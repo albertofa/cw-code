@@ -111,7 +111,7 @@ describe("TracingCliDriver", () => {
     const seen: Array<{ requestId: string; decision: string }> = [];
     const withApprovals = new TracingCliDriver({
       kind: "codex",
-      respondToApproval: async (requestId, decision) => {
+      respondToApproval: async (requestId: string, decision: "accept") => {
         seen.push({ requestId, decision });
       }
     } as unknown as CliDriver);

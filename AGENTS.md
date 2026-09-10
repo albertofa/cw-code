@@ -3,8 +3,8 @@
 ## Product
 
 cw-code is a T3-Code-style desktop shell where every prompt executes in the real
-`claude` / `opencode` CLI binaries, preserving subscription billing. No SDK or
-AI-API calls for inference.
+`claude` / `opencode` / `codex` CLI binaries, preserving subscription billing. No
+SDK or AI-API calls for inference.
 
 Layout is a single window: left sidebar with projects grouping their sessions,
 center chat thread with tool-call cards and a usage/cost footer, right pane with
