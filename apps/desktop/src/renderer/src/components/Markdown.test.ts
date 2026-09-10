@@ -1,0 +1,94 @@
+import { describe, expect, it } from "vitest";
+import {
+  buildPreviewHtml,
+  isAbsolutePath,
+  isLocalPreviewLink,
+  isPathInsideBase,
+  isPreviewablePath,
+  resolvePreviewPaths
+} from "./Markdown.js";
+
+describe("isPreviewablePath", () => {
+  it("accepts markdown and html extensions", () => {
+    expect(isPreviewablePath("docs/a.md")).toBe(true);
+    expect(isPreviewablePath("a.MARKDOWN")).toBe(true);
+    expect(isPreviewablePath("x.html")).toBe(true);
+    expect(isPreviewablePath("x.htm")).toBe(true);
+  });
+
+  it("rejects other files", () => {
+    expect(isPreviewablePath("a.ts")).toBe(false);
+    expect(isPreviewablePath("noext")).toBe(false);
+  });
+});
+
+describe("isLocalPreviewLink", () => {
+  it("accepts local markdown/html links", () => {
+    expect(isLocalPreviewLink("docs/a.md")).toBe(true);
+    expect(isLocalPreviewLink("./a.md")).toBe(true);
+    expect(isLocalPreviewLink("/abs/a.html")).toBe(true);
+    expect(isLocalPreviewLink("C:\\proj\\a.md")).toBe(true);
+    expect(isLocalPreviewLink("a.md#section")).toBe(true);
+  });
+
+  it("rejects remote and non-preview links", () => {
+    expect(isLocalPreviewLink("https://x.com/a.md")).toBe(false);
+    expect(isLocalPreviewLink("mailto:a@b.c")).toBe(false);
+    expect(isLocalPreviewLink("//x.com/a.md")).toBe(false);
+    expect(isLocalPreviewLink("a.ts")).toBe(false);
+    expect(isLocalPreviewLink("#frag")).toBe(false);
+  });
+});
+
+describe("resolvePreviewPaths", () => {
+  it("resolves relative paths against the base", () => {
+    expect(resolvePreviewPaths("C:\\proj", "src/a.md")).toEqual({
+      rel: "src/a.md",
+      abs: "C:/proj/src/a.md"
+    });
+  });
+
+  it("relativizes absolute paths inside the base", () => {
+    expect(resolvePreviewPaths("C:\\proj", "C:\\proj\\src\\a.md")).toEqual({
+      rel: "src/a.md",
+      abs: "C:/proj/src/a.md"
+    });
+  });
+
+  it("passes outside paths through", () => {
+    expect(resolvePreviewPaths("C:\\proj", "D:\\x\\a.md")).toEqual({
+      rel: "D:/x/a.md",
+      abs: "D:/x/a.md"
+    });
+  });
+});
+
+describe("buildPreviewHtml", () => {  it("wraps rendered markdown in a standalone document", () => {
+    const html = buildPreviewHtml("a.md", "# Hi\n\nSome *text*.");
+    expect(html).toContain("<!doctype html>");
+    expect(html).toContain("<title>a.md</title>");
+    expect(html).toContain("<h1>Hi</h1>");
+    expect(html).toContain("<style>");
+  });
+
+  it("escapes the title", () => {
+    expect(buildPreviewHtml("<b>x</b>", "hi")).toContain("<title>&lt;b&gt;x&lt;/b&gt;</title>");
+  });
+});
+
+describe("isPathInsideBase / isAbsolutePath", () => {
+  it("detects paths inside the base", () => {
+    expect(isPathInsideBase("C:\\proj", "C:/proj/src/a.md")).toBe(true);
+    expect(isPathInsideBase("C:/proj/", "C:\\PROJ")).toBe(true);
+    expect(isPathInsideBase("C:\\proj", "C:\\other\\a.md")).toBe(false);
+    expect(isPathInsideBase("C:\\proj", "C:\\proj2\\a.md")).toBe(false);
+    expect(isPathInsideBase("", "C:\\x\\a.md")).toBe(false);
+  });
+
+  it("detects absolute paths", () => {
+    expect(isAbsolutePath("C:\\x\\a.md")).toBe(true);
+    expect(isAbsolutePath("C:/x/a.md")).toBe(true);
+    expect(isAbsolutePath("/x/a.md")).toBe(true);
+    expect(isAbsolutePath("rel/a.md")).toBe(false);
+  });
+});

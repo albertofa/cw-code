@@ -1,0 +1,224 @@
+import { spawn, type ChildProcess } from "node:child_process";
+import { createInterface } from "node:readline";
+import { randomUUID } from "node:crypto";
+import type {
+  AppSettings,
+  CliDriver,
+  EffortLevel,
+  HistoryMessage,
+  PermissionMode,
+  ThreadEvent,
+  TurnHandle,
+  TurnRequest
+} from "@cw-code/contracts";
+import { parseExtraArgs } from "../../settings/settingsUtils.js";
+import { attributeClaudeSubagentEvent, parseStreamLine } from "./claudeStreamParser.js";
+import { listClaudeSessions } from "./claudeSessions.js";
+import { readClaudeHistory } from "./claudeHistory.js";
+import { previewText, traceHarnessCall, truncateError } from "../../debug/harnessTrace.js";
+
+export const CLAUDE_CURATED_MODELS = [
+  { id: "opus", label: "Opus" },
+  { id: "sonnet", label: "Sonnet" },
+  { id: "fable", label: "Fable 5.1" },
+  { id: "haiku", label: "Haiku" },
+  { id: "claude-opus-5", label: "Opus 5" },
+  { id: "claude-sonnet-5", label: "Sonnet 5" },
+  { id: "claude-fable-5", label: "Fable 5" },
+  { id: "claude-haiku-4-5-20251001", label: "Haiku 4.5" }
+];
+
+export function mapClaudePermission(mode: PermissionMode | string): string {
+  if (mode === "acceptEdits") return "acceptEdits";
+  if (mode === "bypassPermissions") return "bypassPermissions";
+  if (mode === "plan") return "plan";
+  if (mode === "manual") return "manual";
+  return "auto";
+}
+
+export function mapClaudeEffort(effort: EffortLevel | string): string {
+  if (effort === "low" || effort === "medium" || effort === "high" || effort === "xhigh" || effort === "max") {
+    return effort;
+  }
+  return "medium";
+}
+
+export function buildClaudeArgs(request: Pick<TurnRequest, "prompt" | "resumeCursor" | "model" | "effort" | "permissionMode" | "allowedTools" | "maxTurns">): string[] {
+  const args = ["-p", request.prompt, "--output-format", "stream-json", "--verbose"];
+  if (request.resumeCursor) args.push("--resume", request.resumeCursor);
+  if (request.model) args.push("--model", request.model);
+  if (request.effort) args.push("--effort", mapClaudeEffort(request.effort));
+  if (request.permissionMode) args.push("--permission-mode", mapClaudePermission(request.permissionMode));
+  if (request.allowedTools?.length) args.push("--allowedTools", request.allowedTools.join(","));
+  if (request.maxTurns) args.push("--max-turns", String(request.maxTurns));
+  return args;
+}
+
+export class ClaudeCliDriver implements CliDriver {
+  readonly kind = "claude" as const;
+  private procs = new Map<string, ChildProcess>();
+
+  constructor(
+    private emit: (event: ThreadEvent) => void,
+    private getSettings: () => AppSettings
+  ) {}
+
+  private configuredBinary(): string {
+    return this.getSettings().claudeBinaryPath;
+  }
+
+  private extraArgs(): string[] {
+    return parseExtraArgs(this.getSettings().claudeExtraArgs);
+  }
+
+  async listSessions(projectRoot: string, projectId = ""): Promise<import("@cw-code/contracts").SessionMeta[]> {
+    const start = Date.now();
+    try {
+      const sessions = await listClaudeSessions(projectId, projectRoot);
+      traceHarnessCall({
+        harness: "claude",
+        operation: "claude.listSessions",
+        cwd: projectRoot,
+        durationMs: Date.now() - start,
+        ok: true,
+        extra: { count: sessions.length }
+      });
+      return sessions;
+    } catch (err) {
+      traceHarnessCall({
+        harness: "claude",
+        operation: "claude.listSessions",
+        cwd: projectRoot,
+        durationMs: Date.now() - start,
+        ok: false,
+        error: truncateError((err as Error).message)
+      });
+      throw err;
+    }
+  }
+
+  async getHistory(projectRoot: string, resumeCursor: string): Promise<HistoryMessage[]> {
+    if (!resumeCursor) return [];
+    const start = Date.now();
+    try {
+      const messages = await readClaudeHistory(projectRoot, resumeCursor);
+      traceHarnessCall({
+        harness: "claude",
+        operation: "claude.getHistory",
+        cwd: projectRoot,
+        resumeCursor,
+        durationMs: Date.now() - start,
+        ok: true,
+        extra: { messageCount: messages.length }
+      });
+      return messages;
+    } catch (err) {
+      traceHarnessCall({
+        harness: "claude",
+        operation: "claude.getHistory",
+        cwd: projectRoot,
+        resumeCursor,
+        durationMs: Date.now() - start,
+        ok: false,
+        error: truncateError((err as Error).message)
+      });
+      throw err;
+    }
+  }
+
+  startTurn(request: TurnRequest): TurnHandle {
+    const turnId = randomUUID();
+    const start = Date.now();
+    const baseArgs = buildClaudeArgs(request);
+    const args = [...this.extraArgs(), ...baseArgs];
+    const preview = previewText(request.prompt);
+    const binary = this.configuredBinary();
+
+    const child = spawn(binary, args, { cwd: request.cwd, windowsHide: true });
+    this.procs.set(turnId, child);
+    traceHarnessCall({
+      harness: "claude",
+      operation: "claude.startTurn",
+      sessionId: request.sessionId,
+      turnId,
+      cwd: request.cwd,
+      binary,
+      args,
+      model: request.model,
+      promptPreview: preview.preview,
+      promptLength: preview.length,
+      resumeCursor: request.resumeCursor,
+      ok: true
+    });
+
+    const rl = createInterface({ input: child.stdout });
+    const agentByCall = new Map<string, string>();
+    rl.on("line", (line) => {
+      for (const event of parseStreamLine(line, turnId, request.resumeCursor ?? "", (info) => {
+        this.emit({
+          type: "turn.done",
+          turnId,
+          sessionId: request.sessionId,
+          resumeCursor: info.resumeCursor,
+          resultText: info.resultText,
+          inputTokens: info.inputTokens,
+          outputTokens: info.outputTokens,
+          costUsd: info.costUsd,
+          numTurns: info.numTurns,
+          isError: info.isError
+        });
+      })) {
+        this.emit(attributeClaudeSubagentEvent(event, agentByCall));
+      }
+    });
+
+    let stderr = "";
+    child.stderr?.on("data", (chunk: Buffer) => {
+      stderr += chunk.toString();
+    });
+    child.on("error", (err) => {
+      traceHarnessCall({
+        harness: "claude",
+        operation: "claude.startTurn",
+        sessionId: request.sessionId,
+        turnId,
+        cwd: request.cwd,
+        binary,
+        durationMs: Date.now() - start,
+        ok: false,
+        error: truncateError(`failed to spawn ${binary}: ${err.message}`)
+      });
+      this.emit({ type: "turn.error", turnId, message: `failed to spawn ${binary}: ${err.message}` });
+    });
+    child.on("close", (code) => {
+      this.procs.delete(turnId);
+      traceHarnessCall({
+        harness: "claude",
+        operation: "claude.startTurn",
+        sessionId: request.sessionId,
+        turnId,
+        cwd: request.cwd,
+        binary,
+        durationMs: Date.now() - start,
+        ok: code === 0,
+        exitCode: code,
+        stderrPreview: stderr ? truncateError(stderr) : undefined
+      });
+      if (code !== 0 && stderr && !child.killed) {
+        this.emit({ type: "turn.error", turnId, message: stderr.slice(0, 2000) });
+      }
+    });
+
+    return { turnId, events: (async function* () {})() };
+  }
+
+  interrupt(turnId: string): void {
+    traceHarnessCall({ harness: "claude", operation: "claude.interrupt", turnId, ok: true });
+    this.procs.get(turnId)?.kill();
+    this.procs.delete(turnId);
+  }
+
+  async renameSession(): Promise<void> {}
+
+  async *events(): AsyncIterable<never> {}
+}

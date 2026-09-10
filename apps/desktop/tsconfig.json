@@ -1,0 +1,15 @@
+{
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "jsx": "react-jsx",
+    "types": ["node", "electron-vite/node"],
+    "noEmit": true,
+    "baseUrl": ".",
+    "paths": {
+      "@cw-code/contracts": ["../../packages/contracts/src/index.ts"]
+    }
+  },
+  "include": ["src", "electron.vite.config.ts"]
+}

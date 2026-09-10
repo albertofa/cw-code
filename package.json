@@ -1,0 +1,13 @@
+{
+  "name": "cw-code",
+  "version": "0.1.0",
+  "private": true,
+  "packageManager": "pnpm@11.5.3",
+  "scripts": {
+    "dev": "pnpm --filter @cw-code/desktop dev",
+    "build": "pnpm -r build",
+    "test": "pnpm -r test",
+    "typecheck": "pnpm -r typecheck",
+    "dist": "pnpm --filter @cw-code/desktop dist"
+  }
+}

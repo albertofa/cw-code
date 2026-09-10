@@ -1,0 +1,14 @@
+appId: com.cwcode.app
+productName: cw-code
+directories:
+  output: dist
+  app: out
+files:
+  - "**/*"
+win:
+  target:
+    - NSIS
+    - dir
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
