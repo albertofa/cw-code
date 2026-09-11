@@ -60,9 +60,9 @@ async function createWindow(): Promise<void> {
     );
     void webContents.reload();
   });
-  webContents.on("console-message", (_e, level, message, line, sourceId) => {
-    if (level === 3) {
-      appendCrashLog(`renderer error: ${message} (${sourceId}:${line})`);
+  webContents.on("console-message", (event) => {
+    if (event.level === "error") {
+      appendCrashLog(`renderer error: ${event.message} (${event.sourceId}:${event.lineNumber})`);
     }
   });
 
@@ -136,6 +136,11 @@ function registerIpc(): void {
     "approvals.respond",
     (_e, args: { sessionId: string; requestId: string; decision: ApprovalDecision }) =>
       sessions.respondApproval(args.requestId, args.decision)
+  );
+  ipcMain.handle(
+    "questions.respond",
+    (_e, args: { sessionId: string; requestId: string; answers: Record<string, string> }) =>
+      sessions.respondQuestion(args.requestId, args.answers)
   );
   ipcMain.handle("projects.list", () => sessions.listProjects());
   ipcMain.handle("projects.add", (_e, rootPath: string) => sessions.addProject(rootPath));

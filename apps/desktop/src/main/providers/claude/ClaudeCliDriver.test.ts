@@ -31,7 +31,6 @@ describe("mapClaudeEffort", () => {
 describe("buildClaudeArgs", () => {
   it("includes model, effort, and permission flags", () => {
     const args = buildClaudeArgs({
-      prompt: "hello",
       model: "claude-fable-5",
       effort: "high",
       permissionMode: "auto"
@@ -44,11 +43,20 @@ describe("buildClaudeArgs", () => {
     expect(args).toContain("auto");
   });
 
+  it("always uses streaming input with the stdio permission host", () => {
+    const args = buildClaudeArgs({});
+    expect(args).toContain("-p");
+    expect(args).not.toContain("hello");
+    const inputPos = args.indexOf("--input-format");
+    expect(args[inputPos + 1]).toBe("stream-json");
+    const hostPos = args.indexOf("--permission-prompt-tool");
+    expect(args[hostPos + 1]).toBe("stdio");
+  });
+
   it("omits unset optionals", () => {
-    const args = buildClaudeArgs({ prompt: "hello" });
+    const args = buildClaudeArgs({});
     expect(args).not.toContain("--model");
     expect(args).not.toContain("--effort");
-    expect(args).not.toContain("--permission-mode");
     expect(args).not.toContain("--permission-mode");
   });
 });

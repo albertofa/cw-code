@@ -11,6 +11,7 @@ import { SubagentCard } from "./SubagentCard.js";
 import { openAgentsPanel } from "./AgentsPanel.js";
 import { NewThread } from "./NewThread.js";
 import { ApprovalCard } from "./ApprovalCard.js";
+import { QuestionDock } from "./QuestionDock.js";
 import { WorkingPill, useWorkingWord } from "./WorkingPill.js";
 import { formatDuration, orderToolsForDisplay } from "./toolSummaries.js";
 import { collectSubagents, describeSubagent, isSubagentMessage, type SubagentGroup } from "./subagents.js";
@@ -206,6 +207,7 @@ export function ThreadView({ rightVisible, onToggleRight }: { rightVisible: bool
         </div>
       )}
       <div className="composer-wrap">
+        <QuestionDock sessionId={session.id} />
         <Composer key={session.id} sessionId={session.id} driver={session.driver} />
         <GitBar sessionId={session.id} />
       </div>

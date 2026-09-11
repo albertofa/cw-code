@@ -59,6 +59,25 @@ export interface ApprovalRequest {
   decisions: ApprovalDecision[];
 }
 
+export interface QuestionOption {
+  label: string;
+  description?: string;
+}
+
+export interface QuestionInfo {
+  question: string;
+  header?: string;
+  options: QuestionOption[];
+  multiSelect: boolean;
+  allowCustom: boolean;
+}
+
+export interface QuestionRequest {
+  requestId: string;
+  turnId: string;
+  questions: QuestionInfo[];
+}
+
 export type TurnEvent =
   | { type: "assistant.delta"; turnId: string; text: string }
   | {
@@ -72,6 +91,13 @@ export type TurnEvent =
   | { type: "tool.result"; turnId: string; toolCallId: string; output: string; isError: boolean }
   | { type: "approval.request"; turnId: string; request: ApprovalRequest }
   | { type: "approval.resolved"; turnId: string; requestId: string }
+  | { type: "question.request"; turnId: string; request: QuestionRequest }
+  | {
+      type: "question.resolved";
+      turnId: string;
+      requestId: string;
+      answers: Record<string, string> | null;
+    }
   | {
       type: "turn.done";
       turnId: string;
@@ -153,6 +179,7 @@ export interface CwApi {
   startTurn(sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[] }): Promise<string>;
   interrupt(turnId: string): Promise<void>;
   respondApproval(requestId: string, decision: ApprovalDecision): Promise<void>;
+  respondQuestion(requestId: string, answers: Record<string, string>): Promise<void>;
   listModels(sessionId: string): Promise<ModelOption[]>;
   listModelsFor(projectId: string, driver: DriverName): Promise<ModelOption[]>;
   getComposer(sessionId: string): Promise<ComposerPrefs>;

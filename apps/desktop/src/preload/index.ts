@@ -51,6 +51,7 @@ export interface CwApi {
   startTurn(sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[] }): Promise<string>;
   interrupt(turnId: string): Promise<void>;
   respondApproval(requestId: string, decision: "accept" | "acceptForSession" | "decline" | "cancel"): Promise<void>;
+  respondQuestion(requestId: string, answers: Record<string, string>): Promise<void>;
   listModels(sessionId: string): Promise<ModelOption[]>;
   listModelsFor(projectId: string, driver: DriverName): Promise<ModelOption[]>;
   getComposer(sessionId: string): Promise<ComposerPrefs>;
@@ -104,6 +105,8 @@ const api: CwApi = {
   interrupt: (turnId: string) => ipcRenderer.invoke("turns.interrupt", { turnId }),
   respondApproval: (requestId: string, decision: "accept" | "acceptForSession" | "decline" | "cancel") =>
     ipcRenderer.invoke("approvals.respond", { requestId, decision }),
+  respondQuestion: (requestId: string, answers: Record<string, string>) =>
+    ipcRenderer.invoke("questions.respond", { requestId, answers }),
   listModels: (sessionId: string) => ipcRenderer.invoke("models.list", { sessionId }),
   listModelsFor: (projectId: string, driver: DriverName) =>
     ipcRenderer.invoke("models.listFor", { projectId, driver }),

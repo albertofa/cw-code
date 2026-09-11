@@ -41,6 +41,25 @@ export interface ApprovalRequest {
   decisions: ApprovalDecision[];
 }
 
+export interface QuestionOption {
+  label: string;
+  description?: string;
+}
+
+export interface QuestionInfo {
+  question: string;
+  header?: string;
+  options: QuestionOption[];
+  multiSelect: boolean;
+  allowCustom: boolean;
+}
+
+export interface QuestionRequest {
+  requestId: string;
+  turnId: string;
+  questions: QuestionInfo[];
+}
+
 export type ThreadEvent =
   | { type: "assistant.delta"; turnId: string; text: string }
   | {
@@ -54,7 +73,13 @@ export type ThreadEvent =
   | { type: "tool.result"; turnId: string; toolCallId: string; output: string; isError: boolean }
   | { type: "approval.request"; turnId: string; request: ApprovalRequest }
   | { type: "approval.resolved"; turnId: string; requestId: string }
+  | { type: "question.request"; turnId: string; request: QuestionRequest }
   | {
+      type: "question.resolved";
+      turnId: string;
+      requestId: string;
+      answers: Record<string, string> | null;
+    } | {
       type: "turn.done";
       turnId: string;
       sessionId: string;

@@ -22,6 +22,8 @@ import {
   buildCommandApproval,
   buildFileChangeApproval,
   buildPermissionsApproval,
+  buildUserInputQuestionRequest,
+  codexUserInputResult,
   mapCodexEffort,
   mapCodexHistory,
   mapCodexModel,
@@ -33,7 +35,8 @@ import {
   type CodexPermissionsApprovalParams,
   type CodexThread,
   type CodexThreadItem,
-  type CodexTurn
+  type CodexTurn,
+  type CodexUserInputParams
 } from "./codexProtocol.js";
 
 interface ActiveTurn {
@@ -85,6 +88,7 @@ export class CodexCliDriver implements CliDriver {
   private turns = new Map<string, ActiveTurn>();
   private turnByCodexId = new Map<string, string>();
   private approvals = new Map<string, PendingApproval>();
+  private pendingQuestions = new Map<string, { serverId: string | number; turnId: string }>();
   private defaultModelIdCache: string | null = null;
 
   constructor(
@@ -394,6 +398,21 @@ export class CodexCliDriver implements CliDriver {
     });
   }
 
+  async respondToQuestion(requestId: string, answers: Record<string, string>): Promise<void> {
+    const question = this.pendingQuestions.get(requestId);
+    if (!question) return;
+    this.pendingQuestions.delete(requestId);
+    this.client.respond(question.serverId, codexUserInputResult(answers));
+    this.emit({ type: "question.resolved", turnId: question.turnId, requestId, answers });
+    traceHarnessCall({
+      harness: "codex",
+      operation: "codex.respondToQuestion",
+      resumeCursor: requestId,
+      ok: true,
+      extra: { questionCount: Object.keys(answers).length }
+    });
+  }
+
   private emitApprovalResolved(requestId: string): void {
     const turnId = requestId.split(":")[0] ?? "";
     this.emit({ type: "approval.resolved", turnId, requestId });
@@ -461,9 +480,16 @@ export class CodexCliDriver implements CliDriver {
         const serverId = p["requestId"];
         if (serverId === undefined || serverId === null) break;
         const entry = [...this.approvals.entries()].find(([, a]) => String(a.serverId) === String(serverId));
-        if (!entry) break;
-        this.approvals.delete(entry[0]);
-        this.emit({ type: "approval.resolved", turnId: entry[0].split(":")[0] ?? "", requestId: entry[0] });
+        if (entry) {
+          this.approvals.delete(entry[0]);
+          this.emit({ type: "approval.resolved", turnId: entry[0].split(":")[0] ?? "", requestId: entry[0] });
+          break;
+        }
+        const questionEntry = [...this.pendingQuestions.entries()].find(([, q]) => String(q.serverId) === String(serverId));
+        if (questionEntry) {
+          this.pendingQuestions.delete(questionEntry[0]);
+          this.emit({ type: "question.resolved", turnId: questionEntry[0].split(":")[0] ?? "", requestId: questionEntry[0], answers: null });
+        }
         break;
       }
       default:
@@ -479,8 +505,13 @@ export class CodexCliDriver implements CliDriver {
     if (!active) return;
     const driverTurnId = active.turnId;
     this.turns.delete(driverTurnId);
-    for (const [codexId, id] of this.turnByCodexId) {
-      if (id === driverTurnId) this.turnByCodexId.delete(codexId);
+    for (const codexId of [...this.turnByCodexId].filter(([, id]) => id === driverTurnId).map(([codexId]) => codexId)) {
+      this.turnByCodexId.delete(codexId);
+    }
+    for (const [requestId, question] of [...this.pendingQuestions]) {
+      if (question.turnId !== driverTurnId) continue;
+      this.pendingQuestions.delete(requestId);
+      this.emit({ type: "question.resolved", turnId: driverTurnId, requestId, answers: null });
     }
     if (turn.status === "failed") {
       this.emit({
@@ -538,6 +569,15 @@ export class CodexCliDriver implements CliDriver {
           name: "websearch",
           input: item
         };
+      case "userInput":
+      case "requestUserInput":
+        return {
+          type: "tool.call",
+          turnId,
+          toolCallId: item.id ?? "codex-userInput",
+          name: "request_user_input",
+          input: item.questions ?? null
+        };
       default:
         return null;
     }
@@ -592,7 +632,14 @@ export class CodexCliDriver implements CliDriver {
     const threadId = typeof p["threadId"] === "string" ? p["threadId"] : "";
     const active = this.turnForCodexId(codexTurnId, threadId);
     if (!active) {
-      this.client.respond(id, method === "item/permissions/requestApproval" ? { permissions: {}, scope: "turn" } : { decision: "decline" });
+      this.client.respond(
+        id,
+        method === "item/permissions/requestApproval"
+          ? { permissions: {}, scope: "turn" }
+          : method === "item/tool/requestUserInput" || method === "requestUserInput"
+            ? { answers: [] }
+            : { decision: "decline" }
+      );
       traceHarnessCall({
         harness: "codex",
         operation: "codex.approval.unrouted",
@@ -637,6 +684,24 @@ export class CodexCliDriver implements CliDriver {
           request: buildPermissionsApproval(requestId, permParams)
         };
         break;
+      }
+      case "item/tool/requestUserInput":
+      case "requestUserInput": {
+        const questionRequest = buildUserInputQuestionRequest(requestId, active.turnId, p as unknown as CodexUserInputParams);
+        if (!questionRequest) {
+          this.client.respond(id, { answers: [] });
+          traceHarnessCall({
+            harness: "codex",
+            operation: "codex.userInput.invalid",
+            resumeCursor: String(id),
+            ok: false,
+            error: "requestUserInput params carried no usable questions"
+          });
+          return;
+        }
+        this.pendingQuestions.set(requestId, { serverId: id, turnId: active.turnId });
+        this.emit({ type: "question.request", turnId: active.turnId, request: questionRequest });
+        return;
       }
       default:
         this.client.respond(id, {});

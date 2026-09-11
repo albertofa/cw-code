@@ -7,6 +7,7 @@ import type {
   DriverName,
   HistoryMessage,
   Project,
+  QuestionRequest,
   Session,
   SettingsPatch,
   TurnEvent
@@ -60,6 +61,7 @@ interface AppState {
   pendingDriver: DriverName | null;
   lastDriver: DriverName;
   pendingApprovals: Record<string, ApprovalRequest[]>;
+  pendingQuestions: Record<string, QuestionRequest[]>;
   pendingPrefs: ComposerPrefs;
   setPendingPrefs(prefs: ComposerPrefs): void;
   preview: { sessionId: string; path: string; basePath: string } | null;
@@ -84,6 +86,7 @@ interface AppState {
   sendPrompt(prompt: string, attachments?: string[]): Promise<void>;
   interrupt(): Promise<void>;
   respondApproval(requestId: string, decision: ApprovalDecision): Promise<void>;
+  respondQuestion(sessionId: string, requestId: string, answers: Record<string, string>): Promise<void>;
   applyEvent(sessionId: string, event: TurnEvent): void;
 }
 
@@ -123,6 +126,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   pendingDriver: null,
   lastDriver: "claude",
   pendingApprovals: {},
+  pendingQuestions: {},
   pendingPrefs: { ...DEFAULT_COMPOSER },
 
   setPendingPrefs(prefs: ComposerPrefs) {
@@ -360,6 +364,17 @@ export const useAppStore = create<AppState>((set, get) => ({
     await window.cw.respondApproval(requestId, decision);
   },
 
+  async respondQuestion(sessionId: string, requestId: string, answers: Record<string, string>) {
+    await window.cw.respondQuestion(requestId, answers);
+    const pending = get().pendingQuestions[sessionId] ?? [];
+    set({
+      pendingQuestions: {
+        ...get().pendingQuestions,
+        [sessionId]: pending.filter((q) => q.requestId !== requestId)
+      }
+    });
+  },
+
   applyEvent(sessionId: string, event: TurnEvent) {
     const messages = get().messagesBySession[sessionId] ?? [];
     if (event.type === "assistant.delta") {
@@ -386,6 +401,42 @@ export const useAppStore = create<AppState>((set, get) => ({
         pendingApprovals: {
           ...get().pendingApprovals,
           [sessionId]: pending
+        }
+      });
+    } else if (event.type === "question.request") {
+      const pending = get().pendingQuestions[sessionId] ?? [];
+      if (pending.some((q) => q.requestId === event.request.requestId)) return;
+      set({
+        pendingQuestions: {
+          ...get().pendingQuestions,
+          [sessionId]: [...pending, event.request]
+        }
+      });
+    } else if (event.type === "question.resolved") {
+      const pending = (get().pendingQuestions[sessionId] ?? []).filter(
+        (q) => q.requestId !== event.requestId
+      );
+      const notes: ChatMessage[] = event.answers
+        ? [
+            {
+              id: `${event.requestId}-ans`,
+              role: "tool",
+              text: Object.entries(event.answers)
+                .map(([q, a]) => `${q} → ${a}`)
+                .join("\n"),
+              turnId: event.turnId,
+              toolCompletedAt: Date.now()
+            }
+          ]
+        : [];
+      set({
+        pendingQuestions: {
+          ...get().pendingQuestions,
+          [sessionId]: pending
+        },
+        messagesBySession: {
+          ...get().messagesBySession,
+          [sessionId]: [...messages, ...notes]
         }
       });
     } else if (event.type === "tool.call") {
@@ -448,10 +499,13 @@ export const useAppStore = create<AppState>((set, get) => ({
       if (startedAt !== undefined) stats[sessionId] = { ms: Date.now() - startedAt };
       const approvals = { ...get().pendingApprovals };
       delete approvals[sessionId];
+      const questions = { ...get().pendingQuestions };
+      delete questions[sessionId];
       set({
         busyTurns: busy,
         lastTurnStats: stats,
         pendingApprovals: approvals,
+        pendingQuestions: questions,
         messagesBySession: {
           ...get().messagesBySession,
           [sessionId]: finalizeTurnTools(messages, event.turnId)
@@ -471,9 +525,12 @@ export const useAppStore = create<AppState>((set, get) => ({
       delete busy[sessionId];
       const approvals = { ...get().pendingApprovals };
       delete approvals[sessionId];
+      const questions = { ...get().pendingQuestions };
+      delete questions[sessionId];
       set({
         busyTurns: busy,
         pendingApprovals: approvals,
+        pendingQuestions: questions,
         messagesBySession: {
           ...get().messagesBySession,
           [sessionId]: [

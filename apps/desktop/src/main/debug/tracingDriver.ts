@@ -177,6 +177,33 @@ export class TracingCliDriver implements CliDriver {
     }
   }
 
+  async respondToQuestion(requestId: string, answers: Record<string, string>): Promise<void> {
+    const start = Date.now();
+    const operation = `${this.kind}.respondToQuestion`;
+    try {
+      if (typeof this.inner.respondToQuestion !== "function") return;
+      await this.inner.respondToQuestion(requestId, answers);
+      traceHarnessCall({
+        harness: this.kind,
+        operation,
+        resumeCursor: requestId,
+        durationMs: Date.now() - start,
+        ok: true,
+        extra: { questionCount: Object.keys(answers).length }
+      });
+    } catch (err) {
+      traceHarnessCall({
+        harness: this.kind,
+        operation,
+        resumeCursor: requestId,
+        durationMs: Date.now() - start,
+        ok: false,
+        error: truncateError((err as Error).message)
+      });
+      throw err;
+    }
+  }
+
   dispose(): void {
     this.inner.dispose?.();
   }
