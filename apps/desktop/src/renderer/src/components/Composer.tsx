@@ -11,7 +11,7 @@ export function Composer({ sessionId, driver }: { sessionId: string; driver: Dri
     for (const [pid, list] of Object.entries(s.sessionsByProject)) {
       if (list.some((session) => session.id === sessionId)) return pid;
     }
-    return s.activeProjectId;
+    return null;
   });
 
   useEffect(() => {

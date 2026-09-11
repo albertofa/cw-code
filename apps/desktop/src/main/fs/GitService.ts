@@ -12,6 +12,11 @@ export function worktreeNameFor(root: string): string {
   return stripped.split(/[/\\]/).filter(Boolean).pop() ?? stripped;
 }
 
+export function isAppManagedPath(path: string): boolean {
+  const normalized = path.replace(/\\/g, "/");
+  return normalized === ".cw" || normalized.startsWith(".cw/");
+}
+
 function queryPrNumber(root: string): Promise<number | null> {
   return new Promise((resolve) => {
     execFile("gh", ["pr", "view", "--json", "number", "--jq", ".number"], { cwd: root, timeout: 5000 }, (error, stdout) => {
@@ -47,8 +52,11 @@ export class GitService {
     }
     try {
       const s = await git.status();
+      const managedUntracked = s.files.filter((file) => file.index === "?" && isAppManagedPath(file.path)).length;
       dirtyCount =
-        s.not_added.length + s.created.length + s.deleted.length + s.modified.length + s.renamed.length;
+        s.not_added.length + s.created.length + s.deleted.length + s.modified.length + s.renamed.length -
+        managedUntracked;
+      if (dirtyCount < 0) dirtyCount = 0;
     } catch (err) {
       console.warn(`git status failed: ${(err as Error).message}`);
     }
