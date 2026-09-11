@@ -16,6 +16,7 @@ function resolvePreload(): string {
 }
 import { checkCliVersion, checkCliVersions, type CliVersionCheck } from "./cliVersions.js";
 import { getHarnessTracePath, initHarnessTrace } from "./debug/harnessTrace.js";
+import { appendCrashLog, initCrashLog } from "./debug/crashLog.js";
 import type { ApprovalDecision, SettingsPatch } from "@cw-code/contracts";
 import type { DriverKind } from "@cw-code/contracts";
 import type { PtyKind } from "./pty/PtyPool.js";
@@ -50,6 +51,20 @@ async function createWindow(): Promise<void> {
 
   mainWindow.on("maximize", () => mainWindow?.webContents.send("win.maximized", true));
   mainWindow.on("unmaximize", () => mainWindow?.webContents.send("win.maximized", false));
+  mainWindow.on("unresponsive", () => appendCrashLog("window unresponsive"));
+
+  const webContents = mainWindow.webContents;
+  webContents.on("render-process-gone", (_e, details) => {
+    appendCrashLog(
+      `render-process-gone: reason=${details.reason} exitCode=${details.exitCode}`
+    );
+    void webContents.reload();
+  });
+  webContents.on("console-message", (_e, level, message, line, sourceId) => {
+    if (level === 3) {
+      appendCrashLog(`renderer error: ${message} (${sourceId}:${line})`);
+    }
+  });
 
   if (process.env["ELECTRON_RENDERER_URL"]) {
     await mainWindow.loadURL(process.env["ELECTRON_RENDERER_URL"]);
@@ -254,7 +269,19 @@ app.whenReady().then(async () => {
   } catch (err) {
     console.warn(`harness trace init failed: ${(err as Error).message}`);
   }
+  initCrashLog(app.getPath("userData"));
+  process.on("uncaughtException", (err) => {
+    appendCrashLog(`uncaughtException: ${err.stack ?? err.message}`);
+  });
+  process.on("unhandledRejection", (reason) => {
+    appendCrashLog(`unhandledRejection: ${String(reason)}`);
+  });
   registerIpc();
+  app.on("child-process-gone", (_e, details) => {
+    appendCrashLog(
+      `child-process-gone: type=${details.type} reason=${details.reason} exitCode=${details.exitCode}`
+    );
+  });
   await createWindow();
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) void createWindow();
