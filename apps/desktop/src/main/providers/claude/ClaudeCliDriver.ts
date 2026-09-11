@@ -1,8 +1,11 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createInterface } from "node:readline";
 import { randomUUID } from "node:crypto";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { dirname, join } from "node:path";
 import type {
   AppSettings,
+  ApprovalDecision,
   CliDriver,
   EffortLevel,
   HistoryMessage,
@@ -13,7 +16,7 @@ import type {
 } from "@cw-code/contracts";
 import { parseExtraArgs } from "../../settings/settingsUtils.js";
 import { killProcessTree } from "../../processTree.js";
-import { attributeClaudeSubagentEvent, claudeQuestionRequest, claudeDenyResponse, claudeControlResponse, parseClaudeControlRequest, parseStreamLine, type ClaudeControlRequest } from "./claudeStreamParser.js";
+import { attributeClaudeSubagentEvent, buildClaudeAllowRule, claudeAllowResponse, claudeApprovalRequest, claudeQuestionRequest, claudeDenyResponse, claudeControlResponse, parseClaudeControlRequest, parseStreamLine, type ClaudeControlRequest } from "./claudeStreamParser.js";
 import { listClaudeSessions } from "./claudeSessions.js";
 import { readClaudeHistory } from "./claudeHistory.js";
 import { previewText, traceHarnessCall, truncateError } from "../../debug/harnessTrace.js";
@@ -61,10 +64,45 @@ export function buildClaudeArgs(request: Pick<TurnRequest, "resumeCursor" | "mod
   return args;
 }
 
+export interface PendingClaudeApproval {
+  turnId: string;
+  control: ClaudeControlRequest;
+  cwd: string;
+  localSessionId: string;
+}
+
+export interface ClaudeTurnMeta {
+  localSessionId: string;
+  cwd: string;
+}
+
+export function claudeSettingsPath(cwd: string): string {
+  return join(cwd, ".claude", "settings.json");
+}
+
+export function mergeClaudeAllowRule(existing: unknown, rule: string): Record<string, unknown> {
+  const base =
+    existing !== null && typeof existing === "object" && !Array.isArray(existing)
+      ? { ...(existing as Record<string, unknown>) }
+      : {};
+  const permissions =
+    base["permissions"] !== null && typeof base["permissions"] === "object" && !Array.isArray(base["permissions"])
+      ? { ...(base["permissions"] as Record<string, unknown>) }
+      : {};
+  const allow = Array.isArray(permissions["allow"])
+    ? [...(permissions["allow"] as unknown[])]
+    : [];
+  if (!allow.includes(rule)) allow.push(rule);
+  return { ...base, permissions: { ...permissions, allow } };
+}
+
 export class ClaudeCliDriver implements CliDriver {
   readonly kind = "claude" as const;
   private procs = new Map<string, ChildProcess>();
   private pendingQuestions = new Map<string, { turnId: string; control: ClaudeControlRequest }>();
+  private pendingApprovals = new Map<string, PendingClaudeApproval>();
+  private turnMeta = new Map<string, ClaudeTurnMeta>();
+  private sessionAllows = new Map<string, Set<string>>();
 
   constructor(
     private emit: (event: ThreadEvent) => void,
@@ -154,6 +192,7 @@ export class ClaudeCliDriver implements CliDriver {
 
     const child = spawn(binary, args, { cwd: request.cwd, windowsHide: true });
     this.procs.set(turnId, child);
+    this.turnMeta.set(turnId, { localSessionId: request.sessionId, cwd: request.cwd });
     traceHarnessCall({
       harness: "claude",
       operation: "claude.startTurn",
@@ -254,7 +293,106 @@ export class ClaudeCliDriver implements CliDriver {
       this.emit({ type: "question.request", turnId, request: question });
       return;
     }
-    this.writeControl(turnId, claudeDenyResponse(control.requestId, "Denied automatically: interactive prompts are unavailable."));
+    const meta = this.turnMeta.get(turnId);
+    const cwd = meta?.cwd ?? "";
+    const localSessionId = meta?.localSessionId ?? "";
+    if (localSessionId && this.sessionAllows.get(localSessionId)?.has(control.toolName)) {
+      this.writeControl(turnId, claudeAllowResponse(control.requestId, control.input));
+      traceHarnessCall({
+        harness: "claude",
+        operation: "claude.autoAllowSession",
+        turnId,
+        cwd: cwd || undefined,
+        ok: true,
+        extra: { requestId: control.requestId, toolName: control.toolName }
+      });
+      return;
+    }
+    this.pendingApprovals.set(control.requestId, { turnId, control, cwd, localSessionId });
+    this.emit({
+      type: "approval.request",
+      turnId,
+      request: claudeApprovalRequest(control, turnId, cwd || undefined)
+    });
+  }
+
+  async respondToApproval(requestId: string, decision: ApprovalDecision): Promise<void> {
+    const entry = this.pendingApprovals.get(requestId);
+    if (!entry) return;
+    this.pendingApprovals.delete(requestId);
+    const { turnId, control, cwd, localSessionId } = entry;
+    if (decision === "accept" || decision === "acceptForSession" || decision === "acceptGlobal") {
+      if (localSessionId && (decision === "acceptForSession" || decision === "acceptGlobal")) {
+        let allowed = this.sessionAllows.get(localSessionId);
+        if (!allowed) {
+          allowed = new Set<string>();
+          this.sessionAllows.set(localSessionId, allowed);
+        }
+        allowed.add(control.toolName);
+      }
+      if (decision === "acceptGlobal") {
+        await this.persistGlobalAllow(control.toolName, control.input, cwd, turnId);
+      }
+      this.writeControl(turnId, claudeAllowResponse(requestId, control.input));
+    } else {
+      const message = decision === "cancel" ? "Cancelled by user." : "Denied by user.";
+      this.writeControl(turnId, claudeDenyResponse(requestId, message));
+    }
+    this.emit({ type: "approval.resolved", turnId, requestId });
+    traceHarnessCall({
+      harness: "claude",
+      operation: "claude.respondToApproval",
+      turnId,
+      cwd: cwd || undefined,
+      ok: true,
+      extra: { requestId, decision, toolName: control.toolName }
+    });
+  }
+
+  private async persistGlobalAllow(toolName: string, input: unknown, cwd: string, turnId: string): Promise<void> {
+    const rule = buildClaudeAllowRule(toolName, input);
+    const filePath = claudeSettingsPath(cwd);
+    try {
+      let raw: string | null = null;
+      try {
+        raw = await readFile(filePath, "utf8");
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException)?.code !== "ENOENT") throw err;
+      }
+      let existing: unknown = null;
+      if (raw !== null) {
+        try {
+          existing = JSON.parse(raw);
+        } catch (err) {
+          throw new Error(`existing settings are not valid JSON: ${(err as Error).message}`);
+        }
+        if (existing === null || typeof existing !== "object" || Array.isArray(existing)) {
+          throw new Error("existing settings are not a JSON object; refusing to overwrite");
+        }
+      }
+      const next = mergeClaudeAllowRule(existing, rule);
+      await mkdir(dirname(filePath), { recursive: true });
+      await writeFile(filePath, JSON.stringify(next, null, 2), "utf8");
+      traceHarnessCall({
+        harness: "claude",
+        operation: "claude.persistGlobalAllow",
+        turnId,
+        cwd: cwd || undefined,
+        ok: true,
+        extra: { rule, filePath }
+      });
+    } catch (err) {
+      const message = `Could not save global allow rule "${rule}" to ${filePath}: ${(err as Error).message}`;
+      traceHarnessCall({
+        harness: "claude",
+        operation: "claude.persistGlobalAllow",
+        turnId,
+        cwd: cwd || undefined,
+        ok: false,
+        error: truncateError(message)
+      });
+      this.emit({ type: "turn.error", turnId, message });
+    }
   }
 
   async respondToQuestion(requestId: string, answers: Record<string, string>): Promise<void> {
@@ -276,6 +414,12 @@ export class ClaudeCliDriver implements CliDriver {
       this.pendingQuestions.delete(requestId);
       this.emit({ type: "question.resolved", turnId, requestId, answers });
     }
+    for (const [requestId, entry] of [...this.pendingApprovals]) {
+      if (entry.turnId !== turnId) continue;
+      this.pendingApprovals.delete(requestId);
+      this.emit({ type: "approval.resolved", turnId, requestId });
+    }
+    this.turnMeta.delete(turnId);
   }
 
   async renameSession(): Promise<void> {}

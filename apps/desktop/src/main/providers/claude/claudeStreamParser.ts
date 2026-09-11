@@ -1,4 +1,4 @@
-import type { QuestionInfo, QuestionOption, QuestionRequest, ThreadEvent } from "@cw-code/contracts";
+import type { ApprovalDecision, ApprovalRequest, QuestionInfo, QuestionOption, QuestionRequest, ThreadEvent } from "@cw-code/contracts";
 
 interface ControlRequestMsg {
   type: "control_request";
@@ -111,6 +111,101 @@ export function claudeDenyResponse(requestId: string, message: string): string {
     type: "control_response",
     response: { subtype: "success", request_id: requestId, response: body }
   } satisfies ControlResponseEnvelope);
+}
+
+export function claudeAllowResponse(requestId: string, input: unknown): string {
+  const body: ControlResponseEnvelope["response"]["response"] = {
+    behavior: "allow",
+    updatedInput: input ?? {}
+  };
+  return JSON.stringify({
+    type: "control_response",
+    response: { subtype: "success", request_id: requestId, response: body }
+  } satisfies ControlResponseEnvelope);
+}
+
+export function buildClaudeAllowRule(toolName: string, input: unknown): string {
+  void input;
+  return toolName.trim() || "unknown";
+}
+
+const CLAUDE_APPROVAL_DECISIONS: ApprovalDecision[] = [
+  "accept",
+  "acceptForSession",
+  "acceptGlobal",
+  "decline",
+  "cancel"
+];
+
+const CLAUDE_COMMAND_TOOLS = new Set(["bash", "powershell"]);
+const CLAUDE_FILE_TOOLS = new Set(["edit", "write", "multiedit"]);
+
+const CLAUDE_DETAIL_MAX = 2000;
+
+function truncateClaudeDetail(text: string): string {
+  return text.length <= CLAUDE_DETAIL_MAX ? text : `${text.slice(0, CLAUDE_DETAIL_MAX)}…[len=${text.length}]`;
+}
+
+function claudeInputCommand(input: unknown): string {
+  if (typeof input === "string") return input;
+  if (input !== null && typeof input === "object" && !Array.isArray(input)) {
+    const command = (input as Record<string, unknown>)["command"];
+    if (typeof command === "string") return command;
+  }
+  return "";
+}
+
+function claudeInputFilePath(input: unknown): string {
+  if (input !== null && typeof input === "object" && !Array.isArray(input)) {
+    const record = input as Record<string, unknown>;
+    for (const key of ["file_path", "filePath", "path"]) {
+      const value = record[key];
+      if (typeof value === "string" && value) return value;
+    }
+  }
+  return "";
+}
+
+function claudeInputJson(input: unknown): string {
+  if (input === null || input === undefined) return "";
+  try {
+    return JSON.stringify(input) ?? "";
+  } catch {
+    return String(input);
+  }
+}
+
+export function claudeApprovalRequest(
+  control: ClaudeControlRequest,
+  turnId: string,
+  cwd?: string
+): ApprovalRequest {
+  void turnId;
+  const toolName = control.toolName;
+  const lower = toolName.toLowerCase();
+  const decisions = [...CLAUDE_APPROVAL_DECISIONS];
+  const base = {
+    requestId: control.requestId,
+    decisions,
+    toolName,
+    ...(cwd ? { cwd } : {})
+  };
+  if (CLAUDE_COMMAND_TOOLS.has(lower)) {
+    const command = claudeInputCommand(control.input);
+    const firstLine = command.split("\n").map((line) => line.trim()).find((line) => line) ?? "";
+    const title = (firstLine || toolName).slice(0, 120);
+    const parts = [command, cwd ? `cwd: ${cwd}` : ""].filter(Boolean);
+    const details = parts.length > 0 ? truncateClaudeDetail(parts.join("\n")) : undefined;
+    return { ...base, kind: "command", title, ...(details ? { details } : {}) };
+  }
+  if (CLAUDE_FILE_TOOLS.has(lower)) {
+    const filePath = claudeInputFilePath(control.input);
+    const title = (filePath ? `${toolName} ${filePath}` : toolName).slice(0, 120);
+    const json = claudeInputJson(control.input);
+    return { ...base, kind: "fileChange", title, ...(json ? { details: truncateClaudeDetail(json) } : {}) };
+  }
+  const json = claudeInputJson(control.input);
+  return { ...base, kind: "permissions", title: toolName, ...(json ? { details: truncateClaudeDetail(json) } : {}) };
 }
 
 
