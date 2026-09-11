@@ -15,7 +15,10 @@ describe("opencodeFileArgs", () => {
 
   it("drops attachments that escape the project root", () => {
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    expect(opencodeFileArgs("C:\\proj", ["../secret.png", "C:\\Windows\\a.png"])).toEqual([]);
+    const root = mkdtempSync(join(tmpdir(), "cw-opencode-args-"));
+    const outside = mkdtempSync(join(tmpdir(), "cw-opencode-outside-"));
+    const escapes = opencodeFileArgs(root, [join("..", "secret.png"), join(outside, "a.png")]);
+    expect(escapes).toEqual([]);
     expect(warn).toHaveBeenCalledTimes(2);
     warn.mockRestore();
   });

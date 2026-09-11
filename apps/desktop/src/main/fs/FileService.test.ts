@@ -76,7 +76,7 @@ describe("paste image helpers", () => {
     const data = Uint8Array.from([1, 2, 3, 4]);
     const rel = svc.savePasteImage(root, "image/png", data);
     expect(rel).toMatch(/^\.cw\/pastes\/cw-paste-[\dT-]+Z\.png$/);
-    const written = readFileSync(join(root, rel.replaceAll("/", "\\")));
+    const written = readFileSync(join(root, rel));
     expect(Array.from(written)).toEqual(Array.from(data));
   });
 });
