@@ -5,6 +5,8 @@ import {
   buildCommandApproval,
   buildFileChangeApproval,
   buildPermissionsApproval,
+  buildUserInputQuestionRequest,
+  codexUserInputResult,
   accumulateCodexUsage,
   mapCodexHistory,
   mapCodexModel,
@@ -253,5 +255,36 @@ describe("accumulateCodexUsage", () => {
     accumulateCodexUsage(acc, usage(100, 50, 10, 5));
     accumulateCodexUsage(acc, usage(200, 0, 20, 0));
     expect(acc).toEqual({ inputTokens: 350, outputTokens: 35 });
+  });
+});
+
+describe("codex user input questions", () => {
+  const params = {
+    questions: [
+      { question: "Preferred color?", header: "Color", options: [{ label: "Red", description: "Red" }, { label: "Blue" }], multiSelect: false },
+      { question: "Which extras?", options: [{ label: "Lint" }], multiSelect: true },
+      "junk",
+      { header: "Color", options: [{ label: "Red" }] }
+    ]
+  };
+
+  it("maps usable questions and drops the rest", () => {
+    const request = buildUserInputQuestionRequest("t1:42", "t1", params);
+    expect(request).toMatchObject({ requestId: "t1:42", turnId: "t1" });
+    expect(request!.questions).toEqual([
+      { question: "Preferred color?", header: "Color", options: [{ label: "Red", description: "Red" }, { label: "Blue" }], multiSelect: false, allowCustom: true },
+      { question: "Which extras?", options: [{ label: "Lint" }], multiSelect: true, allowCustom: true }
+    ]);
+  });
+
+  it("returns null when no usable questions exist", () => {
+    expect(buildUserInputQuestionRequest("t1:42", "t1", { questions: [] })).toBeNull();
+    expect(buildUserInputQuestionRequest("t1:42", "t1", {})).toBeNull();
+  });
+
+  it("serializes answers in submission order", () => {
+    expect(codexUserInputResult({ "Preferred color?": "Red", "Which extras?": "Lint" })).toEqual({
+      answers: ["Red", "Lint"]
+    });
   });
 });

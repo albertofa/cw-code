@@ -6,6 +6,9 @@ import type {
   HistoryMessage,
   ModelOption,
   PermissionMode,
+  QuestionInfo,
+  QuestionOption,
+  QuestionRequest,
   SessionMeta
 } from "@cw-code/contracts";
 
@@ -48,6 +51,7 @@ export interface CodexThreadItem {
   server?: string;
   tool?: string;
   arguments?: unknown;
+  questions?: unknown;
   result?: unknown;
   content?: Array<{ type?: string; text?: string; path?: string }>;
 }
@@ -318,6 +322,60 @@ export function buildPermissionsApproval(
     details: params.permissions ? JSON.stringify(params.permissions) : undefined,
     decisions: ["accept", "acceptForSession", "decline", "cancel"]
   };
+}
+
+export interface CodexUserInputQuestionParams {
+  header?: unknown;
+  question?: unknown;
+  options?: unknown;
+  multiSelect?: unknown;
+  isOther?: unknown;
+  isSecret?: unknown;
+}
+
+export interface CodexUserInputParams {
+  questions?: unknown[];
+}
+
+function codexOptionOf(entry: unknown): QuestionOption | null {
+  if (entry === null || typeof entry !== "object" || Array.isArray(entry)) return null;
+  const args = entry as Record<string, unknown>;
+  if (typeof args["label"] !== "string" || !args["label"]) return null;
+  const description = args["description"];
+  return {
+    label: args["label"],
+    ...(typeof description === "string" && description ? { description } : {})
+  };
+}
+
+export function codexQuestionsFor(params: CodexUserInputParams): QuestionInfo[] {
+  const raw = Array.isArray(params.questions) ? params.questions : [];
+  const questions: QuestionInfo[] = [];
+  for (const entry of raw) {
+    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) continue;
+    const args = entry as CodexUserInputQuestionParams;
+    if (typeof args.question !== "string" || !args.question) continue;
+    const rawOptions = Array.isArray(args.options) ? args.options : [];
+    const options = rawOptions.map(codexOptionOf).filter((o): o is QuestionOption => o !== null);
+    questions.push({
+      question: args.question,
+      ...(typeof args.header === "string" && args.header ? { header: args.header } : {}),
+      options,
+      multiSelect: args.multiSelect === true,
+      allowCustom: args.isOther !== false
+    });
+  }
+  return questions;
+}
+
+export function buildUserInputQuestionRequest(requestId: string, turnId: string, params: CodexUserInputParams): QuestionRequest | null {
+  const questions = codexQuestionsFor(params);
+  if (questions.length === 0) return null;
+  return { requestId, turnId, questions };
+}
+
+export function codexUserInputResult(answers: Record<string, string>): unknown {
+  return { answers: Object.values(answers) };
 }
 
 export function approvalResultFor(
