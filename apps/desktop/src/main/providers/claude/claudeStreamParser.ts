@@ -1,4 +1,118 @@
-import type { ThreadEvent } from "@cw-code/contracts";
+import type { QuestionInfo, QuestionOption, QuestionRequest, ThreadEvent } from "@cw-code/contracts";
+
+interface ControlRequestMsg {
+  type: "control_request";
+  request_id?: string;
+  request?: {
+    subtype?: string;
+    tool_name?: string;
+    tool_use_id?: string;
+    input?: unknown;
+  };
+}
+
+export interface ClaudeControlRequest {
+  requestId: string;
+  toolName: string;
+  toolUseId?: string;
+  input: unknown;
+}
+
+export function parseClaudeControlRequest(line: string): ClaudeControlRequest | null {
+  if (!line.trim().startsWith("{")) return null;
+  let msg: ControlRequestMsg;
+  try {
+    msg = JSON.parse(line) as ControlRequestMsg;
+  } catch {
+    return null;
+  }
+  if (msg.type !== "control_request" || typeof msg.request_id !== "string") return null;
+  if (msg.request?.subtype !== "can_use_tool" || typeof msg.request.tool_name !== "string") return null;
+  return {
+    requestId: msg.request_id,
+    toolName: msg.request.tool_name,
+    toolUseId: typeof msg.request.tool_use_id === "string" ? msg.request.tool_use_id : undefined,
+    input: msg.request.input ?? null
+  };
+}
+
+function optionOf(entry: unknown): QuestionOption | null {
+  if (entry === null || typeof entry !== "object" || Array.isArray(entry)) return null;
+  const label = (entry as Record<string, unknown>)["label"];
+  if (typeof label !== "string" || !label) return null;
+  const description = (entry as Record<string, unknown>)["description"];
+  return {
+    label,
+    ...(typeof description === "string" && description ? { description } : {})
+  };
+}
+
+export function claudeQuestionRequest(control: ClaudeControlRequest, turnId: string): QuestionRequest | null {
+  if (control.toolName.toLowerCase() !== "askuserquestion") return null;
+  const input = control.input as { questions?: unknown } | null;
+  const raw = Array.isArray(input?.questions) ? input.questions : [];
+  const questions: QuestionInfo[] = [];
+  for (const entry of raw) {
+    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) continue;
+    const args = entry as Record<string, unknown>;
+    if (typeof args["question"] !== "string" || !args["question"]) continue;
+    const rawOptions = Array.isArray(args["options"]) ? args["options"] : [];
+    const options = rawOptions
+      .map(optionOf)
+      .filter((o): o is QuestionOption => o !== null);
+    questions.push({
+      question: args["question"],
+      ...(typeof args["header"] === "string" && args["header"] ? { header: args["header"] } : {}),
+      options,
+      multiSelect: args["multiSelect"] === true,
+      allowCustom: true
+    });
+  }
+  if (questions.length === 0) return null;
+  return { requestId: control.requestId, turnId, questions };
+}
+
+interface ControlResponseEnvelope {
+  type: "control_response";
+  response: {
+    subtype: "success";
+    request_id: string;
+    response:
+      | { behavior: "allow"; updatedInput: unknown }
+      | { behavior: "deny"; message: string };
+  };
+}
+
+export function claudeControlResponse(
+  requestId: string,
+  originalInput: unknown,
+  answers: Record<string, string>
+): string {
+  const input = originalInput as { questions?: unknown } | null;
+  const body: ControlResponseEnvelope["response"]["response"] = {
+    behavior: "allow",
+    updatedInput: {
+      ...(input?.questions !== undefined ? { questions: input.questions } : {}),
+      answers
+    }
+  };
+  return JSON.stringify({
+    type: "control_response",
+    response: { subtype: "success", request_id: requestId, response: body }
+  } satisfies ControlResponseEnvelope);
+}
+
+export function claudeDenyResponse(requestId: string, message: string): string {
+  const body: ControlResponseEnvelope["response"]["response"] = {
+    behavior: "deny",
+    message
+  };
+  return JSON.stringify({
+    type: "control_response",
+    response: { subtype: "success", request_id: requestId, response: body }
+  } satisfies ControlResponseEnvelope);
+}
+
 
 interface TextDelta {
   type: "stream_event";

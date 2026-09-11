@@ -12,7 +12,7 @@ import type {
   TurnRequest
 } from "@cw-code/contracts";
 import { parseExtraArgs } from "../../settings/settingsUtils.js";
-import { attributeClaudeSubagentEvent, parseStreamLine } from "./claudeStreamParser.js";
+import { attributeClaudeSubagentEvent, claudeQuestionRequest, claudeDenyResponse, claudeControlResponse, parseClaudeControlRequest, parseStreamLine, type ClaudeControlRequest } from "./claudeStreamParser.js";
 import { listClaudeSessions } from "./claudeSessions.js";
 import { readClaudeHistory } from "./claudeHistory.js";
 import { previewText, traceHarnessCall, truncateError } from "../../debug/harnessTrace.js";
@@ -43,8 +43,14 @@ export function mapClaudeEffort(effort: EffortLevel | string): string {
   return "medium";
 }
 
-export function buildClaudeArgs(request: Pick<TurnRequest, "prompt" | "resumeCursor" | "model" | "effort" | "permissionMode" | "allowedTools" | "maxTurns">): string[] {
-  const args = ["-p", request.prompt, "--output-format", "stream-json", "--verbose"];
+export function buildClaudeArgs(request: Pick<TurnRequest, "resumeCursor" | "model" | "effort" | "permissionMode" | "allowedTools" | "maxTurns">): string[] {
+  const args = [
+    "-p",
+    "--output-format", "stream-json",
+    "--verbose",
+    "--input-format", "stream-json",
+    "--permission-prompt-tool", "stdio"
+  ];
   if (request.resumeCursor) args.push("--resume", request.resumeCursor);
   if (request.model) args.push("--model", request.model);
   if (request.effort) args.push("--effort", mapClaudeEffort(request.effort));
@@ -57,11 +63,18 @@ export function buildClaudeArgs(request: Pick<TurnRequest, "prompt" | "resumeCur
 export class ClaudeCliDriver implements CliDriver {
   readonly kind = "claude" as const;
   private procs = new Map<string, ChildProcess>();
+  private pendingQuestions = new Map<string, { turnId: string; control: ClaudeControlRequest }>();
 
   constructor(
     private emit: (event: ThreadEvent) => void,
     private getSettings: () => AppSettings
   ) {}
+
+  private writeControl(turnId: string, line: string): void {
+    const stdin = this.procs.get(turnId)?.stdin;
+    if (!stdin) return;
+    stdin.write(line + "\n");
+  }
 
   private configuredBinary(): string {
     return this.getSettings().claudeBinaryPath;
@@ -154,6 +167,11 @@ export class ClaudeCliDriver implements CliDriver {
     const rl = createInterface({ input: child.stdout });
     const agentByCall = new Map<string, string>();
     rl.on("line", (line) => {
+      const control = parseClaudeControlRequest(line);
+      if (control) {
+        this.handleControl(control, turnId);
+        return;
+      }
       for (const event of parseStreamLine(line, turnId, request.resumeCursor ?? "", (info) => {
         this.emit({
           type: "turn.done",
@@ -167,10 +185,15 @@ export class ClaudeCliDriver implements CliDriver {
           numTurns: info.numTurns,
           isError: info.isError
         });
+        child.stdin?.end();
+        if (!info.isError) child.kill();
       })) {
         this.emit(attributeClaudeSubagentEvent(event, agentByCall));
       }
     });
+    child.stdin?.write(
+      `${JSON.stringify({ type: "user", message: { role: "user", content: request.prompt } })}\n`
+    );
 
     let stderr = "";
     child.stderr?.on("data", (chunk: Buffer) => {
@@ -192,6 +215,7 @@ export class ClaudeCliDriver implements CliDriver {
     });
     child.on("close", (code) => {
       this.procs.delete(turnId);
+      this.resolvePendingFor(turnId, null);
       traceHarnessCall({
         harness: "claude",
         operation: "claude.startTurn",
@@ -216,6 +240,37 @@ export class ClaudeCliDriver implements CliDriver {
     traceHarnessCall({ harness: "claude", operation: "claude.interrupt", turnId, ok: true });
     this.procs.get(turnId)?.kill();
     this.procs.delete(turnId);
+  }
+
+  private handleControl(control: ClaudeControlRequest, turnId: string): void {
+    const question = claudeQuestionRequest(control, turnId);
+    if (question) {
+      this.pendingQuestions.set(control.requestId, { turnId, control });
+      this.emit({ type: "question.request", turnId, request: question });
+      return;
+    }
+    this.writeControl(turnId, claudeDenyResponse(control.requestId, "Denied automatically: interactive prompts are unavailable."));
+  }
+
+  async respondToQuestion(requestId: string, answers: Record<string, string>): Promise<void> {
+    const entry = this.pendingQuestions.get(requestId);
+    if (!entry) return;
+    this.pendingQuestions.delete(requestId);
+    this.writeControl(entry.turnId, claudeControlResponse(requestId, entry.control.input, answers));
+    this.emit({
+      type: "question.resolved",
+      turnId: entry.turnId,
+      requestId,
+      answers
+    });
+  }
+
+  private resolvePendingFor(turnId: string, answers: Record<string, string> | null): void {
+    for (const [requestId, entry] of [...this.pendingQuestions]) {
+      if (entry.turnId !== turnId) continue;
+      this.pendingQuestions.delete(requestId);
+      this.emit({ type: "question.resolved", turnId, requestId, answers });
+    }
   }
 
   async renameSession(): Promise<void> {}

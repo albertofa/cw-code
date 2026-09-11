@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { attributeClaudeSubagentEvent, parseStreamLine } from "./claudeStreamParser.js";
+import {
+  attributeClaudeSubagentEvent,
+  claudeControlResponse,
+  claudeDenyResponse,
+  claudeQuestionRequest,
+  parseClaudeControlRequest,
+  parseStreamLine
+} from "./claudeStreamParser.js";
 
 describe("parseStreamLine", () => {
   it("maps text deltas to assistant.delta", () => {
@@ -118,5 +125,98 @@ describe("attributeClaudeSubagentEvent", () => {
     };
     expect(attributeClaudeSubagentEvent(read, agentByCall)).toBe(read);
     expect(attributeClaudeSubagentEvent(send, agentByCall)).toBe(send);
+  });
+});
+
+describe("parseClaudeControlRequest", () => {
+  const requestLine = (
+    tool_name: string,
+    questions: unknown,
+    request_id = "req-1"
+  ): string =>
+    JSON.stringify({
+      type: "control_request",
+      request_id,
+      request: { subtype: "can_use_tool", tool_name, input: { questions }, tool_use_id: "tu-9" }
+    });
+
+  it("parses a can_use_tool control request for AskUserQuestion", () => {
+    const control = parseClaudeControlRequest(
+      requestLine("AskUserQuestion", [
+        {
+          question: "Preferred color?",
+          header: "Color",
+          options: [
+            { label: "Red", description: "Red" },
+            { label: "Blue", description: "Blue" }
+          ],
+          multiSelect: false
+        }
+      ])
+    );
+    expect(control).not.toBeNull();
+    expect(control!.requestId).toBe("req-1");
+    expect(control!.toolName).toBe("AskUserQuestion");
+    expect(control!.toolUseId).toBe("tu-9");
+  });
+
+  it("parses control requests from other tools but maps none of them to questions", () => {
+    expect(parseClaudeControlRequest(requestLine("Bash", []))).toMatchObject({ requestId: "req-1", toolName: "Bash" });
+    expect(parseClaudeControlRequest("not json")).toBeNull();
+    expect(
+      parseClaudeControlRequest(JSON.stringify({ type: "control_request", request_id: "req-1", request: { subtype: "other", tool_name: "AskUserQuestion" } }))
+    ).toBeNull();
+    expect(parseClaudeControlRequest(JSON.stringify({ type: "control_request" }))).toBeNull();
+  });
+
+  it("maps a control request onto the renderer QuestionRequest", () => {
+    const control = parseClaudeControlRequest(
+      requestLine("AskUserQuestion", [
+        { question: "Preferred color?", header: "Color", options: [{ label: "Red" }, { label: "Blue" }], multiSelect: false },
+        { question: "Which extras?", options: [{ label: "Lint" }, { label: "Docs" }], multiSelect: true }
+      ])
+    );
+    expect(control).not.toBeNull();
+    const request = claudeQuestionRequest(control!, "t1");
+    expect(request).toEqual({
+      requestId: "req-1",
+      turnId: "t1",
+      questions: [
+        { question: "Preferred color?", header: "Color", options: [{ label: "Red" }, { label: "Blue" }], multiSelect: false, allowCustom: true },
+        { question: "Which extras?", options: [{ label: "Lint" }, { label: "Docs" }], multiSelect: true, allowCustom: true }
+      ]
+    });
+  });
+
+  it("drops entries missing question text, keeps empty option lists", () => {
+    const control = parseClaudeControlRequest(
+      requestLine("AskUserQuestion", [{ question: "ok?", options: [] }, "junk", { header: "Color", options: [{ label: "Red" }] }])
+    );
+    expect(control).not.toBeNull();
+    const request = claudeQuestionRequest(control!, "t1");
+    expect(request?.questions.map((q) => q.question)).toEqual(["ok?"]);
+    expect(request?.questions[0].options).toEqual([]);
+  });
+});
+
+describe("claudeControlResponse", () => {
+  it("serializes the answers over the original questions", () => {
+    const questions = [{ question: "Preferred color?", options: [{ label: "Red" }, { label: "Blue" }] }];
+    const line = claudeControlResponse("req-1", { questions }, { "Preferred color?": "Red" });
+    const parsed = JSON.parse(line);
+    expect(parsed).toEqual({
+      type: "control_response",
+      response: {
+        subtype: "success",
+        request_id: "req-1",
+        response: { behavior: "allow", updatedInput: { questions, answers: { "Preferred color?": "Red" } } }
+      }
+    });
+  });
+
+  it("serializes deny responses", () => {
+    const parsed = JSON.parse(claudeDenyResponse("req-2", "denied"));
+    expect(parsed.response.request_id).toBe("req-2");
+    expect(parsed.response.response).toEqual({ behavior: "deny", message: "denied" });
   });
 });
