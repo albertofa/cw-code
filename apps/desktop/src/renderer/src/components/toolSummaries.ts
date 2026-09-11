@@ -201,12 +201,10 @@ export function describeToolCall(toolName: string, input: unknown): ToolSummary 
     case "askuserquestion":
     case "request_user_input": {
       const questions = Array.isArray(args["questions"]) ? (args["questions"] as Array<Record<string, unknown>>) : [];
-      const first = questions.length > 0 ? str(questions[0]["question"]) : undefined;
-      if (first) {
-        summary.subject = truncate(oneLine(first), 90);
+      if (questions.length > 0) {
+        summary.subject = `Asked ${questions.length} question${questions.length === 1 ? "" : "s"}`;
         summary.subjectKind = "text";
       }
-      if (questions.length > 1) summary.meta = [`${questions.length} questions`];
       break;
     }
   }
