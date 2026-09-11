@@ -12,7 +12,11 @@ const SETTINGS: AppSettings = {
   codexExtraArgs: "",
   claudeDefaultModel: "",
   claudeEnabledModels: [],
-  claudeCustomModel: { id: "", name: "" }
+  claudeCustomModel: { id: "", name: "" },
+  gitBinaryPath: "git",
+  githubCliBinaryPath: "gh",
+  sourceControlRefreshIntervalSeconds: 30,
+  defaultUseWorktree: true
 };
 
 class FakeClient implements CodexAppServerLike {
@@ -279,7 +283,7 @@ describe("CodexCliDriver", () => {
       request: {
         kind: "command",
         title: "git push",
-        decisions: ["accept", "acceptForSession", "decline", "cancel"]
+        decisions: ["accept", "acceptForSession", "acceptGlobal", "decline", "cancel"]
       }
     });
     const requestId = request && "request" in request ? request.request.requestId : "";
