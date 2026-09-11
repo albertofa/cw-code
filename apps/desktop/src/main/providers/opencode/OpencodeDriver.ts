@@ -510,8 +510,6 @@ export class OpencodeDriver implements CliDriver {
       this.watches.get(turnId)?.abort();
       this.watches.delete(turnId);
       this.watchInfo.delete(turnId);
-      const closingSessionId = this.sessionIds.get(turnId) ?? acc.sessionId;
-      if (closingSessionId) this.sessionAllows.delete(closingSessionId);
       this.sessionIds.delete(turnId);
       this.resolvePendingFor(turnId, null);
       this.resolveApprovalsFor(turnId);
@@ -546,27 +544,45 @@ export class OpencodeDriver implements CliDriver {
   async respondToApproval(requestId: string, decision: ApprovalDecision): Promise<void> {
     const entry = this.pendingApprovals.get(requestId);
     if (!entry) return;
+    this.pendingApprovals.delete(requestId);
     const reply = opencodePermissionReply(decision);
     if (decision === "acceptForSession") {
       let allowed = this.sessionAllows.get(entry.sessionID);
       if (!allowed) {
         allowed = new Set();
+        if (this.sessionAllows.size >= 100) {
+          const oldest = this.sessionAllows.keys().next();
+          if (!oldest.done) this.sessionAllows.delete(oldest.value);
+        }
         this.sessionAllows.set(entry.sessionID, allowed);
       }
       allowed.add(this.sessionAllowKey(entry));
     }
-    const outcome = await this.replyPermission(this.watchInfo.get(entry.turnId), entry.sessionID, requestId, reply);
-    this.pendingApprovals.delete(requestId);
-    this.emit({ type: "approval.resolved", turnId: entry.turnId, requestId });
-    traceHarnessCall({
-      harness: "opencode",
-      operation: "opencode.respondToApproval",
-      turnId: entry.turnId,
-      resumeCursor: requestId,
-      ok: outcome === "replied",
-      ...(outcome === "missing" ? { error: "permission already answered, resolved locally" } : {}),
-      extra: { decision, reply, permission: entry.permission }
-    });
+    try {
+      const outcome = await this.replyPermission(this.watchInfo.get(entry.turnId), entry.sessionID, requestId, reply);
+      this.emit({ type: "approval.resolved", turnId: entry.turnId, requestId });
+      traceHarnessCall({
+        harness: "opencode",
+        operation: "opencode.respondToApproval",
+        turnId: entry.turnId,
+        resumeCursor: requestId,
+        ok: outcome === "replied",
+        ...(outcome === "missing" ? { error: "permission already answered, resolved locally" } : {}),
+        extra: { decision, reply, permission: entry.permission }
+      });
+    } catch (err) {
+      traceHarnessCall({
+        harness: "opencode",
+        operation: "opencode.respondToApproval",
+        turnId: entry.turnId,
+        resumeCursor: requestId,
+        ok: false,
+        error: truncateError((err as Error).message),
+        extra: { decision, reply, permission: entry.permission }
+      });
+      this.pendingApprovals.set(requestId, entry);
+      this.emit(permissionApprovalOf(entry, entry.turnId, entry.cwd));
+    }
   }
 
   async respondToQuestion(requestId: string, answers: Record<string, string>): Promise<void> {
