@@ -36,14 +36,23 @@ export function mapOpencodeMessages(messages: ServerMessage[], limit = 300): His
           turnId,
           toolName: part.tool ?? "tool"
         });
-        if (typeof part.state?.output === "string" && part.state.output.trim()) {
+        const output = part.state?.output;
+        const errorText =
+          typeof part.state?.error === "string" && part.state.error.trim()
+            ? part.state.error
+            : undefined;
+        const resultText =
+          typeof output === "string" && output.trim()
+            ? output.slice(0, 4000)
+            : (errorText?.slice(0, 4000) ?? "");
+        if (resultText) {
           out.push({
             id: `${callId}-r`,
             role: "tool",
-            text: part.state.output.slice(0, 4000),
+            text: resultText,
             turnId,
             toolName: part.tool ?? "tool",
-            isError: part.state?.error != null
+            isError: part.state?.error != null || part.state?.status === "error"
           });
         }
       } else if (part.type === "file") {

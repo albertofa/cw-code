@@ -3,6 +3,7 @@ import { createInterface } from "node:readline";
 import { randomUUID } from "node:crypto";
 import type { AppSettings, CliDriver, HistoryMessage, SessionMeta, ThreadEvent, TurnHandle, TurnRequest } from "@cw-code/contracts";
 import { parseOpencodeLine, summarizeRun } from "./opencodeEvents.js";
+import { diffLiveTools, type LiveMessage, type LiveSeen } from "./opencodeLivePoll.js";
 import { mapOpencodeMessages } from "./opencodeHistory.js";
 import { listOpencodeModels, mapEffortToVariant } from "./opencodeModels.js";
 import { assertInside } from "../../fs/FileService.js";
@@ -20,6 +21,7 @@ interface ServerSession {
 export class OpencodeDriver implements CliDriver {
   readonly kind = "opencode" as const;
   private procs = new Map<string, ChildProcess>();
+  private pollTimers = new Map<string, NodeJS.Timeout>();
   private pool: OpencodeServerPool;
 
   constructor(
@@ -131,8 +133,11 @@ export class OpencodeDriver implements CliDriver {
     const start = Date.now();
     const binary = this.configuredBinary();
     let serverPort: number | null = null;
+    let authHeader = "";
     try {
-      serverPort = (await this.pool.ensure(request.cwd)).port;
+      const handle = await this.pool.ensure(request.cwd);
+      serverPort = handle.port;
+      authHeader = handle.authHeader;
     } catch (err) {
       traceHarnessCall({
         harness: "opencode",
@@ -207,9 +212,49 @@ export class OpencodeDriver implements CliDriver {
     };
 
     const rl = createInterface({ input: child.stdout });
+    const liveSeen = new Map<string, LiveSeen>();
     rl.on("line", (line) => {
-      for (const event of parseOpencodeLine(line, turnId, acc)) this.emit(event);
+      for (const event of parseOpencodeLine(line, turnId, acc)) {
+        if (event.type === "tool.call" && liveSeen.get(event.toolCallId)?.call === true) continue;
+        if (event.type === "tool.call") {
+          const entry = liveSeen.get(event.toolCallId) ?? { call: false, result: false };
+          entry.call = true;
+          liveSeen.set(event.toolCallId, entry);
+        }
+        if (event.type === "tool.result") {
+          const entry = liveSeen.get(event.toolCallId) ?? { call: false, result: false };
+          entry.result = true;
+          liveSeen.set(event.toolCallId, entry);
+        }
+        this.emit(event);
+      }
     });
+
+    let pollWarned = false;
+    const pollLiveTools = async (final = false): Promise<void> => {
+      if (!final && !this.procs.has(turnId)) return;
+      const serverSessionId = acc.sessionId || request.resumeCursor || "";
+      if (!serverSessionId || serverPort === null) return;
+      try {
+        const res = await fetch(
+          `http://127.0.0.1:${serverPort}/session/${encodeURIComponent(serverSessionId)}/message?limit=50`,
+          { headers: { Authorization: authHeader } }
+        );
+        if (!res.ok) throw new Error(`live tool poll failed: ${res.status}`);
+        const messages = (await res.json()) as LiveMessage[];
+        for (const event of diffLiveTools(liveSeen, messages, turnId)) this.emit(event);
+      } catch (err) {
+        if (!pollWarned) {
+          pollWarned = true;
+          console.warn(`opencode live tool poll failed, falling back to run output: ${(err as Error).message}`);
+        }
+      }
+    };
+    const pollTimer = setInterval(() => {
+      void pollLiveTools();
+    }, 2000);
+    pollTimer.unref?.();
+    this.pollTimers.set(turnId, pollTimer);
 
     let stderr = "";
     child.stderr?.on("data", (chunk: Buffer) => {
@@ -230,6 +275,11 @@ export class OpencodeDriver implements CliDriver {
       this.emit({ type: "turn.error", turnId, message: `failed to spawn ${binary}: ${err.message}` });
     });
     child.on("close", (code) => {
+      const timer = this.pollTimers.get(turnId);
+      if (timer) {
+        clearInterval(timer);
+        this.pollTimers.delete(turnId);
+      }
       this.procs.delete(turnId);
       traceHarnessCall({
         harness: "opencode",
@@ -244,10 +294,17 @@ export class OpencodeDriver implements CliDriver {
         stderrPreview: stderr ? truncateError(stderr) : undefined
       });
       if (!child.killed) {
-        if (code === 0 || acc.text.length > 0 || acc.sessionId) {
-          this.emit(summarizeRun(turnId, request.sessionId, acc));
-        } else if (stderr) {
-          this.emit({ type: "turn.error", turnId, message: stderr.slice(0, 2000) });
+        const finish = () => {
+          if (code === 0 || acc.text.length > 0 || acc.sessionId) {
+            this.emit(summarizeRun(turnId, request.sessionId, acc));
+          } else if (stderr) {
+            this.emit({ type: "turn.error", turnId, message: stderr.slice(0, 2000) });
+          }
+        };
+        if (acc.sessionId || request.resumeCursor) {
+          void pollLiveTools(true).then(finish);
+        } else {
+          finish();
         }
       }
     });
@@ -255,6 +312,11 @@ export class OpencodeDriver implements CliDriver {
 
   interrupt(turnId: string): void {
     traceHarnessCall({ harness: "opencode", operation: "opencode.interrupt", turnId, ok: true });
+    const timer = this.pollTimers.get(turnId);
+    if (timer) {
+      clearInterval(timer);
+      this.pollTimers.delete(turnId);
+    }
     this.procs.get(turnId)?.kill();
     this.procs.delete(turnId);
   }
@@ -264,6 +326,8 @@ export class OpencodeDriver implements CliDriver {
   async *events(): AsyncIterable<never> {}
 
   dispose(): void {
+    for (const timer of this.pollTimers.values()) clearInterval(timer);
+    this.pollTimers.clear();
     this.pool.dispose();
   }
 }

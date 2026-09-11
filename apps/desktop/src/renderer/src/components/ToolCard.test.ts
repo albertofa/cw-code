@@ -3,6 +3,7 @@ import {
   describeToolCall,
   extractCommandFragment,
   extractFileFragment,
+  extractPatchFiles,
   formatDuration,
   mergeToolPairs,
   orderToolsForDisplay,
@@ -91,6 +92,29 @@ describe("describeToolCall", () => {
     expect(describeToolCall("grep", grepWrapped)?.subject).toBe("foo");
     const skillWrapped = { status: "completed", input: { name: "plan" }, output: "y" };
     expect(describeToolCall("skill", skillWrapped)?.subject).toBe("plan");
+  });
+
+  it("summarizes opencode apply_patch with the first file", () => {
+    const patch = "*** Begin Patch\n*** Update File: C:\\Projects\\app\\a.ts\n@@\n-x\n+y\n*** Add File: src/b.ts\n@@\n+z\n";
+    expect(extractPatchFiles(patch)).toEqual(["C:\\Projects\\app\\a.ts", "src/b.ts"]);
+    const s = describeToolCall("apply_patch", { patchText: patch });
+    expect(s?.verb).toBe("Patch");
+    expect(s?.subject).toBe("C:\\Projects\\app\\a.ts");
+    expect(s?.subjectKind).toBe("file");
+    expect(s?.meta).toEqual(["2 files"]);
+    expect(relativizeToBase("C:\\Projects\\app", s?.subject ?? "")).toBe("a.ts");
+  });
+
+  it("summarizes opencode question tools", () => {
+    const s = describeToolCall("question", {
+      questions: [
+        { header: "Scope", question: "Include the release notes?", options: [] },
+        { header: "Other", question: "Second?", options: [] }
+      ]
+    });
+    expect(s?.verb).toBe("Question");
+    expect(s?.subject).toBe("Include the release notes?");
+    expect(s?.meta).toEqual(["2 questions"]);
   });
 });
 
