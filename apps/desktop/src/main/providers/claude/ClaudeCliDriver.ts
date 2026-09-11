@@ -2,7 +2,7 @@ import { spawn, type ChildProcess } from "node:child_process";
 import { createInterface } from "node:readline";
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { dirname, join, normalize } from "node:path";
 import type {
   AppSettings,
   ApprovalDecision,
@@ -77,7 +77,7 @@ export interface ClaudeTurnMeta {
 }
 
 export function claudeSettingsPath(cwd: string): string {
-  return join(cwd, ".claude", "settings.json");
+  return join(normalize(cwd), ".claude", "settings.json");
 }
 
 export function mergeClaudeAllowRule(existing: unknown, rule: string): Record<string, unknown> {
@@ -284,13 +284,18 @@ export class ClaudeCliDriver implements CliDriver {
     traceHarnessCall({ harness: "claude", operation: "claude.interrupt", turnId, ok: true });
     this.terminate(turnId);
     this.procs.delete(turnId);
+    this.resolvePendingFor(turnId, null);
   }
 
   private handleControl(control: ClaudeControlRequest, turnId: string): void {
-    const question = claudeQuestionRequest(control, turnId);
-    if (question) {
-      this.pendingQuestions.set(control.requestId, { turnId, control });
-      this.emit({ type: "question.request", turnId, request: question });
+    if (control.toolName.toLowerCase() === "askuserquestion") {
+      const question = claudeQuestionRequest(control, turnId);
+      if (question) {
+        this.pendingQuestions.set(control.requestId, { turnId, control });
+        this.emit({ type: "question.request", turnId, request: question });
+      } else {
+        this.writeControl(turnId, claudeDenyResponse(control.requestId, "Denied automatically: AskUserQuestion arrived without usable questions."));
+      }
       return;
     }
     const meta = this.turnMeta.get(turnId);
@@ -351,6 +356,18 @@ export class ClaudeCliDriver implements CliDriver {
 
   private async persistGlobalAllow(toolName: string, input: unknown, cwd: string, turnId: string): Promise<void> {
     const rule = buildClaudeAllowRule(toolName, input);
+    if (!cwd.trim()) {
+      const message = `Could not save global allow rule "${rule}": turn has no cwd, refusing to write settings to the process cwd.`;
+      traceHarnessCall({
+        harness: "claude",
+        operation: "claude.persistGlobalAllow",
+        turnId,
+        ok: false,
+        error: truncateError(message)
+      });
+      this.emit({ type: "turn.error", turnId, message });
+      return;
+    }
     const filePath = claudeSettingsPath(cwd);
     try {
       let raw: string | null = null;

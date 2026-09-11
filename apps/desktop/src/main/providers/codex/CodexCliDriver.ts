@@ -388,12 +388,13 @@ export class CodexCliDriver implements CliDriver {
     if (!approval) return;
     this.approvals.delete(requestId);
     const result = approvalResultFor(approval.kind, decision, approval.requestedPermissions);
-    if (decision === "acceptGlobal") {
+    if (decision === "acceptGlobal" && approval.kind !== "permissions") {
       traceHarnessCall({
         harness: "codex",
         operation: "codex.respondToApproval.globalFallback",
         resumeCursor: requestId,
-        ok: true,
+        ok: false,
+        error: `app-server has no global approval scope; downgraded acceptGlobal to session scope for ${approval.kind}`,
         extra: { kind: approval.kind, requested: decision, fallback: "session" }
       });
     }
