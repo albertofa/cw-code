@@ -1,4 +1,4 @@
-import { useState, type CSSProperties } from "react";
+import { useRef, useState, type CSSProperties, type DragEvent } from "react";
 import { FolderGit2, GitBranch, Settings, SquarePen } from "lucide-react";
 import type { Project, Session, SessionStatus } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
@@ -77,9 +77,15 @@ function orderByStored(current: Session[], ids: string[]): Session[] {
 
 function isStoredOrderValid(mainAll: Session[], resolvedAll: Session[], stored: SidebarOrder): boolean {
   if (stored.main.length !== mainAll.length || stored.resolved.length !== resolvedAll.length) return false;
+  if (new Set(stored.main).size !== stored.main.length) return false;
+  if (new Set(stored.resolved).size !== stored.resolved.length) return false;
   const mainIds = new Set(mainAll.map((s) => s.id));
   const resolvedIds = new Set(resolvedAll.map((s) => s.id));
+  const storedMain = new Set(stored.main);
+  const storedResolved = new Set(stored.resolved);
   if (stored.main.some((id) => !mainIds.has(id)) || stored.resolved.some((id) => !resolvedIds.has(id))) return false;
+  if (mainAll.some((s) => !storedMain.has(s.id)) || resolvedAll.some((s) => !storedResolved.has(s.id))) return false;
+  if (stored.main.some((id) => storedResolved.has(id))) return false;
   const pinned = new Set(stored.pinned);
   for (const s of [...mainAll, ...resolvedAll]) {
     if (pinned.has(s.id)) continue;
@@ -101,6 +107,9 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const [renameDraft, setRenameDraft] = useState("");
   const [dragged, setDragged] = useState<{ id: string; section: SidebarSection } | null>(null);
   const [indicator, setIndicator] = useState<{ id: string; before: boolean } | null>(null);
+  const draggedRef = useRef<{ id: string; section: SidebarSection } | null>(null);
+  const allowsDrop = (e: DragEvent) =>
+    draggedRef.current !== null || Array.from(e.dataTransfer.types ?? []).includes("text/plain");
 
   const activeProject = projects.find((p) => p.id === activeProjectId);
   const filterProject = projectFilter === "all" ? undefined : projects.find((p) => p.id === projectFilter);
@@ -111,10 +120,23 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const matchesQuery = (s: Session) =>
     !query || s.title.toLowerCase().includes(query.toLowerCase());
   const byRecency = (a: Session, b: Session) => b.updatedAt - a.updatedAt;
-  const mainAll = source.filter((s) => s.status !== "resolved" && s.status !== "archived");
-  const resolvedAll = source.filter((s) => s.status === "resolved");
   const orderKey = orderKeyFor(projectFilter);
   const storedOrder = readStoredOrder(orderKey);
+  const pinnedSet = new Set(storedOrder?.pinned ?? []);
+  const storedMainSet = new Set(storedOrder?.main ?? []);
+  const storedResolvedSet = new Set(storedOrder?.resolved ?? []);
+  const effectiveSection = (s: Session): SidebarSection | null => {
+    if (pinnedSet.has(s.id)) {
+      const inMain = storedMainSet.has(s.id);
+      const inResolved = storedResolvedSet.has(s.id);
+      if (inMain !== inResolved) return inMain ? "main" : "resolved";
+    }
+    if (s.status === "resolved") return "resolved";
+    if (s.status === "archived") return null;
+    return "main";
+  };
+  const mainAll = source.filter((s) => effectiveSection(s) === "main");
+  const resolvedAll = source.filter((s) => effectiveSection(s) === "resolved");
   const storedValid = storedOrder ? isStoredOrderValid(mainAll, resolvedAll, storedOrder) : false;
   const orderedMainAll =
     storedValid && storedOrder ? orderByStored(mainAll, storedOrder.main) : [...mainAll].sort(byRecency);
@@ -189,6 +211,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
     const fromId = from.id;
     const fromSection = from.section;
     setDragged(null);
+    draggedRef.current = null;
     setIndicator(null);
     if (targetId === fromId && fromSection === toSection) return;
     const nextMain = orderedMainAll.filter((s) => s.id !== fromId);
@@ -215,11 +238,13 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
     const snap: Record<string, number> = {};
     for (const s of [...nextMain, ...nextResolved]) snap[s.id] = s.updatedAt;
     const cross = fromSection !== toSection;
+    const prevPinned = readStoredOrder(orderKey)?.pinned ?? storedOrder?.pinned ?? [];
+    const pinned = cross ? Array.from(new Set([...prevPinned, fromId])) : [...prevPinned];
     writeStoredOrder(orderKey, {
       main: nextMain.map((s) => s.id),
       resolved: nextResolved.map((s) => s.id),
       snap,
-      pinned: cross ? [fromId] : [],
+      pinned,
     });
     if (cross) setStatus(fromId, toSection === "main" ? "idle" : "resolved");
   };
@@ -245,12 +270,13 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
       key={s.id}
       draggable
       onDragStart={(e) => {
+        draggedRef.current = { id: s.id, section };
         setDragged({ id: s.id, section });
         e.dataTransfer.effectAllowed = "move";
         e.dataTransfer.setData("text/plain", s.id);
       }}
       onDragOver={(e) => {
-        if (!dragged) return;
+        if (!allowsDrop(e)) return;
         e.preventDefault();
         e.dataTransfer.dropEffect = "move";
         const rect = e.currentTarget.getBoundingClientRect();
@@ -260,12 +286,18 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
       onDrop={(e) => {
         e.preventDefault();
         e.stopPropagation();
-        if (!dragged) return;
+        const active = draggedRef.current ?? dragged;
+        if (!active) return;
         const rect = e.currentTarget.getBoundingClientRect();
         const before = e.clientY < rect.top + rect.height / 2;
-        handleDrop(dragged, section, s.id, before);
+        handleDrop(active, section, s.id, before);
+      }}
+      onDragLeave={(e) => {
+        if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+        setIndicator((prev) => (prev && prev.id === s.id ? null : prev));
       }}
       onDragEnd={() => {
+        draggedRef.current = null;
         setDragged(null);
         setIndicator(null);
       }}
@@ -440,13 +472,14 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
       <div className="session-list">
         <div
           onDragOver={(e) => {
-            if (!dragged) return;
+            if (!allowsDrop(e)) return;
             e.preventDefault();
           }}
           onDrop={(e) => {
             e.preventDefault();
-            if (!dragged) return;
-            handleDrop(dragged, "main", null, false);
+            const active = draggedRef.current ?? dragged;
+            if (!active) return;
+            handleDrop(active, "main", null, false);
           }}
         >
           {shown.map((s) => renderRow(s, "main"))}
@@ -456,26 +489,28 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
           <details
             className="resolved"
             onDragOver={(e) => {
-              if (!dragged) return;
+              if (!allowsDrop(e)) return;
               e.preventDefault();
             }}
             onDrop={(e) => {
               e.preventDefault();
-              if (!dragged) return;
-              handleDrop(dragged, "resolved", null, false);
+              const active = draggedRef.current ?? dragged;
+              if (!active) return;
+              handleDrop(active, "resolved", null, false);
             }}
           >
             <summary
               onDragOver={(e) => {
-                if (!dragged) return;
+                if (!allowsDrop(e)) return;
                 e.preventDefault();
                 e.stopPropagation();
               }}
               onDrop={(e) => {
                 e.preventDefault();
                 e.stopPropagation();
-                if (!dragged) return;
-                handleDrop(dragged, "resolved", null, false);
+                const active = draggedRef.current ?? dragged;
+                if (!active) return;
+                handleDrop(active, "resolved", null, false);
               }}
             >resolved · {resolved.length}</summary>
             {resolved.map((s) => renderRow(s, "resolved"))}
