@@ -264,7 +264,8 @@ export class OpencodeDriver implements CliDriver {
     const child = spawn(binary, args, {
       cwd: request.cwd,
       windowsHide: true,
-      stdio: ["ignore", "pipe", "pipe"]
+      stdio: ["ignore", "pipe", "pipe"],
+      env: { ...process.env, OPENCODE_ENABLE_QUESTION_TOOL: "true" }
     });
     this.procs.set(turnId, child);
     const preview = previewText(request.prompt);
