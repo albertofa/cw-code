@@ -50,7 +50,7 @@ export interface CwApi {
   getHistory(sessionId: string): Promise<unknown[]>;
   startTurn(sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[] }): Promise<string>;
   interrupt(turnId: string): Promise<void>;
-  respondApproval(requestId: string, decision: "accept" | "acceptForSession" | "decline" | "cancel"): Promise<void>;
+  respondApproval(requestId: string, decision: "accept" | "acceptForSession" | "acceptGlobal" | "decline" | "cancel"): Promise<void>;
   respondQuestion(requestId: string, answers: Record<string, string>): Promise<void>;
   listModels(sessionId: string): Promise<ModelOption[]>;
   listModelsFor(projectId: string, driver: DriverName): Promise<ModelOption[]>;
@@ -103,7 +103,7 @@ const api: CwApi = {
   startTurn: (sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[] }) =>
     ipcRenderer.invoke("turns.start", { sessionId, prompt, prefs: opts?.prefs, attachments: opts?.attachments }),
   interrupt: (turnId: string) => ipcRenderer.invoke("turns.interrupt", { turnId }),
-  respondApproval: (requestId: string, decision: "accept" | "acceptForSession" | "decline" | "cancel") =>
+  respondApproval: (requestId: string, decision: "accept" | "acceptForSession" | "acceptGlobal" | "decline" | "cancel") =>
     ipcRenderer.invoke("approvals.respond", { requestId, decision }),
   respondQuestion: (requestId: string, answers: Record<string, string>) =>
     ipcRenderer.invoke("questions.respond", { requestId, answers }),
