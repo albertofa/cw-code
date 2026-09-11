@@ -1,4 +1,4 @@
-import { useLayoutEffect, useRef, useState, type CSSProperties, type DragEvent } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
 import { FolderGit2, GitBranch, Settings, SquarePen } from "lucide-react";
 import type { Project, Session, SessionStatus } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
@@ -162,12 +162,17 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const [menu, setMenu] = useState<{ sessionId: string; x: number; y: number } | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
-  const [dragged, setDragged] = useState<{ id: string; section: SidebarSection } | null>(null);
+  const [dragged, setDragged] = useState<{ id: string; section: SidebarSection; title: string } | null>(null);
   const [preview, setPreview] = useState<{ targetId: string | null; section: SidebarSection; before: boolean } | null>(null);
   const [landedId, setLandedId] = useState<string | null>(null);
-  const draggedRef = useRef<{ id: string; section: SidebarSection } | null>(null);
-  const lastHover = useRef<{ x: number; y: number } | null>(null);
+  const dragRef = useRef<{ id: string; section: SidebarSection; title: string; startX: number; startY: number; active: boolean } | null>(null);
+  const ghostRef = useRef<HTMLDivElement>(null);
+  const suppressClickRef = useRef(false);
+  const scrollTimer = useRef<number | null>(null);
+  const pointerY = useRef(0);
+  const detachRef = useRef<(() => void) | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const resolvedDetailsRef = useRef<HTMLDetailsElement>(null);
   const slotSnap = useRef<SlotSnapshot | null>(null);
   const rowRefs = useRef(new Map<string, HTMLDivElement>());
   const prevRects = useRef(new Map<string, { top: number; height: number }>());
@@ -197,8 +202,15 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
     }
     prevRects.current = next;
   });
-  const allowsDrop = (e: DragEvent) =>
-    draggedRef.current !== null || Array.from(e.dataTransfer.types ?? []).includes("text/plain");
+  useEffect(() => {
+    document.body.classList.toggle("session-dragging", dragged !== null);
+    return () => document.body.classList.remove("session-dragging");
+  }, [dragged]);
+
+  useEffect(() => () => {
+    detachRef.current?.();
+    stopAutoScroll();
+  }, []);
 
   const activeProject = projects.find((p) => p.id === activeProjectId);
   const filterProject = projectFilter === "all" ? undefined : projects.find((p) => p.id === projectFilter);
@@ -238,7 +250,6 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const previewing = dragged !== null && preview !== null;
   const shownPreview = (previewing ? previewMainAll : orderedMainAll).filter(matchesQuery);
   const resolvedPreview = (previewing ? previewResolvedAll : orderedResolvedAll).filter(matchesQuery);
-  const currentIds = [...orderedMainAll, ...orderedResolvedAll].map((s) => s.id).join(",");
 
   const captureSlots = (): void => {
     const rows: SlotRow[] = [];
@@ -260,29 +271,59 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
     };
   };
 
-  const measureLiveRows = (): SlotRow[] => {
-    const rows: SlotRow[] = [];
-    const put = (list: Session[], section: SidebarSection) => {
-      for (const s of list) {
-        const el = rowRefs.current.get(s.id);
-        if (!el || !el.isConnected) continue;
-        const { top, height } = layoutTop(el);
-        if (height === 0) continue;
-        rows.push({ id: s.id, section, top, height });
-      }
-    };
-    put(orderedMainAll, "main");
-    put(orderedResolvedAll, "resolved");
-    return rows;
-  };
-
-  const slotFromPoint = (clientY: number): { targetId: string | null; section: SidebarSection; before: boolean } => {
+  const slotFromPoint = (clientY: number, onlySection?: SidebarSection): { targetId: string | null; section: SidebarSection; before: boolean } => {
     const snap = slotSnap.current;
-    const from = draggedRef.current;
+    const from = dragRef.current;
     const fallback = from?.section ?? "main";
     if (!snap || !from) return { targetId: null, section: fallback, before: false };
     const y = clientY + ((listRef.current?.scrollTop ?? 0) - snap.scrollTop);
-    return slotInRows(snap.rows, y, from.id, fallback);
+    const rows = onlySection ? snap.rows.filter((r) => r.section === onlySection) : snap.rows;
+    return slotInRows(rows, y, from.id, onlySection ?? fallback);
+  };
+
+  const moveGhost = (x: number, y: number): void => {
+    const el = ghostRef.current;
+    if (el) el.style.transform = `translate(${x + 14}px, ${y + 14}px)`;
+  };
+
+  const stopAutoScroll = (): void => {
+    if (scrollTimer.current !== null) {
+      window.clearInterval(scrollTimer.current);
+      scrollTimer.current = null;
+    }
+  };
+
+  const startAutoScroll = (): void => {
+    stopAutoScroll();
+    scrollTimer.current = window.setInterval(() => {
+      const list = listRef.current;
+      const d = dragRef.current;
+      if (!list || !d?.active) return;
+      const rect = list.getBoundingClientRect();
+      if (pointerY.current < rect.top + 28) list.scrollTop -= 14;
+      else if (pointerY.current > rect.bottom - 28) list.scrollTop += 14;
+    }, 30);
+  };
+
+  const endPointerDrag = (): void => {
+    detachRef.current?.();
+    detachRef.current = null;
+    stopAutoScroll();
+    dragRef.current = null;
+    slotSnap.current = null;
+    setDragged(null);
+    setPreview(null);
+  };
+
+  const maybeOpenResolved = (clientY: number): void => {
+    const det = resolvedDetailsRef.current;
+    if (!det || det.open) return;
+    const summary = det.querySelector("summary");
+    if (!summary) return;
+    const r = summary.getBoundingClientRect();
+    if (clientY < r.top - 4 || clientY > r.bottom + 4) return;
+    det.open = true;
+    captureSlots();
   };
   const visibleProjects = projectQuery
     ? projects.filter(
@@ -351,8 +392,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
     const fromId = from.id;
     const fromSection = from.section;
     setDragged(null);
-    draggedRef.current = null;
-    lastHover.current = null;
+    dragRef.current = null;
     slotSnap.current = null;
     setPreview(null);
     if (targetId === fromId && fromSection === toSection) return;
@@ -412,55 +452,100 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
               : pr?.reviewDecision === "CHANGES_REQUESTED" ? "changes-requested" : "open";
     const status = s.status ?? "idle";
     const projectName = projectNameById[s.projectId] ?? "";
+    const beginRowDrag = (e: React.MouseEvent) => {
+      if (e.button !== 0) return;
+      if ((e.target as HTMLElement).closest("input,button")) return;
+      if (renamingId === s.id || query) return;
+      const pending = { id: s.id, section, title: s.title, startX: e.clientX, startY: e.clientY, active: false };
+      dragRef.current = pending;
+      const onMove = (ev: PointerEvent): void => {
+        const d = dragRef.current;
+        if (!d || d.id !== s.id) return;
+        if (!d.active) {
+          if (Math.hypot(ev.clientX - d.startX, ev.clientY - d.startY) < 6) return;
+          d.active = true;
+          captureSlots();
+          setDragged({ id: d.id, section: d.section, title: d.title });
+          startAutoScroll();
+        }
+        ev.preventDefault();
+        pointerY.current = ev.clientY;
+        moveGhost(ev.clientX, ev.clientY);
+        maybeOpenResolved(ev.clientY);
+        const freshIds = Object.values(useAppStore.getState().sessionsByProject)
+          .flat()
+          .map((x) => x.id)
+          .sort()
+          .join(",");
+        const snapIds = (slotSnap.current?.rows ?? []).map((r) => r.id).sort().join(",");
+        if (!slotSnap.current || snapIds !== freshIds) captureSlots();
+        const slot = slotFromPoint(ev.clientY);
+        setPreview((prev) =>
+          prev && prev.targetId === slot.targetId && prev.section === slot.section && prev.before === slot.before
+            ? prev
+            : slot
+        );
+      };
+      const finish = (commit: boolean, ev?: PointerEvent): void => {
+        detachRef.current?.();
+        detachRef.current = null;
+        stopAutoScroll();
+        const d = dragRef.current;
+        dragRef.current = null;
+        slotSnap.current = null;
+        setDragged(null);
+        setPreview(null);
+        if (!d?.active) return;
+        suppressClickRef.current = true;
+        window.setTimeout(() => {
+          suppressClickRef.current = false;
+        }, 50);
+        if (!commit || !ev) return;
+        const active = { id: d.id, section: d.section };
+        const el = document.elementFromPoint(ev.clientX, ev.clientY);
+        if (!el || !(listRef.current?.contains(el) ?? false)) return;
+        if (el.closest(".resolved-empty-drop") || (el.closest("details.resolved") && el.closest("summary"))) {
+          handleDrop(active, "resolved", null, false);
+          return;
+        }
+        if (el.closest(".session-main-list")) {
+          const slot = slotFromPoint(ev.clientY, "main");
+          handleDrop(active, slot.section, slot.targetId, slot.before);
+          return;
+        }
+        const slot = slotFromPoint(ev.clientY);
+        handleDrop(active, slot.section, slot.targetId, slot.before);
+      };
+      const onUp = (ev: PointerEvent): void => finish(true, ev);
+      const onCancel = (): void => finish(false);
+      const onKey = (ev: KeyboardEvent): void => {
+        if (ev.key === "Escape") finish(false);
+      };
+      detachRef.current = () => {
+        window.removeEventListener("pointermove", onMove);
+        window.removeEventListener("pointerup", onUp);
+        window.removeEventListener("pointercancel", onCancel);
+        window.removeEventListener("keydown", onKey);
+      };
+      window.addEventListener("pointermove", onMove);
+      window.addEventListener("pointerup", onUp);
+      window.addEventListener("pointercancel", onCancel);
+      window.addEventListener("keydown", onKey);
+    };
     return <div
       key={s.id}
       ref={(el) => {
         if (el) rowRefs.current.set(s.id, el);
         else rowRefs.current.delete(s.id);
       }}
-      draggable={renamingId !== s.id && !query}
-      onDragStart={(e) => {
-        draggedRef.current = { id: s.id, section };
-        lastHover.current = null;
-        captureSlots();
-        setDragged({ id: s.id, section });
-        e.dataTransfer.effectAllowed = "move";
-        e.dataTransfer.setData("text/plain", s.id);
-      }}
-      onDragOver={(e) => {
-        if (!allowsDrop(e)) return;
-        e.preventDefault();
-        e.dataTransfer.dropEffect = "move";
-        if (lastHover.current?.x === e.clientX && lastHover.current?.y === e.clientY) return;
-        lastHover.current = { x: e.clientX, y: e.clientY };
-        if (!slotSnap.current || slotSnap.current.ids !== currentIds) captureSlots();
-        const slot = slotFromPoint(e.clientY);
-        setPreview((prev) =>
-          prev && prev.targetId === slot.targetId && prev.section === slot.section && prev.before === slot.before
-            ? prev
-            : slot
-        );
-      }}
-      onDrop={(e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        const active = draggedRef.current ?? dragged;
-        if (!active) {
-          setPreview(null);
-          console.warn("[sidebar] drop ignored: no active drag payload");
+      onMouseDown={beginRowDrag}
+      onClick={() => {
+        if (suppressClickRef.current) {
+          suppressClickRef.current = false;
           return;
         }
-        const slot = slotInRows(measureLiveRows(), e.clientY, active.id, active.section);
-        handleDrop(active, slot.section, slot.targetId, slot.before);
+        store.selectSession(s.id);
       }}
-      onDragEnd={() => {
-        draggedRef.current = null;
-        lastHover.current = null;
-        slotSnap.current = null;
-        setDragged(null);
-        setPreview(null);
-      }}
-      onClick={() => store.selectSession(s.id)}
       onContextMenu={(e) => {
         e.preventDefault();
         e.stopPropagation();
@@ -512,11 +597,6 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
     <div
       className="side"
       onClick={() => setMenu(null)}
-      onDragOver={(e) => {
-        if (!draggedRef.current) return;
-        e.preventDefault();
-        e.dataTransfer.dropEffect = "move";
-      }}
     >
       <div className="brand">
         <div className="search-row ghost">
@@ -636,87 +716,23 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
           </button>
         </div>
       </div>
-      <div className="session-list" ref={listRef}
-        onDragLeave={(e) => {
-          if (e.currentTarget.contains(e.relatedTarget as Node)) return;
-          setPreview(null);
-        }}
-      >
-        <div
-          onDragOver={(e) => {
-            if (!allowsDrop(e)) return;
-            e.preventDefault();
-            e.dataTransfer.dropEffect = "move";
-          }}
-          onDrop={(e) => {
-            e.preventDefault();
-            const active = draggedRef.current ?? dragged;
-            if (!active) {
-              setPreview(null);
-              return;
-            }
-            handleDrop(active, "main", null, false);
-          }}
-        >
+      <div className="session-list" ref={listRef}>
+        <div className="session-main-list">
           {shownPreview.map((s) => renderRow(s, "main"))}
           {shownPreview.length === 0 && <div className="side-empty">{query ? "No matches." : "No sessions yet."}</div>}
         </div>
         {resolvedPreview.length > 0 && (
           <details
             className="resolved"
-            onDragOver={(e) => {
-              if (!allowsDrop(e)) return;
-              e.preventDefault();
-              e.dataTransfer.dropEffect = "move";
-            }}
-            onDrop={(e) => {
-              e.preventDefault();
-              const active = draggedRef.current ?? dragged;
-              if (!active) {
-                setPreview(null);
-                return;
-              }
-              handleDrop(active, "resolved", null, false);
-            }}
+            ref={resolvedDetailsRef}
           >
-            <summary
-              onDragOver={(e) => {
-                if (!allowsDrop(e)) return;
-                e.preventDefault();
-                e.dataTransfer.dropEffect = "move";
-                e.stopPropagation();
-              }}
-              onDrop={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                const active = draggedRef.current ?? dragged;
-                if (!active) {
-                  setPreview(null);
-                  return;
-                }
-                handleDrop(active, "resolved", null, false);
-              }}
-            >resolved · {resolvedPreview.length}</summary>
+            <summary>resolved · {resolvedPreview.length}</summary>
             {resolvedPreview.map((s) => renderRow(s, "resolved"))}
           </details>
         )}
         {resolvedPreview.length === 0 && dragged && (
           <div
             className="resolved-empty-drop"
-            onDragOver={(e) => {
-              if (!allowsDrop(e)) return;
-              e.preventDefault();
-              e.dataTransfer.dropEffect = "move";
-            }}
-            onDrop={(e) => {
-              e.preventDefault();
-              const active = draggedRef.current ?? dragged;
-              if (!active) {
-                setPreview(null);
-                return;
-              }
-              handleDrop(active, "resolved", null, false);
-            }}
           >Drop here to resolve</div>
         )}
         {discovered.length > 0 && (
@@ -783,6 +799,11 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
           <Settings size={15} />
         </button>
       </div>
+      {dragged && (
+        <div ref={ghostRef} className="session-drag-ghost">
+          <span className="session-title">{dragged.title}</span>
+        </div>
+      )}
     </div>
   );
 }
