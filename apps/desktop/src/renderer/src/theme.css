@@ -516,12 +516,22 @@ body {
   box-shadow: inset 2px 0 0 var(--driver);
 }
 
-.session-row.drop-before {
-  box-shadow: inset 0 2px 0 var(--driver);
+.session-row.dragging {
+  opacity: 0.35;
 }
 
-.session-row.drop-after {
-  box-shadow: inset 0 -2px 0 var(--driver);
+.session-row.landed {
+  animation: session-land 650ms ease-out;
+}
+
+@keyframes session-land {
+  0% {
+    background: var(--driver-soft);
+  }
+
+  100% {
+    background: transparent;
+  }
 }
 
 .session-title {

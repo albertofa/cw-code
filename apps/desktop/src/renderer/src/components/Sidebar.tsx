@@ -1,4 +1,4 @@
-import { useRef, useState, type CSSProperties, type DragEvent } from "react";
+import { useLayoutEffect, useRef, useState, type CSSProperties, type DragEvent } from "react";
 import { FolderGit2, GitBranch, Settings, SquarePen } from "lucide-react";
 import type { Project, Session, SessionStatus } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
@@ -37,6 +37,24 @@ interface SidebarOrder {
 
 function orderKeyFor(filter: string): string {
   return `cw:order:${filter}`;
+}
+
+function previewPlacement(
+  orderedMain: Session[],
+  orderedResolved: Session[],
+  dragged: { id: string; section: SidebarSection } | null,
+  preview: { targetId: string; section: SidebarSection; before: boolean } | null,
+  section: SidebarSection
+): Session[] {
+  if (!dragged || !preview) return section === "main" ? orderedMain : orderedResolved;
+  const moving = [...orderedMain, ...orderedResolved].find((s) => s.id === dragged.id);
+  if (!moving) return section === "main" ? orderedMain : orderedResolved;
+  const base = (section === "main" ? orderedMain : orderedResolved).filter((s) => s.id !== dragged.id);
+  if (preview.section !== section) return base;
+  const idx = base.findIndex((s) => s.id === preview.targetId);
+  if (idx === -1) return [...base, moving];
+  base.splice(preview.before ? idx : idx + 1, 0, moving);
+  return base;
 }
 
 function readStoredOrder(key: string): SidebarOrder | null {
@@ -106,8 +124,37 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const [dragged, setDragged] = useState<{ id: string; section: SidebarSection } | null>(null);
-  const [indicator, setIndicator] = useState<{ id: string; before: boolean } | null>(null);
+  const [preview, setPreview] = useState<{ targetId: string; section: SidebarSection; before: boolean } | null>(null);
+  const [landedId, setLandedId] = useState<string | null>(null);
   const draggedRef = useRef<{ id: string; section: SidebarSection } | null>(null);
+  const rowRefs = useRef(new Map<string, HTMLDivElement>());
+  const prevRects = useRef(new Map<string, { top: number; height: number }>());
+  useLayoutEffect(() => {
+    const next = new Map<string, { top: number; height: number }>();
+    rowRefs.current.forEach((el, id) => {
+      if (!el.isConnected) {
+        rowRefs.current.delete(id);
+        return;
+      }
+      const rect = el.getBoundingClientRect();
+      next.set(id, { top: rect.top, height: rect.height });
+    });
+    if (!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+      prevRects.current.forEach((prev, id) => {
+        const el = rowRefs.current.get(id);
+        const cur = next.get(id);
+        if (!el || !cur || prev.height === 0 || cur.height === 0) return;
+        const dy = prev.top - cur.top;
+        if (dy === 0) return;
+        el.getAnimations().forEach((a) => a.cancel());
+        el.animate([{ transform: `translateY(${dy}px)` }, { transform: "translateY(0px)" }], {
+          duration: 170,
+          easing: "ease-out"
+        });
+      });
+    }
+    prevRects.current = next;
+  });
   const allowsDrop = (e: DragEvent) =>
     draggedRef.current !== null || Array.from(e.dataTransfer.types ?? []).includes("text/plain");
 
@@ -144,6 +191,11 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
     storedValid && storedOrder ? orderByStored(resolvedAll, storedOrder.resolved) : [...resolvedAll].sort(byRecency);
   const shown = orderedMainAll.filter(matchesQuery);
   const resolved = orderedResolvedAll.filter(matchesQuery);
+  const previewMainAll = previewPlacement(orderedMainAll, orderedResolvedAll, dragged, preview, "main");
+  const previewResolvedAll = previewPlacement(orderedMainAll, orderedResolvedAll, dragged, preview, "resolved");
+  const previewing = dragged !== null && preview !== null;
+  const shownPreview = (previewing ? previewMainAll : orderedMainAll).filter(matchesQuery);
+  const resolvedPreview = (previewing ? previewResolvedAll : orderedResolvedAll).filter(matchesQuery);
   const visibleProjects = projectQuery
     ? projects.filter(
         (p) =>
@@ -212,7 +264,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
     const fromSection = from.section;
     setDragged(null);
     draggedRef.current = null;
-    setIndicator(null);
+    setPreview(null);
     if (targetId === fromId && fromSection === toSection) return;
     const nextMain = orderedMainAll.filter((s) => s.id !== fromId);
     const nextResolved = orderedResolvedAll.filter((s) => s.id !== fromId);
@@ -247,6 +299,8 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
       pinned,
     });
     if (cross) setStatus(fromId, toSection === "main" ? "idle" : "resolved");
+    setLandedId(fromId);
+    window.setTimeout(() => setLandedId((id) => (id === fromId ? null : id)), 650);
   };
 
   const renderRow = (s: Session, section: SidebarSection) => {
@@ -265,9 +319,12 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
               : pr?.reviewDecision === "CHANGES_REQUESTED" ? "changes-requested" : "open";
     const status = s.status ?? "idle";
     const projectName = projectNameById[s.projectId] ?? "";
-    const dropClass = indicator && indicator.id === s.id ? (indicator.before ? " drop-before" : " drop-after") : "";
     return <div
       key={s.id}
+      ref={(el) => {
+        if (el) rowRefs.current.set(s.id, el);
+        else rowRefs.current.delete(s.id);
+      }}
       draggable={renamingId !== s.id && !query}
       onDragStart={(e) => {
         draggedRef.current = { id: s.id, section };
@@ -281,14 +338,18 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
         e.dataTransfer.dropEffect = "move";
         const rect = e.currentTarget.getBoundingClientRect();
         const before = e.clientY < rect.top + rect.height / 2;
-        setIndicator((prev) => (prev && prev.id === s.id && prev.before === before ? prev : { id: s.id, before }));
+        setPreview((prev) =>
+          prev && prev.targetId === s.id && prev.section === section && prev.before === before
+            ? prev
+            : { targetId: s.id, section, before }
+        );
       }}
       onDrop={(e) => {
         e.preventDefault();
         e.stopPropagation();
         const active = draggedRef.current ?? dragged;
         if (!active) {
-          setIndicator(null);
+          setPreview(null);
           return;
         }
         const rect = e.currentTarget.getBoundingClientRect();
@@ -297,12 +358,12 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
       }}
       onDragLeave={(e) => {
         if (e.currentTarget.contains(e.relatedTarget as Node)) return;
-        setIndicator((prev) => (prev && prev.id === s.id ? null : prev));
+        setPreview((prev) => (prev && prev.targetId === s.id ? null : prev));
       }}
       onDragEnd={() => {
         draggedRef.current = null;
         setDragged(null);
-        setIndicator(null);
+        setPreview(null);
       }}
       onClick={() => store.selectSession(s.id)}
       onContextMenu={(e) => {
@@ -311,7 +372,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
         setRenamingId(null);
         setMenu({ sessionId: s.id, x: e.clientX, y: e.clientY });
       }}
-      className={`session-row${s.id === activeSessionId ? " active" : ""}${dropClass}`}
+      className={`session-row${s.id === activeSessionId ? " active" : ""}${dragged?.id === s.id ? " dragging" : ""}${landedId === s.id ? " landed" : ""}`}
       title={s.title}
     >
       <span className="session-copy">
@@ -482,16 +543,16 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
             e.preventDefault();
             const active = draggedRef.current ?? dragged;
             if (!active) {
-              setIndicator(null);
+              setPreview(null);
               return;
             }
             handleDrop(active, "main", null, false);
           }}
         >
-          {shown.map((s) => renderRow(s, "main"))}
-          {shown.length === 0 && <div className="side-empty">{query ? "No matches." : "No sessions yet."}</div>}
+          {shownPreview.map((s) => renderRow(s, "main"))}
+          {shownPreview.length === 0 && <div className="side-empty">{query ? "No matches." : "No sessions yet."}</div>}
         </div>
-        {resolved.length > 0 && (
+        {resolvedPreview.length > 0 && (
           <details
             className="resolved"
             onDragOver={(e) => {
@@ -502,7 +563,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
               e.preventDefault();
               const active = draggedRef.current ?? dragged;
               if (!active) {
-                setIndicator(null);
+                setPreview(null);
                 return;
               }
               handleDrop(active, "resolved", null, false);
@@ -519,16 +580,16 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
                 e.stopPropagation();
                 const active = draggedRef.current ?? dragged;
                 if (!active) {
-                  setIndicator(null);
+                  setPreview(null);
                   return;
                 }
                 handleDrop(active, "resolved", null, false);
               }}
-            >resolved · {resolved.length}</summary>
-            {resolved.map((s) => renderRow(s, "resolved"))}
+            >resolved · {resolvedPreview.length}</summary>
+            {resolvedPreview.map((s) => renderRow(s, "resolved"))}
           </details>
         )}
-        {resolved.length === 0 && dragged && (
+        {resolvedPreview.length === 0 && dragged && (
           <div
             className="resolved-empty-drop"
             onDragOver={(e) => {
@@ -539,7 +600,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
               e.preventDefault();
               const active = draggedRef.current ?? dragged;
               if (!active) {
-                setIndicator(null);
+                setPreview(null);
                 return;
               }
               handleDrop(active, "resolved", null, false);
