@@ -22,8 +22,12 @@ function avatarStyle(name: string): CSSProperties {
   return { background: `hsl(${hashHue(name)} 45% 32%)` };
 }
 
+function stateLabel(status: SessionStatus): string {
+  return status === "input-required" ? "input" : status;
+}
+
 export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
-  const { projects, sessionsByProject, discoveredByProject, activeProjectId, activeSessionId, gitStatusBySession } = useAppStore();
+  const { projects, sessionsByProject, discoveredByProject, activeProjectId, activeSessionId, gitStatusBySession, projectFilter } = useAppStore();
   const store = useAppStore();
   const [query, setQuery] = useState("");
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -35,21 +39,19 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const [renameDraft, setRenameDraft] = useState("");
 
   const activeProject = projects.find((p) => p.id === activeProjectId);
-  const sessions = activeProjectId ? (sessionsByProject[activeProjectId] ?? []) : [];
+  const filterProject = projectFilter === "all" ? undefined : projects.find((p) => p.id === projectFilter);
+  const projectNameById: Record<string, string> = Object.fromEntries(projects.map((p) => [p.id, p.name]));
+  const source: Session[] =
+    projectFilter === "all" ? Object.values(sessionsByProject).flat() : (sessionsByProject[projectFilter] ?? []);
   const discovered = activeProjectId ? (discoveredByProject[activeProjectId] ?? []) : [];
   const matchesQuery = (s: Session) =>
     !query || s.title.toLowerCase().includes(query.toLowerCase());
-  const byRecency = (a: Session, b: Session) => {
-    if ((a.status === "input-required") !== (b.status === "input-required")) {
-      return a.status === "input-required" ? -1 : 1;
-    }
-    return b.updatedAt - a.updatedAt;
-  };
-  const shown = sessions
+  const byRecency = (a: Session, b: Session) => b.updatedAt - a.updatedAt;
+  const shown = source
     .filter((s) => s.status !== "resolved" && s.status !== "archived")
     .filter(matchesQuery)
     .sort(byRecency);
-  const resolved = sessions.filter((s) => s.status === "resolved").filter(matchesQuery).sort(byRecency);
+  const resolved = source.filter((s) => s.status === "resolved").filter(matchesQuery).sort(byRecency);
   const visibleProjects = projectQuery
     ? projects.filter(
         (p) =>
@@ -135,7 +137,6 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
       className={`session-row${s.id === activeSessionId ? " active" : ""}`}
       title={s.title}
     >
-      <span className={`state-dot status-${status}`} title={status} />
       <span className="session-copy">
       {renamingId === s.id ? (
         <input
@@ -154,6 +155,10 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
       ) : (
         <span className="session-title">{s.title}</span>
       )}
+        <span className="session-meta">
+          <span className="session-project">{projectNameById[s.projectId] ?? ""}</span>
+          <span className={`session-state status-${status}`}>{stateLabel(status)}</span>
+        </span>
         <span className="session-git" title={git?.worktreePath ?? s.worktreePath}>
           <span>{git?.worktreeName ?? (s.worktreePath ? s.worktreePath.split(/[/\\]/).pop() : "project")}</span>
           <span className="session-branch">{git?.branch ?? s.branch ?? "Git status loading…"}</span>
@@ -161,7 +166,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
           {git && !git.clean && <span className="session-dirty">{git.dirtyCount}Δ</span>}
         </span>
       </span>
-      <DriverIcon driver={s.driver} size={12} />
+      <DriverIcon driver={s.driver} size={10} />
     </div>
   };
 
@@ -185,7 +190,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
           <div className="picker">
             <button className="picker-btn" onClick={() => setPickerOpen((o) => !o)} aria-haspopup="listbox" aria-expanded={pickerOpen}>
             <span className="picker-icon">▤</span>
-            <span className="picker-name">{activeProject?.name ?? "Select project…"}</span>
+            <span className="picker-name">{projectFilter === "all" ? "All Projects" : (filterProject?.name ?? activeProject?.name ?? "Select project…")}</span>
             <span className="picker-chevron">{pickerOpen ? "▴" : "▾"}</span>
           </button>
           {pickerOpen && (
@@ -211,6 +216,17 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
                   />
                 </div>
                 <div className="picker-list">
+                  <div
+                    className={`picker-row${projectFilter === "all" ? " active" : ""}`}
+                    onClick={() => {
+                      closePicker();
+                      store.setProjectFilter("all");
+                    }}
+                    role="option"
+                    aria-selected={projectFilter === "all"}
+                  >
+                    <span className="name">All Projects</span>
+                  </div>
                   {visibleProjects.map((p) => (
                     <div key={p.id}>
                       <div
@@ -319,7 +335,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
             <button
               className="ctx-item"
               onClick={() => {
-                const target = sessions.find((s) => s.id === menu.sessionId);
+                const target = [...shown, ...resolved].find((s) => s.id === menu.sessionId);
                 setRenameDraft(target?.title ?? "");
                 setRenamingId(menu.sessionId);
                 setMenu(null);

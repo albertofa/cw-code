@@ -490,7 +490,7 @@ body {
 
 .session-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   padding: 7px 9px;
   border-radius: var(--r-md);
@@ -568,41 +568,51 @@ body {
   color: var(--text);
 }
 
-.state-dot {
-  width: 7px;
-  height: 7px;
-  border-radius: 50%;
+.session-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.session-project {
+  font-size: 10.5px;
+  color: var(--muted);
+  letter-spacing: 0.05em;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-state {
+  font-size: 10.5px;
   flex: none;
 }
 
-.state-dot.status-idle {
-  background: var(--muted);
+.session-state.status-idle {
+  color: var(--faint);
 }
 
-.state-dot.status-working {
-  background: var(--opencode);
-  box-shadow: 0 0 8px rgba(90, 184, 255, 0.8);
-  animation: pulse 1.2s ease-in-out infinite;
+.session-state.status-working {
+  color: var(--opencode);
 }
 
-.state-dot.status-input-required {
-  background: var(--warning);
-  box-shadow: 0 0 8px rgba(255, 159, 10, 0.8);
+.session-state.status-input-required {
+  color: var(--warning);
+  font-weight: 600;
 }
 
-.state-dot.status-done {
-  background: var(--success);
-  box-shadow: 0 0 8px rgba(48, 209, 88, 0.8);
+.session-state.status-done {
+  color: var(--success);
 }
 
-.state-dot.status-resolved {
-  background: #a371f7;
-  box-shadow: 0 0 8px rgba(163, 113, 247, 0.8);
+.session-state.status-resolved {
+  color: #a371f7;
 }
 
-.state-dot.status-archived {
-  background: var(--faint);
-  opacity: 0.6;
+.session-row .driver-icon {
+  margin-top: 2px;
 }
 
 .driver-dot {
