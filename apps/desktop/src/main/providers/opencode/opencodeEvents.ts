@@ -17,6 +17,8 @@ interface RunEvent {
   type: string;
   sessionID?: string;
   part?: {
+    id?: string;
+    callID?: string;
     type?: string;
     text?: string;
     reason?: string;
@@ -27,6 +29,40 @@ interface RunEvent {
     error?: unknown;
   };
   error?: unknown;
+}
+
+interface ToolPartState {
+  status?: string;
+  input?: unknown;
+  output?: string;
+  error?: unknown;
+}
+
+function toolCallId(part: Record<string, unknown> | undefined, turnId: string): string {
+  const callID = (part?.["callID"] ?? part?.["callId"]) as string | undefined;
+  if (typeof callID === "string" && callID) return callID;
+  const id = part?.["id"] as string | undefined;
+  if (typeof id === "string" && id) return id;
+  return `${turnId}-tool`;
+}
+
+function toolInputOf(part: { tool?: string; state?: unknown } | undefined): unknown {
+  const state = part?.state as ToolPartState | string | null | undefined;
+  if (state !== null && typeof state === "object" && !Array.isArray(state) && "input" in state) {
+    return (state as ToolPartState).input ?? null;
+  }
+  return state ?? null;
+}
+
+function toolResultOf(part: { state?: unknown } | undefined): { output: string; isError: boolean } | null {
+  const state = part?.state as ToolPartState | string | undefined;
+  if (typeof state === "string") return { output: state, isError: false };
+  if (state === null || typeof state !== "object" || Array.isArray(state)) return null;
+  const status = (state as ToolPartState).status;
+  if (status !== "completed" && status !== "error") return null;
+  const raw = (state as ToolPartState).output;
+  const output = typeof raw === "string" ? raw : JSON.stringify(raw ?? "");
+  return { output: output.slice(0, 8000), isError: status === "error" || (state as ToolPartState).error != null };
 }
 
 export function parseOpencodeLine(
@@ -50,14 +86,19 @@ export function parseOpencodeLine(
   }
 
   if (event.type === "tool_use" || part?.type === "tool") {
+    const id = toolCallId(part as Record<string, unknown> | undefined, turnId);
+    const call: ThreadEvent = {
+      type: "tool.call",
+      turnId,
+      toolCallId: id,
+      name: part?.tool ?? "tool",
+      input: toolInputOf(part)
+    };
+    const result = toolResultOf(part);
+    if (!result) return [call];
     return [
-      {
-        type: "tool.call",
-        turnId,
-        toolCallId: (part as { id?: string })?.id ?? `${turnId}-tool`,
-        name: part?.tool ?? "tool",
-        input: part?.state ?? null
-      }
+      call,
+      { type: "tool.result", turnId, toolCallId: id, output: result.output, isError: result.isError }
     ];
   }
 
@@ -68,7 +109,7 @@ export function parseOpencodeLine(
       {
         type: "tool.result",
         turnId,
-        toolCallId: (part as { id?: string })?.id ?? `${turnId}-tool`,
+        toolCallId: toolCallId(part as Record<string, unknown> | undefined, turnId),
         output: output.slice(0, 8000),
         isError: part?.error != null
       }

@@ -83,7 +83,11 @@ export function describeToolCall(toolName: string, input: unknown): ToolSummary 
     Icon: kind.Icon
   };
   if (!input || typeof input !== "object") return summary;
-  const args = input as Record<string, unknown>;
+  let args = input as Record<string, unknown>;
+  const nested = args["input"];
+  if (nested !== null && typeof nested === "object" && !Array.isArray(nested)) {
+    args = { ...(nested as Record<string, unknown>), ...args };
+  }
   const file = () => pick(args, "file_path", "filePath", "file", "path");
 
   switch (toolName.toLowerCase()) {
@@ -128,21 +132,33 @@ export function describeToolCall(toolName: string, input: unknown): ToolSummary 
       if (description) summary.meta = [description];
       break;
     }
-    case "glob":
-      summary.subject = pick(args, "pattern", "path");
+    case "glob": {
+      const pattern = pick(args, "pattern");
+      const path = pick(args, "path", "dir", "cwd");
+      summary.subject = pattern ?? path;
       summary.subjectKind = "text";
-      break;
-    case "grep": {
-      const path = pick(args, "path", "dir");
-      summary.subject = pick(args, "pattern", "query");
-      summary.subjectKind = "text";
-      if (path) summary.meta = [`in ${path}`];
+      if (pattern && path) summary.meta = [`in ${path}`];
       break;
     }
-    case "skill":
-      summary.subject = pick(args, "skill", "skill_id", "name");
+    case "grep": {
+      const path = pick(args, "path", "dir", "cwd");
+      const include = pick(args, "include", "glob", "file_pattern");
+      summary.subject = pick(args, "pattern", "query", "regex", "text");
       summary.subjectKind = "text";
+      const meta: string[] = [];
+      if (path) meta.push(`in ${path}`);
+      if (include) meta.push(include);
+      if (meta.length) summary.meta = meta;
       break;
+    }
+    case "skill": {
+      const name = pick(args, "skill", "skill_id", "skillId", "name");
+      summary.subject = name;
+      summary.subjectKind = "text";
+      const skillArgs = str(args["args"] ?? args["input"]);
+      if (name && skillArgs) summary.meta = [truncate(oneLine(skillArgs), 80)];
+      break;
+    }
     case "task": {
       const description = pick(args, "description", "prompt", "subagent_type", "subagent") ?? "";
       if (description) {
