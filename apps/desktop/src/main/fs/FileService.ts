@@ -2,7 +2,7 @@ import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
 function assertInside(root: string, target: string): string {
-  const abs = resolve(root, target);
+  const abs = resolve(root, target.replace(/\\/g, "/"));
   const rel = relative(resolve(root), abs);
   if (rel === ".." || rel.startsWith(`..${sep}`) || abs !== resolve(abs)) {
     throw new Error(`path escapes project root: ${target}`);
