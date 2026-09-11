@@ -52,6 +52,32 @@ interface SlotSnapshot {
   ids: string;
 }
 
+function layoutTop(el: HTMLElement): { top: number; height: number } {
+  const rect = el.getBoundingClientRect();
+  let shift = 0;
+  try {
+    shift = new DOMMatrixReadOnly(window.getComputedStyle(el).transform).m42;
+  } catch {
+    shift = 0;
+  }
+  return { top: rect.top - shift, height: rect.height };
+}
+
+function slotInRows(
+  rows: SlotRow[],
+  y: number,
+  fromId: string,
+  fallback: SidebarSection
+): { targetId: string | null; section: SidebarSection; before: boolean } {
+  for (const r of rows) {
+    if (r.id === fromId) continue;
+    if (y < r.top + r.height / 2) return { targetId: r.id, section: r.section, before: true };
+    if (y < r.top + r.height) return { targetId: r.id, section: r.section, before: false };
+  }
+  const last = [...rows].reverse().find((r) => r.id !== fromId);
+  return { targetId: null, section: last?.section ?? fallback, before: false };
+}
+
 function previewPlacement(
   orderedMain: Session[],
   orderedResolved: Session[],
@@ -152,14 +178,8 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
         rowRefs.current.delete(id);
         return;
       }
-      const rect = el.getBoundingClientRect();
-      let shift = 0;
-      try {
-        shift = new DOMMatrixReadOnly(window.getComputedStyle(el).transform).m42;
-      } catch {
-        shift = 0;
-      }
-      next.set(id, { top: rect.top - shift, height: rect.height });
+      const { top, height } = layoutTop(el);
+      next.set(id, { top, height });
     });
     if (!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
       prevRects.current.forEach((prev, id) => {
@@ -226,9 +246,9 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
       for (const s of list) {
         const el = rowRefs.current.get(s.id);
         if (!el || !el.isConnected) continue;
-        const rect = el.getBoundingClientRect();
-        if (rect.height === 0) continue;
-        rows.push({ id: s.id, section, top: rect.top, height: rect.height });
+        const { top, height } = layoutTop(el);
+        if (height === 0) continue;
+        rows.push({ id: s.id, section, top, height });
       }
     };
     put(orderedMainAll, "main");
@@ -240,19 +260,29 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
     };
   };
 
+  const measureLiveRows = (): SlotRow[] => {
+    const rows: SlotRow[] = [];
+    const put = (list: Session[], section: SidebarSection) => {
+      for (const s of list) {
+        const el = rowRefs.current.get(s.id);
+        if (!el || !el.isConnected) continue;
+        const { top, height } = layoutTop(el);
+        if (height === 0) continue;
+        rows.push({ id: s.id, section, top, height });
+      }
+    };
+    put(orderedMainAll, "main");
+    put(orderedResolvedAll, "resolved");
+    return rows;
+  };
+
   const slotFromPoint = (clientY: number): { targetId: string | null; section: SidebarSection; before: boolean } => {
     const snap = slotSnap.current;
     const from = draggedRef.current;
     const fallback = from?.section ?? "main";
     if (!snap || !from) return { targetId: null, section: fallback, before: false };
     const y = clientY + ((listRef.current?.scrollTop ?? 0) - snap.scrollTop);
-    for (const r of snap.rows) {
-      if (r.id === from.id) continue;
-      if (y < r.top + r.height / 2) return { targetId: r.id, section: r.section, before: true };
-      if (y < r.top + r.height) return { targetId: r.id, section: r.section, before: false };
-    }
-    const last = [...snap.rows].reverse().find((r) => r.id !== from.id);
-    return { targetId: null, section: last?.section ?? fallback, before: false };
+    return slotInRows(snap.rows, y, from.id, fallback);
   };
   const visibleProjects = projectQuery
     ? projects.filter(
@@ -329,7 +359,10 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
     const nextMain = orderedMainAll.filter((s) => s.id !== fromId);
     const nextResolved = orderedResolvedAll.filter((s) => s.id !== fromId);
     const moving = [...orderedMainAll, ...orderedResolvedAll].find((s) => s.id === fromId);
-    if (!moving) return;
+    if (!moving) {
+      console.warn(`[sidebar] drop ignored: session ${fromId} not found`);
+      return;
+    }
     if (toSection === "main") {
       if (targetId) {
         const idx = nextMain.findIndex((s) => s.id === targetId);
@@ -400,7 +433,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
         e.dataTransfer.dropEffect = "move";
         if (lastHover.current?.x === e.clientX && lastHover.current?.y === e.clientY) return;
         lastHover.current = { x: e.clientX, y: e.clientY };
-        if (slotSnap.current && slotSnap.current.ids !== currentIds) captureSlots();
+        if (!slotSnap.current || slotSnap.current.ids !== currentIds) captureSlots();
         const slot = slotFromPoint(e.clientY);
         setPreview((prev) =>
           prev && prev.targetId === slot.targetId && prev.section === slot.section && prev.before === slot.before
@@ -414,15 +447,11 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
         const active = draggedRef.current ?? dragged;
         if (!active) {
           setPreview(null);
+          console.warn("[sidebar] drop ignored: no active drag payload");
           return;
         }
-        if (slotSnap.current && slotSnap.current.ids !== currentIds) captureSlots();
-        const slot = slotFromPoint(e.clientY);
+        const slot = slotInRows(measureLiveRows(), e.clientY, active.id, active.section);
         handleDrop(active, slot.section, slot.targetId, slot.before);
-      }}
-      onDragLeave={(e) => {
-        if (e.currentTarget.contains(e.relatedTarget as Node)) return;
-        setPreview((prev) => (prev && prev.targetId === s.id ? null : prev));
       }}
       onDragEnd={() => {
         draggedRef.current = null;
@@ -599,7 +628,12 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
           </button>
         </div>
       </div>
-      <div className="session-list" ref={listRef}>
+      <div className="session-list" ref={listRef}
+        onDragLeave={(e) => {
+          if (e.currentTarget.contains(e.relatedTarget as Node)) return;
+          setPreview(null);
+        }}
+      >
         <div
           onDragOver={(e) => {
             if (!allowsDrop(e)) return;
