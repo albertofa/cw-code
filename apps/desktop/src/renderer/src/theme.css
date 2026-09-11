@@ -1250,6 +1250,12 @@ body {
   position: relative;
 }
 
+.composer-paste-error {
+  font-size: 11px;
+  color: var(--danger);
+  padding: 2px 8px 0;
+}
+
 .composer-empty-hint {
   position: absolute;
   left: 4px;
