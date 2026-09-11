@@ -605,6 +605,28 @@ body {
   opacity: 0.6;
 }
 
+.driver-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+}
+
+.driver-dot.claude {
+  background: var(--claude);
+  box-shadow: 0 0 8px rgba(232, 131, 90, 0.8);
+}
+
+.driver-dot.opencode {
+  background: var(--opencode);
+  box-shadow: 0 0 8px rgba(90, 184, 255, 0.8);
+}
+
+.driver-dot.codex {
+  background: var(--codex);
+  box-shadow: 0 0 8px rgba(180, 156, 255, 0.8);
+}
+
 .driver-icon {
   display: inline-flex;
   flex: none;
