@@ -3066,3 +3066,79 @@ select.field option {
   border-color: var(--danger);
   color: var(--danger);
 }
+
+.question-card {
+  border-color: var(--accent);
+  background: rgba(10, 132, 255, 0.07);
+}
+
+.question-card .approval-icon {
+  color: var(--accent);
+}
+
+.question-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.question-header {
+  color: var(--dim);
+  font-size: 10.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.question-text {
+  font-size: 12.5px;
+  overflow-wrap: anywhere;
+}
+
+.question-options {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.question-option {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 2px;
+  font-size: 12px;
+  padding: 5px 10px;
+  max-width: 100%;
+  text-align: left;
+}
+
+.question-option.active {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
+.question-option-text {
+  font-weight: 600;
+}
+
+.question-option-desc {
+  color: var(--dim);
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
+
+.question-custom {
+  font-size: 12px;
+  padding: 4px 8px;
+  background: var(--bg-deep);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-sm);
+  color: var(--fg);
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.question-custom:focus {
+  outline: none;
+  border-color: var(--accent);
+}

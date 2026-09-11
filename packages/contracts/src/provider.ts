@@ -16,6 +16,7 @@ export interface CliDriver {
   events(): AsyncIterable<SessionEvent>;
   listModels?(cwd: string): Promise<ModelOption[]>;
   respondToApproval?(requestId: string, decision: ApprovalDecision): Promise<void>;
+  respondToQuestion?(requestId: string, answers: Record<string, string>): Promise<void>;
   dispose?(): void;
 }
 

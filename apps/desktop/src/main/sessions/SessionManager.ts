@@ -254,6 +254,17 @@ export class SessionManager {
     }
   }
 
+  async respondQuestion(requestId: string, answers: Record<string, string>): Promise<void> {
+    for (const driver of Object.values(this.drivers)) {
+      if (typeof driver.respondToQuestion !== "function") continue;
+      try {
+        await driver.respondToQuestion(requestId, answers);
+      } catch (err) {
+        console.warn(`question response failed for ${driver.kind}: ${(err as Error).message}`);
+      }
+    }
+  }
+
   rootFor(sessionId: string): string {
     const session = this.store.getSession(sessionId);
     if (!session) throw new Error(`unknown session ${sessionId}`);

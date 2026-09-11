@@ -137,6 +137,11 @@ function registerIpc(): void {
     (_e, args: { sessionId: string; requestId: string; decision: ApprovalDecision }) =>
       sessions.respondApproval(args.requestId, args.decision)
   );
+  ipcMain.handle(
+    "questions.respond",
+    (_e, args: { sessionId: string; requestId: string; answers: Record<string, string> }) =>
+      sessions.respondQuestion(args.requestId, args.answers)
+  );
   ipcMain.handle("projects.list", () => sessions.listProjects());
   ipcMain.handle("projects.add", (_e, rootPath: string) => sessions.addProject(rootPath));
   ipcMain.handle("sessions.list", (_e, projectId: string) => sessions.listSessions(projectId));
