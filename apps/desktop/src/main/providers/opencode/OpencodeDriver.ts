@@ -551,6 +551,8 @@ export class OpencodeDriver implements CliDriver {
       this.watches.get(turnId)?.abort();
       this.watches.delete(turnId);
       this.watchInfo.delete(turnId);
+      const closingSessionId = this.sessionIds.get(turnId) ?? acc.sessionId;
+      if (closingSessionId) this.sessionAllows.delete(closingSessionId);
       this.sessionIds.delete(turnId);
       this.resolvePendingFor(turnId, null);
       this.resolveApprovalsFor(turnId);

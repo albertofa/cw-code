@@ -58,7 +58,7 @@ describe("buildClaudeArgs", () => {
     const args = buildClaudeArgs({});
     expect(args).not.toContain("--model");
     expect(args).not.toContain("--effort");
-    expect(args).not.toContain("-- permission-mode");
+    expect(args).not.toContain("--permission-mode");
   });
 });
 
