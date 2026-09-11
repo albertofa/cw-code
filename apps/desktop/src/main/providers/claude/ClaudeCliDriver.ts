@@ -12,6 +12,7 @@ import type {
   TurnRequest
 } from "@cw-code/contracts";
 import { parseExtraArgs } from "../../settings/settingsUtils.js";
+import { killProcessTree } from "../../processTree.js";
 import { attributeClaudeSubagentEvent, claudeQuestionRequest, claudeDenyResponse, claudeControlResponse, parseClaudeControlRequest, parseStreamLine, type ClaudeControlRequest } from "./claudeStreamParser.js";
 import { listClaudeSessions } from "./claudeSessions.js";
 import { readClaudeHistory } from "./claudeHistory.js";
@@ -74,6 +75,10 @@ export class ClaudeCliDriver implements CliDriver {
     const stdin = this.procs.get(turnId)?.stdin;
     if (!stdin) return;
     stdin.write(line + "\n");
+  }
+
+  private terminate(turnId: string): void {
+    killProcessTree(this.procs.get(turnId));
   }
 
   private configuredBinary(): string {
@@ -186,7 +191,7 @@ export class ClaudeCliDriver implements CliDriver {
           isError: info.isError
         });
         child.stdin?.end();
-        if (!info.isError) child.kill();
+        if (!info.isError) this.terminate(turnId);
       })) {
         this.emit(attributeClaudeSubagentEvent(event, agentByCall));
       }
@@ -238,7 +243,7 @@ export class ClaudeCliDriver implements CliDriver {
 
   interrupt(turnId: string): void {
     traceHarnessCall({ harness: "claude", operation: "claude.interrupt", turnId, ok: true });
-    this.procs.get(turnId)?.kill();
+    this.terminate(turnId);
     this.procs.delete(turnId);
   }
 

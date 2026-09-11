@@ -60,9 +60,9 @@ async function createWindow(): Promise<void> {
     );
     void webContents.reload();
   });
-  webContents.on("console-message", (_e, level, message, line, sourceId) => {
-    if (level === 3) {
-      appendCrashLog(`renderer error: ${message} (${sourceId}:${line})`);
+  webContents.on("console-message", (event) => {
+    if (event.level === "error") {
+      appendCrashLog(`renderer error: ${event.message} (${event.sourceId}:${event.lineNumber})`);
     }
   });
 

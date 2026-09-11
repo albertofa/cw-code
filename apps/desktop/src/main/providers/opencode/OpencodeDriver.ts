@@ -15,6 +15,7 @@ import { mapOpencodeMessages } from "./opencodeHistory.js";
 import { listOpencodeModels, mapEffortToVariant } from "./opencodeModels.js";
 import { assertInside } from "../../fs/FileService.js";
 import { OpencodeServerPool } from "./opencodeServerPool.js";
+import { killProcessTree } from "../../processTree.js";
 import { parseExtraArgs } from "../../settings/settingsUtils.js";
 import { previewText, traceHarnessCall, truncateError } from "../../debug/harnessTrace.js";
 
@@ -350,7 +351,7 @@ export class OpencodeDriver implements CliDriver {
 
   interrupt(turnId: string): void {
     traceHarnessCall({ harness: "opencode", operation: "opencode.interrupt", turnId, ok: true });
-    this.procs.get(turnId)?.kill();
+    killProcessTree(this.procs.get(turnId));
     this.procs.delete(turnId);
   }
 

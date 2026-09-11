@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess } from "node:child_process";
 import { createServer } from "node:net";
+import { killProcessTree } from "../../processTree.js";
 import { traceHarnessCall, truncateError } from "../../debug/harnessTrace.js";
 
 export interface ServerHandle {
@@ -98,7 +99,7 @@ export class OpencodeServerPool {
 
   stop(rootPath: string): void {
     const entry = this.servers.get(rootPath);
-    entry?.proc.kill();
+    killProcessTree(entry?.proc);
     this.servers.delete(rootPath);
   }
 
