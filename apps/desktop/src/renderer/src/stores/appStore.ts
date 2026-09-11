@@ -362,6 +362,15 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   async respondApproval(requestId: string, decision: ApprovalDecision) {
     await window.cw.respondApproval(requestId, decision);
+    const approvals = get().pendingApprovals;
+    let changed = false;
+    const next: Record<string, ApprovalRequest[]> = {};
+    for (const [sessionId, list] of Object.entries(approvals)) {
+      const filtered = list.filter((p) => p.requestId !== requestId);
+      if (filtered.length !== list.length) changed = true;
+      next[sessionId] = filtered;
+    }
+    if (changed) set({ pendingApprovals: next });
   },
 
   async respondQuestion(sessionId: string, requestId: string, answers: Record<string, string>) {

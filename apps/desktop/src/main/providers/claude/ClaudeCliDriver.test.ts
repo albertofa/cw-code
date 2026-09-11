@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { buildClaudeArgs, mapClaudeEffort, mapClaudePermission } from "./ClaudeCliDriver.js";
+import { join } from "node:path";
+import { buildClaudeArgs, claudeSettingsPath, mapClaudeEffort, mapClaudePermission, mergeClaudeAllowRule } from "./ClaudeCliDriver.js";
 
 describe("mapClaudePermission", () => {
   it("passes through supported modes", () => {
@@ -58,5 +59,39 @@ describe("buildClaudeArgs", () => {
     expect(args).not.toContain("--model");
     expect(args).not.toContain("--effort");
     expect(args).not.toContain("--permission-mode");
+  });
+});
+
+describe("claudeSettingsPath", () => {
+  it("points at .claude/settings.json under the turn cwd", () => {
+    expect(claudeSettingsPath(join("C:", "proj"))).toBe(join("C:", "proj", ".claude", "settings.json"));
+  });
+});
+
+describe("mergeClaudeAllowRule", () => {
+  it("creates the permissions allow list from scratch", () => {
+    expect(mergeClaudeAllowRule(null, "Bash")).toEqual({ permissions: { allow: ["Bash"] } });
+  });
+
+  it("dedupes an existing rule instead of appending twice", () => {
+    expect(mergeClaudeAllowRule({ permissions: { allow: ["Bash"] } }, "Bash")).toEqual({
+      permissions: { allow: ["Bash"] }
+    });
+  });
+
+  it("appends new rules while preserving other settings", () => {
+    expect(
+      mergeClaudeAllowRule({ model: "sonnet", permissions: { allow: ["Read"], deny: ["Bash(sudo *)"] } }, "Bash")
+    ).toEqual({
+      model: "sonnet",
+      permissions: { allow: ["Read", "Bash"], deny: ["Bash(sudo *)"] }
+    });
+  });
+
+  it("tolerates missing or non-object settings", () => {
+    expect(mergeClaudeAllowRule(undefined, "Edit")).toEqual({ permissions: { allow: ["Edit"] } });
+    expect(mergeClaudeAllowRule({ permissions: null }, "Edit")).toEqual({
+      permissions: { allow: ["Edit"] }
+    });
   });
 });

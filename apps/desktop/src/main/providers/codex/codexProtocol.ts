@@ -293,7 +293,7 @@ export function buildCommandApproval(
     title: firstLine.slice(0, 120) || "Run command",
     reason: params.reason ?? undefined,
     details: [command, params.cwd ? `cwd: ${params.cwd}` : ""].filter(Boolean).join("\n"),
-    decisions: ["accept", "acceptForSession", "decline", "cancel"]
+    decisions: ["accept", "acceptForSession", "acceptGlobal", "decline", "cancel"]
   };
 }
 
@@ -306,7 +306,7 @@ export function buildFileChangeApproval(
     kind: "fileChange",
     title: "Apply file changes",
     reason: params.reason ?? undefined,
-    decisions: ["accept", "acceptForSession", "decline", "cancel"]
+    decisions: ["accept", "acceptForSession", "acceptGlobal", "decline", "cancel"]
   };
 }
 
@@ -320,7 +320,7 @@ export function buildPermissionsApproval(
     title: "Grant additional permissions",
     reason: params.reason ?? undefined,
     details: params.permissions ? JSON.stringify(params.permissions) : undefined,
-    decisions: ["accept", "acceptForSession", "decline", "cancel"]
+    decisions: ["accept", "acceptForSession", "acceptGlobal", "decline", "cancel"]
   };
 }
 
@@ -384,13 +384,16 @@ export function approvalResultFor(
   requestedPermissions?: unknown
 ): unknown {
   if (kind === "permissions") {
-    if (decision === "accept" || decision === "acceptForSession") {
+    if (decision === "accept" || decision === "acceptForSession" || decision === "acceptGlobal") {
       return {
         permissions: requestedPermissions ?? {},
-        scope: decision === "acceptForSession" ? "session" : "turn"
+        scope: decision === "accept" ? "turn" : "session"
       };
     }
     return { permissions: {}, scope: "turn" };
+  }
+  if (decision === "acceptGlobal") {
+    return { decision: "acceptForSession" };
   }
   return { decision };
 }

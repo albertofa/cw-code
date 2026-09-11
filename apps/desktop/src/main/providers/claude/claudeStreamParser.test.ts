@@ -1,6 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   attributeClaudeSubagentEvent,
+  buildClaudeAllowRule,
+  claudeAllowResponse,
+  claudeApprovalRequest,
   claudeControlResponse,
   claudeDenyResponse,
   claudeQuestionRequest,
@@ -218,5 +221,104 @@ describe("claudeControlResponse", () => {
     const parsed = JSON.parse(claudeDenyResponse("req-2", "denied"));
     expect(parsed.response.request_id).toBe("req-2");
     expect(parsed.response.response).toEqual({ behavior: "deny", message: "denied" });
+  });
+});
+
+describe("claudeApprovalRequest", () => {
+  it("maps Bash to a command approval with first-line title and full command details", () => {
+    const request = claudeApprovalRequest(
+      { requestId: "req-bash", toolName: "Bash", input: { command: "npm run test\nnpm run lint" } },
+      "t1",
+      "/repo"
+    );
+    expect(request).toMatchObject({
+      requestId: "req-bash",
+      kind: "command",
+      title: "npm run test",
+      toolName: "Bash",
+      cwd: "/repo",
+      decisions: ["accept", "acceptForSession", "acceptGlobal", "decline", "cancel"]
+    });
+    expect(request.details).toContain("npm run test\nnpm run lint");
+    expect(request.details).toContain("cwd: /repo");
+  });
+
+  it("maps PowerShell case-insensitively to a command approval", () => {
+    const request = claudeApprovalRequest(
+      { requestId: "req-ps", toolName: "powershell", input: { command: "Get-ChildItem" } },
+      "t1"
+    );
+    expect(request.kind).toBe("command");
+    expect(request.title).toBe("Get-ChildItem");
+  });
+
+  it("maps Edit/Write/MultiEdit to fileChange approvals naming the file", () => {
+    for (const toolName of ["Edit", "Write", "MultiEdit"]) {
+      const request = claudeApprovalRequest(
+        { requestId: `req-${toolName}`, toolName, input: { file_path: "src/a.ts" } },
+        "t1"
+      );
+      expect(request.kind).toBe("fileChange");
+      expect(request.title).toContain("src/a.ts");
+      expect(request.decisions).toEqual(["accept", "acceptForSession", "acceptGlobal", "decline", "cancel"]);
+    }
+  });
+
+  it("maps unknown tools to permissions approvals with truncated JSON details", () => {
+    const request = claudeApprovalRequest(
+      { requestId: "req-web", toolName: "WebFetch", input: { url: "https://example.com", prompt: "summarize" } },
+      "t1"
+    );
+    expect(request.kind).toBe("permissions");
+    expect(request.title).toBe("WebFetch");
+    expect(request.details).toContain("https://example.com");
+  });
+
+  it("tolerates missing input and unknown tools without crashing", () => {
+    expect(claudeApprovalRequest({ requestId: "r1", toolName: "Bash", input: null }, "t1").kind).toBe("command");
+    expect(claudeApprovalRequest({ requestId: "r2", toolName: "Bash", input: null }, "t1").title).toBe("Bash");
+    expect(
+      claudeApprovalRequest({ requestId: "r3", toolName: "SomeFutureTool", input: null }, "t1")
+    ).toMatchObject({ kind: "permissions", title: "SomeFutureTool" });
+    expect(
+      claudeApprovalRequest({ requestId: "r4", toolName: "Edit", input: { nonsense: true } }, "t1").title
+    ).toBe("Edit");
+  });
+
+  it("truncates very long details", () => {
+    const request = claudeApprovalRequest(
+      { requestId: "r5", toolName: "Bash", input: { command: `echo hi\n${"x".repeat(5000)}` } },
+      "t1"
+    );
+    expect(request.details!.length).toBeLessThan(5000);
+    expect(request.details).toContain("[len=");
+  });
+});
+
+describe("claudeAllowResponse", () => {
+  it("serializes an allow carrying the original input", () => {
+    const input = { command: "npm run test" };
+    const parsed = JSON.parse(claudeAllowResponse("req-1", input));
+    expect(parsed).toEqual({
+      type: "control_response",
+      response: {
+        subtype: "success",
+        request_id: "req-1",
+        response: { behavior: "allow", updatedInput: input }
+      }
+    });
+  });
+
+  it("falls back to an empty object for missing input", () => {
+    const parsed = JSON.parse(claudeAllowResponse("req-1", null));
+    expect(parsed.response.response).toEqual({ behavior: "allow", updatedInput: {} });
+  });
+});
+
+describe("buildClaudeAllowRule", () => {
+  it("returns the bare tool name regardless of input", () => {
+    expect(buildClaudeAllowRule("Bash", { command: "rm -rf /" })).toBe("Bash");
+    expect(buildClaudeAllowRule("Edit", { file_path: "src/a.ts" })).toBe("Edit");
+    expect(buildClaudeAllowRule("  Read  ", null)).toBe("Read");
   });
 });

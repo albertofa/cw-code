@@ -279,7 +279,7 @@ describe("CodexCliDriver", () => {
       request: {
         kind: "command",
         title: "git push",
-        decisions: ["accept", "acceptForSession", "decline", "cancel"]
+        decisions: ["accept", "acceptForSession", "acceptGlobal", "decline", "cancel"]
       }
     });
     const requestId = request && "request" in request ? request.request.requestId : "";
