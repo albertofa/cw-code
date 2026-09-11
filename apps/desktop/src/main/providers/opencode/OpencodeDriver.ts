@@ -1,7 +1,9 @@
-import { spawn, type ChildProcess } from "node:child_process";
+﻿import { spawn, type ChildProcess } from "node:child_process";
 import { createInterface } from "node:readline";
 import { randomUUID } from "node:crypto";
-import type { AppSettings, CliDriver, HistoryMessage, QuestionInfo, SessionMeta, ThreadEvent, TurnHandle, TurnRequest } from "@cw-code/contracts";
+import type { AppSettings, CliDriver, HistoryMessage, QuestionInfo, QuestionRequest, SessionMeta, ThreadEvent, TurnHandle, TurnRequest } from "@cw-code/contracts";
+import { app } from "electron";
+import { join } from "node:path";
 import { parseOpencodeLine, summarizeRun } from "./opencodeEvents.js";
 import {
   questionRequestOf,
@@ -11,6 +13,8 @@ import {
   parseOpencodeQuestionReplied,
   type ParsedOpencodeQuestion
 } from "./opencodeQuestions.js";
+import { AskBridge } from "./askBridge.js";
+import { writeAskBridgeTool } from "./askToolFile.js";
 import { mapOpencodeMessages } from "./opencodeHistory.js";
 import { listOpencodeModels, mapEffortToVariant } from "./opencodeModels.js";
 import { assertInside } from "../../fs/FileService.js";
@@ -34,6 +38,9 @@ export class OpencodeDriver implements CliDriver {
   private watchInfo = new Map<string, { port: number; authHeader: string; cwd: string }>();
   private sessionIds = new Map<string, string>();
   private pool: OpencodeServerPool;
+  private bridge: AskBridge | null = null;
+  private bridgeStarting: Promise<void> | null = null;
+  private bridgeEndpoint = "";
 
   constructor(
     private emit: (event: ThreadEvent) => void,
@@ -41,6 +48,63 @@ export class OpencodeDriver implements CliDriver {
     pool?: OpencodeServerPool
   ) {
     this.pool = pool ?? new OpencodeServerPool(() => this.configuredBinary());
+  }
+
+  private ensureBridge(): Promise<void> {
+    if (this.bridgeStarting) return this.bridgeStarting;
+    this.bridgeStarting = (async () => {
+      const bridge = new AskBridge((sessionID, request) => this.routeBridgeQuestion(sessionID, request));
+      const port = await bridge.start();
+      this.bridge = bridge;
+      this.bridgeEndpoint = `http://127.0.0.1:${port}/ask`;
+      const dir = join(app.getPath("userData"), "cw-opencode");
+      try {
+        await writeAskBridgeTool(dir, this.bridgeEndpoint);
+      } catch (err) {
+        traceHarnessCall({
+          harness: "opencode",
+          operation: "askBridge.toolFile",
+          ok: false,
+          error: truncateError((err as Error).message)
+        });
+      }
+    })();
+    return this.bridgeStarting;
+  }
+
+  private async bridgeUrl(): Promise<string> {
+    await this.ensureBridge();
+    if (!this.bridgeEndpoint) throw new Error("opencode ask bridge failed to start");
+    return this.bridgeEndpoint;
+  }
+
+  private routeBridgeQuestion(sessionID: string, request: QuestionRequest): void {
+    let turnId = "";
+    for (const [candidateTurnId, candidateSession] of this.sessionIds) {
+      if (candidateSession === sessionID) {
+        turnId = candidateTurnId;
+        break;
+      }
+    }
+    if (!turnId) {
+      traceHarnessCall({
+        harness: "opencode",
+        operation: "askBridge.unrouted",
+        resumeCursor: request.requestId,
+        ok: false,
+        error: `bridged question for unknown opencode session ${sessionID}`
+      });
+      this.bridge?.abandon(request.requestId);
+      return;
+    }
+    this.pendingQuestions.set(request.requestId, {
+      requestId: request.requestId,
+      turnId,
+      sessionID,
+      questions: request.questions,
+      cwd: ""
+    });
+    this.emit({ type: "question.request", turnId, request });
   }
 
   private configuredBinary(): string {
@@ -226,10 +290,22 @@ export class OpencodeDriver implements CliDriver {
     const binary = this.configuredBinary();
     let serverPort: number | null = null;
     let authHeader = "";
+    let bridgeEnv: Record<string, string> | undefined;
     try {
-      const handle = await this.pool.ensure(request.cwd);
+      let handle = await this.pool.ensure(request.cwd);
       serverPort = handle.port;
       authHeader = handle.authHeader;
+      if (request.resumeCursor) {
+        const native = await this.nativeQuestionAvailable(request.resumeCursor, serverPort, authHeader);
+        if (!native) {
+          const dir = join(app.getPath("userData"), "cw-opencode");
+          await writeAskBridgeTool(dir, await this.bridgeUrl());
+          bridgeEnv = { OPENCODE_CONFIG_DIR: dir };
+          handle = await this.pool.ensure(request.cwd, bridgeEnv);
+          serverPort = handle.port;
+          authHeader = handle.authHeader;
+        }
+      }
     } catch (err) {
       traceHarnessCall({
         harness: "opencode",
@@ -284,10 +360,10 @@ export class OpencodeDriver implements CliDriver {
     }
     const sessionId = this.sessionIds.get(turnId) ?? "";
     if (sessionId) baseArgs.push("--session", sessionId);
+    if (request.permissionMode === "auto" || request.permissionMode === "bypassPermissions") baseArgs.push("--auto");
     if (request.model) baseArgs.push("--model", request.model);
     const variant = request.variant ?? (request.effort ? mapEffortToVariant(request.effort) : undefined);
     if (variant) baseArgs.push("--variant", variant);
-    if (request.permissionMode === "auto" || request.permissionMode === "bypassPermissions") baseArgs.push("--auto");
     for (const rel of request.attachments ?? []) {
       try {
         assertInside(request.cwd, rel);
@@ -303,7 +379,11 @@ export class OpencodeDriver implements CliDriver {
       cwd: request.cwd,
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"],
-      env: { ...process.env, OPENCODE_ENABLE_QUESTION_TOOL: "true" }
+      env: {
+        ...process.env,
+        OPENCODE_ENABLE_QUESTION_TOOL: "true",
+        ...(bridgeEnv ? { OPENCODE_CONFIG_DIR: bridgeEnv["OPENCODE_CONFIG_DIR"] } : {})
+      }
     });
     this.procs.set(turnId, child);
     const preview = previewText(request.prompt);
@@ -393,6 +473,19 @@ export class OpencodeDriver implements CliDriver {
   }
 
   async respondToQuestion(requestId: string, answers: Record<string, string>): Promise<void> {
+    if (requestId.startsWith("bridge:")) {
+      if (!this.bridge) return;
+      const entry = this.pendingQuestions.get(requestId);
+      if (!entry) {
+        this.bridge.resolve(requestId, answers);
+        return;
+      }
+      if (this.bridge.resolve(requestId, answers)) {
+        this.pendingQuestions.delete(requestId);
+        this.emit({ type: "question.resolved", turnId: entry.turnId, requestId, answers });
+      }
+      return;
+    }
     const entry = this.pendingQuestions.get(requestId);
     if (!entry) return;
     const info = this.watchInfo.get(entry.turnId);
@@ -415,8 +508,26 @@ export class OpencodeDriver implements CliDriver {
     for (const [requestId, entry] of [...this.pendingQuestions]) {
       if (entry.turnId !== turnId) continue;
       this.pendingQuestions.delete(requestId);
+      if (requestId.startsWith("bridge:")) this.bridge?.abandon(requestId);
       this.emit({ type: "question.resolved", turnId, requestId, answers });
     }
+  }
+
+  private async nativeQuestionAvailable(sessionId: string, port: number, authHeader: string): Promise<boolean> {
+    if (!sessionId) return true;
+    const res = await fetch(`http://127.0.0.1:${port}/session/${sessionId}`, {
+      headers: { Authorization: authHeader }
+    });
+    if (!res.ok) return false;
+    const info = (await res.json()) as { permission?: unknown };
+    return !questionInfoDenied(info.permission);
+  }
+
+  private disposeBridge(): void {
+    this.bridge?.dispose();
+    this.bridge = null;
+    this.bridgeStarting = null;
+    this.bridgeEndpoint = "";
   }
 
   async renameSession(): Promise<void> {}
@@ -426,6 +537,16 @@ export class OpencodeDriver implements CliDriver {
   dispose(): void {
     for (const watch of this.watches.values()) watch.abort();
     this.watches.clear();
+    this.disposeBridge();
     this.pool.dispose();
   }
 }
+
+function questionInfoDenied(permission: unknown): boolean {
+  if (permission === null || permission === undefined) return false;
+  if (typeof permission === "string") return permission.trim() === "deny";
+  const p = permission as { question?: unknown };
+  const question = p?.question;
+  return typeof question === "string" ? question.trim() === "deny" : false;
+}
+

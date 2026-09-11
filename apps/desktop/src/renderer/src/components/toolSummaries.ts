@@ -47,7 +47,8 @@ const TOOL_KINDS: Record<string, { verb?: string; Icon: LucideIcon }> = {
   delete: { verb: "Delete", Icon: Trash2 },
   remove: { verb: "Delete", Icon: Trash2 },
   askuserquestion: { verb: "Ask", Icon: MessageCircleQuestion },
-  request_user_input: { verb: "Ask", Icon: MessageCircleQuestion }
+  request_user_input: { verb: "Ask", Icon: MessageCircleQuestion },
+  cw_ask: { verb: "Ask", Icon: MessageCircleQuestion }
 };
 
 function str(value: unknown): string | undefined {
@@ -199,7 +200,8 @@ export function describeToolCall(toolName: string, input: unknown): ToolSummary 
       summary.subjectKind = "file";
       break;
     case "askuserquestion":
-    case "request_user_input": {
+    case "request_user_input":
+    case "cw_ask": {
       const questions = Array.isArray(args["questions"]) ? (args["questions"] as Array<Record<string, unknown>>) : [];
       if (questions.length > 0) {
         summary.subject = `Asked ${questions.length} question${questions.length === 1 ? "" : "s"}`;
