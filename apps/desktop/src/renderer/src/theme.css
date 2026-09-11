@@ -501,9 +501,13 @@ body {
   gap: 8px;
   padding: 7px 9px;
   border-radius: var(--r-md);
-  cursor: pointer;
+  cursor: grab;
   margin-bottom: 2px;
   border: 1px solid transparent;
+}
+
+.session-row:active {
+  cursor: grabbing;
 }
 
 .session-row:hover {
