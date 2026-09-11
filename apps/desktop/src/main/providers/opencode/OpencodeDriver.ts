@@ -177,7 +177,11 @@ export class OpencodeDriver implements CliDriver {
     baseArgs.push(request.prompt);
     const args = [...this.extraArgs(), ...baseArgs];
 
-    const child = spawn(binary, args, { cwd: request.cwd, windowsHide: true });
+    const child = spawn(binary, args, {
+      cwd: request.cwd,
+      windowsHide: true,
+      stdio: ["ignore", "pipe", "pipe"]
+    });
     this.procs.set(turnId, child);
     const preview = previewText(request.prompt);
     traceHarnessCall({

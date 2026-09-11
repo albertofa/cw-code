@@ -166,7 +166,7 @@ export class CodexAppServer implements CodexAppServerLike {
       id,
       params: {
         clientInfo: this.opts.clientInfo ?? DEFAULT_CLIENT_INFO,
-        capabilities: { experimentalApi: true }
+        capabilities: { experimentalApi: true, requestAttestation: false }
       }
     });
     await initialized;
