@@ -20,6 +20,7 @@ import { TracingCliDriver } from "../debug/tracingDriver.js";
 import { CLAUDE_CURATED_MODELS, ClaudeCliDriver } from "../providers/claude/ClaudeCliDriver.js";
 import { OpencodeDriver } from "../providers/opencode/OpencodeDriver.js";
 import { CodexCliDriver } from "../providers/codex/CodexCliDriver.js";
+import { resolveAttachments } from "./attachments.js";
 
 export interface SessionManagerOptions {
   dbPath?: string;
@@ -195,19 +196,20 @@ export class SessionManager {
     if (session.title === "New session") {
       this.store.updateSession(sessionId, { title: prompt.slice(0, 60) });
     }
+    const cwd = this.rootFor(sessionId);
     const stored = this.getComposer(sessionId);
     const prefs = { ...stored, ...(opts?.prefs ?? {}) };
     const driver = this.drivers[session.driver];
     const handle = driver.startTurn({
       sessionId,
       prompt,
-      cwd: project.rootPath,
+      cwd,
       resumeCursor: session.resumeCursor,
       model: prefs.model,
       effort: prefs.effort,
       variant: prefs.variant,
       permissionMode: prefs.permissionMode,
-      attachments: opts?.attachments ?? []
+      attachments: resolveAttachments(project.rootPath, cwd, opts?.attachments ?? [])
     });
     this.activeTurns.set(handle.turnId, sessionId);
     return handle.turnId;
