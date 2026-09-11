@@ -72,6 +72,7 @@ export async function listClaudeSessions(projectId: string, rootPath: string): P
       projectId,
       driver: "claude",
       title: peekClaudeTitle(join(dir, file)) ?? id.slice(0, 8),
+      status: "idle",
       resumeCursor: id,
       createdAt: updatedAt,
       updatedAt

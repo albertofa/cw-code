@@ -117,6 +117,7 @@ describe("SessionManager", () => {
           projectId: project.id,
           driver: "claude",
           title: "external work",
+          status: "idle",
           resumeCursor: "abc",
           createdAt: 1,
           updatedAt: 2
