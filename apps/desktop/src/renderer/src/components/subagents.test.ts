@@ -13,6 +13,7 @@ import {
   isSubagentTool,
   parseResultCounts,
   shortModelName,
+  unwrapTaskOutput,
   type SubagentMessage
 } from "./subagents.js";
 import { mergeToolPairs } from "./toolSummaries.js";
@@ -333,6 +334,28 @@ describe("groupSubagents", () => {
     expect(groups).toHaveLength(2);
     expect(groups[0].items.map((i) => i.name)).toEqual(["one"]);
     expect(groups[1].items.map((i) => i.name)).toEqual(["two"]);
+  });
+});
+
+describe("unwrapTaskOutput", () => {
+  it("extracts the inner result from opencode task wrappers", () => {
+    const wrapped = `<task id="ses_1" state="completed">\n<task_result>\n# Report\n\nDone.\n</task_result>\n</task>`;
+    expect(unwrapTaskOutput(wrapped)).toBe("# Report\n\nDone.");
+    expect(unwrapTaskOutput("plain output")).toBe("plain output");
+    expect(unwrapTaskOutput(undefined)).toBeUndefined();
+  });
+
+  it("summarizes wrapped output without the task tag line", () => {
+    const info = describeSubagent(
+      msg({
+        toolName: "task",
+        toolInput: { description: "Explore drivers", subagent_type: "explore" },
+        toolOutput: `<task id="ses_1" state="completed">\n<task_result>\n# Survey\n\nDetails here.\n</task_result>\n</task>`
+      })
+    );
+    expect(info.name).toBe("Explore drivers");
+    expect(info.summary).toBe("Survey");
+    expect(info.output).toBe("# Survey\n\nDetails here.");
   });
 });
 

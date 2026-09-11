@@ -134,6 +134,34 @@ describe("parseOpencodeLine", () => {
       isError: true
     });
   });
+  it("uses the error text when a failed tool has no output", () => {
+    const events = parseOpencodeLine(
+      JSON.stringify({
+        type: "tool_use",
+        sessionID: "ses_1",
+        part: {
+          type: "tool",
+          tool: "task",
+          callID: "call_9",
+          state: {
+            status: "error",
+            input: { description: "Review paths" },
+            error: "Subagent failed (task_id: ses_x): The usage limit has been reached"
+          }
+        }
+      }),
+      "t1",
+      freshAcc()
+    );
+    expect(events).toHaveLength(2);
+    expect(events[1]).toEqual({
+      type: "tool.result",
+      turnId: "t1",
+      toolCallId: "call_9",
+      output: "Subagent failed (task_id: ses_x): The usage limit has been reached",
+      isError: true
+    });
+  });
 
   it("summarizes a run into turn.done", () => {
     const acc = { text: ["ok"], usage: { input: 8718, output: 11, reasoning: 155 }, cost: 0, sessionId: "ses_1" };

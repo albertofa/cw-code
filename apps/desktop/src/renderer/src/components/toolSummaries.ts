@@ -46,9 +46,12 @@ const TOOL_KINDS: Record<string, { verb?: string; Icon: LucideIcon }> = {
   websearch: { verb: "Search", Icon: Globe },
   delete: { verb: "Delete", Icon: Trash2 },
   remove: { verb: "Delete", Icon: Trash2 },
+  apply_patch: { verb: "Patch", Icon: Pencil },
+  patch: { verb: "Patch", Icon: Pencil },
   askuserquestion: { verb: "Ask", Icon: MessageCircleQuestion },
   request_user_input: { verb: "Ask", Icon: MessageCircleQuestion },
-  cw_ask: { verb: "Ask", Icon: MessageCircleQuestion }
+  cw_ask: { verb: "Ask", Icon: MessageCircleQuestion },
+  question: { verb: "Question", Icon: MessageCircleQuestion }
 };
 
 function str(value: unknown): string | undefined {
@@ -77,6 +80,19 @@ function truncate(s: string, n: number): string {
 
 function oneLine(s: string): string {
   return s.replace(/\s+/g, " ").trim();
+}
+
+const PATCH_FILE_MARKERS =
+  /^\*\*\*\s+(?:Add File|Update File|Move to|Delete File|Rename from|Rename to)\s*:\s*(.+?)\s*$/gim;
+
+export function extractPatchFiles(patchText: string): string[] {
+  const files: string[] = [];
+  PATCH_FILE_MARKERS.lastIndex = 0;
+  for (const match of patchText.matchAll(PATCH_FILE_MARKERS)) {
+    const file = match[1].trim().replace(/\s+\(from\s+.+\)$/, "");
+    if (file && !files.includes(file)) files.push(file);
+  }
+  return files;
 }
 
 export function describeToolCall(toolName: string, input: unknown): ToolSummary | null {
@@ -201,11 +217,23 @@ export function describeToolCall(toolName: string, input: unknown): ToolSummary 
       break;
     case "askuserquestion":
     case "request_user_input":
-    case "cw_ask": {
+    case "cw_ask":
+    case "question": {
       const questions = Array.isArray(args["questions"]) ? (args["questions"] as Array<Record<string, unknown>>) : [];
       if (questions.length > 0) {
         summary.subject = `Asked ${questions.length} question${questions.length === 1 ? "" : "s"}`;
         summary.subjectKind = "text";
+      }
+      break;
+    }
+    case "apply_patch":
+    case "patch": {
+      const patchText = pick(args, "patchText", "patch", "diff") ?? "";
+      const files = extractPatchFiles(patchText);
+      if (files.length > 0) {
+        summary.subject = files[0];
+        summary.subjectKind = "file";
+        if (files.length > 1) summary.meta = [`${files.length} files`];
       }
       break;
     }
