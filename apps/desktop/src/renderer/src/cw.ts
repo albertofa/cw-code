@@ -7,11 +7,14 @@ export interface Project {
 
 export type DriverName = "claude" | "opencode" | "codex";
 
+export type SessionStatus = "idle" | "working" | "input-required" | "done" | "resolved" | "archived";
+
 export interface Session {
   id: string;
   projectId: string;
   driver: DriverName;
   title: string;
+  status: SessionStatus;
   resumeCursor: string;
   createdAt: number;
   updatedAt: number;
@@ -261,6 +264,7 @@ export interface CwApi {
   importSession(projectId: string, driver: DriverName, resumeCursor: string, title: string): Promise<Session>;
   createSession(projectId: string, driver: DriverName, options?: CreateSessionOptions): Promise<Session>;
   renameSession(sessionId: string, title: string): Promise<void>;
+  setSessionStatus(sessionId: string, status: SessionStatus): Promise<Session>;
   getHistory(sessionId: string): Promise<HistoryMessage[]>;
   startTurn(sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[] }): Promise<string>;
   interrupt(turnId: string): Promise<void>;

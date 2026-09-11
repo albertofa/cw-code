@@ -1,6 +1,6 @@
 import { useState, type CSSProperties } from "react";
 import { Settings, SquarePen } from "lucide-react";
-import type { Project } from "../cw.js";
+import type { Project, Session, SessionStatus } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { useNotifs } from "./Notifications.js";
@@ -37,9 +37,19 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const activeProject = projects.find((p) => p.id === activeProjectId);
   const sessions = activeProjectId ? (sessionsByProject[activeProjectId] ?? []) : [];
   const discovered = activeProjectId ? (discoveredByProject[activeProjectId] ?? []) : [];
-  const shown = query
-    ? sessions.filter((s) => s.title.toLowerCase().includes(query.toLowerCase()))
-    : sessions;
+  const matchesQuery = (s: Session) =>
+    !query || s.title.toLowerCase().includes(query.toLowerCase());
+  const byRecency = (a: Session, b: Session) => {
+    if ((a.status === "input-required") !== (b.status === "input-required")) {
+      return a.status === "input-required" ? -1 : 1;
+    }
+    return b.updatedAt - a.updatedAt;
+  };
+  const shown = sessions
+    .filter((s) => s.status !== "resolved" && s.status !== "archived")
+    .filter(matchesQuery)
+    .sort(byRecency);
+  const resolved = sessions.filter((s) => s.status === "resolved").filter(matchesQuery).sort(byRecency);
   const visibleProjects = projectQuery
     ? projects.filter(
         (p) =>
@@ -89,6 +99,70 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
     void store.renameSession(sessionId, draft).catch((err: Error) => {
       useNotifs.getState().push({ kind: "error", title: "Could not rename session", message: err.message });
     });
+  };
+
+  const setStatus = (sessionId: string, status: SessionStatus) => {
+    setMenu(null);
+    void store.setSessionStatus(sessionId, status).catch((err: Error) => {
+      useNotifs.getState().push({ kind: "error", title: "Could not update session", message: err.message });
+    });
+  };
+
+  const renderRow = (s: Session) => {
+    const git = gitStatusBySession[s.id];
+    const pr = git?.pullRequest;
+    const prState = pr?.isDraft
+      ? "draft"
+      : pr?.state !== "OPEN"
+        ? pr?.state.toLowerCase()
+        : pr?.checks.failed
+          ? "failing"
+          : pr?.checks.pending
+            ? "pending"
+            : pr?.reviewDecision === "APPROVED"
+              ? "approved"
+              : pr?.reviewDecision === "CHANGES_REQUESTED" ? "changes-requested" : "open";
+    const status = s.status ?? "idle";
+    return <div
+      key={s.id}
+      onClick={() => store.selectSession(s.id)}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        setRenamingId(null);
+        setMenu({ sessionId: s.id, x: e.clientX, y: e.clientY });
+      }}
+      className={`session-row${s.id === activeSessionId ? " active" : ""}`}
+      title={s.title}
+    >
+      <span className={`state-dot status-${status}`} title={status} />
+      <span className="session-copy">
+      {renamingId === s.id ? (
+        <input
+          autoFocus
+          className="session-rename"
+          value={renameDraft}
+          onChange={(e) => setRenameDraft(e.target.value)}
+          onClick={(e) => e.stopPropagation()}
+          onKeyDown={(e) => {
+            e.stopPropagation();
+            if (e.key === "Enter") commitRename(s.id);
+            if (e.key === "Escape") setRenamingId(null);
+          }}
+          onBlur={() => commitRename(s.id)}
+        />
+      ) : (
+        <span className="session-title">{s.title}</span>
+      )}
+        <span className="session-git" title={git?.worktreePath ?? s.worktreePath}>
+          <span>{git?.worktreeName ?? (s.worktreePath ? s.worktreePath.split(/[/\\]/).pop() : "project")}</span>
+          <span className="session-branch">{git?.branch ?? s.branch ?? "Git status loading…"}</span>
+          {pr && <span className={`session-pr ${prState}`}>#{pr.number} {prState?.replace("-", " ")}</span>}
+          {git && !git.clean && <span className="session-dirty">{git.dirtyCount}Δ</span>}
+        </span>
+      </span>
+      <DriverIcon driver={s.driver} size={12} />
+    </div>
   };
 
   return (
@@ -201,68 +275,20 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
         </div>
       </div>
       <div className="session-list">
-        {shown.map((s) => {
-          const git = gitStatusBySession[s.id];
-          const pr = git?.pullRequest;
-          const prState = pr?.isDraft
-            ? "draft"
-            : pr?.state !== "OPEN"
-              ? pr?.state.toLowerCase()
-              : pr?.checks.failed
-                ? "failing"
-                : pr?.checks.pending
-                  ? "pending"
-                  : pr?.reviewDecision === "APPROVED"
-                    ? "approved"
-                    : pr?.reviewDecision === "CHANGES_REQUESTED" ? "changes-requested" : "open";
-          return <div
-            key={s.id}
-            onClick={() => store.selectSession(s.id)}
-            onContextMenu={(e) => {
-              e.preventDefault();
-              e.stopPropagation();
-              setRenamingId(null);
-              setMenu({ sessionId: s.id, x: e.clientX, y: e.clientY });
-            }}
-            className={`session-row${s.id === activeSessionId ? " active" : ""}`}
-            title={s.title}
-          >
-            <span className={`driver-dot ${s.driver}`} />
-            <span className="session-copy">
-            {renamingId === s.id ? (
-              <input
-                autoFocus
-                className="session-rename"
-                value={renameDraft}
-                onChange={(e) => setRenameDraft(e.target.value)}
-                onClick={(e) => e.stopPropagation()}
-                onKeyDown={(e) => {
-                  e.stopPropagation();
-                  if (e.key === "Enter") commitRename(s.id);
-                  if (e.key === "Escape") setRenamingId(null);
-                }}
-                onBlur={() => commitRename(s.id)}
-              />
-            ) : (
-              <span className="session-title">{s.title}</span>
-            )}
-              <span className="session-git" title={git?.worktreePath ?? s.worktreePath}>
-                <span>{git?.worktreeName ?? (s.worktreePath ? s.worktreePath.split(/[/\\]/).pop() : "project")}</span>
-                <span className="session-branch">{git?.branch ?? s.branch ?? "Git status loading…"}</span>
-                {pr && <span className={`session-pr ${prState}`}>#{pr.number} {prState?.replace("-", " ")}</span>}
-                {git && !git.clean && <span className="session-dirty">{git.dirtyCount}Δ</span>}
-              </span>
-            </span>
-            <DriverIcon driver={s.driver} size={12} />
-          </div>
-        })}
+        {shown.map(renderRow)}
         {shown.length === 0 && <div className="side-empty">{query ? "No matches." : "No sessions yet."}</div>}
+        {resolved.length > 0 && (
+          <details className="resolved">
+            <summary>resolved · {resolved.length}</summary>
+            {resolved.map(renderRow)}
+          </details>
+        )}
         {discovered.length > 0 && (
           <details className="discovered">
             <summary>from cli · {discovered.length}</summary>
             {discovered.map((s) => (
               <div key={s.id} className="discovered-row" title={s.title}>
-                <span className={`driver-dot ${s.driver}`} />
+                <span className={`state-dot status-${s.status ?? "idle"}`} title={s.status ?? "idle"} />
                 <span className="session-title">{s.title}</span>
                 <button className="btn" style={{ fontSize: 11, padding: "3px 8px" }} onClick={() => void store.importDiscovered(s)} title="Import into cw-code">
                   Import
@@ -300,6 +326,18 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
               }}
             >
               Rename
+            </button>
+            <button className="ctx-item" onClick={() => setStatus(menu.sessionId, "idle")}>
+              Mark as Idle
+            </button>
+            <button className="ctx-item" onClick={() => setStatus(menu.sessionId, "done")}>
+              Mark as Done
+            </button>
+            <button className="ctx-item" onClick={() => setStatus(menu.sessionId, "resolved")}>
+              Mark as Resolved
+            </button>
+            <button className="ctx-item" onClick={() => setStatus(menu.sessionId, "archived")}>
+              Archive
             </button>
           </div>
         </>
