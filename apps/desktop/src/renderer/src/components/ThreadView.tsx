@@ -11,7 +11,7 @@ import { SubagentCard } from "./SubagentCard.js";
 import { openAgentsPanel } from "./AgentsPanel.js";
 import { NewThread } from "./NewThread.js";
 import { ApprovalCard } from "./ApprovalCard.js";
-import { QuestionCard } from "./QuestionCard.js";
+import { QuestionDock } from "./QuestionDock.js";
 import { WorkingPill, useWorkingWord } from "./WorkingPill.js";
 import { formatDuration, orderToolsForDisplay } from "./toolSummaries.js";
 import { collectSubagents, describeSubagent, isSubagentMessage, type SubagentGroup } from "./subagents.js";
@@ -28,8 +28,7 @@ export function ThreadView({ rightVisible, onToggleRight }: { rightVisible: bool
     pendingDriver,
     lastDriver,
     lastTurnStats,
-    pendingApprovals,
-    pendingQuestions
+    pendingApprovals
   } = useAppStore();
   const store = useAppStore();
 
@@ -41,7 +40,6 @@ export function ThreadView({ rightVisible, onToggleRight }: { rightVisible: bool
   const usage = activeSessionId ? usageBySession[activeSessionId] : undefined;
   const lastTurn = activeSessionId ? lastTurnStats[activeSessionId] : undefined;
   const approvals = activeSessionId ? (pendingApprovals[activeSessionId] ?? []) : [];
-  const questions = activeSessionId ? (pendingQuestions[activeSessionId] ?? []) : [];
   const ordered = orderToolsForDisplay(messages);
   const subagents = collectSubagents(messages);
   const subagentsRunning = subagents.filter((s) => s.status === "running").length;
@@ -189,13 +187,6 @@ export function ThreadView({ rightVisible, onToggleRight }: { rightVisible: bool
               </div>
             );
           })}
-          {questions.length > 0 && (
-            <div className="approval-stack">
-              {questions.map((q) => (
-                <QuestionCard key={q.requestId} request={q} />
-              ))}
-            </div>
-          )}
           {approvals.length > 0 && (
             <div className="approval-stack">
               {approvals.map((a) => (
@@ -216,6 +207,7 @@ export function ThreadView({ rightVisible, onToggleRight }: { rightVisible: bool
         </div>
       )}
       <div className="composer-wrap">
+        <QuestionDock sessionId={session.id} />
         <Composer key={session.id} sessionId={session.id} driver={session.driver} />
         <GitBar sessionId={session.id} />
       </div>
