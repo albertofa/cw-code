@@ -165,13 +165,15 @@ describe("SessionManager", () => {
 
   it("forwards stored prefs on startTurn and lets explicit opts override without mutating stored prefs", async () => {
     const { manager, fake } = makeManager();
-    const project = manager.addProject("C:\\proj6");
+    const root = mkdtempSync(join(tmpdir(), "cw-session-prefs-"));
+    const project = manager.addProject(root);
     const a = await manager.createSession(project.id, "claude");
     manager.setComposer(a.id, { model: "sonnet", effort: "high", permissionMode: "plan" });
     await manager.startTurn(a.id, "stored");
     expect(fake.lastRequest).toMatchObject({ model: "sonnet", effort: "high", permissionMode: "plan" });
     fake.completeAll();
     await new Promise((r) => setTimeout(r, 20));
+    writeFileSync(join(root, "a.ts"), "x", "utf8");
     await manager.startTurn(a.id, "override", { prefs: { model: "opus" }, attachments: ["a.ts"] });
     expect(fake.lastRequest).toMatchObject({ model: "opus", effort: "high", attachments: ["a.ts"] });
     expect(manager.getComposer(a.id).model).toBe("sonnet");
