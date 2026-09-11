@@ -143,8 +143,10 @@ function QuestionPanel({ request }: { request: QuestionRequest }) {
   );
 }
 
+const NO_REQUESTS: QuestionRequest[] = [];
+
 export function QuestionDock({ sessionId }: { sessionId: string }) {
-  const requests = useAppStore((s) => s.pendingQuestions[sessionId] ?? []);
+  const requests = useAppStore((s) => s.pendingQuestions[sessionId] ?? NO_REQUESTS);
   if (requests.length === 0) return null;
   return (
     <div className="question-dock">
