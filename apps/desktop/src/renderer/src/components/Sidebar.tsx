@@ -230,10 +230,10 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
                   {visibleProjects.map((p) => (
                     <div key={p.id}>
                       <div
-                        className={`picker-row${p.id === activeProjectId ? " active" : ""}`}
+                        className={`picker-row${p.id === projectFilter ? " active" : ""}`}
                         onClick={() => pick(p.id)}
                         role="option"
-                        aria-selected={p.id === activeProjectId}
+                        aria-selected={p.id === projectFilter}
                         title={p.rootPath}
                       >
                         <span className="avatar" style={avatarStyle(p.name)}>
@@ -283,7 +283,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
             className="new-session-btn"
             disabled={!activeProjectId}
             onClick={() => store.startNewSession()}
-            title="New session"
+            title={`New session in ${activeProject?.name ?? "…"}`}
             aria-label="New session"
           >
             <SquarePen size={14} />

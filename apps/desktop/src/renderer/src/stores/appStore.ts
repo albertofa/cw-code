@@ -209,7 +209,18 @@ export const useAppStore = create<AppState>((set, get) => ({
       pendingWorkspace: { ...get().pendingWorkspace, useWorktree: settings.defaultUseWorktree }
     });
     if (projects.length === 0 || get().activeProjectId) return;
-    const lists = await Promise.all(projects.map((p) => window.cw.listSessions(p.id)));
+    const lists = await Promise.all(
+      projects.map((p) =>
+        window.cw.listSessions(p.id).catch((err: Error) => {
+          useNotifs.getState().push({
+            kind: "error",
+            title: "Could not load sessions",
+            message: `${p.name}: ${err.message}`
+          });
+          return [];
+        })
+      )
+    );
     const sessionsByProject: Record<string, Session[]> = {};
     projects.forEach((p, i) => {
       sessionsByProject[p.id] = lists[i];
@@ -352,11 +363,13 @@ export const useAppStore = create<AppState>((set, get) => ({
     const ownerId = Object.entries(byProject).find(([, list]) =>
       list.some((s) => s.id === sessionId)
     )?.[0];
+    const projectChanged = ownerId !== undefined && ownerId !== get().activeProjectId;
     set({
       activeSessionId: sessionId,
       pendingDriver: null,
       ...(ownerId && ownerId !== get().activeProjectId ? { activeProjectId: ownerId } : {})
     });
+    if (projectChanged) void get().loadDiscovered();
     void get().ensureHistory(sessionId);
     void get().ensureComposer(sessionId);
     void get().refreshGitStatus(sessionId);

@@ -70,8 +70,7 @@ export function TitleBar() {
     return window.cw.onWindowMaximized(setMaxed);
   }, []);
 
-  const sessions = activeProjectId ? (sessionsByProject[activeProjectId] ?? []) : [];
-  const session = sessions.find((s) => s.id === activeSessionId);
+  const session = Object.values(sessionsByProject).flat().find((s) => s.id === activeSessionId);
   const project = projects.find((p) => p.id === activeProjectId);
 
   return (
