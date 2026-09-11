@@ -39,6 +39,17 @@ function orderKeyFor(filter: string): string {
   return `cw:order:${filter}`;
 }
 
+function hoverBefore(e: DragEvent, el: HTMLElement): boolean {
+  const rect = el.getBoundingClientRect();
+  let shift = 0;
+  try {
+    shift = new DOMMatrixReadOnly(window.getComputedStyle(el).transform).m42;
+  } catch {
+    shift = 0;
+  }
+  return e.clientY < rect.top - shift + rect.height / 2;
+}
+
 function previewPlacement(
   orderedMain: Session[],
   orderedResolved: Session[],
@@ -336,8 +347,8 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
         if (!allowsDrop(e)) return;
         e.preventDefault();
         e.dataTransfer.dropEffect = "move";
-        const rect = e.currentTarget.getBoundingClientRect();
-        const before = e.clientY < rect.top + rect.height / 2;
+        if (draggedRef.current?.id === s.id) return;
+        const before = hoverBefore(e, e.currentTarget);
         setPreview((prev) =>
           prev && prev.targetId === s.id && prev.section === section && prev.before === before
             ? prev
@@ -352,9 +363,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
           setPreview(null);
           return;
         }
-        const rect = e.currentTarget.getBoundingClientRect();
-        const before = e.clientY < rect.top + rect.height / 2;
-        handleDrop(active, section, s.id, before);
+        handleDrop(active, section, s.id, hoverBefore(e, e.currentTarget));
       }}
       onDragLeave={(e) => {
         if (e.currentTarget.contains(e.relatedTarget as Node)) return;
