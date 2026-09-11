@@ -34,6 +34,35 @@ describe("mapOpencodeMessages", () => {
     ]);
   });
 
+  it("surfaces error text for failed task parts without output", () => {
+    const out = mapOpencodeMessages([
+      {
+        info: { id: "m9", role: "assistant" },
+        parts: [
+          {
+            type: "tool",
+            tool: "task",
+            callID: "call_9",
+            state: {
+              status: "error",
+              input: { description: "Review paths" },
+              error: "Subagent failed: usage limit reached"
+            }
+          }
+        ]
+      }
+    ]);
+    expect(out).toHaveLength(2);
+    expect(out[1]).toEqual({
+      id: "call_9-r",
+      role: "tool",
+      text: "Subagent failed: usage limit reached",
+      turnId: "m9",
+      toolName: "task",
+      isError: true
+    });
+  });
+
   it("skips step bookkeeping parts", () => {
     const out = mapOpencodeMessages([
       { info: { id: "m4", role: "assistant" }, parts: [{ type: "step-start" }, { type: "step-finish" }] }

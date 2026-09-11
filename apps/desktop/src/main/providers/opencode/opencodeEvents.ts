@@ -54,15 +54,40 @@ function toolInputOf(part: { tool?: string; state?: unknown } | undefined): unkn
   return state ?? null;
 }
 
-function toolResultOf(part: { state?: unknown } | undefined): { output: string; isError: boolean } | null {
-  const state = part?.state as ToolPartState | string | undefined;
+function errorText(error: unknown): string | undefined {
+  if (typeof error === "string" && error.trim()) return error;
+  if (error !== null && typeof error === "object") {
+    const text = JSON.stringify(error);
+    if (text && text !== "{}") return text;
+  }
+  return undefined;
+}
+
+export function toolResultFromState(
+  state: unknown
+): { output: string; isError: boolean } | null {
   if (typeof state === "string") return { output: state, isError: false };
   if (state === null || typeof state !== "object" || Array.isArray(state)) return null;
-  const status = (state as ToolPartState).status;
-  if (status !== "completed" && status !== "error") return null;
-  const raw = (state as ToolPartState).output;
-  const output = typeof raw === "string" ? raw : JSON.stringify(raw ?? "");
-  return { output: output.slice(0, 8000), isError: status === "error" || (state as ToolPartState).error != null };
+  const typed = state as ToolPartState;
+  if (typed.status !== "completed" && typed.status !== "error") return null;
+  const raw = typed.output;
+  if (typeof raw === "string") {
+    if (raw.trim()) {
+      return { output: raw.slice(0, 8000), isError: typed.status === "error" || typed.error != null };
+    }
+  } else if (raw !== undefined && raw !== null) {
+    return {
+      output: JSON.stringify(raw).slice(0, 8000),
+      isError: typed.status === "error" || typed.error != null
+    };
+  }
+  const err = errorText(typed.error);
+  if (err !== undefined) return { output: err.slice(0, 8000), isError: true };
+  return { output: "", isError: typed.status === "error" };
+}
+
+function toolResultOf(part: { state?: unknown } | undefined): { output: string; isError: boolean } | null {
+  return toolResultFromState(part?.state);
 }
 
 export function parseOpencodeLine(
