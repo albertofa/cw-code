@@ -53,7 +53,7 @@ export interface SubagentToolSummary {
   totalTokens?: number;
 }
 
-export type ApprovalDecision = "accept" | "acceptForSession" | "decline" | "cancel";
+export type ApprovalDecision = "accept" | "acceptForSession" | "acceptGlobal" | "decline" | "cancel";
 
 export type ApprovalKind = "command" | "fileChange" | "permissions";
 
@@ -64,6 +64,11 @@ export interface ApprovalRequest {
   reason?: string;
   details?: string;
   decisions: ApprovalDecision[];
+  permission?: string;
+  patterns?: string[];
+  always?: string[];
+  toolName?: string;
+  cwd?: string;
 }
 
 export interface QuestionOption {
