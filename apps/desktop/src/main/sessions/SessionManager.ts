@@ -306,6 +306,7 @@ export class SessionManager {
     const session = this.store.getSession(sessionId);
     if (session) this.drivers[session.driver].interrupt(turnId);
     this.activeTurns.delete(turnId);
+    this.store.updateSession(sessionId, { status: "idle" });
   }
 
   async respondApproval(requestId: string, decision: ApprovalDecision): Promise<void> {

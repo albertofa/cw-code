@@ -288,7 +288,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
             <summary>from cli · {discovered.length}</summary>
             {discovered.map((s) => (
               <div key={s.id} className="discovered-row" title={s.title}>
-                <span className={`state-dot status-${s.status ?? "idle"}`} title={s.status ?? "idle"} />
+                <span className={`driver-dot ${s.driver}`} title={s.driver} />
                 <span className="session-title">{s.title}</span>
                 <button className="btn" style={{ fontSize: 11, padding: "3px 8px" }} onClick={() => void store.importDiscovered(s)} title="Import into cw-code">
                   Import

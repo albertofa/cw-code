@@ -172,7 +172,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         const current = Object.values(get().sessionsByProject)
           .flat()
           .find((s) => s.id === sessionId);
-        if (current && current.status === "done") {
+        if (current && current.status !== "resolved" && current.status !== "archived" && sessionId !== get().activeSessionId) {
           void get().setSessionStatus(sessionId, "resolved").catch((err) =>
             console.warn(`setSessionStatus failed for ${sessionId} -> resolved: ${(err as Error).message}`)
           );
@@ -214,15 +214,21 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   async selectProject(projectId: string) {
     const sessions = await window.cw.listSessions(projectId);
-    if (sessions.length > 0) {
+    const picked = sessions.find((s) => s.status !== "archived");
+    if (picked) {
       set({
         activeProjectId: projectId,
         sessionsByProject: { ...get().sessionsByProject, [projectId]: sessions },
-        activeSessionId: sessions[0].id,
+        activeSessionId: picked.id,
         pendingDriver: null
       });
-      void get().ensureHistory(sessions[0].id);
-      void get().ensureComposer(sessions[0].id);
+      if (picked.status === "resolved") {
+        void get().setSessionStatus(picked.id, "idle").catch((err) =>
+          console.warn(`setSessionStatus failed for ${picked.id} -> idle: ${(err as Error).message}`)
+        );
+      }
+      void get().ensureHistory(picked.id);
+      void get().ensureComposer(picked.id);
       for (const session of sessions) void get().refreshGitStatus(session.id);
     } else {
       set({
@@ -447,7 +453,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     await window.cw.interrupt(turnId);
     const busy = { ...get().busyTurns };
     if (sessionId) delete busy[sessionId];
-    set({ busyTurns: busy });
+    set({
+      busyTurns: busy,
+      ...(sessionId ? { sessionsByProject: withSessionStatus(get().sessionsByProject, sessionId, "idle") } : {})
+    });
   },
 
   async respondApproval(requestId: string, decision: ApprovalDecision) {
