@@ -1,4 +1,4 @@
-import { existsSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
 function assertInside(root: string, target: string): string {
@@ -12,6 +12,27 @@ function assertInside(root: string, target: string): string {
 }
 
 const PREVIEW_MAX_BYTES = 2 * 1024 * 1024;
+
+const PASTE_EXTS: Record<string, string> = {
+  "image/png": "png",
+  "image/jpeg": "jpg",
+  "image/webp": "webp",
+  "image/gif": "gif",
+};
+
+export function pasteImageExt(mime: string): string {
+  const ext = PASTE_EXTS[mime];
+  if (!ext) throw new Error("unsupported paste image mime: " + mime);
+  return ext;
+}
+
+export function pasteImageName(mime: string, now: Date = new Date()): string {
+  return `cw-paste-${now.toISOString().replaceAll(":", "-").replace(".", "-")}.${pasteImageExt(mime)}`;
+}
+
+function toPosixRelative(p: string): string {
+  return p.replaceAll("\\", "/");
+}
 
 export class FileService {
   readFile(root: string, target: string): string {
@@ -36,6 +57,14 @@ export class FileService {
   saveFile(root: string, target: string, content: string): void {
     const abs = assertInside(root, target);
     writeFileSync(abs, content, "utf8");
+  }
+
+  savePasteImage(root: string, mime: string, data: Uint8Array): string {
+    const dir = join(root, ".cw", "pastes");
+    mkdirSync(dir, { recursive: true });
+    const name = pasteImageName(mime);
+    writeFileSync(join(dir, name), data);
+    return toPosixRelative(join(".cw", "pastes", name));
   }
 
   listFiles(root: string): string[] {
