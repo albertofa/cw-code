@@ -10,7 +10,7 @@ import { ToolCard } from "./ToolCard.js";
 import { SubagentCard } from "./SubagentCard.js";
 import { openAgentsPanel } from "./AgentsPanel.js";
 import { NewThread } from "./NewThread.js";
-import { ApprovalCard } from "./ApprovalCard.js";
+import { ApprovalDock } from "./ApprovalDock.js";
 import { QuestionDock } from "./QuestionDock.js";
 import { WorkingPill, useWorkingWord } from "./WorkingPill.js";
 import { formatDuration, orderToolsForDisplay } from "./toolSummaries.js";
@@ -28,7 +28,6 @@ export function ThreadView({ rightVisible, onToggleRight }: { rightVisible: bool
     pendingDriver,
     lastDriver,
     lastTurnStats,
-    pendingApprovals
   } = useAppStore();
   const store = useAppStore();
 
@@ -39,7 +38,6 @@ export function ThreadView({ rightVisible, onToggleRight }: { rightVisible: bool
   const busyTurn = activeSessionId ? busyTurns[activeSessionId] : undefined;
   const usage = activeSessionId ? usageBySession[activeSessionId] : undefined;
   const lastTurn = activeSessionId ? lastTurnStats[activeSessionId] : undefined;
-  const approvals = activeSessionId ? (pendingApprovals[activeSessionId] ?? []) : [];
   const ordered = orderToolsForDisplay(messages);
   const subagents = collectSubagents(messages);
   const subagentsRunning = subagents.filter((s) => s.status === "running").length;
@@ -187,13 +185,6 @@ export function ThreadView({ rightVisible, onToggleRight }: { rightVisible: bool
               </div>
             );
           })}
-          {approvals.length > 0 && (
-            <div className="approval-stack">
-              {approvals.map((a) => (
-                <ApprovalCard key={a.requestId} request={a} />
-              ))}
-            </div>
-          )}
           {busyTurn && <WorkingPill word={workingWord} />}
           {!busyTurn && lastTurn && (
             <div className="turn-sep">Worked for {formatDuration(lastTurn.ms)}</div>
@@ -207,6 +198,7 @@ export function ThreadView({ rightVisible, onToggleRight }: { rightVisible: bool
         </div>
       )}
       <div className="composer-wrap">
+        <ApprovalDock sessionId={session.id} />
         <QuestionDock sessionId={session.id} />
         <Composer key={session.id} sessionId={session.id} driver={session.driver} />
         <GitBar sessionId={session.id} />
