@@ -1,7 +1,7 @@
 ﻿import { spawn, type ChildProcess } from "node:child_process";
 import { createInterface } from "node:readline";
 import { randomUUID } from "node:crypto";
-import type { AppSettings, CliDriver, HistoryMessage, QuestionInfo, QuestionRequest, SessionMeta, ThreadEvent, TurnHandle, TurnRequest } from "@cw-code/contracts";
+import type { AppSettings, ApprovalDecision, CliDriver, HistoryMessage, QuestionInfo, QuestionRequest, SessionMeta, ThreadEvent, TurnHandle, TurnRequest } from "@cw-code/contracts";
 import { app } from "electron";
 import { join } from "node:path";
 import { parseOpencodeLine, summarizeRun } from "./opencodeEvents.js";
@@ -13,6 +13,14 @@ import {
   parseOpencodeQuestionReplied,
   type ParsedOpencodeQuestion
 } from "./opencodeQuestions.js";
+import {
+  opencodePermissionReply,
+  parseOpencodePermissionAsked,
+  parseOpencodePermissionList,
+  parseOpencodePermissionReplied,
+  permissionApprovalOf,
+  type ParsedOpencodePermission
+} from "./opencodePermissions.js";
 import { AskBridge } from "./askBridge.js";
 import { writeAskBridgeTool } from "./askToolFile.js";
 import { diffLiveTools, type LiveMessage, type LiveSeen } from "./opencodeLivePoll.js";
@@ -35,6 +43,8 @@ export class OpencodeDriver implements CliDriver {
   readonly kind = "opencode" as const;
   private procs = new Map<string, ChildProcess>();
   private pendingQuestions = new Map<string, ParsedOpencodeQuestion & { turnId: string; questions: QuestionInfo[]; cwd: string }>();
+  private pendingApprovals = new Map<string, ParsedOpencodePermission & { turnId: string; cwd: string }>();
+  private sessionAllows = new Map<string, Set<string>>();
   private watches = new Map<string, AbortController>();
   private watchInfo = new Map<string, { port: number; authHeader: string; cwd: string }>();
   private sessionIds = new Map<string, string>();
@@ -134,6 +144,7 @@ export class OpencodeDriver implements CliDriver {
           projectId,
           driver: "opencode" as const,
           title: s.title || s.id.slice(0, 8),
+          status: "idle" as const,
           resumeCursor: s.id,
           createdAt: s.time.created,
           updatedAt: s.time.updated
@@ -284,6 +295,56 @@ export class OpencodeDriver implements CliDriver {
       if (!parsed || !entry) return;
       this.pendingQuestions.delete(parsed.requestID);
       this.emit({ type: "question.resolved", turnId, requestId: parsed.requestID, answers: {} });
+      return;
+    }
+    if (envelope.type === "permission.asked" || envelope.type === "permission.v2.asked") {
+      const parsed = parseOpencodePermissionAsked(event);
+      if (!parsed) {
+        traceHarnessCall({
+          harness: "opencode",
+          operation: "opencode.permissions.parse",
+          turnId,
+          ok: false,
+          error: truncateError("unparseable permission ask payload, approval not surfaced")
+        });
+        return;
+      }
+      const known = this.sessionIds.get(turnId);
+      if (!known || parsed.sessionID !== known) return;
+      if (this.pendingApprovals.has(parsed.requestId)) return;
+      const info = this.watchInfo.get(turnId);
+      if (info && this.isSessionAllowed(parsed)) {
+        void this.replyPermission(info, parsed.sessionID, parsed.requestId, "once").catch((err) => {
+          traceHarnessCall({
+            harness: "opencode",
+            operation: "opencode.permissions.autoReply",
+            turnId,
+            resumeCursor: parsed.requestId,
+            ok: false,
+            error: truncateError((err as Error).message)
+          });
+        });
+        return;
+      }
+      const cwd = info?.cwd ?? "";
+      this.pendingApprovals.set(parsed.requestId, { ...parsed, turnId, cwd });
+      this.emit(permissionApprovalOf(parsed, turnId, cwd));
+      traceHarnessCall({
+        harness: "opencode",
+        operation: "opencode.permissions.asked",
+        turnId,
+        resumeCursor: parsed.requestId,
+        ok: true,
+        extra: { permission: parsed.permission, patternCount: parsed.patterns.length }
+      });
+      return;
+    }
+    if (envelope.type === "permission.replied" || envelope.type === "permission.v2.replied" || envelope.type === "permission.updated") {
+      const parsed = parseOpencodePermissionReplied(event);
+      const entry = parsed ? this.pendingApprovals.get(parsed.requestID) : undefined;
+      if (!parsed || !entry) return;
+      this.pendingApprovals.delete(parsed.requestID);
+      this.emit({ type: "approval.resolved", turnId: entry.turnId, requestId: parsed.requestID });
     }
   }
 
@@ -457,6 +518,7 @@ export class OpencodeDriver implements CliDriver {
     };
     const pollTimer = setInterval(() => {
       void pollLiveTools();
+      void this.pollSessionPermissions(turnId);
     }, 2000);
     pollTimer.unref?.();
     this.pollTimers.set(turnId, pollTimer);
@@ -491,6 +553,7 @@ export class OpencodeDriver implements CliDriver {
       this.watchInfo.delete(turnId);
       this.sessionIds.delete(turnId);
       this.resolvePendingFor(turnId, null);
+      this.resolveApprovalsFor(turnId);
       traceHarnessCall({
         harness: "opencode",
         operation: "opencode.startTurn",
@@ -531,6 +594,32 @@ export class OpencodeDriver implements CliDriver {
     this.procs.delete(turnId);
   }
 
+  async respondToApproval(requestId: string, decision: ApprovalDecision): Promise<void> {
+    const entry = this.pendingApprovals.get(requestId);
+    if (!entry) return;
+    const reply = opencodePermissionReply(decision);
+    if (decision === "acceptForSession") {
+      let allowed = this.sessionAllows.get(entry.sessionID);
+      if (!allowed) {
+        allowed = new Set();
+        this.sessionAllows.set(entry.sessionID, allowed);
+      }
+      allowed.add(this.sessionAllowKey(entry));
+    }
+    const outcome = await this.replyPermission(this.watchInfo.get(entry.turnId), entry.sessionID, requestId, reply);
+    this.pendingApprovals.delete(requestId);
+    this.emit({ type: "approval.resolved", turnId: entry.turnId, requestId });
+    traceHarnessCall({
+      harness: "opencode",
+      operation: "opencode.respondToApproval",
+      turnId: entry.turnId,
+      resumeCursor: requestId,
+      ok: outcome === "replied",
+      ...(outcome === "missing" ? { error: "permission already answered, resolved locally" } : {}),
+      extra: { decision, reply, permission: entry.permission }
+    });
+  }
+
   async respondToQuestion(requestId: string, answers: Record<string, string>): Promise<void> {
     if (requestId.startsWith("bridge:")) {
       if (!this.bridge) return;
@@ -563,12 +652,87 @@ export class OpencodeDriver implements CliDriver {
     throw new Error("opencode question reply failed: no accepted route");
   }
 
+  private sessionAllowKey(parsed: Pick<ParsedOpencodePermission, "permission" | "patterns">): string {
+    return `${parsed.permission}\n${[...parsed.patterns].sort().join("\n")}`;
+  }
+
+  private isSessionAllowed(parsed: ParsedOpencodePermission): boolean {
+    return this.sessionAllows.get(parsed.sessionID)?.has(this.sessionAllowKey(parsed)) ?? false;
+  }
+
+  private async replyPermission(
+    info: { port: number; authHeader: string } | undefined,
+    sessionID: string,
+    requestID: string,
+    reply: "once" | "always" | "reject"
+  ): Promise<"replied" | "missing"> {
+    if (!info) throw new Error("opencode permission reply has no live server");
+    const payload = JSON.stringify({ reply });
+    const headers = { "Content-Type": "application/json", Authorization: info.authHeader };
+    for (const base of [
+      `/session/${sessionID}/permission/${requestID}/reply`,
+      `/api/session/${sessionID}/permission/${requestID}/reply`
+    ]) {
+      const res = await fetch(`http://127.0.0.1:${info.port}${base}`, { method: "POST", headers, body: payload });
+      if (res.status === 404) continue;
+      if (!res.ok) throw new Error(`opencode permission reply failed: ${res.status}`);
+      const contentType = res.headers.get("content-type") ?? "";
+      if (contentType.includes("text/html")) continue;
+      return "replied";
+    }
+    return "missing";
+  }
+
+  private async pollSessionPermissions(turnId: string): Promise<void> {
+    if (!this.procs.has(turnId)) return;
+    const info = this.watchInfo.get(turnId);
+    const sessionID = this.sessionIds.get(turnId);
+    if (!info || !sessionID) return;
+    const headers = { Authorization: info.authHeader };
+    const encoded = encodeURIComponent(sessionID);
+    for (const path of [`/session/${encoded}/permission`, `/api/session/${encoded}/permission`, `/permission`]) {
+      let res: Response;
+      try {
+        res = await fetch(`http://127.0.0.1:${info.port}${path}`, { headers });
+      } catch {
+        return;
+      }
+      if (!res.ok) continue;
+      if ((res.headers.get("content-type") ?? "").includes("text/html")) continue;
+      let payload: unknown;
+      try {
+        payload = (await res.json()) as unknown;
+      } catch {
+        continue;
+      }
+      for (const parsed of parseOpencodePermissionList(payload)) {
+        if (parsed.sessionID !== sessionID) continue;
+        if (this.pendingApprovals.has(parsed.requestId)) continue;
+        if (this.isSessionAllowed(parsed)) {
+          void this.replyPermission(info, parsed.sessionID, parsed.requestId, "once").catch(() => {});
+          continue;
+        }
+        this.pendingApprovals.set(parsed.requestId, { ...parsed, turnId, cwd: info.cwd });
+        this.emit(permissionApprovalOf(parsed, turnId, info.cwd));
+      }
+      return;
+    }
+  }
+
   private resolvePendingFor(turnId: string, answers: Record<string, string> | null): void {
     for (const [requestId, entry] of [...this.pendingQuestions]) {
       if (entry.turnId !== turnId) continue;
       this.pendingQuestions.delete(requestId);
       if (requestId.startsWith("bridge:")) this.bridge?.abandon(requestId);
       this.emit({ type: "question.resolved", turnId, requestId, answers });
+    }
+  }
+
+  private resolveApprovalsFor(turnId: string): void {
+    for (const [requestId, entry] of [...this.pendingApprovals]) {
+      if (entry.turnId !== turnId) continue;
+      this.pendingApprovals.delete(requestId);
+      this.emit({ type: "approval.resolved", turnId, requestId });
     }
   }
 
@@ -599,6 +763,8 @@ export class OpencodeDriver implements CliDriver {
     this.disposeBridge();
     for (const timer of this.pollTimers.values()) clearInterval(timer);
     this.pollTimers.clear();
+    this.pendingApprovals.clear();
+    this.sessionAllows.clear();
     this.pool.dispose();
   }
 }
