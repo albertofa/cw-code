@@ -138,6 +138,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const [preview, setPreview] = useState<{ targetId: string; section: SidebarSection; before: boolean } | null>(null);
   const [landedId, setLandedId] = useState<string | null>(null);
   const draggedRef = useRef<{ id: string; section: SidebarSection } | null>(null);
+  const lastHover = useRef<{ x: number; y: number } | null>(null);
   const rowRefs = useRef(new Map<string, HTMLDivElement>());
   const prevRects = useRef(new Map<string, { top: number; height: number }>());
   useLayoutEffect(() => {
@@ -281,6 +282,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
     const fromSection = from.section;
     setDragged(null);
     draggedRef.current = null;
+    lastHover.current = null;
     setPreview(null);
     if (targetId === fromId && fromSection === toSection) return;
     const nextMain = orderedMainAll.filter((s) => s.id !== fromId);
@@ -345,6 +347,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
       draggable={renamingId !== s.id && !query}
       onDragStart={(e) => {
         draggedRef.current = { id: s.id, section };
+        lastHover.current = null;
         setDragged({ id: s.id, section });
         e.dataTransfer.effectAllowed = "move";
         e.dataTransfer.setData("text/plain", s.id);
@@ -353,6 +356,8 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
         if (!allowsDrop(e)) return;
         e.preventDefault();
         e.dataTransfer.dropEffect = "move";
+        if (lastHover.current?.x === e.clientX && lastHover.current?.y === e.clientY) return;
+        lastHover.current = { x: e.clientX, y: e.clientY };
         if (draggedRef.current?.id === s.id) return;
         const before = hoverBefore(e, e.currentTarget);
         setPreview((prev) =>
@@ -377,6 +382,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
       }}
       onDragEnd={() => {
         draggedRef.current = null;
+        lastHover.current = null;
         setDragged(null);
         setPreview(null);
       }}
