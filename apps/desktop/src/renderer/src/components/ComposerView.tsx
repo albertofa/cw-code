@@ -172,9 +172,11 @@ export function ComposerView({
               {isImage(a) ? (
                 <ImageThumb target={imageTarget} path={a} className="chip-thumb" />
               ) : (
-                <span aria-hidden>@</span>
+                <>
+                  <span aria-hidden>@</span>
+                  <span className="chip-name">{a}</span>
+                </>
               )}
-              <span className="chip-name">{a}</span>
               <button
                 className="chip-x"
                 aria-label={`Remove ${a}`}
