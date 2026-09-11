@@ -32,8 +32,9 @@ import {
   turnMessagesOf
 } from "./opencodeMessage.js";
 import { mapOpencodeMessages } from "./opencodeHistory.js";
-import { listOpencodeModels, mapEffortToVariant } from "./opencodeModels.js";
 import { assertInside } from "../../fs/FileService.js";
+import { listOpencodeModels, mapEffortToVariant } from "./opencodeModels.js";
+import { opencodeFileArgs } from "./opencodeArgs.js";
 import { OpencodeServerPool } from "./opencodeServerPool.js";
 import { previewText, traceHarnessCall, truncateError } from "../../debug/harnessTrace.js";
 

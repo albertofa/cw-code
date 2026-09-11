@@ -15,6 +15,8 @@ import { QuestionDock } from "./QuestionDock.js";
 import { WorkingPill, useWorkingWord } from "./WorkingPill.js";
 import { formatDuration, orderToolsForDisplay } from "./toolSummaries.js";
 import { collectSubagents, describeSubagent, isSubagentMessage, type SubagentGroup } from "./subagents.js";
+import { splitImageMentions } from "./imagePreview.js";
+import { ImageThumb } from "./ImageThumb.js";
 
 export function ThreadView({ rightVisible, onToggleRight }: { rightVisible: boolean; onToggleRight: () => void }) {
   const {
@@ -157,7 +159,18 @@ export function ThreadView({ rightVisible, onToggleRight }: { rightVisible: bool
             if (m.role === "user") {
               return (
                 <div key={m.id} className="msg-user">
-                  {m.text}
+                  {splitImageMentions(m.text).map((seg, i) =>
+                    seg.kind === "image" ? (
+                      <ImageThumb
+                        key={i}
+                        target={{ sessionId: session.id, projectId: project?.id }}
+                        path={seg.path}
+                        className="msg-image-thumb"
+                      />
+                    ) : (
+                      <span key={i}>{seg.value}</span>
+                    )
+                  )}
                 </div>
               );
             }

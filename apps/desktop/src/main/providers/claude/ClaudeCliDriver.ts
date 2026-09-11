@@ -19,6 +19,7 @@ import { killProcessTree } from "../../processTree.js";
 import { attributeClaudeSubagentEvent, buildClaudeAllowRule, claudeAllowResponse, claudeApprovalRequest, claudeQuestionRequest, claudeDenyResponse, claudeControlResponse, parseClaudeControlRequest, parseStreamLine, type ClaudeControlRequest } from "./claudeStreamParser.js";
 import { listClaudeSessions } from "./claudeSessions.js";
 import { readClaudeHistory } from "./claudeHistory.js";
+import { buildClaudeUserContent } from "./claudeUserContent.js";
 import { previewText, traceHarnessCall, truncateError } from "../../debug/harnessTrace.js";
 
 export const CLAUDE_CURATED_MODELS = [
@@ -236,7 +237,7 @@ export class ClaudeCliDriver implements CliDriver {
       }
     });
     child.stdin?.write(
-      `${JSON.stringify({ type: "user", message: { role: "user", content: request.prompt } })}\n`
+      `${JSON.stringify({ type: "user", message: { role: "user", content: buildClaudeUserContent(request.cwd, request.prompt, request.attachments) } })}\n`
     );
 
     let stderr = "";
