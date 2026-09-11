@@ -36,6 +36,17 @@ export class SessionStore {
         project.rootPath = normalized;
         migrated = true;
       }
+      if (project.githubAccount) {
+        const host = typeof project.githubAccount.host === "string" ? project.githubAccount.host.trim().toLowerCase() : "";
+        const login = typeof project.githubAccount.login === "string" ? project.githubAccount.login.trim() : "";
+        if (!host || !login) {
+          delete project.githubAccount;
+          migrated = true;
+        } else if (host !== project.githubAccount.host || login !== project.githubAccount.login) {
+          project.githubAccount = { host, login };
+          migrated = true;
+        }
+      }
     }
     for (const session of this.data.sessions) {
       if (!session.worktreePath) continue;
@@ -74,6 +85,18 @@ export class SessionStore {
 
   getProject(id: string): Project | undefined {
     return this.data.projects.find((p) => p.id === id);
+  }
+
+  updateProject(id: string, patch: Partial<Pick<Project, "githubAccount">>, clearGitHubAccount = false): Project {
+    const project = this.getProject(id);
+    if (!project) throw new Error(`unknown project ${id}`);
+    if (clearGitHubAccount) delete project.githubAccount;
+    else if (patch.githubAccount !== undefined) project.githubAccount = {
+      host: patch.githubAccount.host.trim().toLowerCase(),
+      login: patch.githubAccount.login.trim()
+    };
+    this.persist();
+    return { ...project, ...(project.githubAccount ? { githubAccount: { ...project.githubAccount } } : {}) };
   }
 
   createSession(

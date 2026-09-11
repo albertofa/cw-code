@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { GitService, parsePrNumber, parsePullRequest, parseWorktreeList, worktreeNameFor } from "./GitService.js";
+import { GitService, parseGitHubAccounts, parseGitHubRemote, parsePrNumber, parsePullRequest, parseWorktreeList, selectGitHubAccount, worktreeNameFor } from "./GitService.js";
 
 describe("parsePrNumber", () => {
   it("parses a PR number", () => {
@@ -68,6 +68,33 @@ describe("parsePullRequest", () => {
 
   it("degrades gracefully for invalid gh output", () => {
     expect(parsePullRequest("not-json")).toBeNull();
+  });
+});
+
+describe("GitHub account discovery", () => {
+  const accounts = parseGitHubAccounts(JSON.stringify({ hosts: { "github.com": [
+    { login: "personal", active: true, state: "success" },
+    { login: "acme", active: false, state: "success" }
+  ] } }));
+
+  it("parses HTTPS and SSH remotes", () => {
+    expect(parseGitHubRemote("https://github.com/acme/app.git")).toMatchObject({ host: "github.com", owner: "acme", repository: "app", slug: "acme/app" });
+    expect(parseGitHubRemote("git@github.example.com:team/service.git")).toMatchObject({ host: "github.example.com", owner: "team", repository: "service" });
+  });
+
+  it("prefers a matching repository owner without changing the active account", () => {
+    expect(selectGitHubAccount(accounts, "github.com", "acme")).toMatchObject({ account: { login: "acme" }, source: "owner", error: null });
+  });
+
+  it("honors a project override and reports stale selections", () => {
+    expect(selectGitHubAccount(accounts, "github.com", "org", { host: "github.com", login: "personal" })).toMatchObject({ account: { login: "personal" }, source: "project" });
+    expect(selectGitHubAccount(accounts, "github.com", "org", { host: "github.com", login: "missing" })).toMatchObject({ account: null, source: "project" });
+  });
+
+  it("selects the only account with repository access", () => {
+    const checked = accounts.map((account) => ({ ...account, hasRepositoryAccess: account.login === "acme" }));
+    expect(selectGitHubAccount(checked, "github.com", "company-org")).toMatchObject({ account: { login: "acme" }, source: "access" });
+    expect(selectGitHubAccount(checked, "github.com", "company-org", { host: "github.com", login: "personal" })).toMatchObject({ account: null, source: "project" });
   });
 });
 

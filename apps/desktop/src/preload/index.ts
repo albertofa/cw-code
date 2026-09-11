@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { AppSettings, CreateSessionOptions, GitBranchInfo, GitDiffMode, GitDiffResult, GitStatus } from "@cw-code/contracts";
+import type { AppSettings, CreateSessionOptions, GitBranchInfo, GitDiffMode, GitDiffResult, GitStatus, Project, SourceControlHealth } from "@cw-code/contracts";
 
 export type PermissionMode = "auto" | "acceptEdits" | "bypassPermissions" | "manual" | "plan";
 export type EffortLevel = "low" | "medium" | "high" | "xhigh" | "max";
@@ -32,8 +32,8 @@ export interface CwApi {
   }>>;
   isDev: boolean;
   openHarnessTrace(): Promise<{ ok: boolean; path?: string; error?: string }>;
-  listProjects(): Promise<Array<{ id: string; rootPath: string; name: string }>>;
-  addProject(rootPath: string): Promise<{ id: string; rootPath: string; name: string }>;
+  listProjects(): Promise<Project[]>;
+  addProject(rootPath: string): Promise<Project>;
   listSessions(projectId: string): Promise<unknown[]>;
   listDiscovered(projectId: string): Promise<unknown[]>;
   importSession(projectId: string, driver: DriverName, resumeCursor: string, title: string): Promise<unknown>;
@@ -55,6 +55,9 @@ export interface CwApi {
   listProjectBranches(projectId: string): Promise<GitBranchInfo[]>;
   switchGitBranch(sessionId: string, branch: string): Promise<GitStatus>;
   getGitDiff(sessionId: string, mode: GitDiffMode, baseRef?: string): Promise<GitDiffResult>;
+  getSourceControlHealth(projectId?: string): Promise<SourceControlHealth>;
+  setProjectGitHubAccount(projectId: string, account: { host: string; login: string } | null): Promise<Project>;
+  setRepositoryGitIdentity(projectId: string, name: string, email: string): Promise<void>;
   onTurnEvent(cb: (event: unknown) => void): () => void;
   readFile(sessionId: string, path: string): Promise<string>;
   readOutsideFile(path: string): Promise<string>;
@@ -118,6 +121,11 @@ const api: CwApi = {
   switchGitBranch: (sessionId: string, branch: string) => ipcRenderer.invoke("git.switchBranch", { sessionId, branch }),
   getGitDiff: (sessionId: string, mode: GitDiffMode, baseRef?: string) =>
     ipcRenderer.invoke("git.diff", { sessionId, mode, baseRef }),
+  getSourceControlHealth: (projectId?: string) => ipcRenderer.invoke("git.health", { projectId }),
+  setProjectGitHubAccount: (projectId: string, account: { host: string; login: string } | null) =>
+    ipcRenderer.invoke("git.setProjectAccount", { projectId, account }),
+  setRepositoryGitIdentity: (projectId: string, name: string, email: string) =>
+    ipcRenderer.invoke("git.setIdentity", { projectId, name, email }),
   onTurnEvent: (cb) => {
     const listener = (_e: unknown, event: unknown) => cb(event);
     ipcRenderer.on("turn.event", listener as never);

@@ -1,7 +1,7 @@
 import { normalize } from "node:path";
 import type { AppSettings, ModelOption } from "@cw-code/contracts";
 
-export type CliBinary = "claude" | "opencode" | "codex";
+export type CliBinary = "claude" | "opencode" | "codex" | "git" | "gh";
 
 export function defaultCliBinaryPath(binary: CliBinary, platform: NodeJS.Platform = process.platform): string {
   return platform === "win32" ? `${binary}.exe` : binary;

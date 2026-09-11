@@ -2848,6 +2848,29 @@ body {
   color: var(--muted);
 }
 
+.settings-section-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.settings-recheck { display: inline-flex; align-items: center; gap: 5px; padding: 4px 8px; font-size: 11px; }
+.settings-number-field { grid-column: 2; grid-row: 1 / span 2; display: flex; align-items: center; gap: 8px; color: var(--faint); }
+.settings-number-field .field { width: 110px; }
+.settings-toggle { grid-column: 2; grid-row: 1 / span 2; justify-self: end; }
+.settings-health { margin-top: 12px; }
+.source-health-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.source-health-item,
+.settings-repo-summary { display: flex; align-items: center; gap: 8px; min-width: 0; padding: 9px 10px; border: 1px solid var(--border-soft); border-radius: var(--r-md); color: var(--dim); }
+.source-health-item > span,
+.settings-repo-summary > span { display: flex; flex-direction: column; min-width: 0; }
+.source-health-item b,
+.settings-repo-summary b { color: var(--text); font-size: 12px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.source-health-item small,
+.settings-repo-summary small { color: var(--faint); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.source-health-item.ok,
+.source-health-ok { color: var(--success); }
+.source-health-item.error,
+.source-health-issue.error { color: var(--danger); }
+.source-health-issue,
+.source-health-ok { display: flex; align-items: center; gap: 6px; padding: 6px 2px; font-size: 11px; }
+.source-health-issue.warning { color: var(--warning); }
+
 .settings-row {
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
@@ -3516,6 +3539,8 @@ button.gitbar-pr:hover {
 .gitbar-checks {
   white-space: nowrap;
 }
+
+.gitbar-account { color: var(--muted); white-space: nowrap; }
 
 .gitbar-checks.failed,
 .gitbar-error,

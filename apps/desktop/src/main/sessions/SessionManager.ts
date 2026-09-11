@@ -49,7 +49,7 @@ export class SessionManager {
     const settingsPath = opts.settingsPath ?? join(app.getPath("userData"), "cw-settings.json");
     this.settings = new SettingsStore(settingsPath);
     this.onEvent = opts.onEvent ?? (() => {});
-    this.git = opts.gitService ?? new GitService();
+    this.git = opts.gitService ?? new GitService(() => this.settings.get());
     this.worktreesRoot = opts.worktreesRoot ?? join(app.getPath("userData"), "worktrees");
     const getSettings = (): AppSettings => this.settings.get();
     this.drivers = {
@@ -95,6 +95,22 @@ export class SessionManager {
 
   addProject(rootPath: string): Project {
     return this.store.addProject(rootPath);
+  }
+
+  getProject(projectId: string): Project {
+    const project = this.store.getProject(projectId);
+    if (!project) throw new Error(`unknown project ${projectId}`);
+    return project;
+  }
+
+  projectForSession(sessionId: string): Project {
+    const session = this.store.getSession(sessionId);
+    if (!session) throw new Error(`unknown session ${sessionId}`);
+    return this.getProject(session.projectId);
+  }
+
+  setProjectGitHubAccount(projectId: string, account: { host: string; login: string } | null): Project {
+    return this.store.updateProject(projectId, { githubAccount: account ?? undefined }, account === null);
   }
 
   async listSessions(projectId: string): Promise<SessionMeta[]> {

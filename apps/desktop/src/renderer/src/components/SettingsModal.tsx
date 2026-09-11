@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
-import { Star } from "lucide-react";
-import type { AppSettings, DriverName } from "../cw.js";
+import { AlertTriangle, CheckCircle2, GitBranch, RefreshCw, Star, XCircle } from "lucide-react";
+import type { AppSettings, DriverName, SourceControlHealth } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import { useNotifs } from "./Notifications.js";
 import { DriverIcon } from "./DriverIcon.js";
@@ -18,7 +18,7 @@ const CURATED_MODELS = [
   { id: "claude-haiku-4-5-20251001", label: "Haiku 4.5" }
 ];
 
-type Category = "general" | "harnesses";
+type Category = "general" | "sourceControl" | "harnesses";
 type Harness = DriverName;
 
 export function SettingsModal({
@@ -35,6 +35,13 @@ export function SettingsModal({
   const [saveError, setSaveError] = useState<string | null>(null);
   const [category, setCategory] = useState<Category>("harnesses");
   const [harness, setHarness] = useState<Harness>(initialHarness);
+  const [health, setHealth] = useState<SourceControlHealth | null>(null);
+  const [healthLoading, setHealthLoading] = useState(false);
+  const [projectAccount, setProjectAccount] = useState("");
+  const [gitUserName, setGitUserName] = useState("");
+  const [gitUserEmail, setGitUserEmail] = useState("");
+  const activeProjectId = useAppStore((state) => state.activeProjectId);
+  const activeProject = useAppStore((state) => state.projects.find((project) => project.id === state.activeProjectId));
 
   const load = useCallback(() => {
     setLoading(true);
@@ -54,6 +61,32 @@ export function SettingsModal({
     setCategory("harnesses");
     setHarness(initialHarness);
   }, [initialHarness]);
+
+  useEffect(() => {
+    setProjectAccount(activeProject?.githubAccount ? `${activeProject.githubAccount.host}\t${activeProject.githubAccount.login}` : "");
+  }, [activeProject?.id, activeProject?.githubAccount?.host, activeProject?.githubAccount?.login]);
+
+  const loadSourceControlHealth = useCallback(() => {
+    setHealthLoading(true);
+    void window.cw.getSourceControlHealth(activeProjectId ?? undefined)
+      .then((next) => {
+        setHealth(next);
+        setGitUserName(next.repository.userName ?? "");
+        setGitUserEmail(next.repository.userEmail ?? "");
+      })
+      .catch((error: Error) => setHealth({
+        git: { path: "git", available: false, version: null, error: error.message },
+        githubCli: { path: "gh", available: false, version: null, error: error.message },
+        repository: { available: false, root: null, branch: null, remoteUrl: null, githubHost: null, githubRepository: null, userName: null, userEmail: null, error: error.message },
+        github: { accounts: [], selectedAccount: null, selectionSource: "none", error: error.message },
+        issues: [{ level: "error", message: error.message }]
+      }))
+      .finally(() => setHealthLoading(false));
+  }, [activeProjectId]);
+
+  useEffect(() => {
+    if (category === "sourceControl") loadSourceControlHealth();
+  }, [category, loadSourceControlHealth]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
@@ -123,20 +156,28 @@ export function SettingsModal({
     );
   };
 
-  const onSave = () => {
+  const onSave = async () => {
     if (!draft || saving) return;
     setSaving(true);
     setSaveError(null);
-    void useAppStore
-      .getState()
-      .saveSettings(draft)
-      .then(() => onClose())
-      .catch((err) => {
-        const message = err instanceof Error ? err.message : "Could not save settings";
-        setSaveError(message);
-        useNotifs.getState().push({ kind: "error", title: "Could not save settings", message });
-      })
-      .finally(() => setSaving(false));
+    try {
+      const store = useAppStore.getState();
+      await store.saveSettings(draft);
+      if (activeProjectId) {
+        const [host, login] = projectAccount.split("\t");
+        await store.setProjectGitHubAccount(activeProjectId, host && login ? { host, login } : null);
+        if (health?.repository.available && (gitUserName.trim() !== (health.repository.userName ?? "") || gitUserEmail.trim() !== (health.repository.userEmail ?? ""))) {
+          await window.cw.setRepositoryGitIdentity(activeProjectId, gitUserName, gitUserEmail);
+        }
+      }
+      onClose();
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Could not save settings";
+      setSaveError(message);
+      useNotifs.getState().push({ kind: "error", title: "Could not save settings", message });
+    } finally {
+      setSaving(false);
+    }
   };
 
   const pickHarness = (h: Harness) => {
@@ -276,6 +317,99 @@ export function SettingsModal({
     </>
   );
 
+  const sourceControlFields = draft && (
+    <>
+      <section className="settings-section">
+        <div className="settings-section-title">
+          <h3>Tools and refresh</h3>
+          <button className="btn settings-recheck" onClick={loadSourceControlHealth} disabled={healthLoading}>
+            <RefreshCw size={12} /> {healthLoading ? "Checking…" : "Recheck"}
+          </button>
+        </div>
+        <label className="settings-row">
+          <span className="settings-label">Git executable</span>
+          <span className="settings-hint">Used for status, branches, diffs, identity, and worktrees.</span>
+          <input className="field" value={draft.gitBinaryPath} placeholder="git" onChange={(e) => set({ gitBinaryPath: e.target.value })} />
+        </label>
+        <label className="settings-row">
+          <span className="settings-label">GitHub CLI executable</span>
+          <span className="settings-hint">Used for account discovery and pull-request status.</span>
+          <input className="field" value={draft.githubCliBinaryPath} placeholder="gh" onChange={(e) => set({ githubCliBinaryPath: e.target.value })} />
+        </label>
+        <label className="settings-row">
+          <span className="settings-label">Automatic refresh</span>
+          <span className="settings-hint">Poll Git status and GitHub PR checks in the active project. Minimum 5 seconds.</span>
+          <span className="settings-number-field">
+            <input className="field" type="number" min={5} max={3600} value={draft.sourceControlRefreshIntervalSeconds} onChange={(e) => set({ sourceControlRefreshIntervalSeconds: Number(e.target.value) })} />
+            <span>seconds</span>
+          </span>
+        </label>
+        <label className="settings-row">
+          <span className="settings-label">New-session worktrees</span>
+          <span className="settings-hint">Create an isolated branch and worktree for every new Git session by default.</span>
+          <input className="settings-toggle" type="checkbox" checked={draft.defaultUseWorktree} onChange={(e) => set({ defaultUseWorktree: e.target.checked })} />
+        </label>
+      </section>
+
+      <section className="settings-section settings-health">
+        <h3>Health</h3>
+        {!health && healthLoading && <div className="side-empty">Inspecting source control…</div>}
+        {health && (
+          <>
+            <div className="source-health-grid">
+              <div className={`source-health-item ${health.git.available ? "ok" : "error"}`}>
+                {health.git.available ? <CheckCircle2 size={14} /> : <XCircle size={14} />}
+                <span><b>Git</b><small>{health.git.version ?? health.git.error ?? "Unavailable"}</small></span>
+              </div>
+              <div className={`source-health-item ${health.githubCli.available ? "ok" : "error"}`}>
+                {health.githubCli.available ? <CheckCircle2 size={14} /> : <XCircle size={14} />}
+                <span><b>GitHub CLI</b><small>{health.githubCli.version ?? health.githubCli.error ?? "Unavailable"}</small></span>
+              </div>
+            </div>
+            {health.issues.map((issue, index) => <div key={`${issue.level}:${index}`} className={`source-health-issue ${issue.level}`}><AlertTriangle size={13} /> {issue.message}</div>)}
+            {health.issues.length === 0 && <div className="source-health-ok"><CheckCircle2 size={13} /> Source control is ready.</div>}
+          </>
+        )}
+      </section>
+
+      {activeProjectId && health?.repository.available && (
+        <section className="settings-section">
+          <h3>{activeProject?.name ?? "Current project"}</h3>
+          <div className="settings-repo-summary">
+            <GitBranch size={14} />
+            <span><b>{health.repository.githubRepository ?? health.repository.root}</b><small>{health.repository.remoteUrl ?? "No remote"}</small></span>
+          </div>
+          <label className="settings-row">
+            <span className="settings-label">GitHub account</span>
+            <span className="settings-hint">Auto discovery currently resolves {health.github.selectedAccount ? `@${health.github.selectedAccount}` : "no account"}{health.github.selectionSource !== "none" ? ` by ${health.github.selectionSource}` : ""}.</span>
+            <select className="field" value={projectAccount} onChange={(e) => setProjectAccount(e.target.value)}>
+              <option value="">Automatic (recommended)</option>
+              {activeProject?.githubAccount && !health.github.accounts.some((account) => account.host === activeProject.githubAccount?.host && account.login === activeProject.githubAccount?.login) && (
+                <option value={`${activeProject.githubAccount.host}\t${activeProject.githubAccount.login}`} disabled>{activeProject.githubAccount.login} · {activeProject.githubAccount.host} · unavailable</option>
+              )}
+              {health.github.accounts.map((account) => (
+                <option key={`${account.host}:${account.login}`} value={`${account.host}\t${account.login}`} disabled={!account.authenticated}>
+                  {account.login} · {account.host}{account.active ? " · active" : ""}{account.hasRepositoryAccess === false ? " · no access" : ""}
+                </option>
+              ))}
+            </select>
+          </label>
+          <label className="settings-row">
+            <span className="settings-label">Commit author name</span>
+            <span className="settings-hint">Stored in this repository’s local Git config.</span>
+            <input className="field" value={gitUserName} placeholder="Your name" onChange={(e) => setGitUserName(e.target.value)} />
+          </label>
+          <label className="settings-row">
+            <span className="settings-label">Commit author email</span>
+            <span className="settings-hint">Use the email associated with this project’s GitHub account.</span>
+            <input className="field" type="email" value={gitUserEmail} placeholder="you@example.com" onChange={(e) => setGitUserEmail(e.target.value)} />
+          </label>
+        </section>
+      )}
+      {!activeProjectId && <div className="side-empty">Select a project to configure its repository and GitHub account.</div>}
+    </>
+  );
+
   return (
     <div className="settings-backdrop" onClick={onClose}>
       <div className="settings-modal" role="dialog" aria-label="Settings" onClick={(e) => e.stopPropagation()}>
@@ -293,6 +427,13 @@ export function SettingsModal({
               aria-current={category === "general"}
             >
               General
+            </button>
+            <button
+              className={`settings-nav-item${category === "sourceControl" ? " active" : ""}`}
+              onClick={() => setCategory("sourceControl")}
+              aria-current={category === "sourceControl"}
+            >
+              Source Control
             </button>
             <div className="settings-nav-group">Harnesses</div>
             <button
@@ -332,6 +473,7 @@ export function SettingsModal({
             {!loading && !loadError && draft && category === "general" && (
               <div className="side-empty">Nothing here yet.</div>
             )}
+            {!loading && !loadError && draft && category === "sourceControl" && sourceControlFields}
             {!loading && !loadError && draft && category === "harnesses" && (
               <>
                 <div className="harness-row" role="group" aria-label="Harness">

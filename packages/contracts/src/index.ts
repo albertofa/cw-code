@@ -13,6 +13,10 @@ export type {
   GitBranchInfo,
   GitDiffMode,
   GitDiffResult,
+  GitHubAccountInfo,
+  GitHubAccountSelectionSource,
+  SourceControlBinaryHealth,
+  SourceControlHealth,
   CreateSessionOptions
 } from "./session.js";
 export type { ThreadEvent, SessionEvent, HistoryMessage, SubagentToolActivity, SubagentToolSummary, ApprovalDecision, ApprovalKind, ApprovalRequest, QuestionInfo, QuestionOption, QuestionRequest } from "./events.js";

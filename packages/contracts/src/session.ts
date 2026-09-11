@@ -4,6 +4,8 @@ export interface Project {
   id: string;
   rootPath: string;
   name: string;
+  /** Optional override. When omitted, cw-code resolves the best authenticated account. */
+  githubAccount?: { host: string; login: string };
 }
 
 export interface SessionMeta {
@@ -95,7 +97,50 @@ export interface GitStatus {
   prNumber: number | null;
   pullRequest: GitPullRequest | null;
   githubError: string | null;
+  githubHost: string | null;
+  githubAccount: string | null;
+  githubAccountSource: GitHubAccountSelectionSource;
   clean: boolean;
+}
+
+export type GitHubAccountSelectionSource = "project" | "owner" | "access" | "single" | "active" | "none";
+
+export interface GitHubAccountInfo {
+  host: string;
+  login: string;
+  active: boolean;
+  authenticated: boolean;
+  hasRepositoryAccess: boolean | null;
+}
+
+export interface SourceControlBinaryHealth {
+  path: string;
+  available: boolean;
+  version: string | null;
+  error: string | null;
+}
+
+export interface SourceControlHealth {
+  git: SourceControlBinaryHealth;
+  githubCli: SourceControlBinaryHealth;
+  repository: {
+    available: boolean;
+    root: string | null;
+    branch: string | null;
+    remoteUrl: string | null;
+    githubHost: string | null;
+    githubRepository: string | null;
+    userName: string | null;
+    userEmail: string | null;
+    error: string | null;
+  };
+  github: {
+    accounts: GitHubAccountInfo[];
+    selectedAccount: string | null;
+    selectionSource: GitHubAccountSelectionSource;
+    error: string | null;
+  };
+  issues: Array<{ level: "error" | "warning"; message: string }>;
 }
 
 export interface GitBranchInfo {

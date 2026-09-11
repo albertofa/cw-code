@@ -52,7 +52,7 @@ function loadRightWidth(): number {
 }
 
 export function App() {
-  const { activeProjectId, activeSessionId, sessionsByProject, pendingDriver, preview } = useAppStore();
+  const { activeProjectId, activeSessionId, sessionsByProject, pendingDriver, preview, sourceControlRefreshIntervalSeconds } = useAppStore();
   const store = useAppStore();
   const [rightTab, setRightTab] = useState<RightTab>("files");
   const [rightVisible, setRightVisible] = useState(true);
@@ -127,6 +127,36 @@ export function App() {
       window.removeEventListener("keydown", onKey);
     };
   }, []);
+
+  const activeSessionKey = activeProjectId
+    ? (sessionsByProject[activeProjectId] ?? []).map((session) => session.id).join("|")
+    : "";
+
+  useEffect(() => {
+    if (!activeProjectId || !activeSessionKey) return;
+    let running = false;
+    const refresh = async () => {
+      if (running || document.hidden) return;
+      running = true;
+      try {
+        const current = useAppStore.getState();
+        const sessions = current.sessionsByProject[activeProjectId] ?? [];
+        await Promise.all(sessions.map((session) => current.refreshGitStatus(session.id)));
+      } finally {
+        running = false;
+      }
+    };
+    const onVisibility = () => {
+      if (!document.hidden) void refresh();
+    };
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), sourceControlRefreshIntervalSeconds * 1000);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [activeProjectId, activeSessionKey, sourceControlRefreshIntervalSeconds]);
 
   useEffect(() => {
     if (!window.cw) return;

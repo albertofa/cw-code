@@ -2,6 +2,7 @@ export interface Project {
   id: string;
   rootPath: string;
   name: string;
+  githubAccount?: { host: string; login: string };
 }
 
 export type DriverName = "claude" | "opencode" | "codex";
@@ -154,7 +155,35 @@ export interface GitStatus {
   prNumber: number | null;
   pullRequest: GitPullRequest | null;
   githubError: string | null;
+  githubHost: string | null;
+  githubAccount: string | null;
+  githubAccountSource: GitHubAccountSelectionSource;
   clean: boolean;
+}
+
+export type GitHubAccountSelectionSource = "project" | "owner" | "access" | "single" | "active" | "none";
+
+export interface GitHubAccountInfo {
+  host: string;
+  login: string;
+  active: boolean;
+  authenticated: boolean;
+  hasRepositoryAccess: boolean | null;
+}
+
+export interface SourceControlHealth {
+  git: { path: string; available: boolean; version: string | null; error: string | null };
+  githubCli: { path: string; available: boolean; version: string | null; error: string | null };
+  repository: {
+    available: boolean; root: string | null; branch: string | null; remoteUrl: string | null;
+    githubHost: string | null; githubRepository: string | null; userName: string | null;
+    userEmail: string | null; error: string | null;
+  };
+  github: {
+    accounts: GitHubAccountInfo[]; selectedAccount: string | null;
+    selectionSource: GitHubAccountSelectionSource; error: string | null;
+  };
+  issues: Array<{ level: "error" | "warning"; message: string }>;
 }
 
 export interface GitPullRequest {
@@ -202,6 +231,10 @@ export interface AppSettings {
   claudeDefaultModel: string;
   claudeEnabledModels: string[];
   claudeCustomModel: CustomModel;
+  gitBinaryPath: string;
+  githubCliBinaryPath: string;
+  sourceControlRefreshIntervalSeconds: number;
+  defaultUseWorktree: boolean;
 }
 
 export type SettingsPatch = Partial<AppSettings>;
@@ -241,6 +274,9 @@ export interface CwApi {
   listProjectBranches(projectId: string): Promise<GitBranchInfo[]>;
   switchGitBranch(sessionId: string, branch: string): Promise<GitStatus>;
   getGitDiff(sessionId: string, mode: GitDiffMode, baseRef?: string): Promise<GitDiffResult>;
+  getSourceControlHealth(projectId?: string): Promise<SourceControlHealth>;
+  setProjectGitHubAccount(projectId: string, account: { host: string; login: string } | null): Promise<Project>;
+  setRepositoryGitIdentity(projectId: string, name: string, email: string): Promise<void>;
   onTurnEvent(cb: (msg: { sessionId: string; event: TurnEvent }) => void): () => void;
   readFile(sessionId: string, path: string): Promise<string>;
   readOutsideFile(path: string): Promise<string>;

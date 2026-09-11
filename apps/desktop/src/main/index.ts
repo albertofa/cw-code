@@ -32,7 +32,7 @@ type DriverName = DriverKind;
 let mainWindow: BrowserWindow | null = null;
 const sessions = new SessionManager();
 const files = new FileService();
-const git = new GitService();
+const git = new GitService(() => sessions.getSettings());
 const ptys = new PtyPool(() => sessions.getSettings());
 
 async function createWindow(): Promise<void> {
@@ -186,7 +186,7 @@ function registerIpc(): void {
       sessions.setComposer(args.sessionId, args.prefs)
   );
   ipcMain.handle("git.status", (_e, args: { sessionId: string }) =>
-    git.status(sessions.rootFor(args.sessionId))
+    git.status(sessions.rootFor(args.sessionId), sessions.projectForSession(args.sessionId))
   );
   ipcMain.handle("git.branches", (_e, args: { sessionId: string }) =>
     git.branches(sessions.rootFor(args.sessionId))
@@ -195,12 +195,23 @@ function registerIpc(): void {
     git.branches(sessions.rootForProject(args.projectId))
   );
   ipcMain.handle("git.switchBranch", async (_e, args: { sessionId: string; branch: string }) => {
-    const status = await git.switchBranch(sessions.rootFor(args.sessionId), args.branch);
+    const status = await git.switchBranch(sessions.rootFor(args.sessionId), args.branch, sessions.projectForSession(args.sessionId));
     sessions.updateSessionBranch(args.sessionId, status.branch);
     return status;
   });
   ipcMain.handle("git.diff", (_e, args: { sessionId: string; mode: GitDiffMode; baseRef?: string }) =>
     git.diff(sessions.rootFor(args.sessionId), args.mode, args.baseRef)
+  );
+  ipcMain.handle("git.health", (_e, args: { projectId?: string }) => {
+    if (!args.projectId) return git.health();
+    const project = sessions.getProject(args.projectId);
+    return git.health(project.rootPath, project);
+  });
+  ipcMain.handle("git.setProjectAccount", (_e, args: { projectId: string; account: { host: string; login: string } | null }) =>
+    sessions.setProjectGitHubAccount(args.projectId, args.account)
+  );
+  ipcMain.handle("git.setIdentity", (_e, args: { projectId: string; name: string; email: string }) =>
+    git.setRepositoryIdentity(sessions.rootForProject(args.projectId), args.name, args.email)
   );
 
   ipcMain.handle("fs.readFile", (_e, args: { sessionId: string; path: string }) =>

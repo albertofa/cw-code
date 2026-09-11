@@ -70,6 +70,8 @@ interface AppState {
   setPendingWorkspace(options: CreateSessionOptions): void;
   gitStatusBySession: Record<string, GitStatus>;
   refreshGitStatus(sessionId: string): Promise<void>;
+  sourceControlRefreshIntervalSeconds: number;
+  defaultUseWorktree: boolean;
   preview: { sessionId: string; path: string; basePath: string } | null;
   openPreview(sessionId: string, path: string, basePath: string): void;
   closePreview(): void;
@@ -85,6 +87,7 @@ interface AppState {
   setComposerPrefs(sessionId: string, prefs: ComposerPrefs): Promise<void>;
   settingsVersion: number;
   saveSettings(patch: SettingsPatch): Promise<AppSettings>;
+  setProjectGitHubAccount(projectId: string, account: { host: string; login: string } | null): Promise<void>;
   loadDiscovered(): Promise<void>;
   importDiscovered(session: Session): Promise<void>;
   renameSession(sessionId: string, title: string): Promise<void>;
@@ -136,6 +139,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   pendingPrefs: { ...DEFAULT_COMPOSER },
   pendingWorkspace: { useWorktree: true },
   gitStatusBySession: {},
+  sourceControlRefreshIntervalSeconds: 30,
+  defaultUseWorktree: true,
 
   setPendingPrefs(prefs: ComposerPrefs) {
     set({ pendingPrefs: { ...get().pendingPrefs, ...prefs } });
@@ -165,8 +170,13 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   async loadProjects() {
-    const projects = await window.cw.listProjects();
-    set({ projects });
+    const [projects, settings] = await Promise.all([window.cw.listProjects(), window.cw.getSettings()]);
+    set({
+      projects,
+      sourceControlRefreshIntervalSeconds: settings.sourceControlRefreshIntervalSeconds,
+      defaultUseWorktree: settings.defaultUseWorktree,
+      pendingWorkspace: { ...get().pendingWorkspace, useWorktree: settings.defaultUseWorktree }
+    });
     if (projects.length > 0 && !get().activeProjectId) {
       await get().selectProject(projects[0].id);
     }
@@ -195,7 +205,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         activeProjectId: projectId,
         sessionsByProject: { ...get().sessionsByProject, [projectId]: sessions },
         activeSessionId: null,
-        pendingDriver: get().lastDriver
+        pendingDriver: get().lastDriver,
+        pendingWorkspace: { useWorktree: get().defaultUseWorktree }
       });
     }
     void get().loadDiscovered();
@@ -252,7 +263,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   startNewSession(driver?: DriverName) {
     if (!get().activeProjectId) return;
-    set({ pendingDriver: driver ?? get().lastDriver, activeSessionId: null });
+    set({ pendingDriver: driver ?? get().lastDriver, activeSessionId: null, pendingWorkspace: { useWorktree: get().defaultUseWorktree } });
   },
 
   setPendingDriver(driver: DriverName) {
@@ -331,8 +342,18 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   async saveSettings(patch: SettingsPatch) {
     const saved = await window.cw.setSettings(patch);
-    set({ settingsVersion: get().settingsVersion + 1 });
+    set({
+      settingsVersion: get().settingsVersion + 1,
+      sourceControlRefreshIntervalSeconds: saved.sourceControlRefreshIntervalSeconds,
+      defaultUseWorktree: saved.defaultUseWorktree
+    });
     return saved;
+  },
+
+  async setProjectGitHubAccount(projectId: string, account: { host: string; login: string } | null) {
+    const updated = await window.cw.setProjectGitHubAccount(projectId, account);
+    set({ projects: get().projects.map((project) => project.id === projectId ? updated : project) });
+    for (const session of get().sessionsByProject[projectId] ?? []) void get().refreshGitStatus(session.id);
   },
 
   async createSession(driver: DriverName, prefs?: ComposerPrefs, workspace?: CreateSessionOptions) {
