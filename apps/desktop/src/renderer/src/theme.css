@@ -588,6 +588,7 @@ body {
 .session-state {
   font-size: 10.5px;
   flex: none;
+  margin-left: auto;
 }
 
 .session-state.status-idle {
