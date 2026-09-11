@@ -39,22 +39,24 @@ function orderKeyFor(filter: string): string {
   return `cw:order:${filter}`;
 }
 
-function hoverBefore(e: DragEvent, el: HTMLElement): boolean {
-  const rect = el.getBoundingClientRect();
-  let shift = 0;
-  try {
-    shift = new DOMMatrixReadOnly(window.getComputedStyle(el).transform).m42;
-  } catch {
-    shift = 0;
-  }
-  return e.clientY < rect.top - shift + rect.height / 2;
+interface SlotRow {
+  id: string;
+  section: SidebarSection;
+  top: number;
+  height: number;
+}
+
+interface SlotSnapshot {
+  rows: SlotRow[];
+  scrollTop: number;
+  ids: string;
 }
 
 function previewPlacement(
   orderedMain: Session[],
   orderedResolved: Session[],
   dragged: { id: string; section: SidebarSection } | null,
-  preview: { targetId: string; section: SidebarSection; before: boolean } | null,
+  preview: { targetId: string | null; section: SidebarSection; before: boolean } | null,
   section: SidebarSection
 ): Session[] {
   if (!dragged || !preview) return section === "main" ? orderedMain : orderedResolved;
@@ -135,10 +137,12 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const [dragged, setDragged] = useState<{ id: string; section: SidebarSection } | null>(null);
-  const [preview, setPreview] = useState<{ targetId: string; section: SidebarSection; before: boolean } | null>(null);
+  const [preview, setPreview] = useState<{ targetId: string | null; section: SidebarSection; before: boolean } | null>(null);
   const [landedId, setLandedId] = useState<string | null>(null);
   const draggedRef = useRef<{ id: string; section: SidebarSection } | null>(null);
   const lastHover = useRef<{ x: number; y: number } | null>(null);
+  const listRef = useRef<HTMLDivElement>(null);
+  const slotSnap = useRef<SlotSnapshot | null>(null);
   const rowRefs = useRef(new Map<string, HTMLDivElement>());
   const prevRects = useRef(new Map<string, { top: number; height: number }>());
   useLayoutEffect(() => {
@@ -214,6 +218,42 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const previewing = dragged !== null && preview !== null;
   const shownPreview = (previewing ? previewMainAll : orderedMainAll).filter(matchesQuery);
   const resolvedPreview = (previewing ? previewResolvedAll : orderedResolvedAll).filter(matchesQuery);
+  const currentIds = [...orderedMainAll, ...orderedResolvedAll].map((s) => s.id).join(",");
+
+  const captureSlots = (): void => {
+    const rows: SlotRow[] = [];
+    const put = (list: Session[], section: SidebarSection) => {
+      for (const s of list) {
+        const el = rowRefs.current.get(s.id);
+        if (!el || !el.isConnected) continue;
+        const rect = el.getBoundingClientRect();
+        if (rect.height === 0) continue;
+        rows.push({ id: s.id, section, top: rect.top, height: rect.height });
+      }
+    };
+    put(orderedMainAll, "main");
+    put(orderedResolvedAll, "resolved");
+    slotSnap.current = {
+      rows,
+      scrollTop: listRef.current?.scrollTop ?? 0,
+      ids: [...orderedMainAll, ...orderedResolvedAll].map((s) => s.id).join(",")
+    };
+  };
+
+  const slotFromPoint = (clientY: number): { targetId: string | null; section: SidebarSection; before: boolean } => {
+    const snap = slotSnap.current;
+    const from = draggedRef.current;
+    const fallback = from?.section ?? "main";
+    if (!snap || !from) return { targetId: null, section: fallback, before: false };
+    const y = clientY + ((listRef.current?.scrollTop ?? 0) - snap.scrollTop);
+    for (const r of snap.rows) {
+      if (r.id === from.id) continue;
+      if (y < r.top + r.height / 2) return { targetId: r.id, section: r.section, before: true };
+      if (y < r.top + r.height) return { targetId: r.id, section: r.section, before: false };
+    }
+    const last = [...snap.rows].reverse().find((r) => r.id !== from.id);
+    return { targetId: null, section: last?.section ?? fallback, before: false };
+  };
   const visibleProjects = projectQuery
     ? projects.filter(
         (p) =>
@@ -283,6 +323,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
     setDragged(null);
     draggedRef.current = null;
     lastHover.current = null;
+    slotSnap.current = null;
     setPreview(null);
     if (targetId === fromId && fromSection === toSection) return;
     const nextMain = orderedMainAll.filter((s) => s.id !== fromId);
@@ -348,6 +389,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
       onDragStart={(e) => {
         draggedRef.current = { id: s.id, section };
         lastHover.current = null;
+        captureSlots();
         setDragged({ id: s.id, section });
         e.dataTransfer.effectAllowed = "move";
         e.dataTransfer.setData("text/plain", s.id);
@@ -358,12 +400,12 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
         e.dataTransfer.dropEffect = "move";
         if (lastHover.current?.x === e.clientX && lastHover.current?.y === e.clientY) return;
         lastHover.current = { x: e.clientX, y: e.clientY };
-        if (draggedRef.current?.id === s.id) return;
-        const before = hoverBefore(e, e.currentTarget);
+        if (slotSnap.current && slotSnap.current.ids !== currentIds) captureSlots();
+        const slot = slotFromPoint(e.clientY);
         setPreview((prev) =>
-          prev && prev.targetId === s.id && prev.section === section && prev.before === before
+          prev && prev.targetId === slot.targetId && prev.section === slot.section && prev.before === slot.before
             ? prev
-            : { targetId: s.id, section, before }
+            : slot
         );
       }}
       onDrop={(e) => {
@@ -374,7 +416,9 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
           setPreview(null);
           return;
         }
-        handleDrop(active, section, s.id, hoverBefore(e, e.currentTarget));
+        if (slotSnap.current && slotSnap.current.ids !== currentIds) captureSlots();
+        const slot = slotFromPoint(e.clientY);
+        handleDrop(active, slot.section, slot.targetId, slot.before);
       }}
       onDragLeave={(e) => {
         if (e.currentTarget.contains(e.relatedTarget as Node)) return;
@@ -383,6 +427,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
       onDragEnd={() => {
         draggedRef.current = null;
         lastHover.current = null;
+        slotSnap.current = null;
         setDragged(null);
         setPreview(null);
       }}
@@ -554,7 +599,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
           </button>
         </div>
       </div>
-      <div className="session-list">
+      <div className="session-list" ref={listRef}>
         <div
           onDragOver={(e) => {
             if (!allowsDrop(e)) return;
