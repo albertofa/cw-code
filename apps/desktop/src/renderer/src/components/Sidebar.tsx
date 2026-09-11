@@ -148,7 +148,13 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
         return;
       }
       const rect = el.getBoundingClientRect();
-      next.set(id, { top: rect.top, height: rect.height });
+      let shift = 0;
+      try {
+        shift = new DOMMatrixReadOnly(window.getComputedStyle(el).transform).m42;
+      } catch {
+        shift = 0;
+      }
+      next.set(id, { top: rect.top - shift, height: rect.height });
     });
     if (!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
       prevRects.current.forEach((prev, id) => {
