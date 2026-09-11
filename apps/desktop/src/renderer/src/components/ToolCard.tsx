@@ -134,10 +134,14 @@ export function ToolCard({
       </div>
       {open && (
         <div className="tool-detail" onClick={(e) => e.stopPropagation()}>
-          {summary?.fullSubject && <div className="tool-meta">{summary.fullSubject}</div>}
+          {summary?.fullSubject && (
+            <div className="tool-meta">
+              {basePath ? relativizeInText(basePath, summary.fullSubject) : summary.fullSubject}
+            </div>
+          )}
           {summary?.meta?.map((m) => (
             <div key={m} className="tool-meta">
-              {m}
+              {basePath ? relativizeInText(basePath, m) : m}
             </div>
           ))}
           {!summary && <pre className="tool-output">{message.text}</pre>}
