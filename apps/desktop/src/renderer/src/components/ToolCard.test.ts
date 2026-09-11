@@ -63,6 +63,35 @@ describe("describeToolCall", () => {
     expect(shell?.verb).toBe("Shell");
     expect(shell?.Icon).toBe(bash?.Icon);
   });
+
+  it("summarizes Glob with pattern and path", () => {
+    expect(describeToolCall("glob", { pattern: "**/*.ts" })?.subject).toBe("**/*.ts");
+    const both = describeToolCall("glob", { pattern: "**/*.ts", path: "src" });
+    expect(both?.subject).toBe("**/*.ts");
+    expect(both?.meta).toEqual(["in src"]);
+    expect(describeToolCall("glob", { path: "src" })?.subject).toBe("src");
+  });
+
+  it("summarizes Grep with pattern, path and include", () => {
+    const s = describeToolCall("grep", { pattern: "foo.*", path: "src", include: "*.ts" });
+    expect(s?.subject).toBe("foo.*");
+    expect(s?.meta).toEqual(["in src", "*.ts"]);
+    expect(describeToolCall("grep", { regex: "bar" })?.subject).toBe("bar");
+  });
+
+  it("summarizes Skill by name", () => {
+    expect(describeToolCall("skill", { name: "plan" })?.subject).toBe("plan");
+    expect(describeToolCall("skill", { skill: "writing-skills" })?.subject).toBe("writing-skills");
+  });
+
+  it("unwraps legacy wrapped state input", () => {
+    const wrapped = { status: "completed", input: { pattern: "**/*.ts" }, output: "x" };
+    expect(describeToolCall("glob", wrapped)?.subject).toBe("**/*.ts");
+    const grepWrapped = { status: "running", input: { pattern: "foo", path: "src" } };
+    expect(describeToolCall("grep", grepWrapped)?.subject).toBe("foo");
+    const skillWrapped = { status: "completed", input: { name: "plan" }, output: "y" };
+    expect(describeToolCall("skill", skillWrapped)?.subject).toBe("plan");
+  });
 });
 
 describe("mergeToolPairs", () => {

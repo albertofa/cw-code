@@ -87,6 +87,17 @@ interface AppState {
   applyEvent(sessionId: string, event: TurnEvent): void;
 }
 
+function finalizeTurnTools(messages: ChatMessage[], turnId: string): ChatMessage[] {
+  let changed = false;
+  const out = messages.map((m) => {
+    if (m.role !== "tool" || m.turnId !== turnId) return m;
+    if (m.toolInput === undefined || m.toolDone === true || m.toolOutput !== undefined) return m;
+    changed = true;
+    return { ...m, toolDone: true, toolCompletedAt: Date.now() };
+  });
+  return changed ? out : messages;
+}
+
 function appendAssistantText(messages: ChatMessage[], turnId: string, text: string): ChatMessage[] {
   const last = messages[messages.length - 1];
   if (last && last.role === "assistant" && last.turnId === turnId) {
@@ -441,6 +452,10 @@ export const useAppStore = create<AppState>((set, get) => ({
         busyTurns: busy,
         lastTurnStats: stats,
         pendingApprovals: approvals,
+        messagesBySession: {
+          ...get().messagesBySession,
+          [sessionId]: finalizeTurnTools(messages, event.turnId)
+        },
         usageBySession: {
           ...get().usageBySession,
           [sessionId]: {
@@ -462,7 +477,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         messagesBySession: {
           ...get().messagesBySession,
           [sessionId]: [
-            ...messages,
+            ...finalizeTurnTools(messages, event.turnId),
             { id: `${event.turnId}-e`, role: "system", text: `Error: ${event.message}`, turnId: event.turnId, isError: true }
           ]
         }

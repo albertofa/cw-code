@@ -50,6 +50,91 @@ describe("parseOpencodeLine", () => {
     expect(events[0]?.type).toBe("turn.error");
   });
 
+  it("emits running tool.call with unwrapped input and callID", () => {
+    const events = parseOpencodeLine(
+      JSON.stringify({
+        type: "tool_use",
+        sessionID: "ses_1",
+        part: {
+          id: "prt_1",
+          type: "tool",
+          tool: "read",
+          callID: "call_1",
+          state: { status: "running", input: { path: "a.ts" } }
+        }
+      }),
+      "t1",
+      freshAcc()
+    );
+    expect(events).toHaveLength(1);
+    expect(events[0]).toEqual({
+      type: "tool.call",
+      turnId: "t1",
+      toolCallId: "call_1",
+      name: "read",
+      input: { path: "a.ts" }
+    });
+  });
+
+  it("emits tool.call plus tool.result for completed tools so cards finish", () => {
+    const events = parseOpencodeLine(
+      JSON.stringify({
+        type: "tool_use",
+        sessionID: "ses_1",
+        part: {
+          id: "prt_1",
+          type: "tool",
+          tool: "read",
+          callID: "call_1",
+          state: { status: "completed", input: { path: "a.ts" }, output: "contents" }
+        }
+      }),
+      "t1",
+      freshAcc()
+    );
+    expect(events).toHaveLength(2);
+    expect(events[0]).toEqual({
+      type: "tool.call",
+      turnId: "t1",
+      toolCallId: "call_1",
+      name: "read",
+      input: { path: "a.ts" }
+    });
+    expect(events[1]).toEqual({
+      type: "tool.result",
+      turnId: "t1",
+      toolCallId: "call_1",
+      output: "contents",
+      isError: false
+    });
+  });
+
+  it("marks error tool state as failed result", () => {
+    const events = parseOpencodeLine(
+      JSON.stringify({
+        type: "tool_use",
+        sessionID: "ses_1",
+        part: {
+          id: "prt_2",
+          type: "tool",
+          tool: "bash",
+          callID: "call_2",
+          state: { status: "error", input: { command: "ls" }, output: "nope", error: "boom" }
+        }
+      }),
+      "t1",
+      freshAcc()
+    );
+    expect(events).toHaveLength(2);
+    expect(events[1]).toEqual({
+      type: "tool.result",
+      turnId: "t1",
+      toolCallId: "call_2",
+      output: "nope",
+      isError: true
+    });
+  });
+
   it("summarizes a run into turn.done", () => {
     const acc = { text: ["ok"], usage: { input: 8718, output: 11, reasoning: 155 }, cost: 0, sessionId: "ses_1" };
     expect(summarizeRun("t1", "local-1", acc)).toEqual({
