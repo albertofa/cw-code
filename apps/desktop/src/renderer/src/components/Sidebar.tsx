@@ -1,5 +1,5 @@
 import { useState, type CSSProperties } from "react";
-import { Settings, SquarePen } from "lucide-react";
+import { GitBranch, Settings, SquarePen } from "lucide-react";
 import type { Project, Session, SessionStatus } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import { DriverIcon } from "./DriverIcon.js";
@@ -168,7 +168,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
         </span>
         <span className="session-git" title={git?.worktreePath ?? s.worktreePath}>
           {s.worktreePath ? <span>{git?.worktreeName ?? s.worktreePath.split(/[/\\]/).pop()}</span> : null}
-          <span className="session-branch">{git?.branch ?? s.branch ?? "Git status loading…"}</span>
+          <span className="session-branch"><GitBranch size={9} />{git?.branch ?? s.branch ?? "Git status loading…"}</span>
           {pr && <span className={`session-pr ${prState}`}>#{pr.number} {prState?.replace("-", " ")}</span>}
           {git && !git.clean && <span className="session-dirty">{git.dirtyCount}Δ</span>}
         </span>

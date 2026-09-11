@@ -3535,6 +3535,9 @@ select.field option {
 .session-git .session-branch {
   color: var(--muted);
   max-width: 92px;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
 }
 
 .session-pr {
