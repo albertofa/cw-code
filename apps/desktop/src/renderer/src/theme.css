@@ -1197,7 +1197,6 @@ body {
 
 .composer-wrap {
   padding: 10px 20px 16px;
-  border-top: 1px solid var(--border-soft);
 }
 
 .composer {
@@ -1205,8 +1204,7 @@ body {
   margin: 0 auto;
   background: var(--raised);
   border: 1px solid var(--border);
-  border-bottom: none;
-  border-radius: var(--r-lg) var(--r-lg) 0 0;
+  border-radius: var(--r-lg);
   padding: 16px 16px 12px;
   box-shadow: 0 16px 44px rgba(0, 0, 0, 0.4);
   transition: border-color 120ms ease, box-shadow 120ms ease;
@@ -1638,8 +1636,8 @@ body {
 }
 
 .gitbar {
-  max-width: 720px;
-  margin: 0 auto;
+  max-width: calc(864px * 0.9);
+  margin: 6px auto 0;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -1647,8 +1645,7 @@ body {
   color: var(--muted);
   background: var(--bg-deep);
   border: 1px solid var(--border-soft);
-  border-radius: 0 0 var(--r-lg) var(--r-lg);
-  border-top: none;
+  border-radius: var(--r-lg);
   padding: 6px 12px;
 }
 
@@ -3072,7 +3069,7 @@ select.field option {
   flex-direction: column;
   gap: 8px;
   margin: 0 auto 6px;
-  max-width: calc(864px * 0.9);
+  max-width: calc(864px * 0.95);
 }
 
 .question-panel {
