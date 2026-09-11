@@ -157,8 +157,6 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
       )}
         <span className="session-meta">
           <span className="session-project">{projectNameById[s.projectId] ?? ""}</span>
-          <span className={`session-state status-${status}`}>{stateLabel(status)}</span>
-          <DriverIcon driver={s.driver} size={10} />
         </span>
         <span className="session-git" title={git?.worktreePath ?? s.worktreePath}>
           {s.worktreePath ? <span>{git?.worktreeName ?? s.worktreePath.split(/[/\\]/).pop()}</span> : null}
@@ -166,6 +164,10 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
           {pr && <span className={`session-pr ${prState}`}>#{pr.number} {prState?.replace("-", " ")}</span>}
           {git && !git.clean && <span className="session-dirty">{git.dirtyCount}Δ</span>}
         </span>
+      </span>
+      <span className="session-side">
+        <DriverIcon driver={s.driver} size={10} />
+        <span className={`session-state status-${status}`}>{stateLabel(status)}</span>
       </span>
     </div>
   };

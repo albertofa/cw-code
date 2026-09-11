@@ -588,7 +588,14 @@ body {
 .session-state {
   font-size: 10.5px;
   flex: none;
-  margin-left: auto;
+}
+
+.session-side {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 2px;
+  flex: none;
 }
 
 .session-state.status-idle {
