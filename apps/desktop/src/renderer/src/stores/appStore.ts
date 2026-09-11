@@ -53,6 +53,7 @@ interface AppState {
   sessionsByProject: Record<string, Session[]>;
   discoveredByProject: Record<string, Session[]>;
   activeProjectId: string | null;
+  projectFilter: string | "all";
   activeSessionId: string | null;
   messagesBySession: Record<string, ChatMessage[]>;
   usageBySession: Record<string, Usage>;
@@ -67,6 +68,7 @@ interface AppState {
   pendingQuestions: Record<string, QuestionRequest[]>;
   pendingPrefs: ComposerPrefs;
   pendingWorkspace: CreateSessionOptions;
+  setProjectFilter(filter: string | "all"): void;
   setPendingPrefs(prefs: ComposerPrefs): void;
   setPendingWorkspace(options: CreateSessionOptions): void;
   gitStatusBySession: Record<string, GitStatus>;
@@ -137,6 +139,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   sessionsByProject: {},
   discoveredByProject: {},
   activeProjectId: null,
+  projectFilter: "all",
   activeSessionId: null,
   messagesBySession: {},
   usageBySession: {},
@@ -162,6 +165,10 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   setPendingWorkspace(options: CreateSessionOptions) {
     set({ pendingWorkspace: { ...get().pendingWorkspace, ...options } });
+  },
+
+  setProjectFilter(filter: string | "all") {
+    set({ projectFilter: filter });
   },
 
   async refreshGitStatus(sessionId: string) {
@@ -201,9 +208,44 @@ export const useAppStore = create<AppState>((set, get) => ({
       defaultUseWorktree: settings.defaultUseWorktree,
       pendingWorkspace: { ...get().pendingWorkspace, useWorktree: settings.defaultUseWorktree }
     });
-    if (projects.length > 0 && !get().activeProjectId) {
-      await get().selectProject(projects[0].id);
+    if (projects.length === 0 || get().activeProjectId) return;
+    const lists = await Promise.all(projects.map((p) => window.cw.listSessions(p.id)));
+    const sessionsByProject: Record<string, Session[]> = {};
+    projects.forEach((p, i) => {
+      sessionsByProject[p.id] = lists[i];
+    });
+    const all = Object.values(sessionsByProject).flat();
+    const picked = all
+      .filter((s) => s.status !== "archived")
+      .sort((a, b) => b.updatedAt - a.updatedAt)[0];
+    if (!picked) {
+      set({
+        sessionsByProject,
+        activeProjectId: projects[0].id,
+        activeSessionId: null,
+        pendingDriver: get().lastDriver
+      });
+    } else {
+      const ownerId =
+        picked.projectId ??
+        projects.find((p) => (sessionsByProject[p.id] ?? []).some((s) => s.id === picked.id))?.id ??
+        projects[0].id;
+      set({
+        sessionsByProject,
+        activeProjectId: ownerId,
+        activeSessionId: picked.id,
+        pendingDriver: null
+      });
+      if (picked.status === "resolved") {
+        void get().setSessionStatus(picked.id, "idle").catch((err) =>
+          console.warn(`setSessionStatus failed for ${picked.id} -> idle: ${(err as Error).message}`)
+        );
+      }
+      void get().ensureHistory(picked.id);
+      void get().ensureComposer(picked.id);
+      for (const session of all) void get().refreshGitStatus(session.id);
     }
+    void get().loadDiscovered();
   },
 
   async addProject(rootPath: string) {
@@ -218,6 +260,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (picked) {
       set({
         activeProjectId: projectId,
+        projectFilter: projectId,
         sessionsByProject: { ...get().sessionsByProject, [projectId]: sessions },
         activeSessionId: picked.id,
         pendingDriver: null
@@ -233,6 +276,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     } else {
       set({
         activeProjectId: projectId,
+        projectFilter: projectId,
         sessionsByProject: { ...get().sessionsByProject, [projectId]: sessions },
         activeSessionId: null,
         pendingDriver: get().lastDriver,
@@ -296,7 +340,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   selectSession(sessionId: string) {
-    const current = Object.values(get().sessionsByProject)
+    const byProject = get().sessionsByProject;
+    const current = Object.values(byProject)
       .flat()
       .find((s) => s.id === sessionId);
     if (current?.status === "resolved") {
@@ -304,7 +349,14 @@ export const useAppStore = create<AppState>((set, get) => ({
         console.warn(`setSessionStatus failed for ${sessionId} -> idle: ${(err as Error).message}`)
       );
     }
-    set({ activeSessionId: sessionId, pendingDriver: null });
+    const ownerId = Object.entries(byProject).find(([, list]) =>
+      list.some((s) => s.id === sessionId)
+    )?.[0];
+    set({
+      activeSessionId: sessionId,
+      pendingDriver: null,
+      ...(ownerId && ownerId !== get().activeProjectId ? { activeProjectId: ownerId } : {})
+    });
     void get().ensureHistory(sessionId);
     void get().ensureComposer(sessionId);
     void get().refreshGitStatus(sessionId);
