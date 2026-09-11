@@ -202,6 +202,11 @@ function registerIpc(): void {
   ipcMain.handle("fs.listProjectFiles", (_e, args: { projectId: string }) =>
     files.listFiles(sessions.rootForProject(args.projectId))
   );
+  ipcMain.handle(
+    "fs.savePasteImage",
+    (_e, args: { projectId: string; mime: string; data: Uint8Array }) =>
+      files.savePasteImage(sessions.rootForProject(args.projectId), args.mime, args.data)
+  );
   ipcMain.handle("git.turnDiff", (_e, args: { sessionId: string; since: number }) =>
     git.turnDiff(sessions.rootFor(args.sessionId), args.since)
   );

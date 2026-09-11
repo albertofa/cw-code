@@ -65,6 +65,7 @@ export interface CwApi {
   saveFile(sessionId: string, path: string, content: string): Promise<void>;
   listFiles(sessionId: string): Promise<string[]>;
   listProjectFiles(projectId: string): Promise<string[]>;
+  savePasteImage(projectId: string, mime: string, data: Uint8Array): Promise<string>;
   turnDiff(sessionId: string, since: number): Promise<string>;
   openPty(sessionId: string, kind: PtyKindName): Promise<string>;
   writePty(ptyId: string, data: string): void;
@@ -127,6 +128,8 @@ const api: CwApi = {
     ipcRenderer.invoke("fs.saveFile", { sessionId, path, content }),
   listFiles: (sessionId: string) => ipcRenderer.invoke("fs.listFiles", { sessionId }),
   listProjectFiles: (projectId: string) => ipcRenderer.invoke("fs.listProjectFiles", { projectId }),
+  savePasteImage: (projectId: string, mime: string, data: Uint8Array) =>
+    ipcRenderer.invoke("fs.savePasteImage", { projectId, mime, data }),
   turnDiff: (sessionId: string, since: number) => ipcRenderer.invoke("git.turnDiff", { sessionId, since }),
   openPty: (sessionId: string, kind: PtyKindName) =>
     ipcRenderer.invoke("pty.open", { sessionId, kind }),

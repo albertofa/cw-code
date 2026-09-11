@@ -7,6 +7,12 @@ export function Composer({ sessionId, driver }: { sessionId: string; driver: Dri
   const store = useAppStore();
   const prefs = useAppStore((s) => s.composerBySession[sessionId] ?? DEFAULT_COMPOSER);
   const busy = useAppStore((s) => s.busyTurns[sessionId] !== undefined);
+  const projectId = useAppStore((s) => {
+    for (const [pid, list] of Object.entries(s.sessionsByProject)) {
+      if (list.some((session) => session.id === sessionId)) return pid;
+    }
+    return s.activeProjectId;
+  });
 
   useEffect(() => {
     void store.ensureComposer(sessionId);
@@ -21,6 +27,10 @@ export function Composer({ sessionId, driver }: { sessionId: string; driver: Dri
       void store.setComposerPrefs(sessionId, p);
     },
     send: (body, attachments) => store.sendPrompt(body, attachments),
+    savePasteImage: (mime, data) =>
+      projectId
+        ? window.cw.savePasteImage(projectId, mime, data)
+        : Promise.reject(new Error("project not available")),
     interrupt: () => {
       void store.interrupt();
     }

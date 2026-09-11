@@ -31,6 +31,7 @@ export function NewThread({
     loadFiles: () => window.cw.listProjectFiles(projectId),
     savePrefs: (p) => store.setPendingPrefs(p),
     send: (body, attachments) => store.sendPendingPrompt(body, attachments),
+    savePasteImage: (mime, data) => window.cw.savePasteImage(projectId, mime, data),
     interrupt: () => {}
   };
 
