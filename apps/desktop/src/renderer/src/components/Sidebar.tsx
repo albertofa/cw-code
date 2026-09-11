@@ -126,13 +126,13 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const storedMainSet = new Set(storedOrder?.main ?? []);
   const storedResolvedSet = new Set(storedOrder?.resolved ?? []);
   const effectiveSection = (s: Session): SidebarSection | null => {
+    if (s.status === "archived") return null;
     if (pinnedSet.has(s.id)) {
       const inMain = storedMainSet.has(s.id);
       const inResolved = storedResolvedSet.has(s.id);
       if (inMain !== inResolved) return inMain ? "main" : "resolved";
     }
     if (s.status === "resolved") return "resolved";
-    if (s.status === "archived") return null;
     return "main";
   };
   const mainAll = source.filter((s) => effectiveSection(s) === "main");
@@ -239,7 +239,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
     for (const s of [...nextMain, ...nextResolved]) snap[s.id] = s.updatedAt;
     const cross = fromSection !== toSection;
     const prevPinned = readStoredOrder(orderKey)?.pinned ?? storedOrder?.pinned ?? [];
-    const pinned = cross ? Array.from(new Set([...prevPinned, fromId])) : [...prevPinned];
+    const pinned = cross ? Array.from(new Set([...prevPinned, fromId])) : [];
     writeStoredOrder(orderKey, {
       main: nextMain.map((s) => s.id),
       resolved: nextResolved.map((s) => s.id),
@@ -268,7 +268,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
     const dropClass = indicator && indicator.id === s.id ? (indicator.before ? " drop-before" : " drop-after") : "";
     return <div
       key={s.id}
-      draggable
+      draggable={renamingId !== s.id && !query}
       onDragStart={(e) => {
         draggedRef.current = { id: s.id, section };
         setDragged({ id: s.id, section });
@@ -287,7 +287,10 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
         e.preventDefault();
         e.stopPropagation();
         const active = draggedRef.current ?? dragged;
-        if (!active) return;
+        if (!active) {
+          setIndicator(null);
+          return;
+        }
         const rect = e.currentTarget.getBoundingClientRect();
         const before = e.clientY < rect.top + rect.height / 2;
         handleDrop(active, section, s.id, before);
@@ -478,7 +481,10 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
           onDrop={(e) => {
             e.preventDefault();
             const active = draggedRef.current ?? dragged;
-            if (!active) return;
+            if (!active) {
+              setIndicator(null);
+              return;
+            }
             handleDrop(active, "main", null, false);
           }}
         >
@@ -495,7 +501,10 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
             onDrop={(e) => {
               e.preventDefault();
               const active = draggedRef.current ?? dragged;
-              if (!active) return;
+              if (!active) {
+                setIndicator(null);
+                return;
+              }
               handleDrop(active, "resolved", null, false);
             }}
           >
@@ -509,12 +518,33 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
                 e.preventDefault();
                 e.stopPropagation();
                 const active = draggedRef.current ?? dragged;
-                if (!active) return;
+                if (!active) {
+                  setIndicator(null);
+                  return;
+                }
                 handleDrop(active, "resolved", null, false);
               }}
             >resolved · {resolved.length}</summary>
             {resolved.map((s) => renderRow(s, "resolved"))}
           </details>
+        )}
+        {resolved.length === 0 && dragged && (
+          <div
+            className="resolved-empty-drop"
+            onDragOver={(e) => {
+              if (!allowsDrop(e)) return;
+              e.preventDefault();
+            }}
+            onDrop={(e) => {
+              e.preventDefault();
+              const active = draggedRef.current ?? dragged;
+              if (!active) {
+                setIndicator(null);
+                return;
+              }
+              handleDrop(active, "resolved", null, false);
+            }}
+          >Drop here to resolve</div>
         )}
         {discovered.length > 0 && (
           <details className="discovered">

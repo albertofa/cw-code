@@ -689,6 +689,16 @@ body {
   margin-top: 14px;
 }
 
+.resolved-empty-drop {
+  margin-top: 14px;
+  border: 1px dashed var(--border);
+  border-radius: var(--r-md);
+  color: var(--faint);
+  font-size: 12px;
+  padding: 8px 9px;
+  text-align: center;
+}
+
 .discovered summary,
 .resolved summary {
   font-size: 10.5px;
