@@ -3514,10 +3514,6 @@ select.field option {
   gap: 3px;
 }
 
-.session-copy .session-title {
-  flex: none;
-}
-
 .session-git {
   min-width: 0;
   display: flex;
