@@ -14,6 +14,13 @@ export interface Session {
   resumeCursor: string;
   createdAt: number;
   updatedAt: number;
+  worktreePath?: string;
+  branch?: string;
+}
+
+export interface CreateSessionOptions {
+  baseBranch?: string;
+  useWorktree?: boolean;
 }
 
 export interface HistoryMessage {
@@ -130,11 +137,49 @@ export interface ModelOption {
 }
 
 export interface GitStatus {
+  available: boolean;
   branch: string;
   dirtyCount: number;
+  stagedCount: number;
+  ahead: number;
+  behind: number;
   worktreeName: string;
+  worktreePath: string;
+  repositoryRoot: string;
   prNumber: number | null;
+  pullRequest: GitPullRequest | null;
+  githubError: string | null;
   clean: boolean;
+}
+
+export interface GitPullRequest {
+  number: number;
+  title: string;
+  url: string;
+  state: "OPEN" | "CLOSED" | "MERGED";
+  isDraft: boolean;
+  reviewDecision: string | null;
+  mergeStateStatus: string | null;
+  headRefName: string;
+  baseRefName: string;
+  checks: { total: number; passed: number; failed: number; pending: number };
+}
+
+export interface GitBranchInfo {
+  name: string;
+  label: string;
+  current: boolean;
+  remote: boolean;
+  worktreePath: string | null;
+}
+
+export type GitDiffMode = "working" | "staged" | "branch";
+
+export interface GitDiffResult {
+  mode: GitDiffMode;
+  patch: string;
+  baseRef: string | null;
+  headRef: string;
 }
 
 export interface CustomModel {
@@ -173,7 +218,7 @@ export interface CwApi {
   listSessions(projectId: string): Promise<Session[]>;
   listDiscovered(projectId: string): Promise<Session[]>;
   importSession(projectId: string, driver: DriverName, resumeCursor: string, title: string): Promise<Session>;
-  createSession(projectId: string, driver: DriverName): Promise<Session>;
+  createSession(projectId: string, driver: DriverName, options?: CreateSessionOptions): Promise<Session>;
   renameSession(sessionId: string, title: string): Promise<void>;
   getHistory(sessionId: string): Promise<HistoryMessage[]>;
   startTurn(sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[] }): Promise<string>;
@@ -187,6 +232,10 @@ export interface CwApi {
   getSettings(): Promise<AppSettings>;
   setSettings(patch: SettingsPatch): Promise<AppSettings>;
   getGitStatus(sessionId: string): Promise<GitStatus>;
+  listGitBranches(sessionId: string): Promise<GitBranchInfo[]>;
+  listProjectBranches(projectId: string): Promise<GitBranchInfo[]>;
+  switchGitBranch(sessionId: string, branch: string): Promise<GitStatus>;
+  getGitDiff(sessionId: string, mode: GitDiffMode, baseRef?: string): Promise<GitDiffResult>;
   onTurnEvent(cb: (msg: { sessionId: string; event: TurnEvent }) => void): () => void;
   readFile(sessionId: string, path: string): Promise<string>;
   readOutsideFile(path: string): Promise<string>;
@@ -210,6 +259,7 @@ export interface CwApi {
   getTerminalFont(): Promise<string | null>;
   pickProjectDir(): Promise<string | null>;
   openPath(path: string): Promise<void>;
+  openExternal(url: string): Promise<void>;
   openHtml(name: string, html: string): Promise<void>;
 }
 

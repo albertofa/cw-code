@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { AppSettings } from "@cw-code/contracts";
+import type { AppSettings, CreateSessionOptions, GitBranchInfo, GitDiffMode, GitDiffResult, GitStatus } from "@cw-code/contracts";
 
 export type PermissionMode = "auto" | "acceptEdits" | "bypassPermissions" | "manual" | "plan";
 export type EffortLevel = "low" | "medium" | "high" | "xhigh" | "max";
@@ -15,14 +15,6 @@ export interface ModelOption {
   id: string;
   label: string;
   source: "live" | "curated" | "custom";
-}
-
-export interface GitStatus {
-  branch: string;
-  dirtyCount: number;
-  worktreeName: string;
-  prNumber: number | null;
-  clean: boolean;
 }
 
 export type DriverName = "claude" | "opencode" | "codex";
@@ -45,7 +37,7 @@ export interface CwApi {
   listSessions(projectId: string): Promise<unknown[]>;
   listDiscovered(projectId: string): Promise<unknown[]>;
   importSession(projectId: string, driver: DriverName, resumeCursor: string, title: string): Promise<unknown>;
-  createSession(projectId: string, driver: DriverName): Promise<unknown>;
+  createSession(projectId: string, driver: DriverName, options?: CreateSessionOptions): Promise<unknown>;
   renameSession(sessionId: string, title: string): Promise<void>;
   getHistory(sessionId: string): Promise<unknown[]>;
   startTurn(sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[] }): Promise<string>;
@@ -59,6 +51,10 @@ export interface CwApi {
   getSettings(): Promise<AppSettings>;
   setSettings(patch: Partial<AppSettings>): Promise<AppSettings>;
   getGitStatus(sessionId: string): Promise<GitStatus>;
+  listGitBranches(sessionId: string): Promise<GitBranchInfo[]>;
+  listProjectBranches(projectId: string): Promise<GitBranchInfo[]>;
+  switchGitBranch(sessionId: string, branch: string): Promise<GitStatus>;
+  getGitDiff(sessionId: string, mode: GitDiffMode, baseRef?: string): Promise<GitDiffResult>;
   onTurnEvent(cb: (event: unknown) => void): () => void;
   readFile(sessionId: string, path: string): Promise<string>;
   readOutsideFile(path: string): Promise<string>;
@@ -82,6 +78,7 @@ export interface CwApi {
   getTerminalFont(): Promise<string | null>;
   pickProjectDir(): Promise<string | null>;
   openPath(path: string): Promise<void>;
+  openExternal(url: string): Promise<void>;
   openHtml(name: string, html: string): Promise<void>;
 }
 
@@ -95,8 +92,8 @@ const api: CwApi = {
   listDiscovered: (projectId: string) => ipcRenderer.invoke("sessions.discovered", projectId),
   importSession: (projectId: string, driver: DriverName, resumeCursor: string, title: string) =>
     ipcRenderer.invoke("sessions.import", { projectId, driver, resumeCursor, title }),
-  createSession: (projectId: string, driver: DriverName) =>
-    ipcRenderer.invoke("sessions.create", { projectId, driver }),
+  createSession: (projectId: string, driver: DriverName, options?: CreateSessionOptions) =>
+    ipcRenderer.invoke("sessions.create", { projectId, driver, options }),
   renameSession: (sessionId: string, title: string) =>
     ipcRenderer.invoke("sessions.rename", { sessionId, title }),
   getHistory: (sessionId: string) => ipcRenderer.invoke("sessions.history", { sessionId }),
@@ -116,6 +113,11 @@ const api: CwApi = {
   getSettings: () => ipcRenderer.invoke("settings.get"),
   setSettings: (patch: Partial<AppSettings>) => ipcRenderer.invoke("settings.set", patch),
   getGitStatus: (sessionId: string) => ipcRenderer.invoke("git.status", { sessionId }),
+  listGitBranches: (sessionId: string) => ipcRenderer.invoke("git.branches", { sessionId }),
+  listProjectBranches: (projectId: string) => ipcRenderer.invoke("git.projectBranches", { projectId }),
+  switchGitBranch: (sessionId: string, branch: string) => ipcRenderer.invoke("git.switchBranch", { sessionId, branch }),
+  getGitDiff: (sessionId: string, mode: GitDiffMode, baseRef?: string) =>
+    ipcRenderer.invoke("git.diff", { sessionId, mode, baseRef }),
   onTurnEvent: (cb) => {
     const listener = (_e: unknown, event: unknown) => cb(event);
     ipcRenderer.on("turn.event", listener as never);
@@ -154,6 +156,7 @@ const api: CwApi = {
   getTerminalFont: () => ipcRenderer.invoke("term.font"),
   pickProjectDir: () => ipcRenderer.invoke("projects.pick"),
   openPath: (path: string) => ipcRenderer.invoke("shell.openPath", { path }),
+  openExternal: (url: string) => ipcRenderer.invoke("shell.openExternal", { url }),
   openHtml: (name: string, html: string) => ipcRenderer.invoke("shell.openHtml", { name, html })
 };
 

@@ -17,7 +17,7 @@ function resolvePreload(): string {
 import { checkCliVersion, checkCliVersions, type CliVersionCheck } from "./cliVersions.js";
 import { getHarnessTracePath, initHarnessTrace } from "./debug/harnessTrace.js";
 import { appendCrashLog, initCrashLog } from "./debug/crashLog.js";
-import type { ApprovalDecision, SettingsPatch } from "@cw-code/contracts";
+import type { ApprovalDecision, CreateSessionOptions, GitDiffMode, SettingsPatch } from "@cw-code/contracts";
 import type { DriverKind } from "@cw-code/contracts";
 import type { PtyKind } from "./pty/PtyPool.js";
 import { SessionManager } from "./sessions/SessionManager.js";
@@ -151,8 +151,8 @@ function registerIpc(): void {
     (_e, args: { projectId: string; driver: DriverName; resumeCursor: string; title: string }) =>
       sessions.importSession(args.projectId, args.driver, args.resumeCursor, args.title)
   );
-  ipcMain.handle("sessions.create", (_e, args: { projectId: string; driver: DriverName }) =>
-    sessions.createSession(args.projectId, args.driver)
+  ipcMain.handle("sessions.create", (_e, args: { projectId: string; driver: DriverName; options?: CreateSessionOptions }) =>
+    sessions.createSession(args.projectId, args.driver, args.options)
   );
   ipcMain.handle("sessions.rename", (_e, args: { sessionId: string; title: string }) =>
     sessions.renameSession(args.sessionId, args.title)
@@ -187,6 +187,20 @@ function registerIpc(): void {
   );
   ipcMain.handle("git.status", (_e, args: { sessionId: string }) =>
     git.status(sessions.rootFor(args.sessionId))
+  );
+  ipcMain.handle("git.branches", (_e, args: { sessionId: string }) =>
+    git.branches(sessions.rootFor(args.sessionId))
+  );
+  ipcMain.handle("git.projectBranches", (_e, args: { projectId: string }) =>
+    git.branches(sessions.rootForProject(args.projectId))
+  );
+  ipcMain.handle("git.switchBranch", async (_e, args: { sessionId: string; branch: string }) => {
+    const status = await git.switchBranch(sessions.rootFor(args.sessionId), args.branch);
+    sessions.updateSessionBranch(args.sessionId, status.branch);
+    return status;
+  });
+  ipcMain.handle("git.diff", (_e, args: { sessionId: string; mode: GitDiffMode; baseRef?: string }) =>
+    git.diff(sessions.rootFor(args.sessionId), args.mode, args.baseRef)
   );
 
   ipcMain.handle("fs.readFile", (_e, args: { sessionId: string; path: string }) =>
@@ -258,6 +272,12 @@ function registerIpc(): void {
   ipcMain.handle("shell.openPath", (_e, args: { path: string }): Promise<void> =>
     shell.openExternal(pathToFileURL(args.path).href).then(() => undefined)
   );
+
+  ipcMain.handle("shell.openExternal", (_e, args: { url: string }): Promise<void> => {
+    const target = new URL(args.url);
+    if (target.protocol !== "https:" && target.protocol !== "http:") throw new Error("unsupported external URL");
+    return shell.openExternal(target.href).then(() => undefined);
+  });
 
   ipcMain.handle("shell.openHtml", (_e, args: { name: string; html: string }): Promise<void> => {
     const safe = args.name.replace(/[^a-zA-Z0-9._-]+/g, "_").slice(0, 80) || "preview";

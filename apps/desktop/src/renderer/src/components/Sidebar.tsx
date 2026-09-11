@@ -23,7 +23,7 @@ function avatarStyle(name: string): CSSProperties {
 }
 
 export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
-  const { projects, sessionsByProject, discoveredByProject, activeProjectId, activeSessionId } = useAppStore();
+  const { projects, sessionsByProject, discoveredByProject, activeProjectId, activeSessionId, gitStatusBySession } = useAppStore();
   const store = useAppStore();
   const [query, setQuery] = useState("");
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -201,8 +201,21 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
         </div>
       </div>
       <div className="session-list">
-        {shown.map((s) => (
-          <div
+        {shown.map((s) => {
+          const git = gitStatusBySession[s.id];
+          const pr = git?.pullRequest;
+          const prState = pr?.isDraft
+            ? "draft"
+            : pr?.state !== "OPEN"
+              ? pr?.state.toLowerCase()
+              : pr?.checks.failed
+                ? "failing"
+                : pr?.checks.pending
+                  ? "pending"
+                  : pr?.reviewDecision === "APPROVED"
+                    ? "approved"
+                    : pr?.reviewDecision === "CHANGES_REQUESTED" ? "changes-requested" : "open";
+          return <div
             key={s.id}
             onClick={() => store.selectSession(s.id)}
             onContextMenu={(e) => {
@@ -215,6 +228,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
             title={s.title}
           >
             <span className={`driver-dot ${s.driver}`} />
+            <span className="session-copy">
             {renamingId === s.id ? (
               <input
                 autoFocus
@@ -232,9 +246,16 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
             ) : (
               <span className="session-title">{s.title}</span>
             )}
+              <span className="session-git" title={git?.worktreePath ?? s.worktreePath}>
+                <span>{git?.worktreeName ?? (s.worktreePath ? s.worktreePath.split(/[/\\]/).pop() : "project")}</span>
+                <span className="session-branch">{git?.branch ?? s.branch ?? "Git status loading…"}</span>
+                {pr && <span className={`session-pr ${prState}`}>#{pr.number} {prState?.replace("-", " ")}</span>}
+                {git && !git.clean && <span className="session-dirty">{git.dirtyCount}Δ</span>}
+              </span>
+            </span>
             <DriverIcon driver={s.driver} size={12} />
           </div>
-        ))}
+        })}
         {shown.length === 0 && <div className="side-empty">{query ? "No matches." : "No sessions yet."}</div>}
         {discovered.length > 0 && (
           <details className="discovered">

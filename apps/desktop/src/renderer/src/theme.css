@@ -3309,3 +3309,412 @@ select.field option {
   color: var(--dim);
   font-size: 10.5px;
 }
+
+/* Git worktrees, GitHub status, and inspect view */
+.session-copy {
+  min-width: 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.session-copy .session-title {
+  flex: none;
+}
+
+.session-git {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--faint);
+  font-size: 9.5px;
+  overflow: hidden;
+}
+
+.session-git > span {
+  flex: none;
+  max-width: 78px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-git .session-branch {
+  color: var(--muted);
+  max-width: 92px;
+}
+
+.session-pr {
+  color: #a371f7;
+}
+
+.session-pr.failing,
+.session-pr.changes-requested,
+.session-dirty {
+  color: var(--danger);
+}
+
+.session-pr.pending,
+.gitbar-checks.pending {
+  color: var(--warning);
+}
+
+.session-pr.merged,
+.session-pr.approved,
+.gitbar-checks.passed {
+  color: var(--success);
+}
+
+.newthread-workspace {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  min-height: 30px;
+}
+
+.newthread-workspace .menu {
+  width: 190px;
+}
+
+.newthread-workspace .menu-btn {
+  width: 100%;
+}
+
+.worktree-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--dim);
+  font-size: 11.5px;
+  cursor: pointer;
+}
+
+.worktree-toggle input {
+  accent-color: var(--driver);
+}
+
+.workspace-hint {
+  color: var(--faint);
+  font-size: 11px;
+}
+
+.gitbar {
+  max-width: min(900px, calc(100% - 32px));
+}
+
+.gitbar .menu {
+  min-width: 0;
+  max-width: 220px;
+}
+
+.gitbar .menu-btn {
+  min-width: 0;
+  max-width: 220px;
+  padding: 2px 7px;
+  border-color: transparent;
+  background: transparent;
+}
+
+.gitbar-worktree {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 150px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--faint);
+}
+
+button.gitbar-pr {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  background: transparent;
+  padding: 0;
+  font: inherit;
+  cursor: pointer;
+}
+
+button.gitbar-pr:hover {
+  text-decoration: underline;
+}
+
+.gitbar-checks {
+  white-space: nowrap;
+}
+
+.gitbar-checks.failed,
+.gitbar-error,
+.gitbar-github-error {
+  color: var(--danger);
+}
+
+.gitbar-ahead {
+  color: var(--success);
+}
+
+.gitbar-behind {
+  color: var(--warning);
+}
+
+.inspect {
+  height: 100%;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--bg-deep);
+}
+
+.inspect-toolbar,
+.inspect-compare,
+.inspect-summary,
+.inspect-file-head {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.inspect-toolbar {
+  min-height: 38px;
+  padding: 0 9px;
+  background: var(--bg);
+}
+
+.inspect-title {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text);
+  font-weight: 700;
+  font-size: 12px;
+}
+
+.inspect-modes {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  margin-left: auto;
+}
+
+.inspect-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--muted);
+  padding: 4px 7px;
+  font-family: var(--mono);
+  font-size: 10.5px;
+  cursor: pointer;
+}
+
+.inspect-mode:hover {
+  color: var(--text);
+  background: var(--raised);
+}
+
+.inspect-mode.active {
+  color: var(--text);
+  background: var(--driver-soft);
+}
+
+.inspect-compare {
+  min-height: 36px;
+  padding: 0 10px;
+  color: var(--faint);
+  font-size: 10.5px;
+}
+
+.inspect-compare .menu {
+  width: min(220px, 55%);
+}
+
+.inspect-compare .menu-btn {
+  width: 100%;
+  padding: 3px 7px;
+}
+
+.inspect-head-ref {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inspect-summary {
+  min-height: 30px;
+  padding: 0 10px;
+  color: var(--muted);
+  font-size: 10.5px;
+}
+
+.inspect-summary .add,
+.inspect-file-stats .add {
+  color: var(--success);
+}
+
+.inspect-summary .del,
+.inspect-file-stats .del {
+  color: var(--danger);
+}
+
+.inspect-range {
+  margin-left: auto;
+  max-width: 55%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--faint);
+}
+
+.inspect-body {
+  flex: 1;
+  min-height: 0;
+  display: grid;
+  grid-template-columns: minmax(145px, 34%) minmax(0, 1fr);
+}
+
+.inspect-files {
+  min-width: 0;
+  overflow: auto;
+  border-right: 1px solid var(--border-soft);
+  background: var(--bg);
+}
+
+.inspect-file {
+  width: 100%;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  border-bottom: 1px solid var(--border-soft);
+  background: transparent;
+  color: var(--dim);
+  padding: 7px 8px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.inspect-file:hover {
+  background: var(--raised);
+}
+
+.inspect-file.active {
+  background: var(--driver-soft);
+  box-shadow: inset 2px 0 0 var(--driver);
+}
+
+.inspect-file-copy {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.inspect-file-name,
+.inspect-file-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inspect-file-name {
+  color: var(--text);
+  font-size: 11px;
+}
+
+.inspect-file-path {
+  color: var(--faint);
+  font-size: 9.5px;
+}
+
+.inspect-file-stats {
+  font-size: 9.5px;
+  white-space: nowrap;
+}
+
+.inspect-diff {
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.inspect-file-head {
+  min-height: 32px;
+  padding: 0 10px;
+  color: var(--dim);
+  font-size: 11px;
+}
+
+.inspect-file-head > span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.inspect-binary {
+  margin-left: auto;
+  color: var(--warning);
+}
+
+.inspect-lines {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 6px 0 16px;
+}
+
+.diff-number {
+  width: 34px;
+  flex: none;
+  box-sizing: border-box;
+  padding-right: 6px;
+  text-align: right;
+  color: var(--faint);
+  user-select: none;
+  border-right: 1px solid var(--border-soft);
+}
+
+.inspect-lines .diff-gutter {
+  width: 22px;
+}
+
+.inspect-error {
+  margin: 10px;
+  padding: 9px 10px;
+  border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent);
+  border-radius: var(--r-md);
+  color: var(--danger);
+  background: color-mix(in srgb, var(--danger) 8%, transparent);
+  font-size: 11.5px;
+  overflow-wrap: anywhere;
+}
+
+.inspect-empty {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  color: var(--faint);
+  font-size: 12px;
+  text-align: center;
+  padding: 20px;
+}
+
+.inspect-empty small {
+  max-width: 320px;
+  color: var(--faint);
+}

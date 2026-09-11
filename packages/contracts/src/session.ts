@@ -18,6 +18,17 @@ export interface SessionMeta {
   effort?: EffortLevel;
   variant?: string;
   permissionMode?: PermissionMode;
+  /** The isolated checkout used by this session. Older/imported sessions omit it. */
+  worktreePath?: string;
+  /** Last known branch. Live Git status remains the source of truth. */
+  branch?: string;
+}
+
+export interface CreateSessionOptions {
+  /** Ref used as the starting point for the new session branch. */
+  baseBranch?: string;
+  /** Defaults to true for Git repositories. */
+  useWorktree?: boolean;
 }
 
 export interface TurnRequest {
@@ -51,10 +62,55 @@ export interface ModelOption {
   source: "live" | "curated" | "custom";
 }
 
+export interface GitPullRequestChecks {
+  total: number;
+  passed: number;
+  failed: number;
+  pending: number;
+}
+
+export interface GitPullRequest {
+  number: number;
+  title: string;
+  url: string;
+  state: "OPEN" | "CLOSED" | "MERGED";
+  isDraft: boolean;
+  reviewDecision: string | null;
+  mergeStateStatus: string | null;
+  headRefName: string;
+  baseRefName: string;
+  checks: GitPullRequestChecks;
+}
+
 export interface GitStatus {
+  available: boolean;
   branch: string;
   dirtyCount: number;
+  stagedCount: number;
+  ahead: number;
+  behind: number;
   worktreeName: string;
+  worktreePath: string;
+  repositoryRoot: string;
   prNumber: number | null;
+  pullRequest: GitPullRequest | null;
+  githubError: string | null;
   clean: boolean;
+}
+
+export interface GitBranchInfo {
+  name: string;
+  label: string;
+  current: boolean;
+  remote: boolean;
+  worktreePath: string | null;
+}
+
+export type GitDiffMode = "working" | "staged" | "branch";
+
+export interface GitDiffResult {
+  mode: GitDiffMode;
+  patch: string;
+  baseRef: string | null;
+  headRef: string;
 }

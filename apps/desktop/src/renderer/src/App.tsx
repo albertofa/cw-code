@@ -5,7 +5,8 @@ import { Sidebar } from "./components/Sidebar.js";
 import { TitleBar } from "./components/TitleBar.js";
 import { SettingsModal } from "./components/SettingsModal.js";
 import { ThreadView } from "./components/ThreadView.js";
-import { DiffPanel, FilePanel } from "./components/FilePanel.js";
+import { FilePanel } from "./components/FilePanel.js";
+import { GitInspectPanel } from "./components/GitInspectPanel.js";
 import { AgentsPanel } from "./components/AgentsPanel.js";
 import { PreviewPanel } from "./components/PreviewPanel.js";
 import { PtyTab } from "./components/PtyTab.js";
@@ -280,7 +281,7 @@ export function App() {
                 {!activeSessionId && !preview && <div className="right-empty">No session selected.</div>}
                 {activeSessionId && rightTab === "files" && <FilePanel sessionId={activeSessionId} />}
                 {activeSessionId && rightTab === "agents" && <AgentsPanel sessionId={activeSessionId} />}
-                {activeSessionId && rightTab === "diff" && <DiffPanel sessionId={activeSessionId} />}
+                {activeSessionId && rightTab === "diff" && <GitInspectPanel sessionId={activeSessionId} />}
                 {rightTab === "preview" && preview && (
                   <PreviewPanel
                     key={`${preview.sessionId}:${preview.path}`}

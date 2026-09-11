@@ -4,8 +4,10 @@ import type {
   ApprovalDecision,
   ApprovalRequest,
   ComposerPrefs,
+  CreateSessionOptions,
   DriverName,
   HistoryMessage,
+  GitStatus,
   Project,
   QuestionRequest,
   Session,
@@ -63,7 +65,11 @@ interface AppState {
   pendingApprovals: Record<string, ApprovalRequest[]>;
   pendingQuestions: Record<string, QuestionRequest[]>;
   pendingPrefs: ComposerPrefs;
+  pendingWorkspace: CreateSessionOptions;
   setPendingPrefs(prefs: ComposerPrefs): void;
+  setPendingWorkspace(options: CreateSessionOptions): void;
+  gitStatusBySession: Record<string, GitStatus>;
+  refreshGitStatus(sessionId: string): Promise<void>;
   preview: { sessionId: string; path: string; basePath: string } | null;
   openPreview(sessionId: string, path: string, basePath: string): void;
   closePreview(): void;
@@ -82,7 +88,7 @@ interface AppState {
   loadDiscovered(): Promise<void>;
   importDiscovered(session: Session): Promise<void>;
   renameSession(sessionId: string, title: string): Promise<void>;
-  createSession(driver: DriverName, prefs?: ComposerPrefs): Promise<void>;
+  createSession(driver: DriverName, prefs?: ComposerPrefs, workspace?: CreateSessionOptions): Promise<void>;
   sendPrompt(prompt: string, attachments?: string[]): Promise<void>;
   interrupt(): Promise<void>;
   respondApproval(requestId: string, decision: ApprovalDecision): Promise<void>;
@@ -128,9 +134,24 @@ export const useAppStore = create<AppState>((set, get) => ({
   pendingApprovals: {},
   pendingQuestions: {},
   pendingPrefs: { ...DEFAULT_COMPOSER },
+  pendingWorkspace: { useWorktree: true },
+  gitStatusBySession: {},
 
   setPendingPrefs(prefs: ComposerPrefs) {
     set({ pendingPrefs: { ...get().pendingPrefs, ...prefs } });
+  },
+
+  setPendingWorkspace(options: CreateSessionOptions) {
+    set({ pendingWorkspace: { ...get().pendingWorkspace, ...options } });
+  },
+
+  async refreshGitStatus(sessionId: string) {
+    try {
+      const status = await window.cw.getGitStatus(sessionId);
+      set({ gitStatusBySession: { ...get().gitStatusBySession, [sessionId]: status } });
+    } catch {
+      // Git errors are rendered by the session-level GitBar when selected.
+    }
   },
 
   preview: null,
@@ -168,6 +189,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       });
       void get().ensureHistory(sessions[0].id);
       void get().ensureComposer(sessions[0].id);
+      for (const session of sessions) void get().refreshGitStatus(session.id);
     } else {
       set({
         activeProjectId: projectId,
@@ -225,6 +247,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   selectSession(sessionId: string) {    set({ activeSessionId: sessionId, pendingDriver: null });
     void get().ensureHistory(sessionId);
     void get().ensureComposer(sessionId);
+    void get().refreshGitStatus(sessionId);
   },
 
   startNewSession(driver?: DriverName) {
@@ -241,9 +264,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     const projectId = get().activeProjectId;
     const driver = get().pendingDriver ?? get().lastDriver;
     const prefs = get().pendingPrefs;
+    const workspace = get().pendingWorkspace;
     if (!projectId || (!prompt.trim() && attachments.length === 0)) return;
     try {
-      await get().createSession(driver, prefs);
+      await get().createSession(driver, prefs, workspace);
     } catch (err) {
       useNotifs.getState().push({
         kind: "error",
@@ -311,10 +335,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     return saved;
   },
 
-  async createSession(driver: DriverName, prefs?: ComposerPrefs) {
+  async createSession(driver: DriverName, prefs?: ComposerPrefs, workspace?: CreateSessionOptions) {
     const projectId = get().activeProjectId;
     if (!projectId) return;
-    const session = await window.cw.createSession(projectId, driver);
+    const session = await window.cw.createSession(projectId, driver, workspace);
     set({
       sessionsByProject: {
         ...get().sessionsByProject,
@@ -326,6 +350,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
     await get().ensureComposer(session.id);
     if (prefs) await get().setComposerPrefs(session.id, { ...prefs });
+    void get().refreshGitStatus(session.id);
   },
 
   async sendPrompt(prompt: string, attachments?: string[]) {
@@ -520,6 +545,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           }
         }
       });
+      void get().refreshGitStatus(sessionId);
     } else if (event.type === "turn.error") {
       const busy = { ...get().busyTurns };
       delete busy[sessionId];

@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { mkdtempSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -188,6 +189,31 @@ describe("SessionManager", () => {
     expect(manager.rootForProject(project.id)).toBe("C:\\proj7");
     await expect(manager.listModelsFor("missing", "opencode")).rejects.toThrow("unknown project");
     expect(() => manager.rootForProject("missing")).toThrow("unknown project");
+    manager.dispose();
+  });
+
+  it("creates Git sessions in isolated worktrees and routes turns there", async () => {
+    const sandbox = mkdtempSync(join(tmpdir(), "cw-session-worktree-"));
+    const repository = join(sandbox, "repo");
+    execFileSync("git", ["init", "-b", "main", repository]);
+    writeFileSync(join(repository, "README.md"), "base\n", "utf8");
+    execFileSync("git", ["-C", repository, "add", "README.md"]);
+    execFileSync("git", ["-C", repository, "-c", "user.name=cw-code", "-c", "user.email=test@cw-code.local", "commit", "-m", "initial"]);
+
+    const manager = new SessionManager({
+      dbPath: join(sandbox, "data", "test.db"),
+      worktreesRoot: join(sandbox, "worktrees")
+    });
+    const fake = new FakeDriver((event) => (manager as unknown as { routeEvent(e: ThreadEvent): void }).routeEvent(event));
+    (manager as unknown as { drivers: Record<string, CliDriver> }).drivers = { claude: fake, opencode: fake, codex: fake };
+    const project = manager.addProject(repository);
+    const session = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+
+    expect(session.worktreePath).toBeTruthy();
+    expect(session.branch).toMatch(/^cw\//);
+    expect(manager.rootFor(session.id)).toBe(session.worktreePath);
+    await manager.startTurn(session.id, "isolated");
+    expect(fake.lastRequest?.cwd).toBe(session.worktreePath);
     manager.dispose();
   });
 });
