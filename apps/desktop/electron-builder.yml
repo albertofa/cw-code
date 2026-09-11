@@ -2,9 +2,10 @@ appId: com.cwcode.app
 productName: cw-code
 directories:
   output: dist
-  app: out
+npmRebuild: false
 files:
-  - "**/*"
+  - "out/**"
+  - "package.json"
 win:
   target:
     - NSIS
