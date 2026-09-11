@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { FileService, pasteImageExt, pasteImageName } from "./FileService.js";
+import { FileService, imageExtMime, pasteImageExt, pasteImageName } from "./FileService.js";
 
 describe("FileService sandbox", () => {
   const svc = new FileService();
@@ -36,6 +36,32 @@ describe("paste image helpers", () => {
     expect(pasteImageExt("image/webp")).toBe("webp");
     expect(pasteImageExt("image/gif")).toBe("gif");
     expect(() => pasteImageExt("image/svg+xml")).toThrow(/unsupported paste image mime/);
+  });
+
+  it("maps image extensions back to mimes", () => {
+    expect(imageExtMime("png")).toBe("image/png");
+    expect(imageExtMime("JPEG")).toBe("image/jpeg");
+    expect(imageExtMime("webp")).toBe("image/webp");
+    expect(imageExtMime("gif")).toBe("image/gif");
+    expect(imageExtMime("svg")).toBeNull();
+  });
+
+  it("reads images inside the root with mime and base64", () => {
+    const svc = new FileService();
+    const root = mkdtempSync(join(tmpdir(), "cw-readimg-"));
+    writeFileSync(join(root, "pic.png"), Uint8Array.from([137, 80, 78, 71]));
+    const img = svc.readImage(root, "pic.png");
+    expect(img.mime).toBe("image/png");
+    expect(img.base64).toBe(Buffer.from([137, 80, 78, 71]).toString("base64"));
+  });
+
+  it("rejects non-image files, missing files, and escapes", () => {
+    const svc = new FileService();
+    const root = mkdtempSync(join(tmpdir(), "cw-readimg2-"));
+    writeFileSync(join(root, "note.txt"), "x", "utf8");
+    expect(() => svc.readImage(root, "note.txt")).toThrow(/not an image/);
+    expect(() => svc.readImage(root, "missing.png")).toThrow();
+    expect(() => svc.readImage(root, "../x.png")).toThrow(/escapes project root/);
   });
 
   it("builds paste file names with sanitized timestamps", () => {

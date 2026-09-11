@@ -194,6 +194,7 @@ export interface CwApi {
   listFiles(sessionId: string): Promise<string[]>;
   listProjectFiles(projectId: string): Promise<string[]>;
   savePasteImage(projectId: string, mime: string, data: Uint8Array): Promise<string>;
+  readImage(args: { sessionId?: string; projectId?: string; path: string }): Promise<{ mime: string; base64: string }>;
   turnDiff(sessionId: string, since: number): Promise<string>;
   openPty(sessionId: string, kind: DriverName | "shell"): Promise<string>;
   writePty(ptyId: string, data: string): void;

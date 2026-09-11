@@ -19,6 +19,7 @@ export function Composer({ sessionId, driver }: { sessionId: string; driver: Dri
   }, [sessionId]);
 
   const backend: ComposerBackend = {
+    imageTarget: { sessionId, projectId: projectId ?? undefined },
     prefs,
     busy,
     loadModels: () => window.cw.listModels(sessionId),

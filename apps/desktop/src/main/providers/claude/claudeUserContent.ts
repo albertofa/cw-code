@@ -1,13 +1,6 @@
 import { readFileSync } from "node:fs";
 import { join } from "node:path";
-
-const IMAGE_MEDIA_TYPES: Record<string, string> = {
-  png: "image/png",
-  jpg: "image/jpeg",
-  jpeg: "image/jpeg",
-  webp: "image/webp",
-  gif: "image/gif"
-};
+import { imageExtMime } from "../../fs/FileService.js";
 
 export function buildClaudeUserContent(cwd: string, prompt: string, attachments: string[] | undefined): string | unknown[] {
   const blocks: unknown[] = [];
@@ -16,7 +9,7 @@ export function buildClaudeUserContent(cwd: string, prompt: string, attachments:
   }
   for (const rel of attachments ?? []) {
     const ext = rel.split(".").pop()?.toLowerCase() ?? "";
-    const mediaType = IMAGE_MEDIA_TYPES[ext];
+    const mediaType = imageExtMime(ext);
     if (!mediaType) continue;
     try {
       const data = readFileSync(join(cwd, rel));

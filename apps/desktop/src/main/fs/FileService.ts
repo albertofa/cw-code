@@ -20,6 +20,20 @@ const PASTE_EXTS: Record<string, string> = {
   "image/gif": "gif",
 };
 
+export const IMAGE_MIME_BY_EXT: Record<string, string> = {
+  png: "image/png",
+  jpg: "image/jpeg",
+  jpeg: "image/jpeg",
+  webp: "image/webp",
+  gif: "image/gif",
+};
+
+const IMAGE_MAX_BYTES = 8 * 1024 * 1024;
+
+export function imageExtMime(ext: string): string | null {
+  return IMAGE_MIME_BY_EXT[ext.toLowerCase()] ?? null;
+}
+
 export function pasteImageExt(mime: string): string {
   const ext = PASTE_EXTS[mime];
   if (!ext) throw new Error("unsupported paste image mime: " + mime);
@@ -38,6 +52,17 @@ export class FileService {
   readFile(root: string, target: string): string {
     const abs = assertInside(root, target);
     return readFileSync(abs, "utf8");
+  }
+
+  readImage(root: string, target: string): { mime: string; base64: string } {
+    const abs = assertInside(root, target);
+    const ext = abs.split(".").pop() ?? "";
+    const mime = imageExtMime(ext);
+    if (!mime) throw new Error(`not an image: ${target}`);
+    const stat = statSync(abs);
+    if (!stat.isFile()) throw new Error(`not a file: ${target}`);
+    if (stat.size > IMAGE_MAX_BYTES) throw new Error(`image too large to preview: ${target}`);
+    return { mime, base64: readFileSync(abs).toString("base64") };
   }
 
   readOutsideFile(target: string): string {

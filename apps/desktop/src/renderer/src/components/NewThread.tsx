@@ -25,6 +25,7 @@ export function NewThread({
   const modelsRefreshKey = useAppStore((s) => s.settingsVersion);
 
   const backend: ComposerBackend = {
+    imageTarget: { projectId },
     prefs,
     busy: false,
     loadModels: () => window.cw.listModelsFor(projectId, driver),

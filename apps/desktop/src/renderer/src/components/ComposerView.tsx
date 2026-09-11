@@ -3,8 +3,11 @@ import { AtSign, ClipboardList, Image, Lock, LockOpen, Pencil, Plus, Slash, Term
 import type { ComposerPrefs, DriverName, EffortLevel, ModelOption, PermissionMode } from "../cw.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { MenuSelect } from "./MenuSelect.js";
+import { ImageThumb } from "./ImageThumb.js";
+import type { ImageTarget } from "./imagePreview.js";
 
 export interface ComposerBackend {
+  imageTarget: ImageTarget;
   prefs: ComposerPrefs;
   busy: boolean;
   loadModels(): Promise<ModelOption[]>;
@@ -52,6 +55,7 @@ export function ComposerView({
   const { prefs, busy } = backend;
   const backendRef = useRef(backend);
   backendRef.current = backend;
+  const imageTarget = backend.imageTarget;
   const [draft, setDraft] = useState("");
   const [attachments, setAttachments] = useState<string[]>([]);
   const [pasteError, setPasteError] = useState<string | null>(null);
@@ -165,7 +169,11 @@ export function ComposerView({
         <div className="attach-chips">
           {attachments.map((a) => (
             <span key={a} className="chip" title={a}>
-              <span aria-hidden>{isImage(a) ? "◈" : "@"}</span>
+              {isImage(a) ? (
+                <ImageThumb target={imageTarget} path={a} className="chip-thumb" />
+              ) : (
+                <span aria-hidden>@</span>
+              )}
               <span className="chip-name">{a}</span>
               <button
                 className="chip-x"
