@@ -17,7 +17,7 @@ function resolvePreload(): string {
 import { checkCliVersion, checkCliVersions, type CliVersionCheck } from "./cliVersions.js";
 import { getHarnessTracePath, initHarnessTrace } from "./debug/harnessTrace.js";
 import { appendCrashLog, initCrashLog } from "./debug/crashLog.js";
-import type { ApprovalDecision, CreateSessionOptions, GitDiffMode, SettingsPatch } from "@cw-code/contracts";
+import type { ApprovalDecision, CreateSessionOptions, GitDiffMode, SessionStatus, SettingsPatch } from "@cw-code/contracts";
 import type { DriverKind } from "@cw-code/contracts";
 import type { PtyKind } from "./pty/PtyPool.js";
 import { SessionManager } from "./sessions/SessionManager.js";
@@ -156,6 +156,9 @@ function registerIpc(): void {
   );
   ipcMain.handle("sessions.rename", (_e, args: { sessionId: string; title: string }) =>
     sessions.renameSession(args.sessionId, args.title)
+  );
+  ipcMain.handle("sessions.setStatus", (_e, args: { sessionId: string; status: SessionStatus }) =>
+    sessions.setSessionStatus(args.sessionId, args.status)
   );
   ipcMain.handle("sessions.history", (_e, args: { sessionId: string }) =>
     sessions.getHistory(args.sessionId)

@@ -219,4 +219,24 @@ describe("SessionManager", () => {
     expect(fake.lastRequest?.cwd).toBe(session.worktreePath);
     manager.dispose();
   });
+
+  it("tracks session status across the turn lifecycle", async () => {
+    const { manager, fake } = makeManager();
+    const project = manager.addProject("C:\\proj-status");
+    const a = await manager.createSession(project.id, "claude");
+    const turnId = await manager.startTurn(a.id, "hello");
+    let sessions = await manager.listSessions(project.id);
+    expect(sessions.find((s) => s.id === a.id)?.status).toBe("working");
+    (manager as unknown as { routeEvent(e: ThreadEvent): void }).routeEvent({
+      type: "approval.request",
+      turnId,
+      request: { requestId: "req-1", kind: "command", title: "run?", decisions: ["accept", "decline"] }
+    });
+    sessions = await manager.listSessions(project.id);
+    expect(sessions.find((s) => s.id === a.id)?.status).toBe("input-required");
+    fake.completeAll();
+    sessions = await manager.listSessions(project.id);
+    expect(sessions.find((s) => s.id === a.id)?.status).toBe("done");
+    manager.dispose();
+  });
 });
