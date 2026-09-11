@@ -520,9 +520,17 @@ body {
   font-size: 12.5px;
   color: var(--dim);
   flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.session-title-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
 }
 
 .session-rename {
@@ -595,14 +603,7 @@ body {
 .session-state {
   font-size: 10.5px;
   flex: none;
-}
-
-.session-side {
-  display: flex;
-  flex-direction: column;
-  align-items: flex-end;
-  gap: 2px;
-  flex: none;
+  margin-left: auto;
 }
 
 .session-state.status-idle {
