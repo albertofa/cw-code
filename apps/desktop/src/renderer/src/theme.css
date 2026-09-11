@@ -3540,6 +3540,12 @@ select.field option {
   gap: 2px;
 }
 
+.session-git .session-worktree {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
 .session-pr {
   color: #a371f7;
 }
