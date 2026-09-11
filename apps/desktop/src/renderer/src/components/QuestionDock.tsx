@@ -103,25 +103,29 @@ function QuestionPanel({ request }: { request: QuestionRequest }) {
                   );
                 })}
                 {q.allowCustom && (
-                  <div className={`question-row question-custom-row${state?.custom.trim() ? " picked" : ""}`}>
-                    <span className="question-cell">[{state?.custom.trim() ? "✓" : " "}]</span>
-                    <span className="question-index">{q.options.length + 1}.</span>
-                    <span className="question-row-body">
-                      {state?.customOpen ? (
+                  state?.customOpen ? (
+                    <div className={`question-row question-custom-row${state.custom.trim() ? " picked" : ""}`}>
+                      <span className="question-cell">[{state.custom.trim() ? "✓" : " "}]</span>
+                      <span className="question-index">{q.options.length + 1}.</span>
+                      <span className="question-row-body">
                         <input
                           className="question-custom-input"
                           placeholder="Type your answer..."
-                          value={state.custom.trim()}
+                          value={state.custom}
                           onChange={(e) => setCustom(q, e.target.value)}
                           autoFocus
                         />
-                      ) : (
-                        <button className="question-row-inner" onClick={() => openCustom(q)} type="button">
-                          Type your own answer
-                        </button>
-                      )}
-                    </span>
-                  </div>
+                      </span>
+                    </div>
+                  ) : (
+                    <button className="question-row" onClick={() => openCustom(q)} type="button">
+                      <span className="question-cell">[ ]</span>
+                      <span className="question-index">{q.options.length + 1}.</span>
+                      <span className="question-row-body">
+                        <span className="question-row-inner">Type your own answer</span>
+                      </span>
+                    </button>
+                  )
                 )}
               </div>
               <div className="question-hint">{q.multiSelect ? "Select all answers that apply" : "Select one answer"}</div>

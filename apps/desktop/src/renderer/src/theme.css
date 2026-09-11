@@ -1201,7 +1201,7 @@ body {
 }
 
 .composer {
-  max-width: 720px;
+  max-width: 864px;
   margin: 0 auto;
   background: var(--raised);
   border: 1px solid var(--border);
@@ -3071,7 +3071,8 @@ select.field option {
   display: flex;
   flex-direction: column;
   gap: 8px;
-  margin-bottom: 6px;
+  margin: 0 auto 6px;
+  max-width: calc(864px * 0.9);
 }
 
 .question-panel {

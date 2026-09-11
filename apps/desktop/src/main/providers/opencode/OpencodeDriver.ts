@@ -140,6 +140,18 @@ export class OpencodeDriver implements CliDriver {
     return { turnId, events: (async function* () {})() };
   }
 
+  private async createSession(port: number, authHeader: string): Promise<string> {
+    const res = await fetch(`http://127.0.0.1:${port}/session`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Authorization: authHeader },
+      body: JSON.stringify({})
+    });
+    if (!res.ok) throw new Error(`opencode session create failed: ${res.status}`);
+    const data = (await res.json()) as { id?: string };
+    if (!data.id) throw new Error("opencode session create returned no id");
+    return data.id;
+  }
+
   private watchQuestions(turnId: string, port: number, authHeader: string): void {
     void (async () => {
       const controller = new AbortController();
@@ -246,7 +258,32 @@ export class OpencodeDriver implements CliDriver {
       "--dir",
       request.cwd
     ];
-    if (request.resumeCursor) baseArgs.push("--session", request.resumeCursor);
+    if (!request.resumeCursor) {
+      try {
+        const created = await this.createSession(serverPort, authHeader);
+        this.sessionIds.set(turnId, created);
+      } catch (err) {
+        traceHarnessCall({
+          harness: "opencode",
+          operation: "opencode.startTurn",
+          sessionId: request.sessionId,
+          turnId,
+          cwd: request.cwd,
+          binary,
+          durationMs: Date.now() - start,
+          ok: false,
+          error: truncateError(`opencode session create failed: ${(err as Error).message}`)
+        });
+        this.emit({
+          type: "turn.error",
+          turnId,
+          message: `opencode session create failed: ${(err as Error).message}`
+        });
+        return;
+      }
+    }
+    const sessionId = this.sessionIds.get(turnId) ?? "";
+    if (sessionId) baseArgs.push("--session", sessionId);
     if (request.model) baseArgs.push("--model", request.model);
     const variant = request.variant ?? (request.effort ? mapEffortToVariant(request.effort) : undefined);
     if (variant) baseArgs.push("--variant", variant);
@@ -360,17 +397,18 @@ export class OpencodeDriver implements CliDriver {
     if (!entry) return;
     const info = this.watchInfo.get(entry.turnId);
     if (!info) throw new Error("opencode question reply has no live server");
-    const res = await fetch(
-      `http://127.0.0.1:${info.port}/session/${entry.sessionID}/question/${requestId}/reply`,
-      {
-        method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: info.authHeader },
-        body: JSON.stringify(opencodeReplyPayload(entry.questions, answers))
+    const payload = JSON.stringify(opencodeReplyPayload(entry.questions, answers));
+    const headers = { "Content-Type": "application/json", Authorization: info.authHeader };
+    for (const base of [`/session/${entry.sessionID}/question/${requestId}/reply`, `/api/session/${entry.sessionID}/question/${requestId}/reply`]) {
+      const res = await fetch(`http://127.0.0.1:${info.port}${base}`, { method: "POST", headers, body: payload });
+      if (res.ok) {
+        this.pendingQuestions.delete(requestId);
+        this.emit({ type: "question.resolved", turnId: entry.turnId, requestId, answers });
+        return;
       }
-    );
-    if (!res.ok) throw new Error(`opencode question reply failed: ${res.status}`);
-    this.pendingQuestions.delete(requestId);
-    this.emit({ type: "question.resolved", turnId: entry.turnId, requestId, answers });
+      if (res.status >= 500) throw new Error(`opencode question reply failed: ${res.status}`);
+    }
+    throw new Error("opencode question reply failed: no accepted route");
   }
 
   private resolvePendingFor(turnId: string, answers: Record<string, string> | null): void {
