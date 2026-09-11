@@ -190,8 +190,8 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
         if (dy === 0) return;
         el.getAnimations().forEach((a) => a.cancel());
         el.animate([{ transform: `translateY(${dy}px)` }, { transform: "translateY(0px)" }], {
-          duration: 170,
-          easing: "ease-out"
+          duration: 260,
+          easing: "cubic-bezier(0.22, 1, 0.36, 1)"
         });
       });
     }
@@ -393,7 +393,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
     });
     if (cross) setStatus(fromId, toSection === "main" ? "idle" : "resolved");
     setLandedId(fromId);
-    window.setTimeout(() => setLandedId((id) => (id === fromId ? null : id)), 650);
+    window.setTimeout(() => setLandedId((id) => (id === fromId ? null : id)), 850);
   };
 
   const renderRow = (s: Session, section: SidebarSection) => {
@@ -509,7 +509,15 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
   };
 
   return (
-    <div className="side" onClick={() => setMenu(null)}>
+    <div
+      className="side"
+      onClick={() => setMenu(null)}
+      onDragOver={(e) => {
+        if (!draggedRef.current) return;
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+      }}
+    >
       <div className="brand">
         <div className="search-row ghost">
           <span className="search-icon">⌕</span>
@@ -638,6 +646,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
           onDragOver={(e) => {
             if (!allowsDrop(e)) return;
             e.preventDefault();
+            e.dataTransfer.dropEffect = "move";
           }}
           onDrop={(e) => {
             e.preventDefault();
@@ -658,6 +667,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
             onDragOver={(e) => {
               if (!allowsDrop(e)) return;
               e.preventDefault();
+              e.dataTransfer.dropEffect = "move";
             }}
             onDrop={(e) => {
               e.preventDefault();
@@ -673,6 +683,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
               onDragOver={(e) => {
                 if (!allowsDrop(e)) return;
                 e.preventDefault();
+                e.dataTransfer.dropEffect = "move";
                 e.stopPropagation();
               }}
               onDrop={(e) => {
@@ -695,6 +706,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
             onDragOver={(e) => {
               if (!allowsDrop(e)) return;
               e.preventDefault();
+              e.dataTransfer.dropEffect = "move";
             }}
             onDrop={(e) => {
               e.preventDefault();

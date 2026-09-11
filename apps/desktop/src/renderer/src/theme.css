@@ -518,19 +518,22 @@ body {
 
 .session-row.dragging {
   opacity: 0.35;
+  transition: opacity 120ms ease;
 }
 
 .session-row.landed {
-  animation: session-land 650ms ease-out;
+  animation: session-land 850ms cubic-bezier(0.22, 1, 0.36, 1);
 }
 
 @keyframes session-land {
   0% {
     background: var(--driver-soft);
+    box-shadow: inset 2px 0 0 var(--driver);
   }
 
   100% {
     background: transparent;
+    box-shadow: inset 2px 0 0 transparent;
   }
 }
 
