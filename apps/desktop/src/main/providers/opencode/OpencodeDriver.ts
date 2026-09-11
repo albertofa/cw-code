@@ -17,7 +17,7 @@ import { AskBridge } from "./askBridge.js";
 import { writeAskBridgeTool } from "./askToolFile.js";
 import { mapOpencodeMessages } from "./opencodeHistory.js";
 import { listOpencodeModels, mapEffortToVariant } from "./opencodeModels.js";
-import { assertInside } from "../../fs/FileService.js";
+import { opencodeFileArgs } from "./opencodeArgs.js";
 import { OpencodeServerPool } from "./opencodeServerPool.js";
 import { killProcessTree } from "../../processTree.js";
 import { parseExtraArgs } from "../../settings/settingsUtils.js";
@@ -364,15 +364,8 @@ export class OpencodeDriver implements CliDriver {
     if (request.model) baseArgs.push("--model", request.model);
     const variant = request.variant ?? (request.effort ? mapEffortToVariant(request.effort) : undefined);
     if (variant) baseArgs.push("--variant", variant);
-    for (const rel of request.attachments ?? []) {
-      try {
-        assertInside(request.cwd, rel);
-        baseArgs.push("-f", rel);
-      } catch {
-        console.warn(`attachment escapes project root, skipped: ${rel}`);
-      }
-    }
     baseArgs.push(request.prompt);
+    baseArgs.push(...opencodeFileArgs(request.cwd, request.attachments));
     const args = [...this.extraArgs(), ...baseArgs];
 
     const child = spawn(binary, args, {
