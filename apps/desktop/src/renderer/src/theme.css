@@ -427,6 +427,13 @@ body {
   flex: none;
 }
 
+.avatar.sm {
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  font-size: 8px;
+}
+
 .gear {
   background: transparent;
   border: none;

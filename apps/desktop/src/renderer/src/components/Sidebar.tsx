@@ -125,6 +125,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
               ? "approved"
               : pr?.reviewDecision === "CHANGES_REQUESTED" ? "changes-requested" : "open";
     const status = s.status ?? "idle";
+    const projectName = projectNameById[s.projectId] ?? "";
     return <div
       key={s.id}
       onClick={() => store.selectSession(s.id)}
@@ -156,7 +157,10 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
         <span className="session-title">{s.title}</span>
       )}
         <span className="session-meta">
-          <span className="session-project">{projectNameById[s.projectId] ?? ""}</span>
+          <span className="avatar sm" style={avatarStyle(projectName)}>
+            {initials(projectName)}
+          </span>
+          <span className="session-project">{projectName}</span>
         </span>
         <span className="session-git" title={git?.worktreePath ?? s.worktreePath}>
           {s.worktreePath ? <span>{git?.worktreeName ?? s.worktreePath.split(/[/\\]/).pop()}</span> : null}
