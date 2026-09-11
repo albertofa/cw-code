@@ -187,7 +187,7 @@ describe("approval builders", () => {
       kind: "command",
       title: "rm -rf /tmp/x",
       reason: "needs write access",
-      decisions: ["accept", "acceptForSession", "decline", "cancel"]
+      decisions: ["accept", "acceptForSession", "acceptGlobal", "decline", "cancel"]
     });
     expect(req.details).toContain("rm -rf /tmp/x");
   });
@@ -196,6 +196,7 @@ describe("approval builders", () => {
     const file = buildFileChangeApproval("r2", { threadId: "t", turnId: "tn", itemId: "i" });
     expect(file.kind).toBe("fileChange");
     expect(file.title).toBe("Apply file changes");
+    expect(file.decisions).toEqual(["accept", "acceptForSession", "acceptGlobal", "decline", "cancel"]);
     const perms = buildPermissionsApproval("r3", {
       threadId: "t",
       turnId: "tn",
@@ -204,6 +205,7 @@ describe("approval builders", () => {
     });
     expect(perms.kind).toBe("permissions");
     expect(perms.details).toBe(JSON.stringify({ network: {} }));
+    expect(perms.decisions).toEqual(["accept", "acceptForSession", "acceptGlobal", "decline", "cancel"]);
   });
 });
 
@@ -227,6 +229,16 @@ describe("approvalResultFor", () => {
   it("passes decisions through for command and file changes", () => {
     expect(approvalResultFor("command", "acceptForSession")).toEqual({ decision: "acceptForSession" });
     expect(approvalResultFor("fileChange", "cancel")).toEqual({ decision: "cancel" });
+  });
+
+  it("maps acceptGlobal to session semantics on all three kinds", () => {
+    const requested = { network: {} };
+    expect(approvalResultFor("permissions", "acceptGlobal", requested)).toEqual({
+      permissions: requested,
+      scope: "session"
+    });
+    expect(approvalResultFor("command", "acceptGlobal")).toEqual({ decision: "acceptForSession" });
+    expect(approvalResultFor("fileChange", "acceptGlobal")).toEqual({ decision: "acceptForSession" });
   });
 });
 

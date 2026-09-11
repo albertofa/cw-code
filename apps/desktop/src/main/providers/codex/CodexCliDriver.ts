@@ -387,7 +387,17 @@ export class CodexCliDriver implements CliDriver {
     const approval = this.approvals.get(requestId);
     if (!approval) return;
     this.approvals.delete(requestId);
-    this.client.respond(approval.serverId, approvalResultFor(approval.kind, decision, approval.requestedPermissions));
+    const result = approvalResultFor(approval.kind, decision, approval.requestedPermissions);
+    if (decision === "acceptGlobal") {
+      traceHarnessCall({
+        harness: "codex",
+        operation: "codex.respondToApproval.globalFallback",
+        resumeCursor: requestId,
+        ok: true,
+        extra: { kind: approval.kind, requested: decision, fallback: "session" }
+      });
+    }
+    this.client.respond(approval.serverId, result);
     this.emitApprovalResolved(requestId);
     traceHarnessCall({
       harness: "codex",
