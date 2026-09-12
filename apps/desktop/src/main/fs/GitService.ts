@@ -183,6 +183,20 @@ export function parseWorktreeList(stdout: string): WorktreeEntry[] {
   return entries;
 }
 
+export async function mapLimit<T, R>(items: T[], limit: number, fn: (item: T) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  const workers = Math.max(1, Math.min(limit, items.length));
+  let next = 0;
+  const runWorker = async (): Promise<void> => {
+    while (next < items.length) {
+      const index = next++;
+      results[index] = await fn(items[index]);
+    }
+  };
+  await Promise.all(Array.from({ length: workers }, () => runWorker()));
+  return results;
+}
+
 export function parseNumstat(stdout: string): { addedLines: number; deletedLines: number } {
   let addedLines = 0;
   let deletedLines = 0;
@@ -324,11 +338,11 @@ export class GitService {
     const untrackedFiles = await execText(binary, ["ls-files", "--others", "--exclude-standard", "-z"], root)
       .then((output) => output.split("\0").filter((file) => file && !isAppManagedPath(file)))
       .catch(() => []);
-    const untracked = await Promise.all(untrackedFiles.map((file) =>
+    const untracked = await mapLimit(untrackedFiles, 8, (file) =>
       execDiff(binary, ["diff", "--no-index", "--numstat", "--", "/dev/null", file], root)
         .then(parseNumstat)
         .catch(() => ({ addedLines: 0, deletedLines: 0 }))
-    ));
+    );
     return untracked.reduce((total, counts) => ({
       addedLines: total.addedLines + counts.addedLines,
       deletedLines: total.deletedLines + counts.deletedLines

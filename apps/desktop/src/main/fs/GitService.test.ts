@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { GitService, isAppManagedPath, parseGitHubAccounts, parseGitHubRemote, parseNumstat, parsePrNumber, parsePullRequest, parseWorktreeList, selectGitHubAccount, worktreeNameFor } from "./GitService.js";
+import { GitService, isAppManagedPath, mapLimit, parseGitHubAccounts, parseGitHubRemote, parseNumstat, parsePrNumber, parsePullRequest, parseWorktreeList, selectGitHubAccount, worktreeNameFor } from "./GitService.js";
 
 describe("parsePrNumber", () => {
   it("parses a PR number", () => {
@@ -116,6 +116,28 @@ describe("GitHub account discovery", () => {
   });
 });
 
+describe("mapLimit", () => {
+  it("never exceeds the concurrency limit and preserves input order", async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const items = Array.from({ length: 20 }, (_, i) => i);
+    const results = await mapLimit(items, 3, async (item) => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      inFlight -= 1;
+      return item * 10;
+    });
+    expect(maxInFlight).toBeLessThanOrEqual(3);
+    expect(results).toEqual(items.map((item) => item * 10));
+  });
+
+  it("handles a limit larger than the item count", async () => {
+    const results = await mapLimit(["a", "b", "c"], 50, async (item) => item.toUpperCase());
+    expect(results).toEqual(["A", "B", "C"]);
+  });
+});
+
 describe("GitService worktrees", () => {
   it("creates an isolated session branch and includes untracked files in its diff", async () => {
     const sandbox = mkdtempSync(join(tmpdir(), "cw-git-"));
@@ -148,5 +170,28 @@ describe("GitService worktrees", () => {
     });
     const branches = await service.branches(created.path);
     expect(branches.find((branch) => branch.name === "cw/1234abcd")?.worktreePath).toBe(created.path.replace(/\\/g, "/"));
+  });
+
+  it("counts untracked files through bounded concurrency in status", async () => {
+    const sandbox = mkdtempSync(join(tmpdir(), "cw-git-"));
+    const repository = join(sandbox, "repo");
+    execFileSync("git", ["init", "-b", "main", repository]);
+    writeFileSync(join(repository, "README.md"), "base\n", "utf8");
+    execFileSync("git", ["-C", repository, "add", "README.md"]);
+    execFileSync("git", ["-C", repository, "-c", "user.name=cw-code", "-c", "user.email=test@cw-code.local", "commit", "-m", "initial"]);
+
+    let expectedAdded = 0;
+    for (let i = 1; i <= 25; i++) {
+      writeFileSync(join(repository, `untracked-${i}.txt`), Array.from({ length: i }, (_, line) => `line ${line}`).join("\n") + "\n", "utf8");
+      expectedAdded += i;
+    }
+
+    const service = new GitService();
+    const status = await service.status(repository);
+    expect(status).toMatchObject({
+      available: true,
+      addedLines: expectedAdded,
+      deletedLines: 0
+    });
   });
 });
