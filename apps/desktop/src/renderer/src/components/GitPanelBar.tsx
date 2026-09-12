@@ -91,10 +91,10 @@ export function GitPanelBar({ sessionId }: { sessionId: string }) {
       {status.ahead > 0 && <span className="gitbar-ahead" title="Commits ahead of upstream">↑{status.ahead}</span>}
       {status.behind > 0 && <span className="gitbar-behind" title="Commits behind upstream">↓{status.behind}</span>}
       {error && <span className="gitbar-error" title={error}>Branch list unavailable</span>}
-      {!status.clean && (
+      {(status.addedLines > 0 || status.deletedLines > 0) && (
         <span className="gitbar-lines" title={`${status.addedLines} added, ${status.deletedLines} deleted · ${status.dirtyCount} changed ${status.dirtyCount === 1 ? "file" : "files"}`}>
-          <span className="add">+{status.addedLines}</span>
-          <span className="del">-{status.deletedLines}</span>
+          {status.addedLines > 0 && <span className="add">+{status.addedLines}</span>}
+          {status.deletedLines > 0 && <span className="del">-{status.deletedLines}</span>}
         </span>
       )}
     </div>
