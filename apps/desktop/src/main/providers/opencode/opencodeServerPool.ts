@@ -41,7 +41,8 @@ interface StartedServer {
 
 export class OpencodeServerPool {
   private servers = new Map<string, { binary: string; proc: ChildProcess; handle: ServerHandle; envKey: string }>();
-  private pending = new Map<string, Promise<ServerHandle>>();
+  private pending = new Map<string, { envKey: string; promise: Promise<ServerHandle> }>();
+  private disposed = false;
 
   constructor(
     private getBinary: () => string,
@@ -93,13 +94,18 @@ export class OpencodeServerPool {
     return { proc, handle };
   }
 
-  ensure(rootPath: string, env?: Record<string, string>): Promise<ServerHandle> {
+  async ensure(rootPath: string, env?: Record<string, string>): Promise<ServerHandle> {
+    if (this.disposed) throw new Error("opencode server pool disposed");
+    const envKey = env ? JSON.stringify(env) : "";
     const pending = this.pending.get(rootPath);
-    if (pending) return pending;
+    if (pending) {
+      if (pending.envKey === envKey) return pending.promise;
+      await pending.promise.catch(() => undefined);
+    }
     const promise = this.ensureUncached(rootPath, env).finally(() => {
       this.pending.delete(rootPath);
     });
-    this.pending.set(rootPath, promise);
+    this.pending.set(rootPath, { envKey, promise });
     return promise;
   }
 
@@ -119,11 +125,15 @@ export class OpencodeServerPool {
       return existing.handle;
     }
     if (existing) this.stop(rootPath);
-    const { proc, handle } = this.deps?.startServer
+    const started = this.deps?.startServer
       ? await this.deps.startServer(rootPath, binary, env)
       : await this.ensureProcess(rootPath, binary, envKey, env);
-    this.servers.set(rootPath, { binary, proc, handle, envKey });
-    return handle;
+    if (this.disposed) {
+      killProcessTree(started.proc);
+      throw new Error("opencode server pool disposed");
+    }
+    this.servers.set(rootPath, { binary, proc: started.proc, handle: started.handle, envKey });
+    return started.handle;
   }
 
   stop(rootPath: string): void {
@@ -133,6 +143,7 @@ export class OpencodeServerPool {
   }
 
   dispose(): void {
+    this.disposed = true;
     for (const rootPath of [...this.servers.keys()]) this.stop(rootPath);
   }
 }

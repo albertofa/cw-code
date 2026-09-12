@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { ChildProcess } from "node:child_process";
 import { OpencodeServerPool, type ServerHandle } from "./opencodeServerPool.js";
 
@@ -14,10 +14,6 @@ function fakeProc(): ChildProcess {
 function makePool(startServer: StartServerFn): OpencodeServerPool {
   return new OpencodeServerPool(() => "opencode", { startServer });
 }
-
-afterEach(() => {
-  vi.useRealTimers();
-});
 
 describe("OpencodeServerPool ensure", () => {
   it("dedupes concurrent ensure calls for the same rootPath", async () => {
@@ -71,5 +67,44 @@ describe("OpencodeServerPool ensure", () => {
     expect(second.port).toBe(first.port);
     expect(startServer).toHaveBeenCalledTimes(1);
     pool.dispose();
+  });
+
+  it("spawns a fresh server when a concurrent caller requests a different env", async () => {
+    let calls = 0;
+    const handles: ServerHandle[] = [
+      { port: 40001, authHeader: "a" },
+      { port: 40002, authHeader: "b" }
+    ];
+    const startServer = vi.fn(() => {
+      calls += 1;
+      const handle = handles[calls - 1];
+      return new Promise<{ proc: ChildProcess; handle: ServerHandle }>((resolve) => {
+        setTimeout(() => resolve({ proc: fakeProc(), handle }), 20);
+      });
+    });
+    const pool = makePool(startServer);
+
+    const [plain, bridged] = await Promise.all([pool.ensure(ROOT), pool.ensure(ROOT, { CW_BRIDGE: "1" })]);
+
+    expect(calls).toBe(2);
+    expect(plain.port).toBe(40001);
+    expect(bridged.port).toBe(40002);
+    pool.dispose();
+  });
+
+  it("rejects an in-flight spawn when disposed and never caches it", async () => {
+    const startServer = vi.fn(
+      (): Promise<{ proc: ChildProcess; handle: ServerHandle }> =>
+        new Promise((resolve) => {
+          setTimeout(() => resolve({ proc: fakeProc(), handle: HANDLE }), 50);
+        })
+    );
+    const pool = makePool(startServer);
+
+    const inFlight = pool.ensure(ROOT);
+    pool.dispose();
+    await expect(inFlight).rejects.toThrow("opencode server pool disposed");
+    await expect(pool.ensure(ROOT)).rejects.toThrow("opencode server pool disposed");
+    expect(startServer).toHaveBeenCalledTimes(1);
   });
 });
