@@ -1,5 +1,7 @@
 export type DriverKind = "claude" | "opencode" | "codex";
 
+export type SessionStatus = "idle" | "working" | "input-required" | "done" | "resolved" | "archived";
+
 export interface Project {
   id: string;
   rootPath: string;
@@ -13,6 +15,7 @@ export interface SessionMeta {
   projectId: string;
   driver: DriverKind;
   title: string;
+  status: SessionStatus;
   resumeCursor: string;
   createdAt: number;
   updatedAt: number;

@@ -427,6 +427,13 @@ body {
   flex: none;
 }
 
+.avatar.sm {
+  width: 14px;
+  height: 14px;
+  border-radius: 4px;
+  font-size: 8px;
+}
+
 .gear {
   background: transparent;
   border: none;
@@ -490,7 +497,7 @@ body {
 
 .session-row {
   display: flex;
-  align-items: center;
+  align-items: flex-start;
   gap: 8px;
   padding: 7px 9px;
   border-radius: var(--r-md);
@@ -509,13 +516,66 @@ body {
   box-shadow: inset 2px 0 0 var(--driver);
 }
 
+.session-row.dragging {
+  opacity: 0.35;
+  transition: opacity 120ms ease;
+}
+
+body.session-dragging,
+body.session-dragging * {
+  cursor: pointer !important;
+  user-select: none !important;
+}
+
+.session-drag-ghost {
+  position: fixed;
+  left: 0;
+  top: 0;
+  z-index: 200;
+  pointer-events: none;
+  max-width: 240px;
+  background: var(--raised);
+  border: 1px solid var(--driver);
+  border-radius: var(--r-md);
+  padding: 7px 9px;
+  box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
+}
+
+.session-drag-ghost .session-title {
+  color: var(--text);
+}
+
+.session-row.landed {
+  animation: session-land 850ms cubic-bezier(0.22, 1, 0.36, 1);
+}
+
+@keyframes session-land {
+  0% {
+    background: var(--driver-soft);
+    box-shadow: inset 2px 0 0 var(--driver);
+  }
+
+  100% {
+    background: transparent;
+    box-shadow: inset 2px 0 0 transparent;
+  }
+}
+
 .session-title {
   font-size: 12.5px;
   color: var(--dim);
   flex: 1;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.session-title-line {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
 }
 
 .session-rename {
@@ -568,6 +628,50 @@ body {
   color: var(--text);
 }
 
+.session-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.session-project {
+  font-size: 10.5px;
+  color: var(--muted);
+  letter-spacing: 0.05em;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-state {
+  font-size: 10.5px;
+  flex: none;
+  margin-left: auto;
+}
+
+.session-state.status-idle {
+  color: var(--faint);
+}
+
+.session-state.status-working {
+  color: var(--opencode);
+}
+
+.session-state.status-input-required {
+  color: var(--warning);
+  font-weight: 600;
+}
+
+.session-state.status-done {
+  color: var(--success);
+}
+
+.session-state.status-resolved {
+  color: #a371f7;
+}
+
 .driver-dot {
   width: 7px;
   height: 7px;
@@ -618,7 +722,22 @@ body {
   margin-top: 14px;
 }
 
-.discovered summary {
+.resolved {
+  margin-top: 14px;
+}
+
+.resolved-empty-drop {
+  margin-top: 14px;
+  border: 1px dashed var(--border);
+  border-radius: var(--r-md);
+  color: var(--faint);
+  font-size: 12px;
+  padding: 8px 9px;
+  text-align: center;
+}
+
+.discovered summary,
+.resolved summary {
   font-size: 10.5px;
   color: var(--faint);
   text-transform: uppercase;
@@ -628,7 +747,8 @@ body {
   list-style: none;
 }
 
-.discovered summary::-webkit-details-marker {
+.discovered summary::-webkit-details-marker,
+.resolved summary::-webkit-details-marker {
   display: none;
 }
 
@@ -3449,10 +3569,6 @@ select.field option {
   gap: 3px;
 }
 
-.session-copy .session-title {
-  flex: none;
-}
-
 .session-git {
   min-width: 0;
   display: flex;
@@ -3474,6 +3590,15 @@ select.field option {
 .session-git .session-branch {
   color: var(--muted);
   max-width: 92px;
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+}
+
+.session-git .session-worktree {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
 }
 
 .session-pr {

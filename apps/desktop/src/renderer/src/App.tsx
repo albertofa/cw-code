@@ -256,8 +256,16 @@ export function App() {
     return () => window.removeEventListener("cw:open-agents", onOpenAgents);
   }, []);
 
-  const sessions = activeProjectId ? (sessionsByProject[activeProjectId] ?? []) : [];
-  const driver = pendingDriver ?? sessions.find((s) => s.id === activeSessionId)?.driver;
+  const allSessions = Object.values(sessionsByProject).flat();
+  const allSessionKey = allSessions.map((s) => s.id).join(",");
+  const driver = pendingDriver ?? allSessions.find((s) => s.id === activeSessionId)?.driver;
+
+  useEffect(() => {
+    if (!window.cw || allSessions.length === 0) return;
+    for (const session of Object.values(useAppStore.getState().sessionsByProject).flat()) {
+      void useAppStore.getState().refreshGitStatus(session.id);
+    }
+  }, [allSessionKey]);
 
   return (
     <div className="app-shell" data-driver={driver ?? "none"}>

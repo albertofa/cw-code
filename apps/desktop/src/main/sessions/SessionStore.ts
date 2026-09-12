@@ -49,6 +49,10 @@ export class SessionStore {
       }
     }
     for (const session of this.data.sessions) {
+      if (!session.status) {
+        session.status = "idle";
+        migrated = true;
+      }
       if (!session.worktreePath) continue;
       const normalized = normalizeRoot(session.worktreePath);
       if (normalized !== session.worktreePath) {
@@ -111,6 +115,7 @@ export class SessionStore {
       projectId,
       driver,
       title,
+      status: "idle",
       resumeCursor: "",
       createdAt: now,
       updatedAt: now,
@@ -138,10 +143,11 @@ export class SessionStore {
     );
   }
 
-  updateSession(id: string, patch: Partial<Pick<SessionMeta, "title" | "resumeCursor" | "model" | "effort" | "variant" | "permissionMode" | "worktreePath" | "branch">>): void {
+  updateSession(id: string, patch: Partial<Pick<SessionMeta, "title" | "status" | "resumeCursor" | "model" | "effort" | "variant" | "permissionMode" | "worktreePath" | "branch">>): void {
     const current = this.getSession(id);
     if (!current) return;
     if (patch.title !== undefined) current.title = patch.title;
+    if (patch.status !== undefined) current.status = patch.status;
     if (patch.resumeCursor !== undefined) current.resumeCursor = patch.resumeCursor;
     if (patch.model !== undefined) current.model = patch.model;
     if (patch.effort !== undefined) current.effort = patch.effort;

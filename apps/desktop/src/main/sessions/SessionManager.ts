@@ -13,6 +13,7 @@ import type {
   ModelOption,
   Project,
   SessionMeta,
+  SessionStatus,
   SettingsPatch,
   ThreadEvent
 } from "@cw-code/contracts";
@@ -84,9 +85,20 @@ export class SessionManager {
   private handleDriverEvent(sessionId: string, event: ThreadEvent): void {
     if (event.type === "turn.done") {
       this.activeTurns.delete(event.turnId);
-      this.store.updateSession(event.sessionId, { resumeCursor: event.resumeCursor });
+      this.store.updateSession(event.sessionId, { resumeCursor: event.resumeCursor, status: "done" });
     }
-    if (event.type === "turn.error") this.activeTurns.delete(event.turnId);
+    if (event.type === "turn.error") {
+      this.activeTurns.delete(event.turnId);
+      if (sessionId) this.store.updateSession(sessionId, { status: "idle" });
+    }
+    if (event.type === "approval.request" || event.type === "question.request") {
+      if (sessionId) this.store.updateSession(sessionId, { status: "input-required" });
+    }
+    if (event.type === "approval.resolved" || event.type === "question.resolved") {
+      if (sessionId && this.activeTurns.has(event.turnId)) {
+        this.store.updateSession(sessionId, { status: "working" });
+      }
+    }
     this.onEvent(sessionId, event);
   }
 
@@ -189,6 +201,15 @@ export class SessionManager {
     }
   }
 
+  setSessionStatus(sessionId: string, status: SessionStatus): SessionMeta {
+    const session = this.store.getSession(sessionId);
+    if (!session) throw new Error(`unknown session ${sessionId}`);
+    this.store.updateSession(sessionId, { status });
+    const updated = this.store.getSession(sessionId);
+    if (!updated) throw new Error(`unknown session ${sessionId}`);
+    return updated;
+  }
+
   getComposer(sessionId: string): ComposerPrefs {
     const session = this.store.getSession(sessionId);
     if (!session) throw new Error(`unknown session ${sessionId}`);
@@ -253,6 +274,7 @@ export class SessionManager {
       attachments: resolveAttachments(project.rootPath, cwd, opts?.attachments ?? [])
     });
     this.activeTurns.set(handle.turnId, sessionId);
+    this.store.updateSession(sessionId, { status: "working" });
     return handle.turnId;
   }
 
@@ -284,6 +306,7 @@ export class SessionManager {
     const session = this.store.getSession(sessionId);
     if (session) this.drivers[session.driver].interrupt(turnId);
     this.activeTurns.delete(turnId);
+    this.store.updateSession(sessionId, { status: "idle" });
   }
 
   async respondApproval(requestId: string, decision: ApprovalDecision): Promise<void> {

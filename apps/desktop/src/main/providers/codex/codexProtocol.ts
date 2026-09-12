@@ -153,6 +153,7 @@ export function mapCodexThread(thread: CodexThread, projectId: string): SessionM
     projectId,
     driver: "codex",
     title,
+    status: "idle",
     resumeCursor: thread.id,
     createdAt: (thread.createdAt ?? 0) * 1000,
     updatedAt: (thread.updatedAt ?? thread.createdAt ?? 0) * 1000,

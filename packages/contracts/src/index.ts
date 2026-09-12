@@ -2,6 +2,7 @@ export type {
   DriverKind,
   Project,
   SessionMeta,
+  SessionStatus,
   TurnRequest,
   PermissionMode,
   EffortLevel,
