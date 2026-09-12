@@ -183,6 +183,12 @@ export function parseNumstat(stdout: string): { addedLines: number; deletedLines
   let deletedLines = 0;
   for (const line of stdout.replace(/\r/g, "").split("\n")) {
     const [added, deleted] = line.split("\t", 2);
+    if (added === "-" && deleted === "-") {
+      // Git has no meaningful line count for binary content, but the changed file
+      // should still be represented in the additions total.
+      addedLines += 1;
+      continue;
+    }
     const addedValue = Number.parseInt(added, 10);
     const deletedValue = Number.parseInt(deleted, 10);
     if (Number.isFinite(addedValue)) addedLines += addedValue;

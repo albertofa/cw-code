@@ -72,9 +72,9 @@ describe("parsePullRequest", () => {
 });
 
 describe("parseNumstat", () => {
-  it("sums text changes and ignores binary markers", () => {
-    expect(parseNumstat("12\t3\tsrc/app.ts\n4\t0\tREADME.md\n-\t-\timage.png\n"))
-      .toEqual({ addedLines: 16, deletedLines: 3 });
+  it("sums text changes and counts each binary file as one addition", () => {
+    expect(parseNumstat("12\t3\tsrc/app.ts\n4\t0\tREADME.md\n-\t-\timage.png\n-\t-\tfont.woff2\n"))
+      .toEqual({ addedLines: 18, deletedLines: 3 });
   });
 });
 
