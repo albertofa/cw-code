@@ -128,8 +128,22 @@ describe("mapLimit", () => {
       inFlight -= 1;
       return item * 10;
     });
-    expect(maxInFlight).toBeLessThanOrEqual(3);
+    expect(maxInFlight).toBe(3);
     expect(results).toEqual(items.map((item) => item * 10));
+  });
+
+  it("clamps a non-positive limit to one concurrent invocation", async () => {
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const results = await mapLimit([1, 2, 3], 0, async (item) => {
+      inFlight += 1;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      inFlight -= 1;
+      return item;
+    });
+    expect(maxInFlight).toBe(1);
+    expect(results).toEqual([1, 2, 3]);
   });
 
   it("handles a limit larger than the item count", async () => {
