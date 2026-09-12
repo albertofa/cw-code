@@ -33,8 +33,7 @@ export function ThreadView({ rightVisible, onToggleRight }: { rightVisible: bool
   } = useAppStore();
   const store = useAppStore();
 
-  const sessions = activeProjectId ? (sessionsByProject[activeProjectId] ?? []) : [];
-  const session = sessions.find((s) => s.id === activeSessionId);
+  const session = Object.values(sessionsByProject).flat().find((s) => s.id === activeSessionId);
   const project = projects.find((p) => p.id === activeProjectId);
   const messages = activeSessionId ? (messagesBySession[activeSessionId] ?? []) : [];
   const busyTurn = activeSessionId ? busyTurns[activeSessionId] : undefined;
