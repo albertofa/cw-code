@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { GitService, parseGitHubAccounts, parseGitHubRemote, parsePrNumber, parsePullRequest, parseWorktreeList, selectGitHubAccount, worktreeNameFor } from "./GitService.js";
+import { GitService, parseGitHubAccounts, parseGitHubRemote, parseNumstat, parsePrNumber, parsePullRequest, parseWorktreeList, selectGitHubAccount, worktreeNameFor } from "./GitService.js";
 
 describe("parsePrNumber", () => {
   it("parses a PR number", () => {
@@ -71,6 +71,13 @@ describe("parsePullRequest", () => {
   });
 });
 
+describe("parseNumstat", () => {
+  it("sums text changes and ignores binary markers", () => {
+    expect(parseNumstat("12\t3\tsrc/app.ts\n4\t0\tREADME.md\n-\t-\timage.png\n"))
+      .toEqual({ addedLines: 16, deletedLines: 3 });
+  });
+});
+
 describe("GitHub account discovery", () => {
   const accounts = parseGitHubAccounts(JSON.stringify({ hosts: { "github.com": [
     { login: "personal", active: true, state: "success" },
@@ -108,17 +115,26 @@ describe("GitService worktrees", () => {
     execFileSync("git", ["-C", repository, "-c", "user.name=cw-code", "-c", "user.email=test@cw-code.local", "commit", "-m", "initial"]);
 
     const service = new GitService();
+    expect(await service.status(repository)).toMatchObject({ available: true, isWorktree: false });
     const created = await service.createWorktree(repository, "project", "sess_1234abcd", join(sandbox, "worktrees"), "main");
     expect(created.branch).toBe("cw/1234abcd");
     expect(existsSync(created.path)).toBe(true);
 
+    writeFileSync(join(created.path, "README.md"), "updated\nsecond line\n", "utf8");
     writeFileSync(join(created.path, "new-file.txt"), "untracked\n", "utf8");
     const diff = await service.diff(created.path, "working");
     expect(diff.patch).toContain("new-file.txt");
     expect(diff.patch).toContain("+untracked");
 
     const status = await service.status(created.path);
-    expect(status).toMatchObject({ available: true, branch: "cw/1234abcd", dirtyCount: 1 });
+    expect(status).toMatchObject({
+      available: true,
+      branch: "cw/1234abcd",
+      dirtyCount: 2,
+      addedLines: 3,
+      deletedLines: 1,
+      isWorktree: true
+    });
     const branches = await service.branches(created.path);
     expect(branches.find((branch) => branch.name === "cw/1234abcd")?.worktreePath).toBe(created.path.replace(/\\/g, "/"));
   });

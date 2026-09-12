@@ -178,6 +178,19 @@ export function parseWorktreeList(stdout: string): WorktreeEntry[] {
   return entries;
 }
 
+export function parseNumstat(stdout: string): { addedLines: number; deletedLines: number } {
+  let addedLines = 0;
+  let deletedLines = 0;
+  for (const line of stdout.replace(/\r/g, "").split("\n")) {
+    const [added, deleted] = line.split("\t", 2);
+    const addedValue = Number.parseInt(added, 10);
+    const deletedValue = Number.parseInt(deleted, 10);
+    if (Number.isFinite(addedValue)) addedLines += addedValue;
+    if (Number.isFinite(deletedValue)) deletedLines += deletedValue;
+  }
+  return { addedLines, deletedLines };
+}
+
 export function parsePullRequest(stdout: string): GitPullRequest | null {
   let raw: Record<string, unknown>;
   try {
@@ -277,6 +290,45 @@ export class GitService {
 
   private git(root: string) {
     return simpleGit({ baseDir: root, binary: this.settings().gitBinaryPath });
+  }
+
+  private async lineCounts(root: string): Promise<{ addedLines: number; deletedLines: number }> {
+    const binary = this.settings().gitBinaryPath;
+    let tracked = { addedLines: 0, deletedLines: 0 };
+    try {
+      tracked = parseNumstat(await execDiff(binary, ["diff", "--numstat", "HEAD", "--"], root));
+    } catch {
+      // An unborn repository has no HEAD. Count its staged and unstaged changes separately.
+      const [staged, unstaged] = await Promise.all([
+        execDiff(binary, ["diff", "--cached", "--numstat", "--"], root).catch(() => ""),
+        execDiff(binary, ["diff", "--numstat", "--"], root).catch(() => "")
+      ]);
+      const stagedCounts = parseNumstat(staged);
+      const unstagedCounts = parseNumstat(unstaged);
+      tracked = {
+        addedLines: stagedCounts.addedLines + unstagedCounts.addedLines,
+        deletedLines: stagedCounts.deletedLines + unstagedCounts.deletedLines
+      };
+    }
+    const untrackedFiles = await execText(binary, ["ls-files", "--others", "--exclude-standard", "-z"], root)
+      .then((output) => output.split("\0").filter(Boolean))
+      .catch(() => []);
+    const untracked = await Promise.all(untrackedFiles.map((file) =>
+      execDiff(binary, ["diff", "--no-index", "--numstat", "--", "/dev/null", file], root)
+        .then(parseNumstat)
+        .catch(() => ({ addedLines: 0, deletedLines: 0 }))
+    ));
+    return untracked.reduce((total, counts) => ({
+      addedLines: total.addedLines + counts.addedLines,
+      deletedLines: total.deletedLines + counts.deletedLines
+    }), tracked);
+  }
+
+  private async isLinkedWorktree(root: string): Promise<boolean> {
+    const output = (await this.git(root).raw(["rev-parse", "--git-dir", "--git-common-dir"]))
+      .replace(/\r/g, "").split("\n").filter(Boolean);
+    if (output.length < 2) return false;
+    return !samePath(resolve(root, output[0]), resolve(root, output[1]));
   }
 
   async isRepository(root: string): Promise<boolean> {
@@ -520,9 +572,12 @@ export class GitService {
       available: false,
       branch: "not a repository",
       dirtyCount: 0,
+      addedLines: 0,
+      deletedLines: 0,
       stagedCount: 0,
       ahead: 0,
       behind: 0,
+      isWorktree: false,
       worktreeName: worktreeNameFor(root),
       worktreePath: resolve(root),
       repositoryRoot: resolve(root),
@@ -537,24 +592,31 @@ export class GitService {
     try {
       const git = this.git(root);
       if (!(await git.checkIsRepo())) return fallback;
-      const [repositoryRoot, branch, summary, context] = await Promise.all([
+      const [repositoryRoot, branch, summary, context, isWorktree] = await Promise.all([
         this.repositoryRoot(root),
         git.revparse(["--abbrev-ref", "HEAD"]).then((value) => value.trim() || "detached"),
         git.status(),
-        this.githubContext(root, project)
+        this.githubContext(root, project),
+        this.isLinkedWorktree(root)
       ]);
-      const github = context.remote && context.selection.account
-        ? await queryPullRequest(root, this.settings().githubCliBinaryPath, context.remote, context.selection.account)
-        : { pullRequest: null, error: context.selection.error };
+      const [github, lineCounts] = await Promise.all([
+        context.remote && context.selection.account
+          ? queryPullRequest(root, this.settings().githubCliBinaryPath, context.remote, context.selection.account)
+          : Promise.resolve({ pullRequest: null, error: context.selection.error }),
+        this.lineCounts(root)
+      ]);
       const dirtyCount = summary.files.length;
       const stagedCount = summary.files.filter((file) => file.index !== " " && file.index !== "?").length;
       return {
         available: true,
         branch,
         dirtyCount,
+        addedLines: lineCounts.addedLines,
+        deletedLines: lineCounts.deletedLines,
         stagedCount,
         ahead: summary.ahead,
         behind: summary.behind,
+        isWorktree,
         worktreeName: basename(resolve(root)),
         worktreePath: resolve(root),
         repositoryRoot,

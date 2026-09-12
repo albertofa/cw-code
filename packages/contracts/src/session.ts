@@ -88,9 +88,12 @@ export interface GitStatus {
   available: boolean;
   branch: string;
   dirtyCount: number;
+  addedLines: number;
+  deletedLines: number;
   stagedCount: number;
   ahead: number;
   behind: number;
+  isWorktree: boolean;
   worktreeName: string;
   worktreePath: string;
   repositoryRoot: string;

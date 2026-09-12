@@ -1659,10 +1659,6 @@ body {
   color: #a371f7;
 }
 
-.gitbar-dirty {
-  color: var(--warning);
-}
-
 .gitbar-dim {
   color: var(--faint);
 }
@@ -1670,10 +1666,6 @@ body {
 .gitbar .icon-btn {
   margin-left: auto;
   padding: 1px 6px;
-}
-
-.gitbar-dirty + .icon-btn {
-  margin-left: 6px;
 }
 
 .empty {
@@ -3510,7 +3502,7 @@ select.field option {
   background: transparent;
 }
 
-.gitbar-worktree {
+.gitbar-checkout {
   display: inline-flex;
   align-items: center;
   gap: 4px;
@@ -3519,6 +3511,22 @@ select.field option {
   text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--faint);
+}
+
+.gitbar-lines {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+  font-variant-numeric: tabular-nums;
+}
+
+.gitbar-lines .add {
+  color: var(--success);
+}
+
+.gitbar-lines .del {
+  color: var(--danger);
 }
 
 button.gitbar-pr {
