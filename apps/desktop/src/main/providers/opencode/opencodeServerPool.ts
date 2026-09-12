@@ -34,10 +34,20 @@ async function waitHealthy(port: number, authHeader: string, timeoutMs: number):
   }
 }
 
+interface StartedServer {
+  proc: ChildProcess;
+  handle: ServerHandle;
+}
+
 export class OpencodeServerPool {
   private servers = new Map<string, { binary: string; proc: ChildProcess; handle: ServerHandle; envKey: string }>();
+  private pending = new Map<string, { envKey: string; promise: Promise<ServerHandle> }>();
+  private disposed = false;
 
-  constructor(private getBinary: () => string) {}
+  constructor(
+    private getBinary: () => string,
+    private deps?: { startServer?: (rootPath: string, binary: string, env: Record<string, string> | undefined) => Promise<StartedServer> }
+  ) {}
 
   private async ensureProcess(rootPath: string, binary: string, envKey: string, env: Record<string, string> | undefined): Promise<{ proc: ChildProcess; handle: ServerHandle }> {
     const start = Date.now();
@@ -85,6 +95,22 @@ export class OpencodeServerPool {
   }
 
   async ensure(rootPath: string, env?: Record<string, string>): Promise<ServerHandle> {
+    if (this.disposed) throw new Error("opencode server pool disposed");
+    const envKey = env ? JSON.stringify(env) : "";
+    const pending = this.pending.get(rootPath);
+    if (pending) {
+      if (pending.envKey === envKey) return pending.promise;
+      await pending.promise.catch(() => undefined);
+      return this.ensure(rootPath, env);
+    }
+    const promise = this.ensureUncached(rootPath, env).finally(() => {
+      this.pending.delete(rootPath);
+    });
+    this.pending.set(rootPath, { envKey, promise });
+    return promise;
+  }
+
+  private async ensureUncached(rootPath: string, env?: Record<string, string>): Promise<ServerHandle> {
     const binary = this.getBinary();
     const envKey = env ? JSON.stringify(env) : "";
     const existing = this.servers.get(rootPath);
@@ -100,9 +126,15 @@ export class OpencodeServerPool {
       return existing.handle;
     }
     if (existing) this.stop(rootPath);
-    const { proc, handle } = await this.ensureProcess(rootPath, binary, envKey, env);
-    this.servers.set(rootPath, { binary, proc, handle, envKey });
-    return handle;
+    const started = this.deps?.startServer
+      ? await this.deps.startServer(rootPath, binary, env)
+      : await this.ensureProcess(rootPath, binary, envKey, env);
+    if (this.disposed) {
+      killProcessTree(started.proc);
+      throw new Error("opencode server pool disposed");
+    }
+    this.servers.set(rootPath, { binary, proc: started.proc, handle: started.handle, envKey });
+    return started.handle;
   }
 
   stop(rootPath: string): void {
@@ -112,6 +144,7 @@ export class OpencodeServerPool {
   }
 
   dispose(): void {
+    this.disposed = true;
     for (const rootPath of [...this.servers.keys()]) this.stop(rootPath);
   }
 }
