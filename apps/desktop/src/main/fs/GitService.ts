@@ -156,6 +156,11 @@ export function worktreeNameFor(root: string): string {
   return stripped.split(/[/\\]/).filter(Boolean).pop() ?? stripped;
 }
 
+export function isAppManagedPath(path: string): boolean {
+  const normalized = path.replace(/\\/g, "/");
+  return normalized === ".cw" || normalized.startsWith(".cw/");
+}
+
 export function parseWorktreeList(stdout: string): WorktreeEntry[] {
   const entries: WorktreeEntry[] = [];
   let path: string | null = null;
@@ -317,7 +322,7 @@ export class GitService {
       };
     }
     const untrackedFiles = await execText(binary, ["ls-files", "--others", "--exclude-standard", "-z"], root)
-      .then((output) => output.split("\0").filter(Boolean))
+      .then((output) => output.split("\0").filter((file) => file && !isAppManagedPath(file)))
       .catch(() => []);
     const untracked = await Promise.all(untrackedFiles.map((file) =>
       execDiff(binary, ["diff", "--no-index", "--numstat", "--", "/dev/null", file], root)
@@ -420,6 +425,7 @@ export class GitService {
       patch = await execDiff(binary, ["diff", "HEAD", "--no-ext-diff", "--binary", "--find-renames", "--"], root);
       const summary = await git.status();
       for (const file of summary.not_added) {
+        if (isAppManagedPath(file)) continue;
         const untracked = await execDiff(binary, ["diff", "--no-index", "--binary", "--", "/dev/null", file], root);
         patch += `${patch && !patch.endsWith("\n") ? "\n" : ""}${untracked}`;
       }
@@ -611,8 +617,9 @@ export class GitService {
           : Promise.resolve({ pullRequest: null, error: context.selection.error }),
         this.lineCounts(root)
       ]);
-      const dirtyCount = summary.files.length;
-      const stagedCount = summary.files.filter((file) => file.index !== " " && file.index !== "?").length;
+      const visibleFiles = summary.files.filter((file) => !isAppManagedPath(file.path));
+      const dirtyCount = visibleFiles.length;
+      const stagedCount = visibleFiles.filter((file) => file.index !== " " && file.index !== "?").length;
       return {
         available: true,
         branch,

@@ -1,10 +1,7 @@
-﻿import { spawn, type ChildProcess } from "node:child_process";
-import { createInterface } from "node:readline";
-import { randomUUID } from "node:crypto";
-import type { AppSettings, ApprovalDecision, CliDriver, HistoryMessage, QuestionInfo, QuestionRequest, SessionMeta, ThreadEvent, TurnHandle, TurnRequest } from "@cw-code/contracts";
+﻿import { randomUUID } from "node:crypto";
+import type { AppSettings, ApprovalDecision, CliDriver, HistoryMessage, PermissionMode, QuestionInfo, QuestionRequest, SessionMeta, ThreadEvent, TurnHandle, TurnRequest } from "@cw-code/contracts";
 import { app } from "electron";
 import { join } from "node:path";
-import { parseOpencodeLine, summarizeRun } from "./opencodeEvents.js";
 import {
   questionRequestOf,
   opencodeReplyPayload,
@@ -15,6 +12,8 @@ import {
 } from "./opencodeQuestions.js";
 import {
   opencodePermissionReply,
+  opencodePermissionReplyBody,
+  opencodePermissionReplyRoutes,
   parseOpencodePermissionAsked,
   parseOpencodePermissionList,
   parseOpencodePermissionReplied,
@@ -24,12 +23,19 @@ import {
 import { AskBridge } from "./askBridge.js";
 import { writeAskBridgeTool } from "./askToolFile.js";
 import { diffLiveTools, type LiveMessage, type LiveSeen } from "./opencodeLivePoll.js";
+import {
+  assistantDeltaOf,
+  buildOpencodeMessageBody,
+  mimeForOpencodeAttachment,
+  splitOpencodeModel,
+  summarizeOpencodeTurn,
+  turnMessagesOf
+} from "./opencodeMessage.js";
 import { mapOpencodeMessages } from "./opencodeHistory.js";
-import { listOpencodeModels, mapEffortToVariant } from "./opencodeModels.js";
 import { assertInside } from "../../fs/FileService.js";
+import { listOpencodeModels, mapEffortToVariant } from "./opencodeModels.js";
+import { opencodeFileArgs } from "./opencodeArgs.js";
 import { OpencodeServerPool } from "./opencodeServerPool.js";
-import { killProcessTree } from "../../processTree.js";
-import { parseExtraArgs } from "../../settings/settingsUtils.js";
 import { previewText, traceHarnessCall, truncateError } from "../../debug/harnessTrace.js";
 
 interface ServerSession {
@@ -41,13 +47,14 @@ interface ServerSession {
 
 export class OpencodeDriver implements CliDriver {
   readonly kind = "opencode" as const;
-  private procs = new Map<string, ChildProcess>();
   private pendingQuestions = new Map<string, ParsedOpencodeQuestion & { turnId: string; questions: QuestionInfo[]; cwd: string }>();
   private pendingApprovals = new Map<string, ParsedOpencodePermission & { turnId: string; cwd: string }>();
   private sessionAllows = new Map<string, Set<string>>();
   private watches = new Map<string, AbortController>();
-  private watchInfo = new Map<string, { port: number; authHeader: string; cwd: string }>();
+  private watchInfo = new Map<string, { port: number; authHeader: string; cwd: string; permissionMode?: PermissionMode }>();
   private sessionIds = new Map<string, string>();
+  private turnMeta = new Map<string, { localSessionId: string; beforeIds: Set<string> | null; startedAt: number; pollWarned: boolean }>();
+  private toolSeen = new Map<string, Map<string, LiveSeen>>();
   private pollTimers = new Map<string, NodeJS.Timeout>();
   private pool: OpencodeServerPool;
   private bridge: AskBridge | null = null;
@@ -121,10 +128,6 @@ export class OpencodeDriver implements CliDriver {
 
   private configuredBinary(): string {
     return this.getSettings().opencodeBinaryPath;
-  }
-
-  private extraArgs(): string[] {
-    return parseExtraArgs(this.getSettings().opencodeExtraArgs);
   }
 
   async listSessions(projectRoot: string, projectId = ""): Promise<SessionMeta[]> {
@@ -271,6 +274,11 @@ export class OpencodeDriver implements CliDriver {
             ok: false,
             error: truncateError((err as Error).message)
           });
+          if (this.sessionIds.has(turnId)) {
+            setTimeout(() => {
+              if (this.sessionIds.has(turnId)) this.watchQuestions(turnId, port, authHeader);
+            }, 2000).unref?.();
+          }
         }
       }
     })();
@@ -313,6 +321,27 @@ export class OpencodeDriver implements CliDriver {
       if (!known || parsed.sessionID !== known) return;
       if (this.pendingApprovals.has(parsed.requestId)) return;
       const info = this.watchInfo.get(turnId);
+      if (info && (info.permissionMode === "auto" || info.permissionMode === "bypassPermissions")) {
+        traceHarnessCall({
+          harness: "opencode",
+          operation: "opencode.permissions.autoApprove",
+          turnId,
+          resumeCursor: parsed.requestId,
+          ok: true,
+          extra: { permission: parsed.permission }
+        });
+        void this.replyPermission(info, parsed.sessionID, parsed.requestId, "once").catch((err) => {
+          traceHarnessCall({
+            harness: "opencode",
+            operation: "opencode.permissions.autoReply",
+            turnId,
+            resumeCursor: parsed.requestId,
+            ok: false,
+            error: truncateError((err as Error).message)
+          });
+        });
+        return;
+      }
       if (info && this.isSessionAllowed(parsed)) {
         void this.replyPermission(info, parsed.sessionID, parsed.requestId, "once").catch((err) => {
           traceHarnessCall({
@@ -345,6 +374,22 @@ export class OpencodeDriver implements CliDriver {
       if (!parsed || !entry) return;
       this.pendingApprovals.delete(parsed.requestID);
       this.emit({ type: "approval.resolved", turnId: entry.turnId, requestId: parsed.requestID });
+      return;
+    }
+    if (envelope.type === "message.part.delta") {
+      const known = this.sessionIds.get(turnId);
+      if (!known) return;
+      const text = assistantDeltaOf(event, known);
+      if (text) this.emit({ type: "assistant.delta", turnId, text });
+      return;
+    }
+    if (envelope.type === "session.idle" || envelope.type === "session.status") {
+      if (envelope.type === "session.status" && !isIdleStatus(event)) return;
+      const sid = sessionIdOf(event);
+      if (!sid) return;
+      const owner = [...this.sessionIds].find(([, s]) => s === sid)?.[0];
+      if (!owner) return;
+      void this.finishTurn(owner);
     }
   }
 
@@ -388,19 +433,12 @@ export class OpencodeDriver implements CliDriver {
       });
       return;
     }
-    const baseArgs = [
-      "run",
-      "--format",
-      "json",
-      "--attach",
-      `http://127.0.0.1:${serverPort}`,
-      "--dir",
-      request.cwd
-    ];
-    if (!request.resumeCursor) {
+    let serverSessionId: string;
+    if (request.resumeCursor) {
+      serverSessionId = request.resumeCursor;
+    } else {
       try {
-        const created = await this.createSession(serverPort, authHeader);
-        this.sessionIds.set(turnId, created);
+        serverSessionId = await this.createSession(serverPort, authHeader);
       } catch (err) {
         traceHarnessCall({
           harness: "opencode",
@@ -408,7 +446,6 @@ export class OpencodeDriver implements CliDriver {
           sessionId: request.sessionId,
           turnId,
           cwd: request.cwd,
-          binary,
           durationMs: Date.now() - start,
           ok: false,
           error: truncateError(`opencode session create failed: ${(err as Error).message}`)
@@ -421,177 +458,259 @@ export class OpencodeDriver implements CliDriver {
         return;
       }
     }
-    const sessionId = this.sessionIds.get(turnId) ?? "";
-    if (sessionId) baseArgs.push("--session", sessionId);
-    if (request.permissionMode === "auto" || request.permissionMode === "bypassPermissions") baseArgs.push("--auto");
-    if (request.model) baseArgs.push("--model", request.model);
-    const variant = request.variant ?? (request.effort ? mapEffortToVariant(request.effort) : undefined);
-    if (variant) baseArgs.push("--variant", variant);
-    for (const rel of request.attachments ?? []) {
-      try {
-        assertInside(request.cwd, rel);
-        baseArgs.push("-f", rel);
-      } catch {
-        console.warn(`attachment escapes project root, skipped: ${rel}`);
-      }
-    }
-    baseArgs.push(request.prompt);
-    const args = [...this.extraArgs(), ...baseArgs];
-
-    const child = spawn(binary, args, {
-      cwd: request.cwd,
-      windowsHide: true,
-      stdio: ["ignore", "pipe", "pipe"],
-      env: {
-        ...process.env,
-        OPENCODE_ENABLE_QUESTION_TOOL: "true",
-        ...(bridgeEnv ? { OPENCODE_CONFIG_DIR: bridgeEnv["OPENCODE_CONFIG_DIR"] } : {})
-      }
-    });
-    this.procs.set(turnId, child);
+    this.sessionIds.set(turnId, serverSessionId);
+    this.turnMeta.set(turnId, { localSessionId: request.sessionId, beforeIds: null, startedAt: start, pollWarned: false });
+    this.watchInfo.set(turnId, { port: serverPort, authHeader, cwd: request.cwd, permissionMode: request.permissionMode });
+    this.toolSeen.set(turnId, new Map());
     const preview = previewText(request.prompt);
+    const model = splitOpencodeModel(request.model);
+    const variant = request.variant ?? (request.effort ? mapEffortToVariant(request.effort) : undefined);
+    if (request.model && !model) {
+      traceHarnessCall({
+        harness: "opencode",
+        operation: "opencode.startTurn.model",
+        sessionId: request.sessionId,
+        turnId,
+        cwd: request.cwd,
+        ok: false,
+        error: `ignoring unparseable model id "${request.model}", using server default`
+      });
+    }
     traceHarnessCall({
       harness: "opencode",
       operation: "opencode.startTurn",
       sessionId: request.sessionId,
       turnId,
       cwd: request.cwd,
-      binary,
-      args,
       model: request.model,
       promptPreview: preview.preview,
       promptLength: preview.length,
       resumeCursor: request.resumeCursor,
       ok: true,
-      extra: { serverPort, variant: variant ?? null }
-    });
-    const acc = {
-      text: [] as string[],
-      usage: { input: 0, output: 0, reasoning: 0 },
-      cost: 0,
-      sessionId: ""
-    };
-    if (request.resumeCursor) this.sessionIds.set(turnId, request.resumeCursor);
-    this.watchInfo.set(turnId, { port: serverPort, authHeader, cwd: request.cwd });
-    const rl = createInterface({ input: child.stdout });
-    const liveSeen = new Map<string, LiveSeen>();
-    rl.on("line", (line) => {
-      for (const event of parseOpencodeLine(line, turnId, acc)) {
-        if (event.type === "tool.call" && liveSeen.get(event.toolCallId)?.call === true) continue;
-        if (event.type === "tool.call") {
-          const entry = liveSeen.get(event.toolCallId) ?? { call: false, result: false };
-          entry.call = true;
-          liveSeen.set(event.toolCallId, entry);
-        }
-        if (event.type === "tool.result") {
-          const entry = liveSeen.get(event.toolCallId) ?? { call: false, result: false };
-          entry.result = true;
-          liveSeen.set(event.toolCallId, entry);
-        }
-        this.emit(event);
-      }
-      if (acc.sessionId && this.sessionIds.get(turnId) !== acc.sessionId) {
-        this.sessionIds.set(turnId, acc.sessionId);
-      }
+      extra: { serverPort, variant: variant ?? null, permissionMode: request.permissionMode ?? null }
     });
     this.watchQuestions(turnId, serverPort, authHeader);
 
-    let pollWarned = false;
-    const pollLiveTools = async (final = false): Promise<void> => {
-      if (!final && !this.procs.has(turnId)) return;
-      const serverSessionId = acc.sessionId || request.resumeCursor || "";
-      if (!serverSessionId || serverPort === null) return;
-      try {
-        const res = await fetch(
-          `http://127.0.0.1:${serverPort}/session/${encodeURIComponent(serverSessionId)}/message?limit=50`,
-          { headers: { Authorization: authHeader } }
-        );
-        if (!res.ok) throw new Error(`live tool poll failed: ${res.status}`);
-        const messages = (await res.json()) as LiveMessage[];
-        for (const event of diffLiveTools(liveSeen, messages, turnId)) this.emit(event);
-      } catch (err) {
-        if (!pollWarned) {
-          pollWarned = true;
-          console.warn(`opencode live tool poll failed, falling back to run output: ${(err as Error).message}`);
-        }
-      }
-    };
     const pollTimer = setInterval(() => {
-      void pollLiveTools();
-      void this.pollSessionPermissions(turnId);
+      void this.pollSessionState(turnId);
     }, 2000);
     pollTimer.unref?.();
     this.pollTimers.set(turnId, pollTimer);
 
-    let stderr = "";
-    child.stderr?.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString();
-    });
-    child.on("error", (err) => {
+    try {
+      const res = await fetch(`http://127.0.0.1:${serverPort}/session/${encodeURIComponent(serverSessionId)}/message`, {
+        headers: { Authorization: authHeader }
+      });
+      if (!res.ok) throw new Error(`opencode baseline history failed: ${res.status}`);
+      const seen = new Set<string>();
+      for (const m of turnMessagesOf(await res.json())) seen.add(m.id);
+      const meta = this.turnMeta.get(turnId);
+      if (meta) meta.beforeIds = seen;
+    } catch (err) {
+      traceHarnessCall({
+        harness: "opencode",
+        operation: "opencode.startTurn.baseline",
+        sessionId: request.sessionId,
+        turnId,
+        cwd: request.cwd,
+        ok: false,
+        error: truncateError((err as Error).message)
+      });
+    }
+
+    const files: Array<{ mime: string; url: string }> = [];
+    for (const rel of request.attachments ?? []) {
+      try {
+        assertInside(request.cwd, rel);
+      } catch {
+        console.warn(`attachment escapes project root, skipped: ${rel}`);
+        continue;
+      }
+      const mime = mimeForOpencodeAttachment(rel);
+      if (!mime) {
+        console.warn(`attachment type unsupported, skipped: ${rel}`);
+        continue;
+      }
+      files.push({ mime, url: join(request.cwd, rel) });
+    }
+    const send = (withFiles: boolean): Promise<Response> =>
+      fetch(`http://127.0.0.1:${serverPort}/session/${encodeURIComponent(serverSessionId)}/message`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Authorization: authHeader },
+        body: JSON.stringify(
+          buildOpencodeMessageBody(request.prompt, {
+            ...(model ? { model } : {}),
+            ...(variant ? { variant } : {}),
+            ...(withFiles && files.length > 0 ? { files } : {})
+          })
+        )
+      });
+    try {
+      let res = await send(files.length > 0);
+      if (!res.ok && res.status === 400 && files.length > 0) {
+        console.warn(`attachment message rejected, retrying text-only`);
+        traceHarnessCall({
+          harness: "opencode",
+          operation: "opencode.startTurn.attachments",
+          sessionId: request.sessionId,
+          turnId,
+          cwd: request.cwd,
+          ok: false,
+          error: `file parts rejected: ${res.status}, retried text-only`
+        });
+        res = await send(false);
+      }
+      if (!res.ok) throw new Error(`opencode message send failed: ${res.status}`);
+      traceHarnessCall({
+        harness: "opencode",
+        operation: "opencode.messageSent",
+        sessionId: request.sessionId,
+        turnId,
+        cwd: request.cwd,
+        ok: true,
+        extra: { serverSessionId }
+      });
+    } catch (err) {
+      if (!this.sessionIds.has(turnId)) return;
       traceHarnessCall({
         harness: "opencode",
         operation: "opencode.startTurn",
         sessionId: request.sessionId,
         turnId,
         cwd: request.cwd,
-        binary,
         durationMs: Date.now() - start,
         ok: false,
-        error: truncateError(`failed to spawn ${binary}: ${err.message}`)
+        error: truncateError((err as Error).message)
       });
-      this.emit({ type: "turn.error", turnId, message: `failed to spawn ${binary}: ${err.message}` });
-    });
-    child.on("close", (code) => {
-      const timer = this.pollTimers.get(turnId);
-      if (timer) {
-        clearInterval(timer);
-        this.pollTimers.delete(turnId);
-      }
-      this.procs.delete(turnId);
-      this.watches.get(turnId)?.abort();
-      this.watches.delete(turnId);
-      this.watchInfo.delete(turnId);
-      this.sessionIds.delete(turnId);
+      this.emit({ type: "turn.error", turnId, message: (err as Error).message.slice(0, 2000) });
+      this.takeTurn(turnId);
       this.resolvePendingFor(turnId, null);
       this.resolveApprovalsFor(turnId);
-      traceHarnessCall({
-        harness: "opencode",
-        operation: "opencode.startTurn",
-        sessionId: request.sessionId,
-        turnId,
-        cwd: request.cwd,
-        binary,
-        durationMs: Date.now() - start,
-        ok: code === 0 || acc.text.length > 0 || Boolean(acc.sessionId),
-        exitCode: code,
-        stderrPreview: stderr ? truncateError(stderr) : undefined
-      });
-      if (!child.killed) {
-        const finish = () => {
-          if (code === 0 || acc.text.length > 0 || acc.sessionId) {
-            this.emit(summarizeRun(turnId, request.sessionId, acc));
-          } else if (stderr) {
-            this.emit({ type: "turn.error", turnId, message: stderr.slice(0, 2000) });
-          }
-        };
-        if (acc.sessionId || request.resumeCursor) {
-          void pollLiveTools(true).then(finish);
-        } else {
-          finish();
-        }
-      }
-    });
+    }
   }
 
-  interrupt(turnId: string): void {
-    traceHarnessCall({ harness: "opencode", operation: "opencode.interrupt", turnId, ok: true });
+  private takeTurn(turnId: string): {
+    localSessionId: string;
+    serverSessionId: string;
+    port: number;
+    authHeader: string;
+    beforeIds: Set<string> | null;
+    seen: Map<string, LiveSeen>;
+  } | null {
+    const meta = this.turnMeta.get(turnId);
+    const serverSessionId = this.sessionIds.get(turnId);
+    const info = this.watchInfo.get(turnId);
+    if (!meta || !serverSessionId || !info) return null;
     const timer = this.pollTimers.get(turnId);
     if (timer) {
       clearInterval(timer);
       this.pollTimers.delete(turnId);
     }
-    killProcessTree(this.procs.get(turnId));
-    this.procs.delete(turnId);
+    this.watches.get(turnId)?.abort();
+    this.watches.delete(turnId);
+    this.sessionIds.delete(turnId);
+    this.turnMeta.delete(turnId);
+    this.watchInfo.delete(turnId);
+    const seen = this.toolSeen.get(turnId) ?? new Map<string, LiveSeen>();
+    this.toolSeen.delete(turnId);
+    return {
+      localSessionId: meta.localSessionId,
+      serverSessionId,
+      port: info.port,
+      authHeader: info.authHeader,
+      beforeIds: meta.beforeIds,
+      seen
+    };
+  }
+
+  private async finishTurn(turnId: string): Promise<void> {
+    const taken = this.takeTurn(turnId);
+    if (!taken) return;
+    let text = "";
+    let inputTokens = 0;
+    let outputTokens = 0;
+    let costUsd = 0;
+    try {
+      const res = await fetch(
+        `http://127.0.0.1:${taken.port}/session/${encodeURIComponent(taken.serverSessionId)}/message`,
+        { headers: { Authorization: taken.authHeader } }
+      );
+      if (!res.ok) throw new Error(`opencode result history failed: ${res.status}`);
+      const messages = (await res.json()) as LiveMessage[];
+      for (const event of diffLiveTools(taken.seen, messages, turnId)) this.emit(event);
+      const summary = summarizeOpencodeTurn(turnMessagesOf(messages), taken.beforeIds);
+      text = summary.text;
+      inputTokens = summary.inputTokens;
+      outputTokens = summary.outputTokens;
+      costUsd = summary.costUsd;
+    } catch (err) {
+      traceHarnessCall({
+        harness: "opencode",
+        operation: "opencode.turnDone",
+        sessionId: taken.localSessionId,
+        turnId,
+        ok: false,
+        error: truncateError((err as Error).message)
+      });
+    }
+    this.resolvePendingFor(turnId, null);
+    this.resolveApprovalsFor(turnId);
+    this.emit({
+      type: "turn.done",
+      turnId,
+      sessionId: taken.localSessionId,
+      resumeCursor: taken.serverSessionId,
+      resultText: text,
+      inputTokens,
+      outputTokens,
+      costUsd,
+      numTurns: 1,
+      isError: false
+    });
+    traceHarnessCall({
+      harness: "opencode",
+      operation: "opencode.turnDone",
+      sessionId: taken.localSessionId,
+      turnId,
+      ok: true,
+      extra: { serverSessionId: taken.serverSessionId }
+    });
+  }
+
+  interrupt(turnId: string): void {
+    traceHarnessCall({ harness: "opencode", operation: "opencode.interrupt", turnId, ok: true });
+    const serverSessionId = this.sessionIds.get(turnId);
+    const info = this.watchInfo.get(turnId);
+    if (serverSessionId && info) {
+      void fetch(`http://127.0.0.1:${info.port}/session/${encodeURIComponent(serverSessionId)}/abort`, {
+        method: "POST",
+        headers: { Authorization: info.authHeader }
+      }).then(
+        (res) => {
+          if (!res.ok) {
+            traceHarnessCall({
+              harness: "opencode",
+              operation: "opencode.interrupt",
+              turnId,
+              ok: false,
+              error: `abort failed: ${res.status}`
+            });
+          }
+        },
+        (err) => {
+          traceHarnessCall({
+            harness: "opencode",
+            operation: "opencode.interrupt",
+            turnId,
+            ok: false,
+            error: truncateError((err as Error).message)
+          });
+        }
+      );
+    }
+    this.takeTurn(turnId);
+    this.resolvePendingFor(turnId, null);
+    this.resolveApprovalsFor(turnId);
   }
 
   async respondToApproval(requestId: string, decision: ApprovalDecision): Promise<void> {
@@ -685,13 +804,13 @@ export class OpencodeDriver implements CliDriver {
     reply: "once" | "always" | "reject"
   ): Promise<"replied" | "missing"> {
     if (!info) throw new Error("opencode permission reply has no live server");
-    const payload = JSON.stringify({ reply });
     const headers = { "Content-Type": "application/json", Authorization: info.authHeader };
-    for (const base of [
-      `/session/${sessionID}/permission/${requestID}/reply`,
-      `/api/session/${sessionID}/permission/${requestID}/reply`
-    ]) {
-      const res = await fetch(`http://127.0.0.1:${info.port}${base}`, { method: "POST", headers, body: payload });
+    for (const route of opencodePermissionReplyRoutes(sessionID, requestID)) {
+      const res = await fetch(`http://127.0.0.1:${info.port}${route}`, {
+        method: "POST",
+        headers,
+        body: JSON.stringify(opencodePermissionReplyBody(route, reply))
+      });
       if (res.status === 404) continue;
       if (!res.ok) throw new Error(`opencode permission reply failed: ${res.status}`);
       const contentType = res.headers.get("content-type") ?? "";
@@ -701,13 +820,28 @@ export class OpencodeDriver implements CliDriver {
     return "missing";
   }
 
-  private async pollSessionPermissions(turnId: string): Promise<void> {
-    if (!this.procs.has(turnId)) return;
+  private async pollSessionState(turnId: string): Promise<void> {
+    if (!this.sessionIds.has(turnId)) return;
     const info = this.watchInfo.get(turnId);
     const sessionID = this.sessionIds.get(turnId);
     if (!info || !sessionID) return;
     const headers = { Authorization: info.authHeader };
     const encoded = encodeURIComponent(sessionID);
+    try {
+      const res = await fetch(`http://127.0.0.1:${info.port}/session/${encoded}/message?limit=50`, { headers });
+      if (res.ok && !((res.headers.get("content-type") ?? "").includes("text/html"))) {
+        const seen = this.toolSeen.get(turnId);
+        if (seen) {
+          for (const event of diffLiveTools(seen, (await res.json()) as LiveMessage[], turnId)) this.emit(event);
+        }
+      }
+    } catch (err) {
+      const meta = this.turnMeta.get(turnId);
+      if (meta && !meta.pollWarned) {
+        meta.pollWarned = true;
+        console.warn(`opencode live tool poll failed, retrying: ${(err as Error).message}`);
+      }
+    }
     for (const path of [`/session/${encoded}/permission`, `/api/session/${encoded}/permission`, `/permission`]) {
       let res: Response;
       try {
@@ -726,7 +860,7 @@ export class OpencodeDriver implements CliDriver {
       for (const parsed of parseOpencodePermissionList(payload)) {
         if (parsed.sessionID !== sessionID) continue;
         if (this.pendingApprovals.has(parsed.requestId)) continue;
-        if (this.isSessionAllowed(parsed)) {
+        if (this.isSessionAllowed(parsed) || info.permissionMode === "auto" || info.permissionMode === "bypassPermissions") {
           void this.replyPermission(info, parsed.sessionID, parsed.requestId, "once").catch(() => {});
           continue;
         }
@@ -793,5 +927,30 @@ function questionInfoDenied(permission: unknown): boolean {
   const p = permission as { question?: unknown };
   const question = p?.question;
   return typeof question === "string" ? question.trim() === "deny" : false;
+}
+
+function eventProps(event: unknown): Record<string, unknown> | null {
+  if (event === null || typeof event !== "object" || Array.isArray(event)) return null;
+  const envelope = event as { properties?: unknown; data?: unknown };
+  for (const candidate of [envelope.properties, envelope.data]) {
+    if (candidate !== null && typeof candidate === "object" && !Array.isArray(candidate)) {
+      return candidate as Record<string, unknown>;
+    }
+  }
+  return null;
+}
+
+function sessionIdOf(event: unknown): string {
+  const sid = eventProps(event)?.["sessionID"];
+  return typeof sid === "string" ? sid : "";
+}
+
+function isIdleStatus(event: unknown): boolean {
+  const status = eventProps(event)?.["status"];
+  if (typeof status === "string") return status === "idle";
+  if (status !== null && typeof status === "object" && !Array.isArray(status)) {
+    return (status as Record<string, unknown>)["type"] === "idle";
+  }
+  return false;
 }
 

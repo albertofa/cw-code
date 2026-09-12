@@ -3,14 +3,18 @@ import { AtSign, ClipboardList, Image, Lock, LockOpen, Pencil, Plus, Slash, Term
 import type { ComposerPrefs, DriverName, EffortLevel, ModelOption, PermissionMode } from "../cw.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { MenuSelect } from "./MenuSelect.js";
+import { ImageThumb } from "./ImageThumb.js";
+import type { ImageTarget } from "./imagePreview.js";
 
 export interface ComposerBackend {
+  imageTarget: ImageTarget;
   prefs: ComposerPrefs;
   busy: boolean;
   loadModels(): Promise<ModelOption[]>;
   loadFiles(): Promise<string[]>;
   savePrefs(prefs: ComposerPrefs): void;
   send(body: string, attachments: string[]): Promise<void>;
+  savePasteImage(mime: string, data: Uint8Array): Promise<string>;
   interrupt(): void;
 }
 
@@ -51,8 +55,10 @@ export function ComposerView({
   const { prefs, busy } = backend;
   const backendRef = useRef(backend);
   backendRef.current = backend;
+  const imageTarget = backend.imageTarget;
   const [draft, setDraft] = useState("");
   const [attachments, setAttachments] = useState<string[]>([]);
+  const [pasteError, setPasteError] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
   const [filter, setFilter] = useState("");
@@ -66,6 +72,7 @@ export function ComposerView({
   useEffect(() => {
     setAttachments([]);
     setDraft("");
+    setPasteError(null);
     setShowCustom(false);
     setCustomModel("");
     setAddOpen(false);
@@ -111,6 +118,10 @@ export function ComposerView({
     return list.slice(0, 50);
   }, [files, filter]);
 
+  const addAttachment = (rel: string) => {
+    setAttachments((prev) => (prev.includes(rel) ? prev : [...prev, rel]));
+  };
+
   const send = () => {
     const body = draft.trim();
     if ((!body && attachments.length === 0) || busy) return;
@@ -118,7 +129,26 @@ export function ComposerView({
     void backend.send(tagged, attachments).then(() => {
       setDraft("");
       setAttachments([]);
+      setPasteError(null);
     });
+  };
+
+  const pasteFiles = async (clipboard: DataTransfer): Promise<void> => {
+    const fromItems = Array.from(clipboard.items)
+      .filter((i) => i.kind === "file" && i.type.startsWith("image/"))
+      .map((i) => i.getAsFile())
+      .filter((f): f is File => f !== null);
+    const pasted = fromItems.length > 0 ? fromItems : Array.from(clipboard.files).filter((f) => f.type.startsWith("image/"));
+    for (const file of pasted) {
+      try {
+        const data = new Uint8Array(await file.arrayBuffer());
+        const rel = await backendRef.current.savePasteImage(file.type, data);
+        addAttachment(rel);
+        setPasteError(null);
+      } catch (err) {
+        setPasteError((err as Error).message || "paste failed");
+      }
+    }
   };
 
   const openFilePicker = () => {
@@ -139,8 +169,14 @@ export function ComposerView({
         <div className="attach-chips">
           {attachments.map((a) => (
             <span key={a} className="chip" title={a}>
-              <span aria-hidden>{isImage(a) ? "◈" : "@"}</span>
-              <span className="chip-name">{a}</span>
+              {isImage(a) ? (
+                <ImageThumb target={imageTarget} path={a} className="chip-thumb" />
+              ) : (
+                <>
+                  <span aria-hidden>@</span>
+                  <span className="chip-name">{a}</span>
+                </>
+              )}
               <button
                 className="chip-x"
                 aria-label={`Remove ${a}`}
@@ -168,6 +204,9 @@ export function ComposerView({
               send();
             }
           }}
+          onPaste={(e) => {
+            void pasteFiles(e.clipboardData);
+          }}
           placeholder="Ask for changes, send follow-ups, or attach images"
           className="composer-input"
           rows={2}
@@ -181,6 +220,11 @@ export function ComposerView({
           </div>
         )}
       </div>
+      {pasteError && (
+        <div className="composer-paste-error" role="alert">
+          {pasteError}
+        </div>
+      )}
       {pickerOpen && (
         <div className="attach-picker">
           <input
@@ -198,7 +242,7 @@ export function ComposerView({
                 key={f}
                 className="file-row"
                 onClick={() => {
-                  setAttachments((prev) => (prev.includes(f) ? prev : [...prev, f]));
+                  addAttachment(f);
                   setPickerOpen(false);
                   setFilter("");
                 }}

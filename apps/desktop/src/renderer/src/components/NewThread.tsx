@@ -48,12 +48,14 @@ export function NewThread({
   }, [projectId]);
 
   const backend: ComposerBackend = {
+    imageTarget: { projectId },
     prefs,
     busy: false,
     loadModels: () => window.cw.listModelsFor(projectId, driver),
     loadFiles: () => window.cw.listProjectFiles(projectId),
     savePrefs: (p) => store.setPendingPrefs(p),
     send: (body, attachments) => store.sendPendingPrompt(body, attachments),
+    savePasteImage: (mime, data) => window.cw.savePasteImage(projectId, mime, data),
     interrupt: () => {}
   };
 

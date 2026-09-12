@@ -227,6 +227,34 @@ function registerIpc(): void {
   ipcMain.handle("fs.listProjectFiles", (_e, args: { projectId: string }) =>
     files.listFiles(sessions.rootForProject(args.projectId))
   );
+  ipcMain.handle(
+    "fs.savePasteImage",
+    (_e, args: { projectId: string; mime: string; data: Uint8Array }) =>
+      files.savePasteImage(sessions.rootForProject(args.projectId), args.mime, args.data)
+  );
+  ipcMain.handle(
+    "fs.readImage",
+    (_e, args: { sessionId?: string; projectId?: string; path: string }) => {
+      const roots: string[] = [];
+      if (args.sessionId) {
+        try {
+          roots.push(sessions.rootFor(args.sessionId));
+        } catch {
+          console.warn(`readImage: unknown session ${args.sessionId}`);
+        }
+      }
+      if (args.projectId) roots.push(sessions.rootForProject(args.projectId));
+      let lastError: Error | null = null;
+      for (const root of roots) {
+        try {
+          return files.readImage(root, args.path);
+        } catch (err) {
+          lastError = err as Error;
+        }
+      }
+      throw lastError ?? new Error("no root available to read image");
+    }
+  );
   ipcMain.handle("git.turnDiff", (_e, args: { sessionId: string; since: number }) =>
     git.turnDiff(sessions.rootFor(args.sessionId), args.since)
   );

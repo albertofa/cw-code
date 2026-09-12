@@ -167,3 +167,17 @@ export function opencodePermissionReply(decision: ApprovalDecision): OpencodePer
       return "reject";
   }
 }
+
+export function opencodePermissionReplyRoutes(sessionID: string, requestID: string): string[] {
+  const sid = encodeURIComponent(sessionID);
+  const rid = encodeURIComponent(requestID);
+  return [
+    `/session/${sid}/permissions/${rid}`,
+    `/api/session/${sid}/permission/${rid}/reply`,
+    `/session/${sid}/permission/${rid}/reply`
+  ];
+}
+
+export function opencodePermissionReplyBody(route: string, reply: OpencodePermissionReply): { response: string } | { reply: string } {
+  return route.includes("/permissions/") ? { response: reply } : { reply };
+}

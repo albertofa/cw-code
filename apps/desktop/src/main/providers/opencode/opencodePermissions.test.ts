@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
   opencodePermissionReply,
+  opencodePermissionReplyBody,
+  opencodePermissionReplyRoutes,
   parseOpencodePermissionAsked,
   parseOpencodePermissionList,
   parseOpencodePermissionReplied,
@@ -218,5 +220,27 @@ describe("permissionApprovalOf", () => {
     if (event.type !== "approval.request") throw new Error("expected approval.request");
     expect(event.request.kind).toBe("permissions");
     expect(event.request.title).toContain("external_directory");
+  });
+});
+
+describe("opencodePermissionReplyRoutes", () => {
+  it("tries the canonical plural route first, then the reply fallbacks", () => {
+    expect(opencodePermissionReplyRoutes("ses_1", "per_1")).toEqual([
+      "/session/ses_1/permissions/per_1",
+      "/api/session/ses_1/permission/per_1/reply",
+      "/session/ses_1/permission/per_1/reply"
+    ]);
+  });
+
+  it("encodes session and request ids", () => {
+    expect(opencodePermissionReplyRoutes("ses a", "per/b")[0]).toBe("/session/ses%20a/permissions/per%2Fb");
+  });
+});
+
+describe("opencodePermissionReplyBody", () => {
+  it("uses response for the plural route and reply for the reply routes", () => {
+    expect(opencodePermissionReplyBody("/session/s/permissions/r", "once")).toEqual({ response: "once" });
+    expect(opencodePermissionReplyBody("/api/session/s/permission/r/reply", "always")).toEqual({ reply: "always" });
+    expect(opencodePermissionReplyBody("/session/s/permission/r/reply", "reject")).toEqual({ reply: "reject" });
   });
 });
