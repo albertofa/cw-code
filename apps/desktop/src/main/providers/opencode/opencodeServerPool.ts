@@ -34,10 +34,19 @@ async function waitHealthy(port: number, authHeader: string, timeoutMs: number):
   }
 }
 
+interface StartedServer {
+  proc: ChildProcess;
+  handle: ServerHandle;
+}
+
 export class OpencodeServerPool {
   private servers = new Map<string, { binary: string; proc: ChildProcess; handle: ServerHandle; envKey: string }>();
+  private pending = new Map<string, Promise<ServerHandle>>();
 
-  constructor(private getBinary: () => string) {}
+  constructor(
+    private getBinary: () => string,
+    private deps?: { startServer?: (rootPath: string, binary: string, env: Record<string, string> | undefined) => Promise<StartedServer> }
+  ) {}
 
   private async ensureProcess(rootPath: string, binary: string, envKey: string, env: Record<string, string> | undefined): Promise<{ proc: ChildProcess; handle: ServerHandle }> {
     const start = Date.now();
@@ -84,7 +93,17 @@ export class OpencodeServerPool {
     return { proc, handle };
   }
 
-  async ensure(rootPath: string, env?: Record<string, string>): Promise<ServerHandle> {
+  ensure(rootPath: string, env?: Record<string, string>): Promise<ServerHandle> {
+    const pending = this.pending.get(rootPath);
+    if (pending) return pending;
+    const promise = this.ensureUncached(rootPath, env).finally(() => {
+      this.pending.delete(rootPath);
+    });
+    this.pending.set(rootPath, promise);
+    return promise;
+  }
+
+  private async ensureUncached(rootPath: string, env?: Record<string, string>): Promise<ServerHandle> {
     const binary = this.getBinary();
     const envKey = env ? JSON.stringify(env) : "";
     const existing = this.servers.get(rootPath);
@@ -100,7 +119,9 @@ export class OpencodeServerPool {
       return existing.handle;
     }
     if (existing) this.stop(rootPath);
-    const { proc, handle } = await this.ensureProcess(rootPath, binary, envKey, env);
+    const { proc, handle } = this.deps?.startServer
+      ? await this.deps.startServer(rootPath, binary, env)
+      : await this.ensureProcess(rootPath, binary, envKey, env);
     this.servers.set(rootPath, { binary, proc, handle, envKey });
     return handle;
   }
