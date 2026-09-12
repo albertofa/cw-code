@@ -27,6 +27,8 @@ release/
 
 # Local application data
 .cw-code/
+.cw/
+.claude/
 
 # Operating-system files
 .DS_Store

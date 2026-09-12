@@ -36,6 +36,25 @@ export class SessionStore {
         project.rootPath = normalized;
         migrated = true;
       }
+      if (project.githubAccount) {
+        const host = typeof project.githubAccount.host === "string" ? project.githubAccount.host.trim().toLowerCase() : "";
+        const login = typeof project.githubAccount.login === "string" ? project.githubAccount.login.trim() : "";
+        if (!host || !login) {
+          delete project.githubAccount;
+          migrated = true;
+        } else if (host !== project.githubAccount.host || login !== project.githubAccount.login) {
+          project.githubAccount = { host, login };
+          migrated = true;
+        }
+      }
+    }
+    for (const session of this.data.sessions) {
+      if (!session.worktreePath) continue;
+      const normalized = normalizeRoot(session.worktreePath);
+      if (normalized !== session.worktreePath) {
+        session.worktreePath = normalized;
+        migrated = true;
+      }
     }
     if (migrated) this.persist();
   }
@@ -68,16 +87,35 @@ export class SessionStore {
     return this.data.projects.find((p) => p.id === id);
   }
 
-  createSession(projectId: string, driver: DriverKind, title: string): SessionMeta {
+  updateProject(id: string, patch: Partial<Pick<Project, "githubAccount">>, clearGitHubAccount = false): Project {
+    const project = this.getProject(id);
+    if (!project) throw new Error(`unknown project ${id}`);
+    if (clearGitHubAccount) delete project.githubAccount;
+    else if (patch.githubAccount !== undefined) project.githubAccount = {
+      host: patch.githubAccount.host.trim().toLowerCase(),
+      login: patch.githubAccount.login.trim()
+    };
+    this.persist();
+    return { ...project, ...(project.githubAccount ? { githubAccount: { ...project.githubAccount } } : {}) };
+  }
+
+  createSession(
+    projectId: string,
+    driver: DriverKind,
+    title: string,
+    workspace: { id?: string; worktreePath?: string; branch?: string } = {}
+  ): SessionMeta {
     const now = Date.now();
     const session: SessionMeta = {
-      id: `sess_${randomUUID().slice(0, 8)}`,
+      id: workspace.id ?? `sess_${randomUUID().slice(0, 8)}`,
       projectId,
       driver,
       title,
       resumeCursor: "",
       createdAt: now,
-      updatedAt: now
+      updatedAt: now,
+      ...(workspace.worktreePath ? { worktreePath: normalizeRoot(workspace.worktreePath) } : {}),
+      ...(workspace.branch ? { branch: workspace.branch } : {})
     };
     this.data.sessions.push(session);
     this.persist();
@@ -100,7 +138,7 @@ export class SessionStore {
     );
   }
 
-  updateSession(id: string, patch: Partial<Pick<SessionMeta, "title" | "resumeCursor" | "model" | "effort" | "variant" | "permissionMode">>): void {
+  updateSession(id: string, patch: Partial<Pick<SessionMeta, "title" | "resumeCursor" | "model" | "effort" | "variant" | "permissionMode" | "worktreePath" | "branch">>): void {
     const current = this.getSession(id);
     if (!current) return;
     if (patch.title !== undefined) current.title = patch.title;
@@ -109,6 +147,8 @@ export class SessionStore {
     if (patch.effort !== undefined) current.effort = patch.effort;
     if (patch.variant !== undefined) current.variant = patch.variant;
     if (patch.permissionMode !== undefined) current.permissionMode = patch.permissionMode;
+    if (patch.worktreePath !== undefined) current.worktreePath = normalizeRoot(patch.worktreePath);
+    if (patch.branch !== undefined) current.branch = patch.branch;
     current.updatedAt = Date.now();
     this.persist();
   }

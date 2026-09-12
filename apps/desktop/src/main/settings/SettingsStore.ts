@@ -17,7 +17,11 @@ export const DEFAULT_SETTINGS: AppSettings = {
   codexExtraArgs: "",
   claudeDefaultModel: "",
   claudeEnabledModels: CLAUDE_CURATED_MODELS.map((m) => m.id),
-  claudeCustomModel: { id: "", name: "" }
+  claudeCustomModel: { id: "", name: "" },
+  gitBinaryPath: defaultCliBinaryPath("git"),
+  githubCliBinaryPath: defaultCliBinaryPath("gh"),
+  sourceControlRefreshIntervalSeconds: 30,
+  defaultUseWorktree: true
 };
 
 function sanitize(patch: SettingsPatch): SettingsPatch {
@@ -50,6 +54,17 @@ function sanitize(patch: SettingsPatch): SettingsPatch {
   if (patch.claudeEnabledModels !== undefined) {
     out.claudeEnabledModels = patch.claudeEnabledModels.map((id) => id.trim()).filter(Boolean);
   }
+  if (patch.gitBinaryPath !== undefined) {
+    out.gitBinaryPath = normalizeBinaryPath(patch.gitBinaryPath) || DEFAULT_SETTINGS.gitBinaryPath;
+  }
+  if (patch.githubCliBinaryPath !== undefined) {
+    out.githubCliBinaryPath = normalizeBinaryPath(patch.githubCliBinaryPath) || DEFAULT_SETTINGS.githubCliBinaryPath;
+  }
+  if (patch.sourceControlRefreshIntervalSeconds !== undefined) {
+    const value = Math.round(Number(patch.sourceControlRefreshIntervalSeconds));
+    out.sourceControlRefreshIntervalSeconds = Number.isFinite(value) ? Math.min(3600, Math.max(5, value)) : 30;
+  }
+  if (patch.defaultUseWorktree !== undefined) out.defaultUseWorktree = patch.defaultUseWorktree === true;
   return out;
 }
 

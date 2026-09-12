@@ -5,7 +5,8 @@ import { Sidebar } from "./components/Sidebar.js";
 import { TitleBar } from "./components/TitleBar.js";
 import { SettingsModal } from "./components/SettingsModal.js";
 import { ThreadView } from "./components/ThreadView.js";
-import { DiffPanel, FilePanel } from "./components/FilePanel.js";
+import { FilePanel } from "./components/FilePanel.js";
+import { GitInspectPanel } from "./components/GitInspectPanel.js";
 import { AgentsPanel } from "./components/AgentsPanel.js";
 import { PreviewPanel } from "./components/PreviewPanel.js";
 import { PtyTab } from "./components/PtyTab.js";
@@ -51,7 +52,7 @@ function loadRightWidth(): number {
 }
 
 export function App() {
-  const { activeProjectId, activeSessionId, sessionsByProject, pendingDriver, preview } = useAppStore();
+  const { activeProjectId, activeSessionId, sessionsByProject, pendingDriver, preview, sourceControlRefreshIntervalSeconds } = useAppStore();
   const store = useAppStore();
   const [rightTab, setRightTab] = useState<RightTab>("files");
   const [rightVisible, setRightVisible] = useState(true);
@@ -126,6 +127,36 @@ export function App() {
       window.removeEventListener("keydown", onKey);
     };
   }, []);
+
+  const activeSessionKey = activeProjectId
+    ? (sessionsByProject[activeProjectId] ?? []).map((session) => session.id).join("|")
+    : "";
+
+  useEffect(() => {
+    if (!activeProjectId || !activeSessionKey) return;
+    let running = false;
+    const refresh = async () => {
+      if (running || document.hidden) return;
+      running = true;
+      try {
+        const current = useAppStore.getState();
+        const sessions = current.sessionsByProject[activeProjectId] ?? [];
+        await Promise.all(sessions.map((session) => current.refreshGitStatus(session.id)));
+      } finally {
+        running = false;
+      }
+    };
+    const onVisibility = () => {
+      if (!document.hidden) void refresh();
+    };
+    void refresh();
+    const timer = window.setInterval(() => void refresh(), sourceControlRefreshIntervalSeconds * 1000);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [activeProjectId, activeSessionKey, sourceControlRefreshIntervalSeconds]);
 
   useEffect(() => {
     if (!window.cw) return;
@@ -280,7 +311,7 @@ export function App() {
                 {!activeSessionId && !preview && <div className="right-empty">No session selected.</div>}
                 {activeSessionId && rightTab === "files" && <FilePanel sessionId={activeSessionId} />}
                 {activeSessionId && rightTab === "agents" && <AgentsPanel sessionId={activeSessionId} />}
-                {activeSessionId && rightTab === "diff" && <DiffPanel sessionId={activeSessionId} />}
+                {activeSessionId && rightTab === "diff" && <GitInspectPanel sessionId={activeSessionId} />}
                 {rightTab === "preview" && preview && (
                   <PreviewPanel
                     key={`${preview.sessionId}:${preview.path}`}

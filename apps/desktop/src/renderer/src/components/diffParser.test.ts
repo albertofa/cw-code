@@ -42,6 +42,13 @@ describe("parseUnifiedDiff", () => {
     expect(modified.added).toBe(2);
     expect(modified.removed).toBe(1);
     expect(modified.lines.map((l) => l.type)).toEqual(["hunk", "ctx", "del", "add", "add", "ctx"]);
+    expect(modified.lines.slice(1).map((line) => [line.oldNumber, line.newNumber])).toEqual([
+      [1, 1],
+      [2, undefined],
+      [undefined, 2],
+      [undefined, 3],
+      [3, 4]
+    ]);
 
     expect(added.status).toBe("added");
     expect(added.added).toBe(2);

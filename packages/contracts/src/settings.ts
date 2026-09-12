@@ -13,6 +13,10 @@ export interface AppSettings {
   claudeDefaultModel: string;
   claudeEnabledModels: string[];
   claudeCustomModel: CustomModel;
+  gitBinaryPath: string;
+  githubCliBinaryPath: string;
+  sourceControlRefreshIntervalSeconds: number;
+  defaultUseWorktree: boolean;
 }
 
 export type SettingsPatch = Partial<AppSettings>;

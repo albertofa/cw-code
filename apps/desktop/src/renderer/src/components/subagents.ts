@@ -130,6 +130,14 @@ function resolveInput(m: SubagentMessage): Record<string, unknown> {
   return merged;
 }
 
+export function unwrapTaskOutput(output: string | undefined): string | undefined {
+  if (!output) return output;
+  if (!output.startsWith("<task ")) return output;
+  const inner = /<task_result>([\s\S]*?)<\/task_result>/.exec(output)?.[1];
+  const text = (inner ?? output).trim();
+  return text || output;
+}
+
 function firstLine(text: string, max: number): string {
   const line = text
     .split("\n")
@@ -186,14 +194,15 @@ export function describeSubagent(m: SubagentMessage): SubagentInfo {
   const runRaw = args["run_in_background"] ?? args["runInBackground"];
   const runInBackground = typeof runRaw === "boolean" ? runRaw : undefined;
   const status = describeSubagentStatus(m);
-  const summary = firstLine(m.toolOutput ?? "", 140) || firstLine(prompt ?? "", 140) || name;
+  const body = unwrapTaskOutput(m.toolOutput) ?? "";
+  const summary = firstLine(body, 140) || firstLine(prompt ?? "", 140) || name;
   const startedAt = typeof m.toolStartedAt === "number" ? m.toolStartedAt : undefined;
   const completedAt = typeof m.toolCompletedAt === "number" ? m.toolCompletedAt : undefined;
   const durationMs =
     startedAt !== undefined && completedAt !== undefined && completedAt >= startedAt
       ? completedAt - startedAt
       : undefined;
-  const resultCounts = parseResultCounts(m.toolOutput);
+  const resultCounts = parseResultCounts(body || undefined);
   const counts: SubagentCounts = { ...resultCounts };
   if (m.subagentTools) {
     counts.tools = m.subagentTools.total;
@@ -213,7 +222,7 @@ export function describeSubagent(m: SubagentMessage): SubagentInfo {
     runInBackground,
     status,
     summary,
-    output: m.toolOutput,
+    output: body || undefined,
     startedAt,
     completedAt,
     durationMs,

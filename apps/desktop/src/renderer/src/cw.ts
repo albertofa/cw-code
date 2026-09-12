@@ -2,6 +2,7 @@ export interface Project {
   id: string;
   rootPath: string;
   name: string;
+  githubAccount?: { host: string; login: string };
 }
 
 export type DriverName = "claude" | "opencode" | "codex";
@@ -14,6 +15,13 @@ export interface Session {
   resumeCursor: string;
   createdAt: number;
   updatedAt: number;
+  worktreePath?: string;
+  branch?: string;
+}
+
+export interface CreateSessionOptions {
+  baseBranch?: string;
+  useWorktree?: boolean;
 }
 
 export interface HistoryMessage {
@@ -135,11 +143,80 @@ export interface ModelOption {
 }
 
 export interface GitStatus {
+  available: boolean;
   branch: string;
   dirtyCount: number;
+  addedLines: number;
+  deletedLines: number;
+  stagedCount: number;
+  ahead: number;
+  behind: number;
+  isWorktree: boolean;
   worktreeName: string;
+  worktreePath: string;
+  repositoryRoot: string;
   prNumber: number | null;
+  pullRequest: GitPullRequest | null;
+  githubError: string | null;
+  githubHost: string | null;
+  githubAccount: string | null;
+  githubAccountSource: GitHubAccountSelectionSource;
   clean: boolean;
+}
+
+export type GitHubAccountSelectionSource = "project" | "owner" | "access" | "single" | "active" | "none";
+
+export interface GitHubAccountInfo {
+  host: string;
+  login: string;
+  active: boolean;
+  authenticated: boolean;
+  hasRepositoryAccess: boolean | null;
+}
+
+export interface SourceControlHealth {
+  git: { path: string; available: boolean; version: string | null; error: string | null };
+  githubCli: { path: string; available: boolean; version: string | null; error: string | null };
+  repository: {
+    available: boolean; root: string | null; branch: string | null; remoteUrl: string | null;
+    githubHost: string | null; githubRepository: string | null; userName: string | null;
+    userEmail: string | null; error: string | null;
+  };
+  github: {
+    accounts: GitHubAccountInfo[]; selectedAccount: string | null;
+    selectionSource: GitHubAccountSelectionSource; error: string | null;
+  };
+  issues: Array<{ level: "error" | "warning"; message: string }>;
+}
+
+export interface GitPullRequest {
+  number: number;
+  title: string;
+  url: string;
+  state: "OPEN" | "CLOSED" | "MERGED";
+  isDraft: boolean;
+  reviewDecision: string | null;
+  mergeStateStatus: string | null;
+  headRefName: string;
+  baseRefName: string;
+  checks: { total: number; passed: number; failed: number; pending: number };
+}
+
+export interface GitBranchInfo {
+  name: string;
+  label: string;
+  current: boolean;
+  remote: boolean;
+  worktreePath: string | null;
+}
+
+export type GitDiffMode = "working" | "staged" | "branch";
+
+export interface GitDiffResult {
+  mode: GitDiffMode;
+  patch: string;
+  baseRef: string | null;
+  headRef: string;
 }
 
 export interface CustomModel {
@@ -157,6 +234,10 @@ export interface AppSettings {
   claudeDefaultModel: string;
   claudeEnabledModels: string[];
   claudeCustomModel: CustomModel;
+  gitBinaryPath: string;
+  githubCliBinaryPath: string;
+  sourceControlRefreshIntervalSeconds: number;
+  defaultUseWorktree: boolean;
 }
 
 export type SettingsPatch = Partial<AppSettings>;
@@ -178,7 +259,7 @@ export interface CwApi {
   listSessions(projectId: string): Promise<Session[]>;
   listDiscovered(projectId: string): Promise<Session[]>;
   importSession(projectId: string, driver: DriverName, resumeCursor: string, title: string): Promise<Session>;
-  createSession(projectId: string, driver: DriverName): Promise<Session>;
+  createSession(projectId: string, driver: DriverName, options?: CreateSessionOptions): Promise<Session>;
   renameSession(sessionId: string, title: string): Promise<void>;
   getHistory(sessionId: string): Promise<HistoryMessage[]>;
   startTurn(sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[] }): Promise<string>;
@@ -192,6 +273,13 @@ export interface CwApi {
   getSettings(): Promise<AppSettings>;
   setSettings(patch: SettingsPatch): Promise<AppSettings>;
   getGitStatus(sessionId: string): Promise<GitStatus>;
+  listGitBranches(sessionId: string): Promise<GitBranchInfo[]>;
+  listProjectBranches(projectId: string): Promise<GitBranchInfo[]>;
+  switchGitBranch(sessionId: string, branch: string): Promise<GitStatus>;
+  getGitDiff(sessionId: string, mode: GitDiffMode, baseRef?: string): Promise<GitDiffResult>;
+  getSourceControlHealth(projectId?: string): Promise<SourceControlHealth>;
+  setProjectGitHubAccount(projectId: string, account: { host: string; login: string } | null): Promise<Project>;
+  setRepositoryGitIdentity(projectId: string, name: string, email: string): Promise<void>;
   onTurnEvent(cb: (msg: { sessionId: string; event: TurnEvent }) => void): () => void;
   readFile(sessionId: string, path: string): Promise<string>;
   readOutsideFile(path: string): Promise<string>;
@@ -217,6 +305,7 @@ export interface CwApi {
   getTerminalFont(): Promise<string | null>;
   pickProjectDir(): Promise<string | null>;
   openPath(path: string): Promise<void>;
+  openExternal(url: string): Promise<void>;
   openHtml(name: string, html: string): Promise<void>;
 }
 

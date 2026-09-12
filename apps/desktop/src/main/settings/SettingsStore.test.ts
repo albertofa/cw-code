@@ -64,4 +64,12 @@ describe("SettingsStore", () => {
       opencodeBinaryPath: DEFAULT_SETTINGS.opencodeBinaryPath
     });
   });
+
+  it("sanitizes source-control settings", () => {
+    const store = new SettingsStore(tempFilePath());
+    expect(store.set({ gitBinaryPath: "  custom-git  ", githubCliBinaryPath: "  custom-gh  ", sourceControlRefreshIntervalSeconds: 1, defaultUseWorktree: false })).toMatchObject({
+      gitBinaryPath: "custom-git", githubCliBinaryPath: "custom-gh", sourceControlRefreshIntervalSeconds: 5, defaultUseWorktree: false
+    });
+    expect(store.set({ sourceControlRefreshIntervalSeconds: 50_000 }).sourceControlRefreshIntervalSeconds).toBe(3600);
+  });
 });

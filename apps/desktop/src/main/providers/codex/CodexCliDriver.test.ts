@@ -12,7 +12,11 @@ const SETTINGS: AppSettings = {
   codexExtraArgs: "",
   claudeDefaultModel: "",
   claudeEnabledModels: [],
-  claudeCustomModel: { id: "", name: "" }
+  claudeCustomModel: { id: "", name: "" },
+  gitBinaryPath: "git",
+  githubCliBinaryPath: "gh",
+  sourceControlRefreshIntervalSeconds: 30,
+  defaultUseWorktree: true
 };
 
 class FakeClient implements CodexAppServerLike {

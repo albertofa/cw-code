@@ -3,6 +3,8 @@ export type DiffLineType = "add" | "del" | "ctx" | "hunk" | "meta";
 export interface DiffLine {
   type: DiffLineType;
   text: string;
+  oldNumber?: number;
+  newNumber?: number;
 }
 
 export type DiffStatus = "modified" | "added" | "deleted" | "renamed";
@@ -30,6 +32,8 @@ const DIFF_GIT_RE = /^diff --git\s+("[^"]+"|\S+)\s+("[^"]+"|\S+)/;
 export function parseUnifiedDiff(text: string): DiffFile[] {
   const files: DiffFile[] = [];
   let cur: DiffFile | null = null;
+  let oldNumber = 0;
+  let newNumber = 0;
 
   const push = () => {
     if (cur) files.push(cur);
@@ -69,15 +73,24 @@ export function parseUnifiedDiff(text: string): DiffFile[] {
       cur.binary = true;
       cur.lines.push({ type: "meta", text: "Binary file" });
     } else if (line.startsWith("@@")) {
+      const range = /^@@\s+-(\d+)(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s+@@/.exec(line);
+      if (range) {
+        oldNumber = Number.parseInt(range[1], 10);
+        newNumber = Number.parseInt(range[2], 10);
+      }
       cur.lines.push({ type: "hunk", text: line });
     } else if (line.startsWith("+")) {
       cur.added += 1;
-      cur.lines.push({ type: "add", text: line.slice(1) });
+      cur.lines.push({ type: "add", text: line.slice(1), newNumber });
+      newNumber += 1;
     } else if (line.startsWith("-")) {
       cur.removed += 1;
-      cur.lines.push({ type: "del", text: line.slice(1) });
+      cur.lines.push({ type: "del", text: line.slice(1), oldNumber });
+      oldNumber += 1;
     } else if (line.startsWith(" ")) {
-      cur.lines.push({ type: "ctx", text: line.slice(1) });
+      cur.lines.push({ type: "ctx", text: line.slice(1), oldNumber, newNumber });
+      oldNumber += 1;
+      newNumber += 1;
     } else if (line.startsWith("\\")) {
       cur.lines.push({ type: "meta", text: line });
     }

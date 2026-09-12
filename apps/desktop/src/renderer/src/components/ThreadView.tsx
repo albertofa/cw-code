@@ -5,7 +5,7 @@ import { Notifications } from "./Notifications.js";
 import { Md } from "./Markdown.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { Composer } from "./Composer.js";
-import { GitBar } from "./GitBar.js";
+import { GitPanelBar } from "./GitPanelBar.js";
 import { ToolCard } from "./ToolCard.js";
 import { SubagentCard } from "./SubagentCard.js";
 import { openAgentsPanel } from "./AgentsPanel.js";
@@ -213,8 +213,10 @@ export function ThreadView({ rightVisible, onToggleRight }: { rightVisible: bool
       <div className="composer-wrap">
         <ApprovalDock sessionId={session.id} />
         <QuestionDock sessionId={session.id} />
-        <Composer key={session.id} sessionId={session.id} driver={session.driver} />
-        <GitBar sessionId={session.id} />
+        <div className="composer-git-stack">
+          <Composer key={session.id} sessionId={session.id} driver={session.driver} />
+          <GitPanelBar sessionId={session.id} />
+        </div>
       </div>
       </div>
     </div>

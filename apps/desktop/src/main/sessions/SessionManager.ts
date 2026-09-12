@@ -1,10 +1,13 @@
 import { app } from "electron";
+import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
 import { join } from "node:path";
 import type {
   AppSettings,
   ApprovalDecision,
   CliDriver,
   ComposerPrefs,
+  CreateSessionOptions,
   DriverKind,
   HistoryMessage,
   ModelOption,
@@ -20,6 +23,7 @@ import { TracingCliDriver } from "../debug/tracingDriver.js";
 import { CLAUDE_CURATED_MODELS, ClaudeCliDriver } from "../providers/claude/ClaudeCliDriver.js";
 import { OpencodeDriver } from "../providers/opencode/OpencodeDriver.js";
 import { CodexCliDriver } from "../providers/codex/CodexCliDriver.js";
+import { GitService } from "../fs/GitService.js";
 import { resolveAttachments } from "./attachments.js";
 
 export interface SessionManagerOptions {
@@ -27,6 +31,8 @@ export interface SessionManagerOptions {
   settingsPath?: string;
   onEvent?: (sessionId: string, event: ThreadEvent) => void;
   drivers?: Partial<Record<DriverKind, CliDriver>>;
+  gitService?: GitService;
+  worktreesRoot?: string;
 }
 
 export class SessionManager {
@@ -35,6 +41,8 @@ export class SessionManager {
   private drivers: Record<DriverKind, CliDriver>;
   private activeTurns = new Map<string, string>();
   private onEvent: (sessionId: string, event: ThreadEvent) => void;
+  private git: GitService;
+  private worktreesRoot: string;
 
   constructor(opts: SessionManagerOptions = {}) {
     const dbPath = opts.dbPath ?? join(app.getPath("userData"), "cw-code.db");
@@ -42,6 +50,8 @@ export class SessionManager {
     const settingsPath = opts.settingsPath ?? join(app.getPath("userData"), "cw-settings.json");
     this.settings = new SettingsStore(settingsPath);
     this.onEvent = opts.onEvent ?? (() => {});
+    this.git = opts.gitService ?? new GitService(() => this.settings.get());
+    this.worktreesRoot = opts.worktreesRoot ?? join(app.getPath("userData"), "worktrees");
     const getSettings = (): AppSettings => this.settings.get();
     this.drivers = {
       claude: opts.drivers?.claude ?? new TracingCliDriver(new ClaudeCliDriver((e) => this.routeEvent(e), getSettings)),
@@ -86,6 +96,22 @@ export class SessionManager {
 
   addProject(rootPath: string): Project {
     return this.store.addProject(rootPath);
+  }
+
+  getProject(projectId: string): Project {
+    const project = this.store.getProject(projectId);
+    if (!project) throw new Error(`unknown project ${projectId}`);
+    return project;
+  }
+
+  projectForSession(sessionId: string): Project {
+    const session = this.store.getSession(sessionId);
+    if (!session) throw new Error(`unknown session ${sessionId}`);
+    return this.getProject(session.projectId);
+  }
+
+  setProjectGitHubAccount(projectId: string, account: { host: string; login: string } | null): Project {
+    return this.store.updateProject(projectId, { githubAccount: account ?? undefined }, account === null);
   }
 
   async listSessions(projectId: string): Promise<SessionMeta[]> {
@@ -133,10 +159,25 @@ export class SessionManager {
     return stored;
   }
 
-  async createSession(projectId: string, driver: DriverKind): Promise<SessionMeta> {
+  async createSession(projectId: string, driver: DriverKind, options: CreateSessionOptions = {}): Promise<SessionMeta> {
     const project = this.store.getProject(projectId);
     if (!project) throw new Error(`unknown project ${projectId}`);
-    return this.store.createSession(projectId, driver, "New session");
+    const id = `sess_${randomUUID().slice(0, 8)}`;
+    if (options.useWorktree !== false && await this.git.isRepository(project.rootPath)) {
+      const worktree = await this.git.createWorktree(
+        project.rootPath,
+        project.id,
+        id,
+        this.worktreesRoot,
+        options.baseBranch
+      );
+      return this.store.createSession(projectId, driver, "New session", {
+        id,
+        worktreePath: worktree.path,
+        branch: worktree.branch
+      });
+    }
+    return this.store.createSession(projectId, driver, "New session", { id });
   }
 
   async renameSession(sessionId: string, title: string): Promise<void> {
@@ -178,7 +219,7 @@ export class SessionManager {
     if (!project) throw new Error(`unknown project ${session.projectId}`);
     if (!session.resumeCursor) return [];
     try {
-      return await this.drivers[session.driver].getHistory(project.rootPath, session.resumeCursor);
+      return await this.drivers[session.driver].getHistory(this.rootFor(sessionId), session.resumeCursor);
     } catch (err) {
       console.warn(`history failed for ${sessionId}: ${(err as Error).message}`);
       return [];
@@ -270,7 +311,16 @@ export class SessionManager {
   rootFor(sessionId: string): string {
     const session = this.store.getSession(sessionId);
     if (!session) throw new Error(`unknown session ${sessionId}`);
+    if (session.worktreePath) {
+      if (!existsSync(session.worktreePath)) throw new Error(`session worktree is missing: ${session.worktreePath}`);
+      return session.worktreePath;
+    }
     return this.rootForProject(session.projectId);
+  }
+
+  updateSessionBranch(sessionId: string, branch: string): void {
+    if (!this.store.getSession(sessionId)) throw new Error(`unknown session ${sessionId}`);
+    this.store.updateSession(sessionId, { branch });
   }
 
   rootForProject(projectId: string): string {

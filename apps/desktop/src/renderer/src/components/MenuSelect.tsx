@@ -6,6 +6,7 @@ export interface MenuOption {
   hint?: string;
   description?: string;
   icon?: ReactNode;
+  disabled?: boolean;
 }
 
 export function MenuSelect({
@@ -46,7 +47,7 @@ export function MenuSelect({
     : options;
 
   const pickFirst = () => {
-    const first = shown[0];
+    const first = shown.find((option) => !option.disabled);
     close();
     if (first && first.id !== value) onPick(first.id);
   };
@@ -99,11 +100,12 @@ export function MenuSelect({
             {shown.map((o) => (
               <div
                 key={o.id}
-                className={`menu-row${o.id === value ? " active" : ""}${o.description ? " has-desc" : ""}`}
+                className={`menu-row${o.id === value ? " active" : ""}${o.description ? " has-desc" : ""}${o.disabled ? " disabled" : ""}`}
                 role="option"
                 aria-selected={o.id === value}
                 title={o.hint ?? o.label}
                 onClick={() => {
+                  if (o.disabled) return;
                   close();
                   if (o.id !== value) onPick(o.id);
                 }}
