@@ -101,6 +101,7 @@ export class OpencodeServerPool {
     if (pending) {
       if (pending.envKey === envKey) return pending.promise;
       await pending.promise.catch(() => undefined);
+      return this.ensure(rootPath, env);
     }
     const promise = this.ensureUncached(rootPath, env).finally(() => {
       this.pending.delete(rootPath);

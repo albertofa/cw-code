@@ -186,7 +186,7 @@ describe("GitService worktrees", () => {
     expect(branches.find((branch) => branch.name === "cw/1234abcd")?.worktreePath).toBe(created.path.replace(/\\/g, "/"));
   });
 
-  it("counts untracked files through bounded concurrency in status", async () => {
+  it("counts untracked files in status", async () => {
     const sandbox = mkdtempSync(join(tmpdir(), "cw-git-"));
     const repository = join(sandbox, "repo");
     execFileSync("git", ["init", "-b", "main", repository]);

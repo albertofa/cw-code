@@ -92,6 +92,36 @@ describe("OpencodeServerPool ensure", () => {
     pool.dispose();
   });
 
+  it("shares one spawn when multiple concurrent callers request the same different env", async () => {
+    let calls = 0;
+    const handles: ServerHandle[] = [
+      { port: 40001, authHeader: "a" },
+      { port: 40002, authHeader: "b" },
+      { port: 40003, authHeader: "c" }
+    ];
+    const startServer = vi.fn(() => {
+      calls += 1;
+      const handle = handles[calls - 1];
+      return new Promise<{ proc: ChildProcess; handle: ServerHandle }>((resolve) => {
+        setTimeout(() => resolve({ proc: fakeProc(), handle }), 20);
+      });
+    });
+    const pool = makePool(startServer);
+    const env = { CW_BRIDGE: "1" };
+
+    const [plain, first, second] = await Promise.all([
+      pool.ensure(ROOT),
+      pool.ensure(ROOT, env),
+      pool.ensure(ROOT, env)
+    ]);
+
+    expect(calls).toBe(2);
+    expect(plain.port).toBe(40001);
+    expect(second).toBe(first);
+    expect(first.port).toBe(40002);
+    pool.dispose();
+  });
+
   it("rejects an in-flight spawn when disposed and never caches it", async () => {
     const startServer = vi.fn(
       (): Promise<{ proc: ChildProcess; handle: ServerHandle }> =>
