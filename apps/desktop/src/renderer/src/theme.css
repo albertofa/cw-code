@@ -3493,9 +3493,8 @@ select.field option {
   min-width: 0;
   display: inline-flex;
   align-items: stretch;
-  border: 1px solid var(--border-soft);
   border-radius: var(--r-sm);
-  background: var(--bg);
+  background: color-mix(in srgb, var(--raised) 55%, transparent);
 }
 
 .gitbar-location .menu {
@@ -3523,7 +3522,6 @@ select.field option {
   white-space: nowrap;
   color: var(--faint);
   padding: 3px 7px;
-  border-left: 1px solid var(--border-soft);
 }
 
 .gitbar-lines {
