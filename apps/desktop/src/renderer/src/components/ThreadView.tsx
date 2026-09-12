@@ -200,8 +200,10 @@ export function ThreadView({ rightVisible, onToggleRight }: { rightVisible: bool
       <div className="composer-wrap">
         <ApprovalDock sessionId={session.id} />
         <QuestionDock sessionId={session.id} />
-        <Composer key={session.id} sessionId={session.id} driver={session.driver} />
-        <GitPanelBar sessionId={session.id} />
+        <div className="composer-git-stack">
+          <Composer key={session.id} sessionId={session.id} driver={session.driver} />
+          <GitPanelBar sessionId={session.id} />
+        </div>
       </div>
       </div>
     </div>

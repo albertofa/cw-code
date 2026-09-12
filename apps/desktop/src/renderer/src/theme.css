@@ -1199,6 +1199,21 @@ body {
   padding: 10px 20px 16px;
 }
 
+.composer-git-stack {
+  max-width: calc(864px + 34px);
+  margin: 0 auto;
+}
+
+.composer-git-stack .composer {
+  max-width: none;
+}
+
+.composer-git-stack .gitbar {
+  width: 90%;
+  max-width: none;
+  box-sizing: border-box;
+}
+
 .composer {
   max-width: 864px;
   margin: 0 auto;
@@ -3483,10 +3498,6 @@ select.field option {
 .workspace-hint {
   color: var(--faint);
   font-size: 11px;
-}
-
-.gitbar {
-  max-width: min(900px, calc(100% - 32px));
 }
 
 .gitbar-location {
