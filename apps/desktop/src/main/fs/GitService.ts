@@ -1,6 +1,6 @@
 import { execFile } from "node:child_process";
 import { mkdirSync } from "node:fs";
-import { open } from "node:fs/promises";
+import { open, lstat } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { simpleGit } from "simple-git";
 import type {
@@ -218,7 +218,7 @@ export function parseNumstat(stdout: string): { addedLines: number; deletedLines
 }
 
 export const UNTRACKED_COUNT_MAX_BYTES = 10 * 1024 * 1024;
-const BINARY_SCAN_BYTES = 8192;
+const BINARY_SCAN_BYTES = 8000;
 const READ_CHUNK_BYTES = 64 * 1024;
 
 function countNewlines(buffer: Buffer): number {
@@ -232,6 +232,8 @@ function countNewlines(buffer: Buffer): number {
 }
 
 export async function countUntrackedLines(root: string, file: string): Promise<{ addedLines: number; deletedLines: number }> {
+  const linkStat = await lstat(join(root, file));
+  if (linkStat.isSymbolicLink()) return { addedLines: 1, deletedLines: 0 };
   const handle = await open(join(root, file), "r");
   try {
     const stat = await handle.stat();

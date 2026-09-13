@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { GitService, countUntrackedLines, isAppManagedPath, mapLimit, parseGitHubAccounts, parseGitHubRemote, parseNumstat, parsePrNumber, parsePullRequest, parseWorktreeList, selectGitHubAccount, worktreeNameFor } from "./GitService.js";
@@ -162,6 +162,34 @@ describe("countUntrackedLines", () => {
     expect(await countUntrackedLines(sandbox, "trailing.txt")).toEqual({ addedLines: 3, deletedLines: 0 });
     expect(await countUntrackedLines(sandbox, "no-trailing.txt")).toEqual({ addedLines: 3, deletedLines: 0 });
     expect(await countUntrackedLines(sandbox, "empty.txt")).toEqual({ addedLines: 0, deletedLines: 0 });
+  });
+
+  it("counts CRLF lines and a bare newline like git numstat", async () => {
+    const sandbox = mkdtempSync(join(tmpdir(), "cw-lines-"));
+    writeFileSync(join(sandbox, "crlf.txt"), "a\r\nb\r\nc\r\n");
+    writeFileSync(join(sandbox, "bare.txt"), "\n");
+
+    expect(await countUntrackedLines(sandbox, "crlf.txt")).toEqual({ addedLines: 3, deletedLines: 0 });
+    expect(await countUntrackedLines(sandbox, "bare.txt")).toEqual({ addedLines: 1, deletedLines: 0 });
+  });
+
+  it("treats UTF-16 content as a single added line", async () => {
+    const sandbox = mkdtempSync(join(tmpdir(), "cw-lines-"));
+    writeFileSync(join(sandbox, "utf16.txt"), Buffer.from("a\nb\n", "utf16le"));
+
+    expect(await countUntrackedLines(sandbox, "utf16.txt")).toEqual({ addedLines: 1, deletedLines: 0 });
+  });
+
+  it("treats a symbolic link as a single added line", async () => {
+    const sandbox = mkdtempSync(join(tmpdir(), "cw-lines-"));
+    writeFileSync(join(sandbox, "target.txt"), "a\nb\nc\nd\ne\n");
+    try {
+      symlinkSync(join(sandbox, "target.txt"), join(sandbox, "link.txt"));
+    } catch {
+      return;
+    }
+
+    expect(await countUntrackedLines(sandbox, "link.txt")).toEqual({ addedLines: 1, deletedLines: 0 });
   });
 
   it("treats binary content as a single added line", async () => {
