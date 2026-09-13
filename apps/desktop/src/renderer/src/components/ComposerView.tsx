@@ -3,7 +3,6 @@ import {
   ArrowRight,
   AtSign,
   ClipboardList,
-  Database,
   Image,
   Lock,
   LockOpen,
@@ -53,15 +52,6 @@ function EffortIcon({ size = 15 }: { size?: number }) {
   return (
     <svg width={size} height={size} viewBox="0 0 20 20" fill="none" aria-hidden="true">
       <path d="M3 9h14M7 5.5v6M13 9v5.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-    </svg>
-  );
-}
-
-function PermissionIcon({ size = 16 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 20 20" aria-hidden="true">
-      <path d="M10 2.6l6.2 2.5v4.1c0 4.3-2.8 7.1-6.2 8.6-3.4-1.5-6.2-4.3-6.2-8.6V5.1z" fill="#a98af7" />
-      <rect x="8.9" y="6.3" width="2.2" height="5.2" rx="1.1" fill="#171b2b" opacity=".9" />
     </svg>
   );
 }
@@ -194,6 +184,7 @@ export function ComposerView({
     : (models.find((m) => m.id === prefs.model)?.label ?? "Default model");
   const effortDisplay = EFFORTS.find((o) => o.id === (prefs.effort ?? "medium"))?.label ?? "Medium";
   const permissionDisplay = PERMISSIONS.find((o) => o.id === (prefs.permissionMode ?? "auto"))?.label ?? "Auto";
+  const permissionIcon = PERMISSIONS.find((o) => o.id === (prefs.permissionMode ?? "auto"))?.icon;
 
   return (
     <div className="composer composer-recipe">
@@ -283,6 +274,72 @@ export function ComposerView({
         </div>
       )}
       <div className="composer-recipe-row">
+        <div className="recipe-control recipe-model" title={driver}>
+          <MenuSelect
+            label="Model"
+            icon={<DriverIcon driver={driver} size={15} />}
+            title={modelsError ? `Model list failed: ${modelsError}` : "Model"}
+            value={modelValue}
+            display={modelDisplay}
+            isSet={showCustom || !!prefs.model}
+            searchable
+            searchPlaceholder="Filter models…"
+            options={[
+              ...(!showCustom && !prefs.model ? [{ id: "", label: "Default model" }] : []),
+              ...models.map((m) => ({ id: m.id, label: m.label, hint: m.id })),
+              { id: "__custom", label: "Custom…" }
+            ]}
+            onPick={(v) => {
+              if (v === "__custom") {
+                setShowCustom(true);
+                return;
+              }
+              setShowCustom(false);
+              backend.savePrefs({ model: v || undefined });
+            }}
+          />
+        </div>
+        {showCustom && (
+          <input
+            className="field composer-custom"
+            placeholder="provider/model or alias"
+            aria-label="Custom model"
+            value={customModel}
+            onChange={(e) => setCustomModel(e.target.value)}
+            onBlur={() => {
+              const v = customModel.trim();
+              if (v) backend.savePrefs({ model: v });
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+              if (e.key === "Escape") setShowCustom(false);
+            }}
+          />
+        )}
+        <div className="recipe-control">
+          <MenuSelect
+            label="Effort"
+            icon={<EffortIcon />}
+            title="Effort"
+            value={prefs.effort ?? "medium"}
+            display={effortDisplay}
+            isSet={(prefs.effort ?? "medium") !== "medium"}
+            options={EFFORTS.map((o) => ({ id: o.id, label: o.label }))}
+            onPick={(v) => backend.savePrefs({ effort: v as EffortLevel })}
+          />
+        </div>
+        <div className="recipe-control">
+          <MenuSelect
+            label="Permission"
+            icon={permissionIcon}
+            title="Permission"
+            value={prefs.permissionMode ?? "auto"}
+            display={permissionDisplay}
+            isSet={(prefs.permissionMode ?? "auto") !== "auto"}
+            options={PERMISSIONS.map((o) => ({ id: o.id, label: o.label, description: o.description, icon: o.icon }))}
+            onPick={(v) => backend.savePrefs({ permissionMode: v as PermissionMode })}
+          />
+        </div>
         <div className="menu composer-add">
           <button
             className="icon-btn composer-attach"
@@ -348,83 +405,6 @@ export function ComposerView({
             </>
           )}
         </div>
-        <span className="recipe-lead" aria-hidden="true">Run with</span>
-        <div className="recipe-control recipe-model" title={driver}>
-          <DriverIcon driver={driver} size={15} />
-          <MenuSelect
-            label="Model"
-            title={modelsError ? `Model list failed: ${modelsError}` : "Model"}
-            value={modelValue}
-            display={modelDisplay}
-            isSet={showCustom || !!prefs.model}
-            searchable
-            searchPlaceholder="Filter models…"
-            options={[
-              ...(!showCustom && !prefs.model ? [{ id: "", label: "Default model" }] : []),
-              ...models.map((m) => ({ id: m.id, label: m.label, hint: m.id })),
-              { id: "__custom", label: "Custom…" }
-            ]}
-            onPick={(v) => {
-              if (v === "__custom") {
-                setShowCustom(true);
-                return;
-              }
-              setShowCustom(false);
-              backend.savePrefs({ model: v || undefined });
-            }}
-          />
-        </div>
-        {showCustom && (
-          <input
-            className="field composer-custom"
-            placeholder="provider/model or alias"
-            aria-label="Custom model"
-            value={customModel}
-            onChange={(e) => setCustomModel(e.target.value)}
-            onBlur={() => {
-              const v = customModel.trim();
-              if (v) backend.savePrefs({ model: v });
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-              if (e.key === "Escape") setShowCustom(false);
-            }}
-          />
-        )}
-        <div className="recipe-control">
-          <EffortIcon />
-          <MenuSelect
-            label="Effort"
-            title="Effort"
-            value={prefs.effort ?? "medium"}
-            display={effortDisplay}
-            isSet={(prefs.effort ?? "medium") !== "medium"}
-            options={EFFORTS.map((o) => ({ id: o.id, label: o.label }))}
-            onPick={(v) => backend.savePrefs({ effort: v as EffortLevel })}
-          />
-        </div>
-        <div className="recipe-control">
-          <PermissionIcon />
-          <MenuSelect
-            label="Permission"
-            title="Permission"
-            value={prefs.permissionMode ?? "auto"}
-            display={permissionDisplay}
-            isSet={(prefs.permissionMode ?? "auto") !== "auto"}
-            options={PERMISSIONS.map((o) => ({ id: o.id, label: o.label, description: o.description, icon: o.icon }))}
-            onPick={(v) => backend.savePrefs({ permissionMode: v as PermissionMode })}
-          />
-        </div>
-        <button
-          type="button"
-          className="recipe-files"
-          onClick={openFilePicker}
-          title="Attach project files"
-          aria-label={`${attachments.length} attached ${attachments.length === 1 ? "file" : "files"}. Add context.`}
-        >
-          <Database size={15} />
-          <span aria-live="polite">{attachments.length} {attachments.length === 1 ? "file" : "files"}</span>
-        </button>
         {busy ? (
           <button
             type="button"

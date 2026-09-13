@@ -1018,12 +1018,6 @@ body.session-dragging * {
   background: #1e2941;
 }
 
-.thread-status .icon-btn.agents-btn {
-  width: auto;
-  padding-inline: 8px;
-  gap: 6px;
-}
-
 .pulse {
   width: 7px;
   height: 7px;
@@ -1582,24 +1576,24 @@ body.session-dragging * {
 
 .composer {
   position: relative;
-  width: min(768px, 100%);
-  max-width: 768px;
+  width: 100%;
   min-height: 156px;
   margin: 0 auto;
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  background: linear-gradient(145deg, #1b2135 0%, #181e30 64%, #151a29 100%);
+  background: #161c30;
   border: 1px solid transparent;
   border-radius: 12px;
   padding: 0;
   box-shadow: 0 14px 36px rgba(2, 5, 12, 0.54);
-  transition: box-shadow 140ms cubic-bezier(0.22, 1, 0.36, 1), background 140ms ease;
+  transition: box-shadow 140ms cubic-bezier(0.22, 1, 0.36, 1), background 140ms ease, border-color 140ms ease;
 }
 
 .composer:focus-within {
-  background: linear-gradient(145deg, #1e2439 0%, #1a2033 64%, #171c2c 100%);
-  box-shadow: 0 0 0 1px rgba(160, 120, 255, 0.6), 0 16px 42px rgba(2, 5, 12, 0.6);
+  background: #1a2136;
+  border-color: #2c3a58;
+  box-shadow: 0 16px 42px rgba(2, 5, 12, 0.6);
 }
 
 .composer-writing {
@@ -1654,53 +1648,24 @@ body.session-dragging * {
   padding: 0 18px 4px;
 }
 
-.recipe-lead {
-  display: flex;
-  align-items: center;
-  color: var(--composer-faint);
-  font-size: 13.5px;
-  white-space: nowrap;
-}
-
 .recipe-control {
   min-width: 0;
   display: inline-flex;
   align-items: center;
-  gap: 8px;
   color: #eeeef5;
   font-size: 13.5px;
   white-space: nowrap;
 }
 
-.recipe-control > svg,
-.recipe-files > svg {
-  color: #c8cbe0;
-  flex: none;
+.recipe-model .menu-btn-icon {
+  color: var(--driver);
 }
 
 .recipe-model > svg {
   color: var(--driver);
 }
 
-.recipe-files {
-  display: inline-flex;
-  align-items: center;
-  gap: 8px;
-  min-height: 32px;
-  padding: 4px 6px;
-  border: 0;
-  border-radius: var(--r-sm);
-  background: transparent;
-  color: #d9dbe8;
-  font: 13.5px var(--sans);
-  white-space: nowrap;
-  cursor: pointer;
-}
 
-.recipe-files:hover {
-  color: var(--text);
-  background: rgba(124, 67, 255, 0.1);
-}
 
 .newthread {
   flex: 1;
@@ -1796,6 +1761,13 @@ body.session-dragging * {
   padding: 4px 6px;
   cursor: pointer;
   white-space: nowrap;
+}
+
+.menu-btn-icon {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  color: #c8cbe0;
 }
 
 .menu-btn:hover {
@@ -1964,13 +1936,13 @@ body.session-dragging * {
   border: 0;
   border-radius: var(--r-sm);
   padding: 4px 2px;
-  gap: 5px;
+  gap: 7px;
   color: #eeeef5;
   font-size: 13.5px;
 }
 
 .composer-recipe-row .menu-btn:hover {
-  background: rgba(124, 66, 255, 0.1);
+  background: rgba(255, 255, 255, 0.06);
 }
 
 .composer-recipe-row .menu-chevron {
@@ -3022,31 +2994,6 @@ body.session-dragging * {
   padding: 4px 10px;
 }
 
-.agents-btn {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-}
-
-.agents-btn.running {
-  color: var(--driver);
-}
-
-.agents-count {
-  font-size: 10.5px;
-  color: var(--muted);
-  background: var(--raised);
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 0 6px;
-  line-height: 1.6;
-}
-
-.agents-btn.running .agents-count {
-  color: var(--driver);
-  border-color: var(--driver);
-}
-
 .agents-panel {
   flex: 1;
   min-height: 0;
@@ -3709,10 +3656,6 @@ select.field option {
     padding-inline: 12px;
   }
 
-  .recipe-lead {
-    display: none;
-  }
-
   .composer-recipe-row {
     gap: 4px;
   }
@@ -3799,9 +3742,6 @@ select.field option {
     min-height: 88px;
   }
 
-  .recipe-files span {
-    display: none;
-  }
 }
 
 @media (max-width: 720px) {

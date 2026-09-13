@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { Bot, PanelRightClose, PanelRightOpen, Sparkles, TriangleAlert } from "lucide-react";
+import { PanelRightClose, PanelRightOpen, Sparkles, TriangleAlert } from "lucide-react";
 import { useAppStore, type ChatMessage } from "../stores/appStore.js";
 import { Notifications } from "./Notifications.js";
 import { Md } from "./Markdown.js";
@@ -8,7 +8,6 @@ import { Composer } from "./Composer.js";
 import { GitPanelBar } from "./GitPanelBar.js";
 import { ToolCard } from "./ToolCard.js";
 import { SubagentCard } from "./SubagentCard.js";
-import { openAgentsPanel } from "./AgentsPanel.js";
 import { NewThread } from "./NewThread.js";
 import { ApprovalDock } from "./ApprovalDock.js";
 import { QuestionDock } from "./QuestionDock.js";
@@ -41,7 +40,6 @@ export function ThreadView({ rightVisible, onToggleRight }: { rightVisible: bool
   const lastTurn = activeSessionId ? lastTurnStats[activeSessionId] : undefined;
   const ordered = orderToolsForDisplay(messages);
   const subagents = collectSubagents(messages);
-  const subagentsRunning = subagents.filter((s) => s.status === "running").length;
   const nestedIds = new Set(subagents.map((s) => s.id));
   const nodes: Array<{ kind: "msg"; msg: ChatMessage } | { kind: "sub"; key: string; group: SubagentGroup }> = [];
   {
@@ -133,15 +131,6 @@ export function ThreadView({ rightVisible, onToggleRight }: { rightVisible: bool
         </span>
         <GitPanelBar sessionId={session.id} compact />
         <span className="thread-status">
-          <button
-            className={`icon-btn agents-btn${subagentsRunning > 0 ? " running" : ""}`}
-            onClick={() => openAgentsPanel()}
-            title={subagents.length > 0 ? `Subagents (${subagents.length})` : "Subagents"}
-            aria-label="Subagents"
-          >
-            <Bot size={14} />
-            {subagents.length > 0 && <span className="agents-count">{subagents.length}</span>}
-          </button>
           {busyTurn && <WorkingPill word={workingWord} />}
           <button className="icon-btn" onClick={onToggleRight} title={rightVisible ? "Hide panel" : "Show panel"}>
             {rightVisible ? <PanelRightClose aria-hidden="true" size={14} /> : <PanelRightOpen aria-hidden="true" size={14} />}

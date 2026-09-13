@@ -19,7 +19,8 @@ export function MenuSelect({
   onPick,
   isSet,
   searchable,
-  searchPlaceholder
+  searchPlaceholder,
+  icon
 }: {
   label: string;
   title?: string;
@@ -30,6 +31,7 @@ export function MenuSelect({
   isSet?: boolean;
   searchable?: boolean;
   searchPlaceholder?: string;
+  icon?: ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -63,6 +65,11 @@ export function MenuSelect({
         aria-expanded={open}
         onClick={toggle}
       >
+        {icon && (
+          <span className="menu-btn-icon" aria-hidden="true">
+            {icon}
+          </span>
+        )}
         <span className="menu-value">{display}</span>
         <span className="menu-chevron">{open ? <ChevronUp aria-hidden="true" size={14} /> : <ChevronDown aria-hidden="true" size={14} />}</span>
       </button>
