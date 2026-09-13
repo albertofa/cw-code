@@ -342,8 +342,24 @@ function safeSegment(value: string): string {
   return value.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80) || "workspace";
 }
 
+function cacheKey(root: string): string {
+  const normalized = resolve(root).replace(/[\\/]+$/, "");
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+}
+
+export const STATUS_CACHE_TTL_MS = 5_000;
+export const PR_CACHE_TTL_MS = 60_000;
+
+interface CacheEntry<T> {
+  expiresAt: number;
+  value: T;
+}
+
 export class GitService {
   private accountCache = new Map<string, { expiresAt: number; accounts: GitHubAccountInfo[] }>();
+  private statusInFlight = new Map<string, Promise<GitStatus>>();
+  private statusDone = new Map<string, CacheEntry<GitStatus>>();
+  private prCache = new Map<string, CacheEntry<{ pullRequest: GitPullRequest | null; error: string | null }>>();
 
   constructor(private getSettings: () => SourceControlSettings = () => ({
     gitBinaryPath: defaultBinary("git"),
@@ -462,6 +478,7 @@ export class GitService {
     const git = this.git(root);
     if (target.remote) await git.raw(["checkout", "--track", target.name]);
     else await git.checkout(target.name);
+    this.statusDone.delete(cacheKey(root));
     return this.status(root, project);
   }
 
@@ -637,6 +654,31 @@ export class GitService {
   }
 
   async status(root: string, project?: Project): Promise<GitStatus> {
+    const key = cacheKey(root);
+    const cached = this.statusDone.get(key);
+    if (cached && cached.expiresAt > Date.now()) return cached.value;
+    const inFlight = this.statusInFlight.get(key);
+    if (inFlight) return inFlight;
+    const promise = this.computeStatus(root, project).then((value) => {
+      this.statusDone.set(key, { expiresAt: Date.now() + STATUS_CACHE_TTL_MS, value });
+      return value;
+    }).finally(() => {
+      this.statusInFlight.delete(key);
+    });
+    this.statusInFlight.set(key, promise);
+    return promise;
+  }
+
+  private async cachedPullRequest(root: string, branch: string, remote: ParsedGitHubRemote, account: GitHubAccountInfo): Promise<{ pullRequest: GitPullRequest | null; error: string | null }> {
+    const key = `${cacheKey(root)}|${branch}`;
+    const cached = this.prCache.get(key);
+    if (cached && cached.expiresAt > Date.now()) return cached.value;
+    const value = await queryPullRequest(root, this.settings().githubCliBinaryPath, remote, account);
+    this.prCache.set(key, { expiresAt: Date.now() + PR_CACHE_TTL_MS, value });
+    return value;
+  }
+
+  private async computeStatus(root: string, project?: Project): Promise<GitStatus> {
     const fallback: GitStatus = {
       available: false,
       branch: "not a repository",
@@ -670,7 +712,7 @@ export class GitService {
       ]);
       const [github, lineCounts] = await Promise.all([
         context.remote && context.selection.account
-          ? queryPullRequest(root, this.settings().githubCliBinaryPath, context.remote, context.selection.account)
+          ? this.cachedPullRequest(root, branch, context.remote, context.selection.account)
           : Promise.resolve({ pullRequest: null, error: context.selection.error }),
         this.lineCounts(root)
       ]);

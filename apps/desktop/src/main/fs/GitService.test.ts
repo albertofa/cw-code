@@ -269,4 +269,36 @@ describe("GitService worktrees", () => {
       deletedLines: 0
     });
   });
+
+  it("shares one computation for concurrent status calls on the same root", async () => {
+    const sandbox = mkdtempSync(join(tmpdir(), "cw-git-"));
+    const repository = join(sandbox, "repo");
+    execFileSync("git", ["init", "-b", "main", repository]);
+    writeFileSync(join(repository, "README.md"), "base\n", "utf8");
+    execFileSync("git", ["-C", repository, "add", "README.md"]);
+    execFileSync("git", ["-C", repository, "-c", "user.name=cw-code", "-c", "user.email=test@cw-code.local", "commit", "-m", "initial"]);
+
+    const service = new GitService();
+    const [first, second] = await Promise.all([service.status(repository), service.status(repository)]);
+    const third = await service.status(repository);
+
+    expect(second).toBe(first);
+    expect(third).toBe(first);
+  });
+
+  it("recomputes status after a branch switch instead of serving cache", async () => {
+    const sandbox = mkdtempSync(join(tmpdir(), "cw-git-"));
+    const repository = join(sandbox, "repo");
+    execFileSync("git", ["init", "-b", "main", repository]);
+    writeFileSync(join(repository, "README.md"), "base\n", "utf8");
+    execFileSync("git", ["-C", repository, "add", "README.md"]);
+    execFileSync("git", ["-C", repository, "-c", "user.name=cw-code", "-c", "user.email=test@cw-code.local", "commit", "-m", "initial"]);
+    execFileSync("git", ["-C", repository, "branch", "feature"]);
+
+    const service = new GitService();
+    expect((await service.status(repository)).branch).toBe("main");
+    const switched = await service.switchBranch(repository, "feature");
+    expect(switched.branch).toBe("feature");
+    expect((await service.status(repository)).branch).toBe("feature");
+  });
 });
