@@ -1577,6 +1577,7 @@ body.session-dragging * {
 .composer {
   position: relative;
   width: 100%;
+  max-width: 880px;
   min-height: 156px;
   margin: 0 auto;
   box-sizing: border-box;
@@ -1931,11 +1932,15 @@ body.session-dragging * {
   padding: 5px 8px;
 }
 
+.composer .field:focus {
+  border-color: #3a4a6b;
+}
+
 .composer-recipe-row .menu-btn {
   min-height: 32px;
   border: 0;
   border-radius: var(--r-sm);
-  padding: 4px 2px;
+  padding: 7px 10px;
   gap: 7px;
   color: #eeeef5;
   font-size: 13.5px;
