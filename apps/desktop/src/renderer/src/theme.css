@@ -1631,7 +1631,7 @@ body.session-dragging * {
 .composer-recipe-row {
   display: flex;
   align-items: center;
-  gap: 26px;
+  gap: 8px;
   min-height: 52px;
   box-sizing: border-box;
   padding: 0 10px 8px 23px;
