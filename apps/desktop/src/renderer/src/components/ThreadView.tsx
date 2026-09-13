@@ -1,4 +1,4 @@
-import { useEffect, useRef } from "react";
+import { useCallback, useEffect, useMemo, useRef } from "react";
 import { PanelRightClose, PanelRightOpen, Sparkles, TriangleAlert } from "lucide-react";
 import { useAppStore, type ChatMessage } from "../stores/appStore.js";
 import { Notifications } from "./Notifications.js";
@@ -17,36 +17,39 @@ import { collectSubagents, describeSubagent, isSubagentMessage, type SubagentGro
 import { splitImageMentions } from "./imagePreview.js";
 import { ImageThumb } from "./ImageThumb.js";
 
-export function ThreadView({ rightVisible, onToggleRight }: { rightVisible: boolean; onToggleRight: () => void }) {
-  const {
-    projects,
-    sessionsByProject,
-    activeProjectId,
-    activeSessionId,
-    messagesBySession,
-    busyTurns,
-    usageBySession,
-    pendingDriver,
-    lastDriver,
-    lastTurnStats,
-  } = useAppStore();
-  const store = useAppStore();
+const EMPTY_MESSAGES: ChatMessage[] = [];
 
-  const session = Object.values(sessionsByProject).flat().find((s) => s.id === activeSessionId);
-  const project = projects.find((p) => p.id === activeProjectId);
-  const messages = activeSessionId ? (messagesBySession[activeSessionId] ?? []) : [];
-  const busyTurn = activeSessionId ? busyTurns[activeSessionId] : undefined;
-  const usage = activeSessionId ? usageBySession[activeSessionId] : undefined;
-  const lastTurn = activeSessionId ? lastTurnStats[activeSessionId] : undefined;
-  const ordered = orderToolsForDisplay(messages);
-  const subagents = collectSubagents(messages);
-  const nestedIds = new Set(subagents.map((s) => s.id));
-  const nodes: Array<{ kind: "msg"; msg: ChatMessage } | { kind: "sub"; key: string; group: SubagentGroup }> = [];
-  {
+export function ThreadView({ rightVisible, onToggleRight }: { rightVisible: boolean; onToggleRight: () => void }) {
+  const activeProjectId = useAppStore((s) => s.activeProjectId);
+  const activeSessionId = useAppStore((s) => s.activeSessionId);
+  const pendingDriver = useAppStore((s) => s.pendingDriver);
+  const lastDriver = useAppStore((s) => s.lastDriver);
+  const session = useAppStore((s) => {
+    if (!activeSessionId) return undefined;
+    for (const list of Object.values(s.sessionsByProject)) {
+      const found = list.find((item) => item.id === activeSessionId);
+      if (found) return found;
+    }
+    return undefined;
+  });
+  const project = useAppStore((s) => s.projects.find((p) => p.id === activeProjectId));
+  const messages = useAppStore((s) =>
+    activeSessionId ? (s.messagesBySession[activeSessionId] ?? EMPTY_MESSAGES) : EMPTY_MESSAGES
+  );
+  const busyTurn = useAppStore((s) => (activeSessionId ? s.busyTurns[activeSessionId] : undefined));
+  const usage = useAppStore((s) => (activeSessionId ? s.usageBySession[activeSessionId] : undefined));
+  const lastTurn = useAppStore((s) => (activeSessionId ? s.lastTurnStats[activeSessionId] : undefined));
+  const openPreview = useAppStore((s) => s.openPreview);
+  const setPendingDriver = useAppStore((s) => s.setPendingDriver);
+  const ordered = useMemo(() => orderToolsForDisplay(messages), [messages]);
+  const subagents = useMemo(() => collectSubagents(messages), [messages]);
+  const nestedIds = useMemo(() => new Set(subagents.map((s) => s.id)), [subagents]);
+  const nodes: Array<{ kind: "msg"; msg: ChatMessage } | { kind: "sub"; key: string; group: SubagentGroup }> = useMemo(() => {
+    const out: Array<{ kind: "msg"; msg: ChatMessage } | { kind: "sub"; key: string; group: SubagentGroup }> = [];
     let pending: ChatMessage[] = [];
     const flush = () => {
       if (pending.length > 0) {
-        nodes.push({
+        out.push({
           kind: "sub",
           key: pending[0].id,
           group: { id: pending[0].id, turnId: pending[0].turnId, items: pending.map(describeSubagent) }
@@ -59,23 +62,44 @@ export function ThreadView({ rightVisible, onToggleRight }: { rightVisible: bool
       else if (m.parentToolCallId && nestedIds.has(m.parentToolCallId)) continue;
       else {
         flush();
-        nodes.push({ kind: "msg", msg: m });
+        out.push({ kind: "msg", msg: m });
       }
     }
     flush();
-  }
+    return out;
+  }, [ordered, nestedIds]);
+  const streamingId = useMemo(() => {
+    if (!busyTurn) return null;
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const m = messages[i];
+      if (m.role === "assistant" && m.turnId === busyTurn) return m.id;
+    }
+    return null;
+  }, [messages, busyTurn]);
   const showNew = pendingDriver !== null || !session;
   const workingWord = useWorkingWord(!showNew && !!busyTurn);
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
+
+  const sessionId = session?.id;
+  const projectRoot = project?.rootPath ?? "";
+  const onOpenPreview = useCallback(
+    (path: string) => {
+      if (sessionId) openPreview(sessionId, path, projectRoot);
+    },
+    [openPreview, sessionId, projectRoot]
+  );
 
   useEffect(() => {
     stickRef.current = true;
   }, [activeSessionId]);
 
   useEffect(() => {
-    const el = scrollRef.current;
-    if (el && stickRef.current) el.scrollTop = el.scrollHeight;
+    const raf = requestAnimationFrame(() => {
+      const el = scrollRef.current;
+      if (el && stickRef.current) el.scrollTop = el.scrollHeight;
+    });
+    return () => cancelAnimationFrame(raf);
   }, [messages, busyTurn, lastTurn]);
 
   const onScroll = () => {
@@ -112,7 +136,7 @@ export function ThreadView({ rightVisible, onToggleRight }: { rightVisible: bool
           projectId={activeProjectId ?? ""}
           projectName={project?.name ?? "this project"}
           driver={heroDriver}
-          onDriverChange={(d) => store.setPendingDriver(d)}
+          onDriverChange={setPendingDriver}
         />
       </div>
     );
@@ -177,7 +201,7 @@ export function ThreadView({ rightVisible, onToggleRight }: { rightVisible: bool
                   message={m}
                   basePath={project?.rootPath}
                   sessionId={session.id}
-                  onPreview={(p) => store.openPreview(session.id, p, project?.rootPath ?? "")}
+                  onPreview={onOpenPreview}
                 />
               );
             }
@@ -189,9 +213,18 @@ export function ThreadView({ rightVisible, onToggleRight }: { rightVisible: bool
                 </div>
               );
             }
+            if (m.id === streamingId) {
+              return (
+                <div key={m.id} className="msg-assistant">
+                  <div className="md md-streaming" style={{ whiteSpace: "pre-wrap" }}>
+                    {m.text}
+                  </div>
+                </div>
+              );
+            }
             return (
               <div key={m.id} className="msg-assistant">
-                <Md text={m.text} onOpenFile={(p) => store.openPreview(session.id, p, project?.rootPath ?? "")} />
+                <Md text={m.text} onOpenFile={onOpenPreview} />
               </div>
             );
           })}

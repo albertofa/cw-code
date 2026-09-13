@@ -51,9 +51,67 @@ function loadRightWidth(): number {
   return RIGHT_WIDTH_DEFAULT;
 }
 
+const pendingDeltas = new Map<string, string>();
+let deltaRaf = 0;
+
+function flushPendingDeltas(): void {
+  if (pendingDeltas.size === 0) return;
+  const state = useAppStore.getState();
+  for (const [key, text] of pendingDeltas) {
+    const sep = key.indexOf("\n");
+    const sessionId = key.slice(0, sep);
+    const turnId = key.slice(sep + 1);
+    state.applyEvent(sessionId, { type: "assistant.delta", turnId, text });
+  }
+  pendingDeltas.clear();
+  if (deltaRaf !== 0) {
+    cancelAnimationFrame(deltaRaf);
+    deltaRaf = 0;
+  }
+}
+
+function flushPendingDeltasForSession(sessionId: string): void {
+  const prefix = `${sessionId}\n`;
+  const state = useAppStore.getState();
+  let changed = false;
+  for (const [key, text] of [...pendingDeltas]) {
+    if (!key.startsWith(prefix)) continue;
+    pendingDeltas.delete(key);
+    state.applyEvent(sessionId, { type: "assistant.delta", turnId: key.slice(prefix.length), text });
+    changed = true;
+  }
+  if (changed && pendingDeltas.size === 0 && deltaRaf !== 0) {
+    cancelAnimationFrame(deltaRaf);
+    deltaRaf = 0;
+  }
+}
+
+function handleTurnEvent(msg: { sessionId: string; event: TurnEvent }): void {
+  if (msg.event.type === "assistant.delta") {
+    const key = `${msg.sessionId}\n${msg.event.turnId}`;
+    pendingDeltas.set(key, (pendingDeltas.get(key) ?? "") + msg.event.text);
+    if (deltaRaf === 0) {
+      deltaRaf = requestAnimationFrame(() => {
+        deltaRaf = 0;
+        flushPendingDeltas();
+      });
+    }
+    return;
+  }
+  flushPendingDeltasForSession(msg.sessionId);
+  useAppStore.getState().applyEvent(msg.sessionId, msg.event);
+}
+
 export function App() {
-  const { activeProjectId, activeSessionId, sessionsByProject, pendingDriver, preview, sourceControlRefreshIntervalSeconds } = useAppStore();
-  const store = useAppStore();
+  const activeProjectId = useAppStore((s) => s.activeProjectId);
+  const activeSessionId = useAppStore((s) => s.activeSessionId);
+  const sessionsByProject = useAppStore((s) => s.sessionsByProject);
+  const pendingDriver = useAppStore((s) => s.pendingDriver);
+  const preview = useAppStore((s) => s.preview);
+  const sourceControlRefreshIntervalSeconds = useAppStore((s) => s.sourceControlRefreshIntervalSeconds);
+  const settingsVersion = useAppStore((s) => s.settingsVersion);
+  const loadProjects = useAppStore((s) => s.loadProjects);
+  const closePreview = useAppStore((s) => s.closePreview);
   const [rightTab, setRightTab] = useState<RightTab>("files");
   const [rightSplit, setRightSplit] = useState(false);
   const [rightVisible, setRightVisible] = useState(true);
@@ -103,10 +161,8 @@ export function App() {
       setPreloadError("window.cw is missing — preload did not load. Restart the Electron app (plain browsers can't reach the backend).");
       return;
     }
-    void store.loadProjects();
-    const off = window.cw.onTurnEvent((msg: { sessionId: string; event: TurnEvent }) => {
-      useAppStore.getState().applyEvent(msg.sessionId, msg.event);
-    });
+    void loadProjects();
+    const off = window.cw.onTurnEvent(handleTurnEvent);
     const onKey = (e: KeyboardEvent) => {
       if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
       const target = e.target as HTMLElement | null;
@@ -125,6 +181,7 @@ export function App() {
     window.addEventListener("keydown", onKey);
     return () => {
       off();
+      flushPendingDeltas();
       window.removeEventListener("keydown", onKey);
     };
   }, []);
@@ -142,7 +199,9 @@ export function App() {
       try {
         const current = useAppStore.getState();
         const sessions = current.sessionsByProject[activeProjectId] ?? [];
-        await Promise.all(sessions.map((session) => current.refreshGitStatus(session.id)));
+        for (let i = 0; i < sessions.length; i += 6) {
+          await Promise.all(sessions.slice(i, i + 6).map((session) => current.refreshGitStatus(session.id)));
+        }
       } finally {
         running = false;
       }
@@ -213,7 +272,7 @@ export function App() {
             });
           }
 
-          if (missing.length === 0 && failed.length === 0 && outdated.length === 0 && store.settingsVersion > 0) {
+          if (missing.length === 0 && failed.length === 0 && outdated.length === 0 && settingsVersion > 0) {
             notifs.push({ kind: "success", title: "CLI settings verified" });
           }
         })
@@ -239,7 +298,7 @@ export function App() {
     return () => {
       active = false;
     };
-  }, [store.settingsVersion]);
+  }, [settingsVersion]);
 
   useEffect(() => {
     if (preview) {
@@ -258,7 +317,6 @@ export function App() {
   }, []);
 
   const allSessions = Object.values(sessionsByProject).flat();
-  const allSessionKey = allSessions.map((s) => s.id).join(",");
   const driver = pendingDriver ?? allSessions.find((s) => s.id === activeSessionId)?.driver;
 
   const splitTab: RightTab = rightTab === "claude" || rightTab === "opencode" || rightTab === "codex" || rightTab === "shell"
@@ -280,7 +338,7 @@ export function App() {
           path={preview.path}
           basePath={preview.basePath}
           onClose={() => {
-            store.closePreview();
+            closePreview();
             setRightTab("files");
           }}
         />
@@ -290,13 +348,6 @@ export function App() {
       )}
     </>
   );
-
-  useEffect(() => {
-    if (!window.cw || allSessions.length === 0) return;
-    for (const session of Object.values(useAppStore.getState().sessionsByProject).flat()) {
-      void useAppStore.getState().refreshGitStatus(session.id);
-    }
-  }, [allSessionKey]);
 
   return (
     <div className="app-shell" data-driver={driver ?? "none"}>

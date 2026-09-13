@@ -1,4 +1,4 @@
-import { useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { memo, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Components } from "react-markdown";
@@ -137,7 +137,7 @@ function MdTable({ children }: { children?: ReactNode }) {
   );
 }
 
-export function Md({ text, onOpenFile }: { text: string; onOpenFile?: (path: string) => void }) {
+export const Md = memo(function Md({ text, onOpenFile }: { text: string; onOpenFile?: (path: string) => void }) {
   const components = useMemo<Components>(
     () => ({
       pre: Pre,
@@ -153,4 +153,4 @@ export function Md({ text, onOpenFile }: { text: string; onOpenFile?: (path: str
       </Markdown>
     </div>
   );
-}
+});

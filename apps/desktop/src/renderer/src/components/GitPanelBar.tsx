@@ -17,7 +17,6 @@ export function GitPanelBar({ sessionId, compact = false }: { sessionId: string;
   const [error, setError] = useState("");
   const [switching, setSwitching] = useState(false);
   const refreshGitStatus = useAppStore((state) => state.refreshGitStatus);
-  const refreshInterval = useAppStore((state) => state.sourceControlRefreshIntervalSeconds);
   const status = useAppStore((state) => state.gitStatusBySession[sessionId] ?? null);
 
   useEffect(() => {
@@ -30,9 +29,8 @@ export function GitPanelBar({ sessionId, compact = false }: { sessionId: string;
     setError("");
     void refreshGitStatus(sessionId);
     updateBranches();
-    const timer = window.setInterval(updateBranches, refreshInterval * 1000);
-    return () => { active = false; window.clearInterval(timer); };
-  }, [sessionId, refreshInterval, refreshGitStatus]);
+    return () => { active = false; };
+  }, [sessionId, refreshGitStatus]);
 
   const className = `gitbar${compact ? " gitbar-compact" : ""}`;
 

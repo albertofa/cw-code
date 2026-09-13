@@ -60,6 +60,10 @@ function cleanAuthEnvironment(): NodeJS.ProcessEnv {
   delete env["GITHUB_TOKEN"];
   delete env["GH_ENTERPRISE_TOKEN"];
   delete env["GITHUB_ENTERPRISE_TOKEN"];
+  env["GIT_TERMINAL_PROMPT"] = "0";
+  env["GCM_INTERACTIVE"] = "never";
+  env["GIT_ASKPASS"] = "";
+  env["SSH_ASKPASS"] = "";
   return env;
 }
 
@@ -68,6 +72,15 @@ function authenticatedEnvironment(host: string, token: string): NodeJS.ProcessEn
   env["GH_HOST"] = host;
   if (host === "github.com" || host.endsWith(".ghe.com")) env["GH_TOKEN"] = token;
   else env["GH_ENTERPRISE_TOKEN"] = token;
+  return withNonInteractiveEnv(env);
+}
+
+function withNonInteractiveEnv(base?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  const env = base ?? { ...process.env };
+  env["GIT_TERMINAL_PROMPT"] = "0";
+  env["GCM_INTERACTIVE"] = "never";
+  env["GIT_ASKPASS"] = "";
+  env["SSH_ASKPASS"] = "";
   return env;
 }
 
@@ -299,7 +312,7 @@ export function parsePullRequest(stdout: string): GitPullRequest | null {
 
 function execText(command: string, args: string[], cwd: string, timeout = 10_000, env?: NodeJS.ProcessEnv): Promise<string> {
   return new Promise((resolvePromise, reject) => {
-    execFile(command, args, { cwd, timeout, windowsHide: true, maxBuffer: 16 * 1024 * 1024, env }, (error, stdout, stderr) => {
+    execFile(command, args, { cwd, timeout, windowsHide: true, maxBuffer: 16 * 1024 * 1024, env: env ?? withNonInteractiveEnv() }, (error, stdout, stderr) => {
       if (error) return reject(new Error(String(stderr || error.message).trim()));
       resolvePromise(String(stdout));
     });
@@ -308,7 +321,7 @@ function execText(command: string, args: string[], cwd: string, timeout = 10_000
 
 function execDiff(binary: string, args: string[], cwd: string): Promise<string> {
   return new Promise((resolvePromise, reject) => {
-    execFile(binary, args, { cwd, timeout: 20_000, windowsHide: true, maxBuffer: 32 * 1024 * 1024 }, (error, stdout, stderr) => {
+    execFile(binary, args, { cwd, timeout: 20_000, windowsHide: true, maxBuffer: 32 * 1024 * 1024, env: withNonInteractiveEnv() }, (error, stdout, stderr) => {
       const code = (error as unknown as { code?: unknown } | null)?.code;
       if (error && code !== 1) return reject(new Error(String(stderr || error.message).trim()));
       resolvePromise(String(stdout));
@@ -349,6 +362,10 @@ function cacheKey(root: string): string {
 
 export const STATUS_CACHE_TTL_MS = 5_000;
 export const PR_CACHE_TTL_MS = 60_000;
+export const BRANCH_CACHE_TTL_MS = 15_000;
+const DIFF_PATCH_MAX_BYTES = 400_000;
+const UNTRACKED_DIFF_MAX_FILES = 50;
+const UNTRACKED_DIFF_MAX_BYTES_PER_FILE = 60_000;
 
 interface CacheEntry<T> {
   expiresAt: number;
@@ -361,6 +378,9 @@ export class GitService {
   private statusDone = new Map<string, CacheEntry<GitStatus>>();
   private statusGeneration = new Map<string, number>();
   private prCache = new Map<string, CacheEntry<{ pullRequest: GitPullRequest | null; error: string | null }>>();
+  private branchDone = new Map<string, CacheEntry<GitBranchInfo[]>>();
+  private branchInFlight = new Map<string, Promise<GitBranchInfo[]>>();
+  private diffInFlight = new Map<string, Promise<GitDiffResult>>();
 
   constructor(private getSettings: () => SourceControlSettings = () => ({
     gitBinaryPath: defaultBinary("git"),
@@ -446,10 +466,33 @@ export class GitService {
     } catch (error) {
       throw new Error(`could not create worktree from '${base}': ${(error as Error).message}`);
     }
+    this.invalidateBranches(repositoryRoot);
     return { path: resolve(target), branch, repositoryRoot };
   }
 
   async branches(root: string): Promise<GitBranchInfo[]> {
+    const key = cacheKey(root);
+    const cached = this.branchDone.get(key);
+    if (cached && cached.expiresAt > Date.now()) return cached.value;
+    const inFlight = this.branchInFlight.get(key);
+    if (inFlight) return inFlight;
+    const promise = this.computeBranches(root).then((value) => {
+      this.branchDone.set(key, { expiresAt: Date.now() + BRANCH_CACHE_TTL_MS, value });
+      return value;
+    }).finally(() => {
+      if (this.branchInFlight.get(key) === promise) this.branchInFlight.delete(key);
+    });
+    this.branchInFlight.set(key, promise);
+    return promise;
+  }
+
+  private invalidateBranches(root: string): void {
+    const key = cacheKey(root);
+    this.branchDone.delete(key);
+    this.branchInFlight.delete(key);
+  }
+
+  private async computeBranches(root: string): Promise<GitBranchInfo[]> {
     const git = this.git(root);
     const current = (await git.revparse(["--abbrev-ref", "HEAD"])).trim();
     const refs = (await git.raw(["for-each-ref", "--format=%(refname)%09%(refname:short)", "refs/heads", "refs/remotes"]))
@@ -483,10 +526,27 @@ export class GitService {
     this.statusGeneration.set(key, (this.statusGeneration.get(key) ?? 0) + 1);
     this.statusDone.delete(key);
     this.statusInFlight.delete(key);
+    this.invalidateBranches(root);
     return this.status(root, project);
   }
 
   async diff(root: string, mode: GitDiffMode, requestedBase?: string): Promise<GitDiffResult> {
+    const key = `${cacheKey(root)}|${mode}|${requestedBase ?? ""}`;
+    const inFlight = this.diffInFlight.get(key);
+    if (inFlight) return inFlight;
+    const promise = this.computeDiff(root, mode, requestedBase).finally(() => {
+      if (this.diffInFlight.get(key) === promise) this.diffInFlight.delete(key);
+    });
+    this.diffInFlight.set(key, promise);
+    return promise;
+  }
+
+  private truncatePatch(patch: string): string {
+    if (patch.length <= DIFF_PATCH_MAX_BYTES) return patch;
+    return `${patch.slice(0, DIFF_PATCH_MAX_BYTES)}\n…(truncated ${patch.length - DIFF_PATCH_MAX_BYTES} chars)`;
+  }
+
+  private async computeDiff(root: string, mode: GitDiffMode, requestedBase?: string): Promise<GitDiffResult> {
     const git = this.git(root);
     const binary = this.settings().gitBinaryPath;
     const headRef = (await git.revparse(["--abbrev-ref", "HEAD"])).trim() || "HEAD";
@@ -502,13 +562,19 @@ export class GitService {
     } else {
       patch = await execDiff(binary, ["diff", "HEAD", "--no-ext-diff", "--binary", "--find-renames", "--"], root);
       const summary = await git.status();
-      for (const file of summary.not_added) {
-        if (isAppManagedPath(file)) continue;
-        const untracked = await execDiff(binary, ["diff", "--no-index", "--binary", "--", "/dev/null", file], root);
-        patch += `${patch && !patch.endsWith("\n") ? "\n" : ""}${untracked}`;
+      const untracked = summary.not_added.filter((file) => !isAppManagedPath(file)).slice(0, UNTRACKED_DIFF_MAX_FILES);
+      const parts = await mapLimit(untracked, 8, (file) =>
+        execDiff(binary, ["diff", "--no-index", "--binary", "--", "/dev/null", file], root)
+          .then((out) => (out.length > UNTRACKED_DIFF_MAX_BYTES_PER_FILE ? `${out.slice(0, UNTRACKED_DIFF_MAX_BYTES_PER_FILE)}\n…(truncated)` : out))
+          .catch(() => "")
+      );
+      for (const part of parts) {
+        if (!part) continue;
+        patch += `${patch && !patch.endsWith("\n") ? "\n" : ""}${part}`;
+        if (patch.length > DIFF_PATCH_MAX_BYTES) break;
       }
     }
-    return { mode, patch, baseRef, headRef };
+    return { mode, patch: this.truncatePatch(patch), baseRef, headRef };
   }
 
   private async defaultBase(root: string, headRef: string, branches: GitBranchInfo[]): Promise<string> {

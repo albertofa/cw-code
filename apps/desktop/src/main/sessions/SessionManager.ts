@@ -36,6 +36,8 @@ export interface SessionManagerOptions {
   worktreesRoot?: string;
 }
 
+const DELTA_FLUSH_MS = 24;
+
 export class SessionManager {
   private store: SessionStore;
   private settings: SettingsStore;
@@ -44,6 +46,7 @@ export class SessionManager {
   private onEvent: (sessionId: string, event: ThreadEvent) => void;
   private git: GitService;
   private worktreesRoot: string;
+  private deltaBuffer = new Map<string, { sessionId: string; text: string; timer: NodeJS.Timeout }>();
 
   constructor(opts: SessionManagerOptions = {}) {
     const dbPath = opts.dbPath ?? join(app.getPath("userData"), "cw-code.db");
@@ -62,12 +65,40 @@ export class SessionManager {
   }
 
   private routeEvent(event: ThreadEvent): void {
+    if (event.type === "assistant.delta") {
+      this.bufferDelta(event.turnId, this.activeTurns.get(event.turnId) ?? "", event.text);
+      return;
+    }
     if (event.type === "turn.done") {
+      this.flushDelta(event.turnId);
       this.handleDriverEvent(event.sessionId, event);
       return;
     }
+    this.flushDelta(event.turnId);
     const sessionId = this.activeTurns.get(event.turnId) ?? "";
     this.handleDriverEvent(sessionId, event);
+  }
+
+  private bufferDelta(turnId: string, sessionId: string, text: string): void {
+    if (!text) return;
+    const pending = this.deltaBuffer.get(turnId);
+    if (pending) {
+      pending.text += text;
+      if (pending.sessionId === "" && sessionId !== "") pending.sessionId = sessionId;
+      return;
+    }
+    const timer = setTimeout(() => this.flushDelta(turnId), DELTA_FLUSH_MS);
+    timer.unref?.();
+    this.deltaBuffer.set(turnId, { sessionId, text, timer });
+  }
+
+  private flushDelta(turnId: string): void {
+    const pending = this.deltaBuffer.get(turnId);
+    if (!pending) return;
+    this.deltaBuffer.delete(turnId);
+    clearTimeout(pending.timer);
+    if (!pending.text) return;
+    this.handleDriverEvent(pending.sessionId, { type: "assistant.delta", turnId, text: pending.text });
   }
 
   setEmitter(onEvent: (sessionId: string, event: ThreadEvent) => void): void {
@@ -353,6 +384,8 @@ export class SessionManager {
   }
 
   dispose(): void {
+    for (const pending of this.deltaBuffer.values()) clearTimeout(pending.timer);
+    this.deltaBuffer.clear();
     for (const driver of Object.values(this.drivers)) driver.dispose?.();
     this.store.close();
   }

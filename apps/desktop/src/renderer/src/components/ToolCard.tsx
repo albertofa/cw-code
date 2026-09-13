@@ -1,4 +1,4 @@
-import { useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { memo, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { Check, ChevronDown, ChevronRight, Circle, CircleDot, Monitor, TriangleAlert } from "lucide-react";
 import type { ChatMessage } from "../stores/appStore.js";
 import {
@@ -38,7 +38,7 @@ function ToolState({ state }: { state: "complete" | "error" | "running" | "pendi
   );
 }
 
-export function ToolCard({
+export const ToolCard = memo(function ToolCard({
   message,
   basePath,
   sessionId,
@@ -212,4 +212,4 @@ export function ToolCard({
       )}
     </div>
   );
-}
+});
