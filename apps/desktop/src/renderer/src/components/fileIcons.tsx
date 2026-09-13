@@ -115,7 +115,7 @@ export interface FolderSpec extends IconSpec {
   openable: boolean;
 }
 
-const FALLBACK_FOLDER: FolderSpec = { Icon: Folder, color: "#8b87bd", openable: true };
+const FALLBACK_FOLDER: FolderSpec = { Icon: Folder, color: "#8f9bb3", openable: true };
 
 const FOLDER_NAMES: Record<string, FolderSpec> = {
   src: { Icon: Folder, color: "#6f8cf5", openable: true },

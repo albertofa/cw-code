@@ -20,7 +20,8 @@ export function MenuSelect({
   isSet,
   searchable,
   searchPlaceholder,
-  icon
+  icon,
+  direction = "up"
 }: {
   label: string;
   title?: string;
@@ -32,6 +33,7 @@ export function MenuSelect({
   searchable?: boolean;
   searchPlaceholder?: string;
   icon?: ReactNode;
+  direction?: "up" | "down";
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
@@ -77,7 +79,7 @@ export function MenuSelect({
         <>
           <div className="menu-backdrop" onClick={close} />
           <div
-            className="menu-panel"
+            className={`menu-panel${direction === "down" ? " menu-panel-down" : ""}`}
             role="listbox"
             aria-label={label}
             onKeyDown={(e) => {

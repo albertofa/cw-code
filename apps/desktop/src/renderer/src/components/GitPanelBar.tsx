@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ArrowDown, ArrowUp, ExternalLink, FolderGit2, GitBranch, GitFork } from "lucide-react";
+import { ArrowDown, ArrowUp, ExternalLink, GitBranch, GitFork } from "lucide-react";
 import type { GitBranchInfo } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import { MenuSelect } from "./MenuSelect.js";
@@ -53,6 +53,7 @@ export function GitPanelBar({ sessionId, compact = false }: { sessionId: string;
       <div className="gitbar-location">
         <MenuSelect
           label="Switch branch"
+          direction="down"
           value={status.branch}
           display={switching ? "Switching…" : status.branch}
           options={branches.map((item) => ({
@@ -64,13 +65,12 @@ export function GitPanelBar({ sessionId, compact = false }: { sessionId: string;
           searchable
           searchPlaceholder="Filter branches…"
         />
-        <span
-          className="gitbar-checkout"
-          title={status.isWorktree ? `Worktree: ${status.worktreePath}` : `Local checkout: ${status.worktreePath}`}
-        >
-          {status.isWorktree ? <GitFork size={12} /> : <FolderGit2 size={12} />}
-          {status.isWorktree ? status.worktreeName : "Local checkout"}
-        </span>
+        {status.isWorktree && (
+          <span className="gitbar-checkout" title={`Worktree: ${status.worktreePath}`}>
+            <GitFork size={12} />
+            {status.worktreeName}
+          </span>
+        )}
       </div>
       {pullRequest && (
         <button className="gitbar-item gitbar-pr" title={`${pullRequest.title} — open on GitHub`} onClick={() => void window.cw.openExternal(pullRequest.url)}>
@@ -90,7 +90,7 @@ export function GitPanelBar({ sessionId, compact = false }: { sessionId: string;
       {!pullRequest && status.githubError && <span className="gitbar-github-error" title={status.githubError}>GitHub unavailable</span>}
       {status.ahead > 0 && <span className="gitbar-ahead" title="Commits ahead of upstream"><ArrowUp size={11} />{status.ahead}</span>}
       {status.behind > 0 && <span className="gitbar-behind" title="Commits behind upstream"><ArrowDown size={11} />{status.behind}</span>}
-      {error && <span className="gitbar-error" title={error}>Branch list unavailable</span>}
+      {error && <span className="gitbar-error" title={error}>Git error</span>}
       {(status.addedLines > 0 || status.deletedLines > 0) && (
         <span className="gitbar-lines" title={`${status.addedLines} added, ${status.deletedLines} deleted · ${status.dirtyCount} changed ${status.dirtyCount === 1 ? "file" : "files"}`}>
           {status.addedLines > 0 && <span className="add">+{status.addedLines}</span>}

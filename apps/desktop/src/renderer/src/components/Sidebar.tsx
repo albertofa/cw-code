@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
-import { Check, ChevronDown, ChevronUp, Folder, Plus, RefreshCw, Search, Settings, X } from "lucide-react";
-import type { Project, Session, SessionStatus } from "../cw.js";
+import { Check, ChevronDown, ChevronRight, ChevronUp, Clock, Folder, GitBranch, Plus, RefreshCw, Search, Settings, X } from "lucide-react";
+import type { DriverName, Project, Session, SessionStatus } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { useNotifs } from "./Notifications.js";
@@ -18,8 +18,17 @@ function initials(name: string): string {
   return (parts[0][0] + parts[1][0]).toUpperCase();
 }
 
+const GROUP_VISIBLE = 6;
+
+function groupTintStyle(name: string): CSSProperties {
+  const h = hashHue(name);
+  return {
+    background: `linear-gradient(90deg, hsla(${h}, 35%, 32%, 0.3), hsla(${h}, 35%, 32%, 0) 75%)`
+  };
+}
+
 function avatarStyle(name: string): CSSProperties {
-  return { background: `hsl(${hashHue(name)} 45% 32%)` };
+  return { background: `hsl(${hashHue(name)}, 32%, 36%)` };
 }
 
 function stateLabel(status: SessionStatus): string {
@@ -37,6 +46,25 @@ function ageLabel(ts: number): string {
   if (days < 7) return `${days}d`;
   return `${Math.round(days / 7)}w`;
 }
+
+function fullDate(ts: number): string {
+  return new Date(ts).toLocaleString(undefined, {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
+
+const DRIVER_LABEL: Record<DriverName, string> = {
+  claude: "Claude",
+  opencode: "OpenCode",
+  codex: "Codex"
+};
+
+const HOVER_DELAY = 350;
+const HOVER_FALLBACK_HEIGHT = 280;
 
 type SidebarSection = "main" | "resolved";
 
@@ -177,6 +205,40 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const [dragged, setDragged] = useState<{ id: string; section: SidebarSection; title: string } | null>(null);
   const [preview, setPreview] = useState<{ targetId: string | null; section: SidebarSection; before: boolean } | null>(null);
   const [landedId, setLandedId] = useState<string | null>(null);
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [resolvedOpen, setResolvedOpen] = useState<Set<string>>(new Set());
+  const [hover, setHover] = useState<{ id: string; x: number; y: number } | null>(null);
+  const hoverTimer = useRef<number | null>(null);
+
+  const toggleGroup = (projectId: string) => {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(projectId)) next.delete(projectId);
+      else next.add(projectId);
+      return next;
+    });
+  };
+
+  const toggleExpandGroup = (projectId: string) => {
+    setExpandedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(projectId)) next.delete(projectId);
+      else next.add(projectId);
+      return next;
+    });
+  };
+
+  const toggleResolved = (projectId: string) => {
+    setResolvedOpen((prev) => {
+      const next = new Set(prev);
+      if (next.has(projectId)) next.delete(projectId);
+      else next.add(projectId);
+      return next;
+    });
+  };
+
+  const hoverModel = useAppStore((s) => (hover ? s.composerBySession[hover.id]?.model : undefined));
   const dragRef = useRef<{ id: string; section: SidebarSection; title: string; startX: number; startY: number; active: boolean } | null>(null);
   const ghostRef = useRef<HTMLDivElement>(null);
   const suppressClickRef = useRef(false);
@@ -185,7 +247,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const detachRef = useRef<(() => void) | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
-  const resolvedDetailsRef = useRef<HTMLDetailsElement>(null);
+  const toggleRefs = useRef(new Map<string, HTMLButtonElement>());
   const slotSnap = useRef<SlotSnapshot | null>(null);
   const rowRefs = useRef(new Map<string, HTMLDivElement>());
   const prevRects = useRef(new Map<string, { top: number; height: number }>());
@@ -223,7 +285,34 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
   useEffect(() => () => {
     detachRef.current?.();
     stopAutoScroll();
+    if (hoverTimer.current) window.clearTimeout(hoverTimer.current);
   }, []);
+
+  const clearHover = () => {
+    if (hoverTimer.current) {
+      window.clearTimeout(hoverTimer.current);
+      hoverTimer.current = null;
+    }
+    setHover(null);
+  };
+
+  const scheduleHover = (id: string) => {
+    if (hoverTimer.current) window.clearTimeout(hoverTimer.current);
+    hoverTimer.current = window.setTimeout(() => {
+      const el = rowRefs.current.get(id);
+      if (!el || !el.isConnected) return;
+      const r = el.getBoundingClientRect();
+      setHover({
+        id,
+        x: Math.min(r.right + 10, window.innerWidth - 310),
+        y: Math.max(8, Math.min(r.top - 6, window.innerHeight - HOVER_FALLBACK_HEIGHT))
+      });
+    }, HOVER_DELAY);
+  };
+
+  useEffect(() => {
+    if (dragged || menu) clearHover();
+  }, [dragged, menu]);
 
   useEffect(() => {
     const focusSearch = () => searchRef.current?.focus();
@@ -284,6 +373,16 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const previewing = dragged !== null && preview !== null;
   const shownPreview = (previewing ? previewMainAll : orderedMainAll).filter(matchesQuery);
   const resolvedPreview = (previewing ? previewResolvedAll : orderedResolvedAll).filter(matchesQuery);
+  const resolvedByProject = new Map<string, Session[]>();
+  for (const s of resolvedPreview) {
+    const existing = resolvedByProject.get(s.projectId);
+    if (existing) existing.push(s);
+    else resolvedByProject.set(s.projectId, [s]);
+  }
+  const hoverSession = hover ? (source.find((s) => s.id === hover.id) ?? null) : null;
+  const hoverStatus = hoverSession?.status ?? "idle";
+  const hoverProject = hoverSession ? (projectNameById[hoverSession.projectId] ?? "") : "";
+  const hoverBranch = hoverSession ? (gitStatusBySession[hoverSession.id]?.branch ?? hoverSession.branch) : undefined;
 
   const captureSlots = (): void => {
     const rows: SlotRow[] = [];
@@ -349,15 +448,13 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
     setPreview(null);
   };
 
-  const maybeOpenResolved = (clientY: number): void => {
-    const det = resolvedDetailsRef.current;
-    if (!det || det.open) return;
-    const summary = det.querySelector("summary");
-    if (!summary) return;
-    const r = summary.getBoundingClientRect();
-    if (clientY < r.top - 4 || clientY > r.bottom + 4) return;
-    det.open = true;
-    captureSlots();
+  const maybeOpenResolvedGroup = (clientX: number, clientY: number): void => {
+    toggleRefs.current.forEach((el, pid) => {
+      if (!el.isConnected) return;
+      const r = el.getBoundingClientRect();
+      if (clientX < r.left - 4 || clientX > r.right + 4 || clientY < r.top - 4 || clientY > r.bottom + 4) return;
+      setResolvedOpen((prev) => (prev.has(pid) ? prev : new Set(prev).add(pid)));
+    });
   };
   const visibleProjects = projectQuery
     ? projects.filter(
@@ -470,7 +567,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
     window.setTimeout(() => setLandedId((id) => (id === fromId ? null : id)), 850);
   };
 
-  const renderRow = (s: Session, section: SidebarSection) => {
+  const renderRow = (s: Session, section: SidebarSection, hideState = false) => {
     const git = gitStatusBySession[s.id];
     const pr = git?.pullRequest;
     const prState = pr?.isDraft
@@ -512,7 +609,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
         ev.preventDefault();
         pointerY.current = ev.clientY;
         moveGhost(ev.clientX, ev.clientY);
-        maybeOpenResolved(ev.clientY);
+        maybeOpenResolvedGroup(ev.clientX, ev.clientY);
         const freshIds = Object.values(useAppStore.getState().sessionsByProject)
           .flat()
           .map((x) => x.id)
@@ -545,7 +642,10 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
         const active = { id: d.id, section: d.section };
         const el = document.elementFromPoint(ev.clientX, ev.clientY);
         if (!el || !(listRef.current?.contains(el) ?? false)) return;
-        if (el.closest(".resolved-empty-drop") || (el.closest("details.resolved") && el.closest("summary"))) {
+        const toggle = el.closest(".session-resolved-toggle") as HTMLElement | null;
+        if (el.closest(".resolved-empty-drop") || toggle) {
+          const pid = toggle?.dataset.projectId;
+          if (pid) setResolvedOpen((prev) => (prev.has(pid) ? prev : new Set(prev).add(pid)));
           handleDrop(active, "resolved", null, false);
           return;
         }
@@ -580,6 +680,8 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
         else rowRefs.current.delete(s.id);
       }}
       onMouseDown={beginRowDrag}
+      onMouseEnter={() => scheduleHover(s.id)}
+      onMouseLeave={clearHover}
       onClick={() => {
         if (suppressClickRef.current) {
           suppressClickRef.current = false;
@@ -593,8 +695,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
         setRenamingId(null);
         setMenu({ sessionId: s.id, x: e.clientX, y: e.clientY });
       }}
-      className={`session-row${s.id === activeSessionId ? " active" : ""}${dragged?.id === s.id ? " dragging" : ""}${landedId === s.id ? " landed" : ""}`}
-       title={rowTitle}
+      className={`session-row${s.id === activeSessionId ? " active" : ""}${dragged?.id === s.id ? " dragging" : ""}${landedId === s.id ? " landed" : ""}${status === "idle" ? " idle" : ""}`}
        aria-label={rowTitle}
     >
       {renamingId === s.id ? (
@@ -617,13 +718,40 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
       <span className="session-side">
         <DriverIcon driver={s.driver} size={12} />
         {(status === "working" || status === "input-required") && <span className={`session-dot status-${status}`} />}
-        {status === "idle" ? (
+        {status === "idle" || hideState ? (
           <span className="session-age">{ageLabel(s.updatedAt)}</span>
         ) : (
           <span className={`session-state status-${status}`}>{stateLabel(status)}</span>
         )}
       </span>
     </div>
+  };
+
+  const renderResolvedToggle = (projectId: string, items: Session[]) => {
+    if (items.length === 0) return null;
+    const open = resolvedOpen.has(projectId);
+    return (
+      <>
+        <button
+          type="button"
+          className="session-resolved-toggle"
+          ref={(el) => {
+            if (el) toggleRefs.current.set(projectId, el);
+            else toggleRefs.current.delete(projectId);
+          }}
+          data-project-id={projectId}
+          onClick={() => toggleResolved(projectId)}
+          aria-expanded={open}
+          aria-label={`${open ? "Collapse" : "Expand"} resolved sessions`}
+        >
+          <span className="group-chevron" aria-hidden="true">
+            {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+          </span>
+          Resolved · {items.length}
+        </button>
+        {open && items.map((s) => renderRow(s, "resolved", true))}
+      </>
+    );
   };
 
   const renderRows = (items: Session[], section: SidebarSection) => {
@@ -634,17 +762,45 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
       if (existing) existing.push(session);
       else grouped.set(session.projectId, [session]);
     }
+    for (const pid of resolvedByProject.keys()) {
+      if (!grouped.has(pid)) grouped.set(pid, []);
+    }
     return Array.from(grouped, ([projectId, sessions]) => {
       const project = projects.find((item) => item.id === projectId);
       const name = projectNameById[projectId] ?? "Unknown project";
+      const isCollapsed = collapsedGroups.has(projectId);
+      const isExpanded = expandedGroups.has(projectId);
+      const visible = isExpanded ? sessions : sessions.slice(0, GROUP_VISIBLE);
+      const resolved = resolvedByProject.get(projectId) ?? [];
       return (
         <div className="session-project-group" key={`${section}:${projectId}`}>
-          <div className="session-project-heading" title={project?.rootPath ?? name}>
+          <button
+            type="button"
+            className="session-project-heading"
+            style={groupTintStyle(name)}
+            title={project?.rootPath ?? name}
+            onClick={() => toggleGroup(projectId)}
+            aria-expanded={!isCollapsed}
+            aria-label={`${isCollapsed ? "Expand" : "Collapse"} ${name}`}
+          >
+            <span className="group-chevron" aria-hidden="true">
+              {isCollapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
+            </span>
             <span className="avatar sm" style={avatarStyle(name)}>{initials(name)}</span>
             <span className="session-project-heading-name">{name}</span>
             <span className="session-project-heading-count">{sessions.length}</span>
-          </div>
-          {sessions.map((session) => renderRow(session, section))}
+          </button>
+          {!isCollapsed && (
+            <>
+              {visible.map((session) => renderRow(session, section))}
+              {sessions.length > GROUP_VISIBLE && (
+                <button type="button" className="session-show-all" onClick={() => toggleExpandGroup(projectId)}>
+                  {isExpanded ? "Show less" : `Show all ${sessions.length}`}
+                </button>
+              )}
+              {renderResolvedToggle(projectId, resolved)}
+            </>
+          )}
         </div>
       );
     });
@@ -776,20 +932,14 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
           </button>
         </div>
       </div>
-      <div className="session-list" ref={listRef}>
+      <div className="session-list" ref={listRef} onScroll={clearHover}>
         <div className="session-main-list">
           {renderRows(shownPreview, "main")}
-          {shownPreview.length === 0 && <div className="side-empty">{query ? "No matches." : "No sessions yet."}</div>}
+          {projectFilter !== "all" && renderResolvedToggle(projectFilter, resolvedPreview)}
+          {shownPreview.length === 0 && resolvedPreview.length === 0 && (
+            <div className="side-empty">{query ? "No matches." : "No sessions yet."}</div>
+          )}
         </div>
-        {resolvedPreview.length > 0 && (
-          <details
-            className="resolved"
-            ref={resolvedDetailsRef}
-          >
-            <summary>resolved · {resolvedPreview.length}</summary>
-            {renderRows(resolvedPreview, "resolved")}
-          </details>
-        )}
         {resolvedPreview.length === 0 && dragged && (
           <div
             className="resolved-empty-drop"
@@ -864,6 +1014,41 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
           Refresh
         </button>
       </div>
+      {hover && hoverSession && (
+        <div className="session-hovercard" style={{ left: hover.x, top: hover.y }} aria-hidden="true">
+          <div className="session-hovercard-title">{hoverSession.title}</div>
+          <div className="session-hovercard-row">
+            <span className="avatar sm" style={avatarStyle(hoverProject)} aria-hidden="true">
+              {initials(hoverProject)}
+            </span>
+            <span className="hovercard-text">{hoverProject}</span>
+          </div>
+          <div className="session-hovercard-row">
+            <GitBranch size={13} aria-hidden="true" />
+            <span className="hovercard-text">{hoverBranch ?? "No branch"}</span>
+          </div>
+          <div className="session-hovercard-row">
+            <DriverIcon driver={hoverSession.driver} size={12} />
+            <span className="hovercard-text">
+              {hoverModel ?? "Default model"} · {DRIVER_LABEL[hoverSession.driver]}
+            </span>
+          </div>
+          <div className="session-hovercard-row">
+            {hoverStatus === "working" || hoverStatus === "input-required" ? (
+              <span className={`session-dot status-${hoverStatus}`} aria-hidden="true" />
+            ) : (
+              <span className="session-dot" style={{ background: "var(--faint)" }} aria-hidden="true" />
+            )}
+            <span className="hovercard-text">{stateLabel(hoverStatus)}</span>
+          </div>
+          <div className="session-hovercard-row">
+            <Clock size={13} aria-hidden="true" />
+            <span className="hovercard-text">
+              {ageLabel(hoverSession.updatedAt)} ago · {fullDate(hoverSession.updatedAt)}
+            </span>
+          </div>
+        </div>
+      )}
       {dragged && (
         <div ref={ghostRef} className="session-drag-ghost">
           <span className="session-title">{dragged.title}</span>
