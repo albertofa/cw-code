@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { GitService, isAppManagedPath, mapLimit, parseGitHubAccounts, parseGitHubRemote, parseNumstat, parsePrNumber, parsePullRequest, parseWorktreeList, selectGitHubAccount, worktreeNameFor } from "./GitService.js";
+import { GitService, countUntrackedLines, isAppManagedPath, mapLimit, parseGitHubAccounts, parseGitHubRemote, parseNumstat, parsePrNumber, parsePullRequest, parseWorktreeList, selectGitHubAccount, worktreeNameFor } from "./GitService.js";
 
 describe("parsePrNumber", () => {
   it("parses a PR number", () => {
@@ -152,6 +152,67 @@ describe("mapLimit", () => {
   });
 });
 
+describe("countUntrackedLines", () => {
+  it("counts lines like git numstat would for a new file", async () => {
+    const sandbox = mkdtempSync(join(tmpdir(), "cw-lines-"));
+    writeFileSync(join(sandbox, "trailing.txt"), "a\nb\nc\n");
+    writeFileSync(join(sandbox, "no-trailing.txt"), "a\nb\nc");
+    writeFileSync(join(sandbox, "empty.txt"), "");
+
+    expect(await countUntrackedLines(sandbox, "trailing.txt")).toEqual({ addedLines: 3, deletedLines: 0 });
+    expect(await countUntrackedLines(sandbox, "no-trailing.txt")).toEqual({ addedLines: 3, deletedLines: 0 });
+    expect(await countUntrackedLines(sandbox, "empty.txt")).toEqual({ addedLines: 0, deletedLines: 0 });
+  });
+
+  it("counts CRLF lines and a bare newline like git numstat", async () => {
+    const sandbox = mkdtempSync(join(tmpdir(), "cw-lines-"));
+    writeFileSync(join(sandbox, "crlf.txt"), "a\r\nb\r\nc\r\n");
+    writeFileSync(join(sandbox, "bare.txt"), "\n");
+
+    expect(await countUntrackedLines(sandbox, "crlf.txt")).toEqual({ addedLines: 3, deletedLines: 0 });
+    expect(await countUntrackedLines(sandbox, "bare.txt")).toEqual({ addedLines: 1, deletedLines: 0 });
+  });
+
+  it("treats UTF-16 content as a single added line", async () => {
+    const sandbox = mkdtempSync(join(tmpdir(), "cw-lines-"));
+    writeFileSync(join(sandbox, "utf16.txt"), Buffer.from("a\nb\n", "utf16le"));
+
+    expect(await countUntrackedLines(sandbox, "utf16.txt")).toEqual({ addedLines: 1, deletedLines: 0 });
+  });
+
+  it("treats a symbolic link as a single added line", async () => {
+    const sandbox = mkdtempSync(join(tmpdir(), "cw-lines-"));
+    writeFileSync(join(sandbox, "target.txt"), "a\nb\nc\nd\ne\n");
+    try {
+      symlinkSync(join(sandbox, "target.txt"), join(sandbox, "link.txt"));
+    } catch {
+      return;
+    }
+
+    expect(await countUntrackedLines(sandbox, "link.txt")).toEqual({ addedLines: 1, deletedLines: 0 });
+  });
+
+  it("treats binary content as a single added line", async () => {
+    const sandbox = mkdtempSync(join(tmpdir(), "cw-lines-"));
+    writeFileSync(join(sandbox, "blob.bin"), Buffer.from([0x50, 0x4b, 0x00, 0x01, 0x02]));
+
+    expect(await countUntrackedLines(sandbox, "blob.bin")).toEqual({ addedLines: 1, deletedLines: 0 });
+  });
+
+  it("treats an oversized text file as a single added line", async () => {
+    const sandbox = mkdtempSync(join(tmpdir(), "cw-lines-"));
+    const chunk = "x".repeat(1024) + "\n";
+    writeFileSync(join(sandbox, "huge.txt"), chunk.repeat(11 * 1024));
+
+    expect(await countUntrackedLines(sandbox, "huge.txt")).toEqual({ addedLines: 1, deletedLines: 0 });
+  });
+
+  it("rejects for a missing file", async () => {
+    const sandbox = mkdtempSync(join(tmpdir(), "cw-lines-"));
+    await expect(countUntrackedLines(sandbox, "gone.txt")).rejects.toThrow();
+  });
+});
+
 describe("GitService worktrees", () => {
   it("creates an isolated session branch and includes untracked files in its diff", async () => {
     const sandbox = mkdtempSync(join(tmpdir(), "cw-git-"));
@@ -207,5 +268,37 @@ describe("GitService worktrees", () => {
       addedLines: expectedAdded,
       deletedLines: 0
     });
+  });
+
+  it("shares one computation for concurrent status calls on the same root", async () => {
+    const sandbox = mkdtempSync(join(tmpdir(), "cw-git-"));
+    const repository = join(sandbox, "repo");
+    execFileSync("git", ["init", "-b", "main", repository]);
+    writeFileSync(join(repository, "README.md"), "base\n", "utf8");
+    execFileSync("git", ["-C", repository, "add", "README.md"]);
+    execFileSync("git", ["-C", repository, "-c", "user.name=cw-code", "-c", "user.email=test@cw-code.local", "commit", "-m", "initial"]);
+
+    const service = new GitService();
+    const [first, second] = await Promise.all([service.status(repository), service.status(repository)]);
+    const third = await service.status(repository);
+
+    expect(second).toBe(first);
+    expect(third).toBe(first);
+  });
+
+  it("recomputes status after a branch switch instead of serving cache", async () => {
+    const sandbox = mkdtempSync(join(tmpdir(), "cw-git-"));
+    const repository = join(sandbox, "repo");
+    execFileSync("git", ["init", "-b", "main", repository]);
+    writeFileSync(join(repository, "README.md"), "base\n", "utf8");
+    execFileSync("git", ["-C", repository, "add", "README.md"]);
+    execFileSync("git", ["-C", repository, "-c", "user.name=cw-code", "-c", "user.email=test@cw-code.local", "commit", "-m", "initial"]);
+    execFileSync("git", ["-C", repository, "branch", "feature"]);
+
+    const service = new GitService();
+    expect((await service.status(repository)).branch).toBe("main");
+    const switched = await service.switchBranch(repository, "feature");
+    expect(switched.branch).toBe("feature");
+    expect((await service.status(repository)).branch).toBe("feature");
   });
 });

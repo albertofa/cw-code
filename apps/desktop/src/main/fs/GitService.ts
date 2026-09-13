@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { mkdirSync } from "node:fs";
+import { open, lstat } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { simpleGit } from "simple-git";
 import type {
@@ -216,6 +217,50 @@ export function parseNumstat(stdout: string): { addedLines: number; deletedLines
   return { addedLines, deletedLines };
 }
 
+export const UNTRACKED_COUNT_MAX_BYTES = 10 * 1024 * 1024;
+const BINARY_SCAN_BYTES = 8000;
+const READ_CHUNK_BYTES = 64 * 1024;
+
+function countNewlines(buffer: Buffer): number {
+  let count = 0;
+  let index = buffer.indexOf(0x0a);
+  while (index >= 0) {
+    count += 1;
+    index = buffer.indexOf(0x0a, index + 1);
+  }
+  return count;
+}
+
+export async function countUntrackedLines(root: string, file: string): Promise<{ addedLines: number; deletedLines: number }> {
+  const linkStat = await lstat(join(root, file));
+  if (linkStat.isSymbolicLink()) return { addedLines: 1, deletedLines: 0 };
+  const handle = await open(join(root, file), "r");
+  try {
+    const stat = await handle.stat();
+    if (!stat.isFile() || stat.size === 0) return { addedLines: 0, deletedLines: 0 };
+    if (stat.size > UNTRACKED_COUNT_MAX_BYTES) return { addedLines: 1, deletedLines: 0 };
+    let lines = 0;
+    let scanned = 0;
+    let lastByte = -1;
+    let firstChunk = true;
+    const buffer = Buffer.alloc(Math.min(stat.size, READ_CHUNK_BYTES));
+    while (scanned < stat.size) {
+      const { bytesRead } = await handle.read(buffer, 0, buffer.length, scanned);
+      if (bytesRead === 0) break;
+      const view = buffer.subarray(0, bytesRead);
+      if (firstChunk && view.subarray(0, BINARY_SCAN_BYTES).includes(0)) return { addedLines: 1, deletedLines: 0 };
+      firstChunk = false;
+      lines += countNewlines(view);
+      lastByte = view[bytesRead - 1];
+      scanned += bytesRead;
+    }
+    if (lastByte !== -1 && lastByte !== 0x0a) lines += 1;
+    return { addedLines: lines, deletedLines: 0 };
+  } finally {
+    await handle.close();
+  }
+}
+
 export function parsePullRequest(stdout: string): GitPullRequest | null {
   let raw: Record<string, unknown>;
   try {
@@ -297,8 +342,25 @@ function safeSegment(value: string): string {
   return value.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80) || "workspace";
 }
 
+function cacheKey(root: string): string {
+  const normalized = resolve(root).replace(/[\\/]+$/, "");
+  return process.platform === "win32" ? normalized.toLowerCase() : normalized;
+}
+
+export const STATUS_CACHE_TTL_MS = 5_000;
+export const PR_CACHE_TTL_MS = 60_000;
+
+interface CacheEntry<T> {
+  expiresAt: number;
+  value: T;
+}
+
 export class GitService {
   private accountCache = new Map<string, { expiresAt: number; accounts: GitHubAccountInfo[] }>();
+  private statusInFlight = new Map<string, { generation: number; promise: Promise<GitStatus> }>();
+  private statusDone = new Map<string, CacheEntry<GitStatus>>();
+  private statusGeneration = new Map<string, number>();
+  private prCache = new Map<string, CacheEntry<{ pullRequest: GitPullRequest | null; error: string | null }>>();
 
   constructor(private getSettings: () => SourceControlSettings = () => ({
     gitBinaryPath: defaultBinary("git"),
@@ -338,10 +400,8 @@ export class GitService {
     const untrackedFiles = await execText(binary, ["ls-files", "--others", "--exclude-standard", "-z"], root)
       .then((output) => output.split("\0").filter((file) => file && !isAppManagedPath(file)))
       .catch(() => []);
-    const untracked = await mapLimit(untrackedFiles, 8, (file) =>
-      execDiff(binary, ["diff", "--no-index", "--numstat", "--", "/dev/null", file], root)
-        .then(parseNumstat)
-        .catch(() => ({ addedLines: 0, deletedLines: 0 }))
+    const untracked = await mapLimit(untrackedFiles, 32, (file) =>
+      countUntrackedLines(root, file).catch(() => ({ addedLines: 0, deletedLines: 0 }))
     );
     return untracked.reduce((total, counts) => ({
       addedLines: total.addedLines + counts.addedLines,
@@ -419,6 +479,10 @@ export class GitService {
     const git = this.git(root);
     if (target.remote) await git.raw(["checkout", "--track", target.name]);
     else await git.checkout(target.name);
+    const key = cacheKey(root);
+    this.statusGeneration.set(key, (this.statusGeneration.get(key) ?? 0) + 1);
+    this.statusDone.delete(key);
+    this.statusInFlight.delete(key);
     return this.status(root, project);
   }
 
@@ -594,6 +658,35 @@ export class GitService {
   }
 
   async status(root: string, project?: Project): Promise<GitStatus> {
+    const key = cacheKey(root);
+    const cached = this.statusDone.get(key);
+    if (cached && cached.expiresAt > Date.now()) return cached.value;
+    const inFlight = this.statusInFlight.get(key);
+    if (inFlight) return inFlight.promise;
+    const generation = this.statusGeneration.get(key) ?? 0;
+    const promise = this.computeStatus(root, project).then((value) => {
+      if ((this.statusGeneration.get(key) ?? 0) === generation) {
+        this.statusDone.set(key, { expiresAt: Date.now() + STATUS_CACHE_TTL_MS, value });
+      }
+      return value;
+    }).finally(() => {
+      const current = this.statusInFlight.get(key);
+      if (current?.generation === generation) this.statusInFlight.delete(key);
+    });
+    this.statusInFlight.set(key, { generation, promise });
+    return promise;
+  }
+
+  private async cachedPullRequest(root: string, branch: string, remote: ParsedGitHubRemote, account: GitHubAccountInfo): Promise<{ pullRequest: GitPullRequest | null; error: string | null }> {
+    const key = `${cacheKey(root)}|${branch}|${account.login}`;
+    const cached = this.prCache.get(key);
+    if (cached && cached.expiresAt > Date.now()) return cached.value;
+    const value = await queryPullRequest(root, this.settings().githubCliBinaryPath, remote, account);
+    if (value.error === null) this.prCache.set(key, { expiresAt: Date.now() + PR_CACHE_TTL_MS, value });
+    return value;
+  }
+
+  private async computeStatus(root: string, project?: Project): Promise<GitStatus> {
     const fallback: GitStatus = {
       available: false,
       branch: "not a repository",
@@ -627,7 +720,7 @@ export class GitService {
       ]);
       const [github, lineCounts] = await Promise.all([
         context.remote && context.selection.account
-          ? queryPullRequest(root, this.settings().githubCliBinaryPath, context.remote, context.selection.account)
+          ? this.cachedPullRequest(root, branch, context.remote, context.selection.account)
           : Promise.resolve({ pullRequest: null, error: context.selection.error }),
         this.lineCounts(root)
       ]);

@@ -18,6 +18,14 @@ import type {
 import { mergeToolPairs } from "../components/toolSummaries.js";
 import { useNotifs } from "../components/Notifications.js";
 
+const GIT_REFRESH_BATCH = 6;
+
+async function refreshGitStatusInBatches(ids: string[], refresh: (id: string) => Promise<void>): Promise<void> {
+  for (let i = 0; i < ids.length; i += GIT_REFRESH_BATCH) {
+    await Promise.all(ids.slice(i, i + GIT_REFRESH_BATCH).map((id) => refresh(id)));
+  }
+}
+
 export interface ChatMessage extends HistoryMessage {
   toolInput?: unknown;
   toolOutput?: string;
@@ -254,7 +262,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
       void get().ensureHistory(picked.id);
       void get().ensureComposer(picked.id);
-      for (const session of all) void get().refreshGitStatus(session.id);
+      const ordered = [picked.id, ...all.filter((s) => s.id !== picked.id).map((s) => s.id)];
+      void refreshGitStatusInBatches(ordered, (id) => get().refreshGitStatus(id));
     }
     void get().loadDiscovered();
   },
@@ -283,7 +292,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
       void get().ensureHistory(picked.id);
       void get().ensureComposer(picked.id);
-      for (const session of sessions) void get().refreshGitStatus(session.id);
+      const ordered = [picked.id, ...sessions.filter((s) => s.id !== picked.id).map((s) => s.id)];
+      void refreshGitStatusInBatches(ordered, (id) => get().refreshGitStatus(id));
     } else {
       set({
         activeProjectId: projectId,
@@ -467,7 +477,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   async setProjectGitHubAccount(projectId: string, account: { host: string; login: string } | null) {
     const updated = await window.cw.setProjectGitHubAccount(projectId, account);
     set({ projects: get().projects.map((project) => project.id === projectId ? updated : project) });
-    for (const session of get().sessionsByProject[projectId] ?? []) void get().refreshGitStatus(session.id);
+    const ids = (get().sessionsByProject[projectId] ?? []).map((session) => session.id);
+    void refreshGitStatusInBatches(ids, (id) => get().refreshGitStatus(id));
   },
 
   async createSession(driver: DriverName, prefs?: ComposerPrefs, workspace?: CreateSessionOptions) {
