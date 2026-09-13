@@ -86,6 +86,36 @@ export function ToolCard({
   }
   const lowerName = name.toLowerCase();
   const isShell = lowerName === "bash" || lowerName === "shell";
+  const isTodo = lowerName === "todowrite" || lowerName === "todo";
+  const todoRaw = (isTodo ? message.toolInput ?? recoverToolInput(name, message.text) : undefined) as
+    | Record<string, unknown>
+    | undefined;
+  const todoItems = isTodo
+    ? (Array.isArray(todoRaw?.["todos"]) ? (todoRaw?.["todos"] as Array<Record<string, unknown>>) : [])
+        .map((t) => ({
+          status: String(t["status"] ?? "pending"),
+          content: String(t["content"] ?? t["label"] ?? "")
+        }))
+        .filter((t) => t.content)
+    : [];
+  if (isTodo && todoItems.length > 0) {
+    return (
+      <div className="worklog">
+        {todoItems.map((t, i) => (
+          <div key={`${i}-${t.content}`} className="worklog-row">
+            <span
+              className={`worklog-dot ${t.status === "completed" ? "completed" : t.status === "in_progress" ? "in_progress" : "pending"}`}
+            >
+              {t.status === "completed" && <Check size={11} strokeWidth={3.5} aria-hidden="true" />}
+            </span>
+            <span className="worklog-label" title={t.content}>
+              {t.content}
+            </span>
+          </div>
+        ))}
+      </div>
+    );
+  }
   const displaySubject =
     summary?.subject && summary.subjectKind === "file" && basePath
       ? relativizeToBase(basePath, summary.subject)

@@ -3,14 +3,12 @@ import {
   ArrowRight,
   AtSign,
   ClipboardList,
-  Files,
+  Database,
   Image,
   Lock,
   LockOpen,
   Paperclip,
   Pencil,
-  ShieldCheck,
-  SlidersHorizontal,
   Slash,
   Square,
   Terminal,
@@ -50,6 +48,23 @@ const PERMISSIONS: Array<{ id: PermissionMode; label: string; description: strin
   { id: "bypassPermissions", label: "Full access", description: "Allow commands and edits without prompts.", icon: <LockOpen size={14} /> },
   { id: "plan", label: "Plan", description: "Review and approve a plan before anything runs.", icon: <ClipboardList size={14} /> }
 ];
+
+function EffortIcon({ size = 15 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 20 20" fill="none" aria-hidden="true">
+      <path d="M3 9h14M7 5.5v6M13 9v5.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
+    </svg>
+  );
+}
+
+function PermissionIcon({ size = 16 }: { size?: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 20 20" aria-hidden="true">
+      <path d="M10 2.6l6.2 2.5v4.1c0 4.3-2.8 7.1-6.2 8.6-3.4-1.5-6.2-4.3-6.2-8.6V5.1z" fill="#a98af7" />
+      <rect x="8.9" y="6.3" width="2.2" height="5.2" rx="1.1" fill="#171b2b" opacity=".9" />
+    </svg>
+  );
+}
 
 const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "webp", "gif"]);
 
@@ -377,7 +392,7 @@ export function ComposerView({
           />
         )}
         <div className="recipe-control">
-          <SlidersHorizontal size={15} aria-hidden="true" />
+          <EffortIcon />
           <MenuSelect
             label="Effort"
             title="Effort"
@@ -389,7 +404,7 @@ export function ComposerView({
           />
         </div>
         <div className="recipe-control">
-          <ShieldCheck size={16} aria-hidden="true" />
+          <PermissionIcon />
           <MenuSelect
             label="Permission"
             title="Permission"
@@ -407,7 +422,7 @@ export function ComposerView({
           title="Attach project files"
           aria-label={`${attachments.length} attached ${attachments.length === 1 ? "file" : "files"}. Add context.`}
         >
-          <Files size={15} />
+          <Database size={15} />
           <span aria-live="polite">{attachments.length} {attachments.length === 1 ? "file" : "files"}</span>
         </button>
         {busy ? (

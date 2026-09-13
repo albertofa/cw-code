@@ -10,7 +10,6 @@ import {
   FileText,
   FlaskConical,
   Folder,
-  FolderOpen,
   GitBranch,
   Globe,
   Image,
@@ -116,10 +115,10 @@ export interface FolderSpec extends IconSpec {
   openable: boolean;
 }
 
-const FALLBACK_FOLDER: FolderSpec = { Icon: Folder, color: "#8aa2c0", openable: true };
+const FALLBACK_FOLDER: FolderSpec = { Icon: Folder, color: "#8b87bd", openable: true };
 
 const FOLDER_NAMES: Record<string, FolderSpec> = {
-  src: { Icon: Folder, color: "#4b9fff", openable: true },
+  src: { Icon: Folder, color: "#6f8cf5", openable: true },
   test: { Icon: Folder, color: "#30d158", openable: true },
   tests: { Icon: Folder, color: "#30d158", openable: true },
   __tests__: { Icon: Folder, color: "#30d158", openable: true },
@@ -138,6 +137,34 @@ export function folderSpec(dirName: string): FolderSpec {
   return FOLDER_NAMES[dirName.toLowerCase()] ?? FALLBACK_FOLDER;
 }
 
+function FolderGlyph({ size, color, open }: { size: number; color: string; open: boolean }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 20 20" className="file-icon" aria-hidden>
+      {open ? (
+        <path
+          d="M2 5.4a1.6 1.6 0 0 1 1.6-1.6h4l1.7 2h7.1A1.6 1.6 0 0 1 18 7.4v1H4.9L2 15.6zM4.9 9.6h13l-2.1 6.6H2.4z"
+          fill={color}
+        />
+      ) : (
+        <path
+          d="M2 5.4a1.6 1.6 0 0 1 1.6-1.6h4l1.7 2h7.1A1.6 1.6 0 0 1 18 7.4v7.2a1.6 1.6 0 0 1-1.6 1.6H3.6A1.6 1.6 0 0 1 2 14.6z"
+          fill={color}
+        />
+      )}
+    </svg>
+  );
+}
+
+function ComponentGlyph({ size, color }: { size: number; color: string }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 20 20" className="file-icon" aria-hidden>
+      <g stroke={color} strokeWidth="2.4" strokeLinecap="round" fill="none">
+        <path d="M10 3v14M3.9 6.5l12.2 7M16.1 6.5l-12.2 7" />
+      </g>
+    </svg>
+  );
+}
+
 export function FileIcon({
   name,
   isDir = false,
@@ -151,8 +178,12 @@ export function FileIcon({
 }) {
   if (isDir) {
     const spec = folderSpec(name);
-    const Icon = spec.openable ? (expanded ? FolderOpen : Folder) : spec.Icon;
-    return <Icon size={size} style={{ color: spec.color }} className="file-icon" aria-hidden />;
+    if (spec.openable) return <FolderGlyph size={size} color={spec.color} open={expanded} />;
+    return <spec.Icon size={size} style={{ color: spec.color }} className="file-icon" aria-hidden />;
+  }
+  const lower = name.toLowerCase();
+  if (lower.endsWith(".tsx") || lower.endsWith(".jsx")) {
+    return <ComponentGlyph size={size} color="#6f8cf5" />;
   }
   const spec = fileSpec(name);
   return <spec.Icon size={size} style={{ color: spec.color }} className="file-icon" aria-hidden />;

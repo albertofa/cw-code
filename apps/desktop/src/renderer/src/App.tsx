@@ -37,7 +37,7 @@ const VERSION_NOTIF_ID = "cli-versions";
 const BINARY_NOTIF_ID = "cli-binaries";
 
 const RIGHT_WIDTH_KEY = "cw-code:rightWidth";
-const RIGHT_WIDTH_DEFAULT = 480;
+const RIGHT_WIDTH_DEFAULT = 520;
 const RIGHT_WIDTH_MIN = 320;
 const RIGHT_WIDTH_MAX = 800;
 
@@ -303,7 +303,7 @@ export function App() {
       {preloadError && <div className="preload-error">{preloadError}</div>}
       {!preloadError && (
         <>
-          <TitleBar />
+          <TitleBar onOpenSettings={() => openSettings()} />
           <div className="app-body">
           <Sidebar onOpenSettings={() => openSettings()} />
           <ThreadView rightVisible={rightVisible} onToggleRight={() => setRightVisible((v) => !v)} />
@@ -325,6 +325,7 @@ export function App() {
                     aria-label={t.title}
                   >
                     <t.Icon size={15} className={t.driver ? `driver-icon ${t.driver}` : undefined} />
+                    {rightTab === t.id && <span className="tab-label">{t.title}</span>}
                   </button>
                 ))}
                 {preview && (
@@ -335,6 +336,7 @@ export function App() {
                     aria-label="Preview"
                   >
                     <Eye size={15} />
+                    {rightTab === "preview" && <span className="tab-label">Preview</span>}
                   </button>
                 )}
                 <button

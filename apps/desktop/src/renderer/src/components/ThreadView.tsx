@@ -91,8 +91,13 @@ export function ThreadView({ rightVisible, onToggleRight }: { rightVisible: bool
     return (
       <div className="thread-col">
         <div className="thread-head">
+          <span className="thread-avatar" aria-hidden="true">
+            {(project?.name ?? "cw").slice(0, 2).toUpperCase()}
+          </span>
           <span className="crumb" title={`${project?.name ?? ""} / New thread`}>
-            {project?.name ?? "…"} / <strong>New thread</strong>
+            <span>{project?.name ?? "…"}</span>
+            <span className="crumb-sep">/</span>
+            <strong>New thread</strong>
           </span>
           <span title={heroDriver}>
             <DriverIcon driver={heroDriver} size={14} />
@@ -118,11 +123,13 @@ export function ThreadView({ rightVisible, onToggleRight }: { rightVisible: bool
   return (
     <div className="thread-col">
       <div className="thread-head">
-        <span className="crumb" title={`${project?.name ?? ""} / ${session.title}`}>
-          {project?.name ?? "…"} / <strong>{session.title}</strong>
+        <span className="thread-avatar" aria-hidden="true">
+          {(project?.name ?? "cw").slice(0, 2).toUpperCase()}
         </span>
-        <span title={session.driver}>
-          <DriverIcon driver={session.driver} size={14} />
+        <span className="crumb" title={`${project?.name ?? ""} / ${session.title}`}>
+          <span>{project?.name ?? "…"}</span>
+          <span className="crumb-sep">/</span>
+          <strong>{session.title}</strong>
         </span>
         <GitPanelBar sessionId={session.id} compact />
         <span className="thread-status">

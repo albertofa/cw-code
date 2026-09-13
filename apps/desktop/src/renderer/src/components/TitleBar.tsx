@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ChevronDown, ChevronUp, Copy, Minus, Square, Terminal, X } from "lucide-react";
+import { ChevronDown, ChevronUp, Copy, Minus, Search, Settings, Square, X } from "lucide-react";
 import { useAppStore } from "../stores/appStore.js";
 import { useNotifs } from "./Notifications.js";
 
@@ -61,7 +61,7 @@ function DebugMenu() {
   );
 }
 
-export function TitleBar() {
+export function TitleBar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const { projects, sessionsByProject, activeProjectId, activeSessionId, pendingDriver } = useAppStore();
   const [maxed, setMaxed] = useState(false);
 
@@ -76,8 +76,8 @@ export function TitleBar() {
   return (
     <div className="titlebar" onDoubleClick={() => window.cw.toggleMaximizeWindow()}>
       <div className="titlebar-brand">
-        <Terminal size={13} />
-        <span>cw·code</span>
+        <span className="titlebar-logo">CW</span>
+        <span>cw-code</span>
       </div>
       <DebugMenu />
       <div className="titlebar-crumb">
@@ -90,8 +90,21 @@ export function TitleBar() {
             {project.name} <span className="sep">/</span> <strong>New thread</strong>
           </span>
         ) : (
-          <span> </span>
+          <span>Rider Violet Workbench</span>
         )}
+      </div>
+      <div className="titlebar-actions" onDoubleClick={(e) => e.stopPropagation()}>
+        <button
+          className="icon-btn"
+          title="Search sessions (Ctrl+K)"
+          aria-label="Search sessions"
+          onClick={() => window.dispatchEvent(new Event("cw:focus-search"))}
+        >
+          <Search size={15} />
+        </button>
+        <button className="icon-btn" title="Settings" aria-label="Settings" onClick={onOpenSettings}>
+          <Settings size={15} />
+        </button>
       </div>
       <div className="win-controls" onDoubleClick={(e) => e.stopPropagation()}>
         <button className="win-btn" onClick={() => window.cw.minimizeWindow()} title="Minimize" aria-label="Minimize">

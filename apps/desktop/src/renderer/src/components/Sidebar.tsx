@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
-import { Check, ChevronDown, ChevronUp, FolderGit2, Search, Settings, SquarePen, X } from "lucide-react";
+import { Check, ChevronDown, ChevronUp, Folder, Plus, RefreshCw, Search, Settings, X } from "lucide-react";
 import type { Project, Session, SessionStatus } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import { DriverIcon } from "./DriverIcon.js";
@@ -23,7 +23,19 @@ function avatarStyle(name: string): CSSProperties {
 }
 
 function stateLabel(status: SessionStatus): string {
-  return status === "input-required" ? "input" : status;
+  if (status === "input-required") return "Input";
+  if (status === "working") return "Running";
+  return status;
+}
+
+function ageLabel(ts: number): string {
+  const mins = Math.max(1, Math.round((Date.now() - ts) / 60000));
+  if (mins < 60) return `${mins}m`;
+  const hrs = Math.round(mins / 60);
+  if (hrs < 24) return `${hrs}h`;
+  const days = Math.round(hrs / 24);
+  if (days < 7) return `${days}d`;
+  return `${Math.round(days / 7)}w`;
 }
 
 type SidebarSection = "main" | "resolved";
@@ -172,6 +184,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const pointerY = useRef(0);
   const detachRef = useRef<(() => void) | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
+  const searchRef = useRef<HTMLInputElement>(null);
   const resolvedDetailsRef = useRef<HTMLDetailsElement>(null);
   const slotSnap = useRef<SlotSnapshot | null>(null);
   const rowRefs = useRef(new Map<string, HTMLDivElement>());
@@ -211,6 +224,27 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
     detachRef.current?.();
     stopAutoScroll();
   }, []);
+
+  useEffect(() => {
+    const focusSearch = () => searchRef.current?.focus();
+    const onKey = (e: KeyboardEvent) => {
+      if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
+        e.preventDefault();
+        focusSearch();
+      }
+    };
+    window.addEventListener("keydown", onKey);
+    window.addEventListener("cw:focus-search", focusSearch);
+    return () => {
+      window.removeEventListener("keydown", onKey);
+      window.removeEventListener("cw:focus-search", focusSearch);
+    };
+  }, []);
+
+  const refreshAll = () => {
+    void store.loadProjects();
+    void store.loadDiscovered();
+  };
 
   const activeProject = projects.find((p) => p.id === activeProjectId);
   const filterProject = projectFilter === "all" ? undefined : projects.find((p) => p.id === projectFilter);
@@ -563,8 +597,6 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
        title={rowTitle}
        aria-label={rowTitle}
     >
-      <span className="session-copy">
-      <span className="session-title-line">
       {renamingId === s.id ? (
         <input
           autoFocus
@@ -582,11 +614,14 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
       ) : (
         <span className="session-title">{s.title}</span>
       )}
-        <DriverIcon driver={s.driver} size={10} />
-      </span>
-        <span className="session-meta">
+      <span className="session-side">
+        <DriverIcon driver={s.driver} size={12} />
+        {(status === "working" || status === "input-required") && <span className={`session-dot status-${status}`} />}
+        {status === "idle" ? (
+          <span className="session-age">{ageLabel(s.updatedAt)}</span>
+        ) : (
           <span className={`session-state status-${status}`}>{stateLabel(status)}</span>
-        </span>
+        )}
       </span>
     </div>
   };
@@ -624,21 +659,24 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
         <div className="search-row ghost">
           <Search className="search-icon" aria-hidden="true" size={15} />
           <input
+            ref={searchRef}
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search sessions…"
+            placeholder="Search"
           />
-          {query && (
+          {query ? (
             <button className="icon-btn" aria-label="Clear search" onClick={() => setQuery("")}>
               <X aria-hidden="true" size={15} />
             </button>
+          ) : (
+            <span className="search-kbd">Ctrl+K</span>
           )}
         </div>
         <div className="project-bar">
           <div className="picker">
             <button className="picker-btn" onClick={() => setPickerOpen((o) => !o)} aria-haspopup="listbox" aria-expanded={pickerOpen}>
-            <FolderGit2 className="picker-icon" aria-hidden="true" size={15} />
-            <span className="picker-name">{projectFilter === "all" ? "All Projects" : (filterProject?.name ?? activeProject?.name ?? "Select project…")}</span>
+            <Folder className="picker-icon" aria-hidden="true" size={16} />
+            <span className="picker-name">{projectFilter === "all" ? "All projects" : (filterProject?.name ?? activeProject?.name ?? "Select project…")}</span>
             <span className="picker-chevron">{pickerOpen ? <ChevronUp aria-hidden="true" size={14} /> : <ChevronDown aria-hidden="true" size={14} />}</span>
           </button>
           {pickerOpen && (
@@ -673,7 +711,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
                     role="option"
                     aria-selected={projectFilter === "all"}
                   >
-                    <span className="name">All Projects</span>
+                    <span className="name">All projects</span>
                   </div>
                   {visibleProjects.map((p) => (
                     <div key={p.id}>
@@ -734,7 +772,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
             title={`New session in ${activeProject?.name ?? "…"}`}
             aria-label="New session"
           >
-            <SquarePen size={14} />
+            <Plus size={16} />
           </button>
         </div>
       </div>
@@ -817,8 +855,13 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
         </>
       )}
       <div className="side-footer">
-        <button className="icon-btn" title="Settings" aria-label="Settings" onClick={onOpenSettings}>
+        <button className="side-footer-btn" title="Settings" aria-label="Settings" onClick={onOpenSettings}>
           <Settings size={15} />
+          Settings
+        </button>
+        <button className="side-footer-btn" title="Refresh projects and sessions" aria-label="Refresh" onClick={refreshAll}>
+          <RefreshCw size={14} />
+          Refresh
         </button>
       </div>
       {dragged && (

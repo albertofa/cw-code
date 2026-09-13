@@ -49,7 +49,35 @@ export function PtyTab({ sessionId, kind }: { sessionId: string; kind: DriverNam
 
     const start = (fontFamily: string) => {
       if (disposed || !divRef.current) return;
-      term = new Terminal({ fontSize: 13, fontFamily, scrollback: 5000 });
+      term = new Terminal({
+        fontSize: 13,
+        fontFamily,
+        scrollback: 5000,
+        cursorBlink: true,
+        theme: {
+          background: "#0d131f",
+          foreground: "#d5d9e8",
+          cursor: "#e8ecf7",
+          cursorAccent: "#0d131f",
+          selectionBackground: "rgba(124, 66, 255, 0.35)",
+          black: "#0d131f",
+          red: "#ff5c72",
+          green: "#16d9b3",
+          yellow: "#f5b84b",
+          blue: "#4b9fff",
+          magenta: "#b49cff",
+          cyan: "#4abbea",
+          white: "#d5d9e8",
+          brightBlack: "#67718c",
+          brightRed: "#ff8093",
+          brightGreen: "#3de8c4",
+          brightYellow: "#ffd27a",
+          brightBlue: "#7cb8ff",
+          brightMagenta: "#c9b6ff",
+          brightCyan: "#7fd4f5",
+          brightWhite: "#f2f4fb"
+        }
+      });
       termRef.current = term;
       fitAddon = new FitAddon();
       term.loadAddon(fitAddon);
