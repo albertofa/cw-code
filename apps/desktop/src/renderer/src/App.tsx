@@ -303,7 +303,7 @@ export function App() {
       {preloadError && <div className="preload-error">{preloadError}</div>}
       {!preloadError && (
         <>
-          <TitleBar onOpenSettings={() => openSettings()} />
+          <TitleBar />
           <div className="app-body">
           <Sidebar onOpenSettings={() => openSettings()} />
           <ThreadView rightVisible={rightVisible} onToggleRight={() => setRightVisible((v) => !v)} />

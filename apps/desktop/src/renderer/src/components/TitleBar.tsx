@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ChevronDown, ChevronUp, Copy, Minus, Search, Settings, Square, X } from "lucide-react";
+import { ChevronDown, ChevronUp, Copy, Minus, Square, X } from "lucide-react";
 import { useAppStore } from "../stores/appStore.js";
 import { useNotifs } from "./Notifications.js";
 
@@ -61,7 +61,7 @@ function DebugMenu() {
   );
 }
 
-export function TitleBar({ onOpenSettings }: { onOpenSettings: () => void }) {
+export function TitleBar() {
   const { projects, sessionsByProject, activeProjectId, activeSessionId, pendingDriver } = useAppStore();
   const [maxed, setMaxed] = useState(false);
 
@@ -92,19 +92,6 @@ export function TitleBar({ onOpenSettings }: { onOpenSettings: () => void }) {
         ) : (
           <span>Rider Violet Workbench</span>
         )}
-      </div>
-      <div className="titlebar-actions" onDoubleClick={(e) => e.stopPropagation()}>
-        <button
-          className="icon-btn"
-          title="Search sessions (Ctrl+K)"
-          aria-label="Search sessions"
-          onClick={() => window.dispatchEvent(new Event("cw:focus-search"))}
-        >
-          <Search size={15} />
-        </button>
-        <button className="icon-btn" title="Settings" aria-label="Settings" onClick={onOpenSettings}>
-          <Settings size={15} />
-        </button>
       </div>
       <div className="win-controls" onDoubleClick={(e) => e.stopPropagation()}>
         <button className="win-btn" onClick={() => window.cw.minimizeWindow()} title="Minimize" aria-label="Minimize">
