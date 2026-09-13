@@ -557,6 +557,7 @@ body {
 button.session-project-heading {
   width: 100%;
   box-sizing: border-box;
+  background: transparent;
   border: 0;
   font: inherit;
   text-align: left;
@@ -879,8 +880,27 @@ body.session-dragging * {
   margin-top: 14px;
 }
 
-.resolved {
-  margin-top: 14px;
+.session-resolved-toggle {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: calc(100% - 4px);
+  box-sizing: border-box;
+  margin: 1px 0 2px 4px;
+  padding: 4px 10px;
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-md);
+  color: var(--faint);
+  font-family: var(--sans);
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.session-resolved-toggle:hover {
+  color: var(--dim);
+  background: var(--raised);
 }
 
 .resolved-empty-drop {
@@ -893,8 +913,7 @@ body.session-dragging * {
   text-align: center;
 }
 
-.discovered summary,
-.resolved summary {
+.discovered summary {
   font-size: 10.5px;
   color: var(--faint);
   text-transform: uppercase;
@@ -904,26 +923,8 @@ body.session-dragging * {
   list-style: none;
 }
 
-.discovered summary::-webkit-details-marker,
-.resolved summary::-webkit-details-marker {
+.discovered summary::-webkit-details-marker {
   display: none;
-}
-
-.resolved summary:hover {
-  color: var(--dim);
-}
-
-.resolved summary::before {
-  content: "▸";
-  display: inline-block;
-  margin-right: 7px;
-  font-size: 9px;
-  color: var(--faint);
-  transition: transform 120ms ease;
-}
-
-.resolved[open] > summary::before {
-  transform: rotate(90deg);
 }
 
 .discovered-row {

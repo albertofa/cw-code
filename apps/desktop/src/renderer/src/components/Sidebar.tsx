@@ -188,6 +188,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const [landedId, setLandedId] = useState<string | null>(null);
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+  const [resolvedOpen, setResolvedOpen] = useState<Set<string>>(new Set());
 
   const toggleGroup = (projectId: string) => {
     setCollapsedGroups((prev) => {
@@ -206,6 +207,15 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
       return next;
     });
   };
+
+  const toggleResolved = (projectId: string) => {
+    setResolvedOpen((prev) => {
+      const next = new Set(prev);
+      if (next.has(projectId)) next.delete(projectId);
+      else next.add(projectId);
+      return next;
+    });
+  };
   const dragRef = useRef<{ id: string; section: SidebarSection; title: string; startX: number; startY: number; active: boolean } | null>(null);
   const ghostRef = useRef<HTMLDivElement>(null);
   const suppressClickRef = useRef(false);
@@ -214,7 +224,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const detachRef = useRef<(() => void) | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
-  const resolvedDetailsRef = useRef<HTMLDetailsElement>(null);
+  const toggleRefs = useRef(new Map<string, HTMLButtonElement>());
   const slotSnap = useRef<SlotSnapshot | null>(null);
   const rowRefs = useRef(new Map<string, HTMLDivElement>());
   const prevRects = useRef(new Map<string, { top: number; height: number }>());
@@ -313,6 +323,12 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const previewing = dragged !== null && preview !== null;
   const shownPreview = (previewing ? previewMainAll : orderedMainAll).filter(matchesQuery);
   const resolvedPreview = (previewing ? previewResolvedAll : orderedResolvedAll).filter(matchesQuery);
+  const resolvedByProject = new Map<string, Session[]>();
+  for (const s of resolvedPreview) {
+    const existing = resolvedByProject.get(s.projectId);
+    if (existing) existing.push(s);
+    else resolvedByProject.set(s.projectId, [s]);
+  }
 
   const captureSlots = (): void => {
     const rows: SlotRow[] = [];
@@ -378,15 +394,13 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
     setPreview(null);
   };
 
-  const maybeOpenResolved = (clientY: number): void => {
-    const det = resolvedDetailsRef.current;
-    if (!det || det.open) return;
-    const summary = det.querySelector("summary");
-    if (!summary) return;
-    const r = summary.getBoundingClientRect();
-    if (clientY < r.top - 4 || clientY > r.bottom + 4) return;
-    det.open = true;
-    captureSlots();
+  const maybeOpenResolvedGroup = (clientX: number, clientY: number): void => {
+    toggleRefs.current.forEach((el, pid) => {
+      if (!el.isConnected) return;
+      const r = el.getBoundingClientRect();
+      if (clientX < r.left - 4 || clientX > r.right + 4 || clientY < r.top - 4 || clientY > r.bottom + 4) return;
+      setResolvedOpen((prev) => (prev.has(pid) ? prev : new Set(prev).add(pid)));
+    });
   };
   const visibleProjects = projectQuery
     ? projects.filter(
@@ -499,7 +513,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
     window.setTimeout(() => setLandedId((id) => (id === fromId ? null : id)), 850);
   };
 
-  const renderRow = (s: Session, section: SidebarSection) => {
+  const renderRow = (s: Session, section: SidebarSection, hideState = false) => {
     const git = gitStatusBySession[s.id];
     const pr = git?.pullRequest;
     const prState = pr?.isDraft
@@ -541,7 +555,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
         ev.preventDefault();
         pointerY.current = ev.clientY;
         moveGhost(ev.clientX, ev.clientY);
-        maybeOpenResolved(ev.clientY);
+        maybeOpenResolvedGroup(ev.clientX, ev.clientY);
         const freshIds = Object.values(useAppStore.getState().sessionsByProject)
           .flat()
           .map((x) => x.id)
@@ -574,7 +588,10 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
         const active = { id: d.id, section: d.section };
         const el = document.elementFromPoint(ev.clientX, ev.clientY);
         if (!el || !(listRef.current?.contains(el) ?? false)) return;
-        if (el.closest(".resolved-empty-drop") || (el.closest("details.resolved") && el.closest("summary"))) {
+        const toggle = el.closest(".session-resolved-toggle") as HTMLElement | null;
+        if (el.closest(".resolved-empty-drop") || toggle) {
+          const pid = toggle?.dataset.projectId;
+          if (pid) setResolvedOpen((prev) => (prev.has(pid) ? prev : new Set(prev).add(pid)));
           handleDrop(active, "resolved", null, false);
           return;
         }
@@ -646,7 +663,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
       <span className="session-side">
         <DriverIcon driver={s.driver} size={12} />
         {(status === "working" || status === "input-required") && <span className={`session-dot status-${status}`} />}
-        {status === "idle" ? (
+        {status === "idle" || hideState ? (
           <span className="session-age">{ageLabel(s.updatedAt)}</span>
         ) : (
           <span className={`session-state status-${status}`}>{stateLabel(status)}</span>
@@ -655,13 +672,43 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
     </div>
   };
 
-  const renderRows = (items: Session[], section: SidebarSection, flat = false) => {
-    if (projectFilter !== "all" || flat) return items.map((s) => renderRow(s, section));
+  const renderResolvedToggle = (projectId: string, items: Session[]) => {
+    if (items.length === 0) return null;
+    const open = resolvedOpen.has(projectId);
+    return (
+      <>
+        <button
+          type="button"
+          className="session-resolved-toggle"
+          ref={(el) => {
+            if (el) toggleRefs.current.set(projectId, el);
+            else toggleRefs.current.delete(projectId);
+          }}
+          data-project-id={projectId}
+          onClick={() => toggleResolved(projectId)}
+          aria-expanded={open}
+          aria-label={`${open ? "Collapse" : "Expand"} resolved sessions`}
+        >
+          <span className="group-chevron" aria-hidden="true">
+            {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+          </span>
+          Resolved · {items.length}
+        </button>
+        {open && items.map((s) => renderRow(s, "resolved", true))}
+      </>
+    );
+  };
+
+  const renderRows = (items: Session[], section: SidebarSection) => {
+    if (projectFilter !== "all") return items.map((s) => renderRow(s, section));
     const grouped = new Map<string, Session[]>();
     for (const session of items) {
       const existing = grouped.get(session.projectId);
       if (existing) existing.push(session);
       else grouped.set(session.projectId, [session]);
+    }
+    for (const pid of resolvedByProject.keys()) {
+      if (!grouped.has(pid)) grouped.set(pid, []);
     }
     return Array.from(grouped, ([projectId, sessions]) => {
       const project = projects.find((item) => item.id === projectId);
@@ -669,6 +716,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
       const isCollapsed = collapsedGroups.has(projectId);
       const isExpanded = expandedGroups.has(projectId);
       const visible = isExpanded ? sessions : sessions.slice(0, GROUP_VISIBLE);
+      const resolved = resolvedByProject.get(projectId) ?? [];
       return (
         <div className="session-project-group" key={`${section}:${projectId}`}>
           <button
@@ -687,11 +735,16 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
             <span className="session-project-heading-name">{name}</span>
             <span className="session-project-heading-count">{sessions.length}</span>
           </button>
-          {!isCollapsed && visible.map((session) => renderRow(session, section))}
-          {!isCollapsed && sessions.length > GROUP_VISIBLE && (
-            <button type="button" className="session-show-all" onClick={() => toggleExpandGroup(projectId)}>
-              {isExpanded ? "Show less" : `Show all ${sessions.length}`}
-            </button>
+          {!isCollapsed && (
+            <>
+              {visible.map((session) => renderRow(session, section))}
+              {sessions.length > GROUP_VISIBLE && (
+                <button type="button" className="session-show-all" onClick={() => toggleExpandGroup(projectId)}>
+                  {isExpanded ? "Show less" : `Show all ${sessions.length}`}
+                </button>
+              )}
+              {renderResolvedToggle(projectId, resolved)}
+            </>
           )}
         </div>
       );
@@ -827,17 +880,11 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
       <div className="session-list" ref={listRef}>
         <div className="session-main-list">
           {renderRows(shownPreview, "main")}
-          {shownPreview.length === 0 && <div className="side-empty">{query ? "No matches." : "No sessions yet."}</div>}
+          {projectFilter !== "all" && renderResolvedToggle(projectFilter, resolvedPreview)}
+          {shownPreview.length === 0 && resolvedPreview.length === 0 && (
+            <div className="side-empty">{query ? "No matches." : "No sessions yet."}</div>
+          )}
         </div>
-        {resolvedPreview.length > 0 && (
-          <details
-            className="resolved"
-            ref={resolvedDetailsRef}
-          >
-            <summary>Resolved · {resolvedPreview.length}</summary>
-            {renderRows(resolvedPreview, "resolved", true)}
-          </details>
-        )}
         {resolvedPreview.length === 0 && dragged && (
           <div
             className="resolved-empty-drop"
