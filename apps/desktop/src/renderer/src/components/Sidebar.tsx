@@ -27,8 +27,8 @@ function groupTintStyle(name: string): CSSProperties {
   };
 }
 
-function avatarStyle(): CSSProperties {
-  return { background: "linear-gradient(135deg, #3f8cff, #2749d8)" };
+function avatarStyle(name: string): CSSProperties {
+  return { background: `hsl(${hashHue(name)}, 32%, 36%)` };
 }
 
 function stateLabel(status: SessionStatus): string {
@@ -683,7 +683,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
             <span className="group-chevron" aria-hidden="true">
               {isCollapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
             </span>
-            <span className="avatar sm" style={avatarStyle()}>{initials(name)}</span>
+            <span className="avatar sm" style={avatarStyle(name)}>{initials(name)}</span>
             <span className="session-project-heading-name">{name}</span>
             <span className="session-project-heading-count">{sessions.length}</span>
           </button>
@@ -770,7 +770,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
                         aria-selected={p.id === projectFilter}
                         title={p.rootPath}
                       >
-                        <span className="avatar" style={avatarStyle()}>
+                        <span className="avatar" style={avatarStyle(p.name)}>
                           {initials(p.name)}
                         </span>
                         <span className="name">{p.name}</span>
