@@ -357,8 +357,9 @@ interface CacheEntry<T> {
 
 export class GitService {
   private accountCache = new Map<string, { expiresAt: number; accounts: GitHubAccountInfo[] }>();
-  private statusInFlight = new Map<string, Promise<GitStatus>>();
+  private statusInFlight = new Map<string, { generation: number; promise: Promise<GitStatus> }>();
   private statusDone = new Map<string, CacheEntry<GitStatus>>();
+  private statusGeneration = new Map<string, number>();
   private prCache = new Map<string, CacheEntry<{ pullRequest: GitPullRequest | null; error: string | null }>>();
 
   constructor(private getSettings: () => SourceControlSettings = () => ({
@@ -478,7 +479,10 @@ export class GitService {
     const git = this.git(root);
     if (target.remote) await git.raw(["checkout", "--track", target.name]);
     else await git.checkout(target.name);
-    this.statusDone.delete(cacheKey(root));
+    const key = cacheKey(root);
+    this.statusGeneration.set(key, (this.statusGeneration.get(key) ?? 0) + 1);
+    this.statusDone.delete(key);
+    this.statusInFlight.delete(key);
     return this.status(root, project);
   }
 
@@ -658,23 +662,27 @@ export class GitService {
     const cached = this.statusDone.get(key);
     if (cached && cached.expiresAt > Date.now()) return cached.value;
     const inFlight = this.statusInFlight.get(key);
-    if (inFlight) return inFlight;
+    if (inFlight) return inFlight.promise;
+    const generation = this.statusGeneration.get(key) ?? 0;
     const promise = this.computeStatus(root, project).then((value) => {
-      this.statusDone.set(key, { expiresAt: Date.now() + STATUS_CACHE_TTL_MS, value });
+      if ((this.statusGeneration.get(key) ?? 0) === generation) {
+        this.statusDone.set(key, { expiresAt: Date.now() + STATUS_CACHE_TTL_MS, value });
+      }
       return value;
     }).finally(() => {
-      this.statusInFlight.delete(key);
+      const current = this.statusInFlight.get(key);
+      if (current?.generation === generation) this.statusInFlight.delete(key);
     });
-    this.statusInFlight.set(key, promise);
+    this.statusInFlight.set(key, { generation, promise });
     return promise;
   }
 
   private async cachedPullRequest(root: string, branch: string, remote: ParsedGitHubRemote, account: GitHubAccountInfo): Promise<{ pullRequest: GitPullRequest | null; error: string | null }> {
-    const key = `${cacheKey(root)}|${branch}`;
+    const key = `${cacheKey(root)}|${branch}|${account.login}`;
     const cached = this.prCache.get(key);
     if (cached && cached.expiresAt > Date.now()) return cached.value;
     const value = await queryPullRequest(root, this.settings().githubCliBinaryPath, remote, account);
-    this.prCache.set(key, { expiresAt: Date.now() + PR_CACHE_TTL_MS, value });
+    if (value.error === null) this.prCache.set(key, { expiresAt: Date.now() + PR_CACHE_TTL_MS, value });
     return value;
   }
 
