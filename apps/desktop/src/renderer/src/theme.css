@@ -120,7 +120,6 @@ body {
   gap: 14px;
   padding: 0 4px 0 12px;
   background: var(--panel);
-  border-bottom: 1px solid var(--border-soft);
   color: var(--muted);
   font-size: 13px;
   user-select: none;
@@ -241,7 +240,7 @@ body {
 .side,
 .thread-col,
 .right {
-  border: 1px solid #26282d;
+  border: 0;
   border-radius: 10px;
   overflow: hidden;
 }
@@ -946,7 +945,7 @@ body.session-dragging * {
   align-items: center;
   gap: 10px;
   padding: 0 16px;
-  border-bottom: 1px solid var(--border-soft);
+  border-bottom: 0;
   min-height: 52px;
   background: var(--panel-head);
 }
@@ -2257,7 +2256,7 @@ body.session-dragging * {
   box-sizing: border-box;
   align-items: stretch;
   padding: 0 10px;
-  border-bottom: 1px solid var(--border-soft);
+  border-bottom: 0;
   background: var(--panel);
 }
 
