@@ -551,6 +551,48 @@ body {
   color: var(--text);
   font-size: 13px;
   font-weight: 600;
+  border-radius: var(--r-md);
+}
+
+button.session-project-heading {
+  width: 100%;
+  box-sizing: border-box;
+  border: 0;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+button.session-project-heading:hover {
+  filter: brightness(1.25);
+}
+
+.group-chevron {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  color: var(--faint);
+}
+
+.session-show-all {
+  display: block;
+  width: calc(100% - 4px);
+  box-sizing: border-box;
+  margin: 1px 0 2px 4px;
+  padding: 5px 10px;
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-md);
+  color: var(--faint);
+  font-family: var(--sans);
+  font-size: 11.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.session-show-all:hover {
+  color: var(--dim);
+  background: var(--raised);
 }
 
 .session-project-heading-name {
@@ -737,6 +779,14 @@ body.session-dragging * {
   color: var(--text);
 }
 
+.session-row.idle .session-title {
+  color: #757b87;
+}
+
+.session-row.active.idle .session-title {
+  color: var(--text);
+}
+
 .session-meta {
   display: contents;
 }
@@ -857,6 +907,23 @@ body.session-dragging * {
 .discovered summary::-webkit-details-marker,
 .resolved summary::-webkit-details-marker {
   display: none;
+}
+
+.resolved summary:hover {
+  color: var(--dim);
+}
+
+.resolved summary::before {
+  content: "▸";
+  display: inline-block;
+  margin-right: 7px;
+  font-size: 9px;
+  color: var(--faint);
+  transition: transform 120ms ease;
+}
+
+.resolved[open] > summary::before {
+  transform: rotate(90deg);
 }
 
 .discovered-row {

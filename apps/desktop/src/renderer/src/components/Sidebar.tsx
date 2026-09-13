@@ -1,15 +1,30 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
-import { Check, ChevronDown, ChevronUp, Folder, Plus, RefreshCw, Search, Settings, X } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, ChevronUp, Folder, Plus, RefreshCw, Search, Settings, X } from "lucide-react";
 import type { Project, Session, SessionStatus } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { useNotifs } from "./Notifications.js";
+
+function hashHue(s: string): number {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
+  return h % 360;
+}
 
 function initials(name: string): string {
   const parts = name.split(/[^A-Za-z0-9]+/).filter(Boolean);
   if (parts.length === 0) return name.slice(0, 1).toUpperCase() || "?";
   if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
   return (parts[0][0] + parts[1][0]).toUpperCase();
+}
+
+const GROUP_VISIBLE = 6;
+
+function groupTintStyle(name: string): CSSProperties {
+  const h = hashHue(name);
+  return {
+    background: `linear-gradient(90deg, hsla(${h}, 35%, 32%, 0.3), hsla(${h}, 35%, 32%, 0) 75%)`
+  };
 }
 
 function avatarStyle(): CSSProperties {
@@ -171,6 +186,26 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const [dragged, setDragged] = useState<{ id: string; section: SidebarSection; title: string } | null>(null);
   const [preview, setPreview] = useState<{ targetId: string | null; section: SidebarSection; before: boolean } | null>(null);
   const [landedId, setLandedId] = useState<string | null>(null);
+  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
+  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
+
+  const toggleGroup = (projectId: string) => {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(projectId)) next.delete(projectId);
+      else next.add(projectId);
+      return next;
+    });
+  };
+
+  const toggleExpandGroup = (projectId: string) => {
+    setExpandedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(projectId)) next.delete(projectId);
+      else next.add(projectId);
+      return next;
+    });
+  };
   const dragRef = useRef<{ id: string; section: SidebarSection; title: string; startX: number; startY: number; active: boolean } | null>(null);
   const ghostRef = useRef<HTMLDivElement>(null);
   const suppressClickRef = useRef(false);
@@ -587,7 +622,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
         setRenamingId(null);
         setMenu({ sessionId: s.id, x: e.clientX, y: e.clientY });
       }}
-      className={`session-row${s.id === activeSessionId ? " active" : ""}${dragged?.id === s.id ? " dragging" : ""}${landedId === s.id ? " landed" : ""}`}
+      className={`session-row${s.id === activeSessionId ? " active" : ""}${dragged?.id === s.id ? " dragging" : ""}${landedId === s.id ? " landed" : ""}${status === "idle" ? " idle" : ""}`}
        title={rowTitle}
        aria-label={rowTitle}
     >
@@ -620,8 +655,8 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
     </div>
   };
 
-  const renderRows = (items: Session[], section: SidebarSection) => {
-    if (projectFilter !== "all") return items.map((s) => renderRow(s, section));
+  const renderRows = (items: Session[], section: SidebarSection, flat = false) => {
+    if (projectFilter !== "all" || flat) return items.map((s) => renderRow(s, section));
     const grouped = new Map<string, Session[]>();
     for (const session of items) {
       const existing = grouped.get(session.projectId);
@@ -631,14 +666,33 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
     return Array.from(grouped, ([projectId, sessions]) => {
       const project = projects.find((item) => item.id === projectId);
       const name = projectNameById[projectId] ?? "Unknown project";
+      const isCollapsed = collapsedGroups.has(projectId);
+      const isExpanded = expandedGroups.has(projectId);
+      const visible = isExpanded ? sessions : sessions.slice(0, GROUP_VISIBLE);
       return (
         <div className="session-project-group" key={`${section}:${projectId}`}>
-          <div className="session-project-heading" title={project?.rootPath ?? name}>
+          <button
+            type="button"
+            className="session-project-heading"
+            style={groupTintStyle(name)}
+            title={project?.rootPath ?? name}
+            onClick={() => toggleGroup(projectId)}
+            aria-expanded={!isCollapsed}
+            aria-label={`${isCollapsed ? "Expand" : "Collapse"} ${name}`}
+          >
+            <span className="group-chevron" aria-hidden="true">
+              {isCollapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
+            </span>
             <span className="avatar sm" style={avatarStyle()}>{initials(name)}</span>
             <span className="session-project-heading-name">{name}</span>
             <span className="session-project-heading-count">{sessions.length}</span>
-          </div>
-          {sessions.map((session) => renderRow(session, section))}
+          </button>
+          {!isCollapsed && visible.map((session) => renderRow(session, section))}
+          {!isCollapsed && sessions.length > GROUP_VISIBLE && (
+            <button type="button" className="session-show-all" onClick={() => toggleExpandGroup(projectId)}>
+              {isExpanded ? "Show less" : `Show all ${sessions.length}`}
+            </button>
+          )}
         </div>
       );
     });
@@ -780,8 +834,8 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
             className="resolved"
             ref={resolvedDetailsRef}
           >
-            <summary>resolved · {resolvedPreview.length}</summary>
-            {renderRows(resolvedPreview, "resolved")}
+            <summary>Resolved · {resolvedPreview.length}</summary>
+            {renderRows(resolvedPreview, "resolved", true)}
           </details>
         )}
         {resolvedPreview.length === 0 && dragged && (
