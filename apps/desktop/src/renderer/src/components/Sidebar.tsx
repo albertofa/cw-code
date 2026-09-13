@@ -5,12 +5,6 @@ import { useAppStore } from "../stores/appStore.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { useNotifs } from "./Notifications.js";
 
-function hashHue(s: string): number {
-  let h = 0;
-  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
-  return h % 360;
-}
-
 function initials(name: string): string {
   const parts = name.split(/[^A-Za-z0-9]+/).filter(Boolean);
   if (parts.length === 0) return name.slice(0, 1).toUpperCase() || "?";
@@ -18,8 +12,8 @@ function initials(name: string): string {
   return (parts[0][0] + parts[1][0]).toUpperCase();
 }
 
-function avatarStyle(name: string): CSSProperties {
-  return { background: `hsl(${hashHue(name)} 45% 32%)` };
+function avatarStyle(): CSSProperties {
+  return { background: "linear-gradient(135deg, #3f8cff, #2749d8)" };
 }
 
 function stateLabel(status: SessionStatus): string {
@@ -640,7 +634,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
       return (
         <div className="session-project-group" key={`${section}:${projectId}`}>
           <div className="session-project-heading" title={project?.rootPath ?? name}>
-            <span className="avatar sm" style={avatarStyle(name)}>{initials(name)}</span>
+            <span className="avatar sm" style={avatarStyle()}>{initials(name)}</span>
             <span className="session-project-heading-name">{name}</span>
             <span className="session-project-heading-count">{sessions.length}</span>
           </div>
@@ -722,7 +716,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
                         aria-selected={p.id === projectFilter}
                         title={p.rootPath}
                       >
-                        <span className="avatar" style={avatarStyle(p.name)}>
+                        <span className="avatar" style={avatarStyle()}>
                           {initials(p.name)}
                         </span>
                         <span className="name">{p.name}</span>

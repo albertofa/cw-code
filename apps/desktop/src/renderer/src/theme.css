@@ -461,7 +461,7 @@ body {
 }
 
 .picker-row.active {
-  background: var(--driver-soft);
+  background: rgba(124, 66, 255, 0.18);
 }
 
 .picker-row .name {
@@ -537,9 +537,9 @@ body {
 
 .add-project {
   background: transparent;
-  border: 1px dashed var(--driver);
+  border: 1px dashed rgba(169, 138, 247, 0.5);
   border-radius: var(--r-md);
-  color: var(--driver);
+  color: #a98af7;
   font-family: var(--mono);
   font-size: 12px;
   padding: 7px;
@@ -548,7 +548,7 @@ body {
 }
 
 .add-project:hover {
-  background: var(--driver-soft);
+  background: rgba(124, 66, 255, 0.12);
   border-style: solid;
 }
 
@@ -717,7 +717,7 @@ body.session-dragging * {
   font-size: 12.5px;
   color: var(--text);
   background: var(--bg);
-  border: 1px solid var(--driver);
+  border: 1px solid var(--accent);
   border-radius: 4px;
   padding: 2px 6px;
   outline: none;
@@ -1139,7 +1139,7 @@ body.session-dragging * {
 }
 
 .md a {
-  color: var(--driver);
+  color: var(--accent);
   cursor: pointer;
   text-decoration: none;
 }
@@ -1222,7 +1222,7 @@ body.session-dragging * {
 }
 
 .md blockquote {
-  border-left: 2px solid var(--driver);
+  border-left: 2px solid var(--accent);
   margin: 10px 0;
   padding: 2px 0 2px 12px;
   color: var(--dim);
@@ -1660,10 +1660,6 @@ body.session-dragging * {
   color: var(--driver);
 }
 
-.recipe-model > svg {
-  color: var(--driver);
-}
-
 
 
 .newthread {
@@ -1853,7 +1849,7 @@ body.session-dragging * {
 }
 
 .menu-row.active {
-  background: color-mix(in srgb, var(--driver) 28%, transparent);
+  background: rgba(124, 66, 255, 0.18);
   color: var(--text);
 }
 
@@ -1905,7 +1901,7 @@ body.session-dragging * {
 .menu-check {
   flex: none;
   width: 14px;
-  color: var(--driver);
+  color: #a98af7;
   font-size: 12px;
 }
 
@@ -2699,16 +2695,16 @@ body.session-dragging * {
 }
 
 .btn-primary {
-  background: var(--driver);
-  border-color: var(--driver);
-  color: #201d1d;
+  background: linear-gradient(135deg, var(--violet), var(--violet-strong));
+  border-color: transparent;
+  color: #fff;
   font-weight: 700;
 }
 
 .btn-primary:hover:not(:disabled) {
-  background: var(--driver);
-  color: #201d1d;
-  filter: brightness(1.1);
+  background: linear-gradient(135deg, var(--violet), var(--violet-strong));
+  color: #fff;
+  filter: brightness(1.12);
 }
 
 .notifs {
