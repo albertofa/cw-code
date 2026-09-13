@@ -1,0 +1,757 @@
+{
+  "tool": "comp-spec",
+  "version": 1,
+  "createdAt": "2026-09-13T03:51:44.164Z",
+  "comp": ".impeccable/mocks/composer-hybrid-final.png",
+  "warnings": [],
+  "uncoveredInkCells": [],
+  "compSize": {
+    "width": 1674,
+    "height": 943
+  },
+  "aspect": 1.7752,
+  "orientation": "landscape",
+  "palette": [
+    {
+      "hex": "#0b1824",
+      "coverage": 0.8401
+    },
+    {
+      "hex": "#181939",
+      "coverage": 0.1007
+    },
+    {
+      "hex": "#083d29",
+      "coverage": 0.035
+    },
+    {
+      "hex": "#7b7b88",
+      "coverage": 0.0142
+    },
+    {
+      "hex": "#b8b9bf",
+      "coverage": 0.01
+    }
+  ],
+  "bands": [
+    {
+      "y": 0.0972,
+      "strength": 0.2222
+    },
+    {
+      "y": 0.3333,
+      "strength": 0.2436
+    },
+    {
+      "y": 0.9861,
+      "strength": 0.2409
+    }
+  ],
+  "regions": [
+    {
+      "id": "app-titlebar",
+      "kind": "chrome",
+      "note": "subtly violet navy native title chrome with compact icon actions",
+      "grid": "A0:J0",
+      "box": {
+        "x": 0,
+        "y": 0,
+        "w": 1,
+        "h": 0.1
+      },
+      "px": {
+        "x": 0,
+        "y": 0,
+        "w": 1674,
+        "h": 94
+      },
+      "aspect": 17.8085,
+      "palette": [
+        {
+          "hex": "#14182c",
+          "coverage": 0.7722
+        },
+        {
+          "hex": "#081818",
+          "coverage": 0.1711
+        },
+        {
+          "hex": "#767787",
+          "coverage": 0.0435
+        },
+        {
+          "hex": "#bebec3",
+          "coverage": 0.0073
+        },
+        {
+          "hex": "#3c4056",
+          "coverage": 0.0059
+        }
+      ],
+      "detail": {
+        "energy": 18.1377
+      },
+      "medium": "semantic",
+      "plate": null,
+      "text": null
+    },
+    {
+      "id": "session-sidebar",
+      "kind": "control",
+      "note": "project-grouped session navigation on stepped graphite",
+      "grid": "A1:B8",
+      "coverBox": {
+        "x": 0,
+        "y": 0.1,
+        "w": 0.2,
+        "h": 0.8
+      },
+      "box": {
+        "x": 0.006,
+        "y": 0.1188,
+        "w": 0.1601,
+        "h": 0.2503
+      },
+      "px": {
+        "x": 10,
+        "y": 112,
+        "w": 268,
+        "h": 236
+      },
+      "aspect": 1.1356,
+      "palette": [
+        {
+          "hex": "#091825",
+          "coverage": 0.9021
+        },
+        {
+          "hex": "#babdc1",
+          "coverage": 0.0307
+        },
+        {
+          "hex": "#85878f",
+          "coverage": 0.0246
+        },
+        {
+          "hex": "#555860",
+          "coverage": 0.0219
+        },
+        {
+          "hex": "#2e3039",
+          "coverage": 0.0207
+        }
+      ],
+      "detail": {
+        "energy": 26.0677
+      },
+      "medium": "semantic",
+      "plate": null,
+      "text": null
+    },
+    {
+      "id": "sidebar-footer",
+      "kind": "control",
+      "note": "quiet settings and refresh icon actions",
+      "grid": "A9:B9",
+      "coverBox": {
+        "x": 0,
+        "y": 0.9,
+        "w": 0.2,
+        "h": 0.1
+      },
+      "box": {
+        "x": 0.0108,
+        "y": 0.9258,
+        "w": 0.0645,
+        "h": 0.0382
+      },
+      "px": {
+        "x": 18,
+        "y": 873,
+        "w": 108,
+        "h": 36
+      },
+      "aspect": 3,
+      "palette": [
+        {
+          "hex": "#0a1623",
+          "coverage": 0.8404
+        },
+        {
+          "hex": "#adadb6",
+          "coverage": 0.0493
+        },
+        {
+          "hex": "#d7dadc",
+          "coverage": 0.0493
+        },
+        {
+          "hex": "#81868b",
+          "coverage": 0.0399
+        },
+        {
+          "hex": "#383a41",
+          "coverage": 0.0211
+        }
+      ],
+      "detail": {
+        "energy": 21.3821
+      },
+      "medium": "semantic",
+      "plate": null,
+      "text": null
+    },
+    {
+      "id": "thread-header",
+      "kind": "chrome",
+      "note": "session title, provider, branch and compact thread actions",
+      "grid": "C0:G0",
+      "box": {
+        "x": 0.2,
+        "y": 0,
+        "w": 0.5,
+        "h": 0.1
+      },
+      "px": {
+        "x": 335,
+        "y": 0,
+        "w": 837,
+        "h": 94
+      },
+      "aspect": 8.9043,
+      "palette": [
+        {
+          "hex": "#16182c",
+          "coverage": 0.6865
+        },
+        {
+          "hex": "#081818",
+          "coverage": 0.2638
+        },
+        {
+          "hex": "#787888",
+          "coverage": 0.0358
+        },
+        {
+          "hex": "#444850",
+          "coverage": 0.0092
+        },
+        {
+          "hex": "#cbcbcb",
+          "coverage": 0.0047
+        }
+      ],
+      "detail": {
+        "energy": 14.7966
+      },
+      "medium": "semantic",
+      "plate": null,
+      "text": null
+    },
+    {
+      "id": "user-message",
+      "kind": "text",
+      "note": "right-aligned neutral prompt bubble with no speaker label or resting metadata",
+      "grid": "D1:G1",
+      "coverBox": {
+        "x": 0.3,
+        "y": 0.1,
+        "w": 0.4,
+        "h": 0.1
+      },
+      "box": {
+        "x": 0.3895,
+        "y": 0.1315,
+        "w": 0.2724,
+        "h": 0.0636
+      },
+      "px": {
+        "x": 652,
+        "y": 124,
+        "w": 456,
+        "h": 60
+      },
+      "aspect": 7.6,
+      "palette": [
+        {
+          "hex": "#1a2838",
+          "coverage": 0.8581
+        },
+        {
+          "hex": "#515665",
+          "coverage": 0.0463
+        },
+        {
+          "hex": "#1a1a3a",
+          "coverage": 0.0364
+        },
+        {
+          "hex": "#b2b5c0",
+          "coverage": 0.0317
+        },
+        {
+          "hex": "#838995",
+          "coverage": 0.0276
+        }
+      ],
+      "detail": {
+        "energy": 36.724
+      },
+      "medium": "semantic",
+      "plate": null,
+      "text": null,
+      "type": {
+        "comp": {
+          "lines": 2,
+          "glyphs": 63,
+          "capHeightPx": 13.4,
+          "inkIsDark": false,
+          "allCaps": false,
+          "advance": 0.5895,
+          "advTall": 0.5979,
+          "advX": 0.5895,
+          "gap": 0.1105,
+          "xRatio": 0.702,
+          "stemW": 0.1708,
+          "contrast": 1.0956,
+          "serif": 0.4354,
+          "densTall": 0.4963,
+          "densX": 0.6141,
+          "weight": 0.4963
+        },
+        "widthClass": "normal",
+        "weightClass": "medium"
+      }
+    },
+    {
+      "id": "assistant-message",
+      "kind": "text",
+      "note": "open assistant work-log prose without avatar or bubble",
+      "grid": "C2:G2",
+      "coverBox": {
+        "x": 0.2,
+        "y": 0.2,
+        "w": 0.5,
+        "h": 0.1
+      },
+      "box": {
+        "x": 0.2145,
+        "y": 0.2322,
+        "w": 0.4409,
+        "h": 0.0636
+      },
+      "px": {
+        "x": 359,
+        "y": 219,
+        "w": 738,
+        "h": 60
+      },
+      "aspect": 12.3,
+      "palette": [
+        {
+          "hex": "#091721",
+          "coverage": 0.8368
+        },
+        {
+          "hex": "#c4c7cb",
+          "coverage": 0.0489
+        },
+        {
+          "hex": "#8d9099",
+          "coverage": 0.0472
+        },
+        {
+          "hex": "#52555e",
+          "coverage": 0.0348
+        },
+        {
+          "hex": "#2e313b",
+          "coverage": 0.0323
+        }
+      ],
+      "detail": {
+        "energy": 42.4149
+      },
+      "medium": "semantic",
+      "plate": null,
+      "text": null,
+      "type": {
+        "comp": {
+          "lines": 2,
+          "glyphs": 103,
+          "capHeightPx": 13.9,
+          "inkIsDark": false,
+          "allCaps": false,
+          "advance": 0.574,
+          "advTall": 0.1797,
+          "advX": 0.5749,
+          "gap": 0.0719,
+          "xRatio": 0.7154,
+          "stemW": 0.1777,
+          "contrast": 1.1078,
+          "serif": 0.6019,
+          "densTall": 0.6722,
+          "densX": 0.6031,
+          "weight": 0.6722
+        },
+        "widthClass": "condensed",
+        "weightClass": "black",
+        "chosen": {
+          "family": "Mukta Malar",
+          "weight": 400,
+          "fontSizePx": 20,
+          "source": "catalog",
+          "estimatedSize": true,
+          "stamp": "e8e5092c8643"
+        }
+      }
+    },
+    {
+      "id": "activity-ledger",
+      "kind": "control",
+      "note": "compact tool activity rows with status icon, description, subject and diff counts",
+      "grid": "C3:G4",
+      "coverBox": {
+        "x": 0.2,
+        "y": 0.3,
+        "w": 0.5,
+        "h": 0.2
+      },
+      "box": {
+        "x": 0.2324,
+        "y": 0.3637,
+        "w": 0.147,
+        "h": 0.1336
+      },
+      "px": {
+        "x": 389,
+        "y": 343,
+        "w": 246,
+        "h": 126
+      },
+      "aspect": 1.9524,
+      "palette": [
+        {
+          "hex": "#091720",
+          "coverage": 0.8985
+        },
+        {
+          "hex": "#43464e",
+          "coverage": 0.0336
+        },
+        {
+          "hex": "#c6c9cd",
+          "coverage": 0.0297
+        },
+        {
+          "hex": "#08f6ed",
+          "coverage": 0.0213
+        },
+        {
+          "hex": "#9a9da4",
+          "coverage": 0.0168
+        }
+      ],
+      "detail": {
+        "energy": 26.0189
+      },
+      "medium": "semantic",
+      "plate": null,
+      "text": null
+    },
+    {
+      "id": "conversation-canvas",
+      "kind": "chrome",
+      "note": "darkest and calmest workspace surface",
+      "grid": "C5:G7",
+      "box": {
+        "x": 0.2,
+        "y": 0.5,
+        "w": 0.5,
+        "h": 0.3
+      },
+      "px": {
+        "x": 335,
+        "y": 472,
+        "w": 837,
+        "h": 283
+      },
+      "aspect": 2.9576,
+      "palette": [
+        {
+          "hex": "#091925",
+          "coverage": 0.9489
+        },
+        {
+          "hex": "#181838",
+          "coverage": 0.0511
+        }
+      ],
+      "detail": {
+        "energy": 1.6685
+      },
+      "medium": "semantic",
+      "plate": null,
+      "text": null
+    },
+    {
+      "id": "composer",
+      "kind": "control",
+      "note": "single cohesive Run Recipe composer with Integrated Hull controls and violet send key",
+      "grid": "C8:G9",
+      "coverBox": {
+        "x": 0.2,
+        "y": 0.8,
+        "w": 0.5,
+        "h": 0.2
+      },
+      "box": {
+        "x": 0.6302,
+        "y": 0.8759,
+        "w": 0.0394,
+        "h": 0.0636
+      },
+      "px": {
+        "x": 1055,
+        "y": 826,
+        "w": 66,
+        "h": 60
+      },
+      "aspect": 1.1,
+      "palette": [
+        {
+          "hex": "#181832",
+          "coverage": 0.4429
+        },
+        {
+          "hex": "#6b33f5",
+          "coverage": 0.4338
+        },
+        {
+          "hex": "#261b4b",
+          "coverage": 0.105
+        },
+        {
+          "hex": "#e8d8f8",
+          "coverage": 0.0091
+        },
+        {
+          "hex": "#482ca4",
+          "coverage": 0.0091
+        }
+      ],
+      "detail": {
+        "energy": 3.4802
+      },
+      "medium": "semantic",
+      "plate": null,
+      "text": null
+    },
+    {
+      "id": "right-tabs",
+      "kind": "chrome",
+      "note": "icon-first dock tabs with violet active state",
+      "grid": "H0:J0",
+      "box": {
+        "x": 0.7,
+        "y": 0,
+        "w": 0.3,
+        "h": 0.1
+      },
+      "px": {
+        "x": 1172,
+        "y": 0,
+        "w": 502,
+        "h": 94
+      },
+      "aspect": 5.3404,
+      "palette": [
+        {
+          "hex": "#11182d",
+          "coverage": 0.8669
+        },
+        {
+          "hex": "#091818",
+          "coverage": 0.0768
+        },
+        {
+          "hex": "#767685",
+          "coverage": 0.0394
+        },
+        {
+          "hex": "#b6b8c0",
+          "coverage": 0.0128
+        },
+        {
+          "hex": "#3c3f4a",
+          "coverage": 0.0041
+        }
+      ],
+      "detail": {
+        "energy": 12.1381
+      },
+      "medium": "semantic",
+      "plate": null,
+      "text": null
+    },
+    {
+      "id": "file-tree",
+      "kind": "control",
+      "note": "compact Rider-like file tree",
+      "grid": "H1:H6",
+      "coverBox": {
+        "x": 0.7,
+        "y": 0.1,
+        "w": 0.1,
+        "h": 0.6
+      },
+      "box": {
+        "x": 0.7001,
+        "y": 0.3669,
+        "w": 0.0789,
+        "h": 0.0318
+      },
+      "px": {
+        "x": 1172,
+        "y": 346,
+        "w": 132,
+        "h": 30
+      },
+      "aspect": 4.4,
+      "palette": [
+        {
+          "hex": "#1a263f",
+          "coverage": 0.8676
+        },
+        {
+          "hex": "#696b89",
+          "coverage": 0.0466
+        },
+        {
+          "hex": "#969caf",
+          "coverage": 0.0417
+        },
+        {
+          "hex": "#085ac6",
+          "coverage": 0.0221
+        },
+        {
+          "hex": "#161d4f",
+          "coverage": 0.0221
+        }
+      ],
+      "detail": {
+        "energy": 17.742
+      },
+      "medium": "semantic",
+      "plate": null,
+      "text": null
+    },
+    {
+      "id": "diff-editor",
+      "kind": "control",
+      "note": "dense syntax-colored diff editor",
+      "grid": "I1:J6",
+      "coverBox": {
+        "x": 0.8,
+        "y": 0.1,
+        "w": 0.2,
+        "h": 0.6
+      },
+      "box": {
+        "x": 0.7999,
+        "y": 0.1188,
+        "w": 0.1995,
+        "h": 0.5557
+      },
+      "px": {
+        "x": 1339,
+        "y": 112,
+        "w": 334,
+        "h": 524
+      },
+      "aspect": 0.6374,
+      "palette": [
+        {
+          "hex": "#0c1928",
+          "coverage": 0.5961
+        },
+        {
+          "hex": "#083c29",
+          "coverage": 0.3222
+        },
+        {
+          "hex": "#171f3f",
+          "coverage": 0.0497
+        },
+        {
+          "hex": "#08beb3",
+          "coverage": 0.0162
+        },
+        {
+          "hex": "#085c42",
+          "coverage": 0.0158
+        }
+      ],
+      "detail": {
+        "energy": 25.2246
+      },
+      "medium": "semantic",
+      "plate": null,
+      "text": null
+    },
+    {
+      "id": "terminal",
+      "kind": "control",
+      "note": "integrated terminal tool window",
+      "grid": "H7:J9",
+      "coverBox": {
+        "x": 0.7,
+        "y": 0.7,
+        "w": 0.3,
+        "h": 0.3
+      },
+      "box": {
+        "x": 0.7001,
+        "y": 0.7455,
+        "w": 0.2043,
+        "h": 0.035
+      },
+      "px": {
+        "x": 1172,
+        "y": 703,
+        "w": 342,
+        "h": 33
+      },
+      "aspect": 10.3636,
+      "palette": [
+        {
+          "hex": "#0b181e",
+          "coverage": 0.8939
+        },
+        {
+          "hex": "#b7b9bf",
+          "coverage": 0.0327
+        },
+        {
+          "hex": "#3a3b45",
+          "coverage": 0.0302
+        },
+        {
+          "hex": "#64676c",
+          "coverage": 0.022
+        },
+        {
+          "hex": "#888a93",
+          "coverage": 0.0212
+        }
+      ],
+      "detail": {
+        "energy": 39.6608
+      },
+      "medium": "semantic",
+      "plate": null,
+      "text": null
+    }
+  ]
+}

@@ -1,5 +1,5 @@
 import { useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
-import { Monitor, Wrench } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, Circle, CircleDot, Monitor, TriangleAlert } from "lucide-react";
 import type { ChatMessage } from "../stores/appStore.js";
 import {
   describeToolCall,
@@ -22,10 +22,19 @@ function LegacyHead({ name, text, open }: { name: string; text: string; open: bo
   const firstLine = (text.split("\n")[0] ?? "").slice(0, 120) || "…";
   return (
     <>
-      <Wrench size={13} className="tool-icon" />
       <span className="tool-action">{name}</span>
       {!open && <span className="tool-subject">{firstLine}</span>}
     </>
+  );
+}
+
+function ToolState({ state }: { state: "complete" | "error" | "running" | "pending" }) {
+  const label = state === "complete" ? "Completed" : state === "error" ? "Error" : state === "running" ? "Running" : "Pending";
+  const Icon = state === "complete" ? Check : state === "error" ? TriangleAlert : state === "running" ? CircleDot : Circle;
+  return (
+    <span className={`tool-state ${state}`} role="img" aria-label={label} title={label}>
+      <Icon size={13} aria-hidden="true" />
+    </span>
   );
 }
 
@@ -47,6 +56,7 @@ export function ToolCard({
   const isError = message.isError === true;
   const done = message.toolDone === true || message.toolOutput !== undefined;
   const running = message.toolInput !== undefined && !done;
+  const state = isError ? "error" : running ? "running" : done ? "complete" : "pending";
   const summary = describeToolCall(name, message.toolInput ?? recoverToolInput(name, message.text));
   if (summary && !summary.subject) {
     if (name.toLowerCase() === "bash" || name.toLowerCase() === "shell") {
@@ -65,6 +75,15 @@ export function ToolCard({
       }
     }
   }
+  if (summary && !summary.subject) {
+    const rawDetail = stripToolNamePrefix(name, message.text).trim();
+    summary.subject = rawDetail && rawDetail.toLowerCase() !== name.toLowerCase()
+      ? (rawDetail.length > 90 ? `${rawDetail.slice(0, 89)}…` : rawDetail)
+      : name.toLowerCase() === "bash" || name.toLowerCase() === "shell"
+        ? "command details unavailable"
+        : "target details unavailable";
+    summary.subjectKind = "text";
+  }
   const lowerName = name.toLowerCase();
   const isShell = lowerName === "bash" || lowerName === "shell";
   const displaySubject =
@@ -77,10 +96,8 @@ export function ToolCard({
 
   let head: ReactNode;
   if (summary) {
-    const Icon = summary.Icon;
     head = (
       <>
-        <Icon size={13} className="tool-icon" />
         <span className="tool-action">{summary.verb}</span>
         {summary.subject && summary.subjectKind === "file" && (
           <span className="tool-subject file" title={summary.subject}>
@@ -98,6 +115,11 @@ export function ToolCard({
             <span className="add">+{summary.stat.added}</span> <span className="del">−{summary.stat.removed}</span>
           </span>
         )}
+        {!summary.stat && summary.meta?.filter((m) => /^\d+\s+(?:files|lines)$/.test(m)).map((m) => (
+          <span key={m} className="tool-stat">
+            {m}
+          </span>
+        ))}
         {summary.subject &&
           summary.subjectKind === "file" &&
           isPreviewablePath(summary.subject) &&
@@ -128,9 +150,9 @@ export function ToolCard({
       title={open ? "Collapse" : "Expand"}
     >
       <div className="tool-head">
+        <ToolState state={state} />
         {head}
-        {running && <span className="pulse" title="Running" />}
-        <span className="tool-caret">{open ? "▾" : "▸"}</span>
+        <span className="tool-caret" aria-hidden="true">{open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</span>
       </div>
       {open && (
         <div className="tool-detail" onClick={(e) => e.stopPropagation()}>

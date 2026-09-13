@@ -30,6 +30,9 @@ release/
 .cw/
 .claude/
 
+# Temporary browser profiles used during visual QA
+apps/desktop/.impeccable/edge-*-profile*/
+
 # Operating-system files
 .DS_Store
 Thumbs.db

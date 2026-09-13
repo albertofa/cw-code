@@ -1,0 +1,7 @@
+Correct this exact cw-code Rider Violet Agents screenshot while preserving the left project/session sidebar, center delegation work log, vertical agent overview above the full-width right inspector, agent statuses, event ledger, icon-first tabs, and Rider Violet palette.
+
+In the center work log, remove the words “You”, “Assistant”, “Claude”, and all persistent speaker labels completely. Keep avatars/icons and resting timestamps absent. Render the user request and agent response as a continuous coding record like the supplied T3 Code reference, using spacing and typography only. Hover timestamp/copy controls are not visible in this resting comp.
+
+Rebuild the bottom composer exactly as a clear floating work surface: total height around 145–155px, a 92–102px writing plane with 14px padding and a visibly lighter graphite/plum tone than the near-black thread, then a 40–44px tooling shelf beneath in a distinct second graphite tone. The toolbar must be clearly visible and readable. Use icon-plus-short-value groups separated only by 12–18px whitespace. Absolutely no separator lines, segmented controls, or boxed pills. A 40–42px violet stop/send key sits at far right with a small gap. Use restrained 8–10px outer corners and soft elevation, not a T3-style oversized rounded box.
+
+Do not alter the improved vertical Agents layout: compact four-row roster at top, selected-agent inspector full width below. No extra navigation, no marketing styling, no chat bubbles.

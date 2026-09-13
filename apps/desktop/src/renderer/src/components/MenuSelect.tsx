@@ -1,4 +1,5 @@
 import { useState, type ReactNode } from "react";
+import { Check, ChevronDown, ChevronUp } from "lucide-react";
 
 export interface MenuOption {
   id: string;
@@ -63,7 +64,7 @@ export function MenuSelect({
         onClick={toggle}
       >
         <span className="menu-value">{display}</span>
-        <span className="menu-chevron">{open ? "▴" : "▾"}</span>
+        <span className="menu-chevron">{open ? <ChevronUp aria-hidden="true" size={14} /> : <ChevronDown aria-hidden="true" size={14} />}</span>
       </button>
       {open && (
         <>
@@ -116,7 +117,7 @@ export function MenuSelect({
                   {o.description && <span className="desc">{o.description}</span>}
                 </span>
                 <span className="menu-check" aria-hidden>
-                  {o.id === value ? "✓" : ""}
+                  {o.id === value ? <Check aria-hidden="true" size={14} /> : null}
                 </span>
               </div>
             ))}

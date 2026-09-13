@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import { X } from "lucide-react";
 
 export interface NotifAction {
   label: string;
@@ -67,7 +68,7 @@ export function Notifications() {
           <div className="notif-head">
             <span className="notif-title">{n.title}</span>
             <button className="icon-btn" aria-label="Dismiss notification" onClick={() => dismiss(n.id)}>
-              ×
+              <X aria-hidden="true" size={15} />
             </button>
           </div>
           {n.message && <div className="notif-msg">{n.message}</div>}

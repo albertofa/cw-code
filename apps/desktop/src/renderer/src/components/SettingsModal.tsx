@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from "react";
-import { AlertTriangle, CheckCircle2, GitBranch, RefreshCw, Star, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, GitBranch, RefreshCw, Star, X, XCircle } from "lucide-react";
 import type { AppSettings, DriverName, SourceControlHealth } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import { useNotifs } from "./Notifications.js";
@@ -416,7 +416,7 @@ export function SettingsModal({
         <div className="settings-head">
           <span>Settings</span>
           <button className="icon-btn" aria-label="Close settings" onClick={onClose}>
-            ×
+            <X size={16} />
           </button>
         </div>
         <div className="settings-main">

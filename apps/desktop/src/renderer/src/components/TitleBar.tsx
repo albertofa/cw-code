@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Copy, Minus, Square, Terminal, X } from "lucide-react";
+import { ChevronDown, ChevronUp, Copy, Minus, Square, Terminal, X } from "lucide-react";
 import { useAppStore } from "../stores/appStore.js";
 import { useNotifs } from "./Notifications.js";
 
@@ -38,7 +38,7 @@ function DebugMenu() {
         onClick={() => setOpen((o) => !o)}
       >
         <span className="menu-value">Debug</span>
-        <span className="menu-chevron">{open ? "▴" : "▾"}</span>
+        <span className="menu-chevron">{open ? <ChevronUp aria-hidden="true" size={14} /> : <ChevronDown aria-hidden="true" size={14} />}</span>
       </button>
       {open && (
         <>

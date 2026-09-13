@@ -1,0 +1,45 @@
+{
+  "title": "Choose the Rider-led cw-code design",
+  "question": "The T3 structure is fixed. These vary only the visual system and the Rider/VS Code balance. Choose one, or tell me which details to combine.",
+  "options": [
+    {
+      "id": "rider-graphite",
+      "label": "Rider Graphite",
+      "kicker": "RESTRAINED",
+      "lineage": "Rider surface depth with T3 hierarchy",
+      "thesis": "A quiet Rider interpretation: stepped graphite work surfaces, compact IDE controls, and precise cyan focus without changing the current shell.",
+      "palette": ["#17181b", "#1e1f22", "#26282d", "#343840", "#4d8dff", "#dfe1e5"],
+      "materials": ["matte graphite fields", "softly inset work panes", "crisp diff color"],
+      "viewport": "The current three-region shell remains intact. Narrow gutters and tonal steps create pane depth; the right workspace is open to Diff.",
+      "risk": "Its restraint may still feel conservative if cw-code needs a more recognizable accent signature.",
+      "comp": ".impeccable/mocks/rider-graphite.png"
+    },
+    {
+      "id": "rider-teal",
+      "label": "Rider Teal Studio",
+      "kicker": "RIDER-LED",
+      "lineage": "Rider New UI chrome and panels with T3 session composition",
+      "thesis": "A smoky teal titlebar, clearly layered inset panes, cyan focus, and violet tooling accents give cw-code a stronger native IDE identity.",
+      "palette": ["#181a1e", "#202328", "#26383c", "#343a43", "#55b8c8", "#9b8cff"],
+      "materials": ["smoky teal chrome", "inset charcoal panes", "multicolor semantic accents"],
+      "viewport": "The same sidebar, thread, and contextual workspace sit inside a Rider-like app ground with soft outer rounding and narrow gutters.",
+      "risk": "The colored titlebar and brighter accents are more distinctive and need careful restraint during implementation.",
+      "comp": ".impeccable/mocks/rider-teal.png"
+    },
+    {
+      "id": "rider-violet",
+      "label": "Rider Violet Workbench",
+      "kicker": "TOOLING-LED",
+      "lineage": "Rider’s chromatic syntax and tabs with VS Code docking density",
+      "thesis": "A graphite-violet workspace gives active context more personality while the expanded Diff and Terminal area demonstrates serious tooling density.",
+      "palette": ["#17181b", "#202126", "#25232e", "#373641", "#8b7cf6", "#52b9cf"],
+      "materials": ["plum graphite chrome", "violet focus fields", "dense Rider-like code surfaces"],
+      "viewport": "The existing right workspace expands and splits internally between Diff and Terminal; the project/session and conversation regions remain unchanged.",
+      "risk": "The violet signature is memorable but could become visually loud if repeated beyond active context and tooling.",
+      "comp": ".impeccable/mocks/rider-violet.png"
+    }
+  ],
+  "buildPath": {"value": "comp", "toggle": false},
+  "steer": true,
+  "followup": true
+}

@@ -1,0 +1,45 @@
+{
+  "title": "Rider Violet — refined cw-code system",
+  "question": "Review these three states as one coordinated product direction. Choose the screen that best represents the system, then use the note to approve the suite or call out anything to revise.",
+  "options": [
+    {
+      "id": "rider-violet-workbench-refined",
+      "label": "Core Workbench",
+      "kicker": "PRIMARY STATE",
+      "lineage": "Rider visual clarity + T3 workflow structure + cw-code Command Deck",
+      "thesis": "The existing three-region shell, scaled up and stripped of label noise, with icon-first tooling and a distinct two-plane composer.",
+      "palette": ["#10141f", "#171c29", "#202638", "#302a4a", "#7c4dff", "#33d8a0"],
+      "materials": ["plum graphite chrome", "quiet tonal panes", "detached violet command key"],
+      "viewport": "Project-grouped sessions remain left, conversation stays central, and Files/Diff/Terminal remain a dockable right workspace. The writing plane and utility rail are now separate components.",
+      "risk": "The icon-first toolbar depends on excellent tooltips and keyboard discoverability in implementation.",
+      "comp": ".impeccable/mocks/rider-violet-workbench-refined.png"
+    },
+    {
+      "id": "rider-violet-settings",
+      "label": "Settings Workspace",
+      "kicker": "CONFIGURATION",
+      "lineage": "Rider density + ZCode operational grouping",
+      "thesis": "Settings becomes a focused provider workspace with one compact category rail and a provider master-detail view instead of a generic stacked form.",
+      "palette": ["#10141f", "#171c29", "#202638", "#302a4a", "#7c4dff", "#33d8a0"],
+      "materials": ["tonal settings wells", "violet focus state", "compact health telemetry"],
+      "viewport": "The shell remains recognizable while Providers uses the center and right work area. Real Claude Code, OpenCode, Codex, model, path, and health controls define the content.",
+      "risk": "The broad workspace treatment is a larger change than polishing the current centered modal, though it better supports future configuration depth.",
+      "comp": ".impeccable/mocks/rider-violet-settings.png"
+    },
+    {
+      "id": "rider-violet-agents",
+      "label": "Agents Inspector",
+      "kicker": "MULTI-AGENT",
+      "lineage": "Rider workbench + ZCode run hierarchy + DeepSeek trajectory",
+      "thesis": "Parallel work stays visible in the conversation while the right workspace becomes a compact run list and selected-agent event ledger.",
+      "palette": ["#10141f", "#171c29", "#202638", "#302a4a", "#7c4dff", "#33d8a0"],
+      "materials": ["status-colored agent identities", "quiet event ledger", "compact operational metrics"],
+      "viewport": "The center shows delegation context; the right pane separates running agents from the selected agent trace, preserving links back to the owning thread and worktree.",
+      "risk": "This density needs careful progressive disclosure so the narrow pane remains scannable at its minimum width.",
+      "comp": ".impeccable/mocks/rider-violet-agents.png"
+    }
+  ],
+  "buildPath": {"value": "comp", "toggle": false},
+  "steer": true,
+  "followup": true
+}

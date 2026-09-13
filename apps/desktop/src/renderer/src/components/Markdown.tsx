@@ -4,6 +4,7 @@ import remarkGfm from "remark-gfm";
 import type { Components } from "react-markdown";
 import { renderToStaticMarkup } from "react-dom/server";
 import { useNotifs } from "./Notifications.js";
+import { Check } from "lucide-react";
 
 const PREVIEW_EXTS = new Set(["md", "markdown", "html", "htm"]);
 
@@ -91,7 +92,7 @@ function Pre({ children }: { children?: ReactNode }) {
   return (
     <div className="md-pre">
       <button className="md-copy" onClick={copy} title="Copy code">
-        {copied ? "✓" : "Copy"}
+        {copied ? <Check aria-hidden="true" size={14} /> : "Copy"}
       </button>
       <pre ref={preRef}>{children}</pre>
     </div>

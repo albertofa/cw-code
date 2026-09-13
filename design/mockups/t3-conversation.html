@@ -1,0 +1,613 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>T3 Conversation — cw-code visual concept</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --canvas: #090b0f;
+        --canvas-raised: #0d1015;
+        --panel: #11151b;
+        --panel-raised: #171c24;
+        --panel-soft: #1a2029;
+        --line: #252c36;
+        --line-soft: #1d242d;
+        --ink: #eef1f5;
+        --ink-soft: #c8cdd5;
+        --muted: #828b99;
+        --muted-strong: #aab2bf;
+        --blue: #76a8ff;
+        --blue-bright: #8cb7ff;
+        --blue-wash: rgba(118, 168, 255, 0.12);
+        --coral: #ff836d;
+        --coral-soft: #ffae9e;
+        --coral-wash: rgba(255, 131, 109, 0.12);
+        --green: #76d6a3;
+        --yellow: #e4c878;
+        --shadow: 0 24px 64px rgba(0, 0, 0, 0.32);
+        --radius-sm: 8px;
+        --radius-md: 12px;
+        --radius-lg: 16px;
+        --density: 1;
+        --side-width: 248px;
+        --inspector-width: 318px;
+        --content-width: 856px;
+        font-family: Inter, ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+        font-synthesis: none;
+      }
+
+      * { box-sizing: border-box; }
+
+      html, body { min-width: 1100px; height: 100%; }
+
+      body {
+        margin: 0;
+        overflow: hidden;
+        background:
+          radial-gradient(900px 520px at 58% -18%, rgba(65, 85, 120, 0.16), transparent 70%),
+          var(--canvas);
+        color: var(--ink);
+        font-size: 15px;
+        letter-spacing: -0.005em;
+      }
+
+      body[data-density="compact"] { --density: 0.78; }
+
+      button, input, textarea, select { font: inherit; }
+      button { color: inherit; }
+      button, [role="button"] { -webkit-tap-highlight-color: transparent; }
+      button:focus-visible, input:focus-visible, textarea:focus-visible, select:focus-visible {
+        outline: 2px solid var(--blue);
+        outline-offset: 2px;
+      }
+
+      .icon { width: 18px; height: 18px; flex: 0 0 auto; fill: none; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 1.8; }
+      .icon-sm { width: 15px; height: 15px; }
+      .icon-xs { width: 13px; height: 13px; }
+
+      .concept-label {
+        position: fixed;
+        z-index: 20;
+        top: 10px;
+        left: 50%;
+        transform: translateX(-50%);
+        padding: 5px 10px;
+        border: 1px solid rgba(255, 255, 255, 0.11);
+        border-radius: 999px;
+        background: rgba(14, 17, 22, 0.82);
+        color: #adb5c1;
+        font-size: 10px;
+        font-weight: 700;
+        letter-spacing: 0.13em;
+        line-height: 1;
+        text-transform: uppercase;
+        box-shadow: 0 5px 18px rgba(0, 0, 0, 0.18);
+        backdrop-filter: blur(14px);
+        pointer-events: none;
+      }
+
+      .app-shell {
+        display: grid;
+        grid-template-columns: 58px var(--side-width) minmax(0, 1fr) var(--inspector-width);
+        height: 100vh;
+        transition: grid-template-columns 220ms ease;
+      }
+
+      .app-shell.inspector-hidden { grid-template-columns: 58px var(--side-width) minmax(0, 1fr); }
+      .app-shell.inspector-hidden .inspector { display: none; }
+
+      .rail {
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: space-between;
+        padding: 16px 8px 13px;
+        border-right: 1px solid var(--line-soft);
+        background: rgba(8, 10, 13, 0.76);
+      }
+
+      .brand {
+        display: grid;
+        place-items: center;
+        width: 34px;
+        height: 34px;
+        border: 1px solid rgba(255, 131, 109, 0.48);
+        border-radius: 10px;
+        background: linear-gradient(145deg, rgba(255, 131, 109, 0.19), rgba(255, 131, 109, 0.04));
+        color: var(--coral-soft);
+        font-size: 13px;
+        font-weight: 800;
+        letter-spacing: -0.08em;
+      }
+
+      .rail-nav, .rail-bottom { display: flex; flex-direction: column; gap: 8px; align-items: center; }
+      .rail-nav { margin-top: 30px; align-self: stretch; }
+      .rail-button {
+        position: relative;
+        display: grid;
+        place-items: center;
+        width: 38px;
+        height: 38px;
+        border: 1px solid transparent;
+        border-radius: 10px;
+        background: transparent;
+        color: #737c89;
+        cursor: pointer;
+      }
+      .rail-button:hover { background: var(--panel); color: var(--ink-soft); }
+      .rail-button.is-active { border-color: rgba(118, 168, 255, 0.25); background: var(--blue-wash); color: var(--blue-bright); }
+      .rail-button.is-active::before { position: absolute; left: -9px; width: 2px; height: 18px; border-radius: 2px; background: var(--blue); content: ""; }
+
+      .session-sidebar {
+        display: flex;
+        min-width: 0;
+        flex-direction: column;
+        border-right: 1px solid var(--line);
+        background: linear-gradient(180deg, rgba(18, 22, 28, 0.94), rgba(12, 15, 20, 0.94));
+      }
+
+      .sidebar-head { padding: 20px 17px 15px; border-bottom: 1px solid var(--line-soft); }
+      .workspace-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 18px; }
+      .workspace-name { display: flex; align-items: center; gap: 10px; min-width: 0; font-size: 15px; font-weight: 700; }
+      .workspace-mark { display: grid; place-items: center; width: 26px; height: 26px; border-radius: 8px; background: #263247; color: #9ac0ff; font-size: 11px; font-weight: 800; }
+      .workspace-name span:last-child { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .workspace-chevron { color: var(--muted); }
+      .sidebar-icon-button { display: grid; place-items: center; width: 30px; height: 30px; border: 0; border-radius: 8px; background: transparent; color: var(--muted); cursor: pointer; }
+      .sidebar-icon-button:hover { background: var(--panel-raised); color: var(--ink); }
+
+      .search-box { display: flex; align-items: center; gap: 9px; height: 36px; padding: 0 10px; border: 1px solid var(--line); border-radius: 9px; background: rgba(8, 10, 13, 0.42); color: var(--muted); }
+      .search-box input { min-width: 0; flex: 1; border: 0; outline: 0; background: transparent; color: var(--ink); font-size: 13px; }
+      .search-box input::placeholder { color: #697381; }
+      .search-shortcut { padding: 3px 6px; border: 1px solid var(--line); border-radius: 5px; color: #707987; font-size: 10px; }
+
+      .session-list { min-height: 0; flex: 1; overflow: auto; padding: 17px 10px; scrollbar-color: #2d3744 transparent; }
+      .session-list::-webkit-scrollbar, .thread::-webkit-scrollbar { width: 8px; }
+      .session-list::-webkit-scrollbar-thumb, .thread::-webkit-scrollbar-thumb { border: 2px solid transparent; border-radius: 99px; background: #2d3744; background-clip: padding-box; }
+      .list-section { margin-bottom: 24px; }
+      .section-label { display: flex; align-items: center; justify-content: space-between; padding: 0 9px 8px; color: #687381; font-size: 10px; font-weight: 800; letter-spacing: 0.11em; text-transform: uppercase; }
+      .section-label button { border: 0; background: none; color: var(--muted); cursor: pointer; }
+      .project { margin-bottom: 11px; }
+      .project-title { display: flex; align-items: center; gap: 8px; padding: 5px 9px; color: var(--muted-strong); font-size: 12px; font-weight: 700; }
+      .project-title .project-dot { width: 7px; height: 7px; border-radius: 2px; background: #6d8fbe; box-shadow: 0 0 0 3px rgba(109, 143, 190, 0.1); }
+      .project-title .project-count { margin-left: auto; color: #687381; font-size: 11px; font-weight: 500; }
+      .session-item { display: block; width: 100%; padding: 10px 10px 10px 24px; border: 1px solid transparent; border-radius: 9px; background: transparent; text-align: left; cursor: pointer; }
+      .session-item:hover { background: rgba(255, 255, 255, 0.035); }
+      .session-item.is-active { border-color: rgba(118, 168, 255, 0.18); background: rgba(118, 168, 255, 0.09); }
+      .session-title { overflow: hidden; color: var(--ink-soft); font-size: 13px; font-weight: 650; line-height: 1.35; text-overflow: ellipsis; white-space: nowrap; }
+      .session-item.is-active .session-title { color: var(--ink); }
+      .session-meta { display: flex; align-items: center; gap: 7px; margin-top: 5px; color: #697381; font-size: 11px; }
+      .session-state { display: inline-flex; align-items: center; gap: 4px; }
+      .state-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); }
+      .state-dot.coral { background: var(--coral); }
+      .state-dot.gray { background: #66717f; }
+      .sidebar-footer { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-top: 1px solid var(--line-soft); color: var(--muted); font-size: 12px; }
+      .avatar { display: grid; place-items: center; width: 27px; height: 27px; border-radius: 50%; background: #34425a; color: #c8dcff; font-size: 10px; font-weight: 800; }
+      .sidebar-footer strong { color: var(--ink-soft); font-size: 12px; }
+      .sidebar-footer button { margin-left: auto; border: 0; background: none; color: var(--muted); cursor: pointer; }
+
+      .conversation {
+        display: flex;
+        min-width: 0;
+        min-height: 0;
+        height: 100vh;
+        flex-direction: column;
+        overflow: hidden;
+        background: rgba(10, 13, 17, 0.65);
+      }
+
+      .conversation-topbar { display: flex; align-items: center; justify-content: space-between; min-height: 64px; padding: 0 24px; border-bottom: 1px solid var(--line); background: rgba(10, 13, 17, 0.76); }
+      .crumbs { display: flex; align-items: center; min-width: 0; gap: 9px; color: var(--muted); font-size: 12px; }
+      .crumbs .current { overflow: hidden; max-width: 320px; color: var(--ink); font-size: 15px; font-weight: 700; text-overflow: ellipsis; white-space: nowrap; }
+      .crumb-separator { color: #4b5664; }
+      .topbar-actions { display: flex; align-items: center; gap: 8px; }
+      .branch-chip, .status-chip { display: inline-flex; align-items: center; gap: 7px; height: 30px; padding: 0 10px; border: 1px solid var(--line); border-radius: 7px; color: var(--muted-strong); font-size: 11px; }
+      .branch-chip .icon { color: var(--blue); }
+      .status-chip { border-color: rgba(118, 214, 163, 0.2); background: rgba(118, 214, 163, 0.06); color: var(--green); }
+      .topbar-button { display: inline-flex; align-items: center; gap: 7px; height: 34px; padding: 0 10px; border: 1px solid var(--line); border-radius: 8px; background: transparent; color: var(--muted-strong); font-size: 12px; cursor: pointer; }
+      .topbar-button:hover { border-color: #3a4656; background: var(--panel); color: var(--ink); }
+      .topbar-button.is-emphasis { border-color: rgba(118, 168, 255, 0.36); background: var(--blue-wash); color: var(--blue-bright); }
+
+      .thread { min-height: 0; flex: 1; overflow: auto; padding: 38px 30px 24px; scrollbar-color: #2d3744 transparent; }
+      .thread-inner { width: min(100%, var(--content-width)); margin: 0 auto; }
+      .date-divider { display: flex; align-items: center; gap: 12px; margin: 0 0 35px; color: #65707e; font-size: 11px; font-weight: 700; letter-spacing: 0.08em; text-transform: uppercase; }
+      .date-divider::before, .date-divider::after { height: 1px; flex: 1; background: var(--line-soft); content: ""; }
+      .message { display: flex; gap: 14px; margin-bottom: calc(43px * var(--density)); }
+      .message.user { align-items: flex-start; }
+      .message-avatar { display: grid; place-items: center; width: 34px; height: 34px; flex: 0 0 auto; border-radius: 10px; font-size: 11px; font-weight: 800; }
+      .message.user .message-avatar { background: #263247; color: #b9d3ff; }
+      .message.assistant .message-avatar { border: 1px solid rgba(255, 131, 109, 0.4); background: var(--coral-wash); color: var(--coral-soft); }
+      .message-content { min-width: 0; flex: 1; }
+      .message-header { display: flex; align-items: baseline; gap: 9px; margin: 3px 0 9px; }
+      .message-name { color: var(--ink); font-size: 13px; font-weight: 750; }
+      .message-time { color: #697381; font-size: 11px; }
+      .user-copy { max-width: 720px; padding: 16px 18px; border: 1px solid #273140; border-radius: 4px 15px 15px 15px; background: #151b24; color: var(--ink-soft); font-size: 15px; line-height: 1.63; }
+      .user-copy em { color: var(--blue-bright); font-style: normal; }
+      .attachment-row { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 11px; }
+      .attachment { display: inline-flex; align-items: center; gap: 7px; padding: 7px 9px; border: 1px solid var(--line); border-radius: 8px; background: rgba(17, 21, 27, 0.82); color: var(--muted-strong); font-size: 11px; }
+      .attachment .icon { color: var(--coral-soft); }
+
+      .assistant-intro { max-width: 760px; }
+      .assistant-intro h1 { margin: 0 0 11px; color: var(--ink); font-size: 29px; font-weight: 680; letter-spacing: -0.04em; line-height: 1.13; }
+      .assistant-intro p { margin: 0; color: var(--ink-soft); font-size: 16px; line-height: 1.7; }
+      .assistant-intro p + p { margin-top: 13px; }
+      .accent { color: var(--coral-soft); }
+      .blue { color: var(--blue-bright); }
+
+      .decision-card { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 10px; margin: 21px 0 0; }
+      .decision { padding: 14px 15px; border: 1px solid var(--line); border-radius: 11px; background: rgba(22, 27, 35, 0.68); }
+      .decision.is-selected { border-color: rgba(118, 168, 255, 0.34); background: rgba(118, 168, 255, 0.075); }
+      .decision-kicker { display: flex; align-items: center; gap: 7px; color: #7c8795; font-size: 10px; font-weight: 800; letter-spacing: 0.08em; text-transform: uppercase; }
+      .decision strong { display: block; margin-top: 8px; color: var(--ink); font-size: 13px; }
+      .decision p { margin: 6px 0 0; color: var(--muted); font-size: 12px; line-height: 1.46; }
+
+      .tool-card { margin: 23px 0 0; overflow: hidden; border: 1px solid var(--line); border-radius: 12px; background: var(--panel); box-shadow: 0 10px 35px rgba(0, 0, 0, 0.12); }
+      .tool-head { display: flex; align-items: center; gap: 10px; padding: 12px 15px; border-bottom: 1px solid var(--line-soft); }
+      .tool-icon { display: grid; place-items: center; width: 25px; height: 25px; border-radius: 7px; background: var(--coral-wash); color: var(--coral-soft); }
+      .tool-title { color: var(--ink-soft); font-size: 12px; font-weight: 750; }
+      .tool-subtitle { margin-left: auto; color: #6e7886; font-size: 11px; }
+      .tool-command { display: block; padding: 14px 15px; border-bottom: 1px solid var(--line-soft); background: #0b0e12; color: #b9c5d3; font: 12px/1.55 "SFMono-Regular", Consolas, "Liberation Mono", monospace; white-space: pre-wrap; }
+      .prompt { color: var(--coral-soft); }
+      .tool-output { padding: 11px 15px 13px; color: #85909e; font: 11px/1.7 "SFMono-Regular", Consolas, "Liberation Mono", monospace; }
+      .tool-output .file { color: #cbd4df; }
+      .tool-output .ok { color: var(--green); }
+      .tool-footer { display: flex; align-items: center; gap: 8px; padding: 9px 15px; border-top: 1px solid var(--line-soft); color: #707b89; font-size: 11px; }
+      .tool-footer .ok { color: var(--green); }
+      .tool-footer span:last-child { margin-left: auto; }
+
+      .subheading { margin: 25px 0 8px; color: var(--ink); font-size: 17px; font-weight: 700; }
+      .body-copy { max-width: 760px; margin: 0; color: var(--ink-soft); font-size: 15px; line-height: 1.68; }
+      .body-copy code, .inspector code { padding: 2px 5px; border: 1px solid #303946; border-radius: 5px; background: #171d26; color: #cbd7e8; font: 0.86em "SFMono-Regular", Consolas, monospace; }
+      .next-step { display: flex; align-items: flex-start; gap: 10px; max-width: 740px; margin-top: 18px; padding: 13px 15px; border-left: 2px solid var(--blue); background: linear-gradient(90deg, rgba(118, 168, 255, 0.1), transparent); color: var(--ink-soft); font-size: 13px; line-height: 1.55; }
+      .next-step .icon { margin-top: 1px; color: var(--blue-bright); }
+
+      .composer-wrap { padding: 0 30px 22px; background: linear-gradient(180deg, rgba(10, 13, 17, 0), rgba(10, 13, 17, 0.98) 24%); }
+      .composer { width: min(100%, var(--content-width)); margin: 0 auto; overflow: hidden; border: 1px solid #303946; border-radius: 15px; background: #151a22; box-shadow: var(--shadow); }
+      .composer:focus-within { border-color: rgba(118, 168, 255, 0.54); box-shadow: 0 0 0 3px rgba(118, 168, 255, 0.08), var(--shadow); }
+      .composer textarea { display: block; width: 100%; min-height: 76px; max-height: 160px; padding: 15px 17px 8px; border: 0; outline: 0; resize: vertical; background: transparent; color: var(--ink); font-size: 14px; line-height: 1.55; }
+      .composer textarea::placeholder { color: #76818f; }
+      .composer-toolbar { display: flex; align-items: center; gap: 7px; padding: 9px 10px 10px 12px; }
+      .composer-tool { display: inline-flex; align-items: center; gap: 6px; height: 31px; padding: 0 8px; border: 0; border-radius: 7px; background: transparent; color: var(--muted-strong); font-size: 11px; cursor: pointer; }
+      .composer-tool:hover { background: rgba(255, 255, 255, 0.05); color: var(--ink); }
+      .composer-tool.provider { color: var(--coral-soft); }
+      .composer-tool .chevron { width: 12px; height: 12px; }
+      .toolbar-divider { width: 1px; height: 19px; margin: 0 3px; background: var(--line); }
+      .composer-spacer { flex: 1; }
+      .send-button { display: grid; place-items: center; width: 35px; height: 35px; border: 0; border-radius: 10px; background: var(--blue); color: #08101d; cursor: pointer; box-shadow: 0 4px 14px rgba(118, 168, 255, 0.22); }
+      .send-button:hover { background: var(--blue-bright); transform: translateY(-1px); }
+      .send-button:disabled { opacity: 0.45; cursor: default; transform: none; }
+      .composer-hint { padding: 0 16px 10px; color: #626d7b; font-size: 10px; }
+
+      .density-toggle { position: fixed; right: calc(var(--inspector-width) + 22px); bottom: 10px; z-index: 12; display: inline-flex; align-items: center; gap: 2px; padding: 3px; border: 1px solid var(--line); border-radius: 8px; background: rgba(17, 21, 27, 0.92); box-shadow: 0 8px 26px rgba(0, 0, 0, 0.22); backdrop-filter: blur(12px); }
+      .inspector-hidden ~ .density-toggle { right: 22px; }
+      .density-toggle button { height: 25px; padding: 0 8px; border: 0; border-radius: 5px; background: transparent; color: #76818f; font-size: 10px; cursor: pointer; }
+      .density-toggle button:hover { color: var(--ink-soft); }
+      .density-toggle button.is-active { background: #2a3340; color: var(--ink); }
+
+      .inspector { min-width: 0; overflow: hidden; border-left: 1px solid var(--line); background: rgba(15, 18, 23, 0.9); }
+      .inspector-inner { height: 100%; overflow: auto; padding: 20px 17px; scrollbar-color: #2d3744 transparent; }
+      .inspector-head { display: flex; align-items: center; justify-content: space-between; margin: 1px 0 21px; }
+      .inspector-head h2 { margin: 0; color: var(--ink); font-size: 14px; font-weight: 750; }
+      .inspector-head button { display: grid; place-items: center; width: 28px; height: 28px; border: 0; border-radius: 7px; background: transparent; color: var(--muted); cursor: pointer; }
+      .inspector-head button:hover { background: var(--panel-raised); color: var(--ink); }
+      .inspector-section { padding-bottom: 21px; margin-bottom: 19px; border-bottom: 1px solid var(--line-soft); }
+      .inspector-label { display: flex; align-items: center; justify-content: space-between; margin-bottom: 11px; color: #74808d; font-size: 10px; font-weight: 800; letter-spacing: 0.1em; text-transform: uppercase; }
+      .inspector-label button { border: 0; background: none; color: var(--blue); font-size: 11px; cursor: pointer; }
+      .branch-card { padding: 14px; border: 1px solid #293442; border-radius: 11px; background: #151b23; }
+      .branch-name { display: flex; align-items: center; gap: 8px; color: var(--ink); font: 13px "SFMono-Regular", Consolas, monospace; }
+      .branch-name .icon { color: var(--blue); }
+      .branch-base { margin: 9px 0 14px; color: #7b8693; font-size: 11px; }
+      .branch-metrics { display: flex; gap: 15px; }
+      .branch-metric { display: flex; align-items: center; gap: 5px; color: var(--muted); font-size: 11px; }
+      .branch-metric strong { color: var(--ink-soft); font-weight: 700; }
+      .branch-metric .ahead { color: var(--green); }
+      .branch-metric .behind { color: var(--yellow); }
+      .activity-item { display: flex; align-items: flex-start; gap: 10px; padding: 10px 0; }
+      .activity-icon { display: grid; place-items: center; width: 24px; height: 24px; flex: 0 0 auto; border-radius: 7px; background: var(--blue-wash); color: var(--blue-bright); }
+      .activity-icon.coral { background: var(--coral-wash); color: var(--coral-soft); }
+      .activity-copy { min-width: 0; }
+      .activity-copy strong { display: block; color: var(--ink-soft); font-size: 12px; font-weight: 650; }
+      .activity-copy span { display: block; margin-top: 3px; color: #737e8c; font-size: 11px; line-height: 1.45; }
+      .activity-status { width: 6px; height: 6px; margin: 7px 1px 0 auto; border-radius: 50%; background: var(--green); }
+      .file-list { display: grid; gap: 8px; }
+      .file-row { display: flex; align-items: center; gap: 8px; min-width: 0; color: var(--muted-strong); font: 11px "SFMono-Regular", Consolas, monospace; }
+      .file-row .icon { color: var(--coral-soft); }
+      .file-row span:nth-child(2) { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .file-row small { margin-left: auto; color: var(--green); font: 10px ui-sans-serif, sans-serif; }
+      .usage-card { padding: 14px; border: 1px solid var(--line); border-radius: 11px; background: #141920; }
+      .usage-top { display: flex; align-items: center; justify-content: space-between; margin-bottom: 10px; }
+      .usage-top strong { color: var(--ink); font-size: 12px; }
+      .usage-top span { color: var(--muted); font-size: 11px; }
+      .usage-track { height: 6px; overflow: hidden; border-radius: 99px; background: #29313c; }
+      .usage-fill { width: 34%; height: 100%; border-radius: inherit; background: linear-gradient(90deg, var(--blue), #a4c4ff); }
+      .usage-foot { display: flex; justify-content: space-between; margin-top: 9px; color: #76818e; font-size: 10px; }
+      .inspector-button { display: inline-flex; align-items: center; justify-content: center; gap: 7px; width: 100%; height: 36px; border: 1px solid #314052; border-radius: 8px; background: rgba(118, 168, 255, 0.08); color: var(--blue-bright); font-size: 12px; font-weight: 650; cursor: pointer; }
+      .inspector-button:hover { border-color: rgba(118, 168, 255, 0.6); background: rgba(118, 168, 255, 0.15); }
+
+      .density-compact .message { margin-bottom: 25px; }
+      .density-compact .thread { padding-top: 28px; }
+      .density-compact .assistant-intro h1 { font-size: 26px; }
+      .density-compact .decision { padding: 10px 12px; }
+      .density-compact .tool-card { margin-top: 15px; }
+      .density-compact .composer textarea { min-height: 62px; }
+
+      @media (max-width: 1270px) {
+        :root { --side-width: 226px; --inspector-width: 286px; }
+        .thread { padding-right: 24px; padding-left: 24px; }
+        .composer-wrap { padding-right: 24px; padding-left: 24px; }
+        .conversation-topbar { padding-right: 18px; padding-left: 18px; }
+        .branch-chip { display: none; }
+      }
+
+      @media (max-width: 1140px) {
+        :root { --side-width: 210px; --inspector-width: 270px; }
+        .session-item { padding-left: 18px; }
+        .topbar-button span { display: none; }
+        .decision-card { gap: 7px; }
+        .decision { padding-right: 10px; padding-left: 10px; }
+      }
+
+      @media (max-height: 760px) {
+        .thread { padding-top: 24px; }
+        .date-divider { margin-bottom: 24px; }
+        .message { margin-bottom: 30px; }
+        .composer-wrap { padding-bottom: 13px; }
+      }
+    </style>
+  </head>
+  <body data-density="comfortable">
+    <svg aria-hidden="true" width="0" height="0" style="position:absolute">
+      <symbol id="i-grid" viewBox="0 0 24 24"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><rect x="14" y="14" width="6" height="6" rx="1"/></symbol>
+      <symbol id="i-search" viewBox="0 0 24 24"><circle cx="10.8" cy="10.8" r="6.5"/><path d="m16 16 4.7 4.7"/></symbol>
+      <symbol id="i-branch" viewBox="0 0 24 24"><circle cx="7" cy="5" r="2.5"/><circle cx="17" cy="19" r="2.5"/><circle cx="17" cy="7" r="2.5"/><path d="M7 7.5v5a4 4 0 0 0 4 4h3.5M7 7.5a4 4 0 0 1 4-4h3.5"/></symbol>
+      <symbol id="i-files" viewBox="0 0 24 24"><path d="M5 4.5A1.5 1.5 0 0 1 6.5 3h8L19 7.5v12A1.5 1.5 0 0 1 17.5 21h-11A1.5 1.5 0 0 1 5 19.5z"/><path d="M14 3v5h5M8 12h8M8 16h6"/></symbol>
+      <symbol id="i-sliders" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16"/><circle cx="9" cy="6" r="2"/><circle cx="15" cy="12" r="2"/><circle cx="8" cy="18" r="2"/></symbol>
+      <symbol id="i-terminal" viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M13 15h4"/></symbol>
+      <symbol id="i-settings" viewBox="0 0 24 24"><path d="M12 3v2M12 19v2M3 12h2M19 12h2M5.6 5.6 7 7M17 17l1.4 1.4M18.4 5.6 17 7M7 17l-1.4 1.4"/><circle cx="12" cy="12" r="4.2"/></symbol>
+      <symbol id="i-plus" viewBox="0 0 24 24"><path d="M12 5v14M5 12h14"/></symbol>
+      <symbol id="i-chevron-down" viewBox="0 0 24 24"><path d="m6 9 6 6 6-6"/></symbol>
+      <symbol id="i-chevron-right" viewBox="0 0 24 24"><path d="m9 6 6 6-6 6"/></symbol>
+      <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+      <symbol id="i-spark" viewBox="0 0 24 24"><path d="m12 3 1.5 6.5L20 12l-6.5 1.5L12 20l-1.5-6.5L4 12l6.5-2.5z"/></symbol>
+      <symbol id="i-paperclip" viewBox="0 0 24 24"><path d="m9 12.5 5.8-5.8a3.2 3.2 0 0 1 4.5 4.5l-7.7 7.7a5 5 0 0 1-7.1-7.1l7.4-7.4a2.8 2.8 0 1 1 4 4l-7.1 7.1a1.1 1.1 0 0 1-1.6-1.6l6.2-6.2"/></symbol>
+      <symbol id="i-send" viewBox="0 0 24 24"><path d="m4 4 16 8-16 8 3-8zM7 12h13"/></symbol>
+      <symbol id="i-check" viewBox="0 0 24 24"><path d="m5 12 4.5 4.5L19 7"/></symbol>
+      <symbol id="i-file" viewBox="0 0 24 24"><path d="M6 3.5h8l4 4v13H6zM14 3.5v4h4M9 12h6M9 16h4"/></symbol>
+      <symbol id="i-diff" viewBox="0 0 24 24"><path d="M7 4v16M17 4v16M3 8h8M13 16h8"/></symbol>
+      <symbol id="i-eye" viewBox="0 0 24 24"><path d="M3 12s3.5-6 9-6 9 6 9 6-3.5 6-9 6-9-6-9-6z"/><circle cx="12" cy="12" r="2.5"/></symbol>
+      <symbol id="i-info" viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 11v5M12 8h.01"/></symbol>
+      <symbol id="i-window" viewBox="0 0 24 24"><rect x="4" y="5" width="16" height="14" rx="2"/><path d="M4 9h16"/></symbol>
+      <symbol id="i-pulse" viewBox="0 0 24 24"><path d="M3 13h4l2-6 4 11 2-5h6"/></symbol>
+    </svg>
+
+    <div class="concept-label">concept / t3 conversation</div>
+
+    <div class="app-shell" id="app-shell">
+      <aside class="rail" aria-label="Primary navigation">
+        <div>
+          <div class="brand" title="cw-code">cw</div>
+          <nav class="rail-nav">
+            <button class="rail-button is-active" aria-label="Sessions" title="Sessions"><svg class="icon"><use href="#i-grid"/></svg></button>
+            <button class="rail-button" aria-label="Search" title="Search"><svg class="icon"><use href="#i-search"/></svg></button>
+            <button class="rail-button" aria-label="Branches" title="Branches"><svg class="icon"><use href="#i-branch"/></svg></button>
+            <button class="rail-button" aria-label="Files" title="Files"><svg class="icon"><use href="#i-files"/></svg></button>
+          </nav>
+        </div>
+        <div class="rail-bottom">
+          <button class="rail-button" aria-label="Terminal" title="Terminal"><svg class="icon"><use href="#i-terminal"/></svg></button>
+          <button class="rail-button" aria-label="Settings" title="Settings"><svg class="icon"><use href="#i-settings"/></svg></button>
+        </div>
+      </aside>
+
+      <aside class="session-sidebar" aria-label="Projects and sessions">
+        <div class="sidebar-head">
+          <div class="workspace-row">
+            <div class="workspace-name"><span class="workspace-mark">C</span><span>cw-code workspace</span><svg class="icon icon-xs workspace-chevron"><use href="#i-chevron-down"/></svg></div>
+            <button class="sidebar-icon-button" aria-label="New session" title="New session"><svg class="icon icon-sm"><use href="#i-plus"/></svg></button>
+          </div>
+          <label class="search-box"><svg class="icon icon-sm"><use href="#i-search"/></svg><input aria-label="Search sessions" placeholder="Search sessions"/><span class="search-shortcut">⌘ K</span></label>
+        </div>
+
+        <div class="session-list">
+          <section class="list-section">
+            <div class="section-label"><span>Active</span><span>1</span></div>
+            <div class="project">
+              <div class="project-title"><span class="project-dot"></span><span>cw-code</span><span class="project-count">3</span></div>
+              <button class="session-item is-active">
+                <span class="session-title">Visual design pass</span>
+                <span class="session-meta"><span class="session-state"><i class="state-dot coral"></i>Working</span><span>now</span></span>
+              </button>
+              <button class="session-item">
+                <span class="session-title">Session routing audit</span>
+                <span class="session-meta"><span class="session-state"><i class="state-dot gray"></i>Settled</span><span>yesterday</span></span>
+              </button>
+              <button class="session-item">
+                <span class="session-title">T3 shell parity notes</span>
+                <span class="session-meta"><span class="session-state"><i class="state-dot gray"></i>Settled</span><span>Sep 10</span></span>
+              </button>
+            </div>
+          </section>
+
+          <section class="list-section">
+            <div class="section-label"><span>Projects</span><button aria-label="Add project"><svg class="icon icon-xs"><use href="#i-plus"/></svg></button></div>
+            <div class="project">
+              <div class="project-title"><span class="project-dot" style="background:#a68ed7"></span><span>nuria-devkit</span><span class="project-count">2</span></div>
+              <button class="session-item"><span class="session-title">Refactor skills, add skill creator</span><span class="session-meta"><span class="session-state"><i class="state-dot gray"></i>Settled</span><span>1d</span></span></button>
+            </div>
+            <div class="project">
+              <div class="project-title"><span class="project-dot" style="background:#74c9b0"></span><span>clickhouse-replicator</span><span class="project-count">1</span></div>
+              <button class="session-item"><span class="session-title">MySQL → ClickHouse CDC</span><span class="session-meta"><span class="session-state"><i class="state-dot gray"></i>Settled</span><span>9d</span></span></button>
+            </div>
+          </section>
+
+          <section class="list-section">
+            <div class="section-label"><span>Discovered</span><span>2</span></div>
+            <button class="session-item"><span class="session-title">Import from Claude CLI</span><span class="session-meta"><span class="session-state"><i class="state-dot gray"></i>Available</span></span></button>
+          </section>
+        </div>
+
+        <div class="sidebar-footer"><span class="avatar">AP</span><span><strong>Alberto Pascoal</strong><br /><span>Local workspace</span></span><button aria-label="Account menu"><svg class="icon icon-sm"><use href="#i-chevron-down"/></svg></button></div>
+      </aside>
+
+      <main class="conversation" aria-label="Conversation">
+        <header class="conversation-topbar">
+          <div class="crumbs"><span>cw-code</span><span class="crumb-separator">/</span><span class="current">Visual design pass</span></div>
+          <div class="topbar-actions">
+            <span class="branch-chip"><svg class="icon icon-xs"><use href="#i-branch"/></svg>feature/design-pass</span>
+            <span class="status-chip"><i class="state-dot"></i>Working</span>
+            <button class="topbar-button" aria-label="Open terminal"><svg class="icon icon-sm"><use href="#i-terminal"/></svg><span>Terminal</span></button>
+            <button class="topbar-button is-emphasis" data-inspector-toggle aria-expanded="true"><svg class="icon icon-sm"><use href="#i-sliders"/></svg><span>Context</span></button>
+          </div>
+        </header>
+
+        <div class="thread" id="thread">
+          <div class="thread-inner">
+            <div class="date-divider">Today · 12:48 PM</div>
+
+            <article class="message user">
+              <div class="message-avatar">AP</div>
+              <div class="message-content">
+                <div class="message-header"><span class="message-name">Alberto</span><span class="message-time">12:48 PM</span></div>
+                <div class="user-copy">Give cw-code a full visual design pass. Keep the current three-pane structure, but make the hierarchy calmer, clearer, and <em>larger by default</em>. Use Rider, T3 Code, and VS Code as references.</div>
+                <div class="attachment-row"><span class="attachment"><svg class="icon icon-xs"><use href="#i-file"/></svg>rider-reference.png</span><span class="attachment"><svg class="icon icon-xs"><use href="#i-file"/></svg>t3-code-reference.png</span><span class="attachment"><svg class="icon icon-xs"><use href="#i-file"/></svg>vscode-reference.png</span></div>
+              </div>
+            </article>
+
+            <article class="message assistant">
+              <div class="message-avatar"><svg class="icon icon-sm"><use href="#i-spark"/></svg></div>
+              <div class="message-content">
+                <div class="message-header"><span class="message-name">Claude</span><span class="message-time">12:49 PM · Medium</span></div>
+                <div class="assistant-intro">
+                  <h1>A calmer surface for power work.</h1>
+                  <p>I’m treating the conversation as the product’s primary canvas: fewer competing borders, more breathing room around intent, and a stronger reading rhythm for long-running CLI work.</p>
+                  <p>The visual language pairs a <span class="accent">restrained coral</span> provider signal with a confident <span class="blue">blue action</span> color. The inspector stays present, but deliberately secondary.</p>
+                </div>
+
+                <div class="decision-card" aria-label="Design decisions">
+                  <div class="decision is-selected"><span class="decision-kicker"><svg class="icon icon-xs"><use href="#i-check"/></svg>Hierarchy</span><strong>Editorial thread</strong><p>15–16px reading text and wider message measure.</p></div>
+                  <div class="decision"><span class="decision-kicker"><svg class="icon icon-xs"><use href="#i-eye"/></svg>Navigation</span><strong>Quiet by default</strong><p>Session state stays scannable without shouting.</p></div>
+                  <div class="decision"><span class="decision-kicker"><svg class="icon icon-xs"><use href="#i-pulse"/></svg>Density</span><strong>Comfortable first</strong><p>Compact remains one click away for deep work.</p></div>
+                </div>
+
+                <div class="tool-card">
+                  <div class="tool-head"><span class="tool-icon"><svg class="icon icon-sm"><use href="#i-search"/></svg></span><span class="tool-title">Inspecting current shell</span><span class="tool-subtitle">Read-only · 1.8s</span></div>
+                  <code class="tool-command"><span class="prompt">›</span> rg --files apps/desktop/src | rg "(App|layout|theme|session)"</code>
+                  <div class="tool-output"><span class="ok">✓</span> 14 files matched<br /><span class="file">apps/desktop/src/renderer/App.tsx</span><br /><span class="file">apps/desktop/src/renderer/styles/theme.css</span><br /><span class="file">apps/desktop/src/renderer/components/SessionSidebar.tsx</span></div>
+                  <div class="tool-footer"><span class="ok"><svg class="icon icon-xs"><use href="#i-check"/></svg> Completed</span><span>3.2k tokens</span></div>
+                </div>
+
+                <h2 class="subheading">The first implementation slice</h2>
+                <p class="body-copy">I’d start with shared tokens and surface scale: a 15px base, 34–38px interactive targets, a single border treatment, and explicit type roles. Then the composer and right inspector can inherit the same rhythm without bespoke nudges.</p>
+                <div class="next-step"><svg class="icon icon-sm"><use href="#i-spark"/></svg><span><strong>Next:</strong> I can turn this direction into the first renderer pass, starting with <code>theme.css</code> and the shell grid.</span></div>
+              </div>
+            </article>
+
+            <article class="message assistant" id="new-message-template" hidden>
+              <div class="message-avatar"><svg class="icon icon-sm"><use href="#i-spark"/></svg></div>
+              <div class="message-content"><div class="message-header"><span class="message-name">Claude</span><span class="message-time">just now · Medium</span></div><div class="body-copy">I’ve queued that follow-up in the current <span class="blue">feature/design-pass</span> context. The existing branch and tool state remain attached.</div></div>
+            </article>
+          </div>
+        </div>
+
+        <div class="composer-wrap">
+          <form class="composer" id="composer">
+            <textarea id="composer-input" aria-label="Message Claude" placeholder="Ask for changes, send a follow-up, or attach images"></textarea>
+            <div class="composer-toolbar">
+              <button class="composer-tool provider" type="button"><svg class="icon icon-sm"><use href="#i-spark"/></svg>Claude Sonnet 5<svg class="icon icon-xs chevron"><use href="#i-chevron-down"/></svg></button>
+              <span class="toolbar-divider"></span>
+              <button class="composer-tool" type="button">Medium · 200k<svg class="icon icon-xs chevron"><use href="#i-chevron-down"/></svg></button>
+              <button class="composer-tool" type="button"><svg class="icon icon-sm"><use href="#i-sliders"/></svg>Auto<svg class="icon icon-xs chevron"><use href="#i-chevron-down"/></svg></button>
+              <span class="composer-spacer"></span>
+              <button class="composer-tool" type="button" aria-label="Attach file"><svg class="icon icon-sm"><use href="#i-paperclip"/></svg></button>
+              <button class="send-button" id="send-button" type="submit" aria-label="Send message"><svg class="icon icon-sm"><use href="#i-send"/></svg></button>
+            </div>
+            <div class="composer-hint">Enter to send · Shift + Enter for a new line · CLI remains the source of truth</div>
+          </form>
+        </div>
+      </main>
+
+      <aside class="inspector" aria-label="Context inspector" id="inspector">
+        <div class="inspector-inner">
+          <div class="inspector-head"><h2>Context</h2><button data-inspector-toggle aria-label="Hide context" aria-expanded="true"><svg class="icon icon-sm"><use href="#i-close"/></svg></button></div>
+
+          <section class="inspector-section">
+            <div class="inspector-label"><span>Branch state</span><button>Open diff</button></div>
+            <div class="branch-card"><div class="branch-name"><svg class="icon icon-sm"><use href="#i-branch"/></svg>feature/design-pass</div><div class="branch-base">based on <code>main</code> · clean checkout</div><div class="branch-metrics"><span class="branch-metric"><strong class="ahead">↑ 3</strong> ahead</span><span class="branch-metric"><strong class="behind">↓ 0</strong> behind</span></div></div>
+          </section>
+
+          <section class="inspector-section">
+            <div class="inspector-label"><span>Run activity</span><span style="color:var(--green)">live</span></div>
+            <div class="activity-item"><span class="activity-icon coral"><svg class="icon icon-xs"><use href="#i-spark"/></svg></span><span class="activity-copy"><strong>Visual pass in progress</strong><span>Claude is shaping the first renderer slice.</span></span><i class="activity-status"></i></div>
+            <div class="activity-item"><span class="activity-icon"><svg class="icon icon-xs"><use href="#i-check"/></svg></span><span class="activity-copy"><strong>Shell inventory complete</strong><span>14 relevant files found in apps/desktop.</span></span><i class="activity-status"></i></div>
+          </section>
+
+          <section class="inspector-section">
+            <div class="inspector-label"><span>Changed files</span><span>4</span></div>
+            <div class="file-list"><div class="file-row"><svg class="icon icon-xs"><use href="#i-file"/></svg><span>theme.css</span><small>+42</small></div><div class="file-row"><svg class="icon icon-xs"><use href="#i-file"/></svg><span>AppShell.tsx</span><small>+18</small></div><div class="file-row"><svg class="icon icon-xs"><use href="#i-file"/></svg><span>Composer.tsx</span><small>+11</small></div><div class="file-row"><svg class="icon icon-xs"><use href="#i-file"/></svg><span>SessionSidebar.tsx</span><small>+7</small></div></div>
+          </section>
+
+          <section class="inspector-section">
+            <div class="inspector-label"><span>Usage</span><button>Details</button></div>
+            <div class="usage-card"><div class="usage-top"><strong>Current turn</strong><span>42k / 124k</span></div><div class="usage-track"><div class="usage-fill"></div></div><div class="usage-foot"><span>Claude Sonnet 5</span><span>$0.84 est.</span></div></div>
+          </section>
+
+          <button class="inspector-button" type="button"><svg class="icon icon-sm"><use href="#i-window"/></svg>Open files in editor</button>
+        </div>
+      </aside>
+    </div>
+
+    <div class="density-toggle" aria-label="Conversation density">
+      <button type="button" data-density-choice="comfortable" class="is-active">Comfortable</button>
+      <button type="button" data-density-choice="compact">Compact</button>
+    </div>
+
+    <script>
+      const shell = document.getElementById('app-shell');
+      const input = document.getElementById('composer-input');
+      const form = document.getElementById('composer');
+      const send = document.getElementById('send-button');
+      const thread = document.getElementById('thread');
+      const threadInner = thread.querySelector('.thread-inner');
+      const template = document.getElementById('new-message-template');
+
+      document.querySelectorAll('[data-density-choice]').forEach((button) => {
+        button.addEventListener('click', () => {
+          const density = button.dataset.densityChoice;
+          document.body.dataset.density = density;
+          document.querySelectorAll('[data-density-choice]').forEach((item) => item.classList.toggle('is-active', item === button));
+          document.querySelector('.density-toggle').setAttribute('data-current', density);
+        });
+      });
+
+      document.querySelectorAll('[data-inspector-toggle]').forEach((button) => {
+        button.addEventListener('click', () => {
+          const isHidden = shell.classList.toggle('inspector-hidden');
+          document.querySelectorAll('[data-inspector-toggle]').forEach((item) => item.setAttribute('aria-expanded', String(!isHidden)));
+        });
+      });
+
+      input.addEventListener('input', () => { send.disabled = !input.value.trim(); });
+      form.addEventListener('submit', (event) => {
+        event.preventDefault();
+        const value = input.value.trim();
+        if (!value) return;
+        const node = document.createElement('article');
+        node.className = 'message user';
+        node.innerHTML = '<div class="message-avatar">AP</div><div class="message-content"><div class="message-header"><span class="message-name">Alberto</span><span class="message-time">just now</span></div><div class="user-copy"></div></div>';
+        node.querySelector('.user-copy').textContent = value;
+        threadInner.insertBefore(node, template);
+        input.value = '';
+        send.disabled = true;
+        node.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      });
+
+      document.querySelectorAll('.session-item').forEach((item) => {
+        item.addEventListener('click', () => {
+          document.querySelectorAll('.session-item').forEach((session) => session.classList.remove('is-active'));
+          item.classList.add('is-active');
+        });
+      });
+    </script>
+  </body>
+</html>

@@ -1,0 +1,146 @@
+{
+  "schemaVersion": 2,
+  "generatedAt": "2026-09-13T14:30:11.896Z",
+  "title": "Design System: cw-code",
+  "extensions": {
+    "colorMeta": {
+      "bg": { "role": "neutral", "displayName": "Workbench Blue-Graphite", "tonalRamp": ["#07101b", "#09121f", "#0d1725", "#101826", "#182132", "#303a50", "#9ca4bd", "#f2f1f8"] },
+      "bg-deep": { "role": "neutral", "displayName": "Conversation Deep", "tonalRamp": ["#050a12", "#080f1b", "#09121f", "#0d1725", "#182132", "#303a50", "#9ca4bd", "#f2f1f8"] },
+      "raised": { "role": "neutral", "displayName": "Raised Graphite", "tonalRamp": ["#09121f", "#0d1725", "#101826", "#182132", "#1c2638", "#303a50", "#9ca4bd", "#f2f1f8"] },
+      "overlay": { "role": "neutral", "displayName": "Overlay Slate", "tonalRamp": ["#09121f", "#101826", "#182132", "#1c2638", "#303a50", "#46516a", "#9ca4bd", "#f2f1f8"] },
+      "gutter": { "role": "neutral", "displayName": "Gutter Ink", "tonalRamp": ["#040914", "#080f1b", "#09121f", "#101826", "#182132", "#303a50", "#9ca4bd", "#f2f1f8"] },
+      "border": { "role": "neutral", "displayName": "Structural Slate", "tonalRamp": ["#09121f", "#182132", "#222d40", "#303a50", "#46516a", "#747d99", "#c8ccdc", "#f2f1f8"] },
+      "border-soft": { "role": "neutral", "displayName": "Soft Structural Slate", "tonalRamp": ["#09121f", "#182132", "#222d40", "#303a50", "#46516a", "#747d99", "#c8ccdc", "#f2f1f8"] },
+      "text": { "role": "neutral", "displayName": "Cool Ink", "tonalRamp": ["#09121f", "#182132", "#303a50", "#747d99", "#9ca4bd", "#aeb4d5", "#c8ccdc", "#f2f1f8"] },
+      "dim": { "role": "neutral", "displayName": "Dim Ink", "tonalRamp": ["#09121f", "#182132", "#303a50", "#747d99", "#9ca4bd", "#aeb4d5", "#c8ccdc", "#f2f1f8"] },
+      "muted": { "role": "neutral", "displayName": "Muted Ink", "tonalRamp": ["#09121f", "#182132", "#303a50", "#747d99", "#9ca4bd", "#aeb4d5", "#c8ccdc", "#f2f1f8"] },
+      "faint": { "role": "neutral", "displayName": "Telemetry Ink", "tonalRamp": ["#09121f", "#182132", "#303a50", "#747d99", "#9ca4bd", "#aeb4d5", "#c8ccdc", "#f2f1f8"] },
+      "violet": { "role": "primary", "displayName": "Run Violet", "tonalRamp": ["#170837", "#2c126b", "#4820af", "#5b27e6", "#7c43ff", "#9f7aff", "#c8b8ff", "#eeeaff"] },
+      "violet-strong": { "role": "primary", "displayName": "Deep Run Violet", "tonalRamp": ["#170837", "#2c126b", "#4820af", "#5b27e6", "#7c43ff", "#9f7aff", "#c8b8ff", "#eeeaff"] },
+      "claude": { "role": "secondary", "displayName": "Claude Ember", "tonalRamp": ["#351308", "#692b12", "#a84f26", "#e8835a", "#f5ad8d", "#ffcfba", "#ffe7dd", "#fff7f3"] },
+      "opencode": { "role": "secondary", "displayName": "OpenCode Sky", "tonalRamp": ["#061b31", "#0b3763", "#1469b3", "#5ab8ff", "#8ac9ff", "#b9dfff", "#deefff", "#f5fbff"] },
+      "codex": { "role": "secondary", "displayName": "Codex Lilac", "tonalRamp": ["#21173d", "#423076", "#7052bb", "#b49cff", "#c8b8ff", "#ddd3ff", "#eeeaff", "#fbf9ff"] },
+      "success": { "role": "tertiary", "displayName": "Clear Teal", "tonalRamp": ["#062b28", "#07574f", "#0d9380", "#25d6b3", "#65e4ca", "#a2f0df", "#d0f8ee", "#f3fffb"] },
+      "warning": { "role": "tertiary", "displayName": "Signal Amber", "tonalRamp": ["#352507", "#6b4c0e", "#ad7b1e", "#f5b84b", "#facd7b", "#fce2ad", "#fef1d5", "#fffaf0"] },
+      "danger": { "role": "tertiary", "displayName": "Fault Coral", "tonalRamp": ["#360b16", "#6e182d", "#b72f50", "#ff657a", "#ff9aa7", "#ffc3ca", "#ffe0e4", "#fff6f7"] },
+      "composer-surface": { "role": "neutral", "displayName": "Run Recipe Hull", "tonalRamp": ["#09121f", "#101826", "#181f32", "#1b2338", "#303a50", "#747d99", "#aeb4d5", "#f4f2fb"] },
+      "composer-surface-focus": { "role": "neutral", "displayName": "Focused Run Recipe Hull", "tonalRamp": ["#09121f", "#101826", "#181f32", "#1b2338", "#303a50", "#747d99", "#aeb4d5", "#f4f2fb"] },
+      "composer-muted": { "role": "neutral", "displayName": "Composer Muted Ink", "tonalRamp": ["#09121f", "#182132", "#303a50", "#78819f", "#9ca4bd", "#aeb4d5", "#c8ccdc", "#f4f2fb"] },
+      "composer-faint": { "role": "neutral", "displayName": "Composer Faint Ink", "tonalRamp": ["#09121f", "#182132", "#303a50", "#747d99", "#9ca4bd", "#aeb4d5", "#c8ccdc", "#f4f2fb"] }
+    },
+    "typographyMeta": {
+      "display": { "displayName": "New Thread Display", "purpose": "Centered new-thread heading only." },
+      "headline": { "displayName": "Markdown Headline", "purpose": "Rendered Markdown section hierarchy." },
+      "title": { "displayName": "Operational Title", "purpose": "Settings labels and compact operational titles." },
+      "body": { "displayName": "Workbench Body", "purpose": "Navigation, prose, user messages, and reading content." },
+      "label": { "displayName": "Telemetry Label", "purpose": "Code, paths, commands, small metadata, and uppercase groups." }
+    },
+    "shadows": [
+      { "name": "floating-panel", "value": "0 16px 40px rgba(0, 0, 0, 0.5)", "purpose": "Menus and pickers above the workbench." },
+      { "name": "composer-resting", "value": "0 14px 36px rgba(2, 5, 12, 0.48)", "purpose": "Resting Integrated Hull depth." },
+      { "name": "composer-focused", "value": "0 0 0 1px rgba(158, 116, 255, 0.72), 0 16px 42px rgba(2, 5, 12, 0.58)", "purpose": "The one composer-wide focus contour and lift." },
+      { "name": "settings-modal", "value": "0 28px 90px rgba(0, 0, 0, 0.62)", "purpose": "Focused settings overlay." }
+    ],
+    "motion": [
+      { "name": "utility-transition", "value": "120ms ease", "purpose": "Compact opacity, filter, and state changes." },
+      { "name": "composer-transition", "value": "140ms cubic-bezier(0.22, 1, 0.36, 1)", "purpose": "Composer focus lift and surface change." },
+      { "name": "tool-sweep", "value": "2.8s ease-in-out infinite", "purpose": "Active tool-card and working-pill sweep; disabled by reduced-motion preferences." },
+      { "name": "status-pulse", "value": "1.2s ease-in-out infinite", "purpose": "Current-driver and running-status pulse." }
+    ],
+    "breakpoints": [
+      { "name": "compact-desktop", "value": "1380px" },
+      { "name": "narrow-desktop", "value": "1120px" },
+      { "name": "conversation-only", "value": "900px" },
+      { "name": "settings-mobile", "value": "720px" }
+    ]
+  },
+  "components": [
+    {
+      "name": "Utility Button",
+      "kind": "button",
+      "refersTo": "button-default",
+      "description": "Compact bordered action used for secondary commands.",
+      "html": "<button class=\"ds-btn\">Open settings</button>",
+      "css": ".ds-btn { background: transparent; border: 1px solid var(--border); border-radius: var(--r-md); color: var(--dim); cursor: pointer; font: 13px var(--sans); padding: 6px 10px; } .ds-btn:hover { background: var(--raised); color: var(--text); } .ds-btn:focus-visible { outline: 2px solid #9f7aff; outline-offset: 2px; } .ds-btn:active { filter: brightness(1.08); }"
+    },
+    {
+      "name": "Run Recipe Send",
+      "kind": "button",
+      "refersTo": "button-primary",
+      "description": "The single send locus at the end of the Integrated Hull.",
+      "html": "<button class=\"ds-send\" aria-label=\"Send\"><svg viewBox=\"0 0 24 24\" aria-hidden=\"true\"><path d=\"M3 3l18 9-18 9 4-9-4-9zm4.5 9H17\"/></svg></button>",
+      "css": ".ds-send { align-items: center; background: linear-gradient(135deg, var(--violet), var(--violet-strong)); border: 0; border-radius: 9px; box-shadow: 0 5px 14px rgba(91, 39, 230, 0.32); color: #fff; cursor: pointer; display: inline-flex; height: 40px; justify-content: center; transition: filter 120ms ease, transform 120ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 120ms ease; width: 40px; } .ds-send svg { fill: none; height: 18px; stroke: currentColor; stroke-linecap: round; stroke-linejoin: round; stroke-width: 2; width: 18px; } .ds-send:hover { filter: brightness(1.12); transform: translateY(-1px); } .ds-send:focus-visible { outline: 2px solid #9f7aff; outline-offset: 2px; } .ds-send:active { transform: translateY(0); }"
+    },
+    {
+      "name": "Field",
+      "kind": "input",
+      "refersTo": "input-field",
+      "description": "Quiet dark field for searches and configuration values.",
+      "html": "<input class=\"ds-field\" placeholder=\"Search sessions\" />",
+      "css": ".ds-field { background: var(--bg-deep); border: 1px solid var(--border); border-radius: var(--r-md); color: var(--text); font: 13px var(--sans); min-width: 0; padding: 6px 8px; } .ds-field::placeholder { color: var(--faint); } .ds-field:focus { border-color: var(--driver); outline: none; } .ds-field:focus-visible { box-shadow: 0 0 0 2px rgba(159, 122, 255, 0.25); }"
+    },
+    {
+      "name": "Active Session Row",
+      "kind": "nav",
+      "refersTo": "nav-session-active",
+      "description": "Project-grouped session selection in the left rail.",
+      "html": "<button class=\"ds-session\"><span class=\"ds-dot\"></span><span class=\"ds-copy\"><strong>Implement worktrees</strong><small>working</small></span></button>",
+      "css": ".ds-session { align-items: flex-start; background: linear-gradient(90deg, rgba(124, 67, 255, 0.26), rgba(124, 67, 255, 0.10)); border: 0; border-radius: var(--r-md); color: var(--text); cursor: pointer; display: flex; gap: 8px; padding: 9px 10px; text-align: left; width: 100%; } .ds-session:hover { background: var(--raised); } .ds-dot { background: var(--opencode); border-radius: 50%; box-shadow: 0 0 8px rgba(90, 184, 255, 0.8); height: 7px; margin-top: 4px; width: 7px; } .ds-copy { display: flex; flex-direction: column; gap: 3px; min-width: 0; } .ds-copy strong { font: 600 12.5px var(--sans); } .ds-copy small { color: var(--opencode); font: 10.5px var(--sans); } .ds-session:focus-visible { outline: 2px solid #9f7aff; outline-offset: 2px; }"
+    },
+    {
+      "name": "Integrated Hull",
+      "kind": "custom",
+      "refersTo": "composer-hull",
+      "description": "The cohesive next-turn composer with a writing zone and Run Recipe controls.",
+      "html": "<section class=\"ds-composer\"><textarea placeholder=\"Ask cw-code to work on something…\"></textarea><div class=\"ds-recipe\"><button class=\"ds-attach\">+</button><span>Run with</span><button class=\"ds-control\">Codex⌄</button><button class=\"ds-control\">Medium⌄</button><button class=\"ds-send-small\">↑</button></div></section>",
+      "css": ".ds-composer { background: linear-gradient(145deg, var(--composer-surface-focus), var(--composer-surface)); border: 1px solid transparent; border-radius: var(--r-lg); box-shadow: 0 14px 36px rgba(2, 5, 12, 0.48); color: #f4f2fb; display: flex; flex-direction: column; max-width: 768px; min-height: 156px; transition: box-shadow 140ms cubic-bezier(0.22, 1, 0.36, 1), background 140ms ease; width: 100%; } .ds-composer:focus-within { background: linear-gradient(145deg, #1d253a, #192035); box-shadow: 0 0 0 1px rgba(158, 116, 255, 0.72), 0 16px 42px rgba(2, 5, 12, 0.58); } .ds-composer textarea { background: transparent; border: 0; box-sizing: border-box; color: #f4f2fb; flex: 1; font: 15px/1.5 var(--sans); min-height: 100px; padding: 16px 18px 6px; resize: none; } .ds-composer textarea:focus { outline: none; } .ds-composer textarea::placeholder { color: var(--composer-muted); } .ds-recipe { align-items: center; color: var(--composer-muted); display: flex; gap: 8px; min-height: 46px; padding: 0 9px 8px 13px; } .ds-attach, .ds-control { background: transparent; border: 0; border-radius: var(--r-sm); color: #e6e5ef; cursor: pointer; font: 12.5px var(--sans); min-height: 32px; padding: 4px 6px; } .ds-attach:hover, .ds-control:hover { background: rgba(124, 67, 255, 0.1); color: var(--text); } .ds-recipe span { color: var(--composer-faint); font: 12px var(--sans); } .ds-send-small { background: linear-gradient(135deg, var(--violet), var(--violet-strong)); border: 0; border-radius: 9px; color: #fff; cursor: pointer; font-size: 18px; height: 40px; margin-left: auto; width: 40px; } .ds-send-small:hover { filter: brightness(1.12); transform: translateY(-1px); }"
+    },
+    {
+      "name": "Tool Activity Card",
+      "kind": "card",
+      "refersTo": "tool-card",
+      "description": "Expandable execution evidence in the continuous work log.",
+      "html": "<article class=\"ds-tool\"><header><span class=\"ds-ok\">✓</span><strong>Read</strong><span>apps/desktop/theme.css</span><b>⌄</b></header><div class=\"ds-detail\">Completed in 42ms</div></article>",
+      "css": ".ds-tool { background: var(--bg-deep); border: 0; border-radius: var(--r-md); color: var(--dim); cursor: pointer; overflow: hidden; } .ds-tool:hover { background: color-mix(in srgb, var(--bg-deep) 82%, var(--raised)); } .ds-tool header { align-items: center; display: flex; font: 12px var(--sans); gap: 7px; padding: 7px 10px; } .ds-tool strong { color: var(--text); } .ds-tool header span:not(.ds-ok) { color: var(--muted); flex: 1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; } .ds-tool b { color: var(--faint); margin-left: auto; } .ds-ok { color: var(--success); } .ds-detail { border-top: 1px solid var(--border-soft); color: var(--muted); font: 11.5px var(--sans); padding: 8px 12px 10px 26px; } .ds-tool:focus-visible { outline: 2px solid #9f7aff; outline-offset: 2px; }"
+    },
+    {
+      "name": "Context Tab",
+      "kind": "nav",
+      "refersTo": "tab-active",
+      "description": "Borderless right-workspace tab with a crisp active underline.",
+      "html": "<nav class=\"ds-tabs\"><button>Files</button><button class=\"ds-active\">Diff</button><button>Agents</button><button>Shell</button></nav>",
+      "css": ".ds-tabs { align-items: center; background: #111a2a; display: flex; gap: 2px; min-height: 48px; padding: 5px 10px 0; } .ds-tabs button { background: transparent; border: 0; border-bottom: 2px solid transparent; color: var(--faint); cursor: pointer; font: 12px var(--sans); padding: 9px 13px; } .ds-tabs button:hover { color: var(--dim); } .ds-tabs .ds-active { border-bottom-color: var(--violet); color: var(--text); } .ds-tabs button:focus-visible { outline: 2px solid #9f7aff; outline-offset: -2px; }"
+    }
+  ],
+  "narrative": {
+    "northStar": "Rider Violet Run Recipe",
+    "overview": "cw-code is a dense, calm operational workbench: Rider-led blue-graphite surfaces give the project rail, conversation stage, and contextual tools distinct depth without turning the window into a field of cards. The conversation remains the quietest and darkest region; violet is the deliberate control color that connects active navigation, focus, and the turn composer.\n\nThe Run Recipe structure makes each turn feel executable rather than conversational. Its Integrated Hull keeps writing, attachments, model, effort, permission, and one send-or-stop locus in one cohesive field. Provider colors, green, amber, and coral carry factual operational states; they are not decorative brand washes.\n\nConfirmed rejections: dashboard navigation, decorative card grids, persistent separator-heavy chrome, detached composer controls, speaker avatars, and resting chat timestamps.",
+    "keyCharacteristics": [
+      "Stepped graphite depth and narrow gutters instead of pervasive borders.",
+      "Comfortably zoomed IDE density: readable 14–15px UI text with compact 38–48px chrome.",
+      "Violet is scarce, structurally meaningful, and strongest at active or focused controls.",
+      "Monospace is reserved for code, paths, commands, and telemetry."
+    ],
+    "rules": [
+      { "name": "The Violet Means Action Rule", "body": "Violet identifies active navigation, a set control, focus, or the one turn-launching button; routine content and idle containers stay blue-graphite.", "section": "colors" },
+      { "name": "The Provider Is Data Rule", "body": "Claude Ember, OpenCode Sky, and Codex Lilac identify the selected or reported CLI provider only. Do not repurpose them as generic button colors.", "section": "colors" },
+      { "name": "The Mono Is Evidence Rule", "body": "Use the mono face for machine-adjacent information, never as the default for navigation or human-readable conversation.", "section": "typography" },
+      { "name": "The Conversation Stays Quiet Rule", "body": "Keep the conversation canvas the darkest, least accented region. Put Git branch and worktree context in its header, not in the composer or a separate dashboard band.", "section": "layout" },
+      { "name": "The Edge Earns Its Place Rule", "body": "Use a border for focus, text entry, popovers, code/data boundaries, or expanded disclosure content—not to divide every resting surface.", "section": "elevation" }
+    ],
+    "dos": [
+      "Do preserve the three-region workspace: grouped projects and sessions, conversation, and contextual tools.",
+      "Do make state factual with the established provider, success, warning, and danger colors.",
+      "Do use tonal layering, narrow gutters, and active fills before adding a divider.",
+      "Do keep the composer as one integrated Run Recipe hull with one focus state and one turn action.",
+      "Do give tooltips to icon-only global and tool actions while retaining text for names, files, and states."
+    ],
+    "donts": [
+      "Don't turn the workbench into dashboard cards, a new navigation metaphor, or a decorative grid.",
+      "Don't use violet, provider colors, or status colors as broad decorative washes.",
+      "Don't fracture composer controls into detached rows, gaps, or separator-led sub-panels.",
+      "Don't add speaker names, avatars, or resting timestamps to the continuous work-log conversation.",
+      "Don't blanket every panel and row with borders; an edge must correspond to interaction, focus, or a true content boundary."
+    ]
+  }
+}

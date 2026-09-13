@@ -1,4 +1,5 @@
 import { Fragment, useEffect, useRef, useState } from "react";
+import { Bot, Check, ChevronDown, ChevronRight, CircleDot, TriangleAlert } from "lucide-react";
 import type { SubagentGroup, SubagentInfo } from "./subagents.js";
 import { collectAgentMessages, formatSubagentCount, formatTokensShort, groupSubagents } from "./subagents.js";
 import { describeToolCall, formatDuration, orderToolsForDisplay, relativizeToBase } from "./toolSummaries.js";
@@ -46,6 +47,12 @@ function metaLine(item: SubagentInfo): string {
   return parts.join(" · ");
 }
 
+function StatusIcon({ status }: { status: SubagentInfo["status"] }) {
+  if (status === "completed") return <Check aria-hidden="true" size={14} strokeWidth={2.25} />;
+  if (status === "running") return <CircleDot aria-hidden="true" size={13} strokeWidth={2.25} />;
+  return <TriangleAlert aria-hidden="true" size={14} strokeWidth={2.25} />;
+}
+
 function RunningElapsed({ startedAt }: { startedAt: number }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -85,36 +92,28 @@ function toolSummary(t: SubagentToolActivity, basePath?: string): string {
   return subject ? `${summary.verb} ${subject}` : summary.verb;
 }
 
-function AgentRow({
-  groupId,
+function AgentRosterItem({
   item,
-  expanded,
   live,
-  basePath,
-  sessionId,
-  onPreview,
-  onToggle
+  selected,
+  onSelect
 }: {
-  groupId: string;
   item: SubagentInfo;
-  expanded: boolean;
   live: boolean;
-  basePath?: string;
-  sessionId: string;
-  onPreview: (path: string) => void;
-  onToggle: () => void;
+  selected: boolean;
+  onSelect: () => void;
 }) {
-  const [copied, setCopied] = useState(false);
-  const [toolsOpen, setToolsOpen] = useState(false);
-  const [expandedToolIds, setExpandedToolIds] = useState<Set<string>>(() => new Set());
   const meta = metaLine(item);
-  const directives = collectAgentMessages(
-    useAppStore((s) => s.messagesBySession[sessionId] ?? []),
-    item.id
-  );
   return (
-    <div id={`agents-row-${item.id}`} className="agents-row">
-      <div className="agents-row-head" onClick={onToggle} title={expanded ? "Collapse" : "Expand"}>
+    <button
+      id={`agents-row-${item.id}`}
+      type="button"
+      className={`agents-row agents-roster-item${selected ? " is-selected" : ""}`}
+      aria-pressed={selected}
+      onClick={onSelect}
+      title={`Inspect ${item.name}`}
+    >
+      <span className="agents-row-head">
         <span className={`suba-dot ${item.status}`} />
         <span className="agents-name" title={item.name}>
           {item.name}
@@ -127,33 +126,84 @@ function AgentRow({
             item.durationMs !== undefined && <span className="suba-dur">{formatDuration(item.durationMs)}</span>
           )}
           <span className={`suba-check ${item.status}`}>
-            {item.status === "completed" ? "✓" : item.status === "running" ? "●" : "⚠"}
+            <StatusIcon status={item.status} />
           </span>
         </span>
+      </span>
+      <span className="suba-excerpt" title={item.summary}>
+        {item.summary}
+      </span>
+      {meta && <span className="suba-meta">{meta}</span>}
+    </button>
+  );
+}
+
+function AgentInspector({
+  groupId,
+  item,
+  live,
+  basePath,
+  sessionId,
+  onPreview
+}: {
+  groupId: string;
+  item: SubagentInfo;
+  live: boolean;
+  basePath?: string;
+  sessionId: string;
+  onPreview: (path: string) => void;
+}) {
+  const [copied, setCopied] = useState(false);
+  const [toolsOpen, setToolsOpen] = useState(false);
+  const [expandedToolIds, setExpandedToolIds] = useState<Set<string>>(() => new Set());
+  const meta = metaLine(item);
+  const directives = collectAgentMessages(
+    useAppStore((s) => s.messagesBySession[sessionId] ?? []),
+    item.id
+  );
+  return (
+    <section className="agents-inspector" aria-label={`${item.name} details`}>
+      <div className="agents-inspector-header">
+        <span className={`suba-dot ${item.status}`} />
+        <div className="agents-inspector-title">
+          <span className="agents-name" title={item.name}>
+            {item.name}
+          </span>
+          {item.agentType && <span className="suba-badge">{item.agentType}</span>}
+        </div>
+        <div className="agents-inspector-status">
+          {item.status === "running" && live && item.startedAt !== undefined ? (
+            <RunningElapsed startedAt={item.startedAt} />
+          ) : (
+            item.durationMs !== undefined && <span className="suba-dur">{formatDuration(item.durationMs)}</span>
+          )}
+          <span className={`suba-check ${item.status}`}>
+            <StatusIcon status={item.status} />
+          </span>
+        </div>
       </div>
-      <div className="suba-excerpt" title={item.summary}>
+      <div className="agents-inspector-summary" title={item.summary}>
         {item.summary}
       </div>
-      {meta && <div className="suba-meta">{meta}</div>}
-      {expanded && (
-        <div className="agents-detail" onClick={(e) => e.stopPropagation()}>
-          {item.prompt && (
-            <>
-              <div className="tool-output-label">prompt</div>
-              <div className="agents-md">
-                <Md text={item.prompt} />
-              </div>
-            </>
-          )}
-          {item.output && (
-            <>
-              <div className="tool-output-label">output</div>
-              <div className="agents-md">
-                <Md text={item.output.slice(0, 4000)} />
-              </div>
-            </>
-          )}
-          {(item.toolCount > 0 || item.tools.length > 0) && (
+      {meta && <div className="suba-meta agents-inspector-meta">{meta}</div>}
+      <div className="agents-detail">
+        {item.prompt && (
+          <>
+            <div className="tool-output-label">prompt</div>
+            <div className="agents-md">
+              <Md text={item.prompt} />
+            </div>
+          </>
+        )}
+        {item.output && (
+          <>
+            <div className="tool-output-label">output</div>
+            <div className="agents-md">
+              <Md text={item.output.slice(0, 4000)} />
+            </div>
+          </>
+        )}
+        {(item.toolCount > 0 || item.tools.length > 0) && (
             <div className="agents-tool-calls">
               <button
                 type="button"
@@ -161,7 +211,7 @@ function AgentRow({
                 aria-expanded={toolsOpen}
                 onClick={() => setToolsOpen((open) => !open)}
               >
-                <span className="tool-caret">{toolsOpen ? "▾" : "▸"}</span>
+                {toolsOpen ? <ChevronDown aria-hidden="true" size={14} /> : <ChevronRight aria-hidden="true" size={14} />}
                 Tool calls ({item.toolCount})
               </button>
               {toolsOpen && (
@@ -205,11 +255,12 @@ function AgentRow({
                             >
                               <td>
                                 <span className={`agents-tool-status ${status}`}>
-                                  {status === "completed" ? "✓ Completed" : status === "running" ? "● Running" : "⚠ Error"}
+                                  {status === "completed" ? <Check aria-hidden="true" size={13} /> : status === "running" ? <CircleDot aria-hidden="true" size={12} /> : <TriangleAlert aria-hidden="true" size={13} />}
+                                  {status === "completed" ? "Completed" : status === "running" ? "Running" : "Error"}
                                 </span>
                               </td>
                               <td className="agents-tool-summary" title={summary}>
-                                <span className="tool-caret">{rowOpen ? "▾" : "▸"}</span>
+                                {rowOpen ? <ChevronDown aria-hidden="true" size={14} /> : <ChevronRight aria-hidden="true" size={14} />}
                                 {summary}
                               </td>
                               <td className="agents-tool-duration">
@@ -247,7 +298,7 @@ function AgentRow({
               )}
             </div>
           )}
-          {directives.length > 0 && (
+        {directives.length > 0 && (
             <>
               <div className="tool-output-label">messages</div>
               <div className="agents-tools">
@@ -263,26 +314,26 @@ function AgentRow({
               </div>
             </>
           )}
-          <div className="agents-actions">
-            {item.prompt && (
-              <button
-                className="btn"
-                onClick={() => {
-                  copyText(item.prompt ?? "");
-                  setCopied(true);
-                  window.setTimeout(() => setCopied(false), 1500);
-                }}
+        <div className="agents-actions">
+          {item.prompt && (
+            <button
+              className="btn"
+              onClick={() => {
+                copyText(item.prompt ?? "");
+                setCopied(true);
+                window.setTimeout(() => setCopied(false), 1500);
+              }}
               >
-                {copied ? "✓ Copied" : "Copy prompt"}
-              </button>
-            )}
-            <button className="btn" onClick={() => jumpToSubagentGroup(groupId, item.id)}>
-              Show in thread
+              {copied && <Check aria-hidden="true" size={14} />}
+              {copied ? "Copied" : "Copy prompt"}
             </button>
-          </div>
+          )}
+          <button className="btn" onClick={() => jumpToSubagentGroup(groupId, item.id)}>
+            Show in thread
+          </button>
         </div>
-      )}
-    </div>
+      </div>
+    </section>
   );
 }
 
@@ -293,7 +344,7 @@ export function AgentsPanel({ sessionId }: { sessionId: string }) {
   const activeProjectId = useAppStore((s) => s.activeProjectId);
   const openPreview = useAppStore((s) => s.openPreview);
   const basePath = projects.find((p) => p.id === activeProjectId)?.rootPath;
-  const [expandedId, setExpandedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
 
   const ordered = orderToolsForDisplay(messages);
@@ -315,7 +366,7 @@ export function AgentsPanel({ sessionId }: { sessionId: string }) {
     const applyTarget = (detail: AgentsTarget | undefined) => {
       const targetId =
         detail?.agentId ?? groupsRef.current.find((g) => g.id === detail?.groupId)?.items[0]?.id;
-      if (targetId) setExpandedId(targetId);
+      if (targetId) setSelectedId(targetId);
       window.setTimeout(() => {
         const el = targetId ? document.getElementById(`agents-row-${targetId}`) : null;
         if (el) {
@@ -340,6 +391,9 @@ export function AgentsPanel({ sessionId }: { sessionId: string }) {
     return () => window.removeEventListener("cw:open-agents", onOpen as EventListener);
   }, []);
 
+  const agentEntries = groups.flatMap((group) => group.items.map((item) => ({ groupId: group.id, item })));
+  const selected = agentEntries.find(({ item }) => item.id === selectedId) ?? agentEntries[0];
+
   return (
     <div className="agents-panel">
       <div className="agents-section">
@@ -351,31 +405,42 @@ export function AgentsPanel({ sessionId }: { sessionId: string }) {
           </span>
         )}
       </div>
-      <div ref={bodyRef} className="agents-list">
+      <div ref={bodyRef} className="agents-list agents-panel-body">
         {total === 0 && (
           <div className="agents-empty">
-            <div className="empty-mark">✳</div>
+            <div className="empty-mark"><Bot aria-hidden="true" size={22} /></div>
             <div>No subagents in this session yet.</div>
             <div className="agents-empty-sub">Spawned Task / Agent tools will appear here.</div>
           </div>
         )}
-        {groups.map((g) => (
-          <div key={g.id}>
-            {g.items.map((item) => (
-              <AgentRow
-                key={item.id}
-                groupId={g.id}
-                item={item}
-                expanded={expandedId === item.id}
-                live={live}
-                basePath={basePath}
-                sessionId={sessionId}
-                onPreview={(p) => openPreview(sessionId, p, basePath ?? "")}
-                onToggle={() => setExpandedId((id) => (id === item.id ? null : item.id))}
-              />
+        {total > 0 && (
+          <div className="agents-roster" aria-label="Subagent roster">
+            {groups.map((g) => (
+              <div key={g.id} className="agents-roster-group">
+                {g.items.map((item) => (
+                  <AgentRosterItem
+                    key={item.id}
+                    item={item}
+                    live={live}
+                    selected={selected?.item.id === item.id}
+                    onSelect={() => setSelectedId(item.id)}
+                  />
+                ))}
+              </div>
             ))}
           </div>
-        ))}
+        )}
+        {selected && (
+          <AgentInspector
+            key={selected.item.id}
+            groupId={selected.groupId}
+            item={selected.item}
+            live={live}
+            basePath={basePath}
+            sessionId={sessionId}
+            onPreview={(p) => openPreview(sessionId, p, basePath ?? "")}
+          />
+        )}
       </div>
     </div>
   );

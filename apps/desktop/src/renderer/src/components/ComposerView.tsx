@@ -1,5 +1,22 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { AtSign, ClipboardList, Image, Lock, LockOpen, Pencil, Plus, Slash, Terminal, Zap } from "lucide-react";
+import {
+  ArrowRight,
+  AtSign,
+  ClipboardList,
+  Files,
+  Image,
+  Lock,
+  LockOpen,
+  Paperclip,
+  Pencil,
+  ShieldCheck,
+  SlidersHorizontal,
+  Slash,
+  Square,
+  Terminal,
+  X,
+  Zap
+} from "lucide-react";
 import type { ComposerPrefs, DriverName, EffortLevel, ModelOption, PermissionMode } from "../cw.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { MenuSelect } from "./MenuSelect.js";
@@ -164,7 +181,7 @@ export function ComposerView({
   const permissionDisplay = PERMISSIONS.find((o) => o.id === (prefs.permissionMode ?? "auto"))?.label ?? "Auto";
 
   return (
-    <div className="composer">
+    <div className="composer composer-recipe">
       {attachments.length > 0 && (
         <div className="attach-chips">
           {attachments.map((a) => (
@@ -182,43 +199,38 @@ export function ComposerView({
                 aria-label={`Remove ${a}`}
                 onClick={() => setAttachments((prev) => prev.filter((x) => x !== a))}
               >
-                ✕
+                <X aria-hidden="true" size={14} />
               </button>
             </span>
           ))}
         </div>
       )}
-      <div className="composer-input-wrap">
-        <textarea
-          value={draft}
-          onChange={(e) => setDraft(e.target.value)}
-          onKeyDown={(e) => {
-            if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "u") {
-              e.preventDefault();
-              setPickerOpen(false);
-              setAddOpen((v) => !v);
-              return;
-            }
-            if (e.key === "Enter" && !e.shiftKey) {
-              e.preventDefault();
-              send();
-            }
-          }}
-          onPaste={(e) => {
-            void pasteFiles(e.clipboardData);
-          }}
-          placeholder="Ask for changes, send follow-ups, or attach images"
-          className="composer-input"
-          rows={2}
-          disabled={busy}
-        />
-        {!draft && attachments.length === 0 && (
-          <div className="composer-empty-hint" aria-hidden="true">
-            <kbd>⇧</kbd>
-            <kbd>↵</kbd>
-            <span>newline</span>
-          </div>
-        )}
+      <div className="composer-writing">
+        <div className="composer-input-wrap">
+          <textarea
+            value={draft}
+            onChange={(e) => setDraft(e.target.value)}
+            onKeyDown={(e) => {
+              if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "u") {
+                e.preventDefault();
+                setPickerOpen(false);
+                setAddOpen((v) => !v);
+                return;
+              }
+              if (e.key === "Enter" && !e.shiftKey) {
+                e.preventDefault();
+                send();
+              }
+            }}
+            onPaste={(e) => {
+              void pasteFiles(e.clipboardData);
+            }}
+            placeholder="Ask cw-code — @ files, / commands, $ skills"
+            className="composer-input"
+            rows={3}
+            disabled={busy}
+          />
+        </div>
       </div>
       {pasteError && (
         <div className="composer-paste-error" role="alert">
@@ -248,77 +260,17 @@ export function ComposerView({
                 }}
                 title={f}
               >
-                {isImage(f) ? "◈ " : "@ "}
+                {isImage(f) ? <Image aria-hidden="true" size={14} /> : "@ "}
                 {f}
               </div>
             ))}
           </div>
         </div>
       )}
-      <div className="composer-bar">
-        <span title={driver}>
-          <DriverIcon driver={driver} size={13} />
-        </span>
-        <MenuSelect
-          label="Model"
-          title={modelsError ? `Model list failed: ${modelsError}` : "Model"}
-          value={modelValue}
-          display={modelDisplay}
-          isSet={showCustom || !!prefs.model}
-          searchable
-          searchPlaceholder="Filter models…"
-          options={[
-            ...(!showCustom && !prefs.model ? [{ id: "", label: "Default model" }] : []),
-            ...models.map((m) => ({ id: m.id, label: m.label, hint: m.id })),
-            { id: "__custom", label: "Custom…" }
-          ]}
-          onPick={(v) => {
-            if (v === "__custom") {
-              setShowCustom(true);
-              return;
-            }
-            setShowCustom(false);
-            backend.savePrefs({ model: v || undefined });
-          }}
-        />
-        {showCustom && (
-          <input
-            className="field composer-custom"
-            placeholder="provider/model or alias"
-            aria-label="Custom model"
-            value={customModel}
-            onChange={(e) => setCustomModel(e.target.value)}
-            onBlur={() => {
-              const v = customModel.trim();
-              if (v) backend.savePrefs({ model: v });
-            }}
-            onKeyDown={(e) => {
-              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
-              if (e.key === "Escape") setShowCustom(false);
-            }}
-          />
-        )}
-        <MenuSelect
-          label="Effort"
-          title="Effort"
-          value={prefs.effort ?? "medium"}
-          display={effortDisplay}
-          isSet={(prefs.effort ?? "medium") !== "medium"}
-          options={EFFORTS.map((o) => ({ id: o.id, label: o.label }))}
-          onPick={(v) => backend.savePrefs({ effort: v as EffortLevel })}
-        />
-        <MenuSelect
-          label="Permission"
-          title="Permission"
-          value={prefs.permissionMode ?? "auto"}
-          display={permissionDisplay}
-          isSet={(prefs.permissionMode ?? "auto") !== "auto"}
-          options={PERMISSIONS.map((o) => ({ id: o.id, label: o.label, description: o.description, icon: o.icon }))}
-          onPick={(v) => backend.savePrefs({ permissionMode: v as PermissionMode })}
-        />
+      <div className="composer-recipe-row">
         <div className="menu composer-add">
           <button
-            className="icon-btn"
+            className="icon-btn composer-attach"
             title="Add attachment (Ctrl+U)"
             aria-label="Add attachment"
             aria-haspopup="menu"
@@ -328,7 +280,7 @@ export function ComposerView({
               setAddOpen((v) => !v);
             }}
           >
-            <Plus size={14} />
+            <Paperclip size={17} />
           </button>
           {addOpen && (
             <>
@@ -381,13 +333,103 @@ export function ComposerView({
             </>
           )}
         </div>
+        <span className="recipe-lead" aria-hidden="true">Run with</span>
+        <div className="recipe-control recipe-model" title={driver}>
+          <DriverIcon driver={driver} size={15} />
+          <MenuSelect
+            label="Model"
+            title={modelsError ? `Model list failed: ${modelsError}` : "Model"}
+            value={modelValue}
+            display={modelDisplay}
+            isSet={showCustom || !!prefs.model}
+            searchable
+            searchPlaceholder="Filter models…"
+            options={[
+              ...(!showCustom && !prefs.model ? [{ id: "", label: "Default model" }] : []),
+              ...models.map((m) => ({ id: m.id, label: m.label, hint: m.id })),
+              { id: "__custom", label: "Custom…" }
+            ]}
+            onPick={(v) => {
+              if (v === "__custom") {
+                setShowCustom(true);
+                return;
+              }
+              setShowCustom(false);
+              backend.savePrefs({ model: v || undefined });
+            }}
+          />
+        </div>
+        {showCustom && (
+          <input
+            className="field composer-custom"
+            placeholder="provider/model or alias"
+            aria-label="Custom model"
+            value={customModel}
+            onChange={(e) => setCustomModel(e.target.value)}
+            onBlur={() => {
+              const v = customModel.trim();
+              if (v) backend.savePrefs({ model: v });
+            }}
+            onKeyDown={(e) => {
+              if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+              if (e.key === "Escape") setShowCustom(false);
+            }}
+          />
+        )}
+        <div className="recipe-control">
+          <SlidersHorizontal size={15} aria-hidden="true" />
+          <MenuSelect
+            label="Effort"
+            title="Effort"
+            value={prefs.effort ?? "medium"}
+            display={effortDisplay}
+            isSet={(prefs.effort ?? "medium") !== "medium"}
+            options={EFFORTS.map((o) => ({ id: o.id, label: o.label }))}
+            onPick={(v) => backend.savePrefs({ effort: v as EffortLevel })}
+          />
+        </div>
+        <div className="recipe-control">
+          <ShieldCheck size={16} aria-hidden="true" />
+          <MenuSelect
+            label="Permission"
+            title="Permission"
+            value={prefs.permissionMode ?? "auto"}
+            display={permissionDisplay}
+            isSet={(prefs.permissionMode ?? "auto") !== "auto"}
+            options={PERMISSIONS.map((o) => ({ id: o.id, label: o.label, description: o.description, icon: o.icon }))}
+            onPick={(v) => backend.savePrefs({ permissionMode: v as PermissionMode })}
+          />
+        </div>
+        <button
+          type="button"
+          className="recipe-files"
+          onClick={openFilePicker}
+          title="Attach project files"
+          aria-label={`${attachments.length} attached ${attachments.length === 1 ? "file" : "files"}. Add context.`}
+        >
+          <Files size={15} />
+          <span aria-live="polite">{attachments.length} {attachments.length === 1 ? "file" : "files"}</span>
+        </button>
         {busy ? (
-          <button className="btn btn-stop" onClick={() => backend.interrupt()}>
-            Stop
+          <button
+            type="button"
+            className="composer-action composer-stop"
+            onClick={() => backend.interrupt()}
+            title="Stop response"
+            aria-label="Stop response"
+          >
+            <Square size={14} fill="currentColor" />
           </button>
         ) : (
-          <button className="btn-send-circle" onClick={send} disabled={!draft.trim() && attachments.length === 0} title="Send" aria-label="Send">
-            ↑
+          <button
+            type="button"
+            className="composer-action composer-send"
+            onClick={send}
+            disabled={!draft.trim() && attachments.length === 0}
+            title="Send"
+            aria-label="Send"
+          >
+            <ArrowRight size={18} />
           </button>
         )}
       </div>

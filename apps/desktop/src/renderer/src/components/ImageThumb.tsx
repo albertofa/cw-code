@@ -1,4 +1,5 @@
 import { useEffect, useState } from "react";
+import { Image } from "lucide-react";
 import { imageDataUrl, type ImageTarget } from "./imagePreview.js";
 
 export function ImageThumb({
@@ -27,7 +28,7 @@ export function ImageThumb({
   if (!src) {
     return (
       <span className={className} aria-hidden>
-        ◈
+        <Image aria-hidden="true" size={14} />
       </span>
     );
   }

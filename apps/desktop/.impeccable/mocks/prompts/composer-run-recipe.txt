@@ -1,0 +1,7 @@
+Create a high-fidelity edit of this exact cw-code Rider Violet Workbench screenshot, changing only the composer at the bottom of the center conversation. Preserve every other element exactly: label-free T3-style work log, session header branch, project sidebar, right Files/diff/terminal workspace, dark Rider Violet visual system, and dimensions.
+
+Composer concept: RUN RECIPE. Build one cohesive single graphite composer body about 760px wide and 142–150px tall, with one outer silhouette, one soft shadow, and 11–12px corners. The text area is dominant, open, and spacious with 15px padding. There is no shelf, footer card, vertical spine, gap, border, or divider line.
+
+At the lower baseline inside the same surface, reduce configuration to one readable execution sentence instead of several widgets: attachment plus icon, then “Run with Claude / Sonnet · High · Auto” as a compact semantic recipe. Each phrase looks independently clickable through subtle weight and hover affordance, but there are no pill backgrounds or boxes. A small context icon with “3” sits after the recipe. The provider icon may use a tiny coral accent; all other text is subdued. At far right, the violet 40px send/stop key is set into the shell as the single strong action. Git does not appear in the composer.
+
+This should feel like a command declaration from VS Code/OpenCode rather than a mini settings toolbar: highly cohesive, progressive, and clearly different from the other options. No changes anywhere else, no marketing styling, no extra labels.

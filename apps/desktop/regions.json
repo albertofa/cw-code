@@ -1,0 +1,17 @@
+{
+  "regions": [
+    { "id": "app-titlebar", "kind": "chrome", "grid": "A0:J0", "note": "subtly violet navy native title chrome with compact icon actions" },
+    { "id": "session-sidebar", "kind": "control", "grid": "A1:B8", "note": "project-grouped session navigation on stepped graphite" },
+    { "id": "sidebar-footer", "kind": "control", "grid": "A9:B9", "note": "quiet settings and refresh icon actions" },
+    { "id": "thread-header", "kind": "chrome", "grid": "C0:G0", "note": "session title, provider, branch and compact thread actions" },
+    { "id": "user-message", "kind": "text", "grid": "D1:G1", "note": "right-aligned neutral prompt bubble with no speaker label or resting metadata" },
+    { "id": "assistant-message", "kind": "text", "grid": "C2:G2", "note": "open assistant work-log prose without avatar or bubble" },
+    { "id": "activity-ledger", "kind": "control", "grid": "C3:G4", "note": "compact tool activity rows with status icon, description, subject and diff counts" },
+    { "id": "conversation-canvas", "kind": "chrome", "grid": "C5:G7", "note": "darkest and calmest workspace surface" },
+    { "id": "composer", "kind": "control", "grid": "C8:G9", "note": "single cohesive Run Recipe composer with Integrated Hull controls and violet send key" },
+    { "id": "right-tabs", "kind": "chrome", "grid": "H0:J0", "note": "icon-first dock tabs with violet active state" },
+    { "id": "file-tree", "kind": "control", "grid": "H1:H6", "note": "compact Rider-like file tree" },
+    { "id": "diff-editor", "kind": "control", "grid": "I1:J6", "note": "dense syntax-colored diff editor" },
+    { "id": "terminal", "kind": "control", "grid": "H7:J9", "note": "integrated terminal tool window" }
+  ]
+}

@@ -1,0 +1,45 @@
+{
+  "title": "Choose the cw-code working state",
+  "question": "Same product structure in all three: projects and sessions on the left, conversation in the center, contextual tools on the right. Choose the default emphasis, or steer what should be combined.",
+  "options": [
+    {
+      "id": "balanced",
+      "label": "Balanced T3",
+      "kicker": "DEFAULT STATE",
+      "lineage": "T3 Code structure, Rider surfaces, VS Code tooling density",
+      "thesis": "The current three-region shell, cleaned up and scaled properly, with Diff open beside the active conversation.",
+      "palette": ["#090a0c", "#101216", "#171a1f", "#252a31", "#4d8dff", "#e6e8eb"],
+      "materials": ["matte graphite planes", "quiet selected rows", "crisp code fields"],
+      "viewport": "A 296px grouped-session sidebar, fluid conversation, and roughly 500px contextual Diff pane. The center stays dominant and the right pane remains collapsible and resizable.",
+      "risk": "Keeping the right pane open reduces the conversation width on smaller screens.",
+      "comp": ".impeccable/mocks/canonical-balanced.png"
+    },
+    {
+      "id": "focus",
+      "label": "T3 Focus",
+      "kicker": "CONVERSATION STATE",
+      "lineage": "T3 Code’s open conversation field with cw-code’s existing panel toggle",
+      "thesis": "The same shell with the right workspace collapsed, letting the active thread and composer use the full remaining width.",
+      "palette": ["#090a0c", "#101216", "#171a1f", "#252a31", "#4d8dff", "#e6e8eb"],
+      "materials": ["near-black canvas", "restrained graphite selection", "one quiet tool block"],
+      "viewport": "The project/session sidebar remains fixed; the thread expands and a tiny far-right control restores Files, Diff, Agents, or Terminal.",
+      "risk": "Tool state is less visible until the developer restores the contextual workspace.",
+      "comp": ".impeccable/mocks/canonical-focus.png"
+    },
+    {
+      "id": "workbench",
+      "label": "T3 Workbench",
+      "kicker": "TOOLING STATE",
+      "lineage": "T3 Code shell with a VS Code-style split inside the existing right workspace",
+      "thesis": "The same shell while reviewing changes: Diff and Terminal share a wider contextual workspace without taking over the conversation.",
+      "palette": ["#090a0c", "#101216", "#171a1f", "#252a31", "#4d8dff", "#e6e8eb"],
+      "materials": ["matte work planes", "dense monospace tooling", "subtle draggable split"],
+      "viewport": "The left session structure is unchanged; the center remains a readable thread; the right workspace expands and splits internally between Diff and Terminal.",
+      "risk": "This state is intentionally dense and should be entered by the user rather than forced as the default.",
+      "comp": ".impeccable/mocks/canonical-workbench.png"
+    }
+  ],
+  "buildPath": {"value": "comp", "toggle": false},
+  "steer": true,
+  "followup": true
+}

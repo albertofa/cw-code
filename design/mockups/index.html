@@ -1,0 +1,115 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>cw-code visual design directions</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        font-family: Inter, "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+        --page: #101216;
+        --panel: #181b21;
+        --raised: #20242c;
+        --border: #303641;
+        --text: #f0f3f7;
+        --muted: #929daa;
+        --accent: #6aa9df;
+      }
+
+      * { box-sizing: border-box; }
+      html, body { height: 100%; }
+      body { margin: 0; background: var(--page); color: var(--text); overflow: hidden; }
+      button, a { font: inherit; }
+
+      .shell { height: 100%; display: grid; grid-template-columns: 316px minmax(0, 1fr); }
+      .guide { border-right: 1px solid var(--border); background: var(--panel); padding: 28px 22px; overflow: auto; }
+      .eyebrow { color: var(--accent); font-size: 12px; font-weight: 750; letter-spacing: .11em; text-transform: uppercase; }
+      h1 { margin: 10px 0 10px; font-size: 26px; letter-spacing: -.035em; }
+      .intro { margin: 0 0 26px; color: #bac2cd; line-height: 1.55; font-size: 14px; }
+      .concepts { display: grid; gap: 10px; }
+      .concept {
+        width: 100%; text-align: left; color: inherit; border: 1px solid var(--border); background: transparent;
+        border-radius: 10px; padding: 14px; cursor: pointer; transition: 140ms ease;
+      }
+      .concept:hover { background: var(--raised); border-color: #454e5b; transform: translateY(-1px); }
+      .concept.active { background: #232a33; border-color: var(--accent); box-shadow: inset 3px 0 var(--accent); }
+      .concept strong { display: block; font-size: 14px; margin-bottom: 5px; }
+      .concept span { color: var(--muted); font-size: 12.5px; line-height: 1.45; display: block; }
+      .scale-note { margin-top: 24px; padding-top: 18px; border-top: 1px solid var(--border); }
+      .scale-note strong { font-size: 13px; }
+      .scale-note p { color: var(--muted); font-size: 12.5px; line-height: 1.5; margin: 7px 0 0; }
+
+      .stage { min-width: 0; display: grid; grid-template-rows: 52px minmax(0, 1fr); }
+      .stagebar { display: flex; align-items: center; gap: 10px; padding: 0 16px; background: #14171c; border-bottom: 1px solid var(--border); }
+      .stage-title { font-size: 13px; color: #b7c0cb; flex: 1; }
+      .stage-title b { color: var(--text); }
+      .viewport-pill { border: 1px solid var(--border); border-radius: 999px; padding: 6px 10px; color: var(--muted); font-size: 12px; }
+      .open {
+        color: var(--text); text-decoration: none; background: var(--raised); border: 1px solid var(--border);
+        border-radius: 7px; padding: 7px 11px; font-size: 12.5px;
+      }
+      .open:hover { border-color: var(--accent); }
+      iframe { width: 100%; height: 100%; border: 0; background: #0d0f12; }
+
+      @media (max-width: 980px) {
+        .shell { grid-template-columns: 238px minmax(0, 1fr); }
+        .guide { padding: 20px 14px; }
+        h1 { font-size: 21px; }
+        .viewport-pill { display: none; }
+      }
+    </style>
+  </head>
+  <body>
+    <main class="shell">
+      <aside class="guide">
+        <div class="eyebrow">cw-code design study</div>
+        <h1>Three directions, one product</h1>
+        <p class="intro">The application structure stays intact. Each concept tests a different balance of conversation, tooling, and information density at a larger default scale.</p>
+
+        <nav class="concepts" aria-label="Design concepts">
+          <button class="concept active" data-src="rider-focus.html" data-title="Rider Focus">
+            <strong>01 · Rider Focus</strong>
+            <span>Clear charcoal layers, deliberate accents, confident pane hierarchy. Recommended baseline.</span>
+          </button>
+          <button class="concept" data-src="t3-conversation.html" data-title="T3 Conversation">
+            <strong>02 · T3 Conversation</strong>
+            <span>Quiet navigation, spacious reading canvas, and progressive disclosure around agent work.</span>
+          </button>
+          <button class="concept" data-src="vscode-workbench.html" data-title="VS Code Workbench">
+            <strong>03 · VS Code Workbench</strong>
+            <span>Explicit tool regions, activity rail, bottom panel, and power-user density.</span>
+          </button>
+        </nav>
+
+        <section class="scale-note">
+          <strong>Shared baseline</strong>
+          <p>Comfortable is the default: 14–15px UI text, 16–18px icons, 36–42px rows, 44–48px pane headers, and a 15–16px conversation rhythm.</p>
+        </section>
+      </aside>
+
+      <section class="stage">
+        <header class="stagebar">
+          <div class="stage-title">Previewing <b id="title">Rider Focus</b></div>
+          <div class="viewport-pill">Best viewed at 1440 × 900 or wider</div>
+          <a class="open" id="open" href="rider-focus.html" target="_blank" rel="noreferrer">Open full size ↗</a>
+        </header>
+        <iframe id="preview" title="cw-code design mockup" src="rider-focus.html"></iframe>
+      </section>
+    </main>
+
+    <script>
+      const buttons = [...document.querySelectorAll(".concept")];
+      const preview = document.getElementById("preview");
+      const title = document.getElementById("title");
+      const open = document.getElementById("open");
+      buttons.forEach((button) => button.addEventListener("click", () => {
+        buttons.forEach((item) => item.classList.remove("active"));
+        button.classList.add("active");
+        preview.src = button.dataset.src;
+        title.textContent = button.dataset.title;
+        open.href = button.dataset.src;
+      }));
+    </script>
+  </body>
+</html>

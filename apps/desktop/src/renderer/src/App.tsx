@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
-import { Bot, Code, Eye, Folder, GitBranch, Orbit, PanelRightClose, Sparkles, Terminal, type LucideIcon } from "lucide-react";
+import { Bot, Code, Columns2, Eye, Folder, GitBranch, Orbit, PanelRightClose, Sparkles, Terminal, type LucideIcon } from "lucide-react";
 import type { DriverName } from "./cw.js";
 import { Sidebar } from "./components/Sidebar.js";
 import { TitleBar } from "./components/TitleBar.js";
@@ -55,6 +55,7 @@ export function App() {
   const { activeProjectId, activeSessionId, sessionsByProject, pendingDriver, preview, sourceControlRefreshIntervalSeconds } = useAppStore();
   const store = useAppStore();
   const [rightTab, setRightTab] = useState<RightTab>("files");
+  const [rightSplit, setRightSplit] = useState(false);
   const [rightVisible, setRightVisible] = useState(true);
   const [rightWidth, setRightWidth] = useState(loadRightWidth);
   const [preloadError, setPreloadError] = useState<string | null>(null);
@@ -260,6 +261,36 @@ export function App() {
   const allSessionKey = allSessions.map((s) => s.id).join(",");
   const driver = pendingDriver ?? allSessions.find((s) => s.id === activeSessionId)?.driver;
 
+  const splitTab: RightTab = rightTab === "claude" || rightTab === "opencode" || rightTab === "codex" || rightTab === "shell"
+    ? "files"
+    : "shell";
+  const tabTitle = (tab: RightTab): string => {
+    if (tab === "preview") return "Preview";
+    return TABS.find((item) => item.id === tab)?.title ?? tab;
+  };
+  const renderRightContent = (tab: RightTab, suffix = "main") => (
+    <>
+      {activeSessionId && tab === "files" && <FilePanel sessionId={activeSessionId} />}
+      {activeSessionId && tab === "agents" && <AgentsPanel sessionId={activeSessionId} />}
+      {activeSessionId && tab === "diff" && <GitInspectPanel sessionId={activeSessionId} />}
+      {tab === "preview" && preview && (
+        <PreviewPanel
+          key={`${preview.sessionId}:${preview.path}:${suffix}`}
+          sessionId={preview.sessionId}
+          path={preview.path}
+          basePath={preview.basePath}
+          onClose={() => {
+            store.closePreview();
+            setRightTab("files");
+          }}
+        />
+      )}
+      {activeSessionId && (tab === "claude" || tab === "opencode" || tab === "codex" || tab === "shell") && (
+        <PtyTab key={`${activeSessionId}-${tab}-${suffix}`} sessionId={activeSessionId} kind={tab} />
+      )}
+    </>
+  );
+
   useEffect(() => {
     if (!window.cw || allSessions.length === 0) return;
     for (const session of Object.values(useAppStore.getState().sessionsByProject).flat()) {
@@ -307,6 +338,15 @@ export function App() {
                   </button>
                 )}
                 <button
+                  className={`tab tab-split${rightSplit ? " active" : ""}`}
+                  onClick={() => setRightSplit((value) => !value)}
+                  title={rightSplit ? "Close split panel" : `Split panel with ${tabTitle(splitTab)}`}
+                  aria-label={rightSplit ? "Close split panel" : `Split panel with ${tabTitle(splitTab)}`}
+                  aria-pressed={rightSplit}
+                >
+                  <Columns2 size={15} />
+                </button>
+                <button
                   className="tab tab-min"
                   onClick={() => setRightVisible(false)}
                   title="Minimize panel"
@@ -315,25 +355,21 @@ export function App() {
                   <PanelRightClose size={15} />
                 </button>
               </div>
-              <div className="right-body">
+              <div className={`right-body${rightSplit ? " right-body-split" : ""}`}>
                 {!activeSessionId && !preview && <div className="right-empty">No session selected.</div>}
-                {activeSessionId && rightTab === "files" && <FilePanel sessionId={activeSessionId} />}
-                {activeSessionId && rightTab === "agents" && <AgentsPanel sessionId={activeSessionId} />}
-                {activeSessionId && rightTab === "diff" && <GitInspectPanel sessionId={activeSessionId} />}
-                {rightTab === "preview" && preview && (
-                  <PreviewPanel
-                    key={`${preview.sessionId}:${preview.path}`}
-                    sessionId={preview.sessionId}
-                    path={preview.path}
-                    basePath={preview.basePath}
-                    onClose={() => {
-                      store.closePreview();
-                      setRightTab("files");
-                    }}
-                  />
-                )}
-                {activeSessionId && (rightTab === "claude" || rightTab === "opencode" || rightTab === "codex" || rightTab === "shell") && (
-                  <PtyTab key={`${activeSessionId}-${rightTab}`} sessionId={activeSessionId} kind={rightTab} />
+                {(activeSessionId || preview) && (
+                  rightSplit ? (
+                    <>
+                      <section className="right-split-pane right-split-primary">
+                        <div className="right-split-label">{tabTitle(rightTab)}</div>
+                        <div className="right-split-content">{renderRightContent(rightTab)}</div>
+                      </section>
+                      <section className="right-split-pane right-split-secondary">
+                        <div className="right-split-label">{tabTitle(splitTab)}</div>
+                        <div className="right-split-content">{renderRightContent(splitTab, "split")}</div>
+                      </section>
+                    </>
+                  ) : renderRightContent(rightTab)
                 )}
               </div>
             </aside>

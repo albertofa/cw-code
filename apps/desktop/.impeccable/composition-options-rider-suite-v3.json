@@ -1,0 +1,45 @@
+{
+  "title": "Rider Violet — work-log and composer correction",
+  "question": "This revision removes persistent speaker identity and restores clear composer hierarchy. Review the three states together, then choose a screen and note whether the suite is approved or needs another adjustment.",
+  "options": [
+    {
+      "id": "rider-violet-workbench-v3-final",
+      "label": "Work-log Workbench",
+      "kicker": "PRIMARY STATE",
+      "lineage": "Rider visual clarity + T3 message behavior + cw-code tooling",
+      "thesis": "User prompts identify themselves through right alignment; agent output remains open on the canvas. No names, avatars, or timestamps interrupt the work log.",
+      "palette": ["#0d1118", "#151a24", "#1b2130", "#2c2940", "#7c4dff", "#2ed39a"],
+      "materials": ["dark focus canvas", "neutral user prompt", "elevated command deck"],
+      "viewport": "The composer regains a substantial writing plane and a clearly visible second-tone tooling shelf without separators or segmented boxes.",
+      "risk": "Hover and keyboard-focus affordances must make message timestamp/copy actions discoverable without reintroducing persistent chrome.",
+      "comp": ".impeccable/mocks/rider-violet-workbench-v3-final.png"
+    },
+    {
+      "id": "rider-violet-settings-v2",
+      "label": "Settings Window",
+      "kicker": "CONFIGURATION",
+      "lineage": "Rider settings clarity + focused overlay workflow",
+      "thesis": "Configuration opens as a substantial focused window over an inert workbench, without making the project sidebar part of the settings layout.",
+      "palette": ["#0d1118", "#151a24", "#1b2130", "#2c2940", "#7c4dff", "#2ed39a"],
+      "materials": ["focused graphite window", "dimmed workbench context", "provider master-detail"],
+      "viewport": "The overlay contains only settings categories, provider roster, and provider detail. The workbench survives as subdued context around the edges.",
+      "risk": "The large overlay must trap focus cleanly and keep background session activity visible but non-interactive.",
+      "comp": ".impeccable/mocks/rider-violet-settings-v2.png"
+    },
+    {
+      "id": "rider-violet-agents-v3-final",
+      "label": "Agents Work-log",
+      "kicker": "MULTI-AGENT",
+      "lineage": "Rider workbench + T3 message behavior + full-width agent trace",
+      "thesis": "The same label-free work log and restored composer carry into the multi-agent state, with the compact roster above a full-width inspector.",
+      "palette": ["#0d1118", "#151a24", "#1b2130", "#2c2940", "#7c4dff", "#2ed39a"],
+      "materials": ["neutral prompt block", "status roster", "full-width event ledger"],
+      "viewport": "The center conversation stays readable while the right pane preserves the improved vertical agent overview and selected-agent trace.",
+      "risk": "The overview must remain capped and independently scrollable when many agents are active.",
+      "comp": ".impeccable/mocks/rider-violet-agents-v3-final.png"
+    }
+  ],
+  "buildPath": {"value": "comp", "toggle": false},
+  "steer": true,
+  "followup": true
+}

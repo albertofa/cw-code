@@ -1,5 +1,5 @@
 import { useEffect } from "react";
-import { Bot } from "lucide-react";
+import { Check, ChevronRight, CircleDot, TriangleAlert } from "lucide-react";
 import type { SubagentGroup } from "./subagents.js";
 import { formatSubagentCount, formatTokensShort, groupStatus, groupSubagentMetrics } from "./subagents.js";
 import { openAgentsPanel } from "./AgentsPanel.js";
@@ -11,6 +11,8 @@ export function subagentAnchorId(groupId: string): string {
 export function SubagentCard({ group }: { group: SubagentGroup }) {
   const status = groupStatus(group.items);
   const metrics = groupSubagentMetrics(group.items);
+  const StatusIcon = status === "completed" ? Check : status === "error" ? TriangleAlert : CircleDot;
+  const statusLabel = status === "completed" ? "Completed" : status === "error" ? "Error" : "Running";
 
   useEffect(() => {
     const onShow = (e: Event) => {
@@ -35,21 +37,20 @@ export function SubagentCard({ group }: { group: SubagentGroup }) {
         onClick={() => openAgentsPanel(group.id)}
         title="Open subagents panel"
       >
-        <span className={`suba-dot ${status}`} />
-        <Bot size={13} className="tool-icon" />
+        <span className={`suba-state ${status}`} role="img" aria-label={statusLabel} title={statusLabel}>
+          <StatusIcon size={13} aria-hidden="true" />
+        </span>
         <span className="tool-action">
-          {status === "running" ? "Running" : "Ran"} {formatSubagentCount(group.items.length)}
+          {status === "running" ? "Run" : "Ran"}
         </span>
-        <span className="suba-status">
-          {status === "completed" ? "✓ completed" : status === "running" ? "● running" : "⚠ error"}
-        </span>
+        <span className="suba-status">{formatSubagentCount(group.items.length)}</span>
         {metrics.effort && <span className="suba-metric">{metrics.effort} effort</span>}
         {metrics.tools !== undefined && <span className="suba-metric">{metrics.tools} tools</span>}
         {metrics.tokens !== undefined && (
-          <span className="suba-metric">Σ {formatTokensShort(metrics.tokens).toUpperCase()} tok</span>
+          <span className="suba-metric">{formatTokensShort(metrics.tokens).toUpperCase()} tokens</span>
         )}
         <span className="suba-view">View</span>
-        <span className="tool-caret">▸</span>
+        <span className="tool-caret"><ChevronRight aria-hidden="true" size={14} /></span>
       </div>
     </div>
   );

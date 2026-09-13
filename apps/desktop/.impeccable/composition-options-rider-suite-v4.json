@@ -1,0 +1,45 @@
+{
+  "title": "Rider Violet — detached composer shelf",
+  "question": "This revision separates the prompt surface from a smaller tooling shelf and moves Git context into the conversation header. Review the suite, then choose a screen and note whether it is approved or needs adjustment.",
+  "options": [
+    {
+      "id": "rider-violet-workbench-v4",
+      "label": "Detached Command Shelf",
+      "kicker": "PRIMARY STATE",
+      "lineage": "Rider workbench + T3 work log + cw-code session context",
+      "thesis": "The writing box now stands on its own; a shorter detached shelf below carries only prompt-scoped controls while Git moves into the session header.",
+      "palette": ["#0d1118", "#151a24", "#1b2130", "#2c2940", "#7c4dff", "#2ed39a"],
+      "materials": ["elevated writing surface", "compact graphite shelf", "header branch context"],
+      "viewport": "A visible gap separates the full-width text box from the smaller left-aligned tool shelf; the send key balances it at far right.",
+      "risk": "The narrower shelf must wrap or progressively collapse secondary controls at reduced center widths.",
+      "comp": ".impeccable/mocks/rider-violet-workbench-v4.png"
+    },
+    {
+      "id": "rider-violet-settings-v2",
+      "label": "Settings Window",
+      "kicker": "CONFIGURATION",
+      "lineage": "Rider settings clarity + focused overlay workflow",
+      "thesis": "Configuration opens as a substantial focused window over an inert workbench, without making the project sidebar part of the settings layout.",
+      "palette": ["#0d1118", "#151a24", "#1b2130", "#2c2940", "#7c4dff", "#2ed39a"],
+      "materials": ["focused graphite window", "dimmed workbench context", "provider master-detail"],
+      "viewport": "The overlay contains only settings categories, provider roster, and provider detail. The workbench survives as subdued context around the edges.",
+      "risk": "The large overlay must trap focus cleanly and keep background session activity visible but non-interactive.",
+      "comp": ".impeccable/mocks/rider-violet-settings-v2.png"
+    },
+    {
+      "id": "rider-violet-agents-v4",
+      "label": "Agents with Command Shelf",
+      "kicker": "MULTI-AGENT",
+      "lineage": "Rider workbench + full-width agent trace + detached prompt tooling",
+      "thesis": "The Agents state inherits the smaller detached tool shelf and header Git context without disturbing its vertical roster and inspector.",
+      "palette": ["#0d1118", "#151a24", "#1b2130", "#2c2940", "#7c4dff", "#2ed39a"],
+      "materials": ["compact prompt shelf", "status roster", "full-width event ledger"],
+      "viewport": "The center composer and session header now match the primary state; the right pane remains optimized for agent supervision.",
+      "risk": "The prompt shelf must retain enough contrast when the conversation canvas changes theme or brightness.",
+      "comp": ".impeccable/mocks/rider-violet-agents-v4.png"
+    }
+  ],
+  "buildPath": {"value": "comp", "toggle": false},
+  "steer": true,
+  "followup": true
+}

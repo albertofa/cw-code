@@ -1,0 +1,45 @@
+{
+  "title": "Rider Violet — quieter workbench revision",
+  "question": "This revision applies the requested composer, message, Agents, and Settings changes as one system. Choose the screen that best represents the direction, then use the note to approve the suite or request another adjustment.",
+  "options": [
+    {
+      "id": "rider-violet-workbench-v2",
+      "label": "Quieter Workbench",
+      "kicker": "PRIMARY STATE",
+      "lineage": "Rider visual clarity + T3 workflow structure + lighter cw-code Command Deck",
+      "thesis": "A darker, accent-restrained work canvas with avatar-free work records and a slimmer unsegmented composer rail.",
+      "palette": ["#0d1118", "#131925", "#1b2230", "#2c2940", "#7c4dff", "#2ed39a"],
+      "materials": ["dark focus canvas", "quiet work records", "lightweight command rail"],
+      "viewport": "The same three-region shell remains. Messages drop resting avatars and timestamps; the compact composer uses whitespace instead of separator rules.",
+      "risk": "The calm center increases reliance on hover and keyboard focus to reveal message metadata actions.",
+      "comp": ".impeccable/mocks/rider-violet-workbench-v2.png"
+    },
+    {
+      "id": "rider-violet-settings-v2",
+      "label": "Settings Window",
+      "kicker": "CONFIGURATION",
+      "lineage": "Rider settings clarity + focused overlay workflow",
+      "thesis": "Configuration opens as a substantial focused window over an inert workbench, without making the project sidebar part of the settings layout.",
+      "palette": ["#0d1118", "#131925", "#1b2230", "#2c2940", "#7c4dff", "#2ed39a"],
+      "materials": ["focused graphite window", "dimmed workbench context", "provider master-detail"],
+      "viewport": "The overlay contains only settings categories, provider roster, and provider detail. The workbench survives as subdued context around the window edges.",
+      "risk": "The large overlay must trap focus cleanly and keep background session activity visible but non-interactive.",
+      "comp": ".impeccable/mocks/rider-violet-settings-v2.png"
+    },
+    {
+      "id": "rider-violet-agents-v2",
+      "label": "Vertical Agents Inspector",
+      "kicker": "MULTI-AGENT",
+      "lineage": "Rider workbench + compact overview + full-width trace",
+      "thesis": "The right pane stacks a compact agent overview above a full-width selected-agent ledger, removing the cramped nested columns.",
+      "palette": ["#0d1118", "#131925", "#1b2230", "#2c2940", "#7c4dff", "#2ed39a"],
+      "materials": ["status roster", "full-width event ledger", "tonal selection"],
+      "viewport": "Four agent rows remain visible at the top; the selected agent’s prompt, tools, evidence, and output use the full pane width below.",
+      "risk": "A busy session needs a capped independently scrolling overview so it never crowds the inspector.",
+      "comp": ".impeccable/mocks/rider-violet-agents-v2.png"
+    }
+  ],
+  "buildPath": {"value": "comp", "toggle": false},
+  "steer": true,
+  "followup": true
+}

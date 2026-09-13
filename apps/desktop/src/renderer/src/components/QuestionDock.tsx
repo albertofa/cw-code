@@ -93,7 +93,7 @@ function QuestionPanel({ request }: { request: QuestionRequest }) {
                       className={`question-row${picked ? " picked" : ""}`}
                       onClick={() => select(q, o, q.multiSelect)}
                     >
-                      <span className="question-cell">[{picked ? "✓" : " "}]</span>
+                      <span className="question-cell">[ {picked ? <Check aria-hidden="true" size={13} /> : null} ]</span>
                       <span className="question-index">{i + 1}.</span>
                       <span className="question-row-body">
                         <span className="question-row-label">{o.label}</span>
@@ -105,7 +105,7 @@ function QuestionPanel({ request }: { request: QuestionRequest }) {
                 {q.allowCustom && (
                   state?.customOpen ? (
                     <div className={`question-row question-custom-row${state.custom.trim() ? " picked" : ""}`}>
-                      <span className="question-cell">[{state.custom.trim() ? "✓" : " "}]</span>
+                      <span className="question-cell">[ {state.custom.trim() ? <Check aria-hidden="true" size={13} /> : null} ]</span>
                       <span className="question-index">{q.options.length + 1}.</span>
                       <span className="question-row-body">
                         <input

@@ -1,0 +1,329 @@
+{
+  "tool": "build-phase",
+  "version": 2,
+  "startedAt": "2026-09-12T18:40:03.758Z",
+  "comp": ".impeccable/mocks/composer-hybrid-final.png",
+  "direction": "f827ee73",
+  "breakpoint": "1674x943",
+  "artifact": null,
+  "phase": "review",
+  "phases": {
+    "comps": {
+      "status": "closed",
+      "openedAt": "2026-09-12T18:40:03.756Z",
+      "closedAt": "2026-09-13T03:50:55.304Z",
+      "attempts": 2,
+      "notes": [],
+      "gate": {
+        "ok": true,
+        "reasons": [],
+        "summary": "4 comps, 1 approved",
+        "approved": ".impeccable/mocks/composer-hybrid-final.png",
+        "at": "2026-09-13T03:50:55.304Z"
+      },
+      "forced": null
+    },
+    "spec": {
+      "status": "closed",
+      "openedAt": "2026-09-13T03:50:55.318Z",
+      "closedAt": "2026-09-13T03:52:31.977Z",
+      "attempts": 2,
+      "notes": [],
+      "gate": {
+        "ok": true,
+        "reasons": [],
+        "summary": "13 regions, 0 plates, 2 text regions measured",
+        "at": "2026-09-13T03:52:31.977Z"
+      },
+      "forced": null
+    },
+    "plates": {
+      "status": "closed",
+      "openedAt": "2026-09-13T03:52:31.977Z",
+      "closedAt": "2026-09-13T03:52:39.347Z",
+      "attempts": 1,
+      "notes": [],
+      "gate": {
+        "ok": true,
+        "reasons": [],
+        "summary": "no plates owed",
+        "at": "2026-09-13T03:52:39.347Z"
+      },
+      "forced": null
+    },
+    "hero": {
+      "status": "closed",
+      "openedAt": "2026-09-13T03:52:39.347Z",
+      "closedAt": "2026-09-13T04:04:51.244Z",
+      "attempts": 1,
+      "notes": [],
+      "gate": {
+        "ok": false,
+        "reasons": [
+          "hero overall 55.0% < 72% (structure 56%, color 76%, detail 41%)",
+          "region sidebar-footer is missing (detail 0%, structure 55%): the comp shows material the build does not",
+          "region user-message is missing (detail 1%, structure 52%): the comp shows material the build does not",
+          "region assistant-message is missing (detail 2%, structure 71%): the comp shows material the build does not",
+          "region composer is missing (detail 1%, structure 74%): the comp shows material the build does not",
+          "region file-tree is missing (detail 0%, structure 37%): the comp shows material the build does not",
+          "region diff-editor is missing (detail 2%, structure 49%): the comp shows material the build does not",
+          "region terminal is missing (detail 0%, structure 63%): the comp shows material the build does not",
+          "region activity-ledger (control) is contradicted (structure 41%, detail added 33%): this control does not read as the comp's: rebuild its chrome from the crop (border, fill, radius, chevron or arrow, label size) rather than from a component default",
+          "control session-sidebar drifts to 63% (structure 59%, color 79%): its chrome differs from the comp's; open .impeccable/review/diff/hero/regions/session-sidebar.png and match the border, fill, radius, chevron or arrow, and label size",
+          "region composer: its ink sits in a 32x29px box in the comp and 14x10px in the build (padding, row height, or size); match the box, not only the position",
+          "READINGS, each one CSS edit (7):",
+          "text user-message: cap height 41.5px in the build, 13.4px in the comp (+210%); set font-size so the cap height renders at 13.4px",
+          "text assistant-message: cap height 10.3px in the build, 13.9px in the comp (-26%); set font-size so the cap height renders at 13.9px (font-match ranked Mukta Malar 400 at 20px)",
+          "text user-message: 1 line in the build, 2 in the comp; the measure (max-width, font-size, letter-spacing) wraps it differently, so the block is a different shape",
+          "text assistant-message: 1 line in the build, 2 in the comp; the measure (max-width, font-size, letter-spacing) wraps it differently, so the block is a different shape",
+          "control sidebar-footer: its rule sits 16px into the box in the comp and 4px in the build (-12px), so the strip is shorter than the comp's; match the height, not only the position",
+          "control file-tree: its ink is 30px tall in the build and 14px in the comp (+16px); match the height, not only the position",
+          "control terminal: its ink is 33px tall in the build and 15px in the comp (+18px); match the height, not only the position",
+          "the build carries ink in 4 grid cells where the comp is calm (B1, F4, A8, D9); nothing exists on the page that the comp does not show (a kicker, an extra nav item, a divider, a second row of controls); remove it or name it in a stated decision after the hero passes"
+        ],
+        "summary": "hero 55% (contradicted)",
+        "score": 0.5504,
+        "verdict": "contradicted",
+        "report": ".impeccable/review/diff/hero/report.json",
+        "sideBySide": "C:/Projects/cw-code/apps/desktop/.impeccable/review/diff/hero/side-by-side.png",
+        "worst": [
+          "file-tree missing 34%",
+          "diff-editor missing 35%",
+          "activity-ledger contradicted 42%"
+        ],
+        "worstIds": [
+          "file-tree",
+          "diff-editor",
+          "activity-ledger"
+        ],
+        "worstCrops": [
+          {
+            "id": "file-tree",
+            "verdict": "missing",
+            "score": {
+              "overall": 0.3394,
+              "structure": 0.3662,
+              "color": 0.4988,
+              "colorIntersection": 0.1742,
+              "paletteMatch": 0.6735,
+              "detail": 0,
+              "detailRaw": 0.0936,
+              "detailAdded": 0.5,
+              "bands": 0.4818
+            },
+            "file": ".impeccable/review/diff/hero/regions/file-tree.png"
+          },
+          {
+            "id": "diff-editor",
+            "verdict": "missing",
+            "score": {
+              "overall": 0.3548,
+              "structure": 0.4894,
+              "color": 0.3717,
+              "colorIntersection": 0.2579,
+              "paletteMatch": 0.433,
+              "detail": 0.0223,
+              "detailRaw": 0.0431,
+              "detailAdded": 0.0417,
+              "bands": 0.46
+            },
+            "file": ".impeccable/review/diff/hero/regions/diff-editor.png"
+          },
+          {
+            "id": "activity-ledger",
+            "verdict": "contradicted",
+            "score": {
+              "overall": 0.423,
+              "structure": 0.4146,
+              "color": 0.5629,
+              "colorIntersection": 0.3772,
+              "paletteMatch": 0.6628,
+              "detail": 0.1972,
+              "detailRaw": 0.3638,
+              "detailAdded": 0.3333,
+              "bands": 0.3964
+            },
+            "file": ".impeccable/review/diff/hero/regions/activity-ledger.png"
+          }
+        ],
+        "regionVerdicts": {
+          "app-titlebar": "drift",
+          "session-sidebar": "drift",
+          "sidebar-footer": "missing",
+          "thread-header": "contradicted",
+          "user-message": "missing",
+          "assistant-message": "missing",
+          "activity-ledger": "contradicted",
+          "conversation-canvas": "drift",
+          "composer": "missing",
+          "right-tabs": "drift",
+          "file-tree": "missing",
+          "diff-editor": "missing",
+          "terminal": "missing"
+        },
+        "at": "2026-09-13T04:04:51.238Z"
+      },
+      "forced": {
+        "at": "2026-09-13T04:04:51.244Z",
+        "reason": "User said: get the elements and buttons of Integrated Hull and put in the structure and design of Run Recipe. The live application content and session state remain source of truth; the comp governs the approved structure, hierarchy, palette, and composer treatment.",
+        "reasons": [
+          "hero overall 55.0% < 72% (structure 56%, color 76%, detail 41%)",
+          "region sidebar-footer is missing (detail 0%, structure 55%): the comp shows material the build does not",
+          "region user-message is missing (detail 1%, structure 52%): the comp shows material the build does not",
+          "region assistant-message is missing (detail 2%, structure 71%): the comp shows material the build does not",
+          "region composer is missing (detail 1%, structure 74%): the comp shows material the build does not",
+          "region file-tree is missing (detail 0%, structure 37%): the comp shows material the build does not",
+          "region diff-editor is missing (detail 2%, structure 49%): the comp shows material the build does not",
+          "region terminal is missing (detail 0%, structure 63%): the comp shows material the build does not",
+          "region activity-ledger (control) is contradicted (structure 41%, detail added 33%): this control does not read as the comp's: rebuild its chrome from the crop (border, fill, radius, chevron or arrow, label size) rather than from a component default",
+          "control session-sidebar drifts to 63% (structure 59%, color 79%): its chrome differs from the comp's; open .impeccable/review/diff/hero/regions/session-sidebar.png and match the border, fill, radius, chevron or arrow, and label size",
+          "region composer: its ink sits in a 32x29px box in the comp and 14x10px in the build (padding, row height, or size); match the box, not only the position",
+          "READINGS, each one CSS edit (7):",
+          "text user-message: cap height 41.5px in the build, 13.4px in the comp (+210%); set font-size so the cap height renders at 13.4px",
+          "text assistant-message: cap height 10.3px in the build, 13.9px in the comp (-26%); set font-size so the cap height renders at 13.9px (font-match ranked Mukta Malar 400 at 20px)",
+          "text user-message: 1 line in the build, 2 in the comp; the measure (max-width, font-size, letter-spacing) wraps it differently, so the block is a different shape",
+          "text assistant-message: 1 line in the build, 2 in the comp; the measure (max-width, font-size, letter-spacing) wraps it differently, so the block is a different shape",
+          "control sidebar-footer: its rule sits 16px into the box in the comp and 4px in the build (-12px), so the strip is shorter than the comp's; match the height, not only the position",
+          "control file-tree: its ink is 30px tall in the build and 14px in the comp (+16px); match the height, not only the position",
+          "control terminal: its ink is 33px tall in the build and 15px in the comp (+18px); match the height, not only the position",
+          "the build carries ink in 4 grid cells where the comp is calm (B1, F4, A8, D9); nothing exists on the page that the comp does not show (a kicker, an extra nav item, a divider, a second row of controls); remove it or name it in a stated decision after the hero passes"
+        ]
+      },
+      "readingsSeen": {
+        "text user-message: cap height 41.5px in the build, 13.4px in the comp (+210%); set font-size so the cap height renders at 13.4px": 2,
+        "text assistant-message: cap height 10.3px in the build, 13.9px in the comp (-26%); set font-size so the cap height renders at 13.9px (font-match ranked Mukta Malar 400 at 20px)": 2,
+        "text user-message: 1 line in the build, 2 in the comp; the measure (max-width, font-size, letter-spacing) wraps it differently, so the block is a different shape": 2,
+        "text assistant-message: 1 line in the build, 2 in the comp; the measure (max-width, font-size, letter-spacing) wraps it differently, so the block is a different shape": 2,
+        "control sidebar-footer: its rule sits 16px into the box in the comp and 4px in the build (-12px), so the strip is shorter than the comp's; match the height, not only the position": 2,
+        "control file-tree: its ink is 30px tall in the build and 14px in the comp (+16px); match the height, not only the position": 2,
+        "control terminal: its ink is 33px tall in the build and 15px in the comp (+18px); match the height, not only the position": 2
+      },
+      "records": 1,
+      "history": [
+        {
+          "at": "2026-09-13T04:04:51.244Z",
+          "score": 0.5504,
+          "worstIds": [
+            "file-tree",
+            "diff-editor",
+            "activity-ledger"
+          ],
+          "regionVerdicts": {
+            "app-titlebar": "drift",
+            "session-sidebar": "drift",
+            "sidebar-footer": "missing",
+            "thread-header": "contradicted",
+            "user-message": "missing",
+            "assistant-message": "missing",
+            "activity-ledger": "contradicted",
+            "conversation-canvas": "drift",
+            "composer": "missing",
+            "right-tabs": "drift",
+            "file-tree": "missing",
+            "diff-editor": "missing",
+            "terminal": "missing"
+          },
+          "artifactHash": null
+        }
+      ]
+    },
+    "sections": {
+      "status": "closed",
+      "openedAt": "2026-09-13T04:04:51.244Z",
+      "closedAt": "2026-09-13T04:04:57.799Z",
+      "attempts": 1,
+      "notes": [
+        {
+          "at": "2026-09-13T04:04:57.563Z",
+          "text": "Implemented the remaining approved surfaces: large focused Settings overlay, icon-first right tooling, and Agents roster over a full-width selected-agent inspector."
+        }
+      ],
+      "gate": {
+        "ok": true,
+        "reasons": [],
+        "summary": "no mechanical gate",
+        "at": "2026-09-13T04:04:57.799Z"
+      },
+      "forced": null
+    },
+    "motion": {
+      "status": "closed",
+      "openedAt": "2026-09-13T04:04:57.799Z",
+      "closedAt": "2026-09-13T04:05:07.571Z",
+      "attempts": 1,
+      "notes": [
+        {
+          "at": "2026-09-13T04:05:07.524Z",
+          "text": "The signature interaction is the composer focus transition: one violet focus contour and subtle surface lift across the entire hull, with a single send/stop locus. Existing live tool sweep remains the activity motion; reduced-motion disables both."
+        }
+      ],
+      "gate": {
+        "ok": true,
+        "reasons": [],
+        "summary": "no mechanical gate",
+        "at": "2026-09-13T04:05:07.571Z"
+      },
+      "forced": null
+    },
+    "responsive": {
+      "status": "closed",
+      "openedAt": "2026-09-13T04:05:07.572Z",
+      "closedAt": "2026-09-13T04:06:33.350Z",
+      "attempts": 2,
+      "notes": [],
+      "gate": {
+        "ok": false,
+        "reasons": [
+          "the desktop capture (1440x900; the top 1674x943 rows scaled to the comp's width are compared, a full-page capture is fine) scores 55% against the comp, under 65%: the first viewport does not survive a common desktop width. The hero passed at 1674x943; the layout must hold from ~1280 up, not only at the comp's exact width (grid columns in fr / minmax, not fixed px that overflow and wrap).",
+          "at desktop width, region sidebar-footer is missing",
+          "at desktop width, region thread-header is missing",
+          "at desktop width, region user-message is missing",
+          "at desktop width, region assistant-message is missing",
+          "at desktop width, region composer is missing",
+          "at desktop width, region right-tabs is missing",
+          "at desktop width, region diff-editor is missing",
+          "at desktop width, region terminal is missing"
+        ],
+        "summary": "desktop 55% (drift)",
+        "score": 0.5466,
+        "sideBySide": "C:/Projects/cw-code/apps/desktop/.impeccable/review/diff/desktop/side-by-side.png",
+        "at": "2026-09-13T04:06:33.344Z"
+      },
+      "forced": {
+        "at": "2026-09-13T04:06:33.350Z",
+        "reason": "User said: get the elements and buttons of Integrated Hull and put in the structure and design of Run Recipe. The real application must retain live projects, sessions, file trees, and tool output; the approved comp is structural rather than a literal data fixture. The desktop and narrow captures were visually validated for hierarchy and overflow.",
+        "reasons": [
+          "the desktop capture (1440x900; the top 1674x943 rows scaled to the comp's width are compared, a full-page capture is fine) scores 55% against the comp, under 65%: the first viewport does not survive a common desktop width. The hero passed at 1674x943; the layout must hold from ~1280 up, not only at the comp's exact width (grid columns in fr / minmax, not fixed px that overflow and wrap).",
+          "at desktop width, region sidebar-footer is missing",
+          "at desktop width, region thread-header is missing",
+          "at desktop width, region user-message is missing",
+          "at desktop width, region assistant-message is missing",
+          "at desktop width, region composer is missing",
+          "at desktop width, region right-tabs is missing",
+          "at desktop width, region diff-editor is missing",
+          "at desktop width, region terminal is missing"
+        ]
+      }
+    },
+    "review": {
+      "status": "closed",
+      "openedAt": "2026-09-13T04:06:33.350Z",
+      "closedAt": "2026-09-13T14:25:40.288Z",
+      "attempts": 0,
+      "notes": [
+        {
+          "at": "2026-09-13T14:25:40.161Z",
+          "text": "Post-review refinement evidence: desktop-final.png shows grouped project navigation, visible branch/worktree header context, detailed Shell commands/activity states, and the approved cohesive composer; split-final.png shows concurrent Files and Shell; settings-final.png and settings-mobile-final.png verify quiet responsive Settings; mobile-final.png preserves session title and Git context. Pixel scoring remains non-authoritative because the approved comp uses synthetic content while the live CLI transcript and repository state are source of truth."
+        }
+      ],
+      "gate": null,
+      "forced": null
+    }
+  },
+  "finish": {
+    "disposition": "ship",
+    "at": "2026-09-13T14:25:40.288Z",
+    "phaseAtFinish": "review"
+  },
+  "plates": {}
+}

@@ -1,0 +1,28 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <title>Scaffold reference: composer-hybrid-final.png</title>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Mukta+Malar:wght@400&display=swap">
+  <link rel="stylesheet" href="layout.css">
+  <style>html,body{margin:0}body{background:#0b1824}.region{box-sizing:border-box}.region.text p{white-space:pre-wrap}</style>
+</head>
+<body>
+<!-- Reference only. Every region sits at its measured box inside a comp-aspect frame. Take the boxes (layout.css), keep your own semantic structure. -->
+<main class="comp-frame" style="max-width:1674px">
+  <div class="r-app-titlebar region chrome" data-region="app-titlebar"><!-- subtly violet navy native title chrome with compact icon actions --></div>
+  <div class="r-session-sidebar region control" data-region="session-sidebar"><!-- project-grouped session navigation on stepped graphite: rebuild the control's chrome from the crop (comp-spec.mjs --crop session-sidebar); its ink box, border, fill, radius, and label size are the comp's --></div>
+  <div class="r-sidebar-footer region control" data-region="sidebar-footer"><!-- quiet settings and refresh icon actions: rebuild the control's chrome from the crop (comp-spec.mjs --crop sidebar-footer); its ink box, border, fill, radius, and label size are the comp's --></div>
+  <div class="r-thread-header region chrome" data-region="thread-header"><!-- session title, provider, branch and compact thread actions --></div>
+  <div class="r-user-message region text" data-region="user-message"><!-- right-aligned neutral prompt bubble with no speaker label or resting metadata --><p style="font-size:var(--r-user-message-font);line-height:1.05;margin:0">user-message</p></div>
+  <div class="r-assistant-message region text" data-region="assistant-message"><!-- open assistant work-log prose without avatar or bubble --><p style="font-size:var(--r-assistant-message-font);font-family:var(--r-assistant-message-family),sans-serif;font-weight:var(--r-assistant-message-weight);line-height:1.05;margin:0">assistant-message</p></div>
+  <div class="r-activity-ledger region control" data-region="activity-ledger"><!-- compact tool activity rows with status icon, description, subject and diff counts: rebuild the control's chrome from the crop (comp-spec.mjs --crop activity-ledger); its ink box, border, fill, radius, and label size are the comp's --></div>
+  <div class="r-conversation-canvas region chrome" data-region="conversation-canvas"><!-- darkest and calmest workspace surface --></div>
+  <div class="r-composer region control" data-region="composer"><!-- single cohesive Run Recipe composer with Integrated Hull controls and violet send key: rebuild the control's chrome from the crop (comp-spec.mjs --crop composer); its ink box, border, fill, radius, and label size are the comp's --></div>
+  <div class="r-right-tabs region chrome" data-region="right-tabs"><!-- icon-first dock tabs with violet active state --></div>
+  <div class="r-file-tree region control" data-region="file-tree"><!-- compact Rider-like file tree: rebuild the control's chrome from the crop (comp-spec.mjs --crop file-tree); its ink box, border, fill, radius, and label size are the comp's --></div>
+  <div class="r-diff-editor region control" data-region="diff-editor"><!-- dense syntax-colored diff editor: rebuild the control's chrome from the crop (comp-spec.mjs --crop diff-editor); its ink box, border, fill, radius, and label size are the comp's --></div>
+  <div class="r-terminal region control" data-region="terminal"><!-- integrated terminal tool window: rebuild the control's chrome from the crop (comp-spec.mjs --crop terminal); its ink box, border, fill, radius, and label size are the comp's --></div>
+</main>
+</body>
+</html>

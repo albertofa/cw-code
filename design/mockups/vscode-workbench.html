@@ -1,0 +1,273 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>cw-code — Workbench concept</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #111316;
+        --panel: #191c20;
+        --panel-raised: #20242a;
+        --panel-hover: #282d34;
+        --panel-active: #303742;
+        --line: #2b3038;
+        --line-strong: #3b424d;
+        --text: #e7e9ed;
+        --muted: #9ca5b2;
+        --faint: #68717e;
+        --blue: #62a7ff;
+        --blue-strong: #3785e7;
+        --blue-wash: #183655;
+        --cyan: #4dd1c5;
+        --green: #57c78c;
+        --red: #f0787b;
+        --yellow: #e6c66b;
+        --purple: #bb9af7;
+        --radius: 8px;
+        --rail: 54px;
+        --sidebar: 316px;
+        --inspector: 342px;
+        --topbar: 48px;
+        --bottom: 250px;
+        --base: 15px;
+        --small: 12px;
+      }
+
+      * { box-sizing: border-box; }
+      body {
+        margin: 0; min-width: 1100px; height: 100vh; overflow: hidden;
+        background: var(--bg); color: var(--text);
+        font: 500 var(--base)/1.45 Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+      }
+      button { font: inherit; color: inherit; cursor: pointer; }
+      .app { display: grid; grid-template-columns: var(--rail) var(--sidebar) minmax(420px, 1fr) var(--inspector); grid-template-rows: var(--topbar) minmax(0, 1fr) 25px; height: 100vh; }
+
+      /* Activity rail */
+      .rail { grid-row: 1 / 4; background: #15181c; border-right: 1px solid var(--line); display: flex; flex-direction: column; align-items: center; padding: 9px 0; gap: 5px; }
+      .brand { width: 35px; height: 30px; color: var(--blue); display: grid; place-items: center; margin-bottom: 9px; }
+      .brand svg { width: 26px; height: 26px; }
+      .rail-btn { width: 42px; height: 42px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); display: grid; place-items: center; position: relative; }
+      .rail-btn:hover { color: var(--text); background: var(--panel-hover); }
+      .rail-btn.active { color: var(--text); }
+      .rail-btn.active::before { content: ""; position: absolute; left: -6px; width: 3px; height: 25px; background: var(--blue); border-radius: 0 2px 2px 0; }
+      .rail-btn svg { width: 22px; height: 22px; stroke: currentColor; fill: none; stroke-width: 1.8; }
+      .rail-spacer { flex: 1; }
+      .badge { position: absolute; right: 2px; top: 2px; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 9px; display: grid; place-items: center; background: var(--blue-strong); color: white; font-size: 10px; font-weight: 750; }
+
+      /* Window / workspace chrome */
+      .topbar { grid-column: 2 / 5; display: flex; align-items: center; gap: 12px; background: #171a1e; border-bottom: 1px solid var(--line); padding: 0 16px; min-width: 0; }
+      .workspace { font-weight: 700; font-size: 14px; display: flex; align-items: center; gap: 8px; white-space: nowrap; }
+      .workspace-dot { width: 9px; height: 9px; background: var(--cyan); border-radius: 50%; box-shadow: 0 0 0 3px #193b3b; }
+      .crumb { color: var(--faint); } .branch { color: var(--muted); font-size: 13px; margin-right: auto; }
+      .top-actions { display: flex; align-items: center; gap: 4px; }
+      .icon-button { height: 30px; min-width: 30px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--muted); display: grid; place-items: center; padding: 0 8px; }
+      .icon-button:hover { background: var(--panel-hover); color: var(--text); border-color: var(--line); }
+      .icon-button svg { width: 17px; height: 17px; stroke: currentColor; fill: none; stroke-width: 1.8; }
+      .command { height: 30px; min-width: 220px; background: #111316; border: 1px solid var(--line); border-radius: 6px; color: var(--faint); padding: 0 10px; display: flex; align-items: center; gap: 8px; font-size: 12px; }
+      kbd { padding: 1px 5px; background: #2b3038; border-radius: 3px; color: var(--muted); font-size: 11px; margin-left: auto; }
+
+      /* Sessions */
+      .sidebar { grid-column: 2; grid-row: 2; min-width: 0; background: var(--panel); border-right: 1px solid var(--line); display: flex; flex-direction: column; }
+      .pane-title { min-height: 48px; padding: 0 13px 0 16px; display: flex; align-items: center; gap: 8px; color: var(--muted); font-size: 12px; font-weight: 750; letter-spacing: .06em; text-transform: uppercase; }
+      .pane-title .plus { margin-left: auto; }
+      .section-head { display: flex; align-items: center; gap: 7px; padding: 7px 14px 6px; color: var(--faint); font-size: 11px; font-weight: 750; letter-spacing: .05em; text-transform: uppercase; }
+      .chev { font-size: 13px; color: var(--muted); width: 10px; }
+      .session-list { padding: 0 7px; }
+      .session { border: 1px solid transparent; border-radius: 7px; padding: 10px 9px; margin-bottom: 2px; position: relative; }
+      .session:hover { background: var(--panel-hover); }
+      .session.selected { background: var(--panel-active); border-color: #3b4655; box-shadow: inset 2px 0 var(--blue); }
+      .session-row { display: flex; align-items: center; gap: 8px; min-width: 0; }
+      .project-icon { flex: 0 0 auto; width: 20px; height: 20px; display: grid; place-items: center; border-radius: 5px; background: #243950; color: var(--blue); font-size: 12px; font-weight: 800; }
+      .project-icon.green { color: var(--green); background: #193c31; } .project-icon.purple { color: var(--purple); background: #352b4b; }
+      .session-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 13px; font-weight: 700; }
+      .time { margin-left: auto; color: var(--faint); font-size: 11px; }
+      .session-title { font-size: 13px; color: var(--muted); margin: 6px 0 4px 28px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+      .session-meta { margin-left: 28px; display: flex; align-items: center; gap: 8px; color: var(--faint); font-size: 11px; }
+      .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--green); box-shadow: 0 0 0 2px #1d382d; }
+      .status-dot.idle { background: var(--faint); box-shadow: none; } .status-dot.waiting { background: var(--yellow); box-shadow: 0 0 0 2px #4a3d18; }
+      .new-session { margin: auto 11px 12px; height: 38px; border-radius: 7px; border: 1px solid #3d6fa6; background: #1e4268; color: #e9f3ff; font-size: 13px; font-weight: 700; display: flex; justify-content: center; align-items: center; gap: 7px; }
+      .new-session:hover { background: #285581; }
+
+      /* Main / chat */
+      .main { grid-column: 3; grid-row: 2; min-width: 0; min-height: 0; display: flex; flex-direction: column; background: #14171a; }
+      .tabbar { height: 44px; display: flex; align-items: stretch; border-bottom: 1px solid var(--line); background: #191c20; }
+      .tab { display: flex; align-items: center; gap: 8px; padding: 0 15px; border-right: 1px solid var(--line); color: var(--muted); font-size: 13px; max-width: 300px; }
+      .tab.active { background: #14171a; color: var(--text); border-top: 2px solid var(--blue); padding-top: 1px; }
+      .tab .close { color: var(--faint); font-size: 17px; margin-left: 9px; }
+      .work-state { margin-left: auto; display: flex; align-items: center; gap: 12px; padding: 0 14px; color: var(--faint); font-size: 12px; }
+      .chat-scroll { flex: 1; overflow: auto; padding: 25px max(28px, 7.5%) 18px; }
+      .chat-inner { max-width: 920px; margin: 0 auto; }
+      .conversation-head { display: flex; align-items: center; gap: 10px; padding-bottom: 17px; border-bottom: 1px solid var(--line); margin-bottom: 22px; }
+      .conversation-head h1 { margin: 0; font-size: 19px; letter-spacing: -.015em; }
+      .conversation-head .pill { font-size: 11px; color: var(--green); background: #173d2d; border: 1px solid #255b42; padding: 3px 7px; border-radius: 999px; }
+      .message { margin-bottom: 23px; }
+      .message-top { display: flex; align-items: center; gap: 9px; margin-bottom: 8px; }
+      .avatar { width: 25px; height: 25px; border-radius: 6px; display: grid; place-items: center; font-weight: 800; font-size: 11px; }
+      .avatar.user { background: #29455d; color: #bce0ff; } .avatar.agent { background: #243c36; color: var(--cyan); }
+      .author { font-size: 13px; font-weight: 750; } .message-time { color: var(--faint); font-size: 11px; }
+      .message-body { margin-left: 34px; color: #cbd1da; font-size: 14px; max-width: 800px; }
+      .message-body p { margin: 0 0 9px; }
+      .message-body ul { margin: 8px 0; padding-left: 19px; } .message-body li { margin: 4px 0; }
+      code { font: 12px/1.4 "Cascadia Code", "SFMono-Regular", Consolas, monospace; color: #c9dcff; background: #252a31; padding: 2px 5px; border-radius: 4px; }
+      .tool { margin: 12px 0 0 34px; border: 1px solid var(--line); background: #191d21; border-radius: var(--radius); overflow: hidden; }
+      .tool-head { min-height: 37px; display: flex; align-items: center; gap: 9px; padding: 0 11px; background: #20242a; border-bottom: 1px solid var(--line); font-size: 12px; }
+      .tool-kind { color: var(--cyan); font-weight: 750; } .tool-name { color: var(--text); font-family: "Cascadia Code", Consolas, monospace; }
+      .tool-status { margin-left: auto; color: var(--green); display: flex; align-items: center; gap: 5px; font-size: 11px; }
+      .tool-content { padding: 10px 12px; color: var(--muted); font: 12px/1.55 "Cascadia Code", Consolas, monospace; }
+      .tool-content .path { color: var(--blue); } .tool-content .plusline { color: var(--green); } .tool-content .minusline { color: var(--red); }
+      .diff-summary { display: grid; grid-template-columns: repeat(3, auto); gap: 18px; align-items: center; padding: 9px 12px; border-top: 1px solid var(--line); color: var(--muted); font-size: 11px; }
+      .diff-summary strong { color: var(--text); } .add { color: var(--green); } .remove { color: var(--red); }
+      .composer-wrap { padding: 0 max(28px, 7.5%) 18px; background: linear-gradient(transparent, #14171a 18%); }
+      .composer { max-width: 920px; margin: auto; background: #1d2127; border: 1px solid #3a424e; border-radius: 9px; overflow: hidden; box-shadow: 0 7px 22px #0004; }
+      .composer:focus-within { border-color: #4a84bd; box-shadow: 0 0 0 2px #1e466c, 0 7px 22px #0004; }
+      .composer textarea { display: block; width: 100%; resize: none; height: 56px; padding: 12px 13px 5px; color: var(--text); background: transparent; border: 0; outline: 0; font: 14px/1.4 inherit; }
+      .composer textarea::placeholder { color: #808a97; }
+      .composer-foot { display: flex; height: 35px; align-items: center; gap: 6px; padding: 0 7px 6px; }
+      .composer-select { color: var(--muted); font-size: 12px; padding: 5px 7px; border-radius: 5px; } .composer-select:hover { background: var(--panel-hover); }
+      .send { margin-left: auto; width: 29px; height: 29px; border: 0; border-radius: 6px; background: var(--blue-strong); display: grid; place-items: center; color: white; font-size: 15px; }
+      .send:hover { background: var(--blue); }
+
+      /* Inspector */
+      .inspector { grid-column: 4; grid-row: 2; min-width: 0; background: var(--panel); border-left: 1px solid var(--line); display: flex; flex-direction: column; overflow: hidden; }
+      .inspect-tabs { display: flex; height: 44px; border-bottom: 1px solid var(--line); }
+      .inspect-tab { flex: 1; border: 0; border-bottom: 2px solid transparent; color: var(--faint); background: transparent; font-size: 12px; }
+      .inspect-tab.active { color: var(--text); border-color: var(--blue); background: #1d2126; }
+      .inspect-scroll { overflow: auto; padding: 15px; }
+      .repo-card { border: 1px solid var(--line); border-radius: 8px; background: #1d2126; padding: 12px; margin-bottom: 14px; }
+      .repo-name { font-weight: 750; font-size: 13px; } .repo-path { color: var(--faint); font: 11px "Cascadia Code", Consolas, monospace; margin-top: 4px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+      .repo-row { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--line); display: flex; gap: 9px; color: var(--muted); font-size: 11px; }
+      .inspect-section { margin: 18px 0 8px; color: var(--faint); font-size: 11px; font-weight: 800; text-transform: uppercase; letter-spacing: .06em; }
+      .file-row { display: grid; grid-template-columns: 16px minmax(0, 1fr) auto; align-items: center; gap: 7px; padding: 7px 5px; border-radius: 5px; font-size: 12px; }
+      .file-row:hover { background: var(--panel-hover); } .file-row .file { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; } .file-row .change { font-size: 11px; }
+      .activity { display: flex; gap: 9px; padding: 10px 4px; border-bottom: 1px solid var(--line); } .activity:last-child { border-bottom: 0; }
+      .activity-icon { width: 22px; height: 22px; border-radius: 5px; display: grid; place-items: center; background: #233d35; color: var(--green); font-size: 12px; font-weight: 800; }
+      .activity strong { font-size: 12px; } .activity p { color: var(--muted); margin: 2px 0 0; font-size: 11px; }
+
+      /* Bottom console strip */
+      .statusbar { grid-column: 2 / 5; grid-row: 3; background: #1b4e7b; color: #e8f3ff; display: flex; align-items: center; gap: 15px; padding: 0 10px; font-size: 11px; }
+      .statusbar .right { margin-left: auto; display: flex; gap: 15px; }
+      .bottom-panel { position: absolute; left: calc(var(--rail) + var(--sidebar)); right: var(--inspector); bottom: 25px; height: var(--bottom); z-index: 4; background: #171a1e; border: 1px solid var(--line-strong); border-bottom: 0; border-radius: 8px 8px 0 0; box-shadow: 0 -10px 30px #0005; display: none; }
+      .bottom-panel.open { display: flex; flex-direction: column; }
+      .panel-tabs { height: 38px; padding: 0 12px; display: flex; align-items: center; gap: 15px; border-bottom: 1px solid var(--line); }
+      .panel-tabs button { height: 38px; border: 0; border-bottom: 2px solid transparent; background: transparent; color: var(--faint); font-size: 12px; }
+      .panel-tabs button.active { color: var(--text); border-bottom-color: var(--blue); } .panel-close { margin-left: auto; }
+      .terminal { padding: 13px 16px; overflow: auto; color: #c6ced8; font: 12px/1.65 "Cascadia Code", Consolas, monospace; }
+      .prompt { color: var(--green); } .terminal .dim { color: var(--faint); } .terminal .out { color: var(--muted); }
+
+      .concept { position: fixed; z-index: 9; right: 14px; bottom: 39px; padding: 4px 8px; background: #0c0e10dd; color: #abb6c4; border: 1px solid #3a424e; border-radius: 4px; font-size: 10px; letter-spacing: .07em; text-transform: uppercase; pointer-events: none; }
+      .hidden { display: none !important; }
+
+      /* Compact density preserves readable type, trims rhythm only. */
+      body[data-density="compact"] { --base: 14px; --small: 11px; }
+      body[data-density="compact"] .session { padding-top: 7px; padding-bottom: 7px; }
+      body[data-density="compact"] .chat-scroll { padding-top: 18px; }
+      body[data-density="compact"] .message { margin-bottom: 16px; }
+      body[data-density="compact"] .tool-head { min-height: 32px; }
+
+      body[data-inspector="closed"] { --inspector: 0px; }
+      body[data-inspector="closed"] .inspector { display: none; }
+      body[data-inspector="closed"] .topbar { grid-column: 2 / 5; }
+      body[data-inspector="closed"] .bottom-panel { right: 0; }
+      @media (max-width: 1250px) { :root { --sidebar: 280px; --inspector: 300px; } .command { min-width: 150px; } }
+      @media (max-width: 1100px) { .command { display: none; } }
+    </style>
+  </head>
+  <body data-density="comfortable" data-inspector="open">
+    <div class="app">
+      <nav class="rail" aria-label="Workbench areas">
+        <div class="brand" title="cw-code Workbench"><svg viewBox="0 0 24 24"><path fill="currentColor" d="M3 4.2 9.6 2v6.4L5.9 10 9.6 11.6V18L3 15.8V4.2Zm8.3-1.3L21 5.7v12.6l-9.7 2.8v-6.2l4.7-1.6-4.7-1.6V2.9Z"/></svg></div>
+        <button class="rail-btn active" title="Sessions"><svg viewBox="0 0 24 24"><path d="M4 4h16v12H7l-3 3V4Z"/><path d="M8 8h8M8 12h5"/></svg></button>
+        <button class="rail-btn" title="Explorer"><svg viewBox="0 0 24 24"><path d="M4 5h6l2 2h8v12H4z"/><path d="M4 9h16"/></svg></button>
+        <button class="rail-btn" title="Source control"><svg viewBox="0 0 24 24"><circle cx="7" cy="6" r="2"/><circle cx="17" cy="18" r="2"/><circle cx="17" cy="6" r="2"/><path d="M9 6h6M7 8v8c0 1.1.9 2 2 2h6"/></svg><span class="badge">4</span></button>
+        <button class="rail-btn" title="Search"><svg viewBox="0 0 24 24"><circle cx="10.5" cy="10.5" r="5.5"/><path d="m15 15 4.5 4.5"/></svg></button>
+        <button class="rail-btn" title="Extensions"><svg viewBox="0 0 24 24"><rect x="4" y="4" width="6" height="6" rx="1"/><rect x="14" y="4" width="6" height="6" rx="1"/><rect x="4" y="14" width="6" height="6" rx="1"/><path d="M14 17h6M17 14v6"/></svg></button>
+        <div class="rail-spacer"></div>
+        <button class="rail-btn" id="densityToggle" title="Toggle comfortable / compact density"><svg viewBox="0 0 24 24"><path d="M5 6h14M5 12h14M5 18h14"/><path d="M3 6h.01M3 12h.01M3 18h.01"/></svg></button>
+        <button class="rail-btn" id="bottomToggle" title="Toggle terminal panel"><svg viewBox="0 0 24 24"><path d="M4 5h16v14H4z"/><path d="m7 10 3 2-3 2M12 15h5"/></svg></button>
+        <button class="rail-btn" title="Settings"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.9l.1.1-2.2 2.2-.1-.1a1.7 1.7 0 0 0-1.9-.3 1.7 1.7 0 0 0-1 1.5v.2h-3.1v-.2a1.7 1.7 0 0 0-1-1.5 1.7 1.7 0 0 0-1.9.3l-.1.1L6.3 17l.1-.1a1.7 1.7 0 0 0 .3-1.9 1.7 1.7 0 0 0-1.5-1H5v-3h.2a1.7 1.7 0 0 0 1.5-1 1.7 1.7 0 0 0-.3-1.9l-.1-.1 2.2-2.2.1.1a1.7 1.7 0 0 0 1.9.3 1.7 1.7 0 0 0 1-1.5v-.2h3.1v.2a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.9-.3l.1-.1L19.8 8l-.1.1a1.7 1.7 0 0 0-.3 1.9 1.7 1.7 0 0 0 1.5 1h.2v3h-.2a1.7 1.7 0 0 0-1.5 1Z"/></svg></button>
+      </nav>
+
+      <header class="topbar">
+        <div class="workspace"><span class="workspace-dot"></span> cw-code <span class="crumb">/</span> nuria-hub-bff</div>
+        <div class="branch">⑂ feature/ai-platform-facade</div>
+        <button class="command">⌕&nbsp; Search commands <kbd>Ctrl K</kbd></button>
+        <div class="top-actions">
+          <button class="icon-button" id="inspectorToggle" title="Toggle inspector"><svg viewBox="0 0 24 24"><path d="M5 4h14v16H5zM10 4v16"/></svg></button>
+          <button class="icon-button" title="Notifications">♧</button>
+          <button class="icon-button" title="Layout">▦</button>
+        </div>
+      </header>
+
+      <aside class="sidebar">
+        <div class="pane-title">Sessions <button class="icon-button plus" title="New session">＋</button></div>
+        <div class="section-head"><span class="chev">⌄</span> Pinned</div>
+        <div class="session-list">
+          <div class="session selected">
+            <div class="session-row"><span class="project-icon">N</span><span class="session-name">nuria-hub-bff</span><span class="time">now</span></div>
+            <div class="session-title">Implement AI platform facade</div>
+            <div class="session-meta"><span class="status-dot"></span> Claude · working <span>24.8k</span></div>
+          </div>
+          <div class="session">
+            <div class="session-row"><span class="project-icon purple">C</span><span class="session-name">cw-code</span><span class="time">18m</span></div>
+            <div class="session-title">Review workspace shell redesign</div>
+            <div class="session-meta"><span class="status-dot waiting"></span> Codex · needs input</div>
+          </div>
+        </div>
+        <div class="section-head"><span class="chev">⌄</span> Today</div>
+        <div class="session-list">
+          <div class="session"><div class="session-row"><span class="project-icon green">R</span><span class="session-name">relay-service</span><span class="time">1h</span></div><div class="session-title">Trace intermittent reconnect issue</div><div class="session-meta"><span class="status-dot idle"></span> OpenCode · 8.1k</div></div>
+          <div class="session"><div class="session-row"><span class="project-icon">W</span><span class="session-name">web-console</span><span class="time">3h</span></div><div class="session-title">Add audit log filter state</div><div class="session-meta"><span class="status-dot idle"></span> Claude · complete</div></div>
+        </div>
+        <div class="section-head"><span class="chev">›</span> Earlier this week <span style="margin-left:auto">12</span></div>
+        <button class="new-session">＋ New session</button>
+      </aside>
+
+      <main class="main">
+        <div class="tabbar"><div class="tab active"><span style="color:var(--cyan)">✦</span> Implement AI platform facade <span class="close">×</span></div><div class="tab">Changes <span style="color:var(--green); font-size:11px">4</span></div><div class="work-state"><span>⌁ 24.8k / 200k</span><span style="color:var(--green)">● Running</span></div></div>
+        <div class="chat-scroll"><div class="chat-inner">
+          <div class="conversation-head"><h1>Implement AI platform facade</h1><span class="pill">Active session</span><span class="message-time">Started 10:42</span></div>
+          <article class="message"><div class="message-top"><div class="avatar user">AB</div><span class="author">Alberto</span><span class="message-time">10:42</span></div><div class="message-body"><p>Unify the provider selection behind a small interface. Keep the CLI drivers as the source of truth and preserve the existing resume behavior.</p></div></article>
+          <article class="message"><div class="message-top"><div class="avatar agent">✦</div><span class="author">Claude</span><span class="message-time">10:43</span></div><div class="message-body"><p>I’ll trace the existing driver seam and map the renderer contract before changing it.</p></div>
+            <div class="tool"><div class="tool-head"><span class="tool-kind">Read</span><span class="tool-name">apps/desktop/src/main/cli</span><span class="tool-status">● 7 files</span></div><div class="tool-content"><span class="path">CliDriver.ts</span> &nbsp; <span class="path">claude-driver.ts</span> &nbsp; <span class="path">codex-driver.ts</span><br><span class="dim">Found shared spawn, resume, and stream contracts.</span></div></div>
+          </article>
+          <article class="message"><div class="message-top"><div class="avatar agent">✦</div><span class="author">Claude</span><span class="message-time">10:46</span></div><div class="message-body"><p>The seam is already clean. I added a provider registry at the main-process boundary, then kept IPC and renderer contracts unchanged.</p><ul><li>Normalizes executable discovery before spawning.</li><li>Preserves each driver’s native resume cursor.</li><li>Surfaces unavailable binaries as a visible session message.</li></ul></div>
+            <div class="tool"><div class="tool-head"><span class="tool-kind">Edit</span><span class="tool-name">provider-registry.ts</span><span class="tool-status">● Applied</span></div><div class="tool-content"><span class="plusline">+ export function resolveDriver(provider: Provider): CliDriver</span><br><span class="plusline">+   return drivers.get(provider) ?? unavailableDriver(provider)</span></div><div class="diff-summary"><span><strong>3 files changed</strong></span><span class="add">+78 additions</span><span class="remove">−12 deletions</span></div></div>
+          </article>
+          <article class="message"><div class="message-top"><div class="avatar agent">✦</div><span class="author">Claude</span><span class="message-time">now</span></div><div class="message-body"><p>Typecheck is clean. I’m running the stable contract tests next, then I’ll summarize the behavior change.</p></div><div class="tool"><div class="tool-head"><span class="tool-kind">Run</span><span class="tool-name">pnpm test -- --run</span><span class="tool-status">● Running</span></div><div class="tool-content"><span class="dim">vitest v3.2.1</span><br> ✓ session-routing.test.ts <span class="out">(12)</span><br> ✓ binary-resolution.test.ts <span class="out">(9)</span><br><span style="color:var(--yellow)"> ⠋ provider-registry.test.ts</span></div></div></article>
+        </div></div>
+        <div class="composer-wrap"><div class="composer"><textarea aria-label="Message agent" placeholder="Ask a follow-up, review the diff, or attach a file…"></textarea><div class="composer-foot"><span class="composer-select">✦ Claude 3.7 Sonnet⌄</span><span class="composer-select">◉ Auto⌄</span><span class="composer-select">⌘ Context</span><button class="send" title="Send">↑</button></div></div></div>
+      </main>
+
+      <aside class="inspector"><div class="inspect-tabs"><button class="inspect-tab active">Changes</button><button class="inspect-tab">Context</button><button class="inspect-tab">Agents</button></div><div class="inspect-scroll">
+        <div class="repo-card"><div class="repo-name">nuria-hub-bff</div><div class="repo-path">C:\Projects\nuria-hub-bff</div><div class="repo-row"><span>⑂ feature/ai-platform-facade</span><span class="add">+78</span><span class="remove">−12</span></div></div>
+        <div class="inspect-section">Working changes · 3</div>
+        <div class="file-row"><span style="color:var(--yellow)">◆</span><span class="file">provider-registry.ts</span><span class="change add">+42</span></div>
+        <div class="file-row"><span style="color:var(--blue)">◆</span><span class="file">CliDriver.ts</span><span class="change"><span class="add">+21</span> <span class="remove">−4</span></span></div>
+        <div class="file-row"><span style="color:var(--purple)">◆</span><span class="file">provider-registry.test.ts</span><span class="change add">+15</span></div>
+        <div class="inspect-section">Session activity</div>
+        <div class="activity"><div class="activity-icon">✓</div><div><strong>Typecheck passed</strong><p>pnpm typecheck · 28s ago</p></div></div>
+        <div class="activity"><div class="activity-icon" style="color:var(--yellow);background:#453d1e">◌</div><div><strong>Tests in progress</strong><p>21 / 26 contracts complete</p></div></div>
+        <div class="activity"><div class="activity-icon" style="color:var(--blue);background:#243c58">↗</div><div><strong>3 files updated</strong><p>Review changes when ready</p></div></div>
+      </div></aside>
+
+      <footer class="statusbar"><span>⑂ feature/ai-platform-facade</span><span>↻ Synced</span><span class="right"><span>UTF-8</span><span>TypeScript</span><span>◉ 0 errors</span></span></footer>
+    </div>
+    <section class="bottom-panel" id="bottomPanel"><div class="panel-tabs"><button class="active">Terminal</button><button>Tool output</button><button>Problems <span style="color:var(--yellow)">2</span></button><button class="icon-button panel-close" id="panelClose" title="Close terminal">×</button></div><div class="terminal"><span class="prompt">PS C:\Projects\nuria-hub-bff&gt;</span> pnpm test -- --run<br><span class="out"> RUN  v3.2.1 C:/Projects/nuria-hub-bff</span><br><span style="color:var(--green)"> ✓</span> tests/session-routing.test.ts <span class="dim">(12 tests) 243ms</span><br><span style="color:var(--green)"> ✓</span> tests/binary-resolution.test.ts <span class="dim">(9 tests) 171ms</span><br><span style="color:var(--yellow)"> ⠋</span> tests/provider-registry.test.ts <span class="dim">running…</span></div></section>
+    <div class="concept">Concept · Workbench · comfortable density</div>
+    <script>
+      const body = document.body;
+      const panel = document.getElementById('bottomPanel');
+      document.getElementById('densityToggle').addEventListener('click', () => {
+        body.dataset.density = body.dataset.density === 'comfortable' ? 'compact' : 'comfortable';
+        document.querySelector('.concept').textContent = `Concept · Workbench · ${body.dataset.density} density`;
+      });
+      document.getElementById('inspectorToggle').addEventListener('click', () => {
+        body.dataset.inspector = body.dataset.inspector === 'open' ? 'closed' : 'open';
+      });
+      document.getElementById('bottomToggle').addEventListener('click', () => panel.classList.toggle('open'));
+      document.getElementById('panelClose').addEventListener('click', () => panel.classList.remove('open'));
+    </script>
+  </body>
+</html>

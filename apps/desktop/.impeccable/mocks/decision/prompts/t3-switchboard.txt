@@ -1,0 +1,43 @@
+Use case: ui-mockup
+Asset type: one high-fidelity desktop application concept screenshot, 1600x900 landscape
+Primary request: Design the strongest, most thoughtful “T3 Switchboard” concept for cw-code, a desktop shell that manages multiple projects and many parallel sessions running the real Claude, OpenCode, and Codex CLIs. Structurally and usability-wise, take inspiration from the inspected T3 Code reference, while remaining an original design. Borrow Rider’s confident dark surface hierarchy and VS Code’s information legibility. This must look like a real, polished native Windows desktop application screenshot, edge-to-edge, not a marketing page.
+
+Composition/framing:
+- Exact 16:9 desktop window, straight-on, filling the full frame.
+- A confident left navigator occupies about 20% width. It groups projects and their live sessions.
+- The remaining ~80% is ONE mode-switching stage. No persistent right inspector or third column.
+- Across the top of the stage: active session identity at left and a minimal horizontal mode switcher reading exactly “Thread”, “Files”, “Diff”, “Agents”, “Terminal”. Thread is selected with a quiet filled pill or restrained underline.
+- Thread mode uses the entire stage width beneath the header for one focused conversation.
+- Show only a tiny collapsed pinned-tool affordance near the right edge of the stage, suggesting an optional temporary split. It must not be open and must not resemble a permanent inspector.
+- Large anchored composer near the bottom of the stage, comfortably inset and spanning most of the content width.
+
+Left navigator content and information design:
+- Product title exactly “cw-code” at top and section label exactly “Projects”.
+- Two project groups. First project exactly “nuria-hub-bff”, with session exactly “realtime auth” active and clearly Running. Second project exactly “cw-code”, with session exactly “design pass”.
+- Make multiple session states instantly scannable through tasteful colored status dots/rings: active running in restrained teal/green, one waiting in warm amber, one idle in cool muted gray. Include the words “Running”, “Waiting”, and “Idle” only where useful and large enough to read.
+- Add one or two additional very short session rows if necessary for state demonstration, but avoid noisy metadata and do not invent project names.
+
+Active thread:
+- Active identity should clearly connect “nuria-hub-bff” and “realtime auth”.
+- Very little chrome and a lot of breathable negative space.
+- Only a short user request and a concise assistant response, visually distinct but not card-heavy. One compact inline execution summary reading exactly “3 actions”.
+- The assistant response can show three short implementation-result lines with tiny file/code glyphs; no long paragraphs.
+- Bottom composer placeholder exactly “Ask anything”. Include a restrained CLI/model selector and one send control, but keep chrome sparse.
+- Show a small top-level status label exactly “Running”.
+
+Style/medium: premium production UI mockup, realistic native desktop software screenshot, visually authored rather than template-like. Larger 110–115% UI scale, readable typography, roomy row heights, balanced whitespace. Modern sans-serif UI font with restrained monospace only for technical fragments. Crisp pixel-aligned controls.
+
+Color palette and surfaces: dark neutral graphite/charcoal; left navigator slightly deeper than the stage; subtle stepped surface contrast; off-white primary text, cool gray secondary text, restrained teal/green active status, amber waiting status, muted blue-violet accent for the active mode/composer send control. Almost no borders or separator lines. Use tonal blocks and spacing for hierarchy.
+
+Text (verbatim, prioritize exact spelling): “cw-code”, “Projects”, “nuria-hub-bff”, “realtime auth”, “cw-code”, “design pass”, “Thread”, “Files”, “Diff”, “Agents”, “Terminal”, “Running”, “Waiting”, “Idle”, “3 actions”, “Ask anything”.
+
+Constraints:
+- Single desktop app window only.
+- Conversation occupies the full stage in Thread mode.
+- No always-open inspector, file tree, diff pane, terminal pane, notification pane, dashboard, analytics, or card grid.
+- The pinned-tool control stays tiny and collapsed.
+- Make state, selected project/session, active mode, execution summary, and composer hierarchy unmistakable at a glance.
+- Keep all specified text readable and correctly spelled.
+- Preserve abundant negative space and a refined T3-quality product feel.
+
+Avoid: gradients, glow, glassmorphism, noisy outlines, excessive dividers, tiny text, dense verbose copy, grid of cards, three-column layout, persistent right pane, web browser chrome, device frame, marketing copy, logos from other products, fake macOS traffic-light controls, oversized illustrations, watermark.

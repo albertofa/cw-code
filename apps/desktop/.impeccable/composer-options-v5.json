@@ -1,0 +1,45 @@
+{
+  "title": "Rider Violet — cohesive composer structures",
+  "question": "All three keep the approved workbench and Git context in the session header. Compare how each composer separates writing, context insertion, execution configuration, and send without detached gaps or divider lines.",
+  "options": [
+    {
+      "id": "composer-integrated-hull",
+      "label": "Integrated Hull",
+      "kicker": "HORIZONTAL / QUIET",
+      "lineage": "OpenCode containment + Rider tonal hierarchy",
+      "thesis": "One continuous shell uses a shallow recessed control floor to distinguish next-turn tooling while preserving a single visual object.",
+      "palette": ["#0b1320", "#171d2f", "#111827", "#7b3cff", "#f36b2f"],
+      "materials": ["single outer silhouette", "tonal control floor", "integrated send key"],
+      "viewport": "Writing owns the upper field; attachments, model, effort, permission, context count, and send share a compact floor inside the same shell.",
+      "risk": "The tonal floor must remain subtle enough to avoid reading as a second detached toolbar.",
+      "comp": ".impeccable/mocks/composer-integrated-hull.png"
+    },
+    {
+      "id": "composer-utility-spine",
+      "label": "Utility Spine",
+      "kicker": "VERTICAL / TOOL-FIRST",
+      "lineage": "Rider tool-window rails + ZCode task input",
+      "thesis": "Insertion actions move into an internal vertical spine, giving writing a clean uninterrupted canvas while runtime controls stay subordinate at the lower right.",
+      "palette": ["#0b1320", "#1b2135", "#111726", "#7b3cff", "#a98af7"],
+      "materials": ["continuous graphite body", "internal icon spine", "quiet runtime baseline"],
+      "viewport": "Add, context, and commands occupy the left axis; text fills the center; model, effort, permission, context count, and send anchor the lower-right edge.",
+      "risk": "The three spine icons require excellent tooltips and familiar glyphs to preserve first-use clarity.",
+      "comp": ".impeccable/mocks/composer-utility-spine.png"
+    },
+    {
+      "id": "composer-run-recipe",
+      "label": "Run Recipe",
+      "kicker": "SEMANTIC / EDITOR-FIRST",
+      "lineage": "Rider command grammar + ZCode execution controls",
+      "thesis": "The toolbar disappears: model, effort, and permission become one compact, editable execution sentence along the composer baseline.",
+      "palette": ["#0b1320", "#1a2033", "#151a29", "#7840ff", "#cbbcf8"],
+      "materials": ["single calm surface", "semantic run sentence", "edge-anchored send"],
+      "viewport": "The text field dominates; a plus action starts a low-noise ‘Run with Claude / Sonnet · High · Auto’ recipe with context count and send at the right.",
+      "risk": "Clickable words need strong hover and focus behavior so configuration remains obviously interactive.",
+      "comp": ".impeccable/mocks/composer-run-recipe.png"
+    }
+  ],
+  "buildPath": {"value": "comp", "toggle": false},
+  "steer": true,
+  "followup": true
+}

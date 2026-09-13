@@ -1,0 +1,39 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1674" height="943" viewBox="0 0 1674 943">
+  <defs>
+    <linearGradient id="canvas" x1="0" y1="0" x2="1" y2="0"><stop stop-color="#0c1422"/><stop offset=".55" stop-color="#0b1320"/><stop offset="1" stop-color="#0a111e"/></linearGradient>
+    <linearGradient id="body" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#1b2135"/><stop offset=".64" stop-color="#181e30"/><stop offset="1" stop-color="#151a29"/></linearGradient>
+    <linearGradient id="action" x1="0" y1="0" x2="1" y2="1"><stop stop-color="#7c42ff"/><stop offset="1" stop-color="#5724e9"/></linearGradient>
+    <filter id="bodyShadow" x="-15%" y="-25%" width="130%" height="170%"><feDropShadow dx="0" dy="14" stdDeviation="18" flood-color="#02050c" flood-opacity=".54"/></filter>
+    <filter id="actionGlow" x="-50%" y="-50%" width="200%" height="200%"><feDropShadow dx="0" dy="4" stdDeviation="7" flood-color="#6f37ff" flood-opacity=".34"/></filter>
+  </defs>
+  <image href="file:///C:/Projects/cw-code/apps/desktop/.impeccable/mocks/composer-integrated-hull.png" x="0" y="0" width="1674" height="943"/>
+  <rect x="338" y="700" width="795" height="214" fill="url(#canvas)"/>
+  <g filter="url(#bodyShadow)"><rect x="352" y="730" width="768" height="156" rx="12" fill="url(#body)"/></g>
+  <rect x="375" y="751" width="1.4" height="22" rx=".7" fill="#b99bff"/>
+  <text x="382" y="766" fill="#aeb4d5" font-family="Inter, Segoe UI, sans-serif" font-size="15">Ask cw-code — @ files, / commands, $ skills</text>
+
+  <g fill="none" stroke="#d9dcf1" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round">
+    <path d="M382 839l-7 7a5 5 0 007 7l9-9a3.5 3.5 0 00-5-5l-8 8a2 2 0 003 3l7-7"/>
+  </g>
+  <g font-family="Inter, Segoe UI, sans-serif" font-size="13.5">
+    <text x="410" y="851" fill="#7f86a2">Run with</text>
+    <circle cx="474" cy="846" r="9" fill="#f36b2f"/>
+    <path d="M468 846h12M474 840v12M470 842l8 8M478 842l-8 8" stroke="#4d170d" stroke-width="1" opacity=".75"/>
+    <text x="491" y="851" fill="#eeeef5">Claude Sonnet</text>
+    <path d="M590 844l4 4 4-4" fill="none" stroke="#949ab7" stroke-width="1.4"/>
+
+    <path d="M628 841h17M632 837v8M641 845v6" fill="none" stroke="#c8cbe0" stroke-width="1.5" stroke-linecap="round"/>
+    <text x="654" y="851" fill="#eeeef5">High</text>
+    <path d="M689 844l4 4 4-4" fill="none" stroke="#949ab7" stroke-width="1.4"/>
+
+    <path d="M729 839l7-3 7 3v5c0 5-3.2 8-7 10-3.8-2-7-5-7-10z" fill="#a98af7"/>
+    <path d="M734 842h4v6h-4z" fill="#171b2b" opacity=".9"/>
+    <text x="751" y="851" fill="#eeeef5">Auto</text>
+    <path d="M789 844l4 4 4-4" fill="none" stroke="#949ab7" stroke-width="1.4"/>
+
+    <path d="M835 840c0-3 14-3 14 0v12c0 3-14 3-14 0zm0 0c0 3 14 3 14 0m-14 6c0 3 14 3 14 0" fill="none" stroke="#c8cbe0" stroke-width="1.5"/>
+    <text x="858" y="851" fill="#d9dbe8">3 files</text>
+  </g>
+  <g filter="url(#actionGlow)"><rect x="1066" y="837" width="44" height="41" rx="9" fill="url(#action)"/></g>
+  <path d="M1079 858h18M1090 851l7 7-7 7" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>

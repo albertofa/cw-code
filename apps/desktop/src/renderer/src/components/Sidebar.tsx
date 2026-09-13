@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
-import { FolderGit2, GitBranch, Settings, SquarePen } from "lucide-react";
+import { Check, ChevronDown, ChevronUp, FolderGit2, Search, Settings, SquarePen, X } from "lucide-react";
 import type { Project, Session, SessionStatus } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import { DriverIcon } from "./DriverIcon.js";
@@ -452,6 +452,13 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
               : pr?.reviewDecision === "CHANGES_REQUESTED" ? "changes-requested" : "open";
     const status = s.status ?? "idle";
     const projectName = projectNameById[s.projectId] ?? "";
+    const gitSummary = [
+      git?.branch ?? s.branch ? `Branch: ${git?.branch ?? s.branch}` : null,
+      git?.worktreePath ?? s.worktreePath ? `Worktree: ${git?.worktreeName ?? git?.worktreePath ?? s.worktreePath}` : null,
+      pr ? `PR #${pr.number} ${prState?.replace("-", " ") ?? ""}`.trim() : null,
+      git && !git.clean ? `${git.dirtyCount} changed ${git.dirtyCount === 1 ? "file" : "files"}` : null
+    ].filter((value): value is string => Boolean(value));
+    const rowTitle = [s.title, projectName ? `Project: ${projectName}` : null, ...gitSummary].filter(Boolean).join("\n");
     const beginRowDrag = (e: React.MouseEvent) => {
       if (e.button !== 0) return;
       if ((e.target as HTMLElement).closest("input,button")) return;
@@ -553,7 +560,8 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
         setMenu({ sessionId: s.id, x: e.clientX, y: e.clientY });
       }}
       className={`session-row${s.id === activeSessionId ? " active" : ""}${dragged?.id === s.id ? " dragging" : ""}${landedId === s.id ? " landed" : ""}`}
-      title={s.title}
+       title={rowTitle}
+       aria-label={rowTitle}
     >
       <span className="session-copy">
       <span className="session-title-line">
@@ -577,20 +585,34 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
         <DriverIcon driver={s.driver} size={10} />
       </span>
         <span className="session-meta">
-          <span className="avatar sm" style={avatarStyle(projectName)}>
-            {initials(projectName)}
-          </span>
-          <span className="session-project">{projectName}</span>
           <span className={`session-state status-${status}`}>{stateLabel(status)}</span>
-        </span>
-        <span className="session-git" title={git?.worktreePath ?? s.worktreePath}>
-          {s.worktreePath ? <span className="session-worktree"><FolderGit2 size={9} />{git?.worktreeName ?? s.worktreePath.split(/[/\\]/).pop()}</span> : null}
-          <span className="session-branch"><GitBranch size={9} />{git?.branch ?? s.branch ?? "Git status loading…"}</span>
-          {pr && <span className={`session-pr ${prState}`}>#{pr.number} {prState?.replace("-", " ")}</span>}
-          {git && !git.clean && <span className="session-dirty">{git.dirtyCount}Δ</span>}
         </span>
       </span>
     </div>
+  };
+
+  const renderRows = (items: Session[], section: SidebarSection) => {
+    if (projectFilter !== "all") return items.map((s) => renderRow(s, section));
+    const grouped = new Map<string, Session[]>();
+    for (const session of items) {
+      const existing = grouped.get(session.projectId);
+      if (existing) existing.push(session);
+      else grouped.set(session.projectId, [session]);
+    }
+    return Array.from(grouped, ([projectId, sessions]) => {
+      const project = projects.find((item) => item.id === projectId);
+      const name = projectNameById[projectId] ?? "Unknown project";
+      return (
+        <div className="session-project-group" key={`${section}:${projectId}`}>
+          <div className="session-project-heading" title={project?.rootPath ?? name}>
+            <span className="avatar sm" style={avatarStyle(name)}>{initials(name)}</span>
+            <span className="session-project-heading-name">{name}</span>
+            <span className="session-project-heading-count">{sessions.length}</span>
+          </div>
+          {sessions.map((session) => renderRow(session, section))}
+        </div>
+      );
+    });
   };
 
   return (
@@ -600,7 +622,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
     >
       <div className="brand">
         <div className="search-row ghost">
-          <span className="search-icon">⌕</span>
+          <Search className="search-icon" aria-hidden="true" size={15} />
           <input
             value={query}
             onChange={(e) => setQuery(e.target.value)}
@@ -608,16 +630,16 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
           />
           {query && (
             <button className="icon-btn" aria-label="Clear search" onClick={() => setQuery("")}>
-              ×
+              <X aria-hidden="true" size={15} />
             </button>
           )}
         </div>
         <div className="project-bar">
           <div className="picker">
             <button className="picker-btn" onClick={() => setPickerOpen((o) => !o)} aria-haspopup="listbox" aria-expanded={pickerOpen}>
-            <span className="picker-icon">▤</span>
+            <FolderGit2 className="picker-icon" aria-hidden="true" size={15} />
             <span className="picker-name">{projectFilter === "all" ? "All Projects" : (filterProject?.name ?? activeProject?.name ?? "Select project…")}</span>
-            <span className="picker-chevron">{pickerOpen ? "▴" : "▾"}</span>
+            <span className="picker-chevron">{pickerOpen ? <ChevronUp aria-hidden="true" size={14} /> : <ChevronDown aria-hidden="true" size={14} />}</span>
           </button>
           {pickerOpen && (
             <>
@@ -633,7 +655,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
                 }}
               >
         <div className="search-row">
-                  <span className="search-icon">⌕</span>
+                  <Search className="search-icon" aria-hidden="true" size={15} />
                   <input
                     autoFocus
                     value={projectQuery}
@@ -674,7 +696,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
                             setManagedId((id) => (id === p.id ? null : p.id));
                           }}
                         >
-                          ⚙
+                          <Settings aria-hidden="true" size={14} />
                         </button>
                       </div>
                       {managedId === p.id && (
@@ -690,7 +712,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
                               copyPath(p);
                             }}
                           >
-                            {copiedId === p.id ? "✓" : "Copy"}
+                            {copiedId === p.id ? <Check aria-hidden="true" size={14} /> : "Copy"}
                           </button>
                         </div>
                       )}
@@ -718,7 +740,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
       </div>
       <div className="session-list" ref={listRef}>
         <div className="session-main-list">
-          {shownPreview.map((s) => renderRow(s, "main"))}
+          {renderRows(shownPreview, "main")}
           {shownPreview.length === 0 && <div className="side-empty">{query ? "No matches." : "No sessions yet."}</div>}
         </div>
         {resolvedPreview.length > 0 && (
@@ -727,7 +749,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
             ref={resolvedDetailsRef}
           >
             <summary>resolved · {resolvedPreview.length}</summary>
-            {resolvedPreview.map((s) => renderRow(s, "resolved"))}
+            {renderRows(resolvedPreview, "resolved")}
           </details>
         )}
         {resolvedPreview.length === 0 && dragged && (

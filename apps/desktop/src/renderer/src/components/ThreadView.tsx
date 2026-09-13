@@ -1,5 +1,5 @@
 import { useEffect, useRef } from "react";
-import { Bot } from "lucide-react";
+import { Bot, PanelRightClose, PanelRightOpen, Sparkles, TriangleAlert } from "lucide-react";
 import { useAppStore, type ChatMessage } from "../stores/appStore.js";
 import { Notifications } from "./Notifications.js";
 import { Md } from "./Markdown.js";
@@ -99,7 +99,7 @@ export function ThreadView({ rightVisible, onToggleRight }: { rightVisible: bool
           </span>
           <span className="thread-status">
             <button className="icon-btn" onClick={onToggleRight} title={rightVisible ? "Hide panel" : "Show panel"}>
-              {rightVisible ? "⟩" : "⟨"}
+              {rightVisible ? <PanelRightClose aria-hidden="true" size={14} /> : <PanelRightOpen aria-hidden="true" size={14} />}
             </button>
           </span>
         </div>
@@ -124,6 +124,7 @@ export function ThreadView({ rightVisible, onToggleRight }: { rightVisible: bool
         <span title={session.driver}>
           <DriverIcon driver={session.driver} size={14} />
         </span>
+        <GitPanelBar sessionId={session.id} compact />
         <span className="thread-status">
           <button
             className={`icon-btn agents-btn${subagentsRunning > 0 ? " running" : ""}`}
@@ -136,7 +137,7 @@ export function ThreadView({ rightVisible, onToggleRight }: { rightVisible: bool
           </button>
           {busyTurn && <WorkingPill word={workingWord} />}
           <button className="icon-btn" onClick={onToggleRight} title={rightVisible ? "Hide panel" : "Show panel"}>
-            {rightVisible ? "⟩" : "⟨"}
+            {rightVisible ? <PanelRightClose aria-hidden="true" size={14} /> : <PanelRightOpen aria-hidden="true" size={14} />}
           </button>
         </span>
       </div>
@@ -146,7 +147,7 @@ export function ThreadView({ rightVisible, onToggleRight }: { rightVisible: bool
         <div className="thread-inner">
           {messages.length === 0 && !busyTurn && (
             <div className="empty">
-              <div className="empty-mark">✳</div>
+              <div className="empty-mark"><Sparkles aria-hidden="true" size={22} /></div>
               <div>Prompt below to begin.</div>
             </div>
           )}
@@ -187,7 +188,8 @@ export function ThreadView({ rightVisible, onToggleRight }: { rightVisible: bool
             if (m.role === "system") {
               return (
                 <div key={m.id} className="msg-system">
-                  {m.text}
+                  <TriangleAlert size={14} aria-hidden="true" />
+                  <span>{m.text}</span>
                 </div>
               );
             }
@@ -212,10 +214,7 @@ export function ThreadView({ rightVisible, onToggleRight }: { rightVisible: bool
       <div className="composer-wrap">
         <ApprovalDock sessionId={session.id} />
         <QuestionDock sessionId={session.id} />
-        <div className="composer-git-stack">
-          <Composer key={session.id} sessionId={session.id} driver={session.driver} />
-          <GitPanelBar sessionId={session.id} />
-        </div>
+        <Composer key={session.id} sessionId={session.id} driver={session.driver} />
       </div>
       </div>
     </div>

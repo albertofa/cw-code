@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { ExternalLink, FolderGit2, GitBranch, GitFork } from "lucide-react";
+import { ArrowDown, ArrowUp, ExternalLink, FolderGit2, GitBranch, GitFork } from "lucide-react";
 import type { GitBranchInfo } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import { MenuSelect } from "./MenuSelect.js";
@@ -12,7 +12,7 @@ function GitHubMark({ size = 11 }: { size?: number }) {
   );
 }
 
-export function GitPanelBar({ sessionId }: { sessionId: string }) {
+export function GitPanelBar({ sessionId, compact = false }: { sessionId: string; compact?: boolean }) {
   const [branches, setBranches] = useState<GitBranchInfo[]>([]);
   const [error, setError] = useState("");
   const [switching, setSwitching] = useState(false);
@@ -34,8 +34,10 @@ export function GitPanelBar({ sessionId }: { sessionId: string }) {
     return () => { active = false; window.clearInterval(timer); };
   }, [sessionId, refreshInterval, refreshGitStatus]);
 
-  if (!status) return <div className="gitbar"><span className="gitbar-dim">Loading Git…</span></div>;
-  if (!status.available) return <div className="gitbar"><span className="gitbar-dim">Not a Git repository</span></div>;
+  const className = `gitbar${compact ? " gitbar-compact" : ""}`;
+
+  if (!status) return <div className={className}><span className="gitbar-dim">Loading Git…</span></div>;
+  if (!status.available) return <div className={className}><span className="gitbar-dim">Not a Git repository</span></div>;
 
   const pullRequest = status.pullRequest;
   const checksClass = pullRequest ? pullRequest.checks.failed > 0 ? "failed" : pullRequest.checks.pending > 0 ? "pending" : "passed" : "";
@@ -49,7 +51,7 @@ export function GitPanelBar({ sessionId }: { sessionId: string }) {
   };
 
   return (
-    <div className="gitbar">
+    <div className={className}>
       <div className="gitbar-location">
         <MenuSelect
           label="Switch branch"
@@ -88,8 +90,8 @@ export function GitPanelBar({ sessionId }: { sessionId: string }) {
         </span>
       )}
       {!pullRequest && status.githubError && <span className="gitbar-github-error" title={status.githubError}>GitHub unavailable</span>}
-      {status.ahead > 0 && <span className="gitbar-ahead" title="Commits ahead of upstream">↑{status.ahead}</span>}
-      {status.behind > 0 && <span className="gitbar-behind" title="Commits behind upstream">↓{status.behind}</span>}
+      {status.ahead > 0 && <span className="gitbar-ahead" title="Commits ahead of upstream"><ArrowUp size={11} />{status.ahead}</span>}
+      {status.behind > 0 && <span className="gitbar-behind" title="Commits behind upstream"><ArrowDown size={11} />{status.behind}</span>}
       {error && <span className="gitbar-error" title={error}>Branch list unavailable</span>}
       {(status.addedLines > 0 || status.deletedLines > 0) && (
         <span className="gitbar-lines" title={`${status.addedLines} added, ${status.deletedLines} deleted · ${status.dirtyCount} changed ${status.dirtyCount === 1 ? "file" : "files"}`}>

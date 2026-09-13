@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1674" height="943" viewBox="0 0 1674 943">
+  <defs>
+    <linearGradient id="pane2" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#0c1422"/>
+      <stop offset="0.55" stop-color="#0b1320"/>
+      <stop offset="1" stop-color="#0a111e"/>
+    </linearGradient>
+    <linearGradient id="recipeBody" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#1a2033"/>
+      <stop offset="0.64" stop-color="#171c2c"/>
+      <stop offset="1" stop-color="#151a29"/>
+    </linearGradient>
+    <linearGradient id="send2" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#7840ff"/>
+      <stop offset="1" stop-color="#5724e9"/>
+    </linearGradient>
+    <filter id="shadow2" x="-15%" y="-25%" width="130%" height="160%">
+      <feDropShadow dx="0" dy="14" stdDeviation="18" flood-color="#02050c" flood-opacity="0.54"/>
+    </filter>
+    <filter id="sendGlow2" x="-50%" y="-50%" width="200%" height="200%">
+      <feDropShadow dx="0" dy="4" stdDeviation="7" flood-color="#6f37ff" flood-opacity="0.34"/>
+    </filter>
+  </defs>
+  <image href="file:///C:/Projects/cw-code/apps/desktop/.impeccable/mocks/composer-integrated-hull.png" x="0" y="0" width="1674" height="943"/>
+
+  <rect x="338" y="700" width="795" height="214" fill="url(#pane2)"/>
+
+  <!-- one calm surface; hierarchy comes from placement and type, not subdivisions -->
+  <g filter="url(#shadow2)">
+    <rect x="352" y="730" width="768" height="156" rx="12" fill="url(#recipeBody)"/>
+  </g>
+  <rect x="375" y="751" width="1.4" height="22" rx="0.7" fill="#b99bff"/>
+  <text x="382" y="766" fill="#aeb4d5" font-family="Inter, Segoe UI, sans-serif" font-size="15">Ask cw-code — @ files, / commands, $ skills</text>
+
+  <!-- add/context sits at the start; the run recipe reads as one editable sentence -->
+  <g fill="none" stroke="#d9dcf1" stroke-width="1.8" stroke-linecap="round">
+    <path d="M376 846h13M382.5 839.5v13"/>
+  </g>
+  <g font-family="Inter, Segoe UI, sans-serif" font-size="13.5">
+    <text x="411" y="851" fill="#878da9">Run with</text>
+    <circle cx="475" cy="846" r="8" fill="#f36b2f"/>
+    <path d="M470 846h10M475 841v10M472 843l6 6M478 843l-6 6" stroke="#4d170d" stroke-width="0.9" opacity="0.75"/>
+    <text x="490" y="851" fill="#eeeef5">Claude</text>
+    <text x="539" y="851" fill="#656b84">/</text>
+    <text x="553" y="851" fill="#cbbcf8">Sonnet</text>
+    <text x="604" y="851" fill="#656b84">·</text>
+    <text x="618" y="851" fill="#cbbcf8">High</text>
+    <text x="653" y="851" fill="#656b84">·</text>
+    <text x="667" y="851" fill="#cbbcf8">Auto</text>
+    <path d="M713 844l4 4 4-4" fill="none" stroke="#959bb8" stroke-width="1.4"/>
+
+    <path d="M760 839h11v12h-11zM762 836h7" fill="none" stroke="#b8bdd3" stroke-width="1.5" stroke-linejoin="round"/>
+    <text x="779" y="851" fill="#aeb4ca">3 contexts</text>
+  </g>
+
+  <g filter="url(#sendGlow2)">
+    <rect x="1066" y="837" width="44" height="41" rx="9" fill="url(#send2)"/>
+  </g>
+  <path d="M1079 858h18M1090 851l7 7-7 7" fill="none" stroke="#fff" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+</svg>
