@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { GitService, isAppManagedPath, mapLimit, parseGitHubAccounts, parseGitHubRemote, parseNumstat, parsePrNumber, parsePullRequest, parseWorktreeList, selectGitHubAccount, worktreeNameFor } from "./GitService.js";
+import { GitService, countUntrackedLines, isAppManagedPath, mapLimit, parseGitHubAccounts, parseGitHubRemote, parseNumstat, parsePrNumber, parsePullRequest, parseWorktreeList, selectGitHubAccount, worktreeNameFor } from "./GitService.js";
 
 describe("parsePrNumber", () => {
   it("parses a PR number", () => {
@@ -149,6 +149,39 @@ describe("mapLimit", () => {
   it("handles a limit larger than the item count", async () => {
     const results = await mapLimit(["a", "b", "c"], 50, async (item) => item.toUpperCase());
     expect(results).toEqual(["A", "B", "C"]);
+  });
+});
+
+describe("countUntrackedLines", () => {
+  it("counts lines like git numstat would for a new file", async () => {
+    const sandbox = mkdtempSync(join(tmpdir(), "cw-lines-"));
+    writeFileSync(join(sandbox, "trailing.txt"), "a\nb\nc\n");
+    writeFileSync(join(sandbox, "no-trailing.txt"), "a\nb\nc");
+    writeFileSync(join(sandbox, "empty.txt"), "");
+
+    expect(await countUntrackedLines(sandbox, "trailing.txt")).toEqual({ addedLines: 3, deletedLines: 0 });
+    expect(await countUntrackedLines(sandbox, "no-trailing.txt")).toEqual({ addedLines: 3, deletedLines: 0 });
+    expect(await countUntrackedLines(sandbox, "empty.txt")).toEqual({ addedLines: 0, deletedLines: 0 });
+  });
+
+  it("treats binary content as a single added line", async () => {
+    const sandbox = mkdtempSync(join(tmpdir(), "cw-lines-"));
+    writeFileSync(join(sandbox, "blob.bin"), Buffer.from([0x50, 0x4b, 0x00, 0x01, 0x02]));
+
+    expect(await countUntrackedLines(sandbox, "blob.bin")).toEqual({ addedLines: 1, deletedLines: 0 });
+  });
+
+  it("treats an oversized text file as a single added line", async () => {
+    const sandbox = mkdtempSync(join(tmpdir(), "cw-lines-"));
+    const chunk = "x".repeat(1024) + "\n";
+    writeFileSync(join(sandbox, "huge.txt"), chunk.repeat(11 * 1024));
+
+    expect(await countUntrackedLines(sandbox, "huge.txt")).toEqual({ addedLines: 1, deletedLines: 0 });
+  });
+
+  it("rejects for a missing file", async () => {
+    const sandbox = mkdtempSync(join(tmpdir(), "cw-lines-"));
+    await expect(countUntrackedLines(sandbox, "gone.txt")).rejects.toThrow();
   });
 });
 
