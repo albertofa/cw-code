@@ -1817,6 +1817,11 @@ body.session-dragging * {
   overflow-y: auto;
 }
 
+.menu-panel-down {
+  top: calc(100% + 6px);
+  bottom: auto;
+}
+
 .menu-row {
   display: flex;
   align-items: center;
@@ -2137,16 +2142,25 @@ body.session-dragging * {
 .thread-head > .gitbar.gitbar-compact {
   flex: 0 1 auto;
   min-width: 0;
-  max-width: 40%;
+  max-width: 44%;
   margin: 0 0 0 6px;
   padding: 0;
   gap: 8px;
-  overflow: hidden;
   border: 0;
   border-radius: 0;
   background: transparent;
   font-size: 12.5px;
   color: var(--periwinkle);
+}
+
+.thread-head > .gitbar.gitbar-compact .gitbar-lines,
+.thread-head > .gitbar.gitbar-compact .gitbar-checks,
+.thread-head > .gitbar.gitbar-compact .gitbar-account,
+.thread-head > .gitbar.gitbar-compact .gitbar-error {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .thread-head > .crumb {
@@ -2156,12 +2170,14 @@ body.session-dragging * {
 
 .thread-head > .gitbar.gitbar-compact .gitbar-location {
   min-width: 0;
-  background: transparent;
+  background: #2b2d30;
+  border-radius: 8px;
+  padding: 2px 4px;
 }
 
 .thread-head > .gitbar.gitbar-compact .gitbar-location .menu-btn {
-  padding-inline: 4px;
-  color: var(--muted);
+  padding-inline: 6px;
+  color: var(--text);
 }
 
 .thread-head > .gitbar.gitbar-compact .gitbar-checkout {
