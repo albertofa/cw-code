@@ -788,6 +788,52 @@ body.session-dragging * {
   color: var(--text);
 }
 
+.session-hovercard {
+  position: fixed;
+  z-index: 150;
+  min-width: 230px;
+  max-width: 300px;
+  box-sizing: border-box;
+  background: var(--overlay);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  box-shadow: 0 18px 44px rgba(0, 0, 0, 0.6);
+  padding: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.session-hovercard-title {
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--text);
+  line-height: 1.4;
+  overflow-wrap: break-word;
+}
+
+.session-hovercard-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--dim);
+  min-width: 0;
+}
+
+.session-hovercard-row > svg {
+  color: var(--muted);
+  flex: none;
+}
+
+.session-hovercard-row .hovercard-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .session-meta {
   display: contents;
 }

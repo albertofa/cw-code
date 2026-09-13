@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
-import { Check, ChevronDown, ChevronRight, ChevronUp, Folder, Plus, RefreshCw, Search, Settings, X } from "lucide-react";
-import type { Project, Session, SessionStatus } from "../cw.js";
+import { Check, ChevronDown, ChevronRight, ChevronUp, Clock, Folder, GitBranch, Plus, RefreshCw, Search, Settings, X } from "lucide-react";
+import type { DriverName, Project, Session, SessionStatus } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { useNotifs } from "./Notifications.js";
@@ -46,6 +46,25 @@ function ageLabel(ts: number): string {
   if (days < 7) return `${days}d`;
   return `${Math.round(days / 7)}w`;
 }
+
+function fullDate(ts: number): string {
+  return new Date(ts).toLocaleString(undefined, {
+    day: "numeric",
+    month: "short",
+    year: "numeric",
+    hour: "2-digit",
+    minute: "2-digit"
+  });
+}
+
+const DRIVER_LABEL: Record<DriverName, string> = {
+  claude: "Claude",
+  opencode: "OpenCode",
+  codex: "Codex"
+};
+
+const HOVER_DELAY = 350;
+const HOVER_FALLBACK_HEIGHT = 280;
 
 type SidebarSection = "main" | "resolved";
 
@@ -189,6 +208,8 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [resolvedOpen, setResolvedOpen] = useState<Set<string>>(new Set());
+  const [hover, setHover] = useState<{ id: string; x: number; y: number } | null>(null);
+  const hoverTimer = useRef<number | null>(null);
 
   const toggleGroup = (projectId: string) => {
     setCollapsedGroups((prev) => {
@@ -216,6 +237,8 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
       return next;
     });
   };
+
+  const hoverModel = useAppStore((s) => (hover ? s.composerBySession[hover.id]?.model : undefined));
   const dragRef = useRef<{ id: string; section: SidebarSection; title: string; startX: number; startY: number; active: boolean } | null>(null);
   const ghostRef = useRef<HTMLDivElement>(null);
   const suppressClickRef = useRef(false);
@@ -262,7 +285,34 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
   useEffect(() => () => {
     detachRef.current?.();
     stopAutoScroll();
+    if (hoverTimer.current) window.clearTimeout(hoverTimer.current);
   }, []);
+
+  const clearHover = () => {
+    if (hoverTimer.current) {
+      window.clearTimeout(hoverTimer.current);
+      hoverTimer.current = null;
+    }
+    setHover(null);
+  };
+
+  const scheduleHover = (id: string) => {
+    if (hoverTimer.current) window.clearTimeout(hoverTimer.current);
+    hoverTimer.current = window.setTimeout(() => {
+      const el = rowRefs.current.get(id);
+      if (!el || !el.isConnected) return;
+      const r = el.getBoundingClientRect();
+      setHover({
+        id,
+        x: Math.min(r.right + 10, window.innerWidth - 310),
+        y: Math.max(8, Math.min(r.top - 6, window.innerHeight - HOVER_FALLBACK_HEIGHT))
+      });
+    }, HOVER_DELAY);
+  };
+
+  useEffect(() => {
+    if (dragged || menu) clearHover();
+  }, [dragged, menu]);
 
   useEffect(() => {
     const focusSearch = () => searchRef.current?.focus();
@@ -329,6 +379,10 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
     if (existing) existing.push(s);
     else resolvedByProject.set(s.projectId, [s]);
   }
+  const hoverSession = hover ? (source.find((s) => s.id === hover.id) ?? null) : null;
+  const hoverStatus = hoverSession?.status ?? "idle";
+  const hoverProject = hoverSession ? (projectNameById[hoverSession.projectId] ?? "") : "";
+  const hoverBranch = hoverSession ? (gitStatusBySession[hoverSession.id]?.branch ?? hoverSession.branch) : undefined;
 
   const captureSlots = (): void => {
     const rows: SlotRow[] = [];
@@ -626,6 +680,8 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
         else rowRefs.current.delete(s.id);
       }}
       onMouseDown={beginRowDrag}
+      onMouseEnter={() => scheduleHover(s.id)}
+      onMouseLeave={clearHover}
       onClick={() => {
         if (suppressClickRef.current) {
           suppressClickRef.current = false;
@@ -640,7 +696,6 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
         setMenu({ sessionId: s.id, x: e.clientX, y: e.clientY });
       }}
       className={`session-row${s.id === activeSessionId ? " active" : ""}${dragged?.id === s.id ? " dragging" : ""}${landedId === s.id ? " landed" : ""}${status === "idle" ? " idle" : ""}`}
-       title={rowTitle}
        aria-label={rowTitle}
     >
       {renamingId === s.id ? (
@@ -877,7 +932,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
           </button>
         </div>
       </div>
-      <div className="session-list" ref={listRef}>
+      <div className="session-list" ref={listRef} onScroll={clearHover}>
         <div className="session-main-list">
           {renderRows(shownPreview, "main")}
           {projectFilter !== "all" && renderResolvedToggle(projectFilter, resolvedPreview)}
@@ -959,6 +1014,41 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
           Refresh
         </button>
       </div>
+      {hover && hoverSession && (
+        <div className="session-hovercard" style={{ left: hover.x, top: hover.y }} aria-hidden="true">
+          <div className="session-hovercard-title">{hoverSession.title}</div>
+          <div className="session-hovercard-row">
+            <span className="avatar sm" style={avatarStyle(hoverProject)} aria-hidden="true">
+              {initials(hoverProject)}
+            </span>
+            <span className="hovercard-text">{hoverProject}</span>
+          </div>
+          <div className="session-hovercard-row">
+            <GitBranch size={13} aria-hidden="true" />
+            <span className="hovercard-text">{hoverBranch ?? "No branch"}</span>
+          </div>
+          <div className="session-hovercard-row">
+            <DriverIcon driver={hoverSession.driver} size={12} />
+            <span className="hovercard-text">
+              {hoverModel ?? "Default model"} · {DRIVER_LABEL[hoverSession.driver]}
+            </span>
+          </div>
+          <div className="session-hovercard-row">
+            {hoverStatus === "working" || hoverStatus === "input-required" ? (
+              <span className={`session-dot status-${hoverStatus}`} aria-hidden="true" />
+            ) : (
+              <span className="session-dot" style={{ background: "var(--faint)" }} aria-hidden="true" />
+            )}
+            <span className="hovercard-text">{stateLabel(hoverStatus)}</span>
+          </div>
+          <div className="session-hovercard-row">
+            <Clock size={13} aria-hidden="true" />
+            <span className="hovercard-text">
+              {ageLabel(hoverSession.updatedAt)} ago · {fullDate(hoverSession.updatedAt)}
+            </span>
+          </div>
+        </div>
+      )}
       {dragged && (
         <div ref={ghostRef} className="session-drag-ghost">
           <span className="session-title">{dragged.title}</span>
