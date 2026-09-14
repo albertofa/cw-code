@@ -230,6 +230,9 @@ function registerIpc(): void {
   ipcMain.handle("fs.listProjectFiles", (_e, args: { projectId: string }) =>
     files.listFiles(sessions.rootForProject(args.projectId))
   );
+  ipcMain.handle("fs.listDir", (_e, args: { sessionId: string; dir?: string }) =>
+    files.listDir(sessions.rootFor(args.sessionId), args.dir ?? "")
+  );
   ipcMain.handle(
     "fs.savePasteImage",
     (_e, args: { projectId: string; mime: string; data: Uint8Array }) =>

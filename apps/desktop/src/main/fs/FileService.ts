@@ -1,4 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { readdir, stat } from "node:fs/promises";
 import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
 function assertInside(root: string, target: string): string {
@@ -47,6 +48,16 @@ export function pasteImageName(mime: string, now: Date = new Date()): string {
 function toPosixRelative(p: string): string {
   return p.replaceAll("\\", "/");
 }
+
+export interface DirEntry {
+  name: string;
+  path: string;
+  isDir: boolean;
+}
+
+export const LIST_DIR_MAX_ENTRIES = 2000;
+
+const LIST_DIR_SKIP = new Set(["node_modules", ".git"]);
 
 export class FileService {
   readFile(root: string, target: string): string {
@@ -107,6 +118,29 @@ export class FileService {
       }
     };
     if (existsSync(root) && statSync(root).isDirectory()) walk(root, "");
+    return out;
+  }
+
+  async listDir(root: string, dirRel = "", limit = LIST_DIR_MAX_ENTRIES): Promise<DirEntry[]> {
+    const cleaned = dirRel.replace(/\\/g, "/").replace(/^\/+|\/+$/g, "");
+    const rel = cleaned === "." ? "" : cleaned;
+    const abs = rel ? assertInside(root, rel) : resolve(root);
+    let dirStat: Awaited<ReturnType<typeof stat>>;
+    try {
+      dirStat = await stat(abs);
+    } catch {
+      throw new Error(`directory not found: ${rel || "."}`);
+    }
+    if (!dirStat.isDirectory()) throw new Error(`not a directory: ${rel || "."}`);
+    const dirents = await readdir(abs, { withFileTypes: true });
+    const cap = Math.max(1, Math.floor(limit));
+    const out: DirEntry[] = [];
+    for (const entry of dirents) {
+      if (LIST_DIR_SKIP.has(entry.name)) continue;
+      out.push({ name: entry.name, path: rel ? `${rel}/${entry.name}` : entry.name, isDir: entry.isDirectory() });
+      if (out.length >= cap) break;
+    }
+    out.sort((a, b) => (a.isDir === b.isDir ? a.name.localeCompare(b.name) : a.isDir ? -1 : 1));
     return out;
   }
 }
