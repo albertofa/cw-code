@@ -104,6 +104,7 @@ body {
 }
 
 .app-body {
+  position: relative;
   flex: 1;
   display: flex;
   gap: 6px;
