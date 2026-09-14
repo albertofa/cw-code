@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { existsSync, mkdirSync, readdirSync, rmdirSync } from "node:fs";
 import { open, lstat } from "node:fs/promises";
-import { basename, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { simpleGit } from "simple-git";
 import { sameWorktreePath } from "../sessions/worktreeCleanup.js";
 import type {
@@ -569,6 +569,29 @@ export class GitService {
     return { path: resolve(target), branch, repositoryRoot };
   }
 
+  async attachWorktree(repoRoot: string, path: string, branch: string): Promise<CreatedWorktree> {
+    const repositoryRoot = await this.repositoryRoot(repoRoot);
+    const git = this.git(repositoryRoot);
+    const target = resolve(path);
+    const parent = dirname(target);
+    mkdirSync(parent, { recursive: true });
+    if (existsSync(target) && readdirSync(target).length === 0) rmdirSync(target);
+    try {
+      await git.raw(["worktree", "add", target, branch]);
+    } catch (error) {
+      const message = (error as Error).message;
+      const registered = /missing but already registered worktree|already exists/i.test(message) && !existsSync(join(target, ".git"));
+      if (!registered) throw new Error(`could not attach worktree at '${target}' to branch '${branch}': ${message}`);
+      await git.raw(["worktree", "prune"]);
+      if (existsSync(target) && readdirSync(target).length === 0) rmdirSync(target);
+      await git.raw(["worktree", "add", target, branch]);
+    }
+    await this.initSubmodules(target);
+    this.invalidateStatus(repositoryRoot);
+    this.invalidateBranches(repositoryRoot);
+    return { path: target, branch, repositoryRoot };
+  }
+
   async removeWorktree(repoRoot: string, path: string, opts: { force?: boolean } = {}): Promise<RemoveWorktreeResult> {
     const repositoryRoot = await this.repositoryRoot(repoRoot);
     const git = this.git(repositoryRoot);
@@ -656,6 +679,29 @@ export class GitService {
     }
     this.invalidateBranches(repositoryRoot);
     return { deleted: true, unmergedCommits: false };
+  }
+
+  async unmergedCommitCount(repoRoot: string, branch: string): Promise<number | null> {
+    try {
+      const repositoryRoot = await this.repositoryRoot(repoRoot);
+      const git = this.git(repositoryRoot);
+      const branches = await this.branches(repositoryRoot);
+      if (!branches.some((item) => item.name === branch && !item.remote)) return null;
+      const refs = (await git.raw(["for-each-ref", "--format=%(refname)", "refs/heads", "refs/remotes"]))
+        .replace(/\r/g, "")
+        .split("\n")
+        .map((line) => line.trim())
+        .filter(Boolean)
+        .filter((ref) => ref !== `refs/heads/${branch}` && !ref.endsWith("/HEAD"));
+      const args = ["rev-list", "--count", branch];
+      if (refs.length > 0) args.push("--not", ...refs);
+      const output = (await git.raw(args)).trim();
+      const count = Number.parseInt(output, 10);
+      return Number.isFinite(count) ? count : null;
+    } catch (err) {
+      console.warn(`unmerged commit count failed for '${branch}': ${(err as Error).message}`);
+      return null;
+    }
   }
 
   async renameBranch(repoRoot: string, from: string, to: string, opts: { worktreePath?: string } = {}): Promise<string> {

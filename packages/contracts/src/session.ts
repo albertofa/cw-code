@@ -168,6 +168,8 @@ export interface SessionCleanupResult {
   dirtyBlocked?: boolean;
   branchDeleted: boolean;
   unmergedCommits?: boolean;
+  /** Commits on the session branch that no other branch reaches. Present after an orphan check. */
+  unmergedCommitCount?: number;
   error?: string;
 }
 

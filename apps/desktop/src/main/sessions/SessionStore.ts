@@ -147,7 +147,10 @@ export class SessionStore {
     );
   }
 
-  updateSession(id: string, patch: Partial<Pick<SessionMeta, "title" | "status" | "resumeCursor" | "model" | "effort" | "variant" | "permissionMode" | "worktreePath" | "branch">>): void {
+  updateSession(
+    id: string,
+    patch: Partial<Pick<SessionMeta, "title" | "status" | "resumeCursor" | "model" | "effort" | "variant" | "permissionMode" | "worktreePath" | "branch">>
+  ): void {
     const current = this.getSession(id);
     if (!current) return;
     if (patch.title !== undefined) current.title = patch.title;
@@ -158,7 +161,9 @@ export class SessionStore {
     if (patch.variant !== undefined) current.variant = patch.variant;
     if (patch.permissionMode !== undefined) current.permissionMode = patch.permissionMode;
     if (patch.worktreePath !== undefined) current.worktreePath = normalizeRoot(patch.worktreePath);
+    else if ("worktreePath" in patch) delete current.worktreePath;
     if (patch.branch !== undefined) current.branch = patch.branch;
+    else if ("branch" in patch) delete current.branch;
     current.updatedAt = Date.now();
     this.persist();
   }

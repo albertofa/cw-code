@@ -272,7 +272,13 @@ export class SessionManager {
     if (this.pendingResolves.has(sessionId)) throw new Error("session busy (resolve pending)");
     this.pendingResolves.add(sessionId);
     try {
-      return await this.resolveSessionInner(session, status, project, opts);
+      const recovery = this.worktreeRecovery.get(sessionId);
+      if (recovery) {
+        await recovery.catch(() => undefined);
+        if (this.worktreeRecovery.has(sessionId)) throw new Error("session busy (recovery in progress)");
+      }
+      const refreshed = this.store.getSession(sessionId);
+      return await this.resolveSessionInner(refreshed ?? session, status, project, opts);
     } finally {
       this.pendingResolves.delete(sessionId);
     }
@@ -293,7 +299,21 @@ export class SessionManager {
     }
     const worktreeOrphaned = isWorktreeOrphaned(this.store.listAllSessions(), worktreePath, sessionId);
     if (!worktreeOrphaned || !opts.removeWorktree) {
-      return { sessionId, status, worktreePath, worktreeOrphaned, worktreeRemoved: false, branchDeleted: false };
+      const unmergedCommitCount =
+        !opts.removeWorktree && worktreeOrphaned && session.branch
+          ? await this.git.unmergedCommitCount(project.rootPath, session.branch)
+          : undefined;
+      return {
+        sessionId,
+        status,
+        worktreePath,
+        worktreeOrphaned,
+        worktreeRemoved: false,
+        branchDeleted: false,
+        ...(unmergedCommitCount !== null && unmergedCommitCount !== undefined && unmergedCommitCount > 0
+          ? { unmergedCommitCount }
+          : {})
+      };
     }
     let removal: RemoveWorktreeResult;
     try {
@@ -323,6 +343,9 @@ export class SessionManager {
     const branchOutcome = session.branch
       ? await this.deleteOrphanBranch(project.rootPath, session.branch, worktreePath, opts.forceBranch === true)
       : null;
+    const patch: Partial<Pick<SessionMeta, "worktreePath" | "branch">> = { worktreePath: undefined };
+    if (session.branch && branchOutcome?.deleted) patch.branch = undefined;
+    this.store.updateSession(sessionId, patch);
     return {
       sessionId,
       status,
@@ -369,7 +392,7 @@ export class SessionManager {
         const dirPath = join(projectPath, sessionDir.name);
         summary.scanned += 1;
         if (sessions.some((s) => s.worktreePath && sameWorktreePath(s.worktreePath, dirPath))) continue;
-        if (project) touchedProjects.add(project.id);
+        if (looksLikeWorktree(dirPath)) touchedProjects.add(project?.id ?? projectDir.name);
         await this.removeStaleDir(project?.rootPath ?? null, dirPath, summary);
       }
       if (!project && existsSync(projectPath)) {
@@ -604,6 +627,9 @@ export class SessionManager {
     if (!session) throw new Error(`unknown session ${sessionId}`);
     if (session.worktreePath && existsSync(session.worktreePath)) return session.worktreePath;
     if (!session.worktreePath) return this.rootForProject(session.projectId);
+    if (session.status === "resolved" || session.status === "archived") {
+      throw new Error(`session is ${session.status}; its worktree was removed`);
+    }
     const pending = this.worktreeRecovery.get(sessionId);
     if (pending) return pending;
     const recovery = this.recoverWorktree(sessionId, session).finally(() => {
@@ -621,6 +647,14 @@ export class SessionManager {
     } catch (err) {
       throw new Error(`could not prune worktrees for session ${sessionId} before recovery: ${(err as Error).message}`);
     }
+    if (session.branch && (await this.branchExists(project.rootPath, session.branch))) {
+      try {
+        const attached = await this.git.attachWorktree(project.rootPath, expectedPath, session.branch);
+        return attached.path;
+      } catch (err) {
+        console.warn(`worktree attach failed for ${sessionId}: ${(err as Error).message}`);
+      }
+    }
     let worktree: CreatedWorktree;
     try {
       worktree = await this.git.createWorktree(
@@ -637,6 +671,16 @@ export class SessionManager {
     }
     if (worktree.branch !== session.branch) this.updateSessionBranch(sessionId, worktree.branch);
     return worktree.path;
+  }
+
+  private async branchExists(repoRoot: string, branch: string): Promise<boolean> {
+    try {
+      const branches = await this.git.branches(repoRoot);
+      return branches.some((b) => b.name === branch && !b.remote);
+    } catch (err) {
+      console.warn(`branch lookup failed for '${branch}': ${(err as Error).message}`);
+      return false;
+    }
   }
 
   updateSessionBranch(sessionId: string, branch: string): void {
@@ -673,6 +717,7 @@ export class SessionManager {
   dispose(): void {
     for (const pending of this.deltaBuffer.values()) clearTimeout(pending.timer);
     this.deltaBuffer.clear();
+    this.turnBaseShas.clear();
     for (const driver of Object.values(this.drivers)) driver.dispose?.();
     this.store.close();
   }

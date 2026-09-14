@@ -1019,6 +1019,12 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
                 worktreeConfirm.sessionId}{" "}
               is {worktreeConfirm.status === "archived" ? "archived" : "resolved"} and no other session uses its isolated worktree.
             </div>
+            {typeof worktreeConfirm.unmergedCommitCount === "number" && worktreeConfirm.unmergedCommitCount > 0 && (
+              <div className="worktree-confirm-warning">
+                This branch has {worktreeConfirm.unmergedCommitCount} unmerged{" "}
+                {worktreeConfirm.unmergedCommitCount === 1 ? "commit" : "commits"} that will be permanently deleted.
+              </div>
+            )}
             <button className="ctx-item" onClick={() => void store.confirmWorktreeRemoval()}>
               Remove worktree and branch
             </button>

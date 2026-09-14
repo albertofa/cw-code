@@ -36,6 +36,7 @@ export interface SessionCleanupResult {
   dirtyBlocked?: boolean;
   branchDeleted: boolean;
   unmergedCommits?: boolean;
+  unmergedCommitCount?: number;
   error?: string;
 }
 

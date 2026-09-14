@@ -103,7 +103,7 @@ interface AppState {
   importDiscovered(session: Session): Promise<void>;
   renameSession(sessionId: string, title: string): Promise<void>;
   setSessionStatus(sessionId: string, status: SessionStatus, opts?: { promptWorktree?: boolean }): Promise<void>;
-  worktreeConfirmQueue: Array<{ sessionId: string; status: SessionStatus }>;
+  worktreeConfirmQueue: Array<{ sessionId: string; status: SessionStatus; unmergedCommitCount?: number }>;
   confirmWorktreeRemoval(): Promise<void>;
   dismissWorktreeRemoval(): void;
   createSession(driver: DriverName, prefs?: ComposerPrefs, workspace?: CreateSessionOptions): Promise<void>;
@@ -376,7 +376,16 @@ export const useAppStore = create<AppState>((set, get) => ({
         })
       });
       if (result.worktreeOrphaned && opts.promptWorktree !== false) {
-        set({ worktreeConfirmQueue: [...get().worktreeConfirmQueue, { sessionId, status }] });
+        set({
+          worktreeConfirmQueue: [
+            ...get().worktreeConfirmQueue,
+            {
+              sessionId,
+              status,
+              ...(result.unmergedCommitCount !== undefined ? { unmergedCommitCount: result.unmergedCommitCount } : {})
+            }
+          ]
+        });
       }
       return;
     }
@@ -411,7 +420,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       const result = await window.cw.resolveSession(target.sessionId, target.status, true, true);
       set({
-        sessionsByProject: patchSession(get().sessionsByProject, target.sessionId, { status: result.status })
+        sessionsByProject: patchSession(get().sessionsByProject, target.sessionId, {
+          status: result.status,
+          ...(result.worktreeRemoved ? { worktreePath: undefined } : {}),
+          ...(result.branchDeleted ? { branch: undefined } : {})
+        })
       });
       if (result.dirtyBlocked) {
         appendNotice("Worktree kept: it has uncommitted changes. Commit or clean them, then remove the worktree manually.", true);

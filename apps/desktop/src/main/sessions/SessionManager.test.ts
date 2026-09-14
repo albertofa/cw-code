@@ -505,11 +505,60 @@ describe("SessionManager", () => {
 
     const branches = execFileSync("git", ["-C", repository, "branch", "--list", "cw/*"], { encoding: "utf8" });
     const branchCount = branches.trim() ? branches.trim().split(/\r?\n/).length : 0;
-    expect(branchCount).toBe(2);
+    expect(branchCount).toBe(1);
+    const stored = (await manager.listSessions(project.id)).find((s) => s.id === session.id);
+    expect(stored?.branch).toBe(originalBranch);
+    const checkedOut = execFileSync("git", ["-C", worktreePath, "rev-parse", "--abbrev-ref", "HEAD"], { encoding: "utf8" }).trim();
+    expect(checkedOut).toBe(originalBranch);
+    manager.dispose();
+  });
+
+  it("recovery reuses a slug-renamed branch instead of creating a temp-pattern one", async () => {
+    const { manager, fake, project, repository } = makeGitSandboxManager("cw-recover-slug-");
+    const session = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    const worktreePath = session.worktreePath;
+    if (!worktreePath) throw new Error("expected a worktree-backed session");
+
+    await manager.startTurn(session.id, "fix the login flow");
+    fake.completeAll();
+    const branch = await waitForBranch(manager, project.id, session.id, (b) => b === "cw/fix-the-login-flow");
+    expect(branch).toBe("cw/fix-the-login-flow");
+
+    rmSync(worktreePath, { recursive: true, force: true });
+    const root = await manager.ensureWorktree(session.id);
+    expect(root).toBe(worktreePath);
+    const cwBranches = execFileSync("git", ["-C", repository, "branch", "--list", "cw/*"], { encoding: "utf8" })
+      .trim()
+      .split(/\r?\n/)
+      .map((line) => line.replace(/^\+\s+/, ""));
+    expect(cwBranches).toEqual(["cw/fix-the-login-flow"]);
+    const stored = (await manager.listSessions(project.id)).find((s) => s.id === session.id);
+    expect(stored?.branch).toBe("cw/fix-the-login-flow");
+    const checkedOut = execFileSync("git", ["-C", worktreePath, "rev-parse", "--abbrev-ref", "HEAD"], { encoding: "utf8" }).trim();
+    expect(checkedOut).toBe("cw/fix-the-login-flow");
+    manager.dispose();
+  });
+
+  it("recovery falls back to a fresh branch when the stored branch cannot be attached", async () => {
+    const { manager, fake, project, repository } = makeGitSandboxManager("cw-recover-fallback-");
+    const session = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    const worktreePath = session.worktreePath;
+    const originalBranch = session.branch;
+    if (!worktreePath || !originalBranch) throw new Error("expected a worktree-backed session with a branch");
+
+    rmSync(worktreePath, { recursive: true, force: true });
+    execFileSync("git", ["-C", repository, "worktree", "prune"]);
+    const elsewhere = join(worktreePath, "..", `${session.id}-elsewhere`);
+    execFileSync("git", ["-C", repository, "worktree", "add", elsewhere, originalBranch]);
+
+    const root = await manager.ensureWorktree(session.id);
+    expect(root).toBe(worktreePath);
     const stored = (await manager.listSessions(project.id)).find((s) => s.id === session.id);
     expect(stored?.branch).toBe(`${originalBranch}-1`);
     const checkedOut = execFileSync("git", ["-C", worktreePath, "rev-parse", "--abbrev-ref", "HEAD"], { encoding: "utf8" }).trim();
-    expect(checkedOut).toBe(stored?.branch);
+    expect(checkedOut).toBe(`${originalBranch}-1`);
+    await manager.startTurn(session.id, "recovered");
+    expect(fake.lastRequest?.cwd).toBe(worktreePath);
     manager.dispose();
   });
 
@@ -661,6 +710,79 @@ describe("SessionManager", () => {
     expect(existsSync(worktreePath)).toBe(false);
     const branches = execFileSync("git", ["-C", repository, "branch", "--list", branch], { encoding: "utf8" });
     expect(branches.trim()).toBe("");
+    manager.dispose();
+  });
+
+  it("clears stored worktree and branch references after removal so polling cannot resurrect them", async () => {
+    const { manager, project } = makeGitSandboxManager("cw-resolve-clear-");
+    const session = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    const worktreePath = session.worktreePath;
+    const branch = session.branch;
+    if (!worktreePath || !branch) throw new Error("expected a worktree-backed session with a branch");
+
+    await manager.resolveSession(session.id, "archived", { removeWorktree: true });
+
+    const stored = (await manager.listSessions(project.id)).find((s) => s.id === session.id);
+    expect(stored?.worktreePath).toBeUndefined();
+    expect(stored?.branch).toBeUndefined();
+    await expect(manager.ensureWorktree(session.id)).resolves.toBe(project.rootPath);
+    expect(existsSync(worktreePath)).toBe(false);
+    manager.dispose();
+  });
+
+  it("never triggers recovery for resolved sessions with a missing worktree", async () => {
+    const { manager, project, repository } = makeGitSandboxManager("cw-resolve-gate-");
+    const session = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    const worktreePath = session.worktreePath;
+    const branch = session.branch;
+    if (!worktreePath || !branch) throw new Error("expected a worktree-backed session with a branch");
+
+    await manager.resolveSession(session.id, "resolved");
+    rmSync(worktreePath, { recursive: true, force: true });
+    execFileSync("git", ["-C", repository, "worktree", "prune"]);
+
+    await expect(manager.ensureWorktree(session.id)).rejects.toThrow("session is resolved");
+    expect(existsSync(worktreePath)).toBe(false);
+    const cwBranches = execFileSync("git", ["-C", repository, "branch", "--list", "cw/*"], { encoding: "utf8" }).trim();
+    expect(cwBranches).toBe(branch);
+    manager.dispose();
+  });
+
+  it("reports unmerged commit counts when preparing worktree removal", async () => {
+    const { manager, project } = makeGitSandboxManager("cw-resolve-count-");
+    const session = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    const worktreePath = session.worktreePath;
+    if (!worktreePath || !session.branch) throw new Error("expected a worktree-backed session with a branch");
+    writeFileSync(join(worktreePath, "unmerged.txt"), "work\n", "utf8");
+    execFileSync("git", ["-C", worktreePath, "add", "unmerged.txt"]);
+    execFileSync("git", ["-C", worktreePath, "-c", "user.name=cw-code", "-c", "user.email=test@cw-code.local", "commit", "-m", "unmerged work"]);
+
+    const check = await manager.resolveSession(session.id, "resolved");
+
+    expect(check.worktreeOrphaned).toBe(true);
+    expect(check.unmergedCommitCount).toBe(1);
+    expect(existsSync(worktreePath)).toBe(true);
+    const clean = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    const cleanCheck = await manager.resolveSession(clean.id, "resolved");
+    expect(cleanCheck.unmergedCommitCount).toBeUndefined();
+    manager.dispose();
+  });
+
+  it("waits for in-flight worktree recovery before resolving", async () => {
+    const { manager, project } = makeGitSandboxManager("cw-resolve-recovery-");
+    const session = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    const worktreePath = session.worktreePath;
+    if (!worktreePath) throw new Error("expected a worktree-backed session");
+
+    rmSync(worktreePath, { recursive: true, force: true });
+    const recovered = manager.ensureWorktree(session.id);
+    const result = await manager.resolveSession(session.id, "archived", { removeWorktree: true });
+
+    expect(result.worktreeRemoved).toBe(true);
+    expect(existsSync(worktreePath)).toBe(false);
+    await expect(recovered).resolves.toBe(worktreePath);
+    const stored = (await manager.listSessions(project.id)).find((s) => s.id === session.id);
+    expect(stored?.worktreePath).toBeUndefined();
     manager.dispose();
   });
 

@@ -796,6 +796,13 @@ body.session-dragging * {
   line-height: 1.4;
 }
 
+.worktree-confirm-warning {
+  font-size: 11.5px;
+  color: var(--danger);
+  margin-bottom: 8px;
+  line-height: 1.4;
+}
+
 .session-row.active .session-title {
   color: var(--text);
 }
