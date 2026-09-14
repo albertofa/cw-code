@@ -9,8 +9,8 @@
   --dim: #bcbec4;
   --muted: #868a93;
   --faint: #62666e;
-  --claude: #f36b2f;
-  --claude-soft: rgba(243, 107, 47, 0.14);
+  --claude: #e8835a;
+  --claude-soft: rgba(232, 131, 90, 0.14);
   --opencode: #5ab8ff;
   --opencode-soft: rgba(90, 184, 255, 0.14);
   --codex: #b49cff;
@@ -682,7 +682,7 @@ body.session-dragging * {
 }
 
 .session-title {
-  font-size: 13px;
+  font-size: 14px;
   color: var(--dim);
   flex: 1;
   min-width: 0;
@@ -971,7 +971,7 @@ body.session-dragging * {
 }
 
 .driver-icon.opencode {
-  color: #cdd2e0;
+  color: var(--opencode);
 }
 
 .driver-icon.codex {
@@ -1840,7 +1840,7 @@ body.session-dragging * {
 }
 
 .newthread-composer {
-  width: min(680px, 100%);
+  width: min(860px, 100%);
   margin: 0;
 }
 
@@ -1998,6 +1998,28 @@ body.session-dragging * {
 .menu-search .field {
   width: 100%;
   box-sizing: border-box;
+}
+
+.menu-sep {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 8px 2px;
+  color: var(--faint);
+  font-family: var(--sans);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: default;
+  white-space: nowrap;
+}
+
+.menu-sep::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border-soft);
 }
 
 .menu-row:hover {

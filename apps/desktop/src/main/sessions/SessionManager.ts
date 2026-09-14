@@ -137,7 +137,12 @@ export class SessionManager {
     }
     if (event.type === "turn.error") {
       this.activeTurns.delete(event.turnId);
-      if (sessionId) this.store.updateSession(sessionId, { status: "idle" });
+      if (sessionId) {
+        this.store.updateSession(sessionId, {
+          status: "idle",
+          ...(event.resumeCursor ? { resumeCursor: event.resumeCursor } : {})
+        });
+      }
     }
     if (event.type === "approval.request" || event.type === "question.request") {
       if (sessionId) this.store.updateSession(sessionId, { status: "input-required" });

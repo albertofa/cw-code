@@ -45,7 +45,8 @@ async function createWindow(): Promise<void> {
     webPreferences: {
       preload: resolvePreload(),
       contextIsolation: true,
-      sandbox: false
+      sandbox: false,
+      ...(process.env["ELECTRON_RENDERER_URL"] ? { partition: "dev" } : {})
     }
   });
 

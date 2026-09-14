@@ -3,7 +3,6 @@ import { AlertTriangle, CheckCircle2, GitBranch, RefreshCw, Star, X, XCircle } f
 import type { AppSettings, DriverName, SourceControlHealth, WorktreePruneSummary } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import { useNotifs } from "./Notifications.js";
-import { DriverIcon } from "./DriverIcon.js";
 
 // Must match CLAUDE_CURATED_MODELS in apps/desktop/src/main/providers/claude/ClaudeCliDriver.ts.
 // Main drops unknown ids on save, so keep this list in sync with the driver.
@@ -553,32 +552,6 @@ export function SettingsModal({
             {!loading && !loadError && draft && category === "sourceControl" && sourceControlFields}
             {!loading && !loadError && draft && category === "harnesses" && (
               <>
-                <div className="harness-row" role="group" aria-label="Harness">
-                  <button
-                    className={`harness-btn claude${harness === "claude" ? " active" : ""}`}
-                    onClick={() => setHarness("claude")}
-                    aria-pressed={harness === "claude"}
-                  >
-                    <DriverIcon driver="claude" size={14} />
-                    Claude Code
-                  </button>
-                  <button
-                    className={`harness-btn opencode${harness === "opencode" ? " active" : ""}`}
-                    onClick={() => setHarness("opencode")}
-                    aria-pressed={harness === "opencode"}
-                  >
-                    <DriverIcon driver="opencode" size={14} />
-                    OpenCode
-                  </button>
-                  <button
-                    className={`harness-btn codex${harness === "codex" ? " active" : ""}`}
-                    onClick={() => setHarness("codex")}
-                    aria-pressed={harness === "codex"}
-                  >
-                    <DriverIcon driver="codex" size={14} />
-                    Codex
-                  </button>
-                </div>
                 <div className="settings-section">
                   {harness === "claude" ? claudeFields : harness === "codex" ? codexFields : opencodeFields}
                 </div>

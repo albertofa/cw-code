@@ -16,7 +16,7 @@ import {
 } from "lucide-react";
 import type { ComposerPrefs, DriverName, EffortLevel, ModelOption, PermissionMode } from "../cw.js";
 import { DriverIcon } from "./DriverIcon.js";
-import { MenuSelect } from "./MenuSelect.js";
+import { MenuSelect, type MenuOption } from "./MenuSelect.js";
 import { ImageThumb } from "./ImageThumb.js";
 import type { ImageTarget } from "./imagePreview.js";
 
@@ -57,6 +57,23 @@ function EffortIcon({ size = 15 }: { size?: number }) {
 }
 
 const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "webp", "gif"]);
+
+function groupModelsByProvider(models: ModelOption[]): MenuOption[] {
+  const groups = new Map<string, ModelOption[]>();
+  for (const m of models) {
+    const slash = m.id.indexOf("/");
+    const provider = slash >= 0 ? m.id.slice(0, slash) : "other";
+    const list = groups.get(provider) ?? [];
+    list.push(m);
+    groups.set(provider, list);
+  }
+  const out: MenuOption[] = [];
+  for (const [provider, list] of [...groups.entries()].sort(([a], [b]) => a.localeCompare(b))) {
+    out.push({ id: `__sep:${provider}`, label: provider, separator: true });
+    for (const m of list) out.push({ id: m.id, label: m.label, hint: m.id });
+  }
+  return out;
+}
 
 function isImage(path: string): boolean {
   const ext = path.split(".").pop()?.toLowerCase() ?? "";
@@ -277,7 +294,7 @@ export function ComposerView({
         <div className="recipe-control recipe-model" title={driver}>
           <MenuSelect
             label="Model"
-            icon={<DriverIcon driver={driver} size={15} />}
+            icon={<DriverIcon driver={driver} size={16} />}
             title={modelsError ? `Model list failed: ${modelsError}` : "Model"}
             value={modelValue}
             display={modelDisplay}
@@ -286,7 +303,9 @@ export function ComposerView({
             searchPlaceholder="Filter models…"
             options={[
               ...(!showCustom && !prefs.model ? [{ id: "", label: "Default model" }] : []),
-              ...models.map((m) => ({ id: m.id, label: m.label, hint: m.id })),
+              ...(driver === "opencode"
+                ? groupModelsByProvider(models)
+                : models.map((m) => ({ id: m.id, label: m.label, hint: m.id }))),
               { id: "__custom", label: "Custom…" }
             ]}
             onPick={(v) => {

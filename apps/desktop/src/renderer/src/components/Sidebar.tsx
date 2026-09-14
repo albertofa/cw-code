@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
-import { Check, ChevronDown, ChevronRight, ChevronUp, Clock, Folder, GitBranch, Hash, Plus, RefreshCw, Search, Settings, X } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, ChevronUp, Clock, Folder, GitBranch, Hash, Plus, RefreshCw, Search, Settings, SquarePen, X } from "lucide-react";
 import type { DriverName, Project, Session, SessionStatus } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import { DriverIcon } from "./DriverIcon.js";
@@ -723,13 +723,13 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
         <span className="session-title">{s.title}</span>
       )}
       <span className="session-side">
-        <DriverIcon driver={s.driver} size={12} />
         {(status === "working" || status === "input-required") && <span className={`session-dot status-${status}`} />}
         {status === "idle" || hideState ? (
           <span className="session-age">{ageLabel(s.updatedAt)}</span>
         ) : (
           <span className={`session-state status-${status}`}>{stateLabel(status)}</span>
         )}
+        <DriverIcon driver={s.driver} size={16} />
       </span>
     </div>
   };
@@ -834,6 +834,15 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
           ) : (
             <span className="search-kbd">Ctrl+K</span>
           )}
+          <button
+            className="new-session-btn"
+            disabled={!activeProjectId}
+            onClick={() => store.startNewSession()}
+            title={`New session in ${activeProject?.name ?? "…"}`}
+            aria-label="New session"
+          >
+            <SquarePen size={16} />
+          </button>
         </div>
         <div className="project-bar">
           <div className="picker">
@@ -928,15 +937,6 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
             </>
           )}
           </div>
-          <button
-            className="new-session-btn"
-            disabled={!activeProjectId}
-            onClick={() => store.startNewSession()}
-            title={`New session in ${activeProject?.name ?? "…"}`}
-            aria-label="New session"
-          >
-            <Plus size={16} />
-          </button>
         </div>
       </div>
       <div className="session-list" ref={listRef} onScroll={clearHover}>
@@ -957,7 +957,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
             <summary>from cli · {discovered.length}</summary>
             {discovered.map((s) => (
               <div key={s.id} className="discovered-row" title={s.title}>
-                <DriverIcon driver={s.driver} size={10} />
+                <DriverIcon driver={s.driver} size={14} />
                 <span className="session-title">{s.title}</span>
                 <button className="btn" style={{ fontSize: 11, padding: "3px 8px" }} onClick={() => void store.importDiscovered(s)} title="Import into cw-code">
                   Import
@@ -1071,7 +1071,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
             <span className="hovercard-text hovercard-id">{hoverSession.id}</span>
           </div>
           <div className="session-hovercard-row">
-            <DriverIcon driver={hoverSession.driver} size={12} />
+            <DriverIcon driver={hoverSession.driver} size={16} />
             <span className="hovercard-text">
               {hoverModel ?? "Default model"} · {DRIVER_LABEL[hoverSession.driver]}
             </span>

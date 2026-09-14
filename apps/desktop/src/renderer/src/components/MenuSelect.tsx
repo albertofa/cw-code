@@ -8,6 +8,7 @@ export interface MenuOption {
   description?: string;
   icon?: ReactNode;
   disabled?: boolean;
+  separator?: boolean;
 }
 
 export function MenuSelect({
@@ -48,11 +49,21 @@ export function MenuSelect({
 
   const q = query.trim().toLowerCase();
   const shown = q
-    ? options.filter((o) => o.label.toLowerCase().includes(q) || (o.hint ?? "").toLowerCase().includes(q))
+    ? options.filter((o) => o.separator || o.label.toLowerCase().includes(q) || (o.hint ?? "").toLowerCase().includes(q))
     : options;
 
+  const rows: MenuOption[] = [];
+  for (const o of shown) {
+    if (o.separator) {
+      if (rows.length > 0 && !rows[rows.length - 1].separator) rows.push(o);
+    } else {
+      rows.push(o);
+    }
+  }
+  if (rows.length > 0 && rows[rows.length - 1].separator) rows.pop();
+
   const pickFirst = () => {
-    const first = shown.find((option) => !option.disabled);
+    const first = rows.find((option) => !option.disabled && !option.separator);
     close();
     if (first && first.id !== value) onPick(first.id);
   };
@@ -84,7 +95,7 @@ export function MenuSelect({
             aria-label={label}
             onKeyDown={(e) => {
               if (e.key === "Escape") close();
-              if (e.key === "Enter" && searchable && (e.target as HTMLElement).tagName !== "INPUT" && shown.length > 0) {
+              if (e.key === "Enter" && searchable && (e.target as HTMLElement).tagName !== "INPUT" && rows.length > 0) {
                 pickFirst();
               }
             }}
@@ -101,36 +112,42 @@ export function MenuSelect({
                   onKeyDown={(e) => {
                     if (e.key === "Enter") {
                       e.stopPropagation();
-                      if (shown.length > 0) pickFirst();
+                      if (rows.length > 0) pickFirst();
                     }
                   }}
                 />
               </div>
             )}
-            {shown.map((o) => (
-              <div
-                key={o.id}
-                className={`menu-row${o.id === value ? " active" : ""}${o.description ? " has-desc" : ""}${o.disabled ? " disabled" : ""}`}
-                role="option"
-                aria-selected={o.id === value}
-                title={o.hint ?? o.label}
-                onClick={() => {
-                  if (o.disabled) return;
-                  close();
-                  if (o.id !== value) onPick(o.id);
-                }}
-              >
-                {o.icon && <span className="menu-icon">{o.icon}</span>}
-                <span className="menu-text">
-                  <span className="name">{o.label}</span>
-                  {o.description && <span className="desc">{o.description}</span>}
-                </span>
-                <span className="menu-check" aria-hidden>
-                  {o.id === value ? <Check aria-hidden="true" size={14} /> : null}
-                </span>
-              </div>
-            ))}
-            {shown.length === 0 && <div className="side-empty">No matches.</div>}
+            {rows.map((o) =>
+              o.separator ? (
+                <div key={o.id} className="menu-sep" aria-hidden="true">
+                  <span>{o.label}</span>
+                </div>
+              ) : (
+                <div
+                  key={o.id}
+                  className={`menu-row${o.id === value ? " active" : ""}${o.description ? " has-desc" : ""}${o.disabled ? " disabled" : ""}`}
+                  role="option"
+                  aria-selected={o.id === value}
+                  title={o.hint ?? o.label}
+                  onClick={() => {
+                    if (o.disabled) return;
+                    close();
+                    if (o.id !== value) onPick(o.id);
+                  }}
+                >
+                  {o.icon && <span className="menu-icon">{o.icon}</span>}
+                  <span className="menu-text">
+                    <span className="name">{o.label}</span>
+                    {o.description && <span className="desc">{o.description}</span>}
+                  </span>
+                  <span className="menu-check" aria-hidden>
+                    {o.id === value ? <Check aria-hidden="true" size={14} /> : null}
+                  </span>
+                </div>
+              )
+            )}
+            {rows.length === 0 && <div className="side-empty">No matches.</div>}
           </div>
         </>
       )}
