@@ -43,6 +43,8 @@ export class SessionManager {
   private settings: SettingsStore;
   private drivers: Record<DriverKind, CliDriver>;
   private activeTurns = new Map<string, string>();
+  private pendingTurns = new Set<string>();
+  private worktreeRecovery = new Map<string, Promise<string>>();
   private onEvent: (sessionId: string, event: ThreadEvent) => void;
   private git: GitService;
   private worktreesRoot: string;
@@ -286,27 +288,33 @@ export class SessionManager {
     for (const [turnId, owner] of this.activeTurns) {
       if (owner === sessionId) throw new Error(`session busy (turn ${turnId})`);
     }
-    if (session.title === "New session") {
-      this.store.updateSession(sessionId, { title: prompt.slice(0, 60) });
+    if (this.pendingTurns.has(sessionId)) throw new Error("session busy (turn pending)");
+    this.pendingTurns.add(sessionId);
+    try {
+      const cwd = await this.ensureWorktree(sessionId);
+      const stored = this.getComposer(sessionId);
+      const prefs = { ...stored, ...(opts?.prefs ?? {}) };
+      const driver = this.drivers[session.driver];
+      const handle = driver.startTurn({
+        sessionId,
+        prompt,
+        cwd,
+        resumeCursor: session.resumeCursor,
+        model: prefs.model,
+        effort: prefs.effort,
+        variant: prefs.variant,
+        permissionMode: prefs.permissionMode,
+        attachments: resolveAttachments(project.rootPath, cwd, opts?.attachments ?? [])
+      });
+      this.activeTurns.set(handle.turnId, sessionId);
+      if (session.title === "New session") {
+        this.store.updateSession(sessionId, { title: prompt.slice(0, 60) });
+      }
+      this.store.updateSession(sessionId, { status: "working" });
+      return handle.turnId;
+    } finally {
+      this.pendingTurns.delete(sessionId);
     }
-    const cwd = await this.ensureWorktree(sessionId);
-    const stored = this.getComposer(sessionId);
-    const prefs = { ...stored, ...(opts?.prefs ?? {}) };
-    const driver = this.drivers[session.driver];
-    const handle = driver.startTurn({
-      sessionId,
-      prompt,
-      cwd,
-      resumeCursor: session.resumeCursor,
-      model: prefs.model,
-      effort: prefs.effort,
-      variant: prefs.variant,
-      permissionMode: prefs.permissionMode,
-      attachments: resolveAttachments(project.rootPath, cwd, opts?.attachments ?? [])
-    });
-    this.activeTurns.set(handle.turnId, sessionId);
-    this.store.updateSession(sessionId, { status: "working" });
-    return handle.turnId;
   }
 
   async listModels(sessionId: string): Promise<ModelOption[]> {
@@ -377,9 +385,23 @@ export class SessionManager {
     if (!session) throw new Error(`unknown session ${sessionId}`);
     if (session.worktreePath && existsSync(session.worktreePath)) return session.worktreePath;
     if (!session.worktreePath) return this.rootForProject(session.projectId);
+    const pending = this.worktreeRecovery.get(sessionId);
+    if (pending) return pending;
+    const recovery = this.recoverWorktree(sessionId, session).finally(() => {
+      this.worktreeRecovery.delete(sessionId);
+    });
+    this.worktreeRecovery.set(sessionId, recovery);
+    return recovery;
+  }
+
+  private async recoverWorktree(sessionId: string, session: SessionMeta): Promise<string> {
     const project = this.getProject(session.projectId);
     const expectedPath = join(this.worktreesRoot, session.projectId, sessionId);
-    await this.git.pruneWorktrees(project.rootPath, this.worktreesRoot);
+    try {
+      await this.git.pruneWorktrees(project.rootPath, this.worktreesRoot);
+    } catch (err) {
+      throw new Error(`could not prune worktrees for session ${sessionId} before recovery: ${(err as Error).message}`);
+    }
     let worktree: CreatedWorktree;
     try {
       worktree = await this.git.createWorktree(

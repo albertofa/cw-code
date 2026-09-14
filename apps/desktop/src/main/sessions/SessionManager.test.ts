@@ -106,6 +106,33 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
+  it("rejects a concurrent second startTurn on the same session", async () => {
+    const { manager, fake } = makeManager();
+    const project = manager.addProject("C:\\proj-busy");
+    const a = await manager.createSession(project.id, "claude");
+    const results = await Promise.allSettled([
+      manager.startTurn(a.id, "first"),
+      manager.startTurn(a.id, "second")
+    ]);
+    const fulfilled = results.filter((r): r is PromiseFulfilledResult<string> => r.status === "fulfilled");
+    const rejected = results.filter((r): r is PromiseRejectedResult => r.status === "rejected");
+    expect(fulfilled).toHaveLength(1);
+    expect(rejected).toHaveLength(1);
+    expect(rejected[0].reason).toBeInstanceOf(Error);
+    expect(rejected[0].reason.message).toMatch(/busy/);
+    expect(fake.seen).toEqual(["first"]);
+    manager.dispose();
+  });
+
+  it("returns the project root for sessions without a worktree", async () => {
+    const { manager } = makeManager();
+    const project = manager.addProject("C:\\proj-nowt");
+    const a = await manager.createSession(project.id, "claude");
+    expect(a.worktreePath).toBeFalsy();
+    await expect(manager.ensureWorktree(a.id)).resolves.toBe("C:\\proj-nowt");
+    manager.dispose();
+  });
+
   it("lists CLI-native sessions as discovered without storing them", async () => {
     const { manager } = makeManager();
     const project = manager.addProject("C:\\proj4");
@@ -282,6 +309,45 @@ describe("SessionManager", () => {
 
     await expect(manager.startTurn(session.id, "should fail")).rejects.toThrow(/could not recreate worktree/);
     expect(fake.seen).toHaveLength(0);
+    const after = (await manager.listSessions(project.id)).find((s) => s.id === session.id);
+    expect(after?.title).toBe("New session");
+    manager.dispose();
+  });
+
+  it("coalesces concurrent ensureWorktree recovery into a single recovery", async () => {
+    const sandbox = mkdtempSync(join(tmpdir(), "cw-session-coalesce-"));
+    const repository = join(sandbox, "repo");
+    execFileSync("git", ["init", "-b", "main", repository]);
+    writeFileSync(join(repository, "README.md"), "base\n", "utf8");
+    execFileSync("git", ["-C", repository, "add", "README.md"]);
+    execFileSync("git", ["-C", repository, "-c", "user.name=cw-code", "-c", "user.email=test@cw-code.local", "commit", "-m", "initial"]);
+
+    const manager = new SessionManager({
+      dbPath: join(sandbox, "data", "test.db"),
+      worktreesRoot: join(sandbox, "worktrees")
+    });
+    const project = manager.addProject(repository);
+    const session = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    const worktreePath = session.worktreePath;
+    if (!worktreePath || !session.branch) throw new Error("expected a worktree-backed session with a branch");
+    expect(session.branch).toMatch(/^cw\//);
+    const originalBranch = session.branch;
+
+    rmSync(worktreePath, { recursive: true, force: true });
+    const [rootA, rootB] = await Promise.all([
+      manager.ensureWorktree(session.id),
+      manager.ensureWorktree(session.id)
+    ]);
+    expect(rootA).toBe(worktreePath);
+    expect(rootB).toBe(worktreePath);
+
+    const branches = execFileSync("git", ["-C", repository, "branch", "--list", "cw/*"], { encoding: "utf8" });
+    const branchCount = branches.trim() ? branches.trim().split(/\r?\n/).length : 0;
+    expect(branchCount).toBe(2);
+    const stored = (await manager.listSessions(project.id)).find((s) => s.id === session.id);
+    expect(stored?.branch).toBe(`${originalBranch}-1`);
+    const checkedOut = execFileSync("git", ["-C", worktreePath, "rev-parse", "--abbrev-ref", "HEAD"], { encoding: "utf8" }).trim();
+    expect(checkedOut).toBe(stored?.branch);
     manager.dispose();
   });
 

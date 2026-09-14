@@ -246,8 +246,13 @@ function registerIpc(): void {
       if (args.sessionId) {
         try {
           roots.push(await sessions.ensureWorktree(args.sessionId));
-        } catch {
-          console.warn(`readImage: unknown session ${args.sessionId}`);
+        } catch (err) {
+          const message = (err as Error).message;
+          if (message.includes("unknown session")) {
+            console.warn(`readImage: unknown session ${args.sessionId}`);
+          } else {
+            console.warn(`readImage: worktree recovery failed for ${args.sessionId}: ${message}`);
+          }
         }
       }
       if (args.projectId) roots.push(sessions.rootForProject(args.projectId));
