@@ -861,6 +861,12 @@ body.session-dragging * {
   white-space: nowrap;
 }
 
+.session-hovercard-row .hovercard-id {
+  font-size: 11px;
+  color: var(--muted);
+  font-family: var(--mono);
+}
+
 .session-meta {
   display: contents;
 }

@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
-import { Check, ChevronDown, ChevronRight, ChevronUp, Clock, Folder, GitBranch, Plus, RefreshCw, Search, Settings, X } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, ChevronUp, Clock, Folder, GitBranch, Hash, Plus, RefreshCw, Search, Settings, X } from "lucide-react";
 import type { DriverName, Project, Session, SessionStatus } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import { DriverIcon } from "./DriverIcon.js";
@@ -497,6 +497,12 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
         window.setTimeout(() => setCopiedId((id) => (id === p.id ? null : id)), 1500);
       })
       .catch(() => {});
+  };
+
+  const copySessionId = (sessionId: string) => {
+    setMenu(null);
+    if (!navigator.clipboard) return;
+    void navigator.clipboard.writeText(sessionId).catch(() => {});
   };
 
   const commitRename = (sessionId: string) => {
@@ -1002,6 +1008,9 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
             <button className="ctx-item" onClick={() => setStatus(menu.sessionId, "archived")}>
               Archive
             </button>
+            <button className="ctx-item" onClick={() => copySessionId(menu.sessionId)}>
+              Copy session id
+            </button>
           </div>
         </>
       )}
@@ -1056,6 +1065,10 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
           <div className="session-hovercard-row">
             <GitBranch size={13} aria-hidden="true" />
             <span className="hovercard-text">{hoverBranch ?? "No branch"}</span>
+          </div>
+          <div className="session-hovercard-row">
+            <Hash size={13} aria-hidden="true" />
+            <span className="hovercard-text hovercard-id">{hoverSession.id}</span>
           </div>
           <div className="session-hovercard-row">
             <DriverIcon driver={hoverSession.driver} size={12} />
