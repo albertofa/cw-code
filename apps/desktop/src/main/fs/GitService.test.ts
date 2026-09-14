@@ -319,6 +319,26 @@ describe("GitService worktrees", () => {
     expect(after.some((branch) => branch.name === "other")).toBe(false);
   });
 
+  it("returns the target unchanged when renaming a branch to its own name", async () => {
+    const { repository, service } = initSandbox();
+    expect(await service.renameBranch(repository, "main", "main")).toBe("main");
+    const branches = await service.branches(repository);
+    expect(branches.some((branch) => branch.name === "main")).toBe(true);
+    expect(branches.some((branch) => branch.name === "main-1")).toBe(false);
+  });
+
+  it("leaves no orphan branch when the worktree target directory is occupied", async () => {
+    const { sandbox, repository, service } = initSandbox();
+    const worktreesRoot = join(sandbox, "worktrees");
+    const target = join(worktreesRoot, "project", "sess_orphan1");
+    mkdirSync(target, { recursive: true });
+    writeFileSync(join(target, "blocker.txt"), "occupied\n", "utf8");
+
+    await expect(service.createWorktree(repository, "project", "sess_orphan1", worktreesRoot, "main")).rejects.toThrow("could not create worktree from 'main'");
+    const refs = execFileSync("git", ["-C", repository, "for-each-ref", "--format=%(refname:short)", "refs/heads"], { encoding: "utf8" });
+    expect(refs.split("\n")).not.toContain("cw/orphan1");
+  });
+
   it("prunes stale worktree admin entries so the same path can be reused", async () => {
     const { sandbox, repository, service } = initSandbox();
     const worktreesRoot = join(sandbox, "worktrees");

@@ -360,6 +360,18 @@ function safeSegment(value: string): string {
   return value.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80) || "workspace";
 }
 
+function nextBranchCandidate(base: string, branch: string): string | null {
+  if (branch === base) return `${base}-1`;
+  if (!branch.startsWith(`${base}-`)) return null;
+  const suffix = Number(branch.slice(base.length + 1));
+  if (!Number.isInteger(suffix) || suffix < 1 || suffix >= 100) return null;
+  return `${base}-${suffix + 1}`;
+}
+
+function isBranchCollision(message: string, branch: string): boolean {
+  return message.replace(/\r/g, "").split("\n").some((line) => line.includes(branch) && /already exists/i.test(line));
+}
+
 function cacheKey(root: string): string {
   const normalized = resolve(root).replace(/[\\/]+$/, "");
   return process.platform === "win32" ? normalized.toLowerCase() : normalized;
@@ -465,6 +477,53 @@ export class GitService {
     throw new Error(`no free branch name derived from '${base}'`);
   }
 
+  private async withUniqueBranchName<T>(git: ReturnType<GitService["git"]>, base: string, run: (branch: string) => Promise<T>): Promise<T> {
+    let branch = await this.uniqueBranchName(git, base);
+    for (let attempt = 0; ; attempt += 1) {
+      try {
+        return await run(branch);
+      } catch (error) {
+        const next = attempt < 100 ? nextBranchCandidate(base, branch) : null;
+        if (!next || !isBranchCollision((error as Error).message, branch)) throw error;
+        branch = next;
+      }
+    }
+  }
+
+  private async deleteBranch(git: ReturnType<GitService["git"]>, branch: string): Promise<void> {
+    try {
+      await git.raw(["branch", "-D", branch]);
+    } catch {
+      // The branch may not exist when git failed before creating it.
+    }
+  }
+
+  private async addWorktree(git: ReturnType<GitService["git"]>, branch: string, target: string, base: string): Promise<string> {
+    try {
+      await git.raw(["worktree", "add", "-b", branch, target, base]);
+      return branch;
+    } catch (error) {
+      const message = (error as Error).message;
+      if (isBranchCollision(message, branch)) throw error;
+      const registered = /missing but already registered worktree|already exists/i.test(message) && !existsSync(join(target, ".git"));
+      if (registered) {
+        await git.raw(["worktree", "prune"]);
+        if (existsSync(target) && readdirSync(target).length === 0) {
+          rmdirSync(target);
+          try {
+            await git.raw(["worktree", "add", "-b", branch, target, base]);
+            return branch;
+          } catch (retryError) {
+            await this.deleteBranch(git, branch);
+            throw new Error(`could not create worktree from '${base}': ${(retryError as Error).message}`);
+          }
+        }
+      }
+      await this.deleteBranch(git, branch);
+      throw new Error(`could not create worktree from '${base}': ${message}`);
+    }
+  }
+
   private invalidateStatus(root: string): void {
     const key = cacheKey(root);
     this.statusGeneration.set(key, (this.statusGeneration.get(key) ?? 0) + 1);
@@ -488,32 +547,12 @@ export class GitService {
     const current = branches.find((item) => item.current)?.name;
     const base = requestedBase?.trim() || current || "HEAD";
     if (base !== "HEAD" && !branches.some((item) => item.name === base)) throw new Error(`unknown base branch '${base}'`);
-    const branch = await this.uniqueBranchName(git, `cw/${safeSegment(sessionId.replace(/^sess_/, ""))}`);
     const parent = join(worktreesRoot, safeSegment(projectKey));
     const target = join(parent, safeSegment(sessionId));
     mkdirSync(parent, { recursive: true });
     if (existsSync(target) && readdirSync(target).length === 0) rmdirSync(target);
-    try {
-      await git.raw(["worktree", "add", "-b", branch, target, base]);
-    } catch (error) {
-      const message = (error as Error).message;
-      const registered = /missing but already registered worktree|already exists/i.test(message) && !existsSync(join(target, ".git"));
-      if (registered) {
-        await git.raw(["worktree", "prune"]);
-        if (existsSync(target) && readdirSync(target).length === 0) {
-          rmdirSync(target);
-          try {
-            await git.raw(["worktree", "add", "-b", branch, target, base]);
-          } catch (retryError) {
-            throw new Error(`could not create worktree from '${base}': ${(retryError as Error).message}`);
-          }
-        } else {
-          throw new Error(`could not create worktree from '${base}': ${message}`);
-        }
-      } else {
-        throw new Error(`could not create worktree from '${base}': ${message}`);
-      }
-    }
+    const branch = await this.withUniqueBranchName(git, `cw/${safeSegment(sessionId.replace(/^sess_/, ""))}`,
+      (name) => this.addWorktree(git, name, target, base));
     await this.initSubmodules(target);
     this.invalidateStatus(repositoryRoot);
     this.invalidateBranches(repositoryRoot);
@@ -531,7 +570,7 @@ export class GitService {
       await git.raw(args);
     } catch (error) {
       const message = (error as Error).message;
-      if (!opts.force && /contains modified or untracked files|cannot remove/i.test(message)) {
+      if (!opts.force && existsSync(target) && await this.isDirtyWorktree(target)) {
         return { removed: false, dirtyBlocked: true };
       }
       const alreadyGone = !existsSync(target);
@@ -546,6 +585,14 @@ export class GitService {
     this.invalidateStatus(repositoryRoot);
     this.invalidateBranches(repositoryRoot);
     return { removed: true };
+  }
+
+  private async isDirtyWorktree(path: string): Promise<boolean> {
+    try {
+      return (await this.git(path).raw(["status", "--porcelain"])).trim().length > 0;
+    } catch {
+      return false;
+    }
   }
 
   async pruneWorktrees(repoRoot: string, worktreesRoot: string): Promise<void> {
@@ -579,14 +626,14 @@ export class GitService {
   }
 
   async renameBranch(repoRoot: string, from: string, to: string): Promise<string> {
-    if (!to || to.startsWith("-")) throw new Error("invalid branch name");
+    const name = to.trim();
+    if (!name || name.startsWith("-")) throw new Error("invalid branch name");
+    if (from.trim() === name) return name;
     const git = this.git(repoRoot);
-    const target = await this.uniqueBranchName(git, to);
-    try {
-      await git.raw(["branch", "-m", from, target]);
-    } catch (error) {
-      throw new Error(`could not rename branch '${from}' to '${to}': ${(error as Error).message}`);
-    }
+    const target = await this.withUniqueBranchName(git, name, async (branch) => {
+      await git.raw(["branch", "-m", from, branch]);
+      return branch;
+    });
     this.invalidateStatus(repoRoot);
     this.invalidateBranches(repoRoot);
     return target;
