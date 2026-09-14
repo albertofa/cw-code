@@ -1421,6 +1421,62 @@ body.session-dragging * {
   white-space: pre-wrap;
 }
 
+.tool-group {
+  border: none;
+  border-radius: var(--r-md);
+  background: var(--bg-deep);
+  overflow: hidden;
+  position: relative;
+}
+
+.tool-group .tool-head {
+  cursor: pointer;
+}
+
+.tool-group:hover {
+  background: color-mix(in srgb, var(--bg-deep) 82%, var(--raised));
+}
+
+.tool-group.running::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(100deg, transparent 20%, rgba(253, 252, 252, 0.11) 50%, transparent 80%);
+  animation: tool-sweep 2.8s ease-in-out infinite;
+  pointer-events: none;
+}
+
+.tool-group-icon {
+  display: inline-flex;
+  align-items: center;
+  color: var(--muted);
+  flex: none;
+}
+
+.tool-group-text {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  flex: 1;
+  min-width: 0;
+}
+
+.tool-group-items {
+  border-top: 1px solid var(--border-soft);
+  padding: 4px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.tool-group-items .tool-card {
+  background: transparent;
+}
+
+.tool-group-items .tool-card:hover {
+  background: color-mix(in srgb, var(--bg-deep) 60%, var(--raised));
+}
+
 .tool-card {
   border: none;
   border-radius: var(--r-md);

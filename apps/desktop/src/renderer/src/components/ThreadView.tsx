@@ -7,6 +7,7 @@ import { DriverIcon } from "./DriverIcon.js";
 import { Composer } from "./Composer.js";
 import { GitPanelBar } from "./GitPanelBar.js";
 import { ToolCard } from "./ToolCard.js";
+import { ToolGroupCard } from "./ToolGroupCard.js";
 import { SubagentCard } from "./SubagentCard.js";
 import { NewThread } from "./NewThread.js";
 import { ApprovalDock } from "./ApprovalDock.js";
@@ -48,9 +49,23 @@ export function ThreadView() {
   const ordered = useMemo(() => orderToolsForDisplay(messages), [messages]);
   const subagents = useMemo(() => collectSubagents(messages), [messages]);
   const nestedIds = useMemo(() => new Set(subagents.map((s) => s.id)), [subagents]);
-  const nodes: Array<{ kind: "msg"; msg: ChatMessage } | { kind: "sub"; key: string; group: SubagentGroup }> = useMemo(() => {
-    const out: Array<{ kind: "msg"; msg: ChatMessage } | { kind: "sub"; key: string; group: SubagentGroup }> = [];
+  const nodes: Array<
+    { kind: "msg"; msg: ChatMessage } | { kind: "sub"; key: string; group: SubagentGroup } | { kind: "tools"; key: string; items: ChatMessage[] }
+  > = useMemo(() => {
+    const out: Array<
+      { kind: "msg"; msg: ChatMessage } | { kind: "sub"; key: string; group: SubagentGroup } | { kind: "tools"; key: string; items: ChatMessage[] }
+    > = [];
     let pending: ChatMessage[] = [];
+    let toolRun: ChatMessage[] = [];
+    const isTodoTool = (m: ChatMessage) => {
+      const n = (m.toolName ?? "").toLowerCase();
+      return n === "todowrite" || n === "todo";
+    };
+    const flushTools = () => {
+      if (toolRun.length === 1) out.push({ kind: "msg", msg: toolRun[0] });
+      else if (toolRun.length > 1) out.push({ kind: "tools", key: toolRun[0].id, items: toolRun });
+      toolRun = [];
+    };
     const flush = () => {
       if (pending.length > 0) {
         out.push({
@@ -62,14 +77,23 @@ export function ThreadView() {
       }
     };
     for (const m of ordered) {
-      if (isSubagentMessage(m)) pending.push(m);
+      if (isSubagentMessage(m)) {
+        flushTools();
+        pending.push(m);
+      }
       else if (m.parentToolCallId && nestedIds.has(m.parentToolCallId)) continue;
+      else if (m.role === "tool" && !isTodoTool(m)) {
+        flush();
+        toolRun.push(m);
+      }
       else {
         flush();
+        flushTools();
         out.push({ kind: "msg", msg: m });
       }
     }
     flush();
+    flushTools();
     return out;
   }, [ordered, nestedIds]);
   const streamingId = useMemo(() => {
@@ -217,6 +241,17 @@ export function ThreadView() {
           {nodes.map((n) => {
             if (n.kind === "sub") {
               return <SubagentCard key={n.key} group={n.group} />;
+            }
+            if (n.kind === "tools") {
+              return (
+                <ToolGroupCard
+                  key={n.key}
+                  messages={n.items}
+                  basePath={project?.rootPath}
+                  sessionId={session.id}
+                  onPreview={onOpenPreview}
+                />
+              );
             }
             const m = n.msg;
             if (m.role === "user") {
