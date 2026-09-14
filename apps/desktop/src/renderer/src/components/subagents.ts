@@ -151,8 +151,30 @@ function isDone(m: SubagentMessage): boolean {
   return m.toolDone === true || m.toolOutput !== undefined;
 }
 
+const BACKGROUND_LAUNCH_PHRASE_RE = /async agent launched/i;
+const BACKGROUND_AGENT_ID_RE = /\bagentId:\s*[0-9a-f]{8,64}\b/;
+
+export function isBackgroundLaunchOutput(output: string | undefined): boolean {
+  return typeof output === "string" && BACKGROUND_LAUNCH_PHRASE_RE.test(output);
+}
+
+function isBackgroundLaunch(m: SubagentMessage): boolean {
+  const output = m.toolOutput;
+  if (!output) return false;
+  if (BACKGROUND_LAUNCH_PHRASE_RE.test(output)) return true;
+  if (!BACKGROUND_AGENT_ID_RE.test(output)) return false;
+  const input = m.toolInput;
+  if (input && typeof input === "object" && !Array.isArray(input)) {
+    const raw = (input as Record<string, unknown>)["run_in_background"] ?? (input as Record<string, unknown>)["runInBackground"];
+    if (raw === true) return true;
+    if (raw === false) return false;
+  }
+  return true;
+}
+
 export function describeSubagentStatus(m: SubagentMessage): SubagentStatus {
   if (m.isError === true) return "error";
+  if (isBackgroundLaunch(m)) return "running";
   return isDone(m) ? "completed" : "running";
 }
 

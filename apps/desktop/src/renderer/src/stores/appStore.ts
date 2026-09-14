@@ -122,11 +122,16 @@ interface AppState {
   applySessionTitle(sessionId: string, title: string): void;
 }
 
-function finalizeTurnTools(messages: ChatMessage[], turnId: string): ChatMessage[] {
+function isSubagentToolName(name?: string): boolean {
+  return !!name && (name.toLowerCase() === "task" || name.toLowerCase() === "agent");
+}
+
+function finalizeTurnTools(messages: ChatMessage[], turnId: string, backgroundTasks = 0): ChatMessage[] {
   let changed = false;
   const out = messages.map((m) => {
     if (m.role !== "tool" || m.turnId !== turnId) return m;
     if (m.toolInput === undefined || m.toolDone === true || m.toolOutput !== undefined) return m;
+    if (backgroundTasks > 0 && isSubagentToolName(m.toolName)) return m;
     changed = true;
     return { ...m, toolDone: true, toolCompletedAt: Date.now() };
   });
@@ -829,7 +834,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       delete approvals[sessionId];
       const questions = { ...get().pendingQuestions };
       delete questions[sessionId];
-      let turnMessages = finalizeTurnTools(messages, event.turnId);
+      let turnMessages = finalizeTurnTools(messages, event.turnId, backgroundTasks);
       if (event.isError && !turnMessages.some((m) => m.id === `${event.turnId}-e`)) {
         turnMessages = [
           ...turnMessages,

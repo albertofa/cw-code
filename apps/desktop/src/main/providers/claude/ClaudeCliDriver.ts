@@ -109,6 +109,7 @@ interface ClaudeProcessState {
   stderr: string;
   startedAt: number;
   agentByCall: Map<string, string>;
+  permissionMode: PermissionMode;
   idleTimer?: NodeJS.Timeout;
 }
 
@@ -379,6 +380,7 @@ export class ClaudeCliDriver implements CliDriver {
     if (!request.maxTurns && existing && existing.argsKey === argsKey && this.isProcessAlive(existing)) {
       existing.activeTurnId = turnId;
       existing.completedTurn = false;
+      existing.permissionMode = request.permissionMode ?? "auto";
       this.clearIdleTimer(existing);
       this.turnToSession.set(turnId, request.sessionId);
       this.writeUserMessage(existing, request);
@@ -422,7 +424,8 @@ export class ClaudeCliDriver implements CliDriver {
       errored: false,
       stderr: "",
       startedAt: start,
-      agentByCall: new Map()
+      agentByCall: new Map(),
+      permissionMode: request.permissionMode ?? "auto"
     };
     this.processes.set(request.sessionId, state);
     this.turnToSession.set(turnId, request.sessionId);
@@ -519,6 +522,18 @@ export class ClaudeCliDriver implements CliDriver {
       } else {
         this.writeControl(state.sessionId, claudeDenyResponse(control.requestId, "Denied automatically: AskUserQuestion arrived without usable questions."));
       }
+      return;
+    }
+    if (state.permissionMode === "bypassPermissions") {
+      this.writeControl(state.sessionId, claudeAllowResponse(control.requestId, control.input));
+      traceHarnessCall({
+        harness: "claude",
+        operation: "claude.autoAllowBypass",
+        turnId,
+        cwd: state.cwd || undefined,
+        ok: true,
+        extra: { requestId: control.requestId, toolName: control.toolName }
+      });
       return;
     }
     if (this.sessionAllows.get(state.sessionId)?.has(control.toolName)) {
