@@ -757,7 +757,8 @@ export class GitService {
       baseRef = requestedBase || await this.defaultBase(root, headRef, branches);
       patch = await execDiff(binary, ["diff", "--no-ext-diff", "--binary", "--find-renames", `${baseRef}...HEAD`, "--"], root);
     } else {
-      patch = await execDiff(binary, ["diff", "HEAD", "--no-ext-diff", "--binary", "--find-renames", "--"], root);
+      const base = requestedBase && (await this.isCommitAncestor(root, requestedBase)) ? requestedBase : "HEAD";
+      patch = await execDiff(binary, ["diff", base, "--no-ext-diff", "--binary", "--find-renames", "--"], root);
       const summary = await git.status();
       const untracked = summary.not_added.filter((file) => !isAppManagedPath(file)).slice(0, UNTRACKED_DIFF_MAX_FILES);
       const parts = await mapLimit(untracked, 8, (file) =>
@@ -772,6 +773,19 @@ export class GitService {
       }
     }
     return { mode, patch: this.truncatePatch(patch), baseRef, headRef };
+  }
+
+  private async isCommitAncestor(root: string, sha: string): Promise<boolean> {
+    try {
+      await this.git(root).raw(["merge-base", "--is-ancestor", sha, "HEAD"]);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  async headSha(repoRoot: string): Promise<string> {
+    return (await this.git(repoRoot).revparse(["HEAD"])).trim();
   }
 
   private async defaultBase(root: string, headRef: string, branches: GitBranchInfo[]): Promise<string> {
@@ -789,8 +803,11 @@ export class GitService {
     return fallback.name;
   }
 
-  async turnDiff(root: string, _since: number): Promise<string> {
+  async turnDiff(root: string, _since: number, baseSha?: string | null): Promise<string> {
     try {
+      if (baseSha && (await this.isCommitAncestor(root, baseSha))) {
+        return (await this.diff(root, "working", baseSha)).patch;
+      }
       return (await this.diff(root, "working")).patch;
     } catch (err) {
       return `diff unavailable: ${(err as Error).message}`;

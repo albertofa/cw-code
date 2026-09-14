@@ -461,4 +461,34 @@ describe("GitService worktrees", () => {
     expect(await service.deleteBranch(repository, "cw/unmerged", { force: true })).toEqual({ deleted: true, unmergedCommits: true });
     expect(execFileSync("git", ["-C", repository, "branch", "--list", "cw/unmerged"], { encoding: "utf8" }).trim()).toBe("");
   });
+
+  it("turnDiff scopes changes to the recorded base sha and falls back when it is invalid", async () => {
+    const { sandbox, repository, service } = initSandbox();
+    const created = await service.createWorktree(repository, "project", "sess_turndiff", join(sandbox, "worktrees"), "main");
+    const baseSha = await service.headSha(created.path);
+
+    writeFileSync(join(created.path, "README.md"), "turn\n", "utf8");
+    writeFileSync(join(created.path, "new-file.txt"), "untracked\n", "utf8");
+    const patch = await service.turnDiff(created.path, Date.now(), baseSha);
+    expect(patch).toBe((await service.diff(created.path, "working", baseSha)).patch);
+    expect(patch).toContain("+turn");
+    expect(patch).toContain("new-file.txt");
+    expect(patch).toContain("+untracked");
+
+    execFileSync("git", ["-C", created.path, "add", "-A"]);
+    execFileSync("git", ["-C", created.path, "-c", "user.name=cw-code", "-c", "user.email=test@cw-code.local", "commit", "-m", "turn commit"]);
+    writeFileSync(join(created.path, "later.txt"), "after commit\n", "utf8");
+
+    const turnPatch = await service.turnDiff(created.path, Date.now(), baseSha);
+    expect(turnPatch).toContain("README.md");
+    expect(turnPatch).toContain("later.txt");
+
+    const fallback = await service.turnDiff(created.path, Date.now(), "0".repeat(40));
+    expect(fallback).toBe((await service.diff(created.path, "working")).patch);
+    expect(fallback).not.toContain("README.md");
+    expect(fallback).toContain("later.txt");
+
+    const noBase = await service.turnDiff(created.path, Date.now(), null);
+    expect(noBase).toBe(fallback);
+  });
 });

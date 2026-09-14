@@ -273,9 +273,10 @@ function registerIpc(): void {
       throw lastError ?? new Error("no root available to read image");
     }
   );
-  ipcMain.handle("git.turnDiff", (_e, args: { sessionId: string; since: number }) =>
-    sessions.ensureWorktree(args.sessionId).then((root) => git.turnDiff(root, args.since))
-  );
+  ipcMain.handle("git.turnDiff", async (_e, args: { sessionId: string; since: number }) => {
+    const root = await sessions.ensureWorktree(args.sessionId);
+    return git.turnDiff(root, args.since, sessions.turnBaseSha(args.sessionId));
+  });
 
   ipcMain.handle("pty.open", (_e, args: { sessionId: string; kind: PtyKind }) =>
     sessions.ensureWorktree(args.sessionId).then((root) =>

@@ -312,6 +312,28 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
+  it("records the worktree HEAD as the turn base sha and replaces it on the next turn", async () => {
+    const { manager, fake, project } = makeGitSandboxManager("cw-turn-base-");
+    const session = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    const worktreePath = session.worktreePath;
+    if (!worktreePath) throw new Error("expected a worktree-backed session");
+    const headOf = () => execFileSync("git", ["-C", worktreePath, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+
+    await manager.startTurn(session.id, "first");
+    const firstBase = manager.turnBaseSha(session.id);
+    expect(firstBase).toBe(headOf());
+
+    fake.completeAll();
+    writeFileSync(join(worktreePath, "README.md"), "changed\n", "utf8");
+    execFileSync("git", ["-C", worktreePath, "add", "-A"]);
+    execFileSync("git", ["-C", worktreePath, "-c", "user.name=cw-code", "-c", "user.email=test@cw-code.local", "commit", "-m", "mid-turn"]);
+
+    await manager.startTurn(session.id, "second");
+    expect(manager.turnBaseSha(session.id)).toBe(headOf());
+    expect(manager.turnBaseSha(session.id)).not.toBe(firstBase);
+    manager.dispose();
+  });
+
   it("falls back CW_WORKTREE_PATH to the project root for sessions without a worktree", async () => {
     const { manager, fake } = makeManager();
     const project = manager.addProject("C:\\proj-env-nowt");

@@ -61,6 +61,7 @@ export class SessionManager {
   private git: GitService;
   private worktreesRoot: string;
   private deltaBuffer = new Map<string, { sessionId: string; text: string; timer: NodeJS.Timeout }>();
+  private turnBaseShas = new Map<string, string>();
 
   constructor(opts: SessionManagerOptions = {}) {
     const dbPath = opts.dbPath ?? join(app.getPath("userData"), "cw-code.db");
@@ -284,6 +285,7 @@ export class SessionManager {
     opts: { removeWorktree?: boolean; forceBranch?: boolean }
   ): Promise<SessionCleanupResult> {
     const sessionId = session.id;
+    this.turnBaseShas.delete(sessionId);
     this.store.updateSession(sessionId, { status });
     const worktreePath = session.worktreePath;
     if (!worktreePath) {
@@ -467,6 +469,20 @@ export class SessionManager {
     return buildTurnEnv(process.env, this.sessionEnvVars(session, project, cwd));
   }
 
+  turnBaseSha(sessionId: string): string | null {
+    return this.turnBaseShas.get(sessionId) ?? null;
+  }
+
+  private async captureTurnBaseSha(sessionId: string, cwd: string, worktreePath: string | null | undefined): Promise<void> {
+    if (!worktreePath) return;
+    try {
+      this.turnBaseShas.set(sessionId, await this.git.headSha(cwd));
+    } catch (err) {
+      this.turnBaseShas.delete(sessionId);
+      console.warn(`turn base capture failed for ${sessionId}: ${(err as Error).message}`);
+    }
+  }
+
   async startTurn(sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[] }): Promise<string> {
     const session = this.store.getSession(sessionId);
     if (!session) throw new Error(`unknown session ${sessionId}`);
@@ -483,6 +499,7 @@ export class SessionManager {
     this.pendingTurns.add(sessionId);
     try {
       const cwd = await this.ensureWorktree(sessionId);
+      await this.captureTurnBaseSha(sessionId, cwd, session.worktreePath);
       const stored = this.getComposer(sessionId);
       const prefs = { ...stored, ...(opts?.prefs ?? {}) };
       const driver = this.drivers[session.driver];
