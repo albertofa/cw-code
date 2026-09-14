@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
-import { Bot, Code, Columns2, Eye, Folder, GitBranch, Orbit, PanelRightClose, Sparkles, Terminal, type LucideIcon } from "lucide-react";
+import { Bot, Code, Columns2, Eye, Folder, GitBranch, Orbit, PanelRightClose, PanelRightOpen, Sparkles, Terminal, type LucideIcon } from "lucide-react";
 import type { DriverName } from "./cw.js";
 import { Sidebar } from "./components/Sidebar.js";
 import { TitleBar } from "./components/TitleBar.js";
@@ -358,6 +358,16 @@ export function App() {
           <div className="app-body">
           <Sidebar onOpenSettings={() => openSettings()} />
           <ThreadView />
+          {!rightVisible && (
+            <button
+              className="right-restore"
+              onClick={() => setRightVisible(true)}
+              title="Restore panel"
+              aria-label="Restore panel"
+            >
+              <PanelRightOpen size={14} />
+            </button>
+          )}
           {rightVisible && (
             <aside className="right" style={{ width: rightWidth }}>
               <div

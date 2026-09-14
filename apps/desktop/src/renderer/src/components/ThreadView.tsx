@@ -151,7 +151,7 @@ export function ThreadView() {
           <span className="crumb-sep">/</span>
           <strong>{session.title}</strong>
         </span>
-        <GitPanelBar sessionId={session.id} compact />
+        <GitPanelBar key={session.id} sessionId={session.id} compact />
         <span className="thread-status">
           {busyTurn && <WorkingPill word={workingWord} />}
         </span>

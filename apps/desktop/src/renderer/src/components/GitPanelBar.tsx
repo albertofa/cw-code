@@ -1,7 +1,8 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { ArrowDown, ArrowUp, ExternalLink, FolderOpen, GitBranch, GitFork } from "lucide-react";
 import type { GitBranchInfo } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
+import { useNotifs } from "./Notifications.js";
 import { MenuSelect } from "./MenuSelect.js";
 
 function GitHubMark({ size = 11 }: { size?: number }) {
@@ -17,6 +18,7 @@ export function GitPanelBar({ sessionId, compact = false }: { sessionId: string;
   const [error, setError] = useState("");
   const [switching, setSwitching] = useState(false);
   const [worktreeCard, setWorktreeCard] = useState<{ x: number; y: number } | null>(null);
+  const cardRef = useRef<HTMLDivElement | null>(null);
   const closeTimer = useRef<number | null>(null);
   const refreshGitStatus = useAppStore((state) => state.refreshGitStatus);
   const status = useAppStore((state) => state.gitStatusBySession[sessionId] ?? null);
@@ -25,14 +27,24 @@ export function GitPanelBar({ sessionId, compact = false }: { sessionId: string;
     if (closeTimer.current) window.clearTimeout(closeTimer.current);
   }, []);
 
+  useLayoutEffect(() => {
+    if (!worktreeCard) return;
+    const el = cardRef.current;
+    if (!el) return;
+    const r = el.getBoundingClientRect();
+    const x = Math.max(8, Math.min(worktreeCard.x, window.innerWidth - r.width - 8));
+    const y = Math.max(8, Math.min(worktreeCard.y, window.innerHeight - r.height - 8));
+    if (x !== worktreeCard.x || y !== worktreeCard.y) setWorktreeCard({ x, y });
+  }, [worktreeCard]);
+
   const showWorktreeCard = (el: HTMLElement) => {
     if (closeTimer.current) {
       window.clearTimeout(closeTimer.current);
       closeTimer.current = null;
     }
     const r = el.getBoundingClientRect();
-    const cardWidth = 280;
-    const cardHeight = 130;
+    const cardWidth = 300;
+    const cardHeight = 160;
     setWorktreeCard({
       x: Math.max(8, Math.min(r.left, window.innerWidth - cardWidth - 8)),
       y: Math.max(8, Math.min(r.bottom + 6, window.innerHeight - cardHeight - 8))
@@ -52,6 +64,11 @@ export function GitPanelBar({ sessionId, compact = false }: { sessionId: string;
   };
 
   useEffect(() => {
+    if (closeTimer.current) {
+      window.clearTimeout(closeTimer.current);
+      closeTimer.current = null;
+    }
+    setWorktreeCard(null);
     let active = true;
     const updateBranches = () => {
       window.cw.listGitBranches(sessionId).then((items) => {
@@ -137,6 +154,7 @@ export function GitPanelBar({ sessionId, compact = false }: { sessionId: string;
       </div>
       {worktreeCard && (
         <div
+          ref={cardRef}
           className="session-hovercard interactive"
           style={{ left: worktreeCard.x, top: worktreeCard.y }}
           onMouseEnter={cancelWorktreeClose}
@@ -154,7 +172,9 @@ export function GitPanelBar({ sessionId, compact = false }: { sessionId: string;
             className="session-hovercard-action"
             onClick={() => {
               setWorktreeCard(null);
-              void window.cw.openPath(status.worktreePath);
+              window.cw.openPath(status.worktreePath).catch((err: Error) =>
+                useNotifs.getState().push({ kind: "error", title: "Could not open worktree", message: err.message })
+              );
             }}
           >
             <FolderOpen size={13} aria-hidden="true" />
