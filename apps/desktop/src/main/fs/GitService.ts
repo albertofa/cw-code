@@ -335,6 +335,16 @@ function execDiff(binary: string, args: string[], cwd: string): Promise<string> 
   });
 }
 
+function exitCode(binary: string, args: string[]): Promise<number> {
+  return new Promise((resolvePromise, reject) => {
+    execFile(binary, args, { timeout: 10_000, windowsHide: true, maxBuffer: 1024 * 1024, env: withNonInteractiveEnv() }, (error) => {
+      const code = (error as unknown as { code?: unknown } | null)?.code;
+      if (error && typeof code !== "number") return reject(new Error(String(error.message).trim()));
+      resolvePromise(typeof code === "number" ? code : 0);
+    });
+  });
+}
+
 async function queryPullRequest(root: string, ghBinary: string, remote: ParsedGitHubRemote, account: GitHubAccountInfo): Promise<{ pullRequest: GitPullRequest | null; error: string | null }> {
   try {
     const token = (await execText(ghBinary, ["auth", "token", "--hostname", remote.host, "--user", account.login], root, 8_000, cleanAuthEnvironment())).trim();
@@ -776,12 +786,10 @@ export class GitService {
   }
 
   private async isCommitAncestor(root: string, sha: string): Promise<boolean> {
-    try {
-      await this.git(root).raw(["merge-base", "--is-ancestor", sha, "HEAD"]);
-      return true;
-    } catch {
-      return false;
-    }
+    const code = await exitCode(this.settings().gitBinaryPath, ["-C", root, "merge-base", "--is-ancestor", sha, "HEAD"]);
+    if (code === 0) return true;
+    if (code === 1) return false;
+    throw new Error(`git merge-base failed with exit code ${code}`);
   }
 
   async headSha(repoRoot: string): Promise<string> {
@@ -805,10 +813,15 @@ export class GitService {
 
   async turnDiff(root: string, _since: number, baseSha?: string | null): Promise<string> {
     try {
-      if (baseSha && (await this.isCommitAncestor(root, baseSha))) {
-        return (await this.diff(root, "working", baseSha)).patch;
+      let base: string | undefined;
+      if (baseSha) {
+        try {
+          if (await this.isCommitAncestor(root, baseSha)) base = baseSha;
+        } catch (err) {
+          console.warn(`git: unable to validate turn base sha in ${root}: ${(err as Error).message}`);
+        }
       }
-      return (await this.diff(root, "working")).patch;
+      return (await this.diff(root, "working", base)).patch;
     } catch (err) {
       return `diff unavailable: ${(err as Error).message}`;
     }
