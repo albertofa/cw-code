@@ -50,6 +50,7 @@ export interface WorktreePruneSummary {
   skipped: number;
   failed: number;
   errors: string[];
+  keptDirty: string[];
 }
 
 export interface HistoryMessage {

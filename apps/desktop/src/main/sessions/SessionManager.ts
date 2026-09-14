@@ -413,7 +413,7 @@ export class SessionManager {
   }
 
   async pruneStaleWorktrees(): Promise<WorktreePruneSummary> {
-    const summary: WorktreePruneSummary = { scanned: 0, removed: 0, skipped: 0, failed: 0, errors: [] };
+    const summary: WorktreePruneSummary = { scanned: 0, removed: 0, skipped: 0, failed: 0, errors: [], keptDirty: [] };
     if (!existsSync(this.worktreesRoot)) return summary;
     const sessions = this.store.listAllSessions();
     const touchedProjects = new Set<string>();
@@ -451,6 +451,10 @@ export class SessionManager {
   private async removeStaleDir(repoRoot: string | null, dirPath: string, summary: WorktreePruneSummary): Promise<void> {
     if (!looksLikeWorktree(dirPath)) {
       summary.skipped += 1;
+      return;
+    }
+    if (repoRoot && await this.git.worktreeDirty(dirPath)) {
+      summary.keptDirty.push(dirPath);
       return;
     }
     try {

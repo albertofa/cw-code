@@ -185,6 +185,7 @@ export interface WorktreePruneSummary {
   skipped: number;
   failed: number;
   errors: string[];
+  keptDirty: string[];
 }
 
 export type GitDiffMode = "working" | "staged" | "branch";

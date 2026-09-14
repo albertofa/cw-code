@@ -634,6 +634,10 @@ export class GitService {
     return { removed: true };
   }
 
+  async worktreeDirty(path: string): Promise<boolean> {
+    return this.isDirtyWorktree(path);
+  }
+
   private async isDirtyWorktree(path: string): Promise<boolean> {
     try {
       return (await this.git(path).raw(["status", "--porcelain"])).trim().length > 0;

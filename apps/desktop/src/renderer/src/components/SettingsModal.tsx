@@ -408,12 +408,18 @@ export function SettingsModal({
         )}
         {pruneSummary && (
           <div className="settings-prune-summary">
-            {pruneSummary.removed === 0 && pruneSummary.failed === 0 && pruneSummary.skipped === 0
+            {pruneSummary.removed === 0 && pruneSummary.failed === 0 && pruneSummary.skipped === 0 && pruneSummary.keptDirty.length === 0
               ? "No stale worktrees found."
               : `Removed ${pruneSummary.removed} of ${pruneSummary.scanned} scanned.`}
             {pruneSummary.skipped > 0 && (
               <div>
                 Skipped {pruneSummary.skipped} {pruneSummary.skipped === 1 ? "directory" : "directories"} that are not git worktrees.
+              </div>
+            )}
+            {pruneSummary.keptDirty.length > 0 && (
+              <div>
+                Kept {pruneSummary.keptDirty.length} {pruneSummary.keptDirty.length === 1 ? "worktree" : "worktrees"} with uncommitted changes:
+                <div className="settings-prune-paths">{pruneSummary.keptDirty.join("\n")}</div>
               </div>
             )}
             {pruneSummary.failed > 0 && <div className="settings-error">{pruneSummary.errors.join("\n")}</div>}
