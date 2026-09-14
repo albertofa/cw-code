@@ -192,6 +192,53 @@ export class OpencodeDriver implements CliDriver {
     if (info) this.watchInfo.set(turnId, { ...info, port: handle.port, authHeader: handle.authHeader, cwd });
   }
 
+  private rewatchTurn(turnId: string, port: number, authHeader: string): void {
+    try {
+      this.watches.get(turnId)?.abort();
+    } catch {
+    }
+    this.watches.delete(turnId);
+    this.watchQuestions(turnId, port, authHeader);
+  }
+
+  private async reattachTurn(turnId: string, cwd: string, serverSessionId: string): Promise<boolean> {
+    try {
+      this.pool.invalidate(cwd);
+      const fresh = await this.pool.ensure(cwd);
+      if (!this.sessionIds.has(turnId)) return false;
+      this.refreshWatchHandle(turnId, fresh, cwd);
+      const probe = await opencodeFetch(`http://127.0.0.1:${fresh.port}/session/${encodeURIComponent(serverSessionId)}`, {
+        headers: { Authorization: fresh.authHeader },
+        timeoutMs: OPENCODE_LIST_TIMEOUT_MS,
+        port: fresh.port
+      });
+      if (probe.status === 404) return false;
+      if (!probe.ok) throw new Error(`opencode session probe failed: ${probe.status}`);
+      if ((probe.headers.get("content-type") ?? "").includes("text/html")) return false;
+      this.rewatchTurn(turnId, fresh.port, fresh.authHeader);
+      traceHarnessCall({
+        harness: "opencode",
+        operation: "opencode.turnReattached",
+        turnId,
+        cwd,
+        ok: true,
+        extra: { serverSessionId, serverPort: fresh.port }
+      });
+      return true;
+    } catch (err) {
+      traceHarnessCall({
+        harness: "opencode",
+        operation: "opencode.turnReattached",
+        turnId,
+        cwd,
+        ok: false,
+        error: truncateError((err as Error).message),
+        extra: { serverSessionId }
+      });
+      return false;
+    }
+  }
+
   async listSessions(projectRoot: string, projectId = ""): Promise<SessionMeta[]> {
     const start = Date.now();
     const operation = "opencode.listSessions";
@@ -332,7 +379,7 @@ export class OpencodeDriver implements CliDriver {
           }
         }
       } catch (err) {
-        if (!controller.signal.aborted) {
+        if (!controller.signal.aborted && this.watches.get(turnId) === controller) {
           traceHarnessCall({
             harness: "opencode",
             operation: "opencode.questions.watch",
@@ -343,17 +390,21 @@ export class OpencodeDriver implements CliDriver {
           if (this.sessionIds.has(turnId)) {
             setTimeout(() => {
               if (!this.sessionIds.has(turnId)) return;
+              if (this.watches.get(turnId) !== controller) return;
               const info = this.watchInfo.get(turnId);
               if (!info) return;
               void this.pool
                 .ensure(info.cwd)
                 .then((fresh) => {
                   if (!this.sessionIds.has(turnId)) return;
+                  if (this.watches.get(turnId) !== controller) return;
                   this.refreshWatchHandle(turnId, fresh, info.cwd);
                   this.watchQuestions(turnId, fresh.port, fresh.authHeader);
                 })
                 .catch(() => {
-                  if (this.sessionIds.has(turnId)) this.watchQuestions(turnId, port, authHeader);
+                  if (!this.sessionIds.has(turnId)) return;
+                  if (this.watches.get(turnId) !== controller) return;
+                  this.watchQuestions(turnId, port, authHeader);
                 });
             }, 2000).unref?.();
           }
@@ -677,21 +728,14 @@ export class OpencodeDriver implements CliDriver {
         res = await send(serverPort, authHeader, files.length > 0);
       } catch (err) {
         if (!isConnectionError(err)) throw err;
-        traceHarnessCall({
-          harness: "opencode",
-          operation: "opencode.serve.reconnect",
-          sessionId: request.sessionId,
-          turnId,
-          cwd: request.cwd,
-          ok: true,
-          extra: { deadPort: serverPort, reason: truncateError((err as Error).message) }
-        });
-        this.pool.invalidate(request.cwd);
-        const fresh = await this.pool.ensure(request.cwd);
-        serverPort = fresh.port;
-        authHeader = fresh.authHeader;
-        this.refreshWatchHandle(turnId, fresh, request.cwd);
-        res = await send(serverPort, authHeader, files.length > 0);
+        if (!this.sessionIds.has(turnId)) return;
+        // The completion signal was lost, but the turn usually keeps running
+        // server-side (the streaming POST is cut around the 5-minute mark
+        // while the server stays alive). Reattach the SSE watch and keep
+        // waiting instead of failing the turn. Never re-POST: the user
+        // message is already stored, a retry would duplicate it.
+        if (await this.reattachTurn(turnId, request.cwd, serverSessionId)) return;
+        throw err;
       }
       if (!res.ok && res.status === 400 && files.length > 0) {
         console.warn(`attachment message rejected, retrying text-only`);
