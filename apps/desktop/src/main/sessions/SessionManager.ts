@@ -21,7 +21,7 @@ import type {
 } from "@cw-code/contracts";
 import { SessionStore } from "./SessionStore.js";
 import { buildTurnEnv } from "./env.js";
-import { isWorktreeOrphaned, looksLikeWorktree, sameWorktreePath } from "./worktreeCleanup.js";
+import { isWorktreeOrphaned, looksLikeWorktree, pinsWorktree, sameWorktreePath } from "./worktreeCleanup.js";
 import { SettingsStore } from "../settings/SettingsStore.js";
 import { resolveClaudeModels } from "../settings/settingsUtils.js";
 import { TracingCliDriver } from "../debug/tracingDriver.js";
@@ -330,6 +330,9 @@ export class SessionManager {
     }
     const worktreeOrphaned = isWorktreeOrphaned(this.store.listAllSessions(), worktreePath, sessionId);
     if (!worktreeOrphaned || !opts.removeWorktree) {
+      if (!worktreeOrphaned && (status === "resolved" || status === "archived")) {
+        this.store.updateSession(sessionId, { worktreePath: undefined });
+      }
       const unmergedCommitCount =
         !opts.removeWorktree && worktreeOrphaned && session.branch
           ? await this.git.unmergedCommitCount(project.rootPath, session.branch)
@@ -422,7 +425,7 @@ export class SessionManager {
         if (!sessionDir.isDirectory()) continue;
         const dirPath = join(projectPath, sessionDir.name);
         summary.scanned += 1;
-        if (sessions.some((s) => s.worktreePath && sameWorktreePath(s.worktreePath, dirPath))) continue;
+        if (sessions.some((s) => pinsWorktree(s) && s.worktreePath && sameWorktreePath(s.worktreePath, dirPath))) continue;
         if (looksLikeWorktree(dirPath)) touchedProjects.add(project?.id ?? projectDir.name);
         await this.removeStaleDir(project?.rootPath ?? null, dirPath, summary);
       }
@@ -832,6 +835,7 @@ export class SessionManager {
     const shared = this.store.listAllSessions().some(
       (other) =>
         other.id !== sessionId &&
+        pinsWorktree(other) &&
         ((other.worktreePath && sameWorktreePath(other.worktreePath, worktreePath)) || other.branch === branch)
     );
     if (shared) return;

@@ -756,6 +756,25 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
+  it("renames the title branch once the only co-tenant is resolved", async () => {
+    const { manager, fake, project } = makeGitSandboxManager("cw-session-branch-resolved-");
+    const a = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    if (!a.worktreePath || !a.branch) throw new Error("expected a worktree-backed session with a branch");
+    const b = await manager.createSession(project.id, "claude", { mode: "previous", reuseWorktreePath: a.worktreePath });
+    expect(b.worktreePath).toBe(a.worktreePath);
+    expect(b.branch).toBe(a.branch);
+
+    const aResult = await manager.resolveSession(a.id, "resolved");
+    expect(aResult.worktreeOrphaned).toBe(false);
+
+    await manager.startTurn(b.id, "fix the login flow");
+    fake.completeAll();
+    const renamed = await waitForBranch(manager, project.id, b.id, (br) => br === "cw/fix-the-login-flow");
+
+    expect(renamed).toBe("cw/fix-the-login-flow");
+    manager.dispose();
+  });
+
   it("falls back to a new worktree when the reuse path is in detached HEAD state", async () => {
     const { manager, project } = makeGitSandboxManager("cw-session-reuse-detached-");
     const a = await manager.createSession(project.id, "claude", { mode: "new", baseBranch: "main" });
@@ -905,14 +924,48 @@ describe("SessionManager", () => {
     const { manager, project } = makeGitSandboxManager("cw-resolve-shared-");
     const a = await manager.createSession(project.id, "claude", { baseBranch: "main" });
     const b = await manager.createSession(project.id, "claude", { baseBranch: "main" });
-    if (!a.worktreePath) throw new Error("expected a worktree-backed session");
-    (manager as unknown as { store: SessionStore }).store.updateSession(b.id, { worktreePath: a.worktreePath });
+    const worktreePath = a.worktreePath;
+    if (!worktreePath) throw new Error("expected a worktree-backed session");
+    (manager as unknown as { store: SessionStore }).store.updateSession(b.id, { worktreePath });
 
     const result = await manager.resolveSession(a.id, "archived", { removeWorktree: true });
 
     expect(result.worktreeOrphaned).toBe(false);
     expect(result.worktreeRemoved).toBe(false);
-    expect(existsSync(a.worktreePath)).toBe(true);
+    expect(existsSync(worktreePath)).toBe(true);
+    const storedA = (await manager.listSessions(project.id)).find((s) => s.id === a.id);
+    expect(storedA?.worktreePath).toBeUndefined();
+    expect(storedA?.branch).toBe(a.branch);
+    manager.dispose();
+  });
+
+  it("gives the last live session of a reused worktree the orphan removal path", async () => {
+    const { manager, project } = makeGitSandboxManager("cw-resolve-reuse-last-");
+    const a = await manager.createSession(project.id, "claude", { mode: "new", baseBranch: "main" });
+    const worktreePath = a.worktreePath;
+    if (!worktreePath) throw new Error("expected a worktree-backed session");
+    const b = await manager.createSession(project.id, "claude", { mode: "previous", reuseWorktreePath: worktreePath });
+    expect(b.worktreePath).toBe(worktreePath);
+
+    const aResult = await manager.resolveSession(a.id, "archived", { removeWorktree: true });
+
+    expect(aResult.worktreeOrphaned).toBe(false);
+    expect(aResult.worktreeRemoved).toBe(false);
+    expect(existsSync(worktreePath)).toBe(true);
+    const storedA = (await manager.listSessions(project.id)).find((s) => s.id === a.id);
+    expect(storedA?.worktreePath).toBeUndefined();
+    expect(storedA?.branch).toBe(a.branch);
+
+    const bCheck = await manager.resolveSession(b.id, "archived");
+
+    expect(bCheck.worktreeOrphaned).toBe(true);
+    expect(bCheck.worktreeRemoved).toBe(false);
+    expect(existsSync(worktreePath)).toBe(true);
+
+    const bResult = await manager.resolveSession(b.id, "archived", { removeWorktree: true });
+
+    expect(bResult.worktreeRemoved).toBe(true);
+    expect(existsSync(worktreePath)).toBe(false);
     manager.dispose();
   });
 
@@ -967,6 +1020,25 @@ describe("SessionManager", () => {
     expect(summary.removed).toBe(1);
     expect(summary.skipped).toBe(0);
     expect(existsSync(orphanPath)).toBe(false);
+    manager.dispose();
+  });
+
+  it("prunes worktrees referenced only by resolved sessions", async () => {
+    const { manager, project } = makeGitSandboxManager("cw-prune-resolved-");
+    const session = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    const worktreePath = session.worktreePath;
+    if (!worktreePath) throw new Error("expected a worktree-backed session");
+
+    const kept = await manager.resolveSession(session.id, "resolved");
+    expect(kept.worktreeOrphaned).toBe(true);
+    expect(kept.worktreeRemoved).toBe(false);
+    const stored = (await manager.listSessions(project.id)).find((s) => s.id === session.id);
+    expect(stored?.worktreePath).toBe(worktreePath);
+
+    const summary = await manager.pruneStaleWorktrees();
+
+    expect(summary.removed).toBe(1);
+    expect(existsSync(worktreePath)).toBe(false);
     manager.dispose();
   });
 

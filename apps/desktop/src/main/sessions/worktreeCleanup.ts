@@ -16,20 +16,24 @@ export function looksLikeWorktree(dirPath: string): boolean {
   }
 }
 
+export function pinsWorktree(session: Pick<SessionMeta, "status">): boolean {
+  return session.status !== "resolved" && session.status !== "archived";
+}
+
 export function isWorktreeOrphaned(
-  sessions: Array<Pick<SessionMeta, "id" | "worktreePath">>,
+  sessions: Array<Pick<SessionMeta, "id" | "worktreePath" | "status">>,
   worktreePath: string,
   excludeSessionId: string
 ): boolean {
   if (!worktreePath) return false;
   return !sessions.some(
-    (s) => s.id !== excludeSessionId && s.worktreePath && sameWorktreePath(s.worktreePath, worktreePath)
+    (s) => s.id !== excludeSessionId && pinsWorktree(s) && s.worktreePath && sameWorktreePath(s.worktreePath, worktreePath)
   );
 }
 
 export function findStaleWorktreeDirs(
-  sessions: Array<Pick<SessionMeta, "worktreePath">>,
+  sessions: Array<Pick<SessionMeta, "id" | "worktreePath" | "status">>,
   dirPaths: string[]
 ): string[] {
-  return dirPaths.filter((dir) => !sessions.some((s) => s.worktreePath && sameWorktreePath(s.worktreePath, dir)));
+  return dirPaths.filter((dir) => !sessions.some((s) => pinsWorktree(s) && s.worktreePath && sameWorktreePath(s.worktreePath, dir)));
 }

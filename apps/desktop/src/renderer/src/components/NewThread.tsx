@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { GitBranch, GitFork, History } from "lucide-react";
 import { useAppStore } from "../stores/appStore.js";
 import type { CreateSessionOptions, CreateWorkspaceMode, DriverName, GitBranchInfo } from "../cw.js";
+import { worktreeCandidates } from "./worktreeCandidates.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { ComposerView, type ComposerBackend } from "./ComposerView.js";
 import { MenuSelect } from "./MenuSelect.js";
@@ -11,13 +12,6 @@ const HARNESS: Array<{ id: DriverName; label: string }> = [
   { id: "opencode", label: "OpenCode" },
   { id: "codex", label: "Codex" }
 ];
-
-interface WorktreeCandidate {
-  sessionId: string;
-  title: string;
-  branch?: string;
-  worktreePath: string;
-}
 
 export function NewThread({
   projectId,
@@ -38,14 +32,7 @@ export function NewThread({
   const [branchError, setBranchError] = useState("");
 
   const sessions = store.sessionsByProject[projectId] ?? [];
-  const candidates: WorktreeCandidate[] = [];
-  const seenPaths = new Set<string>();
-  for (const s of [...sessions].filter((s) => s.worktreePath).sort((a, b) => b.updatedAt - a.updatedAt)) {
-    const path = s.worktreePath as string;
-    if (seenPaths.has(path)) continue;
-    seenPaths.add(path);
-    candidates.push({ sessionId: s.id, title: s.title, branch: s.branch, worktreePath: path });
-  }
+  const candidates = worktreeCandidates(sessions);
 
   useEffect(() => {
     let active = true;

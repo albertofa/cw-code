@@ -612,10 +612,12 @@ export const useAppStore = create<AppState>((set, get) => ({
       session.worktreePath &&
       session.worktreePath !== workspace.reuseWorktreePath
     ) {
+      const requested = workspace.reuseWorktreePath;
+      const stillHeld = (get().sessionsByProject[projectId] ?? []).some((s) => s.worktreePath === requested);
       useNotifs.getState().push({
         kind: "warning",
-        title: "Requested worktree no longer exists",
-        message: "Created a new worktree instead."
+        title: "Created a new worktree instead",
+        ...(stillHeld ? {} : { message: "The requested worktree no longer exists." })
       });
     }
     set({
