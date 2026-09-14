@@ -357,7 +357,7 @@ export function App() {
           <TitleBar />
           <div className="app-body">
           <Sidebar onOpenSettings={() => openSettings()} />
-          <ThreadView rightVisible={rightVisible} onToggleRight={() => setRightVisible((v) => !v)} />
+          <ThreadView />
           {rightVisible && (
             <aside className="right" style={{ width: rightWidth }}>
               <div

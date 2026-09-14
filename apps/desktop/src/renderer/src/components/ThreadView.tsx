@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import { PanelRightClose, PanelRightOpen, Sparkles, TriangleAlert } from "lucide-react";
+import { Sparkles, TriangleAlert } from "lucide-react";
 import { useAppStore, type ChatMessage } from "../stores/appStore.js";
 import { Notifications } from "./Notifications.js";
 import { Md } from "./Markdown.js";
@@ -19,7 +19,7 @@ import { ImageThumb } from "./ImageThumb.js";
 
 const EMPTY_MESSAGES: ChatMessage[] = [];
 
-export function ThreadView({ rightVisible, onToggleRight }: { rightVisible: boolean; onToggleRight: () => void }) {
+export function ThreadView() {
   const activeProjectId = useAppStore((s) => s.activeProjectId);
   const activeSessionId = useAppStore((s) => s.activeSessionId);
   const pendingDriver = useAppStore((s) => s.pendingDriver);
@@ -127,11 +127,6 @@ export function ThreadView({ rightVisible, onToggleRight }: { rightVisible: bool
           <span title={heroDriver}>
             <DriverIcon driver={heroDriver} size={14} />
           </span>
-          <span className="thread-status">
-            <button className="icon-btn" onClick={onToggleRight} title={rightVisible ? "Hide panel" : "Show panel"}>
-              {rightVisible ? <PanelRightClose aria-hidden="true" size={14} /> : <PanelRightOpen aria-hidden="true" size={14} />}
-            </button>
-          </span>
         </div>
         <Notifications />
         <NewThread
@@ -159,9 +154,6 @@ export function ThreadView({ rightVisible, onToggleRight }: { rightVisible: bool
         <GitPanelBar sessionId={session.id} compact />
         <span className="thread-status">
           {busyTurn && <WorkingPill word={workingWord} />}
-          <button className="icon-btn" onClick={onToggleRight} title={rightVisible ? "Hide panel" : "Show panel"}>
-            {rightVisible ? <PanelRightClose aria-hidden="true" size={14} /> : <PanelRightOpen aria-hidden="true" size={14} />}
-          </button>
         </span>
       </div>
       <Notifications />

@@ -867,6 +867,34 @@ body.session-dragging * {
   font-family: var(--mono);
 }
 
+.session-hovercard.interactive {
+  pointer-events: auto;
+}
+
+.session-hovercard-action {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--text);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.session-hovercard-action:hover {
+  background: var(--driver-soft);
+}
+
+.session-hovercard-action > svg {
+  color: var(--muted);
+  flex: none;
+}
+
 .session-meta {
   display: contents;
 }
