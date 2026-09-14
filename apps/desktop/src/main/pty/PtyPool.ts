@@ -14,7 +14,7 @@ interface PtyInstance {
 }
 
 interface PtyModule {
-  spawn(file: string, args: string[], opts: { name: string; cols: number; rows: number; cwd: string }): PtyInstance;
+  spawn(file: string, args: string[], opts: { name: string; cols: number; rows: number; cwd: string; env?: Record<string, string> }): PtyInstance;
 }
 
 let cachedPty: PtyModule | null = null;
@@ -44,6 +44,7 @@ export class PtyPool {
     _sessionId: string,
     cwd: string,
     kind: PtyKind,
+    env: Record<string, string> | undefined,
     onData: (ptyId: string, data: string) => void
   ): Promise<string> {
     const ptyId = `pty_${randomUUID().slice(0, 8)}`;
@@ -99,7 +100,13 @@ export class PtyPool {
     }
     let proc: PtyInstance;
     try {
-      proc = pty.spawn(target.file, target.args, { name: "xterm-256color", cols: 120, rows: 30, cwd });
+      proc = pty.spawn(target.file, target.args, {
+        name: "xterm-256color",
+        cols: 120,
+        rows: 30,
+        cwd,
+        ...(env ? { env } : {})
+      });
     } catch (err) {
       traceHarnessCall({
         harness: kind === "shell" ? "system" : kind,

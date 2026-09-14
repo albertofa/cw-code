@@ -69,6 +69,20 @@ describe("OpencodeServerPool ensure", () => {
     pool.dispose();
   });
 
+  it("reuses an existing env-spawned server when a later ensure specifies no env", async () => {
+    const startServer = vi.fn(
+      (): Promise<{ proc: ChildProcess; handle: ServerHandle }> => Promise.resolve({ proc: fakeProc(), handle: HANDLE })
+    );
+    const pool = makePool(startServer);
+
+    await pool.ensure(ROOT, { CW_TEST: "1" });
+    const second = await pool.ensure(ROOT);
+
+    expect(second).toBe(HANDLE);
+    expect(startServer).toHaveBeenCalledTimes(1);
+    pool.dispose();
+  });
+
   it("spawns a fresh server when a concurrent caller requests a different env", async () => {
     let calls = 0;
     const handles: ServerHandle[] = [
@@ -122,6 +136,111 @@ describe("OpencodeServerPool ensure", () => {
     pool.dispose();
   });
 
+  it("shares one server when concurrent ensures differ only by session-unique env", async () => {
+    const startServer = vi.fn(
+      (_rootPath: string, _binary: string, env: Record<string, string> | undefined): Promise<{ proc: ChildProcess; handle: ServerHandle }> =>
+        Promise.resolve({ proc: fakeProc(), handle: HANDLE })
+    );
+    const pool = makePool(startServer);
+
+    const [a, b] = await Promise.all([
+      pool.ensure(ROOT, { CW_WORKTREE_PATH: ROOT, CW_SESSION_ID: "s1" }),
+      pool.ensure(ROOT, { CW_WORKTREE_PATH: ROOT, CW_SESSION_ID: "s2" })
+    ]);
+
+    expect(startServer).toHaveBeenCalledTimes(1);
+    expect(a).toBe(b);
+    expect(startServer.mock.calls[0][2]).toEqual({ CW_WORKTREE_PATH: ROOT });
+    pool.dispose();
+  });
+
+  it("does not retain raw env values in the pool key", async () => {
+    const startServer = vi.fn(
+      (): Promise<{ proc: ChildProcess; handle: ServerHandle }> => Promise.resolve({ proc: fakeProc(), handle: HANDLE })
+    );
+    const pool = makePool(startServer);
+
+    await pool.ensure(ROOT, { CW_TOKEN: "super-secret" });
+
+    const entry = [...(pool as unknown as { servers: Map<string, { envKey: string }> }).servers.values()][0];
+    expect(entry.envKey).not.toContain("super-secret");
+    pool.dispose();
+  });
+
+  it("evicts a server idle beyond the threshold on the next ensure", async () => {
+    const startServer = vi.fn(
+      (rootPath: string, _binary: string, _env: Record<string, string> | undefined): Promise<{ proc: ChildProcess; handle: ServerHandle }> =>
+        Promise.resolve({ proc: fakeProc(), handle: HANDLE })
+    );
+    const pool = new OpencodeServerPool(() => "opencode", { startServer, idleTimeoutMs: -1 });
+
+    await pool.ensure(ROOT);
+    await pool.ensure("C:\\fake\\other");
+
+    expect(startServer).toHaveBeenCalledTimes(2);
+    expect(startServer.mock.calls.map((call) => call[0])).toEqual([ROOT, "C:\\fake\\other"]);
+    await pool.ensure(ROOT);
+    expect(startServer).toHaveBeenCalledTimes(3);
+    pool.dispose();
+  });
+
+  it("caps total servers with LRU eviction", async () => {
+    const startServer = vi.fn(
+      (): Promise<{ proc: ChildProcess; handle: ServerHandle }> => Promise.resolve({ proc: fakeProc(), handle: HANDLE })
+    );
+    const pool = new OpencodeServerPool(() => "opencode", { startServer, maxServers: 1 });
+
+    const first = await pool.ensure("C:\\fake\\a");
+    const second = await pool.ensure("C:\\fake\\b");
+    expect(second).toBe(first);
+
+    await pool.ensure("C:\\fake\\a");
+    expect(startServer).toHaveBeenCalledTimes(3);
+    pool.dispose();
+  });
+
+  it("never evicts a server with an in-flight turn", async () => {
+    const startServer = vi.fn(
+      (): Promise<{ proc: ChildProcess; handle: ServerHandle }> => Promise.resolve({ proc: fakeProc(), handle: HANDLE })
+    );
+    const pool = new OpencodeServerPool(() => "opencode", { startServer, maxServers: 1, idleTimeoutMs: -1 });
+
+    await pool.ensure("C:\\fake\\a");
+    pool.beginTurn("C:\\fake\\a");
+    await pool.ensure("C:\\fake\\b");
+    expect(startServer).toHaveBeenCalledTimes(2);
+
+    await pool.ensure("C:\\fake\\a");
+    expect(startServer).toHaveBeenCalledTimes(2);
+    pool.endTurn("C:\\fake\\a");
+    pool.dispose();
+  });
+
+  it("reuses a server with mismatched env while a turn is in flight", async () => {
+    const handles: ServerHandle[] = [
+      { port: 40001, authHeader: "a" },
+      { port: 40002, authHeader: "b" }
+    ];
+    let calls = 0;
+    const startServer = vi.fn(() => {
+      calls += 1;
+      return Promise.resolve({ proc: fakeProc(), handle: handles[calls - 1] });
+    });
+    const pool = makePool(startServer);
+
+    await pool.ensure(ROOT);
+    pool.beginTurn(ROOT);
+    const duringTurn = await pool.ensure(ROOT, { CW_BRIDGE: "1" });
+    expect(duringTurn.port).toBe(40001);
+    expect(startServer).toHaveBeenCalledTimes(1);
+
+    pool.endTurn(ROOT);
+    const afterTurn = await pool.ensure(ROOT, { CW_BRIDGE: "1" });
+    expect(afterTurn.port).toBe(40002);
+    expect(startServer).toHaveBeenCalledTimes(2);
+    pool.dispose();
+  });
+
   it("rejects an in-flight spawn when disposed and never caches it", async () => {
     const startServer = vi.fn(
       (): Promise<{ proc: ChildProcess; handle: ServerHandle }> =>
@@ -136,5 +255,49 @@ describe("OpencodeServerPool ensure", () => {
     await expect(inFlight).rejects.toThrow("opencode server pool disposed");
     await expect(pool.ensure(ROOT)).rejects.toThrow("opencode server pool disposed");
     expect(startServer).toHaveBeenCalledTimes(1);
+  });
+
+  it("respawns when the cached proc has exited", async () => {
+    const first = { port: 40001, authHeader: "a" };
+    const second = { port: 40002, authHeader: "b" };
+    let calls = 0;
+    const startServer = vi.fn(() => {
+      calls += 1;
+      return Promise.resolve({
+        proc: fakeProc(),
+        handle: calls === 1 ? first : second
+      });
+    });
+    const pool = makePool(startServer);
+
+    await pool.ensure(ROOT);
+    const servers = (pool as unknown as { servers: Map<string, { proc: ChildProcess }> }).servers;
+    const entry = servers.get(ROOT);
+    Object.defineProperty(entry!.proc, "exitCode", { value: 1, configurable: true });
+
+    const handle = await pool.ensure(ROOT);
+    expect(handle.port).toBe(40002);
+    expect(startServer).toHaveBeenCalledTimes(2);
+    pool.dispose();
+  });
+
+  it("invalidate drops the cached server so the next ensure respawns", async () => {
+    const startServer = vi.fn(
+      (): Promise<{ proc: ChildProcess; handle: ServerHandle }> => Promise.resolve({ proc: fakeProc(), handle: HANDLE })
+    );
+    const pool = makePool(startServer);
+
+    await pool.ensure(ROOT);
+    pool.invalidate(ROOT);
+    await pool.ensure(ROOT);
+
+    expect(startServer).toHaveBeenCalledTimes(2);
+    pool.dispose();
+  });
+
+  it("probe reports false when no server is cached", async () => {
+    const pool = makePool(vi.fn());
+    await expect(pool.probe(ROOT)).resolves.toBe(false);
+    pool.dispose();
   });
 });

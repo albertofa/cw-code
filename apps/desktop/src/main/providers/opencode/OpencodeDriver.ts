@@ -35,7 +35,14 @@ import { mapOpencodeMessages } from "./opencodeHistory.js";
 import { assertInside } from "../../fs/FileService.js";
 import { listOpencodeModels, mapEffortToVariant } from "./opencodeModels.js";
 import { opencodeFileArgs } from "./opencodeArgs.js";
-import { OpencodeServerPool } from "./opencodeServerPool.js";
+import { OpencodeServerPool, type ServerHandle } from "./opencodeServerPool.js";
+import {
+  OPENCODE_LIST_TIMEOUT_MS,
+  OPENCODE_NO_TIMEOUT,
+  OPENCODE_REQUEST_TIMEOUT_MS,
+  isConnectionError,
+  opencodeFetch
+} from "./opencodeFetch.js";
 import { previewText, traceHarnessCall, truncateError } from "../../debug/harnessTrace.js";
 
 interface ServerSession {
@@ -60,6 +67,7 @@ export class OpencodeDriver implements CliDriver {
   private bridge: AskBridge | null = null;
   private bridgeStarting: Promise<void> | null = null;
   private bridgeEndpoint = "";
+  private bridgeNeed = new Map<string, boolean>();
 
   constructor(
     private emit: (event: ThreadEvent) => void,
@@ -130,14 +138,65 @@ export class OpencodeDriver implements CliDriver {
     return this.getSettings().opencodeBinaryPath;
   }
 
+  private async bridgeEnvVars(): Promise<Record<string, string>> {
+    const dir = join(app.getPath("userData"), "cw-opencode");
+    await writeAskBridgeTool(dir, await this.bridgeUrl());
+    return { OPENCODE_CONFIG_DIR: dir };
+  }
+
+  private async fetchViaPool(
+    cwd: string,
+    path: string,
+    init: RequestInit = {},
+    timeoutMs: number = OPENCODE_REQUEST_TIMEOUT_MS,
+    env?: Record<string, string>,
+    turnId?: string
+  ): Promise<Response> {
+    let handle: ServerHandle = await this.pool.ensure(cwd, env);
+    const withAuth = (h: ServerHandle): RequestInit => ({
+      ...init,
+      headers: { ...(init.headers ?? {}), Authorization: h.authHeader }
+    });
+    try {
+      return await opencodeFetch(`http://127.0.0.1:${handle.port}${path}`, {
+        ...withAuth(handle),
+        timeoutMs,
+        port: handle.port
+      });
+    } catch (err) {
+      if (!isConnectionError(err)) throw err;
+      traceHarnessCall({
+        harness: "opencode",
+        operation: "opencode.serve.reconnect",
+        cwd,
+        turnId,
+        ok: true,
+        extra: { deadPort: handle.port, reason: truncateError((err as Error).message) }
+      });
+      this.pool.invalidate(cwd);
+      handle = await this.pool.ensure(cwd, env);
+      if (turnId) {
+        const info = this.watchInfo.get(turnId);
+        if (info) this.watchInfo.set(turnId, { ...info, port: handle.port, authHeader: handle.authHeader, cwd });
+      }
+      return await opencodeFetch(`http://127.0.0.1:${handle.port}${path}`, {
+        ...withAuth(handle),
+        timeoutMs,
+        port: handle.port
+      });
+    }
+  }
+
+  private refreshWatchHandle(turnId: string, handle: ServerHandle, cwd: string): void {
+    const info = this.watchInfo.get(turnId);
+    if (info) this.watchInfo.set(turnId, { ...info, port: handle.port, authHeader: handle.authHeader, cwd });
+  }
+
   async listSessions(projectRoot: string, projectId = ""): Promise<SessionMeta[]> {
     const start = Date.now();
     const operation = "opencode.listSessions";
     try {
-      const { port, authHeader } = await this.pool.ensure(projectRoot);
-      const res = await fetch(`http://127.0.0.1:${port}/session`, {
-        headers: { Authorization: authHeader }
-      });
+      const res = await this.fetchViaPool(projectRoot, "/session", {}, OPENCODE_LIST_TIMEOUT_MS);
       if (!res.ok) throw new Error(`opencode session list failed: ${res.status}`);
       const sessions = (await res.json()) as ServerSession[];
       const mapped = sessions
@@ -159,7 +218,7 @@ export class OpencodeDriver implements CliDriver {
         cwd: projectRoot,
         durationMs: Date.now() - start,
         ok: true,
-        extra: { count: mapped.length, serverPort: port }
+        extra: { count: mapped.length }
       });
       return mapped;
     } catch (err) {
@@ -180,10 +239,7 @@ export class OpencodeDriver implements CliDriver {
     const start = Date.now();
     const operation = "opencode.getHistory";
     try {
-      const { port, authHeader } = await this.pool.ensure(projectRoot);
-      const res = await fetch(`http://127.0.0.1:${port}/session/${resumeCursor}/message`, {
-        headers: { Authorization: authHeader }
-      });
+      const res = await this.fetchViaPool(projectRoot, `/session/${resumeCursor}/message`, {});
       if (!res.ok) throw new Error(`opencode history failed: ${res.status}`);
       const messages = mapOpencodeMessages((await res.json()) as never[]);
       traceHarnessCall({
@@ -193,7 +249,7 @@ export class OpencodeDriver implements CliDriver {
         resumeCursor,
         durationMs: Date.now() - start,
         ok: true,
-        extra: { messageCount: messages.length, serverPort: port }
+        extra: { messageCount: messages.length }
       });
       return messages;
     } catch (err) {
@@ -221,10 +277,12 @@ export class OpencodeDriver implements CliDriver {
   }
 
   private async createSession(port: number, authHeader: string): Promise<string> {
-    const res = await fetch(`http://127.0.0.1:${port}/session`, {
+    const res = await opencodeFetch(`http://127.0.0.1:${port}/session`, {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: authHeader },
-      body: JSON.stringify({})
+      body: JSON.stringify({}),
+      timeoutMs: OPENCODE_LIST_TIMEOUT_MS,
+      port
     });
     if (!res.ok) throw new Error(`opencode session create failed: ${res.status}`);
     const data = (await res.json()) as { id?: string };
@@ -237,9 +295,11 @@ export class OpencodeDriver implements CliDriver {
       const controller = new AbortController();
       this.watches.set(turnId, controller);
       try {
-        const res = await fetch(`http://127.0.0.1:${port}/event`, {
+        const res = await opencodeFetch(`http://127.0.0.1:${port}/event`, {
           headers: { Authorization: authHeader, Accept: "text/event-stream" },
-          signal: controller.signal
+          signal: controller.signal,
+          timeoutMs: 0,
+          port
         });
         if (!res.ok || !res.body) {
           traceHarnessCall({
@@ -276,7 +336,19 @@ export class OpencodeDriver implements CliDriver {
           });
           if (this.sessionIds.has(turnId)) {
             setTimeout(() => {
-              if (this.sessionIds.has(turnId)) this.watchQuestions(turnId, port, authHeader);
+              if (!this.sessionIds.has(turnId)) return;
+              const info = this.watchInfo.get(turnId);
+              if (!info) return;
+              void this.pool
+                .ensure(info.cwd)
+                .then((fresh) => {
+                  if (!this.sessionIds.has(turnId)) return;
+                  this.refreshWatchHandle(turnId, fresh, info.cwd);
+                  this.watchQuestions(turnId, fresh.port, fresh.authHeader);
+                })
+                .catch(() => {
+                  if (this.sessionIds.has(turnId)) this.watchQuestions(turnId, port, authHeader);
+                });
             }, 2000).unref?.();
           }
         }
@@ -398,18 +470,21 @@ export class OpencodeDriver implements CliDriver {
     const binary = this.configuredBinary();
     let serverPort: number | null = null;
     let authHeader = "";
-    let bridgeEnv: Record<string, string> | undefined;
     try {
-      let handle = await this.pool.ensure(request.cwd);
+      let env = request.env;
+      if (request.resumeCursor && this.bridgeNeed.get(request.cwd) === true) {
+        env = { ...(request.env ?? {}), ...(await this.bridgeEnvVars()) };
+      }
+      let handle = await this.pool.ensure(request.cwd, env);
       serverPort = handle.port;
       authHeader = handle.authHeader;
       if (request.resumeCursor) {
         const native = await this.nativeQuestionAvailable(request.resumeCursor, serverPort, authHeader);
-        if (!native) {
-          const dir = join(app.getPath("userData"), "cw-opencode");
-          await writeAskBridgeTool(dir, await this.bridgeUrl());
-          bridgeEnv = { OPENCODE_CONFIG_DIR: dir };
-          handle = await this.pool.ensure(request.cwd, bridgeEnv);
+        const needsBridge = !native;
+        const previouslyNeeded = this.bridgeNeed.get(request.cwd);
+        this.bridgeNeed.set(request.cwd, needsBridge);
+        if (needsBridge && previouslyNeeded !== true) {
+          handle = await this.pool.ensure(request.cwd, { ...(request.env ?? {}), ...(await this.bridgeEnvVars()) });
           serverPort = handle.port;
           authHeader = handle.authHeader;
         }
@@ -440,27 +515,64 @@ export class OpencodeDriver implements CliDriver {
       try {
         serverSessionId = await this.createSession(serverPort, authHeader);
       } catch (err) {
-        traceHarnessCall({
-          harness: "opencode",
-          operation: "opencode.startTurn",
-          sessionId: request.sessionId,
-          turnId,
-          cwd: request.cwd,
-          durationMs: Date.now() - start,
-          ok: false,
-          error: truncateError(`opencode session create failed: ${(err as Error).message}`)
-        });
-        this.emit({
-          type: "turn.error",
-          turnId,
-          message: `opencode session create failed: ${(err as Error).message}`
-        });
-        return;
+        if (isConnectionError(err)) {
+          try {
+            traceHarnessCall({
+              harness: "opencode",
+              operation: "opencode.serve.reconnect",
+              sessionId: request.sessionId,
+              turnId,
+              cwd: request.cwd,
+              ok: true,
+              extra: { deadPort: serverPort, reason: truncateError((err as Error).message) }
+            });
+            this.pool.invalidate(request.cwd);
+            const fresh = await this.pool.ensure(request.cwd, request.env);
+            serverPort = fresh.port;
+            authHeader = fresh.authHeader;
+            serverSessionId = await this.createSession(serverPort, authHeader);
+          } catch (retryErr) {
+            traceHarnessCall({
+              harness: "opencode",
+              operation: "opencode.startTurn",
+              sessionId: request.sessionId,
+              turnId,
+              cwd: request.cwd,
+              durationMs: Date.now() - start,
+              ok: false,
+              error: truncateError(`opencode session create failed: ${(retryErr as Error).message}`)
+            });
+            this.emit({
+              type: "turn.error",
+              turnId,
+              message: `opencode session create failed: ${(retryErr as Error).message}`
+            });
+            return;
+          }
+        } else {
+          traceHarnessCall({
+            harness: "opencode",
+            operation: "opencode.startTurn",
+            sessionId: request.sessionId,
+            turnId,
+            cwd: request.cwd,
+            durationMs: Date.now() - start,
+            ok: false,
+            error: truncateError(`opencode session create failed: ${(err as Error).message}`)
+          });
+          this.emit({
+            type: "turn.error",
+            turnId,
+            message: `opencode session create failed: ${(err as Error).message}`
+          });
+          return;
+        }
       }
     }
     this.sessionIds.set(turnId, serverSessionId);
     this.turnMeta.set(turnId, { localSessionId: request.sessionId, beforeIds: null, startedAt: start, pollWarned: false });
     this.watchInfo.set(turnId, { port: serverPort, authHeader, cwd: request.cwd, permissionMode: request.permissionMode });
+    this.pool.beginTurn(request.cwd);
     this.toolSeen.set(turnId, new Map());
     const preview = previewText(request.prompt);
     const model = splitOpencodeModel(request.model);
@@ -498,8 +610,10 @@ export class OpencodeDriver implements CliDriver {
     this.pollTimers.set(turnId, pollTimer);
 
     try {
-      const res = await fetch(`http://127.0.0.1:${serverPort}/session/${encodeURIComponent(serverSessionId)}/message`, {
-        headers: { Authorization: authHeader }
+      const res = await opencodeFetch(`http://127.0.0.1:${serverPort}/session/${encodeURIComponent(serverSessionId)}/message`, {
+        headers: { Authorization: authHeader },
+        timeoutMs: OPENCODE_REQUEST_TIMEOUT_MS,
+        port: serverPort
       });
       if (!res.ok) throw new Error(`opencode baseline history failed: ${res.status}`);
       const seen = new Set<string>();
@@ -533,20 +647,45 @@ export class OpencodeDriver implements CliDriver {
       }
       files.push({ mime, url: join(request.cwd, rel) });
     }
-    const send = (withFiles: boolean): Promise<Response> =>
-      fetch(`http://127.0.0.1:${serverPort}/session/${encodeURIComponent(serverSessionId)}/message`, {
+    const send = (port: number, auth: string, withFiles: boolean): Promise<Response> =>
+      opencodeFetch(`http://127.0.0.1:${port}/session/${encodeURIComponent(serverSessionId)}/message`, {
         method: "POST",
-        headers: { "Content-Type": "application/json", Authorization: authHeader },
+        headers: { "Content-Type": "application/json", Authorization: auth },
         body: JSON.stringify(
           buildOpencodeMessageBody(request.prompt, {
             ...(model ? { model } : {}),
             ...(variant ? { variant } : {}),
             ...(withFiles && files.length > 0 ? { files } : {})
           })
-        )
+        ),
+        // The send stays open until the turn completes, including indefinite
+        // waits on permission/question replies. A timeout here kills slow turns,
+        // so liveness is left to the SSE watch and poll loop instead.
+        timeoutMs: OPENCODE_NO_TIMEOUT,
+        port
       });
     try {
-      let res = await send(files.length > 0);
+      let res: Response;
+      try {
+        res = await send(serverPort, authHeader, files.length > 0);
+      } catch (err) {
+        if (!isConnectionError(err)) throw err;
+        traceHarnessCall({
+          harness: "opencode",
+          operation: "opencode.serve.reconnect",
+          sessionId: request.sessionId,
+          turnId,
+          cwd: request.cwd,
+          ok: true,
+          extra: { deadPort: serverPort, reason: truncateError((err as Error).message) }
+        });
+        this.pool.invalidate(request.cwd);
+        const fresh = await this.pool.ensure(request.cwd);
+        serverPort = fresh.port;
+        authHeader = fresh.authHeader;
+        this.refreshWatchHandle(turnId, fresh, request.cwd);
+        res = await send(serverPort, authHeader, files.length > 0);
+      }
       if (!res.ok && res.status === 400 && files.length > 0) {
         console.warn(`attachment message rejected, retrying text-only`);
         traceHarnessCall({
@@ -558,7 +697,7 @@ export class OpencodeDriver implements CliDriver {
           ok: false,
           error: `file parts rejected: ${res.status}, retried text-only`
         });
-        res = await send(false);
+        res = await send(serverPort, authHeader, false);
       }
       if (!res.ok) throw new Error(`opencode message send failed: ${res.status}`);
       traceHarnessCall({
@@ -599,6 +738,7 @@ export class OpencodeDriver implements CliDriver {
     serverSessionId: string;
     port: number;
     authHeader: string;
+    cwd: string;
     beforeIds: Set<string> | null;
     seen: Map<string, LiveSeen>;
   } | null {
@@ -606,6 +746,7 @@ export class OpencodeDriver implements CliDriver {
     const serverSessionId = this.sessionIds.get(turnId);
     const info = this.watchInfo.get(turnId);
     if (!meta || !serverSessionId || !info) return null;
+    this.pool.endTurn(info.cwd);
     const timer = this.pollTimers.get(turnId);
     if (timer) {
       clearInterval(timer);
@@ -623,6 +764,7 @@ export class OpencodeDriver implements CliDriver {
       serverSessionId,
       port: info.port,
       authHeader: info.authHeader,
+      cwd: info.cwd,
       beforeIds: meta.beforeIds,
       seen
     };
@@ -635,11 +777,32 @@ export class OpencodeDriver implements CliDriver {
     let inputTokens = 0;
     let outputTokens = 0;
     let costUsd = 0;
+    const resultPath = `/session/${encodeURIComponent(taken.serverSessionId)}/message`;
+    const loadResult = (port: number, auth: string): Promise<Response> =>
+      opencodeFetch(`http://127.0.0.1:${port}${resultPath}`, {
+        headers: { Authorization: auth },
+        timeoutMs: OPENCODE_REQUEST_TIMEOUT_MS,
+        port
+      });
     try {
-      const res = await fetch(
-        `http://127.0.0.1:${taken.port}/session/${encodeURIComponent(taken.serverSessionId)}/message`,
-        { headers: { Authorization: taken.authHeader } }
-      );
+      let res: Response;
+      try {
+        res = await loadResult(taken.port, taken.authHeader);
+      } catch (err) {
+        if (!isConnectionError(err)) throw err;
+        traceHarnessCall({
+          harness: "opencode",
+          operation: "opencode.serve.reconnect",
+          sessionId: taken.localSessionId,
+          turnId,
+          cwd: taken.cwd,
+          ok: true,
+          extra: { deadPort: taken.port, reason: truncateError((err as Error).message) }
+        });
+        this.pool.invalidate(taken.cwd);
+        const fresh = await this.pool.ensure(taken.cwd);
+        res = await loadResult(fresh.port, fresh.authHeader);
+      }
       if (!res.ok) throw new Error(`opencode result history failed: ${res.status}`);
       const messages = (await res.json()) as LiveMessage[];
       for (const event of diffLiveTools(taken.seen, messages, turnId)) this.emit(event);
@@ -687,9 +850,11 @@ export class OpencodeDriver implements CliDriver {
     const serverSessionId = this.sessionIds.get(turnId);
     const info = this.watchInfo.get(turnId);
     if (serverSessionId && info) {
-      void fetch(`http://127.0.0.1:${info.port}/session/${encodeURIComponent(serverSessionId)}/abort`, {
+      void opencodeFetch(`http://127.0.0.1:${info.port}/session/${encodeURIComponent(serverSessionId)}/abort`, {
         method: "POST",
-        headers: { Authorization: info.authHeader }
+        headers: { Authorization: info.authHeader },
+        timeoutMs: OPENCODE_LIST_TIMEOUT_MS,
+        port: info.port
       }).then(
         (res) => {
           if (!res.ok) {
@@ -783,7 +948,13 @@ export class OpencodeDriver implements CliDriver {
     const payload = JSON.stringify(opencodeReplyPayload(entry.questions, answers));
     const headers = { "Content-Type": "application/json", Authorization: info.authHeader };
     for (const base of [`/session/${entry.sessionID}/question/${requestId}/reply`, `/api/session/${entry.sessionID}/question/${requestId}/reply`]) {
-      const res = await fetch(`http://127.0.0.1:${info.port}${base}`, { method: "POST", headers, body: payload });
+      const res = await opencodeFetch(`http://127.0.0.1:${info.port}${base}`, {
+        method: "POST",
+        headers,
+        body: payload,
+        timeoutMs: OPENCODE_LIST_TIMEOUT_MS,
+        port: info.port
+      });
       if (res.ok) {
         this.pendingQuestions.delete(requestId);
         this.emit({ type: "question.resolved", turnId: entry.turnId, requestId, answers });
@@ -811,10 +982,12 @@ export class OpencodeDriver implements CliDriver {
     if (!info) throw new Error("opencode permission reply has no live server");
     const headers = { "Content-Type": "application/json", Authorization: info.authHeader };
     for (const route of opencodePermissionReplyRoutes(sessionID, requestID)) {
-      const res = await fetch(`http://127.0.0.1:${info.port}${route}`, {
+      const res = await opencodeFetch(`http://127.0.0.1:${info.port}${route}`, {
         method: "POST",
         headers,
-        body: JSON.stringify(opencodePermissionReplyBody(route, reply))
+        body: JSON.stringify(opencodePermissionReplyBody(route, reply)),
+        timeoutMs: OPENCODE_LIST_TIMEOUT_MS,
+        port: info.port
       });
       if (res.status === 404) continue;
       if (!res.ok) throw new Error(`opencode permission reply failed: ${res.status}`);
@@ -827,13 +1000,17 @@ export class OpencodeDriver implements CliDriver {
 
   private async pollSessionState(turnId: string): Promise<void> {
     if (!this.sessionIds.has(turnId)) return;
-    const info = this.watchInfo.get(turnId);
+    let info = this.watchInfo.get(turnId);
     const sessionID = this.sessionIds.get(turnId);
     if (!info || !sessionID) return;
     const headers = { Authorization: info.authHeader };
     const encoded = encodeURIComponent(sessionID);
     try {
-      const res = await fetch(`http://127.0.0.1:${info.port}/session/${encoded}/message?limit=50`, { headers });
+      const res = await opencodeFetch(`http://127.0.0.1:${info.port}/session/${encoded}/message?limit=50`, {
+        headers,
+        timeoutMs: OPENCODE_LIST_TIMEOUT_MS,
+        port: info.port
+      });
       if (res.ok && !((res.headers.get("content-type") ?? "").includes("text/html"))) {
         const seen = this.toolSeen.get(turnId);
         if (seen) {
@@ -841,17 +1018,38 @@ export class OpencodeDriver implements CliDriver {
         }
       }
     } catch (err) {
-      const meta = this.turnMeta.get(turnId);
-      if (meta && !meta.pollWarned) {
-        meta.pollWarned = true;
-        console.warn(`opencode live tool poll failed, retrying: ${(err as Error).message}`);
+      if (isConnectionError(err)) {
+        try {
+          const fresh = await this.pool.ensure(info.cwd);
+          this.refreshWatchHandle(turnId, fresh, info.cwd);
+          info = this.watchInfo.get(turnId) ?? { ...info, port: fresh.port, authHeader: fresh.authHeader };
+        } catch {
+          return;
+        }
+      } else {
+        const meta = this.turnMeta.get(turnId);
+        if (meta && !meta.pollWarned) {
+          meta.pollWarned = true;
+          console.warn(`opencode live tool poll failed, retrying: ${(err as Error).message}`);
+        }
       }
     }
     for (const path of [`/session/${encoded}/permission`, `/api/session/${encoded}/permission`, `/permission`]) {
       let res: Response;
       try {
-        res = await fetch(`http://127.0.0.1:${info.port}${path}`, { headers });
-      } catch {
+        res = await opencodeFetch(`http://127.0.0.1:${info.port}${path}`, {
+          headers,
+          timeoutMs: OPENCODE_LIST_TIMEOUT_MS,
+          port: info.port
+        });
+      } catch (err) {
+        if (isConnectionError(err)) {
+          try {
+            const fresh = await this.pool.ensure(info.cwd);
+            this.refreshWatchHandle(turnId, fresh, info.cwd);
+          } catch {
+          }
+        }
         return;
       }
       if (!res.ok) continue;
@@ -895,8 +1093,10 @@ export class OpencodeDriver implements CliDriver {
 
   private async nativeQuestionAvailable(sessionId: string, port: number, authHeader: string): Promise<boolean> {
     if (!sessionId) return true;
-    const res = await fetch(`http://127.0.0.1:${port}/session/${sessionId}`, {
-      headers: { Authorization: authHeader }
+    const res = await opencodeFetch(`http://127.0.0.1:${port}/session/${sessionId}`, {
+      headers: { Authorization: authHeader },
+      timeoutMs: OPENCODE_LIST_TIMEOUT_MS,
+      port
     });
     if (!res.ok) return false;
     const info = (await res.json()) as { permission?: unknown };

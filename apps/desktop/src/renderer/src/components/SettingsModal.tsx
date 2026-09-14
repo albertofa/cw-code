@@ -1,9 +1,8 @@
 import { useCallback, useEffect, useState } from "react";
 import { AlertTriangle, CheckCircle2, GitBranch, RefreshCw, Star, X, XCircle } from "lucide-react";
-import type { AppSettings, DriverName, EffortLevel, ModelOption, SourceControlHealth } from "../cw.js";
+import type { AppSettings, DriverName, EffortLevel, ModelOption, SourceControlHealth, WorktreePruneSummary } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import { useNotifs } from "./Notifications.js";
-import { DriverIcon } from "./DriverIcon.js";
 
 // Must match CLAUDE_CURATED_MODELS in apps/desktop/src/main/providers/claude/ClaudeCliDriver.ts.
 // Main drops unknown ids on save, so keep this list in sync with the driver.
@@ -58,6 +57,10 @@ export function SettingsModal({
   const [projectAccount, setProjectAccount] = useState("");
   const [gitUserName, setGitUserName] = useState("");
   const [gitUserEmail, setGitUserEmail] = useState("");
+  const [pruneBusy, setPruneBusy] = useState(false);
+  const [confirmPrune, setConfirmPrune] = useState(false);
+  const [pruneSummary, setPruneSummary] = useState<WorktreePruneSummary | null>(null);
+  const [pruneError, setPruneError] = useState<string | null>(null);
   const activeProjectId = useAppStore((state) => state.activeProjectId);
   const activeProject = useAppStore((state) => state.projects.find((project) => project.id === state.activeProjectId));
 
@@ -240,6 +243,29 @@ export function SettingsModal({
   const pickHarness = (h: Harness) => {
     setCategory("harnesses");
     setHarness(h);
+  };
+
+  const runPrune = async () => {
+    setPruneBusy(true);
+    setPruneError(null);
+    try {
+      const summary = await window.cw.pruneStaleWorktrees();
+      setPruneSummary(summary);
+      setConfirmPrune(false);
+      if (summary.failed > 0) {
+        useNotifs.getState().push({
+          kind: "error",
+          title: "Prune finished with failures",
+          message: summary.errors[0] ?? `${summary.failed} worktrees could not be removed`
+        });
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Could not prune worktrees";
+      setPruneError(message);
+      useNotifs.getState().push({ kind: "error", title: "Could not prune worktrees", message });
+    } finally {
+      setPruneBusy(false);
+    }
   };
 
   const modelsSection = draft && (
@@ -462,6 +488,56 @@ export function SettingsModal({
         </label>
       </section>
 
+      <section className="settings-section">
+        <h3>Worktree maintenance</h3>
+        <span className="settings-hint">
+          Removes worktree directories that no session references anymore, along with their registration. Sessions are never touched.
+        </span>
+        {!confirmPrune ? (
+          <button
+            className="btn"
+            disabled={pruneBusy}
+            onClick={() => {
+              setConfirmPrune(true);
+              setPruneSummary(null);
+              setPruneError(null);
+            }}
+          >
+            Prune stale worktrees…
+          </button>
+        ) : (
+          <div className="settings-prune-confirm">
+            <span>Scan for stale worktree directories and remove them now?</span>
+            <button className="btn btn-primary" onClick={() => void runPrune()} disabled={pruneBusy}>
+              {pruneBusy ? "Pruning…" : "Remove"}
+            </button>
+            <button className="btn" onClick={() => setConfirmPrune(false)} disabled={pruneBusy}>
+              Cancel
+            </button>
+          </div>
+        )}
+        {pruneSummary && (
+          <div className="settings-prune-summary">
+            {pruneSummary.removed === 0 && pruneSummary.failed === 0 && pruneSummary.skipped === 0 && pruneSummary.keptDirty.length === 0
+              ? "No stale worktrees found."
+              : `Removed ${pruneSummary.removed} of ${pruneSummary.scanned} scanned.`}
+            {pruneSummary.skipped > 0 && (
+              <div>
+                Skipped {pruneSummary.skipped} {pruneSummary.skipped === 1 ? "directory" : "directories"} that are not git worktrees.
+              </div>
+            )}
+            {pruneSummary.keptDirty.length > 0 && (
+              <div>
+                Kept {pruneSummary.keptDirty.length} {pruneSummary.keptDirty.length === 1 ? "worktree" : "worktrees"} with uncommitted changes:
+                <div className="settings-prune-paths">{pruneSummary.keptDirty.join("\n")}</div>
+              </div>
+            )}
+            {pruneSummary.failed > 0 && <div className="settings-error">{pruneSummary.errors.join("\n")}</div>}
+          </div>
+        )}
+        {pruneError && <div className="settings-error">{pruneError}</div>}
+      </section>
+
       <section className="settings-section settings-health">
         <h3>Health</h3>
         {!health && healthLoading && <div className="side-empty">Inspecting source control…</div>}
@@ -585,32 +661,6 @@ export function SettingsModal({
             {!loading && !loadError && draft && category === "sourceControl" && sourceControlFields}
             {!loading && !loadError && draft && category === "harnesses" && (
               <>
-                <div className="harness-row" role="group" aria-label="Harness">
-                  <button
-                    className={`harness-btn claude${harness === "claude" ? " active" : ""}`}
-                    onClick={() => setHarness("claude")}
-                    aria-pressed={harness === "claude"}
-                  >
-                    <DriverIcon driver="claude" size={16} />
-                    Claude Code
-                  </button>
-                  <button
-                    className={`harness-btn opencode${harness === "opencode" ? " active" : ""}`}
-                    onClick={() => setHarness("opencode")}
-                    aria-pressed={harness === "opencode"}
-                  >
-                    <DriverIcon driver="opencode" size={16} />
-                    OpenCode
-                  </button>
-                  <button
-                    className={`harness-btn codex${harness === "codex" ? " active" : ""}`}
-                    onClick={() => setHarness("codex")}
-                    aria-pressed={harness === "codex"}
-                  >
-                    <DriverIcon driver="codex" size={16} />
-                    Codex
-                  </button>
-                </div>
                 <div className="settings-section">
                   {harness === "claude" ? claudeFields : harness === "codex" ? codexFields : opencodeFields}
                 </div>

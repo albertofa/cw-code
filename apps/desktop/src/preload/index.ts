@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { AppSettings, CreateSessionOptions, GitBranchInfo, GitDiffMode, GitDiffResult, GitStatus, Project, SessionStatus, SourceControlHealth } from "@cw-code/contracts";
+import type { AppSettings, CreateSessionOptions, GitBranchInfo, GitDiffMode, GitDiffResult, GitStatus, Project, SessionCleanupResult, SessionStatus, SourceControlHealth, WorktreePruneSummary } from "@cw-code/contracts";
 
 export type PermissionMode = "auto" | "acceptEdits" | "bypassPermissions" | "manual" | "plan";
 export type EffortLevel = "low" | "medium" | "high" | "xhigh" | "max";
@@ -47,6 +47,8 @@ export interface CwApi {
   renameSession(sessionId: string, title: string): Promise<void>;
   regenerateSessionTitle(sessionId: string): Promise<string>;
   setSessionStatus(sessionId: string, status: SessionStatus): Promise<unknown>;
+  resolveSession(sessionId: string, status: SessionStatus, removeWorktree?: boolean, forceBranch?: boolean): Promise<SessionCleanupResult>;
+  pruneStaleWorktrees(): Promise<WorktreePruneSummary>;
   getHistory(sessionId: string): Promise<unknown[]>;
   startTurn(sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[] }): Promise<string>;
   interrupt(turnId: string): Promise<void>;
@@ -116,6 +118,9 @@ const api: CwApi = {
     ipcRenderer.invoke("sessions.regenerateTitle", { sessionId }),
   setSessionStatus: (sessionId: string, status: SessionStatus) =>
     ipcRenderer.invoke("sessions.setStatus", { sessionId, status }),
+  resolveSession: (sessionId: string, status: SessionStatus, removeWorktree?: boolean, forceBranch?: boolean) =>
+    ipcRenderer.invoke("sessions.resolve", { sessionId, status, removeWorktree, forceBranch }),
+  pruneStaleWorktrees: () => ipcRenderer.invoke("worktrees.prune"),
   getHistory: (sessionId: string) => ipcRenderer.invoke("sessions.history", { sessionId }),
   startTurn: (sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[] }) =>
     ipcRenderer.invoke("turns.start", { sessionId, prompt, prefs: opts?.prefs, attachments: opts?.attachments }),

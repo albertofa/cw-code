@@ -39,6 +39,10 @@ export const DEFAULT_COMPOSER: Required<Pick<ComposerPrefs, "effort" | "permissi
   permissionMode: "auto"
 };
 
+function defaultWorkspace(defaultUseWorktree: boolean): CreateSessionOptions {
+  return { mode: defaultUseWorktree ? "new" : "current" };
+}
+
 function readComposerMirror(sessionId: string): ComposerPrefs | null {
   try {
     const raw = window.localStorage.getItem(`cw:composer:${sessionId}`);
@@ -67,6 +71,7 @@ interface AppState {
   usageBySession: Record<string, Usage>;
   busyTurns: Record<string, string>;
   loadingHistory: Record<string, boolean>;
+  historyErrorBySession: Record<string, string>;
   turnStartedAt: Record<string, number>;
   lastTurnStats: Record<string, { ms: number }>;
   composerBySession: Record<string, ComposerPrefs>;
@@ -93,7 +98,7 @@ interface AppState {
   startNewSession(driver?: DriverName): void;
   setPendingDriver(driver: DriverName): void;
   sendPendingPrompt(prompt: string, attachments?: string[]): Promise<void>;
-  ensureHistory(sessionId: string): Promise<void>;
+  ensureHistory(sessionId: string, opts?: { force?: boolean; isRetry?: boolean }): Promise<void>;
   ensureComposer(sessionId: string): Promise<void>;
   setComposerPrefs(sessionId: string, prefs: ComposerPrefs): Promise<void>;
   settingsVersion: number;
@@ -103,7 +108,10 @@ interface AppState {
   importDiscovered(session: Session): Promise<void>;
   renameSession(sessionId: string, title: string): Promise<void>;
   regenerateSessionTitle(sessionId: string): Promise<void>;
-  setSessionStatus(sessionId: string, status: SessionStatus): Promise<void>;
+  setSessionStatus(sessionId: string, status: SessionStatus, opts?: { promptWorktree?: boolean }): Promise<void>;
+  worktreeConfirmQueue: Array<{ sessionId: string; status: SessionStatus; unmergedCommitCount?: number }>;
+  confirmWorktreeRemoval(): Promise<void>;
+  dismissWorktreeRemoval(): void;
   createSession(driver: DriverName, prefs?: ComposerPrefs, workspace?: CreateSessionOptions): Promise<void>;
   sendPrompt(prompt: string, attachments?: string[]): Promise<void>;
   interrupt(): Promise<void>;
@@ -144,6 +152,18 @@ function withSessionStatus(
   return next;
 }
 
+function patchSession(
+  byProject: Record<string, Session[]>,
+  sessionId: string,
+  patch: Partial<Session>
+): Record<string, Session[]> {
+  const next: Record<string, Session[]> = {};
+  for (const [pid, list] of Object.entries(byProject)) {
+    next[pid] = list.map((s) => (s.id === sessionId ? { ...s, ...patch } : s));
+  }
+  return next;
+}
+
 export const useAppStore = create<AppState>((set, get) => ({
   projects: [],
   sessionsByProject: {},
@@ -155,6 +175,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   usageBySession: {},
   busyTurns: {},
   loadingHistory: {},
+  historyErrorBySession: {},
   turnStartedAt: {},
   lastTurnStats: {},
   composerBySession: {},
@@ -163,8 +184,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   lastDriver: "claude",
   pendingApprovals: {},
   pendingQuestions: {},
+  worktreeConfirmQueue: [],
   pendingPrefs: { ...DEFAULT_COMPOSER },
-  pendingWorkspace: { useWorktree: true },
+  pendingWorkspace: defaultWorkspace(true),
   gitStatusBySession: {},
   sourceControlRefreshIntervalSeconds: 30,
   defaultUseWorktree: true,
@@ -190,7 +212,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           .flat()
           .find((s) => s.id === sessionId);
         if (current && current.status !== "resolved" && current.status !== "archived" && sessionId !== get().activeSessionId) {
-          void get().setSessionStatus(sessionId, "resolved").catch((err) =>
+          void get().setSessionStatus(sessionId, "resolved", { promptWorktree: false }).catch((err) =>
             console.warn(`setSessionStatus failed for ${sessionId} -> resolved: ${(err as Error).message}`)
           );
         }
@@ -216,7 +238,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       projects,
       sourceControlRefreshIntervalSeconds: settings.sourceControlRefreshIntervalSeconds,
       defaultUseWorktree: settings.defaultUseWorktree,
-      pendingWorkspace: { ...get().pendingWorkspace, useWorktree: settings.defaultUseWorktree }
+      pendingWorkspace: { ...get().pendingWorkspace, ...defaultWorkspace(settings.defaultUseWorktree) }
     });
     if (projects.length === 0 || get().activeProjectId) return;
     const lists = await Promise.all(
@@ -303,7 +325,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         sessionsByProject: { ...get().sessionsByProject, [projectId]: sessions },
         activeSessionId: null,
         pendingDriver: get().lastDriver,
-        pendingWorkspace: { useWorktree: get().defaultUseWorktree }
+        pendingWorkspace: defaultWorkspace(get().defaultUseWorktree)
       });
     }
     void get().loadDiscovered();
@@ -357,14 +379,84 @@ export const useAppStore = create<AppState>((set, get) => ({
     get().applySessionTitle(sessionId, title);
   },
 
-  async setSessionStatus(sessionId: string, status: SessionStatus) {
-    const updated = await window.cw.setSessionStatus(sessionId, status);
-    const byProject = get().sessionsByProject;
-    const next: Record<string, Session[]> = {};
-    for (const [pid, list] of Object.entries(byProject)) {
-      next[pid] = list.map((s) => (s.id === sessionId ? { ...s, status: updated.status, updatedAt: updated.updatedAt } : s));
+  async setSessionStatus(sessionId: string, status: SessionStatus, opts: { promptWorktree?: boolean } = {}) {
+    if (status === "resolved" || status === "archived") {
+      const result = await window.cw.resolveSession(sessionId, status);
+      set({
+        sessionsByProject: patchSession(get().sessionsByProject, sessionId, {
+          status: result.status,
+          updatedAt: Date.now()
+        })
+      });
+      if (result.worktreeOrphaned && opts.promptWorktree !== false) {
+        set({
+          worktreeConfirmQueue: [
+            ...get().worktreeConfirmQueue,
+            {
+              sessionId,
+              status,
+              ...(result.unmergedCommitCount !== undefined ? { unmergedCommitCount: result.unmergedCommitCount } : {})
+            }
+          ]
+        });
+      }
+      return;
     }
-    set({ sessionsByProject: next });
+    const updated = await window.cw.setSessionStatus(sessionId, status);
+    set({
+      sessionsByProject: patchSession(get().sessionsByProject, sessionId, {
+        status: updated.status,
+        updatedAt: updated.updatedAt
+      })
+    });
+  },
+
+  async confirmWorktreeRemoval() {
+    const [target] = get().worktreeConfirmQueue;
+    if (!target) return;
+    set({ worktreeConfirmQueue: get().worktreeConfirmQueue.slice(1) });
+    const appendNotice = (text: string, isError = false) => {
+      const notice: ChatMessage = {
+        id: `worktree-notice-${target.sessionId}-${Date.now()}`,
+        role: "system",
+        text,
+        turnId: "worktree-cleanup",
+        isError
+      };
+      set({
+        messagesBySession: {
+          ...get().messagesBySession,
+          [target.sessionId]: [...(get().messagesBySession[target.sessionId] ?? []), notice]
+        }
+      });
+    };
+    try {
+      const result = await window.cw.resolveSession(target.sessionId, target.status, true, true);
+      set({
+        sessionsByProject: patchSession(get().sessionsByProject, target.sessionId, {
+          status: result.status,
+          ...(result.worktreeRemoved ? { worktreePath: undefined } : {}),
+          ...(result.branchDeleted ? { branch: undefined } : {})
+        })
+      });
+      if (result.dirtyBlocked) {
+        appendNotice("Worktree kept: it has uncommitted changes. Commit or clean them, then remove the worktree manually.", true);
+      } else if (result.error) {
+        useNotifs.getState().push({ kind: "error", title: "Could not remove worktree", message: result.error });
+      } else if (!result.worktreeRemoved) {
+        appendNotice("Worktree was already gone; nothing to remove.");
+      } else if (result.unmergedCommits) {
+        appendNotice("Worktree removed; its branch was force-deleted and unmerged commits on it were discarded.");
+      } else if (!result.branchDeleted) {
+        appendNotice("Worktree removed; its branch was kept.");
+      }
+    } catch (err) {
+      useNotifs.getState().push({ kind: "error", title: "Could not remove worktree", message: (err as Error).message });
+    }
+  },
+
+  dismissWorktreeRemoval() {
+    set({ worktreeConfirmQueue: get().worktreeConfirmQueue.slice(1) });
   },
 
   selectSession(sessionId: string) {
@@ -394,7 +486,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   startNewSession(driver?: DriverName) {
     if (!get().activeProjectId) return;
-    set({ pendingDriver: driver ?? get().lastDriver, activeSessionId: null, pendingWorkspace: { useWorktree: get().defaultUseWorktree } });
+    set({ pendingDriver: driver ?? get().lastDriver, activeSessionId: null, pendingWorkspace: defaultWorkspace(get().defaultUseWorktree) });
   },
 
   setPendingDriver(driver: DriverName) {
@@ -421,10 +513,17 @@ export const useAppStore = create<AppState>((set, get) => ({
     await get().sendPrompt(prompt, attachments);
   },
 
-  async ensureHistory(sessionId: string) {
-    if ((get().messagesBySession[sessionId] ?? []).length > 0) return;
-    if (get().loadingHistory[sessionId]) return;
-    set({ loadingHistory: { ...get().loadingHistory, [sessionId]: true } });
+  async ensureHistory(sessionId: string, opts?: { force?: boolean; isRetry?: boolean }) {
+    if (!opts?.force) {
+      if ((get().messagesBySession[sessionId] ?? []).length > 0) return;
+      if (get().loadingHistory[sessionId]) return;
+    }
+    set({
+      loadingHistory: { ...get().loadingHistory, [sessionId]: true },
+      historyErrorBySession: Object.fromEntries(
+        Object.entries(get().historyErrorBySession).filter(([id]) => id !== sessionId)
+      )
+    });
     try {
       const history = await window.cw.getHistory(sessionId);
       if ((get().messagesBySession[sessionId] ?? []).length === 0 && history.length > 0) {
@@ -432,7 +531,29 @@ export const useAppStore = create<AppState>((set, get) => ({
           messagesBySession: { ...get().messagesBySession, [sessionId]: mergeToolPairs(history) }
         });
       }
-    } catch {
+    } catch (err) {
+      const message = (err as Error).message;
+      set({ historyErrorBySession: { ...get().historyErrorBySession, [sessionId]: message } });
+      if (!opts?.isRetry) {
+        window.setTimeout(() => {
+          if (get().historyErrorBySession[sessionId]) {
+            void get().ensureHistory(sessionId, { force: true, isRetry: true });
+          }
+        }, 2000);
+      } else {
+        useNotifs.getState().push({
+          kind: "error",
+          title: "Could not load history",
+          message,
+          actions: [
+            {
+              label: "Retry",
+              primary: true,
+              onClick: () => void get().ensureHistory(sessionId, { force: true, isRetry: true })
+            }
+          ]
+        });
+      }
     } finally {
       const loading = { ...get().loadingHistory };
       delete loading[sessionId];
@@ -492,6 +613,20 @@ export const useAppStore = create<AppState>((set, get) => ({
     const projectId = get().activeProjectId;
     if (!projectId) return;
     const session = await window.cw.createSession(projectId, driver, workspace);
+    if (
+      workspace?.mode === "previous" &&
+      workspace.reuseWorktreePath &&
+      session.worktreePath &&
+      session.worktreePath !== workspace.reuseWorktreePath
+    ) {
+      const requested = workspace.reuseWorktreePath;
+      const stillHeld = (get().sessionsByProject[projectId] ?? []).some((s) => s.worktreePath === requested);
+      useNotifs.getState().push({
+        kind: "warning",
+        title: "Created a new worktree instead",
+        ...(stillHeld ? {} : { message: "The requested worktree no longer exists." })
+      });
+    }
     set({
       sessionsByProject: {
         ...get().sessionsByProject,
@@ -720,6 +855,14 @@ export const useAppStore = create<AppState>((set, get) => ({
           }
         }
       });
+      void get().refreshGitStatus(sessionId);
+    } else if (event.type === "session.branch.updated") {
+      const byProject = get().sessionsByProject;
+      const next: Record<string, Session[]> = {};
+      for (const [pid, list] of Object.entries(byProject)) {
+        next[pid] = list.map((s) => (s.id === sessionId ? { ...s, branch: event.branch } : s));
+      }
+      set({ sessionsByProject: next });
       void get().refreshGitStatus(sessionId);
     } else if (event.type === "turn.error") {
       const busy = { ...get().busyTurns };

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef } from "react";
-import { PanelRightClose, PanelRightOpen, Sparkles, TriangleAlert } from "lucide-react";
+import { Sparkles, TriangleAlert } from "lucide-react";
 import { useAppStore, type ChatMessage } from "../stores/appStore.js";
 import { Notifications } from "./Notifications.js";
 import { Md } from "./Markdown.js";
@@ -19,7 +19,7 @@ import { ImageThumb } from "./ImageThumb.js";
 
 const EMPTY_MESSAGES: ChatMessage[] = [];
 
-export function ThreadView({ rightVisible, onToggleRight }: { rightVisible: boolean; onToggleRight: () => void }) {
+export function ThreadView() {
   const activeProjectId = useAppStore((s) => s.activeProjectId);
   const activeSessionId = useAppStore((s) => s.activeSessionId);
   const pendingDriver = useAppStore((s) => s.pendingDriver);
@@ -37,6 +37,9 @@ export function ThreadView({ rightVisible, onToggleRight }: { rightVisible: bool
     activeSessionId ? (s.messagesBySession[activeSessionId] ?? EMPTY_MESSAGES) : EMPTY_MESSAGES
   );
   const busyTurn = useAppStore((s) => (activeSessionId ? s.busyTurns[activeSessionId] : undefined));
+  const historyLoading = useAppStore((s) => (activeSessionId ? !!s.loadingHistory[activeSessionId] : false));
+  const historyError = useAppStore((s) => (activeSessionId ? s.historyErrorBySession[activeSessionId] : undefined));
+  const ensureHistory = useAppStore((s) => s.ensureHistory);
   const usage = useAppStore((s) => (activeSessionId ? s.usageBySession[activeSessionId] : undefined));
   const lastTurn = useAppStore((s) => (activeSessionId ? s.lastTurnStats[activeSessionId] : undefined));
   const openPreview = useAppStore((s) => s.openPreview);
@@ -142,11 +145,6 @@ export function ThreadView({ rightVisible, onToggleRight }: { rightVisible: bool
           <span title={heroDriver}>
             <DriverIcon driver={heroDriver} size={16} />
           </span>
-          <span className="thread-status">
-            <button className="icon-btn" onClick={onToggleRight} title={rightVisible ? "Hide panel" : "Show panel"}>
-              {rightVisible ? <PanelRightClose aria-hidden="true" size={14} /> : <PanelRightOpen aria-hidden="true" size={14} />}
-            </button>
-          </span>
         </div>
         <Notifications />
         <NewThread
@@ -171,19 +169,35 @@ export function ThreadView({ rightVisible, onToggleRight }: { rightVisible: bool
           <span className="crumb-sep">/</span>
           <strong>{session.title}</strong>
         </span>
-        <GitPanelBar sessionId={session.id} compact />
+        <GitPanelBar key={session.id} sessionId={session.id} compact />
         <span className="thread-status">
           {busyTurn && <WorkingPill word={workingWord} />}
-          <button className="icon-btn" onClick={onToggleRight} title={rightVisible ? "Hide panel" : "Show panel"}>
-            {rightVisible ? <PanelRightClose aria-hidden="true" size={14} /> : <PanelRightOpen aria-hidden="true" size={14} />}
-          </button>
         </span>
       </div>
       <Notifications />
       <div className="thread-body">
         <div className="thread-scroll" ref={scrollRef} onScroll={onScroll}>
         <div className="thread-inner">
-          {messages.length === 0 && !busyTurn && (
+          {historyLoading && messages.length === 0 && (
+            <div className="empty">
+              <div className="empty-mark"><Sparkles aria-hidden="true" size={22} /></div>
+              <div>Loading history…</div>
+            </div>
+          )}
+          {!historyLoading && historyError && messages.length === 0 && session && (
+            <div className="empty">
+              <div className="empty-mark"><TriangleAlert aria-hidden="true" size={22} /></div>
+              <div>Could not load history.</div>
+              <div className="notif-msg">{historyError}</div>
+              <button
+                className="btn btn-primary"
+                onClick={() => void ensureHistory(session.id, { force: true, isRetry: true })}
+              >
+                Retry
+              </button>
+            </div>
+          )}
+          {!historyLoading && !historyError && messages.length === 0 && !busyTurn && (
             <div className="empty">
               <div className="empty-mark"><Sparkles aria-hidden="true" size={22} /></div>
               <div>Prompt below to begin.</div>

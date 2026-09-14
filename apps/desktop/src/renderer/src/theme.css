@@ -104,6 +104,7 @@ body {
 }
 
 .app-body {
+  position: relative;
   flex: 1;
   display: flex;
   gap: 6px;
@@ -681,7 +682,7 @@ body.session-dragging * {
 }
 
 .session-title {
-  font-size: 13px;
+  font-size: 14px;
   color: var(--dim);
   flex: 1;
   min-width: 0;
@@ -776,6 +777,33 @@ body.session-dragging * {
   background: var(--driver-soft);
 }
 
+.worktree-confirm {
+  min-width: 260px;
+  max-width: 320px;
+  padding: 10px;
+}
+
+.worktree-confirm-title {
+  font-size: 13px;
+  font-weight: 600;
+  color: var(--text);
+  margin-bottom: 4px;
+}
+
+.worktree-confirm-hint {
+  font-size: 11.5px;
+  color: var(--faint);
+  margin-bottom: 8px;
+  line-height: 1.4;
+}
+
+.worktree-confirm-warning {
+  font-size: 11.5px;
+  color: var(--danger);
+  margin-bottom: 8px;
+  line-height: 1.4;
+}
+
 .session-row.active .session-title {
   color: var(--text);
 }
@@ -832,6 +860,40 @@ body.session-dragging * {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.session-hovercard-row .hovercard-id {
+  font-size: 11px;
+  color: var(--muted);
+  font-family: var(--mono);
+}
+
+.session-hovercard.interactive {
+  pointer-events: auto;
+}
+
+.session-hovercard-action {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-top: 2px;
+  padding: 6px 8px;
+  border: none;
+  border-radius: 6px;
+  background: none;
+  color: var(--text);
+  font-size: 12px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.session-hovercard-action:hover {
+  background: var(--driver-soft);
+}
+
+.session-hovercard-action > svg {
+  color: var(--muted);
+  flex: none;
 }
 
 .session-meta {
@@ -1778,7 +1840,7 @@ body.session-dragging * {
 }
 
 .newthread-composer {
-  width: min(680px, 100%);
+  width: min(860px, 100%);
   margin: 0;
 }
 
@@ -1936,6 +1998,28 @@ body.session-dragging * {
 .menu-search .field {
   width: 100%;
   box-sizing: border-box;
+}
+
+.menu-sep {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 8px 2px;
+  color: var(--faint);
+  font-family: var(--sans);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: default;
+  white-space: nowrap;
+}
+
+.menu-sep::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border-soft);
 }
 
 .menu-row:hover {
@@ -2349,6 +2433,29 @@ body.session-dragging * {
 
 .right-resizer:hover::after {
   background: var(--driver);
+}
+
+.right-restore {
+  position: absolute;
+  right: 0;
+  top: 0;
+  bottom: 0;
+  width: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-left: 1px solid var(--border);
+  background: var(--panel);
+  color: var(--dim);
+  cursor: pointer;
+  z-index: 10;
+}
+
+.right-restore:hover {
+  color: var(--fg);
+  background: var(--raised);
 }
 
 .tabbar {
@@ -3683,6 +3790,29 @@ body.session-dragging * {
   white-space: pre-wrap;
 }
 
+.settings-prune-confirm {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--text);
+}
+
+.settings-prune-summary {
+  font-size: 12px;
+  color: var(--text);
+}
+
+.settings-prune-paths {
+  margin-top: 4px;
+  font-family: var(--font-mono, monospace);
+  font-size: 11px;
+  color: var(--dim);
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
 .settings-sub {
   display: flex;
   flex-direction: column;
@@ -4391,28 +4521,17 @@ select.field option {
   align-items: center;
   justify-content: center;
   gap: 10px;
+  flex-wrap: wrap;
   min-height: 30px;
 }
 
 .newthread-workspace .menu {
   width: 190px;
+  min-width: 0;
 }
 
 .newthread-workspace .menu-btn {
   width: 100%;
-}
-
-.worktree-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--dim);
-  font-size: 11.5px;
-  cursor: pointer;
-}
-
-.worktree-toggle input {
-  accent-color: var(--driver);
 }
 
 .workspace-hint {
