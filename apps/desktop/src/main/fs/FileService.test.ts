@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { FileService, imageExtMime, pasteImageExt, pasteImageName } from "./FileService.js";
@@ -17,7 +17,6 @@ describe("FileService sandbox", () => {
     const listed = svc.listFiles(mkdtempSync(join(tmpdir(), "cw-list-")));
     expect(Array.isArray(listed)).toBe(true);
   });
-
   it("reads outside files with guards", () => {
     const dir = mkdtempSync(join(tmpdir(), "cw-outside-"));
     const file = join(dir, "note.md");
@@ -26,6 +25,63 @@ describe("FileService sandbox", () => {
     expect(() => svc.readOutsideFile(join(dir, "missing.md"))).toThrow(/not found/);
     expect(() => svc.readOutsideFile(dir)).toThrow(/not a file/);
     expect(() => svc.readOutsideFile("relative.md")).toThrow(/absolute path required/);
+  });
+});
+
+describe("FileService listDir", () => {
+  function seedTree(): string {
+    const root = mkdtempSync(join(tmpdir(), "cw-listdir-"));
+    mkdirSync(join(root, "src"));
+    mkdirSync(join(root, "node_modules"));
+    mkdirSync(join(root, ".git"));
+    writeFileSync(join(root, "b.txt"), "b", "utf8");
+    writeFileSync(join(root, "a.txt"), "a", "utf8");
+    writeFileSync(join(root, "src", "index.ts"), "x", "utf8");
+    writeFileSync(join(root, "node_modules", "dep.js"), "x", "utf8");
+    return root;
+  }
+
+  it("lists a single level with directories first and skips managed dirs", async () => {
+    const svc = new FileService();
+    const entries = await svc.listDir(seedTree());
+    expect(entries).toEqual([
+      { name: "src", path: "src", isDir: true },
+      { name: "a.txt", path: "a.txt", isDir: false },
+      { name: "b.txt", path: "b.txt", isDir: false }
+    ]);
+  });
+
+  it("lists nested dirs with posix relative paths", async () => {
+    const svc = new FileService();
+    const root = seedTree();
+    expect(await svc.listDir(root, "src")).toEqual([
+      { name: "index.ts", path: "src/index.ts", isDir: false }
+    ]);
+    expect(await svc.listDir(root, "src/")).toEqual([
+      { name: "index.ts", path: "src/index.ts", isDir: false }
+    ]);
+  });
+
+  it("rejects paths escaping the project root", async () => {
+    const svc = new FileService();
+    const root = seedTree();
+    await expect(svc.listDir(root, "..")).rejects.toThrow(/escapes project root/);
+    await expect(svc.listDir(root, "src/../../..")).rejects.toThrow(/escapes project root/);
+    await expect(svc.listDir(root, "..\\outside")).rejects.toThrow(/escapes project root/);
+  });
+
+  it("throws for missing dirs and file targets", async () => {
+    const svc = new FileService();
+    const root = seedTree();
+    await expect(svc.listDir(root, "missing")).rejects.toThrow(/directory not found/);
+    await expect(svc.listDir(root, "a.txt")).rejects.toThrow(/not a directory/);
+  });
+
+  it("respects the entry limit", async () => {
+    const svc = new FileService();
+    const root = seedTree();
+    const entries = await svc.listDir(root, "", 2);
+    expect(entries).toHaveLength(2);
   });
 });
 

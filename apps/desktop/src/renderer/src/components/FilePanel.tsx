@@ -1,102 +1,98 @@
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
+import type { DirEntry } from "../cw.js";
 import { FileIcon } from "./fileIcons.js";
 import { parseUnifiedDiff } from "./diffParser.js";
 
-interface TreeNode {
-  name: string;
-  path: string;
-  isDir: boolean;
-  children: TreeNode[];
-}
-
-function buildTree(paths: string[]): TreeNode[] {
-  const root: TreeNode = { name: "", path: "", isDir: true, children: [] };
-  for (const p of paths) {
-    const parts = p.split("/");
-    let node = root;
-    let prefix = "";
-    for (let i = 0; i < parts.length; i++) {
-      const part = parts[i];
-      prefix = prefix ? `${prefix}/${part}` : part;
-      const isDir = i < parts.length - 1;
-      let child = node.children.find((c) => c.name === part && c.isDir === isDir);
-      if (!child) {
-        child = { name: part, path: prefix, isDir, children: [] };
-        node.children.push(child);
-      }
-      node = child;
-    }
-  }
-  const sortRec = (n: TreeNode): void => {
-    n.children.sort((a, b) => (a.isDir === b.isDir ? a.name.localeCompare(b.name) : a.isDir ? -1 : 1));
-    n.children.forEach(sortRec);
-  };
-  sortRec(root);
-  return root.children;
-}
-
-const COLLAPSED_BY_DEFAULT = new Set(["node_modules", "dist", "out", "build", "coverage", ".next", ".git"]);
-
-function chainLeaf(node: TreeNode): { label: string; leaf: TreeNode } {
-  let label = node.name;
-  let leaf = node;
-  while (leaf.isDir && leaf.children.length === 1 && leaf.children[0].isDir) {
-    leaf = leaf.children[0];
-    label += ` / ${leaf.name}`;
-  }
-  return { label, leaf };
-}
-
-interface TreeViewProps {
-  nodes: TreeNode[];
+interface FileTreeProps {
+  dir: string;
   depth: number;
-  openFile: string | null;
+  childrenByDir: Record<string, DirEntry[]>;
+  dirErrors: Record<string, string>;
+  loading: Set<string>;
   expanded: Set<string>;
+  openFile: string | null;
   onToggleDir: (path: string) => void;
+  onRetryDir: (path: string) => void;
   onOpenFile: (path: string) => void;
 }
 
-function TreeView({ nodes, depth, openFile, expanded, onToggleDir, onOpenFile }: TreeViewProps) {
+function FileTree({
+  dir,
+  depth,
+  childrenByDir,
+  dirErrors,
+  loading,
+  expanded,
+  openFile,
+  onToggleDir,
+  onRetryDir,
+  onOpenFile
+}: FileTreeProps) {
+  const error = dirErrors[dir];
+  if (error) {
+    return (
+      <div className="side-empty">
+        Couldn’t list {dir || "files"}: {error}{" "}
+        <button
+          className="btn"
+          style={{ fontSize: 11, padding: "2px 8px" }}
+          onClick={() => onRetryDir(dir)}
+        >
+          Retry
+        </button>
+      </div>
+    );
+  }
+  const entries = childrenByDir[dir];
+  if (!entries) {
+    return loading.has(dir) ? <div className="side-empty">loading…</div> : null;
+  }
+  if (entries.length === 0) {
+    return dir === "" ? <div className="side-empty">No files.</div> : null;
+  }
   return (
     <>
-      {nodes.map((n) => {
-        if (!n.isDir) {
+      {entries.map((entry) => {
+        if (!entry.isDir) {
           return (
             <div
-              key={n.path}
-              className={`tree-row${n.path === openFile ? " active" : ""}`}
+              key={entry.path}
+              className={`tree-row${entry.path === openFile ? " active" : ""}`}
               style={{ paddingLeft: 8 + depth * 14 }}
-              onClick={() => onOpenFile(n.path)}
-              title={n.path}
+              onClick={() => onOpenFile(entry.path)}
+              title={entry.path}
             >
               <span className="tree-chevron" />
-              <FileIcon name={n.name} size={14} />
-              <span className="tree-name">{n.name}</span>
+              <FileIcon name={entry.name} size={14} />
+              <span className="tree-name">{entry.name}</span>
             </div>
           );
         }
-        const { label, leaf } = chainLeaf(n);
-        const open = expanded.has(n.path);
+        const open = expanded.has(entry.path);
         return (
-          <div key={n.path}>
+          <div key={entry.path}>
             <div
               className="tree-row dir"
               style={{ paddingLeft: 8 + depth * 14 }}
-              onClick={() => onToggleDir(n.path)}
-              title={n.path}
+              onClick={() => onToggleDir(entry.path)}
+              title={entry.path}
             >
               <span className="tree-chevron">{open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}</span>
-              <FileIcon name={leaf.name} isDir expanded={open} size={14} />
-              <span className="tree-name">{label}</span>
+              <FileIcon name={entry.name} isDir expanded={open} size={14} />
+              <span className="tree-name">{entry.name}</span>
             </div>
             {open && (
-              <TreeView
-                nodes={leaf.children}
+              <FileTree
+                dir={entry.path}
                 depth={depth + 1}
-                openFile={openFile}
+                childrenByDir={childrenByDir}
+                dirErrors={dirErrors}
+                loading={loading}
                 expanded={expanded}
+                openFile={openFile}
                 onToggleDir={onToggleDir}
+                onRetryDir={onRetryDir}
                 onOpenFile={onOpenFile}
               />
             )}
@@ -113,47 +109,104 @@ function baseName(path: string): string {
 }
 
 export function FilePanel({ sessionId }: { sessionId: string }) {
-  const [files, setFiles] = useState<string[]>([]);
+  const [childrenByDir, setChildrenByDir] = useState<Record<string, DirEntry[]>>({});
+  const [expanded, setExpanded] = useState<Set<string>>(new Set());
+  const [loading, setLoading] = useState<Set<string>>(new Set());
+  const [dirErrors, setDirErrors] = useState<Record<string, string>>({});
   const [openFile, setOpenFile] = useState<string | null>(null);
   const [content, setContent] = useState("");
   const [filter, setFilter] = useState("");
+  const [allFiles, setAllFiles] = useState<string[] | null>(null);
+  const [searching, setSearching] = useState(false);
   const [status, setStatus] = useState("");
-  const [expanded, setExpanded] = useState<Set<string> | null>(null);
+  const seqRef = useRef(0);
+  const pendingRef = useRef<Set<string>>(new Set());
+
+  const loadDir = useCallback((sid: string, seq: number, dir: string) => {
+    const key = `${seq}:${dir}`;
+    if (pendingRef.current.has(key)) return;
+    pendingRef.current.add(key);
+    setLoading((prev) => new Set(prev).add(dir));
+    window.cw
+      .listDir(sid, dir || undefined)
+      .then((entries) => {
+        if (seqRef.current !== seq) return;
+        setChildrenByDir((prev) => ({ ...prev, [dir]: entries }));
+        setDirErrors((prev) => {
+          if (!(dir in prev)) return prev;
+          const next = { ...prev };
+          delete next[dir];
+          return next;
+        });
+      })
+      .catch((err: Error) => {
+        if (seqRef.current !== seq) return;
+        setDirErrors((prev) => ({ ...prev, [dir]: err.message }));
+      })
+      .finally(() => {
+        pendingRef.current.delete(key);
+        if (seqRef.current !== seq) return;
+        setLoading((prev) => {
+          if (!prev.has(dir)) return prev;
+          const next = new Set(prev);
+          next.delete(dir);
+          return next;
+        });
+      });
+  }, []);
 
   useEffect(() => {
+    seqRef.current += 1;
+    const seq = seqRef.current;
+    pendingRef.current.clear();
+    setChildrenByDir({});
+    setExpanded(new Set());
+    setLoading(new Set());
+    setDirErrors({});
     setOpenFile(null);
     setContent("");
-    setExpanded(null);
+    setAllFiles(null);
+    setSearching(false);
+    loadDir(sessionId, seq, "");
+  }, [sessionId, loadDir]);
+
+  useEffect(() => {
+    if (!filter || allFiles !== null || searching) return;
+    const seq = seqRef.current;
+    const sid = sessionId;
+    setSearching(true);
     window.cw
-      .listFiles(sessionId)
-      .then(setFiles)
-      .catch((err: Error) => setStatus(`list failed: ${err.message}`));
-  }, [sessionId]);
-
-  const tree = useMemo(() => buildTree(files), [files]);
-
-  const defaultExpanded = useMemo(() => {
-    const s = new Set<string>();
-    const walk = (nodes: TreeNode[]): void => {
-      for (const n of nodes) {
-        if (n.isDir && !COLLAPSED_BY_DEFAULT.has(n.name)) {
-          s.add(n.path);
-          walk(n.children);
-        }
-      }
-    };
-    walk(tree);
-    return s;
-  }, [tree]);
-
-  const exp = expanded ?? defaultExpanded;
+      .listFiles(sid)
+      .then((files) => {
+        if (seqRef.current !== seq) return;
+        setAllFiles(files);
+      })
+      .catch((err: Error) => {
+        if (seqRef.current !== seq) return;
+        setStatus(`search failed: ${err.message}`);
+      })
+      .finally(() => {
+        if (seqRef.current === seq) setSearching(false);
+      });
+  }, [filter, allFiles, searching, sessionId]);
 
   const toggleDir = (path: string) => {
-    const base = expanded ?? defaultExpanded;
-    const next = new Set(base);
-    if (next.has(path)) next.delete(path);
+    const isOpen = expanded.has(path);
+    const next = new Set(expanded);
+    if (isOpen) next.delete(path);
     else next.add(path);
     setExpanded(next);
+    if (!isOpen && !childrenByDir[path] && !dirErrors[path]) loadDir(sessionId, seqRef.current, path);
+  };
+
+  const retryDir = (path: string) => {
+    setDirErrors((prev) => {
+      if (!(path in prev)) return prev;
+      const next = { ...prev };
+      delete next[path];
+      return next;
+    });
+    loadDir(sessionId, seqRef.current, path);
   };
 
   const open = (path: string) => {
@@ -173,7 +226,7 @@ export function FilePanel({ sessionId }: { sessionId: string }) {
   };
 
   const matches = filter
-    ? files.filter((f) => f.toLowerCase().includes(filter.toLowerCase())).slice(0, 300)
+    ? (allFiles ?? []).filter((f) => f.toLowerCase().includes(filter.toLowerCase())).slice(0, 300)
     : null;
 
   return (
@@ -186,30 +239,40 @@ export function FilePanel({ sessionId }: { sessionId: string }) {
           className="field file-filter"
         />
         <div className="file-list">
-          {matches ? (
-            matches.map((f) => (
-              <div
-                key={f}
-                onClick={() => open(f)}
-                className={`tree-row${f === openFile ? " active" : ""}`}
-                title={f}
-              >
-                <span className="tree-chevron" />
-                <FileIcon name={baseName(f)} size={14} />
-                <span className="tree-name">{baseName(f)}</span>
-              </div>
-            ))
+          {filter ? (
+            searching && allFiles === null ? (
+              <div className="side-empty">searching all files…</div>
+            ) : (
+              <>
+                {(matches ?? []).map((f) => (
+                  <div
+                    key={f}
+                    onClick={() => open(f)}
+                    className={`tree-row${f === openFile ? " active" : ""}`}
+                    title={f}
+                  >
+                    <span className="tree-chevron" />
+                    <FileIcon name={baseName(f)} size={14} />
+                    <span className="tree-name">{baseName(f)}</span>
+                  </div>
+                ))}
+                {matches && matches.length === 0 && <div className="side-empty">No matches.</div>}
+              </>
+            )
           ) : (
-            <TreeView
-              nodes={tree}
+            <FileTree
+              dir=""
               depth={0}
+              childrenByDir={childrenByDir}
+              dirErrors={dirErrors}
+              loading={loading}
+              expanded={expanded}
               openFile={openFile}
-              expanded={exp}
               onToggleDir={toggleDir}
+              onRetryDir={retryDir}
               onOpenFile={open}
             />
           )}
-          {matches && matches.length === 0 && <div className="side-empty">No matches.</div>}
         </div>
       </div>
       <div className="editor-col">

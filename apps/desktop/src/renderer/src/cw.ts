@@ -245,6 +245,12 @@ export interface AppSettings {
 
 export type SettingsPatch = Partial<AppSettings>;
 
+export interface DirEntry {
+  name: string;
+  path: string;
+  isDir: boolean;
+}
+
 export interface CwApi {
   checkVersions(): Promise<Array<{
     binary: DriverName;
@@ -290,6 +296,7 @@ export interface CwApi {
   saveFile(sessionId: string, path: string, content: string): Promise<void>;
   listFiles(sessionId: string): Promise<string[]>;
   listProjectFiles(projectId: string): Promise<string[]>;
+  listDir(sessionId: string, dir?: string): Promise<DirEntry[]>;
   savePasteImage(projectId: string, mime: string, data: Uint8Array): Promise<string>;
   readImage(args: { sessionId?: string; projectId?: string; path: string }): Promise<{ mime: string; base64: string }>;
   turnDiff(sessionId: string, since: number): Promise<string>;

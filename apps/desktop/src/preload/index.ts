@@ -17,6 +17,12 @@ export interface ModelOption {
   source: "live" | "curated" | "custom";
 }
 
+export interface DirEntry {
+  name: string;
+  path: string;
+  isDir: boolean;
+}
+
 export type DriverName = "claude" | "opencode" | "codex";
 export type PtyKindName = DriverName | "shell";
 
@@ -65,6 +71,7 @@ export interface CwApi {
   saveFile(sessionId: string, path: string, content: string): Promise<void>;
   listFiles(sessionId: string): Promise<string[]>;
   listProjectFiles(projectId: string): Promise<string[]>;
+  listDir(sessionId: string, dir?: string): Promise<DirEntry[]>;
   savePasteImage(projectId: string, mime: string, data: Uint8Array): Promise<string>;
   readImage(args: { sessionId?: string; projectId?: string; path: string }): Promise<{ mime: string; base64: string }>;
   turnDiff(sessionId: string, since: number): Promise<string>;
@@ -142,6 +149,7 @@ const api: CwApi = {
     ipcRenderer.invoke("fs.saveFile", { sessionId, path, content }),
   listFiles: (sessionId: string) => ipcRenderer.invoke("fs.listFiles", { sessionId }),
   listProjectFiles: (projectId: string) => ipcRenderer.invoke("fs.listProjectFiles", { projectId }),
+  listDir: (sessionId: string, dir?: string) => ipcRenderer.invoke("fs.listDir", { sessionId, dir }),
   savePasteImage: (projectId: string, mime: string, data: Uint8Array) =>
     ipcRenderer.invoke("fs.savePasteImage", { projectId, mime, data }),
   readImage: (args: { sessionId?: string; projectId?: string; path: string }) =>
