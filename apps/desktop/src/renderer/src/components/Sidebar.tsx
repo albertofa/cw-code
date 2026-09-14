@@ -192,7 +192,8 @@ function isStoredOrderValid(mainAll: Session[], resolvedAll: Session[], stored: 
 }
 
 export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
-  const { projects, sessionsByProject, discoveredByProject, activeProjectId, activeSessionId, gitStatusBySession, projectFilter, worktreeConfirm } = useAppStore();
+  const { projects, sessionsByProject, discoveredByProject, activeProjectId, activeSessionId, gitStatusBySession, projectFilter, worktreeConfirmQueue } = useAppStore();
+  const worktreeConfirm = worktreeConfirmQueue[0] ?? null;
   const store = useAppStore();
   const [query, setQuery] = useState("");
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -1016,7 +1017,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
             <div className="worktree-confirm-hint">
               {[...shown, ...resolved].find((s) => s.id === worktreeConfirm.sessionId)?.title ??
                 worktreeConfirm.sessionId}{" "}
-              is resolved and no other session uses its isolated worktree.
+              is {worktreeConfirm.status === "archived" ? "archived" : "resolved"} and no other session uses its isolated worktree.
             </div>
             <button className="ctx-item" onClick={() => void store.confirmWorktreeRemoval()}>
               Remove worktree and branch

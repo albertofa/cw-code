@@ -35,12 +35,14 @@ export interface SessionCleanupResult {
   worktreeRemoved: boolean;
   dirtyBlocked?: boolean;
   branchDeleted: boolean;
+  unmergedCommits?: boolean;
   error?: string;
 }
 
 export interface WorktreePruneSummary {
   scanned: number;
   removed: number;
+  skipped: number;
   failed: number;
   errors: string[];
 }
@@ -290,7 +292,7 @@ export interface CwApi {
   createSession(projectId: string, driver: DriverName, options?: CreateSessionOptions): Promise<Session>;
   renameSession(sessionId: string, title: string): Promise<void>;
   setSessionStatus(sessionId: string, status: SessionStatus): Promise<Session>;
-  resolveSession(sessionId: string, status: SessionStatus, removeWorktree?: boolean): Promise<SessionCleanupResult>;
+  resolveSession(sessionId: string, status: SessionStatus, removeWorktree?: boolean, forceBranch?: boolean): Promise<SessionCleanupResult>;
   pruneStaleWorktrees(): Promise<WorktreePruneSummary>;
   getHistory(sessionId: string): Promise<HistoryMessage[]>;
   startTurn(sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[] }): Promise<string>;

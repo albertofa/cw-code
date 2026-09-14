@@ -442,4 +442,23 @@ describe("GitService worktrees", () => {
     expect(switched.branch).toBe("feature");
     expect((await service.status(repository)).branch).toBe("feature");
   });
+
+  it("deletes merged branches with -d and reports unmergedCommits when forced", async () => {
+    const { repository, service } = initSandbox();
+
+    execFileSync("git", ["-C", repository, "branch", "cw/merged"]);
+    expect(await service.deleteBranch(repository, "cw/merged")).toEqual({ deleted: true, unmergedCommits: false });
+
+    execFileSync("git", ["-C", repository, "checkout", "-b", "cw/unmerged"]);
+    writeFileSync(join(repository, "wip.txt"), "work\n", "utf8");
+    execFileSync("git", ["-C", repository, "add", "wip.txt"]);
+    execFileSync("git", ["-C", repository, "-c", "user.name=cw-code", "-c", "user.email=test@cw-code.local", "commit", "-m", "wip"]);
+    execFileSync("git", ["-C", repository, "checkout", "main"]);
+
+    expect(await service.deleteBranch(repository, "cw/unmerged")).toEqual({ deleted: false, unmergedCommits: false });
+    expect(execFileSync("git", ["-C", repository, "branch", "--list", "cw/unmerged"], { encoding: "utf8" }).trim()).not.toBe("");
+
+    expect(await service.deleteBranch(repository, "cw/unmerged", { force: true })).toEqual({ deleted: true, unmergedCommits: true });
+    expect(execFileSync("git", ["-C", repository, "branch", "--list", "cw/unmerged"], { encoding: "utf8" }).trim()).toBe("");
+  });
 });

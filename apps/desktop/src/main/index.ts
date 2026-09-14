@@ -162,8 +162,8 @@ function registerIpc(): void {
   );
   ipcMain.handle(
     "sessions.resolve",
-    (_e, args: { sessionId: string; status: SessionStatus; removeWorktree?: boolean }) =>
-      sessions.resolveSession(args.sessionId, args.status, { removeWorktree: args.removeWorktree })
+    (_e, args: { sessionId: string; status: SessionStatus; removeWorktree?: boolean; forceBranch?: boolean }) =>
+      sessions.resolveSession(args.sessionId, args.status, { removeWorktree: args.removeWorktree, forceBranch: args.forceBranch })
   );
   ipcMain.handle("worktrees.prune", () => sessions.pruneStaleWorktrees());
   ipcMain.handle("sessions.history", (_e, args: { sessionId: string }) =>

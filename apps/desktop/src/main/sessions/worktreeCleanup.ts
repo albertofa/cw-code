@@ -1,9 +1,19 @@
+import { statSync } from "node:fs";
+import { join, resolve } from "node:path";
 import type { SessionMeta } from "@cw-code/contracts";
 
 export function sameWorktreePath(a: string, b: string): boolean {
-  const left = a.replace(/[\\/]+$/, "");
-  const right = b.replace(/[\\/]+$/, "");
+  const left = resolve(a).replace(/[\\/]+$/, "");
+  const right = resolve(b).replace(/[\\/]+$/, "");
   return process.platform === "win32" ? left.toLowerCase() === right.toLowerCase() : left === right;
+}
+
+export function looksLikeWorktree(dirPath: string): boolean {
+  try {
+    return statSync(join(dirPath, ".git")).isFile();
+  } catch {
+    return false;
+  }
 }
 
 export function isWorktreeOrphaned(

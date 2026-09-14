@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readdirSync, rmdirSync } from "node:fs";
 import { open, lstat } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { simpleGit } from "simple-git";
+import { sameWorktreePath } from "../sessions/worktreeCleanup.js";
 import type {
   AppSettings,
   GitBranchInfo,
@@ -350,12 +351,6 @@ async function queryPullRequest(root: string, ghBinary: string, remote: ParsedGi
   }
 }
 
-function samePath(a: string, b: string): boolean {
-  const left = resolve(a).replace(/[\\/]+$/, "");
-  const right = resolve(b).replace(/[\\/]+$/, "");
-  return process.platform === "win32" ? left.toLowerCase() === right.toLowerCase() : left === right;
-}
-
 function safeSegment(value: string): string {
   return value.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80) || "workspace";
 }
@@ -387,6 +382,11 @@ const UNTRACKED_DIFF_MAX_BYTES_PER_FILE = 60_000;
 interface CacheEntry<T> {
   expiresAt: number;
   value: T;
+}
+
+export interface DeleteBranchResult {
+  deleted: boolean;
+  unmergedCommits: boolean;
 }
 
 export class GitService {
@@ -450,7 +450,7 @@ export class GitService {
     const output = (await this.git(root).raw(["rev-parse", "--git-dir", "--git-common-dir"]))
       .replace(/\r/g, "").split("\n").filter(Boolean);
     if (output.length < 2) return false;
-    return !samePath(resolve(root, output[0]), resolve(root, output[1]));
+    return !sameWorktreePath(resolve(root, output[0]), resolve(root, output[1]));
   }
 
   async isRepository(root: string): Promise<boolean> {
@@ -490,7 +490,7 @@ export class GitService {
     }
   }
 
-  private async deleteBranch(git: ReturnType<GitService["git"]>, branch: string): Promise<void> {
+  private async discardBranch(git: ReturnType<GitService["git"]>, branch: string): Promise<void> {
     try {
       await git.raw(["branch", "-D", branch]);
     } catch {
@@ -514,12 +514,12 @@ export class GitService {
             await git.raw(["worktree", "add", "-b", branch, target, base]);
             return branch;
           } catch (retryError) {
-            await this.deleteBranch(git, branch);
+            await this.discardBranch(git, branch);
             throw new Error(`could not create worktree from '${base}': ${(retryError as Error).message}`);
           }
         }
       }
-      await this.deleteBranch(git, branch);
+      await this.discardBranch(git, branch);
       throw new Error(`could not create worktree from '${base}': ${message}`);
     }
   }
@@ -625,16 +625,27 @@ export class GitService {
     }
   }
 
-  async forceDeleteBranch(repoRoot: string, branch: string): Promise<boolean> {
+  async deleteBranch(repoRoot: string, branch: string, opts: { force?: boolean } = {}): Promise<DeleteBranchResult> {
     const repositoryRoot = await this.repositoryRoot(repoRoot);
+    const git = this.git(repositoryRoot);
     try {
-      await this.git(repositoryRoot).raw(["branch", "-D", branch]);
+      await git.raw(["branch", "-d", branch]);
     } catch (error) {
-      console.warn(`branch delete failed for '${branch}': ${(error as Error).message}`);
-      return false;
+      if (!opts.force) {
+        console.warn(`branch delete failed for '${branch}': ${(error as Error).message}`);
+        return { deleted: false, unmergedCommits: false };
+      }
+      try {
+        await git.raw(["branch", "-D", branch]);
+      } catch (forceError) {
+        console.warn(`branch delete failed for '${branch}': ${(forceError as Error).message}`);
+        return { deleted: false, unmergedCommits: false };
+      }
+      this.invalidateBranches(repositoryRoot);
+      return { deleted: true, unmergedCommits: true };
     }
     this.invalidateBranches(repositoryRoot);
-    return true;
+    return { deleted: true, unmergedCommits: false };
   }
 
   async renameBranch(repoRoot: string, from: string, to: string, opts: { worktreePath?: string } = {}): Promise<string> {
@@ -704,7 +715,7 @@ export class GitService {
     const branches = await this.branches(root);
     const target = branches.find((item) => item.name === name);
     if (!target) throw new Error(`unknown branch '${name}'`);
-    if (target.worktreePath && !samePath(target.worktreePath, root)) throw new Error(`'${target.label}' is already checked out at ${target.worktreePath}`);
+    if (target.worktreePath && !sameWorktreePath(target.worktreePath, root)) throw new Error(`'${target.label}' is already checked out at ${target.worktreePath}`);
     const git = this.git(root);
     if (target.remote) await git.raw(["checkout", "--track", target.name]);
     else await git.checkout(target.name);

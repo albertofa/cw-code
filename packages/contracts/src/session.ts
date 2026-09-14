@@ -165,12 +165,14 @@ export interface SessionCleanupResult {
   worktreeRemoved: boolean;
   dirtyBlocked?: boolean;
   branchDeleted: boolean;
+  unmergedCommits?: boolean;
   error?: string;
 }
 
 export interface WorktreePruneSummary {
   scanned: number;
   removed: number;
+  skipped: number;
   failed: number;
   errors: string[];
 }

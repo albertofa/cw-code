@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
@@ -524,6 +524,7 @@ describe("SessionManager", () => {
     expect(result.worktreeOrphaned).toBe(true);
     expect(result.worktreeRemoved).toBe(true);
     expect(result.branchDeleted).toBe(true);
+    expect(result.unmergedCommits).toBeUndefined();
     expect(result.dirtyBlocked).toBeUndefined();
     expect(existsSync(worktreePath)).toBe(false);
     const branches = execFileSync("git", ["-C", repository, "branch", "--list", branch], { encoding: "utf8" });
@@ -575,7 +576,7 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
-  it("prunes stale worktrees but keeps live session worktrees", async () => {
+  it("prunes stale worktrees, keeps live session worktrees, skips non-worktree dirs", async () => {
     const { manager, project, repository } = makeGitSandboxManager("cw-prune-");
     const live = await manager.createSession(project.id, "claude", { baseBranch: "main" });
     if (!live.worktreePath) throw new Error("expected a worktree-backed session");
@@ -585,16 +586,100 @@ describe("SessionManager", () => {
     execFileSync("git", ["-C", repository, "worktree", "add", "-b", "cw/stale", stalePath, "main"]);
     const junkPath = join(worktreesRoot, project.id, "sess_junk");
     mkdirSync(junkPath, { recursive: true });
+    writeFileSync(join(junkPath, "precious.txt"), "not a worktree\n", "utf8");
 
     const summary = await manager.pruneStaleWorktrees();
 
     expect(summary.scanned).toBe(3);
-    expect(summary.removed).toBe(2);
+    expect(summary.removed).toBe(1);
+    expect(summary.skipped).toBe(1);
     expect(summary.failed).toBe(0);
     expect(summary.errors).toEqual([]);
     expect(existsSync(live.worktreePath)).toBe(true);
     expect(existsSync(stalePath)).toBe(false);
-    expect(existsSync(junkPath)).toBe(false);
+    expect(existsSync(junkPath)).toBe(true);
+    expect(readFileSync(join(junkPath, "precious.txt"), "utf8")).toBe("not a worktree\n");
+    manager.dispose();
+  });
+
+  it("removes unreferenced dirs that carry a .git worktree marker", async () => {
+    const { manager, project } = makeGitSandboxManager("cw-prune-orphan-");
+    const worktreesRoot = join(dirname(join(project.rootPath)), "worktrees");
+    const orphanPath = join(worktreesRoot, "proj_unknown", "sess_orphan");
+    mkdirSync(orphanPath, { recursive: true });
+    writeFileSync(join(orphanPath, ".git"), "gitdir: ../repo/.git/worktrees/sess_orphan\n", "utf8");
+    writeFileSync(join(orphanPath, "tracked.txt"), "data\n", "utf8");
+
+    const summary = await manager.pruneStaleWorktrees();
+
+    expect(summary.scanned).toBe(1);
+    expect(summary.removed).toBe(1);
+    expect(summary.skipped).toBe(0);
+    expect(existsSync(orphanPath)).toBe(false);
+    manager.dispose();
+  });
+
+  it("rejects startTurn on resolved or archived sessions", async () => {
+    const { manager } = makeManager();
+    const project = manager.addProject("C:\\proj-resolve-reject");
+    const a = await manager.createSession(project.id, "claude");
+    await manager.resolveSession(a.id, "resolved");
+    await expect(manager.startTurn(a.id, "hello")).rejects.toThrow("session is resolved");
+    await manager.resolveSession(a.id, "archived");
+    await expect(manager.startTurn(a.id, "hello")).rejects.toThrow("session is archived");
+    manager.dispose();
+  });
+
+  it("refuses to resolve while a turn start is pending for the session", async () => {
+    const { manager } = makeManager();
+    const project = manager.addProject("C:\\proj-resolve-busy");
+    const a = await manager.createSession(project.id, "claude");
+    const internals = manager as unknown as { ensureWorktree(sessionId: string): Promise<string> };
+    internals.ensureWorktree = () => new Promise<string>(() => {});
+    manager.startTurn(a.id, "slow").catch(() => undefined);
+    await new Promise((r) => setTimeout(r, 10));
+    await expect(manager.resolveSession(a.id, "archived")).rejects.toThrow("session busy (turn pending)");
+    manager.dispose();
+  });
+
+  it("refuses to resolve while a turn is active", async () => {
+    const { manager, fake } = makeManager();
+    const project = manager.addProject("C:\\proj-resolve-active");
+    const a = await manager.createSession(project.id, "claude");
+    await manager.startTurn(a.id, "hello");
+    await expect(manager.resolveSession(a.id, "archived")).rejects.toThrow("session busy (turn active)");
+    fake.completeAll();
+    manager.dispose();
+  });
+
+  it("keeps an unmerged orphan branch without force and discards it when forced", async () => {
+    const { manager, project } = makeGitSandboxManager("cw-resolve-unmerged-");
+    const gentle = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    const forced = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    for (const session of [gentle, forced]) {
+      const worktreePath = session.worktreePath;
+      if (!worktreePath) throw new Error("expected a worktree-backed session with a branch");
+      writeFileSync(join(worktreePath, "unmerged.txt"), "work\n", "utf8");
+      execFileSync("git", ["-C", worktreePath, "add", "unmerged.txt"]);
+      execFileSync("git", ["-C", worktreePath, "-c", "user.name=cw-code", "-c", "user.email=test@cw-code.local", "commit", "-m", "unmerged work"]);
+    }
+    if (!gentle.branch || !forced.branch) throw new Error("expected branches on worktree-backed sessions");
+
+    const gentleResult = await manager.resolveSession(gentle.id, "archived", { removeWorktree: true });
+
+    expect(gentleResult.worktreeRemoved).toBe(true);
+    expect(gentleResult.branchDeleted).toBe(false);
+    expect(gentleResult.unmergedCommits).toBeUndefined();
+    expect(existsSync(gentle.worktreePath!)).toBe(false);
+    const keptBranches = execFileSync("git", ["-C", project.rootPath, "branch", "--list", gentle.branch], { encoding: "utf8" });
+    expect(keptBranches.trim()).not.toBe("");
+
+    const forcedResult = await manager.resolveSession(forced.id, "archived", { removeWorktree: true, forceBranch: true });
+
+    expect(forcedResult.branchDeleted).toBe(true);
+    expect(forcedResult.unmergedCommits).toBe(true);
+    const goneBranches = execFileSync("git", ["-C", project.rootPath, "branch", "--list", forced.branch], { encoding: "utf8" });
+    expect(goneBranches.trim()).toBe("");
     manager.dispose();
   });
 });

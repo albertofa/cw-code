@@ -103,7 +103,7 @@ interface AppState {
   importDiscovered(session: Session): Promise<void>;
   renameSession(sessionId: string, title: string): Promise<void>;
   setSessionStatus(sessionId: string, status: SessionStatus, opts?: { promptWorktree?: boolean }): Promise<void>;
-  worktreeConfirm: { sessionId: string; status: SessionStatus } | null;
+  worktreeConfirmQueue: Array<{ sessionId: string; status: SessionStatus }>;
   confirmWorktreeRemoval(): Promise<void>;
   dismissWorktreeRemoval(): void;
   createSession(driver: DriverName, prefs?: ComposerPrefs, workspace?: CreateSessionOptions): Promise<void>;
@@ -176,7 +176,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   lastDriver: "claude",
   pendingApprovals: {},
   pendingQuestions: {},
-  worktreeConfirm: null,
+  worktreeConfirmQueue: [],
   pendingPrefs: { ...DEFAULT_COMPOSER },
   pendingWorkspace: { useWorktree: true },
   gitStatusBySession: {},
@@ -376,7 +376,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         })
       });
       if (result.worktreeOrphaned && opts.promptWorktree !== false) {
-        set({ worktreeConfirm: { sessionId, status } });
+        set({ worktreeConfirmQueue: [...get().worktreeConfirmQueue, { sessionId, status }] });
       }
       return;
     }
@@ -390,30 +390,39 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   async confirmWorktreeRemoval() {
-    const target = get().worktreeConfirm;
+    const [target] = get().worktreeConfirmQueue;
     if (!target) return;
-    set({ worktreeConfirm: null });
+    set({ worktreeConfirmQueue: get().worktreeConfirmQueue.slice(1) });
+    const appendNotice = (text: string, isError = false) => {
+      const notice: ChatMessage = {
+        id: `worktree-notice-${target.sessionId}-${Date.now()}`,
+        role: "system",
+        text,
+        turnId: "worktree-cleanup",
+        isError
+      };
+      set({
+        messagesBySession: {
+          ...get().messagesBySession,
+          [target.sessionId]: [...(get().messagesBySession[target.sessionId] ?? []), notice]
+        }
+      });
+    };
     try {
-      const result = await window.cw.resolveSession(target.sessionId, target.status, true);
+      const result = await window.cw.resolveSession(target.sessionId, target.status, true, true);
       set({
         sessionsByProject: patchSession(get().sessionsByProject, target.sessionId, { status: result.status })
       });
       if (result.dirtyBlocked) {
-        const warning: ChatMessage = {
-          id: `worktree-blocked-${target.sessionId}-${Date.now()}`,
-          role: "system",
-          text: "Worktree kept: it has uncommitted changes. Commit or clean them, then remove the worktree manually.",
-          turnId: "worktree-cleanup",
-          isError: true
-        };
-        set({
-          messagesBySession: {
-            ...get().messagesBySession,
-            [target.sessionId]: [...(get().messagesBySession[target.sessionId] ?? []), warning]
-          }
-        });
+        appendNotice("Worktree kept: it has uncommitted changes. Commit or clean them, then remove the worktree manually.", true);
       } else if (result.error) {
         useNotifs.getState().push({ kind: "error", title: "Could not remove worktree", message: result.error });
+      } else if (!result.worktreeRemoved) {
+        appendNotice("Worktree was already gone; nothing to remove.");
+      } else if (result.unmergedCommits) {
+        appendNotice("Worktree removed; its branch was force-deleted and unmerged commits on it were discarded.");
+      } else if (!result.branchDeleted) {
+        appendNotice("Worktree removed; its branch was kept.");
       }
     } catch (err) {
       useNotifs.getState().push({ kind: "error", title: "Could not remove worktree", message: (err as Error).message });
@@ -421,7 +430,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   dismissWorktreeRemoval() {
-    set({ worktreeConfirm: null });
+    set({ worktreeConfirmQueue: get().worktreeConfirmQueue.slice(1) });
   },
 
   selectSession(sessionId: string) {

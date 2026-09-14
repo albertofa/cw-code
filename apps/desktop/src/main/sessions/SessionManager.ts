@@ -20,7 +20,7 @@ import type {
   WorktreePruneSummary
 } from "@cw-code/contracts";
 import { SessionStore } from "./SessionStore.js";
-import { isWorktreeOrphaned, sameWorktreePath } from "./worktreeCleanup.js";
+import { isWorktreeOrphaned, looksLikeWorktree, sameWorktreePath } from "./worktreeCleanup.js";
 import { SettingsStore } from "../settings/SettingsStore.js";
 import { resolveClaudeModels } from "../settings/settingsUtils.js";
 import { TracingCliDriver } from "../debug/tracingDriver.js";
@@ -40,6 +40,11 @@ export interface SessionManagerOptions {
   worktreesRoot?: string;
 }
 
+interface BranchOutcome {
+  deleted: boolean;
+  unmergedCommits?: boolean;
+}
+
 const DELTA_FLUSH_MS = 24;
 
 export class SessionManager {
@@ -48,6 +53,7 @@ export class SessionManager {
   private drivers: Record<DriverKind, CliDriver>;
   private activeTurns = new Map<string, string>();
   private pendingTurns = new Set<string>();
+  private pendingResolves = new Set<string>();
   private worktreeRecovery = new Map<string, Promise<string>>();
   private branchRenamed = new Set<string>();
   private onEvent: (sessionId: string, event: ThreadEvent) => void;
@@ -252,13 +258,31 @@ export class SessionManager {
   async resolveSession(
     sessionId: string,
     status: SessionStatus,
-    opts: { removeWorktree?: boolean } = {}
+    opts: { removeWorktree?: boolean; forceBranch?: boolean } = {}
   ): Promise<SessionCleanupResult> {
     const session = this.store.getSession(sessionId);
     if (!session) throw new Error(`unknown session ${sessionId}`);
+    const project = this.getProject(session.projectId);
     for (const owner of this.activeTurns.values()) {
       if (owner === sessionId) throw new Error("session busy (turn active)");
     }
+    if (this.pendingTurns.has(sessionId)) throw new Error("session busy (turn pending)");
+    if (this.pendingResolves.has(sessionId)) throw new Error("session busy (resolve pending)");
+    this.pendingResolves.add(sessionId);
+    try {
+      return await this.resolveSessionInner(session, status, project, opts);
+    } finally {
+      this.pendingResolves.delete(sessionId);
+    }
+  }
+
+  private async resolveSessionInner(
+    session: SessionMeta,
+    status: SessionStatus,
+    project: Project,
+    opts: { removeWorktree?: boolean; forceBranch?: boolean }
+  ): Promise<SessionCleanupResult> {
+    const sessionId = session.id;
     this.store.updateSession(sessionId, { status });
     const worktreePath = session.worktreePath;
     if (!worktreePath) {
@@ -268,7 +292,6 @@ export class SessionManager {
     if (!worktreeOrphaned || !opts.removeWorktree) {
       return { sessionId, status, worktreePath, worktreeOrphaned, worktreeRemoved: false, branchDeleted: false };
     }
-    const project = this.getProject(session.projectId);
     let removal: RemoveWorktreeResult;
     try {
       removal = await this.git.removeWorktree(project.rootPath, worktreePath, { force: false });
@@ -294,27 +317,43 @@ export class SessionManager {
         branchDeleted: false
       };
     }
-    const branchDeleted = session.branch
-      ? await this.deleteOrphanBranch(project.rootPath, session.branch, worktreePath)
-      : false;
-    return { sessionId, status, worktreePath, worktreeOrphaned: true, worktreeRemoved: true, branchDeleted };
+    const branchOutcome = session.branch
+      ? await this.deleteOrphanBranch(project.rootPath, session.branch, worktreePath, opts.forceBranch === true)
+      : null;
+    return {
+      sessionId,
+      status,
+      worktreePath,
+      worktreeOrphaned: true,
+      worktreeRemoved: true,
+      branchDeleted: branchOutcome?.deleted ?? false,
+      ...(branchOutcome?.unmergedCommits ? { unmergedCommits: true } : {})
+    };
   }
 
-  private async deleteOrphanBranch(repoRoot: string, branch: string, removedPath: string): Promise<boolean> {
+  private async deleteOrphanBranch(
+    repoRoot: string,
+    branch: string,
+    removedPath: string,
+    force: boolean
+  ): Promise<BranchOutcome> {
     try {
       const branches = await this.git.branches(repoRoot);
       const info = branches.find((b) => b.name === branch && !b.remote);
-      if (!info) return false;
-      if (info.worktreePath && !sameWorktreePath(info.worktreePath, removedPath)) return false;
-      return await this.git.forceDeleteBranch(repoRoot, branch);
+      if (!info) return { deleted: false };
+      if (info.worktreePath && !sameWorktreePath(info.worktreePath, removedPath)) {
+        return { deleted: false };
+      }
+      const outcome = await this.git.deleteBranch(repoRoot, branch, { force: force || undefined });
+      return { deleted: outcome.deleted, ...(outcome.unmergedCommits ? { unmergedCommits: true } : {}) };
     } catch (err) {
       console.warn(`branch cleanup failed for '${branch}': ${(err as Error).message}`);
-      return false;
+      return { deleted: false };
     }
   }
 
   async pruneStaleWorktrees(): Promise<WorktreePruneSummary> {
-    const summary: WorktreePruneSummary = { scanned: 0, removed: 0, failed: 0, errors: [] };
+    const summary: WorktreePruneSummary = { scanned: 0, removed: 0, skipped: 0, failed: 0, errors: [] };
     if (!existsSync(this.worktreesRoot)) return summary;
     const sessions = this.store.listAllSessions();
     const touchedProjects = new Set<string>();
@@ -350,6 +389,10 @@ export class SessionManager {
   }
 
   private async removeStaleDir(repoRoot: string | null, dirPath: string, summary: WorktreePruneSummary): Promise<void> {
+    if (!looksLikeWorktree(dirPath)) {
+      summary.skipped += 1;
+      return;
+    }
     try {
       if (repoRoot) await this.git.removeWorktree(repoRoot, dirPath, { force: true });
       else rmSync(dirPath, { recursive: true, force: true });
@@ -410,12 +453,16 @@ export class SessionManager {
   async startTurn(sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[] }): Promise<string> {
     const session = this.store.getSession(sessionId);
     if (!session) throw new Error(`unknown session ${sessionId}`);
+    if (session.status === "resolved" || session.status === "archived") {
+      throw new Error(`session is ${session.status}; reopen it before starting a turn`);
+    }
     const project = this.store.getProject(session.projectId);
     if (!project) throw new Error(`unknown project ${session.projectId}`);
     for (const [turnId, owner] of this.activeTurns) {
       if (owner === sessionId) throw new Error(`session busy (turn ${turnId})`);
     }
     if (this.pendingTurns.has(sessionId)) throw new Error("session busy (turn pending)");
+    if (this.pendingResolves.has(sessionId)) throw new Error("session busy (resolve pending)");
     this.pendingTurns.add(sessionId);
     try {
       const cwd = await this.ensureWorktree(sessionId);
