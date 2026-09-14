@@ -582,7 +582,12 @@ export class OpencodeDriver implements CliDriver {
         ok: false,
         error: truncateError((err as Error).message)
       });
-      this.emit({ type: "turn.error", turnId, message: (err as Error).message.slice(0, 2000) });
+      this.emit({
+        type: "turn.error",
+        turnId,
+        message: (err as Error).message.slice(0, 2000),
+        resumeCursor: serverSessionId
+      });
       this.takeTurn(turnId);
       this.resolvePendingFor(turnId, null);
       this.resolveApprovalsFor(turnId);

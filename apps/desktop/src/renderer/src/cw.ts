@@ -126,7 +126,7 @@ export type TurnEvent =
       numTurns: number;
       isError: boolean;
     }
-  | { type: "turn.error"; turnId: string; message: string };
+  | { type: "turn.error"; turnId: string; message: string; resumeCursor?: string };
 
 export type PermissionMode = "auto" | "acceptEdits" | "bypassPermissions" | "manual" | "plan";
 

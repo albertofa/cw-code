@@ -96,7 +96,12 @@ export type ThreadEvent =
       numTurns: number;
       isError: boolean;
     }
-  | { type: "turn.error"; turnId: string; message: string };
+  | {
+      type: "turn.error";
+      turnId: string;
+      message: string;
+      resumeCursor?: string;
+    };
 
 export type SessionEvent =
   | { type: "session.list.changed"; projectRoot: string }
