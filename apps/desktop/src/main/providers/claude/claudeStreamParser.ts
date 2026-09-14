@@ -241,12 +241,37 @@ interface UserMsg {
 interface ResultMsg {
   type: "result";
   subtype?: string;
+  subkind?: string;
+  origin?: { kind?: string };
   result?: string;
   session_id?: string;
   total_cost_usd?: number;
   usage?: { input_tokens?: number; output_tokens?: number };
   num_turns?: number;
   is_error?: boolean;
+}
+
+export interface ClaudeTasksInfo {
+  liveTasks: number;
+}
+
+interface SystemTasksMsg {
+  type: "system";
+  subtype?: string;
+  tasks?: unknown;
+}
+
+export function parseClaudeSystemLine(line: string): ClaudeTasksInfo | null {
+  let msg: SystemTasksMsg;
+  try {
+    msg = JSON.parse(line) as SystemTasksMsg;
+  } catch {
+    return null;
+  }
+  if (msg === null || typeof msg !== "object") return null;
+  if (msg.type !== "system" || msg.subtype !== "background_tasks_changed") return null;
+  if (!Array.isArray(msg.tasks)) return null;
+  return { liveTasks: msg.tasks.length };
 }
 
 export interface TurnDoneInfo {
@@ -291,7 +316,8 @@ export function parseStreamLine(
   line: string,
   turnId: string,
   sessionId: string,
-  done: (info: TurnDoneInfo) => void
+  done: (info: TurnDoneInfo) => void,
+  onNotificationAck?: () => void
 ): ThreadEvent[] {
   if (!line.trim()) return [];
   let msg: TextDelta | AssistantMsg | UserMsg | ResultMsg;
@@ -343,6 +369,10 @@ export function parseStreamLine(
   }
 
   if (msg.type === "result") {
+    if (msg.origin?.kind === "task-notification" && (msg.num_turns ?? 0) === 0) {
+      onNotificationAck?.();
+      return [];
+    }
     done({
       resumeCursor: msg.session_id ?? sessionId,
       resultText: msg.result ?? "",

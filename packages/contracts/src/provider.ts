@@ -12,6 +12,8 @@ export interface CliDriver {
   getHistory(projectRoot: string, resumeCursor: string): Promise<HistoryMessage[]>;
   startTurn(request: TurnRequest): TurnHandle;
   interrupt(turnId: string): void;
+  /** Force-stop all work for a local session (kill the underlying process). */
+  stopSession?(sessionId: string): void;
   renameSession(sessionId: string, title: string): Promise<void>;
   events(): AsyncIterable<SessionEvent>;
   listModels?(cwd: string): Promise<ModelOption[]>;

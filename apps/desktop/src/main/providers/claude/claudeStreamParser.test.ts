@@ -8,6 +8,7 @@ import {
   claudeDenyResponse,
   claudeQuestionRequest,
   parseClaudeControlRequest,
+  parseClaudeSystemLine,
   parseStreamLine
 } from "./claudeStreamParser.js";
 
@@ -73,6 +74,101 @@ describe("parseStreamLine", () => {
     expect(parseStreamLine("plain text", "t1", "s1", () => {})).toEqual([
       { type: "assistant.delta", turnId: "t1", text: "plain text" }
     ]);
+  });
+
+  it("acks a task-notification result with zero turns instead of finishing the turn", () => {
+    const line = JSON.stringify({
+      type: "result",
+      origin: { kind: "task-notification" },
+      num_turns: 0,
+      is_error: false,
+      session_id: "sess-1"
+    });
+    let doneCalls = 0;
+    let ackCalls = 0;
+    const events = parseStreamLine(
+      line,
+      "t1",
+      "s1",
+      () => {
+        doneCalls += 1;
+      },
+      () => {
+        ackCalls += 1;
+      }
+    );
+    expect(events).toEqual([]);
+    expect(doneCalls).toBe(0);
+    expect(ackCalls).toBe(1);
+  });
+
+  it("finishes the turn for a task-notification result with turns", () => {
+    const line = JSON.stringify({
+      type: "result",
+      origin: { kind: "task-notification" },
+      num_turns: 3,
+      is_error: false,
+      session_id: "sess-1"
+    });
+    let doneCalls = 0;
+    let ackCalls = 0;
+    parseStreamLine(
+      line,
+      "t1",
+      "s1",
+      () => {
+        doneCalls += 1;
+      },
+      () => {
+        ackCalls += 1;
+      }
+    );
+    expect(doneCalls).toBe(1);
+    expect(ackCalls).toBe(0);
+  });
+
+  it("finishes the turn for an ordinary result with no origin", () => {
+    const line = JSON.stringify({
+      type: "result",
+      subtype: "success",
+      result: "done",
+      session_id: "sess-1",
+      num_turns: 2,
+      is_error: false
+    });
+    let doneCalls = 0;
+    parseStreamLine(line, "t1", "s1", () => {
+      doneCalls += 1;
+    });
+    expect(doneCalls).toBe(1);
+  });
+});
+
+describe("parseClaudeSystemLine", () => {
+  it("reports live task count for background_tasks_changed", () => {
+    const line = JSON.stringify({
+      type: "system",
+      subtype: "background_tasks_changed",
+      tasks: [
+        { type: "local_agent", id: "a202cd0fd545a319e" },
+        { type: "local_bash", id: "b-1" }
+      ]
+    });
+    expect(parseClaudeSystemLine(line)).toEqual({ liveTasks: 2 });
+  });
+
+  it("returns null for other system subtypes", () => {
+    const line = JSON.stringify({ type: "system", subtype: "init", tasks: [] });
+    expect(parseClaudeSystemLine(line)).toBeNull();
+  });
+
+  it("returns null when tasks is not an array", () => {
+    const line = JSON.stringify({ type: "system", subtype: "background_tasks_changed", tasks: {} });
+    expect(parseClaudeSystemLine(line)).toBeNull();
+  });
+
+  it("returns null for non-JSON input", () => {
+    expect(parseClaudeSystemLine("plain text")).toBeNull();
   });
 });
 

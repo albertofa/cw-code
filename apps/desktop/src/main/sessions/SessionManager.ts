@@ -206,9 +206,14 @@ export class SessionManager {
 
   private handleDriverEvent(sessionId: string, event: ThreadEvent): void {
     if (event.type === "turn.done") {
-      this.activeTurns.delete(event.turnId);
-      this.store.updateSession(event.sessionId, { resumeCursor: event.resumeCursor, status: "done" });
-      if (!event.isError) void this.renameBranchForTitle(event.sessionId, event.turnId);
+      const backgroundTasks = event.backgroundTasks ?? 0;
+      if (backgroundTasks > 0) {
+        this.store.updateSession(event.sessionId, { resumeCursor: event.resumeCursor, status: "working" });
+      } else {
+        this.activeTurns.delete(event.turnId);
+        this.store.updateSession(event.sessionId, { resumeCursor: event.resumeCursor, status: "done" });
+        if (!event.isError) void this.renameBranchForTitle(event.sessionId, event.turnId);
+      }
     }
     if (event.type === "turn.error") {
       this.activeTurns.delete(event.turnId);
@@ -404,6 +409,7 @@ export class SessionManager {
     const sessionId = session.id;
     this.turnBaseShas.delete(sessionId);
     this.store.updateSession(sessionId, { status });
+    this.drivers[session.driver].stopSession?.(sessionId);
     const worktreePath = session.worktreePath;
     if (!worktreePath) {
       return { sessionId, status, worktreeOrphaned: false, worktreeRemoved: false, branchDeleted: false };

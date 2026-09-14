@@ -833,7 +833,8 @@ export class OpencodeDriver implements CliDriver {
       outputTokens,
       costUsd,
       numTurns: 1,
-      isError: false
+      isError: false,
+      backgroundTasks: 0
     });
     traceHarnessCall({
       harness: "opencode",

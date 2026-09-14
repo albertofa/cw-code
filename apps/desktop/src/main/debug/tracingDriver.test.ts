@@ -131,4 +131,34 @@ describe("TracingCliDriver", () => {
     const tracing = new TracingCliDriver(new FakeDriver());
     await expect(tracing.respondToApproval("req-1", "decline")).resolves.toBeUndefined();
   });
+
+  it("forwards stopSession and logs the call", () => {
+    const seen: string[] = [];
+    const withStop = new TracingCliDriver({
+      kind: "claude",
+      stopSession: (sessionId: string) => {
+        seen.push(sessionId);
+      }
+    } as unknown as CliDriver);
+    withStop.stopSession("s1");
+    expect(seen).toEqual(["s1"]);
+    const records = readRecords();
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      harness: "claude",
+      operation: "claude.stopSession",
+      sessionId: "s1",
+      ok: true
+    });
+    expect(typeof records[0]["durationMs"]).toBe("number");
+  });
+
+  it("writes no trace for drivers without stopSession support", () => {
+    const tracing = new TracingCliDriver(new FakeDriver());
+    tracing.interrupt("t0");
+    tracing.stopSession("s1");
+    const records = readRecords();
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({ operation: "claude.interrupt" });
+  });
 });

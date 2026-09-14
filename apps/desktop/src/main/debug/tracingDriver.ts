@@ -116,6 +116,32 @@ export class TracingCliDriver implements CliDriver {
     this.inner.interrupt(turnId);
   }
 
+  stopSession(sessionId: string): void {
+    if (typeof this.inner.stopSession !== "function") return;
+    const start = Date.now();
+    const operation = `${this.kind}.stopSession`;
+    try {
+      this.inner.stopSession(sessionId);
+      traceHarnessCall({
+        harness: this.kind,
+        operation,
+        sessionId,
+        durationMs: Date.now() - start,
+        ok: true
+      });
+    } catch (err) {
+      traceHarnessCall({
+        harness: this.kind,
+        operation,
+        sessionId,
+        durationMs: Date.now() - start,
+        ok: false,
+        error: truncateError((err as Error).message)
+      });
+      throw err;
+    }
+  }
+
   async renameSession(sessionId: string, title: string): Promise<void> {
     const start = Date.now();
     const operation = `${this.kind}.renameSession`;

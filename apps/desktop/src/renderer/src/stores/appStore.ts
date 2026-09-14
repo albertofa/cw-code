@@ -15,6 +15,7 @@ import type {
   SettingsPatch,
   TurnEvent
 } from "../cw.js";
+import { appendAssistantText } from "../components/chatMessages.js";
 import { mergeToolPairs } from "../components/toolSummaries.js";
 import { useNotifs } from "../components/Notifications.js";
 
@@ -130,14 +131,6 @@ function finalizeTurnTools(messages: ChatMessage[], turnId: string): ChatMessage
     return { ...m, toolDone: true, toolCompletedAt: Date.now() };
   });
   return changed ? out : messages;
-}
-
-function appendAssistantText(messages: ChatMessage[], turnId: string, text: string): ChatMessage[] {
-  const last = messages[messages.length - 1];
-  if (last && last.role === "assistant" && last.turnId === turnId) {
-    return [...messages.slice(0, -1), { ...last, text: last.text + text }];
-  }
-  return [...messages, { id: `${turnId}-a`, role: "assistant", text, turnId }];
 }
 
 function withSessionStatus(
@@ -826,8 +819,9 @@ export const useAppStore = create<AppState>((set, get) => ({
         });
       }
     } else if (event.type === "turn.done") {
+      const backgroundTasks = event.backgroundTasks ?? 0;
       const busy = { ...get().busyTurns };
-      delete busy[sessionId];
+      if (backgroundTasks === 0) delete busy[sessionId];
       const startedAt = get().turnStartedAt[sessionId];
       const stats = { ...get().lastTurnStats };
       if (startedAt !== undefined) stats[sessionId] = { ms: Date.now() - startedAt };
@@ -835,15 +829,32 @@ export const useAppStore = create<AppState>((set, get) => ({
       delete approvals[sessionId];
       const questions = { ...get().pendingQuestions };
       delete questions[sessionId];
+      let turnMessages = finalizeTurnTools(messages, event.turnId);
+      if (event.isError && !turnMessages.some((m) => m.id === `${event.turnId}-e`)) {
+        turnMessages = [
+          ...turnMessages,
+          {
+            id: `${event.turnId}-e`,
+            role: "system",
+            text: `Error: ${event.resultText || "Claude reported an error with no output."}`,
+            turnId: event.turnId,
+            isError: true
+          }
+        ];
+      }
       set({
         busyTurns: busy,
         lastTurnStats: stats,
         pendingApprovals: approvals,
         pendingQuestions: questions,
-        sessionsByProject: withSessionStatus(get().sessionsByProject, sessionId, "done"),
+        sessionsByProject: withSessionStatus(
+          get().sessionsByProject,
+          sessionId,
+          backgroundTasks > 0 ? "working" : "done"
+        ),
         messagesBySession: {
           ...get().messagesBySession,
-          [sessionId]: finalizeTurnTools(messages, event.turnId)
+          [sessionId]: turnMessages
         },
         usageBySession: {
           ...get().usageBySession,
