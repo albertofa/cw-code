@@ -1,8 +1,10 @@
 import { useCallback, useEffect, useState } from "react";
-import { AlertTriangle, CheckCircle2, GitBranch, RefreshCw, Star, X, XCircle } from "lucide-react";
+import { AlertTriangle, Bot, CheckCircle2, Gauge, GitBranch, RefreshCw, Sparkles, Star, X, XCircle } from "lucide-react";
 import type { AppSettings, DriverName, EffortLevel, ModelOption, SourceControlHealth, WorktreePruneSummary } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import { useNotifs } from "./Notifications.js";
+import { MenuSelect } from "./MenuSelect.js";
+import { DriverIcon } from "./DriverIcon.js";
 
 // Must match CLAUDE_CURATED_MODELS in apps/desktop/src/main/providers/claude/ClaudeCliDriver.ts.
 // Main drops unknown ids on save, so keep this list in sync with the driver.
@@ -404,53 +406,86 @@ export function SettingsModal({
     <section className="settings-section">
       <h3>Session titles</h3>
       <span className="settings-hint">Generate a short title from the first message of a new session, replacing the placeholder title.</span>
-      <label className="settings-row">
-        <span className="settings-label">Generate titles automatically</span>
-        <span className="settings-hint">Runs a one-off title request with the harness and model configured below.</span>
-        <input className="settings-toggle" type="checkbox" checked={draft.autoTitleEnabled} onChange={(e) => set({ autoTitleEnabled: e.target.checked })} />
-      </label>
-      <label className="settings-row">
-        <span className="settings-label">Harness</span>
-        <span className="settings-hint">
+      <div className="settings-card">
+        <label className="settings-card-head">
+          <span className="settings-card-text">
+            <span className="settings-label"><Sparkles size={13} aria-hidden="true" /> Generate titles automatically</span>
+            <span className="settings-hint">Runs a one-off title request with the harness, model and effort below.</span>
+          </span>
+          <span className="settings-switch">
+            <input type="checkbox" checked={draft.autoTitleEnabled} onChange={(e) => set({ autoTitleEnabled: e.target.checked })} aria-label="Generate titles automatically" />
+            <span className="track" aria-hidden="true" />
+          </span>
+        </label>
+        <div className="settings-card-controls">
+          <div className="settings-card-field">
+            <span>Harness</span>
+            <MenuSelect
+              label="Title harness"
+              title="Harness used for the title request"
+              direction="down"
+              value={draft.autoTitleDriver}
+              display={HARNESSES.find((h) => h.id === draft.autoTitleDriver)?.label ?? draft.autoTitleDriver}
+              icon={<DriverIcon driver={draft.autoTitleDriver} size={13} />}
+              options={HARNESSES.map((h) => {
+                const unavailable = harnessChecks?.find((check) => check.binary === h.id)?.available === false;
+                return {
+                  id: h.id,
+                  label: h.label,
+                  hint: h.label,
+                  description: unavailable ? "Not installed" : undefined,
+                  disabled: unavailable,
+                  icon: <DriverIcon driver={h.id} size={13} />
+                };
+              })}
+              onPick={(id) => set({ autoTitleDriver: id as DriverName })}
+            />
+          </div>
+          <div className="settings-card-field">
+            <span>Model</span>
+            <MenuSelect
+              label="Title model"
+              title="Model used for the title request"
+              direction="down"
+              value={draft.autoTitleModel}
+              display={titleModels?.find((model) => model.id === draft.autoTitleModel)?.label ?? (draft.autoTitleModel === "" ? "Default" : draft.autoTitleModel)}
+              icon={<Bot size={13} aria-hidden="true" />}
+              options={[
+                { id: "", label: "Default", hint: "Default" },
+                ...(titleModels?.map((model) => ({ id: model.id, label: model.label, hint: model.id })) ?? []),
+                ...(savedTitleModelMissing ? [{ id: savedTitleModel, label: `${savedTitleModel} (saved)`, hint: savedTitleModel }] : [])
+              ]}
+              onPick={(id) => set({ autoTitleModel: id })}
+              searchable
+              searchPlaceholder="Filter models…"
+            />
+          </div>
+          <div className="settings-card-field">
+            <span>Effort</span>
+            <MenuSelect
+              label="Title effort"
+              title="Reasoning effort used for the title request"
+              direction="down"
+              value={draft.autoTitleEffort}
+              display={EFFORTS.find((effort) => effort.id === draft.autoTitleEffort)?.label ?? draft.autoTitleEffort}
+              icon={<Gauge size={13} aria-hidden="true" />}
+              options={EFFORTS.map((effort) => ({ id: effort.id, label: effort.label, hint: effort.label }))}
+              onPick={(id) => set({ autoTitleEffort: id as EffortLevel })}
+            />
+          </div>
+        </div>
+        <span className="settings-hint settings-card-foot">
           {harnessChecksError
             ? harnessChecksError
             : harnessChecks === null
               ? "Checking installed harnesses…"
-              : "Unavailable harnesses are not installed or failed '--version'."}
+              : titleModelsError
+                ? titleModelsError
+                : titleModels === null
+                  ? "Loading models…"
+                  : "Unavailable harnesses are not installed or failed '--version'. Models are fetched from the selected harness."}
         </span>
-        <select className="field" value={draft.autoTitleDriver} onChange={(e) => set({ autoTitleDriver: e.target.value as DriverName })}>
-          {HARNESSES.map((h) => {
-            const unavailable = harnessChecks?.find((check) => check.binary === h.id)?.available === false;
-            return (
-              <option key={h.id} value={h.id} disabled={unavailable}>
-                {h.label}{unavailable ? " (unavailable)" : ""}
-              </option>
-            );
-          })}
-        </select>
-      </label>
-      <label className="settings-row">
-        <span className="settings-label">Model</span>
-        <span className="settings-hint">
-          {titleModelsError ? titleModelsError : titleModels === null ? "Loading models…" : "Fetched from the selected harness."}
-        </span>
-        <select className="field" value={draft.autoTitleModel} onChange={(e) => set({ autoTitleModel: e.target.value })}>
-          <option value="">Default</option>
-          {titleModels?.map((model) => (
-            <option key={model.id} value={model.id}>{model.label}</option>
-          ))}
-          {savedTitleModelMissing && <option value={savedTitleModel}>{savedTitleModel} (saved)</option>}
-        </select>
-      </label>
-      <label className="settings-row">
-        <span className="settings-label">Effort</span>
-        <span className="settings-hint">Reasoning effort used for the title request.</span>
-        <select className="field" value={draft.autoTitleEffort} onChange={(e) => set({ autoTitleEffort: e.target.value as EffortLevel })}>
-          {EFFORTS.map((effort) => (
-            <option key={effort.id} value={effort.id}>{effort.label}</option>
-          ))}
-        </select>
-      </label>
+      </div>
     </section>
   );
 
@@ -628,21 +663,21 @@ export function SettingsModal({
               onClick={() => pickHarness("claude")}
               aria-current={category === "harnesses" && harness === "claude"}
             >
-              <span className="driver-dot claude" /> Claude Code
+              <DriverIcon driver="claude" size={14} /> Claude Code
             </button>
             <button
               className={`settings-nav-item sub${category === "harnesses" && harness === "opencode" ? " active" : ""}`}
               onClick={() => pickHarness("opencode")}
               aria-current={category === "harnesses" && harness === "opencode"}
             >
-              <span className="driver-dot opencode" /> OpenCode
+              <DriverIcon driver="opencode" size={14} /> OpenCode
             </button>
             <button
               className={`settings-nav-item sub${category === "harnesses" && harness === "codex" ? " active" : ""}`}
               onClick={() => pickHarness("codex")}
               aria-current={category === "harnesses" && harness === "codex"}
             >
-              <span className="driver-dot codex" /> Codex
+              <DriverIcon driver="codex" size={14} /> Codex
             </button>
           </nav>
           <div className="settings-content">

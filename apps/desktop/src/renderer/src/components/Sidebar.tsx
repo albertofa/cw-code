@@ -1,22 +1,10 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
-import { Check, ChevronDown, ChevronRight, ChevronUp, Clock, Folder, GitBranch, Hash, Plus, RefreshCw, Search, Settings, SquarePen, X } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, ChevronUp, Clock, Folder, GitBranch, Hash, Plus, Search, Settings, SquarePen, X } from "lucide-react";
 import type { DriverName, Project, Session, SessionStatus } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { useNotifs } from "./Notifications.js";
-
-function hashHue(s: string): number {
-  let h = 0;
-  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
-  return h % 360;
-}
-
-function initials(name: string): string {
-  const parts = name.split(/[^A-Za-z0-9]+/).filter(Boolean);
-  if (parts.length === 0) return name.slice(0, 1).toUpperCase() || "?";
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[1][0]).toUpperCase();
-}
+import { hashHue, projectAvatarStyle as avatarStyle, projectInitials as initials } from "./avatar.js";
 
 const GROUP_VISIBLE = 6;
 
@@ -25,10 +13,6 @@ function groupTintStyle(name: string): CSSProperties {
   return {
     background: `linear-gradient(90deg, hsla(${h}, 35%, 32%, 0.3), hsla(${h}, 35%, 32%, 0) 75%)`
   };
-}
-
-function avatarStyle(name: string): CSSProperties {
-  return { background: `hsl(${hashHue(name)}, 32%, 36%)` };
 }
 
 function stateLabel(status: SessionStatus): string {
@@ -330,11 +314,6 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
       window.removeEventListener("cw:focus-search", focusSearch);
     };
   }, []);
-
-  const refreshAll = () => {
-    void store.loadProjects();
-    void store.loadDiscovered();
-  };
 
   const activeProject = projects.find((p) => p.id === activeProjectId);
   const filterProject = projectFilter === "all" ? undefined : projects.find((p) => p.id === projectFilter);
@@ -1056,11 +1035,6 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
       <div className="side-footer">
         <button className="side-footer-btn" title="Settings" aria-label="Settings" onClick={onOpenSettings}>
           <Settings size={15} />
-          Settings
-        </button>
-        <button className="side-footer-btn" title="Refresh projects and sessions" aria-label="Refresh" onClick={refreshAll}>
-          <RefreshCw size={14} />
-          Refresh
         </button>
       </div>
       {hover && hoverSession && (

@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
-import { Sparkles, TriangleAlert } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { ChevronDown, Sparkles, TriangleAlert } from "lucide-react";
 import { useAppStore, type ChatMessage } from "../stores/appStore.js";
 import { Notifications } from "./Notifications.js";
 import { Md } from "./Markdown.js";
@@ -12,6 +12,7 @@ import { NewThread } from "./NewThread.js";
 import { ApprovalDock } from "./ApprovalDock.js";
 import { QuestionDock } from "./QuestionDock.js";
 import { WorkingPill, useWorkingWord } from "./WorkingPill.js";
+import { projectAvatarStyle, projectInitials } from "./avatar.js";
 import { formatDuration, orderToolsForDisplay } from "./toolSummaries.js";
 import { collectSubagents, describeSubagent, isSubagentMessage, type SubagentGroup } from "./subagents.js";
 import { splitImageMentions } from "./imagePreview.js";
@@ -84,6 +85,7 @@ export function ThreadView() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
   const lastSeenIdRef = useRef<string | null>(null);
+  const [atBottom, setAtBottom] = useState(true);
 
   const sessionId = session?.id;
   const projectRoot = project?.rootPath ?? "";
@@ -97,6 +99,7 @@ export function ThreadView() {
   useEffect(() => {
     stickRef.current = true;
     lastSeenIdRef.current = null;
+    setAtBottom(true);
   }, [activeSessionId]);
 
   useEffect(() => {
@@ -126,16 +129,27 @@ export function ThreadView() {
   const onScroll = () => {
     const el = scrollRef.current;
     if (!el) return;
-    stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 64;
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 64;
+    stickRef.current = nearBottom;
+    setAtBottom(nearBottom);
   };
+
+  const scrollToBottom = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    stickRef.current = true;
+    setAtBottom(true);
+    el.scrollTop = el.scrollHeight;
+  }, []);
 
   if (showNew) {
     const heroDriver = pendingDriver ?? session?.driver ?? lastDriver;
+    const heroName = project?.name ?? "cw";
     return (
       <div className="thread-col">
         <div className="thread-head">
-          <span className="thread-avatar" aria-hidden="true">
-            {(project?.name ?? "cw").slice(0, 2).toUpperCase()}
+          <span className="thread-avatar" style={projectAvatarStyle(heroName)} aria-hidden="true">
+            {projectInitials(heroName)}
           </span>
           <span className="crumb" title={`${project?.name ?? ""} / New thread`}>
             <span>{project?.name ?? "…"}</span>
@@ -161,8 +175,8 @@ export function ThreadView() {
   return (
     <div className="thread-col">
       <div className="thread-head">
-        <span className="thread-avatar" aria-hidden="true">
-          {(project?.name ?? "cw").slice(0, 2).toUpperCase()}
+        <span className="thread-avatar" style={projectAvatarStyle(project?.name ?? "cw")} aria-hidden="true">
+          {projectInitials(project?.name ?? "cw")}
         </span>
         <span className="crumb" title={`${project?.name ?? ""} / ${session.title}`}>
           <span>{project?.name ?? "…"}</span>
@@ -170,9 +184,6 @@ export function ThreadView() {
           <strong>{session.title}</strong>
         </span>
         <GitPanelBar key={session.id} sessionId={session.id} compact />
-        <span className="thread-status">
-          {busyTurn && <WorkingPill word={workingWord} />}
-        </span>
       </div>
       <Notifications />
       <div className="thread-body">
@@ -263,6 +274,14 @@ export function ThreadView() {
           {busyTurn && <WorkingPill word={workingWord} />}
           {!busyTurn && lastTurn && (
             <div className="turn-sep">Worked for {formatDuration(lastTurn.ms)}</div>
+          )}
+          {!atBottom && (
+            <div className="jump-bottom-wrap">
+              <button className="jump-bottom" onClick={scrollToBottom} title="Scroll to bottom" aria-label="Scroll to bottom">
+                <ChevronDown size={14} aria-hidden="true" />
+                Scroll to bottom
+              </button>
+            </div>
           )}
           </div>
         </div>
