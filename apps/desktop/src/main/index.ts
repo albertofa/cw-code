@@ -183,7 +183,7 @@ function registerIpc(): void {
       args: {
         sessionId: string;
         prompt: string;
-        prefs?: { model?: string; effort?: "low" | "medium" | "high" | "xhigh" | "max"; variant?: string; permissionMode?: "auto" | "acceptEdits" | "bypassPermissions" | "manual" | "plan" };
+        prefs?: { model?: string; effort?: "minimal" | "low" | "medium" | "high" | "xhigh" | "max"; variant?: string; permissionMode?: "auto" | "acceptEdits" | "bypassPermissions" | "manual" };
         attachments?: string[];
       }
     ) => sessions.startTurn(args.sessionId, args.prompt, { prefs: args.prefs, attachments: args.attachments })
@@ -201,7 +201,7 @@ function registerIpc(): void {
   ipcMain.handle("composer.get", (_e, args: { sessionId: string }) => sessions.getComposer(args.sessionId));
   ipcMain.handle(
     "composer.set",
-    (_e, args: { sessionId: string; prefs: { model?: string; effort?: "low" | "medium" | "high" | "xhigh" | "max"; variant?: string; permissionMode?: "auto" | "acceptEdits" | "bypassPermissions" | "manual" | "plan" } }) =>
+    (_e, args: { sessionId: string; prefs: { model?: string; effort?: "minimal" | "low" | "medium" | "high" | "xhigh" | "max"; variant?: string; permissionMode?: "auto" | "acceptEdits" | "bypassPermissions" | "manual" } }) =>
       sessions.setComposer(args.sessionId, args.prefs)
   );
   ipcMain.handle("git.status", (_e, args: { sessionId: string }) =>

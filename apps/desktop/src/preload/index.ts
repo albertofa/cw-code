@@ -1,8 +1,8 @@
 import { contextBridge, ipcRenderer } from "electron";
 import type { AppSettings, CreateSessionOptions, GitBranchInfo, GitDiffMode, GitDiffResult, GitStatus, Project, SessionCleanupResult, SessionStatus, SourceControlHealth, WorktreePruneSummary } from "@cw-code/contracts";
 
-export type PermissionMode = "auto" | "acceptEdits" | "bypassPermissions" | "manual" | "plan";
-export type EffortLevel = "low" | "medium" | "high" | "xhigh" | "max";
+export type PermissionMode = "auto" | "acceptEdits" | "bypassPermissions" | "manual";
+export type EffortLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
 export interface ComposerPrefs {
   model?: string;
@@ -15,6 +15,7 @@ export interface ModelOption {
   id: string;
   label: string;
   source: "live" | "curated" | "custom";
+  variants?: string[];
 }
 
 export interface DirEntry {

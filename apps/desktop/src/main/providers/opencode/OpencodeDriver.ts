@@ -33,7 +33,7 @@ import {
 } from "./opencodeMessage.js";
 import { mapOpencodeMessages } from "./opencodeHistory.js";
 import { assertInside } from "../../fs/FileService.js";
-import { listOpencodeModels, mapEffortToVariant } from "./opencodeModels.js";
+import { listOpencodeModels, resolveOpencodeVariant } from "./opencodeModels.js";
 import { opencodeFileArgs } from "./opencodeArgs.js";
 import { OpencodeServerPool, type ServerHandle } from "./opencodeServerPool.js";
 import {
@@ -266,8 +266,14 @@ export class OpencodeDriver implements CliDriver {
     }
   }
 
+  private modelVariants = new Map<string, string[] | undefined>();
+
   async listModels(cwd: string): Promise<import("@cw-code/contracts").ModelOption[]> {
-    return listOpencodeModels(cwd, this.configuredBinary());
+    const models = await listOpencodeModels(cwd, this.configuredBinary());
+    for (const model of models) {
+      this.modelVariants.set(model.id.toLowerCase(), model.variants);
+    }
+    return models;
   }
 
   startTurn(request: TurnRequest): TurnHandle {
@@ -576,7 +582,8 @@ export class OpencodeDriver implements CliDriver {
     this.toolSeen.set(turnId, new Map());
     const preview = previewText(request.prompt);
     const model = splitOpencodeModel(request.model);
-    const variant = request.variant ?? (request.effort ? mapEffortToVariant(request.effort) : undefined);
+    const knownVariants = request.model ? this.modelVariants.get(request.model.toLowerCase()) : undefined;
+    const variant = resolveOpencodeVariant(knownVariants, request.effort, request.variant);
     if (request.model && !model) {
       traceHarnessCall({
         harness: "opencode",

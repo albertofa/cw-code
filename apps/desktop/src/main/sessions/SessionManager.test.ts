@@ -301,10 +301,20 @@ describe("SessionManager", () => {
     const project = manager.addProject("C:\\proj5");
     const a = await manager.createSession(project.id, "claude");
     expect(manager.getComposer(a.id)).toMatchObject({ effort: "medium", permissionMode: "auto" });
-    manager.setComposer(a.id, { model: "sonnet", effort: "high", permissionMode: "plan" });
-    expect(manager.getComposer(a.id)).toMatchObject({ model: "sonnet", effort: "high", permissionMode: "plan" });
+    manager.setComposer(a.id, { model: "sonnet", effort: "high", permissionMode: "manual" });
+    expect(manager.getComposer(a.id)).toMatchObject({ model: "sonnet", effort: "high", permissionMode: "manual" });
     const b = await manager.createSession(project.id, "claude");
     expect(manager.getComposer(b.id)).toMatchObject({ effort: "medium", permissionMode: "auto" });
+    manager.dispose();
+  });
+
+  it("maps a retired stored plan permission to manual", async () => {
+    const { manager } = makeManager();
+    const project = manager.addProject("C:\\proj-plan-legacy");
+    const session = await manager.createSession(project.id, "claude");
+    const store = (manager as unknown as { store: SessionStore }).store;
+    store.updateSession(session.id, { permissionMode: "plan" as never });
+    expect(manager.getComposer(session.id)).toMatchObject({ permissionMode: "manual" });
     manager.dispose();
   });
 
@@ -313,9 +323,9 @@ describe("SessionManager", () => {
     const root = mkdtempSync(join(tmpdir(), "cw-session-prefs-"));
     const project = manager.addProject(root);
     const a = await manager.createSession(project.id, "claude");
-    manager.setComposer(a.id, { model: "sonnet", effort: "high", permissionMode: "plan" });
+    manager.setComposer(a.id, { model: "sonnet", effort: "high", permissionMode: "manual" });
     await manager.startTurn(a.id, "stored");
-    expect(fake.lastRequest).toMatchObject({ model: "sonnet", effort: "high", permissionMode: "plan" });
+    expect(fake.lastRequest).toMatchObject({ model: "sonnet", effort: "high", permissionMode: "manual" });
     fake.completeAll();
     await new Promise((r) => setTimeout(r, 20));
     writeFileSync(join(root, "a.ts"), "x", "utf8");

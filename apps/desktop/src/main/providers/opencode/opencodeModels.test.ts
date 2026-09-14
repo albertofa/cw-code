@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { labelForModel, mapEffortToVariant, OPENCODE_CURATED_MODELS, parseOpencodeModels, prettyModelLabel } from "./opencodeModels.js";
+import { labelForModel, mapEffortToVariant, OPENCODE_CURATED_MODELS, parseOpencodeModels, parseOpencodeVerboseModels, prettyModelLabel, resolveOpencodeVariant } from "./opencodeModels.js";
 
 describe("parseOpencodeModels", () => {
   it("parses provider/model lines, dedups and sorts", () => {
@@ -32,15 +32,64 @@ describe("labelForModel / prettyModelLabel", () => {
 
 describe("mapEffortToVariant", () => {
   it("maps effort levels to variants", () => {
-    expect(mapEffortToVariant("low")).toBe("minimal");
-    expect(mapEffortToVariant("medium")).toBe("balanced");
+    expect(mapEffortToVariant("minimal")).toBe("minimal");
+    expect(mapEffortToVariant("low")).toBe("low");
+    expect(mapEffortToVariant("medium")).toBe("medium");
     expect(mapEffortToVariant("high")).toBe("high");
     expect(mapEffortToVariant("xhigh")).toBe("xhigh");
     expect(mapEffortToVariant("max")).toBe("max");
   });
 
-  it("falls back to balanced", () => {
-    expect(mapEffortToVariant("unknown")).toBe("balanced");
+  it("maps the legacy balanced effort to medium", () => {
+    expect(mapEffortToVariant("balanced")).toBe("medium");
+  });
+
+  it("returns undefined for unknown efforts instead of inventing a variant", () => {
+    expect(mapEffortToVariant("unknown")).toBeUndefined();
+  });
+
+  it("falls back to the closest available variant", () => {
+    expect(mapEffortToVariant("max", ["minimal", "low", "medium", "high", "xhigh"])).toBe("xhigh");
+    expect(mapEffortToVariant("minimal", ["low", "medium"])).toBe("low");
+    expect(mapEffortToVariant("low", ["minimal", "low", "medium", "high", "xhigh"])).toBe("low");
+  });
+
+  it("returns undefined when the model has no ranked variants", () => {
+    expect(mapEffortToVariant("high", [])).toBeUndefined();
+    expect(mapEffortToVariant("high", ["none", "thinking"])).toBeUndefined();
+  });
+});
+
+describe("resolveOpencodeVariant", () => {
+  it("prefers an explicit variant known to the model", () => {
+    expect(resolveOpencodeVariant(["low", "xhigh"], "max", "xhigh")).toBe("xhigh");
+  });
+
+  it("falls back to effort when the explicit variant is unknown", () => {
+    expect(resolveOpencodeVariant(["low", "xhigh"], "max", "max")).toBe("xhigh");
+  });
+});
+
+describe("parseOpencodeVerboseModels", () => {
+  it("attaches variant names to each model", () => {
+    const stdout = [
+      "opencode-go/muse-spark-1.3-contributor",
+      '{ "variants": { "minimal": {}, "low": {}, "medium": {}, "high": {}, "xhigh": {} } }',
+      "opencode-go/kimi-k3",
+      '{ "variants": { "max": {} } }',
+      "opencode-go/glm-5.1",
+      '{ "variants": {} }'
+    ].join("\n");
+    const out = parseOpencodeVerboseModels(stdout);
+    expect(out.find((m) => m.id === "opencode-go/muse-spark-1.3-contributor")?.variants).toEqual([
+      "minimal",
+      "low",
+      "medium",
+      "high",
+      "xhigh"
+    ]);
+    expect(out.find((m) => m.id === "opencode-go/kimi-k3")?.variants).toEqual(["max"]);
+    expect(out.find((m) => m.id === "opencode-go/glm-5.1")?.variants).toEqual([]);
   });
 });
 

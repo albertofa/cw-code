@@ -156,9 +156,9 @@ export type TurnEvent =
   | { type: "turn.error"; turnId: string; message: string; resumeCursor?: string }
   | { type: "session.branch.updated"; turnId: string; sessionId: string; branch: string };
 
-export type PermissionMode = "auto" | "acceptEdits" | "bypassPermissions" | "manual" | "plan";
+export type PermissionMode = "auto" | "acceptEdits" | "bypassPermissions" | "manual";
 
-export type EffortLevel = "low" | "medium" | "high" | "xhigh" | "max";
+export type EffortLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
 export interface ComposerPrefs {
   model?: string;
@@ -171,6 +171,7 @@ export interface ModelOption {
   id: string;
   label: string;
   source: "live" | "curated" | "custom";
+  variants?: string[];
 }
 
 export interface GitStatus {
