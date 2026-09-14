@@ -21,7 +21,11 @@ export const DEFAULT_SETTINGS: AppSettings = {
   gitBinaryPath: defaultCliBinaryPath("git"),
   githubCliBinaryPath: defaultCliBinaryPath("gh"),
   sourceControlRefreshIntervalSeconds: 30,
-  defaultUseWorktree: true
+  defaultUseWorktree: true,
+  autoTitleEnabled: true,
+  autoTitleDriver: "claude",
+  autoTitleModel: "claude-sonnet-5",
+  autoTitleEffort: "low"
 };
 
 function sanitize(patch: SettingsPatch): SettingsPatch {
@@ -65,6 +69,20 @@ function sanitize(patch: SettingsPatch): SettingsPatch {
     out.sourceControlRefreshIntervalSeconds = Number.isFinite(value) ? Math.min(3600, Math.max(5, value)) : 30;
   }
   if (patch.defaultUseWorktree !== undefined) out.defaultUseWorktree = patch.defaultUseWorktree === true;
+  if (patch.autoTitleEnabled !== undefined) out.autoTitleEnabled = patch.autoTitleEnabled === true;
+  if (patch.autoTitleDriver !== undefined) {
+    out.autoTitleDriver =
+      patch.autoTitleDriver === "claude" || patch.autoTitleDriver === "opencode" || patch.autoTitleDriver === "codex"
+        ? patch.autoTitleDriver
+        : DEFAULT_SETTINGS.autoTitleDriver;
+  }
+  if (patch.autoTitleModel !== undefined) out.autoTitleModel = patch.autoTitleModel.trim();
+  if (patch.autoTitleEffort !== undefined) {
+    out.autoTitleEffort =
+      patch.autoTitleEffort === "low" || patch.autoTitleEffort === "medium" || patch.autoTitleEffort === "high" || patch.autoTitleEffort === "xhigh" || patch.autoTitleEffort === "max"
+        ? patch.autoTitleEffort
+        : DEFAULT_SETTINGS.autoTitleEffort;
+  }
   return out;
 }
 

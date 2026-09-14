@@ -91,6 +91,9 @@ function registerIpc(): void {
   sessions.setEmitter((sessionId, event) => {
     mainWindow?.webContents.send("turn.event", { sessionId, event });
   });
+  sessions.setTitleEmitter((sessionId, title) => {
+    mainWindow?.webContents.send("session.title", { sessionId, title });
+  });
   ipcMain.handle("cli.checkVersions", () => {
     const s = sessions.getSettings();
     return checkCliVersions({
@@ -157,6 +160,9 @@ function registerIpc(): void {
   ipcMain.handle("sessions.rename", (_e, args: { sessionId: string; title: string }) =>
     sessions.renameSession(args.sessionId, args.title)
   );
+  ipcMain.handle("sessions.regenerateTitle", (_e, args: { sessionId: string }) =>
+    sessions.regenerateTitle(args.sessionId)
+  );
   ipcMain.handle("sessions.setStatus", (_e, args: { sessionId: string; status: SessionStatus }) =>
     sessions.setSessionStatus(args.sessionId, args.status)
   );
@@ -181,6 +187,9 @@ function registerIpc(): void {
     "models.listFor",
     (_e, args: { projectId: string; driver: DriverName }) =>
       sessions.listModelsFor(args.projectId, args.driver)
+  );
+  ipcMain.handle("models.listForHarness", (_e, args: { driver: DriverName }) =>
+    sessions.listModelsForHarness(args.driver)
   );
   ipcMain.handle("composer.get", (_e, args: { sessionId: string }) => sessions.getComposer(args.sessionId));
   ipcMain.handle(

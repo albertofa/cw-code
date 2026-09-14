@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { AlertTriangle, CheckCircle2, GitBranch, RefreshCw, Star, X, XCircle } from "lucide-react";
-import type { AppSettings, DriverName, SourceControlHealth } from "../cw.js";
+import type { AppSettings, DriverName, EffortLevel, ModelOption, SourceControlHealth } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import { useNotifs } from "./Notifications.js";
 import { DriverIcon } from "./DriverIcon.js";
@@ -16,6 +16,20 @@ const CURATED_MODELS = [
   { id: "claude-sonnet-5", label: "Sonnet 5" },
   { id: "claude-fable-5", label: "Fable 5" },
   { id: "claude-haiku-4-5-20251001", label: "Haiku 4.5" }
+];
+
+const HARNESSES: Array<{ id: DriverName; label: string }> = [
+  { id: "claude", label: "Claude Code" },
+  { id: "opencode", label: "OpenCode" },
+  { id: "codex", label: "Codex" }
+];
+
+const EFFORTS: Array<{ id: EffortLevel; label: string }> = [
+  { id: "low", label: "Low" },
+  { id: "medium", label: "Medium" },
+  { id: "high", label: "High" },
+  { id: "xhigh", label: "XHigh" },
+  { id: "max", label: "Max" }
 ];
 
 type Category = "general" | "sourceControl" | "harnesses";
@@ -35,6 +49,10 @@ export function SettingsModal({
   const [saveError, setSaveError] = useState<string | null>(null);
   const [category, setCategory] = useState<Category>("harnesses");
   const [harness, setHarness] = useState<Harness>(initialHarness);
+  const [harnessChecks, setHarnessChecks] = useState<Array<{ binary: DriverName; available: boolean }> | null>(null);
+  const [harnessChecksError, setHarnessChecksError] = useState<string | null>(null);
+  const [titleModels, setTitleModels] = useState<ModelOption[] | null>(null);
+  const [titleModelsError, setTitleModelsError] = useState<string | null>(null);
   const [health, setHealth] = useState<SourceControlHealth | null>(null);
   const [healthLoading, setHealthLoading] = useState(false);
   const [projectAccount, setProjectAccount] = useState("");
@@ -89,6 +107,43 @@ export function SettingsModal({
   }, [category, loadSourceControlHealth]);
 
   useEffect(() => {
+    if (category !== "general") return;
+    let cancelled = false;
+    setHarnessChecks(null);
+    setHarnessChecksError(null);
+    void window.cw
+      .checkVersions()
+      .then((checks) => {
+        if (!cancelled) setHarnessChecks(checks);
+      })
+      .catch((err: Error) => {
+        if (!cancelled) setHarnessChecksError(err.message || "Could not check installed harnesses");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [category]);
+
+  useEffect(() => {
+    const driver = draft?.autoTitleDriver;
+    if (category !== "general" || !driver) return;
+    let cancelled = false;
+    setTitleModels(null);
+    setTitleModelsError(null);
+    void window.cw
+      .listModelsForHarness(driver)
+      .then((list) => {
+        if (!cancelled) setTitleModels(list);
+      })
+      .catch((err) => {
+        if (!cancelled) setTitleModelsError(err instanceof Error ? err.message : "Could not load models");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [category, draft?.autoTitleDriver]);
+
+  useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") onClose();
     };
@@ -106,6 +161,8 @@ export function SettingsModal({
 
   const customId = draft?.claudeCustomModel.id.trim() ?? "";
   const customName = draft?.claudeCustomModel.name.trim() ?? "";
+  const savedTitleModel = draft?.autoTitleModel.trim() ?? "";
+  const savedTitleModelMissing = savedTitleModel !== "" && !(titleModels ?? []).some((model) => model.id === savedTitleModel);
 
   const removeCustom = () => {
     if (!draft) return;
@@ -317,6 +374,60 @@ export function SettingsModal({
     </>
   );
 
+  const generalFields = draft && (
+    <section className="settings-section">
+      <h3>Session titles</h3>
+      <span className="settings-hint">Generate a short title from the first message of a new session, replacing the placeholder title.</span>
+      <label className="settings-row">
+        <span className="settings-label">Generate titles automatically</span>
+        <span className="settings-hint">Runs a one-off title request with the harness and model configured below.</span>
+        <input className="settings-toggle" type="checkbox" checked={draft.autoTitleEnabled} onChange={(e) => set({ autoTitleEnabled: e.target.checked })} />
+      </label>
+      <label className="settings-row">
+        <span className="settings-label">Harness</span>
+        <span className="settings-hint">
+          {harnessChecksError
+            ? harnessChecksError
+            : harnessChecks === null
+              ? "Checking installed harnesses…"
+              : "Unavailable harnesses are not installed or failed '--version'."}
+        </span>
+        <select className="field" value={draft.autoTitleDriver} onChange={(e) => set({ autoTitleDriver: e.target.value as DriverName })}>
+          {HARNESSES.map((h) => {
+            const unavailable = harnessChecks?.find((check) => check.binary === h.id)?.available === false;
+            return (
+              <option key={h.id} value={h.id} disabled={unavailable}>
+                {h.label}{unavailable ? " (unavailable)" : ""}
+              </option>
+            );
+          })}
+        </select>
+      </label>
+      <label className="settings-row">
+        <span className="settings-label">Model</span>
+        <span className="settings-hint">
+          {titleModelsError ? titleModelsError : titleModels === null ? "Loading models…" : "Fetched from the selected harness."}
+        </span>
+        <select className="field" value={draft.autoTitleModel} onChange={(e) => set({ autoTitleModel: e.target.value })}>
+          <option value="">Default</option>
+          {titleModels?.map((model) => (
+            <option key={model.id} value={model.id}>{model.label}</option>
+          ))}
+          {savedTitleModelMissing && <option value={savedTitleModel}>{savedTitleModel} (saved)</option>}
+        </select>
+      </label>
+      <label className="settings-row">
+        <span className="settings-label">Effort</span>
+        <span className="settings-hint">Reasoning effort used for the title request.</span>
+        <select className="field" value={draft.autoTitleEffort} onChange={(e) => set({ autoTitleEffort: e.target.value as EffortLevel })}>
+          {EFFORTS.map((effort) => (
+            <option key={effort.id} value={effort.id}>{effort.label}</option>
+          ))}
+        </select>
+      </label>
+    </section>
+  );
+
   const sourceControlFields = draft && (
     <>
       <section className="settings-section">
@@ -470,9 +581,7 @@ export function SettingsModal({
                 </div>
               </>
             )}
-            {!loading && !loadError && draft && category === "general" && (
-              <div className="side-empty">Nothing here yet.</div>
-            )}
+            {!loading && !loadError && draft && category === "general" && generalFields}
             {!loading && !loadError && draft && category === "sourceControl" && sourceControlFields}
             {!loading && !loadError && draft && category === "harnesses" && (
               <>

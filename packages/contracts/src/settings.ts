@@ -1,3 +1,5 @@
+import type { DriverKind, EffortLevel } from "./session.js";
+
 export interface CustomModel {
   id: string;
   name: string;
@@ -17,6 +19,10 @@ export interface AppSettings {
   githubCliBinaryPath: string;
   sourceControlRefreshIntervalSeconds: number;
   defaultUseWorktree: boolean;
+  autoTitleEnabled: boolean;
+  autoTitleDriver: DriverKind;
+  autoTitleModel: string;
+  autoTitleEffort: EffortLevel;
 }
 
 export type SettingsPatch = Partial<AppSettings>;

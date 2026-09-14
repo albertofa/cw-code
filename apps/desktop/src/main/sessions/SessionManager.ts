@@ -1,6 +1,6 @@
 import { app } from "electron";
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, mkdirSync } from "node:fs";
 import { join } from "node:path";
 import type {
   AppSettings,
@@ -15,7 +15,8 @@ import type {
   SessionMeta,
   SessionStatus,
   SettingsPatch,
-  ThreadEvent
+  ThreadEvent,
+  TurnHandle
 } from "@cw-code/contracts";
 import { SessionStore } from "./SessionStore.js";
 import { SettingsStore } from "../settings/SettingsStore.js";
@@ -26,14 +27,27 @@ import { OpencodeDriver } from "../providers/opencode/OpencodeDriver.js";
 import { CodexCliDriver } from "../providers/codex/CodexCliDriver.js";
 import { GitService } from "../fs/GitService.js";
 import { resolveAttachments } from "./attachments.js";
+import { AUTO_TITLE_TIMEOUT_MS, buildTitlePrompt, sanitizeGeneratedTitle } from "./autoTitle.js";
 
 export interface SessionManagerOptions {
   dbPath?: string;
   settingsPath?: string;
   onEvent?: (sessionId: string, event: ThreadEvent) => void;
+  onTitle?: (sessionId: string, title: string) => void;
   drivers?: Partial<Record<DriverKind, CliDriver>>;
   gitService?: GitService;
   worktreesRoot?: string;
+}
+
+interface TitleTurn {
+  sessionId: string;
+  placeholder: string;
+  text: string;
+  settled: boolean;
+  timer: NodeJS.Timeout;
+  driver: CliDriver;
+  promise: Promise<string | null>;
+  resolve: (title: string | null) => void;
 }
 
 const DELTA_FLUSH_MS = 24;
@@ -43,7 +57,10 @@ export class SessionManager {
   private settings: SettingsStore;
   private drivers: Record<DriverKind, CliDriver>;
   private activeTurns = new Map<string, string>();
+  private titleTurns = new Map<string, TitleTurn>();
+  private firstPrompts = new Map<string, string>();
   private onEvent: (sessionId: string, event: ThreadEvent) => void;
+  private onTitle: (sessionId: string, title: string) => void;
   private git: GitService;
   private worktreesRoot: string;
   private deltaBuffer = new Map<string, { sessionId: string; text: string; timer: NodeJS.Timeout }>();
@@ -54,6 +71,7 @@ export class SessionManager {
     const settingsPath = opts.settingsPath ?? join(app.getPath("userData"), "cw-settings.json");
     this.settings = new SettingsStore(settingsPath);
     this.onEvent = opts.onEvent ?? (() => {});
+    this.onTitle = opts.onTitle ?? (() => {});
     this.git = opts.gitService ?? new GitService(() => this.settings.get());
     this.worktreesRoot = opts.worktreesRoot ?? join(app.getPath("userData"), "worktrees");
     const getSettings = (): AppSettings => this.settings.get();
@@ -65,6 +83,10 @@ export class SessionManager {
   }
 
   private routeEvent(event: ThreadEvent): void {
+    if (this.titleTurns.has(event.turnId)) {
+      this.handleTitleTurnEvent(event);
+      return;
+    }
     if (event.type === "assistant.delta") {
       this.bufferDelta(event.turnId, this.activeTurns.get(event.turnId) ?? "", event.text);
       return;
@@ -77,6 +99,55 @@ export class SessionManager {
     this.flushDelta(event.turnId);
     const sessionId = this.activeTurns.get(event.turnId) ?? "";
     this.handleDriverEvent(sessionId, event);
+  }
+
+  private handleTitleTurnEvent(event: ThreadEvent): void {
+    const turn = this.titleTurns.get(event.turnId);
+    if (!turn) return;
+    if (event.type === "assistant.delta") {
+      if (!turn.settled) turn.text += event.text;
+      return;
+    }
+    if (event.type === "turn.done") {
+      if (!turn.settled) {
+        if (event.isError) turn.text = "";
+        else if (!turn.text.trim()) turn.text = event.resultText;
+      }
+      this.finishTitleTurn(event.turnId);
+      return;
+    }
+    if (event.type === "turn.error") {
+      turn.text = "";
+      this.finishTitleTurn(event.turnId);
+      return;
+    }
+    if (event.type === "approval.request") {
+      void turn.driver.respondToApproval?.(event.request.requestId, "decline").catch(() => {});
+      return;
+    }
+    if (event.type === "question.request") {
+      void turn.driver.respondToQuestion?.(event.request.requestId, {}).catch(() => {});
+    }
+  }
+
+  private finishTitleTurn(turnId: string): void {
+    const turn = this.titleTurns.get(turnId);
+    if (!turn || turn.settled) return;
+    turn.settled = true;
+    clearTimeout(turn.timer);
+    const title = sanitizeGeneratedTitle(turn.text);
+    if (!title) {
+      turn.resolve(null);
+      return;
+    }
+    const session = this.store.getSession(turn.sessionId);
+    if (!session || session.title !== turn.placeholder || session.title === title) {
+      turn.resolve(null);
+      return;
+    }
+    this.store.updateSession(turn.sessionId, { title });
+    this.onTitle(turn.sessionId, title);
+    turn.resolve(title);
   }
 
   private bufferDelta(turnId: string, sessionId: string, text: string): void {
@@ -103,6 +174,10 @@ export class SessionManager {
 
   setEmitter(onEvent: (sessionId: string, event: ThreadEvent) => void): void {
     this.onEvent = onEvent;
+  }
+
+  setTitleEmitter(onTitle: (sessionId: string, title: string) => void): void {
+    this.onTitle = onTitle;
   }
 
   getSettings(): AppSettings {
@@ -291,8 +366,12 @@ export class SessionManager {
     for (const [turnId, owner] of this.activeTurns) {
       if (owner === sessionId) throw new Error(`session busy (turn ${turnId})`);
     }
-    if (session.title === "New session") {
-      this.store.updateSession(sessionId, { title: prompt.slice(0, 60) });
+    const firstMessage = session.title === "New session";
+    const placeholder = prompt.slice(0, 60);
+    if (firstMessage) {
+      this.firstPrompts.set(sessionId, prompt);
+      this.store.updateSession(sessionId, { title: placeholder });
+      this.onTitle(sessionId, placeholder);
     }
     const cwd = this.rootFor(sessionId);
     const stored = this.getComposer(sessionId);
@@ -311,7 +390,86 @@ export class SessionManager {
     });
     this.activeTurns.set(handle.turnId, sessionId);
     this.store.updateSession(sessionId, { status: "working" });
+    if (firstMessage) this.maybeAutoTitle(sessionId, prompt, placeholder);
     return handle.turnId;
+  }
+
+  private maybeAutoTitle(sessionId: string, prompt: string, placeholder: string): void {
+    if (!this.settings.get().autoTitleEnabled || !prompt.trim()) return;
+    void this.launchTitleTurn(sessionId, prompt, placeholder);
+  }
+
+  async regenerateTitle(sessionId: string): Promise<string> {
+    const session = this.store.getSession(sessionId);
+    if (!session) throw new Error(`unknown session ${sessionId}`);
+    const source = await this.titleSource(session);
+    if (!source.trim()) throw new Error("No session message to generate a title from yet");
+    const title = await this.launchTitleTurn(sessionId, source, session.title);
+    if (!title) throw new Error("Title generation failed. Check the configured harness and model.");
+    return title;
+  }
+
+  private async titleSource(session: SessionMeta): Promise<string> {
+    if (session.resumeCursor) {
+      const history = await this.getHistory(session.id);
+      const firstUser = history.find((message) => message.role === "user" && message.text.trim());
+      if (firstUser) return firstUser.text;
+    }
+    const firstPrompt = this.firstPrompts.get(session.id);
+    if (firstPrompt) return firstPrompt;
+    return session.title === "New session" ? "" : session.title;
+  }
+
+  private launchTitleTurn(sessionId: string, prompt: string, placeholder: string): Promise<string | null> {
+    for (const pending of this.titleTurns.values()) {
+      if (pending.sessionId === sessionId && !pending.settled) return pending.promise;
+    }
+    const settings = this.settings.get();
+    const driver = this.drivers[settings.autoTitleDriver];
+    let handle: TurnHandle;
+    try {
+      handle = driver.startTurn({
+        sessionId: `title:${sessionId}`,
+        prompt: buildTitlePrompt(prompt),
+        cwd: this.titleGenRoot(),
+        model: settings.autoTitleModel.trim() || undefined,
+        effort: settings.autoTitleEffort,
+        permissionMode: "auto",
+        maxTurns: 1
+      });
+    } catch (err) {
+      console.warn(`title generation failed for ${sessionId}: ${(err as Error).message}`);
+      return Promise.resolve(null);
+    }
+    let resolve: (title: string | null) => void = () => {};
+    const promise = new Promise<string | null>((settle) => {
+      resolve = settle;
+    });
+    const timer = setTimeout(() => {
+      const turn = this.titleTurns.get(handle.turnId);
+      if (!turn || turn.settled) return;
+      turn.settled = true;
+      turn.resolve(null);
+      driver.interrupt(handle.turnId);
+    }, AUTO_TITLE_TIMEOUT_MS);
+    timer.unref?.();
+    this.titleTurns.set(handle.turnId, {
+      sessionId,
+      placeholder,
+      text: "",
+      settled: false,
+      timer,
+      driver,
+      promise,
+      resolve
+    });
+    return promise;
+  }
+
+  private titleGenRoot(): string {
+    const dir = join(app.getPath("userData"), "title-gen");
+    mkdirSync(dir, { recursive: true });
+    return dir;
   }
 
   async listModels(sessionId: string): Promise<ModelOption[]> {
@@ -334,6 +492,20 @@ export class SessionManager {
       console.warn(`model list failed: ${(err as Error).message}`);
     }
     return [];
+  }
+
+  async listModelsForHarness(driver: DriverKind): Promise<ModelOption[]> {
+    if (driver === "claude") {
+      return resolveClaudeModels(this.settings.get(), CLAUDE_CURATED_MODELS);
+    }
+    const driverInstance = this.drivers[driver];
+    if (typeof driverInstance.listModels !== "function") return [];
+    try {
+      return await driverInstance.listModels(this.titleGenRoot());
+    } catch (err) {
+      console.warn(`model list failed for ${driver}: ${(err as Error).message}`);
+      throw err;
+    }
   }
 
   interrupt(turnId: string): void {
@@ -391,6 +563,12 @@ export class SessionManager {
   dispose(): void {
     for (const pending of this.deltaBuffer.values()) clearTimeout(pending.timer);
     this.deltaBuffer.clear();
+    for (const turn of this.titleTurns.values()) {
+      clearTimeout(turn.timer);
+      turn.resolve(null);
+    }
+    this.titleTurns.clear();
+    this.firstPrompts.clear();
     for (const driver of Object.values(this.drivers)) driver.dispose?.();
     this.store.close();
   }

@@ -2,6 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
+import type { DriverKind, EffortLevel } from "@cw-code/contracts";
 import { DEFAULT_SETTINGS, SettingsStore } from "./SettingsStore.js";
 
 function tempFilePath(): string {
@@ -71,5 +72,34 @@ describe("SettingsStore", () => {
       gitBinaryPath: "custom-git", githubCliBinaryPath: "custom-gh", sourceControlRefreshIntervalSeconds: 5, defaultUseWorktree: false
     });
     expect(store.set({ sourceControlRefreshIntervalSeconds: 50_000 }).sourceControlRefreshIntervalSeconds).toBe(3600);
+  });
+
+  it("includes auto-title defaults", () => {
+    const settings = new SettingsStore(tempFilePath()).get();
+    expect(settings.autoTitleEnabled).toBe(true);
+    expect(settings.autoTitleDriver).toBe("claude");
+    expect(settings.autoTitleModel).toBe("claude-sonnet-5");
+    expect(settings.autoTitleEffort).toBe("low");
+  });
+
+  it("sanitizes auto-title settings", () => {
+    const store = new SettingsStore(tempFilePath());
+    expect(store.set({ autoTitleEnabled: false, autoTitleDriver: "opencode", autoTitleModel: "  claude-opus-5  ", autoTitleEffort: "xhigh" })).toMatchObject({
+      autoTitleEnabled: false, autoTitleDriver: "opencode", autoTitleModel: "claude-opus-5", autoTitleEffort: "xhigh"
+    });
+    expect(store.set({ autoTitleModel: "  " }).autoTitleModel).toBe("");
+  });
+
+  it("falls back to default auto-title driver and effort on invalid values", () => {
+    const store = new SettingsStore(tempFilePath());
+    expect(store.set({ autoTitleDriver: "bogus" as unknown as DriverKind, autoTitleEffort: "extreme" as unknown as EffortLevel })).toMatchObject({
+      autoTitleDriver: DEFAULT_SETTINGS.autoTitleDriver, autoTitleEffort: DEFAULT_SETTINGS.autoTitleEffort
+    });
+  });
+
+  it("coerces auto-title enabled with strict true", () => {
+    const store = new SettingsStore(tempFilePath());
+    expect(store.set({ autoTitleEnabled: "yes" as unknown as boolean }).autoTitleEnabled).toBe(false);
+    expect(store.set({ autoTitleEnabled: true }).autoTitleEnabled).toBe(true);
   });
 });

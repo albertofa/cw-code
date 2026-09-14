@@ -163,6 +163,7 @@ export function App() {
     }
     void loadProjects();
     const off = window.cw.onTurnEvent(handleTurnEvent);
+    const offTitle = window.cw.onSessionTitle(({ sessionId, title }) => useAppStore.getState().applySessionTitle(sessionId, title));
     const onKey = (e: KeyboardEvent) => {
       if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
       const target = e.target as HTMLElement | null;
@@ -181,6 +182,7 @@ export function App() {
     window.addEventListener("keydown", onKey);
     return () => {
       off();
+      offTitle();
       flushPendingDeltas();
       window.removeEventListener("keydown", onKey);
     };

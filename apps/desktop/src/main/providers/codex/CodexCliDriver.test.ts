@@ -16,7 +16,11 @@ const SETTINGS: AppSettings = {
   gitBinaryPath: "git",
   githubCliBinaryPath: "gh",
   sourceControlRefreshIntervalSeconds: 30,
-  defaultUseWorktree: true
+  defaultUseWorktree: true,
+  autoTitleEnabled: true,
+  autoTitleDriver: "claude",
+  autoTitleModel: "claude-sonnet-5",
+  autoTitleEffort: "low"
 };
 
 class FakeClient implements CodexAppServerLike {

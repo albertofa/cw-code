@@ -11,13 +11,14 @@ class FakeDriver implements CliDriver {
   readonly kind = "claude" as const;
   seen: string[] = [];
   lastRequest: Record<string, unknown> | null = null;
+  history: HistoryMessage[] = [];
   private pending = new Map<string, { sessionId: string; prompt: string }>();
   constructor(private emit: (event: ThreadEvent) => void) {}
   async listSessions(): Promise<[]> {
     return [];
   }
   async getHistory(): Promise<HistoryMessage[]> {
-    return [];
+    return this.history;
   }
   startTurn(request: { sessionId: string; prompt: string }): TurnHandle {
     const turnId = randomUUID();
@@ -25,7 +26,7 @@ class FakeDriver implements CliDriver {
     this.lastRequest = { ...(request as Record<string, unknown>) };
     this.pending.set(turnId, { sessionId: request.sessionId, prompt: request.prompt });
     queueMicrotask(() => {
-      if (this.pending.has(turnId)) {
+      if (this.pending.has(turnId) && !request.sessionId.startsWith("title:")) {
         this.emit({ type: "assistant.delta", turnId, text: `echo:${request.prompt}` });
       }
     });
@@ -48,6 +49,51 @@ class FakeDriver implements CliDriver {
       isError: false
     });
   }
+  completeTitle(text: string): void {
+    for (const [turnId, pending] of [...this.pending]) {
+      if (!pending.sessionId.startsWith("title:")) continue;
+      this.pending.delete(turnId);
+      this.emit({ type: "assistant.delta", turnId, text });
+      this.emit({
+        type: "turn.done",
+        turnId,
+        sessionId: pending.sessionId,
+        resumeCursor: `cursor-${turnId}`,
+        resultText: text,
+        inputTokens: 1,
+        outputTokens: 1,
+        costUsd: 0,
+        numTurns: 1,
+        isError: false
+      });
+    }
+  }
+  completeTitleError(resultText: string): void {
+    for (const [turnId, pending] of [...this.pending]) {
+      if (!pending.sessionId.startsWith("title:")) continue;
+      this.pending.delete(turnId);
+      this.emit({
+        type: "turn.done",
+        turnId,
+        sessionId: pending.sessionId,
+        resumeCursor: `cursor-${turnId}`,
+        resultText,
+        inputTokens: 1,
+        outputTokens: 1,
+        costUsd: 0,
+        numTurns: 1,
+        isError: true
+      });
+    }
+  }
+  failTitle(partial: string): void {
+    for (const [turnId, pending] of [...this.pending]) {
+      if (!pending.sessionId.startsWith("title:")) continue;
+      this.pending.delete(turnId);
+      this.emit({ type: "assistant.delta", turnId, text: partial });
+      this.emit({ type: "turn.error", turnId, message: "title turn failed" });
+    }
+  }
   completeAll(): void {
     for (const turnId of [...this.pending.keys()]) this.complete(turnId);
   }
@@ -57,11 +103,14 @@ class FakeDriver implements CliDriver {
 }
 
 function makeManager() {
-  const dbPath = join(mkdtempSync(join(tmpdir(), "cw-test-")), "test.db");
+  const dir = mkdtempSync(join(tmpdir(), "cw-test-"));
   const received: Array<{ sessionId: string; event: ThreadEvent }> = [];
+  const titles: Array<{ sessionId: string; title: string }> = [];
   const manager = new SessionManager({
-    dbPath,
-    onEvent: (sessionId, event) => received.push({ sessionId, event })
+    dbPath: join(dir, "test.db"),
+    settingsPath: join(dir, "settings.json"),
+    onEvent: (sessionId, event) => received.push({ sessionId, event }),
+    onTitle: (sessionId, title) => titles.push({ sessionId, title })
   });
   const fake = new FakeDriver((e) => (manager as unknown as { routeEvent(e: ThreadEvent): void }).routeEvent(e));
   (manager as unknown as { drivers: Record<string, CliDriver> }).drivers = {
@@ -69,7 +118,8 @@ function makeManager() {
     opencode: fake,
     codex: fake
   };
-  return { manager, received, fake };
+  manager.setSettings({ autoTitleEnabled: false });
+  return { manager, received, fake, titles };
 }
 
 describe("SessionManager", () => {
@@ -205,10 +255,12 @@ describe("SessionManager", () => {
 
     const manager = new SessionManager({
       dbPath: join(sandbox, "data", "test.db"),
+      settingsPath: join(sandbox, "data", "settings.json"),
       worktreesRoot: join(sandbox, "worktrees")
     });
     const fake = new FakeDriver((event) => (manager as unknown as { routeEvent(e: ThreadEvent): void }).routeEvent(event));
     (manager as unknown as { drivers: Record<string, CliDriver> }).drivers = { claude: fake, opencode: fake, codex: fake };
+    manager.setSettings({ autoTitleEnabled: false });
     const project = manager.addProject(repository);
     const session = await manager.createSession(project.id, "claude", { baseBranch: "main" });
 
@@ -237,6 +289,153 @@ describe("SessionManager", () => {
     fake.completeAll();
     sessions = await manager.listSessions(project.id);
     expect(sessions.find((s) => s.id === a.id)?.status).toBe("done");
+    manager.dispose();
+  });
+
+  it("generates a title for the first message and emits it", async () => {
+    const { manager, received, fake, titles } = makeManager();
+    manager.setSettings({ autoTitleEnabled: true });
+    const project = manager.addProject("C:\\proj-title");
+    const a = await manager.createSession(project.id, "claude");
+    await manager.startTurn(a.id, "Fix the login redirect loop");
+    expect(String(fake.lastRequest?.sessionId).startsWith("title:")).toBe(true);
+    expect(fake.lastRequest).toMatchObject({ model: "claude-sonnet-5", effort: "low" });
+    expect(String(fake.lastRequest?.prompt)).toContain("Fix the login redirect loop");
+    const titleCwd = String(fake.lastRequest?.cwd);
+    expect(titleCwd.length).toBeGreaterThan(0);
+    expect(titleCwd).not.toBe("C:\\proj-title");
+    fake.completeTitle('"Fix login redirect loop"');
+    const sessions = await manager.listSessions(project.id);
+    expect(sessions.find((s) => s.id === a.id)?.title).toBe("Fix login redirect loop");
+    expect(titles).toEqual([
+      { sessionId: a.id, title: "Fix the login redirect loop" },
+      { sessionId: a.id, title: "Fix login redirect loop" }
+    ]);
+    expect(received.some((r) => r.sessionId.startsWith("title:"))).toBe(false);
+    manager.dispose();
+  });
+
+  it("keeps a manual rename that lands before the title turn completes", async () => {
+    const { manager, fake, titles } = makeManager();
+    manager.setSettings({ autoTitleEnabled: true });
+    const project = manager.addProject("C:\\proj-title-rename");
+    const a = await manager.createSession(project.id, "claude");
+    await manager.startTurn(a.id, "Fix the login redirect loop");
+    await manager.renameSession(a.id, "Manual name");
+    fake.completeTitle("Generated name");
+    const sessions = await manager.listSessions(project.id);
+    expect(sessions.find((s) => s.id === a.id)?.title).toBe("Manual name");
+    expect(titles).toEqual([{ sessionId: a.id, title: "Fix the login redirect loop" }]);
+    manager.dispose();
+  });
+
+  it("keeps the placeholder when the title turn ends with an error result", async () => {
+    const { manager, fake, titles } = makeManager();
+    manager.setSettings({ autoTitleEnabled: true });
+    const project = manager.addProject("C:\\proj-title-error-done");
+    const a = await manager.createSession(project.id, "claude");
+    await manager.startTurn(a.id, "Fix the login redirect loop");
+    fake.completeTitleError("API Error: 500 Internal Server Error");
+    const sessions = await manager.listSessions(project.id);
+    expect(sessions.find((s) => s.id === a.id)?.title).toBe("Fix the login redirect loop");
+    expect(titles).toEqual([{ sessionId: a.id, title: "Fix the login redirect loop" }]);
+    manager.dispose();
+  });
+
+  it("keeps the placeholder when the title turn errors after a partial delta", async () => {
+    const { manager, fake, titles } = makeManager();
+    manager.setSettings({ autoTitleEnabled: true });
+    const project = manager.addProject("C:\\proj-title-error-partial");
+    const a = await manager.createSession(project.id, "claude");
+    await manager.startTurn(a.id, "Fix the login redirect loop");
+    fake.failTitle("Fix login");
+    const sessions = await manager.listSessions(project.id);
+    expect(sessions.find((s) => s.id === a.id)?.title).toBe("Fix the login redirect loop");
+    expect(titles).toEqual([{ sessionId: a.id, title: "Fix the login redirect loop" }]);
+    manager.dispose();
+  });
+
+  it("does not start a title turn when auto-title is disabled", async () => {
+    const { manager, fake } = makeManager();
+    const project = manager.addProject("C:\\proj-title-off");
+    const a = await manager.createSession(project.id, "claude");
+    await manager.startTurn(a.id, "Fix the login redirect loop");
+    expect(fake.seen).toHaveLength(1);
+    expect(fake.lastRequest?.sessionId).toBe(a.id);
+    expect(fake.lastRequest?.prompt).toBe("Fix the login redirect loop");
+    manager.dispose();
+  });
+
+  it("regenerates a title from the stored first prompt on demand", async () => {
+    const { manager, fake, titles } = makeManager();
+    const project = manager.addProject("C:\\proj-regen-prompt");
+    const a = await manager.createSession(project.id, "claude");
+    await manager.startTurn(a.id, "Add a dark mode toggle to the settings panel");
+    expect(fake.seen).toHaveLength(1);
+    const promise = manager.regenerateTitle(a.id);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(fake.lastRequest?.sessionId).toBe(`title:${a.id}`);
+    expect(String(fake.lastRequest?.prompt)).toContain("Add a dark mode toggle to the settings panel");
+    fake.completeTitle("Dark mode settings toggle");
+    await expect(promise).resolves.toBe("Dark mode settings toggle");
+    const sessions = await manager.listSessions(project.id);
+    expect(sessions.find((s) => s.id === a.id)?.title).toBe("Dark mode settings toggle");
+    expect(titles).toEqual([
+      { sessionId: a.id, title: "Add a dark mode toggle to the settings panel" },
+      { sessionId: a.id, title: "Dark mode settings toggle" }
+    ]);
+    manager.dispose();
+  });
+
+  it("regenerates from the first user history message when the session has a cursor", async () => {
+    const { manager, fake } = makeManager();
+    const project = manager.addProject("C:\\proj-regen-history");
+    const a = await manager.createSession(project.id, "claude");
+    await manager.startTurn(a.id, "First prompt");
+    fake.completeAll();
+    await new Promise((r) => setTimeout(r, 20));
+    fake.history = [{ id: "m1", role: "user", text: "Use the history message instead", turnId: "t1" }];
+    const promise = manager.regenerateTitle(a.id);
+    await new Promise((r) => setTimeout(r, 20));
+    expect(String(fake.lastRequest?.prompt)).toContain("Use the history message instead");
+    fake.completeTitle("History based title");
+    await expect(promise).resolves.toBe("History based title");
+    manager.dispose();
+  });
+
+  it("rejects regeneration when the title turn fails and keeps the current title", async () => {
+    const { manager, fake } = makeManager();
+    const project = manager.addProject("C:\\proj-regen-fail");
+    const a = await manager.createSession(project.id, "claude");
+    await manager.startTurn(a.id, "Fix the login redirect loop");
+    const promise = manager.regenerateTitle(a.id);
+    await new Promise((r) => setTimeout(r, 20));
+    fake.failTitle("Fix login");
+    await expect(promise).rejects.toThrow(/generation failed/);
+    const sessions = await manager.listSessions(project.id);
+    expect(sessions.find((s) => s.id === a.id)?.title).toBe("Fix the login redirect loop");
+    manager.dispose();
+  });
+
+  it("rejects regeneration that produces the current title", async () => {
+    const { manager, fake } = makeManager();
+    const project = manager.addProject("C:\\proj-regen-same");
+    const a = await manager.createSession(project.id, "claude");
+    await manager.startTurn(a.id, "Fix the login redirect loop");
+    const promise = manager.regenerateTitle(a.id);
+    await new Promise((r) => setTimeout(r, 20));
+    fake.completeTitle("Fix the login redirect loop");
+    await expect(promise).rejects.toThrow(/generation failed/);
+    const sessions = await manager.listSessions(project.id);
+    expect(sessions.find((s) => s.id === a.id)?.title).toBe("Fix the login redirect loop");
+    manager.dispose();
+  });
+
+  it("rejects regeneration before any message exists", async () => {
+    const { manager } = makeManager();
+    const project = manager.addProject("C:\\proj-regen-empty");
+    const a = await manager.createSession(project.id, "claude");
+    await expect(manager.regenerateTitle(a.id)).rejects.toThrow(/No session message/);
     manager.dispose();
   });
 });

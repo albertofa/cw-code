@@ -102,6 +102,7 @@ interface AppState {
   loadDiscovered(): Promise<void>;
   importDiscovered(session: Session): Promise<void>;
   renameSession(sessionId: string, title: string): Promise<void>;
+  regenerateSessionTitle(sessionId: string): Promise<void>;
   setSessionStatus(sessionId: string, status: SessionStatus): Promise<void>;
   createSession(driver: DriverName, prefs?: ComposerPrefs, workspace?: CreateSessionOptions): Promise<void>;
   sendPrompt(prompt: string, attachments?: string[]): Promise<void>;
@@ -109,6 +110,7 @@ interface AppState {
   respondApproval(requestId: string, decision: ApprovalDecision): Promise<void>;
   respondQuestion(sessionId: string, requestId: string, answers: Record<string, string>): Promise<void>;
   applyEvent(sessionId: string, event: TurnEvent): void;
+  applySessionTitle(sessionId: string, title: string): void;
 }
 
 function finalizeTurnTools(messages: ChatMessage[], turnId: string): ChatMessage[] {
@@ -348,6 +350,11 @@ export const useAppStore = create<AppState>((set, get) => ({
       next[pid] = list.map((s) => (s.id === sessionId ? { ...s, title: name } : s));
     }
     set({ sessionsByProject: next });
+  },
+
+  async regenerateSessionTitle(sessionId: string) {
+    const title = await window.cw.regenerateSessionTitle(sessionId);
+    get().applySessionTitle(sessionId, title);
   },
 
   async setSessionStatus(sessionId: string, status: SessionStatus) {
@@ -735,5 +742,20 @@ export const useAppStore = create<AppState>((set, get) => ({
         }
       });
     }
+  },
+
+  applySessionTitle(sessionId: string, title: string) {
+    const byProject = get().sessionsByProject;
+    let changed = false;
+    const next: Record<string, Session[]> = {};
+    for (const [pid, list] of Object.entries(byProject)) {
+      next[pid] = list.map((s) => {
+        if (s.id !== sessionId || s.title === title) return s;
+        changed = true;
+        return { ...s, title };
+      });
+    }
+    if (!changed) return;
+    set({ sessionsByProject: next });
   }
 }));

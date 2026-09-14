@@ -507,6 +507,13 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
     });
   };
 
+  const regenerateTitle = (sessionId: string) => {
+    setMenu(null);
+    void store.regenerateSessionTitle(sessionId).catch((err: Error) => {
+      useNotifs.getState().push({ kind: "error", title: "Could not regenerate title", message: err.message });
+    });
+  };
+
   const setStatus = (sessionId: string, status: SessionStatus) => {
     setMenu(null);
     void store.setSessionStatus(sessionId, status).catch((err: Error) => {
@@ -988,6 +995,9 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
               }}
             >
               Rename
+            </button>
+            <button className="ctx-item" onClick={() => regenerateTitle(menu.sessionId)}>
+              Regenerate title
             </button>
             <button className="ctx-item" onClick={() => setStatus(menu.sessionId, "idle")}>
               Mark as Idle

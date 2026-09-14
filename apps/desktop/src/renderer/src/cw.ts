@@ -241,6 +241,10 @@ export interface AppSettings {
   githubCliBinaryPath: string;
   sourceControlRefreshIntervalSeconds: number;
   defaultUseWorktree: boolean;
+  autoTitleEnabled: boolean;
+  autoTitleDriver: DriverName;
+  autoTitleModel: string;
+  autoTitleEffort: EffortLevel;
 }
 
 export type SettingsPatch = Partial<AppSettings>;
@@ -270,6 +274,7 @@ export interface CwApi {
   importSession(projectId: string, driver: DriverName, resumeCursor: string, title: string): Promise<Session>;
   createSession(projectId: string, driver: DriverName, options?: CreateSessionOptions): Promise<Session>;
   renameSession(sessionId: string, title: string): Promise<void>;
+  regenerateSessionTitle(sessionId: string): Promise<string>;
   setSessionStatus(sessionId: string, status: SessionStatus): Promise<Session>;
   getHistory(sessionId: string): Promise<HistoryMessage[]>;
   startTurn(sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[] }): Promise<string>;
@@ -278,6 +283,7 @@ export interface CwApi {
   respondQuestion(requestId: string, answers: Record<string, string>): Promise<void>;
   listModels(sessionId: string): Promise<ModelOption[]>;
   listModelsFor(projectId: string, driver: DriverName): Promise<ModelOption[]>;
+  listModelsForHarness(driver: DriverName): Promise<ModelOption[]>;
   getComposer(sessionId: string): Promise<ComposerPrefs>;
   setComposer(sessionId: string, prefs: ComposerPrefs): Promise<ComposerPrefs>;
   getSettings(): Promise<AppSettings>;
@@ -291,6 +297,7 @@ export interface CwApi {
   setProjectGitHubAccount(projectId: string, account: { host: string; login: string } | null): Promise<Project>;
   setRepositoryGitIdentity(projectId: string, name: string, email: string): Promise<void>;
   onTurnEvent(cb: (msg: { sessionId: string; event: TurnEvent }) => void): () => void;
+  onSessionTitle(cb: (msg: { sessionId: string; title: string }) => void): () => void;
   readFile(sessionId: string, path: string): Promise<string>;
   readOutsideFile(path: string): Promise<string>;
   saveFile(sessionId: string, path: string, content: string): Promise<void>;

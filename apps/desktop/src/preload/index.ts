@@ -45,6 +45,7 @@ export interface CwApi {
   importSession(projectId: string, driver: DriverName, resumeCursor: string, title: string): Promise<unknown>;
   createSession(projectId: string, driver: DriverName, options?: CreateSessionOptions): Promise<unknown>;
   renameSession(sessionId: string, title: string): Promise<void>;
+  regenerateSessionTitle(sessionId: string): Promise<string>;
   setSessionStatus(sessionId: string, status: SessionStatus): Promise<unknown>;
   getHistory(sessionId: string): Promise<unknown[]>;
   startTurn(sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[] }): Promise<string>;
@@ -53,6 +54,7 @@ export interface CwApi {
   respondQuestion(requestId: string, answers: Record<string, string>): Promise<void>;
   listModels(sessionId: string): Promise<ModelOption[]>;
   listModelsFor(projectId: string, driver: DriverName): Promise<ModelOption[]>;
+  listModelsForHarness(driver: DriverName): Promise<ModelOption[]>;
   getComposer(sessionId: string): Promise<ComposerPrefs>;
   setComposer(sessionId: string, prefs: ComposerPrefs): Promise<ComposerPrefs>;
   getSettings(): Promise<AppSettings>;
@@ -66,6 +68,7 @@ export interface CwApi {
   setProjectGitHubAccount(projectId: string, account: { host: string; login: string } | null): Promise<Project>;
   setRepositoryGitIdentity(projectId: string, name: string, email: string): Promise<void>;
   onTurnEvent(cb: (event: unknown) => void): () => void;
+  onSessionTitle(cb: (msg: { sessionId: string; title: string }) => void): () => void;
   readFile(sessionId: string, path: string): Promise<string>;
   readOutsideFile(path: string): Promise<string>;
   saveFile(sessionId: string, path: string, content: string): Promise<void>;
@@ -109,6 +112,8 @@ const api: CwApi = {
     ipcRenderer.invoke("sessions.create", { projectId, driver, options }),
   renameSession: (sessionId: string, title: string) =>
     ipcRenderer.invoke("sessions.rename", { sessionId, title }),
+  regenerateSessionTitle: (sessionId: string) =>
+    ipcRenderer.invoke("sessions.regenerateTitle", { sessionId }),
   setSessionStatus: (sessionId: string, status: SessionStatus) =>
     ipcRenderer.invoke("sessions.setStatus", { sessionId, status }),
   getHistory: (sessionId: string) => ipcRenderer.invoke("sessions.history", { sessionId }),
@@ -122,6 +127,8 @@ const api: CwApi = {
   listModels: (sessionId: string) => ipcRenderer.invoke("models.list", { sessionId }),
   listModelsFor: (projectId: string, driver: DriverName) =>
     ipcRenderer.invoke("models.listFor", { projectId, driver }),
+  listModelsForHarness: (driver: DriverName) =>
+    ipcRenderer.invoke("models.listForHarness", { driver }),
   getComposer: (sessionId: string) => ipcRenderer.invoke("composer.get", { sessionId }),
   setComposer: (sessionId: string, prefs: ComposerPrefs) =>
     ipcRenderer.invoke("composer.set", { sessionId, prefs }),
@@ -142,6 +149,11 @@ const api: CwApi = {
     const listener = (_e: unknown, event: unknown) => cb(event);
     ipcRenderer.on("turn.event", listener as never);
     return () => ipcRenderer.removeListener("turn.event", listener as never);
+  },
+  onSessionTitle: (cb) => {
+    const listener = (_e: unknown, msg: { sessionId: string; title: string }) => cb(msg);
+    ipcRenderer.on("session.title", listener as never);
+    return () => ipcRenderer.removeListener("session.title", listener as never);
   },
   readFile: (sessionId: string, path: string) => ipcRenderer.invoke("fs.readFile", { sessionId, path }),
   readOutsideFile: (path: string) => ipcRenderer.invoke("fs.readOutsideFile", { path }),
