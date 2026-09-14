@@ -106,7 +106,7 @@ export function NewThread({
             aria-pressed={h.id === driver}
             title={`Use ${h.label}`}
           >
-            <DriverIcon driver={h.id} size={14} />
+            <DriverIcon driver={h.id} size={16} />
             {h.label}
           </button>
         ))}

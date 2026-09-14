@@ -277,7 +277,7 @@ export function ComposerView({
         <div className="recipe-control recipe-model" title={driver}>
           <MenuSelect
             label="Model"
-            icon={<DriverIcon driver={driver} size={15} />}
+            icon={<DriverIcon driver={driver} size={16} />}
             title={modelsError ? `Model list failed: ${modelsError}` : "Model"}
             value={modelValue}
             display={modelDisplay}

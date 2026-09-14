@@ -482,7 +482,7 @@ export function SettingsModal({
                     onClick={() => setHarness("claude")}
                     aria-pressed={harness === "claude"}
                   >
-                    <DriverIcon driver="claude" size={14} />
+                    <DriverIcon driver="claude" size={16} />
                     Claude Code
                   </button>
                   <button
@@ -490,7 +490,7 @@ export function SettingsModal({
                     onClick={() => setHarness("opencode")}
                     aria-pressed={harness === "opencode"}
                   >
-                    <DriverIcon driver="opencode" size={14} />
+                    <DriverIcon driver="opencode" size={16} />
                     OpenCode
                   </button>
                   <button
@@ -498,7 +498,7 @@ export function SettingsModal({
                     onClick={() => setHarness("codex")}
                     aria-pressed={harness === "codex"}
                   >
-                    <DriverIcon driver="codex" size={14} />
+                    <DriverIcon driver="codex" size={16} />
                     Codex
                   </button>
                 </div>
