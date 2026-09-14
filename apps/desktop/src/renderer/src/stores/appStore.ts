@@ -714,6 +714,14 @@ export const useAppStore = create<AppState>((set, get) => ({
         }
       });
       void get().refreshGitStatus(sessionId);
+    } else if (event.type === "session.branch.updated") {
+      const byProject = get().sessionsByProject;
+      const next: Record<string, Session[]> = {};
+      for (const [pid, list] of Object.entries(byProject)) {
+        next[pid] = list.map((s) => (s.id === sessionId ? { ...s, branch: event.branch } : s));
+      }
+      set({ sessionsByProject: next });
+      void get().refreshGitStatus(sessionId);
     } else if (event.type === "turn.error") {
       const busy = { ...get().busyTurns };
       delete busy[sessionId];

@@ -89,14 +89,16 @@ function makeGitSandboxManager(prefix: string) {
   execFileSync("git", ["-C", repository, "add", "README.md"]);
   execFileSync("git", ["-C", repository, "-c", "user.name=cw-code", "-c", "user.email=test@cw-code.local", "commit", "-m", "initial"]);
 
+  const received: Array<{ sessionId: string; event: ThreadEvent }> = [];
   const manager = new SessionManager({
     dbPath: join(sandbox, "data", "test.db"),
-    worktreesRoot: join(sandbox, "worktrees")
+    worktreesRoot: join(sandbox, "worktrees"),
+    onEvent: (sessionId, event) => received.push({ sessionId, event })
   });
   const fake = new FakeDriver((event) => (manager as unknown as { routeEvent(e: ThreadEvent): void }).routeEvent(event));
   (manager as unknown as { drivers: Record<string, CliDriver> }).drivers = { claude: fake, opencode: fake, codex: fake };
   const project = manager.addProject(repository);
-  return { manager, fake, project, repository };
+  return { manager, fake, project, repository, received };
 }
 
 describe("SessionManager", () => {
@@ -408,10 +410,9 @@ describe("SessionManager", () => {
   });
 
   it("renames the worktree branch from the CLI title on the first turn.done", async () => {
-    const { manager, fake, project } = makeGitSandboxManager("cw-session-branch-");
+    const { manager, fake, project, received } = makeGitSandboxManager("cw-session-branch-");
     const session = await manager.createSession(project.id, "claude", { baseBranch: "main" });
-    const tempBranch = session.branch;
-    if (!tempBranch) throw new Error("expected a worktree-backed session with a branch");
+    if (!session.branch) throw new Error("expected a worktree-backed session with a branch");
 
     await manager.startTurn(session.id, "fix the login flow");
     fake.completeAll();
@@ -422,6 +423,7 @@ describe("SessionManager", () => {
     expect(stored?.branch).toBe("cw/fix-the-login-flow");
     const checkedOut = execFileSync("git", ["-C", session.worktreePath!, "rev-parse", "--abbrev-ref", "HEAD"], { encoding: "utf8" }).trim();
     expect(checkedOut).toBe("cw/fix-the-login-flow");
+    expect(received.some((r) => r.sessionId === session.id && r.event.type === "session.branch.updated" && r.event.branch === "cw/fix-the-login-flow")).toBe(true);
     manager.dispose();
   });
 

@@ -327,6 +327,21 @@ describe("GitService worktrees", () => {
     expect(branches.some((branch) => branch.name === "main-1")).toBe(false);
   });
 
+  it("refreshes the worktree-path caches when renaming a checked-out branch", async () => {
+    const { sandbox, repository, service } = initSandbox();
+    const created = await service.createWorktree(repository, "project", "sess_rename1", join(sandbox, "worktrees"), "main");
+    expect(await service.status(created.path)).toMatchObject({ branch: created.branch });
+    const before = await service.branches(created.path);
+    expect(before.some((branch) => branch.name === created.branch)).toBe(true);
+
+    const renamed = await service.renameBranch(repository, created.branch, "cw/renamed", { worktreePath: created.path });
+    expect(renamed).toBe("cw/renamed");
+    expect(await service.status(created.path)).toMatchObject({ branch: "cw/renamed" });
+    const after = await service.branches(created.path);
+    expect(after.some((branch) => branch.name === "cw/renamed")).toBe(true);
+    expect(after.some((branch) => branch.name === created.branch)).toBe(false);
+  });
+
   it("leaves no orphan branch when the worktree target directory is occupied", async () => {
     const { sandbox, repository, service } = initSandbox();
     const worktreesRoot = join(sandbox, "worktrees");

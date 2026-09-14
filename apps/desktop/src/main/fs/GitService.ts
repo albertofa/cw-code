@@ -625,17 +625,22 @@ export class GitService {
     }
   }
 
-  async renameBranch(repoRoot: string, from: string, to: string): Promise<string> {
+  async renameBranch(repoRoot: string, from: string, to: string, opts: { worktreePath?: string } = {}): Promise<string> {
     const name = to.trim();
     if (!name || name.startsWith("-")) throw new Error("invalid branch name");
     if (from.trim() === name) return name;
-    const git = this.git(repoRoot);
+    const repositoryRoot = await this.repositoryRoot(repoRoot);
+    const git = this.git(repositoryRoot);
     const target = await this.withUniqueBranchName(git, name, async (branch) => {
       await git.raw(["branch", "-m", from, branch]);
       return branch;
     });
-    this.invalidateStatus(repoRoot);
-    this.invalidateBranches(repoRoot);
+    this.invalidateStatus(repositoryRoot);
+    this.invalidateBranches(repositoryRoot);
+    if (opts.worktreePath) {
+      this.invalidateStatus(opts.worktreePath);
+      this.invalidateBranches(opts.worktreePath);
+    }
     return target;
   }
 

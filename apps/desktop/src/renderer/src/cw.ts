@@ -126,7 +126,8 @@ export type TurnEvent =
       numTurns: number;
       isError: boolean;
     }
-  | { type: "turn.error"; turnId: string; message: string };
+  | { type: "turn.error"; turnId: string; message: string }
+  | { type: "session.branch.updated"; turnId: string; sessionId: string; branch: string };
 
 export type PermissionMode = "auto" | "acceptEdits" | "bypassPermissions" | "manual" | "plan";
 

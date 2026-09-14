@@ -121,7 +121,7 @@ export class SessionManager {
     if (event.type === "turn.done") {
       this.activeTurns.delete(event.turnId);
       this.store.updateSession(event.sessionId, { resumeCursor: event.resumeCursor, status: "done" });
-      if (!event.isError) void this.renameBranchForTitle(event.sessionId);
+      if (!event.isError) void this.renameBranchForTitle(event.sessionId, event.turnId);
     }
     if (event.type === "turn.error") {
       this.activeTurns.delete(event.turnId);
@@ -428,7 +428,7 @@ export class SessionManager {
     this.store.updateSession(sessionId, { branch });
   }
 
-  private async renameBranchForTitle(sessionId: string): Promise<void> {
+  private async renameBranchForTitle(sessionId: string, turnId: string): Promise<void> {
     if (this.branchRenamed.has(sessionId)) return;
     const session = this.store.getSession(sessionId);
     if (!session?.worktreePath || !session.branch || !TEMP_BRANCH_PATTERN.test(session.branch)) return;
@@ -439,8 +439,9 @@ export class SessionManager {
     this.branchRenamed.add(sessionId);
     try {
       const project = this.getProject(session.projectId);
-      const renamed = await this.git.renameBranch(project.rootPath, session.branch, candidate);
+      const renamed = await this.git.renameBranch(project.rootPath, session.branch, candidate, { worktreePath: session.worktreePath });
       this.updateSessionBranch(sessionId, renamed);
+      this.onEvent(sessionId, { type: "session.branch.updated", turnId, sessionId, branch: renamed });
     } catch (err) {
       console.warn(`branch rename failed for session ${sessionId}: ${(err as Error).message}`);
       this.branchRenamed.delete(sessionId);
