@@ -31,12 +31,12 @@ describe("mapClaudePermission", () => {
     expect(mapClaudePermission("acceptEdits")).toBe("acceptEdits");
     expect(mapClaudePermission("bypassPermissions")).toBe("bypassPermissions");
     expect(mapClaudePermission("manual")).toBe("manual");
-    expect(mapClaudePermission("plan")).toBe("plan");
   });
 
   it("falls back to auto for unknown values", () => {
     expect(mapClaudePermission("default")).toBe("auto");
     expect(mapClaudePermission("")).toBe("auto");
+    expect(mapClaudePermission("plan")).toBe("auto");
   });
 });
 
@@ -49,6 +49,10 @@ describe("mapClaudeEffort", () => {
 
   it("falls back to medium for unknown values", () => {
     expect(mapClaudeEffort("ultra")).toBe("medium");
+  });
+
+  it("maps minimal to low since Claude has no minimal level", () => {
+    expect(mapClaudeEffort("minimal")).toBe("low");
   });
 });
 

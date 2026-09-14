@@ -36,12 +36,12 @@ export const CLAUDE_CURATED_MODELS = [
 export function mapClaudePermission(mode: PermissionMode | string): string {
   if (mode === "acceptEdits") return "acceptEdits";
   if (mode === "bypassPermissions") return "bypassPermissions";
-  if (mode === "plan") return "plan";
   if (mode === "manual") return "manual";
   return "auto";
 }
 
 export function mapClaudeEffort(effort: EffortLevel | string): string {
+  if (effort === "minimal") return "low";
   if (effort === "low" || effort === "medium" || effort === "high" || effort === "xhigh" || effort === "max") {
     return effort;
   }

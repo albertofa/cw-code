@@ -41,11 +41,11 @@ describe("mapPermissionMode", () => {
     });
   });
 
-  it("maps plan to read-only plan mode", () => {
-    expect(mapPermissionMode("plan")).toMatchObject({
-      approvalPolicy: "on-request",
+  it("treats the retired plan mode as untrusted read-only", () => {
+    expect(mapPermissionMode("plan" as never)).toMatchObject({
+      approvalPolicy: "untrusted",
       sandbox: "read-only",
-      planMode: true
+      planMode: false
     });
   });
 

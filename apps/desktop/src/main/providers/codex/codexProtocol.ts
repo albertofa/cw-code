@@ -129,13 +129,11 @@ export function mapPermissionMode(mode: PermissionMode | undefined): CodexPermis
   if (mode === "acceptEdits") {
     return { approvalPolicy: "on-request", sandbox: "workspace-write", planMode: false };
   }
-  if (mode === "plan") {
-    return { approvalPolicy: "on-request", sandbox: "read-only", planMode: true };
-  }
   return { approvalPolicy: "untrusted", sandbox: "read-only", planMode: false };
 }
 
 export function mapCodexEffort(effort: EffortLevel | string | undefined): string | null {
+  if (effort === "minimal") return "low";
   if (effort === "low" || effort === "medium" || effort === "high" || effort === "xhigh" || effort === "max") {
     return effort;
   }

@@ -571,11 +571,18 @@ export class SessionManager {
       const fallback = this.settings.get().claudeDefaultModel?.trim() ?? "";
       if (fallback) model = fallback;
     }
+    const permissionMode = session.permissionMode ?? "auto";
     return {
       model,
       effort: session.effort ?? "medium",
       variant: session.variant,
-      permissionMode: session.permissionMode ?? "auto"
+      permissionMode:
+        permissionMode === "auto" ||
+        permissionMode === "acceptEdits" ||
+        permissionMode === "bypassPermissions" ||
+        permissionMode === "manual"
+          ? permissionMode
+          : "manual"
     };
   }
 

@@ -79,7 +79,7 @@ function sanitize(patch: SettingsPatch): SettingsPatch {
   if (patch.autoTitleModel !== undefined) out.autoTitleModel = patch.autoTitleModel.trim();
   if (patch.autoTitleEffort !== undefined) {
     out.autoTitleEffort =
-      patch.autoTitleEffort === "low" || patch.autoTitleEffort === "medium" || patch.autoTitleEffort === "high" || patch.autoTitleEffort === "xhigh" || patch.autoTitleEffort === "max"
+      patch.autoTitleEffort === "minimal" || patch.autoTitleEffort === "low" || patch.autoTitleEffort === "medium" || patch.autoTitleEffort === "high" || patch.autoTitleEffort === "xhigh" || patch.autoTitleEffort === "max"
         ? patch.autoTitleEffort
         : DEFAULT_SETTINGS.autoTitleEffort;
   }

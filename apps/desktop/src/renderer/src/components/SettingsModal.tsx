@@ -26,6 +26,7 @@ const HARNESSES: Array<{ id: DriverName; label: string }> = [
 ];
 
 const EFFORTS: Array<{ id: EffortLevel; label: string }> = [
+  { id: "minimal", label: "Minimal" },
   { id: "low", label: "Low" },
   { id: "medium", label: "Medium" },
   { id: "high", label: "High" },

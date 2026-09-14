@@ -2,7 +2,6 @@ import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   ArrowRight,
   AtSign,
-  ClipboardList,
   Image,
   Lock,
   LockOpen,
@@ -33,6 +32,7 @@ export interface ComposerBackend {
 }
 
 const EFFORTS: Array<{ id: EffortLevel; label: string }> = [
+  { id: "minimal", label: "Minimal" },
   { id: "low", label: "Low" },
   { id: "medium", label: "Medium" },
   { id: "high", label: "High" },
@@ -40,12 +40,31 @@ const EFFORTS: Array<{ id: EffortLevel; label: string }> = [
   { id: "max", label: "Max" }
 ];
 
+const EFFORT_RANK: EffortLevel[] = ["minimal", "low", "medium", "high", "xhigh", "max"];
+
+function effortOptionsFor(driver: DriverName, models: ModelOption[], modelId?: string): Array<{ id: EffortLevel; label: string }> {
+  if (driver !== "opencode") return EFFORTS;
+  if (!modelId) return EFFORTS;
+  const model = models.find((m) => m.id === modelId) ?? models.find((m) => m.id.toLowerCase() === modelId.toLowerCase());
+  if (!model || model.variants === undefined) return EFFORTS;
+  if (model.variants.length === 0) return EFFORTS.filter((e) => e.id === "high");
+  const available = new Set(model.variants.map((v) => v.toLowerCase()));
+  return EFFORTS.filter((e) => available.has(e.id) || (e.id === "medium" && available.has("balanced")));
+}
+
+function fallbackEffort(current: EffortLevel, available: Array<{ id: EffortLevel; label: string }>): EffortLevel {
+  if (available.some((o) => o.id === current)) return current;
+  const want = EFFORT_RANK.indexOf(current);
+  const below = available.filter((o) => EFFORT_RANK.indexOf(o.id) <= want).sort((a, b) => EFFORT_RANK.indexOf(b.id) - EFFORT_RANK.indexOf(a.id));
+  if (below.length > 0) return below[0].id;
+  return available[0].id;
+}
+
 const PERMISSIONS: Array<{ id: PermissionMode; label: string; description: string; icon: ReactNode }> = [
   { id: "manual", label: "Supervised", description: "Ask before commands and file changes.", icon: <Lock size={14} /> },
   { id: "acceptEdits", label: "Auto-accept edits", description: "Auto-approve edits, ask before other actions.", icon: <Pencil size={14} /> },
   { id: "auto", label: "Auto", description: "Supported providers approve routine actions; others still ask.", icon: <Zap size={14} /> },
-  { id: "bypassPermissions", label: "Full access", description: "Allow commands and edits without prompts.", icon: <LockOpen size={14} /> },
-  { id: "plan", label: "Plan", description: "Review and approve a plan before anything runs.", icon: <ClipboardList size={14} /> }
+  { id: "bypassPermissions", label: "Full access", description: "Allow commands and edits without prompts.", icon: <LockOpen size={14} /> }
 ];
 
 function EffortIcon({ size = 15 }: { size?: number }) {
@@ -199,7 +218,18 @@ export function ComposerView({
   const modelDisplay = showCustom
     ? customModel.trim() || "Custom"
     : (models.find((m) => m.id === prefs.model)?.label ?? "Default model");
-  const effortDisplay = EFFORTS.find((o) => o.id === (prefs.effort ?? "medium"))?.label ?? "Medium";
+  const effortOptions = useMemo(
+    () => effortOptionsFor(driver, models, showCustom ? undefined : prefs.model),
+    [driver, models, showCustom, prefs.model]
+  );
+  const effectiveEffort = prefs.effort ?? "medium";
+  const effortDisplay = EFFORTS.find((o) => o.id === effectiveEffort)?.label ?? "Medium";
+
+  useEffect(() => {
+    if (driver !== "opencode" || showCustom) return;
+    if (effortOptions.some((o) => o.id === effectiveEffort)) return;
+    backendRef.current.savePrefs({ effort: fallbackEffort(effectiveEffort, effortOptions) });
+  }, [driver, showCustom, models, prefs.model, effectiveEffort, effortOptions]);
   const permissionDisplay = PERMISSIONS.find((o) => o.id === (prefs.permissionMode ?? "auto"))?.label ?? "Auto";
   const permissionIcon = PERMISSIONS.find((o) => o.id === (prefs.permissionMode ?? "auto"))?.icon;
 
@@ -343,7 +373,7 @@ export function ComposerView({
             value={prefs.effort ?? "medium"}
             display={effortDisplay}
             isSet={(prefs.effort ?? "medium") !== "medium"}
-            options={EFFORTS.map((o) => ({ id: o.id, label: o.label }))}
+            options={effortOptions.map((o) => ({ id: o.id, label: o.label }))}
             onPick={(v) => backend.savePrefs({ effort: v as EffortLevel })}
           />
         </div>

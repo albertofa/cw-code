@@ -58,9 +58,9 @@ export interface TurnRequest {
   env?: Record<string, string>;
 }
 
-export type PermissionMode = "auto" | "acceptEdits" | "bypassPermissions" | "manual" | "plan";
+export type PermissionMode = "auto" | "acceptEdits" | "bypassPermissions" | "manual";
 
-export type EffortLevel = "low" | "medium" | "high" | "xhigh" | "max";
+export type EffortLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
 export interface ComposerPrefs {
   model?: string;
@@ -73,6 +73,7 @@ export interface ModelOption {
   id: string;
   label: string;
   source: "live" | "curated" | "custom";
+  variants?: string[];
 }
 
 export interface GitPullRequestChecks {
