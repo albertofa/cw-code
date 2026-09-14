@@ -191,6 +191,8 @@ export class ClaudeCliDriver implements CliDriver {
     const preview = previewText(request.prompt);
     const binary = this.configuredBinary();
 
+    // Stream-driven with no timers: the turn lives until the stream ends,
+    // so approval/question waits survive however long the user takes.
     const child = spawn(binary, args, {
       cwd: request.cwd,
       windowsHide: true,

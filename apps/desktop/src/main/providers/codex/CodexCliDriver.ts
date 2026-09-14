@@ -284,6 +284,8 @@ export class CodexCliDriver implements CliDriver {
           return false;
         }
       });
+      // turn/start only acks with the turn id; completion arrives via the
+      // turn/completed notification, so approval waits never hit the request timeout.
       const res = await this.client.request<TurnStartResponse>("turn/start", {
         threadId,
         input: buildCodexUserInput(request.prompt, request.cwd, attachments),

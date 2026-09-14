@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import { createServer } from "node:net";
 import { killProcessTree } from "../../processTree.js";
 import { traceHarnessCall, truncateError } from "../../debug/harnessTrace.js";
+import { OPENCODE_HEALTH_TIMEOUT_MS, opencodeFetch } from "./opencodeFetch.js";
 
 export interface ServerHandle {
   port: number;
@@ -45,8 +46,10 @@ async function waitHealthy(port: number, authHeader: string, timeoutMs: number):
   const start = Date.now();
   for (;;) {
     try {
-      const res = await fetch(`http://127.0.0.1:${port}/session`, {
-        headers: { Authorization: authHeader }
+      const res = await opencodeFetch(`http://127.0.0.1:${port}/session`, {
+        headers: { Authorization: authHeader },
+        timeoutMs: OPENCODE_HEALTH_TIMEOUT_MS,
+        port
       });
       if (res.ok) return;
     } catch {
@@ -94,6 +97,48 @@ export class OpencodeServerPool {
   beginTurn(rootPath: string): void {
     this.inFlight.set(rootPath, (this.inFlight.get(rootPath) ?? 0) + 1);
     if (this.servers.has(rootPath)) this.servers.get(rootPath)!.lastUsed = Date.now();
+  }
+
+  invalidate(rootPath: string): void {
+    this.stop(rootPath);
+  }
+
+  async probe(rootPath: string): Promise<boolean> {
+    const entry = this.servers.get(rootPath);
+    if (!entry) return false;
+    if (entry.proc.exitCode != null || entry.proc.killed) return false;
+    try {
+      await opencodeFetch(`http://127.0.0.1:${entry.handle.port}/session`, {
+        headers: { Authorization: entry.handle.authHeader },
+        timeoutMs: OPENCODE_HEALTH_TIMEOUT_MS,
+        port: entry.handle.port
+      });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private trackProcess(rootPath: string, proc: ChildProcess): void {
+    if (typeof proc.once !== "function") return;
+    const evict = (): void => {
+      if (this.servers.get(rootPath)?.proc === proc) {
+        traceHarnessCall({
+          harness: "opencode",
+          operation: "opencode.serve.evict",
+          cwd: rootPath,
+          ok: true,
+          extra: { reason: "exit", exitCode: proc.exitCode ?? undefined }
+        });
+        this.servers.delete(rootPath);
+      }
+    };
+    proc.once("exit", evict);
+    proc.once("error", evict);
+  }
+
+  private isDead(proc: ChildProcess): boolean {
+    return proc.exitCode != null || proc.killed === true;
   }
 
   endTurn(rootPath: string): void {
@@ -168,7 +213,16 @@ export class OpencodeServerPool {
   private async ensureUncached(rootPath: string, env: Record<string, string> | undefined, envKey: string): Promise<ServerHandle> {
     const binary = this.getBinary();
     const existing = this.servers.get(rootPath);
-    if (existing?.binary === binary && (env === undefined || existing.envKey === envKey)) {
+    if (existing && this.isDead(existing.proc)) {
+      traceHarnessCall({
+        harness: "opencode",
+        operation: "opencode.serve.evict",
+        cwd: rootPath,
+        ok: true,
+        extra: { reason: "dead", serverPort: existing.handle.port }
+      });
+      this.stop(rootPath);
+    } else if (existing?.binary === binary && (env === undefined || existing.envKey === envKey)) {
       existing.lastUsed = Date.now();
       traceHarnessCall({
         harness: "opencode",
@@ -180,10 +234,11 @@ export class OpencodeServerPool {
       });
       return existing.handle;
     }
-    if (existing) {
+    const live = this.servers.get(rootPath);
+    if (live) {
       if ((this.inFlight.get(rootPath) ?? 0) > 0) {
-        existing.lastUsed = Date.now();
-        return existing.handle;
+        live.lastUsed = Date.now();
+        return live.handle;
       }
       this.stop(rootPath);
     }
@@ -195,6 +250,7 @@ export class OpencodeServerPool {
       killProcessTree(started.proc);
       throw new Error("opencode server pool disposed");
     }
+    this.trackProcess(rootPath, started.proc);
     this.servers.set(rootPath, { binary, proc: started.proc, handle: started.handle, envKey, lastUsed: Date.now() });
     return started.handle;
   }

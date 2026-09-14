@@ -31,6 +31,7 @@ import { CodexCliDriver } from "../providers/codex/CodexCliDriver.js";
 import { GitService, type CreatedWorktree, type RemoveWorktreeResult } from "../fs/GitService.js";
 import { resolveAttachments } from "./attachments.js";
 import { branchNameForTitle, TEMP_BRANCH_PATTERN } from "./branchName.js";
+import { NEW_SESSION_TITLE, pickRestoreCandidate } from "./sessionRestore.js";
 
 export interface SessionManagerOptions {
   dbPath?: string;
@@ -467,12 +468,113 @@ export class SessionManager {
     if (!session) throw new Error(`unknown session ${sessionId}`);
     const project = this.store.getProject(session.projectId);
     if (!project) throw new Error(`unknown project ${session.projectId}`);
-    if (!session.resumeCursor) return [];
+    if (!session.resumeCursor) {
+      const healed = await this.healMissingCursor(session, project);
+      if (!healed) return [];
+      return healed;
+    }
+    let messages: HistoryMessage[];
     try {
-      return await this.drivers[session.driver].getHistory(await this.ensureWorktree(sessionId), session.resumeCursor);
+      messages = await this.drivers[session.driver].getHistory(await this.ensureWorktree(sessionId), session.resumeCursor);
     } catch (err) {
-      console.warn(`history failed for ${sessionId}: ${(err as Error).message}`);
+      const message = (err as Error).message;
+      console.warn(`history failed for ${sessionId}: ${message}`);
+      throw new Error(`Could not load history for this session: ${message}. Retry to reconnect.`);
+    }
+    if (messages.length > 0) return messages;
+    return this.verifyEmptyHistory(session, project);
+  }
+
+  private async healMissingCursor(session: SessionMeta, project: Project): Promise<HistoryMessage[] | null> {
+    if (session.title.trim().toLowerCase() === NEW_SESSION_TITLE.toLowerCase()) return null;
+    if (this.pendingTurns.has(session.id)) return null;
+    for (const owner of this.activeTurns.values()) {
+      if (owner === session.id) return null;
+    }
+    let cwd: string;
+    try {
+      cwd = await this.ensureWorktree(session.id);
+    } catch (err) {
+      console.warn(`history restore failed for ${session.id}: ${(err as Error).message}`);
+      return null;
+    }
+    return this.adoptUnclaimedSession(session, project, cwd, null);
+  }
+
+  private async verifyEmptyHistory(session: SessionMeta, project: Project): Promise<HistoryMessage[]> {
+    for (const owner of this.activeTurns.values()) {
+      if (owner === session.id) return [];
+    }
+    let cwd: string;
+    try {
+      cwd = await this.ensureWorktree(session.id);
+    } catch (err) {
+      throw new Error(`Could not load history for this session: ${(err as Error).message}. Retry to reconnect.`);
+    }
+    let listed: SessionMeta[];
+    try {
+      listed = await this.drivers[session.driver].listSessions(cwd, project.id);
+    } catch (err) {
+      throw new Error(`Could not load history for this session: ${(err as Error).message}. Retry to reconnect.`);
+    }
+    const self = listed.find((s) => s.driver === session.driver && s.resumeCursor === session.resumeCursor);
+    if (self) {
+      if (self.updatedAt > self.createdAt) {
+        throw new Error(
+          `History came back empty but the ${session.driver} session ${session.resumeCursor} shows activity. This looks like a transient read, retry to reconnect.`
+        );
+      }
       return [];
+    }
+    const healed = await this.adoptUnclaimedSession(session, project, cwd, listed);
+    if (healed) return healed;
+    throw new Error(
+      `The ${session.driver} session ${session.resumeCursor} for this thread was not found. It may have been deleted outside the app, retry to look again or start a new thread.`
+    );
+  }
+
+  private async adoptUnclaimedSession(
+    session: SessionMeta,
+    project: Project,
+    cwd: string,
+    listed: SessionMeta[] | null
+  ): Promise<HistoryMessage[] | null> {
+    let candidates: SessionMeta[];
+    if (listed) {
+      candidates = listed;
+    } else {
+      try {
+        candidates = await this.drivers[session.driver].listSessions(cwd, project.id);
+      } catch (err) {
+        console.warn(`history restore failed for ${session.id}: ${(err as Error).message}`);
+        return null;
+      }
+    }
+    const claimed = new Set(
+      this.store
+        .listAllSessions()
+        .filter((s) => s.driver === session.driver && s.resumeCursor)
+        .map((s) => `${s.driver}:${s.resumeCursor}`)
+    );
+    const cursor = pickRestoreCandidate(
+      session.title,
+      candidates
+        .filter((s) => s.driver === session.driver)
+        .map((s) => ({
+          resumeCursor: s.resumeCursor,
+          title: s.title,
+          updatedAt: s.updatedAt,
+          claimed: claimed.has(`${s.driver}:${s.resumeCursor}`)
+        }))
+    );
+    if (!cursor) return null;
+    this.store.updateSession(session.id, { resumeCursor: cursor });
+    console.warn(`history restored for ${session.id}: adopted ${session.driver} session ${cursor}`);
+    try {
+      return await this.drivers[session.driver].getHistory(cwd, cursor);
+    } catch (err) {
+      console.warn(`history restore failed for ${session.id}: ${(err as Error).message}`);
+      return null;
     }
   }
 

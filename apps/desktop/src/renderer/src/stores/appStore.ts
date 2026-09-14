@@ -67,6 +67,7 @@ interface AppState {
   usageBySession: Record<string, Usage>;
   busyTurns: Record<string, string>;
   loadingHistory: Record<string, boolean>;
+  historyErrorBySession: Record<string, string>;
   turnStartedAt: Record<string, number>;
   lastTurnStats: Record<string, { ms: number }>;
   composerBySession: Record<string, ComposerPrefs>;
@@ -93,7 +94,7 @@ interface AppState {
   startNewSession(driver?: DriverName): void;
   setPendingDriver(driver: DriverName): void;
   sendPendingPrompt(prompt: string, attachments?: string[]): Promise<void>;
-  ensureHistory(sessionId: string): Promise<void>;
+  ensureHistory(sessionId: string, opts?: { force?: boolean; isRetry?: boolean }): Promise<void>;
   ensureComposer(sessionId: string): Promise<void>;
   setComposerPrefs(sessionId: string, prefs: ComposerPrefs): Promise<void>;
   settingsVersion: number;
@@ -168,6 +169,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   usageBySession: {},
   busyTurns: {},
   loadingHistory: {},
+  historyErrorBySession: {},
   turnStartedAt: {},
   lastTurnStats: {},
   composerBySession: {},
@@ -500,10 +502,17 @@ export const useAppStore = create<AppState>((set, get) => ({
     await get().sendPrompt(prompt, attachments);
   },
 
-  async ensureHistory(sessionId: string) {
-    if ((get().messagesBySession[sessionId] ?? []).length > 0) return;
-    if (get().loadingHistory[sessionId]) return;
-    set({ loadingHistory: { ...get().loadingHistory, [sessionId]: true } });
+  async ensureHistory(sessionId: string, opts?: { force?: boolean; isRetry?: boolean }) {
+    if (!opts?.force) {
+      if ((get().messagesBySession[sessionId] ?? []).length > 0) return;
+      if (get().loadingHistory[sessionId]) return;
+    }
+    set({
+      loadingHistory: { ...get().loadingHistory, [sessionId]: true },
+      historyErrorBySession: Object.fromEntries(
+        Object.entries(get().historyErrorBySession).filter(([id]) => id !== sessionId)
+      )
+    });
     try {
       const history = await window.cw.getHistory(sessionId);
       if ((get().messagesBySession[sessionId] ?? []).length === 0 && history.length > 0) {
@@ -511,7 +520,29 @@ export const useAppStore = create<AppState>((set, get) => ({
           messagesBySession: { ...get().messagesBySession, [sessionId]: mergeToolPairs(history) }
         });
       }
-    } catch {
+    } catch (err) {
+      const message = (err as Error).message;
+      set({ historyErrorBySession: { ...get().historyErrorBySession, [sessionId]: message } });
+      if (!opts?.isRetry) {
+        window.setTimeout(() => {
+          if (get().historyErrorBySession[sessionId]) {
+            void get().ensureHistory(sessionId, { force: true, isRetry: true });
+          }
+        }, 2000);
+      } else {
+        useNotifs.getState().push({
+          kind: "error",
+          title: "Could not load history",
+          message,
+          actions: [
+            {
+              label: "Retry",
+              primary: true,
+              onClick: () => void get().ensureHistory(sessionId, { force: true, isRetry: true })
+            }
+          ]
+        });
+      }
     } finally {
       const loading = { ...get().loadingHistory };
       delete loading[sessionId];

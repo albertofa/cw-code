@@ -256,4 +256,48 @@ describe("OpencodeServerPool ensure", () => {
     await expect(pool.ensure(ROOT)).rejects.toThrow("opencode server pool disposed");
     expect(startServer).toHaveBeenCalledTimes(1);
   });
+
+  it("respawns when the cached proc has exited", async () => {
+    const first = { port: 40001, authHeader: "a" };
+    const second = { port: 40002, authHeader: "b" };
+    let calls = 0;
+    const startServer = vi.fn(() => {
+      calls += 1;
+      return Promise.resolve({
+        proc: fakeProc(),
+        handle: calls === 1 ? first : second
+      });
+    });
+    const pool = makePool(startServer);
+
+    await pool.ensure(ROOT);
+    const servers = (pool as unknown as { servers: Map<string, { proc: ChildProcess }> }).servers;
+    const entry = servers.get(ROOT);
+    Object.defineProperty(entry!.proc, "exitCode", { value: 1, configurable: true });
+
+    const handle = await pool.ensure(ROOT);
+    expect(handle.port).toBe(40002);
+    expect(startServer).toHaveBeenCalledTimes(2);
+    pool.dispose();
+  });
+
+  it("invalidate drops the cached server so the next ensure respawns", async () => {
+    const startServer = vi.fn(
+      (): Promise<{ proc: ChildProcess; handle: ServerHandle }> => Promise.resolve({ proc: fakeProc(), handle: HANDLE })
+    );
+    const pool = makePool(startServer);
+
+    await pool.ensure(ROOT);
+    pool.invalidate(ROOT);
+    await pool.ensure(ROOT);
+
+    expect(startServer).toHaveBeenCalledTimes(2);
+    pool.dispose();
+  });
+
+  it("probe reports false when no server is cached", async () => {
+    const pool = makePool(vi.fn());
+    await expect(pool.probe(ROOT)).resolves.toBe(false);
+    pool.dispose();
+  });
 });

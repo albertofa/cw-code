@@ -936,4 +936,127 @@ describe("SessionManager", () => {
     expect(goneBranches.trim()).toBe("");
     manager.dispose();
   });
+
+  it("surfaces driver history failures instead of returning a silent empty list", async () => {
+    const { manager } = makeManager();
+    const project = manager.addProject("C:\\proj-history-fail");
+    const a = await manager.createSession(project.id, "claude");
+    (manager as unknown as { store: { updateSession(id: string, patch: unknown): void } }).store.updateSession(a.id, {
+      resumeCursor: "cursor-1"
+    });
+    (manager as unknown as { drivers: Record<string, CliDriver> }).drivers.claude.getHistory = async () => {
+      throw new Error("fetch failed");
+    };
+    await expect(manager.getHistory(a.id)).rejects.toThrow(/Could not load history/);
+    manager.dispose();
+  });
+
+  function historyDriver(listed: Array<{ cursor: string; title: string; createdAt: number; updatedAt: number }>, history: HistoryMessage[] | Record<string, HistoryMessage[]>) {
+    const calls: string[] = [];
+    return {
+      calls,
+      driver: {
+        kind: "claude",
+        listSessions: async (projectRoot: string, projectId = "") => {
+          calls.push(`list:${projectRoot}`);
+          return listed.map((s, i) => ({
+            id: `claude:${s.cursor}`,
+            projectId,
+            driver: "claude",
+            title: s.title,
+            status: "idle",
+            resumeCursor: s.cursor,
+            createdAt: s.createdAt,
+            updatedAt: s.updatedAt
+          }));
+        },
+        getHistory: async (_projectRoot: string, resumeCursor: string) =>
+          Array.isArray(history) ? history : (history[resumeCursor] ?? []),
+        startTurn: () => {
+          throw new Error("not used");
+        },
+        interrupt: () => {},
+        renameSession: async () => {},
+        async *events() {}
+      } as unknown as CliDriver
+    };
+  }
+
+  it("returns empty history without a server round-trip for brand-new sessions", async () => {
+    const { manager } = makeManager();
+    const project = manager.addProject("C:\\proj-history-new");
+    const a = await manager.createSession(project.id, "claude");
+    const { calls, driver } = historyDriver([], []);
+    (manager as unknown as { drivers: Record<string, CliDriver> }).drivers.claude = driver;
+    await expect(manager.getHistory(a.id)).resolves.toEqual([]);
+    expect(calls).toEqual([]);
+    manager.dispose();
+  });
+
+  it("adopts an unclaimed native session when the cursor is missing after a failed first turn", async () => {
+    const { manager } = makeManager();
+    const project = manager.addProject("C:\\proj-history-heal");
+    const a = await manager.createSession(project.id, "claude");
+    (manager as unknown as { store: { updateSession(id: string, patch: unknown): void } }).store.updateSession(a.id, {
+      title: "fix the login flow"
+    });
+    const history: HistoryMessage[] = [{ id: "m1", role: "user", text: "fix the login flow", turnId: "t1" }];
+    const { driver } = historyDriver(
+      [{ cursor: "native-1", title: "fix the login flow", createdAt: 1, updatedAt: 2 }],
+      history
+    );
+    (manager as unknown as { drivers: Record<string, CliDriver> }).drivers.claude = driver;
+    await expect(manager.getHistory(a.id)).resolves.toEqual(history);
+    const stored = (await manager.listSessions(project.id)).find((s) => s.id === a.id);
+    expect(stored?.resumeCursor).toBe("native-1");
+    manager.dispose();
+  });
+
+  it("re-links by title when the stored cursor vanished but the native session remains", async () => {
+    const { manager } = makeManager();
+    const project = manager.addProject("C:\\proj-history-relink");
+    const a = await manager.createSession(project.id, "claude");
+    const store = (manager as unknown as { store: { updateSession(id: string, patch: unknown): void } }).store;
+    store.updateSession(a.id, { title: "fix the login flow", resumeCursor: "stale-cursor" });
+    const history: HistoryMessage[] = [{ id: "m1", role: "user", text: "fix the login flow", turnId: "t1" }];
+    const { driver } = historyDriver(
+      [{ cursor: "native-2", title: "fix the login flow", createdAt: 1, updatedAt: 5 }],
+      { "native-2": history }
+    );
+    (manager as unknown as { drivers: Record<string, CliDriver> }).drivers.claude = driver;
+    await expect(manager.getHistory(a.id)).resolves.toEqual(history);
+    const stored = (await manager.listSessions(project.id)).find((s) => s.id === a.id);
+    expect(stored?.resumeCursor).toBe("native-2");
+    manager.dispose();
+  });
+
+  it("throws a transient error when the native session shows activity but history is empty", async () => {
+    const { manager } = makeManager();
+    const project = manager.addProject("C:\\proj-history-active");
+    const a = await manager.createSession(project.id, "claude");
+    (manager as unknown as { store: { updateSession(id: string, patch: unknown): void } }).store.updateSession(a.id, {
+      resumeCursor: "cursor-1"
+    });
+    const { driver } = historyDriver(
+      [{ cursor: "cursor-1", title: "work", createdAt: 1, updatedAt: 9 }],
+      []
+    );
+    (manager as unknown as { drivers: Record<string, CliDriver> }).drivers.claude = driver;
+    await expect(manager.getHistory(a.id)).rejects.toThrow(/transient/);
+    manager.dispose();
+  });
+
+  it("throws a missing-session error when the cursor is gone and nothing can be adopted", async () => {
+    const { manager } = makeManager();
+    const project = manager.addProject("C:\\proj-history-gone");
+    const a = await manager.createSession(project.id, "claude");
+    (manager as unknown as { store: { updateSession(id: string, patch: unknown): void } }).store.updateSession(a.id, {
+      title: "fix the login flow",
+      resumeCursor: "deleted-cursor"
+    });
+    const { driver } = historyDriver([], []);
+    (manager as unknown as { drivers: Record<string, CliDriver> }).drivers.claude = driver;
+    await expect(manager.getHistory(a.id)).rejects.toThrow(/not found/);
+    manager.dispose();
+  });
 });

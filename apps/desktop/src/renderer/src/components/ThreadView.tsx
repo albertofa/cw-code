@@ -37,6 +37,9 @@ export function ThreadView({ rightVisible, onToggleRight }: { rightVisible: bool
     activeSessionId ? (s.messagesBySession[activeSessionId] ?? EMPTY_MESSAGES) : EMPTY_MESSAGES
   );
   const busyTurn = useAppStore((s) => (activeSessionId ? s.busyTurns[activeSessionId] : undefined));
+  const historyLoading = useAppStore((s) => (activeSessionId ? !!s.loadingHistory[activeSessionId] : false));
+  const historyError = useAppStore((s) => (activeSessionId ? s.historyErrorBySession[activeSessionId] : undefined));
+  const ensureHistory = useAppStore((s) => s.ensureHistory);
   const usage = useAppStore((s) => (activeSessionId ? s.usageBySession[activeSessionId] : undefined));
   const lastTurn = useAppStore((s) => (activeSessionId ? s.lastTurnStats[activeSessionId] : undefined));
   const openPreview = useAppStore((s) => s.openPreview);
@@ -165,7 +168,26 @@ export function ThreadView({ rightVisible, onToggleRight }: { rightVisible: bool
       <div className="thread-body">
         <div className="thread-scroll" ref={scrollRef} onScroll={onScroll}>
         <div className="thread-inner">
-          {messages.length === 0 && !busyTurn && (
+          {historyLoading && messages.length === 0 && (
+            <div className="empty">
+              <div className="empty-mark"><Sparkles aria-hidden="true" size={22} /></div>
+              <div>Loading history…</div>
+            </div>
+          )}
+          {!historyLoading && historyError && messages.length === 0 && session && (
+            <div className="empty">
+              <div className="empty-mark"><TriangleAlert aria-hidden="true" size={22} /></div>
+              <div>Could not load history.</div>
+              <div className="notif-msg">{historyError}</div>
+              <button
+                className="btn btn-primary"
+                onClick={() => void ensureHistory(session.id, { force: true, isRetry: true })}
+              >
+                Retry
+              </button>
+            </div>
+          )}
+          {!historyLoading && !historyError && messages.length === 0 && !busyTurn && (
             <div className="empty">
               <div className="empty-mark"><Sparkles aria-hidden="true" size={22} /></div>
               <div>Prompt below to begin.</div>
