@@ -681,7 +681,7 @@ body.session-dragging * {
 }
 
 .session-title {
-  font-size: 13px;
+  font-size: 14px;
   color: var(--dim);
   flex: 1;
   min-width: 0;
@@ -1778,7 +1778,7 @@ body.session-dragging * {
 }
 
 .newthread-composer {
-  width: min(680px, 100%);
+  width: min(860px, 100%);
   margin: 0;
 }
 
@@ -1936,6 +1936,28 @@ body.session-dragging * {
 .menu-search .field {
   width: 100%;
   box-sizing: border-box;
+}
+
+.menu-sep {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 8px 2px;
+  color: var(--faint);
+  font-family: var(--sans);
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  cursor: default;
+  white-space: nowrap;
+}
+
+.menu-sep::after {
+  content: "";
+  flex: 1;
+  height: 1px;
+  background: var(--border-soft);
 }
 
 .menu-row:hover {

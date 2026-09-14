@@ -827,6 +827,15 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
           ) : (
             <span className="search-kbd">Ctrl+K</span>
           )}
+          <button
+            className="new-session-btn"
+            disabled={!activeProjectId}
+            onClick={() => store.startNewSession()}
+            title={`New session in ${activeProject?.name ?? "…"}`}
+            aria-label="New session"
+          >
+            <SquarePen size={16} />
+          </button>
         </div>
         <div className="project-bar">
           <div className="picker">
@@ -921,15 +930,6 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
             </>
           )}
           </div>
-          <button
-            className="new-session-btn"
-            disabled={!activeProjectId}
-            onClick={() => store.startNewSession()}
-            title={`New session in ${activeProject?.name ?? "…"}`}
-            aria-label="New session"
-          >
-            <SquarePen size={16} />
-          </button>
         </div>
       </div>
       <div className="session-list" ref={listRef} onScroll={clearHover}>

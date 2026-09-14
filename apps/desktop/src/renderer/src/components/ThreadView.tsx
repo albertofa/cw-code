@@ -173,7 +173,6 @@ export function ThreadView({ rightVisible, onToggleRight }: { rightVisible: bool
         </span>
         <GitPanelBar sessionId={session.id} compact />
         <span className="thread-status">
-          {busyTurn && <WorkingPill word={workingWord} />}
           <button className="icon-btn" onClick={onToggleRight} title={rightVisible ? "Hide panel" : "Show panel"}>
             {rightVisible ? <PanelRightClose aria-hidden="true" size={14} /> : <PanelRightOpen aria-hidden="true" size={14} />}
           </button>
