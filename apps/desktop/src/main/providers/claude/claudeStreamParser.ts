@@ -230,12 +230,29 @@ interface AssistantMsg {
 interface UserMsg {
   type: "user";
   message?: {
-    content?: Array<{
-      tool_use_id?: string;
-      content?: unknown;
-      is_error?: boolean;
-    }>;
+    content?: unknown;
   };
+}
+
+export interface ClaudeTaskNotification {
+  toolUseId: string;
+  status?: string;
+  result: string;
+}
+
+const TASK_NOTIFY_RE = {
+  toolUseId: /<tool-use-id>([\s\S]*?)<\/tool-use-id>/,
+  status: /<status>([\s\S]*?)<\/status>/,
+  result: /<result>([\s\S]*?)<\/result>/
+};
+
+export function parseClaudeTaskNotification(text: string): ClaudeTaskNotification | null {
+  if (!text.trimStart().startsWith("<task-notification>")) return null;
+  const toolUseId = TASK_NOTIFY_RE.toolUseId.exec(text)?.[1]?.trim();
+  const result = TASK_NOTIFY_RE.result.exec(text)?.[1];
+  if (!toolUseId || result === undefined) return null;
+  const status = TASK_NOTIFY_RE.status.exec(text)?.[1]?.trim();
+  return { toolUseId, ...(status ? { status } : {}), result };
 }
 
 interface ResultMsg {
@@ -351,8 +368,23 @@ export function parseStreamLine(
   }
 
   if (msg.type === "user") {
+    const raw = (msg as UserMsg).message?.content;
+    if (typeof raw === "string") {
+      const notif = parseClaudeTaskNotification(raw);
+      if (!notif) return [];
+      return [
+        {
+          type: "tool.result",
+          turnId,
+          toolCallId: notif.toolUseId,
+          output: notif.result.slice(0, 8000),
+          isError: notif.status ? notif.status.toLowerCase() !== "completed" : false
+        }
+      ];
+    }
     const out: ThreadEvent[] = [];
-    for (const block of msg.message?.content ?? []) {
+    const blocks = Array.isArray(raw) ? raw : [];
+    for (const block of blocks as Array<{ tool_use_id?: string; content?: unknown; is_error?: boolean }>) {
       if (block.tool_use_id) {
         const content =
           typeof block.content === "string" ? block.content : JSON.stringify(block.content ?? "");
