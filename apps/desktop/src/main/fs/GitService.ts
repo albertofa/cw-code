@@ -1,5 +1,5 @@
 import { execFile } from "node:child_process";
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readdirSync, rmdirSync } from "node:fs";
 import { open, lstat } from "node:fs/promises";
 import { basename, join, resolve } from "node:path";
 import { simpleGit } from "simple-git";
@@ -21,6 +21,11 @@ export interface CreatedWorktree {
   path: string;
   branch: string;
   repositoryRoot: string;
+}
+
+export interface RemoveWorktreeResult {
+  removed: boolean;
+  dirtyBlocked?: boolean;
 }
 
 interface WorktreeEntry {
@@ -450,6 +455,32 @@ export class GitService {
     return resolve(value);
   }
 
+  private async uniqueBranchName(git: ReturnType<GitService["git"]>, base: string): Promise<string> {
+    const existing = new Set((await git.raw(["for-each-ref", "--format=%(refname:short)", "refs/heads"]))
+      .replace(/\r/g, "").split("\n").map((line) => line.trim()).filter(Boolean));
+    for (let suffix = 0; suffix <= 100; suffix += 1) {
+      const candidate = suffix === 0 ? base : `${base}-${suffix}`;
+      if (!existing.has(candidate)) return candidate;
+    }
+    throw new Error(`no free branch name derived from '${base}'`);
+  }
+
+  private invalidateStatus(root: string): void {
+    const key = cacheKey(root);
+    this.statusGeneration.set(key, (this.statusGeneration.get(key) ?? 0) + 1);
+    this.statusDone.delete(key);
+    this.statusInFlight.delete(key);
+  }
+
+  private async initSubmodules(worktreePath: string): Promise<void> {
+    if (!existsSync(join(worktreePath, ".gitmodules"))) return;
+    try {
+      await execText(this.settings().gitBinaryPath, ["-C", worktreePath, "submodule", "update", "--init", "--recursive"], worktreePath, 120_000);
+    } catch (error) {
+      console.warn(`submodule init failed for ${worktreePath}: ${(error as Error).message}`);
+    }
+  }
+
   async createWorktree(projectRoot: string, projectKey: string, sessionId: string, worktreesRoot: string, requestedBase?: string): Promise<CreatedWorktree> {
     const repositoryRoot = await this.repositoryRoot(projectRoot);
     const git = this.git(repositoryRoot);
@@ -457,17 +488,108 @@ export class GitService {
     const current = branches.find((item) => item.current)?.name;
     const base = requestedBase?.trim() || current || "HEAD";
     if (base !== "HEAD" && !branches.some((item) => item.name === base)) throw new Error(`unknown base branch '${base}'`);
-    const branch = `cw/${safeSegment(sessionId.replace(/^sess_/, ""))}`;
+    const branch = await this.uniqueBranchName(git, `cw/${safeSegment(sessionId.replace(/^sess_/, ""))}`);
     const parent = join(worktreesRoot, safeSegment(projectKey));
     const target = join(parent, safeSegment(sessionId));
     mkdirSync(parent, { recursive: true });
+    if (existsSync(target) && readdirSync(target).length === 0) rmdirSync(target);
     try {
       await git.raw(["worktree", "add", "-b", branch, target, base]);
     } catch (error) {
-      throw new Error(`could not create worktree from '${base}': ${(error as Error).message}`);
+      const message = (error as Error).message;
+      const registered = /missing but already registered worktree|already exists/i.test(message) && !existsSync(join(target, ".git"));
+      if (registered) {
+        await git.raw(["worktree", "prune"]);
+        if (existsSync(target) && readdirSync(target).length === 0) {
+          rmdirSync(target);
+          try {
+            await git.raw(["worktree", "add", "-b", branch, target, base]);
+          } catch (retryError) {
+            throw new Error(`could not create worktree from '${base}': ${(retryError as Error).message}`);
+          }
+        } else {
+          throw new Error(`could not create worktree from '${base}': ${message}`);
+        }
+      } else {
+        throw new Error(`could not create worktree from '${base}': ${message}`);
+      }
     }
+    await this.initSubmodules(target);
+    this.invalidateStatus(repositoryRoot);
     this.invalidateBranches(repositoryRoot);
     return { path: resolve(target), branch, repositoryRoot };
+  }
+
+  async removeWorktree(repoRoot: string, path: string, opts: { force?: boolean } = {}): Promise<RemoveWorktreeResult> {
+    const repositoryRoot = await this.repositoryRoot(repoRoot);
+    const git = this.git(repositoryRoot);
+    const target = resolve(path);
+    const args = ["worktree", "remove"];
+    if (opts.force) args.push("--force");
+    args.push(target);
+    try {
+      await git.raw(args);
+    } catch (error) {
+      const message = (error as Error).message;
+      if (!opts.force && /contains modified or untracked files|cannot remove/i.test(message)) {
+        return { removed: false, dirtyBlocked: true };
+      }
+      const alreadyGone = !existsSync(target);
+      if (!alreadyGone || !/not a working tree|cannot remove/i.test(message)) {
+        throw new Error(`could not remove worktree '${target}': ${message}`);
+      }
+      await git.raw(["worktree", "prune"]);
+      this.invalidateStatus(repositoryRoot);
+      this.invalidateBranches(repositoryRoot);
+      return { removed: false };
+    }
+    this.invalidateStatus(repositoryRoot);
+    this.invalidateBranches(repositoryRoot);
+    return { removed: true };
+  }
+
+  async pruneWorktrees(repoRoot: string, worktreesRoot: string): Promise<void> {
+    const repositoryRoot = await this.repositoryRoot(repoRoot);
+    await this.git(repositoryRoot).raw(["worktree", "prune"]);
+    this.removeEmptyWorktreeDirs(worktreesRoot);
+    this.invalidateStatus(repositoryRoot);
+    this.invalidateBranches(repositoryRoot);
+  }
+
+  private removeEmptyWorktreeDirs(worktreesRoot: string): void {
+    if (!existsSync(worktreesRoot)) return;
+    for (const projectDir of readdirSync(worktreesRoot, { withFileTypes: true })) {
+      if (!projectDir.isDirectory()) continue;
+      const projectPath = join(worktreesRoot, projectDir.name);
+      for (const sessionDir of readdirSync(projectPath, { withFileTypes: true })) {
+        if (!sessionDir.isDirectory()) continue;
+        const sessionPath = join(projectPath, sessionDir.name);
+        try {
+          if (readdirSync(sessionPath).length === 0) rmdirSync(sessionPath);
+        } catch {
+          // Leave in-use directories in place.
+        }
+      }
+      try {
+        if (readdirSync(projectPath).length === 0) rmdirSync(projectPath);
+      } catch {
+        // Leave in-use directories in place.
+      }
+    }
+  }
+
+  async renameBranch(repoRoot: string, from: string, to: string): Promise<string> {
+    if (!to || to.startsWith("-")) throw new Error("invalid branch name");
+    const git = this.git(repoRoot);
+    const target = await this.uniqueBranchName(git, to);
+    try {
+      await git.raw(["branch", "-m", from, target]);
+    } catch (error) {
+      throw new Error(`could not rename branch '${from}' to '${to}': ${(error as Error).message}`);
+    }
+    this.invalidateStatus(repoRoot);
+    this.invalidateBranches(repoRoot);
+    return target;
   }
 
   async branches(root: string): Promise<GitBranchInfo[]> {

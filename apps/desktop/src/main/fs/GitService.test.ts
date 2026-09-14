@@ -1,9 +1,19 @@
 import { describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { GitService, countUntrackedLines, isAppManagedPath, mapLimit, parseGitHubAccounts, parseGitHubRemote, parseNumstat, parsePrNumber, parsePullRequest, parseWorktreeList, selectGitHubAccount, worktreeNameFor } from "./GitService.js";
+
+function initSandbox(): { sandbox: string; repository: string; service: GitService } {
+  const sandbox = mkdtempSync(join(tmpdir(), "cw-git-"));
+  const repository = join(sandbox, "repo");
+  execFileSync("git", ["init", "-b", "main", repository]);
+  writeFileSync(join(repository, "README.md"), "base\n", "utf8");
+  execFileSync("git", ["-C", repository, "add", "README.md"]);
+  execFileSync("git", ["-C", repository, "-c", "user.name=cw-code", "-c", "user.email=test@cw-code.local", "commit", "-m", "initial"]);
+  return { sandbox, repository, service: new GitService() };
+}
 
 describe("parsePrNumber", () => {
   it("parses a PR number", () => {
@@ -245,6 +255,102 @@ describe("GitService worktrees", () => {
     });
     const branches = await service.branches(created.path);
     expect(branches.find((branch) => branch.name === "cw/1234abcd")?.worktreePath).toBe(created.path.replace(/\\/g, "/"));
+  });
+
+  it("removes a clean worktree and its empty session directory", async () => {
+    const { sandbox, repository, service } = initSandbox();
+    const worktreesRoot = join(sandbox, "worktrees");
+    const created = await service.createWorktree(repository, "project", "sess_clean1", worktreesRoot, "main");
+    expect(existsSync(created.path)).toBe(true);
+
+    const result = await service.removeWorktree(repository, created.path);
+    expect(result).toEqual({ removed: true });
+    expect(existsSync(created.path)).toBe(false);
+  });
+
+  it("refuses a dirty worktree without force and removes it with force", async () => {
+    const { sandbox, repository, service } = initSandbox();
+    const worktreesRoot = join(sandbox, "worktrees");
+    const created = await service.createWorktree(repository, "project", "sess_dirty1", worktreesRoot, "main");
+    writeFileSync(join(created.path, "README.md"), "dirty\n", "utf8");
+
+    const blocked = await service.removeWorktree(repository, created.path);
+    expect(blocked).toEqual({ removed: false, dirtyBlocked: true });
+    expect(existsSync(created.path)).toBe(true);
+
+    const forced = await service.removeWorktree(repository, created.path, { force: true });
+    expect(forced).toEqual({ removed: true });
+    expect(existsSync(created.path)).toBe(false);
+  });
+
+  it("treats an already-gone worktree path as a no-op prune", async () => {
+    const { sandbox, repository, service } = initSandbox();
+    const worktreesRoot = join(sandbox, "worktrees");
+    const created = await service.createWorktree(repository, "project", "sess_gone1", worktreesRoot, "main");
+    execFileSync("git", ["-C", repository, "worktree", "remove", "--force", created.path]);
+
+    const result = await service.removeWorktree(repository, created.path);
+    expect(result).toEqual({ removed: false });
+    const recreated = await service.createWorktree(repository, "project", "sess_gone1", worktreesRoot, "main");
+    expect(existsSync(recreated.path)).toBe(true);
+  });
+
+  it("suffixed the session branch when the cw/<id> branch already exists", async () => {
+    const { sandbox, repository, service } = initSandbox();
+    execFileSync("git", ["-C", repository, "branch", "cw/1234abcd"]);
+    const created = await service.createWorktree(repository, "project", "sess_1234abcd", join(sandbox, "worktrees"), "main");
+    expect(created.branch).toBe("cw/1234abcd-1");
+    const branches = await service.branches(repository);
+    expect(branches.some((branch) => branch.name === "cw/1234abcd-1")).toBe(true);
+  });
+
+  it("renames a branch and suffixes the target on collision", async () => {
+    const { repository, service } = initSandbox();
+    execFileSync("git", ["-C", repository, "branch", "feature"]);
+    expect(await service.renameBranch(repository, "feature", "renamed")).toBe("renamed");
+    const branches = await service.branches(repository);
+    expect(branches.some((branch) => branch.name === "renamed")).toBe(true);
+    expect(branches.some((branch) => branch.name === "feature")).toBe(false);
+
+    execFileSync("git", ["-C", repository, "branch", "other"]);
+    expect(await service.renameBranch(repository, "other", "renamed")).toBe("renamed-1");
+    const after = await service.branches(repository);
+    expect(after.some((branch) => branch.name === "renamed-1")).toBe(true);
+    expect(after.some((branch) => branch.name === "other")).toBe(false);
+  });
+
+  it("prunes stale worktree admin entries so the same path can be reused", async () => {
+    const { sandbox, repository, service } = initSandbox();
+    const worktreesRoot = join(sandbox, "worktrees");
+    const created = await service.createWorktree(repository, "project", "sess_prune1", worktreesRoot, "main");
+    execFileSync("git", ["-C", repository, "worktree", "remove", "--force", created.path]);
+    writeFileSync(join(repository, "README.md"), "dirty\n", "utf8");
+
+    const stale = await service.createWorktree(repository, "project", "sess_prune1", worktreesRoot, "main");
+    expect(existsSync(stale.path)).toBe(true);
+    expect(stale.branch).toBe("cw/prune1-1");
+    await service.removeWorktree(repository, stale.path, { force: true });
+    expect(existsSync(stale.path)).toBe(false);
+    await service.pruneWorktrees(repository, worktreesRoot);
+    expect(existsSync(join(worktreesRoot, "project"))).toBe(false);
+    const recreated = await service.createWorktree(repository, "project", "sess_prune1", worktreesRoot, "main");
+    expect(existsSync(recreated.path)).toBe(true);
+    expect(recreated.branch).toBe("cw/prune1-2");
+    expect(await service.removeWorktree(repository, recreated.path, { force: true })).toEqual({ removed: true });
+  });
+
+  it("removes empty project and session directories when pruning", async () => {
+    const { repository, service } = initSandbox();
+    const worktreesRoot = join(repository, "wt-root");
+    const projectDir = join(worktreesRoot, "project");
+    const sessionDir = join(projectDir, "sess_empty1");
+    execFileSync("git", ["-C", repository, "worktree", "add", "-b", "cw/empty1", sessionDir, "main"]);
+    execFileSync("git", ["-C", repository, "worktree", "remove", "--force", sessionDir]);
+    mkdirSync(sessionDir, { recursive: true });
+
+    await service.pruneWorktrees(repository, worktreesRoot);
+    expect(existsSync(sessionDir)).toBe(false);
+    expect(existsSync(projectDir)).toBe(false);
   });
 
   it("counts untracked files in status", async () => {
