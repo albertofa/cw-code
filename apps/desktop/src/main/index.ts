@@ -189,21 +189,22 @@ function registerIpc(): void {
       sessions.setComposer(args.sessionId, args.prefs)
   );
   ipcMain.handle("git.status", (_e, args: { sessionId: string }) =>
-    git.status(sessions.rootFor(args.sessionId), sessions.projectForSession(args.sessionId))
+    sessions.ensureWorktree(args.sessionId).then((root) => git.status(root, sessions.projectForSession(args.sessionId)))
   );
   ipcMain.handle("git.branches", (_e, args: { sessionId: string }) =>
-    git.branches(sessions.rootFor(args.sessionId))
+    sessions.ensureWorktree(args.sessionId).then((root) => git.branches(root))
   );
   ipcMain.handle("git.projectBranches", (_e, args: { projectId: string }) =>
     git.branches(sessions.rootForProject(args.projectId))
   );
   ipcMain.handle("git.switchBranch", async (_e, args: { sessionId: string; branch: string }) => {
-    const status = await git.switchBranch(sessions.rootFor(args.sessionId), args.branch, sessions.projectForSession(args.sessionId));
+    const root = await sessions.ensureWorktree(args.sessionId);
+    const status = await git.switchBranch(root, args.branch, sessions.projectForSession(args.sessionId));
     sessions.updateSessionBranch(args.sessionId, status.branch);
     return status;
   });
   ipcMain.handle("git.diff", (_e, args: { sessionId: string; mode: GitDiffMode; baseRef?: string }) =>
-    git.diff(sessions.rootFor(args.sessionId), args.mode, args.baseRef)
+    sessions.ensureWorktree(args.sessionId).then((root) => git.diff(root, args.mode, args.baseRef))
   );
   ipcMain.handle("git.health", (_e, args: { projectId?: string }) => {
     if (!args.projectId) return git.health();
@@ -218,20 +219,20 @@ function registerIpc(): void {
   );
 
   ipcMain.handle("fs.readFile", (_e, args: { sessionId: string; path: string }) =>
-    files.readFile(sessions.rootFor(args.sessionId), args.path)
+    sessions.ensureWorktree(args.sessionId).then((root) => files.readFile(root, args.path))
   );
   ipcMain.handle("fs.readOutsideFile", (_e, args: { path: string }) => files.readOutsideFile(args.path));
   ipcMain.handle("fs.saveFile", (_e, args: { sessionId: string; path: string; content: string }) =>
-    files.saveFile(sessions.rootFor(args.sessionId), args.path, args.content)
+    sessions.ensureWorktree(args.sessionId).then((root) => files.saveFile(root, args.path, args.content))
   );
   ipcMain.handle("fs.listFiles", (_e, args: { sessionId: string }) =>
-    files.listFiles(sessions.rootFor(args.sessionId))
+    sessions.ensureWorktree(args.sessionId).then((root) => files.listFiles(root))
   );
   ipcMain.handle("fs.listProjectFiles", (_e, args: { projectId: string }) =>
     files.listFiles(sessions.rootForProject(args.projectId))
   );
   ipcMain.handle("fs.listDir", (_e, args: { sessionId: string; dir?: string }) =>
-    files.listDir(sessions.rootFor(args.sessionId), args.dir ?? "")
+    sessions.ensureWorktree(args.sessionId).then((root) => files.listDir(root, args.dir ?? ""))
   );
   ipcMain.handle(
     "fs.savePasteImage",
@@ -240,11 +241,11 @@ function registerIpc(): void {
   );
   ipcMain.handle(
     "fs.readImage",
-    (_e, args: { sessionId?: string; projectId?: string; path: string }) => {
+    async (_e, args: { sessionId?: string; projectId?: string; path: string }) => {
       const roots: string[] = [];
       if (args.sessionId) {
         try {
-          roots.push(sessions.rootFor(args.sessionId));
+          roots.push(await sessions.ensureWorktree(args.sessionId));
         } catch {
           console.warn(`readImage: unknown session ${args.sessionId}`);
         }
@@ -262,13 +263,15 @@ function registerIpc(): void {
     }
   );
   ipcMain.handle("git.turnDiff", (_e, args: { sessionId: string; since: number }) =>
-    git.turnDiff(sessions.rootFor(args.sessionId), args.since)
+    sessions.ensureWorktree(args.sessionId).then((root) => git.turnDiff(root, args.since))
   );
 
   ipcMain.handle("pty.open", (_e, args: { sessionId: string; kind: PtyKind }) =>
-    ptys.open(args.sessionId, sessions.rootFor(args.sessionId), args.kind, (id, data) => {
-      mainWindow?.webContents.send("pty.data", { ptyId: id, data });
-    })
+    sessions.ensureWorktree(args.sessionId).then((root) =>
+      ptys.open(args.sessionId, root, args.kind, (id, data) => {
+        mainWindow?.webContents.send("pty.data", { ptyId: id, data });
+      })
+    )
   );
   ipcMain.on("pty.write", (_e, args: { ptyId: string; data: string }) => ptys.write(args.ptyId, args.data));
   ipcMain.on("pty.resize", (_e, args: { ptyId: string; cols: number; rows: number }) =>

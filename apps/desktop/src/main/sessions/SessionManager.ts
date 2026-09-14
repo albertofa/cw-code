@@ -24,7 +24,7 @@ import { TracingCliDriver } from "../debug/tracingDriver.js";
 import { CLAUDE_CURATED_MODELS, ClaudeCliDriver } from "../providers/claude/ClaudeCliDriver.js";
 import { OpencodeDriver } from "../providers/opencode/OpencodeDriver.js";
 import { CodexCliDriver } from "../providers/codex/CodexCliDriver.js";
-import { GitService } from "../fs/GitService.js";
+import { GitService, type CreatedWorktree } from "../fs/GitService.js";
 import { resolveAttachments } from "./attachments.js";
 
 export interface SessionManagerOptions {
@@ -271,7 +271,7 @@ export class SessionManager {
     if (!project) throw new Error(`unknown project ${session.projectId}`);
     if (!session.resumeCursor) return [];
     try {
-      return await this.drivers[session.driver].getHistory(this.rootFor(sessionId), session.resumeCursor);
+      return await this.drivers[session.driver].getHistory(await this.ensureWorktree(sessionId), session.resumeCursor);
     } catch (err) {
       console.warn(`history failed for ${sessionId}: ${(err as Error).message}`);
       return [];
@@ -289,7 +289,7 @@ export class SessionManager {
     if (session.title === "New session") {
       this.store.updateSession(sessionId, { title: prompt.slice(0, 60) });
     }
-    const cwd = this.rootFor(sessionId);
+    const cwd = await this.ensureWorktree(sessionId);
     const stored = this.getComposer(sessionId);
     const prefs = { ...stored, ...(opts?.prefs ?? {}) };
     const driver = this.drivers[session.driver];
@@ -370,6 +370,32 @@ export class SessionManager {
       return session.worktreePath;
     }
     return this.rootForProject(session.projectId);
+  }
+
+  async ensureWorktree(sessionId: string): Promise<string> {
+    const session = this.store.getSession(sessionId);
+    if (!session) throw new Error(`unknown session ${sessionId}`);
+    if (session.worktreePath && existsSync(session.worktreePath)) return session.worktreePath;
+    if (!session.worktreePath) return this.rootForProject(session.projectId);
+    const project = this.getProject(session.projectId);
+    const expectedPath = join(this.worktreesRoot, session.projectId, sessionId);
+    await this.git.pruneWorktrees(project.rootPath, this.worktreesRoot);
+    let worktree: CreatedWorktree;
+    try {
+      worktree = await this.git.createWorktree(
+        project.rootPath,
+        project.id,
+        sessionId,
+        this.worktreesRoot,
+        session.branch
+      );
+    } catch (err) {
+      throw new Error(
+        `could not recreate worktree for session ${sessionId} at ${expectedPath} from branch '${session.branch ?? "HEAD"}': ${(err as Error).message}`
+      );
+    }
+    if (worktree.branch !== session.branch) this.updateSessionBranch(sessionId, worktree.branch);
+    return worktree.path;
   }
 
   updateSessionBranch(sessionId: string, branch: string): void {

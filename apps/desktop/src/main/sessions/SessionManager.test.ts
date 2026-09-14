@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -217,6 +217,100 @@ describe("SessionManager", () => {
     expect(manager.rootFor(session.id)).toBe(session.worktreePath);
     await manager.startTurn(session.id, "isolated");
     expect(fake.lastRequest?.cwd).toBe(session.worktreePath);
+    manager.dispose();
+  });
+
+  it("recreates a deleted worktree at the same path on the next turn", async () => {
+    const sandbox = mkdtempSync(join(tmpdir(), "cw-session-recover-"));
+    const repository = join(sandbox, "repo");
+    execFileSync("git", ["init", "-b", "main", repository]);
+    writeFileSync(join(repository, "README.md"), "base\n", "utf8");
+    execFileSync("git", ["-C", repository, "add", "README.md"]);
+    execFileSync("git", ["-C", repository, "-c", "user.name=cw-code", "-c", "user.email=test@cw-code.local", "commit", "-m", "initial"]);
+
+    const manager = new SessionManager({
+      dbPath: join(sandbox, "data", "test.db"),
+      worktreesRoot: join(sandbox, "worktrees")
+    });
+    const fake = new FakeDriver((event) => (manager as unknown as { routeEvent(e: ThreadEvent): void }).routeEvent(event));
+    (manager as unknown as { drivers: Record<string, CliDriver> }).drivers = { claude: fake, opencode: fake, codex: fake };
+    const project = manager.addProject(repository);
+    const session = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    const originalBranch = session.branch;
+    const worktreePath = session.worktreePath;
+    if (!worktreePath) throw new Error("expected a worktree-backed session");
+    expect(originalBranch).toMatch(/^cw\//);
+
+    rmSync(worktreePath, { recursive: true, force: true });
+    expect(existsSync(worktreePath)).toBe(false);
+    expect(() => manager.rootFor(session.id)).toThrow(/missing/);
+
+    await manager.startTurn(session.id, "recovered");
+    expect(existsSync(worktreePath)).toBe(true);
+    expect(fake.lastRequest?.cwd).toBe(worktreePath);
+    const sessions = await manager.listSessions(project.id);
+    const stored = sessions.find((s) => s.id === session.id);
+    expect(stored?.branch).toMatch(/^cw\//);
+    const checkedOut = execFileSync("git", ["-C", worktreePath, "rev-parse", "--abbrev-ref", "HEAD"], { encoding: "utf8" }).trim();
+    expect(checkedOut).toBe(stored?.branch);
+    manager.dispose();
+  });
+
+  it("throws a descriptive error when worktree recovery fails because the branch is gone", async () => {
+    const sandbox = mkdtempSync(join(tmpdir(), "cw-session-recover-fail-"));
+    const repository = join(sandbox, "repo");
+    execFileSync("git", ["init", "-b", "main", repository]);
+    writeFileSync(join(repository, "README.md"), "base\n", "utf8");
+    execFileSync("git", ["-C", repository, "add", "README.md"]);
+    execFileSync("git", ["-C", repository, "-c", "user.name=cw-code", "-c", "user.email=test@cw-code.local", "commit", "-m", "initial"]);
+
+    const manager = new SessionManager({
+      dbPath: join(sandbox, "data", "test.db"),
+      worktreesRoot: join(sandbox, "worktrees")
+    });
+    const fake = new FakeDriver((event) => (manager as unknown as { routeEvent(e: ThreadEvent): void }).routeEvent(event));
+    (manager as unknown as { drivers: Record<string, CliDriver> }).drivers = { claude: fake, opencode: fake, codex: fake };
+    const project = manager.addProject(repository);
+    const session = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    const worktreePath = session.worktreePath;
+    const orphanBranch = session.branch;
+    if (!worktreePath || !orphanBranch) throw new Error("expected a worktree-backed session with a branch");
+
+    rmSync(worktreePath, { recursive: true, force: true });
+    execFileSync("git", ["-C", repository, "worktree", "prune"]);
+    execFileSync("git", ["-C", repository, "branch", "-D", orphanBranch]);
+
+    await expect(manager.startTurn(session.id, "should fail")).rejects.toThrow(/could not recreate worktree/);
+    expect(fake.seen).toHaveLength(0);
+    manager.dispose();
+  });
+
+  it("does not recreate git state when ensureWorktree is called twice on an existing worktree", async () => {
+    const sandbox = mkdtempSync(join(tmpdir(), "cw-session-idempotent-"));
+    const repository = join(sandbox, "repo");
+    execFileSync("git", ["init", "-b", "main", repository]);
+    writeFileSync(join(repository, "README.md"), "base\n", "utf8");
+    execFileSync("git", ["-C", repository, "add", "README.md"]);
+    execFileSync("git", ["-C", repository, "-c", "user.name=cw-code", "-c", "user.email=test@cw-code.local", "commit", "-m", "initial"]);
+
+    const manager = new SessionManager({
+      dbPath: join(sandbox, "data", "test.db"),
+      worktreesRoot: join(sandbox, "worktrees")
+    });
+    const project = manager.addProject(repository);
+    const session = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    const worktreePath = session.worktreePath;
+    if (!worktreePath) throw new Error("expected a worktree-backed session");
+    expect(session.branch).toMatch(/^cw\//);
+
+    const rootA = await manager.ensureWorktree(session.id);
+    const branchesBefore = execFileSync("git", ["-C", repository, "branch", "--list", `${session.branch}*`], { encoding: "utf8" });
+    const rootB = await manager.ensureWorktree(session.id);
+    const branchesAfter = execFileSync("git", ["-C", repository, "branch", "--list", `${session.branch}*`], { encoding: "utf8" });
+
+    expect(rootA).toBe(worktreePath);
+    expect(rootB).toBe(worktreePath);
+    expect(branchesAfter).toBe(branchesBefore);
     manager.dispose();
   });
 
