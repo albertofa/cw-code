@@ -342,8 +342,15 @@ export function AgentsPanel({ sessionId }: { sessionId: string }) {
   const live = useAppStore((s) => s.busyTurns[sessionId] !== undefined);
   const projects = useAppStore((s) => s.projects);
   const activeProjectId = useAppStore((s) => s.activeProjectId);
+  const sessionsByProject = useAppStore((s) => s.sessionsByProject);
   const openPreview = useAppStore((s) => s.openPreview);
-  const basePath = projects.find((p) => p.id === activeProjectId)?.rootPath;
+  const basePath = (() => {
+    for (const [pid, list] of Object.entries(sessionsByProject)) {
+      const found = list.find((s) => s.id === sessionId);
+      if (found) return found.worktreePath ?? projects.find((p) => p.id === pid)?.rootPath;
+    }
+    return projects.find((p) => p.id === activeProjectId)?.rootPath;
+  })();
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
 

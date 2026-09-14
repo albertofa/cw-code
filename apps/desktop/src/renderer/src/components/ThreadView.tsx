@@ -112,12 +112,12 @@ export function ThreadView() {
   const [atBottom, setAtBottom] = useState(true);
 
   const sessionId = session?.id;
-  const projectRoot = project?.rootPath ?? "";
+  const basePath = session?.worktreePath ?? project?.rootPath ?? "";
   const onOpenPreview = useCallback(
     (path: string) => {
-      if (sessionId) openPreview(sessionId, path, projectRoot);
+      if (sessionId) openPreview(sessionId, path, basePath);
     },
-    [openPreview, sessionId, projectRoot]
+    [openPreview, sessionId, basePath]
   );
 
   useEffect(() => {
@@ -247,7 +247,7 @@ export function ThreadView() {
                 <ToolGroupCard
                   key={n.key}
                   messages={n.items}
-                  basePath={project?.rootPath}
+                  basePath={basePath}
                   sessionId={session.id}
                   onPreview={onOpenPreview}
                 />
@@ -277,7 +277,7 @@ export function ThreadView() {
                 <ToolCard
                   key={m.id}
                   message={m}
-                  basePath={project?.rootPath}
+                  basePath={basePath}
                   sessionId={session.id}
                   onPreview={onOpenPreview}
                 />
