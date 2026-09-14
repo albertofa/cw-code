@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { ComposerPrefs, DriverKind, Project, SessionMeta } from "@cw-code/contracts";
+import { sameWorktreePath } from "./worktreeCleanup.js";
 
 interface StoreShape {
   projects: Project[];
@@ -131,6 +132,16 @@ export class SessionStore {
     return this.data.sessions
       .filter((s) => s.projectId === projectId)
       .sort((a, b) => b.updatedAt - a.updatedAt);
+  }
+
+  listAllSessions(): SessionMeta[] {
+    return [...this.data.sessions].sort((a, b) => b.updatedAt - a.updatedAt);
+  }
+
+  countWorktreeRefs(worktreePath: string, excludeSessionId?: string): number {
+    return this.data.sessions.filter(
+      (s) => s.id !== excludeSessionId && s.worktreePath && sameWorktreePath(s.worktreePath, worktreePath)
+    ).length;
   }
 
   getSession(id: string): SessionMeta | undefined {

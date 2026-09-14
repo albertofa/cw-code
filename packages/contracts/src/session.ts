@@ -157,6 +157,24 @@ export interface GitBranchInfo {
   worktreePath: string | null;
 }
 
+export interface SessionCleanupResult {
+  sessionId: string;
+  status: SessionStatus;
+  worktreePath?: string;
+  worktreeOrphaned: boolean;
+  worktreeRemoved: boolean;
+  dirtyBlocked?: boolean;
+  branchDeleted: boolean;
+  error?: string;
+}
+
+export interface WorktreePruneSummary {
+  scanned: number;
+  removed: number;
+  failed: number;
+  errors: string[];
+}
+
 export type GitDiffMode = "working" | "staged" | "branch";
 
 export interface GitDiffResult {

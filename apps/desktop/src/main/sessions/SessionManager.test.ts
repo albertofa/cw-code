@@ -1,11 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { CliDriver, HistoryMessage, ThreadEvent, TurnHandle } from "@cw-code/contracts";
 import { SessionManager } from "./SessionManager.js";
+import type { SessionStore } from "./SessionStore.js";
 
 class FakeDriver implements CliDriver {
   readonly kind = "claude" as const;
@@ -508,6 +509,92 @@ describe("SessionManager", () => {
     fake.completeAll();
     sessions = await manager.listSessions(project.id);
     expect(sessions.find((s) => s.id === a.id)?.status).toBe("done");
+    manager.dispose();
+  });
+
+  it("removes an orphaned worktree and deletes its branch when resolving with removal", async () => {
+    const { manager, project, repository } = makeGitSandboxManager("cw-resolve-orphan-");
+    const session = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    const worktreePath = session.worktreePath;
+    const branch = session.branch;
+    if (!worktreePath || !branch) throw new Error("expected a worktree-backed session with a branch");
+
+    const result = await manager.resolveSession(session.id, "archived", { removeWorktree: true });
+
+    expect(result.worktreeOrphaned).toBe(true);
+    expect(result.worktreeRemoved).toBe(true);
+    expect(result.branchDeleted).toBe(true);
+    expect(result.dirtyBlocked).toBeUndefined();
+    expect(existsSync(worktreePath)).toBe(false);
+    const branches = execFileSync("git", ["-C", repository, "branch", "--list", branch], { encoding: "utf8" });
+    expect(branches.trim()).toBe("");
+    manager.dispose();
+  });
+
+  it("keeps a dirty worktree and reports dirtyBlocked when resolving", async () => {
+    const { manager, project, repository } = makeGitSandboxManager("cw-resolve-dirty-");
+    const session = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    const worktreePath = session.worktreePath;
+    const branch = session.branch;
+    if (!worktreePath || !branch) throw new Error("expected a worktree-backed session with a branch");
+    writeFileSync(join(worktreePath, "dirty.txt"), "wip\n", "utf8");
+
+    const result = await manager.resolveSession(session.id, "archived", { removeWorktree: true });
+
+    expect(result.worktreeRemoved).toBe(false);
+    expect(result.dirtyBlocked).toBe(true);
+    expect(existsSync(worktreePath)).toBe(true);
+    const branches = execFileSync("git", ["-C", repository, "branch", "--list", branch], { encoding: "utf8" });
+    expect(branches.trim()).not.toBe("");
+    manager.dispose();
+  });
+
+  it("keeps a worktree that another session still references", async () => {
+    const { manager, project } = makeGitSandboxManager("cw-resolve-shared-");
+    const a = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    const b = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    if (!a.worktreePath) throw new Error("expected a worktree-backed session");
+    (manager as unknown as { store: SessionStore }).store.updateSession(b.id, { worktreePath: a.worktreePath });
+
+    const result = await manager.resolveSession(a.id, "archived", { removeWorktree: true });
+
+    expect(result.worktreeOrphaned).toBe(false);
+    expect(result.worktreeRemoved).toBe(false);
+    expect(existsSync(a.worktreePath)).toBe(true);
+    manager.dispose();
+  });
+
+  it("reports non-orphaned cleanup for sessions without a worktree", async () => {
+    const { manager } = makeManager();
+    const project = manager.addProject("C:\\proj-resolve-plain");
+    const a = await manager.createSession(project.id, "claude");
+    const result = await manager.resolveSession(a.id, "resolved");
+    expect(result.worktreeOrphaned).toBe(false);
+    expect(result.worktreeRemoved).toBe(false);
+    expect(result.branchDeleted).toBe(false);
+    manager.dispose();
+  });
+
+  it("prunes stale worktrees but keeps live session worktrees", async () => {
+    const { manager, project, repository } = makeGitSandboxManager("cw-prune-");
+    const live = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    if (!live.worktreePath) throw new Error("expected a worktree-backed session");
+    const worktreesRoot = join(dirname(repository), "worktrees");
+    const stalePath = join(worktreesRoot, project.id, "sess_stale");
+    mkdirSync(dirname(stalePath), { recursive: true });
+    execFileSync("git", ["-C", repository, "worktree", "add", "-b", "cw/stale", stalePath, "main"]);
+    const junkPath = join(worktreesRoot, project.id, "sess_junk");
+    mkdirSync(junkPath, { recursive: true });
+
+    const summary = await manager.pruneStaleWorktrees();
+
+    expect(summary.scanned).toBe(3);
+    expect(summary.removed).toBe(2);
+    expect(summary.failed).toBe(0);
+    expect(summary.errors).toEqual([]);
+    expect(existsSync(live.worktreePath)).toBe(true);
+    expect(existsSync(stalePath)).toBe(false);
+    expect(existsSync(junkPath)).toBe(false);
     manager.dispose();
   });
 });

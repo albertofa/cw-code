@@ -160,6 +160,12 @@ function registerIpc(): void {
   ipcMain.handle("sessions.setStatus", (_e, args: { sessionId: string; status: SessionStatus }) =>
     sessions.setSessionStatus(args.sessionId, args.status)
   );
+  ipcMain.handle(
+    "sessions.resolve",
+    (_e, args: { sessionId: string; status: SessionStatus; removeWorktree?: boolean }) =>
+      sessions.resolveSession(args.sessionId, args.status, { removeWorktree: args.removeWorktree })
+  );
+  ipcMain.handle("worktrees.prune", () => sessions.pruneStaleWorktrees());
   ipcMain.handle("sessions.history", (_e, args: { sessionId: string }) =>
     sessions.getHistory(args.sessionId)
   );

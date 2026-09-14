@@ -625,6 +625,18 @@ export class GitService {
     }
   }
 
+  async forceDeleteBranch(repoRoot: string, branch: string): Promise<boolean> {
+    const repositoryRoot = await this.repositoryRoot(repoRoot);
+    try {
+      await this.git(repositoryRoot).raw(["branch", "-D", branch]);
+    } catch (error) {
+      console.warn(`branch delete failed for '${branch}': ${(error as Error).message}`);
+      return false;
+    }
+    this.invalidateBranches(repositoryRoot);
+    return true;
+  }
+
   async renameBranch(repoRoot: string, from: string, to: string, opts: { worktreePath?: string } = {}): Promise<string> {
     const name = to.trim();
     if (!name || name.startsWith("-")) throw new Error("invalid branch name");

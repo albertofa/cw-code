@@ -1,6 +1,6 @@
 import { app } from "electron";
 import { randomUUID } from "node:crypto";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync, rmSync } from "node:fs";
 import { join } from "node:path";
 import type {
   AppSettings,
@@ -12,19 +12,22 @@ import type {
   HistoryMessage,
   ModelOption,
   Project,
+  SessionCleanupResult,
   SessionMeta,
   SessionStatus,
   SettingsPatch,
-  ThreadEvent
+  ThreadEvent,
+  WorktreePruneSummary
 } from "@cw-code/contracts";
 import { SessionStore } from "./SessionStore.js";
+import { isWorktreeOrphaned, sameWorktreePath } from "./worktreeCleanup.js";
 import { SettingsStore } from "../settings/SettingsStore.js";
 import { resolveClaudeModels } from "../settings/settingsUtils.js";
 import { TracingCliDriver } from "../debug/tracingDriver.js";
 import { CLAUDE_CURATED_MODELS, ClaudeCliDriver } from "../providers/claude/ClaudeCliDriver.js";
 import { OpencodeDriver } from "../providers/opencode/OpencodeDriver.js";
 import { CodexCliDriver } from "../providers/codex/CodexCliDriver.js";
-import { GitService, type CreatedWorktree } from "../fs/GitService.js";
+import { GitService, type CreatedWorktree, type RemoveWorktreeResult } from "../fs/GitService.js";
 import { resolveAttachments } from "./attachments.js";
 import { branchNameForTitle, TEMP_BRANCH_PATTERN } from "./branchName.js";
 
@@ -244,6 +247,127 @@ export class SessionManager {
     const updated = this.store.getSession(sessionId);
     if (!updated) throw new Error(`unknown session ${sessionId}`);
     return updated;
+  }
+
+  async resolveSession(
+    sessionId: string,
+    status: SessionStatus,
+    opts: { removeWorktree?: boolean } = {}
+  ): Promise<SessionCleanupResult> {
+    const session = this.store.getSession(sessionId);
+    if (!session) throw new Error(`unknown session ${sessionId}`);
+    for (const owner of this.activeTurns.values()) {
+      if (owner === sessionId) throw new Error("session busy (turn active)");
+    }
+    this.store.updateSession(sessionId, { status });
+    const worktreePath = session.worktreePath;
+    if (!worktreePath) {
+      return { sessionId, status, worktreeOrphaned: false, worktreeRemoved: false, branchDeleted: false };
+    }
+    const worktreeOrphaned = isWorktreeOrphaned(this.store.listAllSessions(), worktreePath, sessionId);
+    if (!worktreeOrphaned || !opts.removeWorktree) {
+      return { sessionId, status, worktreePath, worktreeOrphaned, worktreeRemoved: false, branchDeleted: false };
+    }
+    const project = this.getProject(session.projectId);
+    let removal: RemoveWorktreeResult;
+    try {
+      removal = await this.git.removeWorktree(project.rootPath, worktreePath, { force: false });
+    } catch (err) {
+      return {
+        sessionId,
+        status,
+        worktreePath,
+        worktreeOrphaned: true,
+        worktreeRemoved: false,
+        branchDeleted: false,
+        error: (err as Error).message
+      };
+    }
+    if (!removal.removed) {
+      return {
+        sessionId,
+        status,
+        worktreePath,
+        worktreeOrphaned: true,
+        worktreeRemoved: false,
+        ...(removal.dirtyBlocked ? { dirtyBlocked: true } : {}),
+        branchDeleted: false
+      };
+    }
+    const branchDeleted = session.branch
+      ? await this.deleteOrphanBranch(project.rootPath, session.branch, worktreePath)
+      : false;
+    return { sessionId, status, worktreePath, worktreeOrphaned: true, worktreeRemoved: true, branchDeleted };
+  }
+
+  private async deleteOrphanBranch(repoRoot: string, branch: string, removedPath: string): Promise<boolean> {
+    try {
+      const branches = await this.git.branches(repoRoot);
+      const info = branches.find((b) => b.name === branch && !b.remote);
+      if (!info) return false;
+      if (info.worktreePath && !sameWorktreePath(info.worktreePath, removedPath)) return false;
+      return await this.git.forceDeleteBranch(repoRoot, branch);
+    } catch (err) {
+      console.warn(`branch cleanup failed for '${branch}': ${(err as Error).message}`);
+      return false;
+    }
+  }
+
+  async pruneStaleWorktrees(): Promise<WorktreePruneSummary> {
+    const summary: WorktreePruneSummary = { scanned: 0, removed: 0, failed: 0, errors: [] };
+    if (!existsSync(this.worktreesRoot)) return summary;
+    const sessions = this.store.listAllSessions();
+    const touchedProjects = new Set<string>();
+    for (const projectDir of readdirSync(this.worktreesRoot, { withFileTypes: true })) {
+      if (!projectDir.isDirectory()) continue;
+      const projectPath = join(this.worktreesRoot, projectDir.name);
+      const project = this.store.getProject(projectDir.name);
+      for (const sessionDir of readdirSync(projectPath, { withFileTypes: true })) {
+        if (!sessionDir.isDirectory()) continue;
+        const dirPath = join(projectPath, sessionDir.name);
+        summary.scanned += 1;
+        if (sessions.some((s) => s.worktreePath && sameWorktreePath(s.worktreePath, dirPath))) continue;
+        if (project) touchedProjects.add(project.id);
+        await this.removeStaleDir(project?.rootPath ?? null, dirPath, summary);
+      }
+      if (!project && existsSync(projectPath)) {
+        try {
+          if (readdirSync(projectPath).length === 0) rmSync(projectPath, { recursive: true, force: true });
+        } catch {
+        }
+      }
+    }
+    for (const projectId of touchedProjects) {
+      const project = this.store.getProject(projectId);
+      if (!project) continue;
+      try {
+        await this.git.pruneWorktrees(project.rootPath, this.worktreesRoot);
+      } catch (err) {
+        summary.errors.push(`${project.rootPath}: worktree prune failed: ${(err as Error).message}`);
+      }
+    }
+    return summary;
+  }
+
+  private async removeStaleDir(repoRoot: string | null, dirPath: string, summary: WorktreePruneSummary): Promise<void> {
+    try {
+      if (repoRoot) await this.git.removeWorktree(repoRoot, dirPath, { force: true });
+      else rmSync(dirPath, { recursive: true, force: true });
+    } catch {
+      try {
+        rmSync(dirPath, { recursive: true, force: true });
+      } catch (rmErr) {
+        summary.failed += 1;
+        summary.errors.push(`${dirPath}: ${(rmErr as Error).message}`);
+        return;
+      }
+    }
+    if (existsSync(dirPath)) {
+      summary.failed += 1;
+      summary.errors.push(`${dirPath}: could not be removed`);
+      return;
+    }
+    summary.removed += 1;
   }
 
   getComposer(sessionId: string): ComposerPrefs {

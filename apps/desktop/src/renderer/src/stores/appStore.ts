@@ -102,7 +102,10 @@ interface AppState {
   loadDiscovered(): Promise<void>;
   importDiscovered(session: Session): Promise<void>;
   renameSession(sessionId: string, title: string): Promise<void>;
-  setSessionStatus(sessionId: string, status: SessionStatus): Promise<void>;
+  setSessionStatus(sessionId: string, status: SessionStatus, opts?: { promptWorktree?: boolean }): Promise<void>;
+  worktreeConfirm: { sessionId: string; status: SessionStatus } | null;
+  confirmWorktreeRemoval(): Promise<void>;
+  dismissWorktreeRemoval(): void;
   createSession(driver: DriverName, prefs?: ComposerPrefs, workspace?: CreateSessionOptions): Promise<void>;
   sendPrompt(prompt: string, attachments?: string[]): Promise<void>;
   interrupt(): Promise<void>;
@@ -142,6 +145,18 @@ function withSessionStatus(
   return next;
 }
 
+function patchSession(
+  byProject: Record<string, Session[]>,
+  sessionId: string,
+  patch: Partial<Session>
+): Record<string, Session[]> {
+  const next: Record<string, Session[]> = {};
+  for (const [pid, list] of Object.entries(byProject)) {
+    next[pid] = list.map((s) => (s.id === sessionId ? { ...s, ...patch } : s));
+  }
+  return next;
+}
+
 export const useAppStore = create<AppState>((set, get) => ({
   projects: [],
   sessionsByProject: {},
@@ -161,6 +176,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   lastDriver: "claude",
   pendingApprovals: {},
   pendingQuestions: {},
+  worktreeConfirm: null,
   pendingPrefs: { ...DEFAULT_COMPOSER },
   pendingWorkspace: { useWorktree: true },
   gitStatusBySession: {},
@@ -188,7 +204,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           .flat()
           .find((s) => s.id === sessionId);
         if (current && current.status !== "resolved" && current.status !== "archived" && sessionId !== get().activeSessionId) {
-          void get().setSessionStatus(sessionId, "resolved").catch((err) =>
+          void get().setSessionStatus(sessionId, "resolved", { promptWorktree: false }).catch((err) =>
             console.warn(`setSessionStatus failed for ${sessionId} -> resolved: ${(err as Error).message}`)
           );
         }
@@ -350,14 +366,62 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ sessionsByProject: next });
   },
 
-  async setSessionStatus(sessionId: string, status: SessionStatus) {
-    const updated = await window.cw.setSessionStatus(sessionId, status);
-    const byProject = get().sessionsByProject;
-    const next: Record<string, Session[]> = {};
-    for (const [pid, list] of Object.entries(byProject)) {
-      next[pid] = list.map((s) => (s.id === sessionId ? { ...s, status: updated.status, updatedAt: updated.updatedAt } : s));
+  async setSessionStatus(sessionId: string, status: SessionStatus, opts: { promptWorktree?: boolean } = {}) {
+    if (status === "resolved" || status === "archived") {
+      const result = await window.cw.resolveSession(sessionId, status);
+      set({
+        sessionsByProject: patchSession(get().sessionsByProject, sessionId, {
+          status: result.status,
+          updatedAt: Date.now()
+        })
+      });
+      if (result.worktreeOrphaned && opts.promptWorktree !== false) {
+        set({ worktreeConfirm: { sessionId, status } });
+      }
+      return;
     }
-    set({ sessionsByProject: next });
+    const updated = await window.cw.setSessionStatus(sessionId, status);
+    set({
+      sessionsByProject: patchSession(get().sessionsByProject, sessionId, {
+        status: updated.status,
+        updatedAt: updated.updatedAt
+      })
+    });
+  },
+
+  async confirmWorktreeRemoval() {
+    const target = get().worktreeConfirm;
+    if (!target) return;
+    set({ worktreeConfirm: null });
+    try {
+      const result = await window.cw.resolveSession(target.sessionId, target.status, true);
+      set({
+        sessionsByProject: patchSession(get().sessionsByProject, target.sessionId, { status: result.status })
+      });
+      if (result.dirtyBlocked) {
+        const warning: ChatMessage = {
+          id: `worktree-blocked-${target.sessionId}-${Date.now()}`,
+          role: "system",
+          text: "Worktree kept: it has uncommitted changes. Commit or clean them, then remove the worktree manually.",
+          turnId: "worktree-cleanup",
+          isError: true
+        };
+        set({
+          messagesBySession: {
+            ...get().messagesBySession,
+            [target.sessionId]: [...(get().messagesBySession[target.sessionId] ?? []), warning]
+          }
+        });
+      } else if (result.error) {
+        useNotifs.getState().push({ kind: "error", title: "Could not remove worktree", message: result.error });
+      }
+    } catch (err) {
+      useNotifs.getState().push({ kind: "error", title: "Could not remove worktree", message: (err as Error).message });
+    }
+  },
+
+  dismissWorktreeRemoval() {
+    set({ worktreeConfirm: null });
   },
 
   selectSession(sessionId: string) {

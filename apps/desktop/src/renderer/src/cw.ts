@@ -27,6 +27,24 @@ export interface CreateSessionOptions {
   useWorktree?: boolean;
 }
 
+export interface SessionCleanupResult {
+  sessionId: string;
+  status: SessionStatus;
+  worktreePath?: string;
+  worktreeOrphaned: boolean;
+  worktreeRemoved: boolean;
+  dirtyBlocked?: boolean;
+  branchDeleted: boolean;
+  error?: string;
+}
+
+export interface WorktreePruneSummary {
+  scanned: number;
+  removed: number;
+  failed: number;
+  errors: string[];
+}
+
 export interface HistoryMessage {
   id: string;
   role: "user" | "assistant" | "tool" | "system";
@@ -272,6 +290,8 @@ export interface CwApi {
   createSession(projectId: string, driver: DriverName, options?: CreateSessionOptions): Promise<Session>;
   renameSession(sessionId: string, title: string): Promise<void>;
   setSessionStatus(sessionId: string, status: SessionStatus): Promise<Session>;
+  resolveSession(sessionId: string, status: SessionStatus, removeWorktree?: boolean): Promise<SessionCleanupResult>;
+  pruneStaleWorktrees(): Promise<WorktreePruneSummary>;
   getHistory(sessionId: string): Promise<HistoryMessage[]>;
   startTurn(sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[] }): Promise<string>;
   interrupt(turnId: string): Promise<void>;
