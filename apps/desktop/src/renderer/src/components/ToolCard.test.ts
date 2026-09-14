@@ -10,7 +10,8 @@ import {
   recoverToolInput,
   relativizeInText,
   relativizeToBase,
-  stripToolNamePrefix
+  stripToolNamePrefix,
+  summarizeToolGroup
 } from "./toolSummaries.js";
 import type { ChatMessage } from "../stores/appStore.js";
 
@@ -283,5 +284,40 @@ describe("formatDuration", () => {
     expect(formatDuration(3000)).toBe("3s");
     expect(formatDuration(806000)).toBe("13m 26s");
     expect(formatDuration(3723000)).toBe("1h 2m 3s");
+  });
+});
+
+describe("summarizeToolGroup", () => {
+  const done = (toolName: string): ChatMessage =>
+    msg({ id: `${toolName}-${Math.random()}`, toolName, text: toolName, toolInput: {}, toolOutput: "out", toolDone: true });
+
+  it("counts commands with Ran prefix", () => {
+    const s = summarizeToolGroup([done("Bash"), done("shell")]);
+    expect(s?.text).toBe("Ran 2 commands");
+    expect(s?.status).toBe("complete");
+    expect(s?.hasRunning).toBe(false);
+  });
+
+  it("combines reads and commands in first-appearance order", () => {
+    const s = summarizeToolGroup([done("Read"), done("Read"), done("Bash")]);
+    expect(s?.text).toBe("Read 2 files, ran 1 command");
+  });
+
+  it("uses present tense while running", () => {
+    const running = msg({ id: "r1", toolName: "Bash", text: "x", toolInput: { command: "ls" } });
+    const s = summarizeToolGroup([done("Read"), running]);
+    expect(s?.text).toBe("Reading 1 file, running 1 command");
+    expect(s?.status).toBe("running");
+    expect(s?.hasRunning).toBe(true);
+  });
+
+  it("reports errors", () => {
+    const err = msg({ id: "e1", toolName: "Bash", text: "x", toolInput: {}, toolOutput: "nope", toolDone: true, isError: true });
+    const s = summarizeToolGroup([done("Read"), err]);
+    expect(s?.status).toBe("error");
+  });
+
+  it("returns null for empty groups", () => {
+    expect(summarizeToolGroup([])).toBe(null);
   });
 });

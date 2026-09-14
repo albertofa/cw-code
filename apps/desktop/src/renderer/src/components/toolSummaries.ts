@@ -366,9 +366,103 @@ export function relativizeInText(base: string, text: string): string {
   return out.join("");
 }
 
+export interface ToolGroupSummary {
+  text: string;
+  Icon: LucideIcon;
+  status: "complete" | "error" | "running" | "pending";
+  hasRunning: boolean;
+}
+
+type GroupableMessage = {
+  toolName?: string;
+  isError?: boolean;
+  toolInput?: unknown;
+  toolOutput?: string;
+  toolDone?: boolean;
+};
+
 function isRunningTool(m: { toolInput?: unknown; toolOutput?: string; toolDone?: boolean }): boolean {
   const done = m.toolDone === true || m.toolOutput !== undefined;
   return m.toolInput !== undefined && !done;
+}
+
+function groupItemStatus(m: GroupableMessage): "error" | "running" | "complete" | "pending" {
+  if (m.isError === true) return "error";
+  if (isRunningTool(m)) return "running";
+  if (m.toolDone === true || m.toolOutput !== undefined) return "complete";
+  return "pending";
+}
+
+export function summarizeToolGroup(messages: GroupableMessage[]): ToolGroupSummary | null {
+  if (messages.length === 0) return null;
+  let commands = 0;
+  let reads = 0;
+  let edits = 0;
+  let searches = 0;
+  let fetches = 0;
+  const otherCounts = new Map<string, number>();
+  const order: string[] = [];
+  const pushOrder = (key: string) => {
+    if (!order.includes(key)) order.push(key);
+  };
+  for (const m of messages) {
+    const name = (m.toolName ?? "tool").toLowerCase();
+    if (name === "bash" || name === "shell") {
+      commands++;
+      pushOrder("commands");
+    } else if (name === "read") {
+      reads++;
+      pushOrder("reads");
+    } else if (name === "write" || name === "edit" || name === "apply_patch" || name === "patch" || name === "delete" || name === "remove") {
+      edits++;
+      pushOrder("edits");
+    } else if (name === "grep" || name === "glob") {
+      searches++;
+      pushOrder("searches");
+    } else if (name === "webfetch" || name === "websearch") {
+      fetches++;
+      pushOrder("fetches");
+    } else if (name === "askuserquestion" || name === "request_user_input" || name === "cw_ask" || name === "question") {
+      otherCounts.set("questions", (otherCounts.get("questions") ?? 0) + 1);
+      pushOrder("questions");
+    } else {
+      otherCounts.set(name, (otherCounts.get(name) ?? 0) + 1);
+      pushOrder(name);
+    }
+  }
+  let hasError = false;
+  let hasRunning = false;
+  let allDone = true;
+  for (const m of messages) {
+    const s = groupItemStatus(m);
+    if (s === "error") hasError = true;
+    if (s === "running") hasRunning = true;
+    if (s !== "complete" && s !== "error") allDone = false;
+  }
+  const status = hasError ? "error" : hasRunning ? "running" : allDone ? "complete" : "pending";
+  const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
+  const parts: string[] = [];
+  for (const key of order) {
+    if (key === "edits") parts.push(`${hasRunning ? "Editing" : "Edited"} ${edits} ${plural(edits, "file", "files")}`);
+    else if (key === "reads") parts.push(`${hasRunning ? "Reading" : "Read"} ${reads} ${plural(reads, "file", "files")}`);
+    else if (key === "commands") parts.push(`${hasRunning ? "Running" : "Ran"} ${commands} ${plural(commands, "command", "commands")}`);
+    else if (key === "searches") parts.push(`${hasRunning ? "Searching" : "Searched"} ${searches} ${plural(searches, "path", "paths")}`);
+    else if (key === "fetches") parts.push(`${hasRunning ? "Fetching" : "Fetched"} ${fetches} ${plural(fetches, "URL", "URLs")}`);
+    else if (key === "questions") {
+      const n = otherCounts.get("questions") ?? 0;
+      parts.push(`${hasRunning ? "Asking" : "Asked"} ${n} ${plural(n, "question", "questions")}`);
+    } else {
+      const n = otherCounts.get(key) ?? 0;
+      const verb = TOOL_KINDS[key]?.verb ?? key.charAt(0).toUpperCase() + key.slice(1);
+      parts.push(`${hasRunning ? "Running" : "Ran"} ${n} ${plural(n, verb.toLowerCase(), `${verb.toLowerCase()}s`)}`);
+    }
+  }
+  const text = parts
+    .map((p, i) => (i === 0 ? p : p.charAt(0).toLowerCase() + p.slice(1)))
+    .join(", ");
+  const firstName = (messages[0].toolName ?? "tool").toLowerCase();
+  const Icon = TOOL_KINDS[firstName]?.Icon ?? Terminal;
+  return { text, Icon, status, hasRunning };
 }
 
 export function orderToolsForDisplay<T extends { role: string; toolInput?: unknown; toolOutput?: string; toolDone?: boolean }>(
