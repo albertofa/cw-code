@@ -216,6 +216,31 @@ describe("OpencodeServerPool ensure", () => {
     pool.dispose();
   });
 
+  it("reuses a server with mismatched env while a turn is in flight", async () => {
+    const handles: ServerHandle[] = [
+      { port: 40001, authHeader: "a" },
+      { port: 40002, authHeader: "b" }
+    ];
+    let calls = 0;
+    const startServer = vi.fn(() => {
+      calls += 1;
+      return Promise.resolve({ proc: fakeProc(), handle: handles[calls - 1] });
+    });
+    const pool = makePool(startServer);
+
+    await pool.ensure(ROOT);
+    pool.beginTurn(ROOT);
+    const duringTurn = await pool.ensure(ROOT, { CW_BRIDGE: "1" });
+    expect(duringTurn.port).toBe(40001);
+    expect(startServer).toHaveBeenCalledTimes(1);
+
+    pool.endTurn(ROOT);
+    const afterTurn = await pool.ensure(ROOT, { CW_BRIDGE: "1" });
+    expect(afterTurn.port).toBe(40002);
+    expect(startServer).toHaveBeenCalledTimes(2);
+    pool.dispose();
+  });
+
   it("rejects an in-flight spawn when disposed and never caches it", async () => {
     const startServer = vi.fn(
       (): Promise<{ proc: ChildProcess; handle: ServerHandle }> =>

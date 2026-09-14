@@ -180,7 +180,13 @@ export class OpencodeServerPool {
       });
       return existing.handle;
     }
-    if (existing) this.stop(rootPath);
+    if (existing) {
+      if ((this.inFlight.get(rootPath) ?? 0) > 0) {
+        existing.lastUsed = Date.now();
+        return existing.handle;
+      }
+      this.stop(rootPath);
+    }
     const spawnEnv = stripSessionEnv(env);
     const started = this.deps?.startServer
       ? await this.deps.startServer(rootPath, binary, spawnEnv)
