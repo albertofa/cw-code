@@ -361,7 +361,7 @@ async function queryPullRequest(root: string, ghBinary: string, remote: ParsedGi
   }
 }
 
-function safeSegment(value: string): string {
+export function safeSegment(value: string): string {
   return value.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80) || "workspace";
 }
 
@@ -468,6 +468,20 @@ export class GitService {
       return await this.git(root).checkIsRepo();
     } catch {
       return false;
+    }
+  }
+
+  async worktrees(root: string): Promise<WorktreeEntry[]> {
+    const repositoryRoot = await this.repositoryRoot(root);
+    return parseWorktreeList(await this.git(repositoryRoot).raw(["worktree", "list", "--porcelain"]));
+  }
+
+  async currentBranch(root: string): Promise<string | null> {
+    try {
+      const branch = (await this.git(root).revparse(["--abbrev-ref", "HEAD"])).trim();
+      return branch && branch !== "HEAD" ? branch : null;
+    } catch {
+      return null;
     }
   }
 

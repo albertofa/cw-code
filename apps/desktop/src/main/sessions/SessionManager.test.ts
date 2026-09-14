@@ -300,6 +300,64 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
+  it("reuses a previous worktree without creating a new branch", async () => {
+    const { manager, project, repository } = makeGitSandboxManager("cw-session-reuse-");
+    const a = await manager.createSession(project.id, "claude", { mode: "new", baseBranch: "main" });
+    if (!a.worktreePath) throw new Error("expected a worktree-backed session");
+    const branchCount = () =>
+      execFileSync("git", ["-C", repository, "for-each-ref", "--format=%(refname:short)", "refs/heads"], { encoding: "utf8" })
+        .split("\n").filter(Boolean).length;
+    const before = branchCount();
+
+    const b = await manager.createSession(project.id, "claude", { mode: "previous", reuseWorktreePath: a.worktreePath });
+
+    expect(b.worktreePath).toBe(a.worktreePath);
+    expect(b.branch).toBe(a.branch);
+    expect(manager.rootFor(b.id)).toBe(a.worktreePath);
+    expect(branchCount()).toBe(before);
+    manager.dispose();
+  });
+
+  it("falls back to a new worktree when the reuse path does not exist", async () => {
+    const { manager, project } = makeGitSandboxManager("cw-session-reuse-missing-");
+    const session = await manager.createSession(project.id, "claude", {
+      mode: "previous",
+      reuseWorktreePath: join(project.rootPath, "..", "does-not-exist")
+    });
+    expect(session.worktreePath).toBeTruthy();
+    expect(session.worktreePath).not.toContain("does-not-exist");
+    expect(session.branch).toMatch(/^cw\//);
+    manager.dispose();
+  });
+
+  it("falls back to a new worktree when the reuse path is outside the app worktrees root", async () => {
+    const { manager, project, repository } = makeGitSandboxManager("cw-session-reuse-outside-");
+    const session = await manager.createSession(project.id, "claude", {
+      mode: "previous",
+      reuseWorktreePath: repository
+    });
+    expect(session.worktreePath).toBeTruthy();
+    expect(session.worktreePath).not.toBe(repository);
+    expect(session.branch).toMatch(/^cw\//);
+    manager.dispose();
+  });
+
+  it("creates sessions without a worktree in current mode", async () => {
+    const { manager, project } = makeGitSandboxManager("cw-session-current-");
+    const session = await manager.createSession(project.id, "claude", { mode: "current" });
+    expect(session.worktreePath).toBeUndefined();
+    expect(manager.rootFor(session.id)).toBe(project.rootPath);
+    manager.dispose();
+  });
+
+  it("treats a missing mode with useWorktree false as current checkout", async () => {
+    const { manager, project } = makeGitSandboxManager("cw-session-compat-");
+    const session = await manager.createSession(project.id, "claude", { useWorktree: false });
+    expect(session.worktreePath).toBeUndefined();
+    expect(manager.rootFor(session.id)).toBe(project.rootPath);
+    manager.dispose();
+  });
+
   it("injects cw-code env vars into the TurnRequest of worktree sessions", async () => {
     const { manager, fake, project, repository } = makeGitSandboxManager("cw-session-env-");
     const session = await manager.createSession(project.id, "claude", { baseBranch: "main" });

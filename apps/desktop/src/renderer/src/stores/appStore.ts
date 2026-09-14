@@ -39,6 +39,10 @@ export const DEFAULT_COMPOSER: Required<Pick<ComposerPrefs, "effort" | "permissi
   permissionMode: "auto"
 };
 
+function defaultWorkspace(defaultUseWorktree: boolean): CreateSessionOptions {
+  return { mode: defaultUseWorktree ? "new" : "current" };
+}
+
 function readComposerMirror(sessionId: string): ComposerPrefs | null {
   try {
     const raw = window.localStorage.getItem(`cw:composer:${sessionId}`);
@@ -180,7 +184,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   pendingQuestions: {},
   worktreeConfirmQueue: [],
   pendingPrefs: { ...DEFAULT_COMPOSER },
-  pendingWorkspace: { useWorktree: true },
+  pendingWorkspace: defaultWorkspace(true),
   gitStatusBySession: {},
   sourceControlRefreshIntervalSeconds: 30,
   defaultUseWorktree: true,
@@ -232,7 +236,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       projects,
       sourceControlRefreshIntervalSeconds: settings.sourceControlRefreshIntervalSeconds,
       defaultUseWorktree: settings.defaultUseWorktree,
-      pendingWorkspace: { ...get().pendingWorkspace, useWorktree: settings.defaultUseWorktree }
+      pendingWorkspace: defaultWorkspace(settings.defaultUseWorktree)
     });
     if (projects.length === 0 || get().activeProjectId) return;
     const lists = await Promise.all(
@@ -319,7 +323,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         sessionsByProject: { ...get().sessionsByProject, [projectId]: sessions },
         activeSessionId: null,
         pendingDriver: get().lastDriver,
-        pendingWorkspace: { useWorktree: get().defaultUseWorktree }
+        pendingWorkspace: defaultWorkspace(get().defaultUseWorktree)
       });
     }
     void get().loadDiscovered();
@@ -475,7 +479,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   startNewSession(driver?: DriverName) {
     if (!get().activeProjectId) return;
-    set({ pendingDriver: driver ?? get().lastDriver, activeSessionId: null, pendingWorkspace: { useWorktree: get().defaultUseWorktree } });
+    set({ pendingDriver: driver ?? get().lastDriver, activeSessionId: null, pendingWorkspace: defaultWorkspace(get().defaultUseWorktree) });
   },
 
   setPendingDriver(driver: DriverName) {

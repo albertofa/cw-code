@@ -4490,28 +4490,17 @@ select.field option {
   align-items: center;
   justify-content: center;
   gap: 10px;
+  flex-wrap: wrap;
   min-height: 30px;
 }
 
 .newthread-workspace .menu {
   width: 190px;
+  min-width: 0;
 }
 
 .newthread-workspace .menu-btn {
   width: 100%;
-}
-
-.worktree-toggle {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  color: var(--dim);
-  font-size: 11.5px;
-  cursor: pointer;
-}
-
-.worktree-toggle input {
-  accent-color: var(--driver);
 }
 
 .workspace-hint {

@@ -22,9 +22,13 @@ export interface Session {
   branch?: string;
 }
 
+export type CreateWorkspaceMode = "current" | "new" | "previous";
+
 export interface CreateSessionOptions {
   baseBranch?: string;
   useWorktree?: boolean;
+  mode?: CreateWorkspaceMode;
+  reuseWorktreePath?: string;
 }
 
 export interface SessionCleanupResult {

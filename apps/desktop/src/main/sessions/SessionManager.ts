@@ -1,7 +1,7 @@
 import { app } from "electron";
 import { randomUUID } from "node:crypto";
 import { existsSync, readdirSync, rmSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 import type {
   AppSettings,
   ApprovalDecision,
@@ -28,7 +28,7 @@ import { TracingCliDriver } from "../debug/tracingDriver.js";
 import { CLAUDE_CURATED_MODELS, ClaudeCliDriver } from "../providers/claude/ClaudeCliDriver.js";
 import { OpencodeDriver } from "../providers/opencode/OpencodeDriver.js";
 import { CodexCliDriver } from "../providers/codex/CodexCliDriver.js";
-import { GitService, type CreatedWorktree, type RemoveWorktreeResult } from "../fs/GitService.js";
+import { GitService, safeSegment, type CreatedWorktree, type RemoveWorktreeResult } from "../fs/GitService.js";
 import { resolveAttachments } from "./attachments.js";
 import { branchNameForTitle, TEMP_BRANCH_PATTERN } from "./branchName.js";
 import { NEW_SESSION_TITLE, pickRestoreCandidate } from "./sessionRestore.js";
@@ -223,21 +223,51 @@ export class SessionManager {
     const project = this.store.getProject(projectId);
     if (!project) throw new Error(`unknown project ${projectId}`);
     const id = `sess_${randomUUID().slice(0, 8)}`;
-    if (options.useWorktree !== false && await this.git.isRepository(project.rootPath)) {
-      const worktree = await this.git.createWorktree(
-        project.rootPath,
-        project.id,
-        id,
-        this.worktreesRoot,
-        options.baseBranch
-      );
-      return this.store.createSession(projectId, driver, "New session", {
-        id,
-        worktreePath: worktree.path,
-        branch: worktree.branch
-      });
+    const mode = options.mode ?? (options.useWorktree === false ? "current" : "new");
+    if (mode === "current" || !(await this.git.isRepository(project.rootPath))) {
+      return this.store.createSession(projectId, driver, "New session", { id });
     }
-    return this.store.createSession(projectId, driver, "New session", { id });
+    if (mode === "previous" && options.reuseWorktreePath) {
+      const reused = await this.reusableWorktree(project, options.reuseWorktreePath);
+      if (reused) {
+        return this.store.createSession(projectId, driver, "New session", {
+          id,
+          worktreePath: reused.path,
+          branch: reused.branch
+        });
+      }
+    }
+    const worktree = await this.git.createWorktree(
+      project.rootPath,
+      project.id,
+      id,
+      this.worktreesRoot,
+      options.baseBranch
+    );
+    return this.store.createSession(projectId, driver, "New session", {
+      id,
+      worktreePath: worktree.path,
+      branch: worktree.branch
+    });
+  }
+
+  private async reusableWorktree(project: Project, requested: string): Promise<CreatedWorktree | null> {
+    try {
+      const repositoryRoot = await this.git.repositoryRoot(project.rootPath);
+      const parent = resolve(join(this.worktreesRoot, safeSegment(project.id)));
+      const entry = (await this.git.worktrees(repositoryRoot)).find((wt) => sameWorktreePath(wt.path, requested));
+      if (!entry) return null;
+      const path = resolve(entry.path);
+      if (!existsSync(path)) return null;
+      const rel = relative(parent, path);
+      if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) return null;
+      const branch = entry.branch ?? (await this.git.currentBranch(path));
+      if (!branch) return null;
+      return { path, branch, repositoryRoot };
+    } catch (err) {
+      console.warn(`worktree reuse rejected for '${requested}': ${(err as Error).message}`);
+      return null;
+    }
   }
 
   async renameSession(sessionId: string, title: string): Promise<void> {
