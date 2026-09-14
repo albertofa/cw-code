@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
-import type { CliDriver, HistoryMessage, ThreadEvent, TurnHandle } from "@cw-code/contracts";
+import type { CliDriver, HistoryMessage, ModelOption, ThreadEvent, TurnHandle } from "@cw-code/contracts";
 import { SessionManager } from "./SessionManager.js";
 import type { SessionStore } from "./SessionStore.js";
 
@@ -51,6 +51,29 @@ class FakeDriver implements CliDriver {
   }
   completeAll(): void {
     for (const turnId of [...this.pending.keys()]) this.complete(turnId);
+  }
+  interrupt(): void {}
+  async renameSession(): Promise<void> {}
+  async *events(): AsyncIterable<never> {}
+}
+
+class ModelRecordingDriver implements CliDriver {
+  readonly kind = "opencode" as const;
+  modelCwds: string[] = [];
+  constructor(private emit: (event: ThreadEvent) => void) {}
+  async listSessions(): Promise<[]> {
+    return [];
+  }
+  async getHistory(): Promise<HistoryMessage[]> {
+    return [];
+  }
+  async listModels(cwd: string): Promise<ModelOption[]> {
+    this.modelCwds.push(cwd);
+    return [];
+  }
+  startTurn(): TurnHandle {
+    const turnId = randomUUID();
+    return { turnId, events: (async function* () {})() };
   }
   interrupt(): void {}
   async renameSession(): Promise<void> {}
@@ -274,6 +297,56 @@ describe("SessionManager", () => {
     expect(manager.rootFor(session.id)).toBe(session.worktreePath);
     await manager.startTurn(session.id, "isolated");
     expect(fake.lastRequest?.cwd).toBe(session.worktreePath);
+    manager.dispose();
+  });
+
+  it("injects cw-code env vars into the TurnRequest of worktree sessions", async () => {
+    const { manager, fake, project, repository } = makeGitSandboxManager("cw-session-env-");
+    const session = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    await manager.startTurn(session.id, "env");
+    expect(fake.lastRequest?.env).toMatchObject({
+      CW_WORKTREE_PATH: session.worktreePath,
+      CW_PROJECT_ROOT: repository,
+      CW_SESSION_ID: session.id
+    });
+    manager.dispose();
+  });
+
+  it("falls back CW_WORKTREE_PATH to the project root for sessions without a worktree", async () => {
+    const { manager, fake } = makeManager();
+    const project = manager.addProject("C:\\proj-env-nowt");
+    const a = await manager.createSession(project.id, "claude");
+    await manager.startTurn(a.id, "env");
+    expect(fake.lastRequest?.env).toMatchObject({
+      CW_WORKTREE_PATH: "C:\\proj-env-nowt",
+      CW_PROJECT_ROOT: "C:\\proj-env-nowt",
+      CW_SESSION_ID: a.id
+    });
+    manager.dispose();
+  });
+
+  it("lists models from the session worktree when one exists", async () => {
+    const { manager, project } = makeGitSandboxManager("cw-session-models-");
+    const modelDriver = new ModelRecordingDriver((event) =>
+      (manager as unknown as { routeEvent(e: ThreadEvent): void }).routeEvent(event)
+    );
+    (manager as unknown as { drivers: Record<string, CliDriver> }).drivers.opencode = modelDriver;
+    const session = await manager.createSession(project.id, "opencode", { baseBranch: "main" });
+    await manager.listModels(session.id);
+    expect(modelDriver.modelCwds).toEqual([session.worktreePath]);
+    manager.dispose();
+  });
+
+  it("lists models from the project root for sessions without a worktree", async () => {
+    const { manager } = makeManager();
+    const project = manager.addProject("C:\\proj-models-nowt");
+    const modelDriver = new ModelRecordingDriver((event) =>
+      (manager as unknown as { routeEvent(e: ThreadEvent): void }).routeEvent(event)
+    );
+    (manager as unknown as { drivers: Record<string, CliDriver> }).drivers.opencode = modelDriver;
+    const session = await manager.createSession(project.id, "opencode");
+    await manager.listModels(session.id);
+    expect(modelDriver.modelCwds).toEqual(["C:\\proj-models-nowt"]);
     manager.dispose();
   });
 

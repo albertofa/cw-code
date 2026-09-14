@@ -279,9 +279,15 @@ function registerIpc(): void {
 
   ipcMain.handle("pty.open", (_e, args: { sessionId: string; kind: PtyKind }) =>
     sessions.ensureWorktree(args.sessionId).then((root) =>
-      ptys.open(args.sessionId, root, args.kind, (id, data) => {
-        mainWindow?.webContents.send("pty.data", { ptyId: id, data });
-      })
+      ptys.open(
+        args.sessionId,
+        root,
+        args.kind,
+        sessions.turnEnv(args.sessionId, root),
+        (id, data) => {
+          mainWindow?.webContents.send("pty.data", { ptyId: id, data });
+        }
+      )
     )
   );
   ipcMain.on("pty.write", (_e, args: { ptyId: string; data: string }) => ptys.write(args.ptyId, args.data));

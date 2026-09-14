@@ -99,4 +99,44 @@ describe("CodexAppServer", () => {
     disposed.dispose();
     await expect(disposed.request("greet")).rejects.toThrow("disposed");
   });
+
+  it("passes spawn env to the app-server process", async () => {
+    const envEchoPath = join(tmpDir, "env-echo.mjs");
+    writeFileSync(
+      envEchoPath,
+      `
+process.stdin.setEncoding("utf8");
+let buf = "";
+process.stdin.on("data", (chunk) => {
+  buf += chunk;
+  let idx;
+  while ((idx = buf.indexOf("\\n")) >= 0) {
+    const line = buf.slice(0, idx);
+    buf = buf.slice(idx + 1);
+    if (!line.trim()) continue;
+    const msg = JSON.parse(line);
+    if (msg.method === "initialize") {
+      process.stdout.write(JSON.stringify({ id: msg.id, result: {} }) + "\\n");
+    } else if (msg.method === "initialized") {
+      process.stdout.write(JSON.stringify({ method: "ready", params: {} }) + "\\n");
+    } else if (msg.id !== undefined) {
+      process.stdout.write(JSON.stringify({ id: msg.id, result: { mark: process.env.CW_TEST_MARK ?? null } }) + "\\n");
+    }
+  }
+});
+`,
+      "utf8"
+    );
+    const envClient = new CodexAppServer({
+      binary: process.execPath,
+      args: [envEchoPath],
+      env: { ...process.env, CW_TEST_MARK: "present" }
+    });
+    try {
+      const result = await envClient.request<{ mark: string | null }>("check", {});
+      expect(result.mark).toBe("present");
+    } finally {
+      envClient.dispose();
+    }
+  });
 });

@@ -22,6 +22,7 @@ const SETTINGS: AppSettings = {
 class FakeClient implements CodexAppServerLike {
   requests: Array<{ method: string; params?: unknown }> = [];
   responses: Array<{ id: string | number; result: unknown }> = [];
+  spawnEnvs: Array<Record<string, string> | undefined> = [];
   private notificationHandler: ((method: string, params: unknown) => void) | null = null;
   private serverRequestHandler: ((method: string, params: unknown, id: string | number) => void) | null = null;
   private requestCount = 0;
@@ -87,6 +88,10 @@ class FakeClient implements CodexAppServerLike {
 
   respond(id: string | number, result: unknown): void {
     this.responses.push({ id, result });
+  }
+
+  setSpawnEnv(env: Record<string, string> | undefined): void {
+    this.spawnEnvs.push(env);
   }
 
   onNotification(handler: (method: string, params: unknown) => void): void {
@@ -381,6 +386,15 @@ describe("CodexCliDriver", () => {
       method: "thread/name/set",
       params: { threadId: "thr_a", name: "Renamed" }
     });
+    driver.dispose();
+  });
+
+  it("applies the first turn env to the app-server spawn and keeps later turns on the shared process", () => {
+    const shared = new FakeClient();
+    const { driver } = makeDriver(shared);
+    driver.startTurn({ sessionId: "s1", cwd: "C:\\w1", prompt: "a", env: { CW_SESSION_ID: "s1" } });
+    driver.startTurn({ sessionId: "s2", cwd: "C:\\w2", prompt: "b", env: { CW_SESSION_ID: "s2" } });
+    expect(shared.spawnEnvs).toEqual([{ CW_SESSION_ID: "s1" }]);
     driver.dispose();
   });
 });

@@ -69,6 +69,20 @@ describe("OpencodeServerPool ensure", () => {
     pool.dispose();
   });
 
+  it("reuses an existing env-spawned server when a later ensure specifies no env", async () => {
+    const startServer = vi.fn(
+      (): Promise<{ proc: ChildProcess; handle: ServerHandle }> => Promise.resolve({ proc: fakeProc(), handle: HANDLE })
+    );
+    const pool = makePool(startServer);
+
+    await pool.ensure(ROOT, { CW_TEST: "1" });
+    const second = await pool.ensure(ROOT);
+
+    expect(second).toBe(HANDLE);
+    expect(startServer).toHaveBeenCalledTimes(1);
+    pool.dispose();
+  });
+
   it("spawns a fresh server when a concurrent caller requests a different env", async () => {
     let calls = 0;
     const handles: ServerHandle[] = [

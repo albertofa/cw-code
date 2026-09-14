@@ -90,6 +90,7 @@ export class CodexCliDriver implements CliDriver {
   private approvals = new Map<string, PendingApproval>();
   private pendingQuestions = new Map<string, { serverId: string | number; turnId: string }>();
   private defaultModelIdCache: string | null = null;
+  private turnEnvApplied = false;
 
   constructor(
     private emit: (event: ThreadEvent) => void,
@@ -243,6 +244,10 @@ export class CodexCliDriver implements CliDriver {
       resumeCursor: request.resumeCursor,
       ok: true
     });
+    if (!this.turnEnvApplied) {
+      this.turnEnvApplied = true;
+      this.client.setSpawnEnv?.(request.env);
+    }
     void this.runTurn(turnId, request);
     return { turnId, events: (async function* () {})() };
   }

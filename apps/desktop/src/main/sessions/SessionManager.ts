@@ -20,6 +20,7 @@ import type {
   WorktreePruneSummary
 } from "@cw-code/contracts";
 import { SessionStore } from "./SessionStore.js";
+import { buildTurnEnv } from "./env.js";
 import { isWorktreeOrphaned, looksLikeWorktree, sameWorktreePath } from "./worktreeCleanup.js";
 import { SettingsStore } from "../settings/SettingsStore.js";
 import { resolveClaudeModels } from "../settings/settingsUtils.js";
@@ -450,6 +451,21 @@ export class SessionManager {
     }
   }
 
+  private sessionEnvVars(session: SessionMeta, project: Project, cwd: string): Record<string, string> {
+    return {
+      CW_WORKTREE_PATH: cwd,
+      CW_PROJECT_ROOT: project.rootPath,
+      CW_SESSION_ID: session.id
+    };
+  }
+
+  turnEnv(sessionId: string, cwd: string): Record<string, string> {
+    const session = this.store.getSession(sessionId);
+    if (!session) throw new Error(`unknown session ${sessionId}`);
+    const project = this.getProject(session.projectId);
+    return buildTurnEnv(process.env, this.sessionEnvVars(session, project, cwd));
+  }
+
   async startTurn(sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[] }): Promise<string> {
     const session = this.store.getSession(sessionId);
     if (!session) throw new Error(`unknown session ${sessionId}`);
@@ -478,7 +494,8 @@ export class SessionManager {
         effort: prefs.effort,
         variant: prefs.variant,
         permissionMode: prefs.permissionMode,
-        attachments: resolveAttachments(project.rootPath, cwd, opts?.attachments ?? [])
+        attachments: resolveAttachments(project.rootPath, cwd, opts?.attachments ?? []),
+        env: buildTurnEnv(process.env, this.sessionEnvVars(session, project, cwd))
       });
       this.activeTurns.set(handle.turnId, sessionId);
       if (session.title === "New session") {
@@ -494,10 +511,12 @@ export class SessionManager {
   async listModels(sessionId: string): Promise<ModelOption[]> {
     const session = this.store.getSession(sessionId);
     if (!session) throw new Error(`unknown session ${sessionId}`);
-    return this.listModelsFor(session.projectId, session.driver);
+    if (session.driver === "claude") return this.listModelsFor(session.projectId, "claude");
+    const cwd = await this.ensureWorktree(sessionId);
+    return this.listModelsFor(session.projectId, session.driver, cwd);
   }
 
-  async listModelsFor(projectId: string, driver: DriverKind): Promise<ModelOption[]> {
+  async listModelsFor(projectId: string, driver: DriverKind, cwd?: string): Promise<ModelOption[]> {
     if (driver === "claude") {
       return resolveClaudeModels(this.settings.get(), CLAUDE_CURATED_MODELS);
     }
@@ -506,7 +525,7 @@ export class SessionManager {
     const driverInstance = this.drivers[driver];
     if (typeof driverInstance.listModels !== "function") return [];
     try {
-      return await driverInstance.listModels(project.rootPath);
+      return await driverInstance.listModels(cwd ?? project.rootPath);
     } catch (err) {
       console.warn(`model list failed: ${(err as Error).message}`);
     }

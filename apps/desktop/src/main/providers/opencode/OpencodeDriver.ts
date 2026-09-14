@@ -400,7 +400,7 @@ export class OpencodeDriver implements CliDriver {
     let authHeader = "";
     let bridgeEnv: Record<string, string> | undefined;
     try {
-      let handle = await this.pool.ensure(request.cwd);
+      let handle = await this.pool.ensure(request.cwd, request.env);
       serverPort = handle.port;
       authHeader = handle.authHeader;
       if (request.resumeCursor) {
@@ -409,7 +409,7 @@ export class OpencodeDriver implements CliDriver {
           const dir = join(app.getPath("userData"), "cw-opencode");
           await writeAskBridgeTool(dir, await this.bridgeUrl());
           bridgeEnv = { OPENCODE_CONFIG_DIR: dir };
-          handle = await this.pool.ensure(request.cwd, bridgeEnv);
+          handle = await this.pool.ensure(request.cwd, { ...(request.env ?? {}), ...bridgeEnv });
           serverPort = handle.port;
           authHeader = handle.authHeader;
         }

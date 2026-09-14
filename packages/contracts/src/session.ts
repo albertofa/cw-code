@@ -48,6 +48,8 @@ export interface TurnRequest {
   attachments?: string[];
   allowedTools?: string[];
   maxTurns?: number;
+  /** Complete spawn environment (process env plus cw-code injections). When omitted, the child inherits the parent env. */
+  env?: Record<string, string>;
 }
 
 export type PermissionMode = "auto" | "acceptEdits" | "bypassPermissions" | "manual" | "plan";

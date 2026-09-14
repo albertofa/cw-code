@@ -49,7 +49,7 @@ export class OpencodeServerPool {
     private deps?: { startServer?: (rootPath: string, binary: string, env: Record<string, string> | undefined) => Promise<StartedServer> }
   ) {}
 
-  private async ensureProcess(rootPath: string, binary: string, envKey: string, env: Record<string, string> | undefined): Promise<{ proc: ChildProcess; handle: ServerHandle }> {
+  private async ensureProcess(rootPath: string, binary: string, env: Record<string, string> | undefined): Promise<{ proc: ChildProcess; handle: ServerHandle }> {
     const start = Date.now();
     const port = await findFreePort();
     const password = process.env["OPENCODE_SERVER_PASSWORD"] ?? "";
@@ -89,7 +89,7 @@ export class OpencodeServerPool {
       args,
       durationMs: Date.now() - start,
       ok: true,
-      extra: { serverPort: port, envKeys: envKey }
+      extra: { serverPort: port, envKeys: env ? Object.keys(env).join(",") : "" }
     });
     return { proc, handle };
   }
@@ -114,7 +114,7 @@ export class OpencodeServerPool {
     const binary = this.getBinary();
     const envKey = env ? JSON.stringify(env) : "";
     const existing = this.servers.get(rootPath);
-    if (existing?.binary === binary && existing.envKey === envKey) {
+    if (existing?.binary === binary && (env === undefined || existing.envKey === envKey)) {
       traceHarnessCall({
         harness: "opencode",
         operation: "opencode.serve.ensure",
@@ -128,7 +128,7 @@ export class OpencodeServerPool {
     if (existing) this.stop(rootPath);
     const started = this.deps?.startServer
       ? await this.deps.startServer(rootPath, binary, env)
-      : await this.ensureProcess(rootPath, binary, envKey, env);
+      : await this.ensureProcess(rootPath, binary, env);
     if (this.disposed) {
       killProcessTree(started.proc);
       throw new Error("opencode server pool disposed");
