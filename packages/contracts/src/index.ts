@@ -18,7 +18,9 @@ export type {
   GitHubAccountSelectionSource,
   SourceControlBinaryHealth,
   SourceControlHealth,
-  CreateSessionOptions
+  CreateSessionOptions,
+  SessionCleanupResult,
+  WorktreePruneSummary
 } from "./session.js";
 export type { ThreadEvent, SessionEvent, HistoryMessage, SubagentToolActivity, SubagentToolSummary, ApprovalDecision, ApprovalKind, ApprovalRequest, QuestionInfo, QuestionOption, QuestionRequest } from "./events.js";
 export type { CliDriver, TurnHandle } from "./provider.js";

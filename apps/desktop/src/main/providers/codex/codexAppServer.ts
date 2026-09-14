@@ -15,6 +15,7 @@ export interface CodexAppServerOptions {
   binary: string;
   args?: string[];
   clientInfo?: { name: string; title: string; version: string };
+  env?: Record<string, string>;
 }
 
 export interface CodexAppServerLike {
@@ -22,6 +23,8 @@ export interface CodexAppServerLike {
   respond(id: string | number, result: unknown): void;
   onNotification(handler: (method: string, params: unknown) => void): void;
   onServerRequest(handler: (method: string, params: unknown, id: string | number) => void): void;
+  /** Applies the spawn env for the next app-server launch; no effect on an already-running process. */
+  setSpawnEnv?(env: Record<string, string> | undefined): void;
   dispose(): void;
 }
 
@@ -60,6 +63,10 @@ export class CodexAppServer implements CodexAppServerLike {
 
   onServerRequest(handler: (method: string, params: unknown, id: string | number) => void): void {
     this.serverRequestHandler = handler;
+  }
+
+  setSpawnEnv(env: Record<string, string> | undefined): void {
+    this.opts = { ...this.opts, env };
   }
 
   request<T>(method: string, params?: unknown, timeoutMs = 60_000): Promise<T> {
@@ -119,7 +126,8 @@ export class CodexAppServer implements CodexAppServerLike {
     const args = [...(this.opts.args ?? []), "app-server"];
     const proc = spawn(this.opts.binary, args, {
       stdio: ["pipe", "pipe", "pipe"],
-      windowsHide: true
+      windowsHide: true,
+      ...(this.opts.env ? { env: this.opts.env } : {})
     });
     this.stderrTail = [];
 

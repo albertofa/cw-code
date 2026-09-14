@@ -22,9 +22,35 @@ export interface Session {
   branch?: string;
 }
 
+export type CreateWorkspaceMode = "current" | "new" | "previous";
+
 export interface CreateSessionOptions {
   baseBranch?: string;
   useWorktree?: boolean;
+  mode?: CreateWorkspaceMode;
+  reuseWorktreePath?: string;
+}
+
+export interface SessionCleanupResult {
+  sessionId: string;
+  status: SessionStatus;
+  worktreePath?: string;
+  worktreeOrphaned: boolean;
+  worktreeRemoved: boolean;
+  dirtyBlocked?: boolean;
+  branchDeleted: boolean;
+  unmergedCommits?: boolean;
+  unmergedCommitCount?: number;
+  error?: string;
+}
+
+export interface WorktreePruneSummary {
+  scanned: number;
+  removed: number;
+  skipped: number;
+  failed: number;
+  errors: string[];
+  keptDirty: string[];
 }
 
 export interface HistoryMessage {
@@ -126,7 +152,8 @@ export type TurnEvent =
       numTurns: number;
       isError: boolean;
     }
-  | { type: "turn.error"; turnId: string; message: string; resumeCursor?: string };
+  | { type: "turn.error"; turnId: string; message: string; resumeCursor?: string }
+  | { type: "session.branch.updated"; turnId: string; sessionId: string; branch: string };
 
 export type PermissionMode = "auto" | "acceptEdits" | "bypassPermissions" | "manual" | "plan";
 
@@ -271,6 +298,8 @@ export interface CwApi {
   createSession(projectId: string, driver: DriverName, options?: CreateSessionOptions): Promise<Session>;
   renameSession(sessionId: string, title: string): Promise<void>;
   setSessionStatus(sessionId: string, status: SessionStatus): Promise<Session>;
+  resolveSession(sessionId: string, status: SessionStatus, removeWorktree?: boolean, forceBranch?: boolean): Promise<SessionCleanupResult>;
+  pruneStaleWorktrees(): Promise<WorktreePruneSummary>;
   getHistory(sessionId: string): Promise<HistoryMessage[]>;
   startTurn(sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[] }): Promise<string>;
   interrupt(turnId: string): Promise<void>;

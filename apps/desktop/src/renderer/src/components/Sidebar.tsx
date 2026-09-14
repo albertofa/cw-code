@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
-import { Check, ChevronDown, ChevronRight, ChevronUp, Clock, Folder, GitBranch, RefreshCw, Search, Settings, SquarePen, X } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, ChevronUp, Clock, Folder, GitBranch, Hash, Plus, RefreshCw, Search, Settings, SquarePen, X } from "lucide-react";
 import type { DriverName, Project, Session, SessionStatus } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import { DriverIcon } from "./DriverIcon.js";
@@ -192,7 +192,8 @@ function isStoredOrderValid(mainAll: Session[], resolvedAll: Session[], stored: 
 }
 
 export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
-  const { projects, sessionsByProject, discoveredByProject, activeProjectId, activeSessionId, gitStatusBySession, projectFilter } = useAppStore();
+  const { projects, sessionsByProject, discoveredByProject, activeProjectId, activeSessionId, gitStatusBySession, projectFilter, worktreeConfirmQueue } = useAppStore();
+  const worktreeConfirm = worktreeConfirmQueue[0] ?? null;
   const store = useAppStore();
   const [query, setQuery] = useState("");
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -496,6 +497,12 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
         window.setTimeout(() => setCopiedId((id) => (id === p.id ? null : id)), 1500);
       })
       .catch(() => {});
+  };
+
+  const copySessionId = (sessionId: string) => {
+    setMenu(null);
+    if (!navigator.clipboard) return;
+    void navigator.clipboard.writeText(sessionId).catch(() => {});
   };
 
   const commitRename = (sessionId: string) => {
@@ -1001,6 +1008,38 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
             <button className="ctx-item" onClick={() => setStatus(menu.sessionId, "archived")}>
               Archive
             </button>
+            <button className="ctx-item" onClick={() => copySessionId(menu.sessionId)}>
+              Copy session id
+            </button>
+          </div>
+        </>
+      )}
+      {worktreeConfirm && (
+        <>
+          <div className="ctx-backdrop" onClick={() => store.dismissWorktreeRemoval()} />
+          <div
+            className="ctx-menu worktree-confirm"
+            style={{ left: Math.max(12, window.innerWidth / 2 - 140), top: window.innerHeight / 2 - 70 }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div className="worktree-confirm-title">Remove the worktree too?</div>
+            <div className="worktree-confirm-hint">
+              {[...shown, ...resolved].find((s) => s.id === worktreeConfirm.sessionId)?.title ??
+                worktreeConfirm.sessionId}{" "}
+              is {worktreeConfirm.status === "archived" ? "archived" : "resolved"} and no other session uses its isolated worktree.
+            </div>
+            {typeof worktreeConfirm.unmergedCommitCount === "number" && worktreeConfirm.unmergedCommitCount > 0 && (
+              <div className="worktree-confirm-warning">
+                This branch has {worktreeConfirm.unmergedCommitCount} unmerged{" "}
+                {worktreeConfirm.unmergedCommitCount === 1 ? "commit" : "commits"} that will be permanently deleted.
+              </div>
+            )}
+            <button className="ctx-item" onClick={() => void store.confirmWorktreeRemoval()}>
+              Remove worktree and branch
+            </button>
+            <button className="ctx-item" onClick={() => store.dismissWorktreeRemoval()}>
+              Keep it
+            </button>
           </div>
         </>
       )}
@@ -1026,6 +1065,10 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
           <div className="session-hovercard-row">
             <GitBranch size={13} aria-hidden="true" />
             <span className="hovercard-text">{hoverBranch ?? "No branch"}</span>
+          </div>
+          <div className="session-hovercard-row">
+            <Hash size={13} aria-hidden="true" />
+            <span className="hovercard-text hovercard-id">{hoverSession.id}</span>
           </div>
           <div className="session-hovercard-row">
             <DriverIcon driver={hoverSession.driver} size={16} />

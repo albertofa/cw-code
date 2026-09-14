@@ -29,11 +29,17 @@ export interface SessionMeta {
   branch?: string;
 }
 
+export type CreateWorkspaceMode = "current" | "new" | "previous";
+
 export interface CreateSessionOptions {
   /** Ref used as the starting point for the new session branch. */
   baseBranch?: string;
-  /** Defaults to true for Git repositories. */
+  /** Defaults to true for Git repositories. Ignored when mode is set. */
   useWorktree?: boolean;
+  /** Workspace selection for the new session. When omitted, useWorktree decides. */
+  mode?: CreateWorkspaceMode;
+  /** Worktree to reuse when mode is "previous". Must be an app-managed worktree of the project. */
+  reuseWorktreePath?: string;
 }
 
 export interface TurnRequest {
@@ -48,6 +54,8 @@ export interface TurnRequest {
   attachments?: string[];
   allowedTools?: string[];
   maxTurns?: number;
+  /** Complete spawn environment (process env plus cw-code injections). When omitted, the child inherits the parent env. */
+  env?: Record<string, string>;
 }
 
 export type PermissionMode = "auto" | "acceptEdits" | "bypassPermissions" | "manual" | "plan";
@@ -155,6 +163,29 @@ export interface GitBranchInfo {
   current: boolean;
   remote: boolean;
   worktreePath: string | null;
+}
+
+export interface SessionCleanupResult {
+  sessionId: string;
+  status: SessionStatus;
+  worktreePath?: string;
+  worktreeOrphaned: boolean;
+  worktreeRemoved: boolean;
+  dirtyBlocked?: boolean;
+  branchDeleted: boolean;
+  unmergedCommits?: boolean;
+  /** Commits on the session branch that no other branch reaches. Present after an orphan check. */
+  unmergedCommitCount?: number;
+  error?: string;
+}
+
+export interface WorktreePruneSummary {
+  scanned: number;
+  removed: number;
+  skipped: number;
+  failed: number;
+  errors: string[];
+  keptDirty: string[];
 }
 
 export type GitDiffMode = "working" | "staged" | "branch";

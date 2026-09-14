@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useState } from "react";
 import { AlertTriangle, CheckCircle2, GitBranch, RefreshCw, Star, X, XCircle } from "lucide-react";
-import type { AppSettings, DriverName, SourceControlHealth } from "../cw.js";
+import type { AppSettings, DriverName, SourceControlHealth, WorktreePruneSummary } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import { useNotifs } from "./Notifications.js";
 
@@ -39,6 +39,10 @@ export function SettingsModal({
   const [projectAccount, setProjectAccount] = useState("");
   const [gitUserName, setGitUserName] = useState("");
   const [gitUserEmail, setGitUserEmail] = useState("");
+  const [pruneBusy, setPruneBusy] = useState(false);
+  const [confirmPrune, setConfirmPrune] = useState(false);
+  const [pruneSummary, setPruneSummary] = useState<WorktreePruneSummary | null>(null);
+  const [pruneError, setPruneError] = useState<string | null>(null);
   const activeProjectId = useAppStore((state) => state.activeProjectId);
   const activeProject = useAppStore((state) => state.projects.find((project) => project.id === state.activeProjectId));
 
@@ -182,6 +186,29 @@ export function SettingsModal({
   const pickHarness = (h: Harness) => {
     setCategory("harnesses");
     setHarness(h);
+  };
+
+  const runPrune = async () => {
+    setPruneBusy(true);
+    setPruneError(null);
+    try {
+      const summary = await window.cw.pruneStaleWorktrees();
+      setPruneSummary(summary);
+      setConfirmPrune(false);
+      if (summary.failed > 0) {
+        useNotifs.getState().push({
+          kind: "error",
+          title: "Prune finished with failures",
+          message: summary.errors[0] ?? `${summary.failed} worktrees could not be removed`
+        });
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Could not prune worktrees";
+      setPruneError(message);
+      useNotifs.getState().push({ kind: "error", title: "Could not prune worktrees", message });
+    } finally {
+      setPruneBusy(false);
+    }
   };
 
   const modelsSection = draft && (
@@ -348,6 +375,56 @@ export function SettingsModal({
           <span className="settings-hint">Create an isolated branch and worktree for every new Git session by default.</span>
           <input className="settings-toggle" type="checkbox" checked={draft.defaultUseWorktree} onChange={(e) => set({ defaultUseWorktree: e.target.checked })} />
         </label>
+      </section>
+
+      <section className="settings-section">
+        <h3>Worktree maintenance</h3>
+        <span className="settings-hint">
+          Removes worktree directories that no session references anymore, along with their registration. Sessions are never touched.
+        </span>
+        {!confirmPrune ? (
+          <button
+            className="btn"
+            disabled={pruneBusy}
+            onClick={() => {
+              setConfirmPrune(true);
+              setPruneSummary(null);
+              setPruneError(null);
+            }}
+          >
+            Prune stale worktrees…
+          </button>
+        ) : (
+          <div className="settings-prune-confirm">
+            <span>Scan for stale worktree directories and remove them now?</span>
+            <button className="btn btn-primary" onClick={() => void runPrune()} disabled={pruneBusy}>
+              {pruneBusy ? "Pruning…" : "Remove"}
+            </button>
+            <button className="btn" onClick={() => setConfirmPrune(false)} disabled={pruneBusy}>
+              Cancel
+            </button>
+          </div>
+        )}
+        {pruneSummary && (
+          <div className="settings-prune-summary">
+            {pruneSummary.removed === 0 && pruneSummary.failed === 0 && pruneSummary.skipped === 0 && pruneSummary.keptDirty.length === 0
+              ? "No stale worktrees found."
+              : `Removed ${pruneSummary.removed} of ${pruneSummary.scanned} scanned.`}
+            {pruneSummary.skipped > 0 && (
+              <div>
+                Skipped {pruneSummary.skipped} {pruneSummary.skipped === 1 ? "directory" : "directories"} that are not git worktrees.
+              </div>
+            )}
+            {pruneSummary.keptDirty.length > 0 && (
+              <div>
+                Kept {pruneSummary.keptDirty.length} {pruneSummary.keptDirty.length === 1 ? "worktree" : "worktrees"} with uncommitted changes:
+                <div className="settings-prune-paths">{pruneSummary.keptDirty.join("\n")}</div>
+              </div>
+            )}
+            {pruneSummary.failed > 0 && <div className="settings-error">{pruneSummary.errors.join("\n")}</div>}
+          </div>
+        )}
+        {pruneError && <div className="settings-error">{pruneError}</div>}
       </section>
 
       <section className="settings-section settings-health">
