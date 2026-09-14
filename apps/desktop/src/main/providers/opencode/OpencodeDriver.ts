@@ -947,21 +947,52 @@ export class OpencodeDriver implements CliDriver {
     const info = this.watchInfo.get(entry.turnId);
     if (!info) throw new Error("opencode question reply has no live server");
     const payload = JSON.stringify(opencodeReplyPayload(entry.questions, answers));
-    const headers = { "Content-Type": "application/json", Authorization: info.authHeader };
-    for (const base of [`/session/${entry.sessionID}/question/${requestId}/reply`, `/api/session/${entry.sessionID}/question/${requestId}/reply`]) {
-      const res = await opencodeFetch(`http://127.0.0.1:${info.port}${base}`, {
-        method: "POST",
-        headers,
-        body: payload,
-        timeoutMs: OPENCODE_LIST_TIMEOUT_MS,
-        port: info.port
-      });
-      if (res.ok) {
+    const sid = encodeURIComponent(entry.sessionID);
+    const rid = encodeURIComponent(requestId);
+    const routes = [`/api/session/${sid}/question/${rid}/reply`, `/question/${rid}/reply`];
+    const attempt = async (port: number, authHeader: string): Promise<boolean> => {
+      const headers = { "Content-Type": "application/json", Authorization: authHeader };
+      for (const base of routes) {
+        const res = await opencodeFetch(`http://127.0.0.1:${port}${base}`, {
+          method: "POST",
+          headers,
+          body: payload,
+          timeoutMs: OPENCODE_LIST_TIMEOUT_MS,
+          port
+        });
+        if ((res.headers.get("content-type") ?? "").includes("text/html")) continue;
+        if (res.status === 404) continue;
+        if (!res.ok) throw new Error(`opencode question reply failed: ${res.status}`);
+        return true;
+      }
+      return false;
+    };
+    try {
+      if (await attempt(info.port, info.authHeader)) {
         this.pendingQuestions.delete(requestId);
         this.emit({ type: "question.resolved", turnId: entry.turnId, requestId, answers });
         return;
       }
-      if (res.status >= 500) throw new Error(`opencode question reply failed: ${res.status}`);
+    } catch (err) {
+      if (!isConnectionError(err)) throw err;
+      const cwd = entry.cwd || info.cwd;
+      if (!cwd) throw err;
+      traceHarnessCall({
+        harness: "opencode",
+        operation: "opencode.serve.reconnect",
+        turnId: entry.turnId,
+        cwd,
+        ok: true,
+        extra: { deadPort: info.port, reason: truncateError((err as Error).message) }
+      });
+      this.pool.invalidate(cwd);
+      const fresh = await this.pool.ensure(cwd);
+      this.refreshWatchHandle(entry.turnId, fresh, cwd);
+      if (await attempt(fresh.port, fresh.authHeader)) {
+        this.pendingQuestions.delete(requestId);
+        this.emit({ type: "question.resolved", turnId: entry.turnId, requestId, answers });
+        return;
+      }
     }
     throw new Error("opencode question reply failed: no accepted route");
   }
