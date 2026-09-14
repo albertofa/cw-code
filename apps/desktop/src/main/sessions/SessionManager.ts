@@ -26,6 +26,7 @@ import { OpencodeDriver } from "../providers/opencode/OpencodeDriver.js";
 import { CodexCliDriver } from "../providers/codex/CodexCliDriver.js";
 import { GitService, type CreatedWorktree } from "../fs/GitService.js";
 import { resolveAttachments } from "./attachments.js";
+import { branchNameForTitle, TEMP_BRANCH_PATTERN } from "./branchName.js";
 
 export interface SessionManagerOptions {
   dbPath?: string;
@@ -45,6 +46,7 @@ export class SessionManager {
   private activeTurns = new Map<string, string>();
   private pendingTurns = new Set<string>();
   private worktreeRecovery = new Map<string, Promise<string>>();
+  private branchRenamed = new Set<string>();
   private onEvent: (sessionId: string, event: ThreadEvent) => void;
   private git: GitService;
   private worktreesRoot: string;
@@ -119,6 +121,7 @@ export class SessionManager {
     if (event.type === "turn.done") {
       this.activeTurns.delete(event.turnId);
       this.store.updateSession(event.sessionId, { resumeCursor: event.resumeCursor, status: "done" });
+      if (!event.isError) void this.renameBranchForTitle(event.sessionId);
     }
     if (event.type === "turn.error") {
       this.activeTurns.delete(event.turnId);
@@ -423,6 +426,25 @@ export class SessionManager {
   updateSessionBranch(sessionId: string, branch: string): void {
     if (!this.store.getSession(sessionId)) throw new Error(`unknown session ${sessionId}`);
     this.store.updateSession(sessionId, { branch });
+  }
+
+  private async renameBranchForTitle(sessionId: string): Promise<void> {
+    if (this.branchRenamed.has(sessionId)) return;
+    const session = this.store.getSession(sessionId);
+    if (!session?.worktreePath || !session.branch || !TEMP_BRANCH_PATTERN.test(session.branch)) return;
+    const title = session.title.trim();
+    if (!title || title === "New session") return;
+    const candidate = branchNameForTitle(title);
+    if (!candidate || candidate === session.branch) return;
+    this.branchRenamed.add(sessionId);
+    try {
+      const project = this.getProject(session.projectId);
+      const renamed = await this.git.renameBranch(project.rootPath, session.branch, candidate);
+      this.updateSessionBranch(sessionId, renamed);
+    } catch (err) {
+      console.warn(`branch rename failed for session ${sessionId}: ${(err as Error).message}`);
+      this.branchRenamed.delete(sessionId);
+    }
   }
 
   rootForProject(projectId: string): string {

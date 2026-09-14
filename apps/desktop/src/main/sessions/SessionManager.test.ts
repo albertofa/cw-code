@@ -72,6 +72,33 @@ function makeManager() {
   return { manager, received, fake };
 }
 
+async function waitForBranch(manager: SessionManager, projectId: string, sessionId: string, predicate: (branch: string | undefined) => boolean): Promise<string | undefined> {
+  for (let i = 0; i < 100; i += 1) {
+    const branch = (await manager.listSessions(projectId)).find((s) => s.id === sessionId)?.branch;
+    if (predicate(branch)) return branch;
+    await new Promise((r) => setTimeout(r, 50));
+  }
+  return (await manager.listSessions(projectId)).find((s) => s.id === sessionId)?.branch;
+}
+
+function makeGitSandboxManager(prefix: string) {
+  const sandbox = mkdtempSync(join(tmpdir(), prefix));
+  const repository = join(sandbox, "repo");
+  execFileSync("git", ["init", "-b", "main", repository]);
+  writeFileSync(join(repository, "README.md"), "base\n", "utf8");
+  execFileSync("git", ["-C", repository, "add", "README.md"]);
+  execFileSync("git", ["-C", repository, "-c", "user.name=cw-code", "-c", "user.email=test@cw-code.local", "commit", "-m", "initial"]);
+
+  const manager = new SessionManager({
+    dbPath: join(sandbox, "data", "test.db"),
+    worktreesRoot: join(sandbox, "worktrees")
+  });
+  const fake = new FakeDriver((event) => (manager as unknown as { routeEvent(e: ThreadEvent): void }).routeEvent(event));
+  (manager as unknown as { drivers: Record<string, CliDriver> }).drivers = { claude: fake, opencode: fake, codex: fake };
+  const project = manager.addProject(repository);
+  return { manager, fake, project, repository };
+}
+
 describe("SessionManager", () => {
   it("normalizes trailing separators on project roots", () => {
     const { manager } = makeManager();
@@ -377,6 +404,88 @@ describe("SessionManager", () => {
     expect(rootA).toBe(worktreePath);
     expect(rootB).toBe(worktreePath);
     expect(branchesAfter).toBe(branchesBefore);
+    manager.dispose();
+  });
+
+  it("renames the worktree branch from the CLI title on the first turn.done", async () => {
+    const { manager, fake, project } = makeGitSandboxManager("cw-session-branch-");
+    const session = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    const tempBranch = session.branch;
+    if (!tempBranch) throw new Error("expected a worktree-backed session with a branch");
+
+    await manager.startTurn(session.id, "fix the login flow");
+    fake.completeAll();
+    const branch = await waitForBranch(manager, project.id, session.id, (b) => b === "cw/fix-the-login-flow");
+
+    const stored = (await manager.listSessions(project.id)).find((s) => s.id === session.id);
+    expect(branch).toBe("cw/fix-the-login-flow");
+    expect(stored?.branch).toBe("cw/fix-the-login-flow");
+    const checkedOut = execFileSync("git", ["-C", session.worktreePath!, "rev-parse", "--abbrev-ref", "HEAD"], { encoding: "utf8" }).trim();
+    expect(checkedOut).toBe("cw/fix-the-login-flow");
+    manager.dispose();
+  });
+
+  it("suffixes the renamed branch on collision", async () => {
+    const { manager, fake, project, repository } = makeGitSandboxManager("cw-session-branch-collision-");
+    const session = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    if (!session.branch) throw new Error("expected a worktree-backed session with a branch");
+    execFileSync("git", ["-C", repository, "branch", "cw/collision-target"]);
+
+    await manager.startTurn(session.id, "collision-target");
+    fake.completeAll();
+    const branch = await waitForBranch(manager, project.id, session.id, (b) => b === "cw/collision-target-1");
+
+    const stored = (await manager.listSessions(project.id)).find((s) => s.id === session.id);
+    expect(branch).toBe("cw/collision-target-1");
+    expect(stored?.branch).toBe("cw/collision-target-1");
+    const checkedOut = execFileSync("git", ["-C", session.worktreePath!, "rev-parse", "--abbrev-ref", "HEAD"], { encoding: "utf8" }).trim();
+    expect(checkedOut).toBe("cw/collision-target-1");
+    manager.dispose();
+  });
+
+  it("keeps the temporary branch when the title is still the generic fallback", async () => {
+    const { manager, project } = makeGitSandboxManager("cw-session-branch-notitle-");
+    const session = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    const tempBranch = session.branch;
+    if (!tempBranch) throw new Error("expected a worktree-backed session with a branch");
+    expect((await manager.listSessions(project.id)).find((s) => s.id === session.id)?.title).toBe("New session");
+
+    (manager as unknown as { routeEvent(e: ThreadEvent): void }).routeEvent({
+      type: "turn.done",
+      turnId: "turn-no-title",
+      sessionId: session.id,
+      resumeCursor: "cursor-1",
+      resultText: "",
+      inputTokens: 0,
+      outputTokens: 0,
+      costUsd: 0,
+      numTurns: 1,
+      isError: false
+    });
+    await new Promise((r) => setTimeout(r, 50));
+
+    const stored = (await manager.listSessions(project.id)).find((s) => s.id === session.id);
+    expect(stored?.branch).toBe(tempBranch);
+    manager.dispose();
+  });
+
+  it("does not rename again on subsequent turn.done events", async () => {
+    const { manager, fake, project } = makeGitSandboxManager("cw-session-branch-once-");
+    const session = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    if (!session.branch) throw new Error("expected a worktree-backed session with a branch");
+
+    await manager.startTurn(session.id, "first title");
+    fake.completeAll();
+    const renamed = await waitForBranch(manager, project.id, session.id, (b) => b === "cw/first-title");
+    expect(renamed).toBe("cw/first-title");
+
+    await manager.renameSession(session.id, "second title");
+    await manager.startTurn(session.id, "again");
+    fake.completeAll();
+    await new Promise((r) => setTimeout(r, 150));
+
+    const stored = (await manager.listSessions(project.id)).find((s) => s.id === session.id);
+    expect(stored?.branch).toBe("cw/first-title");
     manager.dispose();
   });
 
