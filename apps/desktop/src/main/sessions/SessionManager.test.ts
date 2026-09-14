@@ -731,6 +731,45 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
+  it("skips the title branch rename while another session shares the worktree and retries once it is gone", async () => {
+    const { manager, fake, project } = makeGitSandboxManager("cw-session-branch-shared-");
+    const a = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    if (!a.worktreePath || !a.branch) throw new Error("expected a worktree-backed session with a branch");
+    const b = await manager.createSession(project.id, "claude", { mode: "previous", reuseWorktreePath: a.worktreePath });
+    expect(b.worktreePath).toBe(a.worktreePath);
+    expect(b.branch).toBe(a.branch);
+
+    await manager.startTurn(b.id, "fix the login flow");
+    fake.completeAll();
+    await new Promise((r) => setTimeout(r, 200));
+
+    const stillShared = (await manager.listSessions(project.id)).find((s) => s.id === b.id);
+    expect(stillShared?.branch).toBe(a.branch);
+    const checkedOut = execFileSync("git", ["-C", a.worktreePath, "rev-parse", "--abbrev-ref", "HEAD"], { encoding: "utf8" }).trim();
+    expect(checkedOut).toBe(a.branch);
+
+    (manager as unknown as { store: SessionStore }).store.updateSession(a.id, { worktreePath: undefined, branch: undefined });
+    await manager.startTurn(b.id, "retry rename");
+    fake.completeAll();
+    const renamed = await waitForBranch(manager, project.id, b.id, (br) => br === "cw/fix-the-login-flow");
+    expect(renamed).toBe("cw/fix-the-login-flow");
+    manager.dispose();
+  });
+
+  it("falls back to a new worktree when the reuse path is in detached HEAD state", async () => {
+    const { manager, project } = makeGitSandboxManager("cw-session-reuse-detached-");
+    const a = await manager.createSession(project.id, "claude", { mode: "new", baseBranch: "main" });
+    if (!a.worktreePath) throw new Error("expected a worktree-backed session");
+    execFileSync("git", ["-C", a.worktreePath, "checkout", "--detach"]);
+
+    const b = await manager.createSession(project.id, "claude", { mode: "previous", reuseWorktreePath: a.worktreePath });
+
+    expect(b.worktreePath).toBeTruthy();
+    expect(b.worktreePath).not.toBe(a.worktreePath);
+    expect(b.branch).toMatch(/^cw\//);
+    manager.dispose();
+  });
+
   it("tracks session status across the turn lifecycle", async () => {
     const { manager, fake } = makeManager();
     const project = manager.addProject("C:\\proj-status");

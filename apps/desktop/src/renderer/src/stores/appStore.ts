@@ -236,7 +236,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       projects,
       sourceControlRefreshIntervalSeconds: settings.sourceControlRefreshIntervalSeconds,
       defaultUseWorktree: settings.defaultUseWorktree,
-      pendingWorkspace: defaultWorkspace(settings.defaultUseWorktree)
+      pendingWorkspace: { ...get().pendingWorkspace, ...defaultWorkspace(settings.defaultUseWorktree) }
     });
     if (projects.length === 0 || get().activeProjectId) return;
     const lists = await Promise.all(
@@ -606,6 +606,18 @@ export const useAppStore = create<AppState>((set, get) => ({
     const projectId = get().activeProjectId;
     if (!projectId) return;
     const session = await window.cw.createSession(projectId, driver, workspace);
+    if (
+      workspace?.mode === "previous" &&
+      workspace.reuseWorktreePath &&
+      session.worktreePath &&
+      session.worktreePath !== workspace.reuseWorktreePath
+    ) {
+      useNotifs.getState().push({
+        kind: "warning",
+        title: "Requested worktree no longer exists",
+        message: "Created a new worktree instead."
+      });
+    }
     set({
       sessionsByProject: {
         ...get().sessionsByProject,

@@ -38,10 +38,14 @@ export function NewThread({
   const [branchError, setBranchError] = useState("");
 
   const sessions = store.sessionsByProject[projectId] ?? [];
-  const candidates: WorktreeCandidate[] = [...sessions]
-    .filter((s) => s.worktreePath)
-    .sort((a, b) => b.updatedAt - a.updatedAt)
-    .map((s) => ({ sessionId: s.id, title: s.title, branch: s.branch, worktreePath: s.worktreePath as string }));
+  const candidates: WorktreeCandidate[] = [];
+  const seenPaths = new Set<string>();
+  for (const s of [...sessions].filter((s) => s.worktreePath).sort((a, b) => b.updatedAt - a.updatedAt)) {
+    const path = s.worktreePath as string;
+    if (seenPaths.has(path)) continue;
+    seenPaths.add(path);
+    candidates.push({ sessionId: s.id, title: s.title, branch: s.branch, worktreePath: path });
+  }
 
   useEffect(() => {
     let active = true;
@@ -59,6 +63,18 @@ export function NewThread({
     });
     return () => { active = false; };
   }, [projectId]);
+
+  const candidatePaths = candidates.map((c) => c.worktreePath).join("\n");
+  useEffect(() => {
+    if (workspace.mode !== "previous" || !workspace.reuseWorktreePath) return;
+    if (candidatePaths.split("\n").includes(workspace.reuseWorktreePath)) return;
+    const first = candidates[0];
+    store.setPendingWorkspace(
+      first
+        ? { reuseWorktreePath: first.worktreePath }
+        : { mode: "new", reuseWorktreePath: undefined }
+    );
+  }, [candidatePaths, workspace.mode, workspace.reuseWorktreePath]);
 
   const rawMode: CreateWorkspaceMode = workspace.mode ?? (workspace.useWorktree === false ? "current" : "new");
   const mode: CreateWorkspaceMode = rawMode === "previous" && candidates.length === 0 ? "new" : rawMode;

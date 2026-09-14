@@ -824,14 +824,21 @@ export class SessionManager {
     if (this.branchRenamed.has(sessionId)) return;
     const session = this.store.getSession(sessionId);
     if (!session?.worktreePath || !session.branch || !TEMP_BRANCH_PATTERN.test(session.branch)) return;
+    const { worktreePath, branch } = session;
     const title = session.title.trim();
     if (!title || title === "New session") return;
     const candidate = branchNameForTitle(title);
-    if (!candidate || candidate === session.branch) return;
+    if (!candidate || candidate === branch) return;
+    const shared = this.store.listAllSessions().some(
+      (other) =>
+        other.id !== sessionId &&
+        ((other.worktreePath && sameWorktreePath(other.worktreePath, worktreePath)) || other.branch === branch)
+    );
+    if (shared) return;
     this.branchRenamed.add(sessionId);
     try {
       const project = this.getProject(session.projectId);
-      const renamed = await this.git.renameBranch(project.rootPath, session.branch, candidate, { worktreePath: session.worktreePath });
+      const renamed = await this.git.renameBranch(project.rootPath, branch, candidate, { worktreePath });
       this.updateSessionBranch(sessionId, renamed);
       this.onEvent(sessionId, { type: "session.branch.updated", turnId, sessionId, branch: renamed });
     } catch (err) {
