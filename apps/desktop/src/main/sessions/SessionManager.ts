@@ -461,8 +461,9 @@ export class SessionManager {
 
   turnEnv(sessionId: string, cwd: string): Record<string, string> {
     const session = this.store.getSession(sessionId);
-    if (!session) throw new Error(`unknown session ${sessionId}`);
-    const project = this.getProject(session.projectId);
+    if (!session) return buildTurnEnv(process.env, { CW_WORKTREE_PATH: cwd });
+    const project = this.store.getProject(session.projectId);
+    if (!project) return buildTurnEnv(process.env, { CW_WORKTREE_PATH: cwd, CW_SESSION_ID: session.id });
     return buildTurnEnv(process.env, this.sessionEnvVars(session, project, cwd));
   }
 
@@ -512,8 +513,16 @@ export class SessionManager {
     const session = this.store.getSession(sessionId);
     if (!session) throw new Error(`unknown session ${sessionId}`);
     if (session.driver === "claude") return this.listModelsFor(session.projectId, "claude");
-    const cwd = await this.ensureWorktree(sessionId);
-    return this.listModelsFor(session.projectId, session.driver, cwd);
+    try {
+      const cwd =
+        session.worktreePath && existsSync(session.worktreePath)
+          ? session.worktreePath
+          : this.rootForProject(session.projectId);
+      return await this.listModelsFor(session.projectId, session.driver, cwd);
+    } catch (err) {
+      console.warn(`model list failed for ${sessionId}: ${(err as Error).message}`);
+      return [];
+    }
   }
 
   async listModelsFor(projectId: string, driver: DriverKind, cwd?: string): Promise<ModelOption[]> {

@@ -60,6 +60,7 @@ export class OpencodeDriver implements CliDriver {
   private bridge: AskBridge | null = null;
   private bridgeStarting: Promise<void> | null = null;
   private bridgeEndpoint = "";
+  private bridgeNeed = new Map<string, boolean>();
 
   constructor(
     private emit: (event: ThreadEvent) => void,
@@ -128,6 +129,12 @@ export class OpencodeDriver implements CliDriver {
 
   private configuredBinary(): string {
     return this.getSettings().opencodeBinaryPath;
+  }
+
+  private async bridgeEnvVars(): Promise<Record<string, string>> {
+    const dir = join(app.getPath("userData"), "cw-opencode");
+    await writeAskBridgeTool(dir, await this.bridgeUrl());
+    return { OPENCODE_CONFIG_DIR: dir };
   }
 
   async listSessions(projectRoot: string, projectId = ""): Promise<SessionMeta[]> {
@@ -398,18 +405,21 @@ export class OpencodeDriver implements CliDriver {
     const binary = this.configuredBinary();
     let serverPort: number | null = null;
     let authHeader = "";
-    let bridgeEnv: Record<string, string> | undefined;
     try {
-      let handle = await this.pool.ensure(request.cwd, request.env);
+      let env = request.env;
+      if (request.resumeCursor && this.bridgeNeed.get(request.cwd) === true) {
+        env = { ...(request.env ?? {}), ...(await this.bridgeEnvVars()) };
+      }
+      let handle = await this.pool.ensure(request.cwd, env);
       serverPort = handle.port;
       authHeader = handle.authHeader;
       if (request.resumeCursor) {
         const native = await this.nativeQuestionAvailable(request.resumeCursor, serverPort, authHeader);
-        if (!native) {
-          const dir = join(app.getPath("userData"), "cw-opencode");
-          await writeAskBridgeTool(dir, await this.bridgeUrl());
-          bridgeEnv = { OPENCODE_CONFIG_DIR: dir };
-          handle = await this.pool.ensure(request.cwd, { ...(request.env ?? {}), ...bridgeEnv });
+        const needsBridge = !native;
+        const previouslyNeeded = this.bridgeNeed.get(request.cwd);
+        this.bridgeNeed.set(request.cwd, needsBridge);
+        if (needsBridge && previouslyNeeded !== true) {
+          handle = await this.pool.ensure(request.cwd, { ...(request.env ?? {}), ...(await this.bridgeEnvVars()) });
           serverPort = handle.port;
           authHeader = handle.authHeader;
         }
@@ -461,6 +471,7 @@ export class OpencodeDriver implements CliDriver {
     this.sessionIds.set(turnId, serverSessionId);
     this.turnMeta.set(turnId, { localSessionId: request.sessionId, beforeIds: null, startedAt: start, pollWarned: false });
     this.watchInfo.set(turnId, { port: serverPort, authHeader, cwd: request.cwd, permissionMode: request.permissionMode });
+    this.pool.beginTurn(request.cwd);
     this.toolSeen.set(turnId, new Map());
     const preview = previewText(request.prompt);
     const model = splitOpencodeModel(request.model);
@@ -601,6 +612,7 @@ export class OpencodeDriver implements CliDriver {
     const serverSessionId = this.sessionIds.get(turnId);
     const info = this.watchInfo.get(turnId);
     if (!meta || !serverSessionId || !info) return null;
+    this.pool.endTurn(info.cwd);
     const timer = this.pollTimers.get(turnId);
     if (timer) {
       clearInterval(timer);

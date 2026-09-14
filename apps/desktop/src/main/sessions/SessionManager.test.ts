@@ -350,6 +350,43 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
+  it("lists models from the project root without recreating a missing worktree", async () => {
+    const { manager, project } = makeGitSandboxManager("cw-session-models-missing-");
+    const modelDriver = new ModelRecordingDriver((event) =>
+      (manager as unknown as { routeEvent(e: ThreadEvent): void }).routeEvent(event)
+    );
+    (manager as unknown as { drivers: Record<string, CliDriver> }).drivers.opencode = modelDriver;
+    const session = await manager.createSession(project.id, "opencode", { baseBranch: "main" });
+    if (!session.worktreePath) throw new Error("session has no worktree");
+    rmSync(session.worktreePath, { recursive: true, force: true });
+    await manager.listModels(session.id);
+    expect(modelDriver.modelCwds).toEqual([project.rootPath]);
+    expect(existsSync(session.worktreePath)).toBe(false);
+    manager.dispose();
+  });
+
+  it("builds a cwd-only env for unknown sessions instead of throwing", () => {
+    const { manager } = makeManager();
+    const env = manager.turnEnv("missing-session", "C:\\somewhere");
+    expect(env["CW_WORKTREE_PATH"]).toBe("C:\\somewhere");
+    expect(env["CW_SESSION_ID"]).toBeUndefined();
+    expect(env["CW_PROJECT_ROOT"]).toBeUndefined();
+    manager.dispose();
+  });
+
+  it("omits CW_PROJECT_ROOT when the session's project is gone but keeps the session id", async () => {
+    const { manager } = makeManager();
+    const project = manager.addProject("C:\\proj-env-orphan");
+    const session = await manager.createSession(project.id, "claude");
+    const store = (manager as unknown as { store: { data: { projects: unknown[] } } }).store;
+    store.data.projects = [];
+    const env = manager.turnEnv(session.id, "C:\\proj-env-orphan");
+    expect(env["CW_SESSION_ID"]).toBe(session.id);
+    expect(env["CW_WORKTREE_PATH"]).toBe("C:\\proj-env-orphan");
+    expect(env["CW_PROJECT_ROOT"]).toBeUndefined();
+    manager.dispose();
+  });
+
   it("recreates a deleted worktree at the same path on the next turn", async () => {
     const sandbox = mkdtempSync(join(tmpdir(), "cw-session-recover-"));
     const repository = join(sandbox, "repo");
