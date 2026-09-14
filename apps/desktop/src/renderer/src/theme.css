@@ -9,8 +9,8 @@
   --dim: #bcbec4;
   --muted: #868a93;
   --faint: #62666e;
-  --claude: #f36b2f;
-  --claude-soft: rgba(243, 107, 47, 0.14);
+  --claude: #e8835a;
+  --claude-soft: rgba(232, 131, 90, 0.14);
   --opencode: #5ab8ff;
   --opencode-soft: rgba(90, 184, 255, 0.14);
   --codex: #b49cff;
@@ -909,7 +909,7 @@ body.session-dragging * {
 }
 
 .driver-icon.opencode {
-  color: #cdd2e0;
+  color: var(--opencode);
 }
 
 .driver-icon.codex {

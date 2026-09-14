@@ -80,6 +80,7 @@ export function ThreadView({ rightVisible, onToggleRight }: { rightVisible: bool
   const workingWord = useWorkingWord(!showNew && !!busyTurn);
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
+  const lastSeenIdRef = useRef<string | null>(null);
 
   const sessionId = session?.id;
   const projectRoot = project?.rootPath ?? "";
@@ -92,15 +93,32 @@ export function ThreadView({ rightVisible, onToggleRight }: { rightVisible: bool
 
   useEffect(() => {
     stickRef.current = true;
+    lastSeenIdRef.current = null;
   }, [activeSessionId]);
 
   useEffect(() => {
+    const last = messages[messages.length - 1];
+    if (last && last.id !== lastSeenIdRef.current) {
+      lastSeenIdRef.current = last.id;
+      if (last.role === "user") stickRef.current = true;
+    }
     const raf = requestAnimationFrame(() => {
       const el = scrollRef.current;
       if (el && stickRef.current) el.scrollTop = el.scrollHeight;
     });
     return () => cancelAnimationFrame(raf);
   }, [messages, busyTurn, lastTurn]);
+
+  useEffect(() => {
+    const el = scrollRef.current;
+    const inner = el?.firstElementChild;
+    if (!el || !(inner instanceof HTMLElement)) return;
+    const ro = new ResizeObserver(() => {
+      if (stickRef.current) el.scrollTop = el.scrollHeight;
+    });
+    ro.observe(inner);
+    return () => ro.disconnect();
+  }, [activeSessionId, showNew]);
 
   const onScroll = () => {
     const el = scrollRef.current;
@@ -122,7 +140,7 @@ export function ThreadView({ rightVisible, onToggleRight }: { rightVisible: bool
             <strong>New thread</strong>
           </span>
           <span title={heroDriver}>
-            <DriverIcon driver={heroDriver} size={14} />
+            <DriverIcon driver={heroDriver} size={16} />
           </span>
           <span className="thread-status">
             <button className="icon-btn" onClick={onToggleRight} title={rightVisible ? "Hide panel" : "Show panel"}>
