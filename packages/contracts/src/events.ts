@@ -95,6 +95,7 @@ export type ThreadEvent =
       costUsd: number;
       numTurns: number;
       isError: boolean;
+      backgroundTasks: number;
     }
   | { type: "turn.error"; turnId: string; message: string; resumeCursor?: string }
   | { type: "session.branch.updated"; turnId: string; sessionId: string; branch: string };

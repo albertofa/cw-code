@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface } from "node:readline";
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -16,7 +16,7 @@ import type {
 } from "@cw-code/contracts";
 import { parseExtraArgs } from "../../settings/settingsUtils.js";
 import { killProcessTree } from "../../processTree.js";
-import { attributeClaudeSubagentEvent, buildClaudeAllowRule, claudeAllowResponse, claudeApprovalRequest, claudeQuestionRequest, claudeDenyResponse, claudeControlResponse, parseClaudeControlRequest, parseStreamLine, type ClaudeControlRequest } from "./claudeStreamParser.js";
+import { attributeClaudeSubagentEvent, buildClaudeAllowRule, claudeAllowResponse, claudeApprovalRequest, claudeQuestionRequest, claudeDenyResponse, claudeControlResponse, parseClaudeControlRequest, parseClaudeSystemLine, parseStreamLine, type ClaudeControlRequest, type TurnDoneInfo } from "./claudeStreamParser.js";
 import { listClaudeSessions } from "./claudeSessions.js";
 import { readClaudeHistory } from "./claudeHistory.js";
 import { buildClaudeUserContent } from "./claudeUserContent.js";
@@ -72,11 +72,6 @@ export interface PendingClaudeApproval {
   localSessionId: string;
 }
 
-export interface ClaudeTurnMeta {
-  localSessionId: string;
-  cwd: string;
-}
-
 export function claudeSettingsPath(cwd: string): string {
   return join(normalize(cwd), ".claude", "settings.json");
 }
@@ -97,28 +92,41 @@ export function mergeClaudeAllowRule(existing: unknown, rule: string): Record<st
   return { ...base, permissions: { ...permissions, allow } };
 }
 
+export const CLAUDE_IDLE_EVICT_MS = 20 * 60_000;
+
+interface ClaudeProcessState {
+  sessionId: string;
+  cwd: string;
+  argsKey: string;
+  binary: string;
+  args: string[];
+  child: ChildProcessWithoutNullStreams;
+  resumeCursor: string;
+  activeTurnId: string;
+  liveTasks: number;
+  completedTurn: boolean;
+  errored: boolean;
+  stderr: string;
+  startedAt: number;
+  agentByCall: Map<string, string>;
+  idleTimer?: NodeJS.Timeout;
+}
+
 export class ClaudeCliDriver implements CliDriver {
   readonly kind = "claude" as const;
-  private procs = new Map<string, ChildProcess>();
-  private pendingQuestions = new Map<string, { turnId: string; control: ClaudeControlRequest }>();
+  private processes = new Map<string, ClaudeProcessState>();
+  private turnToSession = new Map<string, string>();
+  private interruptedTurns = new Set<string>();
+  private pendingQuestions = new Map<string, { turnId: string; sessionId: string; control: ClaudeControlRequest }>();
   private pendingApprovals = new Map<string, PendingClaudeApproval>();
-  private turnMeta = new Map<string, ClaudeTurnMeta>();
   private sessionAllows = new Map<string, Set<string>>();
 
   constructor(
     private emit: (event: ThreadEvent) => void,
-    private getSettings: () => AppSettings
+    private getSettings: () => AppSettings,
+    private spawnFn: typeof spawn = spawn,
+    private killFn: (proc: ChildProcess | undefined) => void = killProcessTree
   ) {}
-
-  private writeControl(turnId: string, line: string): void {
-    const stdin = this.procs.get(turnId)?.stdin;
-    if (!stdin) return;
-    stdin.write(line + "\n");
-  }
-
-  private terminate(turnId: string): void {
-    killProcessTree(this.procs.get(turnId));
-  }
 
   private configuredBinary(): string {
     return this.getSettings().claudeBinaryPath;
@@ -126,6 +134,183 @@ export class ClaudeCliDriver implements CliDriver {
 
   private extraArgs(): string[] {
     return parseExtraArgs(this.getSettings().claudeExtraArgs);
+  }
+
+  private claudeArgsKey(request: TurnRequest): string {
+    return JSON.stringify([
+      request.cwd,
+      request.model ?? "",
+      request.effort ?? "",
+      request.permissionMode ?? "",
+      this.extraArgs()
+    ]);
+  }
+
+  private writeControl(sessionId: string, line: string): void {
+    const stdin = this.processes.get(sessionId)?.child.stdin;
+    if (!stdin) return;
+    stdin.write(`${line}\n`);
+  }
+
+  private writeUserMessage(state: ClaudeProcessState, request: TurnRequest): void {
+    state.child.stdin.write(
+      `${JSON.stringify({ type: "user", message: { role: "user", content: buildClaudeUserContent(request.cwd, request.prompt, request.attachments) } })}\n`
+    );
+  }
+
+  private isProcessAlive(state: ClaudeProcessState): boolean {
+    return !state.errored && state.child.exitCode === null && state.child.signalCode === null;
+  }
+
+  private terminate(state: ClaudeProcessState): void {
+    this.clearIdleTimer(state);
+    this.killFn(state.child);
+    if (this.processes.get(state.sessionId) === state) this.processes.delete(state.sessionId);
+  }
+
+  private clearIdleTimer(state: ClaudeProcessState): void {
+    if (!state.idleTimer) return;
+    clearTimeout(state.idleTimer);
+    state.idleTimer = undefined;
+  }
+
+  private armIdleTimer(state: ClaudeProcessState): void {
+    this.clearIdleTimer(state);
+    const timer = setTimeout(() => {
+      state.idleTimer = undefined;
+      if (this.processes.get(state.sessionId) !== state) return;
+      if (state.liveTasks > 0 || !state.completedTurn || this.hasPendingForSession(state.sessionId)) {
+        this.armIdleTimer(state);
+        return;
+      }
+      traceHarnessCall({
+        harness: "claude",
+        operation: "claude.evict",
+        sessionId: state.sessionId,
+        cwd: state.cwd,
+        binary: state.binary,
+        ok: true
+      });
+      this.processes.delete(state.sessionId);
+      this.killFn(state.child);
+    }, CLAUDE_IDLE_EVICT_MS);
+    timer.unref?.();
+    state.idleTimer = timer;
+  }
+
+  private hasPendingForSession(sessionId: string): boolean {
+    for (const entry of this.pendingQuestions.values()) {
+      if (entry.sessionId === sessionId) return true;
+    }
+    for (const entry of this.pendingApprovals.values()) {
+      if (entry.localSessionId === sessionId) return true;
+    }
+    return false;
+  }
+
+  private resolvePendingForSession(sessionId: string, answers: Record<string, string> | null): void {
+    for (const [requestId, entry] of [...this.pendingQuestions]) {
+      if (entry.sessionId !== sessionId) continue;
+      this.pendingQuestions.delete(requestId);
+      this.emit({ type: "question.resolved", turnId: entry.turnId, requestId, answers });
+    }
+    for (const [requestId, entry] of [...this.pendingApprovals]) {
+      if (entry.localSessionId !== sessionId) continue;
+      this.pendingApprovals.delete(requestId);
+      this.emit({ type: "approval.resolved", turnId: entry.turnId, requestId });
+    }
+  }
+
+  private resolvePendingForTurn(turnId: string): void {
+    for (const [requestId, entry] of [...this.pendingQuestions]) {
+      if (entry.turnId !== turnId) continue;
+      this.pendingQuestions.delete(requestId);
+      this.emit({ type: "question.resolved", turnId, requestId, answers: null });
+    }
+    for (const [requestId, entry] of [...this.pendingApprovals]) {
+      if (entry.turnId !== turnId) continue;
+      this.pendingApprovals.delete(requestId);
+      this.emit({ type: "approval.resolved", turnId, requestId });
+    }
+  }
+
+  private handleProcessLine(state: ClaudeProcessState, line: string): void {
+    const background = parseClaudeSystemLine(line);
+    if (background) {
+      state.liveTasks = background.liveTasks;
+      return;
+    }
+    const control = parseClaudeControlRequest(line);
+    if (control) {
+      this.handleControl(control, state);
+      return;
+    }
+    const events = parseStreamLine(
+      line,
+      state.activeTurnId,
+      state.resumeCursor,
+      (info) => this.handleTurnDone(state, info),
+      () => this.clearIdleTimer(state)
+    );
+    for (const event of events) {
+      this.emit(attributeClaudeSubagentEvent(event, state.agentByCall));
+    }
+  }
+
+  private handleTurnDone(state: ClaudeProcessState, info: TurnDoneInfo): void {
+    const turnId = state.activeTurnId;
+    const interrupted = this.interruptedTurns.delete(turnId);
+    if (!interrupted) {
+      this.emit({
+        type: "turn.done",
+        turnId,
+        sessionId: state.sessionId,
+        resumeCursor: info.resumeCursor,
+        resultText: info.resultText,
+        inputTokens: info.inputTokens,
+        outputTokens: info.outputTokens,
+        costUsd: info.costUsd,
+        numTurns: info.numTurns,
+        isError: info.isError,
+        backgroundTasks: state.liveTasks
+      });
+    }
+    state.resumeCursor = info.resumeCursor;
+    state.completedTurn = true;
+    if (state.liveTasks > 0) return;
+    this.turnToSession.delete(turnId);
+    if (state.sessionId.startsWith("title:")) {
+      this.terminate(state);
+      return;
+    }
+    this.armIdleTimer(state);
+  }
+
+  private handleProcessClose(state: ClaudeProcessState, code: number | null): void {
+    if (this.processes.get(state.sessionId) === state) this.processes.delete(state.sessionId);
+    this.clearIdleTimer(state);
+    this.resolvePendingForSession(state.sessionId, null);
+    const turnId = state.activeTurnId;
+    traceHarnessCall({
+      harness: "claude",
+      operation: "claude.processExit",
+      sessionId: state.sessionId,
+      turnId,
+      cwd: state.cwd,
+      binary: state.binary,
+      durationMs: Date.now() - state.startedAt,
+      ok: code === 0,
+      exitCode: code,
+      stderrPreview: state.stderr ? truncateError(state.stderr) : undefined
+    });
+    if (!state.completedTurn && !state.errored) {
+      const message = state.stderr.trim()
+        ? state.stderr.slice(0, 2000)
+        : `claude exited before completing the turn (code ${code})`;
+      this.emit({ type: "turn.error", turnId, message });
+    }
+    this.turnToSession.delete(turnId);
+    this.interruptedTurns.delete(turnId);
   }
 
   async listSessions(projectRoot: string, projectId = ""): Promise<import("@cw-code/contracts").SessionMeta[]> {
@@ -186,20 +371,84 @@ export class ClaudeCliDriver implements CliDriver {
   startTurn(request: TurnRequest): TurnHandle {
     const turnId = randomUUID();
     const start = Date.now();
-    const baseArgs = buildClaudeArgs(request);
-    const args = [...this.extraArgs(), ...baseArgs];
     const preview = previewText(request.prompt);
     const binary = this.configuredBinary();
+    const argsKey = this.claudeArgsKey(request);
+    const existing = this.processes.get(request.sessionId);
 
-    // Stream-driven with no timers: the turn lives until the stream ends,
-    // so approval/question waits survive however long the user takes.
-    const child = spawn(binary, args, {
+    if (!request.maxTurns && existing && existing.argsKey === argsKey && this.isProcessAlive(existing)) {
+      existing.activeTurnId = turnId;
+      existing.completedTurn = false;
+      this.clearIdleTimer(existing);
+      this.turnToSession.set(turnId, request.sessionId);
+      this.writeUserMessage(existing, request);
+      traceHarnessCall({
+        harness: "claude",
+        operation: "claude.startTurn",
+        sessionId: request.sessionId,
+        turnId,
+        cwd: request.cwd,
+        binary: existing.binary,
+        args: existing.args,
+        model: request.model,
+        promptPreview: preview.preview,
+        promptLength: preview.length,
+        resumeCursor: existing.resumeCursor,
+        durationMs: Date.now() - start,
+        ok: true,
+        extra: { reused: true }
+      });
+      return { turnId, events: (async function* () {})() };
+    }
+
+    if (existing) this.terminate(existing);
+    const args = [...this.extraArgs(), ...buildClaudeArgs(request)];
+    const child = this.spawnFn(binary, args, {
       cwd: request.cwd,
       windowsHide: true,
       ...(request.env ? { env: request.env } : {})
     });
-    this.procs.set(turnId, child);
-    this.turnMeta.set(turnId, { localSessionId: request.sessionId, cwd: request.cwd });
+    const state: ClaudeProcessState = {
+      sessionId: request.sessionId,
+      cwd: request.cwd,
+      argsKey,
+      binary,
+      args,
+      child,
+      resumeCursor: request.resumeCursor ?? "",
+      activeTurnId: turnId,
+      liveTasks: 0,
+      completedTurn: false,
+      errored: false,
+      stderr: "",
+      startedAt: start,
+      agentByCall: new Map()
+    };
+    this.processes.set(request.sessionId, state);
+    this.turnToSession.set(turnId, request.sessionId);
+
+    const rl = createInterface({ input: child.stdout });
+    rl.on("line", (line) => this.handleProcessLine(state, line));
+    child.stderr.on("data", (chunk: Buffer) => {
+      state.stderr += chunk.toString();
+    });
+    child.on("error", (err) => {
+      state.errored = true;
+      traceHarnessCall({
+        harness: "claude",
+        operation: "claude.startTurn",
+        sessionId: request.sessionId,
+        turnId: state.activeTurnId,
+        cwd: request.cwd,
+        binary,
+        durationMs: Date.now() - start,
+        ok: false,
+        error: truncateError(`failed to spawn ${binary}: ${err.message}`)
+      });
+      this.emit({ type: "turn.error", turnId: state.activeTurnId, message: `failed to spawn ${binary}: ${err.message}` });
+    });
+    child.on("close", (code) => this.handleProcessClose(state, code));
+
     traceHarnessCall({
       harness: "claude",
       operation: "claude.startTurn",
@@ -212,119 +461,88 @@ export class ClaudeCliDriver implements CliDriver {
       promptPreview: preview.preview,
       promptLength: preview.length,
       resumeCursor: request.resumeCursor,
-      ok: true
+      durationMs: Date.now() - start,
+      ok: true,
+      extra: { reused: false }
     });
-
-    const rl = createInterface({ input: child.stdout });
-    const agentByCall = new Map<string, string>();
-    rl.on("line", (line) => {
-      const control = parseClaudeControlRequest(line);
-      if (control) {
-        this.handleControl(control, turnId);
-        return;
-      }
-      for (const event of parseStreamLine(line, turnId, request.resumeCursor ?? "", (info) => {
-        this.emit({
-          type: "turn.done",
-          turnId,
-          sessionId: request.sessionId,
-          resumeCursor: info.resumeCursor,
-          resultText: info.resultText,
-          inputTokens: info.inputTokens,
-          outputTokens: info.outputTokens,
-          costUsd: info.costUsd,
-          numTurns: info.numTurns,
-          isError: info.isError
-        });
-        child.stdin?.end();
-        if (!info.isError) this.terminate(turnId);
-      })) {
-        this.emit(attributeClaudeSubagentEvent(event, agentByCall));
-      }
-    });
-    child.stdin?.write(
-      `${JSON.stringify({ type: "user", message: { role: "user", content: buildClaudeUserContent(request.cwd, request.prompt, request.attachments) } })}\n`
-    );
-
-    let stderr = "";
-    child.stderr?.on("data", (chunk: Buffer) => {
-      stderr += chunk.toString();
-    });
-    child.on("error", (err) => {
-      traceHarnessCall({
-        harness: "claude",
-        operation: "claude.startTurn",
-        sessionId: request.sessionId,
-        turnId,
-        cwd: request.cwd,
-        binary,
-        durationMs: Date.now() - start,
-        ok: false,
-        error: truncateError(`failed to spawn ${binary}: ${err.message}`)
-      });
-      this.emit({ type: "turn.error", turnId, message: `failed to spawn ${binary}: ${err.message}` });
-    });
-    child.on("close", (code) => {
-      this.procs.delete(turnId);
-      this.resolvePendingFor(turnId, null);
-      traceHarnessCall({
-        harness: "claude",
-        operation: "claude.startTurn",
-        sessionId: request.sessionId,
-        turnId,
-        cwd: request.cwd,
-        binary,
-        durationMs: Date.now() - start,
-        ok: code === 0,
-        exitCode: code,
-        stderrPreview: stderr ? truncateError(stderr) : undefined
-      });
-      if (code !== 0 && stderr && !child.killed) {
-        this.emit({ type: "turn.error", turnId, message: stderr.slice(0, 2000) });
-      }
-    });
+    this.writeUserMessage(state, request);
 
     return { turnId, events: (async function* () {})() };
   }
 
   interrupt(turnId: string): void {
     traceHarnessCall({ harness: "claude", operation: "claude.interrupt", turnId, ok: true });
-    this.terminate(turnId);
-    this.procs.delete(turnId);
-    this.resolvePendingFor(turnId, null);
+    const sessionId = this.turnToSession.get(turnId);
+    const state = sessionId ? this.processes.get(sessionId) : undefined;
+    if (!state) {
+      this.resolvePendingForTurn(turnId);
+      this.turnToSession.delete(turnId);
+      return;
+    }
+    this.interruptedTurns.add(turnId);
+    const line = JSON.stringify({
+      type: "control_request",
+      request_id: randomUUID(),
+      request: { subtype: "interrupt" }
+    });
+    try {
+      if (!state.child.stdin) throw new Error("stdin unavailable");
+      state.child.stdin.write(`${line}\n`);
+    } catch {
+      this.killFn(state.child);
+    }
+    this.resolvePendingForTurn(turnId);
+    state.completedTurn = true;
+    this.turnToSession.delete(turnId);
   }
 
-  private handleControl(control: ClaudeControlRequest, turnId: string): void {
+  stopSession(sessionId: string): void {
+    const state = this.processes.get(sessionId);
+    if (!state) return;
+    traceHarnessCall({ harness: "claude", operation: "claude.stopSession", sessionId, ok: true });
+    this.clearIdleTimer(state);
+    this.processes.delete(sessionId);
+    this.killFn(state.child);
+  }
+
+  dispose(): void {
+    for (const sessionId of [...this.processes.keys()]) this.stopSession(sessionId);
+  }
+
+  private handleControl(control: ClaudeControlRequest, state: ClaudeProcessState): void {
+    const turnId = state.activeTurnId;
     if (control.toolName.toLowerCase() === "askuserquestion") {
       const question = claudeQuestionRequest(control, turnId);
       if (question) {
-        this.pendingQuestions.set(control.requestId, { turnId, control });
+        this.pendingQuestions.set(control.requestId, { turnId, sessionId: state.sessionId, control });
         this.emit({ type: "question.request", turnId, request: question });
       } else {
-        this.writeControl(turnId, claudeDenyResponse(control.requestId, "Denied automatically: AskUserQuestion arrived without usable questions."));
+        this.writeControl(state.sessionId, claudeDenyResponse(control.requestId, "Denied automatically: AskUserQuestion arrived without usable questions."));
       }
       return;
     }
-    const meta = this.turnMeta.get(turnId);
-    const cwd = meta?.cwd ?? "";
-    const localSessionId = meta?.localSessionId ?? "";
-    if (localSessionId && this.sessionAllows.get(localSessionId)?.has(control.toolName)) {
-      this.writeControl(turnId, claudeAllowResponse(control.requestId, control.input));
+    if (this.sessionAllows.get(state.sessionId)?.has(control.toolName)) {
+      this.writeControl(state.sessionId, claudeAllowResponse(control.requestId, control.input));
       traceHarnessCall({
         harness: "claude",
         operation: "claude.autoAllowSession",
         turnId,
-        cwd: cwd || undefined,
+        cwd: state.cwd || undefined,
         ok: true,
         extra: { requestId: control.requestId, toolName: control.toolName }
       });
       return;
     }
-    this.pendingApprovals.set(control.requestId, { turnId, control, cwd, localSessionId });
+    this.pendingApprovals.set(control.requestId, {
+      turnId,
+      control,
+      cwd: state.cwd,
+      localSessionId: state.sessionId
+    });
     this.emit({
       type: "approval.request",
       turnId,
-      request: claudeApprovalRequest(control, turnId, cwd || undefined)
+      request: claudeApprovalRequest(control, turnId, state.cwd || undefined)
     });
   }
 
@@ -345,10 +563,10 @@ export class ClaudeCliDriver implements CliDriver {
       if (decision === "acceptGlobal") {
         await this.persistGlobalAllow(control.toolName, control.input, cwd, turnId);
       }
-      this.writeControl(turnId, claudeAllowResponse(requestId, control.input));
+      this.writeControl(localSessionId, claudeAllowResponse(requestId, control.input));
     } else {
       const message = decision === "cancel" ? "Cancelled by user." : "Denied by user.";
-      this.writeControl(turnId, claudeDenyResponse(requestId, message));
+      this.writeControl(localSessionId, claudeDenyResponse(requestId, message));
     }
     this.emit({ type: "approval.resolved", turnId, requestId });
     traceHarnessCall({
@@ -423,27 +641,13 @@ export class ClaudeCliDriver implements CliDriver {
     const entry = this.pendingQuestions.get(requestId);
     if (!entry) return;
     this.pendingQuestions.delete(requestId);
-    this.writeControl(entry.turnId, claudeControlResponse(requestId, entry.control.input, answers));
+    this.writeControl(entry.sessionId, claudeControlResponse(requestId, entry.control.input, answers));
     this.emit({
       type: "question.resolved",
       turnId: entry.turnId,
       requestId,
       answers
     });
-  }
-
-  private resolvePendingFor(turnId: string, answers: Record<string, string> | null): void {
-    for (const [requestId, entry] of [...this.pendingQuestions]) {
-      if (entry.turnId !== turnId) continue;
-      this.pendingQuestions.delete(requestId);
-      this.emit({ type: "question.resolved", turnId, requestId, answers });
-    }
-    for (const [requestId, entry] of [...this.pendingApprovals]) {
-      if (entry.turnId !== turnId) continue;
-      this.pendingApprovals.delete(requestId);
-      this.emit({ type: "approval.resolved", turnId, requestId });
-    }
-    this.turnMeta.delete(turnId);
   }
 
   async renameSession(): Promise<void> {}

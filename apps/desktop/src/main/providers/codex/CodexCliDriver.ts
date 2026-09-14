@@ -545,7 +545,8 @@ export class CodexCliDriver implements CliDriver {
       outputTokens: active.outputTokens,
       costUsd: 0,
       numTurns: Math.max(1, active.numTurns),
-      isError: false
+      isError: false,
+      backgroundTasks: 0
     });
   }
 

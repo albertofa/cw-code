@@ -221,7 +221,8 @@ describe("CodexCliDriver", () => {
       outputTokens: 15,
       costUsd: 0,
       numTurns: 1,
-      isError: false
+      isError: false,
+      backgroundTasks: 0
     });
     const deltas = events.filter((e) => e.type === "assistant.delta");
     expect(deltas.map((d) => ("text" in d ? d.text : ""))).toEqual(["Hello ", "world"]);

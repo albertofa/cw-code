@@ -11,6 +11,7 @@ import type { SessionStore } from "./SessionStore.js";
 class FakeDriver implements CliDriver {
   readonly kind = "claude" as const;
   seen: string[] = [];
+  stoppedSessions: string[] = [];
   lastRequest: Record<string, unknown> | null = null;
   history: HistoryMessage[] = [];
   private pending = new Map<string, { sessionId: string; prompt: string }>();
@@ -33,10 +34,10 @@ class FakeDriver implements CliDriver {
     });
     return { turnId, events: (async function* () {})() };
   }
-  complete(turnId: string): void {
+  complete(turnId: string, backgroundTasks = 0): void {
     const pending = this.pending.get(turnId);
     if (!pending) return;
-    this.pending.delete(turnId);
+    if (backgroundTasks === 0) this.pending.delete(turnId);
     this.emit({
       type: "turn.done",
       turnId,
@@ -47,7 +48,8 @@ class FakeDriver implements CliDriver {
       outputTokens: 1,
       costUsd: 0,
       numTurns: 1,
-      isError: false
+      isError: false,
+      backgroundTasks
     });
   }
   completeTitle(text: string): void {
@@ -65,7 +67,8 @@ class FakeDriver implements CliDriver {
         outputTokens: 1,
         costUsd: 0,
         numTurns: 1,
-        isError: false
+        isError: false,
+        backgroundTasks: 0
       });
     }
   }
@@ -83,7 +86,8 @@ class FakeDriver implements CliDriver {
         outputTokens: 1,
         costUsd: 0,
         numTurns: 1,
-        isError: true
+        isError: true,
+        backgroundTasks: 0
       });
     }
   }
@@ -99,6 +103,9 @@ class FakeDriver implements CliDriver {
     for (const turnId of [...this.pending.keys()]) this.complete(turnId);
   }
   interrupt(): void {}
+  stopSession(sessionId: string): void {
+    this.stoppedSessions.push(sessionId);
+  }
   async renameSession(): Promise<void> {}
   async *events(): AsyncIterable<never> {}
 }
@@ -106,6 +113,7 @@ class FakeDriver implements CliDriver {
 class ModelRecordingDriver implements CliDriver {
   readonly kind = "opencode" as const;
   modelCwds: string[] = [];
+  stoppedSessions: string[] = [];
   constructor(private emit: (event: ThreadEvent) => void) {}
   async listSessions(): Promise<[]> {
     return [];
@@ -122,6 +130,9 @@ class ModelRecordingDriver implements CliDriver {
     return { turnId, events: (async function* () {})() };
   }
   interrupt(): void {}
+  stopSession(sessionId: string): void {
+    this.stoppedSessions.push(sessionId);
+  }
   async renameSession(): Promise<void> {}
   async *events(): AsyncIterable<never> {}
 }
@@ -758,7 +769,8 @@ describe("SessionManager", () => {
       outputTokens: 0,
       costUsd: 0,
       numTurns: 1,
-      isError: false
+      isError: false,
+      backgroundTasks: 0
     });
     await new Promise((r) => setTimeout(r, 50));
 
@@ -862,6 +874,25 @@ describe("SessionManager", () => {
     fake.completeAll();
     sessions = await manager.listSessions(project.id);
     expect(sessions.find((s) => s.id === a.id)?.status).toBe("done");
+    manager.dispose();
+  });
+
+  it("keeps the session working while background tasks run and completes on the final turn.done", async () => {
+    const { manager, fake } = makeManager();
+    const project = manager.addProject("C:\\proj-background");
+    const a = await manager.createSession(project.id, "claude");
+    const turnId = await manager.startTurn(a.id, "hello");
+
+    fake.complete(turnId, 2);
+    let sessions = await manager.listSessions(project.id);
+    expect(sessions.find((s) => s.id === a.id)?.status).toBe("working");
+    expect(sessions.find((s) => s.id === a.id)?.resumeCursor).toMatch(/^cursor-/);
+    await expect(manager.startTurn(a.id, "second")).rejects.toThrow(/busy/);
+
+    fake.complete(turnId);
+    sessions = await manager.listSessions(project.id);
+    expect(sessions.find((s) => s.id === a.id)?.status).toBe("done");
+    await expect(manager.startTurn(a.id, "second")).resolves.toEqual(expect.any(String));
     manager.dispose();
   });
 
@@ -1180,6 +1211,15 @@ describe("SessionManager", () => {
     expect(result.worktreeOrphaned).toBe(false);
     expect(result.worktreeRemoved).toBe(false);
     expect(result.branchDeleted).toBe(false);
+    manager.dispose();
+  });
+
+  it("stops the driver process when resolving a session", async () => {
+    const { manager, fake } = makeManager();
+    const project = manager.addProject("C:\\proj-resolve-stop");
+    const a = await manager.createSession(project.id, "claude");
+    await manager.resolveSession(a.id, "resolved");
+    expect(fake.stoppedSessions).toEqual([a.id]);
     manager.dispose();
   });
 
