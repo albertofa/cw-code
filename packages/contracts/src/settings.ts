@@ -15,6 +15,9 @@ export interface AppSettings {
   claudeDefaultModel: string;
   claudeEnabledModels: string[];
   claudeCustomModel: CustomModel;
+  claudeReasoningExpanded: boolean;
+  opencodeReasoningExpanded: boolean;
+  codexReasoningExpanded: boolean;
   gitBinaryPath: string;
   githubCliBinaryPath: string;
   sourceControlRefreshIntervalSeconds: number;

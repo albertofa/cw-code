@@ -60,6 +60,14 @@ function defaultWorkspace(defaultUseWorktree: boolean): CreateSessionOptions {
   return { mode: defaultUseWorktree ? "new" : "current" };
 }
 
+function reasoningExpandedFrom(settings: AppSettings): Record<DriverName, boolean> {
+  return {
+    claude: settings.claudeReasoningExpanded,
+    opencode: settings.opencodeReasoningExpanded,
+    codex: settings.codexReasoningExpanded
+  };
+}
+
 function readComposerMirror(sessionId: string): ComposerPrefs | null {
   try {
     const raw = window.localStorage.getItem(`cw:composer:${sessionId}`);
@@ -107,6 +115,7 @@ interface AppState {
   sourceControlRefreshIntervalSeconds: number;
   holdingHours: number;
   defaultUseWorktree: boolean;
+  reasoningExpandedByDriver: Record<DriverName, boolean>;
   preview: { sessionId: string; path: string; basePath: string } | null;
   openPreview(sessionId: string, path: string, basePath: string): void;
   closePreview(): void;
@@ -233,6 +242,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   sourceControlRefreshIntervalSeconds: 30,
   holdingHours: 6,
   defaultUseWorktree: true,
+  reasoningExpandedByDriver: { claude: false, opencode: false, codex: false },
 
   setPendingPrefs(prefs: ComposerPrefs) {
     set({ pendingPrefs: { ...get().pendingPrefs, ...prefs } });
@@ -282,6 +292,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       sourceControlRefreshIntervalSeconds: settings.sourceControlRefreshIntervalSeconds,
       holdingHours: settings.holdingHours,
       defaultUseWorktree: settings.defaultUseWorktree,
+      reasoningExpandedByDriver: reasoningExpandedFrom(settings),
       pendingWorkspace: { ...get().pendingWorkspace, ...defaultWorkspace(settings.defaultUseWorktree) }
     });
     void get().hydrateActiveTurns();
@@ -711,7 +722,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       settingsVersion: get().settingsVersion + 1,
       sourceControlRefreshIntervalSeconds: saved.sourceControlRefreshIntervalSeconds,
       holdingHours: saved.holdingHours,
-      defaultUseWorktree: saved.defaultUseWorktree
+      defaultUseWorktree: saved.defaultUseWorktree,
+      reasoningExpandedByDriver: reasoningExpandedFrom(saved)
     });
     return saved;
   },

@@ -47,6 +47,7 @@ export function ThreadView() {
   const ensureHistory = useAppStore((s) => s.ensureHistory);
   const retryConnection = useAppStore((s) => s.retryConnection);
   const usage = useAppStore((s) => (activeSessionId ? s.usageBySession[activeSessionId] : undefined));
+  const reasoningExpanded = useAppStore((s) => (session ? s.reasoningExpandedByDriver[session.driver] : false));
   const openPreview = useAppStore((s) => s.openPreview);
   const setPendingDriver = useAppStore((s) => s.setPendingDriver);
   const turnStartedAt = useAppStore((s) => (activeSessionId ? s.turnStartedAt[activeSessionId] : undefined));
@@ -228,9 +229,10 @@ export function ThreadView() {
     if (m.role === "reasoning") {
       return (
         <ReasoningBlock
-          key={m.id}
+          key={`${m.id}:${reasoningExpanded ? "open" : "closed"}`}
           message={m}
           live={busyTurn === m.turnId && m.reasoningMs === undefined}
+          defaultOpen={reasoningExpanded}
         />
       );
     }
