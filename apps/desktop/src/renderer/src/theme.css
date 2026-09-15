@@ -35,6 +35,7 @@
   --violet: #7c42ff;
   --violet-strong: #5724e9;
   --periwinkle: #8b93c8;
+  --turn-label: #b6c0dd;
   --composer-surface: #24262b;
   --composer-muted: #868a93;
 }
@@ -1745,7 +1746,7 @@ body.session-dragging * {
   border: 0;
   font-family: var(--sans);
   font-size: 13px;
-  color: var(--dim);
+  color: var(--turn-label);
   background: none;
   text-align: left;
   cursor: pointer;
@@ -1762,7 +1763,7 @@ body.session-dragging * {
 }
 
 .turn-head:disabled:hover {
-  color: var(--dim);
+  color: var(--turn-label);
   background: none;
 }
 
@@ -1782,7 +1783,7 @@ body.session-dragging * {
 
 .turn-caret-right,
 .turn-caret-down {
-  color: var(--muted);
+  color: color-mix(in srgb, var(--turn-label) 72%, transparent);
 }
 
 .turn-head:hover .turn-caret-right,
@@ -1807,7 +1808,7 @@ body.session-dragging * {
 }
 
 .turn-head-live .turn-head-label {
-  background: linear-gradient(90deg, var(--muted) 35%, var(--text) 50%, var(--muted) 65%);
+  background: linear-gradient(90deg, var(--turn-label) 35%, var(--text) 50%, var(--turn-label) 65%);
   background-size: 200% 100%;
   -webkit-background-clip: text;
   background-clip: text;
@@ -1828,9 +1829,9 @@ body.session-dragging * {
 @media (prefers-reduced-motion: reduce) {
   .turn-head-live .turn-head-label {
     animation: none;
-    color: var(--muted);
+    color: var(--turn-label);
     background: none;
-    -webkit-text-fill-color: var(--muted);
+    -webkit-text-fill-color: var(--turn-label);
   }
 }
 
