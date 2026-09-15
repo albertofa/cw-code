@@ -563,6 +563,10 @@ export class SessionManager {
     summary.removed += 1;
   }
 
+  resumeCursorFor(sessionId: string): string {
+    return this.store.getSession(sessionId)?.resumeCursor ?? "";
+  }
+
   getComposer(sessionId: string): ComposerPrefs {
     const session = this.store.getSession(sessionId);
     if (!session) throw new Error(`unknown session ${sessionId}`);

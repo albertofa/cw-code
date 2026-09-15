@@ -338,11 +338,13 @@ export interface CwApi {
   savePasteImage(projectId: string, mime: string, data: Uint8Array): Promise<string>;
   readImage(args: { sessionId?: string; projectId?: string; path: string }): Promise<{ mime: string; base64: string }>;
   turnDiff(sessionId: string, since: number): Promise<string>;
-  openPty(sessionId: string, kind: DriverName | "shell"): Promise<string>;
+  openPty(sessionId: string, kind: DriverName | "shell"): Promise<{ ptyId: string; token: string; replay: string }>;
   writePty(ptyId: string, data: string): void;
   resizePty(ptyId: string, cols: number, rows: number): void;
+  detachPty(ptyId: string, token: string): void;
   killPty(ptyId: string): void;
   onPtyData(cb: (msg: { ptyId: string; data: string }) => void): () => void;
+  onPtyExit(cb: (msg: { ptyId: string; token: string; exitCode: number }) => void): () => void;
   minimizeWindow(): void;
   toggleMaximizeWindow(): void;
   closeWindow(): void;
