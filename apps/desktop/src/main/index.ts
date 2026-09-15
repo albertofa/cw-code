@@ -189,6 +189,7 @@ function registerIpc(): void {
   ipcMain.handle("sessions.history", (_e, args: { sessionId: string }) =>
     sessions.getHistory(args.sessionId)
   );
+  ipcMain.handle("sessions.activeTurns", () => sessions.listActiveTurns());
   ipcMain.handle("sessions.retryConnection", (_e, args: { sessionId: string }) =>
     sessions.retryConnection(args.sessionId)
   );

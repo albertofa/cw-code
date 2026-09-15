@@ -887,6 +887,58 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
+  it("reports the active turn with its start time while it runs", async () => {
+    const { manager } = makeManager();
+    const project = manager.addProject("C:\\proj-active-list");
+    const a = await manager.createSession(project.id, "claude");
+    const before = Date.now();
+    const turnId = await manager.startTurn(a.id, "hello");
+    const active = manager.listActiveTurns();
+    expect(active).toHaveLength(1);
+    expect(active[0]).toMatchObject({ sessionId: a.id, turnId });
+    expect(active[0].startedAt).toBeGreaterThanOrEqual(before);
+    manager.dispose();
+  });
+
+  it("drops the active turn when turn.done completes without background tasks", async () => {
+    const { manager, fake } = makeManager();
+    const project = manager.addProject("C:\\proj-active-done");
+    const a = await manager.createSession(project.id, "claude");
+    const turnId = await manager.startTurn(a.id, "hello");
+    fake.complete(turnId);
+    expect(manager.listActiveTurns()).toEqual([]);
+    manager.dispose();
+  });
+
+  it("drops the active turn on interrupt and on turn.error", async () => {
+    const { manager } = makeManager();
+    const project = manager.addProject("C:\\proj-active-drop");
+    const a = await manager.createSession(project.id, "claude");
+    const turnId = await manager.startTurn(a.id, "hello");
+    manager.interrupt(turnId);
+    expect(manager.listActiveTurns()).toEqual([]);
+
+    const b = await manager.createSession(project.id, "claude");
+    const errorTurnId = await manager.startTurn(b.id, "boom");
+    const routeEvent = (manager as unknown as { routeEvent(e: ThreadEvent): void }).routeEvent.bind(manager);
+    routeEvent({ type: "turn.error", turnId: errorTurnId, message: "boom" });
+    expect(manager.listActiveTurns()).toEqual([]);
+    manager.dispose();
+  });
+
+  it("keeps the active turn while background tasks run", async () => {
+    const { manager, fake } = makeManager();
+    const project = manager.addProject("C:\\proj-active-bg");
+    const a = await manager.createSession(project.id, "claude");
+    const turnId = await manager.startTurn(a.id, "hello");
+    fake.complete(turnId, 2);
+    const active = manager.listActiveTurns();
+    expect(active).toHaveLength(1);
+    expect(active[0]).toMatchObject({ sessionId: a.id, turnId });
+    expect(typeof active[0].startedAt).toBe("number");
+    manager.dispose();
+  });
+
   it("moves interrupted and errored sessions into holding", async () => {
     const { manager } = makeManager();
     const project = manager.addProject("C:\\proj-holding");

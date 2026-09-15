@@ -68,7 +68,7 @@ export class SessionManager {
   private store: SessionStore;
   private settings: SettingsStore;
   private drivers: Record<DriverKind, CliDriver>;
-  private activeTurns = new Map<string, string>();
+  private activeTurns = new Map<string, { sessionId: string; startedAt: number }>();
   private titleTurns = new Map<string, TitleTurn>();
   private firstPrompts = new Map<string, string>();
   private pendingTurns = new Set<string>();
@@ -105,7 +105,7 @@ export class SessionManager {
       return;
     }
     if (event.type === "assistant.delta") {
-      this.bufferDelta(event.turnId, this.activeTurns.get(event.turnId) ?? "", event.text);
+      this.bufferDelta(event.turnId, this.activeTurns.get(event.turnId)?.sessionId ?? "", event.text);
       return;
     }
     if (event.type === "turn.done") {
@@ -114,7 +114,7 @@ export class SessionManager {
       return;
     }
     this.flushDelta(event.turnId);
-    const sessionId = this.activeTurns.get(event.turnId) ?? "";
+    const sessionId = this.activeTurns.get(event.turnId)?.sessionId ?? "";
     this.handleDriverEvent(sessionId, event);
   }
 
@@ -391,8 +391,8 @@ export class SessionManager {
     const session = this.store.getSession(sessionId);
     if (!session) throw new Error(`unknown session ${sessionId}`);
     const project = this.getProject(session.projectId);
-    for (const owner of this.activeTurns.values()) {
-      if (owner === sessionId) throw new Error("session busy (turn active)");
+    for (const entry of this.activeTurns.values()) {
+      if (entry.sessionId === sessionId) throw new Error("session busy (turn active)");
     }
     if (this.pendingTurns.has(sessionId)) throw new Error("session busy (turn pending)");
     if (this.pendingResolves.has(sessionId)) throw new Error("session busy (resolve pending)");
@@ -632,8 +632,8 @@ export class SessionManager {
   private async healMissingCursor(session: SessionMeta, project: Project): Promise<HistoryMessage[] | null> {
     if (session.title.trim().toLowerCase() === NEW_SESSION_TITLE.toLowerCase()) return null;
     if (this.pendingTurns.has(session.id)) return null;
-    for (const owner of this.activeTurns.values()) {
-      if (owner === session.id) return null;
+    for (const entry of this.activeTurns.values()) {
+      if (entry.sessionId === session.id) return null;
     }
     let cwd: string;
     try {
@@ -646,8 +646,8 @@ export class SessionManager {
   }
 
   private async verifyEmptyHistory(session: SessionMeta, project: Project): Promise<HistoryMessage[]> {
-    for (const owner of this.activeTurns.values()) {
-      if (owner === session.id) return [];
+    for (const entry of this.activeTurns.values()) {
+      if (entry.sessionId === session.id) return [];
     }
     let cwd: string;
     try {
@@ -760,8 +760,8 @@ export class SessionManager {
     }
     const project = this.store.getProject(session.projectId);
     if (!project) throw new Error(`unknown project ${session.projectId}`);
-    for (const [turnId, owner] of this.activeTurns) {
-      if (owner === sessionId) throw new Error(`session busy (turn ${turnId})`);
+    for (const [turnId, entry] of this.activeTurns) {
+      if (entry.sessionId === sessionId) throw new Error(`session busy (turn ${turnId})`);
     }
     if (this.pendingTurns.has(sessionId)) throw new Error("session busy (turn pending)");
     if (this.pendingResolves.has(sessionId)) throw new Error("session busy (resolve pending)");
@@ -791,7 +791,7 @@ export class SessionManager {
         attachments: resolveAttachments(project.rootPath, cwd, opts?.attachments ?? []),
         env: buildTurnEnv(process.env, this.sessionEnvVars(session, project, cwd))
       });
-      this.activeTurns.set(handle.turnId, sessionId);
+      this.activeTurns.set(handle.turnId, { sessionId, startedAt: Date.now() });
       this.store.updateSession(sessionId, { status: "working" });
       if (firstMessage) this.maybeAutoTitle(sessionId, prompt, placeholder);
       return handle.turnId;
@@ -924,8 +924,16 @@ export class SessionManager {
     }
   }
 
+  listActiveTurns(): Array<{ sessionId: string; turnId: string; startedAt: number }> {
+    return [...this.activeTurns].map(([turnId, entry]) => ({
+      sessionId: entry.sessionId,
+      turnId,
+      startedAt: entry.startedAt
+    }));
+  }
+
   interrupt(turnId: string): void {
-    const sessionId = this.activeTurns.get(turnId);
+    const sessionId = this.activeTurns.get(turnId)?.sessionId;
     if (!sessionId) return;
     const session = this.store.getSession(sessionId);
     if (session) this.drivers[session.driver].interrupt(turnId);
@@ -936,8 +944,8 @@ export class SessionManager {
   async retryConnection(sessionId: string): Promise<RetryConnectionResult> {
     const session = this.store.getSession(sessionId);
     if (!session) throw new Error(`unknown session ${sessionId}`);
-    for (const owner of this.activeTurns.values()) {
-      if (owner === sessionId) throw new Error("session busy (turn in progress)");
+    for (const entry of this.activeTurns.values()) {
+      if (entry.sessionId === sessionId) throw new Error("session busy (turn in progress)");
     }
     const driver = this.drivers[session.driver];
     if (typeof driver.retryConnection !== "function") {
@@ -951,7 +959,7 @@ export class SessionManager {
       permissionMode: this.getComposer(sessionId).permissionMode
     });
     if (result.status === "running" && result.turnId) {
-      this.activeTurns.set(result.turnId, sessionId);
+      this.activeTurns.set(result.turnId, { sessionId, startedAt: Date.now() });
       this.store.updateSession(sessionId, { status: "working" });
     } else {
       this.store.updateSession(sessionId, { status: "idle" });

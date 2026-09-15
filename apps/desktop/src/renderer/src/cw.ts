@@ -97,6 +97,12 @@ export interface RetryConnectionResult {
   history: HistoryMessage[];
 }
 
+export interface ActiveTurn {
+  sessionId: string;
+  turnId: string;
+  startedAt: number;
+}
+
 export type ApprovalDecision = "accept" | "acceptForSession" | "acceptGlobal" | "decline" | "cancel";
 
 export type ApprovalKind = "command" | "fileChange" | "permissions";
@@ -327,6 +333,7 @@ export interface CwApi {
   resolveSession(sessionId: string, status: SessionStatus, removeWorktree?: boolean, forceBranch?: boolean): Promise<SessionCleanupResult>;
   pruneStaleWorktrees(): Promise<WorktreePruneSummary>;
   getHistory(sessionId: string): Promise<HistoryMessage[]>;
+  activeTurns(): Promise<ActiveTurn[]>;
   retryConnection(sessionId: string): Promise<RetryConnectionResult>;
   startTurn(sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[] }): Promise<string>;
   interrupt(turnId: string): Promise<void>;

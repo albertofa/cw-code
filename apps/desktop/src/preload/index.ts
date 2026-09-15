@@ -52,6 +52,7 @@ export interface CwApi {
   resolveSession(sessionId: string, status: SessionStatus, removeWorktree?: boolean, forceBranch?: boolean): Promise<SessionCleanupResult>;
   pruneStaleWorktrees(): Promise<WorktreePruneSummary>;
   getHistory(sessionId: string): Promise<unknown[]>;
+  activeTurns(): Promise<Array<{ sessionId: string; turnId: string; startedAt: number }>>;
   retryConnection(sessionId: string): Promise<RetryConnectionResult>;
   startTurn(sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[] }): Promise<string>;
   interrupt(turnId: string): Promise<void>;
@@ -129,6 +130,7 @@ const api: CwApi = {
     ipcRenderer.invoke("sessions.resolve", { sessionId, status, removeWorktree, forceBranch }),
   pruneStaleWorktrees: () => ipcRenderer.invoke("worktrees.prune"),
   getHistory: (sessionId: string) => ipcRenderer.invoke("sessions.history", { sessionId }),
+  activeTurns: () => ipcRenderer.invoke("sessions.activeTurns"),
   retryConnection: (sessionId: string) => ipcRenderer.invoke("sessions.retryConnection", { sessionId }),
   startTurn: (sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[] }) =>
     ipcRenderer.invoke("turns.start", { sessionId, prompt, prefs: opts?.prefs, attachments: opts?.attachments }),
