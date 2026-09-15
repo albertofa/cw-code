@@ -27,6 +27,7 @@ function workingCardTintStyle(name: string): CSSProperties {
 function stateLabel(status: SessionStatus): string {
   if (status === "input-required") return "Input";
   if (status === "working") return "Running";
+  if (status === "done") return "Done";
   if (status === "holding") return "Holding";
   return status;
 }
@@ -65,7 +66,6 @@ type SidebarSection = "main" | "resolved";
 interface SidebarOrder {
   main: string[];
   resolved: string[];
-  snap: Record<string, number>;
   pinned: string[];
 }
 
@@ -136,12 +136,10 @@ function readStoredOrder(key: string): SidebarOrder | null {
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<SidebarOrder>;
     if (!Array.isArray(parsed.main) || !Array.isArray(parsed.resolved)) return null;
-    const snap = parsed.snap && typeof parsed.snap === "object" ? (parsed.snap as Record<string, number>) : {};
     const pinned = Array.isArray(parsed.pinned) ? parsed.pinned.filter((id): id is string => typeof id === "string") : [];
     return {
       main: parsed.main.filter((id): id is string => typeof id === "string"),
       resolved: parsed.resolved.filter((id): id is string => typeof id === "string"),
-      snap,
       pinned,
     };
   } catch {
@@ -164,26 +162,6 @@ function orderByStored(current: Session[], ids: string[]): Session[] {
     .sort((a, b) => (index.get(a.id) ?? 0) - (index.get(b.id) ?? 0));
   const unknown = current.filter((s) => !index.has(s.id)).sort((a, b) => b.updatedAt - a.updatedAt);
   return [...known, ...unknown];
-}
-
-function isStoredOrderValid(mainAll: Session[], resolvedAll: Session[], stored: SidebarOrder): boolean {
-  if (stored.main.length !== mainAll.length || stored.resolved.length !== resolvedAll.length) return false;
-  if (new Set(stored.main).size !== stored.main.length) return false;
-  if (new Set(stored.resolved).size !== stored.resolved.length) return false;
-  const mainIds = new Set(mainAll.map((s) => s.id));
-  const resolvedIds = new Set(resolvedAll.map((s) => s.id));
-  const storedMain = new Set(stored.main);
-  const storedResolved = new Set(stored.resolved);
-  if (stored.main.some((id) => !mainIds.has(id)) || stored.resolved.some((id) => !resolvedIds.has(id))) return false;
-  if (mainAll.some((s) => !storedMain.has(s.id)) || resolvedAll.some((s) => !storedResolved.has(s.id))) return false;
-  if (stored.main.some((id) => storedResolved.has(id))) return false;
-  const pinned = new Set(stored.pinned);
-  for (const s of [...mainAll, ...resolvedAll]) {
-    if (pinned.has(s.id)) continue;
-    const snap = stored.snap[s.id];
-    if (snap !== undefined && snap !== s.updatedAt) return false;
-  }
-  return true;
 }
 
 export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
@@ -359,14 +337,8 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
   };
   const mainAll = source.filter((s) => !workingSetIds.has(s.id) && effectiveSection(s) === "main");
   const resolvedAll = source.filter((s) => !workingSetIds.has(s.id) && effectiveSection(s) === "resolved");
-  const storedView: SidebarOrder | null = storedOrder
-    ? { main: storedMain, resolved: storedResolved, snap: storedOrder.snap, pinned: storedPinned }
-    : null;
-  const storedValid = storedView ? isStoredOrderValid(mainAll, resolvedAll, storedView) : false;
-  const orderedMainAll =
-    storedValid && storedView ? orderByStored(mainAll, storedView.main) : [...mainAll].sort(byRecency);
-  const orderedResolvedAll =
-    storedValid && storedView ? orderByStored(resolvedAll, storedView.resolved) : [...resolvedAll].sort(byRecency);
+  const orderedMainAll = storedOrder ? orderByStored(mainAll, storedMain) : [...mainAll].sort(byRecency);
+  const orderedResolvedAll = storedOrder ? orderByStored(resolvedAll, storedResolved) : [...resolvedAll].sort(byRecency);
   const shown = orderedMainAll.filter(matchesQuery);
   const resolved = orderedResolvedAll.filter(matchesQuery);
   const previewMainAll = previewPlacement(orderedMainAll, orderedResolvedAll, dragged, preview, "main");
@@ -565,15 +537,12 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
         nextResolved.push(moving);
       }
     }
-    const snap: Record<string, number> = {};
-    for (const s of [...nextMain, ...nextResolved]) snap[s.id] = s.updatedAt;
     const cross = fromSection !== toSection;
     const prevPinned = readStoredOrder(orderKey)?.pinned ?? storedOrder?.pinned ?? [];
     const pinned = cross ? Array.from(new Set([...prevPinned, fromId])) : [];
     writeStoredOrder(orderKey, {
       main: nextMain.map((s) => s.id),
       resolved: nextResolved.map((s) => s.id),
-      snap,
       pinned,
     });
     if (cross) setStatus(fromId, toSection === "main" ? "idle" : "resolved");
