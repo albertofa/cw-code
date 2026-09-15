@@ -1740,12 +1740,11 @@ body.session-dragging * {
   gap: 8px;
   align-self: stretch;
   width: 100%;
-  padding: 7px 0;
+  margin: 6px 0;
+  padding: 3px 0;
   border: 0;
-  border-top: 1px solid var(--border-soft);
-  border-bottom: 1px solid var(--border-soft);
   font-family: var(--sans);
-  font-size: 12.5px;
+  font-size: 13px;
   color: var(--dim);
   background: none;
   text-align: left;
