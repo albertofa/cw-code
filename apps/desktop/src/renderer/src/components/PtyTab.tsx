@@ -11,17 +11,25 @@ import type { DriverName } from "../cw.js";
 export function PtyTab({ sessionId, kind }: { sessionId: string; kind: DriverName | "shell" }) {
   const divRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
+  const [exitCode, setExitCode] = useState<number | null>(null);
+  const [restartNonce, setRestartNonce] = useState(0);
   const termRef = useRef<Terminal | null>(null);
   const ptyIdRef = useRef<string | null>(null);
+  const ptyTokenRef = useRef<string | null>(null);
 
   useEffect(() => {
     let disposed = false;
     let offPty: (() => void) | undefined;
+    let offExit: (() => void) | undefined;
     let dataHandler: { dispose: () => void } | undefined;
     let term: Terminal | null = null;
     let fitAddon: FitAddon | null = null;
     let observer: ResizeObserver | null = null;
     let raf = 0;
+    let nudgeRaf = 0;
+    let ready = false;
+    const pendingData: Array<{ ptyId: string; data: string }> = [];
+    const pendingExit: Array<{ ptyId: string; token: string; exitCode: number }> = [];
 
     const pushSize = () => {
       if (disposed || !term || !ptyIdRef.current) return;
@@ -33,7 +41,8 @@ export function PtyTab({ sessionId, kind }: { sessionId: string; kind: DriverNam
     };
 
     const fitAndPush = () => {
-      if (disposed || !term || !fitAddon) return;
+      if (disposed || !term || !fitAddon || !divRef.current) return;
+      if (divRef.current.clientWidth === 0 || divRef.current.clientHeight === 0) return;
       try {
         fitAddon.fit();
       } catch {
@@ -45,6 +54,16 @@ export function PtyTab({ sessionId, kind }: { sessionId: string; kind: DriverNam
     const scheduleFit = () => {
       cancelAnimationFrame(raf);
       raf = requestAnimationFrame(fitAndPush);
+    };
+
+    const nudgeRepaint = (ptyId: string) => {
+      if (!term || term.rows < 2) return;
+      const { cols, rows } = term;
+      window.cw.resizePty(ptyId, cols, rows - 1);
+      cancelAnimationFrame(nudgeRaf);
+      nudgeRaf = requestAnimationFrame(() => {
+        if (!disposed) window.cw.resizePty(ptyId, cols, rows);
+      });
     };
 
     const start = (fontFamily: string) => {
@@ -88,19 +107,45 @@ export function PtyTab({ sessionId, kind }: { sessionId: string; kind: DriverNam
         /* Container not laid out yet; ResizeObserver will correct. */
       }
 
-      window.cw.openPty(sessionId, kind).then((ptyId) => {
+      offPty = window.cw.onPtyData((msg) => {
+        if (msg.ptyId !== ptyIdRef.current) {
+          if (!ptyIdRef.current) pendingData.push(msg);
+          return;
+        }
+        if (ready && term) term.write(msg.data);
+        else pendingData.push(msg);
+      });
+      offExit = window.cw.onPtyExit((msg) => {
+        if (!ptyIdRef.current) {
+          pendingExit.push(msg);
+          return;
+        }
+        if (msg.ptyId === ptyIdRef.current && msg.token === ptyTokenRef.current) setExitCode(msg.exitCode);
+      });
+
+      window.cw.openPty(sessionId, kind).then(({ ptyId, token, replay }) => {
         if (disposed) {
-          window.cw.killPty(ptyId);
+          window.cw.detachPty(ptyId, token);
           return;
         }
         ptyIdRef.current = ptyId;
+        ptyTokenRef.current = token;
         fitAndPush();
-        offPty = window.cw.onPtyData((msg) => {
-          if (msg.ptyId === ptyId) term?.write(msg.data);
-        });
+        if (replay && term) {
+          term.write(replay);
+          nudgeRepaint(ptyId);
+        }
+        ready = true;
+        for (const chunk of pendingData) {
+          if (chunk.ptyId === ptyId) term?.write(chunk.data);
+        }
+        pendingData.length = 0;
+        const exited = pendingExit.find((entry) => entry.ptyId === ptyId && entry.token === token);
+        if (exited) setExitCode(exited.exitCode);
       }).catch((err: Error) => {
         if (!disposed) setError(err.message);
       });
+
       dataHandler = term.onData((data) => {
         if (ptyIdRef.current) window.cw.writePty(ptyIdRef.current, data);
       });
@@ -117,20 +162,38 @@ export function PtyTab({ sessionId, kind }: { sessionId: string; kind: DriverNam
     return () => {
       disposed = true;
       cancelAnimationFrame(raf);
+      cancelAnimationFrame(nudgeRaf);
       observer?.disconnect();
       dataHandler?.dispose();
       offPty?.();
-      if (ptyIdRef.current) window.cw.killPty(ptyIdRef.current);
+      offExit?.();
+      if (ptyIdRef.current && ptyTokenRef.current) window.cw.detachPty(ptyIdRef.current, ptyTokenRef.current);
       ptyIdRef.current = null;
+      ptyTokenRef.current = null;
       termRef.current?.dispose();
       termRef.current = null;
     };
-  }, [sessionId, kind]);
+  }, [sessionId, kind, restartNonce]);
 
   return (
     <div className="pty-wrap">
       <div ref={divRef} />
       {error && <div className="pty-error">{error}</div>}
+      {exitCode !== null && (
+        <div className="pty-exit">
+          <span>{exitCode === 0 ? "Terminal exited." : `Terminal exited with code ${exitCode}.`}</span>
+          <button
+            className="btn"
+            onClick={() => {
+              setError(null);
+              setExitCode(null);
+              setRestartNonce((nonce) => nonce + 1);
+            }}
+          >
+            Restart
+          </button>
+        </div>
+      )}
     </div>
   );
 }
