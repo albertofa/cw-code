@@ -1720,45 +1720,95 @@ body.session-dragging * {
   }
 }
 
-.working-pill {
-  position: relative;
-  overflow: hidden;
+.turn-block {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.turn-lead {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  min-width: 0;
+}
+
+.turn-head {
   display: inline-flex;
   align-items: center;
   gap: 7px;
-  background: transparent;
-  border-radius: 999px;
-  padding: 3px 2px;
+  align-self: flex-start;
+  padding: 2px 0;
+  font-family: var(--sans);
   font-size: 11.5px;
   color: var(--muted);
-  white-space: nowrap;
+  background: none;
+  border: 0;
+  text-align: left;
+  cursor: pointer;
+  user-select: none;
 }
 
-.thread-inner .working-pill {
-  margin: 10px 0 4px;
+.turn-head:hover {
+  color: var(--dim);
 }
 
-.working-pill::after {
-  content: "";
-  position: absolute;
-  inset: 0;
-  background: linear-gradient(100deg, transparent 20%, rgba(253, 252, 252, 0.09) 50%, transparent 80%);
-  animation: tool-sweep 2.8s ease-in-out infinite;
-  pointer-events: none;
+.caret-right {
+  display: inline-flex;
 }
 
-.turn-sep {
+.caret-down {
+  display: none;
+}
+
+.turn-block.open .caret-right {
+  display: none;
+}
+
+.turn-block.open .caret-down {
+  display: inline-flex;
+}
+
+.turn-head-live .turn-head-label {
+  background: linear-gradient(90deg, var(--muted) 35%, var(--text) 50%, var(--muted) 65%);
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: turn-text-sweep 2.2s linear infinite;
+}
+
+@keyframes turn-text-sweep {
+  from {
+    background-position: 200% 0;
+  }
+
+  to {
+    background-position: -100% 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .turn-head-live .turn-head-label {
+    animation: none;
+    color: var(--muted);
+    background: none;
+    -webkit-text-fill-color: var(--muted);
+  }
+}
+
+.turn-fold,
+.turn-errors,
+.turn-pinned {
   display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: 10px;
-  color: var(--faint);
-  font-size: 11.5px;
-  margin: 8px 0 2px;
-  white-space: nowrap;
+  min-width: 0;
 }
 
-.turn-sep::after {
-  content: none;
+.turn-fold[hidden] {
+  display: none;
 }
 
 .jump-bottom-wrap {
