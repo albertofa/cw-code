@@ -41,10 +41,13 @@ function partInput(part: LiveToolPart): unknown {
 export function diffLiveTools(
   seen: Map<string, LiveSeen>,
   messages: LiveMessage[],
-  turnId: string
+  turnId: string,
+  beforeIds: Set<string> | null
 ): ThreadEvent[] {
   const events: ThreadEvent[] = [];
   for (const msg of messages) {
+    const msgId = msg.info?.id;
+    if (beforeIds !== null && typeof msgId === "string" && beforeIds.has(msgId)) continue;
     for (const part of msg.parts ?? []) {
       if (part.type !== "tool") continue;
       const id = partCallId(part, turnId);

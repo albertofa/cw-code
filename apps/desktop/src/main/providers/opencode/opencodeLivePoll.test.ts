@@ -35,7 +35,7 @@ function completedTask(callID: string, output = "All done"): LiveMessage {
 describe("diffLiveTools", () => {
   it("emits a call for a newly seen running tool", () => {
     const seen = new Map<string, LiveSeen>();
-    const events = diffLiveTools(seen, [runningTask("call_1")], "t1");
+    const events = diffLiveTools(seen, [runningTask("call_1")], "t1", null);
     expect(events).toHaveLength(1);
     expect(events[0]).toEqual({
       type: "tool.call",
@@ -48,13 +48,13 @@ describe("diffLiveTools", () => {
 
   it("emits nothing when the running tool was already seen", () => {
     const seen = new Map<string, LiveSeen>();
-    diffLiveTools(seen, [runningTask("call_1")], "t1");
-    expect(diffLiveTools(seen, [runningTask("call_1")], "t1")).toEqual([]);
+    diffLiveTools(seen, [runningTask("call_1")], "t1", null);
+    expect(diffLiveTools(seen, [runningTask("call_1")], "t1", null)).toEqual([]);
   });
 
   it("emits call plus result for a tool seen already completed", () => {
     const seen = new Map<string, LiveSeen>();
-    const events = diffLiveTools(seen, [completedTask("call_1")], "t1");
+    const events = diffLiveTools(seen, [completedTask("call_1")], "t1", null);
     expect(events).toHaveLength(2);
     expect(events[0]?.type).toBe("tool.call");
     expect(events[1]).toEqual({
@@ -64,13 +64,13 @@ describe("diffLiveTools", () => {
       output: "All done",
       isError: false
     });
-    expect(diffLiveTools(seen, [completedTask("call_1")], "t1")).toEqual([]);
+    expect(diffLiveTools(seen, [completedTask("call_1")], "t1", null)).toEqual([]);
   });
 
   it("emits only the result when a running tool completes", () => {
     const seen = new Map<string, LiveSeen>();
-    expect(diffLiveTools(seen, [runningTask("call_1")], "t1")).toHaveLength(1);
-    const events = diffLiveTools(seen, [completedTask("call_1")], "t1");
+    expect(diffLiveTools(seen, [runningTask("call_1")], "t1", null)).toHaveLength(1);
+    const events = diffLiveTools(seen, [completedTask("call_1")], "t1", null);
     expect(events).toHaveLength(1);
     expect(events[0]?.type).toBe("tool.result");
   });
@@ -92,7 +92,8 @@ describe("diffLiveTools", () => {
           ]
         }
       ],
-      "t1"
+      "t1",
+      null
     );
     expect(events).toHaveLength(2);
     expect(events[1]).toEqual({
@@ -106,7 +107,32 @@ describe("diffLiveTools", () => {
 
   it("does not re-emit calls the stdout stream already reported", () => {
     const seen = new Map<string, LiveSeen>([["call_1", { call: true, result: false }]]);
-    const events = diffLiveTools(seen, [runningTask("call_1")], "t1");
+    const events = diffLiveTools(seen, [runningTask("call_1")], "t1", null);
     expect(events).toEqual([]);
+  });
+
+  it("emits nothing for tools whose message predates the turn", () => {
+    const seen = new Map<string, LiveSeen>();
+    const old = completedTask("call_old");
+    old.info = { id: "m_old" };
+    expect(diffLiveTools(seen, [old], "t2", new Set(["m_old"]))).toEqual([]);
+  });
+
+  it("emits tools only from messages created after the turn started", () => {
+    const seen = new Map<string, LiveSeen>();
+    const old = completedTask("call_old");
+    old.info = { id: "m_old" };
+    const fresh = runningTask("call_new", "New work");
+    fresh.info = { id: "m_new" };
+    const events = diffLiveTools(seen, [old, fresh], "t2", new Set(["m_old"]));
+    expect(events).toEqual([
+      {
+        type: "tool.call",
+        turnId: "t2",
+        toolCallId: "call_new",
+        name: "task",
+        input: { description: "New work", prompt: "Work hard", subagent_type: "general" }
+      }
+    ]);
   });
 });

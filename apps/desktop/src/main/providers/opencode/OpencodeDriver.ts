@@ -648,12 +648,6 @@ export class OpencodeDriver implements CliDriver {
     });
     this.watchQuestions(turnId, serverPort, authHeader);
 
-    const pollTimer = setInterval(() => {
-      void this.pollSessionState(turnId);
-    }, 2000);
-    pollTimer.unref?.();
-    this.pollTimers.set(turnId, pollTimer);
-
     try {
       const res = await opencodeFetch(`http://127.0.0.1:${serverPort}/session/${encodeURIComponent(serverSessionId)}/message`, {
         headers: { Authorization: authHeader },
@@ -676,6 +670,12 @@ export class OpencodeDriver implements CliDriver {
         error: truncateError((err as Error).message)
       });
     }
+
+    const pollTimer = setInterval(() => {
+      void this.pollSessionState(turnId);
+    }, 2000);
+    pollTimer.unref?.();
+    this.pollTimers.set(turnId, pollTimer);
 
     const files: Array<{ mime: string; url: string }> = [];
     for (const rel of request.attachments ?? []) {
@@ -882,7 +882,7 @@ export class OpencodeDriver implements CliDriver {
       }
       if (!res.ok) throw new Error(`opencode result history failed: ${res.status}`);
       const messages = (await res.json()) as LiveMessage[];
-      for (const event of diffLiveTools(taken.seen, messages, turnId)) this.emit(event);
+      for (const event of diffLiveTools(taken.seen, messages, turnId, taken.beforeIds)) this.emit(event);
       const summary = summarizeOpencodeTurn(turnMessagesOf(messages), taken.beforeIds);
       text = summary.text;
       inputTokens = summary.inputTokens;
@@ -1158,7 +1158,8 @@ export class OpencodeDriver implements CliDriver {
       if (res.ok && !((res.headers.get("content-type") ?? "").includes("text/html"))) {
         const seen = this.toolSeen.get(turnId);
         if (seen) {
-          for (const event of diffLiveTools(seen, (await res.json()) as LiveMessage[], turnId)) this.emit(event);
+          const beforeIds = this.turnMeta.get(turnId)?.beforeIds ?? null;
+          for (const event of diffLiveTools(seen, (await res.json()) as LiveMessage[], turnId, beforeIds)) this.emit(event);
         }
       }
     } catch (err) {
