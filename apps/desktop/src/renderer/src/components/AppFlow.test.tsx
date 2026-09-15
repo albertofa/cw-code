@@ -215,6 +215,14 @@ describe("new-session crash repro (interactive)", () => {
       await emitAll({ type: "tool.result", turnId: "turn-1", toolCallId: id, output: "ok output", isError: false });
     }
     await emitAll({
+      type: "todo.updated",
+      turnId: "turn-1",
+      todos: [
+        { content: "do it", status: "completed" },
+        { content: "hide todo cards", status: "in_progress", priority: "high" }
+      ]
+    });
+    await emitAll({
       type: "question.request",
       turnId: "turn-1",
       request: {
@@ -256,7 +264,11 @@ describe("new-session crash repro (interactive)", () => {
     await act(async () => {
       await new Promise((r) => setTimeout(r, 100));
     });
-    expect(host!.innerHTML.length).toBeGreaterThan(1000);
+    const html = host!.innerHTML;
+    expect(html).toContain("hide todo cards");
+    expect(html).not.toContain("todowrite");
+    expect(html).not.toContain('"todos"');
+    expect(html.length).toBeGreaterThan(1000);
     expect(fatalErrors(errors)).toEqual([]);
   });
 
@@ -426,6 +438,109 @@ describe("new-session crash repro (interactive)", () => {
       console.error = origError;
       modelsForResult = [];
     }
+  });
+
+  it("stores todo.updated events per session", async () => {
+    const { useAppStore } = await mount();
+    emitSessionId = "sess_todos";
+    await emitAll({
+      type: "todo.updated",
+      turnId: "turn-1",
+      todos: [{ content: "write tests", status: "in_progress", priority: "high" }]
+    });
+    expect(useAppStore.getState().todosBySession["sess_todos"]).toEqual([
+      { content: "write tests", status: "in_progress", priority: "high" }
+    ]);
+    expect(fatalErrors(errors)).toEqual([]);
+  });
+
+  it("seeds todos from history when no live update arrived", async () => {
+    const { useAppStore } = await mount();
+    const bridge = (window as unknown as { cw: Record<string, unknown> }).cw;
+    bridge.getHistory = async () => [
+      {
+        id: "m1",
+        role: "tool",
+        text: "todowrite",
+        turnId: "turn-1",
+        todos: [{ content: "do it", status: "completed" }]
+      }
+    ];
+    await act(async () => {
+      await useAppStore.getState().ensureHistory("sess_hist");
+    });
+    expect(useAppStore.getState().todosBySession["sess_hist"]).toEqual([
+      { content: "do it", status: "completed" }
+    ]);
+    expect(fatalErrors(errors)).toEqual([]);
+  });
+
+  it("keeps live todos over history seeding", async () => {
+    const { useAppStore } = await mount();
+    emitSessionId = "sess_live";
+    await emitAll({
+      type: "todo.updated",
+      turnId: "turn-1",
+      todos: [{ content: "live", status: "pending" }]
+    });
+    const bridge = (window as unknown as { cw: Record<string, unknown> }).cw;
+    bridge.getHistory = async () => [
+      {
+        id: "m1",
+        role: "tool",
+        text: "todowrite",
+        turnId: "turn-0",
+        todos: [{ content: "stale", status: "completed" }]
+      }
+    ];
+    await act(async () => {
+      await useAppStore.getState().ensureHistory("sess_live");
+    });
+    expect(useAppStore.getState().todosBySession["sess_live"]).toEqual([
+      { content: "live", status: "pending" }
+    ]);
+    expect(fatalErrors(errors)).toEqual([]);
+  });
+
+  it("seeds the last todos from history", async () => {
+    const { useAppStore } = await mount();
+    const bridge = (window as unknown as { cw: Record<string, unknown> }).cw;
+    bridge.getHistory = async () => [
+      {
+        id: "m1",
+        role: "tool",
+        text: "todowrite",
+        turnId: "turn-1",
+        todos: [{ content: "first", status: "completed" }]
+      },
+      {
+        id: "m2",
+        role: "tool",
+        text: "todowrite",
+        turnId: "turn-1",
+        todos: [{ content: "second", status: "in_progress" }]
+      }
+    ];
+    await act(async () => {
+      await useAppStore.getState().ensureHistory("sess_last_todos");
+    });
+    expect(useAppStore.getState().todosBySession["sess_last_todos"]).toEqual([
+      { content: "second", status: "in_progress" }
+    ]);
+    expect(fatalErrors(errors)).toEqual([]);
+  });
+
+  it("seeds an explicit empty todo list from history", async () => {
+    const { useAppStore } = await mount();
+    const bridge = (window as unknown as { cw: Record<string, unknown> }).cw;
+    bridge.getHistory = async () => [
+      { id: "m1", role: "tool", text: "todowrite", turnId: "turn-1", todos: [] }
+    ];
+    await act(async () => {
+      await useAppStore.getState().ensureHistory("sess_empty_todos");
+    });
+    expect(useAppStore.getState().todosBySession["sess_empty_todos"]).toEqual([]);
+    expect(fatalErrors(errors)).toEqual([]);
   });
 
   it("submits a new session with production-like IPC latency", async () => {

@@ -4687,6 +4687,179 @@ select.field option {
   font-size: 10.5px;
 }
 
+.todo-dock {
+  max-width: 880px;
+  margin: 0 auto 10px;
+  background: var(--bg-deep);
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-lg);
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35);
+  overflow: hidden;
+}
+
+.todo-head {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  width: 100%;
+  padding: 9px 12px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.todo-head:hover {
+  background: rgba(255, 255, 255, 0.02);
+}
+
+.todo-head-icon {
+  color: var(--opencode);
+  flex: none;
+}
+
+.todo-title {
+  font-size: 13px;
+  font-weight: 650;
+  color: var(--text);
+}
+
+.todo-count {
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.todo-live {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11.5px;
+  color: var(--opencode);
+}
+
+.todo-live .pulse {
+  width: 6px;
+  height: 6px;
+  background: var(--opencode);
+}
+
+.todo-chev {
+  margin-left: auto;
+  display: inline-flex;
+  color: var(--faint);
+}
+
+.todo-bar {
+  height: 3px;
+  margin: 0 12px 2px;
+  border-radius: 3px;
+  background: #1b1d21;
+  overflow: hidden;
+}
+
+.todo-bar > i {
+  display: block;
+  height: 100%;
+  border-radius: 3px;
+  background: var(--success);
+}
+
+.todo-list {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  max-height: 190px;
+  overflow-y: auto;
+  padding: 6px 8px 9px;
+}
+
+.todo-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  min-width: 0;
+  padding: 6px 8px;
+  border-radius: 7px;
+  color: var(--dim);
+  font-size: 13px;
+}
+
+.todo-item.in_progress {
+  background: rgba(90, 184, 255, 0.08);
+  color: var(--text);
+}
+
+.todo-item.completed,
+.todo-item.cancelled {
+  color: var(--faint);
+}
+
+.todo-item.completed .todo-label,
+.todo-item.cancelled .todo-label {
+  text-decoration: line-through;
+  text-decoration-color: #4a4e55;
+}
+
+.todo-state {
+  width: 17px;
+  height: 17px;
+  border-radius: 50%;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  box-sizing: border-box;
+}
+
+.todo-state.completed {
+  background: var(--success);
+  color: #04291f;
+}
+
+.todo-state.in_progress {
+  border: 2.5px solid var(--opencode);
+}
+
+.todo-state.in_progress .pulse {
+  width: 5px;
+  height: 5px;
+  background: var(--opencode);
+}
+
+.todo-state.pending {
+  border: 2px solid #52565e;
+}
+
+.todo-state.cancelled {
+  border: 2px solid #4a4e55;
+  color: var(--faint);
+}
+
+.todo-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.todo-now {
+  margin-left: auto;
+  flex: none;
+  padding: 2px 7px;
+  border-radius: 99px;
+  background: var(--opencode-soft);
+  color: var(--opencode);
+  font-size: 10px;
+  letter-spacing: 0.05em;
+}
+
+.todo-dock.collapsed .todo-bar,
+.todo-dock.collapsed .todo-list {
+  display: none;
+}
+
 /* Git worktrees, GitHub status, and inspect view */
 .session-copy {
   min-width: 0;

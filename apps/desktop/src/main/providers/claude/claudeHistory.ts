@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { HistoryMessage } from "@cw-code/contracts";
+import { todosFromToolCall } from "../todos.js";
 import { claudeProjectSlug } from "./claudeSessions.js";
 
 type ContentBlock =
@@ -260,12 +261,14 @@ export function parseClaudeTranscriptLine(line: TranscriptLine): HistoryMessage[
         if (text) out.push({ id: `${baseId}-a${i}`, role: "assistant", text, turnId: baseId, ...stamp });
       } else if (block.type === "tool_use") {
         const tool = block as { id?: string; name?: string; input?: unknown };
+        const todos = todosFromToolCall(tool.name ?? "", tool.input ?? null);
         out.push({
           id: tool.id ?? `${baseId}-c${i}`,
           role: "tool",
           text: `${tool.name ?? "tool"} ${JSON.stringify(tool.input ?? null)?.slice(0, 2000) ?? ""}`,
           turnId: baseId,
           toolName: tool.name ?? "tool",
+          ...(todos !== null ? { todos } : {}),
           ...stamp
         });
       }

@@ -72,6 +72,58 @@ describe("mapOpencodeMessages", () => {
     expect(out).toEqual([]);
   });
 
+  it("attaches normalized todos to todowrite call messages", () => {
+    const out = mapOpencodeMessages([
+      {
+        info: { id: "m10", role: "assistant" },
+        parts: [
+          {
+            type: "tool",
+            tool: "todowrite",
+            callID: "call_todo",
+            state: {
+              status: "completed",
+              input: {
+                todos: [
+                  { content: "Write tests", status: "in_progress", priority: "high" },
+                  { content: "Ship it", status: "completed" }
+                ]
+              },
+              output: "ok"
+            }
+          }
+        ]
+      }
+    ]);
+    expect(out[0]).toMatchObject({
+      id: "call_todo",
+      toolName: "todowrite",
+      todos: [
+        { content: "Write tests", status: "in_progress", priority: "high" },
+        { content: "Ship it", status: "completed" }
+      ]
+    });
+  });
+
+  it("keeps todos complete when the input JSON is truncated for text", () => {
+    const longContent = "x".repeat(5000);
+    const out = mapOpencodeMessages([
+      {
+        info: { id: "m11", role: "assistant" },
+        parts: [
+          {
+            type: "tool",
+            tool: "todowrite",
+            callID: "call_todo_long",
+            state: { status: "completed", input: { todos: [{ content: longContent, status: "pending" }] } }
+          }
+        ]
+      }
+    ]);
+    expect(out[0].text.length).toBeLessThan(2100);
+    expect(out[0].todos).toEqual([{ content: longContent, status: "pending" }]);
+  });
+
   it("tool call cards merge their paired results so they resolve to done", () => {
     const history = mapOpencodeMessages([
       {

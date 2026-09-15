@@ -53,6 +53,49 @@ describe("parseClaudeTranscriptLine", () => {
     ]);
   });
 
+  it("attaches normalized todos to TodoWrite tool_use messages", () => {
+    const input = {
+      todos: [
+        { content: "Write tests", status: "in_progress", activeForm: "Writing tests" },
+        { content: "Ship it", status: "completed", activeForm: "Shipping it" }
+      ]
+    };
+    const out = parseClaudeTranscriptLine({
+      type: "assistant",
+      uuid: "a1",
+      message: {
+        role: "assistant",
+        content: [{ type: "tool_use", id: "tu1", name: "TodoWrite", input }]
+      }
+    });
+    expect(out).toEqual([
+      {
+        id: "tu1",
+        role: "tool",
+        text: `TodoWrite ${JSON.stringify(input)}`,
+        turnId: "a1",
+        toolName: "TodoWrite",
+        todos: [
+          { content: "Write tests", status: "in_progress" },
+          { content: "Ship it", status: "completed" }
+        ]
+      }
+    ]);
+  });
+
+  it("omits the todos field for non-todo tool calls", () => {
+    const out = parseClaudeTranscriptLine({
+      type: "assistant",
+      uuid: "a1",
+      message: {
+        role: "assistant",
+        content: [{ type: "tool_use", id: "tu1", name: "Read", input: { path: "a.ts" } }]
+      }
+    });
+    expect(out).toHaveLength(1);
+    expect("todos" in out[0]).toBe(false);
+  });
+
   it("maps tool_result blocks to tool messages", () => {
     const out = parseClaudeTranscriptLine({
       type: "user",

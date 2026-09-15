@@ -27,12 +27,14 @@ import {
   mapCodexEffort,
   mapCodexHistory,
   mapCodexModel,
+  mapCodexPlan,
   mapCodexThread,
   mapPermissionMode,
   type CodexCommandApprovalParams,
   type CodexFileChangeApprovalParams,
   type CodexModel,
   type CodexPermissionsApprovalParams,
+  type CodexPlanUpdate,
   type CodexThread,
   type CodexThreadItem,
   type CodexTurn,
@@ -475,6 +477,13 @@ export class CodexCliDriver implements CliDriver {
         if (!item || !active) break;
         const result = this.toolResultFor(item, active.turnId);
         if (result) this.emit(result);
+        break;
+      }
+      case "turn/plan/updated": {
+        const active = this.turnForCodexId(String(p["turnId"] ?? ""), typeof p["threadId"] === "string" ? p["threadId"] : undefined);
+        if (!active) break;
+        const todos = mapCodexPlan((p as unknown as CodexPlanUpdate)["plan"]);
+        if (todos !== null) this.emit({ type: "todo.updated", turnId: active.turnId, todos });
         break;
       }
       case "thread/tokenUsage/updated": {

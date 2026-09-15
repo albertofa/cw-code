@@ -13,6 +13,7 @@ import type {
   Session,
   SessionStatus,
   SettingsPatch,
+  TodoItem,
   TurnEvent
 } from "../cw.js";
 import { appendAssistantText } from "../components/chatMessages.js";
@@ -69,6 +70,7 @@ interface AppState {
   projectFilter: string | "all";
   activeSessionId: string | null;
   messagesBySession: Record<string, ChatMessage[]>;
+  todosBySession: Record<string, TodoItem[]>;
   usageBySession: Record<string, Usage>;
   busyTurns: Record<string, string>;
   loadingHistory: Record<string, boolean>;
@@ -170,6 +172,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   projectFilter: "all",
   activeSessionId: null,
   messagesBySession: {},
+  todosBySession: {},
   usageBySession: {},
   busyTurns: {},
   loadingHistory: {},
@@ -525,9 +528,16 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       const history = await window.cw.getHistory(sessionId);
       if ((get().messagesBySession[sessionId] ?? []).length === 0 && history.length > 0) {
+        const merged = mergeToolPairs(history);
         set({
-          messagesBySession: { ...get().messagesBySession, [sessionId]: mergeToolPairs(history) }
+          messagesBySession: { ...get().messagesBySession, [sessionId]: merged }
         });
+        if (get().todosBySession[sessionId] === undefined) {
+          const seeded = [...merged].reverse().find((m) => m.todos !== undefined)?.todos;
+          if (seeded !== undefined) {
+            set({ todosBySession: { ...get().todosBySession, [sessionId]: seeded } });
+          }
+        }
       }
     } catch (err) {
       const message = (err as Error).message;
@@ -823,6 +833,10 @@ export const useAppStore = create<AppState>((set, get) => ({
           }
         });
       }
+    } else if (event.type === "todo.updated") {
+      set({
+        todosBySession: { ...get().todosBySession, [sessionId]: event.todos }
+      });
     } else if (event.type === "turn.done") {
       const backgroundTasks = event.backgroundTasks ?? 0;
       const busy = { ...get().busyTurns };

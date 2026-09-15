@@ -33,6 +33,41 @@ describe("parseStreamLine", () => {
     ]);
   });
 
+  it("emits todo.updated alongside tool.call for TodoWrite", () => {
+    const input = {
+      todos: [
+        { content: "Write tests", status: "in_progress", activeForm: "Writing tests" },
+        { content: "Ship it", status: "completed", activeForm: "Shipping it" }
+      ]
+    };
+    const line = JSON.stringify({
+      type: "assistant",
+      message: { content: [{ type: "tool_use", id: "tu2", name: "TodoWrite", input }] }
+    });
+    expect(parseStreamLine(line, "t1", "s1", () => {})).toEqual([
+      { type: "tool.call", turnId: "t1", toolCallId: "tu2", name: "TodoWrite", input },
+      {
+        type: "todo.updated",
+        turnId: "t1",
+        todos: [
+          { content: "Write tests", status: "in_progress" },
+          { content: "Ship it", status: "completed" }
+        ]
+      }
+    ]);
+  });
+
+  it("leaves non-todo tool calls without a todo event", () => {
+    const input = { todos: [{ content: "Not a todo call" }] };
+    const line = JSON.stringify({
+      type: "assistant",
+      message: { content: [{ type: "tool_use", id: "tu3", name: "Task", input }] }
+    });
+    expect(parseStreamLine(line, "t1", "s1", () => {})).toEqual([
+      { type: "tool.call", turnId: "t1", toolCallId: "tu3", name: "Task", input }
+    ]);
+  });
+
   it("maps user tool results to tool.result", () => {
     const line = JSON.stringify({
       type: "user",

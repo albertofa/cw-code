@@ -1,4 +1,5 @@
 import type { ApprovalDecision, ApprovalRequest, QuestionInfo, QuestionOption, QuestionRequest, ThreadEvent } from "@cw-code/contracts";
+import { todosFromToolCall } from "../todos.js";
 
 interface ControlRequestMsg {
   type: "control_request";
@@ -362,6 +363,8 @@ export function parseStreamLine(
           name: block.name ?? "unknown",
           input: block.input ?? null
         });
+        const todos = todosFromToolCall(block.name ?? "", block.input ?? null);
+        if (todos !== null) out.push({ type: "todo.updated", turnId, todos });
       }
     }
     return out;

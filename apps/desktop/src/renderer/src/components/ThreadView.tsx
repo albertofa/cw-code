@@ -12,6 +12,7 @@ import { SubagentCard } from "./SubagentCard.js";
 import { NewThread } from "./NewThread.js";
 import { ApprovalDock } from "./ApprovalDock.js";
 import { QuestionDock } from "./QuestionDock.js";
+import { TodoDock } from "./TodoDock.js";
 import { WorkingPill, useWorkingWord } from "./WorkingPill.js";
 import { projectAvatarStyle, projectInitials } from "./avatar.js";
 import { formatDuration, orderToolsForDisplay } from "./toolSummaries.js";
@@ -77,12 +78,13 @@ export function ThreadView() {
       }
     };
     for (const m of ordered) {
+      if (isTodoTool(m)) continue;
       if (isSubagentMessage(m)) {
         flushTools();
         pending.push(m);
       }
       else if (m.parentToolCallId && nestedIds.has(m.parentToolCallId)) continue;
-      else if (m.role === "tool" && !isTodoTool(m)) {
+      else if (m.role === "tool") {
         flush();
         toolRun.push(m);
       }
@@ -327,6 +329,7 @@ export function ThreadView() {
         </div>
       )}
       <div className="composer-wrap">
+        <TodoDock sessionId={session.id} />
         <ApprovalDock sessionId={session.id} />
         <QuestionDock sessionId={session.id} />
         <Composer key={session.id} sessionId={session.id} driver={session.driver} />

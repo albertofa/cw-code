@@ -53,6 +53,12 @@ export interface WorktreePruneSummary {
   keptDirty: string[];
 }
 
+export interface TodoItem {
+  content: string;
+  status: "pending" | "in_progress" | "completed" | "cancelled";
+  priority?: "high" | "medium" | "low";
+}
+
 export interface HistoryMessage {
   id: string;
   role: "user" | "assistant" | "tool" | "system";
@@ -64,6 +70,7 @@ export interface HistoryMessage {
   subagentModel?: string;
   subagentTools?: SubagentToolSummary;
   parentToolCallId?: string;
+  todos?: TodoItem[];
 }
 
 export interface SubagentToolActivity {
@@ -140,6 +147,7 @@ export type TurnEvent =
       requestId: string;
       answers: Record<string, string> | null;
     }
+  | { type: "todo.updated"; turnId: string; todos: TodoItem[] }
   | {
       type: "turn.done";
       turnId: string;

@@ -20,6 +20,7 @@ import {
   permissionApprovalOf,
   type ParsedOpencodePermission
 } from "./opencodePermissions.js";
+import { parseOpencodeTodosUpdated } from "./opencodeEvents.js";
 import { AskBridge } from "./askBridge.js";
 import { writeAskBridgeTool } from "./askToolFile.js";
 import { diffLiveTools, type LiveMessage, type LiveSeen } from "./opencodeLivePoll.js";
@@ -490,6 +491,14 @@ export class OpencodeDriver implements CliDriver {
       if (!parsed || !entry) return;
       this.pendingApprovals.delete(parsed.requestID);
       this.emit({ type: "approval.resolved", turnId: entry.turnId, requestId: parsed.requestID });
+      return;
+    }
+    if (envelope.type === "todo.updated") {
+      const parsed = parseOpencodeTodosUpdated(event);
+      if (!parsed) return;
+      const known = this.sessionIds.get(turnId);
+      if (!known || parsed.sessionID !== known) return;
+      this.emit({ type: "todo.updated", turnId, todos: parsed.todos });
       return;
     }
     if (envelope.type === "message.part.delta") {
