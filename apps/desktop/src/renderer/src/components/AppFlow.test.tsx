@@ -47,6 +47,7 @@ function installBridge(): void {
     },
     getHistory: async () => delayed([], 300),
     startTurn: async () => delayed("turn-1", 800),
+    activeTurns: async () => [],
     interrupt: async () => {},
     getComposer: async () => delayed({}, 400),
     setComposer: async (_id: string, prefs: unknown) => delayed(prefs, 200),
@@ -403,6 +404,44 @@ describe("new-session crash repro (interactive)", () => {
     } finally {
       console.error = origError;
     }
+  });
+
+  it("keeps the newer turn busy when a stale turn.done arrives", async () => {
+    const { useAppStore } = await mount();
+    useAppStore.setState({ busyTurns: { sess_stale: "turn-new" }, turnStartedAt: { sess_stale: 500 } });
+    await act(async () => {
+      useAppStore.getState().applyEvent("sess_stale", {
+        type: "turn.done",
+        turnId: "turn-old",
+        sessionId: "sess_stale",
+        resumeCursor: "",
+        resultText: "done",
+        inputTokens: 0,
+        outputTokens: 0,
+        costUsd: 0,
+        numTurns: 1,
+        isError: false,
+        backgroundTasks: 0
+      });
+    });
+    expect(useAppStore.getState().busyTurns["sess_stale"]).toBe("turn-new");
+    expect(useAppStore.getState().turnStartedAt["sess_stale"]).toBe(500);
+  });
+
+  it("rehydrates a running turn from main on session select", async () => {
+    const { useAppStore } = await mount();
+    const bridge = (window as unknown as { cw: Record<string, unknown> }).cw;
+    bridge.activeTurns = async () => [{ sessionId: "sess_hist", turnId: "turn-live", startedAt: 1234 }];
+    useAppStore.setState({
+      activeProjectId: "proj_1",
+      sessionsByProject: { proj_1: [makeSession({ id: "sess_hist", status: "working" })] }
+    });
+    await act(async () => {
+      useAppStore.getState().selectSession("sess_hist");
+      await new Promise((r) => setTimeout(r, 0));
+    });
+    expect(useAppStore.getState().busyTurns["sess_hist"]).toBe("turn-live");
+    expect(useAppStore.getState().turnStartedAt["sess_hist"]).toBe(1234);
   });
 
   it("settles model effort fallback on the new-session form", async () => {

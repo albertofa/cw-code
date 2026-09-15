@@ -14,10 +14,11 @@ import { NewThread } from "./NewThread.js";
 import { ApprovalDock } from "./ApprovalDock.js";
 import { QuestionDock } from "./QuestionDock.js";
 import { TodoDock } from "./TodoDock.js";
-import { WorkingPill, useWorkingWord } from "./WorkingPill.js";
+import { TurnBlock } from "./TurnBlock.js";
+import { groupTurns, splitTurn, type ThreadNode } from "./turnGroups.js";
+import { durationFromMessages } from "./turnFormat.js";
 import { projectAvatarStyle, projectInitials } from "./avatar.js";
-import { formatDuration, orderToolsForDisplay } from "./toolSummaries.js";
-import { collectSubagents, describeSubagent, isSubagentMessage, type SubagentGroup } from "./subagents.js";
+import { collectSubagents } from "./subagents.js";
 import { splitImageMentions } from "./imagePreview.js";
 import { ImageThumb } from "./ImageThumb.js";
 
@@ -46,60 +47,27 @@ export function ThreadView() {
   const ensureHistory = useAppStore((s) => s.ensureHistory);
   const retryConnection = useAppStore((s) => s.retryConnection);
   const usage = useAppStore((s) => (activeSessionId ? s.usageBySession[activeSessionId] : undefined));
-  const lastTurn = useAppStore((s) => (activeSessionId ? s.lastTurnStats[activeSessionId] : undefined));
   const openPreview = useAppStore((s) => s.openPreview);
   const setPendingDriver = useAppStore((s) => s.setPendingDriver);
-  const ordered = useMemo(() => orderToolsForDisplay(messages), [messages]);
+  const turnStartedAt = useAppStore((s) => (activeSessionId ? s.turnStartedAt[activeSessionId] : undefined));
+  const turnDurations = useAppStore((s) => (activeSessionId ? s.turnDurations[activeSessionId] : undefined));
   const subagents = useMemo(() => collectSubagents(messages), [messages]);
   const nestedIds = useMemo(() => new Set(subagents.map((s) => s.id)), [subagents]);
-  const nodes: Array<
-    { kind: "msg"; msg: ChatMessage } | { kind: "sub"; key: string; group: SubagentGroup } | { kind: "tools"; key: string; items: ChatMessage[] }
-  > = useMemo(() => {
-    const out: Array<
-      { kind: "msg"; msg: ChatMessage } | { kind: "sub"; key: string; group: SubagentGroup } | { kind: "tools"; key: string; items: ChatMessage[] }
-    > = [];
-    let pending: ChatMessage[] = [];
-    let toolRun: ChatMessage[] = [];
-    const isTodoTool = (m: ChatMessage) => {
-      const n = (m.toolName ?? "").toLowerCase();
-      return n === "todowrite" || n === "todo";
-    };
-    const flushTools = () => {
-      if (toolRun.length === 1) out.push({ kind: "msg", msg: toolRun[0] });
-      else if (toolRun.length > 1) out.push({ kind: "tools", key: toolRun[0].id, items: toolRun });
-      toolRun = [];
-    };
-    const flush = () => {
-      if (pending.length > 0) {
-        out.push({
-          kind: "sub",
-          key: pending[0].id,
-          group: { id: pending[0].id, turnId: pending[0].turnId, items: pending.map(describeSubagent) }
-        });
-        pending = [];
-      }
-    };
-    for (const m of ordered) {
-      if (isTodoTool(m)) continue;
-      if (isSubagentMessage(m)) {
-        flushTools();
-        pending.push(m);
-      }
-      else if (m.parentToolCallId && nestedIds.has(m.parentToolCallId)) continue;
-      else if (m.role === "tool") {
-        flush();
-        toolRun.push(m);
-      }
-      else {
-        flush();
-        flushTools();
-        out.push({ kind: "msg", msg: m });
-      }
-    }
-    flush();
-    flushTools();
-    return out;
-  }, [ordered, nestedIds]);
+  const turns = useMemo(
+    () =>
+      groupTurns(messages).map((slice) => {
+        const running = busyTurn === slice.turnId;
+        const known = turnDurations?.[slice.turnId];
+        return {
+          turnId: slice.turnId,
+          pieces: splitTurn(slice.messages, nestedIds),
+          running,
+          startedAt: running ? turnStartedAt : undefined,
+          durationMs: known ?? durationFromMessages(slice.messages)
+        };
+      }),
+    [messages, nestedIds, busyTurn, turnStartedAt, turnDurations]
+  );
   const streamingId = useMemo(() => {
     if (!busyTurn) return null;
     for (let i = messages.length - 1; i >= 0; i--) {
@@ -109,7 +77,6 @@ export function ThreadView() {
     return null;
   }, [messages, busyTurn]);
   const showNew = pendingDriver !== null || !session;
-  const workingWord = useWorkingWord(!showNew && !!busyTurn);
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
   const lastSeenIdRef = useRef<string | null>(null);
@@ -141,7 +108,7 @@ export function ThreadView() {
       if (el && stickRef.current) el.scrollTop = el.scrollHeight;
     });
     return () => cancelAnimationFrame(raf);
-  }, [messages, busyTurn, lastTurn]);
+  }, [messages, busyTurn]);
 
   useEffect(() => {
     const el = scrollRef.current;
@@ -200,6 +167,89 @@ export function ThreadView() {
     );
   }
 
+  const renderNode = (n: ThreadNode) => {
+    if (n.kind === "sub") {
+      return <SubagentCard key={n.key} group={n.group} />;
+    }
+    if (n.kind === "tools") {
+      return (
+        <ToolGroupCard
+          key={n.key}
+          messages={n.items}
+          basePath={basePath}
+          sessionId={session.id}
+          onPreview={onOpenPreview}
+        />
+      );
+    }
+    const m = n.msg;
+    if (m.role === "user") {
+      return (
+        <div key={m.id} className="msg-user">
+          {splitImageMentions(m.text).map((seg, i) =>
+            seg.kind === "image" ? (
+              <ImageThumb
+                key={i}
+                target={{ sessionId: session.id, projectId: project?.id }}
+                path={seg.path}
+                className="msg-image-thumb"
+              />
+            ) : (
+              <span key={i}>{seg.value}</span>
+            )
+          )}
+        </div>
+      );
+    }
+    if (m.role === "tool") {
+      return (
+        <ToolCard
+          key={m.id}
+          message={m}
+          basePath={basePath}
+          sessionId={session.id}
+          onPreview={onOpenPreview}
+        />
+      );
+    }
+    if (m.role === "system") {
+      return (
+        <div key={m.id} className="msg-system">
+          <TriangleAlert size={14} aria-hidden="true" />
+          <span>{m.text}</span>
+          {m.retryable && (
+            <button className="msg-retry" onClick={() => void retryConnection(session.id)}>
+              Retry connection
+            </button>
+          )}
+        </div>
+      );
+    }
+    if (m.role === "reasoning") {
+      return (
+        <ReasoningBlock
+          key={m.id}
+          message={m}
+          live={busyTurn === m.turnId && m.reasoningMs === undefined}
+        />
+      );
+    }
+    if (m.id === streamingId) {
+      return (
+        <div key={m.id} className="msg-assistant">
+          <div className="md md-streaming" style={{ whiteSpace: "pre-wrap" }}>
+            {m.text}
+          </div>
+        </div>
+      );
+    }
+    return (
+      <div key={m.id} className="msg-assistant">
+        <Md text={m.text} onOpenFile={onOpenPreview} />
+      </div>
+    );
+  };
+
   return (
     <div className="thread-col">
       <div className="thread-head">
@@ -242,92 +292,19 @@ export function ThreadView() {
               <div>Prompt below to begin.</div>
             </div>
           )}
-          {nodes.map((n) => {
-            if (n.kind === "sub") {
-              return <SubagentCard key={n.key} group={n.group} />;
-            }
-            if (n.kind === "tools") {
-              return (
-                <ToolGroupCard
-                  key={n.key}
-                  messages={n.items}
-                  basePath={basePath}
-                  sessionId={session.id}
-                  onPreview={onOpenPreview}
-                />
-              );
-            }
-            const m = n.msg;
-            if (m.role === "user") {
-              return (
-                <div key={m.id} className="msg-user">
-                  {splitImageMentions(m.text).map((seg, i) =>
-                    seg.kind === "image" ? (
-                      <ImageThumb
-                        key={i}
-                        target={{ sessionId: session.id, projectId: project?.id }}
-                        path={seg.path}
-                        className="msg-image-thumb"
-                      />
-                    ) : (
-                      <span key={i}>{seg.value}</span>
-                    )
-                  )}
-                </div>
-              );
-            }
-            if (m.role === "tool") {
-              return (
-                <ToolCard
-                  key={m.id}
-                  message={m}
-                  basePath={basePath}
-                  sessionId={session.id}
-                  onPreview={onOpenPreview}
-                />
-              );
-            }
-            if (m.role === "system") {
-              return (
-                <div key={m.id} className="msg-system">
-                  <TriangleAlert size={14} aria-hidden="true" />
-                  <span>{m.text}</span>
-                  {m.retryable && (
-                    <button className="msg-retry" onClick={() => void retryConnection(session.id)}>
-                      Retry connection
-                    </button>
-                  )}
-                </div>
-              );
-            }
-            if (m.role === "reasoning") {
-              return (
-                <ReasoningBlock
-                  key={m.id}
-                  message={m}
-                  live={busyTurn === m.turnId && m.reasoningMs === undefined}
-                />
-              );
-            }
-            if (m.id === streamingId) {
-              return (
-                <div key={m.id} className="msg-assistant">
-                  <div className="md md-streaming" style={{ whiteSpace: "pre-wrap" }}>
-                    {m.text}
-                  </div>
-                </div>
-              );
-            }
-            return (
-              <div key={m.id} className="msg-assistant">
-                <Md text={m.text} onOpenFile={onOpenPreview} />
-              </div>
-            );
-          })}
-          {busyTurn && <WorkingPill word={workingWord} />}
-          {!busyTurn && lastTurn && (
-            <div className="turn-sep">Worked for {formatDuration(lastTurn.ms)}</div>
-          )}
+          {turns.map((turn) => (
+            <TurnBlock
+              key={turn.turnId}
+              running={turn.running}
+              startedAt={turn.startedAt}
+              durationMs={turn.durationMs}
+              hasActivity={turn.pieces.activity.length > 0}
+              lead={turn.pieces.lead.map((m) => renderNode({ kind: "msg", msg: m }))}
+              activity={turn.pieces.activity.map(renderNode)}
+              system={turn.pieces.system.map((m) => renderNode({ kind: "msg", msg: m }))}
+              pinned={turn.pieces.pinned ? renderNode({ kind: "msg", msg: turn.pieces.pinned }) : undefined}
+            />
+          ))}
           {!atBottom && (
             <div className="jump-bottom-wrap">
               <button className="jump-bottom" onClick={scrollToBottom} title="Scroll to bottom" aria-label="Scroll to bottom">

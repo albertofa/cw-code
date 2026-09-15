@@ -1,5 +1,6 @@
 import { create } from "zustand";
 import type {
+  ActiveTurn,
   AppSettings,
   ApprovalDecision,
   ApprovalRequest,
@@ -22,6 +23,7 @@ import { expiredHoldingIds } from "../components/workingSet.js";
 import { useNotifs } from "../components/Notifications.js";
 
 const GIT_REFRESH_BATCH = 6;
+const PENDING_TURN = "pending";
 
 async function refreshGitStatusInBatches(ids: string[], refresh: (id: string) => Promise<void>): Promise<void> {
   for (let i = 0; i < ids.length; i += GIT_REFRESH_BATCH) {
@@ -79,7 +81,7 @@ interface AppState {
   loadingHistory: Record<string, boolean>;
   historyErrorBySession: Record<string, string>;
   turnStartedAt: Record<string, number>;
-  lastTurnStats: Record<string, { ms: number }>;
+  turnDurations: Record<string, Record<string, number>>;
   composerBySession: Record<string, ComposerPrefs>;
   pendingDriver: DriverName | null;
   lastDriver: DriverName;
@@ -102,6 +104,7 @@ interface AppState {
   addProject(rootPath: string): Promise<void>;
   selectProject(projectId: string): Promise<void>;
   selectSession(sessionId: string): void;
+  hydrateActiveTurns(): Promise<void>;
   startNewSession(driver?: DriverName): void;
   setPendingDriver(driver: DriverName): void;
   sendPendingPrompt(prompt: string, attachments?: string[]): Promise<void>;
@@ -180,7 +183,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   loadingHistory: {},
   historyErrorBySession: {},
   turnStartedAt: {},
-  lastTurnStats: {},
+  turnDurations: {},
   composerBySession: {},
   settingsVersion: 0,
   pendingDriver: null,
@@ -245,6 +248,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       defaultUseWorktree: settings.defaultUseWorktree,
       pendingWorkspace: { ...get().pendingWorkspace, ...defaultWorkspace(settings.defaultUseWorktree) }
     });
+    void get().hydrateActiveTurns();
     if (projects.length === 0 || get().activeProjectId) return;
     const lists = await Promise.all(
       projects.map((p) =>
@@ -342,6 +346,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       });
     }
     void get().loadDiscovered();
+    void get().hydrateActiveTurns();
   },
 
   async loadDiscovered() {
@@ -492,6 +497,27 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ worktreeConfirmQueue: get().worktreeConfirmQueue.slice(1) });
   },
 
+  async hydrateActiveTurns() {
+    let active: ActiveTurn[] = [];
+    try {
+      active = await window.cw.activeTurns();
+    } catch (err) {
+      console.warn(`activeTurns failed: ${(err as Error).message}`);
+      return;
+    }
+    const busy = { ...get().busyTurns };
+    const startedAt = { ...get().turnStartedAt };
+    let changed = false;
+    for (const turn of active) {
+      if (get().turnDurations[turn.sessionId]?.[turn.turnId] !== undefined) continue;
+      if (busy[turn.sessionId] === turn.turnId && startedAt[turn.sessionId] === turn.startedAt) continue;
+      busy[turn.sessionId] = turn.turnId;
+      startedAt[turn.sessionId] = turn.startedAt;
+      changed = true;
+    }
+    if (changed) set({ busyTurns: busy, turnStartedAt: startedAt });
+  },
+
   selectSession(sessionId: string) {
     const byProject = get().sessionsByProject;
     const current = Object.values(byProject)
@@ -519,6 +545,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     void get().ensureHistory(sessionId);
     void get().ensureComposer(sessionId);
     void get().refreshGitStatus(sessionId);
+    void get().hydrateActiveTurns();
   },
 
   startNewSession(driver?: DriverName) {
@@ -690,15 +717,26 @@ export const useAppStore = create<AppState>((set, get) => ({
     const sessionId = get().activeSessionId;
     if (!sessionId || !prompt.trim()) return;
     const prefs = get().composerBySession[sessionId] ?? DEFAULT_COMPOSER;
-    const turnId = await window.cw.startTurn(sessionId, prompt, { prefs, attachments });
-    const startedAt = { ...get().turnStartedAt, [sessionId]: Date.now() };
-    const lastStats = { ...get().lastTurnStats };
-    delete lastStats[sessionId];
+    set({
+      busyTurns: { ...get().busyTurns, [sessionId]: PENDING_TURN },
+      turnStartedAt: { ...get().turnStartedAt, [sessionId]: Date.now() },
+      sessionsByProject: withSessionStatus(get().sessionsByProject, sessionId, "working")
+    });
+    let turnId: string;
+    try {
+      turnId = await window.cw.startTurn(sessionId, prompt, { prefs, attachments });
+    } catch (err) {
+      const busy = { ...get().busyTurns };
+      const startedAt = { ...get().turnStartedAt };
+      if (busy[sessionId] === PENDING_TURN) {
+        delete busy[sessionId];
+        delete startedAt[sessionId];
+      }
+      set({ busyTurns: busy, turnStartedAt: startedAt });
+      throw err;
+    }
     set({
       busyTurns: { ...get().busyTurns, [sessionId]: turnId },
-      turnStartedAt: startedAt,
-      lastTurnStats: lastStats,
-      sessionsByProject: withSessionStatus(get().sessionsByProject, sessionId, "working"),
       messagesBySession: {
         ...get().messagesBySession,
         [sessionId]: [
@@ -707,17 +745,23 @@ export const useAppStore = create<AppState>((set, get) => ({
         ]
       }
     });
+    void get().hydrateActiveTurns();
   },
 
   async interrupt() {
     const sessionId = get().activeSessionId;
     const turnId = sessionId ? get().busyTurns[sessionId] : undefined;
     if (!turnId) return;
-    await window.cw.interrupt(turnId);
+    if (turnId !== PENDING_TURN) await window.cw.interrupt(turnId);
     const busy = { ...get().busyTurns };
-    if (sessionId) delete busy[sessionId];
+    const startedAt = { ...get().turnStartedAt };
+    if (sessionId) {
+      delete busy[sessionId];
+      delete startedAt[sessionId];
+    }
     set({
       busyTurns: busy,
+      turnStartedAt: startedAt,
       ...(sessionId
         ? { sessionsByProject: patchSession(get().sessionsByProject, sessionId, { status: "holding", updatedAt: Date.now() }) }
         : {})
@@ -749,6 +793,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           [sessionId]: mergeToolPairs(result.history)
         }
       });
+      void get().hydrateActiveTurns();
     } catch (err) {
       useNotifs.getState().push({
         kind: "error",
@@ -911,10 +956,18 @@ export const useAppStore = create<AppState>((set, get) => ({
     } else if (event.type === "turn.done") {
       const backgroundTasks = event.backgroundTasks ?? 0;
       const busy = { ...get().busyTurns };
-      if (backgroundTasks === 0) delete busy[sessionId];
-      const startedAt = get().turnStartedAt[sessionId];
-      const stats = { ...get().lastTurnStats };
-      if (startedAt !== undefined) stats[sessionId] = { ms: Date.now() - startedAt };
+      const startedAt = { ...get().turnStartedAt };
+      const durations = { ...get().turnDurations };
+      if (busy[sessionId] === event.turnId && backgroundTasks === 0) {
+        delete busy[sessionId];
+        if (startedAt[sessionId] !== undefined) {
+          durations[sessionId] = {
+            ...(durations[sessionId] ?? {}),
+            [event.turnId]: Date.now() - startedAt[sessionId]
+          };
+          delete startedAt[sessionId];
+        }
+      }
       const approvals = { ...get().pendingApprovals };
       delete approvals[sessionId];
       const questions = { ...get().pendingQuestions };
@@ -934,7 +987,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
       set({
         busyTurns: busy,
-        lastTurnStats: stats,
+        turnStartedAt: startedAt,
+        turnDurations: durations,
         pendingApprovals: approvals,
         pendingQuestions: questions,
         sessionsByProject: withSessionStatus(
@@ -967,13 +1021,18 @@ export const useAppStore = create<AppState>((set, get) => ({
       void get().refreshGitStatus(sessionId);
     } else if (event.type === "turn.error") {
       const busy = { ...get().busyTurns };
-      delete busy[sessionId];
+      const startedAt = { ...get().turnStartedAt };
+      if (busy[sessionId] === event.turnId) {
+        delete busy[sessionId];
+        delete startedAt[sessionId];
+      }
       const approvals = { ...get().pendingApprovals };
       delete approvals[sessionId];
       const questions = { ...get().pendingQuestions };
       delete questions[sessionId];
       set({
         busyTurns: busy,
+        turnStartedAt: startedAt,
         pendingApprovals: approvals,
         pendingQuestions: questions,
         sessionsByProject: patchSession(get().sessionsByProject, sessionId, { status: "holding", updatedAt: Date.now() }),
