@@ -76,6 +76,7 @@ export interface OpencodeServerPoolDeps {
   startServer?: (rootPath: string, binary: string, env: Record<string, string> | undefined) => Promise<StartedServer>;
   idleTimeoutMs?: number;
   maxServers?: number;
+  onServerGone?: (rootPath: string, port: number) => void;
 }
 
 export class OpencodeServerPool {
@@ -100,6 +101,7 @@ export class OpencodeServerPool {
   }
 
   invalidate(rootPath: string): void {
+    if ((this.inFlight.get(rootPath) ?? 0) > 0) return;
     this.stop(rootPath);
   }
 
@@ -122,7 +124,8 @@ export class OpencodeServerPool {
   private trackProcess(rootPath: string, proc: ChildProcess): void {
     if (typeof proc.once !== "function") return;
     const evict = (): void => {
-      if (this.servers.get(rootPath)?.proc === proc) {
+      const entry = this.servers.get(rootPath);
+      if (entry?.proc === proc) {
         traceHarnessCall({
           harness: "opencode",
           operation: "opencode.serve.evict",
@@ -131,6 +134,7 @@ export class OpencodeServerPool {
           extra: { reason: "exit", exitCode: proc.exitCode ?? undefined }
         });
         this.servers.delete(rootPath);
+        this.deps?.onServerGone?.(rootPath, entry.handle.port);
       }
     };
     proc.once("exit", evict);
@@ -287,8 +291,10 @@ export class OpencodeServerPool {
 
   stop(rootPath: string): void {
     const entry = this.servers.get(rootPath);
-    killProcessTree(entry?.proc);
+    if (!entry) return;
     this.servers.delete(rootPath);
+    this.deps?.onServerGone?.(rootPath, entry.handle.port);
+    killProcessTree(entry.proc);
   }
 
   dispose(): void {

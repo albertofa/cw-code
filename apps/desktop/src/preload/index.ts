@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { AppSettings, CreateSessionOptions, GitBranchInfo, GitDiffMode, GitDiffResult, GitStatus, Project, SessionCleanupResult, SessionStatus, SourceControlHealth, WorktreePruneSummary } from "@cw-code/contracts";
+import type { AppSettings, CreateSessionOptions, GitBranchInfo, GitDiffMode, GitDiffResult, GitStatus, Project, RetryConnectionResult, SessionCleanupResult, SessionStatus, SourceControlHealth, WorktreePruneSummary } from "@cw-code/contracts";
 
 export type PermissionMode = "auto" | "acceptEdits" | "bypassPermissions" | "manual";
 export type EffortLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
@@ -51,6 +51,7 @@ export interface CwApi {
   resolveSession(sessionId: string, status: SessionStatus, removeWorktree?: boolean, forceBranch?: boolean): Promise<SessionCleanupResult>;
   pruneStaleWorktrees(): Promise<WorktreePruneSummary>;
   getHistory(sessionId: string): Promise<unknown[]>;
+  retryConnection(sessionId: string): Promise<RetryConnectionResult>;
   startTurn(sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[] }): Promise<string>;
   interrupt(turnId: string): Promise<void>;
   respondApproval(requestId: string, decision: "accept" | "acceptForSession" | "acceptGlobal" | "decline" | "cancel"): Promise<void>;
@@ -125,6 +126,7 @@ const api: CwApi = {
     ipcRenderer.invoke("sessions.resolve", { sessionId, status, removeWorktree, forceBranch }),
   pruneStaleWorktrees: () => ipcRenderer.invoke("worktrees.prune"),
   getHistory: (sessionId: string) => ipcRenderer.invoke("sessions.history", { sessionId }),
+  retryConnection: (sessionId: string) => ipcRenderer.invoke("sessions.retryConnection", { sessionId }),
   startTurn: (sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[] }) =>
     ipcRenderer.invoke("turns.start", { sessionId, prompt, prefs: opts?.prefs, attachments: opts?.attachments }),
   interrupt: (turnId: string) => ipcRenderer.invoke("turns.interrupt", { turnId }),

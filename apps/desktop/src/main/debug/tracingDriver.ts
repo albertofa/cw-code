@@ -4,6 +4,8 @@ import type {
   DriverKind,
   HistoryMessage,
   ModelOption,
+  RetryConnectionRequest,
+  RetryConnectionResult,
   SessionEvent,
   SessionMeta,
   TurnHandle,
@@ -114,6 +116,39 @@ export class TracingCliDriver implements CliDriver {
   interrupt(turnId: string): void {
     traceHarnessCall({ harness: this.kind, operation: `${this.kind}.interrupt`, turnId, ok: true });
     this.inner.interrupt(turnId);
+  }
+
+  get retryConnection(): ((request: RetryConnectionRequest) => Promise<RetryConnectionResult>) | undefined {
+    const inner = this.inner;
+    if (typeof inner.retryConnection !== "function") return undefined;
+    return async (request) => {
+      const start = Date.now();
+      const operation = `${this.kind}.retryConnection`;
+      try {
+        const result = await inner.retryConnection!(request);
+        traceHarnessCall({
+          harness: this.kind,
+          operation,
+          sessionId: request.sessionId,
+          cwd: request.cwd,
+          durationMs: Date.now() - start,
+          ok: true,
+          extra: { status: result.status, messageCount: result.history.length }
+        });
+        return result;
+      } catch (err) {
+        traceHarnessCall({
+          harness: this.kind,
+          operation,
+          sessionId: request.sessionId,
+          cwd: request.cwd,
+          durationMs: Date.now() - start,
+          ok: false,
+          error: truncateError((err as Error).message)
+        });
+        throw err;
+      }
+    };
   }
 
   stopSession(sessionId: string): void {
