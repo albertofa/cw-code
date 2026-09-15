@@ -1772,9 +1772,15 @@ body.session-dragging * {
 }
 
 .turn-head-hint {
-  margin-left: auto;
   color: var(--faint);
   font-weight: 400;
+}
+
+.turn-head-tail {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  margin-left: auto;
 }
 
 .turn-head:hover .turn-head-hint {
