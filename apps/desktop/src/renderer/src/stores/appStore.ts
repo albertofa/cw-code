@@ -420,6 +420,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (ids.length === 0) return;
     try {
       const expired = await window.cw.expireHolding(ids);
+      if (expired.length === 0) return;
       let sessionsByProject = get().sessionsByProject;
       for (const session of expired) {
         sessionsByProject = patchSession(sessionsByProject, session.id, {
@@ -700,7 +701,9 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (sessionId) delete busy[sessionId];
     set({
       busyTurns: busy,
-      ...(sessionId ? { sessionsByProject: withSessionStatus(get().sessionsByProject, sessionId, "holding") } : {})
+      ...(sessionId
+        ? { sessionsByProject: patchSession(get().sessionsByProject, sessionId, { status: "holding", updatedAt: Date.now() }) }
+        : {})
     });
   },
 
@@ -920,7 +923,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         busyTurns: busy,
         pendingApprovals: approvals,
         pendingQuestions: questions,
-        sessionsByProject: withSessionStatus(get().sessionsByProject, sessionId, "holding"),
+        sessionsByProject: patchSession(get().sessionsByProject, sessionId, { status: "holding", updatedAt: Date.now() }),
         messagesBySession: {
           ...get().messagesBySession,
           [sessionId]: [
