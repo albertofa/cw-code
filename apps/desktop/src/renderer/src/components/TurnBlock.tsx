@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import { formatDuration } from "./toolSummaries.js";
 import { formatElapsed } from "./turnFormat.js";
@@ -20,6 +20,7 @@ export function TurnBlock({
   startedAt,
   durationMs,
   hasActivity,
+  autoExpandIfFits,
   lead,
   activity,
   system,
@@ -29,20 +30,44 @@ export function TurnBlock({
   startedAt?: number;
   durationMs?: number;
   hasActivity: boolean;
+  autoExpandIfFits?: boolean;
   lead: ReactNode[];
   activity: ReactNode[];
   system: ReactNode[];
   pinned?: ReactNode;
 }) {
   const [manualOpen, setManualOpen] = useState<boolean | null>(null);
+  const [measuring, setMeasuring] = useState(
+    () => !running && Boolean(autoExpandIfFits) && hasActivity
+  );
+  const rootRef = useRef<HTMLDivElement>(null);
   const prevRunning = useRef(running);
-  useEffect(() => {
-    if (prevRunning.current !== running) {
-      prevRunning.current = running;
+
+  useLayoutEffect(() => {
+    if (prevRunning.current === running) return;
+    prevRunning.current = running;
+    if (running) {
+      setManualOpen(null);
+      return;
+    }
+    if (manualOpen === false) return;
+    if (autoExpandIfFits) setMeasuring(true);
+    else setManualOpen(null);
+  }, [running, autoExpandIfFits, manualOpen]);
+
+  useLayoutEffect(() => {
+    if (!measuring) return;
+    setMeasuring(false);
+    const root = rootRef.current;
+    const scroll = root?.closest(".thread-scroll");
+    if (root && scroll && root.offsetHeight > 0 && root.offsetHeight <= scroll.clientHeight) {
+      setManualOpen(true);
+    } else {
       setManualOpen(null);
     }
-  }, [running]);
-  const open = manualOpen ?? running;
+  }, [measuring]);
+
+  const open = manualOpen ?? (running || measuring);
   const elapsed = useElapsed(startedAt, running);
   const showHead = running || hasActivity || durationMs !== undefined;
   const label = running
@@ -52,7 +77,7 @@ export function TurnBlock({
       : "Worked";
 
   return (
-    <div className={`turn-block${open ? " open" : ""}`}>
+    <div ref={rootRef} className={`turn-block${open ? " open" : ""}`}>
       {lead.length > 0 && <div className="turn-lead">{lead}</div>}
       {showHead && (
         <button

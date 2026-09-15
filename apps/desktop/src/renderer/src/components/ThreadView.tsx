@@ -301,6 +301,7 @@ export function ThreadView() {
               startedAt={turn.startedAt}
               durationMs={turn.durationMs}
               hasActivity={turn.pieces.activity.length > 0}
+              autoExpandIfFits={index === turns.length - 1}
               lead={turn.pieces.lead.map((m) => renderNode({ kind: "msg", msg: m }))}
               activity={turn.pieces.activity.map(renderNode)}
               system={turn.pieces.system.map((m) => renderNode({ kind: "msg", msg: m }))}
