@@ -62,7 +62,7 @@ export function ThreadView() {
         const known = turnDurations?.[slice.turnId];
         return {
           turnId: slice.turnId,
-          pieces: splitTurn(slice.messages, nestedIds),
+          pieces: splitTurn(slice.messages, nestedIds, running),
           running,
           startedAt: running ? turnStartedAt : undefined,
           durationMs: known ?? durationFromMessages(slice.messages)
@@ -116,10 +116,12 @@ export function ThreadView() {
     const el = scrollRef.current;
     const inner = el?.firstElementChild;
     if (!el || !(inner instanceof HTMLElement)) return;
-    const ro = new ResizeObserver(() => {
+    const stickToBottom = () => {
       if (stickRef.current) el.scrollTop = el.scrollHeight;
-    });
+    };
+    const ro = new ResizeObserver(stickToBottom);
     ro.observe(inner);
+    ro.observe(el);
     return () => ro.disconnect();
   }, [activeSessionId, showNew]);
 

@@ -88,7 +88,7 @@ export function buildThreadNodes(messages: ChatMessage[], nestedIds: Set<string>
   return out;
 }
 
-export function splitTurn(messages: ChatMessage[], nestedIds: Set<string>): TurnPieces {
+export function splitTurn(messages: ChatMessage[], nestedIds: Set<string>, running = false): TurnPieces {
   const lead: ChatMessage[] = [];
   const system: ChatMessage[] = [];
   const rest: ChatMessage[] = [];
@@ -101,11 +101,13 @@ export function splitTurn(messages: ChatMessage[], nestedIds: Set<string>): Turn
   for (let i = rest.length - 1; i >= 0; i--) {
     const m = rest[i];
     if (m.parentToolCallId && nestedIds.has(m.parentToolCallId)) continue;
-    if (m.role === "assistant") {
-      pinned = m;
-      rest.splice(i, 1);
-      break;
+    if (m.role !== "assistant") {
+      if (running) break;
+      continue;
     }
+    pinned = m;
+    rest.splice(i, 1);
+    break;
   }
   const activity = buildThreadNodes(rest, nestedIds);
   return pinned ? { lead, activity, system, pinned } : { lead, activity, system };

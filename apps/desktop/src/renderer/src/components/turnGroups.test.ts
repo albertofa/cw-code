@@ -166,6 +166,36 @@ describe("splitTurn", () => {
     expect(pieces.activity.map((n) => (n.kind === "msg" ? n.msg.id : n.kind))).toEqual(["th"]);
   });
 
+  it("keeps an interim assistant message in order while the turn runs", () => {
+    const messages = [
+      msg({ id: "u", role: "user", turnId: "t1" }),
+      msg({ id: "th1", role: "reasoning", turnId: "t1", text: "thinking" }),
+      msg({ id: "a1", role: "assistant", turnId: "t1", text: "interim" }),
+      msg({ id: "tool", role: "tool", turnId: "t1", toolName: "bash", toolInput: { command: "ls" } })
+    ];
+    const live = splitTurn(messages, nestedIds, true);
+    expect(live.pinned).toBeUndefined();
+    expect(live.activity.map((n) => (n.kind === "msg" ? n.msg.id : n.kind))).toEqual(["th1", "a1", "tool"]);
+
+    const settled = splitTurn(messages, nestedIds, false);
+    expect(settled.pinned?.id).toBe("a1");
+    expect(settled.activity.map((n) => (n.kind === "msg" ? n.msg.id : n.kind))).toEqual(["th1", "tool"]);
+  });
+
+  it("pins a trailing assistant message while the turn runs", () => {
+    const pieces = splitTurn(
+      [
+        msg({ id: "u", role: "user", turnId: "t1" }),
+        msg({ id: "tool", role: "tool", turnId: "t1", toolName: "bash", toolInput: {} }),
+        msg({ id: "a1", role: "assistant", turnId: "t1", text: "streaming answer" })
+      ],
+      nestedIds,
+      true
+    );
+    expect(pieces.pinned?.id).toBe("a1");
+    expect(pieces.activity.map((n) => (n.kind === "msg" ? n.msg.id : n.kind))).toEqual(["tool"]);
+  });
+
   it("leaves a trailing tool call in the activity", () => {
     const pieces = splitTurn(
       [
