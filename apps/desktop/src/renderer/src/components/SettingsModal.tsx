@@ -349,6 +349,17 @@ export function SettingsModal({
           onChange={(e) => set({ claudeExtraArgs: e.target.value })}
         />
       </label>
+      <label className="settings-row">
+        <span className="settings-label">Chain of thought expanded</span>
+        <span className="settings-hint">Show Claude reasoning expanded by default instead of collapsed behind a “Thought for Xs” summary.</span>
+        <input
+          className="settings-toggle"
+          type="checkbox"
+          checked={draft.claudeReasoningExpanded}
+          onChange={(e) => set({ claudeReasoningExpanded: e.target.checked })}
+          aria-label="Expand Claude reasoning by default"
+        />
+      </label>
       {modelsSection}
     </>
   );
@@ -375,6 +386,17 @@ export function SettingsModal({
           onChange={(e) => set({ opencodeExtraArgs: e.target.value })}
         />
       </label>
+      <label className="settings-row">
+        <span className="settings-label">Chain of thought expanded</span>
+        <span className="settings-hint">Show OpenCode reasoning expanded by default instead of collapsed behind a “Thought for Xs” summary.</span>
+        <input
+          className="settings-toggle"
+          type="checkbox"
+          checked={draft.opencodeReasoningExpanded}
+          onChange={(e) => set({ opencodeReasoningExpanded: e.target.checked })}
+          aria-label="Expand OpenCode reasoning by default"
+        />
+      </label>
     </>
   );
 
@@ -398,6 +420,17 @@ export function SettingsModal({
           value={draft.codexExtraArgs}
           placeholder="--enable feature"
           onChange={(e) => set({ codexExtraArgs: e.target.value })}
+        />
+      </label>
+      <label className="settings-row">
+        <span className="settings-label">Chain of thought expanded</span>
+        <span className="settings-hint">Show Codex reasoning expanded by default instead of collapsed behind a “Thought for Xs” summary.</span>
+        <input
+          className="settings-toggle"
+          type="checkbox"
+          checked={draft.codexReasoningExpanded}
+          onChange={(e) => set({ codexReasoningExpanded: e.target.checked })}
+          aria-label="Expand Codex reasoning by default"
         />
       </label>
     </>
