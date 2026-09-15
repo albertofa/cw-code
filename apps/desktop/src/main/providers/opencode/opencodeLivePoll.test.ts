@@ -32,6 +32,20 @@ function completedTask(callID: string, output = "All done"): LiveMessage {
   };
 }
 
+function pendingTask(callID: string): LiveMessage {
+  return {
+    info: { id: "m1" },
+    parts: [
+      {
+        type: "tool",
+        tool: "task",
+        callID,
+        state: { status: "pending", input: {} }
+      }
+    ]
+  };
+}
+
 describe("diffLiveTools", () => {
   it("emits a call for a newly seen running tool", () => {
     const seen = new Map<string, LiveSeen>();
@@ -106,9 +120,42 @@ describe("diffLiveTools", () => {
   });
 
   it("does not re-emit calls the stdout stream already reported", () => {
-    const seen = new Map<string, LiveSeen>([["call_1", { call: true, result: false }]]);
+    const seen = new Map<string, LiveSeen>([["call_1", { call: true, result: false, input: true }]]);
     const events = diffLiveTools(seen, [runningTask("call_1")], "t1", null);
     expect(events).toEqual([]);
+  });
+
+  it("re-emits a pending call once its input arrives", () => {
+    const seen = new Map<string, LiveSeen>();
+    const first = diffLiveTools(seen, [pendingTask("call_1")], "t1", null);
+    expect(first).toHaveLength(1);
+    expect(first[0]).toMatchObject({ type: "tool.call", toolCallId: "call_1", input: {} });
+
+    const events = diffLiveTools(seen, [runningTask("call_1", "Do work")], "t1", null);
+    expect(events).toEqual([
+      {
+        type: "tool.call",
+        turnId: "t1",
+        toolCallId: "call_1",
+        name: "task",
+        input: { description: "Do work", prompt: "Work hard", subagent_type: "general" }
+      }
+    ]);
+    expect(diffLiveTools(seen, [runningTask("call_1", "Do work")], "t1", null)).toEqual([]);
+  });
+
+  it("emits a pending call and its result together when input never lands", () => {
+    const seen = new Map<string, LiveSeen>();
+    const message = pendingTask("call_1");
+    const first = diffLiveTools(seen, [message], "t1", null);
+    expect(first).toHaveLength(1);
+
+    const completed = completedTask("call_1");
+    completed.parts![0]!.state = { status: "completed", input: {}, output: "done" };
+    const events = diffLiveTools(seen, [completed], "t1", null);
+    expect(events).toEqual([
+      { type: "tool.result", turnId: "t1", toolCallId: "call_1", output: "done", isError: false }
+    ]);
   });
 
   it("emits nothing for tools whose message predates the turn", () => {

@@ -15,7 +15,7 @@ import type {
   SettingsPatch,
   TurnEvent
 } from "../cw.js";
-import { appendAssistantText } from "../components/chatMessages.js";
+import { appendAssistantText, upsertToolCall } from "../components/chatMessages.js";
 import { mergeToolPairs } from "../components/toolSummaries.js";
 import { useNotifs } from "../components/Notifications.js";
 
@@ -775,19 +775,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({
         messagesBySession: {
           ...get().messagesBySession,
-          [sessionId]: [
-            ...messages,
-            {
-              id: event.toolCallId,
-              role: "tool",
-              text: `${event.name} ${JSON.stringify(event.input)?.slice(0, 300) ?? ""}`,
-              turnId: event.turnId,
-              toolName: event.name,
-              toolInput: event.input,
-              toolStartedAt: Date.now(),
-              ...(event.parentToolCallId ? { parentToolCallId: event.parentToolCallId } : {})
-            }
-          ]
+          [sessionId]: upsertToolCall(messages, event, Date.now())
         }
       });
     } else if (event.type === "tool.result") {

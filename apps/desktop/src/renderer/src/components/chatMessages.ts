@@ -1,4 +1,49 @@
 import type { ChatMessage } from "../stores/appStore.js";
+import type { TurnEvent } from "../cw.js";
+
+export type ToolCallEvent = Extract<TurnEvent, { type: "tool.call" }>;
+
+function toolCallText(name: string, input: unknown): string {
+  return `${name} ${JSON.stringify(input)?.slice(0, 300) ?? ""}`;
+}
+
+function hasInput(input: unknown): boolean {
+  if (input === null || input === undefined) return false;
+  if (typeof input === "string") return input.length > 0;
+  if (typeof input === "object") return Object.keys(input).length > 0;
+  return true;
+}
+
+export function upsertToolCall(messages: ChatMessage[], event: ToolCallEvent, startedAt: number): ChatMessage[] {
+  const idx = messages.findIndex((m) => m.id === event.toolCallId && m.role === "tool");
+  if (idx >= 0) {
+    const existing = messages[idx];
+    const updated: ChatMessage = {
+      ...existing,
+      toolName: event.name,
+      ...(hasInput(event.input)
+        ? { toolInput: event.input, text: toolCallText(event.name, event.input) }
+        : {}),
+      ...(event.parentToolCallId && !existing.parentToolCallId
+        ? { parentToolCallId: event.parentToolCallId }
+        : {})
+    };
+    return [...messages.slice(0, idx), updated, ...messages.slice(idx + 1)];
+  }
+  return [
+    ...messages,
+    {
+      id: event.toolCallId,
+      role: "tool",
+      text: toolCallText(event.name, event.input),
+      turnId: event.turnId,
+      toolName: event.name,
+      toolInput: event.input,
+      toolStartedAt: startedAt,
+      ...(event.parentToolCallId ? { parentToolCallId: event.parentToolCallId } : {})
+    }
+  ];
+}
 
 export function appendAssistantText(messages: ChatMessage[], turnId: string, text: string): ChatMessage[] {
   const last = messages[messages.length - 1];
