@@ -74,6 +74,13 @@ describe("SettingsStore", () => {
     expect(store.set({ sourceControlRefreshIntervalSeconds: 50_000 }).sourceControlRefreshIntervalSeconds).toBe(3600);
   });
 
+  it("sanitizes holding hours", () => {
+    const store = new SettingsStore(tempFilePath());
+    expect(store.set({ holdingHours: -3 }).holdingHours).toBe(0);
+    expect(store.set({ holdingHours: 500 }).holdingHours).toBe(168);
+    expect(store.set({ holdingHours: 9.6 }).holdingHours).toBe(10);
+  });
+
   it("includes auto-title defaults", () => {
     const settings = new SettingsStore(tempFilePath()).get();
     expect(settings.autoTitleEnabled).toBe(true);

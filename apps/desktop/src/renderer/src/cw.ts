@@ -7,7 +7,7 @@ export interface Project {
 
 export type DriverName = "claude" | "opencode" | "codex";
 
-export type SessionStatus = "idle" | "working" | "input-required" | "done" | "resolved" | "archived";
+export type SessionStatus = "idle" | "working" | "input-required" | "done" | "holding" | "resolved" | "archived";
 
 export interface Session {
   id: string;
@@ -270,6 +270,8 @@ export interface AppSettings {
   githubCliBinaryPath: string;
   sourceControlRefreshIntervalSeconds: number;
   defaultUseWorktree: boolean;
+  /** Hours a session stays in the holding state before it is resolved automatically. */
+  holdingHours: number;
   autoTitleEnabled: boolean;
   autoTitleDriver: DriverName;
   autoTitleModel: string;

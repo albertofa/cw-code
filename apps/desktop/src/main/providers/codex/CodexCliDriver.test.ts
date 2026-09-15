@@ -17,6 +17,7 @@ const SETTINGS: AppSettings = {
   githubCliBinaryPath: "gh",
   sourceControlRefreshIntervalSeconds: 30,
   defaultUseWorktree: true,
+  holdingHours: 6,
   autoTitleEnabled: true,
   autoTitleDriver: "claude",
   autoTitleModel: "claude-sonnet-5",

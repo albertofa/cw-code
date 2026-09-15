@@ -1,6 +1,6 @@
 export type DriverKind = "claude" | "opencode" | "codex";
 
-export type SessionStatus = "idle" | "working" | "input-required" | "done" | "resolved" | "archived";
+export type SessionStatus = "idle" | "working" | "input-required" | "done" | "holding" | "resolved" | "archived";
 
 export interface Project {
   id: string;
