@@ -12,6 +12,7 @@ import { SubagentCard } from "./SubagentCard.js";
 import { NewThread } from "./NewThread.js";
 import { ApprovalDock } from "./ApprovalDock.js";
 import { QuestionDock } from "./QuestionDock.js";
+import { TodoDock } from "./TodoDock.js";
 import { WorkingPill, useWorkingWord } from "./WorkingPill.js";
 import { projectAvatarStyle, projectInitials } from "./avatar.js";
 import { formatDuration, orderToolsForDisplay } from "./toolSummaries.js";
@@ -42,6 +43,7 @@ export function ThreadView() {
   const historyLoading = useAppStore((s) => (activeSessionId ? !!s.loadingHistory[activeSessionId] : false));
   const historyError = useAppStore((s) => (activeSessionId ? s.historyErrorBySession[activeSessionId] : undefined));
   const ensureHistory = useAppStore((s) => s.ensureHistory);
+  const retryConnection = useAppStore((s) => s.retryConnection);
   const usage = useAppStore((s) => (activeSessionId ? s.usageBySession[activeSessionId] : undefined));
   const lastTurn = useAppStore((s) => (activeSessionId ? s.lastTurnStats[activeSessionId] : undefined));
   const openPreview = useAppStore((s) => s.openPreview);
@@ -77,12 +79,13 @@ export function ThreadView() {
       }
     };
     for (const m of ordered) {
+      if (isTodoTool(m)) continue;
       if (isSubagentMessage(m)) {
         flushTools();
         pending.push(m);
       }
       else if (m.parentToolCallId && nestedIds.has(m.parentToolCallId)) continue;
-      else if (m.role === "tool" && !isTodoTool(m)) {
+      else if (m.role === "tool") {
         flush();
         toolRun.push(m);
       }
@@ -288,6 +291,11 @@ export function ThreadView() {
                 <div key={m.id} className="msg-system">
                   <TriangleAlert size={14} aria-hidden="true" />
                   <span>{m.text}</span>
+                  {m.retryable && (
+                    <button className="msg-retry" onClick={() => void retryConnection(session.id)}>
+                      Retry connection
+                    </button>
+                  )}
                 </div>
               );
             }
@@ -327,6 +335,7 @@ export function ThreadView() {
         </div>
       )}
       <div className="composer-wrap">
+        <TodoDock sessionId={session.id} />
         <ApprovalDock sessionId={session.id} />
         <QuestionDock sessionId={session.id} />
         <Composer key={session.id} sessionId={session.id} driver={session.driver} />

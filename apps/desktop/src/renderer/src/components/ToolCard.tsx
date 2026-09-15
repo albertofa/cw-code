@@ -29,8 +29,9 @@ function LegacyHead({ name, text, open }: { name: string; text: string; open: bo
 }
 
 function ToolState({ state }: { state: "complete" | "error" | "running" | "pending" }) {
-  const label = state === "complete" ? "Completed" : state === "error" ? "Error" : state === "running" ? "Running" : "Pending";
-  const Icon = state === "complete" ? Check : state === "error" ? TriangleAlert : state === "running" ? CircleDot : Circle;
+  if (state === "complete") return <span className="tool-state" aria-hidden="true" />;
+  const label = state === "error" ? "Error" : state === "running" ? "Running" : "Pending";
+  const Icon = state === "error" ? TriangleAlert : state === "running" ? CircleDot : Circle;
   return (
     <span className={`tool-state ${state}`} role="img" aria-label={label} title={label}>
       <Icon size={13} aria-hidden="true" />

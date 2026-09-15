@@ -22,6 +22,14 @@ export interface LiveMessage {
 export interface LiveSeen {
   call: boolean;
   result: boolean;
+  input: boolean;
+}
+
+function hasInput(input: unknown): boolean {
+  if (input === null || input === undefined) return false;
+  if (typeof input === "string") return input.length > 0;
+  if (typeof input === "object") return Object.keys(input).length > 0;
+  return true;
 }
 
 function partCallId(part: LiveToolPart, turnId: string): string {
@@ -41,23 +49,38 @@ function partInput(part: LiveToolPart): unknown {
 export function diffLiveTools(
   seen: Map<string, LiveSeen>,
   messages: LiveMessage[],
-  turnId: string
+  turnId: string,
+  beforeIds: Set<string> | null
 ): ThreadEvent[] {
   const events: ThreadEvent[] = [];
   for (const msg of messages) {
+    const msgId = msg.info?.id;
+    if (beforeIds !== null && typeof msgId === "string" && beforeIds.has(msgId)) continue;
     for (const part of msg.parts ?? []) {
       if (part.type !== "tool") continue;
       const id = partCallId(part, turnId);
-      const entry = seen.get(id) ?? { call: false, result: false };
+      const entry = seen.get(id) ?? { call: false, result: false, input: false };
+      const input = partInput(part);
       if (!entry.call) {
         entry.call = true;
+        entry.input = hasInput(input);
         seen.set(id, entry);
         events.push({
           type: "tool.call",
           turnId,
           toolCallId: id,
           name: part.tool ?? "tool",
-          input: partInput(part)
+          input
+        });
+      } else if (!entry.input && hasInput(input)) {
+        entry.input = true;
+        seen.set(id, entry);
+        events.push({
+          type: "tool.call",
+          turnId,
+          toolCallId: id,
+          name: part.tool ?? "tool",
+          input
         });
       }
       if (!entry.result) {

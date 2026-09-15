@@ -1,3 +1,6 @@
+import type { TodoItem } from "@cw-code/contracts";
+import { normalizeTodos } from "../todos.js";
+
 interface ToolPartState {
   status?: string;
   input?: unknown;
@@ -35,4 +38,19 @@ export function toolResultFromState(
   const err = errorText(typed.error);
   if (err !== undefined) return { output: err.slice(0, 8000), isError: true };
   return { output: "", isError: typed.status === "error" };
+}
+
+export function parseOpencodeTodosUpdated(
+  event: unknown
+): { sessionID: string; todos: TodoItem[] } | null {
+  if (event === null || typeof event !== "object" || Array.isArray(event)) return null;
+  const args = event as Record<string, unknown>;
+  if (args["type"] !== "todo.updated") return null;
+  const props = args["properties"];
+  if (props === null || typeof props !== "object" || Array.isArray(props)) return null;
+  const sessionID = (props as Record<string, unknown>)["sessionID"];
+  if (typeof sessionID !== "string" || !sessionID) return null;
+  const todos = normalizeTodos(props);
+  if (todos === null) return null;
+  return { sessionID, todos };
 }

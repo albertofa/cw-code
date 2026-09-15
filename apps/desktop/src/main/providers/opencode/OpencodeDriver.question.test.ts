@@ -121,3 +121,39 @@ describe("OpencodeDriver question reply routing", () => {
     }
   });
 });
+
+describe("OpencodeDriver todo.updated session routing", () => {
+  it("drops todo.updated for a different session and emits it for the turn's session", () => {
+    const events: ThreadEvent[] = [];
+    const driver = makeDriver(events);
+    try {
+      const internals = driver as unknown as {
+        sessionIds: Map<string, string>;
+        handleSseLine: (turnId: string, line: string) => void;
+      };
+      internals.sessionIds.set("turn-1", "ses_1");
+      internals.handleSseLine(
+        "turn-1",
+        JSON.stringify({
+          type: "todo.updated",
+          properties: { sessionID: "ses_other", todos: [{ content: "Wrong session", status: "pending" }] }
+        })
+      );
+      expect(events.filter((e) => e.type === "todo.updated")).toEqual([]);
+      internals.handleSseLine(
+        "turn-1",
+        JSON.stringify({
+          type: "todo.updated",
+          properties: { sessionID: "ses_1", todos: [{ content: "Ship it", status: "in_progress" }] }
+        })
+      );
+      expect(events).toContainEqual({
+        type: "todo.updated",
+        turnId: "turn-1",
+        todos: [{ content: "Ship it", status: "in_progress" }]
+      });
+    } finally {
+      driver.dispose();
+    }
+  });
+});

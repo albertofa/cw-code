@@ -237,6 +237,63 @@ describe("CodexCliDriver", () => {
     driver.dispose();
   });
 
+  it("emits todo.updated from a turn/plan/updated notification for the active turn", async () => {
+    const { driver, events } = makeDriver(client);
+    const handle = driver.startTurn({ sessionId: "local-1", prompt: "plan the work", cwd: "C:\\proj" });
+    await settle();
+    client.notify("turn/plan/updated", {
+      threadId: "thr_1",
+      turnId: "turn_2",
+      explanation: "here is the plan",
+      plan: [
+        { step: "Inspect the repo", status: "completed" },
+        { step: "Write the fix", status: "in_progress" },
+        { step: "Add tests", status: "queued" }
+      ]
+    });
+    await settle();
+    expect(events).toContainEqual({
+      type: "todo.updated",
+      turnId: handle.turnId,
+      todos: [
+        { content: "Inspect the repo", status: "completed" },
+        { content: "Write the fix", status: "in_progress" },
+        { content: "Add tests", status: "pending" }
+      ]
+    });
+    driver.dispose();
+  });
+
+  it("emits an empty todo.updated when the active turn's plan is empty", async () => {
+    const { driver, events } = makeDriver(client);
+    const handle = driver.startTurn({ sessionId: "local-1", prompt: "plan the work", cwd: "C:\\proj" });
+    await settle();
+    client.notify("turn/plan/updated", {
+      threadId: "thr_1",
+      turnId: "turn_2",
+      plan: []
+    });
+    await settle();
+    expect(events).toContainEqual({
+      type: "todo.updated",
+      turnId: handle.turnId,
+      todos: []
+    });
+    driver.dispose();
+  });
+
+  it("drops plan updates for unknown turns", async () => {
+    const { driver, events } = makeDriver(client);
+    client.notify("turn/plan/updated", {
+      threadId: "thr_zzz",
+      turnId: "turn_zzz",
+      plan: [{ step: "Nope", status: "pending" }]
+    });
+    await settle();
+    expect(events.filter((e) => e.type === "todo.updated")).toEqual([]);
+    driver.dispose();
+  });
+
   it("emits turn.error when the turn fails", async () => {
     const { driver, events } = makeDriver(client);
     driver.startTurn({ sessionId: "local-1", prompt: "go", cwd: "C:\\proj" });

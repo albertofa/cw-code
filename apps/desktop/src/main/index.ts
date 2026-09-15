@@ -59,6 +59,7 @@ async function createWindow(): Promise<void> {
     appendCrashLog(
       `render-process-gone: reason=${details.reason} exitCode=${details.exitCode}`
     );
+    ptys.detachAll();
     void webContents.reload();
   });
   webContents.on("console-message", (event) => {
@@ -94,6 +95,10 @@ function registerIpc(): void {
   });
   sessions.setTitleEmitter((sessionId, title) => {
     mainWindow?.webContents.send("session.title", { sessionId, title });
+  });
+  ptys.setExitEmitter((ptyId, token, exitCode) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    mainWindow.webContents.send("pty.exit", { ptyId, token, exitCode });
   });
   ipcMain.handle("cli.checkVersions", () => {
     const s = sessions.getSettings();
@@ -164,20 +169,28 @@ function registerIpc(): void {
   ipcMain.handle("sessions.regenerateTitle", (_e, args: { sessionId: string }) =>
     sessions.regenerateTitle(args.sessionId)
   );
-  ipcMain.handle("sessions.setStatus", (_e, args: { sessionId: string; status: SessionStatus }) =>
-    sessions.setSessionStatus(args.sessionId, args.status)
-  );
+  ipcMain.handle("sessions.setStatus", (_e, args: { sessionId: string; status: SessionStatus }) => {
+    const updated = sessions.setSessionStatus(args.sessionId, args.status);
+    if (updated.status === "resolved" || updated.status === "archived") ptys.killSession(args.sessionId);
+    return updated;
+  });
   ipcMain.handle("sessions.expireHolding", (_e, sessionIds: string[]) =>
     sessions.expireHoldingSessions(sessionIds)
   );
   ipcMain.handle(
     "sessions.resolve",
-    (_e, args: { sessionId: string; status: SessionStatus; removeWorktree?: boolean; forceBranch?: boolean }) =>
-      sessions.resolveSession(args.sessionId, args.status, { removeWorktree: args.removeWorktree, forceBranch: args.forceBranch })
+    async (_e, args: { sessionId: string; status: SessionStatus; removeWorktree?: boolean; forceBranch?: boolean }) => {
+      const result = await sessions.resolveSession(args.sessionId, args.status, { removeWorktree: args.removeWorktree, forceBranch: args.forceBranch });
+      if (result.status === "resolved" || result.status === "archived") ptys.killSession(args.sessionId);
+      return result;
+    }
   );
   ipcMain.handle("worktrees.prune", () => sessions.pruneStaleWorktrees());
   ipcMain.handle("sessions.history", (_e, args: { sessionId: string }) =>
     sessions.getHistory(args.sessionId)
+  );
+  ipcMain.handle("sessions.retryConnection", (_e, args: { sessionId: string }) =>
+    sessions.retryConnection(args.sessionId)
   );
   ipcMain.handle(
     "turns.start",
@@ -297,6 +310,7 @@ function registerIpc(): void {
         args.sessionId,
         root,
         args.kind,
+        sessions.resumeCursorFor(args.sessionId),
         sessions.turnEnv(args.sessionId, root),
         (id, data) => {
           mainWindow?.webContents.send("pty.data", { ptyId: id, data });
@@ -308,6 +322,7 @@ function registerIpc(): void {
   ipcMain.on("pty.resize", (_e, args: { ptyId: string; cols: number; rows: number }) =>
     ptys.resize(args.ptyId, args.cols, args.rows)
   );
+  ipcMain.on("pty.detach", (_e, args: { ptyId: string; token: string }) => ptys.detach(args.ptyId, args.token));
   ipcMain.on("pty.kill", (_e, args: { ptyId: string }) => ptys.kill(args.ptyId));
 
   ipcMain.on("win.minimize", (e) => windowFromSender(e.sender)?.minimize());

@@ -10,6 +10,7 @@ import {
   accumulateCodexUsage,
   mapCodexHistory,
   mapCodexModel,
+  mapCodexPlan,
   mapCodexThread,
   mapPermissionMode,
   type CodexThread,
@@ -110,6 +111,40 @@ describe("buildCodexUserInput", () => {
 
   it("returns an empty list for a bare prompt with no attachments", () => {
     expect(buildCodexUserInput("hi", "C:\\proj", [])).toEqual([{ type: "text", text: "hi" }]);
+  });
+});
+
+describe("mapCodexPlan", () => {
+  it("maps step and status, defaulting unknown statuses to pending", () => {
+    expect(
+      mapCodexPlan([
+        { step: "Inspect the repo", status: "completed" },
+        { step: "Write the fix", status: "in_progress" },
+        { step: "Add tests", status: "queued" },
+        { step: "Ship it" }
+      ])
+    ).toEqual([
+      { content: "Inspect the repo", status: "completed" },
+      { content: "Write the fix", status: "in_progress" },
+      { content: "Add tests", status: "pending" },
+      { content: "Ship it", status: "pending" }
+    ]);
+  });
+
+  it("accepts a { plan: [...] } wrapper", () => {
+    expect(mapCodexPlan({ plan: [{ step: "One", status: "pending" }] })).toEqual([
+      { content: "One", status: "pending" }
+    ]);
+  });
+
+  it("returns an empty list for an empty plan", () => {
+    expect(mapCodexPlan([])).toEqual([]);
+  });
+
+  it("returns null for garbage input", () => {
+    expect(mapCodexPlan("nope")).toBeNull();
+    expect(mapCodexPlan(null)).toBeNull();
+    expect(mapCodexPlan({ plan: "nope" })).toBeNull();
   });
 });
 

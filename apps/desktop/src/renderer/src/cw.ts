@@ -53,6 +53,12 @@ export interface WorktreePruneSummary {
   keptDirty: string[];
 }
 
+export interface TodoItem {
+  content: string;
+  status: "pending" | "in_progress" | "completed" | "cancelled";
+  priority?: "high" | "medium" | "low";
+}
+
 export interface HistoryMessage {
   id: string;
   role: "user" | "assistant" | "tool" | "system";
@@ -64,6 +70,7 @@ export interface HistoryMessage {
   subagentModel?: string;
   subagentTools?: SubagentToolSummary;
   parentToolCallId?: string;
+  todos?: TodoItem[];
 }
 
 export interface SubagentToolActivity {
@@ -81,6 +88,12 @@ export interface SubagentToolSummary {
   items: SubagentToolActivity[];
   effort?: string;
   totalTokens?: number;
+}
+
+export interface RetryConnectionResult {
+  status: "running" | "done";
+  turnId?: string;
+  history: HistoryMessage[];
 }
 
 export type ApprovalDecision = "accept" | "acceptForSession" | "acceptGlobal" | "decline" | "cancel";
@@ -140,6 +153,7 @@ export type TurnEvent =
       requestId: string;
       answers: Record<string, string> | null;
     }
+  | { type: "todo.updated"; turnId: string; todos: TodoItem[] }
   | {
       type: "turn.done";
       turnId: string;
@@ -153,7 +167,7 @@ export type TurnEvent =
       isError: boolean;
       backgroundTasks: number;
     }
-  | { type: "turn.error"; turnId: string; message: string; resumeCursor?: string }
+  | { type: "turn.error"; turnId: string; message: string; resumeCursor?: string; retryable?: boolean }
   | { type: "session.branch.updated"; turnId: string; sessionId: string; branch: string };
 
 export type PermissionMode = "auto" | "acceptEdits" | "bypassPermissions" | "manual";
@@ -311,6 +325,7 @@ export interface CwApi {
   resolveSession(sessionId: string, status: SessionStatus, removeWorktree?: boolean, forceBranch?: boolean): Promise<SessionCleanupResult>;
   pruneStaleWorktrees(): Promise<WorktreePruneSummary>;
   getHistory(sessionId: string): Promise<HistoryMessage[]>;
+  retryConnection(sessionId: string): Promise<RetryConnectionResult>;
   startTurn(sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[] }): Promise<string>;
   interrupt(turnId: string): Promise<void>;
   respondApproval(requestId: string, decision: ApprovalDecision): Promise<void>;
@@ -341,11 +356,13 @@ export interface CwApi {
   savePasteImage(projectId: string, mime: string, data: Uint8Array): Promise<string>;
   readImage(args: { sessionId?: string; projectId?: string; path: string }): Promise<{ mime: string; base64: string }>;
   turnDiff(sessionId: string, since: number): Promise<string>;
-  openPty(sessionId: string, kind: DriverName | "shell"): Promise<string>;
+  openPty(sessionId: string, kind: DriverName | "shell"): Promise<{ ptyId: string; token: string; replay: string }>;
   writePty(ptyId: string, data: string): void;
   resizePty(ptyId: string, cols: number, rows: number): void;
+  detachPty(ptyId: string, token: string): void;
   killPty(ptyId: string): void;
   onPtyData(cb: (msg: { ptyId: string; data: string }) => void): () => void;
+  onPtyExit(cb: (msg: { ptyId: string; token: string; exitCode: number }) => void): () => void;
   minimizeWindow(): void;
   toggleMaximizeWindow(): void;
   closeWindow(): void;

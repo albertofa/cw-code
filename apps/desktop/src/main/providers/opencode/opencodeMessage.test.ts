@@ -2,7 +2,9 @@ import { describe, expect, it } from "vitest";
 import {
   assistantDeltaOf,
   buildOpencodeMessageBody,
+  latestAssistantOf,
   mimeForOpencodeAttachment,
+  runEnded,
   splitOpencodeModel,
   summarizeOpencodeTurn,
   turnMessagesOf
@@ -89,6 +91,47 @@ describe("turnMessagesOf", () => {
     expect(turnMessagesOf({ data: payload }).map((m) => m.id)).toEqual(["msg_1", "msg_2"]);
     expect(turnMessagesOf(null)).toEqual([]);
     expect(turnMessagesOf({})).toEqual([]);
+  });
+});
+
+describe("latestAssistantOf / runEnded", () => {
+  const assistant = (id: string, extra: Record<string, unknown> = {}): unknown => ({
+    info: { id, role: "assistant", ...extra },
+    parts: []
+  });
+
+  it("reports the newest assistant message and whether it is terminal", () => {
+    expect(latestAssistantOf([assistant("msg_1", { finish: "tool-calls" })])).toEqual({
+      id: "msg_1",
+      terminal: false
+    });
+    expect(latestAssistantOf([assistant("msg_1", { finish: "stop" })])).toEqual({ id: "msg_1", terminal: true });
+    expect(latestAssistantOf([assistant("msg_1", { error: { name: "MessageAbortedError" } })])).toEqual({
+      id: "msg_1",
+      terminal: true
+    });
+    expect(latestAssistantOf([assistant("msg_1", { time: { created: 1, completed: 2 } })])).toEqual({
+      id: "msg_1",
+      terminal: true
+    });
+  });
+
+  it("uses the last assistant message and ignores user messages", () => {
+    const payload = [
+      assistant("msg_1", { finish: "stop" }),
+      { info: { id: "msg_2", role: "user" }, parts: [] }
+    ];
+    expect(latestAssistantOf(payload)).toEqual({ id: "msg_1", terminal: true });
+  });
+
+  it("scopes out ids already seen before the turn", () => {
+    const payload = [assistant("msg_old", { finish: "stop" }), assistant("msg_new", { finish: "tool-calls" })];
+    expect(latestAssistantOf(payload, new Set(["msg_old"]))).toEqual({ id: "msg_new", terminal: false });
+    expect(runEnded(payload, new Set(["msg_old"]))).toBe(false);
+    expect(runEnded(payload, new Set(["msg_new"]))).toBe(true);
+    expect(runEnded(payload)).toBe(false);
+    expect(runEnded([], new Set())).toBe(false);
+    expect(runEnded(null)).toBe(false);
   });
 });
 

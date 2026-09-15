@@ -1,12 +1,13 @@
 import { memo, useEffect, useRef, useState } from "react";
-import { Check, ChevronDown, ChevronRight, Circle, CircleDot, TriangleAlert } from "lucide-react";
+import { ChevronDown, ChevronRight, Circle, CircleDot, TriangleAlert } from "lucide-react";
 import type { ChatMessage } from "../stores/appStore.js";
 import { summarizeToolGroup } from "./toolSummaries.js";
 import { ToolCard } from "./ToolCard.js";
 
 function GroupState({ status }: { status: "complete" | "error" | "running" | "pending" }) {
-  const label = status === "complete" ? "Completed" : status === "error" ? "Error" : status === "running" ? "Running" : "Pending";
-  const Icon = status === "complete" ? Check : status === "error" ? TriangleAlert : status === "running" ? CircleDot : Circle;
+  if (status === "complete") return <span className="tool-state" aria-hidden="true" />;
+  const label = status === "error" ? "Error" : status === "running" ? "Running" : "Pending";
+  const Icon = status === "error" ? TriangleAlert : status === "running" ? CircleDot : Circle;
   return (
     <span className={`tool-state ${status}`} role="img" aria-label={label} title={label}>
       <Icon size={13} aria-hidden="true" />

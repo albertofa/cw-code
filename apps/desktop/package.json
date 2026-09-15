@@ -1,6 +1,6 @@
 {
   "name": "@cw-code/desktop",
-  "version": "0.0.1-alpha.8",
+  "version": "0.0.1-alpha.9",
   "private": true,
   "type": "module",
   "main": "out/main/index.js",
@@ -37,6 +37,7 @@
     "electron": "^36.0.0",
     "electron-builder": "^25.1.8",
     "electron-vite": "^3.0.0",
+    "jsdom": "^30.0.1",
     "typescript": "^5.6.3",
     "vite": "^6.0.6",
     "vitest": "^3.2.4"

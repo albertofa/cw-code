@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { ChildProcess } from "node:child_process";
+import { EventEmitter } from "node:events";
 import { OpencodeServerPool, type ServerHandle } from "./opencodeServerPool.js";
 
 const ROOT = "C:\\fake\\project";
@@ -298,6 +299,59 @@ describe("OpencodeServerPool ensure", () => {
   it("probe reports false when no server is cached", async () => {
     const pool = makePool(vi.fn());
     await expect(pool.probe(ROOT)).resolves.toBe(false);
+    pool.dispose();
+  });
+});
+
+describe("OpencodeServerPool server-gone notifications", () => {
+  function emitterProc(): ChildProcess {
+    const proc = new EventEmitter() as unknown as ChildProcess;
+    Object.assign(proc, { killed: false, exitCode: null, kill: () => {} });
+    return proc;
+  }
+
+  function makePoolWithGone(): { pool: OpencodeServerPool; gone: Array<{ rootPath: string; port: number }>; startServer: ReturnType<typeof vi.fn> } {
+    const gone: Array<{ rootPath: string; port: number }> = [];
+    const startServer = vi.fn(
+      (): Promise<{ proc: ChildProcess; handle: ServerHandle }> => Promise.resolve({ proc: emitterProc(), handle: HANDLE })
+    );
+    const pool = new OpencodeServerPool(() => "opencode", {
+      startServer,
+      onServerGone: (rootPath, port) => gone.push({ rootPath, port })
+    });
+    return { pool, gone, startServer };
+  }
+
+  it("reports the port when a cached server is stopped", async () => {
+    const { pool, gone } = makePoolWithGone();
+    await pool.ensure(ROOT);
+    pool.invalidate(ROOT);
+    expect(gone).toEqual([{ rootPath: ROOT, port: HANDLE.port }]);
+    pool.dispose();
+  });
+
+  it("reports the port when the process exits", async () => {
+    const { pool, gone } = makePoolWithGone();
+    await pool.ensure(ROOT);
+    const entry = [...(pool as unknown as { servers: Map<string, { proc: ChildProcess }> }).servers.values()][0];
+    (entry.proc as unknown as EventEmitter).emit("exit", 1, null);
+    expect(gone).toEqual([{ rootPath: ROOT, port: HANDLE.port }]);
+    pool.dispose();
+  });
+
+  it("ignores invalidate while a turn is in flight and applies it after", async () => {
+    const { pool, gone, startServer } = makePoolWithGone();
+    const first = await pool.ensure(ROOT);
+    pool.beginTurn(ROOT);
+    pool.invalidate(ROOT);
+    const duringTurn = await pool.ensure(ROOT);
+    expect(duringTurn.port).toBe(first.port);
+    expect(startServer).toHaveBeenCalledTimes(1);
+    expect(gone).toEqual([]);
+
+    pool.endTurn(ROOT);
+    pool.invalidate(ROOT);
+    expect(gone).toEqual([{ rootPath: ROOT, port: HANDLE.port }]);
     pool.dispose();
   });
 });

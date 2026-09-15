@@ -9,8 +9,10 @@ import type {
   QuestionInfo,
   QuestionOption,
   QuestionRequest,
-  SessionMeta
+  SessionMeta,
+  TodoItem
 } from "@cw-code/contracts";
+import { todosFromPlan } from "../todos.js";
 
 export interface CodexTokenUsageBreakdown {
   totalTokens: number;
@@ -157,6 +159,17 @@ export function mapCodexThread(thread: CodexThread, projectId: string): SessionM
     updatedAt: (thread.updatedAt ?? thread.createdAt ?? 0) * 1000,
     model: thread.model ?? undefined
   };
+}
+
+export interface CodexPlanUpdate {
+  threadId?: string;
+  turnId?: string;
+  explanation?: string | null;
+  plan?: Array<{ step?: unknown; status?: unknown }>;
+}
+
+export function mapCodexPlan(plan: unknown): TodoItem[] | null {
+  return todosFromPlan(plan);
 }
 
 export function buildCodexUserInput(prompt: string, cwd: string, attachments: string[] | undefined): CodexUserInput[] {

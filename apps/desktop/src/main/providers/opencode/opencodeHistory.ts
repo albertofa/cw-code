@@ -1,4 +1,5 @@
 import type { HistoryMessage } from "@cw-code/contracts";
+import { todosFromToolCall } from "../todos.js";
 
 interface ServerPart {
   id?: string;
@@ -29,12 +30,14 @@ export function mapOpencodeMessages(messages: ServerMessage[], limit = 300): His
       } else if (part.type === "tool") {
         const input = JSON.stringify(part.state?.input ?? null)?.slice(0, 2000) ?? "";
         const callId = part.callID ?? part.id ?? `${turnId}-tool`;
+        const todos = todosFromToolCall(part.tool ?? "tool", part.state?.input);
         out.push({
           id: callId,
           role: "tool",
           text: `${part.tool ?? "tool"} ${input}`,
           turnId,
-          toolName: part.tool ?? "tool"
+          toolName: part.tool ?? "tool",
+          ...(todos !== null ? { todos } : {})
         });
         const output = part.state?.output;
         const errorText =
