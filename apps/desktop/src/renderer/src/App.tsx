@@ -109,6 +109,7 @@ export function App() {
   const pendingDriver = useAppStore((s) => s.pendingDriver);
   const preview = useAppStore((s) => s.preview);
   const sourceControlRefreshIntervalSeconds = useAppStore((s) => s.sourceControlRefreshIntervalSeconds);
+  const holdingHours = useAppStore((s) => s.holdingHours);
   const settingsVersion = useAppStore((s) => s.settingsVersion);
   const loadProjects = useAppStore((s) => s.loadProjects);
   const closePreview = useAppStore((s) => s.closePreview);
@@ -219,6 +220,14 @@ export function App() {
       document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [activeProjectId, activeSessionKey, sourceControlRefreshIntervalSeconds]);
+
+  useEffect(() => {
+    if (!window.cw) return;
+    const expire = () => void useAppStore.getState().expireHoldingSessions();
+    expire();
+    const timer = window.setInterval(expire, 60_000);
+    return () => window.clearInterval(timer);
+  }, [holdingHours]);
 
   useEffect(() => {
     if (!window.cw) return;

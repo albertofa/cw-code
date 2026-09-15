@@ -17,6 +17,7 @@ import type {
 } from "../cw.js";
 import { appendAssistantText } from "../components/chatMessages.js";
 import { mergeToolPairs } from "../components/toolSummaries.js";
+import { expiredHoldingIds } from "../components/workingSet.js";
 import { useNotifs } from "../components/Notifications.js";
 
 const GIT_REFRESH_BATCH = 6;
@@ -88,6 +89,7 @@ interface AppState {
   gitStatusBySession: Record<string, GitStatus>;
   refreshGitStatus(sessionId: string): Promise<void>;
   sourceControlRefreshIntervalSeconds: number;
+  holdingHours: number;
   defaultUseWorktree: boolean;
   preview: { sessionId: string; path: string; basePath: string } | null;
   openPreview(sessionId: string, path: string, basePath: string): void;
@@ -110,6 +112,7 @@ interface AppState {
   renameSession(sessionId: string, title: string): Promise<void>;
   regenerateSessionTitle(sessionId: string): Promise<void>;
   setSessionStatus(sessionId: string, status: SessionStatus, opts?: { promptWorktree?: boolean }): Promise<void>;
+  expireHoldingSessions(): Promise<void>;
   worktreeConfirmQueue: Array<{ sessionId: string; status: SessionStatus; unmergedCommitCount?: number }>;
   confirmWorktreeRemoval(): Promise<void>;
   dismissWorktreeRemoval(): void;
@@ -187,6 +190,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   pendingWorkspace: defaultWorkspace(true),
   gitStatusBySession: {},
   sourceControlRefreshIntervalSeconds: 30,
+  holdingHours: 6,
   defaultUseWorktree: true,
 
   setPendingPrefs(prefs: ComposerPrefs) {
@@ -235,6 +239,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({
       projects,
       sourceControlRefreshIntervalSeconds: settings.sourceControlRefreshIntervalSeconds,
+      holdingHours: settings.holdingHours,
       defaultUseWorktree: settings.defaultUseWorktree,
       pendingWorkspace: { ...get().pendingWorkspace, ...defaultWorkspace(settings.defaultUseWorktree) }
     });
@@ -409,6 +414,25 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
   },
 
+  async expireHoldingSessions() {
+    const sessions = Object.values(get().sessionsByProject).flat();
+    const ids = expiredHoldingIds(sessions, get().holdingHours, Date.now());
+    if (ids.length === 0) return;
+    try {
+      const expired = await window.cw.expireHolding(ids);
+      let sessionsByProject = get().sessionsByProject;
+      for (const session of expired) {
+        sessionsByProject = patchSession(sessionsByProject, session.id, {
+          status: session.status,
+          updatedAt: session.updatedAt
+        });
+      }
+      set({ sessionsByProject });
+    } catch (err) {
+      console.warn(`expireHolding failed: ${(err as Error).message}`);
+    }
+  },
+
   async confirmWorktreeRemoval() {
     const [target] = get().worktreeConfirmQueue;
     if (!target) return;
@@ -462,7 +486,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     const current = Object.values(byProject)
       .flat()
       .find((s) => s.id === sessionId);
-    if (current?.status === "resolved" || current?.status === "done") {
+    if (current?.status === "done") {
+      void get().setSessionStatus(sessionId, "holding").catch((err) =>
+        console.warn(`setSessionStatus failed for ${sessionId} -> holding: ${(err as Error).message}`)
+      );
+    } else if (current?.status === "resolved") {
       void get().setSessionStatus(sessionId, "idle").catch((err) =>
         console.warn(`setSessionStatus failed for ${sessionId} -> idle: ${(err as Error).message}`)
       );
@@ -595,6 +623,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({
       settingsVersion: get().settingsVersion + 1,
       sourceControlRefreshIntervalSeconds: saved.sourceControlRefreshIntervalSeconds,
+      holdingHours: saved.holdingHours,
       defaultUseWorktree: saved.defaultUseWorktree
     });
     return saved;
@@ -671,7 +700,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (sessionId) delete busy[sessionId];
     set({
       busyTurns: busy,
-      ...(sessionId ? { sessionsByProject: withSessionStatus(get().sessionsByProject, sessionId, "idle") } : {})
+      ...(sessionId ? { sessionsByProject: withSessionStatus(get().sessionsByProject, sessionId, "holding") } : {})
     });
   },
 
@@ -891,7 +920,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         busyTurns: busy,
         pendingApprovals: approvals,
         pendingQuestions: questions,
-        sessionsByProject: withSessionStatus(get().sessionsByProject, sessionId, "idle"),
+        sessionsByProject: withSessionStatus(get().sessionsByProject, sessionId, "holding"),
         messagesBySession: {
           ...get().messagesBySession,
           [sessionId]: [
