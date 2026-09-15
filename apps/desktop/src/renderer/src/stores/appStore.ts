@@ -146,11 +146,7 @@ function withSessionStatus(
   sessionId: string,
   status: SessionStatus
 ): Record<string, Session[]> {
-  const next: Record<string, Session[]> = {};
-  for (const [pid, list] of Object.entries(byProject)) {
-    next[pid] = list.map((s) => (s.id === sessionId ? { ...s, status } : s));
-  }
-  return next;
+  return patchSession(byProject, sessionId, { status, updatedAt: Date.now() });
 }
 
 function patchSession(
@@ -286,6 +282,10 @@ export const useAppStore = create<AppState>((set, get) => ({
         void get().setSessionStatus(picked.id, "idle").catch((err) =>
           console.warn(`setSessionStatus failed for ${picked.id} -> idle: ${(err as Error).message}`)
         );
+      } else if (picked.status === "done") {
+        void get().setSessionStatus(picked.id, "holding").catch((err) =>
+          console.warn(`setSessionStatus failed for ${picked.id} -> holding: ${(err as Error).message}`)
+        );
       }
       void get().ensureHistory(picked.id);
       void get().ensureComposer(picked.id);
@@ -315,6 +315,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       if (picked.status === "resolved") {
         void get().setSessionStatus(picked.id, "idle").catch((err) =>
           console.warn(`setSessionStatus failed for ${picked.id} -> idle: ${(err as Error).message}`)
+        );
+      } else if (picked.status === "done") {
+        void get().setSessionStatus(picked.id, "holding").catch((err) =>
+          console.warn(`setSessionStatus failed for ${picked.id} -> holding: ${(err as Error).message}`)
         );
       }
       void get().ensureHistory(picked.id);

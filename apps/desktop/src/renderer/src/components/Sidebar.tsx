@@ -5,6 +5,7 @@ import { useAppStore } from "../stores/appStore.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { useNotifs } from "./Notifications.js";
 import { hashHue, projectAvatarStyle as avatarStyle, projectInitials as initials } from "./avatar.js";
+import { mergeAwayIds } from "./sidebarOrder.js";
 import { compareWorkingSet, isWorkingSetStatus } from "./workingSet.js";
 
 const GROUP_VISIBLE = 6;
@@ -537,12 +538,14 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
         nextResolved.push(moving);
       }
     }
+    const nextMainIds = nextMain.map((s) => s.id);
+    const nextResolvedIds = nextResolved.map((s) => s.id);
     const cross = fromSection !== toSection;
     const prevPinned = readStoredOrder(orderKey)?.pinned ?? storedOrder?.pinned ?? [];
     const pinned = cross ? Array.from(new Set([...prevPinned, fromId])) : [];
     writeStoredOrder(orderKey, {
-      main: nextMain.map((s) => s.id),
-      resolved: nextResolved.map((s) => s.id),
+      main: mergeAwayIds(storedOrder?.main ?? nextMainIds, nextMainIds, workingSetIds),
+      resolved: mergeAwayIds(storedOrder?.resolved ?? nextResolvedIds, nextResolvedIds, workingSetIds),
       pinned,
     });
     if (cross) setStatus(fromId, toSection === "main" ? "idle" : "resolved");

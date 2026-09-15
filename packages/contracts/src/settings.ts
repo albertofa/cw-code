@@ -19,7 +19,7 @@ export interface AppSettings {
   githubCliBinaryPath: string;
   sourceControlRefreshIntervalSeconds: number;
   defaultUseWorktree: boolean;
-  /** Hours a session stays in the holding state before it is resolved automatically. */
+  /** Hours a session stays in the holding state before returning to idle. */
   holdingHours: number;
   autoTitleEnabled: boolean;
   autoTitleDriver: DriverKind;
