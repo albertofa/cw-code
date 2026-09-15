@@ -59,12 +59,20 @@ export function TurnBlock({
           type="button"
           className={`turn-head${running ? " turn-head-live" : ""}`}
           aria-expanded={open}
+          disabled={!hasActivity}
           onClick={() => setManualOpen(!open)}
         >
-          <span className="turn-caret-right" aria-hidden="true"><ChevronRight size={14} /></span>
-          <span className="turn-caret-down" aria-hidden="true"><ChevronDown size={14} /></span>
+          {hasActivity && (
+            <>
+              <span className="turn-caret-right" aria-hidden="true"><ChevronRight size={16} /></span>
+              <span className="turn-caret-down" aria-hidden="true"><ChevronDown size={16} /></span>
+            </>
+          )}
           {running && <span className="pulse" aria-hidden="true" />}
           <span className="turn-head-label">{label}</span>
+          {hasActivity && !running && (
+            <span className="turn-head-hint">{open ? "Hide" : "Show work"}</span>
+          )}
         </button>
       )}
       {hasActivity && (
