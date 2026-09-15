@@ -53,7 +53,7 @@ export function TurnBlock({
 
   return (
     <div className={`turn-block${open ? " open" : ""}${running ? " running" : ""}`}>
-      {lead}
+      {lead.length > 0 && <div className="turn-lead">{lead}</div>}
       {showHead && (
         <button
           type="button"
@@ -61,8 +61,8 @@ export function TurnBlock({
           aria-expanded={open}
           onClick={() => setManualOpen(!open)}
         >
-          <span className="caret-right" aria-hidden="true"><ChevronRight size={14} /></span>
-          <span className="caret-down" aria-hidden="true"><ChevronDown size={14} /></span>
+          <span className="turn-caret-right" aria-hidden="true"><ChevronRight size={14} /></span>
+          <span className="turn-caret-down" aria-hidden="true"><ChevronDown size={14} /></span>
           {running && <span className="pulse" aria-hidden="true" />}
           <span className="turn-head-label">{label}</span>
         </button>
@@ -72,7 +72,7 @@ export function TurnBlock({
           {activity}
         </div>
       )}
-      {system}
+      {system.length > 0 && <div className="turn-errors">{system}</div>}
       {pinned && <div className="turn-pinned">{pinned}</div>}
     </div>
   );

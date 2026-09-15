@@ -130,4 +130,31 @@ describe("splitTurn", () => {
     expect("pinned" in pieces).toBe(false);
     expect(pieces.activity.map((n) => (n.kind === "msg" ? n.msg.id : n.kind))).toEqual(["th"]);
   });
+
+  it("leaves a trailing tool call in the activity", () => {
+    const pieces = splitTurn(
+      [
+        msg({ id: "u", role: "user", turnId: "t1" }),
+        msg({ id: "a1", role: "assistant", turnId: "t1", text: "final" }),
+        msg({ id: "tool", role: "tool", turnId: "t1", toolName: "bash" })
+      ],
+      nestedIds
+    );
+    expect(pieces.pinned?.id).toBe("a1");
+    expect(pieces.activity.map((n) => (n.kind === "msg" ? n.msg.id : n.kind))).toEqual(["tool"]);
+  });
+
+  it("never pins an assistant nested inside a subagent call", () => {
+    const pieces = splitTurn(
+      [
+        msg({ id: "u", role: "user", turnId: "t1" }),
+        msg({ id: "s1", role: "tool", turnId: "t1", toolName: "task" }),
+        msg({ id: "nested", role: "assistant", turnId: "t1", parentToolCallId: "s1" }),
+        msg({ id: "a1", role: "assistant", turnId: "t1", text: "final" })
+      ],
+      new Set(["s1"])
+    );
+    expect(pieces.pinned?.id).toBe("a1");
+    expect(pieces.activity.map((n) => (n.kind === "msg" ? n.msg.id : n.kind))).toEqual(["sub"]);
+  });
 });

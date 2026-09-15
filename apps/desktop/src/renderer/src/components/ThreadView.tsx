@@ -292,9 +292,9 @@ export function ThreadView() {
               <div>Prompt below to begin.</div>
             </div>
           )}
-          {turns.map((turn) => (
+          {turns.map((turn, index) => (
             <TurnBlock
-              key={turn.turnId}
+              key={`${turn.turnId}:${index}`}
               running={turn.running}
               startedAt={turn.startedAt}
               durationMs={turn.durationMs}

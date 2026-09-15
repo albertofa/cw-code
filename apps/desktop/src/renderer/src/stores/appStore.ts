@@ -169,6 +169,32 @@ function patchSession(
   return next;
 }
 
+interface TurnBookkeeping {
+  busyTurns: Record<string, string>;
+  turnStartedAt: Record<string, number>;
+  turnDurations: Record<string, Record<string, number>>;
+}
+
+function closeTurn(book: TurnBookkeeping, sessionId: string, turnId: string | undefined): TurnBookkeeping {
+  const busyTurns = { ...book.busyTurns };
+  const turnStartedAt = { ...book.turnStartedAt };
+  const turnDurations = { ...book.turnDurations };
+  delete busyTurns[sessionId];
+  const startedAt = turnStartedAt[sessionId];
+  if (turnId !== undefined && startedAt !== undefined) {
+    turnDurations[sessionId] = {
+      ...(turnDurations[sessionId] ?? {}),
+      [turnId]: Math.max(0, Date.now() - startedAt)
+    };
+  }
+  delete turnStartedAt[sessionId];
+  return { busyTurns, turnStartedAt, turnDurations };
+}
+
+function knownTurnId(value: string | undefined): string | undefined {
+  return value !== undefined && value !== PENDING_TURN ? value : undefined;
+}
+
 export const useAppStore = create<AppState>((set, get) => ({
   projects: [],
   sessionsByProject: {},
@@ -717,6 +743,9 @@ export const useAppStore = create<AppState>((set, get) => ({
     const sessionId = get().activeSessionId;
     if (!sessionId || !prompt.trim()) return;
     const prefs = get().composerBySession[sessionId] ?? DEFAULT_COMPOSER;
+    const previous = Object.values(get().sessionsByProject)
+      .flat()
+      .find((s) => s.id === sessionId);
     set({
       busyTurns: { ...get().busyTurns, [sessionId]: PENDING_TURN },
       turnStartedAt: { ...get().turnStartedAt, [sessionId]: Date.now() },
@@ -726,17 +755,24 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       turnId = await window.cw.startTurn(sessionId, prompt, { prefs, attachments });
     } catch (err) {
-      const busy = { ...get().busyTurns };
-      const startedAt = { ...get().turnStartedAt };
-      if (busy[sessionId] === PENDING_TURN) {
-        delete busy[sessionId];
-        delete startedAt[sessionId];
-      }
-      set({ busyTurns: busy, turnStartedAt: startedAt });
+      const book = closeTurn(
+        { busyTurns: get().busyTurns, turnStartedAt: get().turnStartedAt, turnDurations: get().turnDurations },
+        sessionId,
+        undefined
+      );
+      set({
+        busyTurns: book.busyTurns,
+        turnStartedAt: book.turnStartedAt,
+        turnDurations: book.turnDurations,
+        ...(previous
+          ? { sessionsByProject: withSessionStatus(get().sessionsByProject, sessionId, previous.status) }
+          : {})
+      });
       throw err;
     }
+    const interrupted = get().busyTurns[sessionId] !== PENDING_TURN;
     set({
-      busyTurns: { ...get().busyTurns, [sessionId]: turnId },
+      ...(interrupted ? {} : { busyTurns: { ...get().busyTurns, [sessionId]: turnId } }),
       messagesBySession: {
         ...get().messagesBySession,
         [sessionId]: [
@@ -745,7 +781,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         ]
       }
     });
-    void get().hydrateActiveTurns();
+    if (interrupted) void window.cw.interrupt(turnId);
+    else void get().hydrateActiveTurns();
   },
 
   async interrupt() {
@@ -753,15 +790,15 @@ export const useAppStore = create<AppState>((set, get) => ({
     const turnId = sessionId ? get().busyTurns[sessionId] : undefined;
     if (!turnId) return;
     if (turnId !== PENDING_TURN) await window.cw.interrupt(turnId);
-    const busy = { ...get().busyTurns };
-    const startedAt = { ...get().turnStartedAt };
-    if (sessionId) {
-      delete busy[sessionId];
-      delete startedAt[sessionId];
-    }
+    const book = closeTurn(
+      { busyTurns: get().busyTurns, turnStartedAt: get().turnStartedAt, turnDurations: get().turnDurations },
+      sessionId ?? "",
+      knownTurnId(turnId)
+    );
     set({
-      busyTurns: busy,
-      turnStartedAt: startedAt,
+      busyTurns: book.busyTurns,
+      turnStartedAt: book.turnStartedAt,
+      turnDurations: book.turnDurations,
       ...(sessionId
         ? { sessionsByProject: patchSession(get().sessionsByProject, sessionId, { status: "holding", updatedAt: Date.now() }) }
         : {})
@@ -771,22 +808,23 @@ export const useAppStore = create<AppState>((set, get) => ({
   async retryConnection(sessionId: string) {
     try {
       const result = await window.cw.retryConnection(sessionId);
-      const busy = { ...get().busyTurns };
-      const startedAt = { ...get().turnStartedAt };
-      if (result.status === "running" && result.turnId) {
-        busy[sessionId] = result.turnId;
-        startedAt[sessionId] = Date.now();
-      } else {
-        delete busy[sessionId];
-        delete startedAt[sessionId];
-      }
+      const running = result.status === "running" && result.turnId ? result.turnId : undefined;
+      const current = { busyTurns: get().busyTurns, turnStartedAt: get().turnStartedAt, turnDurations: get().turnDurations };
+      const book: TurnBookkeeping = running
+        ? {
+            busyTurns: { ...current.busyTurns, [sessionId]: running },
+            turnStartedAt: { ...current.turnStartedAt, [sessionId]: Date.now() },
+            turnDurations: current.turnDurations
+          }
+        : closeTurn(current, sessionId, knownTurnId(current.busyTurns[sessionId]));
       set({
-        busyTurns: busy,
-        turnStartedAt: startedAt,
+        busyTurns: book.busyTurns,
+        turnStartedAt: book.turnStartedAt,
+        turnDurations: book.turnDurations,
         sessionsByProject: withSessionStatus(
           get().sessionsByProject,
           sessionId,
-          result.status === "running" ? "working" : "idle"
+          running ? "working" : "idle"
         ),
         messagesBySession: {
           ...get().messagesBySession,
@@ -955,19 +993,14 @@ export const useAppStore = create<AppState>((set, get) => ({
       });
     } else if (event.type === "turn.done") {
       const backgroundTasks = event.backgroundTasks ?? 0;
-      const busy = { ...get().busyTurns };
-      const startedAt = { ...get().turnStartedAt };
-      const durations = { ...get().turnDurations };
-      if (busy[sessionId] === event.turnId && backgroundTasks === 0) {
-        delete busy[sessionId];
-        if (startedAt[sessionId] !== undefined) {
-          durations[sessionId] = {
-            ...(durations[sessionId] ?? {}),
-            [event.turnId]: Date.now() - startedAt[sessionId]
-          };
-          delete startedAt[sessionId];
-        }
-      }
+      const current = get().busyTurns[sessionId] === event.turnId && backgroundTasks === 0;
+      const book = current
+        ? closeTurn(
+            { busyTurns: get().busyTurns, turnStartedAt: get().turnStartedAt, turnDurations: get().turnDurations },
+            sessionId,
+            event.turnId
+          )
+        : { busyTurns: get().busyTurns, turnStartedAt: get().turnStartedAt, turnDurations: get().turnDurations };
       const approvals = { ...get().pendingApprovals };
       delete approvals[sessionId];
       const questions = { ...get().pendingQuestions };
@@ -986,9 +1019,9 @@ export const useAppStore = create<AppState>((set, get) => ({
         ];
       }
       set({
-        busyTurns: busy,
-        turnStartedAt: startedAt,
-        turnDurations: durations,
+        busyTurns: book.busyTurns,
+        turnStartedAt: book.turnStartedAt,
+        turnDurations: book.turnDurations,
         pendingApprovals: approvals,
         pendingQuestions: questions,
         sessionsByProject: withSessionStatus(
@@ -1020,19 +1053,22 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({ sessionsByProject: next });
       void get().refreshGitStatus(sessionId);
     } else if (event.type === "turn.error") {
-      const busy = { ...get().busyTurns };
-      const startedAt = { ...get().turnStartedAt };
-      if (busy[sessionId] === event.turnId) {
-        delete busy[sessionId];
-        delete startedAt[sessionId];
-      }
+      const book =
+        get().busyTurns[sessionId] === event.turnId
+          ? closeTurn(
+              { busyTurns: get().busyTurns, turnStartedAt: get().turnStartedAt, turnDurations: get().turnDurations },
+              sessionId,
+              event.turnId
+            )
+          : { busyTurns: get().busyTurns, turnStartedAt: get().turnStartedAt, turnDurations: get().turnDurations };
       const approvals = { ...get().pendingApprovals };
       delete approvals[sessionId];
       const questions = { ...get().pendingQuestions };
       delete questions[sessionId];
       set({
-        busyTurns: busy,
-        turnStartedAt: startedAt,
+        busyTurns: book.busyTurns,
+        turnStartedAt: book.turnStartedAt,
+        turnDurations: book.turnDurations,
         pendingApprovals: approvals,
         pendingQuestions: questions,
         sessionsByProject: patchSession(get().sessionsByProject, sessionId, { status: "holding", updatedAt: Date.now() }),

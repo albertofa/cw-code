@@ -25,9 +25,12 @@ describe("durationFromMessages", () => {
     expect(durationFromMessages([{ timestamp: 1_000 }, { timestamp: 4_500 }])).toBe(3_500);
   });
 
-  it("returns zero for equal timestamps, including a single message", () => {
+  it("returns zero for two messages with equal timestamps", () => {
     expect(durationFromMessages([{ timestamp: 1_000 }, { timestamp: 1_000 }])).toBe(0);
-    expect(durationFromMessages([{ timestamp: 1_000 }])).toBe(0);
+  });
+
+  it("returns undefined for a single message", () => {
+    expect(durationFromMessages([{ timestamp: 1_000 }])).toBeUndefined();
   });
 
   it("returns undefined for missing timestamps", () => {

@@ -1754,19 +1754,19 @@ body.session-dragging * {
   color: var(--dim);
 }
 
-.caret-right {
+.turn-caret-right {
   display: inline-flex;
 }
 
-.caret-down {
+.turn-caret-down {
   display: none;
 }
 
-.turn-block.open .caret-right {
+.turn-block.open .turn-caret-right {
   display: none;
 }
 
-.turn-block.open .caret-down {
+.turn-block.open .turn-caret-down {
   display: inline-flex;
 }
 

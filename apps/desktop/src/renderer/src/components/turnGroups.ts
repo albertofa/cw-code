@@ -84,8 +84,10 @@ export function splitTurn(messages: ChatMessage[], nestedIds: Set<string>): Turn
   }
   let pinned: ChatMessage | undefined;
   for (let i = rest.length - 1; i >= 0; i--) {
-    if (rest[i].role === "assistant") {
-      pinned = rest[i];
+    const m = rest[i];
+    if (m.parentToolCallId && nestedIds.has(m.parentToolCallId)) continue;
+    if (m.role === "assistant") {
+      pinned = m;
       rest.splice(i, 1);
       break;
     }

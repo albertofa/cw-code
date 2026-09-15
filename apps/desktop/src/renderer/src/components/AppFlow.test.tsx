@@ -444,6 +444,25 @@ describe("new-session crash repro (interactive)", () => {
     expect(useAppStore.getState().turnStartedAt["sess_hist"]).toBe(1234);
   });
 
+  it("does not resurrect an errored turn from a stale activeTurns reply", async () => {
+    const { useAppStore } = await mount();
+    const bridge = (window as unknown as { cw: Record<string, unknown> }).cw;
+    bridge.activeTurns = async () => [{ sessionId: "sess_err", turnId: "turn-dead", startedAt: 10 }];
+    useAppStore.setState({ busyTurns: { sess_err: "turn-dead" }, turnStartedAt: { sess_err: 10 } });
+    await act(async () => {
+      useAppStore.getState().applyEvent("sess_err", {
+        type: "turn.error",
+        turnId: "turn-dead",
+        message: "boom"
+      });
+    });
+    await act(async () => {
+      await useAppStore.getState().hydrateActiveTurns();
+    });
+    expect(useAppStore.getState().busyTurns["sess_err"]).toBeUndefined();
+    expect(useAppStore.getState().turnStartedAt["sess_err"]).toBeUndefined();
+  });
+
   it("settles model effort fallback on the new-session form", async () => {
     modelsForResult = [{ id: "model-x", label: "X", source: "live", variants: ["balanced"] }];
     const { App } = await import("../App.js");
