@@ -8,6 +8,15 @@ interface ToolPartState {
   error?: unknown;
 }
 
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function asString(value: unknown): string {
+  return typeof value === "string" ? value : "";
+}
+
 function errorText(error: unknown): string | undefined {
   if (typeof error === "string" && error.trim()) return error;
   if (error !== null && typeof error === "object") {
@@ -53,4 +62,28 @@ export function parseOpencodeTodosUpdated(
   const todos = normalizeTodos(props);
   if (todos === null) return null;
   return { sessionID, todos };
+}
+
+export function parseOpencodeSessionParent(event: unknown): { sessionID: string; parentID: string } | null {
+  const args = asRecord(event);
+  if (!args) return null;
+  const type = args["type"];
+  if (type !== "session.created" && type !== "session.updated") return null;
+  const props = asRecord(args["properties"]) ?? asRecord(args["data"]);
+  if (!props) return null;
+  const info = asRecord(props["info"]) ?? props;
+  const sessionID = asString(info["id"]) || asString(info["sessionID"]) || asString(props["sessionID"]);
+  const parentID = asString(info["parentID"]) || asString(info["parentId"]);
+  if (!sessionID || !parentID) return null;
+  return { sessionID, parentID };
+}
+
+export function opencodeSessionParentId(payload: unknown): string | null {
+  const record = asRecord(payload);
+  const containers = [record, asRecord(record?.["data"]), asRecord(record?.["info"])];
+  for (const container of containers) {
+    const parentID = asString(container?.["parentID"]);
+    if (parentID) return parentID;
+  }
+  return null;
 }

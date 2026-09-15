@@ -1,5 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { parseOpencodeTodosUpdated, toolResultFromState } from "./opencodeEvents.js";
+import {
+  opencodeSessionParentId,
+  parseOpencodeSessionParent,
+  parseOpencodeTodosUpdated,
+  toolResultFromState
+} from "./opencodeEvents.js";
 
 describe("toolResultFromState", () => {
   it("maps string state to a plain result", () => {
@@ -79,5 +84,47 @@ describe("parseOpencodeTodosUpdated", () => {
     ).toBeNull();
     expect(parseOpencodeTodosUpdated(null)).toBeNull();
     expect(parseOpencodeTodosUpdated([])).toBeNull();
+  });
+});
+
+describe("parseOpencodeSessionParent", () => {
+  it("reads child lineage from session.created and session.updated", () => {
+    expect(
+      parseOpencodeSessionParent({
+        type: "session.created",
+        properties: { sessionID: "ses_child", info: { id: "ses_child", parentID: "ses_root" } }
+      })
+    ).toEqual({ sessionID: "ses_child", parentID: "ses_root" });
+    expect(
+      parseOpencodeSessionParent({
+        type: "session.updated",
+        properties: { info: { id: "ses_child", parentID: "ses_root" } }
+      })
+    ).toEqual({ sessionID: "ses_child", parentID: "ses_root" });
+  });
+
+  it("returns null for root sessions, other events and malformed payloads", () => {
+    expect(
+      parseOpencodeSessionParent({ type: "session.created", properties: { info: { id: "ses_root" } } })
+    ).toBeNull();
+    expect(
+      parseOpencodeSessionParent({ type: "message.updated", properties: { info: { id: "ses_1", parentID: "ses_0" } } })
+    ).toBeNull();
+    expect(parseOpencodeSessionParent(null)).toBeNull();
+    expect(parseOpencodeSessionParent({ type: "session.created" })).toBeNull();
+  });
+});
+
+describe("opencodeSessionParentId", () => {
+  it("reads parentID from direct, data and info payloads", () => {
+    expect(opencodeSessionParentId({ id: "ses_child", parentID: "ses_root" })).toBe("ses_root");
+    expect(opencodeSessionParentId({ data: { id: "ses_child", parentID: "ses_root" } })).toBe("ses_root");
+    expect(opencodeSessionParentId({ info: { id: "ses_child", parentID: "ses_root" } })).toBe("ses_root");
+  });
+
+  it("returns null for root sessions and malformed payloads", () => {
+    expect(opencodeSessionParentId({ id: "ses_root" })).toBeNull();
+    expect(opencodeSessionParentId(null)).toBeNull();
+    expect(opencodeSessionParentId({ data: [] })).toBeNull();
   });
 });

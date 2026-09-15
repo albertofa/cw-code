@@ -20,7 +20,7 @@ import {
   permissionApprovalOf,
   type ParsedOpencodePermission
 } from "./opencodePermissions.js";
-import { parseOpencodeTodosUpdated } from "./opencodeEvents.js";
+import { opencodeSessionParentId, parseOpencodeSessionParent, parseOpencodeTodosUpdated } from "./opencodeEvents.js";
 import { AskBridge } from "./askBridge.js";
 import { writeAskBridgeTool } from "./askToolFile.js";
 import { diffLiveTools, type LiveMessage, type LiveSeen } from "./opencodeLivePoll.js";
@@ -64,6 +64,7 @@ export class OpencodeDriver implements CliDriver {
   private sends = new Map<string, AbortController>();
   private watchInfo = new Map<string, { port: number; authHeader: string; cwd: string; permissionMode?: PermissionMode }>();
   private sessionIds = new Map<string, string>();
+  private sessionParents = new Map<string, string>();
   private turnMeta = new Map<string, { localSessionId: string; beforeIds: Set<string> | null; startedAt: number; pollWarned: boolean; startedPort: number }>();
   private toolSeen = new Map<string, Map<string, LiveSeen>>();
   private pollTimers = new Map<string, NodeJS.Timeout>();
@@ -255,6 +256,70 @@ export class OpencodeDriver implements CliDriver {
     this.pool.beginTurn(params.cwd);
     this.toolSeen.set(params.turnId, new Map());
     this.watchQuestions(params.turnId, params.port, params.authHeader);
+  }
+
+  private rememberSessionParent(sessionID: string, parentID: string): void {
+    this.sessionParents.delete(sessionID);
+    if (this.sessionParents.size >= 256) {
+      const oldest = this.sessionParents.keys().next();
+      if (!oldest.done) this.sessionParents.delete(oldest.value);
+    }
+    this.sessionParents.set(sessionID, parentID);
+  }
+
+  private ownerTurnOf(sessionID: string): string | undefined {
+    let current: string | undefined = sessionID;
+    const visited = new Set<string>();
+    while (current && !visited.has(current)) {
+      visited.add(current);
+      for (const [turnId, known] of this.sessionIds) {
+        if (known === current) return turnId;
+      }
+      current = this.sessionParents.get(current);
+    }
+    return undefined;
+  }
+
+  private async resolveOwnerTurn(
+    sessionID: string,
+    info: { port: number; authHeader: string }
+  ): Promise<string | undefined> {
+    let current: string | undefined = sessionID;
+    const visited = new Set<string>();
+    while (current && !visited.has(current)) {
+      const owner = this.ownerTurnOf(current);
+      if (owner) return owner;
+      visited.add(current);
+      const parentID = await this.fetchSessionParent(info.port, info.authHeader, current);
+      if (!parentID) return undefined;
+      this.rememberSessionParent(current, parentID);
+      current = parentID;
+    }
+    return undefined;
+  }
+
+  private async fetchSessionParent(port: number, authHeader: string, sessionID: string): Promise<string | null> {
+    const encoded = encodeURIComponent(sessionID);
+    for (const path of [`/session/${encoded}`, `/api/session/${encoded}`]) {
+      let res: Response;
+      try {
+        res = await opencodeFetch(`http://127.0.0.1:${port}${path}`, {
+          headers: { Authorization: authHeader },
+          timeoutMs: OPENCODE_LIST_TIMEOUT_MS,
+          port
+        });
+      } catch {
+        return null;
+      }
+      if (!res.ok) continue;
+      if ((res.headers.get("content-type") ?? "").includes("text/html")) continue;
+      try {
+        return opencodeSessionParentId((await res.json()) as unknown);
+      } catch {
+        continue;
+      }
+    }
+    return null;
   }
 
   private startPolling(turnId: string): void {
@@ -527,6 +592,11 @@ export class OpencodeDriver implements CliDriver {
       this.emit({ type: "question.resolved", turnId, requestId: parsed.requestID, answers: {} });
       return;
     }
+    if (envelope.type === "session.created" || envelope.type === "session.updated") {
+      const lineage = parseOpencodeSessionParent(event);
+      if (lineage) this.rememberSessionParent(lineage.sessionID, lineage.parentID);
+      return;
+    }
     if (envelope.type === "permission.asked" || envelope.type === "permission.v2.asked") {
       const parsed = parseOpencodePermissionAsked(event);
       if (!parsed) {
@@ -539,36 +609,15 @@ export class OpencodeDriver implements CliDriver {
         });
         return;
       }
-      const known = this.sessionIds.get(turnId);
-      if (!known || parsed.sessionID !== known) return;
-      if (this.pendingApprovals.has(parsed.requestId)) return;
+      const owner = this.ownerTurnOf(parsed.sessionID);
+      if (owner) {
+        this.surfacePermission(owner, parsed);
+        return;
+      }
       const info = this.watchInfo.get(turnId);
-      if (info && (info.permissionMode === "auto" || info.permissionMode === "bypassPermissions")) {
-        traceHarnessCall({
-          harness: "opencode",
-          operation: "opencode.permissions.autoApprove",
-          turnId,
-          resumeCursor: parsed.requestId,
-          ok: true,
-          extra: { permission: parsed.permission }
-        });
-        this.autoReplyPermission(turnId, parsed, info, "permission mode");
-        return;
-      }
-      if (info && this.isSessionAllowed(parsed)) {
-        this.autoReplyPermission(turnId, parsed, info, "session allow");
-        return;
-      }
-      const cwd = info?.cwd ?? "";
-      this.pendingApprovals.set(parsed.requestId, { ...parsed, turnId, cwd });
-      this.emit(permissionApprovalOf(parsed, turnId, cwd));
-      traceHarnessCall({
-        harness: "opencode",
-        operation: "opencode.permissions.asked",
-        turnId,
-        resumeCursor: parsed.requestId,
-        ok: true,
-        extra: { permission: parsed.permission, patternCount: parsed.patterns.length }
+      if (!info) return;
+      void this.resolveOwnerTurn(parsed.sessionID, info).then((resolved) => {
+        if (resolved) this.surfacePermission(resolved, parsed);
       });
       return;
     }
@@ -1165,6 +1214,38 @@ export class OpencodeDriver implements CliDriver {
     return this.sessionAllows.get(parsed.sessionID)?.has(this.sessionAllowKey(parsed)) ?? false;
   }
 
+  private surfacePermission(turnId: string, parsed: ParsedOpencodePermission): void {
+    if (!this.sessionIds.has(turnId) || this.pendingApprovals.has(parsed.requestId)) return;
+    const info = this.watchInfo.get(turnId);
+    if (info && (info.permissionMode === "auto" || info.permissionMode === "bypassPermissions")) {
+      traceHarnessCall({
+        harness: "opencode",
+        operation: "opencode.permissions.autoApprove",
+        turnId,
+        resumeCursor: parsed.requestId,
+        ok: true,
+        extra: { permission: parsed.permission }
+      });
+      this.autoReplyPermission(turnId, parsed, info, "permission mode");
+      return;
+    }
+    if (info && this.isSessionAllowed(parsed)) {
+      this.autoReplyPermission(turnId, parsed, info, "session allow");
+      return;
+    }
+    const cwd = info?.cwd ?? "";
+    this.pendingApprovals.set(parsed.requestId, { ...parsed, turnId, cwd });
+    this.emit(permissionApprovalOf(parsed, turnId, cwd));
+    traceHarnessCall({
+      harness: "opencode",
+      operation: "opencode.permissions.asked",
+      turnId,
+      resumeCursor: parsed.requestId,
+      ok: true,
+      extra: { permission: parsed.permission, patternCount: parsed.patterns.length }
+    });
+  }
+
   private autoReplyPermission(
     turnId: string,
     parsed: ParsedOpencodePermission,
@@ -1294,14 +1375,9 @@ export class OpencodeDriver implements CliDriver {
         continue;
       }
       for (const parsed of parseOpencodePermissionList(payload)) {
-        if (parsed.sessionID !== sessionID) continue;
-        if (this.pendingApprovals.has(parsed.requestId)) continue;
-        if (this.isSessionAllowed(parsed) || info.permissionMode === "auto" || info.permissionMode === "bypassPermissions") {
-          this.autoReplyPermission(turnId, parsed, info, "poll");
-          continue;
-        }
-        this.pendingApprovals.set(parsed.requestId, { ...parsed, turnId, cwd: info.cwd });
-        this.emit(permissionApprovalOf(parsed, turnId, info.cwd));
+        const owner = await this.resolveOwnerTurn(parsed.sessionID, info);
+        if (owner !== turnId) continue;
+        this.surfacePermission(turnId, parsed);
       }
       return;
     }
