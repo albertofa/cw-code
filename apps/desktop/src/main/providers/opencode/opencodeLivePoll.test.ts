@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { diffLiveTools, type LiveMessage, type LiveSeen } from "./opencodeLivePoll.js";
+import { collectPartTypes, diffLiveTools, type LiveMessage, type LiveSeen } from "./opencodeLivePoll.js";
 
 function runningTask(callID: string, description = "Do work"): LiveMessage {
   return {
@@ -45,6 +45,30 @@ function pendingTask(callID: string): LiveMessage {
     ]
   };
 }
+
+describe("collectPartTypes", () => {
+  it("records part ids by type and skips unusable entries", () => {
+    const into = new Map<string, string>();
+    collectPartTypes(
+      [
+        {
+          info: { id: "m1" },
+          parts: [
+            { id: "p1", type: "reasoning" },
+            { id: "p2", type: "text" },
+            { id: "p3" },
+            { type: "tool" }
+          ]
+        }
+      ],
+      into
+    );
+    expect([...into]).toEqual([
+      ["p1", "reasoning"],
+      ["p2", "text"]
+    ]);
+  });
+});
 
 describe("diffLiveTools", () => {
   it("emits a call for a newly seen running tool", () => {

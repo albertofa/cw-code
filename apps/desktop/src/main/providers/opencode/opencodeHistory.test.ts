@@ -72,6 +72,22 @@ describe("mapOpencodeMessages", () => {
     expect(out).toEqual([]);
   });
 
+  it("maps reasoning parts with their measured duration", () => {
+    const out = mapOpencodeMessages([
+      {
+        info: { id: "m12", role: "assistant" },
+        parts: [
+          { id: "p12", type: "reasoning", text: "weighing options", time: { start: 2000, end: 5400 } },
+          { id: "p13", type: "reasoning", text: "still open", time: { start: 6000 } }
+        ]
+      }
+    ]);
+    expect(out).toEqual([
+      { id: "p12", role: "reasoning", text: "weighing options", turnId: "m12", reasoningMs: 3400 },
+      { id: "p13", role: "reasoning", text: "still open", turnId: "m12" }
+    ]);
+  });
+
   it("attaches normalized todos to todowrite call messages", () => {
     const out = mapOpencodeMessages([
       {

@@ -1362,6 +1362,65 @@ body.session-dragging * {
   min-width: 0;
 }
 
+.reasoning {
+  border-radius: var(--r-md);
+  min-width: 0;
+  cursor: pointer;
+}
+
+.reasoning-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  padding: 4px 2px;
+  font-size: 12.5px;
+  color: var(--muted);
+  user-select: none;
+}
+
+.reasoning:hover .reasoning-head {
+  color: var(--dim);
+}
+
+.reasoning-icon {
+  flex: none;
+  color: var(--faint);
+}
+
+.reasoning-live .reasoning-icon {
+  color: var(--driver);
+  animation: pulse 1.6s ease-in-out infinite;
+}
+
+.reasoning-label {
+  font-weight: 500;
+}
+
+.reasoning-caret {
+  display: inline-flex;
+  align-items: center;
+  margin-left: auto;
+  color: var(--faint);
+}
+
+.reasoning:hover .reasoning-caret {
+  color: var(--dim);
+}
+
+.reasoning-text {
+  margin: 2px 0 10px 19px;
+  padding-left: 11px;
+  border-left: 2px solid var(--border-soft);
+  color: var(--muted);
+  font-size: 13px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  cursor: text;
+  max-height: 340px;
+  overflow-y: auto;
+}
+
 .md {
   overflow-wrap: break-word;
 }

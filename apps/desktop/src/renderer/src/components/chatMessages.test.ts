@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { appendAssistantText, upsertToolCall } from "./chatMessages.js";
+import { appendAssistantText, appendReasoningText, closeReasoning, upsertToolCall } from "./chatMessages.js";
 import type { ChatMessage } from "../stores/appStore.js";
 import type { ToolCallEvent } from "./chatMessages.js";
 
@@ -113,5 +113,47 @@ describe("appendAssistantText", () => {
     expect(messages).toHaveLength(3);
     expect(messages.map((m) => m.id)).toEqual(["t1-u", "call-1", "t1-a"]);
     expect(messages[2].text).toBe("one two");
+  });
+});
+
+describe("appendReasoningText", () => {
+  it("merges contiguous reasoning deltas and stamps the start time", () => {
+    let messages = appendReasoningText([], "t1", "thinking ", 1000);
+    messages = appendReasoningText(messages, "t1", "harder", 1100);
+    expect(messages).toEqual([
+      { id: "t1-th", role: "reasoning", text: "thinking harder", turnId: "t1", reasoningStartedAt: 1000 }
+    ]);
+  });
+
+  it("starts a distinct block when a closed run or other message precedes it", () => {
+    let messages = appendReasoningText([], "t1", "first", 1000);
+    messages = closeReasoning(messages, 4000);
+    messages = appendReasoningText(messages, "t1", "second", 9000);
+    expect(messages.map((m) => m.id)).toEqual(["t1-th", "t1-th2"]);
+    expect(messages.map((m) => m.reasoningStartedAt)).toEqual([1000, 9000]);
+  });
+});
+
+describe("closeReasoning", () => {
+  it("records the measured duration on the open tail run", () => {
+    const messages = appendReasoningText([], "t1", "thinking", 1000);
+    expect(closeReasoning(messages, 4500)[0].reasoningMs).toBe(3500);
+  });
+
+  it("returns the same array when nothing is open", () => {
+    const messages = appendAssistantText([], "t1", "answer");
+    expect(closeReasoning(messages, 4500)).toBe(messages);
+  });
+
+  it("leaves already closed reasoning untouched", () => {
+    const closed = closeReasoning(appendReasoningText([], "t1", "thinking", 1000), 2000);
+    expect(closeReasoning(closed, 9000)).toBe(closed);
+  });
+
+  it("closes a run whose turn was interrupted without a follow-up event", () => {
+    const messages = appendReasoningText([], "t1", "thinking", 1000);
+    const tool = toolMessage("call-1");
+    const withTool = [...messages, tool];
+    expect(closeReasoning(withTool, 3000)[0].reasoningMs).toBe(2000);
   });
 });

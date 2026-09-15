@@ -259,6 +259,9 @@ export function parseClaudeTranscriptLine(line: TranscriptLine): HistoryMessage[
       if (block.type === "text") {
         const text = (block as { text?: string }).text ?? "";
         if (text) out.push({ id: `${baseId}-a${i}`, role: "assistant", text, turnId: baseId, ...stamp });
+      } else if (block.type === "thinking") {
+        const text = (block as { thinking?: string }).thinking ?? "";
+        if (text) out.push({ id: `${baseId}-th${i}`, role: "reasoning", text, turnId: baseId, ...stamp });
       } else if (block.type === "tool_use") {
         const tool = block as { id?: string; name?: string; input?: unknown };
         const todos = todosFromToolCall(tool.name ?? "", tool.input ?? null);
@@ -279,6 +282,19 @@ export function parseClaudeTranscriptLine(line: TranscriptLine): HistoryMessage[
   return [];
 }
 
+export function assignReasoningDurations(
+  reasoningByMsgId: Map<string, HistoryMessage[]>,
+  thinkingStart: Map<string, number>,
+  lastStamp: Map<string, number>
+): void {
+  for (const [msgId, messages] of reasoningByMsgId) {
+    const start = thinkingStart.get(msgId);
+    const end = lastStamp.get(msgId);
+    if (start === undefined || end === undefined || end <= start) continue;
+    for (const msg of messages) msg.reasoningMs = end - start;
+  }
+}
+
 export function readClaudeHistory(rootPath: string, resumeCursor: string, limit = 300): HistoryMessage[] {
   const file = join(homedir(), ".claude", "projects", claudeProjectSlug(rootPath), `${resumeCursor}.jsonl`);
   let raw: string;
@@ -289,11 +305,28 @@ export function readClaudeHistory(rootPath: string, resumeCursor: string, limit 
     return [];
   }
   const out: HistoryMessage[] = [];
+  const reasoningByMsgId = new Map<string, HistoryMessage[]>();
+  const thinkingStart = new Map<string, number>();
+  const lastStamp = new Map<string, number>();
   for (const line of raw.split("\n")) {
     if (!line.trim()) continue;
     try {
       const parsed = JSON.parse(line) as TranscriptLine;
+      const msgId = typeof parsed.message?.id === "string" ? parsed.message.id : "";
+      const stamp = toEpochMs(parsed.timestamp);
+      if (msgId && stamp !== undefined) {
+        const blocks = Array.isArray(parsed.message?.content) ? parsed.message.content : [];
+        if (blocks.some((block) => block.type === "thinking") && !thinkingStart.has(msgId)) {
+          thinkingStart.set(msgId, stamp);
+        }
+        lastStamp.set(msgId, Math.max(lastStamp.get(msgId) ?? 0, stamp));
+      }
       for (const msg of parseClaudeTranscriptLine(parsed)) {
+        if (msg.role === "reasoning" && msgId) {
+          const group = reasoningByMsgId.get(msgId);
+          if (group) group.push(msg);
+          else reasoningByMsgId.set(msgId, [msg]);
+        }
         out.push(msg);
         if (out.length > limit * 2) out.splice(0, out.length - limit * 2);
       }
@@ -301,6 +334,7 @@ export function readClaudeHistory(rootPath: string, resumeCursor: string, limit 
       continue;
     }
   }
+  assignReasoningDurations(reasoningByMsgId, thinkingStart, lastStamp);
   const trimmed = out.slice(-limit);
   const agentByCall = mapAgentCalls(trimmed);
   attachSidecarInfo(file, resumeCursor, trimmed, agentByCall);

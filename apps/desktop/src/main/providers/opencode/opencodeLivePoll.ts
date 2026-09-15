@@ -46,6 +46,16 @@ function partInput(part: LiveToolPart): unknown {
   return state ?? null;
 }
 
+export function collectPartTypes(messages: LiveMessage[], into: Map<string, string>): void {
+  for (const msg of messages) {
+    for (const part of msg.parts ?? []) {
+      if (typeof part.id === "string" && part.id && typeof part.type === "string" && part.type) {
+        into.set(part.id, part.type);
+      }
+    }
+  }
+}
+
 export function diffLiveTools(
   seen: Map<string, LiveSeen>,
   messages: LiveMessage[],

@@ -23,6 +23,28 @@ describe("parseStreamLine", () => {
     ]);
   });
 
+  it("maps thinking deltas and thinking blocks to reasoning.delta", () => {
+    const deltaLine = JSON.stringify({
+      type: "stream_event",
+      event: { delta: { type: "thinking_delta", thinking: "weighing " } }
+    });
+    expect(parseStreamLine(deltaLine, "t1", "s1", () => {})).toEqual([
+      { type: "reasoning.delta", turnId: "t1", text: "weighing " }
+    ]);
+    const blockLine = JSON.stringify({
+      type: "assistant",
+      message: { content: [{ type: "thinking", thinking: "more" }] }
+    });
+    expect(parseStreamLine(blockLine, "t1", "s1", () => {})).toEqual([
+      { type: "reasoning.delta", turnId: "t1", text: "more" }
+    ]);
+    const emptyLine = JSON.stringify({
+      type: "assistant",
+      message: { content: [{ type: "thinking", thinking: "" }] }
+    });
+    expect(parseStreamLine(emptyLine, "t1", "s1", () => {})).toEqual([]);
+  });
+
   it("maps assistant tool_use blocks to tool.call", () => {
     const line = JSON.stringify({
       type: "assistant",

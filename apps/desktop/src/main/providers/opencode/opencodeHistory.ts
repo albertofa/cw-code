@@ -12,6 +12,7 @@ interface ServerPart {
   filename?: string;
   mime?: string;
   url?: string;
+  time?: { start?: number; end?: number };
 }
 
 interface ServerMessage {
@@ -27,6 +28,18 @@ export function mapOpencodeMessages(messages: ServerMessage[], limit = 300): His
     for (const part of msg.parts ?? []) {
       if (part.type === "text" && part.text) {
         out.push({ id: part.id ?? `${turnId}-t`, role, text: part.text, turnId });
+      } else if (part.type === "reasoning" && part.text) {
+        const start = part.time?.start;
+        const end = part.time?.end;
+        const reasoningMs =
+          typeof start === "number" && typeof end === "number" && end > start ? end - start : undefined;
+        out.push({
+          id: part.id ?? `${turnId}-th`,
+          role: "reasoning",
+          text: part.text,
+          turnId,
+          ...(reasoningMs !== undefined ? { reasoningMs } : {})
+        });
       } else if (part.type === "tool") {
         const input = JSON.stringify(part.state?.input ?? null)?.slice(0, 2000) ?? "";
         const callId = part.callID ?? part.id ?? `${turnId}-tool`;

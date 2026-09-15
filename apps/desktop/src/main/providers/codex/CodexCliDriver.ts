@@ -23,6 +23,7 @@ import {
   buildFileChangeApproval,
   buildPermissionsApproval,
   buildUserInputQuestionRequest,
+  codexReasoningText,
   codexUserInputResult,
   mapCodexEffort,
   mapCodexHistory,
@@ -91,6 +92,7 @@ export class CodexCliDriver implements CliDriver {
   private turnByCodexId = new Map<string, string>();
   private approvals = new Map<string, PendingApproval>();
   private pendingQuestions = new Map<string, { serverId: string | number; turnId: string }>();
+  private reasoningKinds = new Map<string, Map<string, "summary" | "text">>();
   private defaultModelIdCache: string | null = null;
 
   constructor(
@@ -308,6 +310,7 @@ export class CodexCliDriver implements CliDriver {
       });
     } catch (err) {
       this.turns.delete(turnId);
+      this.reasoningKinds.delete(turnId);
       traceHarnessCall({
         harness: "codex",
         operation: "codex.startTurn",
@@ -463,6 +466,24 @@ export class CodexCliDriver implements CliDriver {
         if (active && delta) this.emit({ type: "assistant.delta", turnId: active.turnId, text: delta });
         break;
       }
+      case "item/reasoning/summaryTextDelta":
+      case "item/reasoning/textDelta": {
+        const active = this.turnForCodexId(String(p["turnId"] ?? ""), typeof p["threadId"] === "string" ? p["threadId"] : undefined);
+        const delta = typeof p["delta"] === "string" ? p["delta"] : "";
+        if (!active || !delta) break;
+        const kind = method === "item/reasoning/summaryTextDelta" ? "summary" : "text";
+        const itemId = String(p["itemId"] ?? "");
+        let kinds = this.reasoningKinds.get(active.turnId);
+        if (!kinds) {
+          kinds = new Map();
+          this.reasoningKinds.set(active.turnId, kinds);
+        }
+        const seen = kinds.get(itemId);
+        if (seen !== undefined && seen !== kind) break;
+        kinds.set(itemId, kind);
+        this.emit({ type: "reasoning.delta", turnId: active.turnId, text: delta });
+        break;
+      }
       case "item/started": {
         const item = p["item"] as CodexThreadItem | undefined;
         const active = this.turnForCodexId(String(p["turnId"] ?? ""), typeof p["threadId"] === "string" ? p["threadId"] : undefined);
@@ -475,6 +496,13 @@ export class CodexCliDriver implements CliDriver {
         const item = p["item"] as CodexThreadItem | undefined;
         const active = this.turnForCodexId(String(p["turnId"] ?? ""), typeof p["threadId"] === "string" ? p["threadId"] : undefined);
         if (!item || !active) break;
+        if (item.type === "reasoning") {
+          const kinds = this.reasoningKinds.get(active.turnId);
+          const streamed = typeof item.id === "string" && kinds?.has(item.id) === true;
+          const text = streamed ? "" : codexReasoningText(item);
+          if (text) this.emit({ type: "reasoning.delta", turnId: active.turnId, text });
+          break;
+        }
         const result = this.toolResultFor(item, active.turnId);
         if (result) this.emit(result);
         break;
@@ -528,6 +556,7 @@ export class CodexCliDriver implements CliDriver {
     if (!active) return;
     const driverTurnId = active.turnId;
     this.turns.delete(driverTurnId);
+    this.reasoningKinds.delete(driverTurnId);
     for (const codexId of [...this.turnByCodexId].filter(([, id]) => id === driverTurnId).map(([codexId]) => codexId)) {
       this.turnByCodexId.delete(codexId);
     }

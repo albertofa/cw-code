@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
 import {
-  assistantDeltaOf,
   buildOpencodeMessageBody,
+  isReasoningPartDelta,
   latestAssistantOf,
   mimeForOpencodeAttachment,
+  partDeltaOf,
   runEnded,
   splitOpencodeModel,
   summarizeOpencodeTurn,
@@ -159,23 +160,45 @@ describe("summarizeOpencodeTurn", () => {
   });
 });
 
-describe("assistantDeltaOf", () => {
+describe("partDeltaOf", () => {
   const base = {
     id: "evt_1",
     type: "message.part.delta",
     properties: { sessionID: "ses_1", messageID: "msg_1", partID: "prt_1", field: "text", delta: "hel" }
   };
 
-  it("extracts text deltas for our session", () => {
-    expect(assistantDeltaOf(base, "ses_1")).toBe("hel");
+  it("extracts deltas for our session with their part and field", () => {
+    expect(partDeltaOf(base, "ses_1")).toEqual({ partID: "prt_1", field: "text", text: "hel" });
   });
 
-  it("ignores other sessions, fields, and shapes", () => {
-    expect(assistantDeltaOf(base, "ses_2")).toBeNull();
-    expect(assistantDeltaOf({ ...base, properties: { ...base.properties, field: "input" } }, "ses_1")).toBeNull();
-    expect(assistantDeltaOf({ ...base, properties: { ...base.properties, delta: "" } }, "ses_1")).toBeNull();
-    expect(assistantDeltaOf({ id: "e", type: "message.part.delta", data: base.properties }, "ses_1")).toBe("hel");
-    expect(assistantDeltaOf({ type: "session.idle" }, "ses_1")).toBeNull();
-    expect(assistantDeltaOf(null, "ses_1")).toBeNull();
+  it("ignores other sessions, empty deltas, and shapes", () => {
+    expect(partDeltaOf(base, "ses_2")).toBeNull();
+    expect(partDeltaOf({ ...base, properties: { ...base.properties, delta: "" } }, "ses_1")).toBeNull();
+    expect(partDeltaOf({ ...base, properties: { ...base.properties, field: "" } }, "ses_1")).toBeNull();
+    expect(partDeltaOf({ id: "e", type: "message.part.delta", data: base.properties }, "ses_1")).toEqual({
+      partID: "prt_1",
+      field: "text",
+      text: "hel"
+    });
+    expect(partDeltaOf({ type: "session.idle" }, "ses_1")).toBeNull();
+    expect(partDeltaOf(null, "ses_1")).toBeNull();
+  });
+});
+
+describe("isReasoningPartDelta", () => {
+  const delta = (field: string): { partID: string; field: string; text: string } => ({
+    partID: "prt_1",
+    field,
+    text: "chunk"
+  });
+
+  it("treats a reasoning part's text deltas as reasoning", () => {
+    expect(isReasoningPartDelta(delta("text"), "reasoning")).toBe(true);
+    expect(isReasoningPartDelta(delta("text"), "text")).toBe(false);
+    expect(isReasoningPartDelta(delta("text"), undefined)).toBe(false);
+  });
+
+  it("honors an explicit reasoning field even without a known part", () => {
+    expect(isReasoningPartDelta(delta("reasoning"), undefined)).toBe(true);
   });
 });

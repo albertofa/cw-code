@@ -165,12 +165,25 @@ export function summarizeOpencodeTurn(messages: OpencodeTurnMessage[], beforeIds
   return summary;
 }
 
-export function assistantDeltaOf(event: unknown, sessionID: string): string | null {
+export interface OpencodePartDelta {
+  partID: string;
+  field: string;
+  text: string;
+}
+
+export function partDeltaOf(event: unknown, sessionID: string): OpencodePartDelta | null {
   const envelope = asRecord(event);
   if (!envelope || envelope["type"] !== "message.part.delta") return null;
   const props = asRecord(envelope["properties"] ?? envelope["data"]);
   if (!props || props["sessionID"] !== sessionID) return null;
-  if (props["field"] !== "text") return null;
-  const delta = props["delta"];
-  return typeof delta === "string" && delta ? delta : null;
+  const field = props["field"];
+  if (typeof field !== "string" || !field) return null;
+  const text = props["delta"];
+  if (typeof text !== "string" || !text) return null;
+  const partID = props["partID"];
+  return { partID: typeof partID === "string" ? partID : "", field, text };
+}
+
+export function isReasoningPartDelta(delta: OpencodePartDelta, partType: string | undefined): boolean {
+  return delta.field === "reasoning" || partType === "reasoning";
 }

@@ -8,6 +8,7 @@ import { Composer } from "./Composer.js";
 import { GitPanelBar } from "./GitPanelBar.js";
 import { ToolCard } from "./ToolCard.js";
 import { ToolGroupCard } from "./ToolGroupCard.js";
+import { ReasoningBlock } from "./ReasoningBlock.js";
 import { SubagentCard } from "./SubagentCard.js";
 import { NewThread } from "./NewThread.js";
 import { ApprovalDock } from "./ApprovalDock.js";
@@ -297,6 +298,15 @@ export function ThreadView() {
                     </button>
                   )}
                 </div>
+              );
+            }
+            if (m.role === "reasoning") {
+              return (
+                <ReasoningBlock
+                  key={m.id}
+                  message={m}
+                  live={busyTurn === m.turnId && m.reasoningMs === undefined}
+                />
               );
             }
             if (m.id === streamingId) {

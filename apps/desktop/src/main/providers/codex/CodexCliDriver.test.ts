@@ -237,6 +237,56 @@ describe("CodexCliDriver", () => {
     driver.dispose();
   });
 
+  it("maps reasoning notifications to reasoning.delta and sticks to one stream per item", async () => {
+    const { driver, events } = makeDriver(client);
+    driver.startTurn({ sessionId: "local-1", prompt: "think", cwd: "C:\\proj" });
+    await settle();
+    client.notify("item/reasoning/summaryTextDelta", {
+      threadId: "thr_1",
+      turnId: "turn_2",
+      itemId: "r1",
+      delta: "**Planning**",
+      summaryIndex: 0
+    });
+    client.notify("item/reasoning/summaryTextDelta", {
+      threadId: "thr_1",
+      turnId: "turn_2",
+      itemId: "r1",
+      delta: " more",
+      summaryIndex: 0
+    });
+    client.notify("item/reasoning/textDelta", {
+      threadId: "thr_1",
+      turnId: "turn_2",
+      itemId: "r1",
+      delta: "raw reasoning",
+      contentIndex: 0
+    });
+    await settle();
+    const reasoning = events.filter((e) => e.type === "reasoning.delta");
+    expect(reasoning.map((e) => ("text" in e ? e.text : ""))).toEqual(["**Planning**", " more"]);
+    expect(events.some((e) => e.type === "assistant.delta")).toBe(false);
+    driver.dispose();
+  });
+
+  it("emits the full reasoning text from item/completed when nothing streamed", async () => {
+    const { driver, events } = makeDriver(client);
+    driver.startTurn({ sessionId: "local-1", prompt: "think", cwd: "C:\\proj" });
+    await settle();
+    client.notify("item/completed", {
+      threadId: "thr_1",
+      turnId: "turn_2",
+      item: { type: "reasoning", id: "r2", summary: [{ type: "summary_text", text: "Summary body" }] }
+    });
+    await settle();
+    expect(events).toContainEqual({
+      type: "reasoning.delta",
+      turnId: expect.any(String),
+      text: "Summary body"
+    });
+    driver.dispose();
+  });
+
   it("emits todo.updated from a turn/plan/updated notification for the active turn", async () => {
     const { driver, events } = makeDriver(client);
     const handle = driver.startTurn({ sessionId: "local-1", prompt: "plan the work", cwd: "C:\\proj" });
