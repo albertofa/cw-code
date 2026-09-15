@@ -61,7 +61,7 @@ export interface TodoItem {
 
 export interface HistoryMessage {
   id: string;
-  role: "user" | "assistant" | "tool" | "system";
+  role: "user" | "assistant" | "tool" | "system" | "reasoning";
   text: string;
   turnId: string;
   toolName?: string;
@@ -71,6 +71,7 @@ export interface HistoryMessage {
   subagentTools?: SubagentToolSummary;
   parentToolCallId?: string;
   todos?: TodoItem[];
+  reasoningMs?: number;
 }
 
 export interface SubagentToolActivity {
@@ -135,6 +136,7 @@ export interface QuestionRequest {
 
 export type TurnEvent =
   | { type: "assistant.delta"; turnId: string; text: string }
+  | { type: "reasoning.delta"; turnId: string; text: string }
   | {
       type: "tool.call";
       turnId: string;

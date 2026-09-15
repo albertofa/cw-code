@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { attributeSendMessages, extractAgentId, findSidecarModel, foldTaskNotifications, parseClaudeTranscriptLine, readSidecarAgent, toEpochMs } from "./claudeHistory.js";
+import { assignReasoningDurations, attributeSendMessages, extractAgentId, findSidecarModel, foldTaskNotifications, parseClaudeTranscriptLine, readSidecarAgent, toEpochMs } from "./claudeHistory.js";
 import type { HistoryMessage } from "@cw-code/contracts";
 
 function toolMessage(partial: Partial<HistoryMessage> & { id: string }): HistoryMessage {
@@ -36,8 +36,7 @@ describe("parseClaudeTranscriptLine", () => {
         role: "assistant",
         content: [
           { type: "text", text: "looking" },
-          { type: "tool_use", id: "tu1", name: "Read", input: { path: "a.ts" } },
-          { type: "thinking", thinking: "..." }
+          { type: "tool_use", id: "tu1", name: "Read", input: { path: "a.ts" } }
         ]
       }
     });
@@ -49,6 +48,30 @@ describe("parseClaudeTranscriptLine", () => {
         text: 'Read {"path":"a.ts"}',
         turnId: "a1",
         toolName: "Read"
+      }
+    ]);
+  });
+
+  it("maps thinking blocks to reasoning messages and skips empty ones", () => {
+    const out = parseClaudeTranscriptLine({
+      type: "assistant",
+      uuid: "a1",
+      timestamp: "2026-09-09T11:21:21.422Z",
+      message: {
+        role: "assistant",
+        content: [
+          { type: "thinking", thinking: "" },
+          { type: "thinking", thinking: "weighing options" }
+        ]
+      }
+    });
+    expect(out).toEqual([
+      {
+        id: "a1-th1",
+        role: "reasoning",
+        text: "weighing options",
+        turnId: "a1",
+        timestamp: 1788952881422
       }
     ]);
   });
@@ -196,6 +219,26 @@ describe("toEpochMs", () => {
     expect(toEpochMs(undefined)).toBeUndefined();
     expect(toEpochMs("not a date")).toBeUndefined();
     expect(toEpochMs(Number.NaN)).toBeUndefined();
+  });
+});
+
+describe("assignReasoningDurations", () => {
+  it("stamps the span from first thinking line to the last block of the same message", () => {
+    const first: HistoryMessage = { id: "a-th0", role: "reasoning", text: "step one", turnId: "a" };
+    const second: HistoryMessage = { id: "a-th1", role: "reasoning", text: "step two", turnId: "a" };
+    assignReasoningDurations(
+      new Map([["msg_1", [first, second]]]),
+      new Map([["msg_1", 1000]]),
+      new Map([["msg_1", 4200]])
+    );
+    expect(first.reasoningMs).toBe(3200);
+    expect(second.reasoningMs).toBe(3200);
+  });
+
+  it("leaves durations unset when the end stamp is missing", () => {
+    const only: HistoryMessage = { id: "a-th0", role: "reasoning", text: "step", turnId: "a" };
+    assignReasoningDurations(new Map([["msg_1", [only]]]), new Map([["msg_1", 1000]]), new Map());
+    expect(only.reasoningMs).toBeUndefined();
   });
 });
 

@@ -57,3 +57,32 @@ export function appendAssistantText(messages: ChatMessage[], turnId: string, tex
   }
   return [...messages, { id, role: "assistant", text, turnId }];
 }
+
+export function appendReasoningText(
+  messages: ChatMessage[],
+  turnId: string,
+  text: string,
+  startedAt: number
+): ChatMessage[] {
+  const last = messages[messages.length - 1];
+  if (last && last.role === "reasoning" && last.turnId === turnId && last.reasoningMs === undefined) {
+    return [...messages.slice(0, -1), { ...last, text: last.text + text }];
+  }
+  const existing = new Set(messages.map((m) => m.id));
+  let id = `${turnId}-th`;
+  for (let n = 2; existing.has(id); n++) {
+    id = `${turnId}-th${n}`;
+  }
+  return [...messages, { id, role: "reasoning", text, turnId, reasoningStartedAt: startedAt }];
+}
+
+export function closeReasoning(messages: ChatMessage[], now: number): ChatMessage[] {
+  let out: ChatMessage[] | null = null;
+  for (let i = 0; i < messages.length; i++) {
+    const m = messages[i];
+    if (m.role !== "reasoning" || m.reasoningMs !== undefined || m.reasoningStartedAt === undefined) continue;
+    if (!out) out = [...messages];
+    out[i] = { ...m, reasoningMs: Math.max(0, now - m.reasoningStartedAt) };
+  }
+  return out ?? messages;
+}

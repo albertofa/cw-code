@@ -213,7 +213,7 @@ export function claudeApprovalRequest(
 interface TextDelta {
   type: "stream_event";
   event?: {
-    delta?: { type?: string; text?: string };
+    delta?: { type?: string; text?: string; thinking?: string };
   };
 }
 
@@ -222,6 +222,7 @@ interface AssistantMsg {
   message?: {
     content?: Array<
       | { type: "text"; text?: string }
+      | { type: "thinking"; thinking?: string }
       | { type: "tool_use"; id?: string; name?: string; input?: unknown }
       | { type?: string }
     >;
@@ -346,7 +347,11 @@ export function parseStreamLine(
   }
 
   if (msg.type === "stream_event") {
-    const text = msg.event?.delta?.type === "text_delta" ? (msg.event.delta.text ?? "") : "";
+    const delta = msg.event?.delta;
+    if (delta?.type === "thinking_delta") {
+      return delta.thinking ? [{ type: "reasoning.delta", turnId, text: delta.thinking }] : [];
+    }
+    const text = delta?.type === "text_delta" ? (delta.text ?? "") : "";
     return text ? [{ type: "assistant.delta", turnId, text }] : [];
   }
 
@@ -355,6 +360,8 @@ export function parseStreamLine(
     for (const block of msg.message?.content ?? []) {
       if (block.type === "text" && "text" in block && block.text) {
         out.push({ type: "assistant.delta", turnId, text: block.text });
+      } else if (block.type === "thinking" && "thinking" in block && block.thinking) {
+        out.push({ type: "reasoning.delta", turnId, text: block.thinking });
       } else if (block.type === "tool_use" && "id" in block) {
         out.push({
           type: "tool.call",

@@ -23,12 +23,13 @@ import {
 import { parseOpencodeTodosUpdated } from "./opencodeEvents.js";
 import { AskBridge } from "./askBridge.js";
 import { writeAskBridgeTool } from "./askToolFile.js";
-import { diffLiveTools, type LiveMessage, type LiveSeen } from "./opencodeLivePoll.js";
+import { diffLiveTools, collectPartTypes, type LiveMessage, type LiveSeen } from "./opencodeLivePoll.js";
 import {
-  assistantDeltaOf,
   buildOpencodeMessageBody,
+  isReasoningPartDelta,
   latestAssistantOf,
   mimeForOpencodeAttachment,
+  partDeltaOf,
   runEnded,
   splitOpencodeModel,
   summarizeOpencodeTurn,
@@ -66,6 +67,7 @@ export class OpencodeDriver implements CliDriver {
   private sessionIds = new Map<string, string>();
   private turnMeta = new Map<string, { localSessionId: string; beforeIds: Set<string> | null; startedAt: number; pollWarned: boolean; startedPort: number }>();
   private toolSeen = new Map<string, Map<string, LiveSeen>>();
+  private partTypes = new Map<string, Map<string, string>>();
   private pollTimers = new Map<string, NodeJS.Timeout>();
   private pool: OpencodeServerPool;
   private disposed = false;
@@ -225,6 +227,15 @@ export class OpencodeDriver implements CliDriver {
   private refreshWatchHandle(turnId: string, handle: ServerHandle, cwd: string): void {
     const info = this.watchInfo.get(turnId);
     if (info) this.watchInfo.set(turnId, { ...info, port: handle.port, authHeader: handle.authHeader, cwd });
+  }
+
+  private partTypesFor(turnId: string): Map<string, string> {
+    let map = this.partTypes.get(turnId);
+    if (!map) {
+      map = new Map();
+      this.partTypes.set(turnId, map);
+    }
+    return map;
   }
 
   private trackTurn(params: {
@@ -588,11 +599,29 @@ export class OpencodeDriver implements CliDriver {
       this.emit({ type: "todo.updated", turnId, todos: parsed.todos });
       return;
     }
+    if (envelope.type === "message.part.updated") {
+      const known = this.sessionIds.get(turnId);
+      if (!known) return;
+      const props = eventProps(event);
+      if (props?.["sessionID"] !== known) return;
+      const part = props["part"];
+      if (part === null || typeof part !== "object" || Array.isArray(part)) return;
+      const typed = part as { id?: unknown; type?: unknown };
+      if (typeof typed.id !== "string" || !typed.id) return;
+      if (typeof typed.type === "string" && typed.type) this.partTypesFor(turnId).set(typed.id, typed.type);
+      return;
+    }
     if (envelope.type === "message.part.delta") {
       const known = this.sessionIds.get(turnId);
       if (!known) return;
-      const text = assistantDeltaOf(event, known);
-      if (text) this.emit({ type: "assistant.delta", turnId, text });
+      const delta = partDeltaOf(event, known);
+      if (!delta) return;
+      const reasoning = isReasoningPartDelta(delta, this.partTypesFor(turnId).get(delta.partID));
+      this.emit(
+        reasoning
+          ? { type: "reasoning.delta", turnId, text: delta.text }
+          : { type: "assistant.delta", turnId, text: delta.text }
+      );
       return;
     }
     if (envelope.type === "session.idle" || envelope.type === "session.status") {
@@ -921,6 +950,7 @@ export class OpencodeDriver implements CliDriver {
     this.watchInfo.delete(turnId);
     const seen = this.toolSeen.get(turnId) ?? new Map<string, LiveSeen>();
     this.toolSeen.delete(turnId);
+    this.partTypes.delete(turnId);
     return {
       localSessionId: meta.localSessionId,
       serverSessionId,
@@ -1241,6 +1271,8 @@ export class OpencodeDriver implements CliDriver {
       if (res.ok && !((res.headers.get("content-type") ?? "").includes("text/html"))) {
         const payload = (await res.json()) as LiveMessage[];
         const seen = this.toolSeen.get(turnId);
+        const partTypes = this.partTypes.get(turnId);
+        if (partTypes) collectPartTypes(payload, partTypes);
         const meta = this.turnMeta.get(turnId);
         if (seen) {
           for (const event of diffLiveTools(seen, payload, turnId, meta?.beforeIds ?? null)) this.emit(event);

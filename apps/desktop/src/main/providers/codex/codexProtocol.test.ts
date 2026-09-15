@@ -205,6 +205,36 @@ describe("mapCodexHistory", () => {
     expect(messages).toHaveLength(3);
     expect(messages[1]).toMatchObject({ isError: true, text: "boom" });
   });
+
+  it("maps reasoning items from summary and content without repeating text", () => {
+    const thread: CodexThread = {
+      id: "thr_1",
+      turns: [
+        {
+          id: "turn_1",
+          startedAt: 7,
+          items: [
+            {
+              type: "reasoning",
+              id: "i6",
+              summary: [{ type: "summary_text", text: "**Planning**" }],
+              content: [{ type: "reasoning_text", text: "**Planning**" }]
+            },
+            {
+              type: "reasoning",
+              id: "i7",
+              summary: [{ type: "summary_text", text: "checking" }],
+              content: [{ type: "reasoning_text", text: "reading files" }]
+            }
+          ]
+        }
+      ]
+    };
+    expect(mapCodexHistory(thread)).toEqual([
+      { id: "i6", role: "reasoning", text: "**Planning**", turnId: "turn_1", timestamp: 7000 },
+      { id: "i7", role: "reasoning", text: "checking\n\nreading files", turnId: "turn_1", timestamp: 7000 }
+    ]);
+  });
 });
 
 describe("approval builders", () => {

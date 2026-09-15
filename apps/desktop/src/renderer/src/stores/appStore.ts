@@ -16,7 +16,7 @@ import type {
   TodoItem,
   TurnEvent
 } from "../cw.js";
-import { appendAssistantText, upsertToolCall } from "../components/chatMessages.js";
+import { appendAssistantText, appendReasoningText, closeReasoning, upsertToolCall } from "../components/chatMessages.js";
 import { mergeToolPairs } from "../components/toolSummaries.js";
 import { expiredHoldingIds } from "../components/workingSet.js";
 import { useNotifs } from "../components/Notifications.js";
@@ -35,6 +35,7 @@ export interface ChatMessage extends HistoryMessage {
   toolDone?: boolean;
   toolStartedAt?: number;
   toolCompletedAt?: number;
+  reasoningStartedAt?: number;
   retryable?: boolean;
 }
 
@@ -782,7 +783,17 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   applyEvent(sessionId: string, event: TurnEvent) {
-    const messages = get().messagesBySession[sessionId] ?? [];
+    let messages = get().messagesBySession[sessionId] ?? [];
+    if (event.type === "reasoning.delta") {
+      set({
+        messagesBySession: {
+          ...get().messagesBySession,
+          [sessionId]: appendReasoningText(messages, event.turnId, event.text, Date.now())
+        }
+      });
+      return;
+    }
+    messages = closeReasoning(messages, Date.now());
     if (event.type === "assistant.delta") {
       set({
         messagesBySession: {

@@ -56,6 +56,20 @@ export interface CodexThreadItem {
   questions?: unknown;
   result?: unknown;
   content?: Array<{ type?: string; text?: string; path?: string }>;
+  summary?: Array<{ type?: string; text?: string }>;
+}
+
+export function codexReasoningText(item: CodexThreadItem): string {
+  const parts: string[] = [];
+  const push = (value: unknown): void => {
+    if (typeof value !== "string") return;
+    const text = value.trim();
+    if (text && !parts.includes(text)) parts.push(text);
+  };
+  for (const entry of item.summary ?? []) push(entry.text);
+  for (const entry of item.content ?? []) push(entry.text);
+  push(item.text);
+  return parts.join("\n\n");
 }
 
 export interface CodexTurnError {
@@ -227,6 +241,11 @@ function pushHistoryItem(
     case "agentMessage":
     case "plan": {
       if (item.text) out.push({ id, role: "assistant", text: item.text, turnId, timestamp });
+      break;
+    }
+    case "reasoning": {
+      const text = codexReasoningText(item);
+      if (text) out.push({ id, role: "reasoning", text, turnId, timestamp });
       break;
     }
     case "commandExecution": {
