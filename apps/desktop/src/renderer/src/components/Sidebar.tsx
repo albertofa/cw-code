@@ -17,11 +17,10 @@ function groupTintStyle(name: string): CSSProperties {
   };
 }
 
-function workingCardTintStyle(name: string): CSSProperties {
+function workingCardAccentStyle(name: string): CSSProperties {
   const h = hashHue(name);
   return {
-    "--wc-tint": `linear-gradient(135deg, hsla(${h}, 35%, 32%, 0.42), hsla(${h}, 35%, 32%, 0.14))`,
-    "--wc-line": `hsla(${h}, 45%, 52%, 0.28)`
+    "--wc-accent": `hsla(${h}, 45%, 55%, 0.55)`
   } as CSSProperties;
 }
 
@@ -725,7 +724,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
           else rowRefs.current.delete(s.id);
         }}
         className={`working-card${s.id === activeSessionId ? " active" : ""}`}
-        style={workingCardTintStyle(projectName)}
+        style={workingCardAccentStyle(projectName)}
         onMouseEnter={() => scheduleHover(s.id)}
         onMouseLeave={clearHover}
         onClick={() => {

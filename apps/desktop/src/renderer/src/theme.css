@@ -582,17 +582,20 @@ body {
   padding: 9px 10px 8px;
   margin: 0 0 6px;
   border-radius: 10px;
-  border: 1px solid var(--wc-line, var(--border-soft));
-  background: var(--wc-tint, transparent);
+  border: 1px solid var(--border-soft);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.032), rgba(255, 255, 255, 0.012)), var(--bg-deep);
+  box-shadow: inset 3px 0 0 var(--wc-accent, transparent);
   cursor: pointer;
 }
 
 .working-card:hover {
-  filter: brightness(1.12);
+  border-color: var(--border);
+  background: linear-gradient(180deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.02)), var(--bg-deep);
 }
 
 .working-card.active {
-  border-color: rgba(160, 107, 255, 0.55);
+  border-color: rgba(160, 107, 255, 0.45);
+  background: linear-gradient(180deg, rgba(160, 107, 255, 0.12), rgba(160, 107, 255, 0.03)), var(--raised);
   box-shadow: inset 3px 0 0 #a06bff;
 }
 
@@ -633,7 +636,7 @@ body {
 }
 
 .working-card-badge.status-holding {
-  color: var(--faint);
+  color: var(--muted);
   font-variant-numeric: tabular-nums;
 }
 
@@ -651,7 +654,7 @@ body {
   align-items: center;
   gap: 5px;
   min-width: 0;
-  color: var(--faint);
+  color: var(--muted);
   font-size: 11px;
 }
 
