@@ -103,12 +103,16 @@ export function ComposerView({
   backend,
   driver,
   resetKey,
-  modelsRefreshKey = 0
+  modelsRefreshKey = 0,
+  recipePrefix,
+  footer
 }: {
   backend: ComposerBackend;
   driver: DriverName;
   resetKey: string;
   modelsRefreshKey?: number;
+  recipePrefix?: ReactNode;
+  footer?: ReactNode;
 }) {
   const { prefs, busy } = backend;
   const backendRef = useRef(backend);
@@ -234,6 +238,7 @@ export function ComposerView({
   const permissionIcon = PERMISSIONS.find((o) => o.id === (prefs.permissionMode ?? "auto"))?.icon;
 
   return (
+    <>
     <div className="composer composer-recipe">
       {attachments.length > 0 && (
         <div className="attach-chips">
@@ -321,6 +326,7 @@ export function ComposerView({
         </div>
       )}
       <div className="composer-recipe-row">
+        {recipePrefix}
         <div className="recipe-control recipe-model" title={driver}>
           <MenuSelect
             label="Model"
@@ -478,5 +484,7 @@ export function ComposerView({
         )}
       </div>
     </div>
+    {footer}
+    </>
   );
 }

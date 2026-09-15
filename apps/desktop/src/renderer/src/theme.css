@@ -1912,48 +1912,6 @@ body.session-dragging * {
   margin: 0;
 }
 
-.harness-row {
-  display: flex;
-  gap: 8px;
-}
-
-.harness-btn {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  background: transparent;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  color: var(--muted);
-  font-family: var(--mono);
-  font-size: 12.5px;
-  padding: 8px 18px;
-  cursor: pointer;
-}
-
-.harness-btn:hover {
-  color: var(--text);
-  border-color: var(--dim);
-}
-
-.harness-btn.claude.active {
-  border-color: rgba(232, 131, 90, 0.6);
-  background: var(--claude-soft);
-  color: var(--claude);
-}
-
-.harness-btn.opencode.active {
-  border-color: rgba(90, 184, 255, 0.6);
-  background: var(--opencode-soft);
-  color: var(--opencode);
-}
-
-.harness-btn.codex.active {
-  border-color: rgba(180, 156, 255, 0.6);
-  background: var(--codex-soft);
-  color: var(--codex);
-}
-
 .composer-add {
   margin-left: 0;
 }
@@ -3787,10 +3745,6 @@ body.session-dragging * {
   gap: 12px;
 }
 
-.settings-content .harness-row {
-  margin-bottom: 2px;
-}
-
 .settings-foot {
   display: flex;
   justify-content: flex-end;
@@ -4290,10 +4244,6 @@ select.field option {
     overflow-x: hidden;
   }
 
-  .settings-content .harness-row {
-    flex-wrap: wrap;
-  }
-
   .settings-row {
     grid-template-columns: minmax(0, 1fr);
     gap: 6px;
@@ -4786,27 +4736,63 @@ select.field option {
   color: var(--success);
 }
 
-.newthread-workspace {
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  gap: 10px;
-  flex-wrap: wrap;
-  min-height: 30px;
-}
-
-.newthread-workspace .menu {
-  width: 190px;
-  min-width: 0;
-}
-
-.newthread-workspace .menu-btn {
-  width: 100%;
-}
-
 .workspace-hint {
   color: var(--faint);
   font-size: 11px;
+}
+
+.composer-footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0 10px;
+  border: 1px solid var(--border-soft);
+  border-top: 0;
+  background: #1a1b1e;
+  border-radius: 0 0 10px 10px;
+  padding: 6px 14px;
+  min-height: 38px;
+}
+
+.composer-footer .ws-side {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.composer-footer .menu {
+  min-width: 0;
+}
+
+.composer-footer .menu-btn {
+  font-size: 12.5px;
+  color: var(--muted);
+  padding: 4px 6px;
+}
+
+.composer-footer .menu-btn:hover,
+.composer-footer .menu-btn[aria-expanded="true"] {
+  color: var(--text);
+  background: rgba(255, 255, 255, 0.04);
+}
+
+.composer-footer .menu-btn .menu-btn-icon {
+  color: var(--faint);
+}
+
+.composer-footer .menu-value {
+  max-width: 220px;
+}
+
+.composer-footer .ws-current {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--faint);
+  font-size: 12.5px;
+  white-space: nowrap;
 }
 
 .gitbar-location {
