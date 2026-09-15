@@ -7,15 +7,35 @@ function msg(partial: Partial<ChatMessage> & Pick<ChatMessage, "id" | "role" | "
 }
 
 describe("groupTurns", () => {
-  it("partitions consecutive runs by turn id, preserving order", () => {
+  it("anchors turns at user messages and absorbs trailing fragments", () => {
     const turns = groupTurns([
       msg({ id: "a", role: "user", turnId: "t1" }),
       msg({ id: "b", role: "assistant", turnId: "t1" }),
       msg({ id: "c", role: "user", turnId: "t2" }),
-      msg({ id: "d", role: "tool", turnId: "t1", toolName: "read" })
+      msg({ id: "d", role: "tool", turnId: "t2" })
     ]);
-    expect(turns.map((t) => t.turnId)).toEqual(["t1", "t2", "t1"]);
-    expect(turns.map((t) => t.messages.map((m) => m.id))).toEqual([["a", "b"], ["c"], ["d"]]);
+    expect(turns.map((t) => t.turnId)).toEqual(["t1", "t2"]);
+    expect(turns.map((t) => t.messages.map((m) => m.id))).toEqual([["a", "b"], ["c", "d"]]);
+  });
+
+  it("merges per-message turn ids from history under the user anchor", () => {
+    const turns = groupTurns([
+      msg({ id: "u", role: "user", turnId: "u1" }),
+      msg({ id: "a1", role: "assistant", turnId: "u1" }),
+      msg({ id: "t1", role: "tool", turnId: "m2" }),
+      msg({ id: "a2", role: "assistant", turnId: "m3" })
+    ]);
+    expect(turns).toHaveLength(1);
+    expect(turns[0].turnId).toBe("u1");
+    expect(turns[0].messages.map((m) => m.id)).toEqual(["u", "a1", "t1", "a2"]);
+  });
+
+  it("keeps a leading fragment without a user anchor as its own slice", () => {
+    const turns = groupTurns([
+      msg({ id: "t0", role: "tool", turnId: "m0" }),
+      msg({ id: "u", role: "user", turnId: "t1" })
+    ]);
+    expect(turns.map((t) => t.turnId)).toEqual(["m0", "t1"]);
   });
 
   it("returns no slices for no messages", () => {

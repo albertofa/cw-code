@@ -23,7 +23,17 @@ import { expiredHoldingIds } from "../components/workingSet.js";
 import { useNotifs } from "../components/Notifications.js";
 
 const GIT_REFRESH_BATCH = 6;
-const PENDING_TURN = "pending";
+const PENDING_PREFIX = "pending:";
+let pendingSeq = 0;
+
+function nextPendingTurnId(): string {
+  pendingSeq += 1;
+  return `${PENDING_PREFIX}${pendingSeq}`;
+}
+
+function isPendingTurn(value: string | undefined): boolean {
+  return value !== undefined && value.startsWith(PENDING_PREFIX);
+}
 
 async function refreshGitStatusInBatches(ids: string[], refresh: (id: string) => Promise<void>): Promise<void> {
   for (let i = 0; i < ids.length; i += GIT_REFRESH_BATCH) {
@@ -192,7 +202,7 @@ function closeTurn(book: TurnBookkeeping, sessionId: string, turnId: string | un
 }
 
 function knownTurnId(value: string | undefined): string | undefined {
-  return value !== undefined && value !== PENDING_TURN ? value : undefined;
+  return value !== undefined && !isPendingTurn(value) ? value : undefined;
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
@@ -531,17 +541,23 @@ export const useAppStore = create<AppState>((set, get) => ({
       console.warn(`activeTurns failed: ${(err as Error).message}`);
       return;
     }
-    const busy = { ...get().busyTurns };
-    const startedAt = { ...get().turnStartedAt };
-    let changed = false;
+    const localBusy = get().busyTurns;
+    const localStarted = get().turnStartedAt;
+    const durations = get().turnDurations;
+    const busy: Record<string, string> = {};
+    const startedAt: Record<string, number> = {};
     for (const turn of active) {
-      if (get().turnDurations[turn.sessionId]?.[turn.turnId] !== undefined) continue;
-      if (busy[turn.sessionId] === turn.turnId && startedAt[turn.sessionId] === turn.startedAt) continue;
+      if (durations[turn.sessionId]?.[turn.turnId] !== undefined) continue;
+      if (isPendingTurn(localBusy[turn.sessionId])) continue;
       busy[turn.sessionId] = turn.turnId;
       startedAt[turn.sessionId] = turn.startedAt;
-      changed = true;
     }
-    if (changed) set({ busyTurns: busy, turnStartedAt: startedAt });
+    for (const [sessionId, value] of Object.entries(localBusy)) {
+      if (!isPendingTurn(value)) continue;
+      busy[sessionId] = value;
+      startedAt[sessionId] = localStarted[sessionId] ?? Date.now();
+    }
+    set({ busyTurns: busy, turnStartedAt: startedAt });
   },
 
   selectSession(sessionId: string) {
@@ -746,8 +762,9 @@ export const useAppStore = create<AppState>((set, get) => ({
     const previous = Object.values(get().sessionsByProject)
       .flat()
       .find((s) => s.id === sessionId);
+    const pending = nextPendingTurnId();
     set({
-      busyTurns: { ...get().busyTurns, [sessionId]: PENDING_TURN },
+      busyTurns: { ...get().busyTurns, [sessionId]: pending },
       turnStartedAt: { ...get().turnStartedAt, [sessionId]: Date.now() },
       sessionsByProject: withSessionStatus(get().sessionsByProject, sessionId, "working")
     });
@@ -755,24 +772,26 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       turnId = await window.cw.startTurn(sessionId, prompt, { prefs, attachments });
     } catch (err) {
-      const book = closeTurn(
-        { busyTurns: get().busyTurns, turnStartedAt: get().turnStartedAt, turnDurations: get().turnDurations },
-        sessionId,
-        undefined
-      );
-      set({
-        busyTurns: book.busyTurns,
-        turnStartedAt: book.turnStartedAt,
-        turnDurations: book.turnDurations,
-        ...(previous
-          ? { sessionsByProject: withSessionStatus(get().sessionsByProject, sessionId, previous.status) }
-          : {})
-      });
+      if (get().busyTurns[sessionId] === pending) {
+        const book = closeTurn(
+          { busyTurns: get().busyTurns, turnStartedAt: get().turnStartedAt, turnDurations: get().turnDurations },
+          sessionId,
+          undefined
+        );
+        set({
+          busyTurns: book.busyTurns,
+          turnStartedAt: book.turnStartedAt,
+          turnDurations: book.turnDurations,
+          ...(previous
+            ? { sessionsByProject: withSessionStatus(get().sessionsByProject, sessionId, previous.status) }
+            : {})
+        });
+      }
       throw err;
     }
-    const interrupted = get().busyTurns[sessionId] !== PENDING_TURN;
+    const superseded = get().busyTurns[sessionId] !== pending;
     set({
-      ...(interrupted ? {} : { busyTurns: { ...get().busyTurns, [sessionId]: turnId } }),
+      ...(superseded ? {} : { busyTurns: { ...get().busyTurns, [sessionId]: turnId } }),
       messagesBySession: {
         ...get().messagesBySession,
         [sessionId]: [
@@ -781,7 +800,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         ]
       }
     });
-    if (interrupted) void window.cw.interrupt(turnId);
+    if (superseded) void window.cw.interrupt(turnId);
     else void get().hydrateActiveTurns();
   },
 
@@ -789,7 +808,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const sessionId = get().activeSessionId;
     const turnId = sessionId ? get().busyTurns[sessionId] : undefined;
     if (!turnId) return;
-    if (turnId !== PENDING_TURN) await window.cw.interrupt(turnId);
+    if (!isPendingTurn(turnId)) await window.cw.interrupt(turnId);
     const book = closeTurn(
       { busyTurns: get().busyTurns, turnStartedAt: get().turnStartedAt, turnDurations: get().turnDurations },
       sessionId ?? "",

@@ -21,7 +21,17 @@ export interface TurnPieces {
 
 export function groupTurns(messages: ChatMessage[]): TurnSlice[] {
   const out: TurnSlice[] = [];
+  let anchor: TurnSlice | null = null;
   for (const m of messages) {
+    if (m.role === "user") {
+      anchor = { turnId: m.turnId, messages: [m] };
+      out.push(anchor);
+      continue;
+    }
+    if (anchor) {
+      anchor.messages.push(m);
+      continue;
+    }
     const last = out[out.length - 1];
     if (last && last.turnId === m.turnId) last.messages.push(m);
     else out.push({ turnId: m.turnId, messages: [m] });

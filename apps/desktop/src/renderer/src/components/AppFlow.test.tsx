@@ -463,6 +463,18 @@ describe("new-session crash repro (interactive)", () => {
     expect(useAppStore.getState().turnStartedAt["sess_err"]).toBeUndefined();
   });
 
+  it("clears busy state that main no longer reports", async () => {
+    const { useAppStore } = await mount();
+    const bridge = (window as unknown as { cw: Record<string, unknown> }).cw;
+    bridge.activeTurns = async () => [];
+    useAppStore.setState({ busyTurns: { sess_gone: "turn-gone" }, turnStartedAt: { sess_gone: 10 } });
+    await act(async () => {
+      await useAppStore.getState().hydrateActiveTurns();
+    });
+    expect(useAppStore.getState().busyTurns["sess_gone"]).toBeUndefined();
+    expect(useAppStore.getState().turnStartedAt["sess_gone"]).toBeUndefined();
+  });
+
   it("settles model effort fallback on the new-session form", async () => {
     modelsForResult = [{ id: "model-x", label: "X", source: "live", variants: ["balanced"] }];
     const { App } = await import("../App.js");

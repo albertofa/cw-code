@@ -52,7 +52,7 @@ export function TurnBlock({
       : "Worked";
 
   return (
-    <div className={`turn-block${open ? " open" : ""}${running ? " running" : ""}`}>
+    <div className={`turn-block${open ? " open" : ""}`}>
       {lead.length > 0 && <div className="turn-lead">{lead}</div>}
       {showHead && (
         <button
