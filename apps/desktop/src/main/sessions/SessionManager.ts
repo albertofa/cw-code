@@ -722,20 +722,23 @@ export class SessionManager {
     }
   }
 
-  private sessionEnvVars(session: SessionMeta, project: Project, cwd: string): Record<string, string> {
+  private sessionEnvVars(
+    sessionId: string,
+    session: SessionMeta | undefined,
+    project: Project | undefined,
+    cwd: string
+  ): Record<string, string> {
     return {
       CW_WORKTREE_PATH: cwd,
-      CW_PROJECT_ROOT: project.rootPath,
-      CW_SESSION_ID: session.id
+      CW_PROJECT_ROOT: project?.rootPath ?? cwd,
+      CW_SESSION_ID: session?.id ?? sessionId
     };
   }
 
   turnEnv(sessionId: string, cwd: string): Record<string, string> {
     const session = this.store.getSession(sessionId);
-    if (!session) return buildTurnEnv(process.env, { CW_WORKTREE_PATH: cwd });
-    const project = this.store.getProject(session.projectId);
-    if (!project) return buildTurnEnv(process.env, { CW_WORKTREE_PATH: cwd, CW_SESSION_ID: session.id });
-    return buildTurnEnv(process.env, this.sessionEnvVars(session, project, cwd));
+    const project = session ? this.store.getProject(session.projectId) : undefined;
+    return buildTurnEnv(process.env, this.sessionEnvVars(sessionId, session, project, cwd));
   }
 
   turnBaseSha(sessionId: string): string | null {
@@ -789,7 +792,7 @@ export class SessionManager {
         variant: prefs.variant,
         permissionMode: prefs.permissionMode,
         attachments: resolveAttachments(project.rootPath, cwd, opts?.attachments ?? []),
-        env: buildTurnEnv(process.env, this.sessionEnvVars(session, project, cwd))
+        env: buildTurnEnv(process.env, this.sessionEnvVars(session.id, session, project, cwd))
       });
       this.activeTurns.set(handle.turnId, { sessionId, startedAt: Date.now() });
       this.store.updateSession(sessionId, { status: "working" });
@@ -832,16 +835,19 @@ export class SessionManager {
     }
     const settings = this.settings.get();
     const driver = this.drivers[settings.autoTitleDriver];
+    const titleSessionId = `title:${sessionId}`;
+    const titleRoot = this.titleGenRoot();
     let handle: TurnHandle;
     try {
       handle = driver.startTurn({
-        sessionId: `title:${sessionId}`,
+        sessionId: titleSessionId,
         prompt: buildTitlePrompt(prompt),
-        cwd: this.titleGenRoot(),
+        cwd: titleRoot,
         model: settings.autoTitleModel.trim() || undefined,
         effort: settings.autoTitleEffort,
         permissionMode: "auto",
-        maxTurns: 1
+        maxTurns: 1,
+        env: buildTurnEnv(process.env, this.sessionEnvVars(titleSessionId, undefined, undefined, titleRoot))
       });
     } catch (err) {
       console.warn(`title generation failed for ${sessionId}: ${(err as Error).message}`);

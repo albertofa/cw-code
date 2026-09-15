@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
@@ -520,25 +520,41 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
-  it("builds a cwd-only env for unknown sessions instead of throwing", () => {
+  it("builds a complete fallback env for unknown sessions instead of throwing", () => {
     const { manager } = makeManager();
     const env = manager.turnEnv("missing-session", "C:\\somewhere");
     expect(env["CW_WORKTREE_PATH"]).toBe("C:\\somewhere");
-    expect(env["CW_SESSION_ID"]).toBeUndefined();
-    expect(env["CW_PROJECT_ROOT"]).toBeUndefined();
+    expect(env["CW_PROJECT_ROOT"]).toBe("C:\\somewhere");
+    expect(env["CW_SESSION_ID"]).toBe("missing-session");
     manager.dispose();
   });
 
-  it("omits CW_PROJECT_ROOT when the session's project is gone but keeps the session id", async () => {
+  it("overrides stale CW_* values inherited from the process env", () => {
+    const { manager } = makeManager();
+    vi.stubEnv("CW_WORKTREE_PATH", "C:\\stale-worktree");
+    vi.stubEnv("CW_PROJECT_ROOT", "C:\\stale-root");
+    vi.stubEnv("CW_SESSION_ID", "stale-session");
+    try {
+      const env = manager.turnEnv("missing-session", "C:\\somewhere");
+      expect(env["CW_WORKTREE_PATH"]).toBe("C:\\somewhere");
+      expect(env["CW_PROJECT_ROOT"]).toBe("C:\\somewhere");
+      expect(env["CW_SESSION_ID"]).toBe("missing-session");
+    } finally {
+      vi.unstubAllEnvs();
+      manager.dispose();
+    }
+  });
+
+  it("keeps every CW_* var when the session's project is gone", async () => {
     const { manager } = makeManager();
     const project = manager.addProject("C:\\proj-env-orphan");
     const session = await manager.createSession(project.id, "claude");
     const store = (manager as unknown as { store: { data: { projects: unknown[] } } }).store;
     store.data.projects = [];
     const env = manager.turnEnv(session.id, "C:\\proj-env-orphan");
-    expect(env["CW_SESSION_ID"]).toBe(session.id);
     expect(env["CW_WORKTREE_PATH"]).toBe("C:\\proj-env-orphan");
-    expect(env["CW_PROJECT_ROOT"]).toBeUndefined();
+    expect(env["CW_PROJECT_ROOT"]).toBe("C:\\proj-env-orphan");
+    expect(env["CW_SESSION_ID"]).toBe(session.id);
     manager.dispose();
   });
 
