@@ -475,6 +475,48 @@ describe("new-session crash repro (interactive)", () => {
     expect(useAppStore.getState().turnStartedAt["sess_gone"]).toBeUndefined();
   });
 
+  it("preserves a provisional turn when main already reports it", async () => {
+    const { useAppStore } = await mount();
+    const bridge = (window as unknown as { cw: Record<string, unknown> }).cw;
+    bridge.activeTurns = async () => [{ sessionId: "sess_pending", turnId: "turn-real", startedAt: 55 }];
+    useAppStore.setState({ busyTurns: { sess_pending: "pending:99" }, turnStartedAt: { sess_pending: 42 } });
+    await act(async () => {
+      await useAppStore.getState().hydrateActiveTurns();
+    });
+    expect(useAppStore.getState().busyTurns["sess_pending"]).toBe("pending:99");
+    expect(useAppStore.getState().turnStartedAt["sess_pending"]).toBe(42);
+  });
+
+  it("interrupts a turn that started after the user cancelled during dispatch", async () => {
+    const { useAppStore } = await mount();
+    const bridge = (window as unknown as { cw: Record<string, unknown> }).cw;
+    let resolveStart!: (turnId: string) => void;
+    const started = new Promise<string>((resolve) => {
+      resolveStart = resolve;
+    });
+    const interrupted: string[] = [];
+    bridge.startTurn = () => started;
+    bridge.interrupt = async (turnId: string) => {
+      interrupted.push(turnId);
+    };
+    useAppStore.setState({ activeSessionId: "sess_sup" });
+    const send = useAppStore.getState().sendPrompt("hello");
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(useAppStore.getState().busyTurns["sess_sup"]).toBeDefined();
+    await act(async () => {
+      await useAppStore.getState().interrupt();
+    });
+    expect(useAppStore.getState().busyTurns["sess_sup"]).toBeUndefined();
+    await act(async () => {
+      resolveStart("turn-x");
+      await send;
+    });
+    expect(interrupted).toEqual(["turn-x"]);
+    expect(useAppStore.getState().busyTurns["sess_sup"]).toBeUndefined();
+  });
+
   it("settles model effort fallback on the new-session form", async () => {
     modelsForResult = [{ id: "model-x", label: "X", source: "live", variants: ["balanced"] }];
     const { App } = await import("../App.js");
