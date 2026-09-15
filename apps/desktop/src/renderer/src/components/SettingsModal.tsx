@@ -490,6 +490,20 @@ export function SettingsModal({
     </section>
   );
 
+  const holdingFields = draft && (
+    <section className="settings-section">
+      <h3>Sessions</h3>
+      <label className="settings-row">
+        <span className="settings-label">Working set hold</span>
+        <span className="settings-hint">Sessions stay in the Working set for this long after their last activity before returning to their project. 0 disables.</span>
+        <span className="settings-number-field">
+          <input className="field" type="number" min={0} max={168} value={draft.holdingHours} onChange={(e) => set({ holdingHours: Number(e.target.value) })} />
+          <span>hours</span>
+        </span>
+      </label>
+    </section>
+  );
+
   const sourceControlFields = draft && (
     <>
       <section className="settings-section">
@@ -693,7 +707,12 @@ export function SettingsModal({
                 </div>
               </>
             )}
-            {!loading && !loadError && draft && category === "general" && generalFields}
+            {!loading && !loadError && draft && category === "general" && (
+              <>
+                {generalFields}
+                {holdingFields}
+              </>
+            )}
             {!loading && !loadError && draft && category === "sourceControl" && sourceControlFields}
             {!loading && !loadError && draft && category === "harnesses" && (
               <>
