@@ -60,6 +60,7 @@ export class OpencodeDriver implements CliDriver {
   readonly kind = "opencode" as const;
   private pendingQuestions = new Map<string, ParsedOpencodeQuestion & { turnId: string; questions: QuestionInfo[]; cwd: string }>();
   private pendingApprovals = new Map<string, ParsedOpencodePermission & { turnId: string; cwd: string }>();
+  private handledPermissions = new Map<string, string>();
   private sessionAllows = new Map<string, Set<string>>();
   private watches = new Map<string, AbortController>();
   private sends = new Map<string, AbortController>();
@@ -591,6 +592,7 @@ export class OpencodeDriver implements CliDriver {
       if (!parsed) return;
       const known = this.sessionIds.get(turnId);
       if (!known || parsed.sessionID !== known) return;
+      if (this.pendingQuestions.has(parsed.requestId)) return;
       this.pendingQuestions.set(parsed.requestId, { ...parsed, turnId, questions: parsed.questions, cwd: this.watchInfo.get(turnId)?.cwd ?? "" });
       this.emit({ type: "question.request", turnId, request: questionRequestOf(parsed, turnId) });
       return;
@@ -974,6 +976,9 @@ export class OpencodeDriver implements CliDriver {
     beforeIds: Set<string> | null;
     seen: Map<string, LiveSeen>;
   } | null {
+    for (const [requestId, ownerTurnId] of this.handledPermissions) {
+      if (ownerTurnId === turnId) this.handledPermissions.delete(requestId);
+    }
     const meta = this.turnMeta.get(turnId);
     const serverSessionId = this.sessionIds.get(turnId);
     const info = this.watchInfo.get(turnId);
@@ -1245,7 +1250,14 @@ export class OpencodeDriver implements CliDriver {
   }
 
   private surfacePermission(turnId: string, parsed: ParsedOpencodePermission): void {
-    if (!this.sessionIds.has(turnId) || this.pendingApprovals.has(parsed.requestId)) return;
+    if (
+      !this.sessionIds.has(turnId) ||
+      this.pendingApprovals.has(parsed.requestId) ||
+      this.handledPermissions.has(parsed.requestId)
+    ) {
+      return;
+    }
+    this.handledPermissions.set(parsed.requestId, turnId);
     const info = this.watchInfo.get(turnId);
     if (info && (info.permissionMode === "auto" || info.permissionMode === "bypassPermissions")) {
       traceHarnessCall({
@@ -1470,6 +1482,7 @@ export class OpencodeDriver implements CliDriver {
     for (const timer of this.pollTimers.values()) clearInterval(timer);
     this.pollTimers.clear();
     this.pendingApprovals.clear();
+    this.handledPermissions.clear();
     this.sessionAllows.clear();
     this.pool.dispose();
   }

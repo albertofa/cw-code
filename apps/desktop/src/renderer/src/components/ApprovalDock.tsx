@@ -3,7 +3,7 @@ import { Check, ShieldAlert } from "lucide-react";
 import type { ApprovalDecision, ApprovalRequest } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 
-function ApprovalPanel({ request, total }: { request: ApprovalRequest; total: number }) {
+function ApprovalPanel({ request, position, total }: { request: ApprovalRequest; position: number; total: number }) {
   const respond = useAppStore((s) => s.respondApproval);
   const [chosen, setChosen] = useState<ApprovalDecision | null>(null);
 
@@ -18,7 +18,9 @@ function ApprovalPanel({ request, total }: { request: ApprovalRequest; total: nu
       <header className="approval-panel-head">
         <ShieldAlert size={15} className="approval-panel-icon" />
         <span className="approval-panel-title">Approval needed</span>
-        <span className="approval-panel-count chip">{total > 1 ? `${total} approvals` : "1 approval"}</span>
+        <span className="approval-panel-count chip">
+          {total > 1 ? `${position} of ${total} approvals` : "1 approval"}
+        </span>
         <span className="approval-kind chip">{request.kind}</span>
       </header>
       <div className="approval-panel-body">
@@ -84,12 +86,11 @@ const NO_REQUESTS: ApprovalRequest[] = [];
 
 export function ApprovalDock({ sessionId }: { sessionId: string }) {
   const requests = useAppStore((s) => s.pendingApprovals[sessionId] ?? NO_REQUESTS);
-  if (requests.length === 0) return null;
+  const current = requests[0];
+  if (!current) return null;
   return (
     <div className="approval-dock">
-      {requests.map((r) => (
-        <ApprovalPanel key={r.requestId} request={r} total={requests.length} />
-      ))}
+      <ApprovalPanel key={current.requestId} request={current} position={1} total={requests.length} />
     </div>
   );
 }

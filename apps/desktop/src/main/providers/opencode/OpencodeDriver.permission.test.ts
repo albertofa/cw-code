@@ -148,6 +148,27 @@ describe("OpencodeDriver auto-approved permissions", () => {
       h.driver.dispose();
     }
   });
+
+  it("surfaces and replies once when the same permission arrives on repeated event streams", async () => {
+    const h = startHarness((url, init) => {
+      if (url.endsWith("/event")) return Promise.resolve(sseStream([PERMISSION_ASKED, PERMISSION_ASKED]));
+      if (init?.method === "POST" && url.includes("/message")) return new Promise<Response>(() => {});
+      if (init?.method === "POST" && url.includes("/permission")) {
+        return Promise.resolve(new Response(null, { status: 404 }));
+      }
+      if (url.includes("/message")) return Promise.resolve(json([]));
+      if (url.includes("/permission")) return Promise.resolve(new Response(null, { status: 404 }));
+      return Promise.resolve(json({ id: "ses_1" }));
+    });
+    try {
+      await waitFor(() => h.events.some((e) => e.type === "approval.request"));
+      await sleep(300);
+      expect(h.events.filter((e) => e.type === "approval.request")).toHaveLength(1);
+      expect(h.permissionReplies.length).toBe(3);
+    } finally {
+      h.driver.dispose();
+    }
+  });
 });
 
 describe("OpencodeDriver subagent permissions", () => {

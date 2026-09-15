@@ -22,10 +22,20 @@ function baseState(prev?: AnswerState): AnswerState {
   return prev ?? { chosen: {}, custom: "", customOpen: false };
 }
 
-function QuestionPanel({ request }: { request: QuestionRequest }) {
-  const sessionId = useAppStore((s) => s.activeSessionId);
+function QuestionPanel({
+  request,
+  sessionId,
+  position,
+  total
+}: {
+  request: QuestionRequest;
+  sessionId: string;
+  position: number;
+  total: number;
+}) {
   const respond = useAppStore((s) => s.respondQuestion);
   const [states, setStates] = useState<Record<string, AnswerState>>({});
+  const [submitting, setSubmitting] = useState(false);
 
   const select = (q: QuestionInfo, option: QuestionOption, multiSelect: boolean) => {
     setStates((prev) => {
@@ -51,13 +61,15 @@ function QuestionPanel({ request }: { request: QuestionRequest }) {
   };
 
   const submit = () => {
+    if (submitting) return;
     const answers: Record<string, string> = {};
     for (const q of request.questions) {
       const value = answerFor(q, states[q.question]).trim();
       if (value) answers[q.question] = value;
     }
-    if (Object.keys(answers).length === 0 || !sessionId) return;
-    void respond(sessionId, request.requestId, answers).catch(() => {});
+    if (Object.keys(answers).length === 0) return;
+    setSubmitting(true);
+    void respond(sessionId, request.requestId, answers).catch(() => setSubmitting(false));
   };
 
   const complete = request.questions.every((q) => isAnswered(q, states[q.question]));
@@ -68,6 +80,9 @@ function QuestionPanel({ request }: { request: QuestionRequest }) {
       <header className="question-panel-head">
         <MessageCircleQuestion size={15} className="question-panel-icon" />
         <span className="question-panel-title">Your input is needed</span>
+        {total > 1 && (
+          <span className="question-panel-count queue chip">{`${position} of ${total}`}</span>
+        )}
         <span className="question-panel-count chip">
           {request.questions.length > 1 ? `${answeredCount}/${request.questions.length} answered` : "1 question"}
         </span>
@@ -136,9 +151,9 @@ function QuestionPanel({ request }: { request: QuestionRequest }) {
       </div>
       <footer className="question-panel-foot">
         <span className={`question-status${complete ? " ready" : ""}`}>
-          {complete ? "Ready to submit" : "Answer every question to continue"}
+          {submitting ? "Submitting…" : complete ? "Ready to submit" : "Answer every question to continue"}
         </span>
-        <button className="btn question-submit" onClick={submit} disabled={!complete}>
+        <button className="btn question-submit" onClick={submit} disabled={!complete || submitting}>
           <Check size={14} />
           Submit
         </button>
@@ -151,12 +166,17 @@ const NO_REQUESTS: QuestionRequest[] = [];
 
 export function QuestionDock({ sessionId }: { sessionId: string }) {
   const requests = useAppStore((s) => s.pendingQuestions[sessionId] ?? NO_REQUESTS);
-  if (requests.length === 0) return null;
+  const current = requests[0];
+  if (!current) return null;
   return (
     <div className="question-dock">
-      {requests.map((r) => (
-        <QuestionPanel key={r.requestId} request={r} />
-      ))}
+      <QuestionPanel
+        key={current.requestId}
+        request={current}
+        sessionId={sessionId}
+        position={1}
+        total={requests.length}
+      />
     </div>
   );
 }
