@@ -167,6 +167,9 @@ function registerIpc(): void {
   ipcMain.handle("sessions.setStatus", (_e, args: { sessionId: string; status: SessionStatus }) =>
     sessions.setSessionStatus(args.sessionId, args.status)
   );
+  ipcMain.handle("sessions.expireHolding", (_e, sessionIds: string[]) =>
+    sessions.expireHoldingSessions(sessionIds)
+  );
   ipcMain.handle(
     "sessions.resolve",
     (_e, args: { sessionId: string; status: SessionStatus; removeWorktree?: boolean; forceBranch?: boolean }) =>

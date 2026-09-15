@@ -219,7 +219,7 @@ export class SessionManager {
       this.activeTurns.delete(event.turnId);
       if (sessionId) {
         this.store.updateSession(sessionId, {
-          status: "idle",
+          status: "holding",
           ...(event.resumeCursor ? { resumeCursor: event.resumeCursor } : {})
         });
       }
@@ -371,6 +371,15 @@ export class SessionManager {
     const updated = this.store.getSession(sessionId);
     if (!updated) throw new Error(`unknown session ${sessionId}`);
     return updated;
+  }
+
+  expireHoldingSessions(sessionIds: string[]): SessionMeta[] {
+    const expired: SessionMeta[] = [];
+    for (const sessionId of sessionIds) {
+      const updated = this.store.expireHolding(sessionId);
+      if (updated) expired.push(updated);
+    }
+    return expired;
   }
 
   async resolveSession(
@@ -916,7 +925,7 @@ export class SessionManager {
     const session = this.store.getSession(sessionId);
     if (session) this.drivers[session.driver].interrupt(turnId);
     this.activeTurns.delete(turnId);
-    this.store.updateSession(sessionId, { status: "idle" });
+    this.store.updateSession(sessionId, { status: "holding" });
   }
 
   async respondApproval(requestId: string, decision: ApprovalDecision): Promise<void> {

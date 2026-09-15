@@ -52,6 +52,9 @@ export class SessionStore {
       if (!session.status) {
         session.status = "idle";
         migrated = true;
+      } else if (session.status === "working" || session.status === "input-required") {
+        session.status = "holding";
+        migrated = true;
       }
       if (!session.worktreePath) continue;
       const normalized = normalizeRoot(session.worktreePath);
@@ -166,6 +169,14 @@ export class SessionStore {
     else if ("branch" in patch) delete current.branch;
     current.updatedAt = Date.now();
     this.persist();
+  }
+
+  expireHolding(id: string): SessionMeta | null {
+    const session = this.getSession(id);
+    if (!session || session.status !== "holding") return null;
+    session.status = "idle";
+    this.persist();
+    return { ...session };
   }
 
   updateComposer(id: string, prefs: ComposerPrefs): void {

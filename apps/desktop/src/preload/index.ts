@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { AppSettings, CreateSessionOptions, GitBranchInfo, GitDiffMode, GitDiffResult, GitStatus, Project, SessionCleanupResult, SessionStatus, SourceControlHealth, WorktreePruneSummary } from "@cw-code/contracts";
+import type { AppSettings, CreateSessionOptions, GitBranchInfo, GitDiffMode, GitDiffResult, GitStatus, Project, SessionCleanupResult, SessionMeta, SessionStatus, SourceControlHealth, WorktreePruneSummary } from "@cw-code/contracts";
 
 export type PermissionMode = "auto" | "acceptEdits" | "bypassPermissions" | "manual";
 export type EffortLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
@@ -48,6 +48,7 @@ export interface CwApi {
   renameSession(sessionId: string, title: string): Promise<void>;
   regenerateSessionTitle(sessionId: string): Promise<string>;
   setSessionStatus(sessionId: string, status: SessionStatus): Promise<unknown>;
+  expireHolding(sessionIds: string[]): Promise<SessionMeta[]>;
   resolveSession(sessionId: string, status: SessionStatus, removeWorktree?: boolean, forceBranch?: boolean): Promise<SessionCleanupResult>;
   pruneStaleWorktrees(): Promise<WorktreePruneSummary>;
   getHistory(sessionId: string): Promise<unknown[]>;
@@ -119,6 +120,8 @@ const api: CwApi = {
     ipcRenderer.invoke("sessions.regenerateTitle", { sessionId }),
   setSessionStatus: (sessionId: string, status: SessionStatus) =>
     ipcRenderer.invoke("sessions.setStatus", { sessionId, status }),
+  expireHolding: (sessionIds: string[]) =>
+    ipcRenderer.invoke("sessions.expireHolding", sessionIds),
   resolveSession: (sessionId: string, status: SessionStatus, removeWorktree?: boolean, forceBranch?: boolean) =>
     ipcRenderer.invoke("sessions.resolve", { sessionId, status, removeWorktree, forceBranch }),
   pruneStaleWorktrees: () => ipcRenderer.invoke("worktrees.prune"),

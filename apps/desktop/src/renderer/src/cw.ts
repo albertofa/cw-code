@@ -307,6 +307,7 @@ export interface CwApi {
   renameSession(sessionId: string, title: string): Promise<void>;
   regenerateSessionTitle(sessionId: string): Promise<string>;
   setSessionStatus(sessionId: string, status: SessionStatus): Promise<Session>;
+  expireHolding(sessionIds: string[]): Promise<Session[]>;
   resolveSession(sessionId: string, status: SessionStatus, removeWorktree?: boolean, forceBranch?: boolean): Promise<SessionCleanupResult>;
   pruneStaleWorktrees(): Promise<WorktreePruneSummary>;
   getHistory(sessionId: string): Promise<HistoryMessage[]>;

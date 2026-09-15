@@ -887,6 +887,47 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
+  it("moves interrupted and errored sessions into holding", async () => {
+    const { manager } = makeManager();
+    const project = manager.addProject("C:\\proj-holding");
+    const a = await manager.createSession(project.id, "claude");
+    const turnId = await manager.startTurn(a.id, "hello");
+    manager.interrupt(turnId);
+    let sessions = await manager.listSessions(project.id);
+    expect(sessions.find((s) => s.id === a.id)?.status).toBe("holding");
+
+    const b = await manager.createSession(project.id, "claude");
+    const errorTurnId = await manager.startTurn(b.id, "boom");
+    const routeEvent = (manager as unknown as { routeEvent(e: ThreadEvent): void }).routeEvent.bind(manager);
+    routeEvent({ type: "turn.error", turnId: errorTurnId, message: "boom" });
+    sessions = await manager.listSessions(project.id);
+    expect(sessions.find((s) => s.id === b.id)?.status).toBe("holding");
+    manager.dispose();
+  });
+
+  it("expires holding sessions and reports only the changed records", async () => {
+    const { manager } = makeManager();
+    const project = manager.addProject("C:\\proj-expire");
+    const a = await manager.createSession(project.id, "claude");
+    const b = await manager.createSession(project.id, "claude");
+    const c = await manager.createSession(project.id, "claude");
+    const store = (manager as unknown as { store: SessionStore }).store;
+    store.updateSession(a.id, { status: "holding" });
+    store.updateSession(b.id, { status: "done" });
+    const before = (await manager.listSessions(project.id)).find((s) => s.id === a.id);
+    if (!before) throw new Error("expected the holding session");
+
+    const expired = manager.expireHoldingSessions([a.id, b.id, c.id, "missing"]);
+
+    expect(expired).toHaveLength(1);
+    expect(expired[0]).toMatchObject({ id: a.id, status: "idle", updatedAt: before.updatedAt });
+    const sessions = await manager.listSessions(project.id);
+    expect(sessions.find((s) => s.id === a.id)?.status).toBe("idle");
+    expect(sessions.find((s) => s.id === b.id)?.status).toBe("done");
+    expect(sessions.find((s) => s.id === c.id)?.status).toBe("idle");
+    manager.dispose();
+  });
+
   it("keeps the session working while background tasks run and completes on the final turn.done", async () => {
     const { manager, fake } = makeManager();
     const project = manager.addProject("C:\\proj-background");
