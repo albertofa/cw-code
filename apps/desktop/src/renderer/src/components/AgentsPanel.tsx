@@ -14,6 +14,8 @@ export interface AgentsTarget {
   agentId?: string;
 }
 
+const EMPTY_MESSAGES: ChatMessage[] = [];
+
 let pendingTarget: AgentsTarget | null = null;
 
 export function openAgentsPanel(groupId?: string, agentId?: string): void {
@@ -158,7 +160,7 @@ function AgentInspector({
   const [expandedToolIds, setExpandedToolIds] = useState<Set<string>>(() => new Set());
   const meta = metaLine(item);
   const directives = collectAgentMessages(
-    useAppStore((s) => s.messagesBySession[sessionId] ?? []),
+    useAppStore((s) => s.messagesBySession[sessionId] ?? EMPTY_MESSAGES),
     item.id
   );
   return (
@@ -338,7 +340,7 @@ function AgentInspector({
 }
 
 export function AgentsPanel({ sessionId }: { sessionId: string }) {
-  const messages = useAppStore((s) => s.messagesBySession[sessionId] ?? []);
+  const messages = useAppStore((s) => s.messagesBySession[sessionId] ?? EMPTY_MESSAGES);
   const live = useAppStore((s) => s.busyTurns[sessionId] !== undefined);
   const projects = useAppStore((s) => s.projects);
   const activeProjectId = useAppStore((s) => s.activeProjectId);
