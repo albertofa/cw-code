@@ -109,4 +109,17 @@ describe("SettingsStore", () => {
     expect(store.set({ autoTitleEnabled: "yes" as unknown as boolean }).autoTitleEnabled).toBe(false);
     expect(store.set({ autoTitleEnabled: true }).autoTitleEnabled).toBe(true);
   });
+
+  it("defaults reasoning to collapsed per harness and coerces with strict true", () => {
+    const store = new SettingsStore(tempFilePath());
+    const settings = store.get();
+    expect([settings.claudeReasoningExpanded, settings.opencodeReasoningExpanded, settings.codexReasoningExpanded]).toEqual([false, false, false]);
+    expect(
+      store.set({
+        claudeReasoningExpanded: true,
+        opencodeReasoningExpanded: "yes" as unknown as boolean,
+        codexReasoningExpanded: true
+      })
+    ).toMatchObject({ claudeReasoningExpanded: true, opencodeReasoningExpanded: false, codexReasoningExpanded: true });
+  });
 });

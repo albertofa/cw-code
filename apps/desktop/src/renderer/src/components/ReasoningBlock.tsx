@@ -5,12 +5,14 @@ import { formatDuration } from "./toolSummaries.js";
 
 export const ReasoningBlock = memo(function ReasoningBlock({
   message,
-  live
+  live,
+  defaultOpen
 }: {
   message: ChatMessage;
   live?: boolean;
+  defaultOpen?: boolean;
 }) {
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(defaultOpen ?? false);
   const ms = message.reasoningMs;
   const label = live
     ? "Thinking…"
@@ -30,7 +32,7 @@ export const ReasoningBlock = memo(function ReasoningBlock({
           {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
         </span>
       </div>
-      {open && <div className="reasoning-text">{message.text}</div>}
+      {open && <div className="reasoning-text">{message.text.trim()}</div>}
     </div>
   );
 });

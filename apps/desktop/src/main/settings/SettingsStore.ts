@@ -18,6 +18,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   claudeDefaultModel: "",
   claudeEnabledModels: CLAUDE_CURATED_MODELS.map((m) => m.id),
   claudeCustomModel: { id: "", name: "" },
+  claudeReasoningExpanded: false,
+  opencodeReasoningExpanded: false,
+  codexReasoningExpanded: false,
   gitBinaryPath: defaultCliBinaryPath("git"),
   githubCliBinaryPath: defaultCliBinaryPath("gh"),
   sourceControlRefreshIntervalSeconds: 30,
@@ -59,6 +62,9 @@ function sanitize(patch: SettingsPatch): SettingsPatch {
   if (patch.claudeEnabledModels !== undefined) {
     out.claudeEnabledModels = patch.claudeEnabledModels.map((id) => id.trim()).filter(Boolean);
   }
+  if (patch.claudeReasoningExpanded !== undefined) out.claudeReasoningExpanded = patch.claudeReasoningExpanded === true;
+  if (patch.opencodeReasoningExpanded !== undefined) out.opencodeReasoningExpanded = patch.opencodeReasoningExpanded === true;
+  if (patch.codexReasoningExpanded !== undefined) out.codexReasoningExpanded = patch.codexReasoningExpanded === true;
   if (patch.gitBinaryPath !== undefined) {
     out.gitBinaryPath = normalizeBinaryPath(patch.gitBinaryPath) || DEFAULT_SETTINGS.gitBinaryPath;
   }
