@@ -1615,10 +1615,7 @@ body.session-dragging * {
   align-items: center;
   justify-content: center;
   flex: none;
-}
-
-.tool-state.complete {
-  color: var(--success);
+  width: 13px;
 }
 
 .tool-state.running {
