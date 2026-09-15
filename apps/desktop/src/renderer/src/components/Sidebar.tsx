@@ -5,6 +5,7 @@ import { useAppStore } from "../stores/appStore.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { useNotifs } from "./Notifications.js";
 import { hashHue, projectAvatarStyle as avatarStyle, projectInitials as initials } from "./avatar.js";
+import { compareWorkingSet, isWorkingSetStatus } from "./workingSet.js";
 
 const GROUP_VISIBLE = 6;
 
@@ -15,9 +16,18 @@ function groupTintStyle(name: string): CSSProperties {
   };
 }
 
+function workingCardTintStyle(name: string): CSSProperties {
+  const h = hashHue(name);
+  return {
+    "--wc-tint": `linear-gradient(135deg, hsla(${h}, 35%, 32%, 0.42), hsla(${h}, 35%, 32%, 0.14))`,
+    "--wc-line": `hsla(${h}, 45%, 52%, 0.28)`
+  } as CSSProperties;
+}
+
 function stateLabel(status: SessionStatus): string {
   if (status === "input-required") return "Input";
   if (status === "working") return "Running";
+  if (status === "holding") return "Holding";
   return status;
 }
 
@@ -170,7 +180,8 @@ function isStoredOrderValid(mainAll: Session[], resolvedAll: Session[], stored: 
   const pinned = new Set(stored.pinned);
   for (const s of [...mainAll, ...resolvedAll]) {
     if (pinned.has(s.id)) continue;
-    if (stored.snap[s.id] !== s.updatedAt) return false;
+    const snap = stored.snap[s.id];
+    if (snap !== undefined && snap !== s.updatedAt) return false;
   }
   return true;
 }
@@ -193,6 +204,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [resolvedOpen, setResolvedOpen] = useState<Set<string>>(new Set());
+  const [workingSetOpen, setWorkingSetOpen] = useState(true);
   const [hover, setHover] = useState<{ id: string; x: number; y: number } | null>(null);
   const hoverTimer = useRef<number | null>(null);
 
@@ -324,11 +336,17 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const matchesQuery = (s: Session) =>
     !query || s.title.toLowerCase().includes(query.toLowerCase());
   const byRecency = (a: Session, b: Session) => b.updatedAt - a.updatedAt;
+  const workingSetAll = source.filter((s) => isWorkingSetStatus(s.status)).sort(compareWorkingSet);
+  const workingSetShown = workingSetAll.filter(matchesQuery);
+  const workingSetIds = new Set(workingSetAll.map((s) => s.id));
   const orderKey = orderKeyFor(projectFilter);
   const storedOrder = readStoredOrder(orderKey);
-  const pinnedSet = new Set(storedOrder?.pinned ?? []);
-  const storedMainSet = new Set(storedOrder?.main ?? []);
-  const storedResolvedSet = new Set(storedOrder?.resolved ?? []);
+  const storedMain = (storedOrder?.main ?? []).filter((id) => !workingSetIds.has(id));
+  const storedResolved = (storedOrder?.resolved ?? []).filter((id) => !workingSetIds.has(id));
+  const storedPinned = (storedOrder?.pinned ?? []).filter((id) => !workingSetIds.has(id));
+  const pinnedSet = new Set(storedPinned);
+  const storedMainSet = new Set(storedMain);
+  const storedResolvedSet = new Set(storedResolved);
   const effectiveSection = (s: Session): SidebarSection | null => {
     if (s.status === "archived") return null;
     if (pinnedSet.has(s.id)) {
@@ -339,13 +357,16 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
     if (s.status === "resolved") return "resolved";
     return "main";
   };
-  const mainAll = source.filter((s) => effectiveSection(s) === "main");
-  const resolvedAll = source.filter((s) => effectiveSection(s) === "resolved");
-  const storedValid = storedOrder ? isStoredOrderValid(mainAll, resolvedAll, storedOrder) : false;
+  const mainAll = source.filter((s) => !workingSetIds.has(s.id) && effectiveSection(s) === "main");
+  const resolvedAll = source.filter((s) => !workingSetIds.has(s.id) && effectiveSection(s) === "resolved");
+  const storedView: SidebarOrder | null = storedOrder
+    ? { main: storedMain, resolved: storedResolved, snap: storedOrder.snap, pinned: storedPinned }
+    : null;
+  const storedValid = storedView ? isStoredOrderValid(mainAll, resolvedAll, storedView) : false;
   const orderedMainAll =
-    storedValid && storedOrder ? orderByStored(mainAll, storedOrder.main) : [...mainAll].sort(byRecency);
+    storedValid && storedView ? orderByStored(mainAll, storedView.main) : [...mainAll].sort(byRecency);
   const orderedResolvedAll =
-    storedValid && storedOrder ? orderByStored(resolvedAll, storedOrder.resolved) : [...resolvedAll].sort(byRecency);
+    storedValid && storedView ? orderByStored(resolvedAll, storedView.resolved) : [...resolvedAll].sort(byRecency);
   const shown = orderedMainAll.filter(matchesQuery);
   const resolved = orderedResolvedAll.filter(matchesQuery);
   const previewMainAll = previewPlacement(orderedMainAll, orderedResolvedAll, dragged, preview, "main");
@@ -720,6 +741,71 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
     </div>
   };
 
+  const renderWorkingCard = (s: Session) => {
+    const projectName = projectNameById[s.projectId] ?? "";
+    const branch = gitStatusBySession[s.id]?.branch ?? s.branch;
+    const badge = s.status === "holding" ? ageLabel(s.updatedAt) : stateLabel(s.status);
+    return (
+      <div
+        key={s.id}
+        ref={(el) => {
+          if (el) rowRefs.current.set(s.id, el);
+          else rowRefs.current.delete(s.id);
+        }}
+        className={`working-card${s.id === activeSessionId ? " active" : ""}`}
+        style={workingCardTintStyle(projectName)}
+        onMouseEnter={() => scheduleHover(s.id)}
+        onMouseLeave={clearHover}
+        onClick={() => {
+          if (suppressClickRef.current) {
+            suppressClickRef.current = false;
+            return;
+          }
+          store.selectSession(s.id);
+        }}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setRenamingId(null);
+          setMenu({ sessionId: s.id, x: e.clientX, y: e.clientY });
+        }}
+        aria-label={`${s.title}${projectName ? ` · ${projectName}` : ""}`}
+      >
+        <div className="working-card-head">
+          <span className="avatar sm" style={avatarStyle(projectName)}>{initials(projectName)}</span>
+          <span className="working-card-project">{projectName}</span>
+          <span className={`working-card-badge status-${s.status}`}>{badge}</span>
+        </div>
+        {renamingId === s.id ? (
+          <input
+            autoFocus
+            className="session-rename"
+            value={renameDraft}
+            onChange={(e) => setRenameDraft(e.target.value)}
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => {
+              e.stopPropagation();
+              if (e.key === "Enter") commitRename(s.id);
+              if (e.key === "Escape") setRenamingId(null);
+            }}
+            onBlur={() => commitRename(s.id)}
+          />
+        ) : (
+          <div className="working-card-title">{s.title}</div>
+        )}
+        <div className="working-card-foot">
+          {branch ? (
+            <span className="working-card-branch">
+              <GitBranch size={11} aria-hidden="true" />
+              {branch}
+            </span>
+          ) : null}
+          <DriverIcon driver={s.driver} size={14} />
+        </div>
+      </div>
+    );
+  };
+
   const renderResolvedToggle = (projectId: string, items: Session[]) => {
     if (items.length === 0) return null;
     const open = resolvedOpen.has(projectId);
@@ -927,9 +1013,27 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
       </div>
       <div className="session-list" ref={listRef} onScroll={clearHover}>
         <div className="session-main-list">
+          {workingSetShown.length > 0 && (
+            <div className="working-set">
+              <button
+                type="button"
+                className="working-set-heading"
+                onClick={() => setWorkingSetOpen((o) => !o)}
+                aria-expanded={workingSetOpen}
+                aria-label={`${workingSetOpen ? "Collapse" : "Expand"} working set`}
+              >
+                <span className="group-chevron" aria-hidden="true">
+                  {workingSetOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                </span>
+                <span>Working set</span>
+                <span className="working-set-count">{workingSetShown.length}</span>
+              </button>
+              {workingSetOpen && workingSetShown.map((s) => renderWorkingCard(s))}
+            </div>
+          )}
           {renderRows(shownPreview, "main")}
           {projectFilter !== "all" && renderResolvedToggle(projectFilter, resolvedPreview)}
-          {shownPreview.length === 0 && resolvedPreview.length === 0 && (
+          {shownPreview.length === 0 && resolvedPreview.length === 0 && workingSetShown.length === 0 && (
             <div className="side-empty">{query ? "No matches." : "No sessions yet."}</div>
           )}
         </div>
@@ -974,7 +1078,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
             <button
               className="ctx-item"
               onClick={() => {
-                const target = [...shown, ...resolved].find((s) => s.id === menu.sessionId);
+                const target = [...workingSetShown, ...shown, ...resolved].find((s) => s.id === menu.sessionId);
                 setRenameDraft(target?.title ?? "");
                 setRenamingId(menu.sessionId);
                 setMenu(null);
@@ -1013,7 +1117,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
           >
             <div className="worktree-confirm-title">Remove the worktree too?</div>
             <div className="worktree-confirm-hint">
-              {[...shown, ...resolved].find((s) => s.id === worktreeConfirm.sessionId)?.title ??
+              {[...workingSetShown, ...shown, ...resolved].find((s) => s.id === worktreeConfirm.sessionId)?.title ??
                 worktreeConfirm.sessionId}{" "}
               is {worktreeConfirm.status === "archived" ? "archived" : "resolved"} and no other session uses its isolated worktree.
             </div>

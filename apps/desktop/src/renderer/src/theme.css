@@ -539,6 +539,137 @@ body {
   padding: 6px 8px 10px;
 }
 
+.working-set {
+  margin: 2px 0 14px;
+}
+
+.working-set-heading {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  width: 100%;
+  box-sizing: border-box;
+  padding: 3px 10px 7px;
+  background: none;
+  border: 0;
+  border-radius: var(--r-md);
+  color: var(--faint);
+  font-family: var(--sans);
+  font-size: 10.5px;
+  font-weight: 700;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  cursor: pointer;
+}
+
+.working-set-heading:hover {
+  color: var(--muted);
+}
+
+.working-set-count {
+  margin-left: auto;
+  font-size: 10.5px;
+  font-weight: 600;
+  letter-spacing: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.working-card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 9px 10px 8px;
+  margin: 0 0 6px;
+  border-radius: 10px;
+  border: 1px solid var(--wc-line, var(--border-soft));
+  background: var(--wc-tint, transparent);
+  cursor: pointer;
+}
+
+.working-card:hover {
+  filter: brightness(1.12);
+}
+
+.working-card.active {
+  border-color: rgba(160, 107, 255, 0.55);
+  box-shadow: inset 3px 0 0 #a06bff;
+}
+
+.working-card-head {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-width: 0;
+}
+
+.working-card-project {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-size: 11.5px;
+  font-weight: 600;
+  color: rgba(223, 225, 229, 0.82);
+}
+
+.working-card-badge {
+  flex: none;
+  font-size: 11.5px;
+  font-weight: 700;
+}
+
+.working-card-badge.status-input-required {
+  color: var(--accent);
+}
+
+.working-card-badge.status-working {
+  color: var(--success);
+}
+
+.working-card-badge.status-done {
+  color: var(--text);
+}
+
+.working-card-badge.status-holding {
+  color: var(--faint);
+  font-variant-numeric: tabular-nums;
+}
+
+.working-card-title {
+  font-size: 13.5px;
+  font-weight: 650;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.working-card-foot {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+  color: var(--faint);
+  font-size: 11px;
+}
+
+.working-card-branch {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+  font-family: var(--mono);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.working-card-foot .driver-icon {
+  margin-left: auto;
+}
+
 .session-project-group {
   margin: 6px 0 14px;
 }
