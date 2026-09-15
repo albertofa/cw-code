@@ -214,9 +214,15 @@ export function mapCodexHistory(thread: CodexThread, limit = 300): HistoryMessag
   const out: HistoryMessage[] = [];
   for (const turn of thread.turns ?? []) {
     const turnId = turn.id;
-    const timestamp = (turn.startedAt ?? null) != null ? (turn.startedAt as number) * 1000 : undefined;
+    const startedAt = turn.startedAt ?? null;
+    const completedAt = turn.completedAt ?? null;
+    const timestamp = startedAt != null ? startedAt * 1000 : undefined;
+    const first = out.length;
     for (const item of turn.items ?? []) {
       pushHistoryItem(out, item, turnId, timestamp);
+    }
+    if (out.length > first && completedAt != null && timestamp !== undefined) {
+      out[out.length - 1] = { ...out[out.length - 1], timestamp: completedAt * 1000 };
     }
   }
   return out.slice(-limit);

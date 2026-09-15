@@ -83,9 +83,24 @@ describe("mapOpencodeMessages", () => {
       }
     ]);
     expect(out).toEqual([
-      { id: "p12", role: "reasoning", text: "weighing options", turnId: "m12", reasoningMs: 3400 },
-      { id: "p13", role: "reasoning", text: "still open", turnId: "m12" }
+      { id: "p12", role: "reasoning", text: "weighing options", turnId: "m12", reasoningMs: 3400, timestamp: 5400 },
+      { id: "p13", role: "reasoning", text: "still open", turnId: "m12", timestamp: 6000 }
     ]);
+  });
+
+  it("stamps messages with server times so history keeps the turn duration", () => {
+    const out = mapOpencodeMessages([
+      {
+        info: { id: "m1", role: "user", time: { created: 1000 } },
+        parts: [{ id: "p1", type: "text", text: "hi" }]
+      },
+      {
+        info: { id: "m2", role: "assistant", time: { created: 1500, completed: 61_000 } },
+        parts: [{ id: "p2", type: "text", text: "done" }]
+      }
+    ]);
+    expect(out[0]).toMatchObject({ timestamp: 1000 });
+    expect(out[1]).toMatchObject({ timestamp: 61_000 });
   });
 
   it("attaches normalized todos to todowrite call messages", () => {

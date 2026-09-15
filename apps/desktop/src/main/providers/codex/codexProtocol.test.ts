@@ -188,6 +188,26 @@ describe("mapCodexHistory", () => {
     expect(messages[5]).toMatchObject({ text: "done" });
   });
 
+  it("stamps the last turn item with completedAt so history keeps the duration", () => {
+    const thread: CodexThread = {
+      id: "thr_1",
+      turns: [
+        {
+          id: "turn_1",
+          startedAt: 5,
+          completedAt: 65,
+          items: [
+            { type: "userMessage", id: "i1", content: [{ type: "text", text: "hi" }] },
+            { type: "agentMessage", id: "i2", text: "done" }
+          ]
+        }
+      ]
+    };
+    const messages = mapCodexHistory(thread);
+    expect(messages[0].timestamp).toBe(5000);
+    expect(messages[1].timestamp).toBe(65_000);
+  });
+
   it("flags failed commands and skips empty outputs", () => {
     const thread: CodexThread = {
       id: "thr_1",
