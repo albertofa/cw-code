@@ -1,10 +1,79 @@
 import { describe, expect, it } from "vitest";
-import { appendAssistantText } from "./chatMessages.js";
+import { appendAssistantText, upsertToolCall } from "./chatMessages.js";
 import type { ChatMessage } from "../stores/appStore.js";
+import type { ToolCallEvent } from "./chatMessages.js";
 
 function toolMessage(id: string, turnId = "t1"): ChatMessage {
   return { id, role: "tool", text: "output", turnId };
 }
+
+function call(partial: Partial<ToolCallEvent> = {}): ToolCallEvent {
+  return { type: "tool.call", turnId: "t1", toolCallId: "call-1", name: "task", input: {}, ...partial };
+}
+
+describe("upsertToolCall", () => {
+  it("appends a new tool call with its start time", () => {
+    const messages = upsertToolCall([], call({ input: { description: "Review" } }), 1000);
+    expect(messages).toEqual([
+      {
+        id: "call-1",
+        role: "tool",
+        text: 'task {"description":"Review"}',
+        turnId: "t1",
+        toolName: "task",
+        toolInput: { description: "Review" },
+        toolStartedAt: 1000
+      }
+    ]);
+  });
+
+  it("merges a replayed call in place instead of duplicating it", () => {
+    const existing: ChatMessage = {
+      id: "call-1",
+      role: "tool",
+      text: "task {}",
+      turnId: "t1",
+      toolName: "task",
+      toolInput: {},
+      toolStartedAt: 1000,
+      toolOutput: "done",
+      toolDone: true,
+      toolCompletedAt: 5000
+    };
+    const messages = upsertToolCall(
+      [toolMessage("other"), existing],
+      call({ turnId: "t2", input: { description: "Review", subagent_type: "general" } }),
+      9000
+    );
+    expect(messages).toHaveLength(2);
+    expect(messages[1]).toEqual({
+      ...existing,
+      text: 'task {"description":"Review","subagent_type":"general"}',
+      toolInput: { description: "Review", subagent_type: "general" }
+    });
+  });
+
+  it("keeps the richer input when a replay carries none", () => {
+    const existing: ChatMessage = {
+      id: "call-1",
+      role: "tool",
+      text: 'task {"description":"Review"}',
+      turnId: "t1",
+      toolName: "task",
+      toolInput: { description: "Review" },
+      toolStartedAt: 1000
+    };
+    const messages = upsertToolCall([existing], call({ input: null, turnId: "t2" }), 9000);
+    expect(messages).toEqual([existing]);
+  });
+
+  it("keeps the original turn id when a later turn replays the call", () => {
+    const first = upsertToolCall([], call(), 1000);
+    const replayed = upsertToolCall(first, call({ turnId: "t2" }), 9000);
+    expect(replayed[0].turnId).toBe("t1");
+    expect(replayed[0].toolStartedAt).toBe(1000);
+  });
+});
 
 describe("appendAssistantText", () => {
   it("merges contiguous deltas into a single message", () => {

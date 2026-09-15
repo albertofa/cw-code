@@ -92,7 +92,7 @@ describe("OpencodeDriver auto-approved permissions", () => {
   it("surfaces the approval dock when no reply route accepts the auto-approve", async () => {
     const h = startHarness((url, init) => {
       if (url.endsWith("/event")) return Promise.resolve(sse(PERMISSION_ASKED));
-      if (init?.method === "POST" && url.includes("/message")) return Promise.resolve(json({}));
+      if (init?.method === "POST" && url.includes("/message")) return new Promise<Response>(() => {});
       if (init?.method === "POST" && url.includes("/permission")) {
         return Promise.resolve(new Response(null, { status: 404 }));
       }
@@ -116,7 +116,7 @@ describe("OpencodeDriver auto-approved permissions", () => {
   it("stays silent when the reply route accepts the auto-approve", async () => {
     const h = startHarness((url, init) => {
       if (url.endsWith("/event")) return Promise.resolve(sse(PERMISSION_ASKED));
-      if (init?.method === "POST" && url.includes("/message")) return Promise.resolve(json({}));
+      if (init?.method === "POST" && url.includes("/message")) return new Promise<Response>(() => {});
       if (init?.method === "POST" && url.includes("/permission") && url.includes("/permissions/")) {
         return Promise.resolve(json(true));
       }

@@ -119,6 +119,39 @@ export function turnMessagesOf(payload: unknown): OpencodeTurnMessage[] {
   return out;
 }
 
+export interface OpencodeAssistantState {
+  id: string;
+  terminal: boolean;
+}
+
+function isTerminalAssistant(info: Record<string, unknown>): boolean {
+  if (info["error"] !== null && info["error"] !== undefined) return true;
+  const finish = info["finish"];
+  if (typeof finish === "string") return finish !== "tool-calls";
+  const time = asRecord(info["time"]);
+  return typeof time?.["completed"] === "number";
+}
+
+export function latestAssistantOf(rawMessages: unknown, scopeIds?: Set<string>): OpencodeAssistantState | null {
+  const container = asRecord(rawMessages);
+  const raw = Array.isArray(rawMessages) ? rawMessages : container?.["data"];
+  if (!Array.isArray(raw)) return null;
+  let latest: OpencodeAssistantState | null = null;
+  for (const entry of raw) {
+    const msg = asRecord(entry);
+    const info = asRecord(msg?.["info"]) ?? {};
+    if (info["role"] !== "assistant") continue;
+    const id = typeof info["id"] === "string" ? info["id"] : "";
+    if (!id || scopeIds?.has(id)) continue;
+    latest = { id, terminal: isTerminalAssistant(info) };
+  }
+  return latest;
+}
+
+export function runEnded(rawMessages: unknown, scopeIds?: Set<string>): boolean {
+  return latestAssistantOf(rawMessages, scopeIds)?.terminal === true;
+}
+
 export function summarizeOpencodeTurn(messages: OpencodeTurnMessage[], beforeIds: Set<string> | null): OpencodeTurnSummary {
   const fresh = beforeIds === null ? [] : messages.filter((m) => !beforeIds.has(m.id));
   const scoped = beforeIds === null ? [] : fresh.filter((m) => m.role === "assistant");

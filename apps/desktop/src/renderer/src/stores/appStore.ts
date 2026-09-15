@@ -16,7 +16,7 @@ import type {
   TodoItem,
   TurnEvent
 } from "../cw.js";
-import { appendAssistantText } from "../components/chatMessages.js";
+import { appendAssistantText, upsertToolCall } from "../components/chatMessages.js";
 import { mergeToolPairs } from "../components/toolSummaries.js";
 import { useNotifs } from "../components/Notifications.js";
 
@@ -34,6 +34,7 @@ export interface ChatMessage extends HistoryMessage {
   toolDone?: boolean;
   toolStartedAt?: number;
   toolCompletedAt?: number;
+  retryable?: boolean;
 }
 
 export const DEFAULT_COMPOSER: Required<Pick<ComposerPrefs, "effort" | "permissionMode">> & ComposerPrefs = {
@@ -118,6 +119,7 @@ interface AppState {
   createSession(driver: DriverName, prefs?: ComposerPrefs, workspace?: CreateSessionOptions): Promise<void>;
   sendPrompt(prompt: string, attachments?: string[]): Promise<void>;
   interrupt(): Promise<void>;
+  retryConnection(sessionId: string): Promise<void>;
   respondApproval(requestId: string, decision: ApprovalDecision): Promise<void>;
   respondQuestion(sessionId: string, requestId: string, answers: Record<string, string>): Promise<void>;
   applyEvent(sessionId: string, event: TurnEvent): void;
@@ -685,6 +687,40 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
   },
 
+  async retryConnection(sessionId: string) {
+    try {
+      const result = await window.cw.retryConnection(sessionId);
+      const busy = { ...get().busyTurns };
+      const startedAt = { ...get().turnStartedAt };
+      if (result.status === "running" && result.turnId) {
+        busy[sessionId] = result.turnId;
+        startedAt[sessionId] = Date.now();
+      } else {
+        delete busy[sessionId];
+        delete startedAt[sessionId];
+      }
+      set({
+        busyTurns: busy,
+        turnStartedAt: startedAt,
+        sessionsByProject: withSessionStatus(
+          get().sessionsByProject,
+          sessionId,
+          result.status === "running" ? "working" : "idle"
+        ),
+        messagesBySession: {
+          ...get().messagesBySession,
+          [sessionId]: mergeToolPairs(result.history)
+        }
+      });
+    } catch (err) {
+      useNotifs.getState().push({
+        kind: "error",
+        title: "Could not reconnect",
+        message: (err as Error).message
+      });
+    }
+  },
+
   async respondApproval(requestId: string, decision: ApprovalDecision) {
     await window.cw.respondApproval(requestId, decision);
     const approvals = get().pendingApprovals;
@@ -785,19 +821,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({
         messagesBySession: {
           ...get().messagesBySession,
-          [sessionId]: [
-            ...messages,
-            {
-              id: event.toolCallId,
-              role: "tool",
-              text: `${event.name} ${JSON.stringify(event.input)?.slice(0, 300) ?? ""}`,
-              turnId: event.turnId,
-              toolName: event.name,
-              toolInput: event.input,
-              toolStartedAt: Date.now(),
-              ...(event.parentToolCallId ? { parentToolCallId: event.parentToolCallId } : {})
-            }
-          ]
+          [sessionId]: upsertToolCall(messages, event, Date.now())
         }
       });
     } else if (event.type === "tool.result") {
@@ -910,7 +934,14 @@ export const useAppStore = create<AppState>((set, get) => ({
           ...get().messagesBySession,
           [sessionId]: [
             ...finalizeTurnTools(messages, event.turnId),
-            { id: `${event.turnId}-e`, role: "system", text: `Error: ${event.message}`, turnId: event.turnId, isError: true }
+            {
+              id: `${event.turnId}-e`,
+              role: "system",
+              text: `Error: ${event.message}`,
+              turnId: event.turnId,
+              isError: true,
+              ...(event.retryable ? { retryable: true } : {})
+            }
           ]
         }
       });
