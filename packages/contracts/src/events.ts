@@ -97,7 +97,7 @@ export type ThreadEvent =
       isError: boolean;
       backgroundTasks: number;
     }
-  | { type: "turn.error"; turnId: string; message: string; resumeCursor?: string }
+  | { type: "turn.error"; turnId: string; message: string; resumeCursor?: string; retryable?: boolean }
   | { type: "session.branch.updated"; turnId: string; sessionId: string; branch: string };
 
 export type SessionEvent =

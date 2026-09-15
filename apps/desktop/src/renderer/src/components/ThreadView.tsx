@@ -42,6 +42,7 @@ export function ThreadView() {
   const historyLoading = useAppStore((s) => (activeSessionId ? !!s.loadingHistory[activeSessionId] : false));
   const historyError = useAppStore((s) => (activeSessionId ? s.historyErrorBySession[activeSessionId] : undefined));
   const ensureHistory = useAppStore((s) => s.ensureHistory);
+  const retryConnection = useAppStore((s) => s.retryConnection);
   const usage = useAppStore((s) => (activeSessionId ? s.usageBySession[activeSessionId] : undefined));
   const lastTurn = useAppStore((s) => (activeSessionId ? s.lastTurnStats[activeSessionId] : undefined));
   const openPreview = useAppStore((s) => s.openPreview);
@@ -288,6 +289,11 @@ export function ThreadView() {
                 <div key={m.id} className="msg-system">
                   <TriangleAlert size={14} aria-hidden="true" />
                   <span>{m.text}</span>
+                  {m.retryable && (
+                    <button className="msg-retry" onClick={() => void retryConnection(session.id)}>
+                      Retry connection
+                    </button>
+                  )}
                 </div>
               );
             }

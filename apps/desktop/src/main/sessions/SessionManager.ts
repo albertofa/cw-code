@@ -12,6 +12,7 @@ import type {
   HistoryMessage,
   ModelOption,
   Project,
+  RetryConnectionResult,
   SessionCleanupResult,
   SessionMeta,
   SessionStatus,
@@ -921,6 +922,32 @@ export class SessionManager {
     if (session) this.drivers[session.driver].interrupt(turnId);
     this.activeTurns.delete(turnId);
     this.store.updateSession(sessionId, { status: "idle" });
+  }
+
+  async retryConnection(sessionId: string): Promise<RetryConnectionResult> {
+    const session = this.store.getSession(sessionId);
+    if (!session) throw new Error(`unknown session ${sessionId}`);
+    for (const owner of this.activeTurns.values()) {
+      if (owner === sessionId) throw new Error("session busy (turn in progress)");
+    }
+    const driver = this.drivers[session.driver];
+    if (typeof driver.retryConnection !== "function") {
+      return { status: "done", history: await this.getHistory(sessionId) };
+    }
+    const cwd = await this.ensureWorktree(sessionId);
+    const result = await driver.retryConnection({
+      sessionId,
+      cwd,
+      resumeCursor: session.resumeCursor,
+      permissionMode: this.getComposer(sessionId).permissionMode
+    });
+    if (result.status === "running" && result.turnId) {
+      this.activeTurns.set(result.turnId, sessionId);
+      this.store.updateSession(sessionId, { status: "working" });
+    } else {
+      this.store.updateSession(sessionId, { status: "idle" });
+    }
+    return result;
   }
 
   async respondApproval(requestId: string, decision: ApprovalDecision): Promise<void> {

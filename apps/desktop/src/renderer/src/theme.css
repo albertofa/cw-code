@@ -1421,6 +1421,24 @@ body.session-dragging * {
   white-space: pre-wrap;
 }
 
+.msg-system .msg-retry {
+  margin-left: auto;
+  flex-shrink: 0;
+  border-radius: var(--r-sm, 6px);
+  border: 1px solid rgba(255, 107, 97, 0.5);
+  background: rgba(255, 107, 97, 0.12);
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 12px;
+  font-weight: 600;
+  padding: 4px 10px;
+  cursor: pointer;
+}
+
+.msg-system .msg-retry:hover {
+  background: rgba(255, 107, 97, 0.22);
+}
+
 .tool-group {
   border: none;
   border-radius: var(--r-md);

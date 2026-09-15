@@ -83,6 +83,12 @@ export interface SubagentToolSummary {
   totalTokens?: number;
 }
 
+export interface RetryConnectionResult {
+  status: "running" | "done";
+  turnId?: string;
+  history: HistoryMessage[];
+}
+
 export type ApprovalDecision = "accept" | "acceptForSession" | "acceptGlobal" | "decline" | "cancel";
 
 export type ApprovalKind = "command" | "fileChange" | "permissions";
@@ -153,7 +159,7 @@ export type TurnEvent =
       isError: boolean;
       backgroundTasks: number;
     }
-  | { type: "turn.error"; turnId: string; message: string; resumeCursor?: string }
+  | { type: "turn.error"; turnId: string; message: string; resumeCursor?: string; retryable?: boolean }
   | { type: "session.branch.updated"; turnId: string; sessionId: string; branch: string };
 
 export type PermissionMode = "auto" | "acceptEdits" | "bypassPermissions" | "manual";
@@ -308,6 +314,7 @@ export interface CwApi {
   resolveSession(sessionId: string, status: SessionStatus, removeWorktree?: boolean, forceBranch?: boolean): Promise<SessionCleanupResult>;
   pruneStaleWorktrees(): Promise<WorktreePruneSummary>;
   getHistory(sessionId: string): Promise<HistoryMessage[]>;
+  retryConnection(sessionId: string): Promise<RetryConnectionResult>;
   startTurn(sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[] }): Promise<string>;
   interrupt(turnId: string): Promise<void>;
   respondApproval(requestId: string, decision: ApprovalDecision): Promise<void>;
