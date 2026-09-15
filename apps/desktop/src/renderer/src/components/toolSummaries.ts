@@ -381,7 +381,7 @@ type GroupableMessage = {
   toolDone?: boolean;
 };
 
-function isRunningTool(m: { toolInput?: unknown; toolOutput?: string; toolDone?: boolean }): boolean {
+export function isRunningTool(m: { toolInput?: unknown; toolOutput?: string; toolDone?: boolean }): boolean {
   const done = m.toolDone === true || m.toolOutput !== undefined;
   return m.toolInput !== undefined && !done;
 }

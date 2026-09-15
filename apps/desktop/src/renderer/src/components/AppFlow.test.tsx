@@ -566,6 +566,30 @@ describe("new-session crash repro (interactive)", () => {
     expect(fatalErrors(errors)).toEqual([]);
   });
 
+  it("clears stale todos when a new turn starts", async () => {
+    const { useAppStore } = await mount();
+    await act(async () => {
+      useAppStore.getState().setPendingDriver("opencode");
+    });
+    await act(async () => {
+      await useAppStore.getState().sendPendingPrompt("first task");
+    });
+    const sessionId = useAppStore.getState().activeSessionId!;
+    emitSessionId = sessionId;
+    await emitAll({
+      type: "todo.updated",
+      turnId: "turn-1",
+      todos: [{ content: "write tests", status: "in_progress", priority: "high" }]
+    });
+    expect(useAppStore.getState().todosBySession[sessionId]).toHaveLength(1);
+
+    await act(async () => {
+      await useAppStore.getState().sendPrompt("second task", []);
+    });
+    expect(useAppStore.getState().todosBySession[sessionId]).toEqual([]);
+    expect(fatalErrors(errors)).toEqual([]);
+  });
+
   it("seeds todos from history when no live update arrived", async () => {
     const { useAppStore } = await mount();
     const bridge = (window as unknown as { cw: Record<string, unknown> }).cw;

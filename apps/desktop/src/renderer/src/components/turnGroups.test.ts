@@ -60,6 +60,21 @@ describe("buildThreadNodes", () => {
     expect(nodes[2]).toMatchObject({ kind: "msg", msg: { id: "t3" } });
   });
 
+  it("keeps a running tool outside the group until it finishes", () => {
+    const done = (id: string): ChatMessage =>
+      msg({ id, role: "tool", turnId: "x", toolName: "read", toolInput: {}, toolDone: true, toolOutput: "out" });
+    const running = msg({ id: "r", role: "tool", turnId: "x", toolName: "edit", toolInput: { filePath: "a.ts" } });
+
+    const live = buildThreadNodes([done("t1"), done("t2"), running], new Set());
+    expect(live.map((n) => n.kind)).toEqual(["tools", "msg"]);
+    if (live[0].kind === "tools") expect(live[0].items.map((m) => m.id)).toEqual(["t1", "t2"]);
+    expect(live[1]).toMatchObject({ kind: "msg", msg: { id: "r" } });
+
+    const settled = buildThreadNodes([done("t1"), done("t2"), done("r")], new Set());
+    expect(settled.map((n) => n.kind)).toEqual(["tools"]);
+    if (settled[0].kind === "tools") expect(settled[0].items.map((m) => m.id)).toEqual(["t1", "t2", "r"]);
+  });
+
   it("clusters consecutive subagent calls into one group", () => {
     const nodes = buildThreadNodes(
       [

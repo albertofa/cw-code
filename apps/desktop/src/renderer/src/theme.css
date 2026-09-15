@@ -1415,7 +1415,6 @@ body.session-dragging * {
   color: var(--muted);
   font-size: 13px;
   line-height: 1.6;
-  white-space: pre-wrap;
   overflow-wrap: break-word;
   cursor: text;
   max-height: 340px;
@@ -1656,13 +1655,6 @@ body.session-dragging * {
   background: linear-gradient(100deg, transparent 20%, rgba(253, 252, 252, 0.11) 50%, transparent 80%);
   animation: tool-sweep 2.8s ease-in-out infinite;
   pointer-events: none;
-}
-
-.tool-group-icon {
-  display: inline-flex;
-  align-items: center;
-  color: var(--muted);
-  flex: none;
 }
 
 .tool-group-text {
@@ -1933,6 +1925,10 @@ body.session-dragging * {
 
 .tool-state.pending {
   color: var(--faint);
+}
+
+.tool-state.complete {
+  color: var(--muted);
 }
 
 .tool-subject {

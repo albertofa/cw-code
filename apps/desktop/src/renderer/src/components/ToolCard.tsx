@@ -1,5 +1,5 @@
-import { memo, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
-import { Check, ChevronDown, ChevronRight, Circle, CircleDot, Monitor, TriangleAlert } from "lucide-react";
+import { memo, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { Check, ChevronDown, ChevronRight, Circle, CircleDot, Monitor, TriangleAlert, Wrench, type LucideIcon } from "lucide-react";
 import type { ChatMessage } from "../stores/appStore.js";
 import {
   describeToolCall,
@@ -28,13 +28,19 @@ function LegacyHead({ name, text, open }: { name: string; text: string; open: bo
   );
 }
 
-function ToolState({ state }: { state: "complete" | "error" | "running" | "pending" }) {
-  if (state === "complete") return <span className="tool-state" aria-hidden="true" />;
+function ToolState({ state, Icon }: { state: "complete" | "error" | "running" | "pending"; Icon?: LucideIcon }) {
+  if (state === "complete") {
+    return (
+      <span className="tool-state complete" aria-hidden="true">
+        {Icon && <Icon size={13} />}
+      </span>
+    );
+  }
   const label = state === "error" ? "Error" : state === "running" ? "Running" : "Pending";
-  const Icon = state === "error" ? TriangleAlert : state === "running" ? CircleDot : Circle;
+  const StateIcon = state === "error" ? TriangleAlert : state === "running" ? CircleDot : Circle;
   return (
     <span className={`tool-state ${state}`} role="img" aria-label={label} title={label}>
-      <Icon size={13} aria-hidden="true" />
+      <StateIcon size={13} aria-hidden="true" />
     </span>
   );
 }
@@ -57,6 +63,11 @@ export const ToolCard = memo(function ToolCard({
   const isError = message.isError === true;
   const done = message.toolDone === true || message.toolOutput !== undefined;
   const running = message.toolInput !== undefined && !done;
+  const wasRunning = useRef(running);
+  useEffect(() => {
+    if (wasRunning.current && !running) setOpen(false);
+    wasRunning.current = running;
+  }, [running]);
   const state = isError ? "error" : running ? "running" : done ? "complete" : "pending";
   const summary = describeToolCall(name, message.toolInput ?? recoverToolInput(name, message.text));
   if (summary && !summary.subject) {
@@ -181,7 +192,7 @@ export const ToolCard = memo(function ToolCard({
       title={open ? "Collapse" : "Expand"}
     >
       <div className="tool-head">
-        <ToolState state={state} />
+        <ToolState state={state} Icon={summary?.Icon ?? Wrench} />
         {head}
         <span className="tool-caret" aria-hidden="true">{open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</span>
       </div>

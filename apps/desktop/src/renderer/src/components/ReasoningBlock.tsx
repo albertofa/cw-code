@@ -2,6 +2,7 @@ import { memo, useState } from "react";
 import { Brain, ChevronDown, ChevronRight } from "lucide-react";
 import type { ChatMessage } from "../stores/appStore.js";
 import { formatDuration } from "./toolSummaries.js";
+import { Md } from "./Markdown.js";
 
 export const ReasoningBlock = memo(function ReasoningBlock({
   message,
@@ -32,7 +33,11 @@ export const ReasoningBlock = memo(function ReasoningBlock({
           {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
         </span>
       </div>
-      {open && <div className="reasoning-text">{message.text.trim()}</div>}
+      {open && (
+        <div className="reasoning-text">
+          <Md text={message.text.trim()} />
+        </div>
+      )}
     </div>
   );
 });

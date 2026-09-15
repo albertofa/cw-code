@@ -774,10 +774,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     const previous = Object.values(get().sessionsByProject)
       .flat()
       .find((s) => s.id === sessionId);
+    const previousTodos = get().todosBySession[sessionId];
     const pending = nextPendingTurnId();
     set({
       busyTurns: { ...get().busyTurns, [sessionId]: pending },
       turnStartedAt: { ...get().turnStartedAt, [sessionId]: Date.now() },
+      todosBySession: { ...get().todosBySession, [sessionId]: [] },
       sessionsByProject: withSessionStatus(get().sessionsByProject, sessionId, "working")
     });
     let turnId: string;
@@ -794,6 +796,9 @@ export const useAppStore = create<AppState>((set, get) => ({
           busyTurns: book.busyTurns,
           turnStartedAt: book.turnStartedAt,
           turnDurations: book.turnDurations,
+          ...(previousTodos && previousTodos.length > 0 && (get().todosBySession[sessionId] ?? []).length === 0
+            ? { todosBySession: { ...get().todosBySession, [sessionId]: previousTodos } }
+            : {}),
           ...(previous
             ? { sessionsByProject: withSessionStatus(get().sessionsByProject, sessionId, previous.status) }
             : {})
