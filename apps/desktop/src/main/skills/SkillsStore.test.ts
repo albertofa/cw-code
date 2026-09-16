@@ -119,6 +119,41 @@ describe("SkillsStore", () => {
     });
   });
 
+  it("round-trips extra frontmatter keys through save", async () => {
+    const { store, userData } = makeStore(makeFixtureHome());
+    const saved = await store.saveSkill({
+      name: "extra-props",
+      description: "Has extras",
+      body: "Body here.\n",
+      enabled: { claude: true, opencode: true, codex: false },
+      frontmatter: { license: "MIT", audience: "devs", name: "spoofed", description: "spoofed" }
+    });
+    expect(saved.frontmatter).toMatchObject({
+      name: "extra-props",
+      description: "Has extras",
+      license: "MIT",
+      audience: "devs"
+    });
+    const raw = readFileSync(join(userData, "skills", "extra-props", "SKILL.md"), "utf8");
+    expect(raw).toContain("license: MIT");
+    expect(raw).not.toContain("spoofed");
+
+    const detail = await store.getSkill("extra-props");
+    const resaved = await store.saveSkill({
+      name: detail.name,
+      description: "Updated description",
+      body: detail.body,
+      enabled: detail.enabled,
+      frontmatter: detail.frontmatter
+    });
+    expect(resaved.frontmatter).toMatchObject({
+      name: "extra-props",
+      description: "Updated description",
+      license: "MIT",
+      audience: "devs"
+    });
+  });
+
   it("rejects invalid skill names", async () => {
     const { store } = makeStore(makeFixtureHome());
     await expect(store.getSkill("../escape")).rejects.toThrow(/invalid skill name/);

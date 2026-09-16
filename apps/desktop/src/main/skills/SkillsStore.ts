@@ -249,7 +249,7 @@ export class SkillsStore {
     const dir = this.canonicalDir(name);
     mkdirSync(dir, { recursive: true });
     const tmp = `${skillFileForDir(dir)}.${process.pid}.tmp`;
-    writeFileSync(tmp, serializeSkillFile({ name, description }, body), "utf8");
+    writeFileSync(tmp, serializeSkillFile({ ...input.frontmatter, name, description }, body), "utf8");
     renameSync(tmp, skillFileForDir(dir));
     const entry = this.ensureEntry(name);
     const previous = sanitizeEnabled(entry.enabled);

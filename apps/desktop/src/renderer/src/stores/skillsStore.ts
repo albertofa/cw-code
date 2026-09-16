@@ -9,11 +9,17 @@ export function toggleKey(name: string, harness: HarnessId): string {
 }
 
 function detailToDraft(detail: SkillDetail): SkillSaveInput {
+  const frontmatter: Record<string, string> = {};
+  for (const [key, value] of Object.entries(detail.frontmatter ?? {})) {
+    if (key === "name" || key === "description") continue;
+    frontmatter[key] = value;
+  }
   return {
     name: detail.name,
     description: detail.description,
     body: detail.body,
-    enabled: { ...detail.enabled }
+    enabled: { ...detail.enabled },
+    frontmatter
   };
 }
 
@@ -22,7 +28,8 @@ function newDraft(): SkillSaveInput {
     name: "",
     description: "",
     body: "",
-    enabled: { claude: true, opencode: true, codex: true }
+    enabled: { claude: true, opencode: true, codex: true },
+    frontmatter: {}
   };
 }
 

@@ -27,4 +27,5 @@ export interface SkillSaveInput {
   description: string;
   body: string;
   enabled: Record<HarnessId, boolean>;
+  frontmatter?: Record<string, string>;
 }

@@ -164,7 +164,7 @@ function orderByStored(current: Session[], ids: string[]): Session[] {
   return [...known, ...unknown];
 }
 
-export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
+export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { onOpenSettings: () => void; onOpenSkills: () => void; skillsOpen?: boolean }) {
   const { projects, sessionsByProject, discoveredByProject, activeProjectId, activeSessionId, gitStatusBySession, projectFilter, worktreeConfirmQueue } = useAppStore();
   const worktreeConfirm = worktreeConfirmQueue[0] ?? null;
   const store = useAppStore();
@@ -1108,6 +1108,16 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
         </>
       )}
       <div className="side-footer">
+        <button
+          className={`side-footer-btn${skillsOpen ? " active" : ""}`}
+          title="Skills"
+          aria-label="Skills"
+          aria-pressed={skillsOpen}
+          onClick={onOpenSkills}
+        >
+          <span aria-hidden="true">✦</span>
+          <span>Skills</span>
+        </button>
         <button className="side-footer-btn" title="Settings" aria-label="Settings" onClick={onOpenSettings}>
           <Settings size={15} />
         </button>
