@@ -1108,6 +1108,9 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
         </>
       )}
       <div className="side-footer">
+        <button className="side-footer-btn" title="Settings" aria-label="Settings" onClick={onOpenSettings}>
+          <Settings size={15} />
+        </button>
         <button
           className={`side-footer-btn${skillsOpen ? " active" : ""}`}
           title="Skills"
@@ -1117,9 +1120,6 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
         >
           <span aria-hidden="true">✦</span>
           <span>Skills</span>
-        </button>
-        <button className="side-footer-btn" title="Settings" aria-label="Settings" onClick={onOpenSettings}>
-          <Settings size={15} />
         </button>
       </div>
       {hover && hoverSession && (
