@@ -130,6 +130,18 @@ export function ComposerView({
   const [modelsError, setModelsError] = useState<string | null>(null);
   const [customModel, setCustomModel] = useState("");
   const [showCustom, setShowCustom] = useState(false);
+  const composerRef = useRef<HTMLTextAreaElement | null>(null);
+
+  useEffect(() => {
+    if (busy) return;
+    const frame = requestAnimationFrame(() => {
+      try {
+        composerRef.current?.focus({ preventScroll: true });
+      } catch {
+      }
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [resetKey, busy]);
 
   useEffect(() => {
     setAttachments([]);
@@ -266,6 +278,7 @@ export function ComposerView({
       <div className="composer-writing">
         <div className="composer-input-wrap">
           <textarea
+            ref={composerRef}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
