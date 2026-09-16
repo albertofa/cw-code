@@ -18,9 +18,10 @@ import { checkCliVersion, checkCliVersions, type CliVersionCheck } from "./cliVe
 import { getHarnessTracePath, initHarnessTrace } from "./debug/harnessTrace.js";
 import { appendCrashLog, initCrashLog } from "./debug/crashLog.js";
 import type { ApprovalDecision, CreateSessionOptions, GitDiffMode, SessionStatus, SettingsPatch } from "@cw-code/contracts";
-import type { DriverKind } from "@cw-code/contracts";
+import type { DriverKind, HarnessId, SkillSaveInput } from "@cw-code/contracts";
 import type { PtyKind } from "./pty/PtyPool.js";
 import { SessionManager } from "./sessions/SessionManager.js";
+import { SkillsStore } from "./skills/SkillsStore.js";
 import { FileService } from "./fs/FileService.js";
 import { GitService } from "./fs/GitService.js";
 import { PtyPool } from "./pty/PtyPool.js";
@@ -31,6 +32,7 @@ type DriverName = DriverKind;
 
 let mainWindow: BrowserWindow | null = null;
 const sessions = new SessionManager();
+const skills = new SkillsStore();
 const files = new FileService();
 const git = new GitService(() => sessions.getSettings());
 const ptys = new PtyPool(() => sessions.getSettings());
@@ -113,6 +115,15 @@ function registerIpc(): void {
     });
   });
   ipcMain.handle("settings.get", () => sessions.getSettings());
+  ipcMain.handle("skills.list", () => skills.listSkills());
+  ipcMain.handle("skills.get", (_e, name: string) => skills.getSkill(name));
+  ipcMain.handle("skills.save", (_e, input: SkillSaveInput) => skills.saveSkill(input));
+  ipcMain.handle(
+    "skills.setEnabled",
+    (_e, args: { name: string; harness: HarnessId; on: boolean }) =>
+      skills.setSkillEnabled(args.name, args.harness, args.on)
+  );
+  ipcMain.handle("skills.importAll", () => skills.importSkills());
   ipcMain.handle("settings.set", async (_e, patch: SettingsPatch) => {
     const current = sessions.getSettings();
     const normalized = { ...patch };
