@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   buildOpencodeMessageBody,
+  errorMessageOf,
   isReasoningPartDelta,
   latestAssistantOf,
   mimeForOpencodeAttachment,
@@ -93,6 +94,40 @@ describe("turnMessagesOf", () => {
     expect(turnMessagesOf(null)).toEqual([]);
     expect(turnMessagesOf({})).toEqual([]);
   });
+
+  it("carries the assistant error message", () => {
+    const errored = turnMessagesOf([
+      {
+        info: { id: "msg_9", role: "assistant", error: { name: "APIError", data: { message: "Free usage exceeded, subscribe to Go" } } },
+        parts: []
+      }
+    ]);
+    expect(errored).toEqual([
+      {
+        id: "msg_9",
+        role: "assistant",
+        cost: 0,
+        tokens: undefined,
+        text: "",
+        error: "Free usage exceeded, subscribe to Go"
+      }
+    ]);
+  });
+});
+
+describe("errorMessageOf", () => {
+  it("reads nested data messages and falls back to the error name", () => {
+    expect(errorMessageOf({ name: "APIError", data: { message: "rate limited" } })).toBe("rate limited");
+    expect(errorMessageOf({ name: "AbortedError" })).toBe("AbortedError");
+    expect(errorMessageOf("plain text")).toBe("plain text");
+  });
+
+  it("returns an empty string for missing or malformed errors", () => {
+    expect(errorMessageOf(undefined)).toBe("");
+    expect(errorMessageOf(null)).toBe("");
+    expect(errorMessageOf(42)).toBe("");
+    expect(errorMessageOf({ data: { message: 42 } })).toBe("");
+  });
 });
 
 describe("latestAssistantOf / runEnded", () => {
@@ -151,12 +186,33 @@ describe("summarizeOpencodeTurn", () => {
       text: "new",
       inputTokens: 114,
       outputTokens: 7,
-      costUsd: 0.003
+      costUsd: 0.003,
+      errorText: ""
     });
   });
 
   it("returns zeros when the baseline is unknown", () => {
-    expect(summarizeOpencodeTurn(messages, null)).toEqual({ text: "", inputTokens: 0, outputTokens: 0, costUsd: 0 });
+    expect(summarizeOpencodeTurn(messages, null)).toEqual({
+      text: "",
+      inputTokens: 0,
+      outputTokens: 0,
+      costUsd: 0,
+      errorText: ""
+    });
+  });
+
+  it("reports the last fresh assistant error", () => {
+    const errored = turnMessagesOf([
+      { info: { id: "msg_0", role: "assistant" }, parts: [] },
+      { info: { id: "msg_1", role: "assistant", error: { name: "APIError", data: { message: "rate limited" } } }, parts: [] }
+    ]);
+    expect(summarizeOpencodeTurn(errored, new Set(["msg_0"]))).toEqual({
+      text: "",
+      inputTokens: 0,
+      outputTokens: 0,
+      costUsd: 0,
+      errorText: "rate limited"
+    });
   });
 });
 

@@ -20,7 +20,7 @@ import {
   permissionApprovalOf,
   type ParsedOpencodePermission
 } from "./opencodePermissions.js";
-import { opencodeSessionParentId, parseOpencodeSessionParent, parseOpencodeTodosUpdated } from "./opencodeEvents.js";
+import { opencodeSessionParentId, parseOpencodeSessionError, parseOpencodeSessionParent, parseOpencodeStatusRetry, parseOpencodeTodosUpdated } from "./opencodeEvents.js";
 import { AskBridge } from "./askBridge.js";
 import { writeAskBridgeTool } from "./askToolFile.js";
 import { diffLiveTools, collectPartTypes, collectTaskParts, type LiveMessage, type LiveSeen } from "./opencodeLivePoll.js";
@@ -685,6 +685,38 @@ export class OpencodeDriver implements CliDriver {
       );
       return;
     }
+    if (envelope.type === "session.status") {
+      const retry = parseOpencodeStatusRetry(event);
+      if (retry) {
+        if (this.ownerTurnOf(retry.sessionID) !== turnId) return;
+        this.emit({
+          type: "turn.retry",
+          turnId,
+          attempt: retry.attempt,
+          message: retry.message,
+          retryAt: retry.retryAt,
+          ...(retry.detail ? { detail: retry.detail } : {}),
+          ...(retry.link ? { link: retry.link } : {})
+        });
+        traceHarnessCall({
+          harness: "opencode",
+          operation: "opencode.turnRetry",
+          turnId,
+          ok: true,
+          extra: { attempt: retry.attempt, retryAt: retry.retryAt, message: retry.message }
+        });
+        return;
+      }
+    }
+    if (envelope.type === "session.error") {
+      const parsed = parseOpencodeSessionError(event);
+      if (!parsed || parsed.name === "ContextOverflowError") return;
+      const known = this.sessionIds.get(turnId);
+      if (!known || parsed.sessionID !== known) return;
+      const meta = this.turnMeta.get(turnId);
+      this.failTurn(turnId, meta?.localSessionId ?? "", known, new Error(parsed.message));
+      return;
+    }
     if (envelope.type === "session.idle" || envelope.type === "session.status") {
       if (envelope.type === "session.status" && !isIdleStatus(event)) return;
       const sid = sessionIdOf(event);
@@ -1036,6 +1068,7 @@ export class OpencodeDriver implements CliDriver {
     let inputTokens = 0;
     let outputTokens = 0;
     let costUsd = 0;
+    let errorText = "";
     const resultPath = `/session/${encodeURIComponent(taken.serverSessionId)}/message`;
     const loadResult = (port: number, auth: string): Promise<Response> =>
       opencodeFetch(`http://127.0.0.1:${port}${resultPath}`, {
@@ -1070,6 +1103,7 @@ export class OpencodeDriver implements CliDriver {
       inputTokens = summary.inputTokens;
       outputTokens = summary.outputTokens;
       costUsd = summary.costUsd;
+      errorText = summary.errorText;
     } catch (err) {
       traceHarnessCall({
         harness: "opencode",
@@ -1087,12 +1121,12 @@ export class OpencodeDriver implements CliDriver {
       turnId,
       sessionId: taken.localSessionId,
       resumeCursor: taken.serverSessionId,
-      resultText: text,
+      resultText: errorText || text,
       inputTokens,
       outputTokens,
       costUsd,
       numTurns: 1,
-      isError: false,
+      isError: errorText !== "",
       backgroundTasks: 0
     });
     traceHarnessCall({

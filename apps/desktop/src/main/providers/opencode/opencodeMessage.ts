@@ -62,6 +62,7 @@ export interface OpencodeTurnMessage {
     cache?: { read?: number; write?: number };
   };
   text: string;
+  error?: string;
 }
 
 export interface OpencodeTurnSummary {
@@ -69,6 +70,7 @@ export interface OpencodeTurnSummary {
   inputTokens: number;
   outputTokens: number;
   costUsd: number;
+  errorText: string;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -78,6 +80,16 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 function asNumber(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+export function errorMessageOf(error: unknown): string {
+  if (typeof error === "string") return error.trim();
+  const record = asRecord(error);
+  if (!record) return "";
+  const data = asRecord(record["data"]);
+  const message = typeof data?.["message"] === "string" ? data["message"].trim() : "";
+  if (message) return message;
+  return typeof record["name"] === "string" ? record["name"] : "";
 }
 
 export function turnMessagesOf(payload: unknown): OpencodeTurnMessage[] {
@@ -93,6 +105,7 @@ export function turnMessagesOf(payload: unknown): OpencodeTurnMessage[] {
     const role = typeof info["role"] === "string" ? info["role"] : "";
     const tokens = asRecord(info["tokens"]);
     const cache = asRecord(tokens?.["cache"]);
+    const error = errorMessageOf(info["error"]);
     const texts: string[] = [];
     const parts = Array.isArray(msg?.["parts"]) ? (msg?.["parts"] as unknown[]) : [];
     for (const partEntry of parts) {
@@ -113,7 +126,8 @@ export function turnMessagesOf(payload: unknown): OpencodeTurnMessage[] {
             cache: cache ? { read: asNumber(cache["read"]), write: asNumber(cache["write"]) } : undefined
           }
         : undefined,
-      text: texts.join("\n")
+      text: texts.join("\n"),
+      ...(error ? { error } : {})
     });
   }
   return out;
@@ -155,12 +169,13 @@ export function runEnded(rawMessages: unknown, scopeIds?: Set<string>): boolean 
 export function summarizeOpencodeTurn(messages: OpencodeTurnMessage[], beforeIds: Set<string> | null): OpencodeTurnSummary {
   const fresh = beforeIds === null ? [] : messages.filter((m) => !beforeIds.has(m.id));
   const scoped = beforeIds === null ? [] : fresh.filter((m) => m.role === "assistant");
-  const summary: OpencodeTurnSummary = { text: "", inputTokens: 0, outputTokens: 0, costUsd: 0 };
+  const summary: OpencodeTurnSummary = { text: "", inputTokens: 0, outputTokens: 0, costUsd: 0, errorText: "" };
   for (const m of scoped) {
     if (m.text) summary.text += (summary.text ? "\n" : "") + m.text;
     summary.inputTokens += (m.tokens?.input ?? 0) + (m.tokens?.cache?.read ?? 0) + (m.tokens?.cache?.write ?? 0);
     summary.outputTokens += (m.tokens?.output ?? 0) + (m.tokens?.reasoning ?? 0);
     summary.costUsd += m.cost ?? 0;
+    if (m.error) summary.errorText = m.error;
   }
   return summary;
 }

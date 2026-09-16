@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
 import {
   opencodeSessionParentId,
+  parseOpencodeSessionError,
   parseOpencodeSessionParent,
+  parseOpencodeStatusRetry,
   parseOpencodeTodosUpdated,
   toolResultFromState
 } from "./opencodeEvents.js";
@@ -126,5 +128,96 @@ describe("opencodeSessionParentId", () => {
     expect(opencodeSessionParentId({ id: "ses_root" })).toBeNull();
     expect(opencodeSessionParentId(null)).toBeNull();
     expect(opencodeSessionParentId({ data: [] })).toBeNull();
+  });
+});
+
+describe("parseOpencodeStatusRetry", () => {
+  it("parses a retry status with its upsell action", () => {
+    expect(
+      parseOpencodeStatusRetry({
+        type: "session.status",
+        properties: {
+          sessionID: "ses_1",
+          status: {
+            type: "retry",
+            attempt: 1,
+            message: "Free usage exceeded, subscribe to Go",
+            next: 1789603191837,
+            action: {
+              reason: "free_tier_limit",
+              provider: "opencode",
+              title: "Free limit reached",
+              message: "Subscribe to OpenCode Go for reliable access to the best open-source models for $10/month.",
+              label: "subscribe",
+              link: "https://opencode.ai/go"
+            }
+          }
+        }
+      })
+    ).toEqual({
+      sessionID: "ses_1",
+      attempt: 1,
+      message: "Free usage exceeded, subscribe to Go",
+      detail: "Subscribe to OpenCode Go for reliable access to the best open-source models for $10/month.",
+      retryAt: 1789603191837,
+      link: "https://opencode.ai/go"
+    });
+  });
+
+  it("parses a bare retry status without action metadata", () => {
+    expect(
+      parseOpencodeStatusRetry({
+        type: "session.status",
+        properties: { sessionID: "ses_1", status: { type: "retry", attempt: 2, message: "Provider is overloaded", next: 5 } }
+      })
+    ).toEqual({ sessionID: "ses_1", attempt: 2, message: "Provider is overloaded", retryAt: 5 });
+  });
+
+  it("returns null for idle/busy statuses, other events and malformed payloads", () => {
+    expect(
+      parseOpencodeStatusRetry({ type: "session.status", properties: { sessionID: "ses_1", status: { type: "idle" } } })
+    ).toBeNull();
+    expect(
+      parseOpencodeStatusRetry({ type: "session.status", properties: { sessionID: "ses_1", status: { type: "busy" } } })
+    ).toBeNull();
+    expect(
+      parseOpencodeStatusRetry({ type: "session.idle", properties: { sessionID: "ses_1" } })
+    ).toBeNull();
+    expect(
+      parseOpencodeStatusRetry({ type: "session.status", properties: { status: { type: "retry", message: "x" } } })
+    ).toBeNull();
+    expect(
+      parseOpencodeStatusRetry({ type: "session.status", properties: { sessionID: "ses_1", status: { type: "retry" } } })
+    ).toBeNull();
+    expect(parseOpencodeStatusRetry(null)).toBeNull();
+  });
+});
+
+describe("parseOpencodeSessionError", () => {
+  it("reads the message from the nested error data", () => {
+    expect(
+      parseOpencodeSessionError({
+        type: "session.error",
+        properties: { sessionID: "ses_1", error: { name: "UnknownError", data: { message: "Model not found: opencode/x." } } }
+      })
+    ).toEqual({ sessionID: "ses_1", name: "UnknownError", message: "Model not found: opencode/x." });
+  });
+
+  it("falls back to the error name when data has no message", () => {
+    expect(
+      parseOpencodeSessionError({
+        type: "session.error",
+        properties: { sessionID: "ses_1", error: { name: "AbortedError", data: {} } }
+      })
+    ).toEqual({ sessionID: "ses_1", name: "AbortedError", message: "AbortedError" });
+  });
+
+  it("returns null for other events and malformed payloads", () => {
+    expect(
+      parseOpencodeSessionError({ type: "session.status", properties: { sessionID: "ses_1", error: { name: "x" } } })
+    ).toBeNull();
+    expect(parseOpencodeSessionError({ type: "session.error", properties: { error: { name: "x" } } })).toBeNull();
+    expect(parseOpencodeSessionError({ type: "session.error", properties: { sessionID: "ses_1" } })).toBeNull();
+    expect(parseOpencodeSessionError(null)).toBeNull();
   });
 });

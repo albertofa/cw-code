@@ -87,3 +87,51 @@ export function opencodeSessionParentId(payload: unknown): string | null {
   }
   return null;
 }
+
+export interface OpencodeRetryStatus {
+  sessionID: string;
+  attempt: number;
+  message: string;
+  detail?: string;
+  retryAt: number;
+  link?: string;
+}
+
+export function parseOpencodeStatusRetry(event: unknown): OpencodeRetryStatus | null {
+  const args = asRecord(event);
+  if (!args || args["type"] !== "session.status") return null;
+  const props = asRecord(args["properties"]) ?? asRecord(args["data"]);
+  const status = asRecord(props?.["status"]);
+  if (!props || !status || status["type"] !== "retry") return null;
+  const sessionID = asString(props["sessionID"]);
+  const message = asString(status["message"]);
+  if (!sessionID || !message) return null;
+  const action = asRecord(status["action"]);
+  const attempt = typeof status["attempt"] === "number" && status["attempt"] > 0 ? Math.floor(status["attempt"]) : 0;
+  const next = status["next"];
+  const retryAt = typeof next === "number" && Number.isFinite(next) ? next : 0;
+  const detail = asString(action?.["message"]);
+  const link = asString(action?.["link"]);
+  return {
+    sessionID,
+    attempt,
+    message,
+    retryAt,
+    ...(detail ? { detail } : {}),
+    ...(link ? { link } : {})
+  };
+}
+
+export function parseOpencodeSessionError(event: unknown): { sessionID: string; name: string; message: string } | null {
+  const args = asRecord(event);
+  if (!args || args["type"] !== "session.error") return null;
+  const props = asRecord(args["properties"]) ?? asRecord(args["data"]);
+  const error = asRecord(props?.["error"]);
+  if (!props || !error) return null;
+  const sessionID = asString(props["sessionID"]);
+  const name = asString(error["name"]);
+  const data = asRecord(error["data"]);
+  const message = asString(data?.["message"]) || name;
+  if (!sessionID || !message) return null;
+  return { sessionID, name, message };
+}

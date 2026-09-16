@@ -19,7 +19,7 @@ import type {
   TurnEvent
 } from "../cw.js";
 import { appendAssistantText, appendReasoningText, closeReasoning, upsertToolCall } from "../components/chatMessages.js";
-import { mergeToolPairs } from "../components/toolSummaries.js";
+import { formatDuration, mergeToolPairs } from "../components/toolSummaries.js";
 import { expiredHoldingIds } from "../components/workingSet.js";
 import { useNotifs } from "../components/Notifications.js";
 
@@ -50,6 +50,7 @@ export interface ChatMessage extends HistoryMessage {
   toolCompletedAt?: number;
   reasoningStartedAt?: number;
   retryable?: boolean;
+  severity?: "warning";
 }
 
 export const DEFAULT_COMPOSER: Required<Pick<ComposerPrefs, "effort" | "permissionMode">> & ComposerPrefs = {
@@ -1063,6 +1064,26 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({
         todosBySession: { ...get().todosBySession, [sessionId]: event.todos }
       });
+    } else if (event.type === "turn.retry") {
+      const id = `${event.turnId}-retry`;
+      const now = Date.now();
+      const attempt = event.attempt > 0 ? ` (attempt ${event.attempt})` : "";
+      const wait = event.retryAt > now ? ` in ${formatDuration(event.retryAt - now)}` : "";
+      const lines = [`Retrying${wait}${attempt}: ${event.message}`];
+      if (event.detail) lines.push(event.detail);
+      if (event.link) lines.push(event.link);
+      const text = lines.join("\n");
+      const idx = messages.findIndex((m) => m.id === id);
+      const notice: ChatMessage = { id, role: "system", text, turnId: event.turnId, severity: "warning" };
+      set({
+        messagesBySession: {
+          ...get().messagesBySession,
+          [sessionId]:
+            idx >= 0
+              ? [...messages.slice(0, idx), { ...messages[idx], text }, ...messages.slice(idx + 1)]
+              : [...messages, notice]
+        }
+      });
     } else if (event.type === "turn.done") {
       const backgroundTasks = event.backgroundTasks ?? 0;
       const current = get().busyTurns[sessionId] === event.turnId && backgroundTasks === 0;
@@ -1077,7 +1098,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       delete approvals[sessionId];
       const questions = { ...get().pendingQuestions };
       delete questions[sessionId];
-      let turnMessages = finalizeTurnTools(messages, event.turnId, backgroundTasks);
+      let turnMessages = finalizeTurnTools(messages, event.turnId, backgroundTasks).filter(
+        (m) => m.id !== `${event.turnId}-retry`
+      );
       if (event.isError && !turnMessages.some((m) => m.id === `${event.turnId}-e`)) {
         turnMessages = [
           ...turnMessages,
@@ -1147,7 +1170,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         messagesBySession: {
           ...get().messagesBySession,
           [sessionId]: [
-            ...finalizeTurnTools(messages, event.turnId),
+            ...finalizeTurnTools(messages, event.turnId).filter((m) => m.id !== `${event.turnId}-retry`),
             {
               id: `${event.turnId}-e`,
               role: "system",

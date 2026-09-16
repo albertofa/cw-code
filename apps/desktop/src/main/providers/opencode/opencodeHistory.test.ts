@@ -72,6 +72,39 @@ describe("mapOpencodeMessages", () => {
     expect(out).toEqual([]);
   });
 
+  it("surfaces assistant errors as system messages", () => {
+    const out = mapOpencodeMessages([
+      {
+        info: {
+          id: "m20",
+          role: "assistant",
+          time: { created: 100, completed: 200 },
+          error: { name: "APIError", data: { message: "Free usage exceeded, subscribe to Go" } }
+        },
+        parts: []
+      }
+    ]);
+    expect(out).toEqual([
+      {
+        id: "m20-e",
+        role: "system",
+        text: "Free usage exceeded, subscribe to Go",
+        turnId: "m20",
+        isError: true,
+        timestamp: 200
+      }
+    ]);
+  });
+
+  it("skips aborted assistant errors", () => {
+    for (const name of ["AbortedError", "MessageAbortedError"]) {
+      const out = mapOpencodeMessages([
+        { info: { id: "m21", role: "assistant", error: { name, data: { message: "Aborted" } } }, parts: [] }
+      ]);
+      expect(out).toEqual([]);
+    }
+  });
+
   it("maps reasoning parts with their measured duration", () => {
     const out = mapOpencodeMessages([
       {

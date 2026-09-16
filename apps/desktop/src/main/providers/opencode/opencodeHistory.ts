@@ -1,5 +1,6 @@
 import type { HistoryMessage } from "@cw-code/contracts";
 import { todosFromToolCall } from "../todos.js";
+import { errorMessageOf } from "./opencodeMessage.js";
 
 interface ServerPart {
   id?: string;
@@ -16,8 +17,16 @@ interface ServerPart {
 }
 
 interface ServerMessage {
-  info?: { id?: string; role?: string; time?: { created?: number; completed?: number } };
+  info?: { id?: string; role?: string; time?: { created?: number; completed?: number }; error?: unknown };
   parts?: ServerPart[];
+}
+
+const ABORTED_ERROR_NAMES = new Set(["AbortedError", "MessageAbortedError"]);
+
+function isAbortedError(error: unknown): boolean {
+  if (error === null || typeof error !== "object" || Array.isArray(error)) return false;
+  const name = (error as { name?: unknown }).name;
+  return typeof name === "string" && ABORTED_ERROR_NAMES.has(name);
 }
 
 function stamp(value: unknown): { timestamp?: number } {
@@ -93,6 +102,17 @@ export function mapOpencodeMessages(messages: ServerMessage[], limit = 300): His
           ...partStamp
         });
       }
+    }
+    const errorText = role === "assistant" && !isAbortedError(msg.info?.error) ? errorMessageOf(msg.info?.error) : "";
+    if (errorText) {
+      out.push({
+        id: `${turnId}-e`,
+        role: "system",
+        text: errorText,
+        turnId,
+        isError: true,
+        ...stamp(completed ?? created)
+      });
     }
   }
   return out.slice(-limit);

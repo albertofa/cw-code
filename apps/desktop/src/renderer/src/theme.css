@@ -1646,6 +1646,12 @@ body.session-dragging * {
   cursor: pointer;
 }
 
+.msg-system.msg-warning {
+  color: var(--warning);
+  border-color: rgba(232, 180, 79, 0.35);
+  background: rgba(232, 180, 79, 0.08);
+}
+
 .msg-system .msg-retry:hover {
   background: rgba(255, 107, 97, 0.22);
 }

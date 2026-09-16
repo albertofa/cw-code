@@ -199,6 +199,15 @@ export type TurnEvent =
       backgroundTasks: number;
     }
   | { type: "turn.error"; turnId: string; message: string; resumeCursor?: string; retryable?: boolean }
+  | {
+      type: "turn.retry";
+      turnId: string;
+      attempt: number;
+      message: string;
+      detail?: string;
+      retryAt: number;
+      link?: string;
+    }
   | { type: "session.branch.updated"; turnId: string; sessionId: string; branch: string };
 
 export type PermissionMode = "auto" | "acceptEdits" | "bypassPermissions" | "manual";

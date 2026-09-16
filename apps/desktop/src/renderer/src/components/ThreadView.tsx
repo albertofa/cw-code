@@ -219,7 +219,7 @@ export function ThreadView() {
     }
     if (m.role === "system") {
       return (
-        <div key={m.id} className="msg-system">
+        <div key={m.id} className={`msg-system${m.severity === "warning" ? " msg-warning" : ""}`}>
           <TriangleAlert size={14} aria-hidden="true" />
           <span>{m.text}</span>
           {m.retryable && (
