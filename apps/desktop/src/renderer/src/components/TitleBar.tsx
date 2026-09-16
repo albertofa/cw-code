@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { ChevronDown, ChevronUp, Copy, Minus, Square, X } from "lucide-react";
 import { useAppStore } from "../stores/appStore.js";
 import { useNotifs } from "./Notifications.js";
+import appIcon from "../assets/console-c.svg";
 
 function DebugMenu() {
   const [open, setOpen] = useState(false);
@@ -76,7 +77,7 @@ export function TitleBar() {
   return (
     <div className="titlebar" onDoubleClick={() => window.cw.toggleMaximizeWindow()}>
       <div className="titlebar-brand">
-        <span className="titlebar-logo">CW</span>
+        <img className="titlebar-logo" src={appIcon} alt="" aria-hidden="true" draggable={false} />
         <span>cw-code</span>
       </div>
       <DebugMenu />
@@ -90,7 +91,7 @@ export function TitleBar() {
             {project.name} <span className="sep">/</span> <strong>New thread</strong>
           </span>
         ) : (
-          <span>Rider Violet Workbench</span>
+          <span className="titlebar-tagline">Desktop workspace for coding CLIs</span>
         )}
       </div>
       <div className="win-controls" onDoubleClick={(e) => e.stopPropagation()}>

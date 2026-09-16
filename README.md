@@ -1,17 +1,36 @@
+<picture>
+  <source media="(prefers-color-scheme: dark)" srcset="design/brand/assets/lockup-primary.svg">
+  <img src="design/brand/assets/lockup-dark.svg" alt="cw-code" width="280">
+</picture>
+
 # cw-code
 
-cw-code is an open-source Windows desktop shell for working with local AI coding
-CLIs. Every prompt is executed by the installed CLI, so the CLI remains the
-source of truth for authentication, subscriptions, sessions, and model access.
-The application does not make SDK or hosted AI API calls for inference.
+A desktop workspace for Claude Code, OpenCode, and Codex.
+
+Run sessions across projects, inspect files and Git diffs, and open real CLI
+terminals. cw-code uses your installed CLIs and their authentication. Each CLI
+handles inference, model access, and session continuation.
+
+**Windows · Open source · Alpha**
+
+[Releases](https://github.com/albertofa/cw-code/releases) ·
+[Report an issue](https://github.com/albertofa/cw-code/issues) ·
+[Contributing](CONTRIBUTING.md)
+
+There is no published installer release yet. Build from source using the
+instructions below.
 
 ## Features
 
-- Projects with multiple isolated sessions in one window.
-- Chat history with tool-call cards, usage, and cost information.
-- File editor, working-tree Git diff, and an embedded terminal.
-- Headless turns plus a PTY fallback for interactive CLI features.
-- Claude Code, OpenCode, and Codex drivers behind one application interface.
+- Run isolated sessions across projects in one window.
+- Read conversations, tool output, and available usage/cost information.
+- Inspect files and Git diffs.
+- Open real CLI terminals for interactive features.
+- Resume sessions using the CLI's saved context.
+
+The app runs the installed CLIs rather than making SDK or hosted AI API calls
+for inference. Provider usage limits and charges depend on your CLI and account
+configuration.
 
 ## Requirements
 
@@ -82,6 +101,13 @@ Their names and products remain the property of their respective owners.
 - History rendering is best-effort and may omit thinking blocks or provider
   bookkeeping when provider formats change.
 - The packaged target is Windows; other platforms may require adjustments.
+
+## Branding and website
+
+The selected identity is **Console C** with a violet app icon and an Inter
+wordmark. See the [brand suite](design/brand/README.md),
+[visual brand sheet](design/brand/brand-sheet.png), and
+[landing-page plan](design/brand/LANDING-PAGE.md).
 
 ## Contributing
 
