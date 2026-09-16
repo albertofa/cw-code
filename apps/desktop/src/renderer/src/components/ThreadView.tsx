@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, Sparkles, TriangleAlert } from "lucide-react";
 import { useAppStore, type ChatMessage } from "../stores/appStore.js";
 import { Notifications } from "./Notifications.js";
-import { Md } from "./Markdown.js";
+import { Md, StreamingMd } from "./Markdown.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { Composer } from "./Composer.js";
 import { GitPanelBar } from "./GitPanelBar.js";
@@ -243,9 +243,7 @@ export function ThreadView() {
     if (m.id === streamingId) {
       return (
         <div key={m.id} className="msg-assistant">
-          <div className="md md-streaming" style={{ whiteSpace: "pre-wrap" }}>
-            {m.text}
-          </div>
+          <StreamingMd text={m.text} onOpenFile={onOpenPreview} />
         </div>
       );
     }

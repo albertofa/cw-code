@@ -5,7 +5,8 @@ import {
   isLocalPreviewLink,
   isPathInsideBase,
   isPreviewablePath,
-  resolvePreviewPaths
+  resolvePreviewPaths,
+  sanitizeStreamingMarkdown
 } from "./Markdown.js";
 
 describe("isPreviewablePath", () => {
@@ -90,5 +91,26 @@ describe("isPathInsideBase / isAbsolutePath", () => {
     expect(isAbsolutePath("C:/x/a.md")).toBe(true);
     expect(isAbsolutePath("/x/a.md")).toBe(true);
     expect(isAbsolutePath("rel/a.md")).toBe(false);
+  });
+});
+
+describe("sanitizeStreamingMarkdown", () => {
+  it("returns closed fence unchanged", () => {
+    const text = "before\n```ts\nconst x = 1;\n```\nafter";
+    expect(sanitizeStreamingMarkdown(text)).toBe(text);
+  });
+
+  it("closes unclosed fence", () => {
+    expect(sanitizeStreamingMarkdown("before\n```ts\nconst x = 1;")).toBe("before\n```ts\nconst x = 1;\n```");
+  });
+
+  it("returns text without fence unchanged", () => {
+    const text = "just **some** text";
+    expect(sanitizeStreamingMarkdown(text)).toBe(text);
+  });
+
+  it("leaves unclosed inline code alone", () => {
+    const text = "use `inline code here";
+    expect(sanitizeStreamingMarkdown(text)).toBe(text);
   });
 });

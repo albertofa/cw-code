@@ -137,6 +137,12 @@ function MdTable({ children }: { children?: ReactNode }) {
   );
 }
 
+export function sanitizeStreamingMarkdown(text: string): string {
+  const fences = text.split("\n").filter((line) => line.trimStart().startsWith("```")).length;
+  if (fences % 2 === 1) return `${text}\n\`\`\``;
+  return text;
+}
+
 export const Md = memo(function Md({ text, onOpenFile }: { text: string; onOpenFile?: (path: string) => void }) {
   const components = useMemo<Components>(
     () => ({
@@ -150,6 +156,31 @@ export const Md = memo(function Md({ text, onOpenFile }: { text: string; onOpenF
     <div className="md">
       <Markdown remarkPlugins={[remarkGfm]} components={components}>
         {text}
+      </Markdown>
+    </div>
+  );
+});
+
+export const StreamingMd = memo(function StreamingMd({
+  text,
+  onOpenFile
+}: {
+  text: string;
+  onOpenFile?: (path: string) => void;
+}) {
+  const components = useMemo<Components>(
+    () => ({
+      pre: Pre,
+      table: MdTable,
+      a: (props) => <MdLink {...props} onOpenFile={onOpenFile} />
+    }),
+    [onOpenFile]
+  );
+  const sanitized = useMemo(() => sanitizeStreamingMarkdown(text), [text]);
+  return (
+    <div className="md md-streaming">
+      <Markdown remarkPlugins={[remarkGfm]} components={components}>
+        {sanitized}
       </Markdown>
     </div>
   );
