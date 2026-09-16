@@ -5944,8 +5944,8 @@ button.gitbar-pr:hover {
   background: transparent;
   border: 0;
   border-radius: var(--r-md);
-  width: 32px;
-  height: 32px;
+  width: 36px;
+  height: 36px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -5975,7 +5975,8 @@ button.gitbar-pr:hover {
   }
 }
 
-.skill-icon-off .driver-icon {
+.skill-icon-off .driver-icon,
+.skill-htoggle-lg:not(.on) .driver-icon {
   color: var(--faint);
 }
 
@@ -6055,7 +6056,7 @@ button.gitbar-pr:hover {
   font-size: 12px;
   font-weight: 600;
   padding: 5px 13px;
-  min-height: 32px;
+  min-height: 36px;
   border-radius: 6px;
   cursor: pointer;
 }
@@ -6200,6 +6201,11 @@ button.gitbar-pr:hover {
 
 .prop-remove {
   flex: none;
+  display: inline-flex;
+  min-width: 36px;
+  min-height: 36px;
+  align-items: center;
+  justify-content: center;
 }
 
 .add-prop {

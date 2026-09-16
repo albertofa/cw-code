@@ -68,6 +68,7 @@ function SkillRow({ meta, selected, onPick }: { meta: SkillMeta; selected: boole
                   e.stopPropagation();
                   void toggle(meta.name, id, !on);
                 }}
+                onKeyDown={(e) => e.stopPropagation()}
               >
                 <span className={on ? undefined : "skill-icon-off"}>
                   <DriverIcon driver={id as DriverName} size={15} />
@@ -111,9 +112,11 @@ function SkillEditor({ tab, setTab }: { tab: EditorTab; setTab: (tab: EditorTab)
   const renameExtra = (oldKey: string, newKey: string) => {
     if (newKey === oldKey) return;
     if (newKey !== "" && newKey in extras) {
-      const next = { ...extras };
-      delete next[oldKey];
-      setDraft({ frontmatter: next });
+      useNotifs.getState().push({
+        kind: "error",
+        title: `Could not rename property '${oldKey || "(new)"}'`,
+        message: `Property '${newKey}' already exists.`
+      });
       return;
     }
     setDraft({
@@ -207,7 +210,9 @@ function SkillEditor({ tab, setTab }: { tab: EditorTab; setTab: (tab: EditorTab)
               aria-pressed={on}
               onClick={() => setDraft({ enabled: { ...draft.enabled, [id]: !on } })}
             >
-              <DriverIcon driver={id as DriverName} size={20} />
+              <span className={on ? undefined : "skill-icon-off"}>
+                <DriverIcon driver={id as DriverName} size={20} />
+              </span>
               {label}
             </button>
           );
