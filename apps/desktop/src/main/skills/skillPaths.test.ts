@@ -9,8 +9,7 @@ import {
   getScanRoots,
   harnessSkillRoot,
   isValidSkillName,
-  resolveSkillDir,
-  selectCodexRoot
+  resolveSkillDir
 } from "./skillPaths.js";
 
 describe("isValidSkillName", () => {
@@ -59,14 +58,10 @@ describe("scan roots", () => {
     expect(roots[3].dir).toBe(join("/home/tester", ".config", "opencode", "skills"));
   });
 
-  it("prefers ~/.agents/skills for the codex harness", () => {
+  it("prefers ~/.agents/skills for codex writes and still scans the legacy root", () => {
     const home = "/home/tester";
     expect(harnessSkillRoot("codex", home)).toBe(codexSkillRoots(home).current);
-    expect(selectCodexRoot(home, () => true)).toBe(join(home, ".agents", "skills"));
-    expect(selectCodexRoot(home, (p) => p === join(home, ".codex", "skills"))).toBe(
-      join(home, ".codex", "skills")
-    );
-    expect(selectCodexRoot(home, () => false)).toBe(join(home, ".agents", "skills"));
+    expect(codexSkillRoots(home).legacy).toBe(join(home, ".codex", "skills"));
   });
 });
 

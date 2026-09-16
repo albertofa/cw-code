@@ -83,6 +83,28 @@ describe("SkillsStore", () => {
     expect(existsSync(join(home, ".config", "opencode", "skills", "fresh-skill"))).toBe(false);
   });
 
+  it("prunes newly-disabled harness copies on save", async () => {
+    const home = makeFixtureHome();
+    const { store, userData } = makeStore(home);
+    await store.importSkills();
+    await store.setSkillEnabled("claude-only", "opencode", true);
+    const opencodeDir = join(home, ".config", "opencode", "skills", "claude-only");
+    const claudeFile = join(home, ".claude", "skills", "claude-only", "SKILL.md");
+    expect(existsSync(join(opencodeDir, "SKILL.md"))).toBe(true);
+
+    const detail = await store.saveSkill({
+      name: "claude-only",
+      description: "Updated description",
+      body: "Updated body.\n",
+      enabled: { claude: true, opencode: false, codex: false }
+    });
+    expect(detail.description).toBe("Updated description");
+    expect(detail.enabled).toEqual({ claude: true, opencode: false, codex: false });
+    expect(existsSync(opencodeDir)).toBe(false);
+    expect(readFileSync(claudeFile, "utf8")).toContain("Updated body.");
+    expect(readFileSync(join(userData, "skills", "claude-only", "SKILL.md"), "utf8")).toContain("Updated body.");
+  });
+
   it("dedupes a skill present in both claude and opencode roots with first-writer winning", async () => {
     const home = makeFixtureHome();
     const dupDir = join(home, ".config", "opencode", "skills", "claude-only");

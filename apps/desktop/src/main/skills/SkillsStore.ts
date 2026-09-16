@@ -136,6 +136,12 @@ export class SkillsStore {
     return current === legacy ? [current] : [current, legacy];
   }
 
+  private removeHarnessCopy(harness: HarnessId, name: string): void {
+    for (const root of this.harnessSearchDirs(harness)) {
+      rmSync(resolveSkillDir(root, name), { recursive: true, force: true });
+    }
+  }
+
   private harnessPresent(harness: HarnessId, name: string): boolean {
     try {
       return this.harnessSearchDirs(harness).some((root) =>
@@ -246,11 +252,13 @@ export class SkillsStore {
     writeFileSync(tmp, serializeSkillFile({ name, description }, body), "utf8");
     renameSync(tmp, skillFileForDir(dir));
     const entry = this.ensureEntry(name);
+    const previous = sanitizeEnabled(entry.enabled);
     entry.enabled = enabled;
     entry.updatedAt = Date.now();
     this.persist();
     for (const harness of HARNESSES) {
       if (enabled[harness]) copySkillDir(dir, resolveSkillDir(this.harnessRoot(harness), name));
+      else if (previous[harness]) this.removeHarnessCopy(harness, name);
     }
     return this.getSkill(name);
   }
@@ -265,9 +273,7 @@ export class SkillsStore {
       if (!existsSync(skillFileForDir(dir))) throw new Error(`cannot enable ${name}: canonical copy is missing`);
       copySkillDir(dir, resolveSkillDir(this.harnessRoot(harness), name));
     } else {
-      for (const root of this.harnessSearchDirs(harness)) {
-        rmSync(resolveSkillDir(root, name), { recursive: true, force: true });
-      }
+      this.removeHarnessCopy(harness, name);
     }
     const entry = this.ensureEntry(name);
     entry.enabled[harness] = on;

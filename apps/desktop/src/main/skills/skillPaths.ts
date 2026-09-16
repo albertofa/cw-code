@@ -1,4 +1,3 @@
-import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
 import type { HarnessId } from "@cw-code/contracts";
@@ -51,16 +50,6 @@ export function harnessSkillRoot(harness: HarnessId, homeDir: string): string {
 export function codexSkillRoots(homeDir: string): { current: string; legacy: string } {
   const home = normalizeStoredDir(homeDir);
   return { current: join(home, ".agents", "skills"), legacy: join(home, ".codex", "skills") };
-}
-
-export function selectCodexRoot(
-  homeDir: string,
-  exists: (p: string) => boolean = existsSync
-): string {
-  const { current, legacy } = codexSkillRoots(homeDir);
-  if (exists(current)) return current;
-  if (exists(legacy)) return legacy;
-  return current;
 }
 
 export function getScanRoots(homeDir: string): HarnessScanRoot[] {
