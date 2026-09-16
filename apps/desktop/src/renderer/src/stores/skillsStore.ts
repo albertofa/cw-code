@@ -115,6 +115,8 @@ export const useSkillsStore = create<SkillsState>((set, get) => ({
     const key = toggleKey(name, harness);
     const prevItems = get().items;
     const prevDetail = get().detail;
+    const prevDraft = get().draft;
+    const prevDirty = get().dirty;
     const prev = prevItems.find((item) => item.name === name);
     if (!prev || prev.enabled[harness] === on) return;
     set({
@@ -141,13 +143,19 @@ export const useSkillsStore = create<SkillsState>((set, get) => ({
         items: upsertItem(get().items, updated),
         ...(get().detail && get().detail?.name === name
           ? { detail: { ...get().detail as SkillDetail, enabled: { ...updated.enabled } } }
+          : {}),
+        ...(get().draft && get().draft?.name === name
+          ? {
+              draft: { ...get().draft as SkillSaveInput, enabled: { ...updated.enabled } },
+              dirty: get().dirty
+            }
           : {})
       });
     } catch (err) {
       const message = (err as Error).message;
       const pending = { ...get().pending };
       delete pending[key];
-      set({ pending, items: prevItems, error: message, ...(prevDetail && prevDetail.name === name ? { detail: prevDetail } : {}) });
+      set({ pending, items: prevItems, draft: prevDraft, dirty: prevDirty, error: message, ...(prevDetail && prevDetail.name === name ? { detail: prevDetail } : {}) });
       useNotifs.getState().push({ kind: "error", title: `Could not ${on ? "enable" : "disable"} '${name}'`, message });
     }
   },
