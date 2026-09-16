@@ -134,7 +134,7 @@ export function ComposerView({
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
 
   useEffect(() => {
-    if (busy) return;
+    if (backendRef.current.busy) return;
     const frame = requestAnimationFrame(() => {
       try {
         composerRef.current?.focus({ preventScroll: true });
@@ -142,7 +142,7 @@ export function ComposerView({
       }
     });
     return () => cancelAnimationFrame(frame);
-  }, [resetKey, busy]);
+  }, [resetKey]);
 
   useEffect(() => {
     setAttachments([]);

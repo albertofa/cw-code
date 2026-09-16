@@ -5,7 +5,6 @@ import type { CreateSessionOptions, CreateWorkspaceMode, DriverName, GitBranchIn
 import { worktreeCandidates } from "./worktreeCandidates.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { ComposerView, type ComposerBackend } from "./ComposerView.js";
-import { getLastModel, setLastModel } from "./lastModel.js";
 import { MenuSelect } from "./MenuSelect.js";
 
 const HARNESS: Array<{ id: DriverName; label: string; blurb: string }> = [
@@ -116,9 +115,7 @@ export function NewThread({
 
   const handleDriverChange = (next: DriverName) => {
     if (next === driver) return;
-    if (prefs.model) setLastModel(driver, prefs.model);
-    const restored = getLastModel(next);
-    store.setPendingPrefs({ model: restored ?? undefined });
+    store.setPendingPrefs({ model: undefined });
     onDriverChange(next);
   };
 
