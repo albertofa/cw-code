@@ -7,6 +7,7 @@ import type {
   HistoryMessage,
   ModelOption,
   SessionMeta,
+  SubagentToolsResult,
   ThreadEvent,
   TurnHandle,
   TurnRequest
@@ -23,12 +24,14 @@ import {
   buildFileChangeApproval,
   buildPermissionsApproval,
   buildUserInputQuestionRequest,
+  codexCollabTool,
   codexReasoningText,
   codexUserInputResult,
   mapCodexEffort,
   mapCodexHistory,
   mapCodexModel,
   mapCodexPlan,
+  mapCodexSubagentTools,
   mapCodexThread,
   mapPermissionMode,
   type CodexCommandApprovalParams,
@@ -190,6 +193,15 @@ export class CodexCliDriver implements CliDriver {
       });
       throw err;
     }
+  }
+
+  async getSubagentTools(_projectRoot: string, _resumeCursor: string, agentId: string): Promise<SubagentToolsResult> {
+    if (!agentId) return { items: [] };
+    const res = await this.client.request<ThreadReadResponse>("thread/read", {
+      threadId: agentId,
+      includeTurns: true
+    });
+    return { items: mapCodexSubagentTools(res.thread) };
   }
 
   async listModels(_cwd: string): Promise<ModelOption[]> {
@@ -631,8 +643,23 @@ export class CodexCliDriver implements CliDriver {
           name: "request_user_input",
           input: item.questions ?? null
         };
-      default:
-        return null;
+      default: {
+        const collab = codexCollabTool(item);
+        if (!collab) return null;
+        return {
+          type: "tool.call",
+          turnId,
+          toolCallId: item.id ?? `codex-collab-${collab.tool}`,
+          name: `collab:${collab.tool}`,
+          input: {
+            tool: collab.tool,
+            prompt: collab.prompt ?? "",
+            receiverThreadIds: collab.receiverThreadIds,
+            ...(collab.senderThreadId ? { senderThreadId: collab.senderThreadId } : {}),
+            ...(collab.agentsStates !== undefined ? { agentsStates: collab.agentsStates } : {})
+          }
+        };
+      }
     }
   }
 
@@ -674,8 +701,24 @@ export class CodexCliDriver implements CliDriver {
           isError
         };
       }
-      default:
-        return null;
+      default: {
+        const collab = codexCollabTool(item);
+        if (!collab) return null;
+        const isError = item.status === "failed" || item.status === "declined";
+        const target = collab.receiverThreadIds[0];
+        const output =
+          collab.agentsStates !== undefined
+            ? truncateError(JSON.stringify(collab.agentsStates), 8000)
+            : `${collab.tool}${target ? ` → ${target}` : ""}`;
+        return {
+          type: "tool.result",
+          turnId,
+          toolCallId: item.id ?? `codex-collab-${collab.tool}`,
+          output,
+          isError,
+          ...(target ? { agentId: target } : {})
+        };
+      }
     }
   }
 

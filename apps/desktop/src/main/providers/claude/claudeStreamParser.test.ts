@@ -8,7 +8,8 @@ import {
   claudeDenyResponse,
   claudeQuestionRequest,
   parseClaudeControlRequest,
-  parseClaudeSystemLine,
+  parseClaudeTaskSystemLine,
+  parseTaskNotificationUsage,
   parseStreamLine
 } from "./claudeStreamParser.js";
 
@@ -52,6 +53,30 @@ describe("parseStreamLine", () => {
     });
     expect(parseStreamLine(line, "t1", "s1", () => {})).toEqual([
       { type: "tool.call", turnId: "t1", toolCallId: "tu1", name: "Read", input: { path: "a.ts" } }
+    ]);
+  });
+
+  it("routes subagent tool calls to their parent call and drops subagent prose", () => {
+    const line = JSON.stringify({
+      type: "assistant",
+      parent_tool_use_id: "call_task",
+      message: {
+        content: [
+          { type: "text", text: "subagent narration" },
+          { type: "thinking", thinking: "subagent thought" },
+          { type: "tool_use", id: "tu_nested", name: "Bash", input: { command: "ls" } }
+        ]
+      }
+    });
+    expect(parseStreamLine(line, "t1", "s1", () => {})).toEqual([
+      {
+        type: "tool.call",
+        turnId: "t1",
+        toolCallId: "tu_nested",
+        name: "Bash",
+        input: { command: "ls" },
+        parentToolCallId: "call_task"
+      }
     ]);
   });
 
@@ -201,7 +226,7 @@ describe("parseStreamLine", () => {
   });
 });
 
-describe("parseClaudeSystemLine", () => {
+describe("parseClaudeTaskSystemLine", () => {
   it("reports live task count for background_tasks_changed", () => {
     const line = JSON.stringify({
       type: "system",
@@ -211,21 +236,108 @@ describe("parseClaudeSystemLine", () => {
         { type: "local_bash", id: "b-1" }
       ]
     });
-    expect(parseClaudeSystemLine(line)).toEqual({ liveTasks: 2 });
+    expect(parseClaudeTaskSystemLine(line)).toEqual({ kind: "tasks", liveTasks: 2 });
+  });
+
+  it("parses task_started with prompt and background flag", () => {
+    const line = JSON.stringify({
+      type: "system",
+      subtype: "task_started",
+      task_id: "a202cd0fd545a319e",
+      tool_use_id: "toolu_1",
+      description: "Review the diff",
+      subagent_type: "general-purpose",
+      is_backgrounded: true,
+      prompt: "Review PR #15"
+    });
+    expect(parseClaudeTaskSystemLine(line)).toEqual({
+      kind: "started",
+      taskId: "a202cd0fd545a319e",
+      toolUseId: "toolu_1",
+      description: "Review the diff",
+      subagentType: "general-purpose",
+      background: true,
+      prompt: "Review PR #15"
+    });
+  });
+
+  it("parses task_progress usage and last tool", () => {
+    const line = JSON.stringify({
+      type: "system",
+      subtype: "task_progress",
+      task_id: "a202cd0fd545a319e",
+      tool_use_id: "toolu_1",
+      last_tool_name: "Grep",
+      usage: { total_tokens: 24206, tool_uses: 1, duration_ms: 1925 }
+    });
+    expect(parseClaudeTaskSystemLine(line)).toEqual({
+      kind: "progress",
+      taskId: "a202cd0fd545a319e",
+      toolUseId: "toolu_1",
+      lastToolName: "Grep",
+      usage: { tokens: 24206, toolUses: 1, durationMs: 1925 }
+    });
+  });
+
+  it("parses task_updated status and end time", () => {
+    const line = JSON.stringify({
+      type: "system",
+      subtype: "task_updated",
+      task_id: "a202cd0fd545a319e",
+      patch: { status: "completed", end_time: 1789499157135 }
+    });
+    expect(parseClaudeTaskSystemLine(line)).toEqual({
+      kind: "updated",
+      taskId: "a202cd0fd545a319e",
+      status: "completed",
+      endTime: 1789499157135
+    });
+  });
+
+  it("parses task_notification status, summary and usage", () => {
+    const line = JSON.stringify({
+      type: "system",
+      subtype: "task_notification",
+      task_id: "a202cd0fd545a319e",
+      tool_use_id: "toolu_1",
+      status: "completed",
+      summary: "PROBE-AGENT-DONE",
+      usage: { total_tokens: 25500, tool_uses: 1, duration_ms: 6964 }
+    });
+    expect(parseClaudeTaskSystemLine(line)).toEqual({
+      kind: "notification",
+      taskId: "a202cd0fd545a319e",
+      toolUseId: "toolu_1",
+      status: "completed",
+      summary: "PROBE-AGENT-DONE",
+      usage: { tokens: 25500, toolUses: 1, durationMs: 6964 }
+    });
   });
 
   it("returns null for other system subtypes", () => {
     const line = JSON.stringify({ type: "system", subtype: "init", tasks: [] });
-    expect(parseClaudeSystemLine(line)).toBeNull();
+    expect(parseClaudeTaskSystemLine(line)).toBeNull();
   });
 
   it("returns null when tasks is not an array", () => {
     const line = JSON.stringify({ type: "system", subtype: "background_tasks_changed", tasks: {} });
-    expect(parseClaudeSystemLine(line)).toBeNull();
+    expect(parseClaudeTaskSystemLine(line)).toBeNull();
   });
 
   it("returns null for non-JSON input", () => {
-    expect(parseClaudeSystemLine("plain text")).toBeNull();
+    expect(parseClaudeTaskSystemLine("plain text")).toBeNull();
+  });
+});
+
+describe("parseTaskNotificationUsage", () => {
+  it("extracts subagent tokens, tool uses and duration", () => {
+    const text =
+      "<usage><subagent_tokens>136099</subagent_tokens><tool_uses>12</tool_uses><duration_ms>287602</duration_ms></usage>";
+    expect(parseTaskNotificationUsage(text)).toEqual({ tokens: 136099, toolUses: 12, durationMs: 287602 });
+  });
+
+  it("returns undefined when no usage block is present", () => {
+    expect(parseTaskNotificationUsage("no usage here")).toBeUndefined();
   });
 });
 

@@ -24,4 +24,4 @@ Fresh installation, upgrade over an existing install, taskbar appearance at mult
 - Independent selected-asset review found no material issue with geometry, documentation, or the selected direction.
 - Measured contrast: primary text on graphite 12.59:1, secondary text 8.87:1, white mark on violet 5.15:1.
 
-See [the shipping checklist](SHIP.md) and [landing-page plan](LANDING-PAGE.md) for remaining work.
+See [the shipping checklist](SHIP.md) and [landing-page plan](https://github.com/albertofa/cw-code/pull/17) for remaining work.

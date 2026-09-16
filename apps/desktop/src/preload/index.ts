@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { AppSettings, CreateSessionOptions, GitBranchInfo, GitDiffMode, GitDiffResult, GitStatus, Project, RetryConnectionResult, SessionCleanupResult, SessionMeta, SessionStatus, SourceControlHealth, WorktreePruneSummary } from "@cw-code/contracts";
+import type { AppSettings, CreateSessionOptions, GitBranchInfo, GitDiffMode, GitDiffResult, GitStatus, Project, RetryConnectionResult, SessionCleanupResult, SessionMeta, SessionStatus, SourceControlHealth, SubagentToolsResult, WorktreePruneSummary } from "@cw-code/contracts";
 
 export type PermissionMode = "auto" | "acceptEdits" | "bypassPermissions" | "manual";
 export type EffortLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
@@ -52,6 +52,7 @@ export interface CwApi {
   resolveSession(sessionId: string, status: SessionStatus, removeWorktree?: boolean, forceBranch?: boolean): Promise<SessionCleanupResult>;
   pruneStaleWorktrees(): Promise<WorktreePruneSummary>;
   getHistory(sessionId: string): Promise<unknown[]>;
+  getSubagentTools(sessionId: string, agentId: string): Promise<SubagentToolsResult>;
   activeTurns(): Promise<Array<{ sessionId: string; turnId: string; startedAt: number }>>;
   retryConnection(sessionId: string): Promise<RetryConnectionResult>;
   startTurn(sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[] }): Promise<string>;
@@ -130,6 +131,8 @@ const api: CwApi = {
     ipcRenderer.invoke("sessions.resolve", { sessionId, status, removeWorktree, forceBranch }),
   pruneStaleWorktrees: () => ipcRenderer.invoke("worktrees.prune"),
   getHistory: (sessionId: string) => ipcRenderer.invoke("sessions.history", { sessionId }),
+  getSubagentTools: (sessionId: string, agentId: string) =>
+    ipcRenderer.invoke("sessions.subagentTools", { sessionId, agentId }),
   activeTurns: () => ipcRenderer.invoke("sessions.activeTurns"),
   retryConnection: (sessionId: string) => ipcRenderer.invoke("sessions.retryConnection", { sessionId }),
   startTurn: (sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[] }) =>

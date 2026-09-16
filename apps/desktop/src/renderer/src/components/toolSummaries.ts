@@ -40,6 +40,7 @@ const TOOL_KINDS: Record<string, { verb?: string; Icon: LucideIcon }> = {
   grep: { verb: "Grep", Icon: Search },
   skill: { verb: "Skill", Icon: GraduationCap },
   task: { verb: "Task", Icon: Bot },
+  agent: { verb: "Agent", Icon: Bot },
   todowrite: { verb: "Todos", Icon: ListChecks },
   todo: { verb: "Todos", Icon: ListChecks },
   webfetch: { verb: "Fetch", Icon: Globe },
@@ -96,10 +97,14 @@ export function extractPatchFiles(patchText: string): string[] {
 }
 
 export function describeToolCall(toolName: string, input: unknown): ToolSummary | null {
-  const kind = TOOL_KINDS[toolName.toLowerCase()];
+  const lower = toolName.toLowerCase();
+  const collab = lower.startsWith("collab:");
+  const kind = TOOL_KINDS[collab ? "agent" : lower];
   if (!kind) return null;
   const summary: ToolSummary = {
-    verb: kind.verb ?? (toolName.charAt(0).toUpperCase() + toolName.slice(1)),
+    verb: collab
+      ? toolName.slice("collab:".length).replace(/_/g, " ")
+      : kind.verb ?? (toolName.charAt(0).toUpperCase() + toolName.slice(1)),
     Icon: kind.Icon
   };
   if (!input || typeof input !== "object") return summary;
@@ -107,6 +112,14 @@ export function describeToolCall(toolName: string, input: unknown): ToolSummary 
   const nested = args["input"];
   if (nested !== null && typeof nested === "object" && !Array.isArray(nested)) {
     args = { ...(nested as Record<string, unknown>), ...args };
+  }
+  if (collab) {
+    const prompt = pick(args, "prompt", "description");
+    if (prompt) {
+      summary.subject = truncate(oneLine(prompt), 90);
+      summary.subjectKind = "text";
+    }
+    return summary;
   }
   const file = () => pick(args, "file_path", "filePath", "file", "path");
 
@@ -179,7 +192,8 @@ export function describeToolCall(toolName: string, input: unknown): ToolSummary 
       if (name && skillArgs) summary.meta = [truncate(oneLine(skillArgs), 80)];
       break;
     }
-    case "task": {
+    case "task":
+    case "agent": {
       const description = pick(args, "description", "prompt", "subagent_type", "subagent") ?? "";
       if (description) {
         summary.subject = truncate(oneLine(description), 90);
@@ -245,21 +259,22 @@ export function mergeToolPairs(messages: ChatMessage[]): ChatMessage[] {
   const out: ChatMessage[] = [];
   const indexById = new Map<string, number>();
   let pending = -1;
-  const attach = (idx: number, text: string, isError?: boolean, completedAt?: number): void => {
+  const attach = (idx: number, source: ChatMessage): void => {
     const call = out[idx];
     out[idx] = {
       ...call,
-      toolOutput: text,
+      toolOutput: source.text,
       toolDone: true,
-      isError: call.isError === true || isError === true,
-      ...(completedAt !== undefined ? { toolCompletedAt: completedAt } : {})
+      isError: call.isError === true || source.isError === true,
+      ...(source.toolUsage ? { toolUsage: source.toolUsage } : {}),
+      ...(source.timestamp !== undefined ? { toolCompletedAt: source.timestamp } : {})
     };
   };
   for (const m of messages) {
     if (m.role === "tool" && m.id.endsWith("-r")) {
       const idx = indexById.get(m.id.slice(0, -2));
       if (idx !== undefined && out[idx].role === "tool") {
-        attach(idx, m.text, m.isError, m.timestamp);
+        attach(idx, m);
         if (pending === idx) pending = -1;
         continue;
       }
@@ -272,7 +287,7 @@ export function mergeToolPairs(messages: ChatMessage[]): ChatMessage[] {
       out[pending].toolInput === undefined &&
       out[pending].toolOutput === undefined
     ) {
-      attach(pending, m.text, m.isError, m.timestamp);
+      attach(pending, m);
       pending = -1;
       continue;
     }

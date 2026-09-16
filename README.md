@@ -106,8 +106,7 @@ Their names and products remain the property of their respective owners.
 
 The selected identity is **Console C** with a violet app icon and an Inter
 wordmark. See the [brand suite](design/brand/README.md),
-[visual brand sheet](design/brand/brand-sheet.png), and
-[landing-page plan](design/brand/LANDING-PAGE.md).
+[visual brand sheet](design/brand/brand-sheet.png).
 
 ## Contributing
 

@@ -4,6 +4,12 @@ export interface TodoItem {
   priority?: "high" | "medium" | "low";
 }
 
+export interface ToolUsage {
+  tokens?: number;
+  toolUses?: number;
+  durationMs?: number;
+}
+
 export interface HistoryMessage {
   id: string;
   role: "user" | "assistant" | "tool" | "system" | "reasoning";
@@ -14,7 +20,9 @@ export interface HistoryMessage {
   timestamp?: number;
   subagentModel?: string;
   subagentTools?: SubagentToolSummary;
+  subagentAgentId?: string;
   parentToolCallId?: string;
+  toolUsage?: ToolUsage;
   todos?: TodoItem[];
   reasoningMs?: number;
 }
@@ -84,7 +92,7 @@ export type ThreadEvent =
       input: unknown;
       parentToolCallId?: string;
     }
-  | { type: "tool.result"; turnId: string; toolCallId: string; output: string; isError: boolean }
+  | { type: "tool.result"; turnId: string; toolCallId: string; output: string; isError: boolean; usage?: ToolUsage; agentId?: string }
   | { type: "approval.request"; turnId: string; request: ApprovalRequest }
   | { type: "approval.resolved"; turnId: string; requestId: string }
   | { type: "question.request"; turnId: string; request: QuestionRequest }

@@ -1,4 +1,4 @@
-import type { ApprovalDecision, ApprovalRequest, QuestionInfo, QuestionOption, QuestionRequest, ThreadEvent } from "@cw-code/contracts";
+import type { ApprovalDecision, ApprovalRequest, QuestionInfo, QuestionOption, QuestionRequest, ThreadEvent, ToolUsage } from "@cw-code/contracts";
 import { todosFromToolCall } from "../todos.js";
 
 interface ControlRequestMsg {
@@ -219,6 +219,7 @@ interface TextDelta {
 
 interface AssistantMsg {
   type: "assistant";
+  parent_tool_use_id?: string | null;
   message?: {
     content?: Array<
       | { type: "text"; text?: string }
@@ -270,27 +271,164 @@ interface ResultMsg {
   is_error?: boolean;
 }
 
-export interface ClaudeTasksInfo {
-  liveTasks: number;
+export interface ClaudeTaskSystemInfo {
+  kind: "tasks" | "started" | "progress" | "updated" | "notification";
+  liveTasks?: number;
+  taskId?: string;
+  toolUseId?: string;
+  description?: string;
+  subagentType?: string;
+  background?: boolean;
+  prompt?: string;
+  status?: string;
+  summary?: string;
+  endTime?: number;
+  lastToolName?: string;
+  usage?: ToolUsage;
 }
 
-interface SystemTasksMsg {
-  type: "system";
-  subtype?: string;
+interface TaskUsageMsg {
+  total_tokens?: unknown;
+  tool_uses?: unknown;
+  duration_ms?: unknown;
+}
+
+interface TaskPatchMsg {
+  status?: unknown;
+  end_time?: unknown;
+}
+
+interface SystemTaskMsg {
+  type?: unknown;
+  subtype?: unknown;
   tasks?: unknown;
+  task_id?: unknown;
+  tool_use_id?: unknown;
+  description?: unknown;
+  subagent_type?: unknown;
+  is_backgrounded?: unknown;
+  prompt?: unknown;
+  status?: unknown;
+  summary?: unknown;
+  last_tool_name?: unknown;
+  usage?: unknown;
+  patch?: unknown;
 }
 
-export function parseClaudeSystemLine(line: string): ClaudeTasksInfo | null {
-  let msg: SystemTasksMsg;
+function str(value: unknown): string | undefined {
+  return typeof value === "string" && value.trim() ? value : undefined;
+}
+
+function taskNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+function taskUsage(value: unknown): ToolUsage | undefined {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return undefined;
+  const usage = value as TaskUsageMsg;
+  const mapped: ToolUsage = {};
+  const tokens = taskNumber(usage.total_tokens);
+  if (tokens !== undefined) mapped.tokens = tokens;
+  const toolUses = taskNumber(usage.tool_uses);
+  if (toolUses !== undefined) mapped.toolUses = toolUses;
+  const durationMs = taskNumber(usage.duration_ms);
+  if (durationMs !== undefined) mapped.durationMs = durationMs;
+  return Object.keys(mapped).length > 0 ? mapped : undefined;
+}
+
+export function parseClaudeTaskSystemLine(line: string): ClaudeTaskSystemInfo | null {
+  if (!line.trim().startsWith("{") || !line.includes('"type":"system"')) return null;
+  let msg: SystemTaskMsg;
   try {
-    msg = JSON.parse(line) as SystemTasksMsg;
+    msg = JSON.parse(line) as SystemTaskMsg;
   } catch {
     return null;
   }
-  if (msg === null || typeof msg !== "object") return null;
-  if (msg.type !== "system" || msg.subtype !== "background_tasks_changed") return null;
-  if (!Array.isArray(msg.tasks)) return null;
-  return { liveTasks: msg.tasks.length };
+  if (msg === null || typeof msg !== "object" || msg.type !== "system") return null;
+  const taskId = str(msg.task_id);
+  const toolUseId = str(msg.tool_use_id);
+  const description = str(msg.description);
+  const usage = taskUsage(msg.usage);
+  switch (msg.subtype) {
+    case "background_tasks_changed": {
+      if (!Array.isArray(msg.tasks)) return null;
+      return { kind: "tasks", liveTasks: msg.tasks.length };
+    }
+    case "task_started": {
+      if (!taskId && !toolUseId) return null;
+      const prompt = str(msg.prompt);
+      const subagentType = str(msg.subagent_type);
+      return {
+        kind: "started",
+        ...(taskId ? { taskId } : {}),
+        ...(toolUseId ? { toolUseId } : {}),
+        ...(description ? { description } : {}),
+        ...(subagentType ? { subagentType } : {}),
+        ...(typeof msg.is_backgrounded === "boolean" ? { background: msg.is_backgrounded } : {}),
+        ...(prompt ? { prompt } : {})
+      };
+    }
+    case "task_progress": {
+      if (!taskId) return null;
+      const lastToolName = str(msg.last_tool_name);
+      return {
+        kind: "progress",
+        taskId,
+        ...(toolUseId ? { toolUseId } : {}),
+        ...(description ? { description } : {}),
+        ...(lastToolName ? { lastToolName } : {}),
+        ...(usage ? { usage } : {})
+      };
+    }
+    case "task_updated": {
+      if (!taskId) return null;
+      const patch =
+        msg.patch !== null && typeof msg.patch === "object" && !Array.isArray(msg.patch)
+          ? (msg.patch as TaskPatchMsg)
+          : {};
+      const status = str(patch.status);
+      const endTime = taskNumber(patch.end_time);
+      if (!status && endTime === undefined) return null;
+      return {
+        kind: "updated",
+        taskId,
+        ...(status ? { status } : {}),
+        ...(endTime !== undefined ? { endTime } : {})
+      };
+    }
+    case "task_notification": {
+      if (!taskId) return null;
+      const status = str(msg.status);
+      const summary = str(msg.summary);
+      return {
+        kind: "notification",
+        taskId,
+        ...(toolUseId ? { toolUseId } : {}),
+        ...(status ? { status } : {}),
+        ...(summary ? { summary } : {}),
+        ...(usage ? { usage } : {})
+      };
+    }
+    default:
+      return null;
+  }
+}
+
+const TASK_NOTIFY_USAGE_RE = {
+  tokens: /<subagent_tokens>(\d+)<\/subagent_tokens>/,
+  toolUses: /<tool_uses>(\d+)<\/tool_uses>/,
+  durationMs: /<duration_ms>(\d+)<\/duration_ms>/
+};
+
+export function parseTaskNotificationUsage(text: string): ToolUsage | undefined {
+  const usage: ToolUsage = {};
+  const tokens = TASK_NOTIFY_USAGE_RE.tokens.exec(text)?.[1];
+  if (tokens !== undefined) usage.tokens = Number.parseInt(tokens, 10);
+  const toolUses = TASK_NOTIFY_USAGE_RE.toolUses.exec(text)?.[1];
+  if (toolUses !== undefined) usage.toolUses = Number.parseInt(toolUses, 10);
+  const durationMs = TASK_NOTIFY_USAGE_RE.durationMs.exec(text)?.[1];
+  if (durationMs !== undefined) usage.durationMs = Number.parseInt(durationMs, 10);
+  return Object.keys(usage).length > 0 ? usage : undefined;
 }
 
 export interface TurnDoneInfo {
@@ -316,6 +454,7 @@ export function attributeClaudeSubagentEvent(
   }
   if (
     event.type !== "tool.call" ||
+    event.parentToolCallId ||
     event.name.toLowerCase() !== "sendmessage" ||
     !event.input ||
     typeof event.input !== "object" ||
@@ -356,22 +495,29 @@ export function parseStreamLine(
   }
 
   if (msg.type === "assistant") {
+    const parentToolCallId = msg.parent_tool_use_id ?? undefined;
     const out: ThreadEvent[] = [];
     for (const block of msg.message?.content ?? []) {
-      if (block.type === "text" && "text" in block && block.text) {
-        out.push({ type: "assistant.delta", turnId, text: block.text });
-      } else if (block.type === "thinking" && "thinking" in block && block.thinking) {
-        out.push({ type: "reasoning.delta", turnId, text: block.thinking });
-      } else if (block.type === "tool_use" && "id" in block) {
+      if (block.type === "tool_use" && "id" in block) {
         out.push({
           type: "tool.call",
           turnId,
           toolCallId: block.id ?? `${turnId}-tool`,
           name: block.name ?? "unknown",
-          input: block.input ?? null
+          input: block.input ?? null,
+          ...(parentToolCallId ? { parentToolCallId } : {})
         });
-        const todos = todosFromToolCall(block.name ?? "", block.input ?? null);
-        if (todos !== null) out.push({ type: "todo.updated", turnId, todos });
+        if (!parentToolCallId) {
+          const todos = todosFromToolCall(block.name ?? "", block.input ?? null);
+          if (todos !== null) out.push({ type: "todo.updated", turnId, todos });
+        }
+        continue;
+      }
+      if (parentToolCallId) continue;
+      if (block.type === "text" && "text" in block && block.text) {
+        out.push({ type: "assistant.delta", turnId, text: block.text });
+      } else if (block.type === "thinking" && "thinking" in block && block.thinking) {
+        out.push({ type: "reasoning.delta", turnId, text: block.thinking });
       }
     }
     return out;

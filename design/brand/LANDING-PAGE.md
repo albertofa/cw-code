@@ -7,7 +7,7 @@ or download an available Windows release. Use the selected Console C identity
 and the desktop's existing graphite palette, Inter, and JetBrains Mono.
 
 **Status:** planned in this draft PR. The page is not built or published here.
-The desktop branding and repository README are implemented in this PR.
+The desktop branding and repository README are already on `main`. This PR contains only the landing-page plan.
 
 ## Page content, in reading order
 

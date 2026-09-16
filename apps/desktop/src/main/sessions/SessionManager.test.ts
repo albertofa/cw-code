@@ -22,6 +22,11 @@ class FakeDriver implements CliDriver {
   async getHistory(): Promise<HistoryMessage[]> {
     return this.history;
   }
+  subagentCalls: Array<{ rootPath: string; resumeCursor: string; agentId: string }> = [];
+  async getSubagentTools(rootPath: string, resumeCursor: string, agentId: string) {
+    this.subagentCalls.push({ rootPath, resumeCursor, agentId });
+    return { items: [{ id: "tu1", name: "Read", input: null, output: "file" }], model: "claude-sonnet-5" };
+  }
   startTurn(request: { sessionId: string; prompt: string }): TurnHandle {
     const turnId = randomUUID();
     this.seen.push(request.prompt);
@@ -246,6 +251,35 @@ describe("SessionManager", () => {
     const a = await manager.createSession(project.id, "claude");
     expect(a.worktreePath).toBeFalsy();
     await expect(manager.ensureWorktree(a.id)).resolves.toBe("C:\\proj-nowt");
+    manager.dispose();
+  });
+
+  it("routes subagent tool lookups through the session driver", async () => {
+    const { manager, fake } = makeManager();
+    const project = manager.addProject("C:\\proj-subagents");
+    const a = await manager.createSession(project.id, "claude");
+    const result = await manager.getSubagentTools(a.id, "agent-1");
+    expect(result.model).toBe("claude-sonnet-5");
+    expect(fake.subagentCalls).toEqual([{ rootPath: "C:\\proj-subagents", resumeCursor: "", agentId: "agent-1" }]);
+    manager.dispose();
+  });
+
+  it("returns an empty result when the driver has no subagent source", async () => {
+    const { manager } = makeManager();
+    const project = manager.addProject("C:\\proj-subagents-none");
+    const a = await manager.createSession(project.id, "claude");
+    (manager as unknown as { drivers: Record<string, CliDriver> }).drivers.claude = {
+      kind: "claude",
+      listSessions: async () => [],
+      getHistory: async () => [],
+      startTurn: () => {
+        throw new Error("not used");
+      },
+      interrupt: () => {},
+      renameSession: async () => {},
+      async *events() {}
+    };
+    await expect(manager.getSubagentTools(a.id, "agent-1")).resolves.toEqual({ items: [] });
     manager.dispose();
   });
 

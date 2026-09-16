@@ -2,6 +2,7 @@ import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from "n
 import { createInterface } from "node:readline";
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { dirname, join, normalize } from "node:path";
 import type {
   AppSettings,
@@ -10,15 +11,16 @@ import type {
   EffortLevel,
   HistoryMessage,
   PermissionMode,
+  SubagentToolsResult,
   ThreadEvent,
   TurnHandle,
   TurnRequest
 } from "@cw-code/contracts";
 import { parseExtraArgs } from "../../settings/settingsUtils.js";
 import { killProcessTree } from "../../processTree.js";
-import { attributeClaudeSubagentEvent, buildClaudeAllowRule, claudeAllowResponse, claudeApprovalRequest, claudeQuestionRequest, claudeDenyResponse, claudeControlResponse, parseClaudeControlRequest, parseClaudeSystemLine, parseStreamLine, type ClaudeControlRequest, type TurnDoneInfo } from "./claudeStreamParser.js";
-import { listClaudeSessions } from "./claudeSessions.js";
-import { readClaudeHistory } from "./claudeHistory.js";
+import { attributeClaudeSubagentEvent, buildClaudeAllowRule, claudeAllowResponse, claudeApprovalRequest, claudeQuestionRequest, claudeDenyResponse, claudeControlResponse, parseClaudeControlRequest, parseClaudeTaskSystemLine, parseStreamLine, type ClaudeControlRequest, type ClaudeTaskSystemInfo, type TurnDoneInfo } from "./claudeStreamParser.js";
+import { claudeProjectSlug, listClaudeSessions } from "./claudeSessions.js";
+import { readClaudeHistory, readSidecarAgent, readClaudeTaskResult, type SidecarAgent } from "./claudeHistory.js";
 import { buildClaudeUserContent } from "./claudeUserContent.js";
 import { previewText, traceHarnessCall, truncateError } from "../../debug/harnessTrace.js";
 
@@ -94,6 +96,16 @@ export function mergeClaudeAllowRule(existing: unknown, rule: string): Record<st
 
 export const CLAUDE_IDLE_EVICT_MS = 20 * 60_000;
 
+export function subagentToolsResult(agent: SidecarAgent | undefined): SubagentToolsResult {
+  if (!agent) return { items: [] };
+  return {
+    items: agent.items,
+    ...(agent.model ? { model: agent.model } : {}),
+    ...(agent.effort ? { effort: agent.effort } : {}),
+    ...(agent.totalTokens !== undefined ? { tokens: agent.totalTokens } : {})
+  };
+}
+
 interface ClaudeProcessState {
   sessionId: string;
   cwd: string;
@@ -109,6 +121,7 @@ interface ClaudeProcessState {
   stderr: string;
   startedAt: number;
   agentByCall: Map<string, string>;
+  taskToolCalls: Map<string, string>;
   permissionMode: PermissionMode;
   idleTimer?: NodeJS.Timeout;
 }
@@ -236,9 +249,9 @@ export class ClaudeCliDriver implements CliDriver {
   }
 
   private handleProcessLine(state: ClaudeProcessState, line: string): void {
-    const background = parseClaudeSystemLine(line);
-    if (background) {
-      state.liveTasks = background.liveTasks;
+    const taskSystem = parseClaudeTaskSystemLine(line);
+    if (taskSystem) {
+      this.handleTaskSystem(state, taskSystem);
       return;
     }
     const control = parseClaudeControlRequest(line);
@@ -254,8 +267,57 @@ export class ClaudeCliDriver implements CliDriver {
       () => this.clearIdleTimer(state)
     );
     for (const event of events) {
-      this.emit(attributeClaudeSubagentEvent(event, state.agentByCall));
+      this.emit(this.attributeSubagentResult(state, attributeClaudeSubagentEvent(event, state.agentByCall)));
     }
+  }
+
+  private attributeSubagentResult(state: ClaudeProcessState, event: ThreadEvent): ThreadEvent {
+    if (event.type !== "tool.result") return event;
+    const agentId = state.agentByCall.get(event.toolCallId);
+    return agentId ? { ...event, agentId } : event;
+  }
+
+  private handleTaskSystem(state: ClaudeProcessState, info: ClaudeTaskSystemInfo): void {
+    if (info.kind === "tasks") {
+      state.liveTasks = info.liveTasks ?? 0;
+      return;
+    }
+    if (info.kind === "started") {
+      if (info.taskId && info.toolUseId) {
+        state.taskToolCalls.set(info.taskId, info.toolUseId);
+        state.agentByCall.set(info.toolUseId, info.taskId);
+      }
+      return;
+    }
+    if (info.kind === "progress") return;
+    const toolUseId = info.toolUseId ?? (info.taskId ? state.taskToolCalls.get(info.taskId) : undefined);
+    if (!toolUseId) return;
+    if (info.kind === "updated") {
+      const status = (info.status ?? "").toLowerCase();
+      if (status === "" || status === "completed" || status === "running" || status === "in_progress") return;
+      this.emit({
+        type: "tool.result",
+        turnId: state.activeTurnId,
+        toolCallId: toolUseId,
+        output: `Subagent ${status}`,
+        isError: true
+      });
+      return;
+    }
+    const transcript = readClaudeTaskResult(state.cwd, state.resumeCursor, toolUseId);
+    const status = (transcript?.status ?? info.status ?? "completed").toLowerCase();
+    const output = (transcript?.result ?? info.summary ?? status).slice(0, 8000);
+    const agentId = state.agentByCall.get(toolUseId);
+    this.emit({
+      type: "tool.result",
+      turnId: state.activeTurnId,
+      toolCallId: toolUseId,
+      output,
+      isError: status !== "completed",
+      ...(info.usage ? { usage: info.usage } : {}),
+      ...(agentId ? { agentId } : {})
+    });
+    if (info.taskId) state.taskToolCalls.delete(info.taskId);
   }
 
   private handleTurnDone(state: ClaudeProcessState, info: TurnDoneInfo): void {
@@ -369,6 +431,13 @@ export class ClaudeCliDriver implements CliDriver {
     }
   }
 
+  async getSubagentTools(projectRoot: string, resumeCursor: string, agentId: string): Promise<SubagentToolsResult> {
+    if (!resumeCursor || !agentId) return { items: [] };
+    const transcriptDir = join(homedir(), ".claude", "projects", claudeProjectSlug(projectRoot), resumeCursor);
+    const agent = readSidecarAgent(transcriptDir, agentId) ?? readSidecarAgent(dirname(transcriptDir), agentId);
+    return subagentToolsResult(agent);
+  }
+
   startTurn(request: TurnRequest): TurnHandle {
     const turnId = randomUUID();
     const start = Date.now();
@@ -425,6 +494,7 @@ export class ClaudeCliDriver implements CliDriver {
       stderr: "",
       startedAt: start,
       agentByCall: new Map(),
+      taskToolCalls: new Map(),
       permissionMode: request.permissionMode ?? "auto"
     };
     this.processes.set(request.sessionId, state);

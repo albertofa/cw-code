@@ -57,6 +57,10 @@ Suggested surface tokens for the first implementation slice:
 | T3 Conversation | Best reading flow and strongest agent-first identity | Progressive disclosure can hide operational detail | Borrow its thread and composer treatment |
 | VS Code Workbench | Best tooling discoverability and persistent status | Risks feeling generic or overly busy | Borrow its activity rail and bottom-panel behavior selectively |
 
+## Panel studies
+
+- `subagents-panel.html` — three variations of the Subagents right-pane panel (A drill-in detail, B accordion stack, C split list + detail). Shows preview-first prompt/result, tool calls nested inside the agent, and running/completed status sourced from structured stream events. Pick one before implementing the panel rework.
+
 ## Recommended synthesis
 
 Start from Rider Focus, use T3 Conversation's centered thread and composer, and adopt the Workbench concept's clear status bar plus optional bottom terminal. Keep the existing app structure and backend contracts unchanged.

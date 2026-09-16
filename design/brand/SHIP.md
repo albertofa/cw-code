@@ -9,7 +9,7 @@
 - [x] Typography rules, bundled font files/licenses, color tokens, voice guidance.
 - [x] Visual brand sheet, copy library, and reproducible asset generator.
 
-The assets are delivered. The title-bar and About branding, runtime/packaging icon configuration, metadata, bundled license notices, and README opening are implemented in this branch. The tables below retain acceptance criteria; fresh-install/upgrade checks and publication remain release work. See `LANDING-PAGE.md` for the website implementation plan.
+The assets are delivered. The title-bar and About branding, runtime/packaging icon configuration, metadata, bundled license notices, and README opening are implemented in this branch. The tables below retain acceptance criteria; fresh-install/upgrade checks and publication remain release work. The website implementation plan is tracked separately in draft PR #17.
 
 ## P0 — Put the identity in the next Windows build
 
@@ -39,17 +39,7 @@ Owner: release maintainer. Publishing is a later task; nothing is posted by this
 
 ## P1 — Public landing page
 
-Build one small page after the release is installable:
-
-1. Logo, primary headline, short description, Windows download, source link.
-2. Real product screenshot with meaningful alt text.
-3. The five concise feature bullets from `COPY.md`.
-4. Windows/CLI prerequisites and link to installation instructions.
-5. Release status, source/license, issue link, and attribution.
-
-Use Inter, the current graphite palette, and the supplied social image/favicon. Self-host fonts. Set page title to `cw-code — Desktop workspace for coding CLIs`; use the website description for metadata. Add canonical URL and social-image absolute URL only after the hosting location is known. Verify keyboard access, narrow-screen layout, contrast, and real download targets.
-
-Owner: web maintainer. Dependencies: public source URL, release URL, hosting/domain choice, and current product captures. No pricing page or competitor comparison is required to explain the application.
+The [landing-page plan](https://github.com/albertofa/cw-code/pull/17) is a separate draft PR.
 
 ## P2 — Supporting material
 

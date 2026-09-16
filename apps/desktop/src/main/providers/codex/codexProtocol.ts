@@ -10,6 +10,7 @@ import type {
   QuestionOption,
   QuestionRequest,
   SessionMeta,
+  SubagentToolActivity,
   TodoItem
 } from "@cw-code/contracts";
 import { todosFromPlan } from "../todos.js";
@@ -57,6 +58,94 @@ export interface CodexThreadItem {
   result?: unknown;
   content?: Array<{ type?: string; text?: string; path?: string }>;
   summary?: Array<{ type?: string; text?: string }>;
+}
+
+export interface CodexCollabTool {
+  tool: string;
+  senderThreadId?: string;
+  receiverThreadIds: string[];
+  prompt?: string;
+  status?: string;
+  agentsStates?: unknown;
+}
+
+function collabString(value: unknown): string | undefined {
+  return typeof value === "string" && value ? value : undefined;
+}
+
+function collabStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
+    : [];
+}
+
+export function codexCollabTool(item: CodexThreadItem): CodexCollabTool | null {
+  if (item.type !== "collabToolCall" && item.type !== "collab_tool_call") return null;
+  const raw = item as unknown as Record<string, unknown>;
+  const tool = collabString(raw["tool"]);
+  if (!tool) return null;
+  const senderThreadId = collabString(raw["senderThreadId"]) ?? collabString(raw["sender_thread_id"]);
+  const prompt = collabString(raw["prompt"]);
+  const agentsStates = raw["agentsStates"] ?? raw["agents_states"];
+  return {
+    tool,
+    receiverThreadIds: collabStringArray(raw["receiverThreadIds"] ?? raw["receiver_thread_ids"]),
+    ...(senderThreadId ? { senderThreadId } : {}),
+    ...(prompt ? { prompt } : {}),
+    ...(item.status ? { status: item.status } : {}),
+    ...(agentsStates !== undefined ? { agentsStates } : {})
+  };
+}
+
+export function mapCodexSubagentTools(thread: CodexThread): SubagentToolActivity[] {
+  const items: SubagentToolActivity[] = [];
+  for (const turn of thread.turns ?? []) {
+    const startedAt = turn.startedAt != null ? turn.startedAt * 1000 : undefined;
+    const completedAt = turn.completedAt != null ? turn.completedAt * 1000 : undefined;
+    for (const item of turn.items ?? []) {
+      if (!item.id) continue;
+      const base = {
+        id: item.id,
+        ...(startedAt !== undefined ? { timestamp: startedAt } : {}),
+        ...(completedAt !== undefined ? { completedAt } : {})
+      };
+      const failed = item.status === "failed" || item.status === "declined";
+      if (item.type === "commandExecution") {
+        const output = (item.aggregatedOutput ?? "").trim();
+        items.push({
+          ...base,
+          name: "shell",
+          input: { command: item.command ?? "", cwd: item.cwd ?? "" },
+          ...(output ? { output: output.slice(0, 4000) } : {}),
+          ...(failed || (item.exitCode ?? 0) > 0 ? { isError: true } : {})
+        });
+      } else if (item.type === "fileChange") {
+        const changes = item.changes ?? [];
+        items.push({
+          ...base,
+          name: "edit",
+          input: { changes },
+          ...(changes.length > 0
+            ? { output: changes.map((change) => `${change.kind} ${change.path}`).join("\n").slice(0, 4000) }
+            : {}),
+          ...(failed ? { isError: true } : {})
+        });
+      } else if (item.type === "mcpToolCall") {
+        items.push({
+          ...base,
+          name: item.tool ?? "mcp",
+          input: item.arguments ?? null,
+          ...(item.result !== undefined && item.result !== null
+            ? { output: JSON.stringify(item.result).slice(0, 4000) }
+            : {}),
+          ...(failed ? { isError: true } : {})
+        });
+      } else if (item.type === "webSearch") {
+        items.push({ ...base, name: "websearch", input: { query: item.text ?? "" } });
+      }
+    }
+  }
+  return items;
 }
 
 export function codexReasoningText(item: CodexThreadItem): string {

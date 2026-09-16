@@ -11,6 +11,7 @@ import {
   groupSubagents,
   isSubagentMessage,
   isSubagentTool,
+  mergeSubagentTools,
   parseResultCounts,
   shortModelName,
   unwrapTaskOutput,
@@ -113,6 +114,52 @@ describe("describeSubagent", () => {
     );
     expect(info.name).toBe("Fresh");
     expect(info.prompt).toBe("Fresh prompt");
+  });
+
+  it("uses structured tool usage, agent id and duration", () => {
+    const info = describeSubagent(
+      msg({
+        toolName: "Agent",
+        toolInput: { description: "Review diff", run_in_background: true },
+        toolOutput: "Approve with nits.",
+        toolDone: true,
+        toolStartedAt: 1000,
+        toolCompletedAt: 9000,
+        subagentAgentId: "a36e7282329ba6455",
+        toolUsage: { tokens: 136099, toolUses: 12, durationMs: 287602 }
+      })
+    );
+    expect(info.agentId).toBe("a36e7282329ba6455");
+    expect(info.durationMs).toBe(287602);
+    expect(info.counts).toEqual({ tokens: 136099, tools: 12 });
+  });
+
+  it("hides the launch acknowledgement from output and summary while still running", () => {
+    const info = describeSubagent(
+      msg({
+        toolName: "Agent",
+        toolInput: { description: "Review PR #15", prompt: "Review the PR", run_in_background: true },
+        toolOutput: "Async agent launched successfully. (This tool result is internal metadata.)\nagentId: a36e7282329ba6455",
+        toolDone: true
+      })
+    );
+    expect(info.status).toBe("running");
+    expect(info.output).toBeUndefined();
+    expect(info.summary).toBe("Review the PR");
+  });
+
+  it("completes a background agent once the notification result replaces the launch ack", () => {
+    const info = describeSubagent(
+      msg({
+        toolName: "Agent",
+        toolInput: { description: "Review PR #15", run_in_background: true },
+        toolOutput: "Approve with nits; two blockers.",
+        toolDone: true,
+        toolCompletedAt: 5000
+      })
+    );
+    expect(info.status).toBe("completed");
+    expect(info.output).toBe("Approve with nits; two blockers.");
   });
 
   it("falls back to the sidecar model when the call omits it", () => {
@@ -345,6 +392,12 @@ describe("unwrapTaskOutput", () => {
     expect(unwrapTaskOutput(undefined)).toBeUndefined();
   });
 
+  it("handles leading whitespace, missing closing tags and tag-only output", () => {
+    expect(unwrapTaskOutput(`\n  <task id="ses_1" state="completed">\n<task_result>\nDone\n</task_result>`)).toBe("Done");
+    expect(unwrapTaskOutput(`<task id="ses_1" state="running">`)).toBe("");
+    expect(unwrapTaskOutput(`<task id="ses_1" state="running">\nstarting up`)).toBe("starting up");
+  });
+
   it("summarizes wrapped output without the task tag line", () => {
     const info = describeSubagent(
       msg({
@@ -389,5 +442,40 @@ describe("helpers", () => {
       effort: "mixed"
     });
     expect(groupSubagentMetrics([{ counts: { tokens: 0, tools: 0 } }, {}])).toEqual({ tokens: 0, tools: 0 });
+  });
+});
+
+describe("mergeSubagentTools", () => {
+  it("prefers live activity over fetched entries and sorts by timestamp", () => {
+    const merged = mergeSubagentTools(
+      [
+        {
+          id: "tu2",
+          role: "tool",
+          text: "Bash",
+          turnId: "t1",
+          toolName: "Bash",
+          toolInput: { command: "ls" },
+          toolOutput: "a.ts",
+          toolDone: true,
+          toolStartedAt: 2000,
+          toolCompletedAt: 2500
+        }
+      ],
+      [
+        { id: "tu1", name: "Read", input: { file_path: "a.ts" }, timestamp: 1000, output: "file!" },
+        { id: "tu2", name: "Bash", input: { command: "ls" }, timestamp: 2000 }
+      ]
+    );
+    expect(merged.map((tool) => tool.id)).toEqual(["tu1", "tu2"]);
+    expect(merged[1].output).toBe("a.ts");
+    expect(merged[1].completedAt).toBe(2500);
+  });
+
+  it("ignores non-tool rows and merges nothing when both sources are empty", () => {
+    expect(mergeSubagentTools([], [])).toEqual([]);
+    expect(
+      mergeSubagentTools([{ id: "m1", role: "assistant", text: "hi", turnId: "t1" }], [])
+    ).toEqual([]);
   });
 });

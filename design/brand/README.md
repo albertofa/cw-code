@@ -8,7 +8,7 @@ See [validation results](VALIDATION.md) for repository checks and the limits of 
 
 **Selected logo: Option C — Console C**, with the violet app-icon treatment.
 
-This suite extends the current desktop design. Console C is integrated into the title bar, About section, runtime window icon, Windows packaging configuration, and GitHub README. Installation/release checks remain on the shipping plan. The [landing-page plan](LANDING-PAGE.md) is included for the next implementation PR.
+This suite extends the current desktop design. Console C is integrated into the title bar, About section, runtime window icon, Windows packaging configuration, and GitHub README. Installation/release checks remain on the shipping plan. The [landing-page plan](https://github.com/albertofa/cw-code/pull/17) is tracked separately in a draft PR.
 
 ## Assets
 

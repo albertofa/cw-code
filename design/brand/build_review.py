@@ -19,7 +19,7 @@ def image(name, alt, **attrs):
 def download(path, label=None):
     return f'<a href="{data(path)}" download="{html.escape(path.name)}">{html.escape(label or path.name)}</a>'
 
-documents = [('BRAND.md','guidelines'), ('COPY.md','copy'), ('SHIP.md','shipping'), ('LANDING-PAGE.md','landing'), ('README.md','handoff'), ('VALIDATION.md','validation')]
+documents = [('BRAND.md','guidelines'), ('COPY.md','copy'), ('SHIP.md','shipping'), ('README.md','handoff'), ('VALIDATION.md','validation')]
 anchors = dict(documents)
 
 def document(name, anchor):

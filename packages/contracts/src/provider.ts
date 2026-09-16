@@ -1,9 +1,22 @@
 import type { ModelOption, PermissionMode, SessionMeta, TurnRequest } from "./session.js";
-import type { ApprovalDecision, HistoryMessage, SessionEvent, ThreadEvent } from "./events.js";
+import type {
+  ApprovalDecision,
+  HistoryMessage,
+  SessionEvent,
+  SubagentToolActivity,
+  ThreadEvent
+} from "./events.js";
 
 export interface TurnHandle {
   turnId: string;
   events: AsyncIterable<ThreadEvent>;
+}
+
+export interface SubagentToolsResult {
+  items: SubagentToolActivity[];
+  model?: string;
+  effort?: string;
+  tokens?: number;
 }
 
 export interface RetryConnectionRequest {
@@ -23,6 +36,8 @@ export interface CliDriver {
   readonly kind: SessionMeta["driver"];
   listSessions(projectRoot: string, projectId?: string): Promise<SessionMeta[]>;
   getHistory(projectRoot: string, resumeCursor: string): Promise<HistoryMessage[]>;
+  /** Tool activity and metrics recorded for a subagent spawned by a session, when the provider exposes it. */
+  getSubagentTools?(projectRoot: string, resumeCursor: string, agentId: string): Promise<SubagentToolsResult>;
   startTurn(request: TurnRequest): TurnHandle;
   interrupt(turnId: string): void;
   /** Force-stop all work for a local session (kill the underlying process). */

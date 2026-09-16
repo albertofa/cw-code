@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { collectPartTypes, diffLiveTools, type LiveMessage, type LiveSeen } from "./opencodeLivePoll.js";
+import { collectPartTypes, collectTaskParts, diffLiveTools, type LiveMessage, type LiveSeen } from "./opencodeLivePoll.js";
 
 function runningTask(callID: string, description = "Do work"): LiveMessage {
   return {
@@ -204,6 +204,49 @@ describe("diffLiveTools", () => {
         name: "task",
         input: { description: "New work", prompt: "Work hard", subagent_type: "general" }
       }
+    ]);
+  });
+
+  it("stamps the parent tool call on nested subagent tool events", () => {
+    const seen = new Map<string, LiveSeen>();
+    const messages: LiveMessage[] = [
+      {
+        info: { id: "child_1" },
+        parts: [
+          {
+            type: "tool",
+            tool: "read",
+            callID: "child_read",
+            state: { status: "completed", input: { file_path: "a.ts" }, output: "file!" }
+          }
+        ]
+      }
+    ];
+    const events = diffLiveTools(seen, messages, "t1", null, "call_task");
+    expect(events).toEqual([
+      {
+        type: "tool.call",
+        turnId: "t1",
+        toolCallId: "child_read",
+        name: "read",
+        input: { file_path: "a.ts" },
+        parentToolCallId: "call_task"
+      },
+      { type: "tool.result", turnId: "t1", toolCallId: "child_read", output: "file!", isError: false }
+    ]);
+  });
+});
+
+describe("collectTaskParts", () => {
+  it("collects task call ids and statuses and ignores other tools", () => {
+    const messages: LiveMessage[] = [
+      runningTask("call_a", "First"),
+      { info: { id: "m2" }, parts: [{ type: "tool", tool: "read", callID: "call_b", state: { status: "running" } }] },
+      completedTask("call_c")
+    ];
+    expect(collectTaskParts(messages)).toEqual([
+      { callId: "call_a", status: "running" },
+      { callId: "call_c", status: "completed" }
     ]);
   });
 });
