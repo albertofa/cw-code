@@ -337,7 +337,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
   };
   const mainAll = source.filter((s) => !workingSetIds.has(s.id) && effectiveSection(s) === "main");
   const resolvedAll = source.filter((s) => !workingSetIds.has(s.id) && effectiveSection(s) === "resolved");
-  const orderedMainAll = storedOrder ? orderByStored(mainAll, storedMain) : [...mainAll].sort(byRecency);
+  const orderedMainAll = [...mainAll].sort(byRecency);
   const orderedResolvedAll = storedOrder ? orderByStored(resolvedAll, storedResolved) : [...resolvedAll].sort(byRecency);
   const shown = orderedMainAll.filter(matchesQuery);
   const resolved = orderedResolvedAll.filter(matchesQuery);
