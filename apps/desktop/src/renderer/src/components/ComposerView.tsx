@@ -166,8 +166,10 @@ export function ComposerView({
           const last = getLastModel(driver);
           const next = (last && list.some((m) => m.id === last) ? last : undefined) ?? firstDisplayedModelId(driver, list);
           if (next) backendRef.current.savePrefs({ model: next });
+          setShowCustom(false);
         } else if (list.some((m) => m.id === prefs.model)) {
           setLastModel(driver, prefs.model);
+          setShowCustom(false);
         } else {
           setCustomModel(prefs.model);
           setShowCustom(true);
