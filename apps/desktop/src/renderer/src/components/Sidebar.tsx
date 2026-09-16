@@ -4,6 +4,7 @@ import type { DriverName, Project, Session, SessionStatus } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { useNotifs } from "./Notifications.js";
+import { getLastModel } from "./lastModel.js";
 import { hashHue, projectAvatarStyle as avatarStyle, projectInitials as initials } from "./avatar.js";
 import { mergeAwayIds } from "./sidebarOrder.js";
 import { compareWorkingSet, isWorkingSetStatus } from "./workingSet.js";
@@ -164,7 +165,7 @@ function orderByStored(current: Session[], ids: string[]): Session[] {
   return [...known, ...unknown];
 }
 
-export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
+export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { onOpenSettings: () => void; onOpenSkills: () => void; skillsOpen?: boolean }) {
   const { projects, sessionsByProject, discoveredByProject, activeProjectId, activeSessionId, gitStatusBySession, projectFilter, worktreeConfirmQueue } = useAppStore();
   const worktreeConfirm = worktreeConfirmQueue[0] ?? null;
   const store = useAppStore();
@@ -1111,6 +1112,16 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
         <button className="side-footer-btn" title="Settings" aria-label="Settings" onClick={onOpenSettings}>
           <Settings size={15} />
         </button>
+        <button
+          className={`side-footer-btn${skillsOpen ? " active" : ""}`}
+          title="Skills"
+          aria-label="Skills"
+          aria-pressed={skillsOpen}
+          onClick={onOpenSkills}
+        >
+          <span aria-hidden="true">✦</span>
+          <span>Skills</span>
+        </button>
       </div>
       {hover && hoverSession && (
         <div className="session-hovercard" style={{ left: hover.x, top: hover.y }} aria-hidden="true">
@@ -1132,7 +1143,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
           <div className="session-hovercard-row">
             <DriverIcon driver={hoverSession.driver} size={16} />
             <span className="hovercard-text">
-              {hoverModel ?? "Default model"} · {DRIVER_LABEL[hoverSession.driver]}
+              {hoverModel ?? getLastModel(hoverSession.driver) ?? "No model"} · {DRIVER_LABEL[hoverSession.driver]}
             </span>
           </div>
           <div className="session-hovercard-row">

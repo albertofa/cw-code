@@ -342,6 +342,15 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
+  it("returns undefined model when unset without falling back to the claude default", async () => {
+    const { manager } = makeManager();
+    manager.setSettings({ claudeDefaultModel: "should-not-appear" });
+    const project = manager.addProject("C:\\proj5-unset-model");
+    const a = await manager.createSession(project.id, "claude");
+    expect(manager.getComposer(a.id).model).toBeUndefined();
+    manager.dispose();
+  });
+
   it("maps a retired stored plan permission to manual", async () => {
     const { manager } = makeManager();
     const project = manager.addProject("C:\\proj-plan-legacy");

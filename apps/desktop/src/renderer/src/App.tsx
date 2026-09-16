@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from 
 import { Bot, Code, Columns2, Eye, Folder, GitBranch, Orbit, PanelRightClose, PanelRightOpen, Sparkles, Terminal, type LucideIcon } from "lucide-react";
 import type { DriverName } from "./cw.js";
 import { Sidebar } from "./components/Sidebar.js";
+import { SkillsModal } from "./components/SkillsModal.js";
 import { TitleBar } from "./components/TitleBar.js";
 import { SettingsModal } from "./components/SettingsModal.js";
 import { ThreadView } from "./components/ThreadView.js";
@@ -120,6 +121,7 @@ export function App() {
   const [preloadError, setPreloadError] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
   const [settingsHarness, setSettingsHarness] = useState<DriverName>("claude");
+  const [skillsOpen, setSkillsOpen] = useState(false);
   const dragRef = useRef<{ startX: number; startWidth: number } | null>(null);
 
   const openSettings = (harness: DriverName = "claude") => {
@@ -367,7 +369,7 @@ export function App() {
         <>
           <TitleBar />
           <div className="app-body">
-          <Sidebar onOpenSettings={() => openSettings()} />
+          <Sidebar onOpenSettings={() => openSettings()} onOpenSkills={() => setSkillsOpen(true)} skillsOpen={skillsOpen} />
           <ThreadView />
           {!rightVisible && (
             <button
@@ -452,6 +454,7 @@ export function App() {
           {settingsOpen && (
             <SettingsModal initialHarness={settingsHarness} onClose={() => setSettingsOpen(false)} />
           )}
+          {skillsOpen && <SkillsModal onClose={() => setSkillsOpen(false)} />}
         </>
       )}
     </div>
