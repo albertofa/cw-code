@@ -967,9 +967,11 @@ export const useAppStore = create<AppState>((set, get) => ({
           ...get().pendingApprovals,
           [sessionId]: pending
         },
-        ...(get().busyTurns[sessionId]
-          ? { sessionsByProject: withSessionStatus(get().sessionsByProject, sessionId, "working") }
-          : {})
+        ...(pending.length > 0
+          ? { sessionsByProject: withSessionStatus(get().sessionsByProject, sessionId, "input-required") }
+          : get().busyTurns[sessionId]
+            ? { sessionsByProject: withSessionStatus(get().sessionsByProject, sessionId, "working") }
+            : {})
       });
     } else if (event.type === "question.request") {
       const pending = get().pendingQuestions[sessionId] ?? [];
@@ -1007,9 +1009,11 @@ export const useAppStore = create<AppState>((set, get) => ({
           ...get().messagesBySession,
           [sessionId]: [...messages, ...notes]
         },
-        ...(get().busyTurns[sessionId]
-          ? { sessionsByProject: withSessionStatus(get().sessionsByProject, sessionId, "working") }
-          : {})
+        ...(pending.length > 0
+          ? { sessionsByProject: withSessionStatus(get().sessionsByProject, sessionId, "input-required") }
+          : get().busyTurns[sessionId]
+            ? { sessionsByProject: withSessionStatus(get().sessionsByProject, sessionId, "working") }
+            : {})
       });
     } else if (event.type === "tool.call") {
       set({

@@ -122,6 +122,31 @@ describe("OpencodeDriver question reply routing", () => {
   });
 });
 
+describe("OpencodeDriver question event dedupe", () => {
+  it("emits a single question.request when the same ask is replayed", () => {
+    const events: ThreadEvent[] = [];
+    const driver = makeDriver(events);
+    try {
+      const internals = driver as unknown as {
+        sessionIds: Map<string, string>;
+        watchInfo: Map<string, { port: number; authHeader: string; cwd: string }>;
+        handleSseLine: (turnId: string, line: string) => void;
+      };
+      internals.sessionIds.set("turn-1", "ses_1");
+      internals.watchInfo.set("turn-1", { port: 41234, authHeader: "auth", cwd: "C:\\proj" });
+      const line = JSON.stringify({
+        type: "question.asked",
+        properties: { id: "que_1", sessionID: "ses_1", questions }
+      });
+      internals.handleSseLine("turn-1", line);
+      internals.handleSseLine("turn-1", line);
+      expect(events.filter((e) => e.type === "question.request")).toHaveLength(1);
+    } finally {
+      driver.dispose();
+    }
+  });
+});
+
 describe("OpencodeDriver todo.updated session routing", () => {
   it("drops todo.updated for a different session and emits it for the turn's session", () => {
     const events: ThreadEvent[] = [];
