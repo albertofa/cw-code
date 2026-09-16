@@ -18,13 +18,6 @@ function groupTintStyle(name: string): CSSProperties {
   };
 }
 
-function workingCardAccentStyle(name: string): CSSProperties {
-  const h = hashHue(name);
-  return {
-    "--wc-accent": `hsla(${h}, 45%, 55%, 0.55)`
-  } as CSSProperties;
-}
-
 function stateLabel(status: SessionStatus): string {
   if (status === "input-required") return "Input";
   if (status === "working") return "Running";
@@ -724,8 +717,7 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
           if (el) rowRefs.current.set(s.id, el);
           else rowRefs.current.delete(s.id);
         }}
-        className={`working-card${s.id === activeSessionId ? " active" : ""}`}
-        style={workingCardAccentStyle(projectName)}
+        className={`working-card status-${s.status}${s.id === activeSessionId ? " active" : ""}`}
         onMouseEnter={() => scheduleHover(s.id)}
         onMouseLeave={clearHover}
         onClick={() => {

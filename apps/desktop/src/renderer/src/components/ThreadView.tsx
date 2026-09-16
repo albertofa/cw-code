@@ -17,7 +17,6 @@ import { TodoDock } from "./TodoDock.js";
 import { TurnBlock } from "./TurnBlock.js";
 import { groupTurns, splitTurn, type ThreadNode } from "./turnGroups.js";
 import { durationFromMessages } from "./turnFormat.js";
-import { isRunningTool } from "./toolSummaries.js";
 import { projectAvatarStyle, projectInitials } from "./avatar.js";
 import { collectSubagents } from "./subagents.js";
 import { splitImageMentions } from "./imagePreview.js";
@@ -213,7 +212,6 @@ export function ThreadView() {
           basePath={basePath}
           sessionId={session.id}
           onPreview={onOpenPreview}
-          defaultOpen={isRunningTool(m)}
         />
       );
     }

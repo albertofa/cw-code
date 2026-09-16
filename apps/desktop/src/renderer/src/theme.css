@@ -612,10 +612,25 @@ body {
   background: linear-gradient(180deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.02)), var(--bg-deep);
 }
 
+.working-card.status-input-required {
+  --wc-accent: color-mix(in srgb, var(--accent) 60%, transparent);
+}
+
+.working-card.status-working {
+  --wc-accent: color-mix(in srgb, var(--success) 60%, transparent);
+}
+
+.working-card.status-done {
+  --wc-accent: color-mix(in srgb, var(--accent) 60%, transparent);
+}
+
+.working-card.status-holding {
+  --wc-accent: color-mix(in srgb, var(--dim) 70%, transparent);
+}
+
 .working-card.active {
   border-color: rgba(160, 107, 255, 0.45);
   background: linear-gradient(180deg, rgba(160, 107, 255, 0.12), rgba(160, 107, 255, 0.03)), var(--raised);
-  box-shadow: inset 3px 0 0 #a06bff;
 }
 
 .working-card-head {
@@ -651,7 +666,7 @@ body {
 }
 
 .working-card-badge.status-done {
-  color: var(--text);
+  color: var(--accent);
 }
 
 .working-card-badge.status-holding {
