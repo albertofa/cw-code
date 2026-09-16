@@ -254,3 +254,18 @@ The composer is the signature silhouette: one 12px rounded hull with internal zo
 - **Don't** fracture composer controls into detached rows, gaps, or separator-led sub-panels.
 - **Don't** add speaker names, avatars, or resting timestamps to the continuous work-log conversation.
 - **Don't** blanket every panel and row with borders; an edge must correspond to interaction, focus, or a true content boundary.
+
+
+## Selected product identity — Console C
+
+The approved logo is Option C, Console C: a cut-corner C and command-line bar,
+white on the existing `#7c42ff` violet tile, paired with a lowercase Inter
+wordmark. The master is `design/brand/assets/app-icon.svg` at the repository root.
+The 22px title-bar icon and 40px About icon use the renderer copy at
+`src/renderer/src/assets/console-c.svg`. The runtime and Windows installer use
+`resources/icon.ico`; the brand generator synchronizes both copies.
+
+Preserve the existing UI layout and `theme.css` font/color values. This addition
+records the selected identity only; the earlier palette and Segoe-first sections
+above predate the current graphite/Inter implementation and remain separate
+historical documentation drift.

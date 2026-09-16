@@ -9,5 +9,8 @@
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
     "dist": "pnpm --filter @cw-code/desktop dist"
-  }
+  },
+  "description": "A desktop workspace for Claude Code, OpenCode, and Codex.",
+  "license": "MIT",
+  "homepage": "https://github.com/albertofa/cw-code"
 }

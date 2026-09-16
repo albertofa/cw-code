@@ -5,6 +5,8 @@ import { useAppStore } from "../stores/appStore.js";
 import { useNotifs } from "./Notifications.js";
 import { MenuSelect } from "./MenuSelect.js";
 import { DriverIcon } from "./DriverIcon.js";
+import appIcon from "../assets/console-c.svg";
+import { version as appVersion, description as appDescription } from "../../../../package.json";
 
 // Must match CLAUDE_CURATED_MODELS in apps/desktop/src/main/providers/claude/ClaudeCliDriver.ts.
 // Main drops unknown ids on save, so keep this list in sync with the driver.
@@ -744,6 +746,18 @@ export function SettingsModal({
               <>
                 {generalFields}
                 {holdingFields}
+                <section className="settings-section" aria-label="About cw-code">
+                  <h3>About</h3>
+                  <div className="settings-brand">
+                    <img src={appIcon} alt="" aria-hidden="true" draggable={false} />
+                    <div>
+                      <strong>cw-code</strong>
+                      <span>Version {appVersion} · MIT License</span>
+                    </div>
+                  </div>
+                  <p>{appDescription}</p>
+                  <p className="settings-brand-description">Uses your installed CLIs and their authentication.</p>
+                </section>
               </>
             )}
             {!loading && !loadError && draft && category === "sourceControl" && sourceControlFields}

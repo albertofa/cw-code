@@ -3,6 +3,7 @@
   "generatedAt": "2026-09-13T14:30:11.896Z",
   "title": "Design System: cw-code",
   "extensions": {
+    "brandIdentity": {"name": "Console C", "selectedOption": "C", "tileColor": "#7c42ff", "symbolColor": "#ffffff", "wordmarkFont": "Inter", "wordmarkWeight": 600, "titlebarIconSize": 22, "aboutIconSize": 40, "canonicalAsset": "design/brand/assets/app-icon.svg", "rendererAsset": "src/renderer/src/assets/console-c.svg", "windowsIcon": "resources/icon.ico", "scope": "Logo integration only; existing desktop theme remains authoritative"},
     "colorMeta": {
       "bg": { "role": "neutral", "displayName": "Workbench Blue-Graphite", "tonalRamp": ["#07101b", "#09121f", "#0d1725", "#101826", "#182132", "#303a50", "#9ca4bd", "#f2f1f8"] },
       "bg-deep": { "role": "neutral", "displayName": "Conversation Deep", "tonalRamp": ["#050a12", "#080f1b", "#09121f", "#0d1725", "#182132", "#303a50", "#9ca4bd", "#f2f1f8"] },

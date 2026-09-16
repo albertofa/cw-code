@@ -40,7 +40,11 @@ async function createWindow(): Promise<void> {
     width: 1440,
     height: 900,
     frame: false,
-    backgroundColor: "#141212",
+    title: "cw-code",
+    icon: app.isPackaged
+      ? join(process.resourcesPath, "branding", "icon.ico")
+      : join(app.getAppPath(), "resources", "icon.ico"),
+    backgroundColor: "#141518",
     autoHideMenuBar: true,
     webPreferences: {
       preload: resolvePreload(),
