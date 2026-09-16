@@ -4,6 +4,7 @@ import type { DriverName, Project, Session, SessionStatus } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { useNotifs } from "./Notifications.js";
+import { getLastModel } from "./lastModel.js";
 import { hashHue, projectAvatarStyle as avatarStyle, projectInitials as initials } from "./avatar.js";
 import { mergeAwayIds } from "./sidebarOrder.js";
 import { compareWorkingSet, isWorkingSetStatus } from "./workingSet.js";
@@ -1132,7 +1133,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
           <div className="session-hovercard-row">
             <DriverIcon driver={hoverSession.driver} size={16} />
             <span className="hovercard-text">
-              {hoverModel ?? "Default model"} · {DRIVER_LABEL[hoverSession.driver]}
+              {hoverModel ?? getLastModel(hoverSession.driver) ?? "No model"} · {DRIVER_LABEL[hoverSession.driver]}
             </span>
           </div>
           <div className="session-hovercard-row">
