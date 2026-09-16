@@ -14,6 +14,7 @@ import type {
   Session,
   SessionStatus,
   SettingsPatch,
+  SubagentToolsResult,
   TodoItem,
   TurnEvent
 } from "../cw.js";
@@ -128,6 +129,9 @@ interface AppState {
   setPendingDriver(driver: DriverName): void;
   sendPendingPrompt(prompt: string, attachments?: string[]): Promise<void>;
   ensureHistory(sessionId: string, opts?: { force?: boolean; isRetry?: boolean }): Promise<void>;
+  subagentToolsByKey: Record<string, SubagentToolsResult>;
+  subagentToolsLoading: Record<string, boolean>;
+  loadSubagentTools(sessionId: string, agentId: string): Promise<void>;
   ensureComposer(sessionId: string): Promise<void>;
   setComposerPrefs(sessionId: string, prefs: ComposerPrefs): Promise<void>;
   settingsVersion: number;
@@ -227,6 +231,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   busyTurns: {},
   loadingHistory: {},
   historyErrorBySession: {},
+  subagentToolsByKey: {},
+  subagentToolsLoading: {},
   turnStartedAt: {},
   turnDurations: {},
   composerBySession: {},
@@ -685,6 +691,28 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
+  async loadSubagentTools(sessionId: string, agentId: string) {
+    const key = `${sessionId}:${agentId}`;
+    if (get().subagentToolsByKey[key] || get().subagentToolsLoading[key]) return;
+    set({ subagentToolsLoading: { ...get().subagentToolsLoading, [key]: true } });
+    try {
+      const result = await window.cw.getSubagentTools(sessionId, agentId);
+      if (result.items.length > 0) {
+        set({ subagentToolsByKey: { ...get().subagentToolsByKey, [key]: result } });
+      }
+    } catch (err) {
+      useNotifs.getState().push({
+        kind: "error",
+        title: "Could not load subagent tools",
+        message: (err as Error).message
+      });
+    } finally {
+      const loading = { ...get().subagentToolsLoading };
+      delete loading[key];
+      set({ subagentToolsLoading: loading });
+    }
+  },
+
   async ensureComposer(sessionId: string) {
     if (get().composerBySession[sessionId]) return;
     const mirror = readComposerMirror(sessionId);
@@ -1000,7 +1028,9 @@ export const useAppStore = create<AppState>((set, get) => ({
           toolOutput: event.output.slice(0, 8000),
           toolDone: true,
           toolCompletedAt: Date.now(),
-          isError: call.isError === true || event.isError
+          isError: call.isError === true || event.isError,
+          ...(event.usage ? { toolUsage: event.usage } : {}),
+          ...(event.agentId ? { subagentAgentId: event.agentId } : {})
         };
         set({
           messagesBySession: { ...get().messagesBySession, [sessionId]: updated }
@@ -1017,6 +1047,8 @@ export const useAppStore = create<AppState>((set, get) => ({
                 text: event.output.slice(0, 1000),
                 turnId: event.turnId,
                 isError: event.isError,
+                ...(event.usage ? { toolUsage: event.usage } : {}),
+                ...(event.agentId ? { subagentAgentId: event.agentId } : {}),
                 toolCompletedAt: Date.now()
               }
             ]

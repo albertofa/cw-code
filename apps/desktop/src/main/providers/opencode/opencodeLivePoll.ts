@@ -60,7 +60,8 @@ export function diffLiveTools(
   seen: Map<string, LiveSeen>,
   messages: LiveMessage[],
   turnId: string,
-  beforeIds: Set<string> | null
+  beforeIds: Set<string> | null,
+  parentToolCallId?: string
 ): ThreadEvent[] {
   const events: ThreadEvent[] = [];
   for (const msg of messages) {
@@ -80,7 +81,8 @@ export function diffLiveTools(
           turnId,
           toolCallId: id,
           name: part.tool ?? "tool",
-          input
+          input,
+          ...(parentToolCallId ? { parentToolCallId } : {})
         });
       } else if (!entry.input && hasInput(input)) {
         entry.input = true;
@@ -90,7 +92,8 @@ export function diffLiveTools(
           turnId,
           toolCallId: id,
           name: part.tool ?? "tool",
-          input
+          input,
+          ...(parentToolCallId ? { parentToolCallId } : {})
         });
       }
       if (!entry.result) {
@@ -110,4 +113,27 @@ export function diffLiveTools(
     }
   }
   return events;
+}
+
+export interface LiveTaskPart {
+  callId: string;
+  status?: string;
+}
+
+export function collectTaskParts(messages: LiveMessage[]): LiveTaskPart[] {
+  const out: LiveTaskPart[] = [];
+  for (const msg of messages) {
+    for (const part of msg.parts ?? []) {
+      if (part.type !== "tool" || (part.tool ?? "").toLowerCase() !== "task") continue;
+      const id =
+        typeof part.callID === "string" && part.callID
+          ? part.callID
+          : typeof part.id === "string" && part.id
+            ? part.id
+            : "";
+      if (!id) continue;
+      out.push({ callId: id, ...(part.state?.status ? { status: part.state.status } : {}) });
+    }
+  }
+  return out;
 }

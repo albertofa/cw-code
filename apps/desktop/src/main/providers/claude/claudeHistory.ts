@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { HistoryMessage } from "@cw-code/contracts";
 import { todosFromToolCall } from "../todos.js";
+import { parseClaudeTaskNotification, parseTaskNotificationUsage } from "./claudeStreamParser.js";
 import { claudeProjectSlug } from "./claudeSessions.js";
 
 type ContentBlock =
@@ -370,26 +371,59 @@ export function attributeSendMessages(messages: HistoryMessage[], agentByCall: M
   }
 }
 
-const TASK_NOTIFY_RE = {
-  toolUseId: /<tool-use-id>([\s\S]*?)<\/tool-use-id>/,
-  status: /<status>([\s\S]*?)<\/status>/,
-  result: /<result>([\s\S]*?)<\/result>/
-};
+const TASK_RESULT_SCAN_LINES = 400;
+
+export function readClaudeTaskResult(
+  rootPath: string,
+  resumeCursor: string,
+  toolUseId: string
+): { result?: string; status?: string } | undefined {
+  if (!resumeCursor || !toolUseId || !/^[\w-]+$/.test(resumeCursor)) return undefined;
+  const file = join(homedir(), ".claude", "projects", claudeProjectSlug(rootPath), `${resumeCursor}.jsonl`);
+  let raw: string;
+  try {
+    raw = readFileSync(file, "utf8");
+  } catch {
+    return undefined;
+  }
+  const lines = raw.split("\n");
+  for (let i = lines.length - 1, scanned = 0; i >= 0 && scanned < TASK_RESULT_SCAN_LINES; i--) {
+    const line = lines[i];
+    if (!line.includes("<task-notification>") || !line.includes(toolUseId)) continue;
+    scanned++;
+    let content: unknown;
+    try {
+      content = (JSON.parse(line) as TranscriptLine).message?.content;
+    } catch {
+      continue;
+    }
+    if (typeof content !== "string") continue;
+    const notification = parseClaudeTaskNotification(content);
+    if (!notification || notification.toolUseId !== toolUseId) continue;
+    return {
+      result: notification.result,
+      ...(notification.status ? { status: notification.status } : {})
+    };
+  }
+  return undefined;
+}
 
 export function foldTaskNotifications(messages: HistoryMessage[]): HistoryMessage[] {
   const byId = new Map(messages.map((m) => [m.id, m]));
   const drop = new Set<string>();
   for (const m of messages) {
     if (m.role !== "tool" || m.toolName !== "task-notification") continue;
-    const toolUseId = TASK_NOTIFY_RE.toolUseId.exec(m.text)?.[1]?.trim();
-    const result = TASK_NOTIFY_RE.result.exec(m.text)?.[1];
+    const notification = parseClaudeTaskNotification(m.text);
+    const toolUseId = notification?.toolUseId;
+    const result = notification?.result;
     const target = toolUseId ? byId.get(`${toolUseId}-r`) : undefined;
-    const status = TASK_NOTIFY_RE.status.exec(m.text)?.[1]?.trim();
-    const isError = status ? status.toLowerCase() !== "completed" : undefined;
+    const isError = notification?.status ? notification.status.toLowerCase() !== "completed" : undefined;
+    const usage = parseTaskNotificationUsage(m.text);
     if (target && result !== undefined) {
       target.text = result.slice(0, 8000);
       if (m.timestamp !== undefined) target.timestamp = m.timestamp;
       if (isError !== undefined) target.isError = isError;
+      if (usage) target.toolUsage = usage;
       drop.add(m.id);
       continue;
     }
@@ -400,6 +434,7 @@ export function foldTaskNotifications(messages: HistoryMessage[]): HistoryMessag
       m.turnId = call.turnId;
       m.toolName = "result";
       if (isError !== undefined) m.isError = isError;
+      if (usage) m.toolUsage = usage;
       byId.set(m.id, m);
       continue;
     }

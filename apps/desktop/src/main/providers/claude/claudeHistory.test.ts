@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { assignReasoningDurations, attributeSendMessages, extractAgentId, findSidecarModel, foldTaskNotifications, parseClaudeTranscriptLine, readSidecarAgent, toEpochMs } from "./claudeHistory.js";
+import { assignReasoningDurations, attributeSendMessages, extractAgentId, findSidecarModel, foldTaskNotifications, parseClaudeTranscriptLine, readClaudeTaskResult, readSidecarAgent, toEpochMs } from "./claudeHistory.js";
 import type { HistoryMessage } from "@cw-code/contracts";
 
 function toolMessage(partial: Partial<HistoryMessage> & { id: string }): HistoryMessage {
@@ -296,6 +296,27 @@ describe("foldTaskNotifications", () => {
     expect(out[0].text).toBe("second");
     expect(out[0].timestamp).toBe(9500);
     expect(out[0].isError).toBe(true);
+  });
+
+  it("carries the usage block onto the folded result", () => {
+    const withUsage = toolMessage({
+      id: "n1",
+      toolName: "task-notification",
+      timestamp: 9000,
+      text: `<task-notification>\n<tool-use-id>tu1</tool-use-id>\n<status>completed</status>\n<result>done</result>\n<usage><subagent_tokens>136099</subagent_tokens><tool_uses>12</tool_uses><duration_ms>287602</duration_ms></usage>`
+    });
+    const out = foldTaskNotifications([
+      toolMessage({ id: "tu1-r", toolName: "result", text: "Async agent launched" }),
+      withUsage
+    ]);
+    expect(out[0].toolUsage).toEqual({ tokens: 136099, toolUses: 12, durationMs: 287602 });
+  });
+});
+
+describe("readClaudeTaskResult", () => {
+  it("returns undefined for unsafe cursors or missing transcripts", () => {
+    expect(readClaudeTaskResult("C:\\proj", "../escape", "tu1")).toBeUndefined();
+    expect(readClaudeTaskResult("C:\\proj", "no-such-session", "tu1")).toBeUndefined();
   });
 });
 

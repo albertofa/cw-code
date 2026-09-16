@@ -3,7 +3,7 @@ import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { join } from "node:path";
 import type { AppSettings, ThreadEvent } from "@cw-code/contracts";
-import { buildClaudeArgs, CLAUDE_IDLE_EVICT_MS, ClaudeCliDriver, claudeSettingsPath, mapClaudeEffort, mapClaudePermission, mergeClaudeAllowRule } from "./ClaudeCliDriver.js";
+import { buildClaudeArgs, CLAUDE_IDLE_EVICT_MS, ClaudeCliDriver, claudeSettingsPath, mapClaudeEffort, mapClaudePermission, mergeClaudeAllowRule, subagentToolsResult } from "./ClaudeCliDriver.js";
 
 const SETTINGS: AppSettings = {
   claudeBinaryPath: "claude",
@@ -96,6 +96,29 @@ describe("buildClaudeArgs", () => {
 describe("claudeSettingsPath", () => {
   it("points at .claude/settings.json under the turn cwd", () => {
     expect(claudeSettingsPath(join("C:", "proj"))).toBe(join("C:", "proj", ".claude", "settings.json"));
+  });
+});
+
+describe("subagentToolsResult", () => {
+  it("maps a sidecar agent to the bridge result", () => {
+    expect(
+      subagentToolsResult({
+        model: "claude-sonnet-5",
+        effort: "high",
+        totalTokens: 136099,
+        total: 1,
+        items: [{ id: "tu1", name: "Read", input: { path: "a.ts" }, output: "file" }]
+      })
+    ).toEqual({
+      items: [{ id: "tu1", name: "Read", input: { path: "a.ts" }, output: "file" }],
+      model: "claude-sonnet-5",
+      effort: "high",
+      tokens: 136099
+    });
+  });
+
+  it("returns an empty list when the sidecar is missing", () => {
+    expect(subagentToolsResult(undefined)).toEqual({ items: [] });
   });
 });
 
@@ -265,6 +288,53 @@ describe("ClaudeCliDriver persistent process", () => {
     await settle();
     expect(events.filter((event) => event.type === "turn.done")).toEqual([]);
     expect(killed).toEqual([]);
+    driver.dispose();
+  });
+
+  it("completes a background task from task_notification with usage", async () => {
+    const { driver, events, children } = makeDriver();
+    driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
+    await settle();
+    children[0].stdout.write(
+      `${JSON.stringify({ type: "system", subtype: "task_started", task_id: "agent-1", tool_use_id: "call-1", is_backgrounded: true, prompt: "review" })}\n`
+    );
+    children[0].stdout.write(
+      `${JSON.stringify({ type: "system", subtype: "task_updated", task_id: "agent-1", patch: { status: "completed", end_time: 1000 } })}\n`
+    );
+    children[0].stdout.write(
+      `${JSON.stringify({ type: "system", subtype: "task_notification", task_id: "agent-1", tool_use_id: "call-1", status: "completed", summary: "DONE", usage: { total_tokens: 1200, tool_uses: 3, duration_ms: 900 } })}\n`
+    );
+    await settle();
+    expect(events).toContainEqual({
+      type: "tool.result",
+      turnId: expect.any(String),
+      toolCallId: "call-1",
+      output: "DONE",
+      isError: false,
+      usage: { tokens: 1200, toolUses: 3, durationMs: 900 },
+      agentId: "agent-1"
+    });
+    driver.dispose();
+  });
+
+  it("marks a failed task from task_updated when no notification follows", async () => {
+    const { driver, events, children } = makeDriver();
+    driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
+    await settle();
+    children[0].stdout.write(
+      `${JSON.stringify({ type: "system", subtype: "task_started", task_id: "agent-2", tool_use_id: "call-2", is_backgrounded: true })}\n`
+    );
+    children[0].stdout.write(
+      `${JSON.stringify({ type: "system", subtype: "task_updated", task_id: "agent-2", patch: { status: "failed", end_time: 1000 } })}\n`
+    );
+    await settle();
+    expect(events).toContainEqual({
+      type: "tool.result",
+      turnId: expect.any(String),
+      toolCallId: "call-2",
+      output: "Subagent failed",
+      isError: true
+    });
     driver.dispose();
   });
 

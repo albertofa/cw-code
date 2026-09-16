@@ -17,6 +17,7 @@ import type {
   SessionMeta,
   SessionStatus,
   SettingsPatch,
+  SubagentToolsResult,
   ThreadEvent,
   TurnHandle,
   WorktreePruneSummary
@@ -627,6 +628,14 @@ export class SessionManager {
     }
     if (messages.length > 0) return messages;
     return this.verifyEmptyHistory(session, project);
+  }
+
+  async getSubagentTools(sessionId: string, agentId: string): Promise<SubagentToolsResult> {
+    const session = this.store.getSession(sessionId);
+    if (!session) throw new Error(`unknown session ${sessionId}`);
+    const driver = this.drivers[session.driver];
+    if (!driver.getSubagentTools) return { items: [] };
+    return driver.getSubagentTools(await this.ensureWorktree(sessionId), session.resumeCursor, agentId);
   }
 
   private async healMissingCursor(session: SessionMeta, project: Project): Promise<HistoryMessage[] | null> {

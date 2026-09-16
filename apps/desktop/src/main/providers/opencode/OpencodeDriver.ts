@@ -23,7 +23,7 @@ import {
 import { opencodeSessionParentId, parseOpencodeSessionParent, parseOpencodeTodosUpdated } from "./opencodeEvents.js";
 import { AskBridge } from "./askBridge.js";
 import { writeAskBridgeTool } from "./askToolFile.js";
-import { diffLiveTools, collectPartTypes, type LiveMessage, type LiveSeen } from "./opencodeLivePoll.js";
+import { diffLiveTools, collectPartTypes, collectTaskParts, type LiveMessage, type LiveSeen } from "./opencodeLivePoll.js";
 import {
   buildOpencodeMessageBody,
   isReasoningPartDelta,
@@ -66,6 +66,10 @@ export class OpencodeDriver implements CliDriver {
   private watchInfo = new Map<string, { port: number; authHeader: string; cwd: string; permissionMode?: PermissionMode }>();
   private sessionIds = new Map<string, string>();
   private sessionParents = new Map<string, string>();
+  private sessionChildren = new Map<string, string[]>();
+  private taskChildren = new Map<string, Map<string, string>>();
+  private childToolSeen = new Map<string, Map<string, Map<string, LiveSeen>>>();
+  private childPollDone = new Map<string, Set<string>>();
   private turnMeta = new Map<string, { localSessionId: string; beforeIds: Set<string> | null; startedAt: number; pollWarned: boolean; startedPort: number }>();
   private toolSeen = new Map<string, Map<string, LiveSeen>>();
   private partTypes = new Map<string, Map<string, string>>();
@@ -276,6 +280,12 @@ export class OpencodeDriver implements CliDriver {
       if (!oldest.done) this.sessionParents.delete(oldest.value);
     }
     this.sessionParents.set(sessionID, parentID);
+    const siblings = this.sessionChildren.get(parentID) ?? [];
+    if (!siblings.includes(sessionID)) {
+      siblings.push(sessionID);
+      if (siblings.length > 32) siblings.shift();
+      this.sessionChildren.set(parentID, siblings);
+    }
   }
 
   private ownerTurnOf(sessionID: string): string | undefined {
@@ -1000,6 +1010,9 @@ export class OpencodeDriver implements CliDriver {
     const seen = this.toolSeen.get(turnId) ?? new Map<string, LiveSeen>();
     this.toolSeen.delete(turnId);
     this.partTypes.delete(turnId);
+    this.taskChildren.delete(turnId);
+    this.childToolSeen.delete(turnId);
+    this.childPollDone.delete(turnId);
     return {
       localSessionId: meta.localSessionId,
       serverSessionId,
@@ -1336,6 +1349,75 @@ export class OpencodeDriver implements CliDriver {
     return "missing";
   }
 
+  private async pollChildTools(
+    turnId: string,
+    info: { port: number; authHeader: string },
+    rootSessionId: string,
+    payload: LiveMessage[]
+  ): Promise<void> {
+    const tasks = collectTaskParts(payload);
+    if (tasks.length === 0) return;
+    let assigned = this.taskChildren.get(turnId);
+    if (!assigned) {
+      assigned = new Map();
+      this.taskChildren.set(turnId, assigned);
+    }
+    const children = this.sessionChildren.get(rootSessionId) ?? [];
+    const done = this.childPollDone.get(turnId) ?? new Set<string>();
+    this.childPollDone.set(turnId, done);
+    for (const task of tasks) {
+      let child = assigned.get(task.callId);
+      if (!child) {
+        const used = new Set(assigned.values());
+        child = children.find((id) => !used.has(id));
+        if (!child) continue;
+        assigned.set(task.callId, child);
+      }
+      if (done.has(task.callId)) continue;
+      let seenByCall = this.childToolSeen.get(turnId);
+      if (!seenByCall) {
+        seenByCall = new Map();
+        this.childToolSeen.set(turnId, seenByCall);
+      }
+      let seen = seenByCall.get(task.callId);
+      if (!seen) {
+        seen = new Map();
+        seenByCall.set(task.callId, seen);
+      }
+      const childPayload = await this.loadSessionMessages(info, child);
+      if (!childPayload) {
+        const meta = this.turnMeta.get(turnId);
+        if (meta && !meta.pollWarned) {
+          meta.pollWarned = true;
+          console.warn(`opencode subagent tool poll failed for session ${child}`);
+        }
+        continue;
+      }
+      for (const event of diffLiveTools(seen, childPayload, turnId, null, task.callId)) this.emit(event);
+      if (task.status === "completed" || task.status === "error") done.add(task.callId);
+    }
+  }
+
+  private async loadSessionMessages(
+    info: { port: number; authHeader: string },
+    sessionID: string
+  ): Promise<LiveMessage[] | null> {
+    try {
+      const res = await opencodeFetch(
+        `http://127.0.0.1:${info.port}/session/${encodeURIComponent(sessionID)}/message?limit=50`,
+        {
+          headers: { Authorization: info.authHeader },
+          timeoutMs: OPENCODE_LIST_TIMEOUT_MS,
+          port: info.port
+        }
+      );
+      if (!res.ok || (res.headers.get("content-type") ?? "").includes("text/html")) return null;
+      return (await res.json()) as LiveMessage[];
+    } catch {
+      return null;
+    }
+  }
+
   private async pollSessionState(turnId: string): Promise<void> {
     if (!this.sessionIds.has(turnId)) return;
     let info = this.watchInfo.get(turnId);
@@ -1358,6 +1440,7 @@ export class OpencodeDriver implements CliDriver {
         if (seen) {
           for (const event of diffLiveTools(seen, payload, turnId, meta?.beforeIds ?? null)) this.emit(event);
         }
+        await this.pollChildTools(turnId, info, sessionID, payload);
         if (meta?.beforeIds && runEnded(payload, meta.beforeIds)) {
           void this.finishTurn(turnId);
           return;

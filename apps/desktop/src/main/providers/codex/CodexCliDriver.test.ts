@@ -79,7 +79,39 @@ class FakeClient implements CodexAppServerLike {
           ],
           nextCursor: null
         } as T;
-      case "thread/read":
+      case "thread/read": {
+        const threadId = (params as { threadId?: string } | undefined)?.threadId;
+        if (threadId === "thr_child") {
+          return {
+            thread: {
+              id: "thr_child",
+              turns: [
+                {
+                  id: "turn_c",
+                  startedAt: 10,
+                  completedAt: 12,
+                  items: [
+                    {
+                      type: "commandExecution",
+                      id: "cc1",
+                      command: "ls",
+                      cwd: "C:\\proj",
+                      aggregatedOutput: "a.ts\nb.ts",
+                      exitCode: 0,
+                      status: "completed"
+                    },
+                    {
+                      type: "fileChange",
+                      id: "cf1",
+                      status: "completed",
+                      changes: [{ path: "a.ts", kind: "update", diff: "@@" }]
+                    }
+                  ]
+                }
+              ]
+            }
+          } as T;
+        }
         return {
           thread: {
             id: "thr_history",
@@ -95,6 +127,7 @@ class FakeClient implements CodexAppServerLike {
             ]
           }
         } as T;
+      }
       default:
         return {} as T;
     }
@@ -237,6 +270,87 @@ describe("CodexCliDriver", () => {
         name: "shell"
       })
     );
+    driver.dispose();
+  });
+
+  it("maps collab tool calls to subagent tool events", async () => {
+    const { driver, events } = makeDriver(client);
+    driver.startTurn({ sessionId: "local-1", prompt: "spawn", cwd: "C:\\proj" });
+    await settle();
+    client.notify("item/started", {
+      threadId: "thr_1",
+      turnId: "turn_2",
+      item: {
+        type: "collabToolCall",
+        id: "co1",
+        tool: "spawn_agent",
+        prompt: "review the diff",
+        receiverThreadIds: ["thr_child"],
+        status: "in_progress"
+      }
+    });
+    client.notify("item/completed", {
+      threadId: "thr_1",
+      turnId: "turn_2",
+      item: {
+        type: "collabToolCall",
+        id: "co1",
+        tool: "spawn_agent",
+        receiverThreadIds: ["thr_child"],
+        status: "completed",
+        agentsStates: { thr_child: { status: "running" } }
+      }
+    });
+    await settle();
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "tool.call",
+        toolCallId: "co1",
+        name: "collab:spawn_agent",
+        input: expect.objectContaining({ prompt: "review the diff", receiverThreadIds: ["thr_child"] })
+      })
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "tool.result",
+        toolCallId: "co1",
+        agentId: "thr_child",
+        isError: false
+      })
+    );
+    driver.dispose();
+  });
+
+  it("maps the snake_case collab item shape", async () => {
+    const { driver, events } = makeDriver(client);
+    driver.startTurn({ sessionId: "local-1", prompt: "spawn", cwd: "C:\\proj" });
+    await settle();
+    client.notify("item/started", {
+      threadId: "thr_1",
+      turnId: "turn_2",
+      item: {
+        type: "collab_tool_call",
+        id: "co2",
+        tool: "wait",
+        receiver_thread_ids: ["thr_child"],
+        status: "in_progress"
+      }
+    });
+    await settle();
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: "tool.call", toolCallId: "co2", name: "collab:wait" })
+    );
+    driver.dispose();
+  });
+
+  it("reads subagent tool activity from the child thread", async () => {
+    const { driver } = makeDriver(client);
+    const result = await driver.getSubagentTools("C:\\proj", "thr_parent", "thr_child");
+    expect(result.items.map((item) => item.name)).toEqual(["shell", "edit"]);
+    expect(result.items[0].output).toBe("a.ts\nb.ts");
+    expect(result.items[0].timestamp).toBe(10000);
+    expect(result.items[0].completedAt).toBe(12000);
+    expect(result.items[1].input).toEqual({ changes: [{ path: "a.ts", kind: "update", diff: "@@" }] });
     driver.dispose();
   });
 
