@@ -14,6 +14,7 @@ import {
   Zap
 } from "lucide-react";
 import type { ComposerPrefs, DriverName, EffortLevel, ModelOption, PermissionMode } from "../cw.js";
+import { firstDisplayedModelId, getLastModel, setLastModel } from "./lastModel.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { MenuSelect, type MenuOption } from "./MenuSelect.js";
 import { ImageThumb } from "./ImageThumb.js";
@@ -130,6 +131,18 @@ export function ComposerView({
   const [modelsError, setModelsError] = useState<string | null>(null);
   const [customModel, setCustomModel] = useState("");
   const [showCustom, setShowCustom] = useState(false);
+  const composerRef = useRef<HTMLTextAreaElement | null>(null);
+
+  useEffect(() => {
+    if (backendRef.current.busy) return;
+    const frame = requestAnimationFrame(() => {
+      try {
+        composerRef.current?.focus({ preventScroll: true });
+      } catch {
+      }
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [resetKey]);
 
   useEffect(() => {
     setAttachments([]);
@@ -149,7 +162,15 @@ export function ComposerView({
       .then((list) => {
         if (cancelled) return;
         setModels(list);
-        if (prefs.model && !list.some((m) => m.id === prefs.model)) {
+        if (!prefs.model) {
+          const last = getLastModel(driver);
+          const next = (last && list.some((m) => m.id === last) ? last : undefined) ?? firstDisplayedModelId(driver, list);
+          if (next) backendRef.current.savePrefs({ model: next });
+          setShowCustom(false);
+        } else if (list.some((m) => m.id === prefs.model)) {
+          setLastModel(driver, prefs.model);
+          setShowCustom(false);
+        } else {
           setCustomModel(prefs.model);
           setShowCustom(true);
         }
@@ -221,7 +242,7 @@ export function ComposerView({
   const modelValue = showCustom ? "__custom" : (prefs.model ?? "");
   const modelDisplay = showCustom
     ? customModel.trim() || "Custom"
-    : (models.find((m) => m.id === prefs.model)?.label ?? "Default model");
+    : (models.find((m) => m.id === prefs.model)?.label ?? "Select model");
   const effortOptions = useMemo(
     () => effortOptionsFor(driver, models, showCustom ? undefined : prefs.model),
     [driver, models, showCustom, prefs.model]
@@ -234,6 +255,11 @@ export function ComposerView({
     if (effortOptions.some((o) => o.id === effectiveEffort)) return;
     backendRef.current.savePrefs({ effort: fallbackEffort(effectiveEffort, effortOptions) });
   }, [driver, showCustom, models, prefs.model, effectiveEffort, effortOptions]);
+  useEffect(() => {
+    if (!prefs.model || showCustom) return;
+    if (!models.some((m) => m.id === prefs.model)) return;
+    setLastModel(driver, prefs.model);
+  }, [driver, prefs.model, models, showCustom]);
   const permissionDisplay = PERMISSIONS.find((o) => o.id === (prefs.permissionMode ?? "auto"))?.label ?? "Auto";
   const permissionIcon = PERMISSIONS.find((o) => o.id === (prefs.permissionMode ?? "auto"))?.icon;
 
@@ -266,6 +292,7 @@ export function ComposerView({
       <div className="composer-writing">
         <div className="composer-input-wrap">
           <textarea
+            ref={composerRef}
             value={draft}
             onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => {
@@ -338,7 +365,6 @@ export function ComposerView({
             searchable
             searchPlaceholder="Filter models…"
             options={[
-              ...(!showCustom && !prefs.model ? [{ id: "", label: "Default model" }] : []),
               ...(driver === "opencode"
                 ? groupModelsByProvider(models)
                 : models.map((m) => ({ id: m.id, label: m.label, hint: m.id }))),
@@ -350,6 +376,7 @@ export function ComposerView({
                 return;
               }
               setShowCustom(false);
+              if (v) setLastModel(driver, v);
               backend.savePrefs({ model: v || undefined });
             }}
           />

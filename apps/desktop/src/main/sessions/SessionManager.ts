@@ -581,11 +581,7 @@ export class SessionManager {
   getComposer(sessionId: string): ComposerPrefs {
     const session = this.store.getSession(sessionId);
     if (!session) throw new Error(`unknown session ${sessionId}`);
-    let model = session.model;
-    if (!model && session.driver === "claude") {
-      const fallback = this.settings.get().claudeDefaultModel?.trim() ?? "";
-      if (fallback) model = fallback;
-    }
+    const model = session.model;
     const permissionMode = session.permissionMode ?? "auto";
     return {
       model,

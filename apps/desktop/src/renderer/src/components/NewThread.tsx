@@ -113,6 +113,12 @@ export function NewThread({
     interrupt: () => {}
   };
 
+  const handleDriverChange = (next: DriverName) => {
+    if (next === driver) return;
+    store.setPendingPrefs({ model: undefined });
+    onDriverChange(next);
+  };
+
   const modeSelect = (
     <MenuSelect
       label="Workspace"
@@ -190,7 +196,7 @@ export function NewThread({
                 options={HARNESS.map((h) => ({
                   id: h.id, label: h.label, hint: h.blurb, description: h.blurb, icon: <DriverIcon driver={h.id} size={13} />
                 }))}
-                onPick={(id) => onDriverChange(id as DriverName)}
+                onPick={(id) => handleDriverChange(id as DriverName)}
               />
             </div>
           }
