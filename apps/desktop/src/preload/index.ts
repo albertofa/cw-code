@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { AppSettings, CreateSessionOptions, GitBranchInfo, GitDiffMode, GitDiffResult, GitStatus, Project, RetryConnectionResult, SessionCleanupResult, SessionMeta, SessionStatus, SourceControlHealth, SubagentToolsResult, WorktreePruneSummary } from "@cw-code/contracts";
+import type { AppSettings, CreateSessionOptions, GitBranchInfo, GitDiffMode, GitDiffResult, GitStatus, HarnessId, Project, RetryConnectionResult, SessionCleanupResult, SessionMeta, SessionStatus, SkillDetail, SkillMeta, SkillSaveInput, SkillsListResult, SourceControlHealth, SubagentToolsResult, WorktreePruneSummary } from "@cw-code/contracts";
 
 export type PermissionMode = "auto" | "acceptEdits" | "bypassPermissions" | "manual";
 export type EffortLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
@@ -66,6 +66,13 @@ export interface CwApi {
   setComposer(sessionId: string, prefs: ComposerPrefs): Promise<ComposerPrefs>;
   getSettings(): Promise<AppSettings>;
   setSettings(patch: Partial<AppSettings>): Promise<AppSettings>;
+  skills: {
+    list(): Promise<SkillsListResult>;
+    get(name: string): Promise<SkillDetail>;
+    save(input: SkillSaveInput): Promise<SkillDetail>;
+    setEnabled(name: string, harness: HarnessId, on: boolean): Promise<SkillMeta>;
+    importAll(): Promise<SkillsListResult>;
+  };
   getGitStatus(sessionId: string): Promise<GitStatus>;
   listGitBranches(sessionId: string): Promise<GitBranchInfo[]>;
   listProjectBranches(projectId: string): Promise<GitBranchInfo[]>;
@@ -152,6 +159,14 @@ const api: CwApi = {
     ipcRenderer.invoke("composer.set", { sessionId, prefs }),
   getSettings: () => ipcRenderer.invoke("settings.get"),
   setSettings: (patch: Partial<AppSettings>) => ipcRenderer.invoke("settings.set", patch),
+  skills: {
+    list: () => ipcRenderer.invoke("skills.list"),
+    get: (name: string) => ipcRenderer.invoke("skills.get", name),
+    save: (input: SkillSaveInput) => ipcRenderer.invoke("skills.save", input),
+    setEnabled: (name: string, harness: HarnessId, on: boolean) =>
+      ipcRenderer.invoke("skills.setEnabled", { name, harness, on }),
+    importAll: () => ipcRenderer.invoke("skills.importAll")
+  },
   getGitStatus: (sessionId: string) => ipcRenderer.invoke("git.status", { sessionId }),
   listGitBranches: (sessionId: string) => ipcRenderer.invoke("git.branches", { sessionId }),
   listProjectBranches: (projectId: string) => ipcRenderer.invoke("git.projectBranches", { projectId }),

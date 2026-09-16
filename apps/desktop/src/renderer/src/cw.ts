@@ -1,3 +1,11 @@
+import type {
+  HarnessId,
+  SkillDetail,
+  SkillMeta,
+  SkillSaveInput,
+  SkillsListResult
+} from "@cw-code/contracts";
+
 export interface Project {
   id: string;
   rootPath: string;
@@ -365,6 +373,13 @@ export interface CwApi {
   setComposer(sessionId: string, prefs: ComposerPrefs): Promise<ComposerPrefs>;
   getSettings(): Promise<AppSettings>;
   setSettings(patch: SettingsPatch): Promise<AppSettings>;
+  skills: {
+    list(): Promise<SkillsListResult>;
+    get(name: string): Promise<SkillDetail>;
+    save(input: SkillSaveInput): Promise<SkillDetail>;
+    setEnabled(name: string, harness: HarnessId, on: boolean): Promise<SkillMeta>;
+    importAll(): Promise<SkillsListResult>;
+  };
   getGitStatus(sessionId: string): Promise<GitStatus>;
   listGitBranches(sessionId: string): Promise<GitBranchInfo[]>;
   listProjectBranches(projectId: string): Promise<GitBranchInfo[]>;
