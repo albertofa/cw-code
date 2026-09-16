@@ -68,7 +68,9 @@ function SkillRow({ meta, selected, onPick }: { meta: SkillMeta; selected: boole
                   e.stopPropagation();
                   void toggle(meta.name, id, !on);
                 }}
-                onKeyDown={(e) => e.stopPropagation()}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") e.stopPropagation();
+                }}
               >
                 <span className={on ? undefined : "skill-icon-off"}>
                   <DriverIcon driver={id as DriverName} size={15} />
@@ -82,6 +84,27 @@ function SkillRow({ meta, selected, onPick }: { meta: SkillMeta; selected: boole
         {meta.description || "No description yet"}
       </div>
     </div>
+  );
+}
+
+function ExtraKeyInput({ rowKey, onCommit }: { rowKey: string; onCommit: (oldKey: string, newKey: string) => boolean }) {
+  const [text, setText] = useState(rowKey);
+  const commit = () => {
+    if (text !== rowKey && !onCommit(rowKey, text)) setText(rowKey);
+  };
+  return (
+    <input
+      className="prop-input prop-mono prop-key-input"
+      value={text}
+      placeholder="key"
+      spellCheck={false}
+      aria-label="Property key"
+      onChange={(e) => setText(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+      }}
+    />
   );
 }
 
@@ -109,19 +132,20 @@ function SkillEditor({ tab, setTab }: { tab: EditorTab; setTab: (tab: EditorTab)
     setDraft({ frontmatter: { ...extras, [key]: value } });
   };
 
-  const renameExtra = (oldKey: string, newKey: string) => {
-    if (newKey === oldKey) return;
+  const renameExtra = (oldKey: string, newKey: string): boolean => {
+    if (newKey === oldKey) return true;
     if (newKey !== "" && newKey in extras) {
       useNotifs.getState().push({
         kind: "error",
         title: `Could not rename property '${oldKey || "(new)"}'`,
         message: `Property '${newKey}' already exists.`
       });
-      return;
+      return false;
     }
     setDraft({
       frontmatter: Object.fromEntries(Object.entries(extras).map(([k, v]) => [k === oldKey ? newKey : k, v]))
     });
+    return true;
   };
 
   const removeExtra = (key: string) => {
@@ -248,19 +272,12 @@ function SkillEditor({ tab, setTab }: { tab: EditorTab; setTab: (tab: EditorTab)
               onChange={(e) => setDraft({ description: e.target.value })}
             />
           </div>
-          {Object.entries(extras).map(([key, value], index) => (
-            <div className="prop-row" key={index}>
+          {Object.entries(extras).map(([key, value]) => (
+            <div className="prop-row" key={key}>
               <span className="grip" aria-hidden="true">
                 ☰
               </span>
-              <input
-                className="prop-input prop-mono prop-key-input"
-                value={key}
-                placeholder="key"
-                spellCheck={false}
-                aria-label="Property key"
-                onChange={(e) => renameExtra(key, e.target.value)}
-              />
+              <ExtraKeyInput rowKey={key} onCommit={renameExtra} />
               <input
                 className="prop-input"
                 value={value}
