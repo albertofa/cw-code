@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { AppSettings, CreateSessionOptions, GitBranchInfo, GitDiffMode, GitDiffResult, GitStatus, HarnessId, Project, RetryConnectionResult, SessionCleanupResult, SessionMeta, SessionStatus, SkillDetail, SkillMeta, SkillSaveInput, SkillsListResult, SourceControlHealth, SubagentToolsResult, WorktreePruneSummary } from "@cw-code/contracts";
+import type { AppSettings, CliBinary, CliDiscoveredCandidate, CliDiscoverResult, CreateSessionOptions, GitBranchInfo, GitDiffMode, GitDiffResult, GitStatus, HarnessId, Project, RetryConnectionResult, SessionCleanupResult, SessionMeta, SessionStatus, SkillDetail, SkillMeta, SkillSaveInput, SkillsListResult, SourceControlHealth, SubagentToolsResult, WorktreePruneSummary } from "@cw-code/contracts";
 
 export type PermissionMode = "auto" | "acceptEdits" | "bypassPermissions" | "manual";
 export type EffortLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
@@ -37,6 +37,8 @@ export interface CwApi {
     error: string | null;
     ok: boolean;
   }>>;
+  discoverBinaries(binaries?: CliBinary[]): Promise<CliDiscoverResult>;
+  verifyBinaryPath(binary: CliBinary, path: string): Promise<CliDiscoveredCandidate>;
   isDev: boolean;
   openHarnessTrace(): Promise<{ ok: boolean; path?: string; error?: string }>;
   listProjects(): Promise<Project[]>;
@@ -116,6 +118,9 @@ export interface CwApi {
 
 const api: CwApi = {
   checkVersions: () => ipcRenderer.invoke("cli.checkVersions"),
+  discoverBinaries: (binaries?: CliBinary[]) => ipcRenderer.invoke("cli.discover", { binaries }),
+  verifyBinaryPath: (binary: CliBinary, path: string) =>
+    ipcRenderer.invoke("cli.verifyPath", { binary, path }),
   isDev: Boolean(process.env["ELECTRON_RENDERER_URL"]),
   openHarnessTrace: () => ipcRenderer.invoke("debug.openTrace"),
   listProjects: () => ipcRenderer.invoke("projects.list"),
