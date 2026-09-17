@@ -400,6 +400,7 @@ export interface CwApi {
     list(): Promise<SkillsListResult>;
     get(name: string): Promise<SkillDetail>;
     save(input: SkillSaveInput): Promise<SkillDetail>;
+    remove(name: string): Promise<SkillsListResult>;
     setEnabled(name: string, harness: HarnessId, on: boolean): Promise<SkillMeta>;
     importAll(): Promise<SkillsListResult>;
   };

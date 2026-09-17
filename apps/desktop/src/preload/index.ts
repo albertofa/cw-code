@@ -72,6 +72,7 @@ export interface CwApi {
     list(): Promise<SkillsListResult>;
     get(name: string): Promise<SkillDetail>;
     save(input: SkillSaveInput): Promise<SkillDetail>;
+    remove(name: string): Promise<SkillsListResult>;
     setEnabled(name: string, harness: HarnessId, on: boolean): Promise<SkillMeta>;
     importAll(): Promise<SkillsListResult>;
   };
@@ -168,6 +169,7 @@ const api: CwApi = {
     list: () => ipcRenderer.invoke("skills.list"),
     get: (name: string) => ipcRenderer.invoke("skills.get", name),
     save: (input: SkillSaveInput) => ipcRenderer.invoke("skills.save", input),
+    remove: (name: string) => ipcRenderer.invoke("skills.remove", name),
     setEnabled: (name: string, harness: HarnessId, on: boolean) =>
       ipcRenderer.invoke("skills.setEnabled", { name, harness, on }),
     importAll: () => ipcRenderer.invoke("skills.importAll")

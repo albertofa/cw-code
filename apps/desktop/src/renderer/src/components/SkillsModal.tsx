@@ -1,9 +1,10 @@
 import { useEffect, useState } from "react";
-import { X } from "lucide-react";
+import { Loader2, Plus, RefreshCw, Save, Trash2, X } from "lucide-react";
 import type { HarnessId, SkillMeta } from "@cw-code/contracts";
 import type { DriverName } from "../cw.js";
 import { toggleKey, useSkillsStore } from "../stores/skillsStore.js";
 import { DriverIcon } from "./DriverIcon.js";
+import { useConfirm, type ConfirmRequest } from "./ConfirmDialog.js";
 import { Md } from "./Markdown.js";
 import { useNotifs } from "./Notifications.js";
 
@@ -108,15 +109,23 @@ function ExtraKeyInput({ rowKey, onCommit }: { rowKey: string; onCommit: (oldKey
   );
 }
 
-function SkillEditor({ tab, setTab }: { tab: EditorTab; setTab: (tab: EditorTab) => void }) {
+function SkillEditor({
+  tab,
+  setTab,
+  confirm
+}: {
+  tab: EditorTab;
+  setTab: (tab: EditorTab) => void;
+  confirm: (request: ConfirmRequest) => Promise<boolean>;
+}) {
   const draft = useSkillsStore((s) => s.draft);
   const selectedName = useSkillsStore((s) => s.selectedName);
   const dirty = useSkillsStore((s) => s.dirty);
-  const items = useSkillsStore((s) => s.items);
   const setDraft = useSkillsStore((s) => s.setDraft);
   const saveDraft = useSkillsStore((s) => s.saveDraft);
-  const select = useSkillsStore((s) => s.select);
+  const remove = useSkillsStore((s) => s.remove);
   const [saving, setSaving] = useState(false);
+  const [removing, setRemoving] = useState(false);
   if (!draft) {
     return (
       <div className="skills-editor">
@@ -159,11 +168,6 @@ function SkillEditor({ tab, setTab }: { tab: EditorTab; setTab: (tab: EditorTab)
     setDraft({ frontmatter: { ...extras, "": "" } });
   };
 
-  const onCancel = () => {
-    if (dirty && !window.confirm("Discard unsaved changes?")) return;
-    void select(isNew ? (items[0]?.name ?? null) : selectedName);
-  };
-
   const onSave = async () => {
     if (saving) return;
     const name = draft.name.trim();
@@ -188,6 +192,28 @@ function SkillEditor({ tab, setTab }: { tab: EditorTab; setTab: (tab: EditorTab)
       }
     } finally {
       setSaving(false);
+    }
+  };
+
+  const onRemove = async () => {
+    if (removing || saving || isNew) return;
+    const name = selectedName ?? draft.name;
+    const confirmed = await confirm({
+      title: `Remove /${name} from all harnesses?`,
+      message:
+        "This deletes the skill folder from Claude, OpenCode and Codex, plus the app's own copy. This cannot be undone.",
+      confirmLabel: "Remove",
+      danger: true
+    });
+    if (!confirmed) return;
+    setRemoving(true);
+    try {
+      await remove(name);
+      if (!useSkillsStore.getState().error) {
+        useNotifs.getState().push({ kind: "success", title: `/${name} removed from every harness` });
+      }
+    } finally {
+      setRemoving(false);
     }
   };
 
@@ -319,28 +345,41 @@ function SkillEditor({ tab, setTab }: { tab: EditorTab; setTab: (tab: EditorTab)
         )}
       </div>
       <div className="ed-foot">
-        <span className="status">
-          {dirty || isNew ? (
-            <>
-              Unsaved changes · will propagate to <b>{count}/3</b>
-            </>
-          ) : (
-            <>
-              Synced to <b>{count}/3</b> harnesses · hover an icon for its path
-            </>
-          )}
-        </span>
+        {!isNew && (
+          <button
+            type="button"
+            className="btn btn-danger btn-icon"
+            onClick={() => void onRemove()}
+            disabled={saving || removing}
+            title="Remove this skill from every harness"
+            aria-label="Remove skill"
+          >
+            {removing ? (
+              <Loader2 size={16} className="skills-spin" aria-hidden="true" />
+            ) : (
+              <Trash2 size={16} aria-hidden="true" />
+            )}
+          </button>
+        )}
+        {(dirty || isNew) && (
+          <span className="status">
+            Unsaved changes · will propagate to <b>{count}/3</b>
+          </span>
+        )}
         <span className="sp" />
-        <button type="button" className="btn" onClick={onCancel}>
-          Cancel
-        </button>
         <button
           type="button"
-          className="btn btn-primary"
+          className="btn btn-primary btn-icon"
           onClick={() => void onSave()}
           disabled={(!dirty && !isNew) || saving}
+          title="Save & propagate to the enabled harnesses"
+          aria-label="Save & propagate"
         >
-          {saving ? "Saving…" : "Save & propagate"}
+          {saving ? (
+            <Loader2 size={16} className="skills-spin" aria-hidden="true" />
+          ) : (
+            <Save size={16} aria-hidden="true" />
+          )}
         </button>
       </div>
     </div>
@@ -367,6 +406,8 @@ export function SkillsModal({ onClose }: { onClose: () => void }) {
     void load();
   }, [load]);
 
+  const { confirm, confirmOpen, dialog } = useConfirm();
+
   useEffect(() => {
     if (status === "ready" && selectedName === null && draft === null && items.length > 0) {
       void select(items[0].name);
@@ -375,30 +416,36 @@ export function SkillsModal({ onClose }: { onClose: () => void }) {
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") {
-        const state = useSkillsStore.getState();
-        if (state.dirty && !window.confirm("Discard unsaved changes?")) return;
-        onClose();
-      }
+      if (e.key === "Escape" && !confirmOpen) void requestClose();
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
+  }, [confirmOpen, dirty, onClose]);
 
-  const requestClose = () => {
-    if (dirty && !window.confirm("Discard unsaved changes?")) return;
+  const discardDirty = (): Promise<boolean> =>
+    dirty
+      ? confirm({
+          title: "Discard unsaved changes?",
+          message: "Your edits to this skill will be lost.",
+          confirmLabel: "Discard",
+          danger: true
+        })
+      : Promise.resolve(true);
+
+  const requestClose = async () => {
+    if (!(await discardDirty())) return;
     onClose();
   };
 
-  const pick = (name: string) => {
+  const pick = async (name: string) => {
     if (name === selectedName) return;
-    if (dirty && !window.confirm("Discard unsaved changes?")) return;
+    if (!(await discardDirty())) return;
     setTab("preview");
     void select(name);
   };
 
-  const onNew = () => {
-    if (dirty && !window.confirm("Discard unsaved changes?")) return;
+  const onNew = async () => {
+    if (!(await discardDirty())) return;
     createNew();
     setTab("source");
   };
@@ -427,12 +474,6 @@ export function SkillsModal({ onClose }: { onClose: () => void }) {
         <div className="settings-head">
           <h2>✦ Skills</h2>
           <span className="sp" />
-          <button type="button" className="btn" onClick={() => void onImport()} disabled={importing}>
-            {importing ? "Re-importing…" : "↻ Re-import"}
-          </button>
-          <button type="button" className="btn btn-primary" onClick={onNew}>
-            + New skill
-          </button>
           <button type="button" className="icon-btn" aria-label="Close skills" onClick={requestClose}>
             <X size={16} />
           </button>
@@ -447,6 +488,25 @@ export function SkillsModal({ onClose }: { onClose: () => void }) {
                 aria-label="Filter skills"
                 onChange={(e) => setFilter(e.target.value)}
               />
+              <button
+                type="button"
+                className="icon-btn skills-search-btn"
+                onClick={() => void onImport()}
+                disabled={importing}
+                title="Re-import skills from all harnesses"
+                aria-label="Re-import skills"
+              >
+                <RefreshCw size={15} className={importing ? "skills-spin" : undefined} aria-hidden="true" />
+              </button>
+              <button
+                type="button"
+                className="icon-btn skills-search-btn"
+                onClick={onNew}
+                title="New skill"
+                aria-label="New skill"
+              >
+                <Plus size={15} aria-hidden="true" />
+              </button>
             </div>
             <div className="skills-items">
               {status === "loading" && items.length === 0 && <div className="side-empty">Loading skills…</div>}
@@ -466,8 +526,9 @@ export function SkillsModal({ onClose }: { onClose: () => void }) {
               ))}
             </div>
           </div>
-          <SkillEditor key={selectedName ?? "__new"} tab={tab} setTab={setTab} />
+          <SkillEditor key={selectedName ?? "__new"} tab={tab} setTab={setTab} confirm={confirm} />
         </div>
+        {dialog}
       </div>
     </div>
   );

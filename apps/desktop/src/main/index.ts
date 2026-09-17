@@ -126,6 +126,7 @@ function registerIpc(): void {
   ipcMain.handle("skills.list", () => skills.listSkills());
   ipcMain.handle("skills.get", (_e, name: string) => skills.getSkill(name));
   ipcMain.handle("skills.save", (_e, input: SkillSaveInput) => skills.saveSkill(input));
+  ipcMain.handle("skills.remove", (_e, name: string) => skills.removeSkill(name));
   ipcMain.handle(
     "skills.setEnabled",
     (_e, args: { name: string; harness: HarnessId; on: boolean }) =>
