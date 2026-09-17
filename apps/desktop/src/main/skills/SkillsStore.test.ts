@@ -67,6 +67,29 @@ describe("SkillsStore", () => {
     expect(existsSync(target)).toBe(false);
   });
 
+  it("removes a skill from the canonical store and every harness", async () => {
+    const home = makeFixtureHome();
+    const { store, userData } = makeStore(home);
+    await store.importSkills();
+    await store.setSkillEnabled("claude-only", "opencode", true);
+    expect(existsSync(join(userData, "skills", "claude-only", "SKILL.md"))).toBe(true);
+    expect(existsSync(join(home, ".config", "opencode", "skills", "claude-only", "SKILL.md"))).toBe(true);
+
+    const result = await store.removeSkill("claude-only");
+    expect(result.skills.some((s) => s.name === "claude-only")).toBe(false);
+    expect(existsSync(join(userData, "skills", "claude-only"))).toBe(false);
+    expect(existsSync(join(home, ".claude", "skills", "claude-only"))).toBe(false);
+    expect(existsSync(join(home, ".config", "opencode", "skills", "claude-only"))).toBe(false);
+    expect(JSON.parse(readFileSync(join(userData, "skills.json"), "utf8"))["claude-only"]).toBeUndefined();
+    await expect(store.getSkill("claude-only")).rejects.toThrow(/unknown skill/);
+  });
+
+  it("rejects removing unknown skills and invalid names", async () => {
+    const { store } = makeStore(makeFixtureHome());
+    await expect(store.removeSkill("missing-skill")).rejects.toThrow(/unknown skill/);
+    await expect(store.removeSkill("../escape")).rejects.toThrow(/invalid skill name/);
+  });
+
   it("saves canonical content and re-copies to every enabled harness", async () => {
     const home = makeFixtureHome();
     const { store, userData } = makeStore(home);

@@ -175,6 +175,24 @@ describe("new-session crash repro (interactive)", () => {
     expect(fatalErrors(errors)).toEqual([]);
   });
 
+  it("shows only the current harness terminal tab", async () => {
+    const { useAppStore } = await mount();
+    await act(async () => {
+      useAppStore.getState().setPendingDriver("opencode");
+    });
+    expect(host!.innerHTML).toContain("OpenCode terminal");
+    expect(host!.innerHTML).not.toContain("Claude terminal");
+    expect(host!.innerHTML).not.toContain("Codex terminal");
+
+    await act(async () => {
+      useAppStore.getState().setPendingDriver("codex");
+    });
+    expect(host!.innerHTML).toContain("Codex terminal");
+    expect(host!.innerHTML).not.toContain("OpenCode terminal");
+    expect(host!.innerHTML).not.toContain("Claude terminal");
+    expect(fatalErrors(errors)).toEqual([]);
+  });
+
   it("replays a rich streaming turn", async () => {
     const { useAppStore } = await mount();
     await act(async () => {

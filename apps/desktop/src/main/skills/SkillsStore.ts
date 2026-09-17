@@ -263,6 +263,18 @@ export class SkillsStore {
     return this.getSkill(name);
   }
 
+  async removeSkill(name: string): Promise<SkillsListResult> {
+    assertValidSkillName(name);
+    await this.ensureInitialized();
+    const canonicalFile = skillFileForDir(this.canonicalDir(name));
+    if (!existsSync(canonicalFile) && !this.data[name]) throw new Error(`unknown skill ${name}`);
+    rmSync(this.canonicalDir(name), { recursive: true, force: true });
+    for (const harness of HARNESSES) this.removeHarnessCopy(harness, name);
+    delete this.data[name];
+    this.persist();
+    return this.listSkills();
+  }
+
   async setSkillEnabled(name: string, harness: HarnessId, on: boolean): Promise<SkillMeta> {
     assertValidSkillName(name);
     if (!HARNESSES.includes(harness)) throw new Error(`unknown harness ${harness}`);

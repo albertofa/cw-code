@@ -3367,6 +3367,73 @@ body.session-dragging * {
   filter: brightness(1.12);
 }
 
+.btn-danger {
+  color: var(--danger);
+  border-color: color-mix(in srgb, var(--danger) 45%, var(--border));
+}
+
+.btn-danger:hover:not(:disabled) {
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--danger);
+}
+
+.btn-danger-solid {
+  background: var(--danger);
+  border-color: transparent;
+  color: #fff;
+  font-weight: 700;
+}
+
+.btn-danger-solid:hover:not(:disabled) {
+  background: var(--danger);
+  color: #fff;
+  filter: brightness(1.12);
+}
+
+.confirm-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 200;
+  background: rgba(0, 0, 0, 0.55);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.confirm-card {
+  width: min(420px, calc(100vw - 64px));
+  box-sizing: border-box;
+  background: #22242a;
+  border: 1px solid #393b40;
+  border-radius: 12px;
+  box-shadow: 0 28px 90px rgba(0, 0, 0, 0.62);
+  padding: 18px;
+}
+
+.confirm-title {
+  color: var(--text);
+  font-size: 14px;
+  font-weight: 700;
+}
+
+.confirm-message {
+  margin-top: 8px;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+.confirm-actions {
+  margin-top: 16px;
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.confirm-actions .btn {
+  min-height: 32px;
+}
+
 .notifs {
   position: absolute;
   top: 12px;
@@ -5906,10 +5973,6 @@ button.gitbar-pr:hover {
   flex: 1;
 }
 
-.skills-modal .settings-head .btn {
-  min-height: 36px;
-}
-
 .skills-main {
   flex: 1;
   min-height: 0;
@@ -5927,14 +5990,39 @@ button.gitbar-pr:hover {
 }
 
 .skills-search {
+  display: flex;
+  align-items: center;
+  gap: 6px;
   padding: 12px;
   border-bottom: 1px solid var(--border-soft);
 }
 
 .skills-search .field {
-  width: 100%;
+  flex: 1;
+  min-width: 0;
   min-height: 36px;
   box-sizing: border-box;
+}
+
+.skills-search-btn {
+  flex: none;
+  width: 36px;
+  height: 36px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border-color: var(--border);
+  box-sizing: border-box;
+}
+
+.skills-search-btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.skills-spin {
+  animation: cw-spin 1s linear infinite;
 }
 
 .skills-items {
@@ -6328,6 +6416,14 @@ button.gitbar-pr:hover {
   min-height: 36px;
 }
 
+.ed-foot .btn-icon {
+  width: 36px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
 /* Binary picker (SettingsModal harness + source-control binary rows) */
 .settings-row .binary-picker {
   grid-column: 2;
@@ -6354,10 +6450,10 @@ button.gitbar-pr:hover {
 }
 
 .binary-picker-spin {
-  animation: binary-picker-spin 1s linear infinite;
+  animation: cw-spin 1s linear infinite;
 }
 
-@keyframes binary-picker-spin {
+@keyframes cw-spin {
   from {
     transform: rotate(0deg);
   }
@@ -6620,7 +6716,8 @@ button.gitbar-pr:hover {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .binary-picker-spin {
+  .binary-picker-spin,
+  .skills-spin {
     animation: none;
   }
 }

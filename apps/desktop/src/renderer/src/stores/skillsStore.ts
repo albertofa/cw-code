@@ -55,6 +55,7 @@ interface SkillsState {
   setDraft(patch: Partial<SkillSaveInput>): void;
   toggle(name: string, harness: HarnessId, on: boolean): Promise<void>;
   saveDraft(input?: SkillSaveInput): Promise<void>;
+  remove(name: string): Promise<void>;
   createNew(): void;
   importAll(): Promise<void>;
   clearError(): void;
@@ -189,6 +190,23 @@ export const useSkillsStore = create<SkillsState>((set, get) => ({
 
   createNew() {
     set({ selectedName: null, detail: null, draft: newDraft(), dirty: false, error: null });
+  },
+
+  async remove(name) {
+    try {
+      const result = await window.cw.skills.remove(name);
+      const wasSelected = get().selectedName === name || get().draft?.name === name;
+      set({
+        items: result.skills,
+        status: "ready",
+        error: null,
+        ...(wasSelected ? { selectedName: null, detail: null, draft: null, dirty: false } : {})
+      });
+    } catch (err) {
+      const message = (err as Error).message;
+      set({ error: message });
+      useNotifs.getState().push({ kind: "error", title: `Could not remove '${name}'`, message });
+    }
   },
 
   async importAll() {
