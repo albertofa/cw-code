@@ -6411,6 +6411,32 @@ button.gitbar-pr:hover {
   background: var(--accent-soft);
 }
 
+.binary-picker-row.custom {
+  border-color: rgba(45, 212, 191, 0.5);
+  background: rgba(45, 212, 191, 0.07);
+}
+
+.binary-picker-row.custom:hover {
+  border-color: rgba(45, 212, 191, 0.8);
+  background: rgba(45, 212, 191, 0.12);
+}
+
+.binary-picker-row.custom.selected {
+  border-color: #2dd4bf;
+  background: rgba(45, 212, 191, 0.14);
+}
+
+.binary-picker-row.failed {
+  cursor: not-allowed;
+  border-color: rgba(224, 108, 96, 0.4);
+  background: rgba(224, 108, 96, 0.06);
+}
+
+.binary-picker-row.failed:hover {
+  border-color: rgba(224, 108, 96, 0.4);
+  background: rgba(224, 108, 96, 0.06);
+}
+
 .binary-picker-row input {
   margin-top: 2px;
   flex: none;
@@ -6439,8 +6465,23 @@ button.gitbar-pr:hover {
 }
 
 .binary-picker-version {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
   font-size: 11.5px;
   color: var(--muted);
+}
+
+.binary-picker-version.good {
+  color: var(--success);
+}
+
+.binary-picker-version.stale {
+  color: var(--warning);
+}
+
+.binary-picker-version.failed {
+  color: var(--danger);
 }
 
 .binary-picker-badge {
@@ -6484,6 +6525,10 @@ button.gitbar-pr:hover {
   font-size: 12px;
   color: var(--success);
   flex-wrap: wrap;
+}
+
+.binary-picker-valid.stale {
+  color: var(--warning);
 }
 
 .binary-picker-invalid {

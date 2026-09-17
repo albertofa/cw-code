@@ -10,6 +10,7 @@ export interface CliDiscoveredCandidate {
   available: boolean;
   error: string | null;
   ok: boolean;
+  minimum: string | null;
 }
 
 export type CliDiscoverResult = Record<CliBinary, CliDiscoveredCandidate[]>;

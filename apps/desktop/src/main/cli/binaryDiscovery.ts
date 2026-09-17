@@ -8,7 +8,7 @@ import type {
   CliDiscoverResult,
   CliDiscoveredCandidate,
 } from "@cw-code/contracts";
-import { checkCliVersion, isBinaryUnavailableError, versionProbeTarget } from "../cliVersions.js";
+import { checkCliVersion, isBinaryUnavailableError, MINIMUM_VERSIONS, versionProbeTarget } from "../cliVersions.js";
 import { currentEnv, resolveBinary, type ResolveEnv } from "../pty/resolve.js";
 import { normalizeBinaryPath } from "../settings/settingsUtils.js";
 
@@ -131,7 +131,13 @@ export function candidatePaths(binary: CliBinary, opts: CandidatePathsOptions): 
 
 const ALL_BINARIES: CliBinary[] = ["claude", "opencode", "codex", "git", "gh"];
 
-type ProbedVersion = Pick<CliDiscoveredCandidate, "version" | "available" | "error" | "ok">;
+type ProbedVersion = Pick<CliDiscoveredCandidate, "version" | "available" | "error" | "ok" | "minimum">;
+
+function minimumFor(binary: CliBinary): string | null {
+  return binary === "claude" || binary === "opencode" || binary === "codex"
+    ? MINIMUM_VERSIONS[binary]
+    : null;
+}
 
 function runVersion(execPath: string): Promise<string> {
   return new Promise((resolve, reject) => {
@@ -171,13 +177,14 @@ function parseScmVersion(binary: CliBinary, stdout: string): string | null {
 async function probeScmVersion(binary: CliBinary, execPath: string): Promise<ProbedVersion> {
   try {
     const version = parseScmVersion(binary, await runVersion(execPath));
-    return { version, available: true, error: null, ok: version !== null };
+    return { version, available: true, error: null, ok: version !== null, minimum: null };
   } catch (error) {
     return {
       version: null,
       available: !isBinaryUnavailableError({ code: errorCode(error) }),
       error: errorMessage(error),
-      ok: false
+      ok: false,
+      minimum: null
     };
   }
 }
@@ -185,7 +192,7 @@ async function probeScmVersion(binary: CliBinary, execPath: string): Promise<Pro
 async function probeVersion(binary: CliBinary, execPath: string): Promise<ProbedVersion> {
   if (binary === "claude" || binary === "opencode" || binary === "codex") {
     const check = await checkCliVersion(binary, execPath);
-    return { version: check.actual, available: check.available, error: check.error, ok: check.ok };
+    return { version: check.actual, available: check.available, error: check.error, ok: check.ok, minimum: check.minimum };
   }
   return probeScmVersion(binary, execPath);
 }
@@ -237,7 +244,8 @@ export async function verifyBinaryPath(
       version: null,
       available: false,
       error: "Empty binary path.",
-      ok: false
+      ok: false,
+      minimum: minimumFor(binary)
     };
   }
   if (/[\\/]/.test(rawPath.trim())) {
@@ -304,7 +312,7 @@ async function discoverOne(binary: CliBinary): Promise<CliDiscoveredCandidate[]>
       try {
         return { binary, path, source, ...(await probeVersion(binary, path)) };
       } catch (error) {
-        return { binary, path, source, version: null, available: false, error: errorMessage(error), ok: false };
+        return { binary, path, source, version: null, available: false, error: errorMessage(error), ok: false, minimum: minimumFor(binary) };
       }
     })
   );
