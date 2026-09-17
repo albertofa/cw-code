@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type JSX, type MouseEvent } from "react";
-import { AlertTriangle, CheckCircle2, RefreshCw, X, XCircle } from "lucide-react";
+import { AlertTriangle, CheckCircle2, RefreshCw, Trash2, XCircle } from "lucide-react";
 import type { CliBinary, CliDiscoveredCandidate } from "@cw-code/contracts";
 
 function isBareName(value: string): boolean {
@@ -35,10 +35,10 @@ function failedCandidate(binary: CliBinary, path: string, err: unknown): CliDisc
 }
 
 function sourceBadge(candidate: CliDiscoveredCandidate, currentValue: string): string {
-  if (candidate.path === currentValue) return "current";
+  if (candidate.source === "configured") return "custom";
+  if (samePath(candidate.path, currentValue)) return "current";
   if (candidate.source === "path") return "PATH";
-  if (candidate.source === "common") return "found";
-  return "custom";
+  return "found";
 }
 
 export function BinaryPicker(props: {
@@ -271,19 +271,19 @@ export function BinaryPicker(props: {
                     {renderVersion(candidate)}
                     <span className="binary-picker-badge">{sourceBadge(candidate, value)}</span>
                     {busy && <span className="binary-picker-saving">Saving…</span>}
+                    {custom && (
+                      <button
+                        type="button"
+                        className="binary-picker-remove"
+                        title="Remove custom path"
+                        aria-label={`Remove custom path ${candidate.path}`}
+                        onClick={(e) => hideCustom(e, candidate.path)}
+                      >
+                        <Trash2 size={12} aria-hidden="true" />
+                      </button>
+                    )}
                   </span>
                 </span>
-                {custom && (
-                  <button
-                    type="button"
-                    className="binary-picker-remove"
-                    title="Remove custom path"
-                    aria-label={`Remove custom path ${candidate.path}`}
-                    onClick={(e) => hideCustom(e, candidate.path)}
-                  >
-                    <X size={12} aria-hidden="true" />
-                  </button>
-                )}
               </label>
             );
           })}
@@ -307,17 +307,17 @@ export function BinaryPicker(props: {
                     <XCircle size={12} aria-hidden="true" /> {firstLine(candidate.error ?? "Verification failed")}
                   </span>
                   <span className="binary-picker-badge">custom</span>
+                  <button
+                    type="button"
+                    className="binary-picker-remove"
+                    title="Remove custom path"
+                    aria-label={`Remove custom path ${candidate.path}`}
+                    onClick={(e) => hideCustom(e, candidate.path)}
+                  >
+                    <Trash2 size={12} aria-hidden="true" />
+                  </button>
                 </span>
               </span>
-              <button
-                type="button"
-                className="binary-picker-remove"
-                title="Remove custom path"
-                aria-label={`Remove custom path ${candidate.path}`}
-                onClick={(e) => hideCustom(e, candidate.path)}
-              >
-                <X size={12} aria-hidden="true" />
-              </button>
             </label>
           ))}
         </div>

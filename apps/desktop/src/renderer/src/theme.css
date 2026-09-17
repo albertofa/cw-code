@@ -6391,7 +6391,6 @@ button.gitbar-pr:hover {
 }
 
 .binary-picker-row {
-  position: relative;
   display: flex;
   align-items: flex-start;
   gap: 8px;
@@ -6418,18 +6417,17 @@ button.gitbar-pr:hover {
 }
 
 .binary-picker-row.custom {
-  border-color: rgba(45, 212, 191, 0.5);
-  background: rgba(45, 212, 191, 0.07);
+  border-style: dashed;
+  border-color: var(--border);
 }
 
 .binary-picker-row.custom:hover {
-  border-color: rgba(45, 212, 191, 0.8);
-  background: rgba(45, 212, 191, 0.12);
+  border-color: var(--muted);
+  background: var(--raised);
 }
 
 .binary-picker-row.custom.selected {
-  border-color: #2dd4bf;
-  background: rgba(45, 212, 191, 0.14);
+  border-style: solid;
 }
 
 .binary-picker-row.failed {
@@ -6459,14 +6457,12 @@ button.gitbar-pr:hover {
 }
 
 .binary-picker-remove {
-  position: absolute;
-  top: 5px;
-  right: 5px;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   width: 20px;
   height: 20px;
+  margin-left: auto;
   padding: 0;
   background: transparent;
   border: none;
@@ -6480,10 +6476,6 @@ button.gitbar-pr:hover {
   color: var(--danger);
   background: rgba(224, 108, 96, 0.12);
   opacity: 1;
-}
-
-.binary-picker-row.custom .binary-picker-row-body {
-  padding-right: 22px;
 }
 
 .binary-picker-row-body {
@@ -6516,7 +6508,7 @@ button.gitbar-pr:hover {
 }
 
 .binary-picker-version.good {
-  color: var(--success);
+  color: var(--muted);
 }
 
 .binary-picker-version.stale {
@@ -6566,7 +6558,7 @@ button.gitbar-pr:hover {
   align-items: center;
   gap: 8px;
   font-size: 12px;
-  color: var(--success);
+  color: var(--muted);
   flex-wrap: wrap;
 }
 
