@@ -116,9 +116,12 @@ function registerIpc(): void {
     });
   });
   ipcMain.handle("cli.discover", (_e, args: { binaries?: CliBinary[] }) => discoverBinaries(args?.binaries));
-  ipcMain.handle("cli.verifyPath", (_e, args: { binary: CliBinary; path: string }) =>
-    verifyBinaryPath(args.binary, args.path)
-  );
+  ipcMain.handle("cli.verifyPath", (_e, args: { binary: CliBinary; path: string }) => {
+    if (!args || typeof args.binary !== "string" || typeof args.path !== "string") {
+      throw new Error("cli.verifyPath requires { binary, path }");
+    }
+    return verifyBinaryPath(args.binary, args.path);
+  });
   ipcMain.handle("settings.get", () => sessions.getSettings());
   ipcMain.handle("skills.list", () => skills.listSkills());
   ipcMain.handle("skills.get", (_e, name: string) => skills.getSkill(name));
