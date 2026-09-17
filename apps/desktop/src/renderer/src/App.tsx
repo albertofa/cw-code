@@ -17,6 +17,10 @@ import type { TurnEvent } from "./cw.js";
 
 type RightTab = "files" | "agents" | "diff" | DriverName | "shell" | "preview";
 
+function isHarnessTab(tab: RightTab): tab is DriverName {
+  return tab === "claude" || tab === "opencode" || tab === "codex";
+}
+
 interface TabDef {
   id: RightTab;
   title: string;
@@ -332,9 +336,10 @@ export function App() {
   const allSessions = Object.values(sessionsByProject).flat();
   const driver = pendingDriver ?? allSessions.find((s) => s.id === activeSessionId)?.driver;
 
-  const splitTab: RightTab = rightTab === "claude" || rightTab === "opencode" || rightTab === "codex" || rightTab === "shell"
-    ? "files"
-    : "shell";
+  const visibleTabs = TABS.filter((t) => t.driver === undefined || t.driver === driver);
+  const activeTab: RightTab = isHarnessTab(rightTab) && rightTab !== driver ? (driver ?? "files") : rightTab;
+
+  const splitTab: RightTab = isHarnessTab(activeTab) || activeTab === "shell" ? "files" : "shell";
   const tabTitle = (tab: RightTab): string => {
     if (tab === "preview") return "Preview";
     return TABS.find((item) => item.id === tab)?.title ?? tab;
@@ -390,27 +395,27 @@ export function App() {
                 title="Drag to resize · double-click to reset"
               />
               <div className="tabbar">
-                {TABS.map((t) => (
+                {visibleTabs.map((t) => (
                   <button
                     key={t.id}
                     onClick={() => setRightTab(t.id)}
-                    className={`tab${rightTab === t.id ? " active" : ""}`}
+                    className={`tab${activeTab === t.id ? " active" : ""}`}
                     title={t.title}
                     aria-label={t.title}
                   >
                     <t.Icon size={15} className={t.driver ? `driver-icon ${t.driver}` : undefined} />
-                    {rightTab === t.id && <span className="tab-label">{t.title}</span>}
+                    {activeTab === t.id && <span className="tab-label">{t.title}</span>}
                   </button>
                 ))}
                 {preview && (
                   <button
                     onClick={() => setRightTab("preview")}
-                    className={`tab${rightTab === "preview" ? " active" : ""}`}
+                    className={`tab${activeTab === "preview" ? " active" : ""}`}
                     title="Preview"
                     aria-label="Preview"
                   >
                     <Eye size={15} />
-                    {rightTab === "preview" && <span className="tab-label">Preview</span>}
+                    {activeTab === "preview" && <span className="tab-label">Preview</span>}
                   </button>
                 )}
                 <button
@@ -437,15 +442,15 @@ export function App() {
                   rightSplit ? (
                     <>
                       <section className="right-split-pane right-split-primary">
-                        <div className="right-split-label">{tabTitle(rightTab)}</div>
-                        <div className="right-split-content">{renderRightContent(rightTab)}</div>
+                        <div className="right-split-label">{tabTitle(activeTab)}</div>
+                        <div className="right-split-content">{renderRightContent(activeTab)}</div>
                       </section>
                       <section className="right-split-pane right-split-secondary">
                         <div className="right-split-label">{tabTitle(splitTab)}</div>
                         <div className="right-split-content">{renderRightContent(splitTab, "split")}</div>
                       </section>
                     </>
-                  ) : renderRightContent(rightTab)
+                  ) : renderRightContent(activeTab)
                 )}
               </div>
             </aside>
