@@ -37,6 +37,10 @@ export function resolveBinary(name: string, env: ResolveEnv = currentEnv()): str
         const candidate = join(dir, `${name}${ext.toLowerCase()}`);
         if (existsSync(candidate)) return candidate;
       }
+      if (!env.pathExts.some((ext) => ext.toLowerCase() === ".ps1")) {
+        const ps1 = join(dir, `${name}.ps1`);
+        if (existsSync(ps1)) return ps1;
+      }
     }
   }
   return null;

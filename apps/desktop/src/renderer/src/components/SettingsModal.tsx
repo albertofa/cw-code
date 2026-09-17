@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from "react";
 import { AlertTriangle, Bot, CheckCircle2, Gauge, GitBranch, RefreshCw, Sparkles, Star, X, XCircle } from "lucide-react";
 import type { AppSettings, DriverName, EffortLevel, ModelOption, SourceControlHealth, WorktreePruneSummary } from "../cw.js";
+import { BinaryPicker } from "./BinaryPicker.js";
 import { useAppStore } from "../stores/appStore.js";
 import { useNotifs } from "./Notifications.js";
 import { MenuSelect } from "./MenuSelect.js";
@@ -161,6 +162,18 @@ export function SettingsModal({
 
   const set = (patch: Partial<AppSettings>) => {
     setDraft((d) => (d ? { ...d, ...patch } : d));
+  };
+
+  type BinarySettingKey =
+    | "claudeBinaryPath"
+    | "opencodeBinaryPath"
+    | "codexBinaryPath"
+    | "gitBinaryPath"
+    | "githubCliBinaryPath";
+
+  const makeOnPick = (key: BinarySettingKey) => async (path: string) => {
+    await useAppStore.getState().saveSettings({ [key]: path } as Partial<AppSettings>);
+    setDraft((d) => (d ? ({ ...d, [key]: path } as AppSettings) : d));
   };
 
   const setCustom = (patch: Partial<{ id: string; name: string }>) => {
@@ -331,16 +344,17 @@ export function SettingsModal({
 
   const claudeFields = draft && (
     <>
-      <label className="settings-row">
+      <div className="settings-row">
         <span className="settings-label">Binary path</span>
-        <span className="settings-hint">Path to the Claude binary used by this instance.</span>
-        <input
-          className="field"
+        <span className="settings-hint">Verified installs only. Picking one applies immediately.</span>
+        <BinaryPicker
+          key="claude"
+          binary="claude"
           value={draft.claudeBinaryPath}
-          placeholder="claude"
-          onChange={(e) => set({ claudeBinaryPath: e.target.value })}
+          onPick={makeOnPick("claudeBinaryPath")}
+          autoDiscoverKey={`harness:claude:${draft.claudeBinaryPath}`}
         />
-      </label>
+      </div>
       <label className="settings-row">
         <span className="settings-label">Launch arguments</span>
         <span className="settings-hint">Additional CLI arguments passed on session start.</span>
@@ -368,16 +382,17 @@ export function SettingsModal({
 
   const opencodeFields = draft && (
     <>
-      <label className="settings-row">
+      <div className="settings-row">
         <span className="settings-label">Binary path</span>
-        <span className="settings-hint">Path to the OpenCode binary used by this instance.</span>
-        <input
-          className="field"
+        <span className="settings-hint">Verified installs only. Picking one applies immediately.</span>
+        <BinaryPicker
+          key="opencode"
+          binary="opencode"
           value={draft.opencodeBinaryPath}
-          placeholder="opencode"
-          onChange={(e) => set({ opencodeBinaryPath: e.target.value })}
+          onPick={makeOnPick("opencodeBinaryPath")}
+          autoDiscoverKey={`harness:opencode:${draft.opencodeBinaryPath}`}
         />
-      </label>
+      </div>
       <label className="settings-row">
         <span className="settings-label">Launch arguments</span>
         <span className="settings-hint">Additional CLI arguments passed on session start.</span>
@@ -404,16 +419,17 @@ export function SettingsModal({
 
   const codexFields = draft && (
     <>
-      <label className="settings-row">
+      <div className="settings-row">
         <span className="settings-label">Binary path</span>
-        <span className="settings-hint">Path to the Codex binary used by this instance.</span>
-        <input
-          className="field"
+        <span className="settings-hint">Verified installs only. Picking one applies immediately.</span>
+        <BinaryPicker
+          key="codex"
+          binary="codex"
           value={draft.codexBinaryPath}
-          placeholder="codex"
-          onChange={(e) => set({ codexBinaryPath: e.target.value })}
+          onPick={makeOnPick("codexBinaryPath")}
+          autoDiscoverKey={`harness:codex:${draft.codexBinaryPath}`}
         />
-      </label>
+      </div>
       <label className="settings-row">
         <span className="settings-label">Launch arguments</span>
         <span className="settings-hint">Additional CLI arguments passed to the app server on startup.</span>
@@ -548,16 +564,28 @@ export function SettingsModal({
             <RefreshCw size={12} /> {healthLoading ? "Checking…" : "Recheck"}
           </button>
         </div>
-        <label className="settings-row">
+        <div className="settings-row">
           <span className="settings-label">Git executable</span>
-          <span className="settings-hint">Used for status, branches, diffs, identity, and worktrees.</span>
-          <input className="field" value={draft.gitBinaryPath} placeholder="git" onChange={(e) => set({ gitBinaryPath: e.target.value })} />
-        </label>
-        <label className="settings-row">
+          <span className="settings-hint">Used for status, branches, diffs, identity, and worktrees. Picking one applies immediately.</span>
+          <BinaryPicker
+            key="git"
+            binary="git"
+            value={draft.gitBinaryPath}
+            onPick={makeOnPick("gitBinaryPath")}
+            autoDiscoverKey={`sourceControl:git:${draft.gitBinaryPath}`}
+          />
+        </div>
+        <div className="settings-row">
           <span className="settings-label">GitHub CLI executable</span>
-          <span className="settings-hint">Used for account discovery and pull-request status.</span>
-          <input className="field" value={draft.githubCliBinaryPath} placeholder="gh" onChange={(e) => set({ githubCliBinaryPath: e.target.value })} />
-        </label>
+          <span className="settings-hint">Used for account discovery and pull-request status. Picking one applies immediately.</span>
+          <BinaryPicker
+            key="gh"
+            binary="gh"
+            value={draft.githubCliBinaryPath}
+            onPick={makeOnPick("githubCliBinaryPath")}
+            autoDiscoverKey={`sourceControl:gh:${draft.githubCliBinaryPath}`}
+          />
+        </div>
         <label className="settings-row">
           <span className="settings-label">Automatic refresh</span>
           <span className="settings-hint">Poll Git status and GitHub PR checks in the active project. Minimum 5 seconds.</span>

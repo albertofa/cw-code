@@ -1,4 +1,7 @@
 import type {
+  CliBinary,
+  CliDiscoveredCandidate,
+  CliDiscoverResult,
   HarnessId,
   SkillDetail,
   SkillMeta,
@@ -353,6 +356,8 @@ export interface CwApi {
     error: string | null;
     ok: boolean;
   }>>;
+  discoverBinaries(binaries?: CliBinary[]): Promise<CliDiscoverResult>;
+  verifyBinaryPath(binary: CliBinary, path: string): Promise<CliDiscoveredCandidate>;
   isDev: boolean;
   openHarnessTrace(): Promise<{ ok: boolean; path?: string; error?: string }>;
   listProjects(): Promise<Project[]>;

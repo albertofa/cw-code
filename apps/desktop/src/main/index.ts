@@ -15,9 +15,10 @@ function resolvePreload(): string {
   return found ?? candidates[0];
 }
 import { checkCliVersion, checkCliVersions, type CliVersionCheck } from "./cliVersions.js";
+import { discoverBinaries, verifyBinaryPath } from "./cli/binaryDiscovery.js";
 import { getHarnessTracePath, initHarnessTrace } from "./debug/harnessTrace.js";
 import { appendCrashLog, initCrashLog } from "./debug/crashLog.js";
-import type { ApprovalDecision, CreateSessionOptions, GitDiffMode, SessionStatus, SettingsPatch } from "@cw-code/contracts";
+import type { ApprovalDecision, CliBinary, CreateSessionOptions, GitDiffMode, SessionStatus, SettingsPatch } from "@cw-code/contracts";
 import type { DriverKind, HarnessId, SkillSaveInput } from "@cw-code/contracts";
 import type { PtyKind } from "./pty/PtyPool.js";
 import { SessionManager } from "./sessions/SessionManager.js";
@@ -114,6 +115,13 @@ function registerIpc(): void {
       codexBinary: s.codexBinaryPath
     });
   });
+  ipcMain.handle("cli.discover", (_e, args: { binaries?: CliBinary[] }) => discoverBinaries(args?.binaries));
+  ipcMain.handle("cli.verifyPath", (_e, args: { binary: CliBinary; path: string }) => {
+    if (!args || typeof args.binary !== "string" || typeof args.path !== "string") {
+      throw new Error("cli.verifyPath requires { binary, path }");
+    }
+    return verifyBinaryPath(args.binary, args.path);
+  });
   ipcMain.handle("settings.get", () => sessions.getSettings());
   ipcMain.handle("skills.list", () => skills.listSkills());
   ipcMain.handle("skills.get", (_e, name: string) => skills.getSkill(name));
@@ -146,12 +154,14 @@ function registerIpc(): void {
         checks.push(checkCliVersion("codex", normalized.codexBinaryPath));
       }
     }
-    const failed = (await Promise.all(checks)).find((check) => check.error !== null);
+    const failed = (await Promise.all(checks)).find((check) => check.error !== null || !check.ok);
     if (failed) {
       const name = failed.binary === "claude" ? "Claude" : failed.binary === "codex" ? "Codex" : "OpenCode";
-      const reason = failed.available
-        ? "The executable did not complete '--version' successfully."
-        : "Choose a valid executable name or full path.";
+      const reason = !failed.available
+        ? "Choose a valid executable name or full path."
+        : failed.error !== null
+          ? "The executable did not complete '--version' successfully."
+          : `It reported version ${failed.actual ?? "unknown"} but needs >= ${failed.minimum}. Update the CLI to use it.`;
       throw new Error(`${name} CLI could not be verified at '${failed.binaryPath}'. ${reason}`);
     }
     return sessions.setSettings(normalized);

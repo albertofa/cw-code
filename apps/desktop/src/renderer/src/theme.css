@@ -6309,3 +6309,300 @@ button.gitbar-pr:hover {
 .ed-foot .btn {
   min-height: 36px;
 }
+
+/* Binary picker (SettingsModal harness + source-control binary rows) */
+.settings-row .binary-picker {
+  grid-column: 2;
+  grid-row: 1 / span 2;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.binary-picker-path {
+  font-family: var(--mono);
+  font-size: 12px;
+  color: var(--dim);
+  overflow-wrap: anywhere;
+}
+
+.binary-picker-status {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--muted);
+}
+
+.binary-picker-spin {
+  animation: binary-picker-spin 1s linear infinite;
+}
+
+@keyframes binary-picker-spin {
+  from {
+    transform: rotate(0deg);
+  }
+
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.binary-picker-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.binary-picker-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  font-size: 12px;
+  padding: 4px 10px;
+}
+
+.binary-picker-notice {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--warning);
+  line-height: 1.45;
+}
+
+.binary-picker-empty {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  font-size: 12px;
+  color: var(--warning);
+  border: 1px solid rgba(232, 180, 79, 0.35);
+  background: rgba(232, 180, 79, 0.08);
+  border-radius: var(--r-md);
+  padding: 8px 12px;
+}
+
+.binary-picker-list {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.binary-picker-row {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  padding: 7px 9px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-md);
+  cursor: pointer;
+  font-size: 12px;
+}
+
+.binary-picker-row:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.binary-picker-row:hover {
+  border-color: var(--border);
+  background: var(--raised);
+}
+
+.binary-picker-row.selected {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+}
+
+.binary-picker-row.custom {
+  border-style: dashed;
+  border-color: var(--border);
+}
+
+.binary-picker-row.custom:hover {
+  border-color: var(--muted);
+  background: var(--raised);
+}
+
+.binary-picker-row.custom.selected {
+  border-style: solid;
+}
+
+.binary-picker-row.failed {
+  cursor: not-allowed;
+  border-color: rgba(224, 108, 96, 0.4);
+  background: rgba(224, 108, 96, 0.06);
+}
+
+.binary-picker-row.failed:hover {
+  border-color: rgba(224, 108, 96, 0.4);
+  background: rgba(224, 108, 96, 0.06);
+}
+
+.binary-picker-row.blocked {
+  cursor: not-allowed;
+  border-color: rgba(232, 180, 79, 0.4);
+  background: rgba(232, 180, 79, 0.06);
+}
+
+.binary-picker-row.blocked:hover {
+  border-color: rgba(232, 180, 79, 0.4);
+  background: rgba(232, 180, 79, 0.06);
+}
+
+.binary-picker-row input {
+  margin-top: 2px;
+  flex: none;
+  accent-color: var(--accent);
+}
+
+.binary-picker-radio {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.binary-picker-remove {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  margin-left: auto;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: var(--r-sm);
+  color: var(--danger);
+  cursor: pointer;
+}
+
+.binary-picker-remove:hover {
+  background: rgba(224, 108, 96, 0.12);
+}
+
+.binary-picker-row-body {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.binary-picker-row-body .binary-picker-path {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.binary-picker-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+.binary-picker-version {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 11.5px;
+  color: var(--muted);
+}
+
+.binary-picker-version.good {
+  color: var(--success);
+}
+
+.binary-picker-version.stale {
+  color: var(--warning);
+}
+
+.binary-picker-version.failed {
+  color: var(--danger);
+}
+
+.binary-picker-badge {
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--opencode);
+  background: var(--opencode-soft);
+  border-radius: 999px;
+  padding: 1px 8px;
+}
+
+.binary-picker-saving {
+  font-size: 11px;
+  color: var(--muted);
+}
+
+.binary-picker-skipped {
+  font-size: 11.5px;
+  color: var(--faint);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.binary-picker-custom-body {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.binary-picker-custom-body .field {
+  width: 100%;
+  box-sizing: border-box;
+}
+
+.binary-picker-valid {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--success);
+  flex-wrap: wrap;
+}
+
+.binary-picker-valid.stale {
+  color: var(--warning);
+}
+
+.binary-picker-invalid {
+  display: flex;
+  align-items: flex-start;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--danger);
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.binary-picker-error {
+  font-size: 12px;
+  color: var(--danger);
+  border: 1px solid rgba(255, 107, 97, 0.35);
+  background: rgba(255, 107, 97, 0.08);
+  border-radius: var(--r-md);
+  padding: 8px 12px;
+  white-space: pre-wrap;
+}
+
+@media (max-width: 720px) {
+  .settings-row .binary-picker {
+    grid-column: 1;
+    grid-row: auto;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .binary-picker-spin {
+    animation: none;
+  }
+}
