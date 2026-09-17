@@ -7,19 +7,32 @@ export interface CandidatePathsOptions {
   env: Record<string, string | undefined>;
 }
 
-const KNOWN_BINARIES: ReadonlySet<string> = new Set(["claude", "opencode", "codex", "git", "gh"]);
+const KNOWN_BINARIES: ReadonlySet<CliBinary> = new Set(["claude", "opencode", "codex", "git", "gh"]);
 
 const POSIX_SYSTEM_DIRS = ["/usr/local/bin", "/opt/homebrew/bin", "/usr/bin"];
 
 const WIN32_EXECUTABLE_FORMS = [".exe", ".cmd", ".ps1"];
 
 function isKnownBinary(binary: string): binary is CliBinary {
-  return KNOWN_BINARIES.has(binary);
+  return (KNOWN_BINARIES as ReadonlySet<string>).has(binary);
 }
 
-function envValue(env: Record<string, string | undefined>, name: string): string | undefined {
-  const raw = env[name];
-  return raw !== undefined && raw.length > 0 ? raw : undefined;
+function getEnv(env: Record<string, string | undefined>, names: string[]): string | undefined {
+  for (const name of names) {
+    const raw = env[name];
+    if (raw !== undefined && raw.length > 0) return raw;
+  }
+  const folded = new Map<string, string>();
+  for (const [key, value] of Object.entries(env)) {
+    if (value !== undefined && value.length > 0 && !folded.has(key.toLowerCase())) {
+      folded.set(key.toLowerCase(), value);
+    }
+  }
+  for (const name of names) {
+    const hit = folded.get(name.toLowerCase());
+    if (hit !== undefined) return hit;
+  }
+  return undefined;
 }
 
 function pushCandidate(
@@ -65,14 +78,13 @@ function win32Candidates(binary: CliBinary, opts: CandidatePathsOptions): string
   for (const ext of forms) push(`${binary}${ext}`);
 
   const home = opts.homeDir;
-  const userProfile = envValue(opts.env, "USERPROFILE") ?? home;
-  const appData = envValue(opts.env, "APPDATA") ?? (home ? win32.join(home, "AppData", "Roaming") : undefined);
+  const userProfile = getEnv(opts.env, ["USERPROFILE"]) ?? home;
+  const appData = getEnv(opts.env, ["APPDATA"]) ?? (home ? win32.join(home, "AppData", "Roaming") : undefined);
   const localAppData =
-    envValue(opts.env, "LOCALAPPDATA") ?? (home ? win32.join(home, "AppData", "Local") : undefined);
-  const programData = envValue(opts.env, "PROGRAMDATA") ?? "C:\\ProgramData";
-  const programFiles = envValue(opts.env, "PROGRAMFILES") ?? "C:\\Program Files";
-  const programFilesX86 =
-    envValue(opts.env, "ProgramFiles(x86)") ?? envValue(opts.env, "PROGRAMFILES(X86)");
+    getEnv(opts.env, ["LOCALAPPDATA"]) ?? (home ? win32.join(home, "AppData", "Local") : undefined);
+  const programData = getEnv(opts.env, ["PROGRAMDATA", "ProgramData"]) ?? "C:\\ProgramData";
+  const programFiles = getEnv(opts.env, ["PROGRAMFILES", "ProgramFiles"]) ?? "C:\\Program Files";
+  const programFilesX86 = getEnv(opts.env, ["ProgramFiles(x86)", "PROGRAMFILES(X86)"]);
 
   if (appData) pushForms(win32.join(appData, "npm"));
   if (localAppData) pushForms(win32.join(localAppData, "Microsoft", "WinGet", "Links"));

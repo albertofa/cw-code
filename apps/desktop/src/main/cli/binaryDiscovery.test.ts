@@ -79,6 +79,20 @@ describe("candidatePaths on win32", () => {
     expect(paths).toContain("D:\\work\\me\\scoop\\shims\\claude.exe");
   });
 
+  it("resolves mixed-casing Windows env keys to custom drive roots", () => {
+    const env = {
+      ProgramData: "D:\\CustomProgramData",
+      ProgramFiles: "E:\\Custom PF",
+      "ProgramFiles(x86)": "E:\\Custom PF (x86)"
+    };
+    const opts: CandidatePathsOptions = { platform: "win32", homeDir: "C:\\Users\\testuser", env };
+    expect(candidatePaths("claude", opts)).toContain("D:\\CustomProgramData\\chocolatey\\bin\\claude.exe");
+    expect(candidatePaths("git", opts)).toContain("E:\\Custom PF\\Git\\bin\\git.exe");
+    expect(candidatePaths("git", opts)).toContain("E:\\Custom PF (x86)\\Git\\bin\\git.exe");
+    expect(candidatePaths("gh", opts)).toContain("E:\\Custom PF\\GitHub CLI\\gh.exe");
+    expect(candidatePaths("gh", opts)).toContain("E:\\Custom PF (x86)\\GitHub CLI\\gh.exe");
+  });
+
   it("dedupes case-insensitively and normalizes separators", () => {
     const paths = candidatePaths("opencode", {
       platform: "win32",
