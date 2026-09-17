@@ -5,6 +5,7 @@ import type { Components } from "react-markdown";
 import { renderToStaticMarkup } from "react-dom/server";
 import { useNotifs } from "./Notifications.js";
 import { Check } from "lucide-react";
+import { GitHubMark } from "./GitHubMark.js";
 
 const PREVIEW_EXTS = new Set(["md", "markdown", "html", "htm"]);
 
@@ -99,6 +100,20 @@ function Pre({ children }: { children?: ReactNode }) {
   );
 }
 
+export function isHttpLink(href: string): boolean {
+  return /^https?:\/\//i.test(href);
+}
+
+export function isGitHubLink(href: string): boolean {
+  if (!isHttpLink(href)) return false;
+  try {
+    const host = new URL(href).hostname.toLowerCase();
+    return host === "github.com" || host === "www.github.com" || host === "gist.github.com";
+  } catch {
+    return false;
+  }
+}
+
 function MdLink({
   href,
   children,
@@ -108,11 +123,18 @@ function MdLink({
   children?: ReactNode;
   onOpenFile?: (path: string) => void;
 }) {
+  const github = !!href && isGitHubLink(href);
   const onClick = (e: ReactMouseEvent<HTMLAnchorElement>) => {
     e.preventDefault();
     if (!href) return;
     if (onOpenFile && isLocalPreviewLink(href)) {
       onOpenFile(href);
+      return;
+    }
+    if (isHttpLink(href)) {
+      void window.cw.openExternal(href).catch(() => {
+        useNotifs.getState().push({ kind: "error", title: "Could not open link", message: href });
+      });
       return;
     }
     if (!navigator.clipboard) return;
@@ -123,7 +145,8 @@ function MdLink({
   };
 
   return (
-    <a href={href} onClick={onClick} title={href}>
+    <a href={href} onClick={onClick} title={href} className={github ? "md-link-gh" : undefined}>
+      {github && <GitHubMark size={12} />}
       {children}
     </a>
   );

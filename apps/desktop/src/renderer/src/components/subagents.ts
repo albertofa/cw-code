@@ -219,7 +219,6 @@ export function describeSubagent(m: SubagentMessage): SubagentInfo {
   const prompt = pick(args, "prompt");
   const name = pick(args, "description") || firstLine(prompt ?? "", 80) || "Subagent";
   const agentType = pick(args, "subagent_type", "subagentType", "subagent", "agent", "mode");
-  const model = pick(args, "model") ?? shortModelName(m.subagentModel);
   const runRaw = args["run_in_background"] ?? args["runInBackground"];
   const runInBackground = typeof runRaw === "boolean" ? runRaw : undefined;
   const status = describeSubagentStatus(m);
@@ -246,6 +245,7 @@ export function describeSubagent(m: SubagentMessage): SubagentInfo {
       delete counts.tokensRaw;
     }
   }
+  const model = pick(args, "model") ?? shortModelName(m.subagentModel) ?? shortModelName(counts.model);
   return {
     id: m.id,
     turnId: m.turnId,

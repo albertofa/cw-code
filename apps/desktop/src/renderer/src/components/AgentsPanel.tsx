@@ -40,9 +40,10 @@ function copyText(text: string): void {
   }
 }
 
-function metaLine(item: SubagentInfo): string {
+function metaLine(item: SubagentInfo, fallbackModel?: string): string {
   const parts: string[] = [];
-  if (item.model) parts.push(item.model);
+  const model = item.model ?? fallbackModel;
+  if (model) parts.push(model);
   if (item.counts?.effort) parts.push(`${item.counts.effort} effort`);
   if (item.counts?.tokens !== undefined) parts.push(`${formatTokensShort(item.counts.tokens)} tok`);
   if (item.counts?.tools !== undefined) parts.push(`${item.counts.tools} tools`);
@@ -207,6 +208,7 @@ function AgentDetail({
   sessionId,
   messages,
   fetchedTools,
+  fetchedModel,
   onBack,
   onPreview
 }: {
@@ -219,10 +221,12 @@ function AgentDetail({
   sessionId: string;
   messages: ChatMessage[];
   fetchedTools: SubagentToolActivity[] | undefined;
+  fetchedModel: string | undefined;
   onBack: () => void;
   onPreview: (path: string) => void;
 }) {
   const [copied, setCopied] = useState(false);
+  const model = item.model ?? fetchedModel;
   const nested = collectAgentMessages(messages, item.id);
   const directives = nested.filter((m) => m.toolName?.toLowerCase() === "sendmessage");
   const liveTools = nested.filter((m) => m.role === "tool" && m.toolName && m.toolName !== "result");
@@ -252,7 +256,7 @@ function AgentDetail({
         </div>
         <div className="agents-hero-chips">
           {item.agentType && <span className="suba-badge">{item.agentType}</span>}
-          {item.model && <span className="suba-badge model">{item.model}</span>}
+          {model && <span className="suba-badge model">{model}</span>}
           {item.counts?.effort && <span className="suba-badge">{item.counts.effort} effort</span>}
           {item.counts?.tokens !== undefined && (
             <span className="suba-badge">{formatTokensShort(item.counts.tokens)} tok</span>
@@ -382,12 +386,19 @@ export function AgentsPanel({ sessionId }: { sessionId: string }) {
   entriesRef.current = entries;
 
   const agentId = selected?.item.agentId;
-  const fetchedTools = agentId ? subagentToolsByKey[`${sessionId}:${agentId}`]?.items : undefined;
+  const fetched = agentId ? subagentToolsByKey[`${sessionId}:${agentId}`] : undefined;
+  const fetchedTools = fetched?.items;
+  const fetchedModelFor = (item: SubagentInfo): string | undefined =>
+    item.agentId ? subagentToolsByKey[`${sessionId}:${item.agentId}`]?.model : undefined;
+  const agentKey = entries
+    .map(({ item }) => (item.agentId ? `${item.id}:${item.agentId}` : ""))
+    .join("|");
 
   useEffect(() => {
-    if (view !== "detail" || !agentId) return;
-    void loadSubagentTools(sessionId, agentId);
-  }, [view, agentId, sessionId, loadSubagentTools]);
+    for (const { item } of entriesRef.current) {
+      if (item.agentId) void loadSubagentTools(sessionId, item.agentId);
+    }
+  }, [sessionId, agentKey, loadSubagentTools]);
 
   useEffect(() => {
     const applyTarget = (detail: AgentsTarget | undefined) => {
@@ -442,38 +453,41 @@ export function AgentsPanel({ sessionId }: { sessionId: string }) {
               <div className="agents-empty-sub">Spawned Task / Agent tools will appear here.</div>
             </div>
           )}
-          {entries.map(({ item }) => (
-            <button
-              key={item.id}
-              id={`agents-row-${item.id}`}
-              type="button"
-              className="agents-row"
-              onClick={() => {
-                setSelectedId(item.id);
-                setView("detail");
-              }}
-            >
-              <span className={`suba-dot ${item.status}`} />
-              <span className="agents-row-main">
-                <span className="agents-row-nameline">
-                  <span className="agents-row-name" title={item.name}>
-                    {item.name}
+          {entries.map(({ item }) => {
+            const meta = metaLine(item, fetchedModelFor(item));
+            return (
+              <button
+                key={item.id}
+                id={`agents-row-${item.id}`}
+                type="button"
+                className="agents-row"
+                onClick={() => {
+                  setSelectedId(item.id);
+                  setView("detail");
+                }}
+              >
+                <span className={`suba-dot ${item.status}`} />
+                <span className="agents-row-main">
+                  <span className="agents-row-nameline">
+                    <span className="agents-row-name" title={item.name}>
+                      {item.name}
+                    </span>
+                    {item.agentType && <span className="suba-badge">{item.agentType}</span>}
                   </span>
-                  {item.agentType && <span className="suba-badge">{item.agentType}</span>}
+                  <span className="agents-row-excerpt" title={item.summary}>
+                    {item.summary}
+                  </span>
+                  {meta && <span className="agents-row-meta">{meta}</span>}
                 </span>
-                <span className="agents-row-excerpt" title={item.summary}>
-                  {item.summary}
+                <span className="agents-row-right">
+                  <AgentDuration item={item} live={live} />
                 </span>
-                {metaLine(item) && <span className="agents-row-meta">{metaLine(item)}</span>}
-              </span>
-              <span className="agents-row-right">
-                <AgentDuration item={item} live={live} />
-              </span>
-              <span className="agents-row-chev">
-                <ChevronRight aria-hidden="true" size={14} />
-              </span>
-            </button>
-          ))}
+                <span className="agents-row-chev">
+                  <ChevronRight aria-hidden="true" size={14} />
+                </span>
+              </button>
+            );
+          })}
         </div>
       ) : (
         <AgentDetail
@@ -487,6 +501,7 @@ export function AgentsPanel({ sessionId }: { sessionId: string }) {
           sessionId={sessionId}
           messages={messages}
           fetchedTools={fetchedTools}
+          fetchedModel={fetched?.model}
           onBack={() => setView("list")}
           onPreview={(p) => openPreview(sessionId, p, basePath ?? "")}
         />

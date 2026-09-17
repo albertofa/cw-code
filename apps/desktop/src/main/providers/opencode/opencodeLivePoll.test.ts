@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { collectPartTypes, collectTaskParts, diffLiveTools, type LiveMessage, type LiveSeen } from "./opencodeLivePoll.js";
+import { childModelOf, collectPartTypes, collectTaskParts, diffLiveTools, type LiveMessage, type LiveSeen } from "./opencodeLivePoll.js";
 
 function runningTask(callID: string, description = "Do work"): LiveMessage {
   return {
@@ -207,6 +207,21 @@ describe("diffLiveTools", () => {
     ]);
   });
 
+  it("stamps the child model on a task result when known", () => {
+    const seen = new Map<string, LiveSeen>();
+    const events = diffLiveTools(seen, [completedTask("call_1")], "t1", null, undefined, (callId) =>
+      callId === "call_1" ? "claude-sonnet-4-5" : undefined
+    );
+    expect(events[1]).toEqual({
+      type: "tool.result",
+      turnId: "t1",
+      toolCallId: "call_1",
+      output: "All done",
+      isError: false,
+      model: "claude-sonnet-4-5"
+    });
+  });
+
   it("stamps the parent tool call on nested subagent tool events", () => {
     const seen = new Map<string, LiveSeen>();
     const messages: LiveMessage[] = [
@@ -234,6 +249,22 @@ describe("diffLiveTools", () => {
       },
       { type: "tool.result", turnId: "t1", toolCallId: "child_read", output: "file!", isError: false }
     ]);
+  });
+});
+
+describe("childModelOf", () => {
+  it("reads the first assistant model and ignores other roles", () => {
+    const messages: LiveMessage[] = [
+      { info: { id: "u1", role: "user" }, parts: [] },
+      { info: { id: "a1", role: "assistant", modelID: "claude-sonnet-4-5", providerID: "anthropic" }, parts: [] },
+      { info: { id: "a2", role: "assistant", modelID: "claude-opus-5" }, parts: [] }
+    ];
+    expect(childModelOf(messages)).toBe("claude-sonnet-4-5");
+  });
+
+  it("returns undefined without an assistant model", () => {
+    expect(childModelOf([{ info: { id: "a1", role: "assistant" }, parts: [] }])).toBeUndefined();
+    expect(childModelOf([])).toBeUndefined();
   });
 });
 

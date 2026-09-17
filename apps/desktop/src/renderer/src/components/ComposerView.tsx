@@ -131,6 +131,7 @@ export function ComposerView({
   const [modelsError, setModelsError] = useState<string | null>(null);
   const [customModel, setCustomModel] = useState("");
   const [showCustom, setShowCustom] = useState(false);
+  const [sending, setSending] = useState(false);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
 
   useEffect(() => {
@@ -207,13 +208,14 @@ export function ComposerView({
 
   const send = () => {
     const body = draft.trim();
-    if ((!body && attachments.length === 0) || busy) return;
+    if ((!body && attachments.length === 0) || busy || sending) return;
     const tagged = attachments.length > 0 ? `${body}${body ? "\n" : ""}${attachments.map((a) => `@${a}`).join("\n")}` : body;
+    setSending(true);
     void backend.send(tagged, attachments).then(() => {
       setDraft("");
       setAttachments([]);
       setPasteError(null);
-    });
+    }).finally(() => setSending(false));
   };
 
   const pasteFiles = async (clipboard: DataTransfer): Promise<void> => {
@@ -313,7 +315,7 @@ export function ComposerView({
             placeholder="Ask cw-code — @ files, / commands, $ skills"
             className="composer-input"
             rows={3}
-            disabled={busy}
+            disabled={busy || sending}
           />
         </div>
       </div>
@@ -502,7 +504,7 @@ export function ComposerView({
             type="button"
             className="composer-action composer-send"
             onClick={send}
-            disabled={!draft.trim() && attachments.length === 0}
+            disabled={sending || (!draft.trim() && attachments.length === 0)}
             title="Send"
             aria-label="Send"
           >

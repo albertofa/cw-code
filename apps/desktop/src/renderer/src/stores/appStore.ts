@@ -26,6 +26,7 @@ import { useNotifs } from "../components/Notifications.js";
 const GIT_REFRESH_BATCH = 6;
 const PENDING_PREFIX = "pending:";
 let pendingSeq = 0;
+let pendingPromptInFlight = false;
 
 function nextPendingTurnId(): string {
   pendingSeq += 1;
@@ -624,17 +625,23 @@ export const useAppStore = create<AppState>((set, get) => ({
     const prefs = get().pendingPrefs;
     const workspace = get().pendingWorkspace;
     if (!projectId || (!prompt.trim() && attachments.length === 0)) return;
+    if (pendingPromptInFlight) return;
+    pendingPromptInFlight = true;
     try {
-      await get().createSession(driver, prefs, workspace);
-    } catch (err) {
-      useNotifs.getState().push({
-        kind: "error",
-        title: "Could not start session",
-        message: (err as Error).message
-      });
-      return;
+      try {
+        await get().createSession(driver, prefs, workspace);
+      } catch (err) {
+        useNotifs.getState().push({
+          kind: "error",
+          title: "Could not start session",
+          message: (err as Error).message
+        });
+        return;
+      }
+      await get().sendPrompt(prompt, attachments);
+    } finally {
+      pendingPromptInFlight = false;
     }
-    await get().sendPrompt(prompt, attachments);
   },
 
   async ensureHistory(sessionId: string, opts?: { force?: boolean; isRetry?: boolean }) {
@@ -698,7 +705,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ subagentToolsLoading: { ...get().subagentToolsLoading, [key]: true } });
     try {
       const result = await window.cw.getSubagentTools(sessionId, agentId);
-      if (result.items.length > 0) {
+      const hasData =
+        result.items.length > 0 ||
+        result.model !== undefined ||
+        result.effort !== undefined ||
+        result.tokens !== undefined;
+      if (hasData) {
         set({ subagentToolsByKey: { ...get().subagentToolsByKey, [key]: result } });
       }
     } catch (err) {
@@ -1035,7 +1047,8 @@ export const useAppStore = create<AppState>((set, get) => ({
           toolCompletedAt: Date.now(),
           isError: call.isError === true || event.isError,
           ...(event.usage ? { toolUsage: event.usage } : {}),
-          ...(event.agentId ? { subagentAgentId: event.agentId } : {})
+          ...(event.agentId ? { subagentAgentId: event.agentId } : {}),
+          ...(event.model ? { subagentModel: event.model } : {})
         };
         set({
           messagesBySession: { ...get().messagesBySession, [sessionId]: updated }
@@ -1054,6 +1067,7 @@ export const useAppStore = create<AppState>((set, get) => ({
                 isError: event.isError,
                 ...(event.usage ? { toolUsage: event.usage } : {}),
                 ...(event.agentId ? { subagentAgentId: event.agentId } : {}),
+                ...(event.model ? { subagentModel: event.model } : {}),
                 toolCompletedAt: Date.now()
               }
             ]

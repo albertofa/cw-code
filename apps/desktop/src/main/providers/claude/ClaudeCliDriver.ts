@@ -20,7 +20,7 @@ import { parseExtraArgs } from "../../settings/settingsUtils.js";
 import { killProcessTree } from "../../processTree.js";
 import { attributeClaudeSubagentEvent, buildClaudeAllowRule, claudeAllowResponse, claudeApprovalRequest, claudeQuestionRequest, claudeDenyResponse, claudeControlResponse, parseClaudeControlRequest, parseClaudeTaskSystemLine, parseStreamLine, type ClaudeControlRequest, type ClaudeTaskSystemInfo, type TurnDoneInfo } from "./claudeStreamParser.js";
 import { claudeProjectSlug, listClaudeSessions } from "./claudeSessions.js";
-import { readClaudeHistory, readSidecarAgent, readClaudeTaskResult, type SidecarAgent } from "./claudeHistory.js";
+import { readClaudeHistory, readSidecarAgent, readClaudeTaskResult, findSidecarModel, type SidecarAgent } from "./claudeHistory.js";
 import { buildClaudeUserContent } from "./claudeUserContent.js";
 import { previewText, traceHarnessCall, truncateError } from "../../debug/harnessTrace.js";
 
@@ -271,10 +271,18 @@ export class ClaudeCliDriver implements CliDriver {
     }
   }
 
+  private subagentModel(state: ClaudeProcessState, agentId: string): string | undefined {
+    if (!state.resumeCursor) return undefined;
+    const transcriptDir = join(homedir(), ".claude", "projects", claudeProjectSlug(state.cwd), state.resumeCursor);
+    return findSidecarModel(transcriptDir, agentId) ?? findSidecarModel(dirname(transcriptDir), agentId);
+  }
+
   private attributeSubagentResult(state: ClaudeProcessState, event: ThreadEvent): ThreadEvent {
     if (event.type !== "tool.result") return event;
     const agentId = state.agentByCall.get(event.toolCallId);
-    return agentId ? { ...event, agentId } : event;
+    if (!agentId) return event;
+    const model = this.subagentModel(state, agentId);
+    return { ...event, agentId, ...(model ? { model } : {}) };
   }
 
   private handleTaskSystem(state: ClaudeProcessState, info: ClaudeTaskSystemInfo): void {
@@ -308,15 +316,17 @@ export class ClaudeCliDriver implements CliDriver {
     const status = (transcript?.status ?? info.status ?? "completed").toLowerCase();
     const output = (transcript?.result ?? info.summary ?? status).slice(0, 8000);
     const agentId = state.agentByCall.get(toolUseId);
-    this.emit({
-      type: "tool.result",
-      turnId: state.activeTurnId,
-      toolCallId: toolUseId,
-      output,
-      isError: status !== "completed",
-      ...(info.usage ? { usage: info.usage } : {}),
-      ...(agentId ? { agentId } : {})
-    });
+    this.emit(
+      this.attributeSubagentResult(state, {
+        type: "tool.result",
+        turnId: state.activeTurnId,
+        toolCallId: toolUseId,
+        output,
+        isError: status !== "completed",
+        ...(info.usage ? { usage: info.usage } : {}),
+        ...(agentId ? { agentId } : {})
+      })
+    );
     if (info.taskId) state.taskToolCalls.delete(info.taskId);
   }
 

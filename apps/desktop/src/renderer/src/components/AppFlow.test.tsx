@@ -719,4 +719,24 @@ describe("new-session crash repro (interactive)", () => {
       mockDelays = false;
     }
   });
+
+  it("ignores a second submit while the new session is still being created", async () => {
+    mockDelays = true;
+    try {
+      const { useAppStore } = await mount();
+      await act(async () => {
+        useAppStore.getState().setPendingDriver("opencode");
+      });
+      await act(async () => {
+        const first = useAppStore.getState().sendPendingPrompt("task one");
+        const second = useAppStore.getState().sendPendingPrompt("task two");
+        await Promise.all([first, second]);
+      });
+      const sessions = useAppStore.getState().sessionsByProject["proj_1"] ?? [];
+      expect(sessions).toHaveLength(1);
+      expect(fatalErrors(errors)).toEqual([]);
+    } finally {
+      mockDelays = false;
+    }
+  });
 });
