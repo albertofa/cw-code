@@ -23,7 +23,7 @@ import {
 import { opencodeSessionParentId, parseOpencodeSessionError, parseOpencodeSessionParent, parseOpencodeStatusRetry, parseOpencodeTodosUpdated } from "./opencodeEvents.js";
 import { AskBridge } from "./askBridge.js";
 import { writeAskBridgeTool } from "./askToolFile.js";
-import { diffLiveTools, collectPartTypes, collectTaskParts, type LiveMessage, type LiveSeen } from "./opencodeLivePoll.js";
+import { diffLiveTools, childModelOf, collectPartTypes, collectTaskParts, type LiveMessage, type LiveSeen } from "./opencodeLivePoll.js";
 import {
   buildOpencodeMessageBody,
   isReasoningPartDelta,
@@ -71,6 +71,7 @@ export class OpencodeDriver implements CliDriver {
   private taskChildren = new Map<string, Map<string, string>>();
   private childToolSeen = new Map<string, Map<string, Map<string, LiveSeen>>>();
   private childPollDone = new Map<string, Set<string>>();
+  private childModels = new Map<string, Map<string, string>>();
   private turnMeta = new Map<string, { localSessionId: string; beforeIds: Set<string> | null; startedAt: number; pollWarned: boolean; startedPort: number }>();
   private toolSeen = new Map<string, Map<string, LiveSeen>>();
   private partTypes = new Map<string, Map<string, string>>();
@@ -1017,6 +1018,7 @@ export class OpencodeDriver implements CliDriver {
     cwd: string;
     beforeIds: Set<string> | null;
     seen: Map<string, LiveSeen>;
+    childModels: Map<string, string>;
   } | null {
     for (const [requestId, ownerTurnId] of this.handledPermissions) {
       if (ownerTurnId === turnId) this.handledPermissions.delete(requestId);
@@ -1045,11 +1047,13 @@ export class OpencodeDriver implements CliDriver {
     this.turnMeta.delete(turnId);
     this.watchInfo.delete(turnId);
     const seen = this.toolSeen.get(turnId) ?? new Map<string, LiveSeen>();
+    const childModels = this.childModels.get(turnId) ?? new Map<string, string>();
     this.toolSeen.delete(turnId);
     this.partTypes.delete(turnId);
     this.taskChildren.delete(turnId);
     this.childToolSeen.delete(turnId);
     this.childPollDone.delete(turnId);
+    this.childModels.delete(turnId);
     return {
       localSessionId: meta.localSessionId,
       serverSessionId,
@@ -1057,7 +1061,8 @@ export class OpencodeDriver implements CliDriver {
       authHeader: info.authHeader,
       cwd: info.cwd,
       beforeIds: meta.beforeIds,
-      seen
+      seen,
+      childModels
     };
   }
 
@@ -1097,7 +1102,16 @@ export class OpencodeDriver implements CliDriver {
       }
       if (!res.ok) throw new Error(`opencode result history failed: ${res.status}`);
       const messages = (await res.json()) as LiveMessage[];
-      for (const event of diffLiveTools(taken.seen, messages, turnId, taken.beforeIds)) this.emit(event);
+      for (const event of diffLiveTools(
+        taken.seen,
+        messages,
+        turnId,
+        taken.beforeIds,
+        undefined,
+        (callId) => taken.childModels.get(callId)
+      )) {
+        this.emit(event);
+      }
       const summary = summarizeOpencodeTurn(turnMessagesOf(messages), taken.beforeIds);
       text = summary.text;
       inputTokens = summary.inputTokens;
@@ -1439,6 +1453,15 @@ export class OpencodeDriver implements CliDriver {
         }
         continue;
       }
+      const childModel = childModelOf(childPayload);
+      if (childModel) {
+        let models = this.childModels.get(turnId);
+        if (!models) {
+          models = new Map();
+          this.childModels.set(turnId, models);
+        }
+        models.set(task.callId, childModel);
+      }
       for (const event of diffLiveTools(seen, childPayload, turnId, null, task.callId)) this.emit(event);
       if (task.status === "completed" || task.status === "error") done.add(task.callId);
     }
@@ -1484,7 +1507,16 @@ export class OpencodeDriver implements CliDriver {
         if (partTypes) collectPartTypes(payload, partTypes);
         const meta = this.turnMeta.get(turnId);
         if (seen) {
-          for (const event of diffLiveTools(seen, payload, turnId, meta?.beforeIds ?? null)) this.emit(event);
+          for (const event of diffLiveTools(
+            seen,
+            payload,
+            turnId,
+            meta?.beforeIds ?? null,
+            undefined,
+            (callId) => this.childModels.get(turnId)?.get(callId)
+          )) {
+            this.emit(event);
+          }
         }
         await this.pollChildTools(turnId, info, sessionID, payload);
         if (meta?.beforeIds && runEnded(payload, meta.beforeIds)) {

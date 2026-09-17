@@ -1504,6 +1504,24 @@ body.session-dragging * {
   text-decoration: underline;
 }
 
+.md a.md-link-gh {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--text);
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0 5px 0 4px;
+  font-weight: 550;
+}
+
+.md a.md-link-gh:hover {
+  text-decoration: none;
+  border-color: var(--accent);
+  color: var(--accent);
+}
+
 .md code {
   font-family: var(--mono);
   font-size: 12px;

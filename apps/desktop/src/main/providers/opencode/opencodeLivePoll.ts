@@ -15,7 +15,7 @@ export interface LiveToolPart {
 }
 
 export interface LiveMessage {
-  info?: { id?: string };
+  info?: { id?: string; role?: string; modelID?: string; providerID?: string };
   parts?: LiveToolPart[];
 }
 
@@ -56,12 +56,22 @@ export function collectPartTypes(messages: LiveMessage[], into: Map<string, stri
   }
 }
 
+export function childModelOf(messages: LiveMessage[]): string | undefined {
+  for (const msg of messages) {
+    const info = msg.info;
+    if (!info || info.role !== "assistant") continue;
+    if (typeof info.modelID === "string" && info.modelID) return info.modelID;
+  }
+  return undefined;
+}
+
 export function diffLiveTools(
   seen: Map<string, LiveSeen>,
   messages: LiveMessage[],
   turnId: string,
   beforeIds: Set<string> | null,
-  parentToolCallId?: string
+  parentToolCallId?: string,
+  modelForCall?: (toolCallId: string) => string | undefined
 ): ThreadEvent[] {
   const events: ThreadEvent[] = [];
   for (const msg of messages) {
@@ -101,12 +111,14 @@ export function diffLiveTools(
         if (result) {
           entry.result = true;
           seen.set(id, entry);
+          const model = modelForCall?.(id);
           events.push({
             type: "tool.result",
             turnId,
             toolCallId: id,
             output: result.output,
-            isError: result.isError
+            isError: result.isError,
+            ...(model ? { model } : {})
           });
         }
       }

@@ -201,7 +201,10 @@ export class CodexCliDriver implements CliDriver {
       threadId: agentId,
       includeTurns: true
     });
-    return { items: mapCodexSubagentTools(res.thread) };
+    return {
+      items: mapCodexSubagentTools(res.thread),
+      ...(res.thread.model ? { model: res.thread.model } : {})
+    };
   }
 
   async listModels(_cwd: string): Promise<ModelOption[]> {

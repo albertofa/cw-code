@@ -174,6 +174,18 @@ describe("describeSubagent", () => {
     expect(info.model).toBe("sonnet-5");
   });
 
+  it("falls back to the model reported in the result text", () => {
+    const info = describeSubagent(
+      msg({
+        toolName: "Task",
+        toolInput: { description: "Audit" },
+        toolOutput: "model: claude-sonnet-4-5\nAudit complete."
+      })
+    );
+    expect(info.model).toBe("sonnet-4-5");
+    expect(info.counts?.model).toBe("claude-sonnet-4-5");
+  });
+
   it("prefers the explicit call model over the sidecar model", () => {
     const info = describeSubagent(
       msg({

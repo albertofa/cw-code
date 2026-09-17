@@ -44,6 +44,10 @@ function isTodoTool(m: ChatMessage): boolean {
   return n === "todowrite" || n === "todo";
 }
 
+function isSkillTool(m: ChatMessage): boolean {
+  return (m.toolName ?? "").toLowerCase() === "skill";
+}
+
 export function buildThreadNodes(messages: ChatMessage[], nestedIds: Set<string>): ThreadNode[] {
   const out: ThreadNode[] = [];
   let pending: ChatMessage[] = [];
@@ -71,7 +75,7 @@ export function buildThreadNodes(messages: ChatMessage[], nestedIds: Set<string>
     } else if (m.parentToolCallId && nestedIds.has(m.parentToolCallId)) continue;
     else if (m.role === "tool") {
       flushSubs();
-      if (isRunningTool(m)) {
+      if (isRunningTool(m) || isSkillTool(m)) {
         flushTools();
         out.push({ kind: "msg", msg: m });
       } else {

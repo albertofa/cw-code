@@ -85,6 +85,7 @@ class FakeClient implements CodexAppServerLike {
           return {
             thread: {
               id: "thr_child",
+              model: "gpt-6-astra",
               turns: [
                 {
                   id: "turn_c",
@@ -346,6 +347,7 @@ describe("CodexCliDriver", () => {
   it("reads subagent tool activity from the child thread", async () => {
     const { driver } = makeDriver(client);
     const result = await driver.getSubagentTools("C:\\proj", "thr_parent", "thr_child");
+    expect(result.model).toBe("gpt-6-astra");
     expect(result.items.map((item) => item.name)).toEqual(["shell", "edit"]);
     expect(result.items[0].output).toBe("a.ts\nb.ts");
     expect(result.items[0].timestamp).toBe(10000);

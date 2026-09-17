@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   buildPreviewHtml,
   isAbsolutePath,
+  isGitHubLink,
+  isHttpLink,
   isLocalPreviewLink,
   isPathInsideBase,
   isPreviewablePath,
@@ -38,6 +40,24 @@ describe("isLocalPreviewLink", () => {
     expect(isLocalPreviewLink("//x.com/a.md")).toBe(false);
     expect(isLocalPreviewLink("a.ts")).toBe(false);
     expect(isLocalPreviewLink("#frag")).toBe(false);
+  });
+});
+
+describe("isHttpLink / isGitHubLink", () => {
+  it("detects http(s) links only", () => {
+    expect(isHttpLink("https://example.com/x")).toBe(true);
+    expect(isHttpLink("http://example.com/x")).toBe(true);
+    expect(isHttpLink("mailto:a@b.c")).toBe(false);
+    expect(isHttpLink("docs/a.md")).toBe(false);
+  });
+
+  it("detects GitHub hosts", () => {
+    expect(isGitHubLink("https://github.com/org/repo/pull/15")).toBe(true);
+    expect(isGitHubLink("https://www.github.com/org/repo")).toBe(true);
+    expect(isGitHubLink("https://gist.github.com/user/abc")).toBe(true);
+    expect(isGitHubLink("https://gitlab.com/org/repo")).toBe(false);
+    expect(isGitHubLink("https://github.com.evil.test/org")).toBe(false);
+    expect(isGitHubLink("not a url")).toBe(false);
   });
 });
 

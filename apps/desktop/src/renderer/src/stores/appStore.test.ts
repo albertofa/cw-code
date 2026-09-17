@@ -31,4 +31,27 @@ describe("appStore tool.result", () => {
     expect(message.toolDone).toBe(true);
     expect(message.toolOutput).toBe("done");
   });
+
+  it("stores the subagent model reported with the tool result", () => {
+    const session = "sess_model";
+    useAppStore.getState().applyEvent(session, {
+      type: "tool.call",
+      turnId: "turn-1",
+      toolCallId: "call_1",
+      name: "task",
+      input: { description: "review" }
+    });
+    useAppStore.getState().applyEvent(session, {
+      type: "tool.result",
+      turnId: "turn-1",
+      toolCallId: "call_1",
+      output: "done",
+      isError: false,
+      agentId: "agent-1",
+      model: "claude-sonnet-4-5"
+    });
+    const message = useAppStore.getState().messagesBySession[session][0];
+    expect(message.subagentModel).toBe("claude-sonnet-4-5");
+    expect(message.subagentAgentId).toBe("agent-1");
+  });
 });

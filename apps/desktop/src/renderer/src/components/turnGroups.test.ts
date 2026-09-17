@@ -75,6 +75,16 @@ describe("buildThreadNodes", () => {
     if (settled[0].kind === "tools") expect(settled[0].items.map((m) => m.id)).toEqual(["t1", "t2", "r"]);
   });
 
+  it("keeps skill cards out of tool groups", () => {
+    const done = (id: string, toolName: string): ChatMessage =>
+      msg({ id, role: "tool", turnId: "x", toolName, toolDone: true, toolOutput: "out" });
+    const nodes = buildThreadNodes(
+      [done("t1", "read"), done("t2", "read"), done("sk", "Skill"), done("t3", "read")],
+      new Set()
+    );
+    expect(nodes.map((n) => (n.kind === "msg" ? n.msg.id : n.kind))).toEqual(["tools", "sk", "t3"]);
+  });
+
   it("clusters consecutive subagent calls into one group", () => {
     const nodes = buildThreadNodes(
       [

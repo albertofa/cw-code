@@ -92,7 +92,16 @@ export type ThreadEvent =
       input: unknown;
       parentToolCallId?: string;
     }
-  | { type: "tool.result"; turnId: string; toolCallId: string; output: string; isError: boolean; usage?: ToolUsage; agentId?: string }
+  | {
+      type: "tool.result";
+      turnId: string;
+      toolCallId: string;
+      output: string;
+      isError: boolean;
+      usage?: ToolUsage;
+      agentId?: string;
+      model?: string;
+    }
   | { type: "approval.request"; turnId: string; request: ApprovalRequest }
   | { type: "approval.resolved"; turnId: string; requestId: string }
   | { type: "question.request"; turnId: string; request: QuestionRequest }
