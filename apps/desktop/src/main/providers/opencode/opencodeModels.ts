@@ -1,5 +1,5 @@
-import { execFile } from "node:child_process";
 import type { EffortLevel, ModelOption } from "@cw-code/contracts";
+import { execCliFile } from "../../cli/spawnCli.js";
 import { traceHarnessCall, truncateError } from "../../debug/harnessTrace.js";
 
 export const OPENCODE_CURATED_MODELS: ModelOption[] = [
@@ -181,15 +181,9 @@ export function resolveOpencodeVariant(
 }
 
 function queryModels(binary: string, args: string[]): Promise<string> {
-  return new Promise((resolve, reject) => {
-    execFile(binary, args, { timeout: 20000, maxBuffer: 16 * 1024 * 1024 }, (error, stdout) => {
-      if (error) {
-        reject(error);
-        return;
-      }
-      resolve(String(stdout));
-    });
-  });
+  return execCliFile(binary, args, { timeout: 20000, maxBuffer: 16 * 1024 * 1024 }).then(
+    ({ stdout }) => String(stdout)
+  );
 }
 
 export async function listOpencodeModels(cwd: string, binary: string): Promise<ModelOption[]> {

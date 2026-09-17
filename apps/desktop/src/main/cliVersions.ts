@@ -1,4 +1,4 @@
-import { execFile } from "node:child_process";
+import { execCliFile } from "./cli/spawnCli.js";
 import { traceHarnessCall } from "./debug/harnessTrace.js";
 
 export const MINIMUM_VERSIONS = {
@@ -35,51 +35,24 @@ export function isBinaryUnavailableError(error: { code?: string | number | null 
   return error.code === "ENOENT" || error.code === "EACCES" || error.code === "EINVAL" || error.code === "EPERM";
 }
 
-export interface VersionProbeTarget {
-  file: string;
-  args: string[];
-}
-
-export function versionProbeTarget(execPath: string, platform: NodeJS.Platform = process.platform): VersionProbeTarget {
-  if (platform === "win32") {
-    const lower = execPath.toLowerCase();
-    if (lower.endsWith(".cmd") || lower.endsWith(".bat") || lower.endsWith(".ps1")) {
-      const quoted = `'${execPath.replace(/'/g, "''")}'`;
-      return {
-        file: "powershell.exe",
-        args: ["-NoProfile", "-NonInteractive", "-Command", `& ${quoted} --version`]
-      };
-    }
-  }
-  return { file: execPath, args: ["--version"] };
-}
-
-function queryVersion(binaryPath: string): Promise<{ actual: string | null; available: boolean; error: string | null }> {
-  return new Promise((resolve) => {
-    const fail = (error: unknown): void => {
-      const code = typeof error === "object" && error !== null && "code" in error
-        ? (error as { code?: string | number | null }).code
-        : undefined;
-      resolve({
-        actual: null,
-        available: !isBinaryUnavailableError({ code }),
-        error: error instanceof Error ? error.message : String(error)
-      });
+async function queryVersion(binaryPath: string): Promise<{ actual: string | null; available: boolean; error: string | null }> {
+  const fail = (error: unknown): { actual: string | null; available: boolean; error: string | null } => {
+    const code = typeof error === "object" && error !== null && "code" in error
+      ? (error as { code?: string | number | null }).code
+      : undefined;
+    return {
+      actual: null,
+      available: !isBinaryUnavailableError({ code }),
+      error: error instanceof Error ? error.message : String(error)
     };
-    try {
-      const target = versionProbeTarget(binaryPath);
-      execFile(target.file, target.args, { timeout: 15000 }, (error, stdout) => {
-        if (error) {
-          fail(error);
-          return;
-        }
-        const match = stdout.match(/(\d+\.\d+\.\d+)/);
-        resolve({ actual: match ? match[1] : stdout.trim().slice(0, 32), available: true, error: null });
-      });
-    } catch (error) {
-      fail(error);
-    }
-  });
+  };
+  try {
+    const { stdout } = await execCliFile(binaryPath, ["--version"], { timeout: 15000 });
+    const match = stdout.match(/(\d+\.\d+\.\d+)/);
+    return { actual: match ? match[1] : stdout.trim().slice(0, 32), available: true, error: null };
+  } catch (error) {
+    return fail(error);
+  }
 }
 
 export async function checkCliVersions(opts: {

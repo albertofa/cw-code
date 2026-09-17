@@ -1,7 +1,8 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createServer } from "node:net";
 import { killProcessTree } from "../../processTree.js";
+import { spawnCli } from "../../cli/spawnCli.js";
 import { traceHarnessCall, truncateError } from "../../debug/harnessTrace.js";
 import { OPENCODE_HEALTH_TIMEOUT_MS, opencodeFetch } from "./opencodeFetch.js";
 
@@ -158,7 +159,7 @@ export class OpencodeServerPool {
     const password = process.env["OPENCODE_SERVER_PASSWORD"] ?? "";
     const authHeader = `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}`;
     const args = ["serve", "--port", String(port), "--hostname", "127.0.0.1"];
-    const proc = spawn(binary, args, {
+    const proc = spawnCli(binary, args, {
       cwd: rootPath,
       windowsHide: true,
       ...(env && Object.keys(env).length > 0 ? { env: { ...process.env, ...env } } : {})

@@ -1,4 +1,3 @@
-import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
 import { normalize, posix, win32, dirname, basename, sep } from "node:path";
@@ -8,7 +7,8 @@ import type {
   CliDiscoverResult,
   CliDiscoveredCandidate,
 } from "@cw-code/contracts";
-import { checkCliVersion, isBinaryUnavailableError, MINIMUM_VERSIONS, versionProbeTarget } from "../cliVersions.js";
+import { checkCliVersion, isBinaryUnavailableError, MINIMUM_VERSIONS } from "../cliVersions.js";
+import { execCliFile } from "./spawnCli.js";
 import { currentEnv, resolveBinary, type ResolveEnv } from "../pty/resolve.js";
 import { normalizeBinaryPath } from "../settings/settingsUtils.js";
 
@@ -140,20 +140,7 @@ function minimumFor(binary: CliBinary): string | null {
 }
 
 function runVersion(execPath: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    try {
-      const target = versionProbeTarget(execPath);
-      execFile(target.file, target.args, { timeout: 15000 }, (error, stdout) => {
-        if (error) {
-          reject(error);
-          return;
-        }
-        resolve(stdout);
-      });
-    } catch (error) {
-      reject(error);
-    }
-  });
+  return execCliFile(execPath, ["--version"], { timeout: 15000 }).then(({ stdout }) => stdout);
 }
 
 function errorMessage(error: unknown): string {

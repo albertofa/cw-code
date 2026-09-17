@@ -1,5 +1,6 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { type ChildProcess } from "node:child_process";
 import { createInterface } from "node:readline";
+import { spawnCli } from "../../cli/spawnCli.js";
 
 export class CodexAppServerError extends Error {
   readonly code: number | null;
@@ -124,7 +125,7 @@ export class CodexAppServer implements CodexAppServerLike {
 
   private async spawnAndInitialize(): Promise<ChildProcess> {
     const args = [...(this.opts.args ?? []), "app-server"];
-    const proc = spawn(this.opts.binary, args, {
+    const proc = spawnCli(this.opts.binary, args, {
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
       ...(this.opts.env ? { env: this.opts.env } : {})
