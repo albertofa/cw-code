@@ -31,6 +31,7 @@ export function BinaryPicker(props: {
   const [applying, setApplying] = useState<string | null>(null);
   const onPickRef = useRef(onPick);
   onPickRef.current = onPick;
+  const customVerifySeq = useRef(0);
 
   const runDiscover = useCallback(async () => {
     setScanning(true);
@@ -65,7 +66,10 @@ export function BinaryPicker(props: {
       setScanning(true);
       try {
         const result = await window.cw.discoverBinaries([binary]);
-        if (!cancelled) setCandidates(result[binary] ?? []);
+        if (!cancelled) {
+          setCandidates(result[binary] ?? []);
+          setScanError(null);
+        }
       } catch (err) {
         if (!cancelled) setScanError(err instanceof Error ? err.message : "Discovery failed");
       } finally {
@@ -81,16 +85,23 @@ export function BinaryPicker(props: {
   useEffect(() => {
     const trimmed = customPath.trim();
     if (trimmed === "") {
+      customVerifySeq.current += 1;
       setCustomCheck(null);
       setChecking(false);
       return;
     }
     setChecking(true);
+    customVerifySeq.current += 1;
+    const requestId = customVerifySeq.current;
     const timer = window.setTimeout(() => {
       void window.cw
         .verifyBinaryPath(binary, trimmed)
-        .then((candidate) => setCustomCheck(candidate))
-        .catch((err: Error) =>
+        .then((candidate) => {
+          if (customVerifySeq.current !== requestId) return;
+          setCustomCheck(candidate);
+        })
+        .catch((err: Error) => {
+          if (customVerifySeq.current !== requestId) return;
           setCustomCheck({
             binary,
             path: trimmed,
@@ -99,9 +110,11 @@ export function BinaryPicker(props: {
             available: false,
             error: err.message,
             ok: false
-          })
-        )
-        .finally(() => setChecking(false));
+          });
+        })
+        .finally(() => {
+          if (customVerifySeq.current === requestId) setChecking(false);
+        });
     }, 400);
     return () => window.clearTimeout(timer);
   }, [binary, customPath]);
