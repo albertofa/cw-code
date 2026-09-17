@@ -6391,6 +6391,7 @@ button.gitbar-pr:hover {
 }
 
 .binary-picker-row {
+  position: relative;
   display: flex;
   align-items: flex-start;
   gap: 8px;
@@ -6399,6 +6400,11 @@ button.gitbar-pr:hover {
   border-radius: var(--r-md);
   cursor: pointer;
   font-size: 12px;
+}
+
+.binary-picker-row:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 1px;
 }
 
 .binary-picker-row:hover {
@@ -6441,6 +6447,43 @@ button.gitbar-pr:hover {
   margin-top: 2px;
   flex: none;
   accent-color: var(--accent);
+}
+
+.binary-picker-radio {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+
+.binary-picker-remove {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 20px;
+  height: 20px;
+  padding: 0;
+  background: transparent;
+  border: none;
+  border-radius: var(--r-sm);
+  color: var(--faint);
+  cursor: pointer;
+  opacity: 0.6;
+}
+
+.binary-picker-remove:hover {
+  color: var(--danger);
+  background: rgba(224, 108, 96, 0.12);
+  opacity: 1;
+}
+
+.binary-picker-row.custom .binary-picker-row-body {
+  padding-right: 22px;
 }
 
 .binary-picker-row-body {

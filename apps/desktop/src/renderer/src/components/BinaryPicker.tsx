@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useRef, useState, type JSX } from "react";
-import { AlertTriangle, CheckCircle2, RefreshCw, XCircle } from "lucide-react";
+import { useCallback, useEffect, useRef, useState, type JSX, type MouseEvent } from "react";
+import { AlertTriangle, CheckCircle2, RefreshCw, X, XCircle } from "lucide-react";
 import type { CliBinary, CliDiscoveredCandidate } from "@cw-code/contracts";
 
 function isBareName(value: string): boolean {
@@ -57,6 +57,7 @@ export function BinaryPicker(props: {
   const [checking, setChecking] = useState(false);
   const [applyError, setApplyError] = useState<string | null>(null);
   const [applying, setApplying] = useState<string | null>(null);
+  const [hiddenCustom, setHiddenCustom] = useState<string[]>([]);
   const onPickRef = useRef(onPick);
   onPickRef.current = onPick;
   const valueRef = useRef(value);
@@ -70,6 +71,13 @@ export function BinaryPicker(props: {
     if (!customKnownRef.current.some((known) => samePath(known, path))) {
       customKnownRef.current = [...customKnownRef.current, path];
     }
+    setHiddenCustom((prev) => prev.filter((h) => !samePath(h, path)));
+  }, []);
+
+  const hideCustom = useCallback((e: MouseEvent, path: string) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setHiddenCustom((prev) => (prev.some((h) => samePath(h, path)) ? prev : [...prev, path]));
   }, []);
 
   const mergeCustomRows = useCallback(async (base: CliDiscoveredCandidate[]): Promise<CliDiscoveredCandidate[]> => {
@@ -190,13 +198,16 @@ export function BinaryPicker(props: {
     }
   }, [rememberCustom]);
 
-  const pickable = (candidates ?? [])
+  const visible = (candidates ?? []).filter(
+    (c) => c.source !== "configured" || !hiddenCustom.some((h) => samePath(h, c.path))
+  );
+  const pickable = visible
     .filter((c) => c.error === null && c.version !== null)
     .sort((a, b) => (a.source === "configured" ? 0 : 1) - (b.source === "configured" ? 0 : 1));
-  const customFailed = (candidates ?? []).filter(
+  const customFailed = visible.filter(
     (c) => c.source === "configured" && (c.error !== null || c.version === null)
   );
-  const skipped = (candidates ?? []).filter(
+  const skipped = visible.filter(
     (c) => c.source !== "configured" && (c.error !== null || c.version === null)
   );
   const scanned = candidates !== null;
@@ -248,6 +259,7 @@ export function BinaryPicker(props: {
               >
                 <input
                   type="radio"
+                  className="binary-picker-radio"
                   name={`binary-picker-${binary}`}
                   checked={selected}
                   disabled={applying !== null}
@@ -261,6 +273,17 @@ export function BinaryPicker(props: {
                     {busy && <span className="binary-picker-saving">Saving…</span>}
                   </span>
                 </span>
+                {custom && (
+                  <button
+                    type="button"
+                    className="binary-picker-remove"
+                    title="Remove custom path"
+                    aria-label={`Remove custom path ${candidate.path}`}
+                    onClick={(e) => hideCustom(e, candidate.path)}
+                  >
+                    <X size={12} aria-hidden="true" />
+                  </button>
+                )}
               </label>
             );
           })}
@@ -272,6 +295,7 @@ export function BinaryPicker(props: {
             >
               <input
                 type="radio"
+                className="binary-picker-radio"
                 name={`binary-picker-${binary}`}
                 checked={false}
                 disabled
@@ -285,6 +309,15 @@ export function BinaryPicker(props: {
                   <span className="binary-picker-badge">custom</span>
                 </span>
               </span>
+              <button
+                type="button"
+                className="binary-picker-remove"
+                title="Remove custom path"
+                aria-label={`Remove custom path ${candidate.path}`}
+                onClick={(e) => hideCustom(e, candidate.path)}
+              >
+                <X size={12} aria-hidden="true" />
+              </button>
             </label>
           ))}
         </div>
