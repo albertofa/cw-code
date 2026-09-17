@@ -41,6 +41,45 @@ function sourceBadge(candidate: CliDiscoveredCandidate, currentValue: string): s
   return "found";
 }
 
+const DISCOVERY_TTL_MS = 60_000;
+
+interface DiscoveryCacheEntry {
+  at: number;
+  candidates: CliDiscoveredCandidate[];
+}
+
+const discoveryCache = new Map<CliBinary, DiscoveryCacheEntry>();
+const inflightScans = new Map<CliBinary, Promise<CliDiscoveredCandidate[]>>();
+const customKnownCache = new Map<CliBinary, string[]>();
+const hiddenCustomCache = new Map<CliBinary, string[]>();
+
+function getFreshCache(binary: CliBinary): CliDiscoveredCandidate[] | null {
+  const hit = discoveryCache.get(binary);
+  if (!hit || Date.now() - hit.at > DISCOVERY_TTL_MS) return null;
+  return hit.candidates;
+}
+
+async function scanBinary(binary: CliBinary, force: boolean): Promise<CliDiscoveredCandidate[]> {
+  if (!force) {
+    const fresh = getFreshCache(binary);
+    if (fresh) return fresh;
+  }
+  const ongoing = inflightScans.get(binary);
+  if (ongoing) return ongoing;
+  const run = window.cw
+    .discoverBinaries([binary])
+    .then((result) => {
+      const list = result[binary] ?? [];
+      discoveryCache.set(binary, { at: Date.now(), candidates: list });
+      return list;
+    })
+    .finally(() => {
+      if (inflightScans.get(binary) === run) inflightScans.delete(binary);
+    });
+  inflightScans.set(binary, run);
+  return run;
+}
+
 export function BinaryPicker(props: {
   binary: CliBinary;
   value: string;
@@ -48,7 +87,7 @@ export function BinaryPicker(props: {
   autoDiscoverKey: string;
 }): JSX.Element {
   const { binary, value, onPick, autoDiscoverKey } = props;
-  const [candidates, setCandidates] = useState<CliDiscoveredCandidate[] | null>(null);
+  const [candidates, setCandidates] = useState<CliDiscoveredCandidate[] | null>(() => getFreshCache(binary));
   const [scanning, setScanning] = useState(false);
   const [scanError, setScanError] = useState<string | null>(null);
   const [customOpen, setCustomOpen] = useState(false);
@@ -57,28 +96,36 @@ export function BinaryPicker(props: {
   const [checking, setChecking] = useState(false);
   const [applyError, setApplyError] = useState<string | null>(null);
   const [applying, setApplying] = useState<string | null>(null);
-  const [hiddenCustom, setHiddenCustom] = useState<string[]>([]);
+  const [hiddenCustom, setHiddenCustom] = useState<string[]>(() => hiddenCustomCache.get(binary) ?? []);
   const onPickRef = useRef(onPick);
   onPickRef.current = onPick;
   const valueRef = useRef(value);
   valueRef.current = value;
-  const candidatesRef = useRef<CliDiscoveredCandidate[] | null>(null);
-  candidatesRef.current = candidates;
-  const customKnownRef = useRef<string[]>([]);
+  const customKnownRef = useRef<string[]>(customKnownCache.get(binary) ?? []);
+  const hiddenCustomRef = useRef<string[]>(hiddenCustomCache.get(binary) ?? []);
   const customVerifySeq = useRef(0);
 
   const rememberCustom = useCallback((path: string) => {
     if (!customKnownRef.current.some((known) => samePath(known, path))) {
       customKnownRef.current = [...customKnownRef.current, path];
+      customKnownCache.set(binary, customKnownRef.current);
     }
-    setHiddenCustom((prev) => prev.filter((h) => !samePath(h, path)));
-  }, []);
+    const next = hiddenCustomRef.current.filter((h) => !samePath(h, path));
+    hiddenCustomRef.current = next;
+    hiddenCustomCache.set(binary, next);
+    setHiddenCustom(next);
+  }, [binary]);
 
   const hideCustom = useCallback((e: MouseEvent, path: string) => {
     e.preventDefault();
     e.stopPropagation();
-    setHiddenCustom((prev) => (prev.some((h) => samePath(h, path)) ? prev : [...prev, path]));
-  }, []);
+    const next = hiddenCustomRef.current.some((h) => samePath(h, path))
+      ? hiddenCustomRef.current
+      : [...hiddenCustomRef.current, path];
+    hiddenCustomRef.current = next;
+    hiddenCustomCache.set(binary, next);
+    setHiddenCustom(next);
+  }, [binary]);
 
   const mergeCustomRows = useCallback(async (base: CliDiscoveredCandidate[]): Promise<CliDiscoveredCandidate[]> => {
     const saved = valueRef.current;
@@ -99,8 +146,9 @@ export function BinaryPicker(props: {
     setScanning(true);
     setScanError(null);
     try {
-      const result = await window.cw.discoverBinaries([binary]);
-      setCandidates(await mergeCustomRows(result[binary] ?? []));
+      discoveryCache.delete(binary);
+      const list = await scanBinary(binary, true);
+      setCandidates(await mergeCustomRows(list));
     } catch (err) {
       setScanError(err instanceof Error ? err.message : "Discovery failed");
     } finally {
@@ -112,6 +160,14 @@ export function BinaryPicker(props: {
     let cancelled = false;
     setScanError(null);
     void (async () => {
+      const cached = getFreshCache(binary);
+      const scanPromise = cached
+        ? null
+        : scanBinary(binary, false).then(
+          (list) => ({ ok: true as const, list }),
+          (err) => ({ ok: false as const, message: err instanceof Error ? err.message : "Discovery failed" })
+        );
+      if (scanPromise) setScanning(true);
       let checked: CliDiscoveredCandidate | null = null;
       try {
         checked = await window.cw.verifyBinaryPath(binary, valueRef.current);
@@ -119,30 +175,48 @@ export function BinaryPicker(props: {
         checked = null;
       }
       if (cancelled) return;
-      if (checked && checked.error === null && checked.version !== null) {
-        const merged = await mergeCustomRows(candidatesRef.current ?? []);
-        if (!cancelled && (merged.length > 0 || candidatesRef.current !== null)) {
-          setCandidates(merged);
+      const healthy = checked !== null && checked.error === null && checked.version !== null;
+      if (cached && healthy) {
+        const merged = await mergeCustomRows(cached);
+        if (!cancelled) setCandidates(merged);
+        return;
+      }
+      if (!healthy) {
+        const saved = valueRef.current;
+        setScanError(
+          isBareName(saved)
+            ? `'${saved}' was not found on PATH. Scanning common install locations…`
+            : `Saved path '${saved}' stopped working (${checked?.error ? firstLine(checked.error) : "verification failed"}). Scanning for installs…`
+        );
+      }
+      if (!scanPromise) {
+        setScanning(true);
+        try {
+          const list = await scanBinary(binary, true);
+          if (!cancelled) {
+            setCandidates(await mergeCustomRows(list));
+            setScanError(null);
+          }
+        } catch (err) {
+          if (!cancelled) setScanError((prev) => prev ?? (err instanceof Error ? err.message : "Discovery failed"));
+        } finally {
+          if (!cancelled) setScanning(false);
         }
         return;
       }
-      const saved = valueRef.current;
-      setScanError(
-        isBareName(saved)
-          ? `'${saved}' was not found on PATH. Scanning common install locations…`
-          : `Saved path '${saved}' stopped working (${checked?.error ?? "verification failed"}). Scanning for installs…`
-      );
-      setScanning(true);
-      try {
-        const result = await window.cw.discoverBinaries([binary]);
-        if (!cancelled) {
-          setCandidates(await mergeCustomRows(result[binary] ?? []));
-          setScanError(null);
-        }
-      } catch (err) {
-        if (!cancelled) setScanError(err instanceof Error ? err.message : "Discovery failed");
-      } finally {
-        if (!cancelled) setScanning(false);
+      const scanned = await scanPromise;
+      if (cancelled) return;
+      setScanning(false);
+      if (scanned.ok) {
+        const merged = await mergeCustomRows(scanned.list);
+        if (cancelled) return;
+        setCandidates(merged);
+        setScanError(null);
+      } else {
+        const merged = await mergeCustomRows([]);
+        if (cancelled) return;
+        setCandidates(merged);
+        setScanError((prev) => (healthy ? scanned.message : (prev ?? scanned.message)));
       }
     })();
     return () => {
