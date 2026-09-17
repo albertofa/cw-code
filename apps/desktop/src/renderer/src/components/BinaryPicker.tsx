@@ -175,7 +175,7 @@ export function BinaryPicker(props: {
         checked = null;
       }
       if (cancelled) return;
-      const healthy = checked !== null && checked.error === null && checked.version !== null;
+      const healthy = checked?.ok === true;
       if (cached && healthy) {
         const merged = await mergeCustomRows(cached);
         if (!cancelled) setCandidates(merged);
@@ -184,9 +184,11 @@ export function BinaryPicker(props: {
       if (!healthy) {
         const saved = valueRef.current;
         setScanError(
-          isBareName(saved)
-            ? `'${saved}' was not found on PATH. Scanning common install locations…`
-            : `Saved path '${saved}' stopped working (${checked?.error ? firstLine(checked.error) : "verification failed"}). Scanning for installs…`
+          checked && checked.error === null && checked.version !== null
+            ? `Saved path '${saved}' is version ${checked.version} but needs >= ${checked.minimum ?? "a newer release"}. Pick a compatible install below.`
+            : isBareName(saved)
+              ? `'${saved}' was not found on PATH. Scanning common install locations…`
+              : `Saved path '${saved}' stopped working (${checked?.error ? firstLine(checked.error) : "verification failed"}). Scanning for installs…`
         );
       }
       if (!scanPromise) {
@@ -276,7 +278,10 @@ export function BinaryPicker(props: {
     (c) => c.source !== "configured" || !hiddenCustom.some((h) => samePath(h, c.path))
   );
   const pickable = visible
-    .filter((c) => c.error === null && c.version !== null)
+    .filter((c) => c.ok && c.error === null && c.version !== null)
+    .sort((a, b) => (a.source === "configured" ? 0 : 1) - (b.source === "configured" ? 0 : 1));
+  const blocked = visible
+    .filter((c) => !c.ok && c.error === null && c.version !== null)
     .sort((a, b) => (a.source === "configured" ? 0 : 1) - (b.source === "configured" ? 0 : 1));
   const customFailed = visible.filter(
     (c) => c.source === "configured" && (c.error !== null || c.version === null)
@@ -313,13 +318,13 @@ export function BinaryPicker(props: {
           <AlertTriangle size={13} aria-hidden="true" /> {scanError}
         </div>
       )}
-      {scanned && !scanning && pickable.length === 0 && customFailed.length === 0 && (
+      {scanned && !scanning && pickable.length === 0 && blocked.length === 0 && customFailed.length === 0 && (
         <div className="binary-picker-empty" role="alert">
           <AlertTriangle size={13} aria-hidden="true" />
           <span>No verified {binary} installs found. Try a custom path below.</span>
         </div>
       )}
-      {(pickable.length > 0 || customFailed.length > 0) && (
+      {(pickable.length > 0 || blocked.length > 0 || customFailed.length > 0) && (
         <div className="binary-picker-list" role="radiogroup" aria-label={`${binary} installs`}>
           {pickable.map((candidate) => {
             const selected = samePath(candidate.path, value);
@@ -345,6 +350,44 @@ export function BinaryPicker(props: {
                     {renderVersion(candidate)}
                     <span className="binary-picker-badge">{sourceBadge(candidate, value)}</span>
                     {busy && <span className="binary-picker-saving">Saving…</span>}
+                    {custom && (
+                      <button
+                        type="button"
+                        className="binary-picker-remove"
+                        title="Remove custom path"
+                        aria-label={`Remove custom path ${candidate.path}`}
+                        onClick={(e) => hideCustom(e, candidate.path)}
+                      >
+                        <Trash2 size={12} aria-hidden="true" />
+                      </button>
+                    )}
+                  </span>
+                </span>
+              </label>
+            );
+          })}
+          {blocked.map((candidate) => {
+            const custom = candidate.source === "configured";
+            return (
+              <label
+                key={candidate.path}
+                className={`binary-picker-row blocked${custom ? " custom" : ""}`}
+                title={candidate.minimum
+                  ? `${candidate.path} — version ${candidate.version} needs >= ${candidate.minimum}`
+                  : candidate.path}
+              >
+                <input
+                  type="radio"
+                  className="binary-picker-radio"
+                  name={`binary-picker-${binary}`}
+                  checked={false}
+                  disabled
+                />
+                <span className="binary-picker-row-body">
+                  <span className="binary-picker-path">{candidate.path}</span>
+                  <span className="binary-picker-meta">
+                    {renderVersion(candidate)}
+                    <span className="binary-picker-badge">{sourceBadge(candidate, value)}</span>
                     {custom && (
                       <button
                         type="button"
@@ -423,15 +466,10 @@ export function BinaryPicker(props: {
               onChange={(e) => setCustomPath(e.target.value)}
             />
             {checking && <div className="binary-picker-status">Checking…</div>}
-            {!checking && customCheck && (customStatus === "good" || customStatus === "stale") && (
-              <div className={`binary-picker-valid${customStatus === "stale" ? " stale" : ""}`}>
-                {customStatus === "good"
-                  ? <CheckCircle2 size={13} aria-hidden="true" />
-                  : <AlertTriangle size={13} aria-hidden="true" />}
+            {!checking && customCheck && customStatus === "good" && (
+              <div className="binary-picker-valid">
+                <CheckCircle2 size={13} aria-hidden="true" />
                 {customCheck.version}
-                {customStatus === "stale" && customCheck.minimum
-                  ? <span>below minimum {customCheck.minimum}, still usable</span>
-                  : null}
                 <button
                   className="btn btn-primary binary-picker-btn"
                   disabled={applying !== null}
@@ -439,6 +477,17 @@ export function BinaryPicker(props: {
                 >
                   {applying === customCheck.path ? "Saving…" : "Use this path"}
                 </button>
+              </div>
+            )}
+            {!checking && customCheck && customStatus === "stale" && (
+              <div className="binary-picker-valid stale" role="alert">
+                <AlertTriangle size={13} aria-hidden="true" />
+                {customCheck.version}
+                <span>
+                  {customCheck.minimum
+                    ? `needs >= ${customCheck.minimum} — update the CLI to use this path`
+                    : "below the required version — update the CLI to use this path"}
+                </span>
               </div>
             )}
             {!checking && customCheck && customStatus === "failed" && (

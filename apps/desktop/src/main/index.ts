@@ -154,12 +154,14 @@ function registerIpc(): void {
         checks.push(checkCliVersion("codex", normalized.codexBinaryPath));
       }
     }
-    const failed = (await Promise.all(checks)).find((check) => check.error !== null);
+    const failed = (await Promise.all(checks)).find((check) => check.error !== null || !check.ok);
     if (failed) {
       const name = failed.binary === "claude" ? "Claude" : failed.binary === "codex" ? "Codex" : "OpenCode";
-      const reason = failed.available
-        ? "The executable did not complete '--version' successfully."
-        : "Choose a valid executable name or full path.";
+      const reason = !failed.available
+        ? "Choose a valid executable name or full path."
+        : failed.error !== null
+          ? "The executable did not complete '--version' successfully."
+          : `It reported version ${failed.actual ?? "unknown"} but needs >= ${failed.minimum}. Update the CLI to use it.`;
       throw new Error(`${name} CLI could not be verified at '${failed.binaryPath}'. ${reason}`);
     }
     return sessions.setSettings(normalized);

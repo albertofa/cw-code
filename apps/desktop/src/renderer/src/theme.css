@@ -6441,6 +6441,17 @@ button.gitbar-pr:hover {
   background: rgba(224, 108, 96, 0.06);
 }
 
+.binary-picker-row.blocked {
+  cursor: not-allowed;
+  border-color: rgba(232, 180, 79, 0.4);
+  background: rgba(232, 180, 79, 0.06);
+}
+
+.binary-picker-row.blocked:hover {
+  border-color: rgba(232, 180, 79, 0.4);
+  background: rgba(232, 180, 79, 0.06);
+}
+
 .binary-picker-row input {
   margin-top: 2px;
   flex: none;
@@ -6508,7 +6519,7 @@ button.gitbar-pr:hover {
 }
 
 .binary-picker-version.good {
-  color: var(--muted);
+  color: var(--success);
 }
 
 .binary-picker-version.stale {
@@ -6558,7 +6569,7 @@ button.gitbar-pr:hover {
   align-items: center;
   gap: 8px;
   font-size: 12px;
-  color: var(--muted);
+  color: var(--success);
   flex-wrap: wrap;
 }
 
