@@ -1115,6 +1115,29 @@ export const useAppStore = create<AppState>((set, get) => ({
       let turnMessages = finalizeTurnTools(messages, event.turnId, backgroundTasks).filter(
         (m) => m.id !== `${event.turnId}-retry`
       );
+      if (!event.isError) {
+        const resultText = event.resultText ?? "";
+        if (resultText.trim()) {
+          const alreadyShown = turnMessages.some(
+            (m) => m.role === "assistant" && m.turnId === event.turnId && m.text.includes(resultText)
+          );
+          if (!alreadyShown) {
+            const last = turnMessages[turnMessages.length - 1];
+            if (
+              last &&
+              last.role === "assistant" &&
+              last.turnId === event.turnId &&
+              resultText.startsWith(last.text) &&
+              last.text.trim()
+            ) {
+              const suffix = resultText.slice(last.text.length);
+              if (suffix.trim()) turnMessages = appendAssistantText(turnMessages, event.turnId, suffix);
+            } else {
+              turnMessages = appendAssistantText(turnMessages, event.turnId, resultText);
+            }
+          }
+        }
+      }
       if (event.isError && !turnMessages.some((m) => m.id === `${event.turnId}-e`)) {
         turnMessages = [
           ...turnMessages,
