@@ -348,6 +348,7 @@ export function SettingsModal({
         <span className="settings-label">Binary path</span>
         <span className="settings-hint">Verified installs only. Picking one applies immediately.</span>
         <BinaryPicker
+          key="claude"
           binary="claude"
           value={draft.claudeBinaryPath}
           onPick={makeOnPick("claudeBinaryPath")}
@@ -385,6 +386,7 @@ export function SettingsModal({
         <span className="settings-label">Binary path</span>
         <span className="settings-hint">Verified installs only. Picking one applies immediately.</span>
         <BinaryPicker
+          key="opencode"
           binary="opencode"
           value={draft.opencodeBinaryPath}
           onPick={makeOnPick("opencodeBinaryPath")}
@@ -421,6 +423,7 @@ export function SettingsModal({
         <span className="settings-label">Binary path</span>
         <span className="settings-hint">Verified installs only. Picking one applies immediately.</span>
         <BinaryPicker
+          key="codex"
           binary="codex"
           value={draft.codexBinaryPath}
           onPick={makeOnPick("codexBinaryPath")}
@@ -565,6 +568,7 @@ export function SettingsModal({
           <span className="settings-label">Git executable</span>
           <span className="settings-hint">Used for status, branches, diffs, identity, and worktrees. Picking one applies immediately.</span>
           <BinaryPicker
+            key="git"
             binary="git"
             value={draft.gitBinaryPath}
             onPick={makeOnPick("gitBinaryPath")}
@@ -575,6 +579,7 @@ export function SettingsModal({
           <span className="settings-label">GitHub CLI executable</span>
           <span className="settings-hint">Used for account discovery and pull-request status. Picking one applies immediately.</span>
           <BinaryPicker
+            key="gh"
             binary="gh"
             value={draft.githubCliBinaryPath}
             onPick={makeOnPick("githubCliBinaryPath")}
