@@ -15,9 +15,10 @@ function resolvePreload(): string {
   return found ?? candidates[0];
 }
 import { checkCliVersion, checkCliVersions, type CliVersionCheck } from "./cliVersions.js";
+import { discoverBinaries, verifyBinaryPath } from "./cli/binaryDiscovery.js";
 import { getHarnessTracePath, initHarnessTrace } from "./debug/harnessTrace.js";
 import { appendCrashLog, initCrashLog } from "./debug/crashLog.js";
-import type { ApprovalDecision, CreateSessionOptions, GitDiffMode, SessionStatus, SettingsPatch } from "@cw-code/contracts";
+import type { ApprovalDecision, CliBinary, CreateSessionOptions, GitDiffMode, SessionStatus, SettingsPatch } from "@cw-code/contracts";
 import type { DriverKind, HarnessId, SkillSaveInput } from "@cw-code/contracts";
 import type { PtyKind } from "./pty/PtyPool.js";
 import { SessionManager } from "./sessions/SessionManager.js";
@@ -114,6 +115,10 @@ function registerIpc(): void {
       codexBinary: s.codexBinaryPath
     });
   });
+  ipcMain.handle("cli.discover", (_e, args: { binaries?: CliBinary[] }) => discoverBinaries(args?.binaries));
+  ipcMain.handle("cli.verifyPath", (_e, args: { binary: CliBinary; path: string }) =>
+    verifyBinaryPath(args.binary, args.path)
+  );
   ipcMain.handle("settings.get", () => sessions.getSettings());
   ipcMain.handle("skills.list", () => skills.listSkills());
   ipcMain.handle("skills.get", (_e, name: string) => skills.getSkill(name));

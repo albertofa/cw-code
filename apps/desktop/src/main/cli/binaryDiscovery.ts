@@ -1,5 +1,16 @@
-import { posix, win32 } from "node:path";
-import type { CliBinary } from "@cw-code/contracts";
+import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
+import { homedir } from "node:os";
+import { normalize, posix, win32 } from "node:path";
+import type {
+  BinarySource,
+  CliBinary,
+  CliDiscoverResult,
+  CliDiscoveredCandidate,
+} from "@cw-code/contracts";
+import { checkCliVersion, isBinaryUnavailableError } from "../cliVersions.js";
+import { currentEnv, resolveBinary, type ResolveEnv } from "../pty/resolve.js";
+import { normalizeBinaryPath } from "../settings/settingsUtils.js";
 
 export interface CandidatePathsOptions {
   platform: NodeJS.Platform;
@@ -111,4 +122,179 @@ function win32Candidates(binary: CliBinary, opts: CandidatePathsOptions): string
 export function candidatePaths(binary: CliBinary, opts: CandidatePathsOptions): string[] {
   if (!isKnownBinary(binary)) return [binary];
   return opts.platform === "win32" ? win32Candidates(binary, opts) : posixCandidates(binary, opts);
+}
+
+const ALL_BINARIES: CliBinary[] = ["claude", "opencode", "codex", "git", "gh"];
+
+type ProbedVersion = Pick<CliDiscoveredCandidate, "version" | "available" | "error" | "ok">;
+
+function runVersion(execPath: string): Promise<string> {
+  return new Promise((resolve, reject) => {
+    try {
+      execFile(execPath, ["--version"], { timeout: 15000 }, (error, stdout) => {
+        if (error) {
+          reject(error);
+          return;
+        }
+        resolve(stdout);
+      });
+    } catch (error) {
+      reject(error);
+    }
+  });
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function errorCode(error: unknown): string | number | null | undefined {
+  if (typeof error === "object" && error !== null && "code" in error) {
+    return (error as { code?: string | number | null }).code;
+  }
+  return undefined;
+}
+
+function parseScmVersion(binary: CliBinary, stdout: string): string | null {
+  const firstLine = stdout.replace(/\r/g, "").split("\n")[0]?.trim() ?? "";
+  if (!firstLine) return null;
+  if (binary === "gh") return firstLine.match(/(\d+\.\d+\.\d+)/)?.[1] ?? firstLine;
+  return firstLine;
+}
+
+async function probeScmVersion(binary: CliBinary, execPath: string): Promise<ProbedVersion> {
+  try {
+    const version = parseScmVersion(binary, await runVersion(execPath));
+    return { version, available: true, error: null, ok: version !== null };
+  } catch (error) {
+    return {
+      version: null,
+      available: !isBinaryUnavailableError({ code: errorCode(error) }),
+      error: errorMessage(error),
+      ok: false
+    };
+  }
+}
+
+async function probeVersion(binary: CliBinary, execPath: string): Promise<ProbedVersion> {
+  if (binary === "claude" || binary === "opencode" || binary === "codex") {
+    const check = await checkCliVersion(binary, execPath);
+    return { version: check.actual, available: check.available, error: check.error, ok: check.ok };
+  }
+  return probeScmVersion(binary, execPath);
+}
+
+function safeHomeDir(): string {
+  try {
+    return homedir();
+  } catch {
+    return "";
+  }
+}
+
+function tryResolveBinary(name: string, env: ResolveEnv): string | null {
+  try {
+    return resolveBinary(name, env);
+  } catch {
+    return null;
+  }
+}
+
+function tryExists(path: string): boolean {
+  try {
+    return existsSync(path);
+  } catch {
+    return false;
+  }
+}
+
+function bareSource(binary: CliBinary, normalized: string, platform: NodeJS.Platform): BinarySource {
+  const candidates = candidatePaths(binary, { platform, homeDir: safeHomeDir(), env: process.env });
+  const key = platform === "win32" ? normalized.toLowerCase() : normalized;
+  const match = candidates.some((candidate) =>
+    platform === "win32" ? candidate.toLowerCase() === key : candidate === key
+  );
+  return match ? "path" : "common";
+}
+
+export async function verifyBinaryPath(
+  binary: CliBinary,
+  rawPath: string,
+  env: ResolveEnv = currentEnv()
+): Promise<CliDiscoveredCandidate> {
+  const normalized = normalizeBinaryPath(rawPath);
+  if (!normalized) {
+    return {
+      binary,
+      path: rawPath,
+      source: "configured",
+      version: null,
+      available: false,
+      error: "Empty binary path.",
+      ok: false
+    };
+  }
+  if (/[\\/]/.test(rawPath.trim())) {
+    const probed = await probeVersion(binary, normalized);
+    return { binary, path: normalized, source: "configured", ...probed };
+  }
+  const resolved = tryResolveBinary(normalized, env);
+  const execPath = resolved ?? normalized;
+  const probed = await probeVersion(binary, execPath);
+  return { binary, path: execPath, source: bareSource(binary, normalized, env.platform), ...probed };
+}
+
+async function discoverOne(binary: CliBinary): Promise<CliDiscoveredCandidate[]> {
+  const env = currentEnv();
+  const platform = process.platform;
+  const keyOf = (value: string): string => (platform === "win32" ? value.toLowerCase() : value);
+  const gathered: Array<{ path: string; source: BinarySource }> = [];
+  const seen = new Set<string>();
+  const resolved = tryResolveBinary(binary, env);
+  if (resolved) {
+    const normalized = normalize(resolved);
+    gathered.push({ path: normalized, source: "path" });
+    seen.add(keyOf(normalized));
+  }
+  for (const candidate of candidatePaths(binary, {
+    platform,
+    homeDir: safeHomeDir(),
+    env: process.env
+  })) {
+    if (!/[\\/]/.test(candidate)) continue;
+    const normalized = normalize(candidate);
+    if (seen.has(keyOf(normalized))) continue;
+    seen.add(keyOf(normalized));
+    if (!tryExists(candidate)) continue;
+    gathered.push({ path: normalized, source: "common" });
+  }
+  const verified = await Promise.all(
+    gathered.map(async ({ path, source }): Promise<CliDiscoveredCandidate> => {
+      try {
+        return { binary, path, source, ...(await probeVersion(binary, path)) };
+      } catch (error) {
+        return { binary, path, source, version: null, available: false, error: errorMessage(error), ok: false };
+      }
+    })
+  );
+  verified.sort((a, b) => Number(b.ok) - Number(a.ok) || a.path.length - b.path.length);
+  return verified;
+}
+
+export async function discoverBinaries(binaries?: CliBinary[]): Promise<CliDiscoverResult> {
+  const targets = [...new Set(binaries ?? ALL_BINARIES)];
+  const entries = await Promise.all(
+    targets.map(async (binary): Promise<[CliBinary, CliDiscoveredCandidate[]]> => {
+      try {
+        return [binary, await discoverOne(binary)];
+      } catch (error) {
+        console.warn(`binary discovery failed for ${binary}: ${errorMessage(error)}`);
+        return [binary, []];
+      }
+    })
+  );
+  const result = {} as Record<CliBinary, CliDiscoveredCandidate[]>;
+  for (const [binary, candidates] of entries) result[binary] = candidates;
+  for (const binary of ALL_BINARIES) result[binary] ??= [];
+  return result;
 }
