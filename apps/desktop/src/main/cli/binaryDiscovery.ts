@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { existsSync } from "node:fs";
 import { homedir } from "node:os";
-import { normalize, posix, win32 } from "node:path";
+import { normalize, posix, win32, dirname, basename, sep } from "node:path";
 import type {
   BinarySource,
   CliBinary,
@@ -250,6 +250,31 @@ export async function verifyBinaryPath(
   return { binary, path: execPath, source: bareSource(binary, normalized, env.platform), ...probed };
 }
 
+const SHIM_PREFERENCE = [".exe", ".cmd", ".bat", ".ps1"];
+
+function shimRank(execPath: string): number {
+  const lower = execPath.toLowerCase();
+  const rank = SHIM_PREFERENCE.findIndex((ext) => lower.endsWith(ext));
+  return rank === -1 ? SHIM_PREFERENCE.length : rank;
+}
+
+function shimStem(execPath: string, platform: NodeJS.Platform): string {
+  const normalized = normalize(execPath);
+  const stem = `${dirname(normalized)}${sep}${basename(normalized).replace(/\.[a-zA-Z0-9]+$/, "")}`;
+  return platform === "win32" ? stem.toLowerCase() : stem;
+}
+
+export function dedupeShimCandidates<T extends { path: string }>(items: T[], platform: NodeJS.Platform): T[] {
+  if (platform !== "win32") return [...items];
+  const best = new Map<string, T>();
+  for (const item of items) {
+    const key = shimStem(item.path, platform);
+    const prev = best.get(key);
+    if (!prev || shimRank(item.path) < shimRank(prev.path)) best.set(key, item);
+  }
+  return [...best.values()];
+}
+
 async function discoverOne(binary: CliBinary): Promise<CliDiscoveredCandidate[]> {
   const env = currentEnv();
   const platform = process.platform;
@@ -275,7 +300,7 @@ async function discoverOne(binary: CliBinary): Promise<CliDiscoveredCandidate[]>
     gathered.push({ path: normalized, source: "common" });
   }
   const verified = await Promise.all(
-    gathered.map(async ({ path, source }): Promise<CliDiscoveredCandidate> => {
+    dedupeShimCandidates(gathered, platform).map(async ({ path, source }): Promise<CliDiscoveredCandidate> => {
       try {
         return { binary, path, source, ...(await probeVersion(binary, path)) };
       } catch (error) {

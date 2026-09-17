@@ -137,19 +137,9 @@ export function BinaryPicker(props: {
 
   return (
     <div className="binary-picker">
-      <div className="binary-picker-current" title={value}>
-        Current: <span className="binary-picker-path">{value === "" ? "(default)" : value}</span>
-      </div>
       {scanning && (
         <div className="binary-picker-status">
           <RefreshCw size={13} className="binary-picker-spin" aria-hidden="true" /> Scanning for {binary} installs…
-        </div>
-      )}
-      {!scanning && !scanned && !scanError && (
-        <div className="binary-picker-actions">
-          <button className="btn binary-picker-btn" onClick={() => void runDiscover()}>
-            Discover installs
-          </button>
         </div>
       )}
       {scanError && !scanning && (
@@ -160,10 +150,7 @@ export function BinaryPicker(props: {
       {scanned && !scanning && verified.length === 0 && (
         <div className="binary-picker-empty" role="alert">
           <AlertTriangle size={13} aria-hidden="true" />
-          <span>No verified {binary} installs found.{scanError ? "" : " Try a custom path below."}</span>
-          <button className="btn binary-picker-btn" onClick={() => void runDiscover()}>
-            <RefreshCw size={12} aria-hidden="true" /> Rescan
-          </button>
+          <span>No verified {binary} installs found. Try a custom path below.</span>
         </div>
       )}
       {verified.length > 0 && (
@@ -202,23 +189,20 @@ export function BinaryPicker(props: {
           {unverified.length} unverified location(s) skipped: {unverified[0].error ?? unverified[0].path}
         </div>
       )}
-      {scanned && verified.length > 0 && (
-        <div className="binary-picker-actions">
-          <button className="btn binary-picker-btn" onClick={() => void runDiscover()} disabled={scanning}>
-            <RefreshCw size={12} aria-hidden="true" /> Rescan
-          </button>
-        </div>
-      )}
-      <div className="binary-picker-custom">
+      <div className="binary-picker-actions">
+        <button className="btn binary-picker-btn" onClick={() => void runDiscover()} disabled={scanning}>
+          <RefreshCw size={12} aria-hidden="true" /> {scanned ? "Rescan" : "Discover installs"}
+        </button>
         <button
-          className="binary-picker-toggle"
+          className="btn binary-picker-btn"
           aria-expanded={customOpen}
           onClick={() => setCustomOpen((o) => !o)}
         >
           {customOpen ? "Hide custom path" : "Custom path…"}
         </button>
-        {customOpen && (
-          <div className="binary-picker-custom-body">
+      </div>
+      {customOpen && (
+        <div className="binary-picker-custom-body">
             <input
               className="field"
               value={customPath}
@@ -244,9 +228,8 @@ export function BinaryPicker(props: {
                 <XCircle size={13} aria-hidden="true" /> {customCheck.error ?? "Not a usable binary"}
               </div>
             )}
-          </div>
-        )}
-      </div>
+        </div>
+      )}
       {applyError && <div className="binary-picker-error" role="alert">{applyError}</div>}
     </div>
   );

@@ -6320,14 +6320,6 @@ button.gitbar-pr:hover {
   gap: 6px;
 }
 
-.binary-picker-current {
-  font-size: 12px;
-  color: var(--faint);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
 .binary-picker-path {
   font-family: var(--mono);
   font-size: 12px;
@@ -6472,27 +6464,6 @@ button.gitbar-pr:hover {
   color: var(--faint);
   line-height: 1.45;
   overflow-wrap: anywhere;
-}
-
-.binary-picker-custom {
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.binary-picker-toggle {
-  align-self: flex-start;
-  background: transparent;
-  border: none;
-  color: var(--muted);
-  font-family: var(--sans);
-  font-size: 12px;
-  padding: 2px 0;
-  cursor: pointer;
-}
-
-.binary-picker-toggle:hover {
-  color: var(--text);
 }
 
 .binary-picker-custom-body {

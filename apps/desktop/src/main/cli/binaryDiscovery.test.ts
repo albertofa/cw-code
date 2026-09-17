@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { CliBinary } from "@cw-code/contracts";
-import { candidatePaths } from "./binaryDiscovery.js";
+import { candidatePaths, dedupeShimCandidates } from "./binaryDiscovery.js";
 import type { CandidatePathsOptions } from "./binaryDiscovery.js";
 
 const POSIX_OPTS: CandidatePathsOptions = {
@@ -132,5 +132,35 @@ describe("candidatePaths fallback", () => {
   it("falls back to the bare name for unknown binaries", () => {
     expect(candidatePaths("mystery-tool" as CliBinary, POSIX_OPTS)).toEqual(["mystery-tool"]);
     expect(candidatePaths("mystery-tool" as CliBinary, WIN_OPTS)).toEqual(["mystery-tool"]);
+  });
+});
+
+describe("dedupeShimCandidates", () => {
+  const item = (path: string, source: "path" | "common" = "common") => ({ path, source });
+
+  it("collapses same-dir npm shims to one entry preferring .cmd over .ps1", () => {
+    const out = dedupeShimCandidates(
+      [item("C:\\nvm4w\\nodejs\\opencode.cmd", "path"), item("C:\\nvm4w\\nodejs\\opencode.ps1")],
+      "win32"
+    );
+    expect(out).toEqual([item("C:\\nvm4w\\nodejs\\opencode.cmd", "path")]);
+  });
+
+  it("prefers a native .exe and drops the unusable extensionless sh script", () => {
+    const out = dedupeShimCandidates(
+      [item("C:\\tools\\codex.ps1"), item("C:\\tools\\codex"), item("C:\\tools\\codex.exe")],
+      "win32"
+    );
+    expect(out).toEqual([item("C:\\tools\\codex.exe")]);
+  });
+
+  it("keeps installs in different directories and is case-insensitive", () => {
+    const out = dedupeShimCandidates([item("C:\\A\\opencode.cmd"), item("C:\\b\\OPENCODE.ps1")], "win32");
+    expect(out).toHaveLength(2);
+  });
+
+  it("passes posix candidates through untouched", () => {
+    const items = [item("/usr/local/bin/opencode"), item("/home/u/.opencode/bin/opencode")];
+    expect(dedupeShimCandidates(items, "linux")).toEqual(items);
   });
 });
