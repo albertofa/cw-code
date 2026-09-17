@@ -8,7 +8,7 @@ import type {
   CliDiscoverResult,
   CliDiscoveredCandidate,
 } from "@cw-code/contracts";
-import { checkCliVersion, isBinaryUnavailableError } from "../cliVersions.js";
+import { checkCliVersion, isBinaryUnavailableError, versionProbeTarget } from "../cliVersions.js";
 import { currentEnv, resolveBinary, type ResolveEnv } from "../pty/resolve.js";
 import { normalizeBinaryPath } from "../settings/settingsUtils.js";
 
@@ -99,6 +99,11 @@ function win32Candidates(binary: CliBinary, opts: CandidatePathsOptions): string
 
   if (appData) pushForms(win32.join(appData, "npm"));
   if (localAppData) pushForms(win32.join(localAppData, "Microsoft", "WinGet", "Links"));
+  if (localAppData) pushForms(win32.join(localAppData, "pnpm"));
+  const nvmSymlink = getEnv(opts.env, ["NVM_SYMLINK"]);
+  const nvmHome = getEnv(opts.env, ["NVM_HOME"]);
+  if (nvmSymlink) pushForms(nvmSymlink);
+  if (nvmHome) pushForms(win32.join(nvmHome, "nodejs"));
   if (binary === "opencode" && userProfile) pushForms(win32.join(userProfile, ".opencode", "bin"));
   if (binary === "claude" && userProfile) pushForms(win32.join(userProfile, ".claude", "local"));
   if (userProfile) pushForms(win32.join(userProfile, "scoop", "shims"));
@@ -131,7 +136,8 @@ type ProbedVersion = Pick<CliDiscoveredCandidate, "version" | "available" | "err
 function runVersion(execPath: string): Promise<string> {
   return new Promise((resolve, reject) => {
     try {
-      execFile(execPath, ["--version"], { timeout: 15000 }, (error, stdout) => {
+      const target = versionProbeTarget(execPath);
+      execFile(target.file, target.args, { timeout: 15000 }, (error, stdout) => {
         if (error) {
           reject(error);
           return;

@@ -35,6 +35,25 @@ export function isBinaryUnavailableError(error: { code?: string | number | null 
   return error.code === "ENOENT" || error.code === "EACCES" || error.code === "EINVAL" || error.code === "EPERM";
 }
 
+export interface VersionProbeTarget {
+  file: string;
+  args: string[];
+}
+
+export function versionProbeTarget(execPath: string, platform: NodeJS.Platform = process.platform): VersionProbeTarget {
+  if (platform === "win32") {
+    const lower = execPath.toLowerCase();
+    if (lower.endsWith(".cmd") || lower.endsWith(".bat") || lower.endsWith(".ps1")) {
+      const quoted = `'${execPath.replace(/'/g, "''")}'`;
+      return {
+        file: "powershell.exe",
+        args: ["-NoProfile", "-NonInteractive", "-Command", `& ${quoted} --version`]
+      };
+    }
+  }
+  return { file: execPath, args: ["--version"] };
+}
+
 function queryVersion(binaryPath: string): Promise<{ actual: string | null; available: boolean; error: string | null }> {
   return new Promise((resolve) => {
     const fail = (error: unknown): void => {
@@ -48,7 +67,8 @@ function queryVersion(binaryPath: string): Promise<{ actual: string | null; avai
       });
     };
     try {
-      execFile(binaryPath, ["--version"], { timeout: 15000 }, (error, stdout) => {
+      const target = versionProbeTarget(binaryPath);
+      execFile(target.file, target.args, { timeout: 15000 }, (error, stdout) => {
         if (error) {
           fail(error);
           return;

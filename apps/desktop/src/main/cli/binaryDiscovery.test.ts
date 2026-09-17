@@ -72,6 +72,26 @@ describe("candidatePaths on win32", () => {
     expect(candidatePaths("gh", WIN_OPTS)).toContain("C:\\Program Files\\GitHub CLI\\gh.exe");
   });
 
+  it("includes nvm-windows and pnpm install locations", () => {
+    const opts: CandidatePathsOptions = {
+      platform: "win32",
+      homeDir: "C:\\Users\\testuser",
+      env: {
+        ...WIN_OPTS.env,
+        NVM_SYMLINK: "C:\\nvm4w\\nodejs",
+        NVM_HOME: "C:\\Users\\testuser\\AppData\\Local\\nvm"
+      }
+    };
+    expect(candidatePaths("opencode", opts)).toContain("C:\\nvm4w\\nodejs\\opencode.cmd");
+    expect(candidatePaths("codex", opts)).toContain("C:\\nvm4w\\nodejs\\codex.ps1");
+    expect(candidatePaths("opencode", opts)).toContain(
+      "C:\\Users\\testuser\\AppData\\Local\\nvm\\nodejs\\opencode.exe"
+    );
+    expect(candidatePaths("codex", opts)).toContain(
+      "C:\\Users\\testuser\\AppData\\Local\\pnpm\\codex.cmd"
+    );
+  });
+
   it("derives win32 locations from homeDir when env vars are missing", () => {
     const paths = candidatePaths("claude", { platform: "win32", homeDir: "D:\\work\\me", env: {} });
     expect(paths).toContain("D:\\work\\me\\AppData\\Roaming\\npm\\claude.cmd");
