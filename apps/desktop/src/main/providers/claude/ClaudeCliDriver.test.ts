@@ -148,6 +148,15 @@ describe("mergeClaudeAllowRule", () => {
       permissions: { allow: ["Edit"] }
     });
   });
+
+  it("lists native permission modes including full access", async () => {
+    const { driver } = makeDriver();
+    const modes = await driver.listPermissionModes();
+    expect(modes.map((m) => m.id)).toEqual(["manual", "acceptEdits", "auto", "bypassPermissions"]);
+    expect(modes.map((m) => m.label)).toEqual(["Manual", "Accept edits", "Auto", "Bypass permissions"]);
+    expect(modes.every((m) => m.native)).toBe(true);
+    driver.dispose();
+  });
 });
 
 class FakeChild extends EventEmitter {

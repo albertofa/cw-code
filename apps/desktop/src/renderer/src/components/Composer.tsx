@@ -23,6 +23,7 @@ export function Composer({ sessionId, driver }: { sessionId: string; driver: Dri
     prefs,
     busy,
     loadModels: () => window.cw.listModels(sessionId),
+    loadPermissions: () => window.cw.listPermissions(sessionId),
     loadFiles: () => window.cw.listFiles(sessionId),
     savePrefs: (p) => {
       void store.setComposerPrefs(sessionId, p);

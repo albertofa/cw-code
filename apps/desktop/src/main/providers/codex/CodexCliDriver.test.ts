@@ -627,6 +627,32 @@ describe("CodexCliDriver", () => {
     driver.dispose();
   });
 
+  it("auto-accepts approvals in the background for full access mode", async () => {
+    const { driver, events } = makeDriver(client);
+    driver.startTurn({ sessionId: "local-1", prompt: "work", cwd: "C:\\proj", permissionMode: "bypassPermissions" });
+    await settle();
+    client.serverRequest("item/commandExecution/requestApproval", {
+      threadId: "thr_1",
+      turnId: "turn_2",
+      itemId: "c1",
+      command: "rm -rf build"
+    }, 11);
+    await settle();
+    expect(events.some((e) => e.type === "approval.request")).toBe(false);
+    expect(client.responses).toEqual([{ id: 11, result: { decision: "accept" } }]);
+    expect(events).toContainEqual(expect.objectContaining({ type: "approval.resolved" }));
+    driver.dispose();
+  });
+
+  it("lists native permission modes including full access", async () => {
+    const { driver } = makeDriver(client);
+    const modes = await driver.listPermissionModes();
+    expect(modes.map((m) => m.id)).toEqual(["manual", "auto", "bypassPermissions"]);
+    expect(modes.map((m) => m.label)).toEqual(["Read Only", "Auto", "Full Access"]);
+    expect(modes.every((m) => m.native)).toBe(true);
+    driver.dispose();
+  });
+
   it("applies each turn's env to the next app-server spawn and never restarts a live shared server", async () => {
     const shared = new FakeClient();
     const { driver } = makeDriver(shared);

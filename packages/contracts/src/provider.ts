@@ -1,4 +1,4 @@
-import type { ModelOption, PermissionMode, SessionMeta, TurnRequest } from "./session.js";
+import type { ModelOption, PermissionMode, PermissionOption, SessionMeta, TurnRequest } from "./session.js";
 import type {
   ApprovalDecision,
   HistoryMessage,
@@ -47,6 +47,7 @@ export interface CliDriver {
   renameSession(sessionId: string, title: string): Promise<void>;
   events(): AsyncIterable<SessionEvent>;
   listModels?(cwd: string): Promise<ModelOption[]>;
+  listPermissionModes?(cwd: string): Promise<PermissionOption[]>;
   respondToApproval?(requestId: string, decision: ApprovalDecision): Promise<void>;
   respondToQuestion?(requestId: string, answers: Record<string, string>): Promise<void>;
   dispose?(): void;

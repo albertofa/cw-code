@@ -240,6 +240,13 @@ export interface ModelOption {
   variants?: string[];
 }
 
+export interface PermissionOption {
+  id: PermissionMode;
+  label: string;
+  description: string;
+  native: boolean;
+}
+
 export interface GitStatus {
   available: boolean;
   branch: string;
@@ -393,6 +400,9 @@ export interface CwApi {
   listModels(sessionId: string): Promise<ModelOption[]>;
   listModelsFor(projectId: string, driver: DriverName): Promise<ModelOption[]>;
   listModelsForHarness(driver: DriverName): Promise<ModelOption[]>;
+  listPermissions(sessionId: string): Promise<PermissionOption[]>;
+  listPermissionsFor(projectId: string, driver: DriverName): Promise<PermissionOption[]>;
+  listPermissionsForHarness(driver: DriverName): Promise<PermissionOption[]>;
   getComposer(sessionId: string): Promise<ComposerPrefs>;
   setComposer(sessionId: string, prefs: ComposerPrefs): Promise<ComposerPrefs>;
   getSettings(): Promise<AppSettings>;

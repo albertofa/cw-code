@@ -42,21 +42,21 @@ describe("mapPermissionMode", () => {
     });
   });
 
-  it("treats the retired plan mode as untrusted read-only", () => {
+  it("treats the retired plan mode as supervised read-only", () => {
     expect(mapPermissionMode("plan" as never)).toMatchObject({
-      approvalPolicy: "untrusted",
+      approvalPolicy: "on-request",
       sandbox: "read-only",
       planMode: false
     });
   });
 
-  it("defaults to untrusted read-only", () => {
+  it("defaults to supervised read-only", () => {
     expect(mapPermissionMode(undefined)).toEqual({
-      approvalPolicy: "untrusted",
+      approvalPolicy: "on-request",
       sandbox: "read-only",
       planMode: false
     });
-    expect(mapPermissionMode("manual")).toMatchObject({ approvalPolicy: "untrusted", sandbox: "read-only" });
+    expect(mapPermissionMode("manual")).toMatchObject({ approvalPolicy: "on-request", sandbox: "read-only" });
   });
 });
 

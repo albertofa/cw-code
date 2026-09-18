@@ -246,6 +246,17 @@ function registerIpc(): void {
   ipcMain.handle("models.listForHarness", (_e, args: { driver: DriverName }) =>
     sessions.listModelsForHarness(args.driver)
   );
+  ipcMain.handle("permissions.list", (_e, args: { sessionId: string }) =>
+    sessions.listPermissionModes(args.sessionId)
+  );
+  ipcMain.handle(
+    "permissions.listFor",
+    (_e, args: { projectId: string; driver: DriverName }) =>
+      sessions.listPermissionModesFor(args.projectId, args.driver)
+  );
+  ipcMain.handle("permissions.listForHarness", (_e, args: { driver: DriverName }) =>
+    sessions.listPermissionModesForHarness(args.driver)
+  );
   ipcMain.handle("composer.get", (_e, args: { sessionId: string }) => sessions.getComposer(args.sessionId));
   ipcMain.handle(
     "composer.set",

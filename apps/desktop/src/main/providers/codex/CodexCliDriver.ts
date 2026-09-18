@@ -6,12 +6,15 @@ import type {
   CliDriver,
   HistoryMessage,
   ModelOption,
+  PermissionMode,
+  PermissionOption,
   SessionMeta,
   SubagentToolsResult,
   ThreadEvent,
   TurnHandle,
   TurnRequest
 } from "@cw-code/contracts";
+import { isFullAccessMode } from "../permissions.js";
 import { assertInside } from "../../fs/FileService.js";
 import { parseExtraArgs } from "../../settings/settingsUtils.js";
 import { previewText, traceHarnessCall, truncateError } from "../../debug/harnessTrace.js";
@@ -34,6 +37,7 @@ import {
   mapCodexSubagentTools,
   mapCodexThread,
   mapPermissionMode,
+  listCodexPermissionModes,
   type CodexCommandApprovalParams,
   type CodexFileChangeApprovalParams,
   type CodexModel,
@@ -52,6 +56,7 @@ interface ActiveTurn {
   inputTokens: number;
   outputTokens: number;
   numTurns: number;
+  permissionMode?: PermissionMode;
 }
 
 interface PendingApproval {
@@ -281,7 +286,8 @@ export class CodexCliDriver implements CliDriver {
         threadId,
         inputTokens: 0,
         outputTokens: 0,
-        numTurns: 0
+        numTurns: 0,
+        ...(request.permissionMode ? { permissionMode: request.permissionMode } : {})
       };
       this.turns.set(turnId, active);
       const collaborationMode = perms.planMode
@@ -814,6 +820,19 @@ export class CodexCliDriver implements CliDriver {
         return;
     }
     this.approvals.set(requestId, approval);
+    if (isFullAccessMode(active.permissionMode)) {
+      this.approvals.delete(requestId);
+      this.client.respond(id, approvalResultFor(approval.kind, "accept", approval.requestedPermissions));
+      this.emit({ type: "approval.resolved", turnId: active.turnId, requestId });
+      traceHarnessCall({
+        harness: "codex",
+        operation: "codex.permissions.autoApprove",
+        resumeCursor: String(id),
+        ok: true,
+        extra: { kind: approval.kind }
+      });
+      return;
+    }
     this.emit(requestEvent);
   }
 
@@ -833,6 +852,10 @@ export class CodexCliDriver implements CliDriver {
   }
 
   async *events(): AsyncIterable<never> {}
+
+  async listPermissionModes(): Promise<PermissionOption[]> {
+    return listCodexPermissionModes();
+  }
 
   dispose(): void {
     if (this.ownsClient) this.client.dispose();

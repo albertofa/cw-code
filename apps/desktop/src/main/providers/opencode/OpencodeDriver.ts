@@ -1,5 +1,5 @@
 ﻿import { randomUUID } from "node:crypto";
-import type { AppSettings, ApprovalDecision, CliDriver, HistoryMessage, PermissionMode, QuestionInfo, QuestionRequest, RetryConnectionRequest, RetryConnectionResult, SessionMeta, ThreadEvent, TurnHandle, TurnRequest } from "@cw-code/contracts";
+import type { AppSettings, ApprovalDecision, CliDriver, HistoryMessage, PermissionMode, PermissionOption, QuestionInfo, QuestionRequest, RetryConnectionRequest, RetryConnectionResult, SessionMeta, ThreadEvent, TurnHandle, TurnRequest } from "@cw-code/contracts";
 import { app } from "electron";
 import { join } from "node:path";
 import {
@@ -11,6 +11,7 @@ import {
   type ParsedOpencodeQuestion
 } from "./opencodeQuestions.js";
 import {
+  isEditLikePermission,
   opencodePermissionReply,
   opencodePermissionReplyBody,
   opencodePermissionReplyRoutes,
@@ -461,6 +462,13 @@ export class OpencodeDriver implements CliDriver {
       this.modelVariants.set(model.id.toLowerCase(), model.variants);
     }
     return models;
+  }
+
+  async listPermissionModes(): Promise<PermissionOption[]> {
+    return [
+      { id: "manual", label: "Ask", description: "Prompt for approval on restricted actions.", native: true },
+      { id: "auto", label: "Auto", description: "Auto-approve permissions that are not explicitly denied.", native: true }
+    ];
   }
 
   startTurn(request: TurnRequest): TurnHandle {
@@ -1357,6 +1365,18 @@ export class OpencodeDriver implements CliDriver {
         extra: { permission: parsed.permission }
       });
       this.autoReplyPermission(turnId, parsed, info, "permission mode");
+      return;
+    }
+    if (info && info.permissionMode === "acceptEdits" && isEditLikePermission(parsed.permission)) {
+      traceHarnessCall({
+        harness: "opencode",
+        operation: "opencode.permissions.autoApprove",
+        turnId,
+        resumeCursor: parsed.requestId,
+        ok: true,
+        extra: { permission: parsed.permission, reason: "acceptEdits" }
+      });
+      this.autoReplyPermission(turnId, parsed, info, "acceptEdits");
       return;
     }
     if (info && this.isSessionAllowed(parsed)) {

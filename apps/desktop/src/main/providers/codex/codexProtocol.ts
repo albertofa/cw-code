@@ -6,6 +6,7 @@ import type {
   HistoryMessage,
   ModelOption,
   PermissionMode,
+  PermissionOption,
   QuestionInfo,
   QuestionOption,
   QuestionRequest,
@@ -234,7 +235,15 @@ export function mapPermissionMode(mode: PermissionMode | undefined): CodexPermis
   if (mode === "acceptEdits") {
     return { approvalPolicy: "on-request", sandbox: "workspace-write", planMode: false };
   }
-  return { approvalPolicy: "untrusted", sandbox: "read-only", planMode: false };
+  return { approvalPolicy: "on-request", sandbox: "read-only", planMode: false };
+}
+
+export function listCodexPermissionModes(): PermissionOption[] {
+  return [
+    { id: "manual", label: "Read Only", description: "Reads files and answers questions; edits and commands need approval.", native: true },
+    { id: "auto", label: "Auto", description: "Writes inside the workspace; approval requests go through automatic review.", native: true },
+    { id: "bypassPermissions", label: "Full Access", description: "No sandbox and no approval prompts.", native: true }
+  ];
 }
 
 export function mapCodexEffort(effort: EffortLevel | string | undefined): string | null {

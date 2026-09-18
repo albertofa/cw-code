@@ -18,6 +18,13 @@ export interface ModelOption {
   variants?: string[];
 }
 
+export interface PermissionOption {
+  id: PermissionMode;
+  label: string;
+  description: string;
+  native: boolean;
+}
+
 export interface DirEntry {
   name: string;
   path: string;
@@ -65,6 +72,9 @@ export interface CwApi {
   listModels(sessionId: string): Promise<ModelOption[]>;
   listModelsFor(projectId: string, driver: DriverName): Promise<ModelOption[]>;
   listModelsForHarness(driver: DriverName): Promise<ModelOption[]>;
+  listPermissions(sessionId: string): Promise<PermissionOption[]>;
+  listPermissionsFor(projectId: string, driver: DriverName): Promise<PermissionOption[]>;
+  listPermissionsForHarness(driver: DriverName): Promise<PermissionOption[]>;
   getComposer(sessionId: string): Promise<ComposerPrefs>;
   setComposer(sessionId: string, prefs: ComposerPrefs): Promise<ComposerPrefs>;
   getSettings(): Promise<AppSettings>;
@@ -162,6 +172,11 @@ const api: CwApi = {
     ipcRenderer.invoke("models.listFor", { projectId, driver }),
   listModelsForHarness: (driver: DriverName) =>
     ipcRenderer.invoke("models.listForHarness", { driver }),
+  listPermissions: (sessionId: string) => ipcRenderer.invoke("permissions.list", { sessionId }),
+  listPermissionsFor: (projectId: string, driver: DriverName) =>
+    ipcRenderer.invoke("permissions.listFor", { projectId, driver }),
+  listPermissionsForHarness: (driver: DriverName) =>
+    ipcRenderer.invoke("permissions.listForHarness", { driver }),
   getComposer: (sessionId: string) => ipcRenderer.invoke("composer.get", { sessionId }),
   setComposer: (sessionId: string, prefs: ComposerPrefs) =>
     ipcRenderer.invoke("composer.set", { sessionId, prefs }),
