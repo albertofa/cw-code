@@ -8,6 +8,7 @@ import { getLastModel } from "./lastModel.js";
 import { hashHue, projectAvatarStyle as avatarStyle, projectInitials as initials } from "./avatar.js";
 import { mergeAwayIds } from "./sidebarOrder.js";
 import { compareWorkingSet, isWorkingSetStatus } from "./workingSet.js";
+import { shortenHome } from "./pathDisplay.js";
 
 const GROUP_VISIBLE = 6;
 
@@ -159,7 +160,8 @@ function orderByStored(current: Session[], ids: string[]): Session[] {
 }
 
 export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { onOpenSettings: () => void; onOpenSkills: () => void; skillsOpen?: boolean }) {
-  const { projects, sessionsByProject, discoveredByProject, activeProjectId, activeSessionId, gitStatusBySession, projectFilter, worktreeConfirmQueue } = useAppStore();
+  const { projects, sessionsByProject, discoveredByProject, activeProjectId, activeSessionId, gitStatusBySession, projectFilter, worktreeConfirmQueue, homeDir } = useAppStore();
+  const shortPath = (value: string): string => shortenHome(value, homeDir ?? undefined);
   const worktreeConfirm = worktreeConfirmQueue[0] ?? null;
   const store = useAppStore();
   const [query, setQuery] = useState("");
@@ -564,7 +566,7 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
     const projectName = projectNameById[s.projectId] ?? "";
     const gitSummary = [
       git?.branch ?? s.branch ? `Branch: ${git?.branch ?? s.branch}` : null,
-      git?.worktreePath ?? s.worktreePath ? `Worktree: ${git?.worktreeName ?? git?.worktreePath ?? s.worktreePath}` : null,
+      git?.worktreePath ?? s.worktreePath ? `Worktree: ${git?.worktreeName ?? shortPath(git?.worktreePath ?? s.worktreePath ?? "")}` : null,
       pr ? `PR #${pr.number} ${prState?.replace("-", " ") ?? ""}`.trim() : null,
       git && !git.clean ? `${git.dirtyCount} changed ${git.dirtyCount === 1 ? "file" : "files"}` : null
     ].filter((value): value is string => Boolean(value));
@@ -948,7 +950,7 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
                       {managedId === p.id && (
                         <div className="manage">
                           <span className="path" title={p.rootPath}>
-                            {p.rootPath}
+                            {shortPath(p.rootPath)}
                           </span>
                           <button
                             className="btn"

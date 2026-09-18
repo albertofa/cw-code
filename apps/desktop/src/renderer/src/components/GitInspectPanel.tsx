@@ -4,6 +4,8 @@ import type { GitBranchInfo, GitDiffMode, GitDiffResult } from "../cw.js";
 import { FileIcon } from "./fileIcons.js";
 import { MenuSelect } from "./MenuSelect.js";
 import { parseUnifiedDiff } from "./diffParser.js";
+import { useAppStore } from "../stores/appStore.js";
+import { shortenHome } from "./pathDisplay.js";
 
 const MODE_LABEL: Record<GitDiffMode, string> = {
   working: "Changes",
@@ -27,6 +29,7 @@ export function GitInspectPanel({ sessionId }: { sessionId: string }) {
   const [mode, setMode] = useState<GitDiffMode>("working");
   const [branches, setBranches] = useState<GitBranchInfo[]>([]);
   const [baseRef, setBaseRef] = useState<string>();
+  const homeDir = useAppStore((s) => s.homeDir);
   const [result, setResult] = useState<GitDiffResult | null>(null);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [error, setError] = useState("");
@@ -107,7 +110,7 @@ export function GitInspectPanel({ sessionId }: { sessionId: string }) {
               id: branch.name,
               label: branch.label,
               hint: branch.name,
-              description: branch.remote ? "Remote branch" : branch.worktreePath ? `Worktree: ${branch.worktreePath}` : undefined
+              description: branch.remote ? "Remote branch" : branch.worktreePath ? `Worktree: ${shortenHome(branch.worktreePath, homeDir ?? undefined)}` : undefined
             }))}
             onPick={setBaseRef}
             searchable

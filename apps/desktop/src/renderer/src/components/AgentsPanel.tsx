@@ -3,7 +3,8 @@ import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, CircleDot, Copy, Tr
 import type { SubagentGroup, SubagentInfo } from "./subagents.js";
 import { collectAgentMessages, formatSubagentCount, formatTokensShort, groupSubagents, mergeSubagentTools } from "./subagents.js";
 import type { SubagentToolActivity } from "../cw.js";
-import { describeToolCall, formatDuration, orderToolsForDisplay, relativizeToBase } from "./toolSummaries.js";
+import { describeToolCall, formatDuration, orderToolsForDisplay } from "./toolSummaries.js";
+import { formatFileSubject, looksLikeFileMention } from "./pathDisplay.js";
 import { Md } from "./Markdown.js";
 import { ToolCard } from "./ToolCard.js";
 import { useAppStore, type ChatMessage } from "../stores/appStore.js";
@@ -99,11 +100,11 @@ function toolStatus(t: SubagentToolActivity): "running" | "completed" | "error" 
   return t.output !== undefined ? "completed" : "running";
 }
 
-function toolSubject(t: SubagentToolActivity, basePath?: string): string {
+function toolSubject(t: SubagentToolActivity, basePath?: string, homeDir?: string): string {
   const summary = describeToolCall(t.name, t.input);
   if (!summary?.subject) return "";
-  return summary.subjectKind === "file" && basePath
-    ? relativizeToBase(basePath, summary.subject)
+  return summary.subjectKind === "file" || looksLikeFileMention(summary.subject)
+    ? formatFileSubject(summary.subject, basePath, homeDir)
     : summary.subject;
 }
 
@@ -138,6 +139,7 @@ function AgentToolList({
   onPreview: (path: string) => void;
 }) {
   const [expandedId, setExpandedId] = useState<string | null>(null);
+  const homeDir = useAppStore((s) => s.homeDir);
   return (
     <>
       <div className="agents-tool-list">
@@ -146,7 +148,7 @@ function AgentToolList({
           const summary = describeToolCall(tool.name, tool.input);
           const Icon = summary?.Icon ?? CircleDot;
           const verb = summary?.verb ?? tool.name;
-          const subject = toolSubject(tool, basePath);
+          const subject = toolSubject(tool, basePath, homeDir ?? undefined);
           const duration =
             tool.timestamp !== undefined && tool.completedAt !== undefined && tool.completedAt >= tool.timestamp
               ? tool.completedAt - tool.timestamp

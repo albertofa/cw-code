@@ -122,6 +122,8 @@ interface AppState {
   preview: { sessionId: string; path: string; basePath: string } | null;
   openPreview(sessionId: string, path: string, basePath: string): void;
   closePreview(): void;
+  homeDir: string | null;
+  ensureHomeDir(): Promise<string>;
   loadProjects(): Promise<void>;
   addProject(rootPath: string): Promise<void>;
   selectProject(projectId: string): Promise<void>;
@@ -290,6 +292,17 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   preview: null,
 
+  homeDir: null,
+
+  async ensureHomeDir() {
+    const cached = get().homeDir;
+    if (cached) return cached;
+    const homeDir = await window.cw.getHomeDir();
+    if (typeof homeDir !== "string" || !homeDir) return "";
+    set({ homeDir });
+    return homeDir;
+  },
+
   openPreview(sessionId: string, path: string, basePath: string) {
     set({ preview: { sessionId, path, basePath } });
   },
@@ -300,6 +313,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   async loadProjects() {
     const [projects, settings] = await Promise.all([window.cw.listProjects(), window.cw.getSettings()]);
+    void get().ensureHomeDir().catch(() => {});
     set({
       projects,
       sourceControlRefreshIntervalSeconds: settings.sourceControlRefreshIntervalSeconds,

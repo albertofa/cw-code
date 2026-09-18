@@ -1,15 +1,16 @@
 import { memo, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { Check, ChevronDown, ChevronRight, Circle, CircleDot, Monitor, TriangleAlert, Wrench, type LucideIcon } from "lucide-react";
 import type { ChatMessage } from "../stores/appStore.js";
+import { useAppStore } from "../stores/appStore.js";
 import {
   describeToolCall,
   extractCommandFragment,
   extractFileFragment,
   recoverToolInput,
   relativizeInText,
-  relativizeToBase,
   stripToolNamePrefix
 } from "./toolSummaries.js";
+import { formatFileSubject, looksLikeFileMention, shortenHomeInText, stripMentionMarker } from "./pathDisplay.js";
 import { FileIcon } from "./fileIcons.js";
 import { isPreviewablePath } from "./Markdown.js";
 
@@ -98,6 +99,10 @@ export const ToolCard = memo(function ToolCard({
   }
   const lowerName = name.toLowerCase();
   const isShell = lowerName === "bash" || lowerName === "shell";
+  const homeDir = useAppStore((s) => s.homeDir);
+  const home = homeDir ?? undefined;
+  const formatText = (value: string): string =>
+    shortenHomeInText(basePath ? relativizeInText(basePath, value) : value, home);
   const isTodo = lowerName === "todowrite" || lowerName === "todo";
   const todoRaw = (isTodo ? message.toolInput ?? recoverToolInput(name, message.text) : undefined) as
     | Record<string, unknown>
@@ -129,11 +134,12 @@ export const ToolCard = memo(function ToolCard({
     );
   }
   const displaySubject =
-    summary?.subject && summary.subjectKind === "file" && basePath
-      ? relativizeToBase(basePath, summary.subject)
-      : summary?.subject && summary.subjectKind !== "file" && isShell && basePath
-        ? relativizeInText(basePath, summary.subject)
+    summary?.subject && (summary.subjectKind === "file" || looksLikeFileMention(summary.subject))
+      ? formatFileSubject(summary.subject, basePath, home)
+      : summary?.subject && summary.subjectKind !== "file" && isShell
+        ? formatText(summary.subject)
         : summary?.subject;
+  const previewPath = summary?.subject ? stripMentionMarker(summary.subject) : undefined;
   const output = (message.toolOutput ?? "").slice(0, 2000);
 
   let head: ReactNode;
@@ -164,7 +170,8 @@ export const ToolCard = memo(function ToolCard({
         ))}
         {summary.subject &&
           summary.subjectKind === "file" &&
-          isPreviewablePath(summary.subject) &&
+          previewPath &&
+          isPreviewablePath(previewPath) &&
           sessionId &&
           onPreview && (
             <button
@@ -173,7 +180,7 @@ export const ToolCard = memo(function ToolCard({
               aria-label="Preview rendered file"
               onClick={(e: ReactMouseEvent<HTMLButtonElement>) => {
                 e.stopPropagation();
-                onPreview(summary.subject as string);
+                onPreview(previewPath);
               }}
             >
               <Monitor size={13} />
@@ -200,12 +207,12 @@ export const ToolCard = memo(function ToolCard({
         <div className="tool-detail" onClick={(e) => e.stopPropagation()}>
           {summary?.fullSubject && (
             <div className="tool-meta">
-              {basePath ? relativizeInText(basePath, summary.fullSubject) : summary.fullSubject}
+              {formatText(summary.fullSubject)}
             </div>
           )}
           {summary?.meta?.map((m) => (
             <div key={m} className="tool-meta">
-              {basePath ? relativizeInText(basePath, m) : m}
+              {formatText(m)}
             </div>
           ))}
           {!summary && <pre className="tool-output">{message.text}</pre>}

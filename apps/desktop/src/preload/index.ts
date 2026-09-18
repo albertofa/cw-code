@@ -43,6 +43,7 @@ export interface CwApi {
   openHarnessTrace(): Promise<{ ok: boolean; path?: string; error?: string }>;
   listProjects(): Promise<Project[]>;
   addProject(rootPath: string): Promise<Project>;
+  getHomeDir(): Promise<string>;
   listSessions(projectId: string): Promise<unknown[]>;
   listDiscovered(projectId: string): Promise<unknown[]>;
   importSession(projectId: string, driver: DriverName, resumeCursor: string, title: string): Promise<unknown>;
@@ -126,6 +127,7 @@ const api: CwApi = {
   openHarnessTrace: () => ipcRenderer.invoke("debug.openTrace"),
   listProjects: () => ipcRenderer.invoke("projects.list"),
   addProject: (rootPath: string) => ipcRenderer.invoke("projects.add", rootPath),
+  getHomeDir: () => ipcRenderer.invoke("os.homeDir"),
   listSessions: (projectId: string) => ipcRenderer.invoke("sessions.list", projectId),
   listDiscovered: (projectId: string) => ipcRenderer.invoke("sessions.discovered", projectId),
   importSession: (projectId: string, driver: DriverName, resumeCursor: string, title: string) =>
