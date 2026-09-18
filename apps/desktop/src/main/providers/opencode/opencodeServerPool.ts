@@ -1,5 +1,6 @@
 import { type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
+import { mkdirSync } from "node:fs";
 import { createServer } from "node:net";
 import { killProcessTree } from "../../processTree.js";
 import { spawnCli } from "../../cli/spawnCli.js";
@@ -11,9 +12,10 @@ export interface ServerHandle {
   authHeader: string;
 }
 
-const SESSION_UNIQUE_ENV_KEYS = new Set(["CW_SESSION_ID"]);
-const DEFAULT_IDLE_TIMEOUT_MS = 10 * 60 * 1000;
-const DEFAULT_MAX_SERVERS = 8;
+const SESSION_UNIQUE_ENV_KEYS = new Set(["CW_SESSION_ID", "CW_WORKTREE_PATH", "CW_PROJECT_ROOT"]);
+const DEFAULT_IDLE_TIMEOUT_MS = 5 * 60 * 1000;
+const DEFAULT_MAX_SERVERS = 4;
+const SWEEP_INTERVAL_MS = 60_000;
 
 export function poolEnvKey(env: Record<string, string> | undefined): string {
   if (!env) return "";
@@ -78,6 +80,13 @@ export interface OpencodeServerPoolDeps {
   idleTimeoutMs?: number;
   maxServers?: number;
   onServerGone?: (rootPath: string, port: number) => void;
+  /**
+   * When set, every working directory shares a single server spawned at this
+   * root. Callers must scope each request to its own directory (the opencode
+   * server routes sessions by directory). Session-unique env vars are excluded
+   * from the pool key and the spawn env so unrelated sessions keep sharing.
+   */
+  sharedRoot?: string;
 }
 
 export class OpencodeServerPool {
@@ -87,6 +96,7 @@ export class OpencodeServerPool {
   private disposed = false;
   private idleTimeoutMs: number;
   private maxServers: number;
+  private sweepTimer: NodeJS.Timeout | null = null;
 
   constructor(
     private getBinary: () => string,
@@ -94,19 +104,27 @@ export class OpencodeServerPool {
   ) {
     this.idleTimeoutMs = deps?.idleTimeoutMs ?? DEFAULT_IDLE_TIMEOUT_MS;
     this.maxServers = deps?.maxServers ?? DEFAULT_MAX_SERVERS;
+    const cadence = Math.max(1000, Math.min(this.idleTimeoutMs, SWEEP_INTERVAL_MS));
+    this.sweepTimer = setInterval(() => {
+      if (!this.disposed) this.sweep();
+    }, cadence);
+    this.sweepTimer.unref?.();
   }
 
   beginTurn(rootPath: string): void {
+    rootPath = this.keyOf(rootPath);
     this.inFlight.set(rootPath, (this.inFlight.get(rootPath) ?? 0) + 1);
     if (this.servers.has(rootPath)) this.servers.get(rootPath)!.lastUsed = Date.now();
   }
 
   invalidate(rootPath: string): void {
+    rootPath = this.keyOf(rootPath);
     if ((this.inFlight.get(rootPath) ?? 0) > 0) return;
     this.stop(rootPath);
   }
 
   async probe(rootPath: string): Promise<boolean> {
+    rootPath = this.keyOf(rootPath);
     const entry = this.servers.get(rootPath);
     if (!entry) return false;
     if (entry.proc.exitCode != null || entry.proc.killed) return false;
@@ -123,6 +141,7 @@ export class OpencodeServerPool {
   }
 
   private trackProcess(rootPath: string, proc: ChildProcess): void {
+    rootPath = this.keyOf(rootPath);
     if (typeof proc.once !== "function") return;
     const evict = (): void => {
       const entry = this.servers.get(rootPath);
@@ -147,6 +166,7 @@ export class OpencodeServerPool {
   }
 
   endTurn(rootPath: string): void {
+    rootPath = this.keyOf(rootPath);
     const count = (this.inFlight.get(rootPath) ?? 0) - 1;
     if (count <= 0) this.inFlight.delete(rootPath);
     else this.inFlight.set(rootPath, count);
@@ -155,6 +175,7 @@ export class OpencodeServerPool {
 
   private async ensureProcess(rootPath: string, binary: string, env: Record<string, string> | undefined): Promise<{ proc: ChildProcess; handle: ServerHandle }> {
     const start = Date.now();
+    if (this.deps?.sharedRoot) mkdirSync(rootPath, { recursive: true });
     const port = await findFreePort();
     const password = process.env["OPENCODE_SERVER_PASSWORD"] ?? "";
     const authHeader = `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}`;
@@ -200,6 +221,7 @@ export class OpencodeServerPool {
 
   async ensure(rootPath: string, env?: Record<string, string>): Promise<ServerHandle> {
     if (this.disposed) throw new Error("opencode server pool disposed");
+    rootPath = this.keyOf(rootPath);
     this.sweep();
     const envKey = poolEnvKey(env);
     const pending = this.pending.get(rootPath);
@@ -291,6 +313,7 @@ export class OpencodeServerPool {
   }
 
   stop(rootPath: string): void {
+    rootPath = this.keyOf(rootPath);
     const entry = this.servers.get(rootPath);
     if (!entry) return;
     this.servers.delete(rootPath);
@@ -300,6 +323,14 @@ export class OpencodeServerPool {
 
   dispose(): void {
     this.disposed = true;
+    if (this.sweepTimer) {
+      clearInterval(this.sweepTimer);
+      this.sweepTimer = null;
+    }
     for (const rootPath of [...this.servers.keys()]) this.stop(rootPath);
+  }
+
+  private keyOf(rootPath: string): string {
+    return this.deps?.sharedRoot ?? rootPath;
   }
 }

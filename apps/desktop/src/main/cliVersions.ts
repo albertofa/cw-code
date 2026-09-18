@@ -3,7 +3,7 @@ import { traceHarnessCall } from "./debug/harnessTrace.js";
 
 export const MINIMUM_VERSIONS = {
   claude: "2.1.260",
-  opencode: "1.18.23",
+  opencode: "1.18.31",
   codex: "0.153.4"
 } as const;
 

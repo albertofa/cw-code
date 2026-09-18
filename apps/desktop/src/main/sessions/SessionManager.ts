@@ -82,6 +82,7 @@ export class SessionManager {
   private worktreesRoot: string;
   private deltaBuffer = new Map<string, { sessionId: string; text: string; timer: NodeJS.Timeout }>();
   private turnBaseShas = new Map<string, string>();
+  private disposed = false;
 
   constructor(opts: SessionManagerOptions = {}) {
     const dbPath = opts.dbPath ?? join(app.getPath("userData"), "cw-code.db");
@@ -95,7 +96,13 @@ export class SessionManager {
     const getSettings = (): AppSettings => this.settings.get();
     this.drivers = {
       claude: opts.drivers?.claude ?? new TracingCliDriver(new ClaudeCliDriver((e) => this.routeEvent(e), getSettings)),
-      opencode: opts.drivers?.opencode ?? new TracingCliDriver(new OpencodeDriver((e) => this.routeEvent(e), getSettings)),
+      opencode:
+        opts.drivers?.opencode ??
+        new TracingCliDriver(
+          new OpencodeDriver((e) => this.routeEvent(e), getSettings, undefined, {
+            sharedRoot: join(app.getPath("userData"), "cw-opencode-server")
+          })
+        ),
       codex: opts.drivers?.codex ?? new TracingCliDriver(new CodexCliDriver((e) => this.routeEvent(e), getSettings))
     };
   }
@@ -152,6 +159,7 @@ export class SessionManager {
     const turn = this.titleTurns.get(turnId);
     if (!turn || turn.settled) return;
     turn.settled = true;
+    this.titleTurns.delete(turnId);
     clearTimeout(turn.timer);
     const title = sanitizeGeneratedTitle(turn.text);
     if (!title) {
@@ -419,6 +427,9 @@ export class SessionManager {
   ): Promise<SessionCleanupResult> {
     const sessionId = session.id;
     this.turnBaseShas.delete(sessionId);
+    this.firstPrompts.delete(sessionId);
+    this.branchRenamed.delete(sessionId);
+    this.cancelTitleTurns(sessionId);
     this.store.updateSession(sessionId, { status });
     this.drivers[session.driver].stopSession?.(sessionId);
     const worktreePath = session.worktreePath;
@@ -486,6 +497,20 @@ export class SessionManager {
       branchDeleted: branchOutcome?.deleted ?? false,
       ...(branchOutcome?.unmergedCommits ? { unmergedCommits: true } : {})
     };
+  }
+
+  private cancelTitleTurns(sessionId: string): void {
+    for (const [turnId, turn] of [...this.titleTurns]) {
+      if (turn.sessionId !== sessionId) continue;
+      turn.settled = true;
+      this.titleTurns.delete(turnId);
+      clearTimeout(turn.timer);
+      turn.resolve(null);
+      try {
+        turn.driver.interrupt(turnId);
+      } catch {
+      }
+    }
   }
 
   private async deleteOrphanBranch(
@@ -866,6 +891,7 @@ export class SessionManager {
       const turn = this.titleTurns.get(handle.turnId);
       if (!turn || turn.settled) return;
       turn.settled = true;
+      this.titleTurns.delete(handle.turnId);
       turn.resolve(null);
       driver.interrupt(handle.turnId);
     }, AUTO_TITLE_TIMEOUT_MS);
@@ -1111,11 +1137,17 @@ export class SessionManager {
   }
 
   dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
     for (const pending of this.deltaBuffer.values()) clearTimeout(pending.timer);
     this.deltaBuffer.clear();
-    for (const turn of this.titleTurns.values()) {
+    for (const [turnId, turn] of [...this.titleTurns]) {
       clearTimeout(turn.timer);
       turn.resolve(null);
+      try {
+        turn.driver.interrupt(turnId);
+      } catch {
+      }
     }
     this.titleTurns.clear();
     this.firstPrompts.clear();
