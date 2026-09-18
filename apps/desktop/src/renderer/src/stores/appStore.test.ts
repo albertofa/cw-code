@@ -122,4 +122,49 @@ describe("appStore tool.result", () => {
       .map((m) => m.text);
     expect(texts).toEqual(["Done"]);
   });
+
+  it("clears the retry notice once the turn resumes with tool activity", () => {
+    const session = "sess_retry_resume";
+    useAppStore.getState().applyEvent(session, {
+      type: "turn.retry",
+      turnId: "turn-1",
+      attempt: 1,
+      message: "Rate limit exceeded. Please retry after a brief wait.",
+      retryAt: Date.now() + 2000
+    });
+    expect(useAppStore.getState().messagesBySession[session].some((m) => m.id === "turn-1-retry")).toBe(true);
+    useAppStore.getState().applyEvent(session, {
+      type: "tool.call",
+      turnId: "turn-1",
+      toolCallId: "call_1",
+      name: "Edit",
+      input: {}
+    });
+    expect(useAppStore.getState().messagesBySession[session].some((m) => m.id === "turn-1-retry")).toBe(false);
+  });
+
+  it("clears the retry notice on assistant progress and re-shows the next retry", () => {
+    const session = "sess_retry_progress";
+    useAppStore.getState().applyEvent(session, {
+      type: "turn.retry",
+      turnId: "turn-1",
+      attempt: 1,
+      message: "Rate limit exceeded.",
+      retryAt: 0
+    });
+    useAppStore.getState().applyEvent(session, {
+      type: "assistant.delta",
+      turnId: "turn-1",
+      text: "resumed"
+    });
+    expect(useAppStore.getState().messagesBySession[session].some((m) => m.id === "turn-1-retry")).toBe(false);
+    useAppStore.getState().applyEvent(session, {
+      type: "turn.retry",
+      turnId: "turn-1",
+      attempt: 2,
+      message: "Rate limit exceeded.",
+      retryAt: 0
+    });
+    expect(useAppStore.getState().messagesBySession[session].some((m) => m.id === "turn-1-retry")).toBe(true);
+  });
 });
