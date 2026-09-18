@@ -9,7 +9,7 @@
     "build": "electron-vite build",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
-    "dist": "electron-builder"
+    "dist": "electron-vite build && electron-builder"
   },
   "dependencies": {
     "@cw-code/contracts": "workspace:*",
