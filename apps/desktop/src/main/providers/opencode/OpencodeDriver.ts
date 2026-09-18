@@ -45,7 +45,8 @@ import {
   OPENCODE_NO_TIMEOUT,
   OPENCODE_REQUEST_TIMEOUT_MS,
   isConnectionError,
-  opencodeFetch
+  opencodeFetch,
+  withDirectoryQuery
 } from "./opencodeFetch.js";
 import { previewText, traceHarnessCall, truncateError } from "../../debug/harnessTrace.js";
 
@@ -68,6 +69,7 @@ export class OpencodeDriver implements CliDriver {
   private sessionIds = new Map<string, string>();
   private sessionParents = new Map<string, string>();
   private sessionChildren = new Map<string, string[]>();
+  private sessionCwds = new Map<string, string>();
   private taskChildren = new Map<string, Map<string, string>>();
   private childToolSeen = new Map<string, Map<string, Map<string, LiveSeen>>>();
   private childPollDone = new Map<string, Set<string>>();
@@ -86,17 +88,19 @@ export class OpencodeDriver implements CliDriver {
   constructor(
     private emit: (event: ThreadEvent) => void,
     private getSettings: () => AppSettings,
-    pool?: OpencodeServerPool
+    pool?: OpencodeServerPool,
+    opts?: { sharedRoot?: string }
   ) {
     this.pool = pool ?? new OpencodeServerPool(() => this.configuredBinary(), {
+      ...(opts?.sharedRoot ? { sharedRoot: opts.sharedRoot } : {}),
       onServerGone: (rootPath, port) => this.handleServerGone(rootPath, port)
     });
   }
 
-  private handleServerGone(rootPath: string, port: number): void {
+  private handleServerGone(_rootPath: string, port: number): void {
     if (this.disposed) return;
     for (const [turnId, info] of [...this.watchInfo]) {
-      if (info.port !== port || info.cwd !== rootPath) continue;
+      if (info.port !== port) continue;
       const serverSessionId = this.sessionIds.get(turnId);
       if (!serverSessionId) continue;
       const localSessionId = this.turnMeta.get(turnId)?.localSessionId ?? "";
@@ -105,7 +109,7 @@ export class OpencodeDriver implements CliDriver {
         operation: "opencode.serverGone",
         sessionId: localSessionId,
         turnId,
-        cwd: rootPath,
+        cwd: info.cwd,
         ok: false,
         extra: { serverPort: port }
       });
@@ -205,7 +209,8 @@ export class OpencodeDriver implements CliDriver {
       return await opencodeFetch(`http://127.0.0.1:${handle.port}${path}`, {
         ...withAuth(handle),
         timeoutMs,
-        port: handle.port
+        port: handle.port,
+        directory: cwd
       });
     } catch (err) {
       if (!isConnectionError(err)) throw err;
@@ -226,7 +231,8 @@ export class OpencodeDriver implements CliDriver {
       return await opencodeFetch(`http://127.0.0.1:${handle.port}${path}`, {
         ...withAuth(handle),
         timeoutMs,
-        port: handle.port
+        port: handle.port,
+        directory: cwd
       });
     }
   }
@@ -270,6 +276,12 @@ export class OpencodeDriver implements CliDriver {
       cwd: params.cwd,
       permissionMode: params.permissionMode
     });
+    this.sessionCwds.delete(params.localSessionId);
+    if (this.sessionCwds.size >= 512) {
+      const oldest = this.sessionCwds.keys().next();
+      if (!oldest.done) this.sessionCwds.delete(oldest.value);
+    }
+    this.sessionCwds.set(params.localSessionId, params.cwd);
     this.pool.beginTurn(params.cwd);
     this.toolSeen.set(params.turnId, new Map());
     this.watchQuestions(params.turnId, params.port, params.authHeader);
@@ -305,7 +317,7 @@ export class OpencodeDriver implements CliDriver {
 
   private async resolveOwnerTurn(
     sessionID: string,
-    info: { port: number; authHeader: string }
+    info: { port: number; authHeader: string; cwd: string }
   ): Promise<string | undefined> {
     let current: string | undefined = sessionID;
     const visited = new Set<string>();
@@ -313,7 +325,7 @@ export class OpencodeDriver implements CliDriver {
       const owner = this.ownerTurnOf(current);
       if (owner) return owner;
       visited.add(current);
-      const parentID = await this.fetchSessionParent(info.port, info.authHeader, current);
+      const parentID = await this.fetchSessionParent(info.port, info.authHeader, current, info.cwd);
       if (!parentID) return undefined;
       this.rememberSessionParent(current, parentID);
       current = parentID;
@@ -321,7 +333,7 @@ export class OpencodeDriver implements CliDriver {
     return undefined;
   }
 
-  private async fetchSessionParent(port: number, authHeader: string, sessionID: string): Promise<string | null> {
+  private async fetchSessionParent(port: number, authHeader: string, sessionID: string, cwd: string): Promise<string | null> {
     const encoded = encodeURIComponent(sessionID);
     for (const path of [`/session/${encoded}`, `/api/session/${encoded}`]) {
       let res: Response;
@@ -329,7 +341,8 @@ export class OpencodeDriver implements CliDriver {
         res = await opencodeFetch(`http://127.0.0.1:${port}${path}`, {
           headers: { Authorization: authHeader },
           timeoutMs: OPENCODE_LIST_TIMEOUT_MS,
-          port
+          port,
+          directory: cwd
         });
       } catch {
         return null;
@@ -353,11 +366,12 @@ export class OpencodeDriver implements CliDriver {
     this.pollTimers.set(turnId, pollTimer);
   }
 
-  private async sessionProbe(port: number, authHeader: string, serverSessionId: string): Promise<boolean> {
+  private async sessionProbe(port: number, authHeader: string, serverSessionId: string, cwd: string): Promise<boolean> {
     const probe = await opencodeFetch(`http://127.0.0.1:${port}/session/${encodeURIComponent(serverSessionId)}`, {
       headers: { Authorization: authHeader },
       timeoutMs: OPENCODE_LIST_TIMEOUT_MS,
-      port
+      port,
+      directory: cwd
     });
     if (probe.status === 404) return false;
     if (!probe.ok) throw new Error(`opencode session probe failed: ${probe.status}`);
@@ -369,7 +383,7 @@ export class OpencodeDriver implements CliDriver {
     const start = Date.now();
     const operation = "opencode.listSessions";
     try {
-      const res = await this.fetchViaPool(projectRoot, "/session", {}, OPENCODE_LIST_TIMEOUT_MS);
+      const res = await this.fetchViaPool(projectRoot, withDirectoryQuery("/session", projectRoot), {}, OPENCODE_LIST_TIMEOUT_MS);
       if (!res.ok) throw new Error(`opencode session list failed: ${res.status}`);
       const sessions = (await res.json()) as ServerSession[];
       const mapped = sessions
@@ -471,12 +485,13 @@ export class OpencodeDriver implements CliDriver {
       this.pool.invalidate(cwd);
       handle = await this.pool.ensure(cwd);
     }
-    const alive = await this.sessionProbe(handle.port, handle.authHeader, resumeCursor);
+    const alive = await this.sessionProbe(handle.port, handle.authHeader, resumeCursor, cwd);
     if (!alive) throw new Error("opencode session no longer exists on the server");
     const res = await opencodeFetch(`http://127.0.0.1:${handle.port}/session/${encodeURIComponent(resumeCursor)}/message`, {
       headers: { Authorization: handle.authHeader },
       timeoutMs: OPENCODE_LIST_TIMEOUT_MS,
-      port: handle.port
+      port: handle.port,
+      directory: cwd
     });
     if (!res.ok) throw new Error(`opencode reconnect history failed: ${res.status}`);
     const raw = (await res.json()) as unknown;
@@ -510,17 +525,23 @@ export class OpencodeDriver implements CliDriver {
     return { status: "running", turnId, history };
   }
 
-  private async createSession(port: number, authHeader: string): Promise<string> {
-    const res = await opencodeFetch(`http://127.0.0.1:${port}/session`, {
+  private async createSession(port: number, authHeader: string, cwd: string): Promise<string> {
+    const res = await opencodeFetch(withDirectoryQuery(`http://127.0.0.1:${port}/session`, cwd), {
       method: "POST",
       headers: { "Content-Type": "application/json", Authorization: authHeader },
       body: JSON.stringify({}),
       timeoutMs: OPENCODE_LIST_TIMEOUT_MS,
-      port
+      port,
+      directory: cwd
     });
     if (!res.ok) throw new Error(`opencode session create failed: ${res.status}`);
-    const data = (await res.json()) as { id?: string };
+    const data = (await res.json()) as { id?: string; directory?: string };
     if (!data.id) throw new Error("opencode session create returned no id");
+    if (!data.directory || !sameDirectory(data.directory, cwd)) {
+      throw new Error(
+        `opencode server ignored the session directory (wanted ${cwd}, got ${data.directory ?? "none"}); update the opencode CLI`
+      );
+    }
     return data.id;
   }
 
@@ -533,7 +554,8 @@ export class OpencodeDriver implements CliDriver {
           headers: { Authorization: authHeader, Accept: "text/event-stream" },
           signal: controller.signal,
           timeoutMs: 0,
-          port
+          port,
+          directory: this.watchInfo.get(turnId)?.cwd
         });
         if (!res.ok || !res.body) {
           traceHarnessCall({
@@ -742,7 +764,7 @@ export class OpencodeDriver implements CliDriver {
       serverPort = handle.port;
       authHeader = handle.authHeader;
       if (request.resumeCursor) {
-        const native = await this.nativeQuestionAvailable(request.resumeCursor, serverPort, authHeader);
+        const native = await this.nativeQuestionAvailable(request.resumeCursor, serverPort, authHeader, request.cwd);
         const needsBridge = !native;
         const previouslyNeeded = this.bridgeNeed.get(request.cwd);
         this.bridgeNeed.set(request.cwd, needsBridge);
@@ -776,7 +798,7 @@ export class OpencodeDriver implements CliDriver {
       serverSessionId = request.resumeCursor;
     } else {
       try {
-        serverSessionId = await this.createSession(serverPort, authHeader);
+        serverSessionId = await this.createSession(serverPort, authHeader, request.cwd);
       } catch (err) {
         if (isConnectionError(err)) {
           try {
@@ -793,7 +815,7 @@ export class OpencodeDriver implements CliDriver {
             const fresh = await this.pool.ensure(request.cwd, request.env);
             serverPort = fresh.port;
             authHeader = fresh.authHeader;
-            serverSessionId = await this.createSession(serverPort, authHeader);
+            serverSessionId = await this.createSession(serverPort, authHeader, request.cwd);
           } catch (retryErr) {
             traceHarnessCall({
               harness: "opencode",
@@ -876,7 +898,8 @@ export class OpencodeDriver implements CliDriver {
       const res = await opencodeFetch(`http://127.0.0.1:${serverPort}/session/${encodeURIComponent(serverSessionId)}/message`, {
         headers: { Authorization: authHeader },
         timeoutMs: OPENCODE_REQUEST_TIMEOUT_MS,
-        port: serverPort
+        port: serverPort,
+        directory: request.cwd
       });
       if (!res.ok) throw new Error(`opencode baseline history failed: ${res.status}`);
       const seen = new Set<string>();
@@ -931,7 +954,8 @@ export class OpencodeDriver implements CliDriver {
         // and the poll loop, and a dead server surfaces through handleServerGone.
         signal: controller.signal,
         timeoutMs: OPENCODE_NO_TIMEOUT,
-        port: serverPort
+        port: serverPort,
+        directory: request.cwd
       });
     void send(files.length > 0)
       .then(async (first) => {
@@ -1079,7 +1103,8 @@ export class OpencodeDriver implements CliDriver {
       opencodeFetch(`http://127.0.0.1:${port}${resultPath}`, {
         headers: { Authorization: auth },
         timeoutMs: OPENCODE_REQUEST_TIMEOUT_MS,
-        port
+        port,
+        directory: taken.cwd
       });
     try {
       let res: Response;
@@ -1162,7 +1187,8 @@ export class OpencodeDriver implements CliDriver {
         method: "POST",
         headers: { Authorization: info.authHeader },
         timeoutMs: OPENCODE_LIST_TIMEOUT_MS,
-        port: info.port
+        port: info.port,
+        directory: info.cwd
       }).then(
         (res) => {
           if (!res.ok) {
@@ -1263,7 +1289,8 @@ export class OpencodeDriver implements CliDriver {
           headers,
           body: payload,
           timeoutMs: OPENCODE_LIST_TIMEOUT_MS,
-          port
+          port,
+          directory: entry.cwd || info.cwd
         });
         if ((res.headers.get("content-type") ?? "").includes("text/html")) continue;
         if (res.status === 404) continue;
@@ -1385,7 +1412,7 @@ export class OpencodeDriver implements CliDriver {
   }
 
   private async replyPermission(
-    info: { port: number; authHeader: string } | undefined,
+    info: { port: number; authHeader: string; cwd: string } | undefined,
     sessionID: string,
     requestID: string,
     reply: "once" | "always" | "reject"
@@ -1398,7 +1425,8 @@ export class OpencodeDriver implements CliDriver {
         headers,
         body: JSON.stringify(opencodePermissionReplyBody(route, reply)),
         timeoutMs: OPENCODE_LIST_TIMEOUT_MS,
-        port: info.port
+        port: info.port,
+        directory: info.cwd
       });
       if (res.status === 404) continue;
       if (!res.ok) throw new Error(`opencode permission reply failed: ${res.status}`);
@@ -1411,7 +1439,7 @@ export class OpencodeDriver implements CliDriver {
 
   private async pollChildTools(
     turnId: string,
-    info: { port: number; authHeader: string },
+    info: { port: number; authHeader: string; cwd: string },
     rootSessionId: string,
     payload: LiveMessage[]
   ): Promise<void> {
@@ -1468,7 +1496,7 @@ export class OpencodeDriver implements CliDriver {
   }
 
   private async loadSessionMessages(
-    info: { port: number; authHeader: string },
+    info: { port: number; authHeader: string; cwd: string },
     sessionID: string
   ): Promise<LiveMessage[] | null> {
     try {
@@ -1477,7 +1505,8 @@ export class OpencodeDriver implements CliDriver {
         {
           headers: { Authorization: info.authHeader },
           timeoutMs: OPENCODE_LIST_TIMEOUT_MS,
-          port: info.port
+          port: info.port,
+          directory: info.cwd
         }
       );
       if (!res.ok || (res.headers.get("content-type") ?? "").includes("text/html")) return null;
@@ -1498,7 +1527,8 @@ export class OpencodeDriver implements CliDriver {
       const res = await opencodeFetch(`http://127.0.0.1:${info.port}/session/${encoded}/message?limit=50`, {
         headers,
         timeoutMs: OPENCODE_LIST_TIMEOUT_MS,
-        port: info.port
+        port: info.port,
+        directory: info.cwd
       });
       if (res.ok && !((res.headers.get("content-type") ?? "").includes("text/html"))) {
         const payload = (await res.json()) as LiveMessage[];
@@ -1547,7 +1577,8 @@ export class OpencodeDriver implements CliDriver {
         res = await opencodeFetch(`http://127.0.0.1:${info.port}${path}`, {
           headers,
           timeoutMs: OPENCODE_LIST_TIMEOUT_MS,
-          port: info.port
+          port: info.port,
+          directory: info.cwd
         });
       } catch (err) {
         if (isConnectionError(err)) {
@@ -1593,12 +1624,13 @@ export class OpencodeDriver implements CliDriver {
     }
   }
 
-  private async nativeQuestionAvailable(sessionId: string, port: number, authHeader: string): Promise<boolean> {
+  private async nativeQuestionAvailable(sessionId: string, port: number, authHeader: string, cwd: string): Promise<boolean> {
     if (!sessionId) return true;
     const res = await opencodeFetch(`http://127.0.0.1:${port}/session/${sessionId}`, {
       headers: { Authorization: authHeader },
       timeoutMs: OPENCODE_LIST_TIMEOUT_MS,
-      port
+      port,
+      directory: cwd
     });
     if (!res.ok) return false;
     const info = (await res.json()) as { permission?: unknown };
@@ -1616,6 +1648,14 @@ export class OpencodeDriver implements CliDriver {
 
   async *events(): AsyncIterable<never> {}
 
+  stopSession(sessionId: string): void {
+    const cwd = this.sessionCwds.get(sessionId);
+    this.sessionCwds.delete(sessionId);
+    if (!cwd) return;
+    traceHarnessCall({ harness: "opencode", operation: "opencode.stopSession", sessionId, cwd, ok: true });
+    this.pool.invalidate(cwd);
+  }
+
   dispose(): void {
     this.disposed = true;
     for (const watch of this.watches.values()) watch.abort();
@@ -1630,9 +1670,23 @@ export class OpencodeDriver implements CliDriver {
     this.disposeBridge();
     for (const timer of this.pollTimers.values()) clearInterval(timer);
     this.pollTimers.clear();
+    this.pendingQuestions.clear();
     this.pendingApprovals.clear();
     this.handledPermissions.clear();
     this.sessionAllows.clear();
+    this.sessionIds.clear();
+    this.sessionParents.clear();
+    this.sessionChildren.clear();
+    this.sessionCwds.clear();
+    this.turnMeta.clear();
+    this.toolSeen.clear();
+    this.partTypes.clear();
+    this.watchInfo.clear();
+    this.taskChildren.clear();
+    this.childToolSeen.clear();
+    this.childPollDone.clear();
+    this.childModels.clear();
+    this.bridgeNeed.clear();
     this.pool.dispose();
   }
 }
@@ -1643,6 +1697,12 @@ function questionInfoDenied(permission: unknown): boolean {
   const p = permission as { question?: unknown };
   const question = p?.question;
   return typeof question === "string" ? question.trim() === "deny" : false;
+}
+
+export function sameDirectory(a: string, b: string): boolean {
+  const norm = (s: string): string => s.replace(/\\/g, "/").replace(/\/+$/, "");
+  if (process.platform === "win32") return norm(a).toLowerCase() === norm(b).toLowerCase();
+  return norm(a) === norm(b);
 }
 
 function eventProps(event: unknown): Record<string, unknown> | null {

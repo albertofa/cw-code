@@ -18,6 +18,7 @@ import { checkCliVersion, checkCliVersions, type CliVersionCheck } from "./cliVe
 import { discoverBinaries, verifyBinaryPath } from "./cli/binaryDiscovery.js";
 import { getHarnessTracePath, initHarnessTrace } from "./debug/harnessTrace.js";
 import { appendCrashLog, initCrashLog } from "./debug/crashLog.js";
+import { reapOrphanedServers } from "./orphanServers.js";
 import type { ApprovalDecision, CliBinary, CreateSessionOptions, GitDiffMode, SessionStatus, SettingsPatch } from "@cw-code/contracts";
 import type { DriverKind, HarnessId, SkillSaveInput } from "@cw-code/contracts";
 import type { PtyKind } from "./pty/PtyPool.js";
@@ -426,6 +427,18 @@ app.whenReady().then(async () => {
   process.on("unhandledRejection", (reason) => {
     appendCrashLog(`unhandledRejection: ${String(reason)}`);
   });
+  reapOrphanedServers()
+    .then((reaped) => {
+      if (reaped.length > 0) console.warn(`reaped ${reaped.length} orphaned CLI server(s) from a previous run`);
+    })
+    .catch((err) => {
+      console.warn(`orphan server sweep failed: ${(err as Error).message}`);
+    });
+  const quitOnSignal = (): void => {
+    app.quit();
+  };
+  process.once("SIGINT", quitOnSignal);
+  process.once("SIGTERM", quitOnSignal);
   registerIpc();
   app.on("child-process-gone", (_e, details) => {
     appendCrashLog(

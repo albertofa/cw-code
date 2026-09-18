@@ -71,6 +71,7 @@ export class PtyPool {
   private openings = new Map<string, Promise<PtyEntry>>();
   private pendingKills = new Set<string>();
   private nextToken = 1;
+  private disposed = false;
   private onExit: (ptyId: string, token: string, exitCode: number) => void = () => {};
 
   constructor(private getSettings: () => AppSettings) {}
@@ -87,6 +88,7 @@ export class PtyPool {
     env: Record<string, string> | undefined,
     onData: (ptyId: string, data: string) => void
   ): Promise<PtyAttachResult> {
+    if (this.disposed) throw new Error("pty pool disposed");
     const ptyId = `${sessionId}:${kind}`;
     const existing = this.ptys.get(ptyId);
     if (existing) return this.attach(existing, ptyId);
@@ -202,6 +204,14 @@ export class PtyPool {
     }
     const entry: PtyEntry = { proc, replay: "", token: `pty-${this.nextToken++}`, attachedCount: 0 };
     this.ptys.set(ptyId, entry);
+    if (this.disposed) {
+      this.ptys.delete(ptyId);
+      try {
+        proc.kill();
+      } catch {
+      }
+      throw new Error("pty pool disposed");
+    }
     proc.onData((data) => {
       appendReplay(entry, data);
       if (entry.attachedCount > 0) onData(ptyId, data);
@@ -249,6 +259,9 @@ export class PtyPool {
   }
 
   dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
     for (const ptyId of [...this.ptys.keys()]) this.kill(ptyId);
+    this.pendingKills.clear();
   }
 }
