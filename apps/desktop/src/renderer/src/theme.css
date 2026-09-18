@@ -556,6 +556,14 @@ body {
   flex: 1;
   overflow-y: auto;
   padding: 6px 8px 10px;
+  scrollbar-width: none;
+  -ms-overflow-style: none;
+}
+
+.session-list::-webkit-scrollbar {
+  display: none;
+  width: 0;
+  height: 0;
 }
 
 .working-set {
@@ -2188,7 +2196,10 @@ body.session-dragging * {
   line-height: 1.5;
   resize: none;
   min-height: 68px;
+  max-height: 180px;
+  overflow-y: hidden;
   padding: 0;
+  field-sizing: content;
 }
 
 .composer-input::placeholder {
@@ -2904,6 +2915,7 @@ body.session-dragging * {
 }
 
 .tab {
+  position: relative;
   font-family: var(--sans);
   font-size: 12.5px;
   background: transparent;
@@ -2933,6 +2945,47 @@ body.session-dragging * {
 
 .tab-label {
   font-weight: 600;
+}
+
+.tab-badge {
+  position: absolute;
+  top: 4px;
+  right: 1px;
+  min-width: 16px;
+  height: 16px;
+  box-sizing: border-box;
+  padding: 0 4px;
+  border-radius: 999px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 10px;
+  font-weight: 700;
+  line-height: 1;
+  font-variant-numeric: tabular-nums;
+  background: var(--raised);
+  border: 1px solid var(--border);
+  color: var(--dim);
+  flex: none;
+  pointer-events: none;
+}
+
+.tab.active .tab-badge {
+  background: color-mix(in srgb, var(--violet) 22%, var(--raised));
+  border-color: color-mix(in srgb, var(--violet) 55%, var(--border));
+  color: var(--text);
+}
+
+.tab-badge.running {
+  background: var(--success);
+  border-color: var(--success);
+  color: #07130b;
+}
+
+.tab.active .tab-badge.running {
+  background: var(--success);
+  border-color: var(--success);
+  color: #07130b;
 }
 
 .tab-min {

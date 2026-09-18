@@ -120,7 +120,6 @@ export function ThreadView() {
     };
     const ro = new ResizeObserver(stickToBottom);
     ro.observe(inner);
-    ro.observe(el);
     return () => ro.disconnect();
   }, [activeSessionId, showNew]);
 
