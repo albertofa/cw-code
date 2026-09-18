@@ -350,7 +350,6 @@ export class ClaudeCliDriver implements CliDriver {
     }
     state.resumeCursor = info.resumeCursor;
     state.completedTurn = true;
-    if (state.liveTasks > 0) return;
     this.turnToSession.delete(turnId);
     if (state.sessionId.startsWith("title:")) {
       this.terminate(state);

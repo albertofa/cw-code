@@ -1100,7 +1100,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       });
     } else if (event.type === "turn.done") {
       const backgroundTasks = event.backgroundTasks ?? 0;
-      const current = get().busyTurns[sessionId] === event.turnId && backgroundTasks === 0;
+      const busyForSession = get().busyTurns[sessionId];
+      const current = busyForSession === event.turnId;
+      const superseded = busyForSession !== undefined && !current;
       const book = current
         ? closeTurn(
             { busyTurns: get().busyTurns, turnStartedAt: get().turnStartedAt, turnDurations: get().turnDurations },
@@ -1109,9 +1111,9 @@ export const useAppStore = create<AppState>((set, get) => ({
           )
         : { busyTurns: get().busyTurns, turnStartedAt: get().turnStartedAt, turnDurations: get().turnDurations };
       const approvals = { ...get().pendingApprovals };
-      delete approvals[sessionId];
+      if (current) delete approvals[sessionId];
       const questions = { ...get().pendingQuestions };
-      delete questions[sessionId];
+      if (current) delete questions[sessionId];
       let turnMessages = finalizeTurnTools(messages, event.turnId, backgroundTasks).filter(
         (m) => m.id !== `${event.turnId}-retry`
       );
@@ -1156,26 +1158,26 @@ export const useAppStore = create<AppState>((set, get) => ({
         turnDurations: book.turnDurations,
         pendingApprovals: approvals,
         pendingQuestions: questions,
-        sessionsByProject: withSessionStatus(
-          get().sessionsByProject,
-          sessionId,
-          backgroundTasks > 0 ? "working" : "done"
-        ),
+        sessionsByProject: current
+          ? withSessionStatus(get().sessionsByProject, sessionId, "done")
+          : get().sessionsByProject,
         messagesBySession: {
           ...get().messagesBySession,
           [sessionId]: turnMessages
         },
-        usageBySession: {
-          ...get().usageBySession,
-          [sessionId]: {
-            inputTokens: event.inputTokens,
-            outputTokens: event.outputTokens,
-            costUsd: event.costUsd,
-            numTurns: event.numTurns
-          }
-        }
+        usageBySession: superseded
+          ? get().usageBySession
+          : {
+              ...get().usageBySession,
+              [sessionId]: {
+                inputTokens: event.inputTokens,
+                outputTokens: event.outputTokens,
+                costUsd: event.costUsd,
+                numTurns: event.numTurns
+              }
+            }
       });
-      void get().refreshGitStatus(sessionId);
+      if (!superseded) void get().refreshGitStatus(sessionId);
     } else if (event.type === "session.branch.updated") {
       const byProject = get().sessionsByProject;
       const next: Record<string, Session[]> = {};

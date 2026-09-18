@@ -208,14 +208,13 @@ export class SessionManager {
 
   private handleDriverEvent(sessionId: string, event: ThreadEvent): void {
     if (event.type === "turn.done") {
-      const backgroundTasks = event.backgroundTasks ?? 0;
-      if (backgroundTasks > 0) {
-        this.store.updateSession(event.sessionId, { resumeCursor: event.resumeCursor, status: "working" });
-      } else {
-        this.activeTurns.delete(event.turnId);
-        this.store.updateSession(event.sessionId, { resumeCursor: event.resumeCursor, status: "done" });
-        if (!event.isError) void this.renameBranchForTitle(event.sessionId, event.turnId);
-      }
+      const wasActive = this.activeTurns.delete(event.turnId);
+      const stillActive = [...this.activeTurns.values()].some((entry) => entry.sessionId === event.sessionId);
+      this.store.updateSession(event.sessionId, {
+        resumeCursor: event.resumeCursor,
+        ...(stillActive ? {} : { status: "done" as const })
+      });
+      if (wasActive && !event.isError) void this.renameBranchForTitle(event.sessionId, event.turnId);
     }
     if (event.type === "turn.error") {
       this.activeTurns.delete(event.turnId);
