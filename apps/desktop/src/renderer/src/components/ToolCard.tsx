@@ -4,6 +4,8 @@ import type { ChatMessage } from "../stores/appStore.js";
 import {
   describeToolCall,
   extractCommandFragment,
+  extractFileDiff,
+  extractFileDiffFromText,
   extractFileFragment,
   recoverToolInput,
   relativizeInText,
@@ -69,7 +71,12 @@ export const ToolCard = memo(function ToolCard({
     wasRunning.current = running;
   }, [running]);
   const state = isError ? "error" : running ? "running" : done ? "complete" : "pending";
-  const summary = describeToolCall(name, message.toolInput ?? recoverToolInput(name, message.text));
+  const toolInput = message.toolInput ?? recoverToolInput(name, message.text);
+  const summary = describeToolCall(name, toolInput);
+  const fileDiff = extractFileDiff(name, toolInput) ?? extractFileDiffFromText(name, message.text);
+  const MAX_DIFF_LINES = 120;
+  const visibleDiff = fileDiff?.slice(0, MAX_DIFF_LINES) ?? [];
+  const hiddenDiffCount = fileDiff && fileDiff.length > visibleDiff.length ? fileDiff.length - visibleDiff.length : 0;
   if (summary && !summary.subject) {
     if (name.toLowerCase() === "bash" || name.toLowerCase() === "shell") {
       const command = extractCommandFragment(message.text);
@@ -99,9 +106,7 @@ export const ToolCard = memo(function ToolCard({
   const lowerName = name.toLowerCase();
   const isShell = lowerName === "bash" || lowerName === "shell";
   const isTodo = lowerName === "todowrite" || lowerName === "todo";
-  const todoRaw = (isTodo ? message.toolInput ?? recoverToolInput(name, message.text) : undefined) as
-    | Record<string, unknown>
-    | undefined;
+  const todoRaw = (isTodo ? toolInput : undefined) as Record<string, unknown> | undefined;
   const todoItems = isTodo
     ? (Array.isArray(todoRaw?.["todos"]) ? (todoRaw?.["todos"] as Array<Record<string, unknown>>) : [])
         .map((t) => ({
@@ -213,6 +218,20 @@ export const ToolCard = memo(function ToolCard({
             <div className="tool-pending">
               <span className="pulse" /> Running…
             </div>
+          )}
+          {visibleDiff.length > 0 && (
+            <>
+              <div className="tool-output-label">diff</div>
+              <div className="diff-body tool-diff">
+                {visibleDiff.map((line, i) => (
+                  <div key={i} className={`diff-line ${line.type}`}>
+                    <span className="diff-gutter">{line.type === "add" ? "+" : "−"}</span>
+                    <span className="diff-text">{line.text || " "}</span>
+                  </div>
+                ))}
+              </div>
+              {hiddenDiffCount > 0 && <div className="tool-meta">… {hiddenDiffCount} more lines</div>}
+            </>
           )}
           {summary && done && output && (
             <>

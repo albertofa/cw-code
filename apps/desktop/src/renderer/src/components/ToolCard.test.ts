@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import {
   describeToolCall,
   extractCommandFragment,
+  extractFileDiff,
+  extractFileDiffFromText,
   extractFileFragment,
   extractPatchFiles,
   formatDuration,
@@ -114,6 +116,63 @@ describe("describeToolCall", () => {
     });
     expect(s?.verb).toBe("Question");
     expect(s?.subject).toBe("Asked 2 questions");
+  });
+});
+
+describe("extractFileDiff", () => {
+  it("maps Write content to added lines", () => {
+    expect(extractFileDiff("Write", { file_path: "a.ts", content: "one\ntwo\nthree" })).toEqual([
+      { type: "add", text: "one" },
+      { type: "add", text: "two" },
+      { type: "add", text: "three" }
+    ]);
+  });
+
+  it("maps Edit old/new strings to removed then added lines", () => {
+    expect(extractFileDiff("Edit", { file_path: "x.ts", old_string: "a\nb", new_string: "c" })).toEqual([
+      { type: "del", text: "a" },
+      { type: "del", text: "b" },
+      { type: "add", text: "c" }
+    ]);
+    expect(extractFileDiff("edit", { filePath: "x.ts", oldString: "a", newString: "b\nc" })).toEqual([
+      { type: "del", text: "a" },
+      { type: "add", text: "b" },
+      { type: "add", text: "c" }
+    ]);
+  });
+
+  it("flattens MultiEdit edits arrays", () => {
+    expect(
+      extractFileDiff("MultiEdit", { edits: [{ old_string: "a", new_string: "b" }, { oldString: "c", newString: "d\ne" }] })
+    ).toEqual([
+      { type: "del", text: "a" },
+      { type: "add", text: "b" },
+      { type: "del", text: "c" },
+      { type: "add", text: "d" },
+      { type: "add", text: "e" }
+    ]);
+  });
+
+  it("returns null for other tools and empty inputs", () => {
+    expect(extractFileDiff("Bash", { command: "ls" })).toBeNull();
+    expect(extractFileDiff("Write", { file_path: "a.ts" })).toBeNull();
+    expect(extractFileDiff("Edit", { file_path: "a.ts" })).toBeNull();
+    expect(extractFileDiff("Write", null)).toBeNull();
+  });
+
+  it("recovers diff lines from truncated history text", () => {
+    expect(extractFileDiffFromText("Write", 'Write {"file_path":"a.ts","content":"one\\ntwo"}')).toEqual([
+      { type: "add", text: "one" },
+      { type: "add", text: "two" }
+    ]);
+    expect(
+      extractFileDiffFromText("Edit", 'Edit {"file_path":"x.ts","old_string":"a\\nb","new_string":"c"}')
+    ).toEqual([
+      { type: "del", text: "a" },
+      { type: "del", text: "b" },
+      { type: "add", text: "c" }
+    ]);
+    expect(extractFileDiffFromText("Bash", 'Bash {"command":"ls"}')).toBeNull();
   });
 });
 
