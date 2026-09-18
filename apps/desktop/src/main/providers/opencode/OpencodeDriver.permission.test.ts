@@ -309,3 +309,63 @@ describe("OpencodeDriver subagent permissions", () => {
     }
   });
 });
+
+describe("OpencodeDriver acceptEdits permission mode", () => {
+  function asked(requestId: string, permission: string): unknown {
+    return {
+      type: "permission.v2.asked",
+      properties: { id: requestId, sessionID: "ses_1", action: permission, resources: ["a.ts"] }
+    };
+  }
+
+  function harnessFor(permission: string, mode: PermissionMode): Harness {
+    return startHarness((url, init) => {
+      if (url.endsWith("/event")) return Promise.resolve(sse(asked("per_edit", permission)));
+      if (init?.method === "POST" && url.includes("/message")) return new Promise<Response>(() => {});
+      if (init?.method === "POST" && url.includes("/permission") && url.includes("/permissions/")) {
+        return Promise.resolve(json(true));
+      }
+      if (url.includes("/message")) return Promise.resolve(json([]));
+      if (url.includes("/permission")) return Promise.resolve(new Response(null, { status: 404 }));
+      return Promise.resolve(json({ id: "ses_1" }));
+    }, { permissionMode: mode });
+  }
+
+  it("auto-approves edit permissions without surfacing the approval dock", async () => {
+    const h = harnessFor("edit", "acceptEdits");
+    try {
+      await waitFor(() => h.permissionReplies.length >= 1);
+      await sleep(300);
+      expect(h.events.filter((e) => e.type === "approval.request")).toEqual([]);
+    } finally {
+      h.driver.dispose();
+    }
+  });
+
+  it("surfaces bash permissions for review", async () => {
+    const h = harnessFor("bash", "acceptEdits");
+    try {
+      await waitFor(() => h.events.some((e) => e.type === "approval.request"));
+      expect(h.permissionReplies).toEqual([]);
+    } finally {
+      h.driver.dispose();
+    }
+  });
+
+  it("lists native modes without a bypass entry (synthetic full access is injected upstream)", async () => {
+    const h = startHarness((url, init) => {
+      if (url.endsWith("/event")) return Promise.resolve(sse(PERMISSION_ASKED));
+      if (init?.method === "POST" && url.includes("/message")) return new Promise<Response>(() => {});
+      if (url.includes("/message")) return Promise.resolve(json([]));
+      return Promise.resolve(json({ id: "ses_1" }));
+    }, { permissionMode: "manual" });
+    try {
+      const modes = await h.driver.listPermissionModes();
+      expect(modes.map((m) => m.id)).toEqual(["manual", "auto"]);
+      expect(modes.map((m) => m.label)).toEqual(["Ask", "Auto"]);
+      expect(modes.every((m) => m.native)).toBe(true);
+    } finally {
+      h.driver.dispose();
+    }
+  });
+});

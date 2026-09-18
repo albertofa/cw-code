@@ -13,7 +13,7 @@ import {
   X,
   Zap
 } from "lucide-react";
-import type { ComposerPrefs, DriverName, EffortLevel, ModelOption, PermissionMode } from "../cw.js";
+import type { ComposerPrefs, DriverName, EffortLevel, ModelOption, PermissionMode, PermissionOption } from "../cw.js";
 import { firstDisplayedModelId, getLastModel, setLastModel } from "./lastModel.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { MenuSelect, type MenuOption } from "./MenuSelect.js";
@@ -25,6 +25,7 @@ export interface ComposerBackend {
   prefs: ComposerPrefs;
   busy: boolean;
   loadModels(): Promise<ModelOption[]>;
+  loadPermissions(): Promise<PermissionOption[]>;
   loadFiles(): Promise<string[]>;
   savePrefs(prefs: ComposerPrefs): void;
   send(body: string, attachments: string[]): Promise<void>;
@@ -61,12 +62,19 @@ function fallbackEffort(current: EffortLevel, available: Array<{ id: EffortLevel
   return available[0].id;
 }
 
-const PERMISSIONS: Array<{ id: PermissionMode; label: string; description: string; icon: ReactNode }> = [
-  { id: "manual", label: "Supervised", description: "Ask before commands and file changes.", icon: <Lock size={14} /> },
-  { id: "acceptEdits", label: "Auto-accept edits", description: "Auto-approve edits, ask before other actions.", icon: <Pencil size={14} /> },
-  { id: "auto", label: "Auto", description: "Supported providers approve routine actions; others still ask.", icon: <Zap size={14} /> },
-  { id: "bypassPermissions", label: "Full access", description: "Allow commands and edits without prompts.", icon: <LockOpen size={14} /> }
+const FALLBACK_PERMISSIONS: PermissionOption[] = [
+  { id: "manual", label: "Supervised", description: "Ask before commands and file changes.", native: true },
+  { id: "acceptEdits", label: "Auto-accept edits", description: "Auto-approve edits, ask before other actions.", native: true },
+  { id: "auto", label: "Auto", description: "Supported providers approve routine actions; others still ask.", native: true },
+  { id: "bypassPermissions", label: "Full Access", description: "Allow commands and edits without prompts.", native: false }
 ];
+
+function permissionIconFor(id: PermissionMode): ReactNode {
+  if (id === "manual") return <Lock size={14} />;
+  if (id === "acceptEdits") return <Pencil size={14} />;
+  if (id === "bypassPermissions") return <LockOpen size={14} />;
+  return <Zap size={14} />;
+}
 
 function EffortIcon({ size = 15 }: { size?: number }) {
   return (
@@ -129,6 +137,8 @@ export function ComposerView({
   const [filesLoading, setFilesLoading] = useState(false);
   const [models, setModels] = useState<ModelOption[]>([]);
   const [modelsError, setModelsError] = useState<string | null>(null);
+  const [permissionOptions, setPermissionOptions] = useState<PermissionOption[] | null>(null);
+  const [permissionsError, setPermissionsError] = useState<string | null>(null);
   const [customModel, setCustomModel] = useState("");
   const [showCustom, setShowCustom] = useState(false);
   const [sending, setSending] = useState(false);
@@ -213,6 +223,25 @@ export function ComposerView({
   }, [resetKey, driver, prefs.model, modelsRefreshKey]);
 
   useEffect(() => {
+    let cancelled = false;
+    setPermissionsError(null);
+    Promise.resolve()
+      .then(() => backendRef.current.loadPermissions())
+      .then((list) => {
+        if (cancelled) return;
+        setPermissionOptions(list.length > 0 ? list : FALLBACK_PERMISSIONS);
+      })
+      .catch((err) => {
+        if (cancelled) return;
+        setPermissionOptions(FALLBACK_PERMISSIONS);
+        setPermissionsError(err instanceof Error ? err.message : "permission list failed");
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [resetKey, driver, modelsRefreshKey]);
+
+  useEffect(() => {
     if (!pickerOpen) return;
     setFilesLoading(true);
     backendRef.current
@@ -288,8 +317,18 @@ export function ComposerView({
     if (!models.some((m) => m.id === prefs.model)) return;
     setLastModel(driver, prefs.model);
   }, [driver, prefs.model, models, showCustom]);
-  const permissionDisplay = PERMISSIONS.find((o) => o.id === (prefs.permissionMode ?? "auto"))?.label ?? "Auto";
-  const permissionIcon = PERMISSIONS.find((o) => o.id === (prefs.permissionMode ?? "auto"))?.icon;
+  const permissions = permissionOptions ?? FALLBACK_PERMISSIONS;
+  const effectivePermission = prefs.permissionMode ?? "auto";
+  const permissionDisplay = permissions.find((o) => o.id === effectivePermission)?.label ?? "Auto";
+  const permissionIcon = permissionIconFor(
+    permissions.some((o) => o.id === effectivePermission) ? effectivePermission : "auto"
+  );
+
+  useEffect(() => {
+    if (!permissionOptions || permissionOptions.length === 0) return;
+    if (permissionOptions.some((o) => o.id === effectivePermission)) return;
+    backendRef.current.savePrefs({ permissionMode: permissionOptions[0].id });
+  }, [permissionOptions, effectivePermission]);
 
   return (
     <>
@@ -442,11 +481,11 @@ export function ComposerView({
           <MenuSelect
             label="Permission"
             icon={permissionIcon}
-            title="Permission"
-            value={prefs.permissionMode ?? "auto"}
+            title={permissionsError ? `Permission list failed: ${permissionsError}` : "Permission"}
+            value={effectivePermission}
             display={permissionDisplay}
-            isSet={(prefs.permissionMode ?? "auto") !== "auto"}
-            options={PERMISSIONS.map((o) => ({ id: o.id, label: o.label, description: o.description, icon: o.icon }))}
+            isSet={effectivePermission !== "auto"}
+            options={permissions.map((o) => ({ id: o.id, label: o.label, description: o.description, icon: permissionIconFor(o.id) }))}
             onPick={(v) => backend.savePrefs({ permissionMode: v as PermissionMode })}
           />
         </div>

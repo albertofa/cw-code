@@ -11,6 +11,7 @@ import type {
   EffortLevel,
   HistoryMessage,
   PermissionMode,
+  PermissionOption,
   SubagentToolsResult,
   ThreadEvent,
   TurnHandle,
@@ -40,6 +41,15 @@ export function mapClaudePermission(mode: PermissionMode | string): string {
   if (mode === "bypassPermissions") return "bypassPermissions";
   if (mode === "manual") return "manual";
   return "auto";
+}
+
+export function listClaudePermissionModes(): PermissionOption[] {
+  return [
+    { id: "manual", label: "Manual", description: "Reads only; asks before edits, commands, and network.", native: true },
+    { id: "acceptEdits", label: "Accept edits", description: "Reads, file edits, and common filesystem commands run without asking.", native: true },
+    { id: "auto", label: "Auto", description: "Everything runs with background safety checks instead of prompts.", native: true },
+    { id: "bypassPermissions", label: "Bypass permissions", description: "Skips permission prompts. Isolated environments only.", native: true }
+  ];
 }
 
 export function mapClaudeEffort(effort: EffortLevel | string): string {
@@ -445,6 +455,10 @@ export class ClaudeCliDriver implements CliDriver {
     const transcriptDir = join(homedir(), ".claude", "projects", claudeProjectSlug(projectRoot), resumeCursor);
     const agent = readSidecarAgent(transcriptDir, agentId) ?? readSidecarAgent(dirname(transcriptDir), agentId);
     return subagentToolsResult(agent);
+  }
+
+  async listPermissionModes(): Promise<PermissionOption[]> {
+    return listClaudePermissionModes();
   }
 
   startTurn(request: TurnRequest): TurnHandle {

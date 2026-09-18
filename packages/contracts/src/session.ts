@@ -60,6 +60,14 @@ export interface TurnRequest {
 
 export type PermissionMode = "auto" | "acceptEdits" | "bypassPermissions" | "manual";
 
+export interface PermissionOption {
+  id: PermissionMode;
+  label: string;
+  description: string;
+  /** False when cw-code synthesizes the mode via background auto-accept. */
+  native: boolean;
+}
+
 export type EffortLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
 export interface ComposerPrefs {

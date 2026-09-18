@@ -391,6 +391,78 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
+  it("injects synthetic full access when a harness lacks a native bypass mode", async () => {
+    const { manager } = makeManager();
+    const drivers = (manager as unknown as { drivers: Record<string, CliDriver> }).drivers;
+    drivers["opencode"] = {
+      kind: "opencode",
+      listSessions: async () => [],
+      getHistory: async () => [],
+      startTurn: () => ({ turnId: "t", events: (async function* () {})() }),
+      interrupt: () => {},
+      renameSession: async () => {},
+      events: (async function* () {})(),
+      listPermissionModes: async () => [
+        { id: "manual", label: "Supervised", description: "Ask.", native: true },
+        { id: "auto", label: "Auto", description: "Auto.", native: true }
+      ]
+    } as unknown as CliDriver;
+    drivers["claude"] = {
+      kind: "claude",
+      listSessions: async () => [],
+      getHistory: async () => [],
+      startTurn: () => ({ turnId: "t", events: (async function* () {})() }),
+      interrupt: () => {},
+      renameSession: async () => {},
+      events: (async function* () {})(),
+      listPermissionModes: async () => [
+        { id: "manual", label: "Supervised", description: "Ask.", native: true },
+        { id: "bypassPermissions", label: "Full access", description: "Native.", native: true }
+      ]
+    } as unknown as CliDriver;
+    const project = manager.addProject("C:\\proj-perms");
+    const opencodeModes = await manager.listPermissionModesFor(project.id, "opencode");
+    expect(opencodeModes.map((m) => m.id)).toEqual(["manual", "auto", "bypassPermissions"]);
+    expect(opencodeModes.find((m) => m.id === "bypassPermissions")?.native).toBe(false);
+    const claudeModes = await manager.listPermissionModesFor(project.id, "claude");
+    expect(claudeModes).toHaveLength(2);
+    expect(claudeModes.find((m) => m.id === "bypassPermissions")?.native).toBe(true);
+    manager.dispose();
+  });
+
+  it("reports each real harness driver permission list with opencode lacking native bypass", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cw-test-perms-"));
+    const manager = new SessionManager({
+      dbPath: join(dir, "test.db"),
+      settingsPath: join(dir, "settings.json")
+    });
+    manager.setSettings({ autoTitleEnabled: false });
+    try {
+      const project = manager.addProject("C:\\proj-perms-real");
+      const claudeModes = await manager.listPermissionModesFor(project.id, "claude");
+      expect(claudeModes.map((m) => m.id)).toEqual(["manual", "acceptEdits", "auto", "bypassPermissions"]);
+      expect(claudeModes.find((m) => m.id === "bypassPermissions")).toMatchObject({
+        label: "Bypass permissions",
+        native: true
+      });
+      const codexModes = await manager.listPermissionModesFor(project.id, "codex");
+      expect(codexModes.map((m) => m.id)).toEqual(["manual", "auto", "bypassPermissions"]);
+      expect(codexModes.find((m) => m.id === "bypassPermissions")).toMatchObject({
+        label: "Full Access",
+        native: true
+      });
+      const opencodeModes = await manager.listPermissionModesFor(project.id, "opencode");
+      expect(opencodeModes.map((m) => m.id)).toEqual(["manual", "auto", "bypassPermissions"]);
+      expect(opencodeModes.find((m) => m.id === "manual")).toMatchObject({ label: "Ask", native: true });
+      expect(opencodeModes.find((m) => m.id === "bypassPermissions")).toMatchObject({
+        label: "Full Access",
+        native: false
+      });
+    } finally {
+      manager.dispose();
+    }
+  });
+
   it("creates Git sessions in isolated worktrees and routes turns there", async () => {
     const sandbox = mkdtempSync(join(tmpdir(), "cw-session-worktree-"));
     const repository = join(sandbox, "repo");

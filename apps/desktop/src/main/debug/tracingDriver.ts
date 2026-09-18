@@ -4,6 +4,7 @@ import type {
   DriverKind,
   HistoryMessage,
   ModelOption,
+  PermissionOption,
   RetryConnectionRequest,
   RetryConnectionResult,
   SessionEvent,
@@ -209,6 +210,11 @@ export class TracingCliDriver implements CliDriver {
   async listModels(cwd: string): Promise<ModelOption[]> {
     if (typeof this.inner.listModels !== "function") return [];
     return this.inner.listModels(cwd);
+  }
+
+  async listPermissionModes(cwd: string): Promise<PermissionOption[]> {
+    if (typeof this.inner.listPermissionModes !== "function") return [];
+    return this.inner.listPermissionModes(cwd);
   }
 
   async respondToApproval(requestId: string, decision: ApprovalDecision): Promise<void> {

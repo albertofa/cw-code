@@ -106,6 +106,7 @@ export function NewThread({
     prefs,
     busy: false,
     loadModels: () => window.cw.listModelsFor(projectId, driver),
+    loadPermissions: () => window.cw.listPermissionsFor(projectId, driver),
     loadFiles: () => window.cw.listProjectFiles(projectId),
     savePrefs: (p) => store.setPendingPrefs(p),
     send: (body, attachments) => store.sendPendingPrompt(body, attachments),

@@ -11,6 +11,7 @@ import type {
   DriverKind,
   HistoryMessage,
   ModelOption,
+  PermissionOption,
   Project,
   RetryConnectionResult,
   SessionCleanupResult,
@@ -27,6 +28,7 @@ import { buildTurnEnv } from "./env.js";
 import { isWorktreeOrphaned, looksLikeWorktree, pinsWorktree, sameWorktreePath } from "./worktreeCleanup.js";
 import { SettingsStore } from "../settings/SettingsStore.js";
 import { resolveClaudeModels } from "../settings/settingsUtils.js";
+import { permissionOption, withSyntheticFullAccess } from "../providers/permissions.js";
 import { TracingCliDriver } from "../debug/tracingDriver.js";
 import { CLAUDE_CURATED_MODELS, ClaudeCliDriver } from "../providers/claude/ClaudeCliDriver.js";
 import { OpencodeDriver } from "../providers/opencode/OpencodeDriver.js";
@@ -932,6 +934,57 @@ export class SessionManager {
       console.warn(`model list failed for ${driver}: ${(err as Error).message}`);
       throw err;
     }
+  }
+
+  private fallbackPermissionModes(): PermissionOption[] {
+    return withSyntheticFullAccess([
+      permissionOption("manual", true),
+      permissionOption("acceptEdits", true),
+      permissionOption("auto", true),
+      permissionOption("bypassPermissions", true)
+    ]);
+  }
+
+  async listPermissionModes(sessionId: string): Promise<PermissionOption[]> {
+    const session = this.store.getSession(sessionId);
+    if (!session) throw new Error(`unknown session ${sessionId}`);
+    try {
+      const cwd =
+        session.worktreePath && existsSync(session.worktreePath)
+          ? session.worktreePath
+          : this.rootForProject(session.projectId);
+      return await this.listPermissionModesFor(session.projectId, session.driver, cwd);
+    } catch (err) {
+      console.warn(`permission list failed for ${sessionId}: ${(err as Error).message}`);
+      return this.fallbackPermissionModes();
+    }
+  }
+
+  async listPermissionModesFor(projectId: string, driver: DriverKind, cwd?: string): Promise<PermissionOption[]> {
+    const project = this.store.getProject(projectId);
+    if (!project) throw new Error(`unknown project ${projectId}`);
+    const driverInstance = this.drivers[driver];
+    if (typeof driverInstance.listPermissionModes === "function") {
+      try {
+        return withSyntheticFullAccess(await driverInstance.listPermissionModes(cwd ?? project.rootPath));
+      } catch (err) {
+        console.warn(`permission list failed: ${(err as Error).message}`);
+      }
+    }
+    return this.fallbackPermissionModes();
+  }
+
+  async listPermissionModesForHarness(driver: DriverKind): Promise<PermissionOption[]> {
+    const driverInstance = this.drivers[driver];
+    if (typeof driverInstance.listPermissionModes === "function") {
+      try {
+        return withSyntheticFullAccess(await driverInstance.listPermissionModes(this.titleGenRoot()));
+      } catch (err) {
+        console.warn(`permission list failed for ${driver}: ${(err as Error).message}`);
+        throw err;
+      }
+    }
+    return this.fallbackPermissionModes();
   }
 
   listActiveTurns(): Array<{ sessionId: string; turnId: string; startedAt: number }> {
