@@ -174,6 +174,11 @@ function finalizeTurnTools(messages: ChatMessage[], turnId: string, backgroundTa
   return changed ? out : messages;
 }
 
+function withoutRetryNotice(messages: ChatMessage[], turnId: string): ChatMessage[] {
+  const id = `${turnId}-retry`;
+  return messages.some((m) => m.id === id) ? messages.filter((m) => m.id !== id) : messages;
+}
+
 function withSessionStatus(
   byProject: Record<string, Session[]>,
   sessionId: string,
@@ -944,6 +949,13 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   applyEvent(sessionId: string, event: TurnEvent) {
     let messages = get().messagesBySession[sessionId] ?? [];
+    if (event.type !== "turn.retry" && event.type !== "turn.done" && event.type !== "turn.error" && "turnId" in event) {
+      const stripped = withoutRetryNotice(messages, event.turnId);
+      if (stripped !== messages) {
+        messages = stripped;
+        set({ messagesBySession: { ...get().messagesBySession, [sessionId]: stripped } });
+      }
+    }
     if (event.type === "reasoning.delta") {
       set({
         messagesBySession: {
