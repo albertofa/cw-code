@@ -29,6 +29,39 @@ export function expandHome(input: string, homeDir: string = defaultHomeDir()): s
   return normalize(input);
 }
 
+function isWindowsStylePath(value: string): boolean {
+  return /^[a-zA-Z]:[\\/]/.test(value) || value.includes("\\");
+}
+
+function stripTrailingSlashes(value: string): string {
+  if (/^[a-zA-Z]:\/$/.test(value)) return value;
+  if (value === "/") return value;
+  return value.replace(/\/+$/, "") || value;
+}
+
+function toSlashes(value: string): string {
+  return stripTrailingSlashes(value.replace(/\\/g, "/").replace(/\/+/g, "/"));
+}
+
+export function shortenHome(input: string, homeDir: string = defaultHomeDir()): string {
+  if (!input || typeof input !== "string") return input;
+  if (input === "~") return "~";
+  if (input.startsWith("~/")) return input.replace(/\/+$/, "") || "~/";
+  if (input.startsWith("~\\")) return `~/${toSlashes(input.slice(2))}`;
+  if (typeof homeDir !== "string") return input;
+  const home = homeDir.trim();
+  if (!home) return input;
+  const pathKey = toSlashes(input.trim());
+  const homeKey = toSlashes(home);
+  if (!pathKey || !homeKey) return input;
+  const windowsStyle = isWindowsStylePath(input) || isWindowsStylePath(home);
+  const pathCmp = windowsStyle ? pathKey.toLowerCase() : pathKey;
+  const homeCmp = windowsStyle ? homeKey.toLowerCase() : homeKey;
+  if (pathCmp === homeCmp) return "~";
+  if (pathCmp.startsWith(`${homeCmp}/`)) return `~${pathKey.slice(homeKey.length)}`;
+  return input;
+}
+
 export function normalizeStoredDir(p: string): string {
   const normalized = normalize(p.trim());
   const stripped = normalized.replace(/[\\/]+$/, "");

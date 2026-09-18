@@ -96,6 +96,112 @@ export function extractPatchFiles(patchText: string): string[] {
   return files;
 }
 
+export interface FileDiffLine {
+  type: "add" | "del";
+  text: string;
+}
+
+function splitDiffLines(value: string): string[] {
+  const lines = value.replace(/\r\n/g, "\n").split("\n");
+  if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+  return lines;
+}
+
+function unwrapArgs(input: unknown): Record<string, unknown> | null {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return null;
+  let args = input as Record<string, unknown>;
+  const nested = args["input"];
+  if (nested !== null && typeof nested === "object" && !Array.isArray(nested)) {
+    args = { ...(nested as Record<string, unknown>), ...args };
+  }
+  return args;
+}
+
+export function extractFileDiff(toolName: string, input: unknown): FileDiffLine[] | null {
+  const lower = toolName.toLowerCase();
+  if (lower !== "write" && lower !== "edit" && lower !== "multiedit") return null;
+  const args = unwrapArgs(input);
+  if (!args) return null;
+  if (lower === "write") {
+    const content = str(args["content"] ?? args["text"] ?? args["new_string"] ?? args["newString"]);
+    if (!content) return null;
+    const lines = splitDiffLines(content);
+    if (lines.length === 0) return null;
+    return lines.map((text) => ({ type: "add" as const, text }));
+  }
+  const editsRaw = args["edits"];
+  if (Array.isArray(editsRaw) && editsRaw.length > 0) {
+    const out: FileDiffLine[] = [];
+    for (const entry of editsRaw) {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+      const e = entry as Record<string, unknown>;
+      const oldText = str(e["old_string"] ?? e["oldString"] ?? e["oldText"]) ?? "";
+      const newText = str(e["new_string"] ?? e["newString"] ?? e["newText"]) ?? "";
+      for (const text of splitDiffLines(oldText)) out.push({ type: "del", text });
+      for (const text of splitDiffLines(newText)) out.push({ type: "add", text });
+    }
+    return out.length > 0 ? out : null;
+  }
+  const oldText = str(args["old_string"] ?? args["oldString"] ?? args["oldText"]) ?? "";
+  const newText = str(args["new_string"] ?? args["newString"] ?? args["newText"]) ?? "";
+  if (!oldText && !newText) return null;
+  return [
+    ...splitDiffLines(oldText).map((text) => ({ type: "del" as const, text })),
+    ...splitDiffLines(newText).map((text) => ({ type: "add" as const, text }))
+  ];
+}
+
+function unescapeDiffFragment(raw: string): string | undefined {
+  try {
+    const parsed: unknown = JSON.parse(`"${raw}"`);
+    if (typeof parsed === "string" && parsed) return parsed;
+  } catch {
+    /* fall through to truncated handling */
+  }
+  const trimmed = raw.replace(/\\$/, "");
+  if (trimmed !== raw) {
+    try {
+      const parsed: unknown = JSON.parse(`"${trimmed}"`);
+      if (typeof parsed === "string" && parsed) return parsed;
+    } catch {
+      /* fall through */
+    }
+  }
+  if (!raw.trim()) return undefined;
+  return raw.replace(/\\n/g, "\n").replace(/\\t/g, "\t").replace(/\\r/g, "\r").replace(/\\"/g, '"').replace(/\\\\/g, "\\");
+}
+
+function extractFragmentField(text: string, keys: string[]): string | undefined {
+  for (const key of keys) {
+    const match = new RegExp(`"${key}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)`).exec(text);
+    if (match) {
+      const value = unescapeDiffFragment(match[1]);
+      if (value) return value;
+    }
+  }
+  return undefined;
+}
+
+export function extractFileDiffFromText(toolName: string, text: string): FileDiffLine[] | null {
+  const lower = toolName.toLowerCase();
+  if (lower !== "write" && lower !== "edit" && lower !== "multiedit") return null;
+  if (!text) return null;
+  if (lower === "write") {
+    const content = extractFragmentField(text, ["content", "text", "new_string", "newString"]);
+    if (!content) return null;
+    const lines = splitDiffLines(content);
+    if (lines.length === 0) return null;
+    return lines.map((line) => ({ type: "add" as const, text: line }));
+  }
+  const oldText = extractFragmentField(text, ["old_string", "oldString", "oldText"]) ?? "";
+  const newText = extractFragmentField(text, ["new_string", "newString", "newText"]) ?? "";
+  if (!oldText && !newText) return null;
+  return [
+    ...splitDiffLines(oldText).map((line) => ({ type: "del" as const, text: line })),
+    ...splitDiffLines(newText).map((line) => ({ type: "add" as const, text: line }))
+  ];
+}
+
 export function describeToolCall(toolName: string, input: unknown): ToolSummary | null {
   const lower = toolName.toLowerCase();
   const collab = lower.startsWith("collab:");

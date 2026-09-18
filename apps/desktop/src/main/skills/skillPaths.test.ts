@@ -9,7 +9,8 @@ import {
   getScanRoots,
   harnessSkillRoot,
   isValidSkillName,
-  resolveSkillDir
+  resolveSkillDir,
+  shortenHome
 } from "./skillPaths.js";
 
 describe("isValidSkillName", () => {
@@ -45,6 +46,33 @@ describe("expandHome", () => {
 
   it("defaults to the OS homedir", () => {
     expect(expandHome("~/x")).toBe(normalize(join(homedir(), "x")));
+  });
+});
+
+describe("shortenHome", () => {
+  it("shortens posix home prefixes to ~/ ", () => {
+    expect(shortenHome("/home/tester", "/home/tester")).toBe("~");
+    expect(shortenHome("/home/tester/projects/cw", "/home/tester")).toBe("~/projects/cw");
+  });
+
+  it("leaves paths outside home untouched", () => {
+    expect(shortenHome("/home/tester2/projects", "/home/tester")).toBe("/home/tester2/projects");
+    expect(shortenHome("/other/place", "/home/tester")).toBe("/other/place");
+  });
+
+  it("shortens Windows user-profile prefixes case-insensitively", () => {
+    expect(shortenHome("C:\\Users\\tester", "C:\\Users\\tester")).toBe("~");
+    expect(shortenHome("C:\\Users\\tester\\Projects\\cw", "C:\\Users\\tester")).toBe("~/Projects/cw");
+    expect(shortenHome("c:\\users\\tester\\Projects", "C:\\Users\\tester")).toBe("~/Projects");
+  });
+
+  it("does not match sibling profile names", () => {
+    expect(shortenHome("C:\\Users\\tester2\\proj", "C:\\Users\\tester")).toBe("C:\\Users\\tester2\\proj");
+  });
+
+  it("keeps already-shortened input shortened", () => {
+    expect(shortenHome("~", "/home/tester")).toBe("~");
+    expect(shortenHome("~/projects", "/home/tester")).toBe("~/projects");
   });
 });
 

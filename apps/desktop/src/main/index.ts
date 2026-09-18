@@ -1,6 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, shell, type WebContents } from "electron";
 import { appendFileSync, existsSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -179,6 +179,7 @@ function registerIpc(): void {
   );
   ipcMain.handle("projects.list", () => sessions.listProjects());
   ipcMain.handle("projects.add", (_e, rootPath: string) => sessions.addProject(rootPath));
+  ipcMain.handle("os.homeDir", () => homedir());
   ipcMain.handle("sessions.list", (_e, projectId: string) => sessions.listSessions(projectId));
   ipcMain.handle("sessions.discovered", (_e, projectId: string) => sessions.listDiscovered(projectId));
   ipcMain.handle(

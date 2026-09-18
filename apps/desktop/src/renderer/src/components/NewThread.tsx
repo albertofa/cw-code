@@ -3,6 +3,7 @@ import { GitBranch, GitFork, History } from "lucide-react";
 import { useAppStore } from "../stores/appStore.js";
 import type { CreateSessionOptions, CreateWorkspaceMode, DriverName, GitBranchInfo } from "../cw.js";
 import { worktreeCandidates } from "./worktreeCandidates.js";
+import { shortenHome } from "./pathDisplay.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { ComposerView, type ComposerBackend } from "./ComposerView.js";
 import { MenuSelect } from "./MenuSelect.js";
@@ -28,6 +29,7 @@ export function NewThread({
   const prefs = useAppStore((s) => s.pendingPrefs);
   const modelsRefreshKey = useAppStore((s) => s.settingsVersion);
   const workspace = useAppStore((s) => s.pendingWorkspace);
+  const homeDir = useAppStore((s) => s.homeDir);
   const [branches, setBranches] = useState<GitBranchInfo[]>([]);
   const [branchError, setBranchError] = useState("");
 
@@ -162,7 +164,7 @@ export function NewThread({
       options={candidates.map((c) => ({
         id: c.sessionId,
         label: c.title,
-        hint: c.worktreePath,
+        hint: shortenHome(c.worktreePath, homeDir ?? undefined),
         description: c.branch ?? undefined
       }))}
       onPick={(sessionId) => {
