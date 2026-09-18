@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   ArrowRight,
   AtSign,
@@ -133,6 +133,32 @@ export function ComposerView({
   const [showCustom, setShowCustom] = useState(false);
   const [sending, setSending] = useState(false);
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
+
+  const autosizeComposer = () => {
+    const el = composerRef.current;
+    if (!el) return;
+    let lineHeight = 22.5;
+    try {
+      const parsed = Number.parseFloat(window.getComputedStyle(el).lineHeight);
+      if (Number.isFinite(parsed) && parsed > 0) lineHeight = parsed;
+    } catch {
+    }
+    const max = Math.round(lineHeight * 8);
+    el.style.height = "auto";
+    const next = Math.min(el.scrollHeight, max);
+    el.style.height = `${next}px`;
+    el.style.overflowY = el.scrollHeight > max ? "auto" : "hidden";
+  };
+
+  useLayoutEffect(() => {
+    autosizeComposer();
+  }, [draft, resetKey]);
+
+  useEffect(() => {
+    const onResize = () => autosizeComposer();
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
 
   useEffect(() => {
     if (backendRef.current.busy) return;

@@ -1,6 +1,7 @@
-import { useEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { Bot, Code, Columns2, Eye, Folder, GitBranch, Orbit, PanelRightClose, PanelRightOpen, Sparkles, Terminal, type LucideIcon } from "lucide-react";
 import type { DriverName } from "./cw.js";
+import { collectSubagents } from "./components/subagents.js";
 import { Sidebar } from "./components/Sidebar.js";
 import { SkillsModal } from "./components/SkillsModal.js";
 import { TitleBar } from "./components/TitleBar.js";
@@ -333,6 +334,16 @@ export function App() {
     return () => window.removeEventListener("cw:open-agents", onOpenAgents);
   }, []);
 
+  const messagesBySession = useAppStore((s) => s.messagesBySession);
+  const subagentStats = useMemo(() => {
+    const messages = activeSessionId ? (messagesBySession[activeSessionId] ?? []) : [];
+    const items = collectSubagents(messages);
+    return {
+      total: items.length,
+      running: items.filter((item) => item.status === "running").length,
+    };
+  }, [messagesBySession, activeSessionId]);
+
   const allSessions = Object.values(sessionsByProject).flat();
   const driver = pendingDriver ?? allSessions.find((s) => s.id === activeSessionId)?.driver;
 
@@ -395,18 +406,34 @@ export function App() {
                 title="Drag to resize · double-click to reset"
               />
               <div className="tabbar">
-                {visibleTabs.map((t) => (
-                  <button
-                    key={t.id}
-                    onClick={() => setRightTab(t.id)}
-                    className={`tab${activeTab === t.id ? " active" : ""}`}
-                    title={t.title}
-                    aria-label={t.title}
-                  >
-                    <t.Icon size={15} className={t.driver ? `driver-icon ${t.driver}` : undefined} />
-                    {activeTab === t.id && <span className="tab-label">{t.title}</span>}
-                  </button>
-                ))}
+                {visibleTabs.map((t) => {
+                  const isAgents = t.id === "agents";
+                  const showBadge = isAgents && subagentStats.total > 0;
+                  const badgeTitle = isAgents
+                    ? `${subagentStats.total} subagent${subagentStats.total === 1 ? "" : "s"}${subagentStats.running > 0 ? ` (${subagentStats.running} running)` : ""}`
+                    : undefined;
+                  return (
+                    <button
+                      key={t.id}
+                      onClick={() => setRightTab(t.id)}
+                      className={`tab${activeTab === t.id ? " active" : ""}`}
+                      title={isAgents && showBadge ? `${t.title} · ${badgeTitle}` : t.title}
+                      aria-label={isAgents && showBadge ? `${t.title}, ${badgeTitle}` : t.title}
+                    >
+                      <t.Icon size={15} className={t.driver ? `driver-icon ${t.driver}` : undefined} />
+                      {activeTab === t.id && <span className="tab-label">{t.title}</span>}
+                      {showBadge && (
+                        <span
+                          className={`tab-badge${subagentStats.running > 0 ? " running" : ""}`}
+                          title={badgeTitle}
+                          aria-hidden="true"
+                        >
+                          {subagentStats.total > 99 ? "99+" : subagentStats.total}
+                        </span>
+                      )}
+                    </button>
+                  );
+                })}
                 {preview && (
                   <button
                     onClick={() => setRightTab("preview")}
