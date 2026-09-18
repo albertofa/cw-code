@@ -5,6 +5,7 @@ import { useAppStore } from "../stores/appStore.js";
 import { useNotifs } from "./Notifications.js";
 import { MenuSelect } from "./MenuSelect.js";
 import { GitHubMark } from "./GitHubMark.js";
+import { shortenHome } from "./pathDisplay.js";
 
 export function GitPanelBar({ sessionId, compact = false }: { sessionId: string; compact?: boolean }) {
   const [branches, setBranches] = useState<GitBranchInfo[]>([]);
@@ -15,6 +16,8 @@ export function GitPanelBar({ sessionId, compact = false }: { sessionId: string;
   const closeTimer = useRef<number | null>(null);
   const refreshGitStatus = useAppStore((state) => state.refreshGitStatus);
   const status = useAppStore((state) => state.gitStatusBySession[sessionId] ?? null);
+  const homeDir = useAppStore((state) => state.homeDir);
+  const shortPath = (value: string): string => shortenHome(value, homeDir ?? undefined);
 
   useEffect(() => () => {
     if (closeTimer.current) window.clearTimeout(closeTimer.current);
@@ -133,7 +136,7 @@ export function GitPanelBar({ sessionId, compact = false }: { sessionId: string;
             icon={<GitBranch size={13} aria-hidden="true" />}
             options={branches.map((item) => ({
               id: item.name, label: item.label, hint: item.name,
-              description: item.worktreePath && !item.current ? `Checked out at ${item.worktreePath}` : item.remote ? "Remote branch" : undefined,
+              description: item.worktreePath && !item.current ? `Checked out at ${shortPath(item.worktreePath)}` : item.remote ? "Remote branch" : undefined,
               disabled: Boolean(item.worktreePath && !item.current), icon: <GitBranch size={13} />
             }))}
             onPick={switchBranch}
@@ -181,7 +184,7 @@ export function GitPanelBar({ sessionId, compact = false }: { sessionId: string;
           </div>
           <div className="session-hovercard-row">
             <GitBranch size={13} aria-hidden="true" />
-            <span className="hovercard-text">{status.worktreePath}</span>
+            <span className="hovercard-text" title={status.worktreePath}>{shortPath(status.worktreePath)}</span>
           </div>
           <button
             className="session-hovercard-action"

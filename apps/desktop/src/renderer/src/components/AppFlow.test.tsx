@@ -52,6 +52,7 @@ function installBridge(): void {
     getComposer: async () => delayed({}, 400),
     setComposer: async (_id: string, prefs: unknown) => delayed(prefs, 200),
     getSettings: async () => ({ sourceControlRefreshIntervalSeconds: 30, defaultUseWorktree: true }),
+    getHomeDir: async () => "C:\\Users\\test",
     getGitStatus: async () => {
       throw new Error("no git");
     },

@@ -371,6 +371,7 @@ export interface CwApi {
   openHarnessTrace(): Promise<{ ok: boolean; path?: string; error?: string }>;
   listProjects(): Promise<Project[]>;
   addProject(rootPath: string): Promise<Project>;
+  getHomeDir(): Promise<string>;
   listSessions(projectId: string): Promise<Session[]>;
   listDiscovered(projectId: string): Promise<Session[]>;
   importSession(projectId: string, driver: DriverName, resumeCursor: string, title: string): Promise<Session>;

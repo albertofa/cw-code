@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { ComposerPrefs, DriverKind, Project, SessionMeta } from "@cw-code/contracts";
+import { expandHome } from "../skills/skillPaths.js";
 
 interface StoreShape {
   projects: Project[];
@@ -73,7 +74,11 @@ export class SessionStore {
   }
 
   addProject(rootPath: string): Project {
-    const normalized = normalizeRoot(rootPath);
+    const trimmed = rootPath.trim();
+    const expanded = trimmed === "~" || trimmed.startsWith("~/") || trimmed.startsWith("~\\")
+      ? expandHome(trimmed)
+      : trimmed;
+    const normalized = normalizeRoot(expanded);
     const existing = this.data.projects.find((p) => p.rootPath === normalized);
     if (existing) return existing;
     const project: Project = {

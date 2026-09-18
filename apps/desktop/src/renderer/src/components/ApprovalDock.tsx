@@ -2,9 +2,12 @@ import { useState } from "react";
 import { Check, ShieldAlert } from "lucide-react";
 import type { ApprovalDecision, ApprovalRequest } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
+import { shortenHome } from "./pathDisplay.js";
 
 function ApprovalPanel({ request, position, total }: { request: ApprovalRequest; position: number; total: number }) {
   const respond = useAppStore((s) => s.respondApproval);
+  const homeDir = useAppStore((s) => s.homeDir);
+  const shortCwd = request.cwd ? shortenHome(request.cwd, homeDir ?? undefined) : "";
   const [chosen, setChosen] = useState<ApprovalDecision | null>(null);
 
   const act = (decision: ApprovalDecision) => {
@@ -26,12 +29,12 @@ function ApprovalPanel({ request, position, total }: { request: ApprovalRequest;
       <div className="approval-panel-body">
         <div className="approval-title">{request.title}</div>
         {request.toolName ? (
-          <div className="approval-meta">
+          <div className="approval-meta" title={request.cwd ?? undefined}>
             {request.toolName}
-            {request.cwd ? ` · ${request.cwd}` : ""}
+            {request.cwd ? ` · ${shortCwd}` : ""}
           </div>
         ) : request.cwd ? (
-          <div className="approval-meta">{request.cwd}</div>
+          <div className="approval-meta" title={request.cwd}>{shortCwd}</div>
         ) : null}
         {request.permission ? <div className="approval-meta">{request.permission}</div> : null}
         {request.reason && <div className="approval-reason">{request.reason}</div>}
