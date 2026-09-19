@@ -1,6 +1,6 @@
 ﻿import { randomUUID } from "node:crypto";
 import type { AppSettings, ApprovalDecision, CliDriver, HistoryMessage, PermissionMode, PermissionOption, QuestionInfo, QuestionRequest, RetryConnectionRequest, RetryConnectionResult, SessionMeta, ThreadEvent, TurnHandle, TurnRequest } from "@cw-code/contracts";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { opencodeConfigDir } from "../../paths/appPaths.js";
 import {
   questionRequestOf,
@@ -930,18 +930,20 @@ export class OpencodeDriver implements CliDriver {
 
     const files: Array<{ mime: string; url: string }> = [];
     for (const rel of request.attachments ?? []) {
-      try {
-        assertInside(request.cwd, rel);
-      } catch {
-        console.warn(`attachment escapes project root, skipped: ${rel}`);
-        continue;
+      if (!isAbsolute(rel)) {
+        try {
+          assertInside(request.cwd, rel);
+        } catch {
+          console.warn(`attachment escapes project root, skipped: ${rel}`);
+          continue;
+        }
       }
       const mime = mimeForOpencodeAttachment(rel);
       if (!mime) {
         console.warn(`attachment type unsupported, skipped: ${rel}`);
         continue;
       }
-      files.push({ mime, url: join(request.cwd, rel) });
+      files.push({ mime, url: isAbsolute(rel) ? rel : join(request.cwd, rel) });
     }
     const controller = new AbortController();
     this.sends.set(turnId, controller);

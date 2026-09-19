@@ -1,7 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, shell, type WebContents } from "electron";
-import { appendFileSync, existsSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
@@ -18,14 +18,14 @@ import { checkCliVersion, checkCliVersions, type CliVersionCheck } from "./cliVe
 import { discoverBinaries, verifyBinaryPath } from "./cli/binaryDiscovery.js";
 import { getHarnessTracePath, initHarnessTrace } from "./debug/harnessTrace.js";
 import { appendCrashLog, initCrashLog } from "./debug/crashLog.js";
-import { ensureAppDirs, logsDir, migrateFromUserData } from "./paths/appPaths.js";
+import { ensureAppDirs, attachmentsDir, logsDir, migrateFromUserData } from "./paths/appPaths.js";
 import { reapOrphanedServers } from "./orphanServers.js";
 import type { ApprovalDecision, CliBinary, CreateSessionOptions, GitDiffMode, SessionStatus, SettingsPatch } from "@cw-code/contracts";
 import type { DriverKind, HarnessId, SkillSaveInput } from "@cw-code/contracts";
 import type { PtyKind } from "./pty/PtyPool.js";
 import { SessionManager } from "./sessions/SessionManager.js";
 import { SkillsStore } from "./skills/SkillsStore.js";
-import { FileService } from "./fs/FileService.js";
+import { FileService, IMAGE_MAX_BYTES, imageExtMime } from "./fs/FileService.js";
 import { GitService } from "./fs/GitService.js";
 import { PtyPool } from "./pty/PtyPool.js";
 import { readWindowsTerminalFontFace } from "./pty/terminalFont.js";
@@ -96,6 +96,19 @@ function bumpZoom(sender: WebContents, delta: number): void {
   if (!w) return;
   const next = Math.min(ZOOM_MAX, Math.max(ZOOM_MIN, w.webContents.getZoomLevel() + delta));
   w.webContents.setZoomLevel(next);
+}
+
+function isInsideAttachmentsDir(target: string): boolean {
+  let base = resolve(attachmentsDir());
+  let abs = resolve(target);
+  if (process.platform === "win32") {
+    base = base.toLowerCase();
+    abs = abs.toLowerCase();
+  }
+  const rel = relative(base, abs);
+  if (rel === "" || rel === ".") return true;
+  if (rel === ".." || rel.startsWith(`..${sep}`) || isAbsolute(rel)) return false;
+  return true;
 }
 
 function registerIpc(): void {
@@ -318,6 +331,15 @@ function registerIpc(): void {
   ipcMain.handle(
     "fs.readImage",
     async (_e, args: { sessionId?: string; projectId?: string; path: string }) => {
+      if (typeof args.path === "string" && isAbsolute(args.path) && isInsideAttachmentsDir(args.path)) {
+        const ext = args.path.split(".").pop() ?? "";
+        const mime = imageExtMime(ext);
+        if (!mime) throw new Error(`not an image: ${args.path}`);
+        const status = statSync(args.path);
+        if (!status.isFile()) throw new Error(`not a file: ${args.path}`);
+        if (status.size > IMAGE_MAX_BYTES) throw new Error(`image too large to preview: ${args.path}`);
+        return { mime, base64: readFileSync(args.path).toString("base64") };
+      }
       const roots: string[] = [];
       if (args.sessionId) {
         try {

@@ -42,6 +42,19 @@ describe("buildClaudeUserContent", () => {
     expect(out.map((b) => b.source?.media_type)).toEqual([undefined, "image/jpeg", "image/webp", "image/gif", "image/jpeg"]);
   });
 
+  it("reads absolute image paths directly", () => {
+    const outside = mkdtempSync(join(tmpdir(), "cuc-abs-"));
+    const abs = join(outside, "pic.png");
+    const bytes = Buffer.from([7, 8, 9]);
+    writeFileSync(abs, bytes);
+    const out = buildClaudeUserContent(dir ?? mkdtempSync(join(tmpdir(), "cuc-")), "look", [abs]) as unknown[];
+    expect(out).toHaveLength(2);
+    expect(out[1]).toEqual({
+      type: "image",
+      source: { type: "base64", media_type: "image/png", data: bytes.toString("base64") }
+    });
+  });
+
   it("skips missing files with a warning", () => {
     dir = mkdtempSync(join(tmpdir(), "cuc-"));
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
