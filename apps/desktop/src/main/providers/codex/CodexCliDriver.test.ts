@@ -1,4 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { AppSettings, ThreadEvent } from "@cw-code/contracts";
 import type { CodexAppServerLike } from "./codexAppServer.js";
 import { CodexCliDriver } from "./CodexCliDriver.js";
@@ -665,6 +668,25 @@ describe("CodexCliDriver", () => {
     driver.startTurn({ sessionId: "s3", cwd: "C:\\w3", prompt: "c", env: { CW_SESSION_ID: "s3" } });
     await settle();
     expect(shared.spawnEnvs).toEqual([{ CW_SESSION_ID: "s1" }, { CW_SESSION_ID: "s3" }]);
+    driver.dispose();
+  });
+
+  it("passes existing absolute attachments through and drops escapes", async () => {
+    const { driver } = makeDriver(client);
+    const outside = mkdtempSync(join(tmpdir(), "cw-codex-outside-"));
+    const abs = join(outside, "paste.png");
+    writeFileSync(abs, "x", "utf8");
+    driver.startTurn({
+      sessionId: "local-1",
+      prompt: "look",
+      cwd: "C:\\proj",
+      attachments: [abs, join("..", "secret.png")]
+    });
+    await settle();
+    const turn = client.requests.find((r) => r.method === "turn/start");
+    const input = (turn?.params as { input?: Array<{ type: string; path?: string }> } | undefined)?.input ?? [];
+    expect(input).toContainEqual({ type: "localImage", path: abs });
+    expect(input.some((entry) => entry.path === join("..", "secret.png"))).toBe(false);
     driver.dispose();
   });
 });

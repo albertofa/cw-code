@@ -1,4 +1,6 @@
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
+import { isAbsolute } from "node:path";
 import type {
   AppSettings,
   ApprovalDecision,
@@ -301,6 +303,11 @@ export class CodexCliDriver implements CliDriver {
           }
         : null;
       const attachments = (request.attachments ?? []).filter((rel) => {
+        if (isAbsolute(rel)) {
+          if (existsSync(rel)) return true;
+          console.warn(`attachment escapes project root, skipped: ${rel}`);
+          return false;
+        }
         try {
           assertInside(request.cwd, rel);
           return true;

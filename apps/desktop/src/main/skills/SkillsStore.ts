@@ -1,4 +1,3 @@
-import { app } from "electron";
 import {
   cpSync,
   existsSync,
@@ -33,6 +32,7 @@ import {
   resolveSkillDir,
   skillFileForDir
 } from "./skillPaths.js";
+import { userdataDir } from "../paths/appPaths.js";
 
 export interface SkillsStoreOptions {
   userDataDir?: string;
@@ -84,7 +84,7 @@ export class SkillsStore {
   private initialized = false;
 
   constructor(opts: SkillsStoreOptions = {}) {
-    this.userDataDir = normalizeStoredDir(opts.userDataDir ?? app.getPath("userData"));
+    this.userDataDir = normalizeStoredDir(opts.userDataDir ?? userdataDir());
     this.homeDir = normalizeStoredDir(opts.homeDir ?? defaultHomeDir());
     this.metadataPath = join(this.userDataDir, "skills.json");
     mkdirSync(dirname(this.metadataPath), { recursive: true });

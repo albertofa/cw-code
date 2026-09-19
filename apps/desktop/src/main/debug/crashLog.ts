@@ -3,8 +3,8 @@ import { join } from "node:path";
 
 let logPath: string | null = null;
 
-export function initCrashLog(userDataDir: string): string {
-  logPath = join(userDataDir, "crash.log");
+export function initCrashLog(logDir: string): string {
+  logPath = join(logDir, "crash.log");
   return logPath;
 }
 

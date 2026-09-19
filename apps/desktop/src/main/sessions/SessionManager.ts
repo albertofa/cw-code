@@ -1,4 +1,3 @@
-import { app } from "electron";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { isAbsolute, join, relative, resolve } from "node:path";
@@ -38,6 +37,7 @@ import { resolveAttachments } from "./attachments.js";
 import { AUTO_TITLE_TIMEOUT_MS, buildTitlePrompt, sanitizeGeneratedTitle } from "./autoTitle.js";
 import { branchNameForTitle, TEMP_BRANCH_PATTERN } from "./branchName.js";
 import { NEW_SESSION_TITLE, pickRestoreCandidate } from "./sessionRestore.js";
+import { opencodeServerDir, titleGenDir, userdataDir, worktreesDir } from "../paths/appPaths.js";
 
 export interface SessionManagerOptions {
   dbPath?: string;
@@ -87,14 +87,14 @@ export class SessionManager {
   private disposed = false;
 
   constructor(opts: SessionManagerOptions = {}) {
-    const dbPath = opts.dbPath ?? join(app.getPath("userData"), "cw-code.db");
+    const dbPath = opts.dbPath ?? join(userdataDir(), "cw-code.db");
     this.store = new SessionStore(dbPath);
-    const settingsPath = opts.settingsPath ?? join(app.getPath("userData"), "cw-settings.json");
+    const settingsPath = opts.settingsPath ?? join(userdataDir(), "cw-settings.json");
     this.settings = new SettingsStore(settingsPath);
     this.onEvent = opts.onEvent ?? (() => {});
     this.onTitle = opts.onTitle ?? (() => {});
     this.git = opts.gitService ?? new GitService(() => this.settings.get());
-    this.worktreesRoot = opts.worktreesRoot ?? join(app.getPath("userData"), "worktrees");
+    this.worktreesRoot = opts.worktreesRoot ?? worktreesDir();
     const getSettings = (): AppSettings => this.settings.get();
     this.drivers = {
       claude: opts.drivers?.claude ?? new TracingCliDriver(new ClaudeCliDriver((e) => this.routeEvent(e), getSettings)),
@@ -102,7 +102,7 @@ export class SessionManager {
         opts.drivers?.opencode ??
         new TracingCliDriver(
           new OpencodeDriver((e) => this.routeEvent(e), getSettings, undefined, {
-            sharedRoot: join(app.getPath("userData"), "cw-opencode-server")
+            sharedRoot: opencodeServerDir()
           })
         ),
       codex: opts.drivers?.codex ?? new TracingCliDriver(new CodexCliDriver((e) => this.routeEvent(e), getSettings))
@@ -911,7 +911,7 @@ export class SessionManager {
   }
 
   private titleGenRoot(): string {
-    const dir = join(app.getPath("userData"), "title-gen");
+    const dir = titleGenDir();
     mkdirSync(dir, { recursive: true });
     return dir;
   }

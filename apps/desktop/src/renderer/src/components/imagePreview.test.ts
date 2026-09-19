@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { splitImageMentions } from "./imagePreview.js";
+import { displayImagePath, splitImageMentions } from "./imagePreview.js";
 
 describe("splitImageMentions", () => {
   it("returns a single text segment when there are no image mentions", () => {
@@ -29,5 +29,32 @@ describe("splitImageMentions", () => {
     expect(splitImageMentions("see @shot.png below")).toEqual([
       { kind: "text", value: "see @shot.png below" }
     ]);
+  });
+
+  it("splits absolute central attachment mention lines into image segments", () => {
+    const segments = splitImageMentions(
+      "look\n@/home/tester/.cw-code/userdata/attachments/cw-paste-x.png\n@C:\\Users\\tester\\.cw-code\\userdata\\attachments\\cw-paste-y.png"
+    );
+    expect(segments).toEqual([
+      { kind: "text", value: "look" },
+      { kind: "image", path: "/home/tester/.cw-code/userdata/attachments/cw-paste-x.png" },
+      { kind: "image", path: "C:\\Users\\tester\\.cw-code\\userdata\\attachments\\cw-paste-y.png" }
+    ]);
+  });
+});
+
+describe("displayImagePath", () => {
+  it("shortens paths inside the home dir", () => {
+    expect(displayImagePath("/home/tester/.cw-code/userdata/attachments/a.png", "/home/tester")).toBe(
+      "~/.cw-code/userdata/attachments/a.png"
+    );
+    expect(
+      displayImagePath("C:\\Users\\tester\\.cw-code\\userdata\\attachments\\a.png", "C:\\Users\\tester")
+    ).toBe("~/.cw-code/userdata/attachments/a.png");
+  });
+
+  it("leaves other paths and missing home dirs unchanged", () => {
+    expect(displayImagePath("/other/place/a.png", "/home/tester")).toBe("/other/place/a.png");
+    expect(displayImagePath("/home/tester/a.png")).toBe("/home/tester/a.png");
   });
 });

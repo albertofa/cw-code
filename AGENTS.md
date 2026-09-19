@@ -26,7 +26,9 @@ Core behaviors:
   `packages/contracts` (shared types only, no runtime logic).
 - Main/preload/renderer communicate exclusively through the typed preload bridge;
   the renderer never spawns processes or touches the filesystem.
-- Session metadata persists as atomic JSON in the Electron userData directory.
+- Session metadata persists as atomic JSON under `~/.cw-code/userdata`.
+  Logs live in `~/.cw-code/logs`, paste/preview attachments in
+  `~/.cw-code/userdata/attachments`, worktrees in `~/.cw-code/worktrees`.
 - Tests run on vitest; builds via electron-vite and electron-builder (Windows NSIS).
 
 ## Guidelines

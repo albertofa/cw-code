@@ -72,8 +72,10 @@ pnpm --filter @cw-code/desktop exec electron-rebuild -f -w node-pty
   orchestration.
 - The renderer communicates with the main process only through the typed
   preload bridge.
-- App-owned session metadata is stored as atomic JSON in Electron's `userData`
-  directory. CLI-native transcripts are read only for best-effort history.
+- App-owned files live under `~/.cw-code`: session metadata as atomic JSON
+  in `userdata/`, paste/preview attachments in `userdata/attachments/`,
+  logs in `logs/`, worktrees in `worktrees/`.
+  CLI-native transcripts are read only for best-effort history.
 
 Claude turns use the CLI's stream JSON output. OpenCode runs a managed server
 per project root and attaches turns to it. Codex uses its app-server protocol.

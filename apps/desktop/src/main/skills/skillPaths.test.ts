@@ -104,7 +104,7 @@ describe("resolveSkillDir", () => {
     expect(() => assertValidSkillName("")).toThrow(/invalid skill name/);
   });
 
-  it("keeps canonical dirs sandboxed under userData", () => {
+  it("keeps canonical dirs sandboxed under the app userdata dir", () => {
     const root = process.platform === "win32" ? "C:\\data" : "/data";
     expect(canonicalSkillDir(root, "my-skill")).toBe(join(root, "skills", "my-skill"));
     expect(() => canonicalSkillDir(root, "..")).toThrow(/invalid skill name/);
