@@ -1,6 +1,6 @@
 import { app, BrowserWindow, dialog, ipcMain, shell, type WebContents } from "electron";
-import { appendFileSync, existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -450,7 +450,9 @@ function registerIpc(): void {
 
   ipcMain.handle("shell.openHtml", (_e, args: { name: string; html: string }): Promise<void> => {
     const safe = args.name.replace(/[^a-zA-Z0-9._-]+/g, "_").slice(0, 80) || "preview";
-    const file = join(tmpdir(), `cw-preview-${safe}.html`);
+    const dir = attachmentsDir();
+    mkdirSync(dir, { recursive: true });
+    const file = join(dir, `cw-preview-${safe}.html`);
     writeFileSync(file, args.html, "utf8");
     return shell.openExternal(pathToFileURL(file).href).then(() => undefined);
   });
