@@ -5688,6 +5688,14 @@ button.gitbar-pr:hover {
   color: var(--success);
 }
 
+.gitbar-base-ahead {
+  white-space: nowrap;
+}
+
+.thread-head > .gitbar.gitbar-compact .gitbar-base-ahead {
+  display: inline-flex;
+}
+
 .gitbar-behind {
   display: inline-flex;
   align-items: center;

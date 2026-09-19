@@ -25,11 +25,26 @@ function baseName(path: string): string {
   return index >= 0 ? path.slice(index + 1) : path;
 }
 
+export interface DiffStatusSummary {
+  baseAhead?: number | null;
+  stagedCount?: number | null;
+}
+
+export function resolveInitialDiffMode(status: DiffStatusSummary | null | undefined): GitDiffMode {
+  if ((status?.baseAhead ?? 0) > 0) return "branch";
+  if ((status?.stagedCount ?? 0) > 0) return "staged";
+  return "working";
+}
+
 export function GitInspectPanel({ sessionId }: { sessionId: string }) {
   const [mode, setMode] = useState<GitDiffMode>("working");
+  const [userPicked, setUserPicked] = useState(false);
+  const [autoApplied, setAutoApplied] = useState(false);
   const [branches, setBranches] = useState<GitBranchInfo[]>([]);
   const [baseRef, setBaseRef] = useState<string>();
   const homeDir = useAppStore((s) => s.homeDir);
+  const status = useAppStore((s) => s.gitStatusBySession[sessionId] ?? null);
+  const refreshGitStatus = useAppStore((s) => s.refreshGitStatus);
   const [result, setResult] = useState<GitDiffResult | null>(null);
   const [selectedPath, setSelectedPath] = useState<string | null>(null);
   const [error, setError] = useState("");
@@ -37,20 +52,37 @@ export function GitInspectPanel({ sessionId }: { sessionId: string }) {
 
   useEffect(() => {
     let active = true;
+    setMode("working");
+    setUserPicked(false);
+    setAutoApplied(false);
     setBaseRef(undefined);
+    setBranches([]);
+    void refreshGitStatus(sessionId);
     window.cw.listGitBranches(sessionId).then((items) => {
       if (!active) return;
       setBranches(items);
       const current = items.find((item) => item.current);
       const preferred = items.find((item) => ["main", "master", "origin/main", "origin/master"].includes(item.name) && !item.current)
         ?? items.find((item) => !item.current);
-      if (!baseRef && preferred) setBaseRef(preferred.name);
-      if (!preferred && current) setBaseRef(current.name);
+      setBaseRef((prev) => {
+        if (prev) return prev;
+        if (preferred) return preferred.name;
+        if (current) return current.name;
+        return prev;
+      });
     }).catch((reason: Error) => {
       if (active) setError(reason.message);
     });
     return () => { active = false; };
-  }, [sessionId]);
+  }, [sessionId, refreshGitStatus]);
+
+  useEffect(() => {
+    if (userPicked || autoApplied || !status) return;
+    const next = resolveInitialDiffMode(status);
+    if (next !== "working") setMode(next);
+    if (status.baseRef) setBaseRef((prev) => prev ?? status.baseRef ?? prev);
+    setAutoApplied(true);
+  }, [status, userPicked, autoApplied]);
 
   useEffect(() => {
     let active = true;
@@ -59,7 +91,7 @@ export function GitInspectPanel({ sessionId }: { sessionId: string }) {
     window.cw.getGitDiff(sessionId, mode, mode === "branch" ? baseRef : undefined).then((next) => {
       if (!active) return;
       setResult(next);
-      if (next.baseRef && !baseRef) setBaseRef(next.baseRef);
+      if (next.baseRef) setBaseRef((prev) => prev ?? next.baseRef ?? prev);
     }).catch((reason: Error) => {
       if (active) setError(reason.message);
     });
@@ -85,7 +117,11 @@ export function GitInspectPanel({ sessionId }: { sessionId: string }) {
             <button
               key={item}
               className={`inspect-mode${mode === item ? " active" : ""}`}
-              onClick={() => setMode(item)}
+              onClick={() => {
+                setUserPicked(true);
+                setAutoApplied(true);
+                setMode(item);
+              }}
               role="tab"
               aria-selected={mode === item}
             >
@@ -112,7 +148,11 @@ export function GitInspectPanel({ sessionId }: { sessionId: string }) {
               hint: branch.name,
               description: branch.remote ? "Remote branch" : branch.worktreePath ? `Worktree: ${shortenHome(branch.worktreePath, homeDir ?? undefined)}` : undefined
             }))}
-            onPick={setBaseRef}
+            onPick={(name) => {
+              setUserPicked(true);
+              setAutoApplied(true);
+              setBaseRef(name);
+            }}
             searchable
             searchPlaceholder="Filter branches…"
           />

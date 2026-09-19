@@ -113,6 +113,12 @@ export interface GitStatus {
   stagedCount: number;
   ahead: number;
   behind: number;
+  /** Reference branch used for branch comparison (e.g. main). Null when none is available. */
+  baseRef: string | null;
+  /** Commits on HEAD not reachable from baseRef. */
+  baseAhead: number;
+  /** Commits on baseRef not reachable from HEAD. */
+  baseBehind: number;
   isWorktree: boolean;
   worktreeName: string;
   worktreePath: string;

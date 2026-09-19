@@ -162,6 +162,14 @@ export function GitPanelBar({ sessionId, compact = false }: { sessionId: string;
         {!pullRequest && status.githubError && <span className="gitbar-github-error" title={status.githubError}>GitHub unavailable</span>}
         {status.ahead > 0 && <span className="gitbar-ahead" title="Commits ahead of upstream"><ArrowUp size={11} />{status.ahead}</span>}
         {status.behind > 0 && <span className="gitbar-behind" title="Commits behind upstream"><ArrowDown size={11} />{status.behind}</span>}
+        {(status.baseAhead ?? 0) > 0 && (
+          <span
+            className="gitbar-ahead gitbar-base-ahead"
+            title={`${status.baseAhead} ${status.baseAhead === 1 ? "commit" : "commits"} ahead of ${status.baseRef ?? "base branch"}`}
+          >
+            <GitFork size={11} />{status.baseAhead}
+          </span>
+        )}
         {error && <span className="gitbar-error" title={error}>Git error</span>}
         {(status.addedLines > 0 || status.deletedLines > 0) && (
           <span className="gitbar-lines" title={`${status.addedLines} added, ${status.deletedLines} deleted · ${status.dirtyCount} changed ${status.dirtyCount === 1 ? "file" : "files"}`}>
