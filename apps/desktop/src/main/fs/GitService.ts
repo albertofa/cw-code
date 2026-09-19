@@ -1043,6 +1043,36 @@ export class GitService {
     return value;
   }
 
+  private async baseComparison(root: string, branch: string): Promise<{ baseRef: string | null; baseAhead: number; baseBehind: number }> {
+    try {
+      const branches = await this.branches(root);
+      let base: string;
+      try {
+        base = await this.defaultBase(root, branch, branches);
+      } catch {
+        return { baseRef: null, baseAhead: 0, baseBehind: 0 };
+      }
+      try {
+        const output = (await this.git(root).raw(["rev-list", "--left-right", "--count", `${base}...HEAD`])).trim();
+        const parts = output.split(/\s+/);
+        if (parts.length >= 2) {
+          const behind = Number.parseInt(parts[0], 10);
+          const ahead = Number.parseInt(parts[1], 10);
+          return {
+            baseRef: base,
+            baseAhead: Number.isFinite(ahead) ? ahead : 0,
+            baseBehind: Number.isFinite(behind) ? behind : 0
+          };
+        }
+      } catch {
+        // Unborn HEAD or missing ref; report the base with zero counts.
+      }
+      return { baseRef: base, baseAhead: 0, baseBehind: 0 };
+    } catch {
+      return { baseRef: null, baseAhead: 0, baseBehind: 0 };
+    }
+  }
+
   private async computeStatus(root: string, project?: Project): Promise<GitStatus> {
     const fallback: GitStatus = {
       available: false,
@@ -1053,6 +1083,9 @@ export class GitService {
       stagedCount: 0,
       ahead: 0,
       behind: 0,
+      baseRef: null,
+      baseAhead: 0,
+      baseBehind: 0,
       isWorktree: false,
       worktreeName: worktreeNameFor(root),
       worktreePath: resolve(root),
@@ -1075,11 +1108,12 @@ export class GitService {
         this.githubContext(root, project),
         this.isLinkedWorktree(root)
       ]);
-      const [github, lineCounts] = await Promise.all([
+      const [github, lineCounts, base] = await Promise.all([
         context.remote && context.selection.account
           ? this.cachedPullRequest(root, branch, context.remote, context.selection.account)
           : Promise.resolve({ pullRequest: null, error: context.selection.error }),
-        this.lineCounts(root)
+        this.lineCounts(root),
+        this.baseComparison(root, branch)
       ]);
       const visibleFiles = summary.files.filter((file) => !isAppManagedPath(file.path));
       const dirtyCount = visibleFiles.length;
@@ -1093,6 +1127,9 @@ export class GitService {
         stagedCount,
         ahead: summary.ahead,
         behind: summary.behind,
+        baseRef: base.baseRef,
+        baseAhead: base.baseAhead,
+        baseBehind: base.baseBehind,
         isWorktree,
         worktreeName: basename(resolve(root)),
         worktreePath: resolve(root),

@@ -256,6 +256,9 @@ export interface GitStatus {
   stagedCount: number;
   ahead: number;
   behind: number;
+  baseRef: string | null;
+  baseAhead: number;
+  baseBehind: number;
   isWorktree: boolean;
   worktreeName: string;
   worktreePath: string;

@@ -257,6 +257,24 @@ describe("GitService worktrees", () => {
     expect(branches.find((branch) => branch.name === "cw/1234abcd")?.worktreePath).toBe(created.path.replace(/\\/g, "/"));
   });
 
+  it("reports commits ahead of the base branch in status", async () => {
+    const { sandbox, repository, service } = initSandbox();
+    const created = await service.createWorktree(repository, "project", "sess_baseahead1", join(sandbox, "worktrees"), "main");
+
+    const fresh = await service.status(created.path);
+    expect(fresh).toMatchObject({ available: true, baseRef: "main", baseAhead: 0, baseBehind: 0 });
+
+    writeFileSync(join(created.path, "feature.txt"), "work\n", "utf8");
+    execFileSync("git", ["-C", created.path, "add", "feature.txt"]);
+    execFileSync("git", ["-C", created.path, "-c", "user.name=cw-code", "-c", "user.email=test@cw-code.local", "commit", "-m", "feature work"]);
+    const afterCommit = await new GitService().status(created.path);
+    expect(afterCommit).toMatchObject({ available: true, baseRef: "main", baseAhead: 1, baseBehind: 0 });
+
+    const branchDiff = await service.diff(created.path, "branch", "main");
+    expect(branchDiff.baseRef).toBe("main");
+    expect(branchDiff.patch).toContain("feature.txt");
+  });
+
   it("removes a clean worktree and its empty session directory", async () => {
     const { sandbox, repository, service } = initSandbox();
     const worktreesRoot = join(sandbox, "worktrees");
