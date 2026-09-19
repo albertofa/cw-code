@@ -18,7 +18,8 @@ import { firstDisplayedModelId, getLastModel, setLastModel } from "./lastModel.j
 import { DriverIcon } from "./DriverIcon.js";
 import { MenuSelect, type MenuOption } from "./MenuSelect.js";
 import { ImageThumb } from "./ImageThumb.js";
-import type { ImageTarget } from "./imagePreview.js";
+import { displayImagePath, type ImageTarget } from "./imagePreview.js";
+import { useAppStore } from "../stores/appStore.js";
 
 export interface ComposerBackend {
   imageTarget: ImageTarget;
@@ -142,6 +143,8 @@ export function ComposerView({
   const [customModel, setCustomModel] = useState("");
   const [showCustom, setShowCustom] = useState(false);
   const [sending, setSending] = useState(false);
+  const homeDir = useAppStore((s) => s.homeDir);
+  const home = homeDir ?? undefined;
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
 
   const autosizeComposer = () => {
@@ -336,13 +339,13 @@ export function ComposerView({
       {attachments.length > 0 && (
         <div className="attach-chips">
           {attachments.map((a) => (
-            <span key={a} className="chip" title={a}>
+            <span key={a} className="chip" title={displayImagePath(a, home)}>
               {isImage(a) ? (
                 <ImageThumb target={imageTarget} path={a} className="chip-thumb" />
               ) : (
                 <>
                   <span aria-hidden>@</span>
-                  <span className="chip-name">{a}</span>
+                  <span className="chip-name">{displayImagePath(a, home)}</span>
                 </>
               )}
               <button

@@ -335,10 +335,19 @@ function registerIpc(): void {
         const ext = args.path.split(".").pop() ?? "";
         const mime = imageExtMime(ext);
         if (!mime) throw new Error(`not an image: ${args.path}`);
-        const status = statSync(args.path);
+        let status: ReturnType<typeof statSync>;
+        try {
+          status = statSync(args.path);
+        } catch {
+          throw new Error(`file not found: ${args.path}`);
+        }
         if (!status.isFile()) throw new Error(`not a file: ${args.path}`);
         if (status.size > IMAGE_MAX_BYTES) throw new Error(`image too large to preview: ${args.path}`);
-        return { mime, base64: readFileSync(args.path).toString("base64") };
+        try {
+          return { mime, base64: readFileSync(args.path).toString("base64") };
+        } catch {
+          throw new Error(`file not found: ${args.path}`);
+        }
       }
       const roots: string[] = [];
       if (args.sessionId) {
