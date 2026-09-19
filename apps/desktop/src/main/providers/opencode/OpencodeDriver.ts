@@ -1,7 +1,7 @@
 ﻿import { randomUUID } from "node:crypto";
 import type { AppSettings, ApprovalDecision, CliDriver, HistoryMessage, PermissionMode, PermissionOption, QuestionInfo, QuestionRequest, RetryConnectionRequest, RetryConnectionResult, SessionMeta, ThreadEvent, TurnHandle, TurnRequest } from "@cw-code/contracts";
-import { app } from "electron";
 import { join } from "node:path";
+import { opencodeConfigDir } from "../../paths/appPaths.js";
 import {
   questionRequestOf,
   opencodeReplyPayload,
@@ -133,7 +133,7 @@ export class OpencodeDriver implements CliDriver {
       const port = await bridge.start();
       this.bridge = bridge;
       this.bridgeEndpoint = `http://127.0.0.1:${port}/ask`;
-      const dir = join(app.getPath("userData"), "cw-opencode");
+      const dir = opencodeConfigDir();
       try {
         await writeAskBridgeTool(dir, this.bridgeEndpoint);
       } catch (err) {
@@ -188,7 +188,7 @@ export class OpencodeDriver implements CliDriver {
   }
 
   private async bridgeEnvVars(): Promise<Record<string, string>> {
-    const dir = join(app.getPath("userData"), "cw-opencode");
+    const dir = opencodeConfigDir();
     await writeAskBridgeTool(dir, await this.bridgeUrl());
     return { OPENCODE_CONFIG_DIR: dir };
   }

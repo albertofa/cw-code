@@ -1,6 +1,7 @@
 import { appendFileSync, mkdirSync, renameSync, rmSync, statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { DriverKind } from "@cw-code/contracts";
+import { logsDir } from "../paths/appPaths.js";
 
 export type HarnessKind = DriverKind | "system";
 
@@ -33,9 +34,8 @@ let traceFilePath: string | null = null;
 let nextSeq = 0;
 let maxBytes = DEFAULT_MAX_BYTES;
 
-export function initHarnessTrace(opts?: { filePath?: string; userDataDir?: string; maxBytes?: number }): string {
-  const filePath = opts?.filePath ?? (opts?.userDataDir ? join(opts.userDataDir, "harness-trace.jsonl") : null);
-  if (!filePath) throw new Error("initHarnessTrace requires filePath or userDataDir");
+export function initHarnessTrace(opts?: { filePath?: string; userDataDir?: string; logDir?: string; maxBytes?: number }): string {
+  const filePath = opts?.filePath ?? join(opts?.logDir || opts?.userDataDir || logsDir(), "harness-trace.jsonl");
   if (opts?.maxBytes !== undefined) maxBytes = opts.maxBytes;
   traceFilePath = filePath;
   try {

@@ -18,6 +18,7 @@ import { checkCliVersion, checkCliVersions, type CliVersionCheck } from "./cliVe
 import { discoverBinaries, verifyBinaryPath } from "./cli/binaryDiscovery.js";
 import { getHarnessTracePath, initHarnessTrace } from "./debug/harnessTrace.js";
 import { appendCrashLog, initCrashLog } from "./debug/crashLog.js";
+import { ensureAppDirs, logsDir, migrateFromUserData } from "./paths/appPaths.js";
 import { reapOrphanedServers } from "./orphanServers.js";
 import type { ApprovalDecision, CliBinary, CreateSessionOptions, GitDiffMode, SessionStatus, SettingsPatch } from "@cw-code/contracts";
 import type { DriverKind, HarnessId, SkillSaveInput } from "@cw-code/contracts";
@@ -425,13 +426,15 @@ function registerIpc(): void {
 }
 
 app.whenReady().then(async () => {
+  ensureAppDirs();
+  migrateFromUserData(app.getPath("userData"));
   try {
-    const tracePath = initHarnessTrace({ userDataDir: app.getPath("userData") });
+    const tracePath = initHarnessTrace({ logDir: logsDir() });
     console.warn(`harness trace: ${tracePath}`);
   } catch (err) {
     console.warn(`harness trace init failed: ${(err as Error).message}`);
   }
-  initCrashLog(app.getPath("userData"));
+  initCrashLog(logsDir());
   process.on("uncaughtException", (err) => {
     appendCrashLog(`uncaughtException: ${err.stack ?? err.message}`);
   });
