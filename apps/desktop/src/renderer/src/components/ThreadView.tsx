@@ -16,6 +16,7 @@ import { QuestionDock } from "./QuestionDock.js";
 import { TodoDock } from "./TodoDock.js";
 import { TurnBlock } from "./TurnBlock.js";
 import { groupTurns, splitTurn, type ThreadNode } from "./turnGroups.js";
+import { pendingToolsForTurn } from "./toolSummaries.js";
 import { durationFromMessages } from "./turnFormat.js";
 import { projectAvatarStyle, projectInitials } from "./avatar.js";
 import { collectSubagents } from "./subagents.js";
@@ -64,6 +65,7 @@ export function ThreadView() {
           pieces: splitTurn(slice.messages, nestedIds, running),
           running,
           startedAt: running ? turnStartedAt : undefined,
+          pending: running ? pendingToolsForTurn(slice.messages, slice.turnId) : undefined,
           durationMs: known ?? durationFromMessages(slice.messages)
         };
       }),
@@ -301,6 +303,7 @@ export function ThreadView() {
               durationMs={turn.durationMs}
               hasActivity={turn.pieces.activity.length > 0}
               autoExpandIfFits={index === turns.length - 1}
+              pending={turn.pending}
               lead={turn.pieces.lead.map((m) => renderNode({ kind: "msg", msg: m }))}
               activity={turn.pieces.activity.map(renderNode)}
               system={turn.pieces.system.map((m) => renderNode({ kind: "msg", msg: m }))}

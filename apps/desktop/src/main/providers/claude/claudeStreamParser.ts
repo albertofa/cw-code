@@ -557,7 +557,7 @@ export function parseStreamLine(
   }
 
   if (msg.type === "result") {
-    if (msg.origin?.kind === "task-notification" && (msg.num_turns ?? 0) === 0) {
+    if (msg.origin?.kind === "task-notification") {
       onNotificationAck?.();
       return [];
     }

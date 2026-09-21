@@ -106,6 +106,21 @@ export function mergeClaudeAllowRule(existing: unknown, rule: string): Record<st
 
 export const CLAUDE_IDLE_EVICT_MS = 20 * 60_000;
 
+const CLAUDE_ANSI_RE = /\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g;
+const CLAUDE_EXIT_BOILERPLATE_RE =
+  /sandbox disabled|sandbox is (not active|enabled)|without sandboxing|restrictions will not be enforced/i;
+
+export function describeClaudeExit(stderr: string, code: number | null): string {
+  const cleaned = stderr
+    .replace(CLAUDE_ANSI_RE, "")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line && !CLAUDE_EXIT_BOILERPLATE_RE.test(line))
+    .join("\n");
+  if (cleaned) return cleaned.slice(0, 2000);
+  return `claude exited before completing the turn (code ${code})`;
+}
+
 export function subagentToolsResult(agent: SidecarAgent | undefined): SubagentToolsResult {
   if (!agent) return { items: [] };
   return {
@@ -386,10 +401,7 @@ export class ClaudeCliDriver implements CliDriver {
       stderrPreview: state.stderr ? truncateError(state.stderr) : undefined
     });
     if (!state.completedTurn && !state.errored) {
-      const message = state.stderr.trim()
-        ? state.stderr.slice(0, 2000)
-        : `claude exited before completing the turn (code ${code})`;
-      this.emit({ type: "turn.error", turnId, message });
+      this.emit({ type: "turn.error", turnId, message: describeClaudeExit(state.stderr, code) });
     }
     this.turnToSession.delete(turnId);
     this.interruptedTurns.delete(turnId);

@@ -3,7 +3,7 @@ import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { join } from "node:path";
 import type { AppSettings, ThreadEvent } from "@cw-code/contracts";
-import { buildClaudeArgs, CLAUDE_IDLE_EVICT_MS, ClaudeCliDriver, claudeSettingsPath, mapClaudeEffort, mapClaudePermission, mergeClaudeAllowRule, subagentToolsResult } from "./ClaudeCliDriver.js";
+import { buildClaudeArgs, CLAUDE_IDLE_EVICT_MS, ClaudeCliDriver, claudeSettingsPath, describeClaudeExit, mapClaudeEffort, mapClaudePermission, mergeClaudeAllowRule, subagentToolsResult } from "./ClaudeCliDriver.js";
 
 const SETTINGS: AppSettings = {
   claudeBinaryPath: "claude",
@@ -159,6 +159,21 @@ describe("mergeClaudeAllowRule", () => {
   });
 });
 
+describe("describeClaudeExit", () => {
+  it("strips sandbox boilerplate and ANSI escapes down to the generic message", () => {
+    expect(describeClaudeExit("\n\u001b[s\u001b[?25l Sandbox disabled: sandbox is enabled\n  Commands will run WITHOUT sandboxing.\n\n", 1)).toBe(
+      "claude exited before completing the turn (code 1)"
+    );
+    expect(describeClaudeExit("", null)).toBe("claude exited before completing the turn (code null)");
+  });
+
+  it("preserves real error lines mixed with boilerplate", () => {
+    expect(
+      describeClaudeExit("Sandbox disabled\nError: socket hang up\n  Commands will run WITHOUT sandboxing.", 1)
+    ).toBe("Error: socket hang up");
+  });
+});
+
 class FakeChild extends EventEmitter {
   readonly stdin = new PassThrough();
   readonly stdout = new PassThrough();
@@ -289,11 +304,11 @@ describe("ClaudeCliDriver persistent process", () => {
     driver.dispose();
   });
 
-  it("ignores task notification results with no turns", async () => {
+  it("ignores task notification results even when they report turns", async () => {
     const { driver, events, children, killed } = makeDriver();
     driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
     await settle();
-    children[0].stdout.write(`${resultLine({ origin: { kind: "task-notification" }, num_turns: 0 })}\n`);
+    children[0].stdout.write(`${resultLine({ origin: { kind: "task-notification" }, num_turns: 3 })}\n`);
     await settle();
     expect(events.filter((event) => event.type === "turn.done")).toEqual([]);
     expect(killed).toEqual([]);
@@ -356,7 +371,24 @@ describe("ClaudeCliDriver persistent process", () => {
     children[0].emit("close", 1);
     await settle();
     expect(events).toContainEqual(
-      expect.objectContaining({ type: "turn.error", turnId: handle.turnId, message: "Sandbox disabled" })
+      expect.objectContaining({
+        type: "turn.error",
+        turnId: handle.turnId,
+        message: "claude exited before completing the turn (code 1)"
+      })
+    );
+  });
+
+  it("keeps the real stderr when boilerplate is mixed in", async () => {
+    const { driver, events, children } = makeDriver();
+    const handle = driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
+    await settle();
+    children[0].stderr.write("Sandbox disabled: sandbox is enabled\nEPIPE: broken pipe\n");
+    await settle();
+    children[0].emit("close", 1);
+    await settle();
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: "turn.error", turnId: handle.turnId, message: "EPIPE: broken pipe" })
     );
   });
 
