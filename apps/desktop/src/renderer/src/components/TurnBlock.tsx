@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
-import { formatDuration } from "./toolSummaries.js";
+import { describeWaitingTools, formatDuration, type PendingTool } from "./toolSummaries.js";
 import { formatElapsed } from "./turnFormat.js";
 
 function useElapsed(startedAt: number | undefined, active: boolean): number {
@@ -21,6 +21,7 @@ export function TurnBlock({
   durationMs,
   hasActivity,
   autoExpandIfFits,
+  pending,
   lead,
   activity,
   system,
@@ -31,6 +32,7 @@ export function TurnBlock({
   durationMs?: number;
   hasActivity: boolean;
   autoExpandIfFits?: boolean;
+  pending?: PendingTool[];
   lead: ReactNode[];
   activity: ReactNode[];
   system: ReactNode[];
@@ -69,9 +71,10 @@ export function TurnBlock({
 
   const open = manualOpen ?? (running || measuring);
   const elapsed = useElapsed(startedAt, running);
+  const waiting = running ? describeWaitingTools(pending ?? [], Date.now(), startedAt) : undefined;
   const showHead = running || hasActivity || durationMs !== undefined;
   const label = running
-    ? `Working for ${formatElapsed(elapsed)}`
+    ? `Working for ${formatElapsed(elapsed)}${waiting ? ` · ${waiting}` : ""}`
     : durationMs !== undefined && durationMs > 0
       ? `Worked for ${formatDuration(durationMs)}`
       : "Worked";

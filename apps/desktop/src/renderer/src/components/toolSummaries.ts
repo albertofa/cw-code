@@ -507,6 +507,51 @@ export function isRunningTool(m: { toolInput?: unknown; toolOutput?: string; too
   return m.toolInput !== undefined && !done;
 }
 
+export interface PendingTool {
+  id: string;
+  name: string;
+  startedAt?: number;
+}
+
+type PendingToolMessage = {
+  id: string;
+  turnId?: string;
+  toolName?: string;
+  toolInput?: unknown;
+  toolOutput?: string;
+  toolDone?: boolean;
+  toolStartedAt?: number;
+  timestamp?: number;
+};
+
+export function pendingToolsForTurn(messages: PendingToolMessage[], turnId: string): PendingTool[] {
+  const out: PendingTool[] = [];
+  for (const m of messages) {
+    if (m.turnId !== undefined && m.turnId !== turnId) continue;
+    if (!isRunningTool(m)) continue;
+    const startedAt =
+      typeof m.toolStartedAt === "number"
+        ? m.toolStartedAt
+        : typeof m.timestamp === "number"
+          ? m.timestamp
+          : undefined;
+    out.push({ id: m.id, name: m.toolName ?? "tool", ...(startedAt !== undefined ? { startedAt } : {}) });
+  }
+  return out;
+}
+
+const WAITING_TOOL_MAX = 3;
+
+export function describeWaitingTools(tools: PendingTool[], now: number, fallbackStart?: number): string | undefined {
+  if (tools.length === 0) return undefined;
+  const parts = tools.slice(0, WAITING_TOOL_MAX).map((tool) => {
+    const start = tool.startedAt ?? fallbackStart;
+    return start === undefined ? tool.name : `${tool.name} (${formatDuration(Math.max(0, now - start))})`;
+  });
+  const extra = tools.length > WAITING_TOOL_MAX ? ` +${tools.length - WAITING_TOOL_MAX} more` : "";
+  return `waiting on ${parts.join(", ")}${extra}`;
+}
+
 function groupItemStatus(m: GroupableMessage): "error" | "running" | "complete" | "pending" {
   if (m.isError === true) return "error";
   if (isRunningTool(m)) return "running";
