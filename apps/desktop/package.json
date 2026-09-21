@@ -1,6 +1,6 @@
 {
   "name": "@cw-code/desktop",
-  "version": "0.0.1-alpha.16",
+  "version": "0.0.1-alpha.17",
   "private": true,
   "type": "module",
   "main": "out/main/index.js",
