@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   describeToolCall,
+  describeWaitingTools,
   extractCommandFragment,
   extractFileDiff,
   extractFileDiffFromText,
@@ -9,6 +10,7 @@ import {
   formatDuration,
   mergeToolPairs,
   orderToolsForDisplay,
+  pendingToolsForTurn,
   recoverToolInput,
   relativizeInText,
   relativizeToBase,
@@ -378,5 +380,50 @@ describe("summarizeToolGroup", () => {
 
   it("returns null for empty groups", () => {
     expect(summarizeToolGroup([])).toBe(null);
+  });
+});
+
+describe("pendingToolsForTurn", () => {
+  it("lists running tools for the turn with their start times", () => {
+    const messages = [
+      msg({ id: "c1", turnId: "t1", toolName: "Bash", toolInput: { command: "sleep 600" }, toolStartedAt: 1000 }),
+      msg({ id: "c2", turnId: "t1", toolName: "Read", toolInput: { path: "a.ts" }, timestamp: 2000 }),
+      msg({ id: "c3", turnId: "t2", toolName: "Bash", toolInput: { command: "ls" }, toolStartedAt: 3000 })
+    ];
+    expect(pendingToolsForTurn(messages, "t1")).toEqual([
+      { id: "c1", name: "Bash", startedAt: 1000 },
+      { id: "c2", name: "Read", startedAt: 2000 }
+    ]);
+  });
+
+  it("excludes completed tools and calls without input", () => {
+    const messages = [
+      msg({ id: "done", toolName: "Bash", toolInput: { command: "ls" }, toolOutput: "out" }),
+      msg({ id: "flag", toolName: "Bash", toolInput: { command: "ls" }, toolDone: true }),
+      msg({ id: "noinput", toolName: "Bash", toolStartedAt: 1000 }),
+      msg({ id: "unnamed", toolInput: { command: "ls" }, toolStartedAt: 1000 })
+    ];
+    expect(pendingToolsForTurn(messages, "t1")).toEqual([{ id: "unnamed", name: "tool", startedAt: 1000 }]);
+  });
+});
+
+describe("describeWaitingTools", () => {
+  it("returns undefined when nothing is pending", () => {
+    expect(describeWaitingTools([], 90000)).toBeUndefined();
+  });
+
+  it("names pending tools with elapsed times and caps the list", () => {
+    const tools = [
+      { id: "a", name: "Bash", startedAt: 1000 },
+      { id: "b", name: "Bash", startedAt: 2000 },
+      { id: "c", name: "Read", startedAt: 3000 },
+      { id: "d", name: "Grep", startedAt: 4000 }
+    ];
+    expect(describeWaitingTools(tools, 301000)).toBe("waiting on Bash (5m 0s), Bash (4m 59s), Read (4m 58s) +1 more");
+  });
+
+  it("falls back to the turn start and then to bare names", () => {
+    expect(describeWaitingTools([{ id: "a", name: "Bash" }], 61000, 1000)).toBe("waiting on Bash (1m 0s)");
+    expect(describeWaitingTools([{ id: "a", name: "Bash" }], 61000)).toBe("waiting on Bash");
   });
 });

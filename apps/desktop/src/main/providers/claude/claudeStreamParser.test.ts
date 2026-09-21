@@ -184,7 +184,7 @@ describe("parseStreamLine", () => {
     expect(ackCalls).toBe(1);
   });
 
-  it("finishes the turn for a task-notification result with turns", () => {
+  it("ignores task-notification results even when they report turns", () => {
     const line = JSON.stringify({
       type: "result",
       origin: { kind: "task-notification" },
@@ -205,8 +205,8 @@ describe("parseStreamLine", () => {
         ackCalls += 1;
       }
     );
-    expect(doneCalls).toBe(1);
-    expect(ackCalls).toBe(0);
+    expect(doneCalls).toBe(0);
+    expect(ackCalls).toBe(1);
   });
 
   it("finishes the turn for an ordinary result with no origin", () => {
