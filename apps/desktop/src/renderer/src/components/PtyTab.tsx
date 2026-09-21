@@ -154,10 +154,18 @@ export function PtyTab({ sessionId, kind }: { sessionId: string; kind: DriverNam
       observer.observe(divRef.current);
     };
 
+    const safeStart = (fontFamily: string) => {
+      try {
+        start(fontFamily);
+      } catch (err) {
+        if (!disposed) setError(err instanceof Error ? err.message : "Terminal failed to start.");
+      }
+    };
+
     window.cw
       .getTerminalFont()
-      .then((face) => start(face ? `"${face}",${TERMINAL_FONT_STACK}` : TERMINAL_FONT_STACK))
-      .catch(() => start(TERMINAL_FONT_STACK));
+      .then((face) => safeStart(face ? `"${face}",${TERMINAL_FONT_STACK}` : TERMINAL_FONT_STACK))
+      .catch(() => safeStart(TERMINAL_FONT_STACK));
 
     return () => {
       disposed = true;

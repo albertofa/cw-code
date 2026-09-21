@@ -181,16 +181,16 @@ describe("new-session crash repro (interactive)", () => {
     await act(async () => {
       useAppStore.getState().setPendingDriver("opencode");
     });
-    expect(host!.innerHTML).toContain("OpenCode terminal");
-    expect(host!.innerHTML).not.toContain("Claude terminal");
-    expect(host!.innerHTML).not.toContain("Codex terminal");
+    expect(host!.innerHTML).toContain("OpenCode CLI");
+    expect(host!.innerHTML).not.toContain("Claude CLI");
+    expect(host!.innerHTML).not.toContain("Codex CLI");
 
     await act(async () => {
       useAppStore.getState().setPendingDriver("codex");
     });
-    expect(host!.innerHTML).toContain("Codex terminal");
-    expect(host!.innerHTML).not.toContain("OpenCode terminal");
-    expect(host!.innerHTML).not.toContain("Claude terminal");
+    expect(host!.innerHTML).toContain("Codex CLI");
+    expect(host!.innerHTML).not.toContain("OpenCode CLI");
+    expect(host!.innerHTML).not.toContain("Claude CLI");
     expect(fatalErrors(errors)).toEqual([]);
   });
 

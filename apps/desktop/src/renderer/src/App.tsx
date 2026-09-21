@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
-import { Bot, Code, Columns2, Eye, Folder, GitBranch, Orbit, PanelRightClose, PanelRightOpen, Sparkles, Terminal, type LucideIcon } from "lucide-react";
+import { Eye, PanelRightClose, PanelRightOpen } from "lucide-react";
 import type { DriverName } from "./cw.js";
 import { collectSubagents } from "./components/subagents.js";
 import { Sidebar } from "./components/Sidebar.js";
@@ -7,37 +7,20 @@ import { SkillsModal } from "./components/SkillsModal.js";
 import { TitleBar } from "./components/TitleBar.js";
 import { SettingsModal } from "./components/SettingsModal.js";
 import { ThreadView } from "./components/ThreadView.js";
-import { FilePanel } from "./components/FilePanel.js";
-import { GitInspectPanel } from "./components/GitInspectPanel.js";
-import { AgentsPanel } from "./components/AgentsPanel.js";
-import { PreviewPanel } from "./components/PreviewPanel.js";
-import { PtyTab } from "./components/PtyTab.js";
+import { ToolContent } from "./components/ToolContent.js";
+import { TOOL_TABS, isHarnessTabId } from "./components/toolTabs.js";
+import { useTabMenu } from "./components/TabMenu.js";
+import { endTabDrag, startTabDrag, useDockDrop } from "./components/useDockDrop.js";
 import { useNotifs } from "./components/Notifications.js";
 import { useAppStore } from "./stores/appStore.js";
+import { tabsInPanel } from "./stores/panelLayout.js";
+import { usePanelStore } from "./stores/panelStore.js";
+import type { DockableTabId } from "@cw-code/contracts";
 import type { TurnEvent } from "./cw.js";
 
-type RightTab = "files" | "agents" | "diff" | DriverName | "shell" | "preview";
+type RightTab = DockableTabId;
 
-function isHarnessTab(tab: RightTab): tab is DriverName {
-  return tab === "claude" || tab === "opencode" || tab === "codex";
-}
-
-interface TabDef {
-  id: RightTab;
-  title: string;
-  Icon: LucideIcon;
-  driver?: DriverName;
-}
-
-const TABS: TabDef[] = [
-  { id: "files", title: "Files", Icon: Folder },
-  { id: "agents", title: "Subagents", Icon: Bot },
-  { id: "diff", title: "Git diff", Icon: GitBranch },
-  { id: "claude", title: "Claude terminal", Icon: Sparkles, driver: "claude" },
-  { id: "opencode", title: "OpenCode terminal", Icon: Code, driver: "opencode" },
-  { id: "codex", title: "Codex terminal", Icon: Orbit, driver: "codex" },
-  { id: "shell", title: "Shell terminal", Icon: Terminal }
-];
+const TABS = TOOL_TABS.filter((t) => t.id !== "preview");
 
 const VERSION_NOTIF_ID = "cli-versions";
 const BINARY_NOTIF_ID = "cli-binaries";
@@ -118,9 +101,14 @@ export function App() {
   const holdingHours = useAppStore((s) => s.holdingHours);
   const settingsVersion = useAppStore((s) => s.settingsVersion);
   const loadProjects = useAppStore((s) => s.loadProjects);
-  const closePreview = useAppStore((s) => s.closePreview);
-  const [rightTab, setRightTab] = useState<RightTab>("files");
-  const [rightSplit, setRightSplit] = useState(false);
+  const dockByTab = usePanelStore((s) => s.dockByTab);
+  const activeRight = usePanelStore((s) => s.activeRight);
+  const activateOrOpen = usePanelStore((s) => s.activateOrOpen);
+  const dropRight = useDockDrop("right");
+  const tabMenu = useTabMenu();
+  const draggingTab = usePanelStore((s) => s.draggingTab);
+
+
   const [rightVisible, setRightVisible] = useState(true);
   const [rightWidth, setRightWidth] = useState(loadRightWidth);
   const [preloadError, setPreloadError] = useState<string | null>(null);
@@ -321,14 +309,14 @@ export function App() {
   useEffect(() => {
     if (preview) {
       setRightVisible(true);
-      setRightTab("preview");
+      activateOrOpen("preview");
     }
   }, [preview]);
 
   useEffect(() => {
     const onOpenAgents = () => {
       setRightVisible(true);
-      setRightTab("agents");
+      activateOrOpen("agents");
     };
     window.addEventListener("cw:open-agents", onOpenAgents);
     return () => window.removeEventListener("cw:open-agents", onOpenAgents);
@@ -348,35 +336,10 @@ export function App() {
   const driver = pendingDriver ?? allSessions.find((s) => s.id === activeSessionId)?.driver;
 
   const visibleTabs = TABS.filter((t) => t.driver === undefined || t.driver === driver);
-  const activeTab: RightTab = isHarnessTab(rightTab) && rightTab !== driver ? (driver ?? "files") : rightTab;
+  const activeTab: RightTab = isHarnessTabId(activeRight) && activeRight !== driver ? (driver ?? "files") : activeRight;
 
-  const splitTab: RightTab = isHarnessTab(activeTab) || activeTab === "shell" ? "files" : "shell";
-  const tabTitle = (tab: RightTab): string => {
-    if (tab === "preview") return "Preview";
-    return TABS.find((item) => item.id === tab)?.title ?? tab;
-  };
-  const renderRightContent = (tab: RightTab, suffix = "main") => (
-    <>
-      {activeSessionId && tab === "files" && <FilePanel sessionId={activeSessionId} />}
-      {activeSessionId && tab === "agents" && <AgentsPanel sessionId={activeSessionId} />}
-      {activeSessionId && tab === "diff" && <GitInspectPanel sessionId={activeSessionId} />}
-      {tab === "preview" && preview && (
-        <PreviewPanel
-          key={`${preview.sessionId}:${preview.path}:${suffix}`}
-          sessionId={preview.sessionId}
-          path={preview.path}
-          basePath={preview.basePath}
-          onClose={() => {
-            closePreview();
-            setRightTab("files");
-          }}
-        />
-      )}
-      {activeSessionId && (tab === "claude" || tab === "opencode" || tab === "codex" || tab === "shell") && (
-        <PtyTab key={`${activeSessionId}-${tab}-${suffix}`} sessionId={activeSessionId} kind={tab} />
-      )}
-    </>
-  );
+  const rightIds = tabsInPanel(dockByTab, "right");
+  const effectiveRightTab: RightTab = rightIds.includes(activeTab) ? activeTab : (rightIds[0] ?? activeTab);
 
   return (
     <div className="app-shell" data-driver={driver ?? "none"}>
@@ -398,14 +361,17 @@ export function App() {
             </button>
           )}
           {rightVisible && (
-            <aside className="right" style={{ width: rightWidth }}>
+            <aside className={`right${dropRight.over || draggingTab !== null ? " drop-target-active" : ""}`} style={{ width: rightWidth }}>
               <div
                 className="right-resizer"
                 onMouseDown={onResizeStart}
                 onDoubleClick={() => applyRightWidth(RIGHT_WIDTH_DEFAULT)}
                 title="Drag to resize · double-click to reset"
               />
-              <div className="tabbar">
+              <div
+                className="tabbar"
+                {...dropRight.bind}
+              >
                 {visibleTabs.map((t) => {
                   const isAgents = t.id === "agents";
                   const showBadge = isAgents && subagentStats.total > 0;
@@ -415,7 +381,11 @@ export function App() {
                   return (
                     <button
                       key={t.id}
-                      onClick={() => setRightTab(t.id)}
+                      onClick={() => activateOrOpen(t.id)}
+                      onContextMenu={tabMenu.onTabContextMenu(t.id)}
+                      draggable
+                      onDragStart={(e) => startTabDrag(e, t.id)}
+                      onDragEnd={endTabDrag}
                       className={`tab${activeTab === t.id ? " active" : ""}`}
                       title={isAgents && showBadge ? `${t.title} · ${badgeTitle}` : t.title}
                       aria-label={isAgents && showBadge ? `${t.title}, ${badgeTitle}` : t.title}
@@ -436,7 +406,11 @@ export function App() {
                 })}
                 {preview && (
                   <button
-                    onClick={() => setRightTab("preview")}
+                    onClick={() => activateOrOpen("preview")}
+                    onContextMenu={tabMenu.onTabContextMenu("preview")}
+                    draggable
+                    onDragStart={(e) => startTabDrag(e, "preview")}
+                    onDragEnd={endTabDrag}
                     className={`tab${activeTab === "preview" ? " active" : ""}`}
                     title="Preview"
                     aria-label="Preview"
@@ -446,15 +420,6 @@ export function App() {
                   </button>
                 )}
                 <button
-                  className={`tab tab-split${rightSplit ? " active" : ""}`}
-                  onClick={() => setRightSplit((value) => !value)}
-                  title={rightSplit ? "Close split panel" : `Split panel with ${tabTitle(splitTab)}`}
-                  aria-label={rightSplit ? "Close split panel" : `Split panel with ${tabTitle(splitTab)}`}
-                  aria-pressed={rightSplit}
-                >
-                  <Columns2 size={15} />
-                </button>
-                <button
                   className="tab tab-min"
                   onClick={() => setRightVisible(false)}
                   title="Minimize panel"
@@ -463,25 +428,23 @@ export function App() {
                   <PanelRightClose size={15} />
                 </button>
               </div>
-              <div className={`right-body${rightSplit ? " right-body-split" : ""}`}>
+              <div
+                className="right-body"
+                {...dropRight.bind}
+              >
                 {!activeSessionId && !preview && <div className="right-empty">No session selected.</div>}
-                {(activeSessionId || preview) && (
-                  rightSplit ? (
-                    <>
-                      <section className="right-split-pane right-split-primary">
-                        <div className="right-split-label">{tabTitle(activeTab)}</div>
-                        <div className="right-split-content">{renderRightContent(activeTab)}</div>
-                      </section>
-                      <section className="right-split-pane right-split-secondary">
-                        <div className="right-split-label">{tabTitle(splitTab)}</div>
-                        <div className="right-split-content">{renderRightContent(splitTab, "split")}</div>
-                      </section>
-                    </>
-                  ) : renderRightContent(activeTab)
-                )}
+                {(activeSessionId || preview) &&
+                  (rightIds.length === 0 ? (
+                    <div className="right-empty">All tools are docked in other panels.</div>
+                  ) : activeSessionId ? (
+                    <ToolContent tab={effectiveRightTab} sessionId={activeSessionId} panel="right" />
+                  ) : preview ? (
+                    <ToolContent tab="preview" sessionId={preview.sessionId} panel="right" />
+                  ) : null)}
               </div>
             </aside>
           )}
+          {tabMenu.menuNode}
           </div>
           {settingsOpen && (
             <SettingsModal initialHarness={settingsHarness} onClose={() => setSettingsOpen(false)} />

@@ -2,7 +2,10 @@ import { useCallback, useEffect, useState } from "react";
 import { AlertTriangle, Bot, CheckCircle2, Gauge, GitBranch, RefreshCw, Sparkles, Star, X, XCircle } from "lucide-react";
 import type { AppSettings, DriverName, EffortLevel, ModelOption, SourceControlHealth, WorktreePruneSummary } from "../cw.js";
 import { BinaryPicker } from "./BinaryPicker.js";
+import { TOOL_TABS } from "./toolTabs.js";
+import type { PanelId } from "@cw-code/contracts";
 import { useAppStore } from "../stores/appStore.js";
+import { usePanelStore } from "../stores/panelStore.js";
 import { useNotifs } from "./Notifications.js";
 import { MenuSelect } from "./MenuSelect.js";
 import { DriverIcon } from "./DriverIcon.js";
@@ -69,6 +72,8 @@ export function SettingsModal({
   const [pruneError, setPruneError] = useState<string | null>(null);
   const activeProjectId = useAppStore((state) => state.activeProjectId);
   const activeProject = useAppStore((state) => state.projects.find((project) => project.id === state.activeProjectId));
+  const tabAutoLocation = usePanelStore((s) => s.autoLocation);
+  const setTabAutoLocation = usePanelStore((s) => s.setAutoLocation);
 
   const load = useCallback(() => {
     setLoading(true);
@@ -541,6 +546,31 @@ export function SettingsModal({
     </section>
   );
 
+  const tabFields = (
+    <section className="settings-section">
+      <h3>Workspace tabs</h3>
+      <span className="settings-hint">Clicking a right-rail icon opens that tab in its auto location, which applies immediately. Drag tabs between panels any time; the rail icons always stay.</span>
+      {TOOL_TABS.map((tab) => (
+        <label className="settings-row" key={tab.id}>
+          <span className="settings-label">
+            <tab.Icon size={13} aria-hidden="true" /> {tab.title}
+          </span>
+          <span className="settings-hint">Where this tab opens from the right rail.</span>
+          <select
+            className="field"
+            value={tabAutoLocation[tab.id]}
+            onChange={(e) => setTabAutoLocation(tab.id, e.target.value as PanelId)}
+            aria-label={`${tab.title} auto location`}
+          >
+            <option value="main">Main panel</option>
+            <option value="right">Right panel</option>
+            <option value="bottom">Bottom panel</option>
+          </select>
+        </label>
+      ))}
+    </section>
+  );
+
   const holdingFields = draft && (
     <section className="settings-section">
       <h3>Sessions</h3>
@@ -773,6 +803,7 @@ export function SettingsModal({
             {!loading && !loadError && draft && category === "general" && (
               <>
                 {generalFields}
+                {tabFields}
                 {holdingFields}
                 <section className="settings-section" aria-label="About cw-code">
                   <h3>About</h3>

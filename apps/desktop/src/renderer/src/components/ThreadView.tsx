@@ -1,11 +1,15 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, Sparkles, TriangleAlert } from "lucide-react";
+import type { DockableTabId } from "@cw-code/contracts";
 import { useAppStore, type ChatMessage } from "../stores/appStore.js";
 import { Notifications } from "./Notifications.js";
 import { Md, StreamingMd } from "./Markdown.js";
-import { DriverIcon } from "./DriverIcon.js";
+import { BottomPanel } from "./BottomPanel.js";
+import { MainTabStrip } from "./MainTabStrip.js";
+import { ToolContent } from "./ToolContent.js";
+import { useDockDrop } from "./useDockDrop.js";
 import { Composer } from "./Composer.js";
-import { GitPanelBar } from "./GitPanelBar.js";
+import { isBottomOpen, resolveMainTab } from "../stores/panelLayout.js";
 import { ToolCard } from "./ToolCard.js";
 import { ToolGroupCard } from "./ToolGroupCard.js";
 import { ReasoningBlock } from "./ReasoningBlock.js";
@@ -17,7 +21,7 @@ import { TodoDock } from "./TodoDock.js";
 import { TurnBlock } from "./TurnBlock.js";
 import { groupTurns, splitTurn, type ThreadNode } from "./turnGroups.js";
 import { durationFromMessages } from "./turnFormat.js";
-import { projectAvatarStyle, projectInitials } from "./avatar.js";
+import { usePanelStore } from "../stores/panelStore.js";
 import { collectSubagents } from "./subagents.js";
 import { splitImageMentions } from "./imagePreview.js";
 import { ImageThumb } from "./ImageThumb.js";
@@ -49,6 +53,11 @@ export function ThreadView() {
   const usage = useAppStore((s) => (activeSessionId ? s.usageBySession[activeSessionId] : undefined));
   const reasoningExpanded = useAppStore((s) => (session ? s.reasoningExpandedByDriver[session.driver] : false));
   const openPreview = useAppStore((s) => s.openPreview);
+  const panelActiveMain = usePanelStore((s) => s.activeMain);
+  const panelDockByTab = usePanelStore((s) => s.dockByTab);
+  const panelMainOrder = usePanelStore((s) => s.mainOrder);
+  const dropMain = useDockDrop("main");
+  const draggingTab = usePanelStore((s) => s.draggingTab);
   const setPendingDriver = useAppStore((s) => s.setPendingDriver);
   const turnStartedAt = useAppStore((s) => (activeSessionId ? s.turnStartedAt[activeSessionId] : undefined));
   const turnDurations = useAppStore((s) => (activeSessionId ? s.turnDurations[activeSessionId] : undefined));
@@ -84,6 +93,11 @@ export function ThreadView() {
   const [atBottom, setAtBottom] = useState(true);
 
   const sessionId = session?.id;
+  const resolvedMainTab =
+    session === undefined
+      ? "chat"
+      : resolveMainTab(panelMainOrder, panelDockByTab, session.driver, panelActiveMain);
+  const showMainTool: DockableTabId | null = resolvedMainTab === "chat" ? null : resolvedMainTab;
   const basePath = session?.worktreePath ?? project?.rootPath ?? "";
   const onOpenPreview = useCallback(
     (path: string) => {
@@ -141,22 +155,9 @@ export function ThreadView() {
 
   if (showNew) {
     const heroDriver = pendingDriver ?? session?.driver ?? lastDriver;
-    const heroName = project?.name ?? "cw";
     return (
       <div className="thread-col">
-        <div className="thread-head">
-          <span className="thread-avatar" style={projectAvatarStyle(heroName)} aria-hidden="true">
-            {projectInitials(heroName)}
-          </span>
-          <span className="crumb" title={`${project?.name ?? ""} / New thread`}>
-            <span>{project?.name ?? "…"}</span>
-            <span className="crumb-sep">/</span>
-            <strong>New thread</strong>
-          </span>
-          <span title={heroDriver}>
-            <DriverIcon driver={heroDriver} size={16} />
-          </span>
-        </div>
+        <MainTabStrip sessionId={undefined} driver={heroDriver} />
         <Notifications />
         <NewThread
           key={activeProjectId}
@@ -253,19 +254,20 @@ export function ThreadView() {
 
   return (
     <div className="thread-col">
-      <div className="thread-head">
-        <span className="thread-avatar" style={projectAvatarStyle(project?.name ?? "cw")} aria-hidden="true">
-          {projectInitials(project?.name ?? "cw")}
-        </span>
-        <span className="crumb" title={`${project?.name ?? ""} / ${session.title}`}>
-          <span>{project?.name ?? "…"}</span>
-          <span className="crumb-sep">/</span>
-          <strong>{session.title}</strong>
-        </span>
-        <GitPanelBar key={session.id} sessionId={session.id} compact />
-      </div>
+      <MainTabStrip sessionId={session.id} driver={session.driver} />
       <Notifications />
-      <div className="thread-body">
+      {showMainTool !== null ? (
+        <div
+          className={`main-tool-body${dropMain.over ? " drop-target-active" : ""}`}
+          {...dropMain.bind}
+        >
+          <ToolContent tab={showMainTool} sessionId={session.id} panel="main" />
+        </div>
+      ) : (
+      <div
+        className={`thread-body${dropMain.over ? " drop-target-active" : ""}`}
+        {...dropMain.bind}
+      >
         <div className="thread-scroll" ref={scrollRef} onScroll={onScroll}>
         <div className="thread-inner">
           {historyLoading && messages.length === 0 && (
@@ -323,13 +325,19 @@ export function ThreadView() {
           {usage.numTurns} turns
         </div>
       )}
+      </div>
+      )}
+      {showMainTool === null && (
       <div className="composer-wrap">
         <TodoDock sessionId={session.id} />
         <ApprovalDock sessionId={session.id} />
         <QuestionDock sessionId={session.id} />
         <Composer key={session.id} sessionId={session.id} driver={session.driver} />
       </div>
-      </div>
+      )}
+      {(isBottomOpen(panelDockByTab) || draggingTab !== null) && (
+        <BottomPanel sessionId={session.id} driver={session.driver} />
+      )}
     </div>
   );
 }

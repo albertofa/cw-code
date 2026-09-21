@@ -2930,21 +2930,22 @@ body.session-dragging * {
 .tab {
   position: relative;
   font-family: var(--sans);
-  font-size: 12.5px;
+  font-size: 12px;
   background: transparent;
   color: var(--faint);
   border: none;
   border-bottom: 2px solid transparent;
-  padding: 0 14px;
+  padding: 0 10px;
   cursor: pointer;
   display: flex;
   align-items: center;
   justify-content: center;
-  gap: 8px;
+  gap: 6px;
 }
 
 .tab:hover {
   color: var(--dim);
+  background: var(--raised);
 }
 
 .tab.active {
@@ -6904,4 +6905,140 @@ button.gitbar-pr:hover {
   .skills-spin {
     animation: none;
   }
+}
+
+.main-tabbar {
+  display: flex;
+  gap: 4px;
+  min-height: 52px;
+  box-sizing: border-box;
+  align-items: stretch;
+  padding: 0 10px;
+  background: var(--panel-head);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.main-tabbar-side {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  min-width: 0;
+}
+
+.main-tool-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  background: var(--panel);
+  overflow: hidden;
+}
+
+.bottom-panel {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  background: var(--panel);
+  border-top: 1px solid var(--border);
+}
+
+.bottom-resizer {
+  flex: none;
+  height: 7px;
+  cursor: row-resize;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--faint);
+  user-select: none;
+}
+
+.bottom-resizer:hover {
+  color: var(--text);
+  background: var(--raised);
+}
+
+.bottom-tabbar {
+  display: flex;
+  gap: 4px;
+  min-height: 40px;
+  box-sizing: border-box;
+  align-items: stretch;
+  padding: 0 10px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.bottom-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+}
+
+.tab-x {
+  visibility: hidden;
+  margin-left: 2px;
+  color: var(--faint);
+  font-size: 13px;
+  line-height: 1;
+  padding: 0 3px;
+  border-radius: 4px;
+  cursor: pointer;
+}
+
+.tab:hover .tab-x {
+  visibility: visible;
+}
+
+.tab-x:hover {
+  color: var(--text);
+  background: var(--raised);
+}
+
+.drop-target-active {
+  outline: 2px dashed var(--violet);
+  outline-offset: -2px;
+  background: rgba(124, 66, 255, 0.06);
+}
+
+.tab-dragging {
+  opacity: 0.4;
+}
+
+.bottom-empty {
+  padding: 12px 14px;
+  color: var(--faint);
+  font-size: 12px;
+  text-align: center;
+}
+
+.ctx-menu.tab-menu .ctx-item {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.ctx-menu.tab-menu .ctx-item > svg {
+  flex: none;
+}
+
+.bottom-panel.drop-target-active {
+  position: relative;
+  outline: none;
+}
+
+.bottom-panel.drop-target-active::after {
+  content: "";
+  position: absolute;
+  inset: 3px;
+  border: 2px dashed var(--violet);
+  border-radius: 8px;
+  pointer-events: none;
+  z-index: 50;
+}
+
+.bottom-tabbar .bottom-min {
+  align-self: center;
+  margin-left: auto;
 }

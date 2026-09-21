@@ -1,0 +1,95 @@
+import { MessageSquare } from "lucide-react";
+import type { DockableTabId, MainTabId } from "@cw-code/contracts";
+import type { DriverName } from "../cw.js";
+import { DriverIcon } from "./DriverIcon.js";
+import { GitPanelBar } from "./GitPanelBar.js";
+import { TOOL_TABS, harnessLabel } from "./toolTabs.js";
+import { useTabMenu } from "./TabMenu.js";
+import { endTabDrag, startTabDrag, useDockDrop } from "./useDockDrop.js";
+import { resolveMainTab } from "../stores/panelLayout.js";
+import { usePanelStore } from "../stores/panelStore.js";
+
+export function MainTabStrip({ sessionId, driver }: { sessionId: string | undefined; driver: DriverName | undefined }) {
+  const mainOrder = usePanelStore((s) => s.mainOrder);
+  const activeMain = usePanelStore((s) => s.activeMain);
+  const dockByTab = usePanelStore((s) => s.dockByTab);
+  const setActive = usePanelStore((s) => s.setActive);
+  const moveTab = usePanelStore((s) => s.moveTab);
+  const dropMain = useDockDrop("main");
+  const tabMenu = useTabMenu();
+  const draggingTab = usePanelStore((s) => s.draggingTab);
+
+  const effectiveActive: MainTabId =
+    sessionId === undefined ? "chat" : resolveMainTab(mainOrder, dockByTab, driver, activeMain);
+  const chatLabel = driver === undefined ? "Chat" : harnessLabel(driver);
+
+  return (
+    <div
+      className={`main-tabbar${dropMain.over || draggingTab !== null ? " drop-target-active" : ""}`}
+      role="tablist"
+      aria-label="Main panel tabs"
+      {...dropMain.bind}
+    >
+      <button
+        role="tab"
+        aria-selected={effectiveActive === "chat"}
+        onClick={() => setActive("main", "chat")}
+        className={`tab fixed${effectiveActive === "chat" ? " active" : ""}`}
+        title={`${chatLabel} - composer and output (fixed tab)`}
+      >
+        {driver !== undefined ? <DriverIcon driver={driver} size={15} /> : <MessageSquare size={15} />}
+        <span className="tab-label">{chatLabel}</span>
+      </button>
+      {sessionId !== undefined &&
+        mainOrder.map((id) => {
+          if (id === "chat") return null;
+          if (dockByTab[id] !== "main") return null;
+          const def = TOOL_TABS.find((item) => item.id === id);
+          if (!def) return null;
+          if (def.driver !== undefined && def.driver !== driver) return null;
+          const tabId = id as DockableTabId;
+          return (
+            <button
+              key={id}
+              role="tab"
+              aria-selected={effectiveActive === id}
+              onClick={() => setActive("main", tabId)}
+              onContextMenu={tabMenu.onTabContextMenu(tabId)}
+              draggable
+              onDragStart={(e) => startTabDrag(e, tabId)}
+              onDragEnd={endTabDrag}
+              className={`tab${effectiveActive === id ? " active" : ""}`}
+              title={`${def.title} - drag to move, right-click for more actions`}
+            >
+              <def.Icon size={15} className={def.driver ? `driver-icon ${def.driver}` : undefined} />
+              <span className="tab-label">{def.title}</span>
+              <span
+                className="tab-x"
+                role="button"
+                aria-label={`Send ${def.title} back to the right panel`}
+                title="Send back to right panel"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  moveTab(tabId, "right");
+                }}
+              >
+                &times;
+              </span>
+            </button>
+          );
+        })}
+      <div className="main-tabbar-side">
+        {sessionId !== undefined ? (
+          <GitPanelBar key={sessionId} sessionId={sessionId} compact />
+        ) : (
+          driver !== undefined && (
+            <span title={driver}>
+              <DriverIcon driver={driver} size={16} />
+            </span>
+          )
+        )}
+      </div>
+      {tabMenu.menuNode}
+    </div>
+  );
+}

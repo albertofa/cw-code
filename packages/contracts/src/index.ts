@@ -26,5 +26,6 @@ export type {
 export type { ThreadEvent, SessionEvent, HistoryMessage, TodoItem, SubagentToolActivity, SubagentToolSummary, ToolUsage, ApprovalDecision, ApprovalKind, ApprovalRequest, QuestionInfo, QuestionOption, QuestionRequest } from "./events.js";
 export type { CliDriver, TurnHandle, RetryConnectionRequest, RetryConnectionResult, SubagentToolsResult } from "./provider.js";
 export type { AppSettings, CustomModel, SettingsPatch } from "./settings.js";
+export type { PanelId, DockableTabId, MainTabId, TabDockState, TabAutoLocation, PanelLayoutSnapshot } from "./panels.js";
 export type { CliBinary, BinarySource, CliDiscoveredCandidate, CliDiscoverResult } from "./cli.js";
 export type { HarnessId, SkillSource, SkillMeta, SkillDetail, SkillsListResult, SkillSaveInput } from "./skills.js";
