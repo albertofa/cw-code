@@ -1146,19 +1146,23 @@ export const useAppStore = create<AppState>((set, get) => ({
       if (!event.isError) {
         const resultText = event.resultText ?? "";
         if (resultText.trim()) {
-          const alreadyShown = turnMessages.some(
-            (m) => m.role === "assistant" && m.turnId === event.turnId && m.text.includes(resultText)
-          );
+          const shown = turnMessages
+            .filter((m) => m.role === "assistant" && m.turnId === event.turnId)
+            .map((m) => m.text)
+            .join("\n");
+          const squash = (s: string) => s.replace(/\s+/g, " ").trim();
+          const alreadyShown = shown.includes(resultText) || squash(shown).includes(squash(resultText));
           if (!alreadyShown) {
             const last = turnMessages[turnMessages.length - 1];
-            if (
-              last &&
-              last.role === "assistant" &&
-              last.turnId === event.turnId &&
-              resultText.startsWith(last.text) &&
-              last.text.trim()
-            ) {
-              const suffix = resultText.slice(last.text.length);
+            const lastIsAssistant = !!last && last.role === "assistant" && last.turnId === event.turnId;
+            const prefixSource =
+              shown.trim() && resultText.startsWith(shown)
+                ? shown
+                : lastIsAssistant && last.text.trim() && resultText.startsWith(last.text)
+                  ? last.text
+                  : null;
+            if (prefixSource !== null) {
+              const suffix = resultText.slice(prefixSource.length);
               if (suffix.trim()) turnMessages = appendAssistantText(turnMessages, event.turnId, suffix);
             } else {
               turnMessages = appendAssistantText(turnMessages, event.turnId, resultText);

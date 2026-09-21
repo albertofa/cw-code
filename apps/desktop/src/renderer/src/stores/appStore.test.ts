@@ -123,6 +123,52 @@ describe("appStore tool.result", () => {
     expect(texts).toEqual(["Done"]);
   });
 
+  it("does not duplicate turn.done resultText spanning interim and final assistant messages", () => {
+    const session = "sess_result_span";
+    useAppStore.getState().applyEvent(session, {
+      type: "assistant.delta",
+      turnId: "turn-1",
+      text: "Checking the wiring in theme.css."
+    });
+    useAppStore.getState().applyEvent(session, {
+      type: "tool.call",
+      turnId: "turn-1",
+      toolCallId: "call_1",
+      name: "Read",
+      input: { file_path: "theme.css" }
+    });
+    useAppStore.getState().applyEvent(session, {
+      type: "tool.result",
+      turnId: "turn-1",
+      toolCallId: "call_1",
+      output: "ok",
+      isError: false
+    });
+    useAppStore.getState().applyEvent(session, {
+      type: "assistant.delta",
+      turnId: "turn-1",
+      text: "Refining the token map."
+    });
+    useAppStore.getState().applyEvent(session, {
+      type: "turn.done",
+      turnId: "turn-1",
+      sessionId: session,
+      resumeCursor: "cursor-1",
+      resultText: "Checking the wiring in theme.css.\nRefining the token map.",
+      inputTokens: 10,
+      outputTokens: 20,
+      costUsd: 0.01,
+      numTurns: 1,
+      isError: false,
+      backgroundTasks: 0
+    });
+    const texts = useAppStore
+      .getState()
+      .messagesBySession[session].filter((m) => m.role === "assistant")
+      .map((m) => m.text);
+    expect(texts.join("\n")).toBe("Checking the wiring in theme.css.\nRefining the token map.");
+  });
+
   it("clears the retry notice once the turn resumes with tool activity", () => {
     const session = "sess_retry_resume";
     useAppStore.getState().applyEvent(session, {
