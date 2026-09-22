@@ -2,8 +2,8 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { ChevronDown, Sparkles, TriangleAlert } from "lucide-react";
 import type { DockableTabId } from "@cw-code/contracts";
 import { useAppStore, type ChatMessage } from "../stores/appStore.js";
-import { Notifications } from "./Notifications.js";
-import { Md, StreamingMd } from "./Markdown.js";
+import { Notifications, useNotifs } from "./Notifications.js";
+import { Md, StreamingMd, resolvePreviewPaths } from "./Markdown.js";
 import { BottomPanel } from "./BottomPanel.js";
 import { MainTabStrip } from "./MainTabStrip.js";
 import { GitPanelBar } from "./GitPanelBar.js";
@@ -109,6 +109,15 @@ export function ThreadView() {
       if (sessionId) openPreview(sessionId, path, basePath);
     },
     [openPreview, sessionId, basePath]
+  );
+  const onOpenExternal = useCallback(
+    (path: string) => {
+      const { abs } = resolvePreviewPaths(basePath, path);
+      void window.cw.openPath(abs).catch((err: Error) => {
+        useNotifs.getState().push({ kind: "error", title: "Could not open file", message: err.message });
+      });
+    },
+    [basePath]
   );
 
   useEffect(() => {
@@ -272,13 +281,13 @@ export function ThreadView() {
     if (m.id === streamingId) {
       return (
         <div key={m.id} className="msg-assistant">
-          <StreamingMd text={m.text} onOpenFile={onOpenPreview} />
+          <StreamingMd text={m.text} onOpenFile={onOpenPreview} onOpenExternal={onOpenExternal} />
         </div>
       );
     }
     return (
       <div key={m.id} className="msg-assistant">
-        <Md text={m.text} onOpenFile={onOpenPreview} />
+        <Md text={m.text} onOpenFile={onOpenPreview} onOpenExternal={onOpenExternal} />
       </div>
     );
   };

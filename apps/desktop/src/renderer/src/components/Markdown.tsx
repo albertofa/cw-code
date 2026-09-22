@@ -1,19 +1,39 @@
-import { memo, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import {
+  createContext,
+  memo,
+  useContext,
+  useMemo,
+  useRef,
+  useState,
+  type MouseEvent as ReactMouseEvent,
+  type ReactNode
+} from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
 import type { Components } from "react-markdown";
 import { renderToStaticMarkup } from "react-dom/server";
 import { useNotifs } from "./Notifications.js";
-import { Check } from "lucide-react";
+import { Check, ExternalLink } from "lucide-react";
 import { GitHubMark } from "./GitHubMark.js";
+import { FileIcon } from "./fileIcons.js";
+import { shortenHome } from "./pathDisplay.js";
+import { useAppStore } from "../stores/appStore.js";
 
 const PREVIEW_EXTS = new Set(["md", "markdown", "html", "htm"]);
+const HTML_EXTS = new Set(["html", "htm"]);
 
 export function isPreviewablePath(path: string): boolean {
   const clean = path.split("#")[0].split("?")[0];
   const dot = clean.lastIndexOf(".");
   if (dot < 0) return false;
   return PREVIEW_EXTS.has(clean.slice(dot + 1).toLowerCase());
+}
+
+export function isHtmlPath(path: string): boolean {
+  const clean = path.split("#")[0].split("?")[0];
+  const dot = clean.lastIndexOf(".");
+  if (dot < 0) return false;
+  return HTML_EXTS.has(clean.slice(dot + 1).toLowerCase());
 }
 
 export function isLocalPreviewLink(href: string): boolean {
@@ -74,6 +94,8 @@ export function buildPreviewHtml(title: string, markdown: string): string {
   return `<!doctype html><html><head><meta charset="utf-8"><title>${safeTitle}</title><style>${PREVIEW_CSS}</style></head><body>${body}</body></html>`;
 }
 
+const BlockCodeContext = createContext(false);
+
 function Pre({ children }: { children?: ReactNode }) {
   const preRef = useRef<HTMLPreElement>(null);
   const [copied, setCopied] = useState(false);
@@ -91,12 +113,14 @@ function Pre({ children }: { children?: ReactNode }) {
   };
 
   return (
-    <div className="md-pre">
-      <button className="md-copy" onClick={copy} title="Copy code">
-        {copied ? <Check aria-hidden="true" size={14} /> : "Copy"}
-      </button>
-      <pre ref={preRef}>{children}</pre>
-    </div>
+    <BlockCodeContext.Provider value={true}>
+      <div className="md-pre">
+        <button className="md-copy" onClick={copy} title="Copy code">
+          {copied ? <Check aria-hidden="true" size={14} /> : "Copy"}
+        </button>
+        <pre ref={preRef}>{children}</pre>
+      </div>
+    </BlockCodeContext.Provider>
   );
 }
 
@@ -114,14 +138,68 @@ export function isGitHubLink(href: string): boolean {
   }
 }
 
+function HtmlFileChip({
+  href,
+  label,
+  onOpenFile,
+  onOpenExternal
+}: {
+  href: string;
+  label?: ReactNode;
+  onOpenFile?: (path: string) => void;
+  onOpenExternal?: (path: string) => void;
+}) {
+  const homeDir = useAppStore((s) => s.homeDir) ?? undefined;
+  const onClick = (e: ReactMouseEvent<HTMLAnchorElement>) => {
+    e.preventDefault();
+    e.stopPropagation();
+    if (onOpenFile) {
+      onOpenFile(href);
+      return;
+    }
+    if (!navigator.clipboard) return;
+    void navigator.clipboard
+      .writeText(href)
+      .then(() => useNotifs.getState().push({ kind: "info", title: "Link copied", message: href }))
+      .catch(() => {});
+  };
+  const shown = typeof label === "string" ? shortenHome(label, homeDir) : (label ?? shortenHome(href, homeDir));
+
+  return (
+    <span className="md-link-html">
+      <a className="md-link-html-body" href={href} onClick={onClick} title={href}>
+        <FileIcon name={href} size={13} />
+        {shown}
+      </a>
+      {onOpenExternal && (
+        <button
+          type="button"
+          className="md-link-html-browser"
+          title="Open in browser"
+          aria-label="Open in browser"
+          onClick={(e) => {
+            e.preventDefault();
+            e.stopPropagation();
+            onOpenExternal(href);
+          }}
+        >
+          <ExternalLink size={12} aria-hidden="true" />
+        </button>
+      )}
+    </span>
+  );
+}
+
 function MdLink({
   href,
   children,
-  onOpenFile
+  onOpenFile,
+  onOpenExternal
 }: {
   href?: string;
   children?: ReactNode;
   onOpenFile?: (path: string) => void;
+  onOpenExternal?: (path: string) => void;
 }) {
   const github = !!href && isGitHubLink(href);
   const onClick = (e: ReactMouseEvent<HTMLAnchorElement>) => {
@@ -144,12 +222,41 @@ function MdLink({
       .catch(() => {});
   };
 
+  if (href && isLocalPreviewLink(href) && isHtmlPath(href)) {
+    return <HtmlFileChip href={href} label={children} onOpenFile={onOpenFile} onOpenExternal={onOpenExternal} />;
+  }
+
   return (
     <a href={href} onClick={onClick} title={href} className={github ? "md-link-gh" : undefined}>
       {github && <GitHubMark size={12} />}
       {children}
     </a>
   );
+}
+
+function reactText(node: ReactNode): string {
+  if (typeof node === "string" || typeof node === "number") return String(node);
+  if (Array.isArray(node)) return node.map(reactText).join("");
+  return "";
+}
+
+function MdCode({
+  children,
+  className,
+  onOpenFile,
+  onOpenExternal
+}: {
+  children?: ReactNode;
+  className?: string;
+  onOpenFile?: (path: string) => void;
+  onOpenExternal?: (path: string) => void;
+}) {
+  const inBlock = useContext(BlockCodeContext);
+  const text = reactText(children).trim();
+  if (!inBlock && text.length > 0 && !/\s/.test(text) && isLocalPreviewLink(text) && isHtmlPath(text)) {
+    return <HtmlFileChip href={text} label={text} onOpenFile={onOpenFile} onOpenExternal={onOpenExternal} />;
+  }
+  return <code className={className}>{children}</code>;
 }
 
 function MdTable({ children }: { children?: ReactNode }) {
@@ -166,14 +273,23 @@ export function sanitizeStreamingMarkdown(text: string): string {
   return text;
 }
 
-export const Md = memo(function Md({ text, onOpenFile }: { text: string; onOpenFile?: (path: string) => void }) {
+export const Md = memo(function Md({
+  text,
+  onOpenFile,
+  onOpenExternal
+}: {
+  text: string;
+  onOpenFile?: (path: string) => void;
+  onOpenExternal?: (path: string) => void;
+}) {
   const components = useMemo<Components>(
     () => ({
       pre: Pre,
+      code: (props) => <MdCode {...props} onOpenFile={onOpenFile} onOpenExternal={onOpenExternal} />,
       table: MdTable,
-      a: (props) => <MdLink {...props} onOpenFile={onOpenFile} />
+      a: (props) => <MdLink {...props} onOpenFile={onOpenFile} onOpenExternal={onOpenExternal} />
     }),
-    [onOpenFile]
+    [onOpenFile, onOpenExternal]
   );
   return (
     <div className="md">
@@ -186,18 +302,21 @@ export const Md = memo(function Md({ text, onOpenFile }: { text: string; onOpenF
 
 export const StreamingMd = memo(function StreamingMd({
   text,
-  onOpenFile
+  onOpenFile,
+  onOpenExternal
 }: {
   text: string;
   onOpenFile?: (path: string) => void;
+  onOpenExternal?: (path: string) => void;
 }) {
   const components = useMemo<Components>(
     () => ({
       pre: Pre,
+      code: (props) => <MdCode {...props} onOpenFile={onOpenFile} onOpenExternal={onOpenExternal} />,
       table: MdTable,
-      a: (props) => <MdLink {...props} onOpenFile={onOpenFile} />
+      a: (props) => <MdLink {...props} onOpenFile={onOpenFile} onOpenExternal={onOpenExternal} />
     }),
-    [onOpenFile]
+    [onOpenFile, onOpenExternal]
   );
   const sanitized = useMemo(() => sanitizeStreamingMarkdown(text), [text]);
   return (
