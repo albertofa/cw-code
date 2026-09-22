@@ -107,6 +107,7 @@ export function App() {
   const activeRight = usePanelStore((s) => s.activeRight);
   const activateOrOpen = usePanelStore((s) => s.activateOrOpen);
   const setActiveTab = usePanelStore((s) => s.setActive);
+  const moveTab = usePanelStore((s) => s.moveTab);
   const dropRight = useDockDrop("right");
   const tabMenu = useTabMenu();
   const draggingTab = usePanelStore((s) => s.draggingTab);
@@ -452,7 +453,19 @@ export function App() {
                     className={`tab${effectiveRightTab === t.id ? " active" : ""}`}
                     title={`${t.title} - drag to move, right-click for more actions`}
                   >
-                    <t.Icon size={15} className={t.driver ? `driver-icon ${t.driver}` : undefined} aria-hidden="true" />
+                    <t.Icon size={15} className={`tab-icon${t.driver ? ` driver-icon ${t.driver}` : ""}`} aria-hidden="true" />
+                    <span
+                      className="tab-x"
+                      role="button"
+                      aria-label={`Close ${t.title}`}
+                      title="Close tab"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        moveTab(t.id, "closed");
+                      }}
+                    >
+                      &times;
+                    </span>
                     <span className="tab-label">{t.title}</span>
                   </button>
                 ))}
