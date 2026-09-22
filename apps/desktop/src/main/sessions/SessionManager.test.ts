@@ -1057,12 +1057,17 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
-  it("drops the active turn on the first turn.done even while background tasks run", async () => {
+  it("keeps the active turn while background tasks run", async () => {
     const { manager, fake } = makeManager();
     const project = manager.addProject("C:\\proj-active-bg");
     const a = await manager.createSession(project.id, "claude");
     const turnId = await manager.startTurn(a.id, "hello");
     fake.complete(turnId, 2);
+    const active = manager.listActiveTurns();
+    expect(active).toHaveLength(1);
+    expect(active[0]).toMatchObject({ sessionId: a.id, turnId });
+    expect(typeof active[0].startedAt).toBe("number");
+    fake.complete(turnId);
     expect(manager.listActiveTurns()).toEqual([]);
     manager.dispose();
   });
@@ -1108,7 +1113,7 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
-  it("frees the session on the first turn.done so background work never blocks the next prompt", async () => {
+  it("keeps the session working while background tasks run and completes on the final turn.done", async () => {
     const { manager, fake } = makeManager();
     const project = manager.addProject("C:\\proj-background");
     const a = await manager.createSession(project.id, "claude");
@@ -1116,18 +1121,14 @@ describe("SessionManager", () => {
 
     fake.complete(turnId, 2);
     let sessions = await manager.listSessions(project.id);
-    expect(sessions.find((s) => s.id === a.id)?.status).toBe("done");
-    expect(sessions.find((s) => s.id === a.id)?.resumeCursor).toMatch(/^cursor-/);
-    const secondId = await manager.startTurn(a.id, "second");
-    sessions = await manager.listSessions(project.id);
     expect(sessions.find((s) => s.id === a.id)?.status).toBe("working");
+    expect(sessions.find((s) => s.id === a.id)?.resumeCursor).toMatch(/^cursor-/);
+    await expect(manager.startTurn(a.id, "second")).rejects.toThrow(/busy/);
 
     fake.complete(turnId);
     sessions = await manager.listSessions(project.id);
-    expect(sessions.find((s) => s.id === a.id)?.status).toBe("working");
-    fake.complete(secondId);
-    sessions = await manager.listSessions(project.id);
     expect(sessions.find((s) => s.id === a.id)?.status).toBe("done");
+    await expect(manager.startTurn(a.id, "second")).resolves.toEqual(expect.any(String));
     manager.dispose();
   });
 
