@@ -3,8 +3,8 @@ import { Eye, PanelRightClose, PanelRightOpen } from "lucide-react";
 import type { DriverName } from "./cw.js";
 import { collectSubagents } from "./components/subagents.js";
 import { Sidebar } from "./components/Sidebar.js";
+import { WindowControls } from "./components/WindowControls.js";
 import { SkillsModal } from "./components/SkillsModal.js";
-import { TitleBar } from "./components/TitleBar.js";
 import { SettingsModal } from "./components/SettingsModal.js";
 import { ThreadView } from "./components/ThreadView.js";
 import { ToolContent } from "./components/ToolContent.js";
@@ -342,11 +342,10 @@ export function App() {
   const effectiveRightTab: RightTab = rightIds.includes(activeTab) ? activeTab : (rightIds[0] ?? activeTab);
 
   return (
-    <div className="app-shell" data-driver={driver ?? "none"}>
+    <div className={`app-shell${rightVisible ? "" : " right-hidden"}`} data-driver={driver ?? "none"}>
       {preloadError && <div className="preload-error">{preloadError}</div>}
       {!preloadError && (
         <>
-          <TitleBar />
           <div className="app-body">
           <Sidebar onOpenSettings={() => openSettings()} onOpenSkills={() => setSkillsOpen(true)} skillsOpen={skillsOpen} />
           <ThreadView />
@@ -370,6 +369,7 @@ export function App() {
               />
               <div
                 className="tabbar"
+                onDoubleClick={() => window.cw.toggleMaximizeWindow()}
                 {...dropRight.bind}
               >
                 {visibleTabs.map((t) => {
@@ -446,6 +446,7 @@ export function App() {
           )}
           {tabMenu.menuNode}
           </div>
+          <WindowControls />
           {settingsOpen && (
             <SettingsModal initialHarness={settingsHarness} onClose={() => setSettingsOpen(false)} />
           )}

@@ -2,7 +2,6 @@ import { MessageSquare } from "lucide-react";
 import type { DockableTabId, MainTabId } from "@cw-code/contracts";
 import type { DriverName } from "../cw.js";
 import { DriverIcon } from "./DriverIcon.js";
-import { GitPanelBar } from "./GitPanelBar.js";
 import { TOOL_TABS, harnessLabel } from "./toolTabs.js";
 import { useTabMenu } from "./TabMenu.js";
 import { endTabDrag, startTabDrag, useDockDrop } from "./useDockDrop.js";
@@ -78,17 +77,6 @@ export function MainTabStrip({ sessionId, driver }: { sessionId: string | undefi
             </button>
           );
         })}
-      <div className="main-tabbar-side">
-        {sessionId !== undefined ? (
-          <GitPanelBar key={sessionId} sessionId={sessionId} compact />
-        ) : (
-          driver !== undefined && (
-            <span title={driver}>
-              <DriverIcon driver={driver} size={16} />
-            </span>
-          )
-        )}
-      </div>
       {tabMenu.menuNode}
     </div>
   );
