@@ -19,6 +19,7 @@ import type {
   TurnEvent
 } from "../cw.js";
 import { appendAssistantText, appendReasoningText, closeReasoning, upsertToolCall } from "../components/chatMessages.js";
+import { getLastModel, setLastModel } from "../components/lastModel.js";
 import { formatDuration, mergeToolPairs } from "../components/toolSummaries.js";
 import { expiredHoldingIds } from "../components/workingSet.js";
 import { useNotifs } from "../components/Notifications.js";
@@ -630,12 +631,47 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   startNewSession(driver?: DriverName) {
     if (!get().activeProjectId) return;
-    set({ pendingDriver: driver ?? get().lastDriver, activeSessionId: null, pendingWorkspace: defaultWorkspace(get().defaultUseWorktree) });
+    const target = driver ?? get().lastDriver;
+    const previous = get().pendingDriver ?? get().lastDriver;
+    const currentModel = get().pendingPrefs.model;
+    if (currentModel && previous !== target) {
+      try {
+        setLastModel(previous, currentModel);
+      } catch {
+      }
+    }
+    let restored: string | undefined;
+    try {
+      restored = getLastModel(target) ?? undefined;
+    } catch {
+      restored = undefined;
+    }
+    set({
+      pendingDriver: target,
+      activeSessionId: null,
+      pendingWorkspace: defaultWorkspace(get().defaultUseWorktree),
+      pendingPrefs: { ...get().pendingPrefs, model: restored }
+    });
   },
 
   setPendingDriver(driver: DriverName) {
     if (!get().activeProjectId) return;
-    set({ pendingDriver: driver });
+    const current = get().pendingDriver ?? get().lastDriver;
+    if (current === driver && get().pendingDriver !== null) return;
+    const currentModel = get().pendingPrefs.model;
+    if (currentModel) {
+      try {
+        setLastModel(current, currentModel);
+      } catch {
+      }
+    }
+    let restored: string | undefined;
+    try {
+      restored = getLastModel(driver) ?? undefined;
+    } catch {
+      restored = undefined;
+    }
+    set({ pendingDriver: driver, pendingPrefs: { ...get().pendingPrefs, model: restored } });
   },
 
   async sendPendingPrompt(prompt: string, attachments: string[] = []) {

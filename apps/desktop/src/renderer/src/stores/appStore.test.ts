@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from "vitest";
-import { useAppStore } from "./appStore.js";
+import { DEFAULT_COMPOSER, useAppStore } from "./appStore.js";
+import { getLastModel, setLastModel } from "../components/lastModel.js";
 
 describe("appStore tool.result", () => {
   beforeEach(() => {
@@ -212,5 +213,46 @@ describe("appStore tool.result", () => {
       retryAt: 0
     });
     expect(useAppStore.getState().messagesBySession[session].some((m) => m.id === "turn-1-retry")).toBe(true);
+  });
+});
+
+describe("appStore pending model per harness", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    useAppStore.setState({
+      activeProjectId: "proj_1",
+      pendingDriver: "opencode",
+      lastDriver: "opencode",
+      pendingPrefs: { ...DEFAULT_COMPOSER }
+    });
+  });
+
+  it("remembers the last model per harness when switching drivers", () => {
+    setLastModel("claude", "sonnet");
+    useAppStore.setState({ pendingPrefs: { ...DEFAULT_COMPOSER, model: "alpha/m1" } });
+    useAppStore.getState().setPendingDriver("claude");
+    expect(useAppStore.getState().pendingDriver).toBe("claude");
+    expect(useAppStore.getState().pendingPrefs.model).toBe("sonnet");
+    expect(getLastModel("opencode")).toBe("alpha/m1");
+    useAppStore.getState().setPendingDriver("opencode");
+    expect(useAppStore.getState().pendingPrefs.model).toBe("alpha/m1");
+  });
+
+  it("clears the model when the next harness has no remembered model", () => {
+    useAppStore.setState({ pendingPrefs: { ...DEFAULT_COMPOSER, model: "sonnet" } });
+    useAppStore.getState().setPendingDriver("codex");
+    expect(useAppStore.getState().pendingPrefs.model).toBeUndefined();
+  });
+
+  it("restores the target harness model when opening a new session", () => {
+    setLastModel("opencode", "alpha/m1");
+    useAppStore.setState({
+      pendingDriver: "claude",
+      lastDriver: "claude",
+      pendingPrefs: { ...DEFAULT_COMPOSER, model: "sonnet" }
+    });
+    useAppStore.getState().startNewSession("opencode");
+    expect(useAppStore.getState().pendingDriver).toBe("opencode");
+    expect(useAppStore.getState().pendingPrefs.model).toBe("alpha/m1");
   });
 });

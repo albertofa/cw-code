@@ -118,7 +118,6 @@ export function NewThread({
 
   const handleDriverChange = (next: DriverName) => {
     if (next === driver) return;
-    store.setPendingPrefs({ model: undefined });
     onDriverChange(next);
   };
 
@@ -186,6 +185,7 @@ export function NewThread({
           backend={backend}
           driver={driver}
           resetKey={`pending:${projectId}`}
+          resetStaleModel
           modelsRefreshKey={modelsRefreshKey}
           recipePrefix={
             <div className="recipe-control" title="Agentic harness">

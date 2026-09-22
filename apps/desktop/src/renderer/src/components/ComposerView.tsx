@@ -114,6 +114,7 @@ export function ComposerView({
   driver,
   resetKey,
   modelsRefreshKey = 0,
+  resetStaleModel = false,
   recipePrefix,
   footer
 }: {
@@ -121,6 +122,7 @@ export function ComposerView({
   driver: DriverName;
   resetKey: string;
   modelsRefreshKey?: number;
+  resetStaleModel?: boolean;
   recipePrefix?: ReactNode;
   footer?: ReactNode;
 }) {
@@ -195,6 +197,11 @@ export function ComposerView({
   }, [resetKey]);
 
   useEffect(() => {
+    setShowCustom(false);
+    setCustomModel("");
+  }, [driver]);
+
+  useEffect(() => {
     let cancelled = false;
     setModelsError(null);
     backendRef.current
@@ -209,6 +216,11 @@ export function ComposerView({
           setShowCustom(false);
         } else if (list.some((m) => m.id === prefs.model)) {
           setLastModel(driver, prefs.model);
+          setShowCustom(false);
+        } else if (resetStaleModel && list.length > 0) {
+          const last = getLastModel(driver);
+          const next = (last && list.some((m) => m.id === last) ? last : undefined) ?? firstDisplayedModelId(driver, list);
+          if (next) backendRef.current.savePrefs({ model: next });
           setShowCustom(false);
         } else {
           setCustomModel(prefs.model);
