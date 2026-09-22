@@ -1,3 +1,5 @@
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import type { EffortLevel, ModelOption } from "@cw-code/contracts";
 import { execCliFile } from "../../cli/spawnCli.js";
 import { traceHarnessCall, truncateError } from "../../debug/harnessTrace.js";
@@ -9,8 +11,22 @@ export const OPENCODE_CURATED_MODELS: ModelOption[] = [
   { id: "openai/gpt-5.2", label: "GPT 5.2", source: "curated" }
 ];
 
-const CACHE_TTL_MS = 60_000;
-const cache = new Map<string, { at: number; models: ModelOption[] }>();
+export const OPENCODE_MODELS_CACHE_TTL_MS = 10 * 60_000;
+
+export type OpencodeModelsQuery = (binary: string, args: string[]) => Promise<string>;
+
+interface CacheEntry {
+  at: number;
+  models: ModelOption[];
+}
+
+const cache = new Map<string, CacheEntry>();
+const inflight = new Map<string, Promise<ModelOption[]>>();
+let cacheFile: string | null = null;
+
+function cacheKey(binary: string): string {
+  return process.platform === "win32" ? binary.toLowerCase() : binary;
+}
 
 const LABEL_ACRONYMS = new Set(["gpt", "llm", "ai", "api", "mcp", "ocr", "tts"]);
 
@@ -186,35 +202,84 @@ function queryModels(binary: string, args: string[]): Promise<string> {
   );
 }
 
-export async function listOpencodeModels(cwd: string, binary: string): Promise<ModelOption[]> {
-  const key = process.platform === "win32"
-    ? `${binary.toLowerCase()}\0${cwd.toLowerCase()}`
-    : `${binary}\0${cwd}`;
-  const hit = cache.get(key);
-  if (hit && Date.now() - hit.at < CACHE_TTL_MS) {
-    traceHarnessCall({
-      harness: "opencode",
-      operation: "opencode.listModels",
-      cwd,
-      binary,
-      ok: true,
-      extra: { cached: true, count: hit.models.length }
-    });
-    return hit.models;
+function isModelOption(value: unknown): value is ModelOption {
+  if (!value || typeof value !== "object") return false;
+  const model = value as { id?: unknown; label?: unknown; source?: unknown; variants?: unknown };
+  if (typeof model.id !== "string" || !model.id) return false;
+  if (typeof model.label !== "string") return false;
+  if (model.source !== "live" && model.source !== "curated" && model.source !== "custom") return false;
+  if (model.variants !== undefined) {
+    if (!Array.isArray(model.variants)) return false;
+    if (!model.variants.every((variant) => typeof variant === "string")) return false;
   }
+  return true;
+}
+
+export function decodeOpencodeModelsCache(raw: string): Array<{ binary: string; at: number; models: ModelOption[] }> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  if (!parsed || typeof parsed !== "object") return [];
+  const entries = (parsed as { entries?: unknown }).entries;
+  if (!entries || typeof entries !== "object") return [];
+  const out: Array<{ binary: string; at: number; models: ModelOption[] }> = [];
+  for (const [binary, value] of Object.entries(entries as Record<string, unknown>)) {
+    if (!value || typeof value !== "object") continue;
+    const entry = value as { at?: unknown; models?: unknown };
+    if (typeof entry.at !== "number" || !Array.isArray(entry.models)) continue;
+    if (!binary.trim() || entry.models.length === 0 || !entry.models.every(isModelOption)) continue;
+    out.push({ binary, at: entry.at, models: entry.models });
+  }
+  return out;
+}
+
+export function initOpencodeModelsCache(filePath: string): void {
+  cacheFile = filePath;
+  try {
+    if (!existsSync(filePath)) return;
+    const entries = decodeOpencodeModelsCache(readFileSync(filePath, "utf8"));
+    for (const entry of entries) {
+      const key = cacheKey(entry.binary);
+      const existing = cache.get(key);
+      if (!existing || existing.at < entry.at) cache.set(key, { at: entry.at, models: entry.models });
+    }
+  } catch (err) {
+    console.warn(`opencode models cache read failed: ${(err as Error).message}`);
+  }
+}
+
+function persistCache(): void {
+  if (!cacheFile) return;
+  const entries: Record<string, CacheEntry> = {};
+  for (const [key, entry] of cache) entries[key] = entry;
+  try {
+    mkdirSync(dirname(cacheFile), { recursive: true });
+    const tmp = `${cacheFile}.${process.pid}.tmp`;
+    writeFileSync(tmp, JSON.stringify({ version: 1, entries }), "utf8");
+    renameSync(tmp, cacheFile);
+  } catch (err) {
+    console.warn(`opencode models cache write failed: ${(err as Error).message}`);
+  }
+}
+
+async function fetchOpencodeModels(cwd: string, binary: string, query: OpencodeModelsQuery): Promise<ModelOption[]> {
   const start = Date.now();
   try {
     let parsed: ModelOption[] = [];
     try {
-      parsed = parseOpencodeVerboseModels(await queryModels(binary, ["models", "--verbose"]));
+      parsed = parseOpencodeVerboseModels(await query(binary, ["models", "--verbose"]));
     } catch {
       parsed = [];
     }
     if (parsed.length === 0) {
-      parsed = parseOpencodeModels(await queryModels(binary, ["models"]));
+      parsed = parseOpencodeModels(await query(binary, ["models"]));
     }
     const models = parsed.length > 0 ? parsed : OPENCODE_CURATED_MODELS;
-    cache.set(key, { at: Date.now(), models });
+    cache.set(cacheKey(binary), { at: Date.now(), models });
+    persistCache();
     traceHarnessCall({
       harness: "opencode",
       operation: "opencode.listModels",
@@ -243,6 +308,41 @@ export async function listOpencodeModels(cwd: string, binary: string): Promise<M
   }
 }
 
+function refreshOpencodeModels(cwd: string, binary: string, query: OpencodeModelsQuery): Promise<ModelOption[]> {
+  const key = cacheKey(binary);
+  const pending = inflight.get(key);
+  if (pending) return pending;
+  const promise = fetchOpencodeModels(cwd, binary, query).finally(() => {
+    if (inflight.get(key) === promise) inflight.delete(key);
+  });
+  inflight.set(key, promise);
+  return promise;
+}
+
+export async function listOpencodeModels(
+  cwd: string,
+  binary: string,
+  query: OpencodeModelsQuery = queryModels
+): Promise<ModelOption[]> {
+  const hit = cache.get(cacheKey(binary));
+  if (hit) {
+    const stale = Date.now() - hit.at >= OPENCODE_MODELS_CACHE_TTL_MS;
+    if (stale) void refreshOpencodeModels(cwd, binary, query);
+    traceHarnessCall({
+      harness: "opencode",
+      operation: "opencode.listModels",
+      cwd,
+      binary,
+      ok: true,
+      extra: { cached: true, stale, count: hit.models.length }
+    });
+    return hit.models;
+  }
+  return refreshOpencodeModels(cwd, binary, query);
+}
+
 export function clearOpencodeModelsCache(): void {
   cache.clear();
+  inflight.clear();
+  cacheFile = null;
 }

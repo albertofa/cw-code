@@ -18,7 +18,7 @@ import { checkCliVersion, checkCliVersions, type CliVersionCheck } from "./cliVe
 import { discoverBinaries, verifyBinaryPath } from "./cli/binaryDiscovery.js";
 import { getHarnessTracePath, initHarnessTrace } from "./debug/harnessTrace.js";
 import { appendCrashLog, initCrashLog } from "./debug/crashLog.js";
-import { ensureAppDirs, attachmentsDir, logsDir, migrateFromUserData } from "./paths/appPaths.js";
+import { ensureAppDirs, attachmentsDir, logsDir, migrateFromUserData, opencodeModelsCachePath } from "./paths/appPaths.js";
 import { reapOrphanedServers } from "./orphanServers.js";
 import type { ApprovalDecision, CliBinary, CreateSessionOptions, GitDiffMode, SessionStatus, SettingsPatch } from "@cw-code/contracts";
 import type { DriverKind, HarnessId, SkillSaveInput } from "@cw-code/contracts";
@@ -30,6 +30,7 @@ import { GitService } from "./fs/GitService.js";
 import { PtyPool } from "./pty/PtyPool.js";
 import { readWindowsTerminalFontFace } from "./pty/terminalFont.js";
 import { configuredCliBinaryPath } from "./settings/settingsUtils.js";
+import { initOpencodeModelsCache } from "./providers/opencode/opencodeModels.js";
 
 type DriverName = DriverKind;
 
@@ -468,6 +469,8 @@ app.whenReady().then(async () => {
     console.warn(`harness trace init failed: ${(err as Error).message}`);
   }
   initCrashLog(logsDir());
+  initOpencodeModelsCache(opencodeModelsCachePath());
+  sessions.warmOpencodeModels();
   process.on("uncaughtException", (err) => {
     appendCrashLog(`uncaughtException: ${err.stack ?? err.message}`);
   });

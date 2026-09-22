@@ -924,6 +924,13 @@ export class SessionManager {
     return dir;
   }
 
+  warmOpencodeModels(): void {
+    const pending = this.drivers.opencode.listModels?.(this.titleGenRoot());
+    void pending?.catch((err) => {
+      console.warn(`opencode model warmup failed: ${(err as Error).message}`);
+    });
+  }
+
   async listModels(sessionId: string): Promise<ModelOption[]> {
     const session = this.store.getSession(sessionId);
     if (!session) throw new Error(`unknown session ${sessionId}`);
