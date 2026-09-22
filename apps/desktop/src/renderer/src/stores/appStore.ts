@@ -1163,9 +1163,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     } else if (event.type === "turn.done") {
       const backgroundTasks = event.backgroundTasks ?? 0;
       const busyForSession = get().busyTurns[sessionId];
-      const current = busyForSession === event.turnId;
-      const superseded = busyForSession !== undefined && !current;
-      const book = current
+      const busyMatch = busyForSession === event.turnId;
+      const isFinal = busyMatch && backgroundTasks === 0;
+      const superseded = busyForSession !== undefined && !busyMatch;
+      const book = isFinal
         ? closeTurn(
             { busyTurns: get().busyTurns, turnStartedAt: get().turnStartedAt, turnDurations: get().turnDurations },
             sessionId,
@@ -1173,9 +1174,9 @@ export const useAppStore = create<AppState>((set, get) => ({
           )
         : { busyTurns: get().busyTurns, turnStartedAt: get().turnStartedAt, turnDurations: get().turnDurations };
       const approvals = { ...get().pendingApprovals };
-      if (current) delete approvals[sessionId];
+      if (busyMatch) delete approvals[sessionId];
       const questions = { ...get().pendingQuestions };
-      if (current) delete questions[sessionId];
+      if (busyMatch) delete questions[sessionId];
       let turnMessages = finalizeTurnTools(messages, event.turnId, backgroundTasks).filter(
         (m) => m.id !== `${event.turnId}-retry`
       );
@@ -1224,9 +1225,11 @@ export const useAppStore = create<AppState>((set, get) => ({
         turnDurations: book.turnDurations,
         pendingApprovals: approvals,
         pendingQuestions: questions,
-        sessionsByProject: current
+        sessionsByProject: isFinal
           ? withSessionStatus(get().sessionsByProject, sessionId, "done")
-          : get().sessionsByProject,
+          : busyMatch
+            ? withSessionStatus(get().sessionsByProject, sessionId, "working")
+            : get().sessionsByProject,
         messagesBySession: {
           ...get().messagesBySession,
           [sessionId]: turnMessages
