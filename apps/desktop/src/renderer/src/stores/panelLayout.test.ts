@@ -14,19 +14,19 @@ import {
 import { usePanelStore } from "./panelStore.js";
 
 describe("tabsInPanel", () => {
-  it("returns tabs docked to the panel in canonical order", () => {
+  it("starts with every tab closed", () => {
     const layout = defaultLayout();
-    expect(tabsInPanel(layout.dockByTab, "main")).toEqual(["files"]);
-    expect(tabsInPanel(layout.dockByTab, "bottom")).toEqual(["shell"]);
-    expect(tabsInPanel(layout.dockByTab, "right")).toEqual(["agents", "diff", "claude", "opencode", "codex", "preview"]);
+    expect(tabsInPanel(layout.dockByTab, "main")).toEqual([]);
+    expect(tabsInPanel(layout.dockByTab, "bottom")).toEqual([]);
+    expect(tabsInPanel(layout.dockByTab, "right")).toEqual([]);
   });
 });
 
 describe("isBottomOpen", () => {
   it("is open only while a tab is docked to the bottom", () => {
     const layout = defaultLayout();
-    expect(isBottomOpen(layout.dockByTab)).toBe(true);
-    expect(isBottomOpen({ ...layout.dockByTab, shell: "right" })).toBe(false);
+    expect(isBottomOpen(layout.dockByTab)).toBe(false);
+    expect(isBottomOpen({ ...layout.dockByTab, shell: "bottom" })).toBe(true);
   });
 });
 
@@ -55,9 +55,22 @@ describe("sanitizeLayout", () => {
       bottomHeight: 200
     });
     expect(clean.dockByTab.files).toBe("bottom");
-    expect(clean.dockByTab.shell).toBe("bottom");
+    expect(clean.dockByTab.shell).toBe("closed");
     expect(clean.mainOrder[0]).toBe("chat");
     expect(clean.mainOrder).not.toContain("bogus");
+    expect(clean.bottomHeight).toBe(200);
+  });
+
+  it("keeps closed tabs and drops them from mainOrder", () => {
+    const clean = sanitizeLayout({
+      dockByTab: { files: "closed", diff: "main" },
+      mainOrder: ["chat", "files", "diff"],
+      activeMain: "files",
+      bottomHeight: 200
+    });
+    expect(clean.dockByTab.files).toBe("closed");
+    expect(clean.mainOrder).toEqual(["chat", "diff"]);
+    expect(clean.activeMain).toBe("chat");
     expect(clean.bottomHeight).toBe(200);
   });
 
@@ -77,12 +90,13 @@ describe("sanitizeLayout", () => {
 describe("serialize/parse round-trip", () => {
   it("preserves a customized layout and rejects corrupt payloads", () => {
     const layout = defaultLayout();
+    layout.dockByTab.files = "main";
     layout.dockByTab.diff = "main";
     layout.mainOrder = ["chat", "files", "diff"];
     layout.activeMain = "diff";
     const parsed = parseLayout(serializeLayout(layout));
     expect(parsed).toEqual({ ...layout, dockByTab: { ...layout.dockByTab } });
-    expect(parseLayout("{oops")).toEqual(defaultLayout());
+    expect(parseLayout("{oops}")).toEqual(defaultLayout());
     expect(parseLayout(null)).toEqual(defaultLayout());
   });
 });
@@ -112,6 +126,15 @@ describe("usePanelStore routing", () => {
     expect(state.activeBottom).toBe("agents");
   });
 
+  it("activateOrOpen focuses open tabs where they are instead of moving them", () => {
+    usePanelStore.getState().moveTab("diff", "main");
+    usePanelStore.getState().setAutoLocation("diff", "bottom");
+    usePanelStore.getState().activateOrOpen("diff");
+    const state = usePanelStore.getState();
+    expect(state.dockByTab.diff).toBe("main");
+    expect(state.activeMain).toBe("diff");
+  });
+
   it("setActive ignores tabs that are not in the panel", () => {
     usePanelStore.getState().setActive("bottom", "diff");
     expect(usePanelStore.getState().activeBottom).toBe("shell");
@@ -119,19 +142,30 @@ describe("usePanelStore routing", () => {
     expect(usePanelStore.getState().activeMain).toBe("chat");
   });
 
-  it("resetLayout restores Files to main and Shell to bottom", () => {
+  it("moveTab closes tabs and falls back to chat", () => {
+    usePanelStore.getState().moveTab("diff", "main");
+    usePanelStore.getState().moveTab("diff", "closed");
+    const state = usePanelStore.getState();
+    expect(state.dockByTab.diff).toBe("closed");
+    expect(state.activeMain).toBe("chat");
+    expect(state.mainOrder).toEqual(["chat"]);
+  });
+
+  it("resetLayout closes every tab", () => {
     usePanelStore.getState().moveTab("files", "right");
-    usePanelStore.getState().moveTab("shell", "main");
+    usePanelStore.getState().moveTab("shell", "bottom");
     usePanelStore.getState().resetLayout();
     const state = usePanelStore.getState();
-    expect(state.dockByTab.files).toBe("main");
-    expect(state.dockByTab.shell).toBe("bottom");
+    expect(state.dockByTab.files).toBe("closed");
+    expect(state.dockByTab.shell).toBe("closed");
     expect(state.activeMain).toBe("chat");
   });
 });
 describe("resolveMainTab", () => {
   it("keeps the active main tab and falls back to chat", () => {
     const layout = defaultLayout();
+    layout.dockByTab.files = "main";
+    layout.mainOrder = ["chat", "files"];
     expect(resolveMainTab(layout.mainOrder, layout.dockByTab, "claude", "files")).toBe("files");
     expect(resolveMainTab(layout.mainOrder, layout.dockByTab, "claude", "agents")).toBe("chat");
   });

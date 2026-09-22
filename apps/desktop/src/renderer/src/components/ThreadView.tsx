@@ -6,6 +6,7 @@ import { Notifications } from "./Notifications.js";
 import { Md, StreamingMd } from "./Markdown.js";
 import { BottomPanel } from "./BottomPanel.js";
 import { MainTabStrip } from "./MainTabStrip.js";
+import { GitPanelBar } from "./GitPanelBar.js";
 import { ToolContent } from "./ToolContent.js";
 import { useDockDrop } from "./useDockDrop.js";
 import { Composer } from "./Composer.js";
@@ -23,6 +24,7 @@ import { groupTurns, splitTurn, type ThreadNode } from "./turnGroups.js";
 import { pendingToolsForTurn } from "./toolSummaries.js";
 import { durationFromMessages } from "./turnFormat.js";
 import { usePanelStore } from "../stores/panelStore.js";
+import { PanelToggles } from "./PanelToggles.js";
 import { collectSubagents } from "./subagents.js";
 import { splitImageMentions } from "./imagePreview.js";
 import { ImageThumb } from "./ImageThumb.js";
@@ -57,6 +59,7 @@ export function ThreadView() {
   const panelActiveMain = usePanelStore((s) => s.activeMain);
   const panelDockByTab = usePanelStore((s) => s.dockByTab);
   const panelMainOrder = usePanelStore((s) => s.mainOrder);
+  const rightVisible = usePanelStore((s) => s.rightVisible);
   const dropMain = useDockDrop("main");
   const draggingTab = usePanelStore((s) => s.draggingTab);
   const setPendingDriver = useAppStore((s) => s.setPendingDriver);
@@ -155,10 +158,36 @@ export function ThreadView() {
     el.scrollTop = el.scrollHeight;
   }, []);
 
+  const head = (
+    <div className="head-seg main-seg" onDoubleClick={() => window.cw.toggleMaximizeWindow()}>
+      <div className="head-col col-left">
+        <div className="titlebar-crumb">
+          {project && session ? (
+            <span title={`${project.name} / ${session.title}`}>
+              {project.name} <span className="sep">/</span> <strong>{session.title}</strong>
+            </span>
+          ) : project && pendingDriver ? (
+            <span title={`${project.name} / New thread`}>
+              {project.name} <span className="sep">/</span> <strong>New thread</strong>
+            </span>
+          ) : (
+            <span className="titlebar-tagline">Desktop workspace for coding CLIs</span>
+          )}
+        </div>
+      </div>
+      <div className="head-col col-mid" />
+      <div className="head-col col-right">
+        {!showNew && sessionId && <GitPanelBar key={sessionId} sessionId={sessionId} />}
+        {!rightVisible && <PanelToggles />}
+      </div>
+    </div>
+  );
+
   if (showNew) {
     const heroDriver = pendingDriver ?? session?.driver ?? lastDriver;
     return (
       <div className="thread-col">
+        {head}
         <MainTabStrip sessionId={undefined} driver={heroDriver} />
         <Notifications />
         <NewThread
@@ -256,6 +285,7 @@ export function ThreadView() {
 
   return (
     <div className="thread-col">
+      {head}
       <MainTabStrip sessionId={session.id} driver={session.driver} />
       <Notifications />
       {showMainTool !== null ? (

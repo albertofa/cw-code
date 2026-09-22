@@ -2,7 +2,6 @@ import { MessageSquare } from "lucide-react";
 import type { DockableTabId, MainTabId } from "@cw-code/contracts";
 import type { DriverName } from "../cw.js";
 import { DriverIcon } from "./DriverIcon.js";
-import { GitPanelBar } from "./GitPanelBar.js";
 import { TOOL_TABS, harnessLabel } from "./toolTabs.js";
 import { useTabMenu } from "./TabMenu.js";
 import { endTabDrag, startTabDrag, useDockDrop } from "./useDockDrop.js";
@@ -61,34 +60,23 @@ export function MainTabStrip({ sessionId, driver }: { sessionId: string | undefi
               className={`tab${effectiveActive === id ? " active" : ""}`}
               title={`${def.title} - drag to move, right-click for more actions`}
             >
-              <def.Icon size={15} className={def.driver ? `driver-icon ${def.driver}` : undefined} />
-              <span className="tab-label">{def.title}</span>
+              <def.Icon size={15} className={`tab-icon${def.driver ? ` driver-icon ${def.driver}` : ""}`} aria-hidden="true" />
               <span
                 className="tab-x"
                 role="button"
-                aria-label={`Send ${def.title} back to the right panel`}
-                title="Send back to right panel"
+                aria-label={`Close ${def.title}`}
+                title="Close tab"
                 onClick={(e) => {
                   e.stopPropagation();
-                  moveTab(tabId, "right");
+                  moveTab(tabId, "closed");
                 }}
               >
                 &times;
               </span>
+              <span className="tab-label">{def.title}</span>
             </button>
           );
         })}
-      <div className="main-tabbar-side">
-        {sessionId !== undefined ? (
-          <GitPanelBar key={sessionId} sessionId={sessionId} compact />
-        ) : (
-          driver !== undefined && (
-            <span title={driver}>
-              <DriverIcon driver={driver} size={16} />
-            </span>
-          )
-        )}
-      </div>
       {tabMenu.menuNode}
     </div>
   );

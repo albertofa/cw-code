@@ -20,13 +20,24 @@ export const DOCKABLE_TABS: readonly DockableTabId[] = [
 
 export const PANELS: readonly PanelId[] = ["main", "right", "bottom"];
 
-export const PANEL_LAYOUT_KEY = "cw-code:panelLayout:v1";
+export const PANEL_LAYOUT_KEY = "cw-code:panelLayout:v2";
 
 export const BOTTOM_HEIGHT_DEFAULT = 260;
 export const BOTTOM_HEIGHT_MIN = 140;
 export const BOTTOM_HEIGHT_MAX = 520;
 
 export const DEFAULT_DOCK: TabDockState = {
+  files: "closed",
+  agents: "closed",
+  diff: "closed",
+  claude: "closed",
+  opencode: "closed",
+  codex: "closed",
+  shell: "closed",
+  preview: "closed"
+};
+
+export const DEFAULT_AUTO: TabAutoLocation = {
   files: "main",
   agents: "right",
   diff: "right",
@@ -37,8 +48,6 @@ export const DEFAULT_DOCK: TabDockState = {
   preview: "right"
 };
 
-export const DEFAULT_AUTO: TabAutoLocation = { ...DEFAULT_DOCK };
-
 export function defaultLayout(): PanelLayoutSnapshot {
   return {
     dockByTab: { ...DEFAULT_DOCK },
@@ -46,7 +55,7 @@ export function defaultLayout(): PanelLayoutSnapshot {
     activeMain: "chat",
     activeRight: "agents",
     activeBottom: "shell",
-    mainOrder: ["chat", "files"],
+    mainOrder: ["chat"],
     bottomHeight: BOTTOM_HEIGHT_DEFAULT
   };
 }
@@ -77,12 +86,12 @@ export function clampBottomHeight(value: unknown): number {
   return Math.min(BOTTOM_HEIGHT_MAX, Math.max(BOTTOM_HEIGHT_MIN, Math.round(n)));
 }
 
-function sanitizeDock(raw: unknown, fallback: TabDockState): TabDockState {
+function sanitizeDock<T extends TabDockState>(raw: unknown, fallback: T, allowClosed: boolean): T {
   const source = (typeof raw === "object" && raw !== null ? raw : {}) as Record<string, unknown>;
   const out = { ...fallback };
   for (const tab of DOCKABLE_TABS) {
     const value = source[tab];
-    if (isPanelId(value)) out[tab] = value;
+    if (isPanelId(value) || (allowClosed && value === "closed")) out[tab] = value;
   }
   return out;
 }
@@ -91,8 +100,8 @@ export function sanitizeLayout(raw: unknown): PanelLayoutSnapshot {
   const defaults = defaultLayout();
   if (typeof raw !== "object" || raw === null) return defaults;
   const source = raw as Record<string, unknown>;
-  const dockByTab = sanitizeDock(source.dockByTab, defaults.dockByTab);
-  const autoLocation = sanitizeDock(source.autoLocation, defaults.autoLocation);
+  const dockByTab = sanitizeDock(source.dockByTab, defaults.dockByTab, true);
+  const autoLocation = sanitizeDock(source.autoLocation, defaults.autoLocation, false);
   const seen = new Set<MainTabId>();
   const mainOrder: MainTabId[] = [];
   const candidateOrder = Array.isArray(source.mainOrder) ? source.mainOrder : [];

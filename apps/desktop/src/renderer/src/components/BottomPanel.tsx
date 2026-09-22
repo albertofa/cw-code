@@ -95,20 +95,20 @@ export function BottomPanel({ sessionId, driver }: { sessionId: string; driver: 
               className={`tab${effectiveActive === id ? " active" : ""}`}
               title={`${def.title} - drag to move, right-click for more actions`}
             >
-              <def.Icon size={14} className={def.driver ? `driver-icon ${def.driver}` : undefined} />
-              <span className="tab-label">{def.title}</span>
+              <def.Icon size={14} className={`tab-icon${def.driver ? ` driver-icon ${def.driver}` : ""}`} aria-hidden="true" />
               <span
                 className="tab-x"
                 role="button"
-                aria-label={`Send ${def.title} back to the right panel`}
-                title="Send back to right panel"
+                aria-label={`Close ${def.title}`}
+                title="Close tab"
                 onClick={(e) => {
                   e.stopPropagation();
-                  moveTab(id, "right");
+                  moveTab(id, "closed");
                 }}
               >
                 &times;
               </span>
+              <span className="tab-label">{def.title}</span>
             </button>
           );
         })}

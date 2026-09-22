@@ -1,6 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
-  ArrowRight,
+  ArrowUp,
   AtSign,
   Image,
   Lock,
@@ -71,10 +71,10 @@ const FALLBACK_PERMISSIONS: PermissionOption[] = [
 ];
 
 function permissionIconFor(id: PermissionMode): ReactNode {
-  if (id === "manual") return <Lock size={14} />;
-  if (id === "acceptEdits") return <Pencil size={14} />;
-  if (id === "bypassPermissions") return <LockOpen size={14} />;
-  return <Zap size={14} />;
+  if (id === "manual") return <Lock size={15} />;
+  if (id === "acceptEdits") return <Pencil size={15} />;
+  if (id === "bypassPermissions") return <LockOpen size={15} />;
+  return <Zap size={15} />;
 }
 
 function EffortIcon({ size = 15 }: { size?: number }) {
@@ -427,7 +427,7 @@ export function ComposerView({
         <div className="recipe-control recipe-model" title={driver}>
           <MenuSelect
             label="Model"
-            icon={<DriverIcon driver={driver} size={16} />}
+            icon={<DriverIcon driver={driver} size={15} />}
             title={modelsError ? `Model list failed: ${modelsError}` : "Model"}
             value={modelValue}
             display={modelDisplay}
@@ -576,7 +576,7 @@ export function ComposerView({
             title="Send"
             aria-label="Send"
           >
-            <ArrowRight size={18} />
+            <ArrowUp size={18} />
           </button>
         )}
       </div>

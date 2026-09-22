@@ -9,6 +9,7 @@ import { hashHue, projectAvatarStyle as avatarStyle, projectInitials as initials
 import { mergeAwayIds } from "./sidebarOrder.js";
 import { compareWorkingSet, isWorkingSetStatus } from "./workingSet.js";
 import { shortenHome } from "./pathDisplay.js";
+import appIcon from "../assets/console-c.svg";
 
 const GROUP_VISIBLE = 6;
 
@@ -157,6 +158,64 @@ function orderByStored(current: Session[], ids: string[]): Session[] {
     .sort((a, b) => (index.get(a.id) ?? 0) - (index.get(b.id) ?? 0));
   const unknown = current.filter((s) => !index.has(s.id)).sort((a, b) => b.updatedAt - a.updatedAt);
   return [...known, ...unknown];
+}
+
+function DebugMenu() {
+  const [open, setOpen] = useState(false);
+  if (!window.cw.isDev) return null;
+
+  const openTrace = async (): Promise<void> => {
+    setOpen(false);
+    try {
+      const res = await window.cw.openHarnessTrace();
+      if (!res.ok) {
+        useNotifs.getState().push({
+          kind: "error",
+          title: "Could not open trace",
+          message: res.error ?? res.path ?? "unknown error"
+        });
+      }
+    } catch (err) {
+      useNotifs.getState().push({
+        kind: "error",
+        title: "Could not open trace",
+        message: (err as Error).message
+      });
+    }
+  };
+
+  return (
+    <div className="menu titlebar-menu">
+      <button
+        className="menu-btn"
+        aria-label="Debug"
+        title="Debug"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+      >
+        <span className="menu-value">Debug</span>
+        <span className="menu-chevron">{open ? <ChevronUp aria-hidden="true" size={14} /> : <ChevronDown aria-hidden="true" size={14} />}</span>
+      </button>
+      {open && (
+        <>
+          <div className="menu-backdrop" onClick={() => setOpen(false)} />
+          <div className="menu-panel" role="menu" aria-label="Debug">
+            <div
+              className="menu-row"
+              role="menuitem"
+              title="Open harness-trace.jsonl"
+              onClick={() => void openTrace()}
+            >
+              <span className="menu-text">
+                <span className="name">Open trace</span>
+              </span>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
 }
 
 export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { onOpenSettings: () => void; onOpenSkills: () => void; skillsOpen?: boolean }) {
@@ -856,6 +915,13 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
       className="side"
       onClick={() => setMenu(null)}
     >
+      <div className="head-seg side-seg" onDoubleClick={() => window.cw.toggleMaximizeWindow()}>
+        <div className="titlebar-brand">
+          <img className="titlebar-logo" src={appIcon} alt="" aria-hidden="true" draggable={false} />
+          <span>cw-code</span>
+        </div>
+        <DebugMenu />
+      </div>
       <div className="brand">
         <div className="search-row ghost">
           <Search className="search-icon" aria-hidden="true" size={15} />
