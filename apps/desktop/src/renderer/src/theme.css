@@ -1616,6 +1616,56 @@ body.session-dragging * {
   color: var(--accent);
 }
 
+.md-link-html {
+  display: inline-block;
+  max-width: 100%;
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0 3px 0 6px;
+  font-weight: 550;
+  vertical-align: middle;
+}
+
+.md-link-html:hover {
+  border-color: var(--accent);
+}
+
+.md a.md-link-html-body {
+  color: var(--text);
+  text-decoration: none;
+  overflow-wrap: anywhere;
+}
+
+.md a.md-link-html-body:hover {
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.md-link-html .file-icon {
+  vertical-align: -2px;
+  margin-right: 4px;
+}
+
+.md-link-html-browser {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  vertical-align: middle;
+  margin-left: 4px;
+  padding: 2px;
+  border: none;
+  border-radius: 4px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.md-link-html-browser:hover {
+  color: var(--accent);
+  background: var(--border-soft);
+}
+
 .md code {
   font-family: var(--mono);
   font-size: 12px;

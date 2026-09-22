@@ -3,6 +3,7 @@ import {
   buildPreviewHtml,
   isAbsolutePath,
   isGitHubLink,
+  isHtmlPath,
   isHttpLink,
   isLocalPreviewLink,
   isPathInsideBase,
@@ -22,6 +23,21 @@ describe("isPreviewablePath", () => {
   it("rejects other files", () => {
     expect(isPreviewablePath("a.ts")).toBe(false);
     expect(isPreviewablePath("noext")).toBe(false);
+  });
+});
+
+describe("isHtmlPath", () => {
+  it("accepts html and htm extensions", () => {
+    expect(isHtmlPath("x.html")).toBe(true);
+    expect(isHtmlPath("dir/page.HTM")).toBe(true);
+    expect(isHtmlPath("page.html#frag")).toBe(true);
+    expect(isHtmlPath("page.html?q=1")).toBe(true);
+  });
+
+  it("rejects other extensions", () => {
+    expect(isHtmlPath("x.md")).toBe(false);
+    expect(isHtmlPath("x.ts")).toBe(false);
+    expect(isHtmlPath("noext")).toBe(false);
   });
 });
 
