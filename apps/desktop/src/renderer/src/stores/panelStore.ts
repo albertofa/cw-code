@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { DockableTabId, MainTabId, PanelId, PanelLayoutSnapshot } from "@cw-code/contracts";
+import type { DockableTabId, DockLocation, MainTabId, PanelId, PanelLayoutSnapshot } from "@cw-code/contracts";
 import {
   PANEL_LAYOUT_KEY,
   clampBottomHeight,
@@ -27,16 +27,17 @@ function persist(snapshot: PanelLayoutSnapshot): void {
 
 export interface PanelActions {
   setDraggingTab(tab: DockableTabId | null): void;
-  moveTab(tab: DockableTabId, panel: PanelId): void;
+  moveTab(tab: DockableTabId, panel: DockLocation): void;
   setActive(panel: PanelId, tab: MainTabId): void;
   activateOrOpen(tab: DockableTabId): void;
   setAutoLocation(tab: DockableTabId, panel: PanelId): void;
   setBottomHeight(height: number): void;
   setBottomCollapsed(collapsed: boolean): void;
+  setRightVisible(visible: boolean): void;
   resetLayout(): void;
 }
 
-export type PanelStore = PanelLayoutSnapshot & PanelActions & { draggingTab: DockableTabId | null; bottomCollapsed: boolean };
+export type PanelStore = PanelLayoutSnapshot & PanelActions & { draggingTab: DockableTabId | null; bottomCollapsed: boolean; rightVisible: boolean };
 
 function snapshotOf(state: PanelStore): PanelLayoutSnapshot {
   return {
@@ -54,6 +55,7 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
   ...loadSnapshot(),
   draggingTab: null,
   bottomCollapsed: false,
+  rightVisible: true,
 
   setDraggingTab: (tab) => {
     set({ draggingTab: tab });
@@ -116,11 +118,11 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
 
   activateOrOpen: (tab) => {
     const current = get();
-    const target = current.autoLocation[tab] ?? "right";
-    if (current.dockByTab[tab] !== target) {
-      current.moveTab(tab, target);
+    const docked = current.dockByTab[tab];
+    if (docked === "closed") {
+      current.moveTab(tab, current.autoLocation[tab] ?? "right");
     } else {
-      current.setActive(target, tab);
+      current.setActive(docked, tab);
     }
   },
 
@@ -140,6 +142,10 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
 
   setBottomCollapsed: (collapsed) => {
     set({ bottomCollapsed: collapsed });
+  },
+
+  setRightVisible: (visible) => {
+    set({ rightVisible: visible });
   },
 
   resetLayout: () => {

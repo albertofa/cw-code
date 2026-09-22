@@ -1,6 +1,6 @@
 import { useEffect, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import type { DockableTabId, PanelId } from "@cw-code/contracts";
-import { AppWindow, PanelBottom, PanelRight, Pin, RotateCcw, type LucideIcon } from "lucide-react";
+import { AppWindow, PanelBottom, PanelRight, Pin, RotateCcw, X, type LucideIcon } from "lucide-react";
 import { usePanelStore } from "../stores/panelStore.js";
 
 const MENU_WIDTH = 240;
@@ -60,9 +60,21 @@ export function TabMenu({ x, y, tab, onClose }: { x: number; y: number; tab: Doc
       <button
         className="ctx-item"
         role="menuitem"
+        title="Close this tab — reopen it any time from the right rail"
+        onClick={() => {
+          moveTab(tab, "closed");
+          onClose();
+        }}
+      >
+        <X size={14} aria-hidden="true" />
+        <span>Close tab</span>
+      </button>
+      <button
+        className="ctx-item"
+        role="menuitem"
         title="Right-rail clicks will open this tab here"
         onClick={() => {
-          setAutoLocation(tab, dockByTab[tab]);
+          if (dockByTab[tab] !== "closed") setAutoLocation(tab, dockByTab[tab]);
           onClose();
         }}
       >
@@ -72,7 +84,7 @@ export function TabMenu({ x, y, tab, onClose }: { x: number; y: number; tab: Doc
       <button
         className="ctx-item"
         role="menuitem"
-        title="Dock every tab back in the right panel"
+        title="Close every tab and restore defaults"
         onClick={() => {
           resetLayout();
           onClose();

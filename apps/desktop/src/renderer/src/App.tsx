@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
-import { Eye, PanelRightClose, PanelRightOpen } from "lucide-react";
+import { Eye } from "lucide-react";
 import type { DriverName } from "./cw.js";
 import { collectSubagents } from "./components/subagents.js";
 import { Sidebar } from "./components/Sidebar.js";
@@ -7,13 +7,14 @@ import { WindowControls } from "./components/WindowControls.js";
 import { SkillsModal } from "./components/SkillsModal.js";
 import { SettingsModal } from "./components/SettingsModal.js";
 import { ThreadView } from "./components/ThreadView.js";
+import { PanelToggles } from "./components/PanelToggles.js";
 import { ToolContent } from "./components/ToolContent.js";
 import { TOOL_TABS, isHarnessTabId } from "./components/toolTabs.js";
 import { useTabMenu } from "./components/TabMenu.js";
 import { endTabDrag, startTabDrag, useDockDrop } from "./components/useDockDrop.js";
 import { useNotifs } from "./components/Notifications.js";
 import { useAppStore } from "./stores/appStore.js";
-import { tabsInPanel } from "./stores/panelLayout.js";
+import { tabsInPanel, DOCKABLE_TABS } from "./stores/panelLayout.js";
 import { usePanelStore } from "./stores/panelStore.js";
 import type { DockableTabId } from "@cw-code/contracts";
 import type { TurnEvent } from "./cw.js";
@@ -102,14 +103,24 @@ export function App() {
   const settingsVersion = useAppStore((s) => s.settingsVersion);
   const loadProjects = useAppStore((s) => s.loadProjects);
   const dockByTab = usePanelStore((s) => s.dockByTab);
+  const autoLocation = usePanelStore((s) => s.autoLocation);
   const activeRight = usePanelStore((s) => s.activeRight);
   const activateOrOpen = usePanelStore((s) => s.activateOrOpen);
+  const setActiveTab = usePanelStore((s) => s.setActive);
   const dropRight = useDockDrop("right");
   const tabMenu = useTabMenu();
   const draggingTab = usePanelStore((s) => s.draggingTab);
+  const rightVisible = usePanelStore((s) => s.rightVisible);
+  const setRightVisible = usePanelStore((s) => s.setRightVisible);
+
+  const openTool = (tab: DockableTabId) => {
+    activateOrOpen(tab);
+    const panels = usePanelStore.getState();
+    if (panels.dockByTab[tab] === "right") setRightVisible(true);
+    if (panels.dockByTab[tab] === "bottom" && panels.bottomCollapsed) panels.setBottomCollapsed(false);
+  };
 
 
-  const [rightVisible, setRightVisible] = useState(true);
   const [rightWidth, setRightWidth] = useState(loadRightWidth);
   const [preloadError, setPreloadError] = useState<string | null>(null);
   const [settingsOpen, setSettingsOpen] = useState(false);
@@ -340,6 +351,16 @@ export function App() {
 
   const rightIds = tabsInPanel(dockByTab, "right");
   const effectiveRightTab: RightTab = rightIds.includes(activeTab) ? activeTab : (rightIds[0] ?? activeTab);
+  const allTabsClosed = DOCKABLE_TABS.every((id) => dockByTab[id] === "closed");
+
+  const visibleIds = new Set(visibleTabs.map((t) => t.id));
+  const openHeaders = rightIds
+    .filter((id) => (id === "preview" ? preview !== null : visibleIds.has(id)))
+    .map((id) => {
+      if (id === "preview") return { id, title: "Preview", Icon: Eye, driver: undefined };
+      const def = TOOL_TABS.find((t) => t.id === id);
+      return { id, title: def?.title ?? id, Icon: def?.Icon ?? Eye, driver: def?.driver };
+    });
 
   return (
     <div className={`app-shell${rightVisible ? "" : " right-hidden"}`} data-driver={driver ?? "none"}>
@@ -349,16 +370,6 @@ export function App() {
           <div className="app-body">
           <Sidebar onOpenSettings={() => openSettings()} onOpenSkills={() => setSkillsOpen(true)} skillsOpen={skillsOpen} />
           <ThreadView />
-          {!rightVisible && (
-            <button
-              className="right-restore"
-              onClick={() => setRightVisible(true)}
-              title="Restore panel"
-              aria-label="Restore panel"
-            >
-              <PanelRightOpen size={14} />
-            </button>
-          )}
           {rightVisible && (
             <aside className={`right${dropRight.over || draggingTab !== null ? " drop-target-active" : ""}`} style={{ width: rightWidth }}>
               <div
@@ -368,30 +379,32 @@ export function App() {
                 title="Drag to resize · double-click to reset"
               />
               <div
-                className="tabbar"
+                className="tabbar tool-rail"
                 onDoubleClick={() => window.cw.toggleMaximizeWindow()}
                 {...dropRight.bind}
               >
+                <div className="tool-rail-openers">
                 {visibleTabs.map((t) => {
                   const isAgents = t.id === "agents";
                   const showBadge = isAgents && subagentStats.total > 0;
                   const badgeTitle = isAgents
                     ? `${subagentStats.total} subagent${subagentStats.total === 1 ? "" : "s"}${subagentStats.running > 0 ? ` (${subagentStats.running} running)` : ""}`
                     : undefined;
+                  const defaultPanel = autoLocation[t.id] ?? "right";
+                  const dockedPanel = dockByTab[t.id];
+                  const placeSuffix = dockedPanel === "closed" ? `opens in ${defaultPanel}` : `open in ${dockedPanel}`;
+                  const label = showBadge ? `${t.title} · ${badgeTitle} · ${placeSuffix}` : `${t.title} · ${placeSuffix}`;
                   return (
                     <button
                       key={t.id}
-                      onClick={() => activateOrOpen(t.id)}
+                      onClick={() => openTool(t.id)}
                       onContextMenu={tabMenu.onTabContextMenu(t.id)}
-                      draggable
-                      onDragStart={(e) => startTabDrag(e, t.id)}
-                      onDragEnd={endTabDrag}
-                      className={`tab${activeTab === t.id ? " active" : ""}`}
-                      title={isAgents && showBadge ? `${t.title} · ${badgeTitle}` : t.title}
-                      aria-label={isAgents && showBadge ? `${t.title}, ${badgeTitle}` : t.title}
+                      className="tool-open"
+                      data-tool={t.id}
+                      title={label}
+                      aria-label={label}
                     >
-                      <t.Icon size={15} className={t.driver ? `driver-icon ${t.driver}` : undefined} />
-                      {activeTab === t.id && <span className="tab-label">{t.title}</span>}
+                      <t.Icon size={15} aria-hidden="true" />
                       {showBadge && (
                         <span
                           className={`tab-badge${subagentStats.running > 0 ? " running" : ""}`}
@@ -406,28 +419,45 @@ export function App() {
                 })}
                 {preview && (
                   <button
-                    onClick={() => activateOrOpen("preview")}
+                    onClick={() => openTool("preview")}
                     onContextMenu={tabMenu.onTabContextMenu("preview")}
-                    draggable
-                    onDragStart={(e) => startTabDrag(e, "preview")}
-                    onDragEnd={endTabDrag}
-                    className={`tab${activeTab === "preview" ? " active" : ""}`}
-                    title="Preview"
+                    className="tool-open"
+                    data-tool="preview"
+                    title={`Preview · opens in ${autoLocation.preview ?? "right"}`}
                     aria-label="Preview"
                   >
-                    <Eye size={15} />
-                    {activeTab === "preview" && <span className="tab-label">Preview</span>}
+                    <Eye size={15} aria-hidden="true" />
                   </button>
                 )}
-                <button
-                  className="tab tab-min"
-                  onClick={() => setRightVisible(false)}
-                  title="Minimize panel"
-                  aria-label="Minimize panel"
-                >
-                  <PanelRightClose size={15} />
-                </button>
+                </div>
+                <PanelToggles />
               </div>
+              {openHeaders.length > 0 && (
+              <div
+                className="right-tabbar"
+                role="tablist"
+                aria-label="Right panel tabs"
+                {...dropRight.bind}
+              >
+                {openHeaders.map((t) => (
+                  <button
+                    key={t.id}
+                    role="tab"
+                    aria-selected={effectiveRightTab === t.id}
+                    onClick={() => setActiveTab("right", t.id)}
+                    onContextMenu={tabMenu.onTabContextMenu(t.id)}
+                    draggable
+                    onDragStart={(e) => startTabDrag(e, t.id)}
+                    onDragEnd={endTabDrag}
+                    className={`tab${effectiveRightTab === t.id ? " active" : ""}`}
+                    title={`${t.title} - drag to move, right-click for more actions`}
+                  >
+                    <t.Icon size={15} className={t.driver ? `driver-icon ${t.driver}` : undefined} aria-hidden="true" />
+                    <span className="tab-label">{t.title}</span>
+                  </button>
+                ))}
+              </div>
+              )}
               <div
                 className="right-body"
                 {...dropRight.bind}
@@ -435,7 +465,7 @@ export function App() {
                 {!activeSessionId && !preview && <div className="right-empty">No session selected.</div>}
                 {(activeSessionId || preview) &&
                   (rightIds.length === 0 ? (
-                    <div className="right-empty">All tools are docked in other panels.</div>
+                    <div className="right-empty">{allTabsClosed ? "Pick a tool above to open it." : "All tools are docked in other panels."}</div>
                   ) : activeSessionId ? (
                     <ToolContent tab={effectiveRightTab} sessionId={activeSessionId} panel="right" />
                   ) : preview ? (

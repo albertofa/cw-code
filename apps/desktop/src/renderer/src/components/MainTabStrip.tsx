@@ -60,20 +60,20 @@ export function MainTabStrip({ sessionId, driver }: { sessionId: string | undefi
               className={`tab${effectiveActive === id ? " active" : ""}`}
               title={`${def.title} - drag to move, right-click for more actions`}
             >
-              <def.Icon size={15} className={def.driver ? `driver-icon ${def.driver}` : undefined} />
-              <span className="tab-label">{def.title}</span>
+              <def.Icon size={15} className={`tab-icon${def.driver ? ` driver-icon ${def.driver}` : ""}`} aria-hidden="true" />
               <span
                 className="tab-x"
                 role="button"
-                aria-label={`Send ${def.title} back to the right panel`}
-                title="Send back to right panel"
+                aria-label={`Close ${def.title}`}
+                title="Close tab"
                 onClick={(e) => {
                   e.stopPropagation();
-                  moveTab(tabId, "right");
+                  moveTab(tabId, "closed");
                 }}
               >
                 &times;
               </span>
+              <span className="tab-label">{def.title}</span>
             </button>
           );
         })}

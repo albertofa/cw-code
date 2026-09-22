@@ -24,6 +24,7 @@ import { groupTurns, splitTurn, type ThreadNode } from "./turnGroups.js";
 import { pendingToolsForTurn } from "./toolSummaries.js";
 import { durationFromMessages } from "./turnFormat.js";
 import { usePanelStore } from "../stores/panelStore.js";
+import { PanelToggles } from "./PanelToggles.js";
 import { collectSubagents } from "./subagents.js";
 import { splitImageMentions } from "./imagePreview.js";
 import { ImageThumb } from "./ImageThumb.js";
@@ -58,6 +59,7 @@ export function ThreadView() {
   const panelActiveMain = usePanelStore((s) => s.activeMain);
   const panelDockByTab = usePanelStore((s) => s.dockByTab);
   const panelMainOrder = usePanelStore((s) => s.mainOrder);
+  const rightVisible = usePanelStore((s) => s.rightVisible);
   const dropMain = useDockDrop("main");
   const draggingTab = usePanelStore((s) => s.draggingTab);
   const setPendingDriver = useAppStore((s) => s.setPendingDriver);
@@ -176,6 +178,7 @@ export function ThreadView() {
       <div className="head-col col-mid" />
       <div className="head-col col-right">
         {!showNew && sessionId && <GitPanelBar key={sessionId} sessionId={sessionId} />}
+        {!rightVisible && <PanelToggles />}
       </div>
     </div>
   );

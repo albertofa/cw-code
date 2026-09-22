@@ -121,6 +121,7 @@ body {
   display: flex;
   align-items: center;
   background: var(--panel);
+  border-bottom: 1px solid var(--border);
   min-width: 0;
   user-select: none;
   -webkit-app-region: drag;
@@ -148,6 +149,7 @@ body {
   padding: 0;
   gap: 0;
   border-radius: 0;
+  background: var(--editor);
 }
 
 .head-col {
@@ -195,10 +197,6 @@ body {
 
 .app-shell.right-hidden .notifs {
   right: 152px;
-}
-
-.app-shell.right-hidden .right-restore {
-  top: 44px;
 }
 
 .titlebar-brand {
@@ -377,6 +375,7 @@ body {
   flex-direction: column;
   min-height: 0;
   background: var(--panel);
+  border-right: 1px solid var(--border);
 }
 
 .brand {
@@ -696,15 +695,15 @@ body {
   padding: 9px 10px 8px;
   margin: 0 0 6px;
   border-radius: 10px;
-  border: 1px solid var(--border-soft);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.032), rgba(255, 255, 255, 0.012)), var(--bg-deep);
+  border: 1px solid color-mix(in srgb, #8ea3c7 22%, var(--border-soft));
+  background: linear-gradient(180deg, rgba(142, 163, 199, 0.1), rgba(142, 163, 199, 0.03)), var(--bg-deep);
   box-shadow: inset 3px 0 0 var(--wc-accent, transparent);
   cursor: pointer;
 }
 
 .working-card:hover {
-  border-color: var(--border);
-  background: linear-gradient(180deg, rgba(255, 255, 255, 0.055), rgba(255, 255, 255, 0.02)), var(--bg-deep);
+  border-color: color-mix(in srgb, #8ea3c7 35%, var(--border));
+  background: linear-gradient(180deg, rgba(142, 163, 199, 0.16), rgba(142, 163, 199, 0.05)), var(--bg-deep);
 }
 
 .working-card.status-input-required {
@@ -2263,8 +2262,8 @@ body.session-dragging * {
   box-sizing: border-box;
   display: flex;
   flex-direction: column;
-  background: var(--composer-surface);
-  border: 1px solid transparent;
+  background: linear-gradient(180deg, rgba(142, 163, 199, 0.09), rgba(142, 163, 199, 0.02) 55%), var(--composer-surface);
+  border: 1px solid color-mix(in srgb, #8ea3c7 25%, transparent);
   border-radius: 12px;
   padding: 0;
   box-shadow: 0 14px 36px rgba(0, 0, 0, 0.5);
@@ -2272,8 +2271,6 @@ body.session-dragging * {
 }
 
 .composer:focus-within {
-  background: #282b31;
-  border-color: #393b40;
   box-shadow: 0 16px 42px rgba(0, 0, 0, 0.5);
 }
 
@@ -2317,7 +2314,7 @@ body.session-dragging * {
   gap: 8px;
   min-height: 52px;
   box-sizing: border-box;
-  padding: 0 10px 8px 23px;
+  padding: 0 12px 10px;
   color: var(--composer-muted);
 }
 
@@ -2378,7 +2375,7 @@ body.session-dragging * {
 }
 
 .composer-add {
-  margin-left: 0;
+  margin-left: auto;
 }
 
 .menu {
@@ -2602,10 +2599,11 @@ body.session-dragging * {
 }
 
 .composer-recipe-row .menu-btn {
-  min-height: 32px;
+  box-sizing: border-box;
+  min-height: 34px;
   border: 0;
   border-radius: var(--r-sm);
-  padding: 7px 10px;
+  padding: 6px 10px;
   gap: 7px;
   color: #eeeef5;
   font-size: 13.5px;
@@ -2634,15 +2632,14 @@ body.session-dragging * {
 }
 
 .composer-action {
-  width: 44px;
-  height: 41px;
-  margin-left: auto;
+  width: 40px;
+  height: 40px;
   flex: none;
   display: inline-flex;
   align-items: center;
   justify-content: center;
   border: 0;
-  border-radius: 9px;
+  border-radius: 10px;
   color: #fff;
   cursor: pointer;
   transition: filter 120ms ease, transform 120ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 120ms ease;
@@ -3147,6 +3144,7 @@ body.session-dragging * {
   display: flex;
   flex-direction: column;
   background: var(--panel);
+  border-left: 1px solid var(--border);
   min-height: 0;
   position: relative;
 }
@@ -3177,29 +3175,6 @@ body.session-dragging * {
   background: var(--driver);
 }
 
-.right-restore {
-  position: absolute;
-  right: 0;
-  top: 0;
-  bottom: 0;
-  width: 14px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  padding: 0;
-  border: 0;
-  border-left: 1px solid var(--border);
-  background: var(--panel);
-  color: var(--dim);
-  cursor: pointer;
-  z-index: 10;
-}
-
-.right-restore:hover {
-  color: var(--fg);
-  background: var(--raised);
-}
-
 .tabbar {
   display: flex;
   gap: 4px;
@@ -3208,13 +3183,130 @@ body.session-dragging * {
   box-sizing: border-box;
   align-items: stretch;
   padding: 0 140px 0 10px;
-  border-bottom: 0;
+  border-bottom: 1px solid var(--border);
   background: var(--panel);
   -webkit-app-region: drag;
 }
 
 .tabbar button {
   -webkit-app-region: no-drag;
+}
+
+.tool-rail {
+  gap: 2px;
+  align-items: center;
+}
+
+.tool-rail-openers {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+}
+
+.tool-rail .panel-toggles {
+  margin-left: auto;
+}
+
+.tool-open {
+  position: relative;
+  width: 30px;
+  height: 30px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  padding: 0;
+  cursor: pointer;
+  opacity: 0.8;
+}
+
+.tool-open:hover {
+  background: var(--raised);
+  opacity: 1;
+}
+
+.tool-open[data-tool="files"] {
+  color: #e8b44f;
+}
+
+.tool-open[data-tool="agents"] {
+  color: #a371f7;
+}
+
+.tool-open[data-tool="diff"] {
+  color: #59a659;
+}
+
+.tool-open[data-tool="claude"] {
+  color: var(--claude);
+}
+
+.tool-open[data-tool="opencode"] {
+  color: var(--opencode);
+}
+
+.tool-open[data-tool="codex"] {
+  color: var(--codex);
+}
+
+.tool-open[data-tool="shell"] {
+  color: #9aa4b2;
+}
+
+.tool-open[data-tool="preview"] {
+  color: #e08ab8;
+}
+
+.right-tabbar {
+  display: flex;
+  gap: 4px;
+  height: 40px;
+  min-height: 40px;
+  box-sizing: border-box;
+  align-items: stretch;
+  padding: 0 10px;
+  background: var(--panel);
+  border-bottom: 1px solid var(--border);
+}
+
+.right-tabbar button {
+  -webkit-app-region: no-drag;
+}
+
+.panel-toggles {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex: none;
+}
+
+.panel-toggle {
+  width: 30px;
+  height: 30px;
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: transparent;
+  border: none;
+  border-radius: 8px;
+  padding: 0;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.panel-toggle:hover {
+  background: var(--raised);
+  color: var(--text);
+}
+
+.panel-toggle[aria-expanded="true"] {
+  background: var(--raised);
+  color: var(--text);
 }
 
 .tab {
@@ -3290,10 +3382,6 @@ body.session-dragging * {
   background: var(--success);
   border-color: var(--success);
   color: #07130b;
-}
-
-.tab-min {
-  margin-left: auto;
 }
 
 .right-body {
@@ -5067,10 +5155,6 @@ select.field option {
 
   .notifs {
     right: 152px;
-  }
-
-  .right-restore {
-    top: 44px;
   }
 
   .composer-wrap {
@@ -7114,7 +7198,8 @@ button.gitbar-checkout:hover {
   box-sizing: border-box;
   align-items: stretch;
   padding: 0 10px;
-  background: var(--panel-head);
+  background: var(--editor);
+  border-bottom: 1px solid var(--border);
 }
 
 .main-tool-body {
@@ -7169,18 +7254,25 @@ button.gitbar-checkout:hover {
 }
 
 .tab-x {
-  visibility: hidden;
-  margin-left: 2px;
+  display: none;
+  width: 15px;
+  height: 15px;
+  flex: none;
+  align-items: center;
+  justify-content: center;
   color: var(--faint);
-  font-size: 13px;
+  font-size: 14px;
   line-height: 1;
-  padding: 0 3px;
   border-radius: 4px;
   cursor: pointer;
 }
 
 .tab:hover .tab-x {
-  visibility: visible;
+  display: inline-flex;
+}
+
+.tab:hover .tab-icon {
+  display: none;
 }
 
 .tab-x:hover {
