@@ -26,11 +26,11 @@ import { buildClaudeUserContent } from "./claudeUserContent.js";
 import { previewText, traceHarnessCall, truncateError } from "../../debug/harnessTrace.js";
 
 export const CLAUDE_CURATED_MODELS = [
-  { id: "opus", label: "Opus" },
   { id: "sonnet", label: "Sonnet" },
   { id: "fable", label: "Fable 5.1" },
   { id: "haiku", label: "Haiku" },
   { id: "claude-opus-5", label: "Opus 5" },
+  { id: "claude-opus-5-5", label: "Opus 5.5" },
   { id: "claude-sonnet-5", label: "Sonnet 5" },
   { id: "claude-fable-5", label: "Fable 5" },
   { id: "claude-haiku-4-5-20251001", label: "Haiku 4.5" }
