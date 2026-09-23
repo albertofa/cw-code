@@ -20,13 +20,14 @@ import { getHarnessTracePath, initHarnessTrace } from "./debug/harnessTrace.js";
 import { appendCrashLog, initCrashLog } from "./debug/crashLog.js";
 import { ensureAppDirs, attachmentsDir, logsDir, migrateFromUserData, opencodeModelsCachePath } from "./paths/appPaths.js";
 import { reapOrphanedServers } from "./orphanServers.js";
-import type { ApprovalDecision, CliBinary, CreateSessionOptions, GitDiffMode, SessionStatus, SettingsPatch } from "@cw-code/contracts";
+import type { ApprovalDecision, CliBinary, CreateSessionOptions, GitDiffMode, PrRef, SessionStatus, SettingsPatch } from "@cw-code/contracts";
 import type { DriverKind, HarnessId, SkillSaveInput } from "@cw-code/contracts";
 import type { PtyKind } from "./pty/PtyPool.js";
 import { SessionManager } from "./sessions/SessionManager.js";
 import { SkillsStore } from "./skills/SkillsStore.js";
 import { FileService, IMAGE_MAX_BYTES, imageExtMime } from "./fs/FileService.js";
 import { GitService } from "./fs/GitService.js";
+import { PullRequestService } from "./github/PullRequestService.js";
 import { PtyPool } from "./pty/PtyPool.js";
 import { readWindowsTerminalFontFace } from "./pty/terminalFont.js";
 import { configuredCliBinaryPath } from "./settings/settingsUtils.js";
@@ -39,6 +40,7 @@ const sessions = new SessionManager();
 const skills = new SkillsStore();
 const files = new FileService();
 const git = new GitService(() => sessions.getSettings());
+const pullRequests = new PullRequestService(git, () => sessions.getSettings(), (rootPath) => sessions.addProject(rootPath));
 const ptys = new PtyPool(() => sessions.getSettings());
 
 async function createWindow(): Promise<void> {
@@ -307,6 +309,12 @@ function registerIpc(): void {
   ipcMain.handle("git.setIdentity", (_e, args: { projectId: string; name: string; email: string }) =>
     git.setRepositoryIdentity(sessions.rootForProject(args.projectId), args.name, args.email)
   );
+
+  ipcMain.handle("prs.inbox", (_e, args: { force?: boolean }) => pullRequests.inbox(args?.force));
+  ipcMain.handle("prs.detail", (_e, args: { ref: PrRef }) => pullRequests.detail(args.ref));
+  ipcMain.handle("prs.diff", (_e, args: { ref: PrRef }) => pullRequests.diff(args.ref));
+  ipcMain.handle("prs.checkLog", (_e, args: { ref: PrRef; runId: number }) => pullRequests.failedCheckLog(args.ref, args.runId));
+  ipcMain.handle("prs.clone", (_e, args: { ref: PrRef }) => pullRequests.clone(args.ref));
 
   ipcMain.handle("fs.readFile", (_e, args: { sessionId: string; path: string }) =>
     sessions.ensureWorktree(args.sessionId).then((root) => files.readFile(root, args.path))

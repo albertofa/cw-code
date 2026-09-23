@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { AppSettings, CliBinary, CliDiscoveredCandidate, CliDiscoverResult, CreateSessionOptions, GitBranchInfo, GitDiffMode, GitDiffResult, GitStatus, HarnessId, Project, RetryConnectionResult, SessionCleanupResult, SessionMeta, SessionStatus, SkillDetail, SkillMeta, SkillSaveInput, SkillsListResult, SourceControlHealth, SubagentToolsResult, WorktreePruneSummary } from "@cw-code/contracts";
+import type { AppSettings, CliBinary, CliDiscoveredCandidate, CliDiscoverResult, CreateSessionOptions, GitBranchInfo, GitDiffMode, GitDiffResult, GitStatus, HarnessId, PrDetail, PrInboxResult, PrRef, Project, RetryConnectionResult, SessionCleanupResult, SessionMeta, SessionStatus, SkillDetail, SkillMeta, SkillSaveInput, SkillsListResult, SourceControlHealth, SubagentToolsResult, WorktreePruneSummary } from "@cw-code/contracts";
 
 export type PermissionMode = "auto" | "acceptEdits" | "bypassPermissions" | "manual";
 export type EffortLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
@@ -95,6 +95,11 @@ export interface CwApi {
   getSourceControlHealth(projectId?: string): Promise<SourceControlHealth>;
   setProjectGitHubAccount(projectId: string, account: { host: string; login: string } | null): Promise<Project>;
   setRepositoryGitIdentity(projectId: string, name: string, email: string): Promise<void>;
+  getPrInbox(force?: boolean): Promise<PrInboxResult>;
+  getPrDetail(ref: PrRef): Promise<PrDetail>;
+  getPrDiff(ref: PrRef): Promise<string>;
+  getPrCheckLog(ref: PrRef, runId: number): Promise<string>;
+  clonePrRepo(ref: PrRef): Promise<Project>;
   onTurnEvent(cb: (event: unknown) => void): () => void;
   onSessionTitle(cb: (msg: { sessionId: string; title: string }) => void): () => void;
   readFile(sessionId: string, path: string): Promise<string>;
@@ -202,6 +207,11 @@ const api: CwApi = {
     ipcRenderer.invoke("git.setProjectAccount", { projectId, account }),
   setRepositoryGitIdentity: (projectId: string, name: string, email: string) =>
     ipcRenderer.invoke("git.setIdentity", { projectId, name, email }),
+  getPrInbox: (force?: boolean) => ipcRenderer.invoke("prs.inbox", { force }),
+  getPrDetail: (ref: PrRef) => ipcRenderer.invoke("prs.detail", { ref }),
+  getPrDiff: (ref: PrRef) => ipcRenderer.invoke("prs.diff", { ref }),
+  getPrCheckLog: (ref: PrRef, runId: number) => ipcRenderer.invoke("prs.checkLog", { ref, runId }),
+  clonePrRepo: (ref: PrRef) => ipcRenderer.invoke("prs.clone", { ref }),
   onTurnEvent: (cb) => {
     const listener = (_e: unknown, event: unknown) => cb(event);
     ipcRenderer.on("turn.event", listener as never);

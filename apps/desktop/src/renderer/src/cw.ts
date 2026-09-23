@@ -3,11 +3,42 @@ import type {
   CliDiscoveredCandidate,
   CliDiscoverResult,
   HarnessId,
+  PrBucket,
+  PrCheck,
+  PrCiState,
+  PrCommit,
+  PrDetail,
+  PrInboxResult,
+  PrMergeable,
+  PrRef,
+  PrReviewer,
+  PrReviewState,
+  PrReviewThread,
+  PrSummary,
+  PrThreadComment,
+  PrTimelineItem,
   SkillDetail,
   SkillMeta,
   SkillSaveInput,
   SkillsListResult
 } from "@cw-code/contracts";
+
+export type {
+  PrBucket,
+  PrCheck,
+  PrCiState,
+  PrCommit,
+  PrDetail,
+  PrInboxResult,
+  PrMergeable,
+  PrRef,
+  PrReviewer,
+  PrReviewState,
+  PrReviewThread,
+  PrSummary,
+  PrThreadComment,
+  PrTimelineItem
+};
 
 export interface Project {
   id: string;
@@ -426,6 +457,11 @@ export interface CwApi {
   getSourceControlHealth(projectId?: string): Promise<SourceControlHealth>;
   setProjectGitHubAccount(projectId: string, account: { host: string; login: string } | null): Promise<Project>;
   setRepositoryGitIdentity(projectId: string, name: string, email: string): Promise<void>;
+  getPrInbox(force?: boolean): Promise<PrInboxResult>;
+  getPrDetail(ref: PrRef): Promise<PrDetail>;
+  getPrDiff(ref: PrRef): Promise<string>;
+  getPrCheckLog(ref: PrRef, runId: number): Promise<string>;
+  clonePrRepo(ref: PrRef): Promise<Project>;
   onTurnEvent(cb: (msg: { sessionId: string; event: TurnEvent }) => void): () => void;
   onSessionTitle(cb: (msg: { sessionId: string; title: string }) => void): () => void;
   readFile(sessionId: string, path: string): Promise<string>;

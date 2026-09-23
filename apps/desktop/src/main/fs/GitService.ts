@@ -57,11 +57,11 @@ interface AccountSelection {
 
 type SourceControlSettings = Pick<AppSettings, "gitBinaryPath" | "githubCliBinaryPath">;
 
-function defaultBinary(name: "git" | "gh"): string {
+export function defaultBinary(name: "git" | "gh"): string {
   return process.platform === "win32" ? `${name}.exe` : name;
 }
 
-function cleanAuthEnvironment(): NodeJS.ProcessEnv {
+export function cleanAuthEnvironment(): NodeJS.ProcessEnv {
   const env = { ...process.env };
   delete env["GH_TOKEN"];
   delete env["GITHUB_TOKEN"];
@@ -74,7 +74,7 @@ function cleanAuthEnvironment(): NodeJS.ProcessEnv {
   return env;
 }
 
-function authenticatedEnvironment(host: string, token: string): NodeJS.ProcessEnv {
+export function authenticatedEnvironment(host: string, token: string): NodeJS.ProcessEnv {
   const env = cleanAuthEnvironment();
   env["GH_HOST"] = host;
   if (host === "github.com" || host.endsWith(".ghe.com")) env["GH_TOKEN"] = token;
@@ -309,7 +309,7 @@ export function parsePullRequest(stdout: string): GitPullRequest | null {
   };
 }
 
-function execText(command: string, args: string[], cwd: string, timeout = 10_000, env?: NodeJS.ProcessEnv): Promise<string> {
+export function execText(command: string, args: string[], cwd: string, timeout = 10_000, env?: NodeJS.ProcessEnv): Promise<string> {
   return new Promise((resolvePromise, reject) => {
     execFile(command, args, { cwd, timeout, windowsHide: true, maxBuffer: 16 * 1024 * 1024, env: env ?? withNonInteractiveEnv() }, (error, stdout, stderr) => {
       if (error) return reject(new Error(String(stderr || error.message).trim()));
@@ -338,9 +338,18 @@ function exitCode(binary: string, args: string[]): Promise<number> {
   });
 }
 
+export async function fetchGhToken(binary: string, cwd: string, host: string, login: string): Promise<string> {
+  return (await execText(binary, ["auth", "token", "--hostname", host, "--user", login], cwd, 8_000, cleanAuthEnvironment())).trim();
+}
+
+export async function fetchGhAuthStatus(binary: string, cwd: string): Promise<GitHubAccountInfo[]> {
+  const stdout = await execText(binary, ["auth", "status", "--json", "hosts"], cwd, 10_000, cleanAuthEnvironment());
+  return parseGitHubAccounts(stdout);
+}
+
 async function queryPullRequest(root: string, ghBinary: string, remote: ParsedGitHubRemote, account: GitHubAccountInfo): Promise<{ pullRequest: GitPullRequest | null; error: string | null }> {
   try {
-    const token = (await execText(ghBinary, ["auth", "token", "--hostname", remote.host, "--user", account.login], root, 8_000, cleanAuthEnvironment())).trim();
+    const token = await fetchGhToken(ghBinary, root, remote.host, account.login);
     if (!token) throw new Error(`No token available for ${account.login}`);
     const stdout = await execText(ghBinary, [
       "pr", "view", "--json",
@@ -715,6 +724,21 @@ export class GitService {
     }
   }
 
+  async fetchPullRequestHead(repoRoot: string, number: number): Promise<string> {
+    if (!Number.isSafeInteger(number) || number <= 0) throw new Error(`invalid pull request number '${String(number)}'`);
+    const repositoryRoot = await this.repositoryRoot(repoRoot);
+    const branch = `cw-pr/${number}`;
+    await execText(
+      this.settings().gitBinaryPath,
+      ["-C", repositoryRoot, "fetch", "origin", `+pull/${number}/head:${branch}`],
+      repositoryRoot,
+      120_000,
+      cleanAuthEnvironment()
+    );
+    this.invalidateBranches(repositoryRoot);
+    return branch;
+  }
+
   async renameBranch(repoRoot: string, from: string, to: string, opts: { worktreePath?: string } = {}): Promise<string> {
     const name = to.trim();
     if (!name || name.startsWith("-")) throw new Error("invalid branch name");
@@ -901,15 +925,15 @@ export class GitService {
   }
 
   private async tokenFor(root: string, remote: ParsedGitHubRemote, login: string): Promise<string> {
-    return (await execText(this.settings().githubCliBinaryPath, ["auth", "token", "--hostname", remote.host, "--user", login], root, 8_000, cleanAuthEnvironment())).trim();
+    return fetchGhToken(this.settings().githubCliBinaryPath, root, remote.host, login);
   }
 
   private async accountsFor(root: string, remote: ParsedGitHubRemote): Promise<GitHubAccountInfo[]> {
     const key = `${this.settings().githubCliBinaryPath}|${remote.host}|${remote.slug}`;
     const cached = this.accountCache.get(key);
     if (cached && cached.expiresAt > Date.now()) return cached.accounts.map((account) => ({ ...account }));
-    const stdout = await execText(this.settings().githubCliBinaryPath, ["auth", "status", "--json", "hosts"], root, 10_000, cleanAuthEnvironment());
-    const accounts = parseGitHubAccounts(stdout).filter((account) => account.host.toLowerCase() === remote.host);
+    const accounts = (await fetchGhAuthStatus(this.settings().githubCliBinaryPath, root))
+      .filter((account) => account.host.toLowerCase() === remote.host);
     await Promise.all(accounts.map(async (account) => {
       if (!account.authenticated) {
         account.hasRepositoryAccess = false;
