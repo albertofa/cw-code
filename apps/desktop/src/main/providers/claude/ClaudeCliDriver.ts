@@ -8,6 +8,7 @@ import type {
   AppSettings,
   ApprovalDecision,
   CliDriver,
+  CommandOption,
   EffortLevel,
   HistoryMessage,
   PermissionMode,
@@ -19,7 +20,9 @@ import type {
 } from "@cw-code/contracts";
 import { parseExtraArgs } from "../../settings/settingsUtils.js";
 import { killProcessTree } from "../../processTree.js";
-import { attributeClaudeSubagentEvent, buildClaudeAllowRule, claudeAllowResponse, claudeApprovalRequest, claudeQuestionRequest, claudeDenyResponse, claudeControlResponse, parseClaudeControlRequest, parseClaudeSubagentHandback, parseClaudeTaskSystemLine, parseStreamLine, type ClaudeControlRequest, type ClaudeTaskSystemInfo, type TurnDoneInfo } from "./claudeStreamParser.js";
+import { attributeClaudeSubagentEvent, buildClaudeAllowRule, claudeAllowResponse, claudeApprovalRequest, claudeQuestionRequest, claudeDenyResponse, claudeControlResponse, parseClaudeControlRequest, parseClaudeSubagentHandback, parseClaudeSystemInit, parseClaudeTaskSystemLine, parseStreamLine, type ClaudeControlRequest, type ClaudeTaskSystemInfo, type TurnDoneInfo } from "./claudeStreamParser.js";
+import { CLAUDE_COMMANDS_PROBE_ARGS, listClaudeCommands, probeClaudeCommands, recordClaudeTerminalCommands } from "./claudeCommands.js";
+import { describeClaudeExit } from "./claudeExit.js";
 import { claudeProjectSlug, listClaudeSessions } from "./claudeSessions.js";
 import { readClaudeHistory, readSidecarAgent, readClaudeTaskResult, findSidecarModel, type SidecarAgent } from "./claudeHistory.js";
 import { buildClaudeUserContent } from "./claudeUserContent.js";
@@ -105,21 +108,6 @@ export function mergeClaudeAllowRule(existing: unknown, rule: string): Record<st
 }
 
 export const CLAUDE_IDLE_EVICT_MS = 20 * 60_000;
-
-const CLAUDE_ANSI_RE = /\x1b(?:[@-Z\\-_]|\[[0-?]*[ -/]*[@-~])/g;
-const CLAUDE_EXIT_BOILERPLATE_RE =
-  /sandbox disabled|sandbox is (not active|enabled)|without sandboxing|restrictions will not be enforced/i;
-
-export function describeClaudeExit(stderr: string, code: number | null): string {
-  const cleaned = stderr
-    .replace(CLAUDE_ANSI_RE, "")
-    .split("\n")
-    .map((line) => line.trim())
-    .filter((line) => line && !CLAUDE_EXIT_BOILERPLATE_RE.test(line))
-    .join("\n");
-  if (cleaned) return cleaned.slice(0, 2000);
-  return `claude exited before completing the turn (code ${code})`;
-}
 
 export function subagentToolsResult(agent: SidecarAgent | undefined): SubagentToolsResult {
   if (!agent) return { items: [] };
@@ -419,6 +407,11 @@ export class ClaudeCliDriver implements CliDriver {
       this.handleTaskSystem(state, taskSystem);
       return;
     }
+    const systemInit = parseClaudeSystemInit(line);
+    if (systemInit) {
+      recordClaudeTerminalCommands(state.binary, state.cwd, systemInit.terminalSlashCommands);
+      return;
+    }
     const control = parseClaudeControlRequest(line);
     if (control) {
       this.handleControl(control, state);
@@ -667,6 +660,12 @@ export class ClaudeCliDriver implements CliDriver {
 
   async listPermissionModes(): Promise<PermissionOption[]> {
     return listClaudePermissionModes();
+  }
+
+  async listCommands(cwd: string): Promise<CommandOption[]> {
+    const binary = this.configuredBinary();
+    const args = [...this.extraArgs(), ...CLAUDE_COMMANDS_PROBE_ARGS];
+    return listClaudeCommands(cwd, binary, args, (b, a, c) => probeClaudeCommands(b, a, c, this.spawnFn, this.killFn));
   }
 
   startTurn(request: TurnRequest): TurnHandle {

@@ -1195,6 +1195,24 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
+  it("forwards a slash command and leaves the title for the first real prompt", async () => {
+    const { manager, fake, titles } = makeManager();
+    manager.setSettings({ autoTitleEnabled: true });
+    const project = manager.addProject("C:\\proj-title-command");
+    const a = await manager.createSession(project.id, "claude");
+    await manager.startTurn(a.id, "/review focus on auth", { command: { name: "review", args: "focus on auth" } });
+    expect(fake.seen).toHaveLength(1);
+    expect(fake.lastRequest).toMatchObject({
+      sessionId: a.id,
+      prompt: "/review focus on auth",
+      command: { name: "review", args: "focus on auth" }
+    });
+    const sessions = await manager.listSessions(project.id);
+    expect(sessions.find((s) => s.id === a.id)?.title).toBe("New session");
+    expect(titles).toEqual([]);
+    manager.dispose();
+  });
+
   it("does not start a title turn when auto-title is disabled", async () => {
     const { manager, fake } = makeManager();
     const project = manager.addProject("C:\\proj-title-off");

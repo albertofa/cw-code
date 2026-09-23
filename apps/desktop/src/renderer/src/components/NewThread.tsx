@@ -110,8 +110,9 @@ export function NewThread({
     loadModels: () => window.cw.listModelsFor(projectId, driver),
     loadPermissions: () => window.cw.listPermissionsFor(projectId, driver),
     loadFiles: () => window.cw.listProjectFiles(projectId),
+    loadCommands: () => window.cw.listCommandsFor(projectId, driver),
     savePrefs: (p) => store.setPendingPrefs(p),
-    send: (body, attachments) => store.sendPendingPrompt(body, attachments),
+    send: (body, attachments, command) => store.sendPendingPrompt(body, attachments, command),
     savePasteImage: (mime, data) => window.cw.savePasteImage(projectId, mime, data),
     interrupt: () => {}
   };

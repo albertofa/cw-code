@@ -1,3 +1,4 @@
+import type { CommandOption } from "./commands.js";
 import type { ModelOption, PermissionMode, PermissionOption, SessionMeta, TurnRequest } from "./session.js";
 import type {
   ApprovalDecision,
@@ -48,6 +49,7 @@ export interface CliDriver {
   events(): AsyncIterable<SessionEvent>;
   listModels?(cwd: string): Promise<ModelOption[]>;
   listPermissionModes?(cwd: string): Promise<PermissionOption[]>;
+  listCommands?(cwd: string): Promise<CommandOption[]>;
   respondToApproval?(requestId: string, decision: ApprovalDecision): Promise<void>;
   respondToQuestion?(requestId: string, answers: Record<string, string>): Promise<void>;
   dispose?(): void;

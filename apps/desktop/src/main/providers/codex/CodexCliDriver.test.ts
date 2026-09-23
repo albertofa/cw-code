@@ -59,6 +59,21 @@ class FakeClient implements CodexAppServerLike {
         return {} as T;
       case "thread/name/set":
         return {} as T;
+      case "review/start":
+        return {
+          turn: { id: `turn_${id}` },
+          reviewThreadId: (params as { threadId?: string } | undefined)?.threadId ?? ""
+        } as T;
+      case "skills/list":
+        return {
+          data: [
+            {
+              cwd: (params as { cwds?: string[] } | undefined)?.cwds?.[0] ?? "",
+              skills: [{ name: "ship", description: "Ship it", path: "/skills/ship", enabled: true }],
+              errors: []
+            }
+          ]
+        } as T;
       case "thread/list":
         return {
           data: [
@@ -161,6 +176,13 @@ class FakeClient implements CodexAppServerLike {
 
   serverRequest(method: string, params: unknown, id: string | number): void {
     this.serverRequestHandler?.(method, params, id);
+  }
+}
+
+class ThrowingSkillsClient extends FakeClient {
+  override async request<T>(method: string, params?: unknown): Promise<T> {
+    if (method === "skills/list") throw new Error("skills/list boom");
+    return super.request<T>(method, params);
   }
 }
 
@@ -687,6 +709,246 @@ describe("CodexCliDriver", () => {
     const input = (turn?.params as { input?: Array<{ type: string; path?: string }> } | undefined)?.input ?? [];
     expect(input).toContainEqual({ type: "localImage", path: abs });
     expect(input.some((entry) => entry.path === join("..", "secret.png"))).toBe(false);
+    driver.dispose();
+  });
+
+  it("lists codex built-in commands plus enabled skills", async () => {
+    const { driver } = makeDriver(client);
+    const commands = await driver.listCommands("C:\\proj");
+    expect(client.requests[0]).toMatchObject({ method: "skills/list", params: { cwds: ["C:\\proj"] } });
+    expect(commands).toEqual([
+      { name: "compact", description: "Summarize the thread to free context", dispatch: "native" },
+      {
+        name: "review",
+        description: "Review uncommitted changes, or follow custom instructions",
+        argumentHint: "[instructions]",
+        dispatch: "native"
+      },
+      { name: "ship", description: "Ship it", dispatch: "native" }
+    ]);
+    driver.dispose();
+  });
+
+  it("falls back to built-in commands and warns when skills/list fails", async () => {
+    const throwingClient = new ThrowingSkillsClient();
+    const { driver } = makeDriver(throwingClient);
+    const commands = await driver.listCommands("C:\\proj");
+    expect(commands).toEqual([
+      { name: "compact", description: "Summarize the thread to free context", dispatch: "native" },
+      {
+        name: "review",
+        description: "Review uncommitted changes, or follow custom instructions",
+        argumentHint: "[instructions]",
+        dispatch: "native"
+      }
+    ]);
+    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining("skills/list boom"));
+    driver.dispose();
+  });
+
+  it("compacts an existing thread via thread/compact/start and emits the compaction note", async () => {
+    const { driver, events } = makeDriver(client);
+    const handle = driver.startTurn({
+      sessionId: "local-1",
+      prompt: "/compact",
+      cwd: "C:\\proj",
+      resumeCursor: "thr_9",
+      command: { name: "compact", args: "" }
+    });
+    await settle();
+    expect(client.requests.map((r) => r.method)).toEqual(["thread/resume", "thread/compact/start"]);
+    expect(client.requests[1].params).toMatchObject({ threadId: "thr_resume" });
+
+    client.notify("turn/started", { threadId: "thr_resume", turn: { id: "turn_c1" } });
+    client.notify("item/completed", {
+      threadId: "thr_resume",
+      turnId: "turn_c1",
+      item: { type: "contextCompaction", id: "cc1" }
+    });
+    client.notify("turn/completed", {
+      threadId: "thr_resume",
+      turn: { id: "turn_c1", status: "completed", items: [] }
+    });
+    await settle();
+
+    expect(events).toContainEqual({ type: "assistant.delta", turnId: handle.turnId, text: "Context compacted." });
+    expect(events.find((e) => e.type === "turn.done")).toMatchObject({
+      turnId: handle.turnId,
+      resumeCursor: "thr_resume"
+    });
+    driver.dispose();
+  });
+
+  it("prefixes the compaction note with a blank line when the turn already streamed assistant text", async () => {
+    const { driver, events } = makeDriver(client);
+    driver.startTurn({
+      sessionId: "local-1",
+      prompt: "/compact",
+      cwd: "C:\\proj",
+      resumeCursor: "thr_9",
+      command: { name: "compact", args: "" }
+    });
+    await settle();
+    client.notify("turn/started", { threadId: "thr_resume", turn: { id: "turn_c2" } });
+    client.notify("item/agentMessage/delta", {
+      threadId: "thr_resume",
+      turnId: "turn_c2",
+      delta: "Summarizing the thread..."
+    });
+    client.notify("item/completed", {
+      threadId: "thr_resume",
+      turnId: "turn_c2",
+      item: { type: "contextCompaction", id: "cc2" }
+    });
+    await settle();
+
+    const deltas = events.filter((e) => e.type === "assistant.delta").map((e) => ("text" in e ? e.text : ""));
+    expect(deltas).toEqual(["Summarizing the thread...", "\n\nContext compacted."]);
+    driver.dispose();
+  });
+
+  it("ignores contextCompaction items on a normal turn (auto-compaction mid-turn)", async () => {
+    const { driver, events } = makeDriver(client);
+    driver.startTurn({ sessionId: "local-1", prompt: "keep going", cwd: "C:\\proj" });
+    await settle();
+    client.notify("item/completed", {
+      threadId: "thr_1",
+      turnId: "turn_2",
+      item: { type: "contextCompaction", id: "cc1" }
+    });
+    await settle();
+    expect(events.some((e) => e.type === "assistant.delta")).toBe(false);
+    driver.dispose();
+  });
+
+  it("throws synchronously when compacting a thread with no history, without creating a thread", () => {
+    const { driver, events } = makeDriver(client);
+    expect(() =>
+      driver.startTurn({
+        sessionId: "local-1",
+        prompt: "/compact",
+        cwd: "C:\\proj",
+        command: { name: "compact", args: "" }
+      })
+    ).toThrow("Nothing to compact yet");
+    expect(events).toEqual([]);
+    expect(client.requests).toEqual([]);
+    driver.dispose();
+  });
+
+  it("starts a review turn via review/start and emits the review text", async () => {
+    const { driver, events } = makeDriver(client);
+    const handle = driver.startTurn({
+      sessionId: "local-1",
+      prompt: "/review check races",
+      cwd: "C:\\proj",
+      command: { name: "review", args: "check races" }
+    });
+    await settle();
+    const review = client.requests.find((r) => r.method === "review/start");
+    expect(review?.params).toMatchObject({
+      threadId: "thr_1",
+      target: { type: "custom", instructions: "check races" },
+      delivery: "inline"
+    });
+
+    client.notify("item/completed", {
+      threadId: "thr_1",
+      turnId: "turn_2",
+      item: { type: "exitedReviewMode", id: "r1", review: "Looks fine overall." }
+    });
+    client.notify("turn/completed", {
+      threadId: "thr_1",
+      turn: { id: "turn_2", status: "completed", items: [] }
+    });
+    await settle();
+
+    expect(events).toContainEqual({ type: "assistant.delta", turnId: handle.turnId, text: "Looks fine overall." });
+    expect(events.find((e) => e.type === "turn.done")).toMatchObject({ turnId: handle.turnId });
+    driver.dispose();
+  });
+
+  it("does not duplicate the review text when agentMessage deltas already streamed it", async () => {
+    const { driver, events } = makeDriver(client);
+    const handle = driver.startTurn({
+      sessionId: "local-1",
+      prompt: "/review check races",
+      cwd: "C:\\proj",
+      command: { name: "review", args: "check races" }
+    });
+    await settle();
+
+    client.notify("item/agentMessage/delta", {
+      threadId: "thr_1",
+      turnId: "turn_2",
+      delta: "Looks fine overall."
+    });
+    client.notify("item/completed", {
+      threadId: "thr_1",
+      turnId: "turn_2",
+      item: { type: "exitedReviewMode", id: "r1", review: "Looks fine overall." }
+    });
+    client.notify("turn/completed", {
+      threadId: "thr_1",
+      turn: { id: "turn_2", status: "completed", items: [] }
+    });
+    await settle();
+
+    const deltas = events.filter((e) => e.type === "assistant.delta").map((e) => ("text" in e ? e.text : ""));
+    expect(deltas).toEqual(["Looks fine overall."]);
+    expect(events.find((e) => e.type === "turn.done")).toMatchObject({ turnId: handle.turnId });
+    driver.dispose();
+  });
+
+  it("dispatches a skill command through turn/start with a skill item", async () => {
+    const { driver } = makeDriver(client);
+    const commands = await driver.listCommands("C:\\proj");
+    expect(commands.map((c) => c.name)).toEqual(["compact", "review", "ship"]);
+
+    driver.startTurn({
+      sessionId: "local-1",
+      prompt: "/ship the release",
+      cwd: "C:\\proj",
+      command: { name: "ship", args: "the release" }
+    });
+    await settle();
+    const turn = client.requests.find((r) => r.method === "turn/start");
+    expect(turn?.params).toMatchObject({
+      threadId: "thr_2",
+      input: [
+        { type: "text", text: "$ship the release" },
+        { type: "skill", name: "ship", path: "/skills/ship" }
+      ]
+    });
+    driver.dispose();
+  });
+
+  it("errors when a skill command cannot be resolved even after refetching skills/list", async () => {
+    const { driver, events } = makeDriver(client);
+    const handle = driver.startTurn({
+      sessionId: "local-1",
+      prompt: "/nope",
+      cwd: "C:\\proj",
+      command: { name: "nope", args: "" }
+    });
+    await settle();
+    const refetch = client.requests.find((r) => r.method === "skills/list");
+    expect(refetch?.params).toMatchObject({ cwds: ["C:\\proj"], forceReload: true });
+    expect(events).toContainEqual({ type: "turn.error", turnId: handle.turnId, message: "Unknown command: /nope" });
+    driver.dispose();
+  });
+
+  it("propagates skills/list errors from resolveSkillPath into turn.error", async () => {
+    const throwingClient = new ThrowingSkillsClient();
+    const { driver, events } = makeDriver(throwingClient);
+    const handle = driver.startTurn({
+      sessionId: "local-1",
+      prompt: "/ship",
+      cwd: "C:\\proj",
+      command: { name: "ship", args: "" }
+    });
+    await settle();
+    expect(events).toContainEqual({ type: "turn.error", turnId: handle.turnId, message: "skills/list boom" });
     driver.dispose();
   });
 });

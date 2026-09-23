@@ -444,6 +444,31 @@ export function parseClaudeTaskSystemLine(line: string): ClaudeTaskSystemInfo | 
   }
 }
 
+export interface ClaudeSystemInitInfo {
+  terminalSlashCommands: string[];
+}
+
+interface SystemInitMsg {
+  type?: unknown;
+  subtype?: unknown;
+  terminal_slash_commands?: unknown;
+}
+
+export function parseClaudeSystemInit(line: string): ClaudeSystemInitInfo | null {
+  if (!line.trim().startsWith("{") || !line.includes('"subtype":"init"')) return null;
+  let msg: SystemInitMsg;
+  try {
+    msg = JSON.parse(line) as SystemInitMsg;
+  } catch {
+    return null;
+  }
+  if (msg.type !== "system" || msg.subtype !== "init") return null;
+  const terminalSlashCommands = Array.isArray(msg.terminal_slash_commands)
+    ? msg.terminal_slash_commands.filter((c): c is string => typeof c === "string")
+    : [];
+  return { terminalSlashCommands };
+}
+
 const TASK_NOTIFY_USAGE_RE = {
   tokens: /<subagent_tokens>(\d+)<\/subagent_tokens>/,
   toolUses: /<tool_uses>(\d+)<\/tool_uses>/,

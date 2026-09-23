@@ -5,6 +5,8 @@ import type {
   AppSettings,
   ApprovalDecision,
   CliDriver,
+  CommandInvocation,
+  CommandOption,
   ComposerPrefs,
   CreateSessionOptions,
   DriverKind,
@@ -794,7 +796,11 @@ export class SessionManager {
     }
   }
 
-  async startTurn(sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[] }): Promise<string> {
+  async startTurn(
+    sessionId: string,
+    prompt: string,
+    opts?: { prefs?: ComposerPrefs; attachments?: string[]; command?: CommandInvocation }
+  ): Promise<string> {
     const session = this.store.getSession(sessionId);
     if (!session) throw new Error(`unknown session ${sessionId}`);
     if (session.status === "resolved" || session.status === "archived") {
@@ -811,7 +817,7 @@ export class SessionManager {
     try {
       const cwd = await this.ensureWorktree(sessionId);
       await this.captureTurnBaseSha(sessionId, cwd, session.worktreePath);
-      const firstMessage = session.title === NEW_SESSION_TITLE;
+      const firstMessage = session.title === NEW_SESSION_TITLE && !opts?.command;
       const placeholder = prompt.slice(0, 60);
       if (firstMessage) {
         this.firstPrompts.set(sessionId, prompt);
@@ -831,6 +837,7 @@ export class SessionManager {
         variant: prefs.variant,
         permissionMode: prefs.permissionMode,
         attachments: resolveAttachments(project.rootPath, cwd, opts?.attachments ?? []),
+        ...(opts?.command ? { command: opts.command } : {}),
         env: buildTurnEnv(process.env, this.sessionEnvVars(session.id, session, project, cwd))
       });
       this.activeTurns.set(handle.turnId, { sessionId, startedAt: Date.now() });
@@ -929,6 +936,24 @@ export class SessionManager {
     void pending?.catch((err) => {
       console.warn(`opencode model warmup failed: ${(err as Error).message}`);
     });
+  }
+
+  async listCommands(sessionId: string): Promise<CommandOption[]> {
+    const session = this.store.getSession(sessionId);
+    if (!session) throw new Error(`unknown session ${sessionId}`);
+    const cwd =
+      session.worktreePath && existsSync(session.worktreePath)
+        ? session.worktreePath
+        : this.rootForProject(session.projectId);
+    return this.listCommandsFor(session.projectId, session.driver, cwd);
+  }
+
+  async listCommandsFor(projectId: string, driver: DriverKind, cwd?: string): Promise<CommandOption[]> {
+    const project = this.store.getProject(projectId);
+    if (!project) throw new Error(`unknown project ${projectId}`);
+    const driverInstance = this.drivers[driver];
+    if (typeof driverInstance.listCommands !== "function") return [];
+    return driverInstance.listCommands(cwd ?? project.rootPath);
   }
 
   async listModels(sessionId: string): Promise<ModelOption[]> {

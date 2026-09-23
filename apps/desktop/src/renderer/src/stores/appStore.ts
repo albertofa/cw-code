@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { CommandInvocation } from "@cw-code/contracts";
 import type {
   ActiveTurn,
   AppSettings,
@@ -132,7 +133,7 @@ interface AppState {
   hydrateActiveTurns(): Promise<void>;
   startNewSession(driver?: DriverName): void;
   setPendingDriver(driver: DriverName): void;
-  sendPendingPrompt(prompt: string, attachments?: string[]): Promise<void>;
+  sendPendingPrompt(prompt: string, attachments?: string[], command?: CommandInvocation): Promise<void>;
   ensureHistory(sessionId: string, opts?: { force?: boolean; isRetry?: boolean }): Promise<void>;
   subagentToolsByKey: Record<string, SubagentToolsResult>;
   subagentToolsLoading: Record<string, boolean>;
@@ -152,7 +153,7 @@ interface AppState {
   confirmWorktreeRemoval(): Promise<void>;
   dismissWorktreeRemoval(): void;
   createSession(driver: DriverName, prefs?: ComposerPrefs, workspace?: CreateSessionOptions): Promise<void>;
-  sendPrompt(prompt: string, attachments?: string[]): Promise<void>;
+  sendPrompt(prompt: string, attachments?: string[], command?: CommandInvocation): Promise<void>;
   interrupt(): Promise<void>;
   retryConnection(sessionId: string): Promise<void>;
   respondApproval(requestId: string, decision: ApprovalDecision): Promise<void>;
@@ -684,7 +685,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ pendingDriver: driver, pendingPrefs: { ...get().pendingPrefs, model: restored } });
   },
 
-  async sendPendingPrompt(prompt: string, attachments: string[] = []) {
+  async sendPendingPrompt(prompt: string, attachments: string[] = [], command?: CommandInvocation) {
     const projectId = get().activeProjectId;
     const driver = get().pendingDriver ?? get().lastDriver;
     const prefs = get().pendingPrefs;
@@ -703,7 +704,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         });
         return;
       }
-      await get().sendPrompt(prompt, attachments);
+      await get().sendPrompt(prompt, attachments, command);
     } finally {
       pendingPromptInFlight = false;
     }
@@ -873,7 +874,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     void get().refreshGitStatus(session.id);
   },
 
-  async sendPrompt(prompt: string, attachments?: string[]) {
+  async sendPrompt(prompt: string, attachments?: string[], command?: CommandInvocation) {
     const sessionId = get().activeSessionId;
     if (!sessionId || !prompt.trim()) return;
     const prefs = get().composerBySession[sessionId] ?? DEFAULT_COMPOSER;
@@ -890,7 +891,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
     let turnId: string;
     try {
-      turnId = await window.cw.startTurn(sessionId, prompt, { prefs, attachments });
+      turnId = await window.cw.startTurn(sessionId, prompt, { prefs, attachments, ...(command ? { command } : {}) });
     } catch (err) {
       if (get().busyTurns[sessionId] === pending) {
         const book = closeTurn(

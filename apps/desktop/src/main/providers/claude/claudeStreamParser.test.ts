@@ -9,6 +9,7 @@ import {
   claudeQuestionRequest,
   parseClaudeControlRequest,
   parseClaudeSubagentHandback,
+  parseClaudeSystemInit,
   parseClaudeTaskSystemLine,
   parseTaskNotificationUsage,
   parseStreamLine
@@ -443,6 +444,34 @@ describe("parseClaudeTaskSystemLine", () => {
 
   it("returns null for non-JSON input", () => {
     expect(parseClaudeTaskSystemLine("plain text")).toBeNull();
+  });
+});
+
+describe("parseClaudeSystemInit", () => {
+  it("captures the terminal-only slash command names", () => {
+    const line = JSON.stringify({
+      type: "system",
+      subtype: "init",
+      terminal_slash_commands: ["doctor", "color", "reload-plugins"]
+    });
+    expect(parseClaudeSystemInit(line)).toEqual({
+      terminalSlashCommands: ["doctor", "color", "reload-plugins"]
+    });
+  });
+
+  it("tolerates a missing or garbage terminal_slash_commands field", () => {
+    expect(parseClaudeSystemInit(JSON.stringify({ type: "system", subtype: "init" }))).toEqual({
+      terminalSlashCommands: []
+    });
+    expect(
+      parseClaudeSystemInit(JSON.stringify({ type: "system", subtype: "init", terminal_slash_commands: "nope" }))
+    ).toEqual({ terminalSlashCommands: [] });
+  });
+
+  it("returns null for other system lines and non-JSON input", () => {
+    expect(parseClaudeSystemInit(JSON.stringify({ type: "system", subtype: "background_tasks_changed" }))).toBeNull();
+    expect(parseClaudeSystemInit(JSON.stringify({ type: "assistant" }))).toBeNull();
+    expect(parseClaudeSystemInit("plain text")).toBeNull();
   });
 });
 

@@ -2,6 +2,7 @@ import type {
   ApprovalDecision,
   ApprovalKind,
   ApprovalRequest,
+  CommandOption,
   EffortLevel,
   HistoryMessage,
   ModelOption,
@@ -33,7 +34,8 @@ export interface CodexTokenUsage {
 
 export type CodexUserInput =
   | { type: "text"; text: string }
-  | { type: "localImage"; path: string };
+  | { type: "localImage"; path: string }
+  | { type: "skill"; name: string; path: string };
 
 export interface CodexFileUpdateChange {
   path: string;
@@ -59,6 +61,7 @@ export interface CodexThreadItem {
   result?: unknown;
   content?: Array<{ type?: string; text?: string; path?: string }>;
   summary?: Array<{ type?: string; text?: string }>;
+  review?: string;
 }
 
 export interface CodexCollabTool {
@@ -295,6 +298,68 @@ export function buildCodexUserInput(prompt: string, cwd: string, attachments: st
   return input;
 }
 
+const RESERVED_COMMAND_NAMES = new Set(["compact", "review"]);
+
+export function mapCodexSkillCommands(res: unknown): { commands: CommandOption[]; paths: Map<string, string> } {
+  const commands: CommandOption[] = [];
+  const paths = new Map<string, string>();
+  const data = (res as Record<string, unknown> | null)?.["data"];
+  if (!Array.isArray(data)) return { commands, paths };
+  for (const entry of data) {
+    if (entry === null || typeof entry !== "object") continue;
+    const entryRaw = entry as Record<string, unknown>;
+    const errors = entryRaw["errors"];
+    if (Array.isArray(errors)) {
+      for (const error of errors) {
+        if (error === null || typeof error !== "object") continue;
+        const errorRaw = error as Record<string, unknown>;
+        const path = typeof errorRaw["path"] === "string" ? errorRaw["path"] : "";
+        const message = typeof errorRaw["message"] === "string" ? errorRaw["message"] : "";
+        console.warn(`codex skill error: ${path} ${message}`.trim());
+      }
+    }
+    const skills = entryRaw["skills"];
+    if (!Array.isArray(skills)) continue;
+    for (const skill of skills) {
+      if (skill === null || typeof skill !== "object") continue;
+      const raw = skill as Record<string, unknown>;
+      if (raw["enabled"] !== true) continue;
+      const name = raw["name"];
+      const path = raw["path"];
+      if (typeof name !== "string" || !name || typeof path !== "string" || !path) continue;
+      if (RESERVED_COMMAND_NAMES.has(name)) continue;
+      const iface = raw["interface"];
+      const ifaceShort =
+        iface !== null && typeof iface === "object" ? (iface as Record<string, unknown>)["shortDescription"] : undefined;
+      const shortDescription = raw["shortDescription"];
+      const description = raw["description"];
+      commands.push({
+        name,
+        description:
+          (typeof ifaceShort === "string" && ifaceShort) ||
+          (typeof shortDescription === "string" && shortDescription) ||
+          (typeof description === "string" ? description : ""),
+        dispatch: "native"
+      });
+      paths.set(name, path);
+    }
+  }
+  return { commands, paths };
+}
+
+export function codexReviewTarget(args: string): { type: "uncommittedChanges" } | { type: "custom"; instructions: string } {
+  const instructions = args.trim();
+  return instructions ? { type: "custom", instructions } : { type: "uncommittedChanges" };
+}
+
+export function buildCodexSkillInput(name: string, path: string, args: string): CodexUserInput[] {
+  const trimmed = args.trim();
+  return [
+    { type: "text", text: trimmed ? `$${name} ${trimmed}` : `$${name}` },
+    { type: "skill", name, path }
+  ];
+}
+
 const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "webp", "gif"]);
 
 function isImagePath(path: string): boolean {
@@ -316,8 +381,9 @@ export function mapCodexHistory(thread: CodexThread, limit = 300): HistoryMessag
     const completedAt = turn.completedAt ?? null;
     const timestamp = startedAt != null ? startedAt * 1000 : undefined;
     const first = out.length;
+    const hasAgentMessage = (turn.items ?? []).some((item) => item.type === "agentMessage");
     for (const item of turn.items ?? []) {
-      pushHistoryItem(out, item, turnId, timestamp);
+      pushHistoryItem(out, item, turnId, timestamp, hasAgentMessage);
     }
     if (out.length > first && completedAt != null && timestamp !== undefined) {
       out[out.length - 1] = { ...out[out.length - 1], timestamp: completedAt * 1000 };
@@ -330,7 +396,8 @@ function pushHistoryItem(
   out: HistoryMessage[],
   item: CodexThreadItem,
   turnId: string,
-  timestamp: number | undefined
+  timestamp: number | undefined,
+  hasAgentMessage: boolean
 ): void {
   const id = item.id ?? `${turnId}-${out.length}`;
   switch (item.type) {
@@ -345,6 +412,10 @@ function pushHistoryItem(
     case "agentMessage":
     case "plan": {
       if (item.text) out.push({ id, role: "assistant", text: item.text, turnId, timestamp });
+      break;
+    }
+    case "exitedReviewMode": {
+      if (item.review && !hasAgentMessage) out.push({ id, role: "assistant", text: item.review, turnId, timestamp });
       break;
     }
     case "reasoning": {

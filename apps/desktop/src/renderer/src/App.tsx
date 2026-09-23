@@ -113,16 +113,10 @@ export function App() {
   const tabMenu = useTabMenu(activeSessionId ?? undefined);
   const draggingTab = usePanelStore((s) => s.draggingTab);
   const setRightVisible = usePanelStore((s) => s.setRightVisible);
+  const revealTab = usePanelStore((s) => s.revealTab);
 
   const openTool = (tab: DockableTabId) => {
-    if (!activeSessionId) return;
-    activateOrOpen(activeSessionId, tab);
-    const panels = usePanelStore.getState();
-    const selected = selectSessionPanel(panels, activeSessionId);
-    if (selected.dockByTab[tab] === "right") setRightVisible(activeSessionId, true);
-    if (selected.dockByTab[tab] === "bottom" && selected.bottomCollapsed) {
-      panels.setBottomCollapsed(activeSessionId, false);
-    }
+    if (activeSessionId) revealTab(activeSessionId, tab);
   };
 
   const preview = activeSessionId ? (previewBySession[activeSessionId] ?? null) : null;
