@@ -176,6 +176,7 @@ export type TurnEvent =
       name: string;
       input: unknown;
       parentToolCallId?: string;
+      model?: string;
     }
   | {
       type: "tool.result";

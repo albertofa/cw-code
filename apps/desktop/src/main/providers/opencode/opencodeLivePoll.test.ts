@@ -222,6 +222,27 @@ describe("diffLiveTools", () => {
     });
   });
 
+  it("re-emits a running task call once its child model is known", () => {
+    const seen = new Map<string, LiveSeen>();
+    const models = new Map<string, string>();
+    const modelFor = (callId: string) => models.get(callId);
+    expect(diffLiveTools(seen, [runningTask("call_1", "Do work")], "t1", null, undefined, modelFor)).toHaveLength(1);
+
+    models.set("call_1", "gpt-5");
+    const events = diffLiveTools(seen, [runningTask("call_1", "Do work")], "t1", null, undefined, modelFor);
+    expect(events).toEqual([
+      {
+        type: "tool.call",
+        turnId: "t1",
+        toolCallId: "call_1",
+        name: "task",
+        input: { description: "Do work", prompt: "Work hard", subagent_type: "general" },
+        model: "gpt-5"
+      }
+    ]);
+    expect(diffLiveTools(seen, [runningTask("call_1", "Do work")], "t1", null, undefined, modelFor)).toEqual([]);
+  });
+
   it("stamps the parent tool call on nested subagent tool events", () => {
     const seen = new Map<string, LiveSeen>();
     const messages: LiveMessage[] = [
