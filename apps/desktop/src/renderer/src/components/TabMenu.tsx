@@ -1,7 +1,7 @@
 import { useEffect, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import type { DockableTabId, PanelId } from "@cw-code/contracts";
 import { AppWindow, PanelBottom, PanelRight, Pin, RotateCcw, X, type LucideIcon } from "lucide-react";
-import { usePanelStore } from "../stores/panelStore.js";
+import { selectSessionPanel, usePanelStore } from "../stores/panelStore.js";
 
 const MENU_WIDTH = 240;
 const MENU_HEIGHT = 220;
@@ -12,9 +12,21 @@ const PANELS: Array<{ id: PanelId; label: string; Icon: LucideIcon }> = [
   { id: "bottom", label: "Bottom", Icon: PanelBottom }
 ];
 
-export function TabMenu({ x, y, tab, onClose }: { x: number; y: number; tab: DockableTabId; onClose: () => void }) {
+export function TabMenu({
+  x,
+  y,
+  tab,
+  sessionId,
+  onClose
+}: {
+  x: number;
+  y: number;
+  tab: DockableTabId;
+  sessionId: string | undefined;
+  onClose: () => void;
+}) {
   const moveTab = usePanelStore((s) => s.moveTab);
-  const dockByTab = usePanelStore((s) => s.dockByTab);
+  const dockByTab = usePanelStore((s) => selectSessionPanel(s, sessionId).dockByTab);
   const setAutoLocation = usePanelStore((s) => s.setAutoLocation);
   const resetLayout = usePanelStore((s) => s.resetLayout);
 
@@ -49,7 +61,7 @@ export function TabMenu({ x, y, tab, onClose }: { x: number; y: number; tab: Doc
           role="menuitem"
           title={dockByTab[tab] === panel ? "Already docked here" : `Dock this tab in the ${label.toLowerCase()} panel`}
           onClick={() => {
-            moveTab(tab, panel);
+            moveTab(sessionId, tab, panel);
             onClose();
           }}
         >
@@ -62,7 +74,7 @@ export function TabMenu({ x, y, tab, onClose }: { x: number; y: number; tab: Doc
         role="menuitem"
         title="Close this tab — reopen it any time from the right rail"
         onClick={() => {
-          moveTab(tab, "closed");
+          moveTab(sessionId, tab, "closed");
           onClose();
         }}
       >
@@ -86,7 +98,7 @@ export function TabMenu({ x, y, tab, onClose }: { x: number; y: number; tab: Doc
         role="menuitem"
         title="Close every tab and restore defaults"
         onClick={() => {
-          resetLayout();
+          resetLayout(sessionId);
           onClose();
         }}
       >
@@ -97,16 +109,19 @@ export function TabMenu({ x, y, tab, onClose }: { x: number; y: number; tab: Doc
   );
 }
 
-export function useTabMenu(): {
+export function useTabMenu(sessionId: string | undefined): {
   menuNode: ReactNode;
   onTabContextMenu: (tab: DockableTabId) => (e: ReactMouseEvent<HTMLElement>) => void;
 } {
-  const [menu, setMenu] = useState<{ x: number; y: number; tab: DockableTabId } | null>(null);
+  const [menu, setMenu] = useState<{ x: number; y: number; tab: DockableTabId; sessionId: string | undefined } | null>(null);
+  useEffect(() => setMenu(null), [sessionId]);
   return {
-    menuNode: menu ? <TabMenu x={menu.x} y={menu.y} tab={menu.tab} onClose={() => setMenu(null)} /> : null,
+    menuNode: menu ? (
+      <TabMenu x={menu.x} y={menu.y} tab={menu.tab} sessionId={menu.sessionId} onClose={() => setMenu(null)} />
+    ) : null,
     onTabContextMenu: (tab: DockableTabId) => (e: ReactMouseEvent<HTMLElement>) => {
       e.preventDefault();
-      setMenu({ x: e.clientX, y: e.clientY, tab });
+      setMenu({ x: e.clientX, y: e.clientY, tab, sessionId });
     }
   };
 }

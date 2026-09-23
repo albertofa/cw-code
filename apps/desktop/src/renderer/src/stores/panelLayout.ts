@@ -21,6 +21,28 @@ export const DOCKABLE_TABS: readonly DockableTabId[] = [
 export const PANELS: readonly PanelId[] = ["main", "right", "bottom"];
 
 export const PANEL_LAYOUT_KEY = "cw-code:panelLayout:v2";
+export const PANEL_STATE_KEY = "cw-code:panelLayout:v3";
+
+export interface SessionPanelState {
+  dockByTab: TabDockState;
+  activeMain: MainTabId;
+  activeRight: DockableTabId;
+  activeBottom: DockableTabId;
+  mainOrder: MainTabId[];
+  bottomHeight: number;
+  rightVisible: boolean;
+  bottomCollapsed: boolean;
+}
+
+export interface PersistedPanelState {
+  autoLocation: TabAutoLocation;
+  sessions: Record<string, SessionPanelState>;
+  legacySession?: SessionPanelState | null;
+}
+
+export interface LoadedPanelState extends PersistedPanelState {
+  legacySession: SessionPanelState | null;
+}
 
 export const BOTTOM_HEIGHT_DEFAULT = 260;
 export const BOTTOM_HEIGHT_MIN = 140;
@@ -57,6 +79,19 @@ export function defaultLayout(): PanelLayoutSnapshot {
     activeBottom: "shell",
     mainOrder: ["chat"],
     bottomHeight: BOTTOM_HEIGHT_DEFAULT
+  };
+}
+
+export function defaultSessionPanel(): SessionPanelState {
+  return {
+    dockByTab: { ...DEFAULT_DOCK },
+    activeMain: "chat",
+    activeRight: "agents",
+    activeBottom: "shell",
+    mainOrder: ["chat"],
+    bottomHeight: BOTTOM_HEIGHT_DEFAULT,
+    rightVisible: true,
+    bottomCollapsed: false
   };
 }
 
@@ -114,6 +149,10 @@ export function sanitizeLayout(raw: unknown): PanelLayoutSnapshot {
   if (!seen.has("chat")) {
     seen.add("chat");
     mainOrder.unshift("chat");
+  } else if (mainOrder[0] !== "chat") {
+    const chatIndex = mainOrder.indexOf("chat");
+    mainOrder.splice(chatIndex, 1);
+    mainOrder.unshift("chat");
   }
   for (const tab of tabsInPanel(dockByTab, "main")) {
     if (!seen.has(tab)) {
@@ -169,6 +208,80 @@ export function parseLayout(raw: string | null | undefined): PanelLayoutSnapshot
     return defaultLayout();
   }
 }
+
+function sessionFromLayout(snapshot: PanelLayoutSnapshot): SessionPanelState {
+  return {
+    dockByTab: snapshot.dockByTab,
+    activeMain: snapshot.activeMain,
+    activeRight: snapshot.activeRight,
+    activeBottom: snapshot.activeBottom,
+    mainOrder: snapshot.mainOrder,
+    bottomHeight: snapshot.bottomHeight,
+    rightVisible: true,
+    bottomCollapsed: false
+  };
+}
+
+export function sanitizeSessionPanel(raw: unknown): SessionPanelState {
+  const source = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>) : {};
+  const layout = sanitizeLayout(source);
+  return {
+    ...sessionFromLayout(layout),
+    rightVisible: typeof source.rightVisible === "boolean" ? source.rightVisible : true,
+    bottomCollapsed: typeof source.bottomCollapsed === "boolean" ? source.bottomCollapsed : false
+  };
+}
+
+function sanitizePersistedPanelState(raw: unknown): LoadedPanelState {
+  const source = typeof raw === "object" && raw !== null ? (raw as Record<string, unknown>) : {};
+  const autoLocation = sanitizeLayout({ autoLocation: source.autoLocation }).autoLocation;
+  const sessions: Record<string, SessionPanelState> = {};
+  const rawSessions = typeof source.sessions === "object" && source.sessions !== null
+    ? (source.sessions as Record<string, unknown>)
+    : {};
+  for (const [sessionId, value] of Object.entries(rawSessions)) {
+    if (sessionId.length === 0) continue;
+    sessions[sessionId] = sanitizeSessionPanel(value);
+  }
+  return {
+    autoLocation,
+    sessions,
+    legacySession:
+      Object.keys(sessions).length === 0 && source.legacySession != null
+        ? sanitizeSessionPanel(source.legacySession)
+        : null
+  };
+}
+
+export function parsePanelState(
+  raw: string | null | undefined,
+  legacyRaw: string | null | undefined
+): LoadedPanelState {
+  if (typeof raw === "string" && raw.length > 0) {
+    try {
+      return sanitizePersistedPanelState(JSON.parse(raw) as unknown);
+    } catch {
+    }
+  }
+  if (typeof legacyRaw === "string" && legacyRaw.length > 0) {
+    const legacy = parseLayout(legacyRaw);
+    return {
+      autoLocation: legacy.autoLocation,
+      sessions: {},
+      legacySession: sessionFromLayout(legacy)
+    };
+  }
+  return sanitizePersistedPanelState(null);
+}
+
+export function serializePanelState(state: PersistedPanelState): string {
+  return JSON.stringify({
+    autoLocation: state.autoLocation,
+    sessions: state.sessions,
+    legacySession: state.legacySession ?? null
+  });
+}
+
 const HARNESS_TABS: readonly DockableTabId[] = [
   "claude",
   "opencode",

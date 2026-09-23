@@ -256,3 +256,22 @@ describe("appStore pending model per harness", () => {
     expect(useAppStore.getState().pendingPrefs.model).toBe("alpha/m1");
   });
 });
+
+describe("appStore preview per session", () => {
+  beforeEach(() => {
+    useAppStore.setState({ previewBySession: {} });
+  });
+
+  it("keeps preview targets independent and closes only the requested session", () => {
+    useAppStore.getState().openPreview("sess_a", "src/a.ts", "C:\\a");
+    useAppStore.getState().openPreview("sess_b", "src/b.ts", "C:\\b");
+    const previews = useAppStore.getState().previewBySession;
+    expect(previews.sess_a.path).toBe("src/a.ts");
+    expect(previews.sess_b.path).toBe("src/b.ts");
+
+    useAppStore.getState().closePreview("sess_a");
+    const remaining = useAppStore.getState().previewBySession;
+    expect(remaining.sess_a).toBeUndefined();
+    expect(remaining.sess_b.path).toBe("src/b.ts");
+  });
+});

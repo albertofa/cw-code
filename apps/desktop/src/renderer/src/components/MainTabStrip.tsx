@@ -6,16 +6,14 @@ import { TOOL_TABS, harnessLabel } from "./toolTabs.js";
 import { useTabMenu } from "./TabMenu.js";
 import { endTabDrag, startTabDrag, useDockDrop } from "./useDockDrop.js";
 import { resolveMainTab } from "../stores/panelLayout.js";
-import { usePanelStore } from "../stores/panelStore.js";
+import { selectSessionPanel, usePanelStore } from "../stores/panelStore.js";
 
 export function MainTabStrip({ sessionId, driver }: { sessionId: string | undefined; driver: DriverName | undefined }) {
-  const mainOrder = usePanelStore((s) => s.mainOrder);
-  const activeMain = usePanelStore((s) => s.activeMain);
-  const dockByTab = usePanelStore((s) => s.dockByTab);
+  const { mainOrder, activeMain, dockByTab } = usePanelStore((s) => selectSessionPanel(s, sessionId));
   const setActive = usePanelStore((s) => s.setActive);
   const moveTab = usePanelStore((s) => s.moveTab);
-  const dropMain = useDockDrop("main");
-  const tabMenu = useTabMenu();
+  const dropMain = useDockDrop("main", sessionId);
+  const tabMenu = useTabMenu(sessionId);
   const draggingTab = usePanelStore((s) => s.draggingTab);
 
   const effectiveActive: MainTabId =
@@ -32,7 +30,7 @@ export function MainTabStrip({ sessionId, driver }: { sessionId: string | undefi
       <button
         role="tab"
         aria-selected={effectiveActive === "chat"}
-        onClick={() => setActive("main", "chat")}
+        onClick={() => setActive(sessionId, "main", "chat")}
         className={`tab fixed${effectiveActive === "chat" ? " active" : ""}`}
         title={`${chatLabel} - composer and output (fixed tab)`}
       >
@@ -52,10 +50,10 @@ export function MainTabStrip({ sessionId, driver }: { sessionId: string | undefi
               key={id}
               role="tab"
               aria-selected={effectiveActive === id}
-              onClick={() => setActive("main", tabId)}
+              onClick={() => setActive(sessionId, "main", tabId)}
               onContextMenu={tabMenu.onTabContextMenu(tabId)}
               draggable
-              onDragStart={(e) => startTabDrag(e, tabId)}
+              onDragStart={(e) => startTabDrag(e, tabId, sessionId)}
               onDragEnd={endTabDrag}
               className={`tab${effectiveActive === id ? " active" : ""}`}
               title={`${def.title} - drag to move, right-click for more actions`}
@@ -68,7 +66,7 @@ export function MainTabStrip({ sessionId, driver }: { sessionId: string | undefi
                 title="Close tab"
                 onClick={(e) => {
                   e.stopPropagation();
-                  moveTab(tabId, "closed");
+                  moveTab(sessionId, tabId, "closed");
                 }}
               >
                 &times;
