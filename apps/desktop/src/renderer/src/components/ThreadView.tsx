@@ -23,7 +23,7 @@ import { TurnBlock } from "./TurnBlock.js";
 import { groupTurns, splitTurn, type ThreadNode } from "./turnGroups.js";
 import { pendingToolsForTurn } from "./toolSummaries.js";
 import { durationFromMessages } from "./turnFormat.js";
-import { usePanelStore } from "../stores/panelStore.js";
+import { selectSessionPanel, usePanelStore } from "../stores/panelStore.js";
 import { PanelToggles } from "./PanelToggles.js";
 import { collectSubagents } from "./subagents.js";
 import { splitImageMentions } from "./imagePreview.js";
@@ -56,11 +56,15 @@ export function ThreadView() {
   const usage = useAppStore((s) => (activeSessionId ? s.usageBySession[activeSessionId] : undefined));
   const reasoningExpanded = useAppStore((s) => (session ? s.reasoningExpandedByDriver[session.driver] : false));
   const openPreview = useAppStore((s) => s.openPreview);
-  const panelActiveMain = usePanelStore((s) => s.activeMain);
-  const panelDockByTab = usePanelStore((s) => s.dockByTab);
-  const panelMainOrder = usePanelStore((s) => s.mainOrder);
-  const rightVisible = usePanelStore((s) => s.rightVisible);
-  const dropMain = useDockDrop("main");
+  const {
+    activeMain: panelActiveMain,
+    dockByTab: panelDockByTab,
+    mainOrder: panelMainOrder,
+    rightVisible
+  } = usePanelStore((s) => selectSessionPanel(s, activeSessionId ?? undefined));
+  const activateOrOpen = usePanelStore((s) => s.activateOrOpen);
+  const setRightVisible = usePanelStore((s) => s.setRightVisible);
+  const dropMain = useDockDrop("main", activeSessionId ?? undefined);
   const draggingTab = usePanelStore((s) => s.draggingTab);
   const setPendingDriver = useAppStore((s) => s.setPendingDriver);
   const turnStartedAt = useAppStore((s) => (activeSessionId ? s.turnStartedAt[activeSessionId] : undefined));
@@ -106,9 +110,12 @@ export function ThreadView() {
   const basePath = session?.worktreePath ?? project?.rootPath ?? "";
   const onOpenPreview = useCallback(
     (path: string) => {
-      if (sessionId) openPreview(sessionId, path, basePath);
+      if (!sessionId) return;
+      openPreview(sessionId, path, basePath);
+      activateOrOpen(sessionId, "preview");
+      setRightVisible(sessionId, true);
     },
-    [openPreview, sessionId, basePath]
+    [openPreview, sessionId, basePath, activateOrOpen, setRightVisible]
   );
   const onOpenExternal = useCallback(
     (path: string) => {
@@ -187,7 +194,7 @@ export function ThreadView() {
       <div className="head-col col-mid" />
       <div className="head-col col-right">
         {!showNew && sessionId && <GitPanelBar key={sessionId} sessionId={sessionId} />}
-        {!rightVisible && <PanelToggles />}
+        {!rightVisible && <PanelToggles sessionId={activeSessionId ?? undefined} />}
       </div>
     </div>
   );

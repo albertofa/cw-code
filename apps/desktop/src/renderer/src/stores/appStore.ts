@@ -120,9 +120,9 @@ interface AppState {
   holdingHours: number;
   defaultUseWorktree: boolean;
   reasoningExpandedByDriver: Record<DriverName, boolean>;
-  preview: { sessionId: string; path: string; basePath: string } | null;
+  previewBySession: Record<string, { sessionId: string; path: string; basePath: string }>;
   openPreview(sessionId: string, path: string, basePath: string): void;
-  closePreview(): void;
+  closePreview(sessionId: string): void;
   homeDir: string | null;
   ensureHomeDir(): Promise<string>;
   loadProjects(): Promise<void>;
@@ -291,7 +291,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
-  preview: null,
+  previewBySession: {},
 
   homeDir: null,
 
@@ -305,11 +305,21 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   openPreview(sessionId: string, path: string, basePath: string) {
-    set({ preview: { sessionId, path, basePath } });
+    set((state) => ({
+      previewBySession: {
+        ...state.previewBySession,
+        [sessionId]: { sessionId, path, basePath }
+      }
+    }));
   },
 
-  closePreview() {
-    set({ preview: null });
+  closePreview(sessionId: string) {
+    set((state) => {
+      if (!state.previewBySession[sessionId]) return state;
+      const previewBySession = { ...state.previewBySession };
+      delete previewBySession[sessionId];
+      return { previewBySession };
+    });
   },
 
   async loadProjects() {
