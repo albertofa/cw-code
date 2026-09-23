@@ -371,6 +371,9 @@ describe("ClaudeCliDriver persistent process", () => {
     children[0].stdout.write(
       `${JSON.stringify({ type: "assistant", parent_tool_use_id: agentCallId, message: { content: [{ type: "tool_use", id: handbackCallId, name: "SubagentHandback", input: { message: report } }] } })}\n`
     );
+    children[0].stdout.write(
+      `${JSON.stringify({ type: "system", subtype: "task_notification", task_id: taskId, status: "completed", summary: notificationText, usage: { total_tokens: 1200, tool_uses: 3, duration_ms: 900 } })}\n`
+    );
     children[0].stdout.write(`${taskNotificationLine(taskId, agentCallId, notificationText)}\n`);
     children[0].stdout.write(
       `${resultLine({ origin: { kind: "task-notification" }, result: "final answer", session_id: "native-1", total_cost_usd: 0.04, usage: { input_tokens: 100, output_tokens: 20 }, num_turns: 2 })}\n`
@@ -379,9 +382,10 @@ describe("ClaudeCliDriver persistent process", () => {
 
     const results = toolResults(events);
     const parentResults = results.filter((event) => event.toolCallId === agentCallId);
-    expect(parentResults.map((event) => event.output)).toEqual([
-      expect.stringContaining("Async agent launched successfully"),
-      report
+    expect(parentResults).toEqual([
+      expect.objectContaining({ output: expect.stringContaining("Async agent launched successfully") }),
+      expect.objectContaining({ output: report }),
+      expect.objectContaining({ output: report, usage: { tokens: 1200, toolUses: 3, durationMs: 900 } })
     ]);
     expect(results.some((event) => event.output === notificationText)).toBe(false);
     expect(events).not.toContainEqual(expect.objectContaining({ type: "tool.call", name: "SubagentHandback" }));
@@ -510,6 +514,30 @@ describe("ClaudeCliDriver persistent process", () => {
       isError: false
     }));
     expect(turnDones(events).map((event) => event.backgroundTasks)).toEqual([1]);
+    driver.dispose();
+  });
+
+  it("uses a later Handback report after an earlier task notification", async () => {
+    const { driver, events, children } = makeDriver();
+    driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
+    await settle();
+    children[0].stdout.write(
+      `${JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", id: "agent-call", name: "Agent", input: { run_in_background: true } }] } })}\n`
+    );
+    children[0].stdout.write(`${taskStartedLine("task-1", "agent-call")}\n`);
+    children[0].stdout.write(`${taskChangeLineWithIds(["task-1"])}\n`);
+    children[0].stdout.write(
+      `${JSON.stringify({ type: "system", subtype: "task_notification", task_id: "task-1", status: "completed", summary: "short summary", usage: { total_tokens: 1200 } })}\n`
+    );
+    children[0].stdout.write(
+      `${JSON.stringify({ type: "assistant", parent_tool_use_id: "agent-call", message: { content: [{ type: "tool_use", id: "handback-call", name: "SubagentHandback", input: { message: "full Handback report" } }] } })}\n`
+    );
+    await settle();
+
+    expect(toolResults(events).filter((event) => event.toolCallId === "agent-call")).toEqual([
+      expect.objectContaining({ output: "short summary", usage: { tokens: 1200 } }),
+      expect.objectContaining({ output: "full Handback report" })
+    ]);
     driver.dispose();
   });
 

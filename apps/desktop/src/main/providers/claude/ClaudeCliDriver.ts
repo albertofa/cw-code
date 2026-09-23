@@ -355,25 +355,18 @@ export class ClaudeCliDriver implements CliDriver {
     return output.trimStart().startsWith("Async agent launched successfully");
   }
 
-  private forgetTaskCall(state: ClaudeProcessState, callId: string): void {
-    for (const [taskId, toolUseId] of state.taskToolCalls) {
-      if (toolUseId === callId) state.taskToolCalls.delete(taskId);
-    }
-  }
-
   private completeTaskResult(
     state: ClaudeProcessState,
     event: Extract<ThreadEvent, { type: "tool.result" }>,
-    report = event.output,
-    attribute = true
+    preferReport = false
   ): void {
     const callId = event.toolCallId;
     if (!state.backgroundCallStartedAt.has(callId)) state.backgroundCallStartedAt.set(callId, Date.now());
-    const output = (state.taskReports.get(callId) ?? report).slice(0, 8000);
+    const previousReport = state.taskReports.get(callId);
+    const output = (preferReport ? event.output : previousReport ?? event.output).slice(0, 8000);
     state.taskReports.set(callId, output);
     this.releaseBackgroundCall(state, callId);
-    this.emitTaskResultOnce(state, { ...event, output }, attribute);
-    this.forgetTaskCall(state, callId);
+    this.emitTaskResultOnce(state, { ...event, output }, preferReport && previousReport !== undefined && previousReport !== output);
   }
 
   private latestTaskReport(state: ClaudeProcessState): string {
@@ -395,11 +388,11 @@ export class ClaudeCliDriver implements CliDriver {
   private emitTaskResultOnce(
     state: ClaudeProcessState,
     event: Extract<ThreadEvent, { type: "tool.result" }>,
-    attribute = true
+    reportChanged = false
   ): void {
-    if (state.reportedTaskCalls.has(event.toolCallId)) return;
+    if (state.reportedTaskCalls.has(event.toolCallId) && !event.usage && !reportChanged) return;
     state.reportedTaskCalls.add(event.toolCallId);
-    this.emit(attribute ? this.attributeSubagentResult(state, attributeClaudeSubagentEvent(event, state.agentByCall)) : event);
+    this.emit(this.attributeSubagentResult(state, attributeClaudeSubagentEvent(event, state.agentByCall)));
   }
 
   private clearTaskTracking(state: ClaudeProcessState): void {
@@ -417,7 +410,7 @@ export class ClaudeCliDriver implements CliDriver {
     state: ClaudeProcessState,
     event: Extract<ThreadEvent, { type: "tool.result" }>
   ): void {
-    this.completeTaskResult(state, event);
+    this.completeTaskResult(state, event, true);
   }
 
   private handleProcessLine(state: ClaudeProcessState, line: string): void {
@@ -547,7 +540,7 @@ export class ClaudeCliDriver implements CliDriver {
       output,
       isError: status !== "completed",
       ...(info.usage ? { usage: info.usage } : {})
-    }, output);
+    });
   }
 
   private handleTurnDone(state: ClaudeProcessState, info: TurnDoneInfo): void {
