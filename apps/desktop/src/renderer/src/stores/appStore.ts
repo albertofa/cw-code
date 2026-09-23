@@ -1108,12 +1108,13 @@ export const useAppStore = create<AppState>((set, get) => ({
         }
       });
     } else if (event.type === "tool.result") {
-      const idx = messages.findIndex((m) => m.id === event.toolCallId);
+      const idx = messages.findIndex((m) => m.role === "tool" && (m.id === event.toolCallId || m.id === `${event.toolCallId}-r`));
       if (idx >= 0 && messages[idx].role === "tool") {
         const updated = [...messages];
         const call = updated[idx];
         updated[idx] = {
           ...call,
+          ...(call.id === `${event.toolCallId}-r` ? { text: event.output.slice(0, 1000) } : {}),
           toolOutput: event.output.slice(0, 8000),
           toolDone: true,
           toolCompletedAt: Date.now(),
