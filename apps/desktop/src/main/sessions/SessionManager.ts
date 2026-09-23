@@ -26,7 +26,7 @@ import type {
   WorktreePruneSummary
 } from "@cw-code/contracts";
 import { SessionStore } from "./SessionStore.js";
-import { linkFromStatus, markSeen } from "../github/prLinks.js";
+import { authorLocalBranch, linkFromStatus, markSeen, prHeadPlan, type PrHeadPlan } from "../github/prLinks.js";
 import { buildTurnEnv } from "./env.js";
 import { isWorktreeOrphaned, looksLikeWorktree, pinsWorktree, sameWorktreePath } from "./worktreeCleanup.js";
 import { SettingsStore } from "../settings/SettingsStore.js";
@@ -36,7 +36,7 @@ import { TracingCliDriver } from "../debug/tracingDriver.js";
 import { CLAUDE_CURATED_MODELS, ClaudeCliDriver } from "../providers/claude/ClaudeCliDriver.js";
 import { OpencodeDriver } from "../providers/opencode/OpencodeDriver.js";
 import { CodexCliDriver } from "../providers/codex/CodexCliDriver.js";
-import { GitService, safeSegment, type CreatedWorktree, type RemoveWorktreeResult } from "../fs/GitService.js";
+import { defaultBinary, execText, GitService, safeSegment, type CreatedWorktree, type RemoveWorktreeResult } from "../fs/GitService.js";
 import { resolveAttachments } from "./attachments.js";
 import { AUTO_TITLE_TIMEOUT_MS, buildTitlePrompt, sanitizeGeneratedTitle } from "./autoTitle.js";
 import { branchNameForTitle, TEMP_BRANCH_PATTERN } from "./branchName.js";
@@ -349,18 +349,44 @@ export class SessionManager {
         });
       }
     }
-    const worktree = await this.git.createWorktree(
-      project.rootPath,
-      project.id,
-      id,
-      this.worktreesRoot,
-      options.baseBranch
-    );
+    const worktree = await this.createSessionWorktree(project, id, options);
     return this.store.createSession(projectId, driver, "New session", {
       id,
       worktreePath: worktree.path,
       branch: worktree.branch
     });
+  }
+
+  private async createSessionWorktree(project: Project, id: string, options: CreateSessionOptions): Promise<CreatedWorktree> {
+    const plan = options.prHead ? await this.planPrHead(project, options) : null;
+    if (plan?.kind === "attach") {
+      const target = join(this.worktreesRoot, safeSegment(project.id), safeSegment(id));
+      return this.git.attachWorktree(project.rootPath, target, plan.branch);
+    }
+    const base =
+      plan?.kind === "base"
+        ? plan.branch
+        : plan?.kind === "fetch"
+          ? await this.git.fetchPullRequestHead(project.rootPath, plan.number)
+          : options.baseBranch;
+    return this.git.createWorktree(project.rootPath, project.id, id, this.worktreesRoot, base);
+  }
+
+  private async planPrHead(project: Project, options: CreateSessionOptions): Promise<PrHeadPlan | null> {
+    const branches = await this.git.branches(project.rootPath);
+    const local = authorLocalBranch(options, branches);
+    const tip = local ? await this.localBranchTip(project.rootPath, local.name) : null;
+    return prHeadPlan(options, branches, local && tip ? { [local.name]: tip } : {});
+  }
+
+  private async localBranchTip(root: string, branch: string): Promise<string | null> {
+    const binary = this.settings.get().gitBinaryPath?.trim() || defaultBinary("git");
+    try {
+      return (await execText(binary, ["-C", root, "rev-parse", "--verify", "--quiet", `refs/heads/${branch}^{commit}`], root)).trim() || null;
+    } catch (err) {
+      console.warn(`could not resolve local branch '${branch}': ${(err as Error).message}`);
+      return null;
+    }
   }
 
   private async reusableWorktree(project: Project, requested: string): Promise<CreatedWorktree | null> {
@@ -577,6 +603,7 @@ export class SessionManager {
     removedPath: string,
     force: boolean
   ): Promise<BranchOutcome> {
+    if (!branch.startsWith("cw/")) return { deleted: false };
     try {
       const branches = await this.git.branches(repoRoot);
       const info = branches.find((b) => b.name === branch && !b.remote);

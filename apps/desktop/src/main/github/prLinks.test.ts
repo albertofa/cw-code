@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
-import type { GitPullRequest, GitStatus, SessionMeta, SessionPrLink } from "@cw-code/contracts";
-import { linkFromStatus, markSeen } from "./prLinks.js";
+import type { GitBranchInfo, GitPullRequest, GitStatus, SessionMeta, SessionPrLink } from "@cw-code/contracts";
+import { authorLocalBranch, linkFromStatus, markSeen, prHeadPlan } from "./prLinks.js";
 
 function session(overrides: Partial<SessionMeta> = {}): SessionMeta {
   return {
@@ -106,5 +106,64 @@ describe("markSeen", () => {
 
   it("keeps the old sha when the head is null", () => {
     expect(markSeen(link, null, 200)).toEqual({ ...link, lastSeenSha: "sha-old", lastSeenAt: 200 });
+  });
+});
+
+describe("prHeadPlan", () => {
+  const branch = (overrides: Partial<GitBranchInfo> = {}): GitBranchInfo => ({
+    name: "feature",
+    label: "feature",
+    current: false,
+    remote: false,
+    worktreePath: null,
+    ...overrides
+  });
+  const head = (viewerIsAuthor: boolean) => ({
+    prHead: { number: 42, headRefName: "feature", headRefOid: "sha-head", viewerIsAuthor }
+  });
+  const matching = { feature: "sha-head" };
+
+  it("returns null without a pull request head", () => {
+    expect(prHeadPlan({ mode: "new" }, [branch()], matching)).toBeNull();
+  });
+
+  it("attaches the author's local branch when its tip matches the PR head and no worktree has it", () => {
+    expect(prHeadPlan(head(true), [branch()], matching)).toEqual({ kind: "attach", branch: "feature" });
+  });
+
+  it("branches from the author's local branch when another worktree has it checked out", () => {
+    expect(prHeadPlan(head(true), [branch({ worktreePath: "C:/repo" })], matching)).toEqual({ kind: "base", branch: "feature" });
+  });
+
+  it("fetches the pull request head when the author's local branch is behind or diverged", () => {
+    expect(prHeadPlan(head(true), [branch()], { feature: "sha-local" })).toEqual({ kind: "fetch", number: 42 });
+  });
+
+  it("fetches the pull request head when the local tip is unknown", () => {
+    expect(prHeadPlan(head(true), [branch()], {})).toEqual({ kind: "fetch", number: 42 });
+  });
+
+  it("fetches the pull request head when the author has no local branch", () => {
+    expect(prHeadPlan(head(true), [branch({ name: "other", label: "other" })], { other: "sha-head" })).toEqual({
+      kind: "fetch",
+      number: 42
+    });
+  });
+
+  it("ignores a remote-tracking branch with the same name", () => {
+    expect(prHeadPlan(head(true), [branch({ remote: true })], matching)).toEqual({ kind: "fetch", number: 42 });
+  });
+
+  it("fetches the pull request head when the viewer is not the author even if the branch matches", () => {
+    expect(prHeadPlan(head(false), [branch()], matching)).toEqual({ kind: "fetch", number: 42 });
+  });
+});
+
+describe("authorLocalBranch", () => {
+  it("returns the local branch named after the PR head only for the author", () => {
+    const local: GitBranchInfo = { name: "feature", label: "feature", current: false, remote: false, worktreePath: null };
+    const prHead = { number: 1, headRefName: "feature", headRefOid: "sha", viewerIsAuthor: true };
+    expect(authorLocalBranch({ prHead }, [local])).toBe(local);
+    expect(authorLocalBranch({ prHead: { ...prHead, viewerIsAuthor: false } }, [local])).toBeNull();
   });
 });

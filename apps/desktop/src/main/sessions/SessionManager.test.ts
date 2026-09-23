@@ -1585,6 +1585,31 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
+  it("attaches the author's matching PR branch and keeps it when the worktree is removed with force", async () => {
+    const { manager, project, repository } = makeGitSandboxManager("cw-resolve-pr-branch-");
+    execFileSync("git", ["-C", repository, "branch", "feature/pr"]);
+    const headRefOid = execFileSync("git", ["-C", repository, "rev-parse", "feature/pr"], { encoding: "utf8" }).trim();
+    const session = await manager.createSession(project.id, "claude", {
+      mode: "new",
+      prHead: { number: 7, headRefName: "feature/pr", headRefOid, viewerIsAuthor: true }
+    });
+    expect(session.branch).toBe("feature/pr");
+    const worktreePath = session.worktreePath;
+    if (!worktreePath) throw new Error("expected a worktree-backed session");
+    writeFileSync(join(worktreePath, "pr.txt"), "work\n", "utf8");
+    execFileSync("git", ["-C", worktreePath, "add", "pr.txt"]);
+    execFileSync("git", ["-C", worktreePath, "-c", "user.name=cw-code", "-c", "user.email=test@cw-code.local", "commit", "-m", "pr work"]);
+
+    const result = await manager.resolveSession(session.id, "archived", { removeWorktree: true, forceBranch: true });
+
+    expect(result.worktreeRemoved).toBe(true);
+    expect(result.branchDeleted).toBe(false);
+    expect(existsSync(worktreePath)).toBe(false);
+    const kept = execFileSync("git", ["-C", repository, "branch", "--list", "feature/pr"], { encoding: "utf8" });
+    expect(kept.trim()).not.toBe("");
+    manager.dispose();
+  });
+
   it("surfaces driver history failures instead of returning a silent empty list", async () => {
     const { manager } = makeManager();
     const project = manager.addProject("C:\\proj-history-fail");

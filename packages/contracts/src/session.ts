@@ -44,7 +44,7 @@ export interface CreateSessionOptions {
   /** Worktree to reuse when mode is "previous". Must be an app-managed worktree of the project. */
   reuseWorktreePath?: string;
   /** Start the worktree from a pull request head instead of baseBranch. */
-  prHead?: { number: number; headRefName: string; viewerIsAuthor: boolean };
+  prHead?: { number: number; headRefName: string; headRefOid: string; viewerIsAuthor: boolean };
 }
 
 export interface TurnRequest {

@@ -153,7 +153,10 @@ interface AppState {
   confirmWorktreeRemoval(): Promise<void>;
   dismissWorktreeRemoval(): void;
   createSession(driver: DriverName, prefs?: ComposerPrefs, workspace?: CreateSessionOptions): Promise<void>;
+  createSessionIn(projectId: string, driver: DriverName, prefs?: ComposerPrefs, workspace?: CreateSessionOptions): Promise<Session>;
+  applySession(session: Session): void;
   sendPrompt(prompt: string, attachments?: string[]): Promise<void>;
+  sendPromptTo(sessionId: string, prompt: string, attachments?: string[]): Promise<void>;
   interrupt(): Promise<void>;
   retryConnection(sessionId: string): Promise<void>;
   respondApproval(requestId: string, decision: ApprovalDecision): Promise<void>;
@@ -838,6 +841,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   async createSession(driver: DriverName, prefs?: ComposerPrefs, workspace?: CreateSessionOptions) {
     const projectId = get().activeProjectId;
     if (!projectId) return;
+    await get().createSessionIn(projectId, driver, prefs, workspace);
+  },
+
+  async createSessionIn(projectId: string, driver: DriverName, prefs?: ComposerPrefs, workspace?: CreateSessionOptions) {
     const session = await window.cw.createSession(projectId, driver, workspace);
     if (
       workspace?.mode === "previous" &&
@@ -853,23 +860,36 @@ export const useAppStore = create<AppState>((set, get) => ({
         ...(stillHeld ? {} : { message: "The requested worktree no longer exists." })
       });
     }
+    const projectChanged = get().activeProjectId !== projectId;
     set({
       sessionsByProject: {
         ...get().sessionsByProject,
         [projectId]: [session, ...(get().sessionsByProject[projectId] ?? [])]
       },
+      activeProjectId: projectId,
       activeSessionId: session.id,
       pendingDriver: null,
       lastDriver: driver
     });
+    if (projectChanged) void get().loadDiscovered();
     await get().ensureComposer(session.id);
     if (prefs) await get().setComposerPrefs(session.id, { ...prefs });
     void get().refreshGitStatus(session.id);
+    return session;
+  },
+
+  applySession(session: Session) {
+    set({ sessionsByProject: patchSession(get().sessionsByProject, session.id, session) });
   },
 
   async sendPrompt(prompt: string, attachments?: string[]) {
     const sessionId = get().activeSessionId;
-    if (!sessionId || !prompt.trim()) return;
+    if (!sessionId) return;
+    await get().sendPromptTo(sessionId, prompt, attachments);
+  },
+
+  async sendPromptTo(sessionId: string, prompt: string, attachments?: string[]) {
+    if (!prompt.trim()) return;
     const prefs = get().composerBySession[sessionId] ?? DEFAULT_COMPOSER;
     const previous = Object.values(get().sessionsByProject)
       .flat()
