@@ -36,6 +36,30 @@ describe("mapOpencodeMessages", () => {
     ]);
   });
 
+  it("stamps task call cards with the subagent model from part metadata", () => {
+    const out = mapOpencodeMessages([
+      {
+        info: { id: "m4", role: "assistant" },
+        parts: [
+          {
+            id: "p4",
+            type: "tool",
+            tool: "task",
+            callID: "call_task",
+            state: {
+              status: "completed",
+              input: { description: "Review" },
+              output: "done",
+              metadata: { model: { modelID: "space-bunny-free", providerID: "opencode-go" } }
+            }
+          }
+        ]
+      }
+    ]);
+    expect(out[0]).toMatchObject({ id: "call_task", toolName: "task", subagentModel: "space-bunny-free" });
+    expect(out[1]).not.toHaveProperty("subagentModel");
+  });
+
   it("surfaces error text for failed task parts without output", () => {
     const out = mapOpencodeMessages([
       {

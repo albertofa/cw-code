@@ -9,7 +9,13 @@ interface ServerPart {
   text?: string;
   tool?: string;
   callID?: string;
-  state?: { status?: string; input?: unknown; output?: string; error?: unknown };
+  state?: {
+    status?: string;
+    input?: unknown;
+    output?: string;
+    error?: unknown;
+    metadata?: { model?: { modelID?: unknown; providerID?: unknown } };
+  };
   filename?: string;
   mime?: string;
   url?: string;
@@ -27,6 +33,11 @@ function isAbortedError(error: unknown): boolean {
   if (error === null || typeof error !== "object" || Array.isArray(error)) return false;
   const name = (error as { name?: unknown }).name;
   return typeof name === "string" && ABORTED_ERROR_NAMES.has(name);
+}
+
+function taskModelOf(part: ServerPart): string | undefined {
+  const modelID = part.state?.metadata?.model?.modelID;
+  return typeof modelID === "string" && modelID ? modelID : undefined;
 }
 
 function stamp(value: unknown): { timestamp?: number } {
@@ -64,6 +75,7 @@ export function mapOpencodeMessages(messages: ServerMessage[], limit = 300): His
         const input = JSON.stringify(part.state?.input ?? null)?.slice(0, 2000) ?? "";
         const callId = part.callID ?? part.id ?? `${turnId}-tool`;
         const todos = todosFromToolCall(part.tool ?? "tool", part.state?.input);
+        const subagentModel = taskModelOf(part);
         out.push({
           id: callId,
           role: "tool",
@@ -71,6 +83,7 @@ export function mapOpencodeMessages(messages: ServerMessage[], limit = 300): His
           turnId,
           toolName: part.tool ?? "tool",
           ...(todos !== null ? { todos } : {}),
+          ...(subagentModel ? { subagentModel } : {}),
           ...partStamp
         });
         const output = part.state?.output;

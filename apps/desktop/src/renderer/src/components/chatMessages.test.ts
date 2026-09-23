@@ -27,6 +27,13 @@ describe("upsertToolCall", () => {
     ]);
   });
 
+  it("applies a subagent model carried by a replayed call", () => {
+    const first = upsertToolCall([], call({ input: { description: "Review" } }), 1000);
+    const messages = upsertToolCall(first, call({ model: "gpt-5" }), 2000);
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({ toolInput: { description: "Review" }, subagentModel: "gpt-5", toolStartedAt: 1000 });
+  });
+
   it("merges a replayed call in place instead of duplicating it", () => {
     const existing: ChatMessage = {
       id: "call-1",
