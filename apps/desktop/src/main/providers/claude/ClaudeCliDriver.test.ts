@@ -513,6 +513,32 @@ describe("ClaudeCliDriver persistent process", () => {
     driver.dispose();
   });
 
+  it("does not complete another background task when a foreground Agent returns", async () => {
+    const { driver, events, children } = makeDriver();
+    driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
+    await settle();
+    children[0].stdout.write(`${taskChangeLineWithIds(["other-task"])}\n`);
+    children[0].stdout.write(
+      `${JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", id: "foreground-call", name: "Agent", input: { prompt: "read a file" } }] } })}\n`
+    );
+    children[0].stdout.write(
+      `${JSON.stringify({ type: "user", message: { content: [{ tool_use_id: "foreground-call", content: "foreground report" }] } })}\n`
+    );
+    children[0].stdout.write(`${resultLine({ result: "waiting" })}\n`);
+    await settle();
+
+    expect(turnDones(events).map((event) => [event.resultText, event.backgroundTasks])).toEqual([["waiting", 1]]);
+
+    children[0].stdout.write(`${taskChangeLineWithIds([])}\n`);
+    children[0].stdout.write(`${resultLine({ origin: { kind: "task-notification" }, result: "finished" })}\n`);
+    await settle();
+    expect(turnDones(events).map((event) => [event.resultText, event.backgroundTasks])).toEqual([
+      ["waiting", 1],
+      ["finished", 0]
+    ]);
+    driver.dispose();
+  });
+
   it("removes the completed mapped call when a task snapshot shrinks", async () => {
     const { driver, events, children } = makeDriver();
     driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
@@ -617,6 +643,31 @@ describe("ClaudeCliDriver persistent process", () => {
       output: "Subagent failed",
       isError: true
     });
+    driver.dispose();
+  });
+
+  it("replaces a failed task update with the later notification details", async () => {
+    const { driver, events, children } = makeDriver();
+    driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
+    await settle();
+    children[0].stdout.write(`${JSON.stringify({ type: "system", subtype: "task_started", task_id: "task-1", tool_use_id: "call-1", task_type: "local_agent", is_backgrounded: true })}\n`);
+    children[0].stdout.write(`${taskChangeLineWithIds(["task-1"])}\n`);
+    children[0].stdout.write(
+      `${JSON.stringify({ type: "system", subtype: "task_updated", task_id: "task-1", patch: { status: "failed" } })}\n`
+    );
+    children[0].stdout.write(
+      `${JSON.stringify({ type: "system", subtype: "task_notification", task_id: "task-1", status: "failed", summary: "Permission denied reading C:/secret.txt", usage: { total_tokens: 1200, tool_uses: 3, duration_ms: 900 } })}\n`
+    );
+    await settle();
+
+    expect(toolResults(events).filter((event) => event.toolCallId === "call-1")).toEqual([
+      expect.objectContaining({ output: "Subagent failed", isError: true }),
+      expect.objectContaining({
+        output: "Permission denied reading C:/secret.txt",
+        isError: true,
+        usage: { tokens: 1200, toolUses: 3, durationMs: 900 }
+      })
+    ]);
     driver.dispose();
   });
 

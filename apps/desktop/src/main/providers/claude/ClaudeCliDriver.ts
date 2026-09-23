@@ -141,6 +141,7 @@ interface ClaudeProcessState {
   resumeCursor: string;
   activeTurnId: string;
   liveTasks: number;
+  liveTaskIds: Set<string>;
   completedTurn: boolean;
   errored: boolean;
   stderr: string;
@@ -295,6 +296,7 @@ export class ClaudeCliDriver implements CliDriver {
     liveTaskIds?: string[]
   ): void {
     state.liveTasks = liveTasks;
+    state.liveTaskIds = new Set(liveTaskIds ?? []);
     const trackedCallIds = [...state.backgroundCallIds];
     const removeCall = (callId: string): void => {
       state.backgroundCallIds.delete(callId);
@@ -339,7 +341,13 @@ export class ClaudeCliDriver implements CliDriver {
 
   private releaseBackgroundCall(state: ClaudeProcessState, callId: string): boolean {
     const released = state.backgroundCallIds.delete(callId);
-    if (released) state.liveTasks = Math.max(0, state.liveTasks - 1);
+    if (released) {
+      for (const [taskId, toolUseId] of state.taskToolCalls) {
+        if (toolUseId === callId && state.liveTaskIds.delete(taskId)) {
+          state.liveTasks = Math.max(0, state.liveTasks - 1);
+        }
+      }
+    }
     return released;
   }
 
@@ -395,6 +403,7 @@ export class ClaudeCliDriver implements CliDriver {
   }
 
   private clearTaskTracking(state: ClaudeProcessState): void {
+    state.liveTaskIds.clear();
     state.taskReports.clear();
     state.backgroundCallIds.clear();
     state.backgroundAgentCallIds.clear();
@@ -511,17 +520,18 @@ export class ClaudeCliDriver implements CliDriver {
       if (status === "" || status === "running" || status === "in_progress") return;
       this.releaseBackgroundCall(state, toolUseId);
       if (status !== "completed") {
+        if (state.reportedTaskCalls.has(toolUseId)) return;
         const label = state.backgroundAgentCallIds.has(toolUseId) || state.agentByCall.has(toolUseId)
           ? "Subagent"
           : "Background task";
         const output = `${label} ${status}`;
-        this.completeTaskResult(state, {
+        this.emit({
           type: "tool.result",
           turnId: state.activeTurnId,
           toolCallId: toolUseId,
           output,
           isError: true
-        }, output, false);
+        });
       } else if (!state.backgroundCallStartedAt.has(toolUseId)) {
         state.backgroundCallStartedAt.set(toolUseId, Date.now());
       }
@@ -718,6 +728,7 @@ export class ClaudeCliDriver implements CliDriver {
       resumeCursor: request.resumeCursor ?? "",
       activeTurnId: turnId,
       liveTasks: 0,
+      liveTaskIds: new Set(),
       completedTurn: false,
       errored: false,
       stderr: "",
