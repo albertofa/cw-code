@@ -278,4 +278,24 @@ describe("appStore applySession", () => {
     expect("pr" in updated).toBe(false);
     expect(untouched).toBe(other);
   });
+
+  it("keeps the renderer's status while a turn is busy for that session", () => {
+    const base = {
+      id: "sess_busy",
+      projectId: "proj_busy",
+      driver: "claude" as const,
+      title: "Busy",
+      status: "working" as const,
+      resumeCursor: "",
+      createdAt: 1,
+      updatedAt: 1
+    };
+    useAppStore.setState({ sessionsByProject: { proj_busy: [base] }, busyTurns: { sess_busy: "turn_1" } });
+    useAppStore.getState().applySession({ ...base, status: "idle", title: "Renamed", updatedAt: 2 });
+    expect(useAppStore.getState().sessionsByProject.proj_busy[0]).toEqual({ ...base, title: "Renamed", updatedAt: 2 });
+
+    useAppStore.setState({ busyTurns: {} });
+    useAppStore.getState().applySession({ ...base, status: "idle", updatedAt: 3 });
+    expect(useAppStore.getState().sessionsByProject.proj_busy[0].status).toBe("idle");
+  });
 });

@@ -887,7 +887,14 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   applySession(session: Session) {
-    set({ sessionsByProject: replaceSession(get().sessionsByProject, session) });
+    const { busyTurns, sessionsByProject } = get();
+    const current = busyTurns[session.id]
+      ? Object.values(sessionsByProject)
+          .flat()
+          .find((s) => s.id === session.id)
+      : undefined;
+    const next = current ? { ...session, status: current.status } : session;
+    set({ sessionsByProject: replaceSession(sessionsByProject, next) });
   },
 
   async sendPrompt(prompt: string, attachments?: string[]) {

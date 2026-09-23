@@ -20,7 +20,6 @@ import {
   type LucideIcon
 } from "lucide-react";
 import type {
-  AppSettings,
   ComposerPrefs,
   CreateSessionOptions,
   DriverName,
@@ -46,11 +45,11 @@ import { shortenHome } from "./pathDisplay.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { MenuSelect } from "./MenuSelect.js";
 import { errorMessage } from "./errorMessage.js";
+import { needsFailedLogs } from "./prSessionModel.js";
+import { usePrSettings } from "./useLinkedPr.js";
 
 const READ_ONLY_NOTICE =
   "cw-code only reads from GitHub. Anything the session commits, pushes, or posts goes through the CLI's own permissions.";
-
-const FAILED_LOGS_PATTERN = /\{\{\s*checks\.failedLogs\s*\}\}/;
 
 const FAILED_LOG_TAIL_CHARS = 12_000;
 
@@ -202,8 +201,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
   const homeDir = useAppStore((s) => s.homeDir);
   const settingsVersion = useAppStore((s) => s.settingsVersion);
 
-  const [settings, setSettings] = useState<AppSettings | null>(null);
-  const [settingsError, setSettingsError] = useState<string | null>(null);
+  const { settings, error: settingsError } = usePrSettings();
   const [reposReady, setReposReady] = useState(false);
   const [workflowId, setWorkflowId] = useState(request.workflowId);
   const [target, setTarget] = useState(request.continueSessionId ?? "");
@@ -245,7 +243,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
   const requestedWorkspace = workspaceChoice ?? workflow?.workspace ?? "worktree";
   const workspace: PrWorkspaceChoice = requestedWorkspace === "linked" && !linkedWorktree ? "worktree" : requestedWorkspace;
   const template = workflow ? (continueSession ? workflow.updatePrompt : workflow.startPrompt) : "";
-  const needsLogs = FAILED_LOGS_PATTERN.test(template);
+  const needsLogs = needsFailedLogs(template);
   const logsReady = !needsLogs || (detail !== undefined && failedLogs?.sha === detail.headRefOid);
   const working = stage !== null;
   const sessionBusy = continueSession ? busyTurns[continueSession.id] !== undefined : false;
@@ -255,23 +253,6 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
     void loadDetail(ref);
     void refreshProjectRepos().finally(() => setReposReady(true));
   }, [key]);
-
-  useEffect(() => {
-    let active = true;
-    window.cw
-      .getSettings()
-      .then((next) => {
-        if (!active) return;
-        setSettings(next);
-        setSettingsError(null);
-      })
-      .catch((err: unknown) => {
-        if (active) setSettingsError(errorMessage(err));
-      });
-    return () => {
-      active = false;
-    };
-  }, [settingsVersion]);
 
   useEffect(() => {
     setWorkspaceChoice(null);

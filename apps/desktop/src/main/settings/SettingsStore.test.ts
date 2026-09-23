@@ -134,6 +134,19 @@ describe("SettingsStore", () => {
     expect(store.set({ prAttributionText: "  custom {{harness}}  " }).prAttributionText).toBe("custom {{harness}}");
   });
 
+  it("falls back to PR defaults for non-string values without resetting other settings", () => {
+    const filePath = tempFilePath();
+    writeFileSync(
+      filePath,
+      JSON.stringify({ claudeBinaryPath: "custom-claude", prCloneRoot: 42, prAttributionText: { text: "x" } }),
+      "utf8"
+    );
+    const settings = new SettingsStore(filePath).get();
+    expect(settings.claudeBinaryPath).toBe("custom-claude");
+    expect(settings.prCloneRoot).toBe(DEFAULT_SETTINGS.prCloneRoot);
+    expect(settings.prAttributionText).toBe(DEFAULT_SETTINGS.prAttributionText);
+  });
+
   it("drops PR workflow entries with an empty or duplicate id or an invalid shape", () => {
     const store = new SettingsStore(tempFilePath());
     const valid = {

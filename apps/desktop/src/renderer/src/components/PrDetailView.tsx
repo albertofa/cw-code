@@ -31,6 +31,7 @@ import { useNotifs } from "./Notifications.js";
 import { PrFilesPanel } from "./PrFilesPanel.js";
 import { prKey } from "./prInbox.js";
 import { firstUnseenIndex } from "./prUpdates.js";
+import { usePrSettings } from "./useLinkedPr.js";
 import { suggestedWorkflow } from "./prWorkflows.js";
 import { linkedSessionsBarState, mergeBoxState, pickMainSession, threadQuoteText, threadSendTarget, type LinkedBarState } from "./prDetailModel.js";
 
@@ -145,7 +146,7 @@ function ThreadCard({
       {thread.comments.map((comment, index) => (
         <div className="pr-detail-thread-comment" key={index}>
           <div className="pr-detail-thread-comment-who"><strong>{comment.author}</strong></div>
-          <Md text={comment.body} />
+          <Md text={comment.body} allowImages={false} />
         </div>
       ))}
       <div className="pr-detail-thread-footer">
@@ -173,29 +174,14 @@ export function PrDetailView({ prRef }: { prRef: PrRef }) {
   const rightVisible = usePanelStore((s) => s.rightVisible);
   const sessionsByProject = useAppStore((s) => s.sessionsByProject);
   const selectSession = useAppStore((s) => s.selectSession);
-  const settingsVersion = useAppStore((s) => s.settingsVersion);
-  const [workflows, setWorkflows] = useState<PrWorkflow[]>([]);
-  const [settingsError, setSettingsError] = useState<string | null>(null);
+  const { settings, error: settingsError } = usePrSettings();
+  const workflows = useMemo<PrWorkflow[]>(() => settings?.prWorkflows ?? [], [settings]);
   const [selectedCheckIndex, setSelectedCheckIndex] = useState<number | null>(null);
   const [logByRunId, setLogByRunId] = useState<Record<number, string>>({});
   const [logLoadingRunId, setLogLoadingRunId] = useState<number | null>(null);
   const [logErrorByRunId, setLogErrorByRunId] = useState<Record<number, string>>({});
   const [expandedLogRunId, setExpandedLogRunId] = useState<number | null>(null);
   const lastHeadRef = useRef<string | null>(null);
-
-  useEffect(() => {
-    let active = true;
-    window.cw.getSettings().then((settings) => {
-      if (!active) return;
-      setWorkflows(settings.prWorkflows);
-      setSettingsError(null);
-    }).catch((err: Error) => {
-      if (active) setSettingsError(err.message);
-    });
-    return () => {
-      active = false;
-    };
-  }, [settingsVersion]);
 
   const allSessions = useMemo(() => Object.values(sessionsByProject).flat(), [sessionsByProject]);
   const linkedSessions = useMemo(
@@ -237,17 +223,20 @@ export function PrDetailView({ prRef }: { prRef: PrRef }) {
 
   const onFixCi = fixCiWorkflow ? () => openWorkflow(fixCiWorkflow.id, mainSession?.id) : null;
 
+  const checksActive = activeTab === "checks";
+
   useEffect(() => {
-    if (!detail) return;
+    if (!detail || !checksActive) return;
     if (selectedCheckIndex !== null) return;
     const firstFailing = detail.checkRuns.findIndex((c) => c.status === "failure");
     if (firstFailing >= 0) setSelectedCheckIndex(firstFailing);
     else if (detail.checkRuns.length > 0) setSelectedCheckIndex(0);
-  }, [detail, selectedCheckIndex]);
+  }, [detail, selectedCheckIndex, checksActive]);
 
   const selectedCheck = detail && selectedCheckIndex !== null ? (detail.checkRuns[selectedCheckIndex] ?? null) : null;
 
   useEffect(() => {
+    if (!checksActive) return;
     if (!selectedCheck || selectedCheck.status !== "failure" || selectedCheck.runId === null) return;
     const runId = selectedCheck.runId;
     if (logByRunId[runId] !== undefined || logLoadingRunId === runId || logErrorByRunId[runId] !== undefined) return;
@@ -259,7 +248,7 @@ export function PrDetailView({ prRef }: { prRef: PrRef }) {
     }).finally(() => {
       setLogLoadingRunId((current) => (current === runId ? null : current));
     });
-  }, [selectedCheck, prRef, logByRunId, logLoadingRunId, logErrorByRunId]);
+  }, [checksActive, selectedCheck, prRef, logByRunId, logLoadingRunId, logErrorByRunId]);
 
   const retryCheckLog = (runId: number) => {
     setLogErrorByRunId((prev) => without(prev, runId));
@@ -513,7 +502,7 @@ function ConversationTab({
           <div className="pr-detail-comment-head">
             <strong>{detail.viewerIsAuthor ? "you" : detail.author.login}</strong> opened this
           </div>
-          <Md text={detail.body} />
+          <Md text={detail.body} allowImages={false} />
         </div>
       )}
       <div className="pr-detail-timeline">
@@ -628,7 +617,7 @@ function TimelineEvent({
           <strong>{item.actor}</strong> {reviewVerb(item.state)} · {ageLabel(item.at)} ago
           <span className={`pr-detail-pill sm ${tone}`}>{item.state.replace("_", " ").toLowerCase()}</span>
         </div>
-        {item.body && <Md text={item.body} />}
+        {item.body && <Md text={item.body} allowImages={false} />}
         {threads.map((thread) => (
           <ThreadCard key={thread.id} thread={thread} onSendToSession={onSendThread} />
         ))}
@@ -639,7 +628,7 @@ function TimelineEvent({
     return (
       <div className="pr-detail-comment">
         <div className="pr-detail-comment-head"><strong>{item.actor}</strong> commented · {ageLabel(item.at)} ago</div>
-        <Md text={item.body} />
+        <Md text={item.body} allowImages={false} />
       </div>
     );
   }

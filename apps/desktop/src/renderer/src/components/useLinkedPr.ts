@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import type { AppSettings, PrDetail, PrSummary, Session, SessionPrLink } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import { usePrStore } from "../stores/prStore.js";
@@ -65,10 +65,12 @@ export function useLinkedPrLoader(sessionId: string | undefined): void {
   }, [inboxUnseen]);
 }
 
-export function usePrSettings(): { settings: AppSettings | null; error: string | null } {
+export function usePrSettings(): { settings: AppSettings | null; error: string | null; reload: () => void } {
   const settingsVersion = useAppStore((s) => s.settingsVersion);
   const [settings, setSettings] = useState<AppSettings | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [reloadToken, setReloadToken] = useState(0);
+  const reload = useCallback(() => setReloadToken((n) => n + 1), []);
 
   useEffect(() => {
     let active = true;
@@ -85,7 +87,7 @@ export function usePrSettings(): { settings: AppSettings | null; error: string |
     return () => {
       active = false;
     };
-  }, [settingsVersion]);
+  }, [settingsVersion, reloadToken]);
 
-  return { settings, error };
+  return { settings, error, reload };
 }

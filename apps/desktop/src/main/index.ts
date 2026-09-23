@@ -81,12 +81,39 @@ async function createWindow(): Promise<void> {
       appendCrashLog(`renderer error: ${event.message} (${event.sourceId}:${event.lineNumber})`);
     }
   });
+  webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:/i.test(url)) void shell.openExternal(url);
+    return { action: "deny" };
+  });
+  webContents.on("will-navigate", (event, url) => {
+    if (isAppUrl(url)) return;
+    event.preventDefault();
+    if (/^https?:/i.test(url)) void shell.openExternal(url);
+  });
 
-  if (process.env["ELECTRON_RENDERER_URL"]) {
-    await mainWindow.loadURL(process.env["ELECTRON_RENDERER_URL"]);
+  const devUrl = process.env["ELECTRON_RENDERER_URL"];
+  if (devUrl) {
+    await mainWindow.loadURL(devUrl);
   } else {
-    await mainWindow.loadFile(join(__dirname, "../renderer/index.html"));
+    await mainWindow.loadFile(rendererIndexPath());
   }
+}
+
+function rendererIndexPath(): string {
+  return join(__dirname, "../renderer/index.html");
+}
+
+function isAppUrl(url: string): boolean {
+  let target: URL;
+  try {
+    target = new URL(url);
+  } catch {
+    return false;
+  }
+  const devUrl = process.env["ELECTRON_RENDERER_URL"];
+  if (devUrl) return target.origin === new URL(devUrl).origin;
+  const indexPath = pathToFileURL(rendererIndexPath()).pathname;
+  return target.protocol === "file:" && target.pathname.toLowerCase() === indexPath.toLowerCase();
 }
 
 function windowFromSender(sender: WebContents): BrowserWindow | null {

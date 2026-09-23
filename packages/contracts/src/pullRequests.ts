@@ -53,6 +53,8 @@ export interface PrInboxResult {
   items: PrSummary[];
   fetchedAt: number;
   error: string | null;
+  /** True when at least one inbox search hit its page size, so older PRs may be missing. */
+  truncated?: boolean;
 }
 
 export interface PrCheck {

@@ -73,3 +73,45 @@ describe("Md html file references", () => {
     expect(onOpenExternal).toHaveBeenCalledWith("design/index.html");
   });
 });
+
+describe("Md images", () => {
+  let root: Root | null = null;
+  let host: HTMLDivElement | null = null;
+
+  afterEach(async () => {
+    await act(async () => {
+      root?.unmount();
+    });
+    root = null;
+    host?.remove();
+    host = null;
+  });
+
+  async function renderMd(text: string, allowImages?: boolean): Promise<HTMLDivElement> {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => {
+      root!.render(<Md text={text} allowImages={allowImages} />);
+    });
+    return host;
+  }
+
+  it("renders images by default", async () => {
+    const rendered = await renderMd("![diagram](https://example.com/a.png)");
+    expect(rendered.querySelector("img")?.getAttribute("src")).toBe("https://example.com/a.png");
+  });
+
+  it("renders images as links labelled with their alt text when images are not allowed", async () => {
+    const rendered = await renderMd("![diagram](https://example.com/a.png)", false);
+    expect(rendered.querySelector("img")).toBeNull();
+    const link = rendered.querySelector(".md-image-link a");
+    expect(link?.getAttribute("href")).toBe("https://example.com/a.png");
+    expect(link?.textContent).toBe("diagram");
+  });
+
+  it("falls back to the image URL when there is no alt text", async () => {
+    const rendered = await renderMd("![](https://example.com/b.png)", false);
+    expect(rendered.querySelector(".md-image-link a")?.textContent).toBe("https://example.com/b.png");
+  });
+});

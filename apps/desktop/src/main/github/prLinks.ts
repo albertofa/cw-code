@@ -3,10 +3,21 @@ import { prKey, prRefFromUrl } from "./prParsers.js";
 
 const MAX_UNLINKED_KEYS = 20;
 
+export function canOwnAutoLink(session: SessionMeta): boolean {
+  if (!session.worktreePath) return false;
+  return session.status !== "resolved" && session.status !== "archived";
+}
+
+export function hasStaleAutoLink(session: SessionMeta): boolean {
+  return session.pr?.origin === "opened" && !canOwnAutoLink(session);
+}
+
 export function linkFromStatus(session: SessionMeta, status: GitStatus, now: number, headSha?: string | null): SessionPrLink | null {
   if (session.pr) return null;
-  if (status.pullRequest?.state !== "OPEN") return null;
-  const ref = prRefFromUrl(status.pullRequest.url);
+  if (!canOwnAutoLink(session) || session.branch !== status.branch) return null;
+  const pullRequest = status.pullRequest;
+  if (pullRequest?.state !== "OPEN" || pullRequest.headRefName !== status.branch) return null;
+  const ref = prRefFromUrl(pullRequest.url);
   if (!ref) return null;
   if (session.prUnlinked?.includes(prKey(ref))) return null;
   return { ref, origin: "opened", lastSeenSha: headSha ?? "", lastSeenAt: now };

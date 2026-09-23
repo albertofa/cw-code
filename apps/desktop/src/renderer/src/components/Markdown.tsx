@@ -273,23 +273,36 @@ export function sanitizeStreamingMarkdown(text: string): string {
   return text;
 }
 
+function MdImageLink({ src, alt }: { src?: string; alt?: string }) {
+  const label = alt?.trim() || src || "image";
+  if (!src) return <span className="md-image-link">{label}</span>;
+  return (
+    <span className="md-image-link">
+      <MdLink href={src}>{label}</MdLink>
+    </span>
+  );
+}
+
 export const Md = memo(function Md({
   text,
   onOpenFile,
-  onOpenExternal
+  onOpenExternal,
+  allowImages = true
 }: {
   text: string;
   onOpenFile?: (path: string) => void;
   onOpenExternal?: (path: string) => void;
+  allowImages?: boolean;
 }) {
   const components = useMemo<Components>(
     () => ({
       pre: Pre,
       code: (props) => <MdCode {...props} onOpenFile={onOpenFile} onOpenExternal={onOpenExternal} />,
       table: MdTable,
-      a: (props) => <MdLink {...props} onOpenFile={onOpenFile} onOpenExternal={onOpenExternal} />
+      a: (props) => <MdLink {...props} onOpenFile={onOpenFile} onOpenExternal={onOpenExternal} />,
+      ...(allowImages ? {} : { img: ({ src, alt }) => <MdImageLink src={typeof src === "string" ? src : undefined} alt={alt} /> })
     }),
-    [onOpenFile, onOpenExternal]
+    [onOpenFile, onOpenExternal, allowImages]
   );
   return (
     <div className="md">

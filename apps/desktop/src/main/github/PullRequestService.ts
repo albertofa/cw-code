@@ -161,7 +161,8 @@ export class PullRequestService {
       }
       const items = mergeInboxItems(parsed.map((entry) => entry.items));
       for (const item of items) this.knownHeads.set(prKey(item.ref), item.headRefOid);
-      return { account: accountInfo, items, fetchedAt, error: null };
+      const truncated = parsed.some((entry) => entry.truncated);
+      return { account: accountInfo, items, fetchedAt, error: null, truncated };
     } catch (error) {
       return { account: accountInfo, items: [], fetchedAt, error: (error as Error).message || "GitHub CLI error" };
     }

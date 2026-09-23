@@ -162,10 +162,13 @@ function sanitize(patch: SettingsPatch): SettingsPatch {
     out.prRefreshIntervalSeconds = Number.isFinite(value) ? Math.min(3600, Math.max(30, value)) : 120;
   }
   if (patch.prCloneRoot !== undefined) {
-    out.prCloneRoot = patch.prCloneRoot.trim() || DEFAULT_SETTINGS.prCloneRoot;
+    out.prCloneRoot = (typeof patch.prCloneRoot === "string" && patch.prCloneRoot.trim()) || DEFAULT_SETTINGS.prCloneRoot;
   }
   if (patch.prAttributionEnabled !== undefined) out.prAttributionEnabled = patch.prAttributionEnabled === true;
-  if (patch.prAttributionText !== undefined) out.prAttributionText = patch.prAttributionText.trim();
+  if (patch.prAttributionText !== undefined) {
+    out.prAttributionText =
+      typeof patch.prAttributionText === "string" ? patch.prAttributionText.trim() : DEFAULT_SETTINGS.prAttributionText;
+  }
   if (patch.prWorkflows !== undefined) out.prWorkflows = sanitizePrWorkflows(patch.prWorkflows);
   return out;
 }

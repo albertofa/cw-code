@@ -9187,6 +9187,11 @@ button.gitbar-checkout:hover {
   font-family: var(--mono);
 }
 
+.pr-inbox-truncated {
+  color: var(--faint);
+  font-size: 11.5px;
+}
+
 .pr-inbox-chips {
   display: flex;
   flex-wrap: wrap;

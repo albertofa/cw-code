@@ -62,6 +62,11 @@ describe("hasUnseen", () => {
     const pr = basePr({ headRefOid: "sha-1", updatedAt: 2_000 });
     expect(hasUnseen(pr, baseLink({ lastSeenSha: "sha-1", lastSeenAt: 1_000 }))).toBe(true);
   });
+
+  it("ignores the head sha while the link has not recorded one yet", () => {
+    const pr = basePr({ headRefOid: "sha-2", updatedAt: 500 });
+    expect(hasUnseen(pr, baseLink({ lastSeenSha: "", lastSeenAt: 1_000 }))).toBe(false);
+  });
 });
 
 describe("updatesSince", () => {
@@ -222,6 +227,33 @@ describe("updatesSince", () => {
     const timeline: PrTimelineItem[] = [{ kind: "merged", at: 1_500, actor: "mbarros" }];
     const detail = basePr({ timeline });
     expect(updatesSince(detail, baseLink())).toEqual([]);
+  });
+
+  it("reports new commits when the head moved but the pushed commits predate lastSeenAt", () => {
+    const timeline: PrTimelineItem[] = [
+      { kind: "commits", at: 900, actor: "mbarros", commits: [{ oid: "sha-2", headline: "fix", author: "mbarros", committedAt: 900, ci: "none" }] }
+    ];
+    const detail = basePr({ timeline, headRefOid: "sha-2", updatedAt: 1_200 });
+    const link = baseLink({ lastSeenSha: "sha-1", lastSeenAt: 1_000 });
+    expect(hasUnseen(detail, link)).toBe(true);
+    expect(updatesSince(detail, link)).toEqual([
+      { kind: "commits", at: 1_200, actor: null, summary: "New commits since the session last ran" }
+    ]);
+  });
+
+  it("does not add a synthetic commits update when a real one exists", () => {
+    const timeline: PrTimelineItem[] = [
+      { kind: "commits", at: 1_500, actor: "mbarros", commits: [{ oid: "sha-2", headline: "fix", author: "mbarros", committedAt: 1_500, ci: "none" }] }
+    ];
+    const detail = basePr({ timeline, headRefOid: "sha-2" });
+    expect(updatesSince(detail, baseLink()).map((update) => update.summary)).toEqual(["mbarros pushed 1 commit"]);
+  });
+
+  it("reports a generic update when the PR changed without a timeline item", () => {
+    const detail = basePr({ updatedAt: 2_000 });
+    const link = baseLink();
+    expect(hasUnseen(detail, link)).toBe(true);
+    expect(updatesSince(detail, link)).toEqual([{ kind: "comment", at: 2_000, actor: null, summary: "PR updated" }]);
   });
 });
 

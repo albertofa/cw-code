@@ -1,7 +1,7 @@
 import type { PrCheck, PrDetail, PrReviewThread, PrSummary, PrTimelineItem, PrUpdate, SessionPrLink } from "@cw-code/contracts";
 
 export function hasUnseen(pr: PrSummary, link: SessionPrLink): boolean {
-  return pr.headRefOid !== link.lastSeenSha || pr.updatedAt > link.lastSeenAt;
+  return (link.lastSeenSha !== "" && pr.headRefOid !== link.lastSeenSha) || pr.updatedAt > link.lastSeenAt;
 }
 
 export function updatesSince(detail: PrDetail, link: SessionPrLink): PrUpdate[] {
@@ -13,6 +13,13 @@ export function updatesSince(detail: PrDetail, link: SessionPrLink): PrUpdate[] 
   }
   const checks = checksUpdate(detail, link.lastSeenAt);
   if (checks) updates.push(checks);
+  const headMoved = link.lastSeenSha !== "" && detail.headRefOid !== link.lastSeenSha;
+  if (headMoved && !updates.some((update) => update.kind === "commits")) {
+    updates.push({ kind: "commits", at: detail.updatedAt, actor: null, summary: "New commits since the session last ran" });
+  }
+  if (updates.length === 0 && hasUnseen(detail, link)) {
+    updates.push({ kind: "comment", at: detail.updatedAt, actor: null, summary: "PR updated" });
+  }
   return updates.sort((a, b) => b.at - a.at);
 }
 

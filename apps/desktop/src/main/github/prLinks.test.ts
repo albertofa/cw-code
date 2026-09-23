@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { GitBranchInfo, GitPullRequest, GitStatus, SessionMeta, SessionPrLink } from "@cw-code/contracts";
-import { authorLocalBranch, linkFromStatus, markSeen, prHeadPlan } from "./prLinks.js";
+import { authorLocalBranch, canOwnAutoLink, hasStaleAutoLink, linkFromStatus, markSeen, prHeadPlan } from "./prLinks.js";
 
 function session(overrides: Partial<SessionMeta> = {}): SessionMeta {
   return {
@@ -12,6 +12,8 @@ function session(overrides: Partial<SessionMeta> = {}): SessionMeta {
     resumeCursor: "",
     createdAt: 0,
     updatedAt: 0,
+    worktreePath: "C:/worktrees/feature",
+    branch: "feature",
     ...overrides
   };
 }
@@ -116,6 +118,55 @@ describe("linkFromStatus", () => {
   it("keeps an empty sha when the head is unknown", () => {
     const open = status({ pullRequest: pullRequest() });
     expect(linkFromStatus(session(), open, 100, null)).toMatchObject({ lastSeenSha: "" });
+  });
+
+  it("returns null for a session running in the project's current checkout", () => {
+    const open = status({ pullRequest: pullRequest() });
+    expect(linkFromStatus(session({ worktreePath: undefined }), open, 100)).toBeNull();
+  });
+
+  it("returns null for archived and resolved sessions", () => {
+    const open = status({ pullRequest: pullRequest() });
+    expect(linkFromStatus(session({ status: "archived" }), open, 100)).toBeNull();
+    expect(linkFromStatus(session({ status: "resolved" }), open, 100)).toBeNull();
+  });
+
+  it("returns null when the session branch differs from the checked-out branch", () => {
+    const open = status({ pullRequest: pullRequest() });
+    expect(linkFromStatus(session({ branch: "other" }), open, 100)).toBeNull();
+    expect(linkFromStatus(session({ branch: undefined }), open, 100)).toBeNull();
+  });
+
+  it("returns null when the pull request head is a different branch", () => {
+    const open = status({ pullRequest: pullRequest({ headRefName: "someone-else" }) });
+    expect(linkFromStatus(session(), open, 100)).toBeNull();
+  });
+});
+
+describe("auto-link ownership", () => {
+  const opened: SessionPrLink = {
+    ref: { host: "github.com", owner: "acme", repo: "widgets", number: 42 },
+    origin: "opened",
+    lastSeenSha: "",
+    lastSeenAt: 1
+  };
+
+  it("only lets live worktree sessions own an auto-link", () => {
+    expect(canOwnAutoLink(session())).toBe(true);
+    expect(canOwnAutoLink(session({ worktreePath: undefined }))).toBe(false);
+    expect(canOwnAutoLink(session({ status: "archived" }))).toBe(false);
+    expect(canOwnAutoLink(session({ status: "resolved" }))).toBe(false);
+  });
+
+  it("flags opened links held by sessions that cannot own them", () => {
+    expect(hasStaleAutoLink(session({ pr: opened, worktreePath: undefined }))).toBe(true);
+    expect(hasStaleAutoLink(session({ pr: opened, status: "archived" }))).toBe(true);
+    expect(hasStaleAutoLink(session({ pr: opened }))).toBe(false);
+  });
+
+  it("never flags manual links or sessions without a link", () => {
+    expect(hasStaleAutoLink(session({ pr: { ...opened, origin: "linked" }, worktreePath: undefined }))).toBe(false);
+    expect(hasStaleAutoLink(session({ worktreePath: undefined }))).toBe(false);
   });
 });
 

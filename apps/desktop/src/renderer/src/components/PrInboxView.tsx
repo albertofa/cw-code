@@ -44,6 +44,7 @@ import {
 } from "./prInboxModel.js";
 import { primaryAction, suggestedWorkflow } from "./prWorkflows.js";
 import { errorMessage } from "./errorMessage.js";
+import { usePrSettings } from "./useLinkedPr.js";
 
 function useNow(intervalMs = 5000): number {
   const [now, setNow] = useState(() => Date.now());
@@ -310,34 +311,14 @@ export function PrInboxView() {
   const projectRepos = usePrStore((s) => s.projectRepos);
   const sessionsByProject = useAppStore((s) => s.sessionsByProject);
   const selectSession = useAppStore((s) => s.selectSession);
-  const settingsVersion = useAppStore((s) => s.settingsVersion);
   const rightVisible = usePanelStore((s) => s.rightVisible);
 
   const [filter, setFilter] = useState<PrInboxFilterId>("all");
   const [collapsed, setCollapsed] = useState<Set<PrBucket>>(() => new Set(DEFAULT_COLLAPSED_BUCKETS));
-  const [workflows, setWorkflows] = useState<PrWorkflow[]>([]);
-  const [workflowsError, setWorkflowsError] = useState<string | null>(null);
-  const [workflowsReloadToken, setWorkflowsReloadToken] = useState(0);
+  const { settings, error: workflowsError, reload: reloadWorkflows } = usePrSettings();
+  const workflows = useMemo<PrWorkflow[]>(() => settings?.prWorkflows ?? [], [settings]);
   const [sessionsPopover, setSessionsPopover] = useState<SessionsPopoverState | null>(null);
   const [workflowPopover, setWorkflowPopover] = useState<WorkflowPopoverState | null>(null);
-
-  useEffect(() => {
-    let active = true;
-    window.cw
-      .getSettings()
-      .then((settings) => {
-        if (!active) return;
-        setWorkflows(settings.prWorkflows);
-        setWorkflowsError(null);
-      })
-      .catch((err: unknown) => {
-        if (!active) return;
-        setWorkflowsError(errorMessage(err));
-      });
-    return () => {
-      active = false;
-    };
-  }, [settingsVersion, workflowsReloadToken]);
 
   const items = inbox?.items ?? [];
   const failure = error ?? inbox?.error ?? null;
@@ -404,7 +385,7 @@ export function PrInboxView() {
         {workflowsError && (
           <div className="pr-view-error" role="alert">
             <span>Could not load workflows: {workflowsError}</span>
-            <button type="button" className="pr-view-retry" onClick={() => setWorkflowsReloadToken((n) => n + 1)}>
+            <button type="button" className="pr-view-retry" onClick={reloadWorkflows}>
               Retry
             </button>
           </div>
@@ -412,6 +393,11 @@ export function PrInboxView() {
 
         <div className="pr-inbox-toolbar">
           <SyncedLabel fetchedAt={inbox?.fetchedAt ?? null} loading={loading} />
+          {inbox?.truncated && (
+            <span className="pr-inbox-truncated" title="GitHub search returns at most 50 pull requests per query; older ones may be missing">
+              at most 50 per search
+            </span>
+          )}
           <span className="pr-inbox-toolbar-grow" />
           <button
             type="button"

@@ -14,6 +14,7 @@ import type {
   PrThreadComment,
   PrTimelineItem
 } from "@cw-code/contracts";
+import { INBOX_SEARCH_LIMIT } from "./prQueries.js";
 
 const PASSING_STATES = new Set(["SUCCESS", "NEUTRAL", "SKIPPED"]);
 const FAILING_STATES = new Set(["FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STALE"]);
@@ -144,21 +145,22 @@ function parseSummaryNode(node: Record<string, unknown>, viewer: string | null):
   };
 }
 
-export function parseInbox(json: string): { viewer: string | null; items: PrSummary[] } {
+export function parseInbox(json: string): { viewer: string | null; items: PrSummary[]; truncated: boolean } {
   let root: Record<string, unknown>;
   try {
     root = JSON.parse(json) as Record<string, unknown>;
   } catch {
-    return { viewer: null, items: [] };
+    return { viewer: null, items: [], truncated: false };
   }
   const data = asRecord(root.data);
   const viewer = asString(asRecord(data.viewer).login) || null;
+  const nodes = asNodes(data.search);
   const items: PrSummary[] = [];
-  for (const node of asNodes(data.search)) {
+  for (const node of nodes) {
     const summary = parseSummaryNode(node, viewer);
     if (summary) items.push(summary);
   }
-  return { viewer, items };
+  return { viewer, items, truncated: nodes.length >= INBOX_SEARCH_LIMIT };
 }
 
 function commentAuthor(commit: Record<string, unknown>): string {

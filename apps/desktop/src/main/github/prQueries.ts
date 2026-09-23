@@ -1,3 +1,5 @@
+export const INBOX_SEARCH_LIMIT = 50;
+
 const PR_SUMMARY_FIELDS = `
   number
   url
@@ -62,7 +64,7 @@ query($q: String!) {
   viewer {
     login
   }
-  search(type: ISSUE, first: 50, query: $q) {
+  search(type: ISSUE, first: ${INBOX_SEARCH_LIMIT}, query: $q) {
     nodes {
       ... on PullRequest {
         __typename
@@ -89,7 +91,7 @@ ${PR_SUMMARY_FIELDS}
       body
       createdAt
       timelineItems(
-        first: 100
+        last: 100
         itemTypes: [
           PULL_REQUEST_COMMIT
           PULL_REQUEST_REVIEW

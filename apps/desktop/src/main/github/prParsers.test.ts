@@ -94,7 +94,17 @@ describe("parseInbox", () => {
   });
 
   it("returns an empty result for malformed JSON", () => {
-    expect(parseInbox("not-json")).toEqual({ viewer: null, items: [] });
+    expect(parseInbox("not-json")).toEqual({ viewer: null, items: [], truncated: false });
+  });
+
+  it("flags a search that returned a full page as truncated", () => {
+    const nodes = Array.from({ length: 50 }, (_, index) =>
+      summaryNode({ number: index + 1, url: `https://github.com/acme/widgets/pull/${index + 1}` })
+    );
+    const full = JSON.stringify({ data: { viewer: { login: "octocat" }, search: { nodes } } });
+    const partial = JSON.stringify({ data: { viewer: { login: "octocat" }, search: { nodes: nodes.slice(0, 49) } } });
+    expect(parseInbox(full).truncated).toBe(true);
+    expect(parseInbox(partial).truncated).toBe(false);
   });
 
   it("drops nodes whose url does not parse into a PR ref", () => {

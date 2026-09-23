@@ -641,7 +641,8 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
 
   const renderRow = (s: Session, section: SidebarSection, hideState = false) => {
     const git = gitStatusBySession[s.id];
-    const chip = prChip({ pr: sessionPrSummary(s, summaryByKey), git: git?.pullRequest ?? null });
+    const gitPr = git?.pullRequest && s.pr && git.pullRequest.number === s.pr.ref.number ? git.pullRequest : null;
+    const chip = prChip({ pr: sessionPrSummary(s, summaryByKey), git: gitPr });
     const unseen = sessionHasUnseen(s, summaryByKey);
     const status = s.status ?? "idle";
     const projectName = projectNameById[s.projectId] ?? "";
