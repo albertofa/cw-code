@@ -23,6 +23,7 @@ export interface LiveSeen {
   call: boolean;
   result: boolean;
   input: boolean;
+  model?: string;
 }
 
 function hasInput(input: unknown): boolean {
@@ -82,9 +83,14 @@ export function diffLiveTools(
       const id = partCallId(part, turnId);
       const entry = seen.get(id) ?? { call: false, result: false, input: false };
       const input = partInput(part);
-      if (!entry.call) {
+      const model = modelForCall?.(id);
+      const newCall = !entry.call;
+      const newInput = !entry.input && hasInput(input);
+      const newModel = !!model && model !== entry.model;
+      if (newCall || newInput || newModel) {
         entry.call = true;
-        entry.input = hasInput(input);
+        entry.input = entry.input || hasInput(input);
+        if (model) entry.model = model;
         seen.set(id, entry);
         events.push({
           type: "tool.call",
@@ -92,18 +98,8 @@ export function diffLiveTools(
           toolCallId: id,
           name: part.tool ?? "tool",
           input,
-          ...(parentToolCallId ? { parentToolCallId } : {})
-        });
-      } else if (!entry.input && hasInput(input)) {
-        entry.input = true;
-        seen.set(id, entry);
-        events.push({
-          type: "tool.call",
-          turnId,
-          toolCallId: id,
-          name: part.tool ?? "tool",
-          input,
-          ...(parentToolCallId ? { parentToolCallId } : {})
+          ...(parentToolCallId ? { parentToolCallId } : {}),
+          ...(model ? { model } : {})
         });
       }
       if (!entry.result) {
@@ -111,7 +107,6 @@ export function diffLiveTools(
         if (result) {
           entry.result = true;
           seen.set(id, entry);
-          const model = modelForCall?.(id);
           events.push({
             type: "tool.result",
             turnId,
