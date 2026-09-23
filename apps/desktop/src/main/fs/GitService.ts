@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readdirSync, rmdirSync } from "node:fs";
 import { open, lstat } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 import { simpleGit } from "simple-git";
+import { ciFromRollup } from "../github/prParsers.js";
 import { sameWorktreePath } from "../sessions/worktreeCleanup.js";
 import type {
   AppSettings,
@@ -291,15 +292,7 @@ export function parsePullRequest(stdout: string): GitPullRequest | null {
   const url = typeof raw.url === "string" ? raw.url : "";
   if (number <= 0 || !url) return null;
   const rollup = Array.isArray(raw.statusCheckRollup) ? raw.statusCheckRollup as GhCheck[] : [];
-  let passed = 0;
-  let failed = 0;
-  let pending = 0;
-  for (const check of rollup) {
-    const state = (check.conclusion || check.state || check.status || "").toUpperCase();
-    if (["SUCCESS", "NEUTRAL", "SKIPPED"].includes(state)) passed += 1;
-    else if (["FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STALE"].includes(state)) failed += 1;
-    else pending += 1;
-  }
+  const { checks } = ciFromRollup(rollup.map((check) => check.conclusion || check.state || check.status || ""));
   const rawState = typeof raw.state === "string" ? raw.state : "OPEN";
   const state = rawState === "MERGED" || rawState === "CLOSED" ? rawState : "OPEN";
   return {
@@ -312,7 +305,7 @@ export function parsePullRequest(stdout: string): GitPullRequest | null {
     mergeStateStatus: typeof raw.mergeStateStatus === "string" && raw.mergeStateStatus ? raw.mergeStateStatus : null,
     headRefName: typeof raw.headRefName === "string" ? raw.headRefName : "",
     baseRefName: typeof raw.baseRefName === "string" ? raw.baseRefName : "",
-    checks: { total: rollup.length, passed, failed, pending }
+    checks
   };
 }
 
