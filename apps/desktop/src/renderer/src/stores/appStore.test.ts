@@ -56,6 +56,34 @@ describe("appStore tool.result", () => {
     expect(message.subagentAgentId).toBe("agent-1");
   });
 
+  it("updates a result-only row when a later task notification has details", () => {
+    const session = "sess_task_failure";
+    useAppStore.getState().applyEvent(session, {
+      type: "tool.result",
+      turnId: "turn-1",
+      toolCallId: "call_1",
+      output: "Subagent failed",
+      isError: true
+    });
+    useAppStore.getState().applyEvent(session, {
+      type: "tool.result",
+      turnId: "turn-1",
+      toolCallId: "call_1",
+      output: "Permission denied reading C:/secret.txt",
+      isError: true,
+      usage: { tokens: 1200 }
+    });
+
+    expect(useAppStore.getState().messagesBySession[session]).toEqual([
+      expect.objectContaining({
+        id: "call_1-r",
+        text: "Permission denied reading C:/secret.txt",
+        toolUsage: { tokens: 1200 },
+        isError: true
+      })
+    ]);
+  });
+
   it("appends turn.done resultText when streaming deltas missed the final message", () => {
     const session = "sess_result";
     useAppStore.getState().applyEvent(session, {
