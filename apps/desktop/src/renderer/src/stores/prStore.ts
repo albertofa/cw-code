@@ -28,9 +28,10 @@ interface PrState {
   runModal: RunModalState | null;
   refreshInbox(force?: boolean): Promise<void>;
   loadDetail(ref: PrRef): Promise<void>;
-  loadDiff(ref: PrRef): Promise<void>;
+  loadDiff(ref: PrRef, force?: boolean): Promise<void>;
   openInbox(): void;
   openPr(ref: PrRef, tab?: PrDetailTab): void;
+  setPrTab(tab: PrDetailTab): void;
   openSessionView(): void;
   refreshProjectRepos(): Promise<void>;
   projectIdForRef(ref: PrRef): string | null;
@@ -98,9 +99,10 @@ export const usePrStore = create<PrState>((set, get) => ({
     }
   },
 
-  async loadDiff(ref: PrRef) {
+  async loadDiff(ref: PrRef, force?: boolean) {
     const key = prKey(ref);
     if (get().diffLoadingByKey[key]) return;
+    if (!force && get().diffByKey[key] !== undefined) return;
     set({ diffLoadingByKey: { ...get().diffLoadingByKey, [key]: true } });
     try {
       const diff = await window.cw.getPrDiff(ref);
@@ -127,6 +129,12 @@ export const usePrStore = create<PrState>((set, get) => ({
   openPr(ref: PrRef, tab: PrDetailTab = "conversation") {
     set({ mainView: { kind: "pr", ref, tab } });
     void get().loadDetail(ref);
+  },
+
+  setPrTab(tab: PrDetailTab) {
+    const view = get().mainView;
+    if (view.kind !== "pr") return;
+    set({ mainView: { ...view, tab } });
   },
 
   openSessionView() {

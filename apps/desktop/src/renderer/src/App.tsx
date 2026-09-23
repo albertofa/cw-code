@@ -9,6 +9,7 @@ import { SettingsModal } from "./components/SettingsModal.js";
 import { ThreadView } from "./components/ThreadView.js";
 import { PrInboxView } from "./components/PrInboxView.js";
 import { PrDetailView } from "./components/PrDetailView.js";
+import { WorkflowRunModal } from "./components/WorkflowRunModal.js";
 import { PanelToggles } from "./components/PanelToggles.js";
 import { ToolContent } from "./components/ToolContent.js";
 import { TOOL_TABS, isHarnessTabId } from "./components/toolTabs.js";
@@ -19,6 +20,7 @@ import { useAppStore } from "./stores/appStore.js";
 import { tabsInPanel, DOCKABLE_TABS } from "./stores/panelLayout.js";
 import { usePanelStore } from "./stores/panelStore.js";
 import { usePrStore } from "./stores/prStore.js";
+import { prKey } from "./components/prInbox.js";
 import type { DockableTabId } from "@cw-code/contracts";
 import type { TurnEvent } from "./cw.js";
 
@@ -104,6 +106,7 @@ export function App() {
   const sourceControlRefreshIntervalSeconds = useAppStore((s) => s.sourceControlRefreshIntervalSeconds);
   const prRefreshIntervalSeconds = useAppStore((s) => s.prRefreshIntervalSeconds);
   const mainView = usePrStore((s) => s.mainView);
+  const runModal = usePrStore((s) => s.runModal);
   const holdingHours = useAppStore((s) => s.holdingHours);
   const settingsVersion = useAppStore((s) => s.settingsVersion);
   const loadProjects = useAppStore((s) => s.loadProjects);
@@ -392,7 +395,7 @@ export function App() {
         <>
           <div className="app-body">
           <Sidebar onOpenSettings={() => openSettings()} onOpenSkills={() => setSkillsOpen(true)} skillsOpen={skillsOpen} />
-          {mainView.kind === "inbox" ? <PrInboxView /> : mainView.kind === "pr" ? <PrDetailView prRef={mainView.ref} /> : <ThreadView />}
+          {mainView.kind === "inbox" ? <PrInboxView /> : mainView.kind === "pr" ? <PrDetailView key={prKey(mainView.ref)} prRef={mainView.ref} /> : <ThreadView />}
           {rightVisible && (
             <aside className={`right${dropRight.over || draggingTab !== null ? " drop-target-active" : ""}`} style={{ width: rightWidth }}>
               <div
@@ -516,6 +519,7 @@ export function App() {
             <SettingsModal initialHarness={settingsHarness} onClose={() => setSettingsOpen(false)} />
           )}
           {skillsOpen && <SkillsModal onClose={() => setSkillsOpen(false)} />}
+          {runModal && <WorkflowRunModal request={runModal} />}
         </>
       )}
     </div>
