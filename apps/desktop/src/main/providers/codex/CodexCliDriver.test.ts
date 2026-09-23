@@ -27,7 +27,12 @@ const SETTINGS: AppSettings = {
   autoTitleEnabled: true,
   autoTitleDriver: "claude",
   autoTitleModel: "claude-sonnet-5",
-  autoTitleEffort: "low"
+  autoTitleEffort: "low",
+  prRefreshIntervalSeconds: 120,
+  prCloneRoot: "~/.cw-code/repos",
+  prAttributionEnabled: true,
+  prAttributionText: "",
+  prWorkflows: []
 };
 
 class FakeClient implements CodexAppServerLike {

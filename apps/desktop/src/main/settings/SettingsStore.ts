@@ -29,7 +29,12 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autoTitleEnabled: true,
   autoTitleDriver: "claude",
   autoTitleModel: "claude-sonnet-5",
-  autoTitleEffort: "low"
+  autoTitleEffort: "low",
+  prRefreshIntervalSeconds: 120,
+  prCloneRoot: "~/.cw-code/repos",
+  prAttributionEnabled: true,
+  prAttributionText: "— drafted with {{harness}} in cw-code",
+  prWorkflows: []
 };
 
 function sanitize(patch: SettingsPatch): SettingsPatch {

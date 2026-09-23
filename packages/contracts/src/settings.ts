@@ -1,4 +1,5 @@
 import type { DriverKind, EffortLevel } from "./session.js";
+import type { PrWorkflow } from "./pullRequests.js";
 
 export interface CustomModel {
   id: string;
@@ -28,6 +29,11 @@ export interface AppSettings {
   autoTitleDriver: DriverKind;
   autoTitleModel: string;
   autoTitleEffort: EffortLevel;
+  prRefreshIntervalSeconds: number;
+  prCloneRoot: string;
+  prAttributionEnabled: boolean;
+  prAttributionText: string;
+  prWorkflows: PrWorkflow[];
 }
 
 export type SettingsPatch = Partial<AppSettings>;
