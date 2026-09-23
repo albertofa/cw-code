@@ -3,7 +3,7 @@ import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
 import { join } from "node:path";
 import type { AppSettings, ThreadEvent } from "@cw-code/contracts";
-import { buildClaudeArgs, CLAUDE_IDLE_EVICT_MS, ClaudeCliDriver, claudeSettingsPath, describeClaudeExit, mapClaudeEffort, mapClaudePermission, mergeClaudeAllowRule, subagentToolsResult } from "./ClaudeCliDriver.js";
+import { buildClaudeArgs, CLAUDE_IDLE_EVICT_MS, ClaudeCliDriver, claudeSettingsPath, mapClaudeEffort, mapClaudePermission, mergeClaudeAllowRule, subagentToolsResult } from "./ClaudeCliDriver.js";
 
 const SETTINGS: AppSettings = {
   claudeBinaryPath: "claude",
@@ -156,21 +156,6 @@ describe("mergeClaudeAllowRule", () => {
     expect(modes.map((m) => m.label)).toEqual(["Manual", "Accept edits", "Auto", "Bypass permissions"]);
     expect(modes.every((m) => m.native)).toBe(true);
     driver.dispose();
-  });
-});
-
-describe("describeClaudeExit", () => {
-  it("strips sandbox boilerplate and ANSI escapes down to the generic message", () => {
-    expect(describeClaudeExit("\n\u001b[s\u001b[?25l Sandbox disabled: sandbox is enabled\n  Commands will run WITHOUT sandboxing.\n\n", 1)).toBe(
-      "claude exited before completing the turn (code 1)"
-    );
-    expect(describeClaudeExit("", null)).toBe("claude exited before completing the turn (code null)");
-  });
-
-  it("preserves real error lines mixed with boilerplate", () => {
-    expect(
-      describeClaudeExit("Sandbox disabled\nError: socket hang up\n  Commands will run WITHOUT sandboxing.", 1)
-    ).toBe("Error: socket hang up");
   });
 });
 

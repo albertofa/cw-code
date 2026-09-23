@@ -29,4 +29,22 @@ describe("claudeProjectSlug", () => {
     expect(peekClaudeTitle(file)).toBe("fix the login bug please");
     expect(peekClaudeTitle(join(dir, "missing.jsonl"))).toBeNull();
   });
+
+  it("titles a slash-command session with /name args instead of the raw transcript line", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cw-peek-"));
+    const file = join(dir, "s.jsonl");
+    writeFileSync(
+      file,
+      JSON.stringify({
+        type: "user",
+        uuid: "u1",
+        message: {
+          content:
+            "<command-name>/compact</command-name>\n<command-message>compact</command-message>\n<command-args></command-args>"
+        }
+      }),
+      "utf8"
+    );
+    expect(peekClaudeTitle(file)).toBe("/compact");
+  });
 });

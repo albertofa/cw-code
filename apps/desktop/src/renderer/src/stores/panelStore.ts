@@ -45,6 +45,7 @@ export interface PanelActions {
   moveTab(sessionId: string | undefined, tab: DockableTabId, panel: DockLocation): void;
   setActive(sessionId: string | undefined, panel: PanelId, tab: MainTabId): void;
   activateOrOpen(sessionId: string | undefined, tab: DockableTabId): void;
+  revealTab(sessionId: string, tab: DockableTabId): void;
   setAutoLocation(tab: DockableTabId, panel: PanelId): void;
   setBottomHeight(sessionId: string | undefined, height: number): void;
   setBottomCollapsed(sessionId: string | undefined, collapsed: boolean): void;
@@ -142,6 +143,14 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
     } else {
       current.setActive(sessionId, panel.dockByTab[tab], tab);
     }
+  },
+
+  revealTab: (sessionId, tab) => {
+    get().activateOrOpen(sessionId, tab);
+    const current = get();
+    const panel = panelFor(current, sessionId);
+    if (panel.dockByTab[tab] === "right") current.setRightVisible(sessionId, true);
+    if (panel.dockByTab[tab] === "bottom" && panel.bottomCollapsed) current.setBottomCollapsed(sessionId, false);
   },
 
   setAutoLocation: (tab, panel) => {

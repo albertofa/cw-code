@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { HistoryMessage } from "@cw-code/contracts";
 import { todosFromToolCall } from "../todos.js";
+import { claudeCommandText } from "./claudeCommands.js";
 import { parseClaudeTaskNotification, parseTaskNotificationUsage } from "./claudeStreamParser.js";
 import { claudeProjectSlug } from "./claudeSessions.js";
 
@@ -224,7 +225,10 @@ export function parseClaudeTranscriptLine(line: TranscriptLine): HistoryMessage[
   if (line.type === "user") {
     if (typeof content === "string") {
       if (!content.trim()) return out;
-      if (content.trimStart().startsWith("<task-notification>")) {
+      const commandText = claudeCommandText(content);
+      if (commandText !== null) {
+        out.push({ id: baseId, role: "user", text: commandText, turnId: baseId, ...stamp });
+      } else if (content.trimStart().startsWith("<task-notification>")) {
         out.push({ id: `${baseId}-n`, role: "tool", text: content, turnId: baseId, toolName: "task-notification", ...stamp });
       } else {
         out.push({ id: baseId, role: "user", text: content, turnId: baseId, ...stamp });

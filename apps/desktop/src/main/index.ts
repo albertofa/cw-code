@@ -18,9 +18,9 @@ import { checkCliVersion, checkCliVersions, type CliVersionCheck } from "./cliVe
 import { discoverBinaries, verifyBinaryPath } from "./cli/binaryDiscovery.js";
 import { getHarnessTracePath, initHarnessTrace } from "./debug/harnessTrace.js";
 import { appendCrashLog, initCrashLog } from "./debug/crashLog.js";
-import { ensureAppDirs, attachmentsDir, logsDir, migrateFromUserData, opencodeModelsCachePath } from "./paths/appPaths.js";
+import { claudeCommandsCachePath, ensureAppDirs, attachmentsDir, logsDir, migrateFromUserData, opencodeModelsCachePath } from "./paths/appPaths.js";
 import { reapOrphanedServers } from "./orphanServers.js";
-import type { ApprovalDecision, CliBinary, CreateSessionOptions, GitDiffMode, SessionStatus, SettingsPatch } from "@cw-code/contracts";
+import type { ApprovalDecision, CliBinary, CommandInvocation, CreateSessionOptions, GitDiffMode, SessionStatus, SettingsPatch } from "@cw-code/contracts";
 import type { DriverKind, HarnessId, SkillSaveInput } from "@cw-code/contracts";
 import type { PtyKind } from "./pty/PtyPool.js";
 import { SessionManager } from "./sessions/SessionManager.js";
@@ -31,6 +31,7 @@ import { PtyPool } from "./pty/PtyPool.js";
 import { readWindowsTerminalFontFace } from "./pty/terminalFont.js";
 import { configuredCliBinaryPath } from "./settings/settingsUtils.js";
 import { initOpencodeModelsCache } from "./providers/opencode/opencodeModels.js";
+import { initClaudeCommandsCache } from "./providers/claude/claudeCommands.js";
 
 type DriverName = DriverKind;
 
@@ -248,10 +249,20 @@ function registerIpc(): void {
         prompt: string;
         prefs?: { model?: string; effort?: "minimal" | "low" | "medium" | "high" | "xhigh" | "max"; variant?: string; permissionMode?: "auto" | "acceptEdits" | "bypassPermissions" | "manual" };
         attachments?: string[];
+        command?: CommandInvocation;
       }
-    ) => sessions.startTurn(args.sessionId, args.prompt, { prefs: args.prefs, attachments: args.attachments })
+    ) =>
+      sessions.startTurn(args.sessionId, args.prompt, {
+        prefs: args.prefs,
+        attachments: args.attachments,
+        ...(args.command ? { command: args.command } : {})
+      })
   );
   ipcMain.handle("turns.interrupt", (_e, args: { turnId: string }) => sessions.interrupt(args.turnId));
+  ipcMain.handle("commands.list", (_e, args: { sessionId: string }) => sessions.listCommands(args.sessionId));
+  ipcMain.handle("commands.listFor", (_e, args: { projectId: string; driver: DriverName }) =>
+    sessions.listCommandsFor(args.projectId, args.driver)
+  );
   ipcMain.handle("models.list", (_e, args: { sessionId: string }) => sessions.listModels(args.sessionId));
   ipcMain.handle(
     "models.listFor",
@@ -470,6 +481,7 @@ app.whenReady().then(async () => {
   }
   initCrashLog(logsDir());
   initOpencodeModelsCache(opencodeModelsCachePath());
+  initClaudeCommandsCache(claudeCommandsCachePath());
   sessions.warmOpencodeModels();
   process.on("uncaughtException", (err) => {
     appendCrashLog(`uncaughtException: ${err.stack ?? err.message}`);

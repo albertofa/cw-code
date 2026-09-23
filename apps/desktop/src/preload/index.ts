@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { AppSettings, CliBinary, CliDiscoveredCandidate, CliDiscoverResult, CreateSessionOptions, GitBranchInfo, GitDiffMode, GitDiffResult, GitStatus, HarnessId, Project, RetryConnectionResult, SessionCleanupResult, SessionMeta, SessionStatus, SkillDetail, SkillMeta, SkillSaveInput, SkillsListResult, SourceControlHealth, SubagentToolsResult, WorktreePruneSummary } from "@cw-code/contracts";
+import type { AppSettings, CliBinary, CliDiscoveredCandidate, CliDiscoverResult, CommandInvocation, CommandOption, CreateSessionOptions, GitBranchInfo, GitDiffMode, GitDiffResult, GitStatus, HarnessId, Project, RetryConnectionResult, SessionCleanupResult, SessionMeta, SessionStatus, SkillDetail, SkillMeta, SkillSaveInput, SkillsListResult, SourceControlHealth, SubagentToolsResult, WorktreePruneSummary } from "@cw-code/contracts";
 
 export type PermissionMode = "auto" | "acceptEdits" | "bypassPermissions" | "manual";
 export type EffortLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
@@ -65,10 +65,12 @@ export interface CwApi {
   getSubagentTools(sessionId: string, agentId: string): Promise<SubagentToolsResult>;
   activeTurns(): Promise<Array<{ sessionId: string; turnId: string; startedAt: number }>>;
   retryConnection(sessionId: string): Promise<RetryConnectionResult>;
-  startTurn(sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[] }): Promise<string>;
+  startTurn(sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[]; command?: CommandInvocation }): Promise<string>;
   interrupt(turnId: string): Promise<void>;
   respondApproval(requestId: string, decision: "accept" | "acceptForSession" | "acceptGlobal" | "decline" | "cancel"): Promise<void>;
   respondQuestion(requestId: string, answers: Record<string, string>): Promise<void>;
+  listCommands(sessionId: string): Promise<CommandOption[]>;
+  listCommandsFor(projectId: string, driver: DriverName): Promise<CommandOption[]>;
   listModels(sessionId: string): Promise<ModelOption[]>;
   listModelsFor(projectId: string, driver: DriverName): Promise<ModelOption[]>;
   listModelsForHarness(driver: DriverName): Promise<ModelOption[]>;
@@ -160,13 +162,16 @@ const api: CwApi = {
     ipcRenderer.invoke("sessions.subagentTools", { sessionId, agentId }),
   activeTurns: () => ipcRenderer.invoke("sessions.activeTurns"),
   retryConnection: (sessionId: string) => ipcRenderer.invoke("sessions.retryConnection", { sessionId }),
-  startTurn: (sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[] }) =>
-    ipcRenderer.invoke("turns.start", { sessionId, prompt, prefs: opts?.prefs, attachments: opts?.attachments }),
+  startTurn: (sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[]; command?: CommandInvocation }) =>
+    ipcRenderer.invoke("turns.start", { sessionId, prompt, prefs: opts?.prefs, attachments: opts?.attachments, command: opts?.command }),
   interrupt: (turnId: string) => ipcRenderer.invoke("turns.interrupt", { turnId }),
   respondApproval: (requestId: string, decision: "accept" | "acceptForSession" | "acceptGlobal" | "decline" | "cancel") =>
     ipcRenderer.invoke("approvals.respond", { requestId, decision }),
   respondQuestion: (requestId: string, answers: Record<string, string>) =>
     ipcRenderer.invoke("questions.respond", { requestId, answers }),
+  listCommands: (sessionId: string) => ipcRenderer.invoke("commands.list", { sessionId }),
+  listCommandsFor: (projectId: string, driver: DriverName) =>
+    ipcRenderer.invoke("commands.listFor", { projectId, driver }),
   listModels: (sessionId: string) => ipcRenderer.invoke("models.list", { sessionId }),
   listModelsFor: (projectId: string, driver: DriverName) =>
     ipcRenderer.invoke("models.listFor", { projectId, driver }),
