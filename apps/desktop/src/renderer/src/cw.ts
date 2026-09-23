@@ -9,6 +9,7 @@ import type {
   PrCommit,
   PrDetail,
   PrInboxResult,
+  PrLinkOrigin,
   PrMergeable,
   PrRef,
   PrReviewer,
@@ -17,6 +18,7 @@ import type {
   PrSummary,
   PrThreadComment,
   PrTimelineItem,
+  SessionPrLink,
   SkillDetail,
   SkillMeta,
   SkillSaveInput,
@@ -30,6 +32,7 @@ export type {
   PrCommit,
   PrDetail,
   PrInboxResult,
+  PrLinkOrigin,
   PrMergeable,
   PrRef,
   PrReviewer,
@@ -37,7 +40,8 @@ export type {
   PrReviewThread,
   PrSummary,
   PrThreadComment,
-  PrTimelineItem
+  PrTimelineItem,
+  SessionPrLink
 };
 
 export interface Project {
@@ -62,6 +66,7 @@ export interface Session {
   updatedAt: number;
   worktreePath?: string;
   branch?: string;
+  pr?: SessionPrLink;
 }
 
 export type CreateWorkspaceMode = "current" | "new" | "previous";
@@ -462,6 +467,9 @@ export interface CwApi {
   getPrDiff(ref: PrRef): Promise<string>;
   getPrCheckLog(ref: PrRef, runId: number): Promise<string>;
   clonePrRepo(ref: PrRef): Promise<Project>;
+  linkSessionPr(sessionId: string, link: SessionPrLink): Promise<Session>;
+  unlinkSessionPr(sessionId: string): Promise<Session>;
+  markSessionPrSeen(sessionId: string, headSha: string | null): Promise<Session>;
   onTurnEvent(cb: (msg: { sessionId: string; event: TurnEvent }) => void): () => void;
   onSessionTitle(cb: (msg: { sessionId: string; title: string }) => void): () => void;
   readFile(sessionId: string, path: string): Promise<string>;

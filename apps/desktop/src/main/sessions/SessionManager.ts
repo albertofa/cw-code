@@ -8,13 +8,16 @@ import type {
   ComposerPrefs,
   CreateSessionOptions,
   DriverKind,
+  GitStatus,
   HistoryMessage,
   ModelOption,
   PermissionOption,
+  PrRef,
   Project,
   RetryConnectionResult,
   SessionCleanupResult,
   SessionMeta,
+  SessionPrLink,
   SessionStatus,
   SettingsPatch,
   SubagentToolsResult,
@@ -23,6 +26,7 @@ import type {
   WorktreePruneSummary
 } from "@cw-code/contracts";
 import { SessionStore } from "./SessionStore.js";
+import { linkFromStatus, markSeen } from "../github/prLinks.js";
 import { buildTurnEnv } from "./env.js";
 import { isWorktreeOrphaned, looksLikeWorktree, pinsWorktree, sameWorktreePath } from "./worktreeCleanup.js";
 import { SettingsStore } from "../settings/SettingsStore.js";
@@ -47,6 +51,7 @@ export interface SessionManagerOptions {
   drivers?: Partial<Record<DriverKind, CliDriver>>;
   gitService?: GitService;
   worktreesRoot?: string;
+  prHead?: (ref: PrRef) => string | null;
 }
 
 interface TitleTurn {
@@ -85,6 +90,7 @@ export class SessionManager {
   private deltaBuffer = new Map<string, { sessionId: string; text: string; timer: NodeJS.Timeout }>();
   private turnBaseShas = new Map<string, string>();
   private disposed = false;
+  private prHead: (ref: PrRef) => string | null;
 
   constructor(opts: SessionManagerOptions = {}) {
     const dbPath = opts.dbPath ?? join(userdataDir(), "cw-code.db");
@@ -95,6 +101,7 @@ export class SessionManager {
     this.onTitle = opts.onTitle ?? (() => {});
     this.git = opts.gitService ?? new GitService(() => this.settings.get());
     this.worktreesRoot = opts.worktreesRoot ?? worktreesDir();
+    this.prHead = opts.prHead ?? (() => null);
     const getSettings = (): AppSettings => this.settings.get();
     this.drivers = {
       claude: opts.drivers?.claude ?? new TracingCliDriver(new ClaudeCliDriver((e) => this.routeEvent(e), getSettings)),
@@ -232,6 +239,7 @@ export class SessionManager {
           ...(stillActive ? {} : { status: "done" as const })
         });
         if (wasActive && !event.isError) void this.renameBranchForTitle(event.sessionId, event.turnId);
+        this.syncPrSeenAfterTurn(event.sessionId);
       }
     }
     if (event.type === "turn.error") {
@@ -390,6 +398,47 @@ export class SessionManager {
     const updated = this.store.getSession(sessionId);
     if (!updated) throw new Error(`unknown session ${sessionId}`);
     return updated;
+  }
+
+  syncPrLink(sessionId: string, status: GitStatus): SessionMeta | null {
+    const session = this.store.getSession(sessionId);
+    if (!session) return null;
+    const link = linkFromStatus(session, status, Date.now());
+    if (!link) return null;
+    this.store.updateSession(sessionId, { pr: link });
+    return this.store.getSession(sessionId) ?? null;
+  }
+
+  linkPr(sessionId: string, link: SessionPrLink): SessionMeta {
+    if (!this.store.getSession(sessionId)) throw new Error(`unknown session ${sessionId}`);
+    this.store.updateSession(sessionId, { pr: link });
+    const updated = this.store.getSession(sessionId);
+    if (!updated) throw new Error(`unknown session ${sessionId}`);
+    return updated;
+  }
+
+  unlinkPr(sessionId: string): SessionMeta {
+    if (!this.store.getSession(sessionId)) throw new Error(`unknown session ${sessionId}`);
+    this.store.updateSession(sessionId, { pr: null });
+    const updated = this.store.getSession(sessionId);
+    if (!updated) throw new Error(`unknown session ${sessionId}`);
+    return updated;
+  }
+
+  markPrSeen(sessionId: string, headSha: string | null): SessionMeta {
+    const session = this.store.getSession(sessionId);
+    if (!session) throw new Error(`unknown session ${sessionId}`);
+    if (session.pr) this.store.updateSession(sessionId, { pr: markSeen(session.pr, headSha, Date.now()) });
+    const updated = this.store.getSession(sessionId);
+    if (!updated) throw new Error(`unknown session ${sessionId}`);
+    return updated;
+  }
+
+  private syncPrSeenAfterTurn(sessionId: string): void {
+    const session = this.store.getSession(sessionId);
+    if (!session?.pr) return;
+    const headSha = this.prHead(session.pr.ref);
+    this.store.updateSession(sessionId, { pr: markSeen(session.pr, headSha, Date.now()) });
   }
 
   expireHoldingSessions(sessionIds: string[]): SessionMeta[] {

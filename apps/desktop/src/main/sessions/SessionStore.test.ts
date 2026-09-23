@@ -72,4 +72,22 @@ describe("SessionStore", () => {
       updatedAt: 1234
     });
   });
+
+  it("round-trips a session's pull request link", () => {
+    const store = makeStore();
+    const project = store.addProject("C:/proj1");
+    const session = store.createSession(project.id, "claude", "a");
+    const link: SessionMeta["pr"] = {
+      ref: { host: "github.com", owner: "acme", repo: "widgets", number: 42 },
+      origin: "opened",
+      lastSeenSha: "sha-1",
+      lastSeenAt: 1000
+    };
+
+    store.updateSession(session.id, { pr: link });
+    expect(store.getSession(session.id)?.pr).toEqual(link);
+
+    store.updateSession(session.id, { pr: null });
+    expect(store.getSession(session.id)?.pr).toBeUndefined();
+  });
 });

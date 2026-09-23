@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { AppSettings, CliBinary, CliDiscoveredCandidate, CliDiscoverResult, CreateSessionOptions, GitBranchInfo, GitDiffMode, GitDiffResult, GitStatus, HarnessId, PrDetail, PrInboxResult, PrRef, Project, RetryConnectionResult, SessionCleanupResult, SessionMeta, SessionStatus, SkillDetail, SkillMeta, SkillSaveInput, SkillsListResult, SourceControlHealth, SubagentToolsResult, WorktreePruneSummary } from "@cw-code/contracts";
+import type { AppSettings, CliBinary, CliDiscoveredCandidate, CliDiscoverResult, CreateSessionOptions, GitBranchInfo, GitDiffMode, GitDiffResult, GitStatus, HarnessId, PrDetail, PrInboxResult, PrRef, Project, RetryConnectionResult, SessionCleanupResult, SessionMeta, SessionPrLink, SessionStatus, SkillDetail, SkillMeta, SkillSaveInput, SkillsListResult, SourceControlHealth, SubagentToolsResult, WorktreePruneSummary } from "@cw-code/contracts";
 
 export type PermissionMode = "auto" | "acceptEdits" | "bypassPermissions" | "manual";
 export type EffortLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
@@ -100,6 +100,9 @@ export interface CwApi {
   getPrDiff(ref: PrRef): Promise<string>;
   getPrCheckLog(ref: PrRef, runId: number): Promise<string>;
   clonePrRepo(ref: PrRef): Promise<Project>;
+  linkSessionPr(sessionId: string, link: SessionPrLink): Promise<SessionMeta>;
+  unlinkSessionPr(sessionId: string): Promise<SessionMeta>;
+  markSessionPrSeen(sessionId: string, headSha: string | null): Promise<SessionMeta>;
   onTurnEvent(cb: (event: unknown) => void): () => void;
   onSessionTitle(cb: (msg: { sessionId: string; title: string }) => void): () => void;
   readFile(sessionId: string, path: string): Promise<string>;
@@ -212,6 +215,10 @@ const api: CwApi = {
   getPrDiff: (ref: PrRef) => ipcRenderer.invoke("prs.diff", { ref }),
   getPrCheckLog: (ref: PrRef, runId: number) => ipcRenderer.invoke("prs.checkLog", { ref, runId }),
   clonePrRepo: (ref: PrRef) => ipcRenderer.invoke("prs.clone", { ref }),
+  linkSessionPr: (sessionId: string, link: SessionPrLink) => ipcRenderer.invoke("sessions.linkPr", { sessionId, link }),
+  unlinkSessionPr: (sessionId: string) => ipcRenderer.invoke("sessions.unlinkPr", { sessionId }),
+  markSessionPrSeen: (sessionId: string, headSha: string | null) =>
+    ipcRenderer.invoke("sessions.markPrSeen", { sessionId, headSha }),
   onTurnEvent: (cb) => {
     const listener = (_e: unknown, event: unknown) => cb(event);
     ipcRenderer.on("turn.event", listener as never);

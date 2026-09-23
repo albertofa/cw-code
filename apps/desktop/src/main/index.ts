@@ -20,14 +20,14 @@ import { getHarnessTracePath, initHarnessTrace } from "./debug/harnessTrace.js";
 import { appendCrashLog, initCrashLog } from "./debug/crashLog.js";
 import { ensureAppDirs, attachmentsDir, logsDir, migrateFromUserData, opencodeModelsCachePath } from "./paths/appPaths.js";
 import { reapOrphanedServers } from "./orphanServers.js";
-import type { ApprovalDecision, CliBinary, CreateSessionOptions, GitDiffMode, PrRef, SessionStatus, SettingsPatch } from "@cw-code/contracts";
+import type { ApprovalDecision, CliBinary, CreateSessionOptions, GitDiffMode, PrRef, SessionPrLink, SessionStatus, SettingsPatch } from "@cw-code/contracts";
 import type { DriverKind, HarnessId, SkillSaveInput } from "@cw-code/contracts";
 import type { PtyKind } from "./pty/PtyPool.js";
 import { SessionManager } from "./sessions/SessionManager.js";
 import { SkillsStore } from "./skills/SkillsStore.js";
 import { FileService, IMAGE_MAX_BYTES, imageExtMime } from "./fs/FileService.js";
 import { GitService } from "./fs/GitService.js";
-import { PullRequestService } from "./github/PullRequestService.js";
+import { assertPrRef, PullRequestService } from "./github/PullRequestService.js";
 import { PtyPool } from "./pty/PtyPool.js";
 import { readWindowsTerminalFontFace } from "./pty/terminalFont.js";
 import { configuredCliBinaryPath } from "./settings/settingsUtils.js";
@@ -36,11 +36,12 @@ import { initOpencodeModelsCache } from "./providers/opencode/opencodeModels.js"
 type DriverName = DriverKind;
 
 let mainWindow: BrowserWindow | null = null;
-const sessions = new SessionManager();
+let pullRequests: PullRequestService;
+const sessions = new SessionManager({ prHead: (ref) => pullRequests.knownHead(ref) });
 const skills = new SkillsStore();
 const files = new FileService();
 const git = new GitService(() => sessions.getSettings());
-const pullRequests = new PullRequestService(git, () => sessions.getSettings(), (rootPath) => sessions.addProject(rootPath));
+pullRequests = new PullRequestService(git, () => sessions.getSettings(), (rootPath) => sessions.addProject(rootPath));
 const ptys = new PtyPool(() => sessions.getSettings());
 
 async function createWindow(): Promise<void> {
@@ -280,9 +281,40 @@ function registerIpc(): void {
     (_e, args: { sessionId: string; prefs: { model?: string; effort?: "minimal" | "low" | "medium" | "high" | "xhigh" | "max"; variant?: string; permissionMode?: "auto" | "acceptEdits" | "bypassPermissions" | "manual" } }) =>
       sessions.setComposer(args.sessionId, args.prefs)
   );
-  ipcMain.handle("git.status", (_e, args: { sessionId: string }) =>
-    sessions.ensureWorktree(args.sessionId).then((root) => git.status(root, sessions.projectForSession(args.sessionId)))
-  );
+  ipcMain.handle("git.status", async (_e, args: { sessionId: string }) => {
+    const root = await sessions.ensureWorktree(args.sessionId);
+    const status = await git.status(root, sessions.projectForSession(args.sessionId));
+    try {
+      sessions.syncPrLink(args.sessionId, status);
+    } catch (error) {
+      console.warn(`syncPrLink failed for ${args.sessionId}: ${(error as Error).message}`);
+    }
+    return status;
+  });
+  ipcMain.handle("sessions.linkPr", (_e, args: { sessionId: string; link: SessionPrLink }) => {
+    const link = args.link;
+    assertPrRef(link.ref);
+    if (link.origin !== "opened" && link.origin !== "workflow" && link.origin !== "linked") {
+      throw new Error(`invalid pull request link origin '${String(link.origin)}'`);
+    }
+    if (link.workflowId !== undefined && typeof link.workflowId !== "string") {
+      throw new Error("invalid workflowId");
+    }
+    if (typeof link.lastSeenSha !== "string") throw new Error("invalid lastSeenSha");
+    if (typeof link.lastSeenAt !== "number" || !Number.isFinite(link.lastSeenAt)) throw new Error("invalid lastSeenAt");
+    return sessions.linkPr(args.sessionId, {
+      ref: link.ref,
+      origin: link.origin,
+      ...(link.workflowId !== undefined ? { workflowId: link.workflowId } : {}),
+      lastSeenSha: link.lastSeenSha,
+      lastSeenAt: link.lastSeenAt
+    });
+  });
+  ipcMain.handle("sessions.unlinkPr", (_e, args: { sessionId: string }) => sessions.unlinkPr(args.sessionId));
+  ipcMain.handle("sessions.markPrSeen", (_e, args: { sessionId: string; headSha: string | null }) => {
+    if (args.headSha !== null && typeof args.headSha !== "string") throw new Error("invalid headSha");
+    return sessions.markPrSeen(args.sessionId, args.headSha);
+  });
   ipcMain.handle("git.branches", (_e, args: { sessionId: string }) =>
     sessions.ensureWorktree(args.sessionId).then((root) => git.branches(root))
   );

@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { ComposerPrefs, DriverKind, Project, SessionMeta } from "@cw-code/contracts";
+import type { ComposerPrefs, DriverKind, Project, SessionMeta, SessionPrLink } from "@cw-code/contracts";
 import { expandHome } from "../skills/skillPaths.js";
 
 interface StoreShape {
@@ -157,7 +157,9 @@ export class SessionStore {
 
   updateSession(
     id: string,
-    patch: Partial<Pick<SessionMeta, "title" | "status" | "resumeCursor" | "model" | "effort" | "variant" | "permissionMode" | "worktreePath" | "branch">>
+    patch: Partial<Pick<SessionMeta, "title" | "status" | "resumeCursor" | "model" | "effort" | "variant" | "permissionMode" | "worktreePath" | "branch">> & {
+      pr?: SessionPrLink | null;
+    }
   ): void {
     const current = this.getSession(id);
     if (!current) return;
@@ -172,6 +174,10 @@ export class SessionStore {
     else if ("worktreePath" in patch) delete current.worktreePath;
     if (patch.branch !== undefined) current.branch = patch.branch;
     else if ("branch" in patch) delete current.branch;
+    if (patch.pr !== undefined) {
+      if (patch.pr === null) delete current.pr;
+      else current.pr = patch.pr;
+    }
     current.updatedAt = Date.now();
     this.persist();
   }
