@@ -7,6 +7,8 @@ import { WindowControls } from "./components/WindowControls.js";
 import { SkillsModal } from "./components/SkillsModal.js";
 import { SettingsModal } from "./components/SettingsModal.js";
 import { ThreadView } from "./components/ThreadView.js";
+import { PrInboxView } from "./components/PrInboxView.js";
+import { PrDetailView } from "./components/PrDetailView.js";
 import { PanelToggles } from "./components/PanelToggles.js";
 import { ToolContent } from "./components/ToolContent.js";
 import { TOOL_TABS, isHarnessTabId } from "./components/toolTabs.js";
@@ -16,6 +18,7 @@ import { useNotifs } from "./components/Notifications.js";
 import { useAppStore } from "./stores/appStore.js";
 import { tabsInPanel, DOCKABLE_TABS } from "./stores/panelLayout.js";
 import { usePanelStore } from "./stores/panelStore.js";
+import { usePrStore } from "./stores/prStore.js";
 import type { DockableTabId } from "@cw-code/contracts";
 import type { TurnEvent } from "./cw.js";
 
@@ -99,6 +102,8 @@ export function App() {
   const pendingDriver = useAppStore((s) => s.pendingDriver);
   const preview = useAppStore((s) => s.preview);
   const sourceControlRefreshIntervalSeconds = useAppStore((s) => s.sourceControlRefreshIntervalSeconds);
+  const prRefreshIntervalSeconds = useAppStore((s) => s.prRefreshIntervalSeconds);
+  const mainView = usePrStore((s) => s.mainView);
   const holdingHours = useAppStore((s) => s.holdingHours);
   const settingsVersion = useAppStore((s) => s.settingsVersion);
   const loadProjects = useAppStore((s) => s.loadProjects);
@@ -227,6 +232,23 @@ export function App() {
       document.removeEventListener("visibilitychange", onVisibility);
     };
   }, [activeProjectId, activeSessionKey, sourceControlRefreshIntervalSeconds]);
+
+  useEffect(() => {
+    if (!window.cw) return;
+    const refresh = () => {
+      if (!document.hidden) void usePrStore.getState().refreshInbox();
+    };
+    const onVisibility = () => {
+      if (!document.hidden) refresh();
+    };
+    refresh();
+    const timer = window.setInterval(refresh, Math.max(30, prRefreshIntervalSeconds || 120) * 1000);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [prRefreshIntervalSeconds]);
 
   useEffect(() => {
     if (!window.cw) return;
@@ -370,7 +392,7 @@ export function App() {
         <>
           <div className="app-body">
           <Sidebar onOpenSettings={() => openSettings()} onOpenSkills={() => setSkillsOpen(true)} skillsOpen={skillsOpen} />
-          <ThreadView />
+          {mainView.kind === "inbox" ? <PrInboxView /> : mainView.kind === "pr" ? <PrDetailView prRef={mainView.ref} /> : <ThreadView />}
           {rightVisible && (
             <aside className={`right${dropRight.over || draggingTab !== null ? " drop-target-active" : ""}`} style={{ width: rightWidth }}>
               <div

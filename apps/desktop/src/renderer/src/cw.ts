@@ -18,6 +18,7 @@ import type {
   PrSummary,
   PrThreadComment,
   PrTimelineItem,
+  PrWorkflow,
   SessionPrLink,
   SkillDetail,
   SkillMeta,
@@ -41,6 +42,7 @@ export type {
   PrSummary,
   PrThreadComment,
   PrTimelineItem,
+  PrWorkflow,
   SessionPrLink
 };
 
@@ -391,6 +393,11 @@ export interface AppSettings {
   autoTitleDriver: DriverName;
   autoTitleModel: string;
   autoTitleEffort: EffortLevel;
+  prRefreshIntervalSeconds: number;
+  prCloneRoot: string;
+  prAttributionEnabled: boolean;
+  prAttributionText: string;
+  prWorkflows: PrWorkflow[];
 }
 
 export type SettingsPatch = Partial<AppSettings>;

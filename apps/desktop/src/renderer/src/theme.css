@@ -1322,6 +1322,220 @@ body.session-dragging * {
   cursor: default;
 }
 
+.pr-inbox-btn {
+  position: relative;
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 32px;
+  padding: 0 8px;
+  justify-content: center;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--r-md);
+  color: var(--dim);
+  font-family: var(--sans);
+  cursor: pointer;
+}
+
+.pr-inbox-btn:hover {
+  background: var(--raised);
+  color: var(--text);
+}
+
+.pr-inbox-btn.active {
+  background: var(--accent-soft);
+  border-color: color-mix(in srgb, var(--accent) 55%, transparent);
+  color: var(--text);
+}
+
+.pr-inbox-count {
+  font-size: 11.5px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+}
+
+.pr-inbox-dot,
+.pr-unseen-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--accent);
+  flex: none;
+}
+
+.pr-inbox-dot {
+  position: absolute;
+  top: 3px;
+  right: 3px;
+  box-shadow: 0 0 0 2px var(--panel);
+}
+
+.pr-chip {
+  --pr-tone: var(--muted);
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  height: 17px;
+  padding: 0 6px 0 5px;
+  border: 1px solid color-mix(in srgb, var(--pr-tone) 40%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--pr-tone) 14%, transparent);
+  color: var(--pr-tone);
+  font-size: 10.5px;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.pr-chip.tone-bad {
+  --pr-tone: var(--danger);
+}
+
+.pr-chip.tone-ok {
+  --pr-tone: var(--success);
+}
+
+.pr-chip.tone-info {
+  --pr-tone: var(--accent);
+}
+
+.pr-chip.tone-warn {
+  --pr-tone: var(--warning);
+}
+
+.pr-view-account {
+  margin-left: 8px;
+  color: var(--faint);
+}
+
+.pr-view-back {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  margin-right: 10px;
+  padding: 4px 8px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  color: var(--dim);
+  font-family: var(--sans);
+  font-size: 12.5px;
+  cursor: pointer;
+}
+
+.pr-view-back:hover {
+  background: var(--raised);
+  color: var(--text);
+}
+
+.pr-view-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 16px 20px;
+}
+
+.pr-view-empty {
+  padding: 20px 0;
+  color: var(--faint);
+  font-size: 12.5px;
+}
+
+.pr-view-error {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 12px;
+  padding: 8px 12px;
+  border: 1px solid color-mix(in srgb, var(--danger) 45%, transparent);
+  border-radius: var(--r-md);
+  background: color-mix(in srgb, var(--danger) 10%, transparent);
+  color: var(--text);
+  font-size: 12.5px;
+  white-space: pre-wrap;
+}
+
+.pr-view-retry {
+  margin-left: auto;
+  padding: 3px 8px;
+  background: var(--raised);
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  color: var(--text);
+  font-family: var(--sans);
+  cursor: pointer;
+}
+
+.pr-view-list {
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.pr-view-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
+  padding: 9px 12px;
+  background: transparent;
+  border: 0;
+  border-bottom: 1px solid var(--border-soft);
+  color: var(--dim);
+  font-family: var(--sans);
+  font-size: 13.5px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.pr-view-row:hover {
+  background: var(--raised);
+  color: var(--text);
+}
+
+.pr-view-title {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.pr-view-meta {
+  flex: none;
+  color: var(--faint);
+  font-size: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.pr-view-heading {
+  margin: 0 0 8px;
+  color: var(--text);
+  font-size: 18px;
+  font-weight: 600;
+}
+
+.pr-view-state {
+  color: var(--muted);
+  font-size: 12px;
+  text-transform: capitalize;
+}
+
+.pr-view-state.state-open {
+  color: var(--success);
+}
+
+.pr-view-state.state-closed {
+  color: var(--danger);
+}
+
+.pr-view-state.state-merged {
+  color: var(--codex);
+}
+
 .thread-col {
   flex: 1;
   display: flex;

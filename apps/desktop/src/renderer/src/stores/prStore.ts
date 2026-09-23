@@ -1,0 +1,120 @@
+import { create } from "zustand";
+import type { PrDetail, PrInboxResult, PrRef } from "../cw.js";
+import { prKey } from "../components/prInbox.js";
+
+export type PrDetailTab = "conversation" | "commits" | "checks" | "files";
+
+export type MainView = { kind: "session" } | { kind: "inbox" } | { kind: "pr"; ref: PrRef; tab: PrDetailTab };
+
+interface PrState {
+  inbox: PrInboxResult | null;
+  inboxLoading: boolean;
+  inboxError: string | null;
+  detailByKey: Record<string, PrDetail>;
+  detailLoadingByKey: Record<string, boolean>;
+  detailErrorByKey: Record<string, string>;
+  diffByKey: Record<string, string>;
+  diffLoadingByKey: Record<string, boolean>;
+  diffErrorByKey: Record<string, string>;
+  mainView: MainView;
+  refreshInbox(force?: boolean): Promise<void>;
+  loadDetail(ref: PrRef): Promise<void>;
+  loadDiff(ref: PrRef): Promise<void>;
+  openInbox(): void;
+  openPr(ref: PrRef, tab?: PrDetailTab): void;
+  openSessionView(): void;
+}
+
+function errorMessage(err: unknown): string {
+  return err instanceof Error ? err.message : String(err);
+}
+
+function without<T>(record: Record<string, T>, key: string): Record<string, T> {
+  if (!(key in record)) return record;
+  const next = { ...record };
+  delete next[key];
+  return next;
+}
+
+export const usePrStore = create<PrState>((set, get) => ({
+  inbox: null,
+  inboxLoading: false,
+  inboxError: null,
+  detailByKey: {},
+  detailLoadingByKey: {},
+  detailErrorByKey: {},
+  diffByKey: {},
+  diffLoadingByKey: {},
+  diffErrorByKey: {},
+  mainView: { kind: "session" },
+
+  async refreshInbox(force?: boolean) {
+    if (get().inboxLoading) return;
+    set({ inboxLoading: true });
+    try {
+      const inbox = await window.cw.getPrInbox(force);
+      set({ inbox, inboxLoading: false, inboxError: null });
+    } catch (err) {
+      const message = errorMessage(err);
+      console.warn(`[pr] inbox refresh failed: ${message}`);
+      set({ inboxLoading: false, inboxError: message });
+    }
+  },
+
+  async loadDetail(ref: PrRef) {
+    const key = prKey(ref);
+    if (get().detailLoadingByKey[key]) return;
+    set({ detailLoadingByKey: { ...get().detailLoadingByKey, [key]: true } });
+    try {
+      const detail = await window.cw.getPrDetail(ref);
+      set({
+        detailByKey: { ...get().detailByKey, [key]: detail },
+        detailLoadingByKey: without(get().detailLoadingByKey, key),
+        detailErrorByKey: without(get().detailErrorByKey, key)
+      });
+    } catch (err) {
+      const message = errorMessage(err);
+      console.warn(`[pr] detail load failed for ${key}: ${message}`);
+      set({
+        detailLoadingByKey: without(get().detailLoadingByKey, key),
+        detailErrorByKey: { ...get().detailErrorByKey, [key]: message }
+      });
+    }
+  },
+
+  async loadDiff(ref: PrRef) {
+    const key = prKey(ref);
+    if (get().diffLoadingByKey[key]) return;
+    set({ diffLoadingByKey: { ...get().diffLoadingByKey, [key]: true } });
+    try {
+      const diff = await window.cw.getPrDiff(ref);
+      set({
+        diffByKey: { ...get().diffByKey, [key]: diff },
+        diffLoadingByKey: without(get().diffLoadingByKey, key),
+        diffErrorByKey: without(get().diffErrorByKey, key)
+      });
+    } catch (err) {
+      const message = errorMessage(err);
+      console.warn(`[pr] diff load failed for ${key}: ${message}`);
+      set({
+        diffLoadingByKey: without(get().diffLoadingByKey, key),
+        diffErrorByKey: { ...get().diffErrorByKey, [key]: message }
+      });
+    }
+  },
+
+  openInbox() {
+    set({ mainView: { kind: "inbox" } });
+    if (!get().inbox && !get().inboxLoading) void get().refreshInbox();
+  },
+
+  openPr(ref: PrRef, tab: PrDetailTab = "conversation") {
+    set({ mainView: { kind: "pr", ref, tab } });
+    void get().loadDetail(ref);
+  },
+
+  openSessionView() {
+    if (get().mainView.kind === "session") return;
+    set({ mainView: { kind: "session" } });
+  }
+}));

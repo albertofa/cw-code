@@ -117,6 +117,7 @@ interface AppState {
   gitStatusBySession: Record<string, GitStatus>;
   refreshGitStatus(sessionId: string): Promise<void>;
   sourceControlRefreshIntervalSeconds: number;
+  prRefreshIntervalSeconds: number;
   holdingHours: number;
   defaultUseWorktree: boolean;
   reasoningExpandedByDriver: Record<DriverName, boolean>;
@@ -256,6 +257,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   pendingWorkspace: defaultWorkspace(true),
   gitStatusBySession: {},
   sourceControlRefreshIntervalSeconds: 30,
+  prRefreshIntervalSeconds: 120,
   holdingHours: 6,
   defaultUseWorktree: true,
   reasoningExpandedByDriver: { claude: false, opencode: false, codex: false },
@@ -318,6 +320,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({
       projects,
       sourceControlRefreshIntervalSeconds: settings.sourceControlRefreshIntervalSeconds,
+      prRefreshIntervalSeconds: settings.prRefreshIntervalSeconds,
       holdingHours: settings.holdingHours,
       defaultUseWorktree: settings.defaultUseWorktree,
       reasoningExpandedByDriver: reasoningExpandedFrom(settings),
@@ -817,6 +820,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({
       settingsVersion: get().settingsVersion + 1,
       sourceControlRefreshIntervalSeconds: saved.sourceControlRefreshIntervalSeconds,
+      prRefreshIntervalSeconds: saved.prRefreshIntervalSeconds,
       holdingHours: saved.holdingHours,
       defaultUseWorktree: saved.defaultUseWorktree,
       reasoningExpandedByDriver: reasoningExpandedFrom(saved)

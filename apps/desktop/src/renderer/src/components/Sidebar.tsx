@@ -1,7 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
-import { Check, ChevronDown, ChevronRight, ChevronUp, Clock, Folder, GitBranch, Hash, Plus, Search, Settings, SquarePen, X } from "lucide-react";
-import type { DriverName, Project, Session, SessionStatus } from "../cw.js";
+import { Check, ChevronDown, ChevronRight, ChevronUp, CircleX, Clock, Eye, Folder, GitBranch, GitMerge, GitPullRequest, GitPullRequestDraft, Hash, MessageSquare, Plus, Search, Settings, SquarePen, X, type LucideIcon } from "lucide-react";
+import type { DriverName, PrSummary, Project, Session, SessionStatus } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
+import { usePrStore } from "../stores/prStore.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { useNotifs } from "./Notifications.js";
 import { getLastModel } from "./lastModel.js";
@@ -9,6 +10,9 @@ import { hashHue, projectAvatarStyle as avatarStyle, projectInitials as initials
 import { mergeAwayIds } from "./sidebarOrder.js";
 import { compareWorkingSet, isWorkingSetStatus } from "./workingSet.js";
 import { shortenHome } from "./pathDisplay.js";
+import { prChip, type PrChip, type PrChipIcon } from "./prChip.js";
+import { needsAttentionCount, prKey } from "./prInbox.js";
+import { hasUnseen } from "./prUpdates.js";
 import appIcon from "../assets/console-c.svg";
 
 const GROUP_VISIBLE = 6;
@@ -53,6 +57,35 @@ const DRIVER_LABEL: Record<DriverName, string> = {
   opencode: "OpenCode",
   codex: "Codex"
 };
+
+const PR_CHIP_ICONS: Record<PrChipIcon, LucideIcon> = {
+  x: CircleX,
+  message: MessageSquare,
+  check: Check,
+  draft: GitPullRequestDraft,
+  eye: Eye,
+  clock: Clock,
+  merge: GitMerge
+};
+
+function PrChipBadge({ chip }: { chip: PrChip }) {
+  const Icon = PR_CHIP_ICONS[chip.icon];
+  return (
+    <span className={`pr-chip tone-${chip.tone}`} title={chip.title}>
+      <Icon size={11} aria-hidden="true" />
+      {chip.label}
+    </span>
+  );
+}
+
+function sessionPrSummary(session: Session, summaryByKey: Map<string, PrSummary>): PrSummary | null {
+  return session.pr ? (summaryByKey.get(prKey(session.pr.ref)) ?? null) : null;
+}
+
+function sessionHasUnseen(session: Session, summaryByKey: Map<string, PrSummary>): boolean {
+  const summary = sessionPrSummary(session, summaryByKey);
+  return summary !== null && session.pr !== undefined && hasUnseen(summary, session.pr);
+}
 
 const HOVER_DELAY = 350;
 const HOVER_FALLBACK_HEIGHT = 280;
@@ -223,6 +256,10 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
   const shortPath = (value: string): string => shortenHome(value, homeDir ?? undefined);
   const worktreeConfirm = worktreeConfirmQueue[0] ?? null;
   const store = useAppStore();
+  const inbox = usePrStore((s) => s.inbox);
+  const mainView = usePrStore((s) => s.mainView);
+  const openInbox = usePrStore((s) => s.openInbox);
+  const openSessionView = usePrStore((s) => s.openSessionView);
   const [query, setQuery] = useState("");
   const [pickerOpen, setPickerOpen] = useState(false);
   const [projectQuery, setProjectQuery] = useState("");
@@ -407,6 +444,20 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
     if (existing) existing.push(s);
     else resolvedByProject.set(s.projectId, [s]);
   }
+  const inboxItems = inbox?.items ?? [];
+  const summaryByKey = new Map(inboxItems.map((pr) => [prKey(pr.ref), pr]));
+  const attentionCount = needsAttentionCount(inboxItems);
+  const anyUnseen = Object.values(sessionsByProject).some((list) => list.some((s) => sessionHasUnseen(s, summaryByKey)));
+  const inboxActive = mainView.kind !== "session";
+  const inboxTitle = [
+    "Pull request inbox",
+    attentionCount > 0 ? `${attentionCount} need${attentionCount === 1 ? "s" : ""} you` : null,
+    anyUnseen ? "linked sessions have updates" : null
+  ].filter(Boolean).join(" · ");
+  const selectSession = (sessionId: string) => {
+    openSessionView();
+    store.selectSession(sessionId);
+  };
   const hoverSession = hover ? (source.find((s) => s.id === hover.id) ?? null) : null;
   const hoverStatus = hoverSession?.status ?? "idle";
   const hoverProject = hoverSession ? (projectNameById[hoverSession.projectId] ?? "") : "";
@@ -609,24 +660,15 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
 
   const renderRow = (s: Session, section: SidebarSection, hideState = false) => {
     const git = gitStatusBySession[s.id];
-    const pr = git?.pullRequest;
-    const prState = pr?.isDraft
-      ? "draft"
-      : pr?.state !== "OPEN"
-        ? pr?.state.toLowerCase()
-        : pr?.checks.failed
-          ? "failing"
-          : pr?.checks.pending
-            ? "pending"
-            : pr?.reviewDecision === "APPROVED"
-              ? "approved"
-              : pr?.reviewDecision === "CHANGES_REQUESTED" ? "changes-requested" : "open";
+    const chip = prChip({ pr: sessionPrSummary(s, summaryByKey), git: git?.pullRequest ?? null });
+    const unseen = sessionHasUnseen(s, summaryByKey);
     const status = s.status ?? "idle";
     const projectName = projectNameById[s.projectId] ?? "";
     const gitSummary = [
       git?.branch ?? s.branch ? `Branch: ${git?.branch ?? s.branch}` : null,
       git?.worktreePath ?? s.worktreePath ? `Worktree: ${git?.worktreeName ?? shortPath(git?.worktreePath ?? s.worktreePath ?? "")}` : null,
-      pr ? `PR #${pr.number} ${prState?.replace("-", " ") ?? ""}`.trim() : null,
+      chip ? chip.title : null,
+      unseen ? "PR updated since last visit" : null,
       git && !git.clean ? `${git.dirtyCount} changed ${git.dirtyCount === 1 ? "file" : "files"}` : null
     ].filter((value): value is string => Boolean(value));
     const rowTitle = [s.title, projectName ? `Project: ${projectName}` : null, ...gitSummary].filter(Boolean).join("\n");
@@ -727,7 +769,7 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
           suppressClickRef.current = false;
           return;
         }
-        store.selectSession(s.id);
+        selectSession(s.id);
       }}
       onContextMenu={(e) => {
         e.preventDefault();
@@ -756,6 +798,8 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
         <span className="session-title">{s.title}</span>
       )}
       <span className="session-side">
+        {unseen && <span className="pr-unseen-dot" title="PR updated since last visit" />}
+        {chip && <PrChipBadge chip={chip} />}
         {(status === "working" || status === "input-required") && <span className={`session-dot status-${status}`} />}
         {status === "idle" || hideState ? (
           <span className="session-age">{ageLabel(s.updatedAt)}</span>
@@ -786,7 +830,7 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
             suppressClickRef.current = false;
             return;
           }
-          store.selectSession(s.id);
+          selectSession(s.id);
         }}
         onContextMenu={(e) => {
           e.preventDefault();
@@ -941,11 +985,25 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
           <button
             className="new-session-btn"
             disabled={!activeProjectId}
-            onClick={() => store.startNewSession()}
+            onClick={() => {
+              openSessionView();
+              store.startNewSession();
+            }}
             title={`New session in ${activeProject?.name ?? "…"}`}
             aria-label="New session"
           >
             <SquarePen size={16} />
+          </button>
+          <button
+            className={`pr-inbox-btn${inboxActive ? " active" : ""}`}
+            onClick={openInbox}
+            title={inboxTitle}
+            aria-label={inboxTitle}
+            aria-pressed={inboxActive}
+          >
+            <GitPullRequest size={16} aria-hidden="true" />
+            {attentionCount > 0 && <span className="pr-inbox-count">{attentionCount > 99 ? "99+" : attentionCount}</span>}
+            {anyUnseen && <span className="pr-inbox-dot" aria-hidden="true" />}
           </button>
         </div>
         <div className="project-bar">
