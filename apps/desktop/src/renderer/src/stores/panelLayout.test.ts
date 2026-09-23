@@ -74,6 +74,22 @@ describe("sanitizeLayout", () => {
     expect(clean.bottomHeight).toBe(200);
   });
 
+  it("keeps a persisted PR tab placement and defaults it to closed", () => {
+    expect(defaultLayout().dockByTab.pr).toBe("closed");
+    expect(defaultLayout().autoLocation.pr).toBe("right");
+    const clean = sanitizeLayout({
+      dockByTab: { pr: "main" },
+      autoLocation: { pr: "bottom" },
+      mainOrder: ["chat", "pr"],
+      activeMain: "pr"
+    });
+    expect(clean.dockByTab.pr).toBe("main");
+    expect(clean.autoLocation.pr).toBe("bottom");
+    expect(clean.mainOrder).toEqual(["chat", "pr"]);
+    expect(clean.activeMain).toBe("pr");
+    expect(sanitizeLayout({ dockByTab: { files: "right" } }).dockByTab.pr).toBe("closed");
+  });
+
   it("repairs actives that point outside their panel", () => {
     const clean = sanitizeLayout({
       dockByTab: { files: "right", agents: "right", shell: "right" },
@@ -166,16 +182,24 @@ describe("resolveMainTab", () => {
     const layout = defaultLayout();
     layout.dockByTab.files = "main";
     layout.mainOrder = ["chat", "files"];
-    expect(resolveMainTab(layout.mainOrder, layout.dockByTab, "claude", "files")).toBe("files");
-    expect(resolveMainTab(layout.mainOrder, layout.dockByTab, "claude", "agents")).toBe("chat");
+    expect(resolveMainTab(layout.mainOrder, layout.dockByTab, "claude", "files", false)).toBe("files");
+    expect(resolveMainTab(layout.mainOrder, layout.dockByTab, "claude", "agents", false)).toBe("chat");
   });
 
   it("hides harness tabs whose driver is not active", () => {
     const layout = defaultLayout();
     layout.dockByTab.claude = "main";
     layout.mainOrder = ["chat", "files", "claude"];
-    expect(resolveMainTab(layout.mainOrder, layout.dockByTab, "opencode", "claude")).toBe("chat");
-    expect(resolveMainTab(layout.mainOrder, layout.dockByTab, "claude", "claude")).toBe("claude");
+    expect(resolveMainTab(layout.mainOrder, layout.dockByTab, "opencode", "claude", false)).toBe("chat");
+    expect(resolveMainTab(layout.mainOrder, layout.dockByTab, "claude", "claude", false)).toBe("claude");
+  });
+
+  it("hides the PR tab for sessions without a linked PR", () => {
+    const layout = defaultLayout();
+    layout.dockByTab.pr = "main";
+    layout.mainOrder = ["chat", "pr"];
+    expect(resolveMainTab(layout.mainOrder, layout.dockByTab, "claude", "pr", false)).toBe("chat");
+    expect(resolveMainTab(layout.mainOrder, layout.dockByTab, "claude", "pr", true)).toBe("pr");
   });
 });
 

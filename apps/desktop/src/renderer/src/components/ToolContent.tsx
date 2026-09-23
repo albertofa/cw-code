@@ -3,6 +3,7 @@ import { AgentsPanel } from "./AgentsPanel.js";
 import { FilePanel } from "./FilePanel.js";
 import { GitInspectPanel } from "./GitInspectPanel.js";
 import { PreviewPanel } from "./PreviewPanel.js";
+import { PrSessionPanel } from "./PrSessionPanel.js";
 import { PtyTab } from "./PtyTab.js";
 import { useAppStore } from "../stores/appStore.js";
 import { tabsInPanel } from "../stores/panelLayout.js";
@@ -17,6 +18,7 @@ export function ToolContent({ tab, sessionId, panel }: { tab: DockableTabId; ses
   if (tab === "files") return <FilePanel sessionId={sessionId} />;
   if (tab === "agents") return <AgentsPanel sessionId={sessionId} />;
   if (tab === "diff") return <GitInspectPanel sessionId={sessionId} />;
+  if (tab === "pr") return <PrSessionPanel key={sessionId} sessionId={sessionId} />;
   if (tab === "preview") {
     if (!preview) return null;
     return (

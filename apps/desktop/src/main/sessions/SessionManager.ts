@@ -86,6 +86,7 @@ export class SessionManager {
   private branchRenamed = new Set<string>();
   private onEvent: (sessionId: string, event: ThreadEvent) => void;
   private onTitle: (sessionId: string, title: string) => void;
+  private onSession: (session: SessionMeta) => void = () => {};
   private git: GitService;
   private worktreesRoot: string;
   private deltaBuffer = new Map<string, { sessionId: string; text: string; timer: NodeJS.Timeout }>();
@@ -214,6 +215,17 @@ export class SessionManager {
 
   setTitleEmitter(onTitle: (sessionId: string, title: string) => void): void {
     this.onTitle = onTitle;
+  }
+
+  setSessionEmitter(onSession: (session: SessionMeta) => void): void {
+    this.onSession = onSession;
+  }
+
+  private emitSession(sessionId: string): SessionMeta {
+    const updated = this.store.getSession(sessionId);
+    if (!updated) throw new Error(`unknown session ${sessionId}`);
+    this.onSession(updated);
+    return updated;
   }
 
   getSettings(): AppSettings {
@@ -435,7 +447,7 @@ export class SessionManager {
     const link = linkFromStatus(session, status, Date.now(), headSha);
     if (!link) return null;
     this.store.updateSession(sessionId, { pr: link });
-    return this.store.getSession(sessionId) ?? null;
+    return this.emitSession(sessionId);
   }
 
   linkPr(sessionId: string, link: SessionPrLink): SessionMeta {
@@ -443,9 +455,7 @@ export class SessionManager {
     if (!session) throw new Error(`unknown session ${sessionId}`);
     const prUnlinked = removeUnlinkedKey(session.prUnlinked, prKey(link.ref));
     this.store.updateSession(sessionId, { pr: link, prUnlinked });
-    const updated = this.store.getSession(sessionId);
-    if (!updated) throw new Error(`unknown session ${sessionId}`);
-    return updated;
+    return this.emitSession(sessionId);
   }
 
   unlinkPr(sessionId: string): SessionMeta {
@@ -453,18 +463,14 @@ export class SessionManager {
     if (!session) throw new Error(`unknown session ${sessionId}`);
     const prUnlinked = session.pr ? addUnlinkedKey(session.prUnlinked, prKey(session.pr.ref)) : session.prUnlinked;
     this.store.updateSession(sessionId, { pr: null, prUnlinked });
-    const updated = this.store.getSession(sessionId);
-    if (!updated) throw new Error(`unknown session ${sessionId}`);
-    return updated;
+    return this.emitSession(sessionId);
   }
 
   markPrSeen(sessionId: string, headSha: string | null): SessionMeta {
     const session = this.store.getSession(sessionId);
     if (!session) throw new Error(`unknown session ${sessionId}`);
     if (session.pr) this.store.updateSession(sessionId, { pr: markSeen(session.pr, headSha, Date.now()) });
-    const updated = this.store.getSession(sessionId);
-    if (!updated) throw new Error(`unknown session ${sessionId}`);
-    return updated;
+    return this.emitSession(sessionId);
   }
 
   private syncPrSeenAfterTurn(sessionId: string): void {
@@ -472,6 +478,7 @@ export class SessionManager {
     if (!session?.pr) return;
     const headSha = this.prHead(session.pr.ref);
     this.store.updateSession(sessionId, { pr: markSeen(session.pr, headSha, Date.now()) });
+    this.emitSession(sessionId);
   }
 
   expireHoldingSessions(sessionIds: string[]): SessionMeta[] {

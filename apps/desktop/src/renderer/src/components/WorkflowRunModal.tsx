@@ -45,6 +45,7 @@ import { firstDisplayedModelId, getLastModel } from "./lastModel.js";
 import { shortenHome } from "./pathDisplay.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { MenuSelect } from "./MenuSelect.js";
+import { errorMessage } from "./errorMessage.js";
 
 const READ_ONLY_NOTICE =
   "cw-code only reads from GitHub. Anything the session commits, pushes, or posts goes through the CLI's own permissions.";
@@ -82,10 +83,6 @@ const STAGE_LABEL: Record<Stage, string> = {
   send: "Sending prompt",
   seen: "Marking the pull request as seen"
 };
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
 
 function failingRuns(checks: PrCheck[]): Array<{ runId: number; names: string[] }> {
   const byRun = new Map<number, string[]>();

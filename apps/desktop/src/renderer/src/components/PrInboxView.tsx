@@ -43,10 +43,7 @@ import {
   type PrInboxRow
 } from "./prInboxModel.js";
 import { primaryAction, suggestedWorkflow } from "./prWorkflows.js";
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
-}
+import { errorMessage } from "./errorMessage.js";
 
 function useNow(intervalMs = 5000): number {
   const [now, setNow] = useState(() => Date.now());

@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
-import { Check, ChevronDown, ChevronRight, ChevronUp, CircleX, Clock, Eye, Folder, GitBranch, GitMerge, GitPullRequest, GitPullRequestDraft, Hash, MessageSquare, Plus, Search, Settings, SquarePen, X, type LucideIcon } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, ChevronUp, Clock, Folder, GitBranch, GitPullRequest, Hash, Plus, Search, Settings, SquarePen, X } from "lucide-react";
 import type { DriverName, PrSummary, Project, Session, SessionStatus } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import { usePrStore } from "../stores/prStore.js";
@@ -10,7 +10,8 @@ import { hashHue, projectAvatarStyle as avatarStyle, projectInitials as initials
 import { mergeAwayIds } from "./sidebarOrder.js";
 import { compareWorkingSet, isWorkingSetStatus } from "./workingSet.js";
 import { shortenHome } from "./pathDisplay.js";
-import { prChip, type PrChip, type PrChipIcon } from "./prChip.js";
+import { prChip } from "./prChip.js";
+import { PrChipBadge } from "./PrChipBadge.js";
 import { needsAttentionCount, prKey } from "./prInbox.js";
 import { hasUnseen } from "./prUpdates.js";
 import appIcon from "../assets/console-c.svg";
@@ -57,26 +58,6 @@ const DRIVER_LABEL: Record<DriverName, string> = {
   opencode: "OpenCode",
   codex: "Codex"
 };
-
-const PR_CHIP_ICONS: Record<PrChipIcon, LucideIcon> = {
-  x: CircleX,
-  message: MessageSquare,
-  check: Check,
-  draft: GitPullRequestDraft,
-  eye: Eye,
-  clock: Clock,
-  merge: GitMerge
-};
-
-function PrChipBadge({ chip }: { chip: PrChip }) {
-  const Icon = PR_CHIP_ICONS[chip.icon];
-  return (
-    <span className={`pr-chip tone-${chip.tone}`} title={chip.title}>
-      <Icon size={11} aria-hidden="true" />
-      {chip.label}
-    </span>
-  );
-}
 
 function sessionPrSummary(session: Session, summaryByKey: Map<string, PrSummary>): PrSummary | null {
   return session.pr ? (summaryByKey.get(prKey(session.pr.ref)) ?? null) : null;

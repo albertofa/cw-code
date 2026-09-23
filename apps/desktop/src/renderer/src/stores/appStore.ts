@@ -206,6 +206,14 @@ function patchSession(
   return next;
 }
 
+function replaceSession(byProject: Record<string, Session[]>, session: Session): Record<string, Session[]> {
+  const next: Record<string, Session[]> = {};
+  for (const [pid, list] of Object.entries(byProject)) {
+    next[pid] = list.map((s) => (s.id === session.id ? session : s));
+  }
+  return next;
+}
+
 interface TurnBookkeeping {
   busyTurns: Record<string, string>;
   turnStartedAt: Record<string, number>;
@@ -879,7 +887,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   applySession(session: Session) {
-    set({ sessionsByProject: patchSession(get().sessionsByProject, session.id, session) });
+    set({ sessionsByProject: replaceSession(get().sessionsByProject, session) });
   },
 
   async sendPrompt(prompt: string, attachments?: string[]) {

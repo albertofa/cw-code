@@ -19,6 +19,9 @@ import { NewThread } from "./NewThread.js";
 import { ApprovalDock } from "./ApprovalDock.js";
 import { QuestionDock } from "./QuestionDock.js";
 import { TodoDock } from "./TodoDock.js";
+import { PrUpdateDock } from "./PrUpdateDock.js";
+import { PrSessionChip } from "./PrSessionPanel.js";
+import { useLinkedPrLoader } from "./useLinkedPr.js";
 import { TurnBlock } from "./TurnBlock.js";
 import { groupTurns, splitTurn, type ThreadNode } from "./turnGroups.js";
 import { pendingToolsForTurn } from "./toolSummaries.js";
@@ -92,6 +95,8 @@ export function ThreadView() {
     return null;
   }, [messages, busyTurn]);
   const showNew = pendingDriver !== null || !session;
+  const hasPr = !showNew && session?.pr !== undefined;
+  useLinkedPrLoader(showNew ? undefined : session?.id);
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
   const lastSeenIdRef = useRef<string | null>(null);
@@ -101,7 +106,7 @@ export function ThreadView() {
   const resolvedMainTab =
     session === undefined
       ? "chat"
-      : resolveMainTab(panelMainOrder, panelDockByTab, session.driver, panelActiveMain);
+      : resolveMainTab(panelMainOrder, panelDockByTab, session.driver, panelActiveMain, hasPr);
   const showMainTool: DockableTabId | null = resolvedMainTab === "chat" ? null : resolvedMainTab;
   const basePath = session?.worktreePath ?? project?.rootPath ?? "";
   const onOpenPreview = useCallback(
@@ -197,7 +202,7 @@ export function ThreadView() {
     return (
       <div className="thread-col">
         {head}
-        <MainTabStrip sessionId={undefined} driver={heroDriver} />
+        <MainTabStrip sessionId={undefined} driver={heroDriver} hasPr={false} />
         <Notifications />
         <NewThread
           key={activeProjectId}
@@ -295,7 +300,12 @@ export function ThreadView() {
   return (
     <div className="thread-col">
       {head}
-      <MainTabStrip sessionId={session.id} driver={session.driver} />
+      <MainTabStrip
+        sessionId={session.id}
+        driver={session.driver}
+        hasPr={hasPr}
+        trailing={hasPr ? <PrSessionChip sessionId={session.id} /> : undefined}
+      />
       <Notifications />
       {showMainTool !== null ? (
         <div
@@ -372,13 +382,14 @@ export function ThreadView() {
       {showMainTool === null && (
       <div className="composer-wrap">
         <TodoDock sessionId={session.id} />
+        <PrUpdateDock key={session.id} sessionId={session.id} />
         <ApprovalDock sessionId={session.id} />
         <QuestionDock sessionId={session.id} />
         <Composer key={session.id} sessionId={session.id} driver={session.driver} />
       </div>
       )}
       {(isBottomOpen(panelDockByTab) || draggingTab !== null) && (
-        <BottomPanel sessionId={session.id} driver={session.driver} />
+        <BottomPanel sessionId={session.id} driver={session.driver} hasPr={hasPr} />
       )}
     </div>
   );

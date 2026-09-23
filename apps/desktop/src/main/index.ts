@@ -123,6 +123,9 @@ function registerIpc(): void {
   sessions.setTitleEmitter((sessionId, title) => {
     mainWindow?.webContents.send("session.title", { sessionId, title });
   });
+  sessions.setSessionEmitter((session) => {
+    mainWindow?.webContents.send("session.updated", session);
+  });
   ptys.setExitEmitter((ptyId, token, exitCode) => {
     if (!mainWindow || mainWindow.isDestroyed()) return;
     mainWindow.webContents.send("pty.exit", { ptyId, token, exitCode });

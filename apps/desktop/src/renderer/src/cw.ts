@@ -485,6 +485,7 @@ export interface CwApi {
   markSessionPrSeen(sessionId: string, headSha: string | null): Promise<Session>;
   onTurnEvent(cb: (msg: { sessionId: string; event: TurnEvent }) => void): () => void;
   onSessionTitle(cb: (msg: { sessionId: string; title: string }) => void): () => void;
+  onSessionUpdated(cb: (session: Session) => void): () => void;
   readFile(sessionId: string, path: string): Promise<string>;
   readOutsideFile(path: string): Promise<string>;
   saveFile(sessionId: string, path: string, content: string): Promise<void>;

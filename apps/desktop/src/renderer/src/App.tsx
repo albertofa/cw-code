@@ -12,7 +12,7 @@ import { PrDetailView } from "./components/PrDetailView.js";
 import { WorkflowRunModal } from "./components/WorkflowRunModal.js";
 import { PanelToggles } from "./components/PanelToggles.js";
 import { ToolContent } from "./components/ToolContent.js";
-import { TOOL_TABS, isHarnessTabId } from "./components/toolTabs.js";
+import { TOOL_TABS, isHarnessTabId, isToolTabAvailable } from "./components/toolTabs.js";
 import { useTabMenu } from "./components/TabMenu.js";
 import { endTabDrag, startTabDrag, useDockDrop } from "./components/useDockDrop.js";
 import { useNotifs } from "./components/Notifications.js";
@@ -180,6 +180,7 @@ export function App() {
     void loadProjects();
     const off = window.cw.onTurnEvent(handleTurnEvent);
     const offTitle = window.cw.onSessionTitle(({ sessionId, title }) => useAppStore.getState().applySessionTitle(sessionId, title));
+    const offSession = window.cw.onSessionUpdated((session) => useAppStore.getState().applySession(session));
     const onKey = (e: KeyboardEvent) => {
       if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
       const target = e.target as HTMLElement | null;
@@ -199,6 +200,7 @@ export function App() {
     return () => {
       off();
       offTitle();
+      offSession();
       flushPendingDeltas();
       window.removeEventListener("keydown", onKey);
     };
@@ -370,14 +372,16 @@ export function App() {
   }, [messagesBySession, activeSessionId]);
 
   const allSessions = Object.values(sessionsByProject).flat();
-  const driver = pendingDriver ?? allSessions.find((s) => s.id === activeSessionId)?.driver;
+  const activeSession = allSessions.find((s) => s.id === activeSessionId);
+  const driver = pendingDriver ?? activeSession?.driver;
+  const hasPr = pendingDriver === null && activeSession?.pr !== undefined;
 
-  const visibleTabs = TABS.filter((t) => t.driver === undefined || t.driver === driver);
+  const visibleTabs = TABS.filter((t) => isToolTabAvailable(t, driver, hasPr));
   const activeTab: RightTab = isHarnessTabId(activeRight) && activeRight !== driver ? (driver ?? "files") : activeRight;
 
-  const rightIds = tabsInPanel(dockByTab, "right");
+  const rightIds = tabsInPanel(dockByTab, "right").filter((id) => id !== "pr" || hasPr);
   const effectiveRightTab: RightTab = rightIds.includes(activeTab) ? activeTab : (rightIds[0] ?? activeTab);
-  const allTabsClosed = DOCKABLE_TABS.every((id) => dockByTab[id] === "closed");
+  const allTabsClosed = DOCKABLE_TABS.every((id) => dockByTab[id] === "closed" || (id === "pr" && !hasPr));
 
   const visibleIds = new Set(visibleTabs.map((t) => t.id));
   const openHeaders = rightIds

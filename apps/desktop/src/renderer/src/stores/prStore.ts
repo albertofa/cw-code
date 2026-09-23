@@ -1,6 +1,7 @@
 import { create } from "zustand";
 import type { PrDetail, PrInboxResult, PrRef, ProjectGitHubRepo } from "../cw.js";
 import { prKey } from "../components/prInbox.js";
+import { errorMessage } from "../components/errorMessage.js";
 
 export type PrDetailTab = "conversation" | "commits" | "checks" | "files";
 
@@ -37,10 +38,6 @@ interface PrState {
   projectIdForRef(ref: PrRef): string | null;
   openRunModal(state: RunModalState): void;
   closeRunModal(): void;
-}
-
-function errorMessage(err: unknown): string {
-  return err instanceof Error ? err.message : String(err);
 }
 
 function without<T>(record: Record<string, T>, key: string): Record<string, T> {

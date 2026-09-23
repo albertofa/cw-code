@@ -107,6 +107,7 @@ export interface CwApi {
   markSessionPrSeen(sessionId: string, headSha: string | null): Promise<SessionMeta>;
   onTurnEvent(cb: (event: unknown) => void): () => void;
   onSessionTitle(cb: (msg: { sessionId: string; title: string }) => void): () => void;
+  onSessionUpdated(cb: (session: SessionMeta) => void): () => void;
   readFile(sessionId: string, path: string): Promise<string>;
   readOutsideFile(path: string): Promise<string>;
   saveFile(sessionId: string, path: string, content: string): Promise<void>;
@@ -232,6 +233,11 @@ const api: CwApi = {
     const listener = (_e: unknown, msg: { sessionId: string; title: string }) => cb(msg);
     ipcRenderer.on("session.title", listener as never);
     return () => ipcRenderer.removeListener("session.title", listener as never);
+  },
+  onSessionUpdated: (cb) => {
+    const listener = (_e: unknown, session: SessionMeta) => cb(session);
+    ipcRenderer.on("session.updated", listener as never);
+    return () => ipcRenderer.removeListener("session.updated", listener as never);
   },
   readFile: (sessionId: string, path: string) => ipcRenderer.invoke("fs.readFile", { sessionId, path }),
   readOutsideFile: (path: string) => ipcRenderer.invoke("fs.readOutsideFile", { path }),

@@ -15,7 +15,8 @@ export const DOCKABLE_TABS: readonly DockableTabId[] = [
   "opencode",
   "codex",
   "shell",
-  "preview"
+  "preview",
+  "pr"
 ];
 
 export const PANELS: readonly PanelId[] = ["main", "right", "bottom"];
@@ -181,10 +182,13 @@ export function resolveMainTab(
   mainOrder: MainTabId[],
   dockByTab: TabDockState,
   driver: DockableTabId | undefined,
-  activeMain: MainTabId
+  activeMain: MainTabId,
+  hasPr: boolean
 ): MainTabId {
   const visible = mainOrder.filter(
-    (id) => id === "chat" || (dockByTab[id] === "main" && (!HARNESS_TABS.includes(id) || id === driver))
+    (id) =>
+      id === "chat" ||
+      (dockByTab[id] === "main" && (!HARNESS_TABS.includes(id) || id === driver) && (id !== "pr" || hasPr))
   );
   return visible.includes(activeMain) ? activeMain : "chat";
 }
