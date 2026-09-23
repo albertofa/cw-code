@@ -1,12 +1,27 @@
 import type { CreateSessionOptions, GitBranchInfo, GitStatus, SessionMeta, SessionPrLink } from "@cw-code/contracts";
-import { prRefFromUrl } from "./prParsers.js";
+import { prKey, prRefFromUrl } from "./prParsers.js";
 
-export function linkFromStatus(session: SessionMeta, status: GitStatus, now: number): SessionPrLink | null {
+const MAX_UNLINKED_KEYS = 20;
+
+export function linkFromStatus(session: SessionMeta, status: GitStatus, now: number, headSha?: string | null): SessionPrLink | null {
   if (session.pr) return null;
   if (status.pullRequest?.state !== "OPEN") return null;
   const ref = prRefFromUrl(status.pullRequest.url);
   if (!ref) return null;
-  return { ref, origin: "opened", lastSeenSha: "", lastSeenAt: now };
+  if (session.prUnlinked?.includes(prKey(ref))) return null;
+  return { ref, origin: "opened", lastSeenSha: headSha ?? "", lastSeenAt: now };
+}
+
+export function addUnlinkedKey(existing: string[] | undefined, key: string): string[] {
+  const next = (existing ?? []).filter((k) => k !== key);
+  next.push(key);
+  return next.length > MAX_UNLINKED_KEYS ? next.slice(next.length - MAX_UNLINKED_KEYS) : next;
+}
+
+export function removeUnlinkedKey(existing: string[] | undefined, key: string): string[] | undefined {
+  if (!existing) return existing;
+  const next = existing.filter((k) => k !== key);
+  return next.length > 0 ? next : undefined;
 }
 
 export function markSeen(link: SessionPrLink, headSha: string | null, now: number): SessionPrLink {

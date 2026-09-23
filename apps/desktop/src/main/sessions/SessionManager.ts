@@ -26,7 +26,8 @@ import type {
   WorktreePruneSummary
 } from "@cw-code/contracts";
 import { SessionStore } from "./SessionStore.js";
-import { authorLocalBranch, linkFromStatus, markSeen, prHeadPlan, type PrHeadPlan } from "../github/prLinks.js";
+import { addUnlinkedKey, authorLocalBranch, linkFromStatus, markSeen, prHeadPlan, removeUnlinkedKey, type PrHeadPlan } from "../github/prLinks.js";
+import { prKey, prRefFromUrl } from "../github/prParsers.js";
 import { buildTurnEnv } from "./env.js";
 import { isWorktreeOrphaned, looksLikeWorktree, pinsWorktree, sameWorktreePath } from "./worktreeCleanup.js";
 import { SettingsStore } from "../settings/SettingsStore.js";
@@ -429,23 +430,29 @@ export class SessionManager {
   syncPrLink(sessionId: string, status: GitStatus): SessionMeta | null {
     const session = this.store.getSession(sessionId);
     if (!session) return null;
-    const link = linkFromStatus(session, status, Date.now());
+    const ref = status.pullRequest ? prRefFromUrl(status.pullRequest.url) : null;
+    const headSha = ref ? this.prHead(ref) : null;
+    const link = linkFromStatus(session, status, Date.now(), headSha);
     if (!link) return null;
     this.store.updateSession(sessionId, { pr: link });
     return this.store.getSession(sessionId) ?? null;
   }
 
   linkPr(sessionId: string, link: SessionPrLink): SessionMeta {
-    if (!this.store.getSession(sessionId)) throw new Error(`unknown session ${sessionId}`);
-    this.store.updateSession(sessionId, { pr: link });
+    const session = this.store.getSession(sessionId);
+    if (!session) throw new Error(`unknown session ${sessionId}`);
+    const prUnlinked = removeUnlinkedKey(session.prUnlinked, prKey(link.ref));
+    this.store.updateSession(sessionId, { pr: link, prUnlinked });
     const updated = this.store.getSession(sessionId);
     if (!updated) throw new Error(`unknown session ${sessionId}`);
     return updated;
   }
 
   unlinkPr(sessionId: string): SessionMeta {
-    if (!this.store.getSession(sessionId)) throw new Error(`unknown session ${sessionId}`);
-    this.store.updateSession(sessionId, { pr: null });
+    const session = this.store.getSession(sessionId);
+    if (!session) throw new Error(`unknown session ${sessionId}`);
+    const prUnlinked = session.pr ? addUnlinkedKey(session.prUnlinked, prKey(session.pr.ref)) : session.prUnlinked;
+    this.store.updateSession(sessionId, { pr: null, prUnlinked });
     const updated = this.store.getSession(sessionId);
     if (!updated) throw new Error(`unknown session ${sessionId}`);
     return updated;

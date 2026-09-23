@@ -71,6 +71,7 @@ export interface Session {
   worktreePath?: string;
   branch?: string;
   pr?: SessionPrLink;
+  prUnlinked?: string[];
 }
 
 export type CreateWorkspaceMode = "current" | "new" | "previous";

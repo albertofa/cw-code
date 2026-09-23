@@ -90,6 +90,33 @@ describe("linkFromStatus", () => {
       lastSeenAt: 100
     });
   });
+
+  it("returns null when the candidate pull request key was previously unlinked", () => {
+    const open = status({ pullRequest: pullRequest() });
+    const unlinked = session({ prUnlinked: ["github.com/acme/widgets#42"] });
+    expect(linkFromStatus(unlinked, open, 100)).toBeNull();
+  });
+
+  it("links when a different pull request key was previously unlinked", () => {
+    const open = status({ pullRequest: pullRequest() });
+    const unlinked = session({ prUnlinked: ["github.com/acme/widgets#7"] });
+    expect(linkFromStatus(unlinked, open, 100)).not.toBeNull();
+  });
+
+  it("uses the provided head sha instead of an empty string", () => {
+    const open = status({ pullRequest: pullRequest() });
+    expect(linkFromStatus(session(), open, 100, "sha-head")).toEqual({
+      ref: { host: "github.com", owner: "acme", repo: "widgets", number: 42 },
+      origin: "opened",
+      lastSeenSha: "sha-head",
+      lastSeenAt: 100
+    });
+  });
+
+  it("keeps an empty sha when the head is unknown", () => {
+    const open = status({ pullRequest: pullRequest() });
+    expect(linkFromStatus(session(), open, 100, null)).toMatchObject({ lastSeenSha: "" });
+  });
 });
 
 describe("markSeen", () => {

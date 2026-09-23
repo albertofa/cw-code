@@ -90,4 +90,16 @@ describe("SessionStore", () => {
     store.updateSession(session.id, { pr: null });
     expect(store.getSession(session.id)?.pr).toBeUndefined();
   });
+
+  it("round-trips a session's unlinked pull request keys", () => {
+    const store = makeStore();
+    const project = store.addProject("C:/proj1");
+    const session = store.createSession(project.id, "claude", "a");
+
+    store.updateSession(session.id, { prUnlinked: ["github.com/acme/widgets#42"] });
+    expect(store.getSession(session.id)?.prUnlinked).toEqual(["github.com/acme/widgets#42"]);
+
+    store.updateSession(session.id, { prUnlinked: undefined });
+    expect(store.getSession(session.id)?.prUnlinked).toBeUndefined();
+  });
 });

@@ -30,6 +30,8 @@ export interface SessionMeta {
   /** Last known branch. Live Git status remains the source of truth. */
   branch?: string;
   pr?: SessionPrLink;
+  /** prKeys of PRs the user explicitly unlinked from this session, so auto-link does not re-attach them. */
+  prUnlinked?: string[];
 }
 
 export type CreateWorkspaceMode = "current" | "new" | "previous";

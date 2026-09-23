@@ -157,7 +157,9 @@ export class SessionStore {
 
   updateSession(
     id: string,
-    patch: Partial<Pick<SessionMeta, "title" | "status" | "resumeCursor" | "model" | "effort" | "variant" | "permissionMode" | "worktreePath" | "branch">> & {
+    patch: Partial<
+      Pick<SessionMeta, "title" | "status" | "resumeCursor" | "model" | "effort" | "variant" | "permissionMode" | "worktreePath" | "branch" | "prUnlinked">
+    > & {
       pr?: SessionPrLink | null;
     }
   ): void {
@@ -178,6 +180,8 @@ export class SessionStore {
       if (patch.pr === null) delete current.pr;
       else current.pr = patch.pr;
     }
+    if (patch.prUnlinked !== undefined) current.prUnlinked = patch.prUnlinked;
+    else if ("prUnlinked" in patch) delete current.prUnlinked;
     current.updatedAt = Date.now();
     this.persist();
   }
