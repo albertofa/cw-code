@@ -1,10 +1,16 @@
 import { create } from "zustand";
-import type { PrDetail, PrInboxResult, PrRef } from "../cw.js";
+import type { PrDetail, PrInboxResult, PrRef, ProjectGitHubRepo } from "../cw.js";
 import { prKey } from "../components/prInbox.js";
 
 export type PrDetailTab = "conversation" | "commits" | "checks" | "files";
 
 export type MainView = { kind: "session" } | { kind: "inbox" } | { kind: "pr"; ref: PrRef; tab: PrDetailTab };
+
+export interface RunModalState {
+  workflowId: string;
+  ref: PrRef;
+  continueSessionId?: string;
+}
 
 interface PrState {
   inbox: PrInboxResult | null;
@@ -17,12 +23,18 @@ interface PrState {
   diffLoadingByKey: Record<string, boolean>;
   diffErrorByKey: Record<string, string>;
   mainView: MainView;
+  projectRepos: ProjectGitHubRepo[];
+  runModal: RunModalState | null;
   refreshInbox(force?: boolean): Promise<void>;
   loadDetail(ref: PrRef): Promise<void>;
   loadDiff(ref: PrRef): Promise<void>;
   openInbox(): void;
   openPr(ref: PrRef, tab?: PrDetailTab): void;
   openSessionView(): void;
+  refreshProjectRepos(): Promise<void>;
+  projectIdForRef(ref: PrRef): string | null;
+  openRunModal(state: RunModalState): void;
+  closeRunModal(): void;
 }
 
 function errorMessage(err: unknown): string {
@@ -47,10 +59,13 @@ export const usePrStore = create<PrState>((set, get) => ({
   diffLoadingByKey: {},
   diffErrorByKey: {},
   mainView: { kind: "session" },
+  projectRepos: [],
+  runModal: null,
 
   async refreshInbox(force?: boolean) {
     if (get().inboxLoading) return;
     set({ inboxLoading: true });
+    void get().refreshProjectRepos();
     try {
       const inbox = await window.cw.getPrInbox(force);
       set({ inbox, inboxLoading: false, inboxError: null });
@@ -116,5 +131,30 @@ export const usePrStore = create<PrState>((set, get) => ({
   openSessionView() {
     if (get().mainView.kind === "session") return;
     set({ mainView: { kind: "session" } });
+  },
+
+  async refreshProjectRepos() {
+    try {
+      set({ projectRepos: await window.cw.getProjectGitHubRepos() });
+    } catch (err) {
+      console.warn(`[pr] project repo lookup failed: ${errorMessage(err)}`);
+    }
+  },
+
+  projectIdForRef(ref: PrRef) {
+    const owner = ref.owner.toLowerCase();
+    const repo = ref.repo.toLowerCase();
+    const match = get().projectRepos.find(
+      (item) => item.host.toLowerCase() === ref.host.toLowerCase() && item.owner.toLowerCase() === owner && item.repo.toLowerCase() === repo
+    );
+    return match?.projectId ?? null;
+  },
+
+  openRunModal(state: RunModalState) {
+    set({ runModal: state });
+  },
+
+  closeRunModal() {
+    set({ runModal: null });
   }
 }));

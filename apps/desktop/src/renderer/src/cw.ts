@@ -9,6 +9,7 @@ import type {
   PrCommit,
   PrDetail,
   PrInboxResult,
+  ProjectGitHubRepo,
   PrLinkOrigin,
   PrMergeable,
   PrRef,
@@ -33,6 +34,7 @@ export type {
   PrCommit,
   PrDetail,
   PrInboxResult,
+  ProjectGitHubRepo,
   PrLinkOrigin,
   PrMergeable,
   PrRef,
@@ -474,6 +476,7 @@ export interface CwApi {
   getPrDiff(ref: PrRef): Promise<string>;
   getPrCheckLog(ref: PrRef, runId: number): Promise<string>;
   clonePrRepo(ref: PrRef): Promise<Project>;
+  getProjectGitHubRepos(): Promise<ProjectGitHubRepo[]>;
   linkSessionPr(sessionId: string, link: SessionPrLink): Promise<Session>;
   unlinkSessionPr(sessionId: string): Promise<Session>;
   markSessionPrSeen(sessionId: string, headSha: string | null): Promise<Session>;

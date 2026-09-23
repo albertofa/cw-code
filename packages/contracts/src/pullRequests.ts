@@ -41,6 +41,13 @@ export interface PrSummary {
   updatedAt: number;
 }
 
+export interface ProjectGitHubRepo {
+  projectId: string;
+  host: string;
+  owner: string;
+  repo: string;
+}
+
 export interface PrInboxResult {
   account: { host: string; login: string } | null;
   items: PrSummary[];

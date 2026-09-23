@@ -20,7 +20,7 @@ import { getHarnessTracePath, initHarnessTrace } from "./debug/harnessTrace.js";
 import { appendCrashLog, initCrashLog } from "./debug/crashLog.js";
 import { ensureAppDirs, attachmentsDir, logsDir, migrateFromUserData, opencodeModelsCachePath } from "./paths/appPaths.js";
 import { reapOrphanedServers } from "./orphanServers.js";
-import type { ApprovalDecision, CliBinary, CreateSessionOptions, GitDiffMode, PrRef, SessionPrLink, SessionStatus, SettingsPatch } from "@cw-code/contracts";
+import type { ApprovalDecision, CliBinary, CreateSessionOptions, GitDiffMode, PrRef, ProjectGitHubRepo, SessionPrLink, SessionStatus, SettingsPatch } from "@cw-code/contracts";
 import type { DriverKind, HarnessId, SkillSaveInput } from "@cw-code/contracts";
 import type { PtyKind } from "./pty/PtyPool.js";
 import { SessionManager } from "./sessions/SessionManager.js";
@@ -347,6 +347,15 @@ function registerIpc(): void {
   ipcMain.handle("prs.diff", (_e, args: { ref: PrRef }) => pullRequests.diff(args.ref));
   ipcMain.handle("prs.checkLog", (_e, args: { ref: PrRef; runId: number }) => pullRequests.failedCheckLog(args.ref, args.runId));
   ipcMain.handle("prs.clone", (_e, args: { ref: PrRef }) => pullRequests.clone(args.ref));
+  ipcMain.handle("prs.projectRepos", async (): Promise<ProjectGitHubRepo[]> => {
+    const repos = await Promise.all(
+      sessions.listProjects().map(async (project) => {
+        const remote = await git.githubRemote(project.rootPath).catch(() => null);
+        return remote ? { projectId: project.id, host: remote.host, owner: remote.owner, repo: remote.repository } : null;
+      })
+    );
+    return repos.filter((repo): repo is ProjectGitHubRepo => repo !== null);
+  });
 
   ipcMain.handle("fs.readFile", (_e, args: { sessionId: string; path: string }) =>
     sessions.ensureWorktree(args.sessionId).then((root) => files.readFile(root, args.path))

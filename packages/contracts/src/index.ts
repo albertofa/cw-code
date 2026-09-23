@@ -34,6 +34,7 @@ export type {
   PrBucket,
   PrSummary,
   PrInboxResult,
+  ProjectGitHubRepo,
   PrCheck,
   PrCommit,
   PrThreadComment,

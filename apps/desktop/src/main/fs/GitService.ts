@@ -908,6 +908,11 @@ export class GitService {
     }
   }
 
+  async githubRemote(root: string): Promise<ParsedGitHubRemote | null> {
+    if (!(await this.isRepository(root))) return null;
+    return this.remote(root);
+  }
+
   private async remote(root: string): Promise<ParsedGitHubRemote | null> {
     const git = this.git(root);
     let url = "";
