@@ -10,6 +10,7 @@ export interface RunModalState {
   workflowId: string;
   ref: PrRef;
   continueSessionId?: string;
+  promptOverride?: string;
 }
 
 interface PrState {
