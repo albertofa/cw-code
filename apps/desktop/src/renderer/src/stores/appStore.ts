@@ -919,7 +919,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         ...get().messagesBySession,
         [sessionId]: [
           ...(get().messagesBySession[sessionId] ?? []),
-          { id: `${turnId}-u`, role: "user", text: prompt, turnId }
+          { id: `${turnId}-u`, role: "user", text: prompt, turnId, timestamp: Date.now() }
         ]
       }
     });
