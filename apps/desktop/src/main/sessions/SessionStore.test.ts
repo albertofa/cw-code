@@ -91,26 +91,6 @@ describe("SessionStore", () => {
     expect(store.getSession(session.id)?.pr).toBeUndefined();
   });
 
-  it("drops auto-links held by sessions that cannot own them and keeps the rest", () => {
-    const opened: SessionMeta["pr"] = {
-      ref: { host: "github.com", owner: "acme", repo: "widgets", number: 42 },
-      origin: "opened",
-      lastSeenSha: "",
-      lastSeenAt: 1
-    };
-    const { dir } = seedStore([
-      { id: "sess_checkout", pr: opened },
-      { id: "sess_archived", status: "archived", worktreePath: "C:/wt/a", pr: opened },
-      { id: "sess_owner", worktreePath: "C:/wt/b", pr: opened },
-      { id: "sess_manual", pr: { ...opened, origin: "linked" } }
-    ]);
-    const reloaded = new SessionStore(join(dir, "test.db"));
-    expect(reloaded.getSession("sess_checkout")?.pr).toBeUndefined();
-    expect(reloaded.getSession("sess_archived")?.pr).toBeUndefined();
-    expect(reloaded.getSession("sess_owner")?.pr).toEqual(opened);
-    expect(reloaded.getSession("sess_manual")?.pr?.origin).toBe("linked");
-  });
-
   it("round-trips a session's unlinked pull request keys", () => {
     const store = makeStore();
     const project = store.addProject("C:/proj1");

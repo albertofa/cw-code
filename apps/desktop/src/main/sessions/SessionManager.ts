@@ -53,6 +53,7 @@ export interface SessionManagerOptions {
   gitService?: GitService;
   worktreesRoot?: string;
   prHead?: (ref: PrRef) => string | null;
+  prHeadRefresh?: (ref: PrRef) => Promise<string | null>;
 }
 
 interface TitleTurn {
@@ -93,6 +94,7 @@ export class SessionManager {
   private turnBaseShas = new Map<string, string>();
   private disposed = false;
   private prHead: (ref: PrRef) => string | null;
+  private prHeadRefresh?: (ref: PrRef) => Promise<string | null>;
 
   constructor(opts: SessionManagerOptions = {}) {
     const dbPath = opts.dbPath ?? join(userdataDir(), "cw-code.db");
@@ -104,6 +106,7 @@ export class SessionManager {
     this.git = opts.gitService ?? new GitService(() => this.settings.get());
     this.worktreesRoot = opts.worktreesRoot ?? worktreesDir();
     this.prHead = opts.prHead ?? (() => null);
+    this.prHeadRefresh = opts.prHeadRefresh;
     const getSettings = (): AppSettings => this.settings.get();
     this.drivers = {
       claude: opts.drivers?.claude ?? new TracingCliDriver(new ClaudeCliDriver((e) => this.routeEvent(e), getSettings)),
@@ -476,9 +479,16 @@ export class SessionManager {
   private syncPrSeenAfterTurn(sessionId: string): void {
     const session = this.store.getSession(sessionId);
     if (!session?.pr) return;
-    const headSha = this.prHead(session.pr.ref);
-    this.store.updateSession(sessionId, { pr: markSeen(session.pr, headSha, Date.now()) });
-    this.emitSession(sessionId);
+    const ref = session.pr.ref;
+    const key = prKey(ref);
+    const now = Date.now();
+    void (async () => {
+      const headSha = (await this.prHeadRefresh?.(ref).catch(() => null)) ?? this.prHead(ref);
+      const current = this.store.getSession(sessionId);
+      if (!current?.pr || prKey(current.pr.ref) !== key) return;
+      this.store.updateSession(sessionId, { pr: markSeen(current.pr, headSha, now) });
+      this.emitSession(sessionId);
+    })();
   }
 
   expireHoldingSessions(sessionIds: string[]): SessionMeta[] {

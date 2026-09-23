@@ -13,8 +13,8 @@ import {
   type GitService
 } from "../fs/GitService.js";
 import { expandHome } from "../skills/skillPaths.js";
-import { DETAIL_QUERY, INBOX_QUERY, inboxSearchQueries } from "./prQueries.js";
-import { parseDetail, parseInbox, prKey } from "./prParsers.js";
+import { DETAIL_QUERY, HEAD_QUERY, INBOX_QUERY, INBOX_SEARCH_LIMIT, inboxSearchQueries } from "./prQueries.js";
+import { parseDetail, parseHead, parseInbox, prKey } from "./prParsers.js";
 
 const GH_HOST = "github.com";
 const INBOX_CACHE_TTL_MS = 30_000;
@@ -162,7 +162,7 @@ export class PullRequestService {
       const items = mergeInboxItems(parsed.map((entry) => entry.items));
       for (const item of items) this.knownHeads.set(prKey(item.ref), item.headRefOid);
       const truncated = parsed.some((entry) => entry.truncated);
-      return { account: accountInfo, items, fetchedAt, error: null, truncated };
+      return { account: accountInfo, items, fetchedAt, error: null, truncated, limit: INBOX_SEARCH_LIMIT };
     } catch (error) {
       return { account: accountInfo, items: [], fetchedAt, error: (error as Error).message || "GitHub CLI error" };
     }
@@ -259,5 +259,26 @@ export class PullRequestService {
 
   knownHead(ref: PrRef): string | null {
     return this.knownHeads.get(prKey(ref)) ?? null;
+  }
+
+  async refreshHead(ref: PrRef): Promise<string | null> {
+    try {
+      assertPrRef(ref);
+      const resolution = await this.resolveAccount();
+      if ("error" in resolution) return null;
+      const { account, token } = resolution;
+      const stdout = await execText(
+        this.githubCliBinary(),
+        ["api", "graphql", "-f", `query=${HEAD_QUERY}`, "-f", `owner=${ref.owner}`, "-f", `repo=${ref.repo}`, "-F", `number=${ref.number}`],
+        homedir(),
+        REQUEST_TIMEOUT_MS,
+        authenticatedEnvironment(account.host, token)
+      );
+      const head = parseHead(stdout);
+      if (head) this.knownHeads.set(prKey(ref), head);
+      return head;
+    } catch {
+      return null;
+    }
   }
 }

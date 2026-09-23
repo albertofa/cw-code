@@ -8,10 +8,6 @@ export function canOwnAutoLink(session: SessionMeta): boolean {
   return session.status !== "resolved" && session.status !== "archived";
 }
 
-export function hasStaleAutoLink(session: SessionMeta): boolean {
-  return session.pr?.origin === "opened" && !canOwnAutoLink(session);
-}
-
 export function linkFromStatus(session: SessionMeta, status: GitStatus, now: number, headSha?: string | null): SessionPrLink | null {
   if (session.pr) return null;
   if (!canOwnAutoLink(session) || session.branch !== status.branch) return null;

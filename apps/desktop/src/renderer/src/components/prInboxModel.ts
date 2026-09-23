@@ -106,7 +106,7 @@ export function rowDeltaText(row: PrInboxRow, nowMs: number): string | null {
   if (!row.hasUnseenSession) return null;
   const session = mainLinkedSession(row.linkedSessions);
   if (!session?.pr) return null;
-  if (row.pr.headRefOid !== session.pr.lastSeenSha) return "new commits";
+  if (session.pr.lastSeenSha !== "" && row.pr.headRefOid !== session.pr.lastSeenSha) return "new commits";
   return `updated ${formatRelativeAge(row.pr.updatedAt, nowMs)}`;
 }
 

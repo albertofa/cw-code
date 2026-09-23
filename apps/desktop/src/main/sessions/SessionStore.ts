@@ -3,7 +3,6 @@ import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "
 import { dirname, join } from "node:path";
 import type { ComposerPrefs, DriverKind, Project, SessionMeta, SessionPrLink } from "@cw-code/contracts";
 import { expandHome } from "../skills/skillPaths.js";
-import { hasStaleAutoLink } from "../github/prLinks.js";
 
 interface StoreShape {
   projects: Project[];
@@ -56,10 +55,6 @@ export class SessionStore {
         migrated = true;
       } else if (session.status === "working" || session.status === "input-required") {
         session.status = "holding";
-        migrated = true;
-      }
-      if (hasStaleAutoLink(session)) {
-        delete session.pr;
         migrated = true;
       }
       if (!session.worktreePath) continue;

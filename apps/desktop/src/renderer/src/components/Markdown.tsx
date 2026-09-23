@@ -95,6 +95,7 @@ export function buildPreviewHtml(title: string, markdown: string): string {
 }
 
 const BlockCodeContext = createContext(false);
+const InLinkContext = createContext(false);
 
 function Pre({ children }: { children?: ReactNode }) {
   const preRef = useRef<HTMLPreElement>(null);
@@ -229,7 +230,7 @@ function MdLink({
   return (
     <a href={href} onClick={onClick} title={href} className={github ? "md-link-gh" : undefined}>
       {github && <GitHubMark size={12} />}
-      {children}
+      <InLinkContext.Provider value={true}>{children}</InLinkContext.Provider>
     </a>
   );
 }
@@ -275,7 +276,8 @@ export function sanitizeStreamingMarkdown(text: string): string {
 
 function MdImageLink({ src, alt }: { src?: string; alt?: string }) {
   const label = alt?.trim() || src || "image";
-  if (!src) return <span className="md-image-link">{label}</span>;
+  const insideLink = useContext(InLinkContext);
+  if (!src || insideLink) return <span className="md-image-link">{label}</span>;
   return (
     <span className="md-image-link">
       <MdLink href={src}>{label}</MdLink>

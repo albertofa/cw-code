@@ -55,6 +55,8 @@ export interface PrInboxResult {
   error: string | null;
   /** True when at least one inbox search hit its page size, so older PRs may be missing. */
   truncated?: boolean;
+  /** Page size used per inbox search query. */
+  limit?: number;
 }
 
 export interface PrCheck {

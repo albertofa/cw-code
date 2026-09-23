@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PrSummary } from "@cw-code/contracts";
-import { bucketFor, ciFromRollup, parseDetail, parseInbox, prKey, prRefFromUrl } from "./prParsers.js";
+import { bucketFor, ciFromRollup, parseDetail, parseHead, parseInbox, prKey, prRefFromUrl } from "./prParsers.js";
 
 function rollupNode(state: string) {
   return { __typename: "CheckRun", conclusion: state };
@@ -201,6 +201,22 @@ describe("ciFromRollup", () => {
     expect(ciFromRollup(["SUCCESS", "NEUTRAL", "SKIPPED"])).toEqual({ ci: "passing", checks: { total: 3, passed: 3, failed: 0, pending: 0 } });
     expect(ciFromRollup(["SUCCESS", "FAILURE"])).toEqual({ ci: "failing", checks: { total: 2, passed: 1, failed: 1, pending: 0 } });
     expect(ciFromRollup(["SUCCESS", "IN_PROGRESS"])).toEqual({ ci: "pending", checks: { total: 2, passed: 1, failed: 0, pending: 1 } });
+  });
+});
+
+describe("parseHead", () => {
+  it("extracts the head sha", () => {
+    const json = JSON.stringify({ data: { repository: { pullRequest: { headRefOid: "sha-1" } } } });
+    expect(parseHead(json)).toBe("sha-1");
+  });
+
+  it("returns null when the head sha is missing", () => {
+    const json = JSON.stringify({ data: { repository: { pullRequest: {} } } });
+    expect(parseHead(json)).toBeNull();
+  });
+
+  it("returns null for malformed JSON", () => {
+    expect(parseHead("not-json")).toBeNull();
   });
 });
 

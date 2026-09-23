@@ -394,8 +394,11 @@ export function PrInboxView() {
         <div className="pr-inbox-toolbar">
           <SyncedLabel fetchedAt={inbox?.fetchedAt ?? null} loading={loading} />
           {inbox?.truncated && (
-            <span className="pr-inbox-truncated" title="GitHub search returns at most 50 pull requests per query; older ones may be missing">
-              at most 50 per search
+            <span
+              className="pr-inbox-truncated"
+              title={`GitHub search returns at most ${inbox.limit ?? "N"} pull requests per query; older ones may be missing`}
+            >
+              at most {inbox.limit ?? "N"} per search
             </span>
           )}
           <span className="pr-inbox-toolbar-grow" />

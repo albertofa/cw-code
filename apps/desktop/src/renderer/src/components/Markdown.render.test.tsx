@@ -114,4 +114,11 @@ describe("Md images", () => {
     const rendered = await renderMd("![](https://example.com/b.png)", false);
     expect(rendered.querySelector(".md-image-link a")?.textContent).toBe("https://example.com/b.png");
   });
+
+  it("renders an image inside a link as plain text to avoid nesting anchors", async () => {
+    const rendered = await renderMd("[![diagram](https://example.com/a.png)](https://example.com/page)", false);
+    expect(rendered.querySelector("a")?.querySelector("a")).toBeNull();
+    expect(rendered.querySelector(".md-image-link")?.textContent).toBe("diagram");
+    expect(rendered.querySelector("a")?.getAttribute("href")).toBe("https://example.com/page");
+  });
 });

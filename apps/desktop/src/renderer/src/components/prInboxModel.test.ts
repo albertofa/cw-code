@@ -190,6 +190,17 @@ describe("rowDeltaText", () => {
     expect(rowDeltaText(row, 120_000)).toBe("updated 1m");
   });
 
+  it("reports the relative update age instead of new commits when the last-seen sha is unknown", () => {
+    const pr = summary({ headRefOid: "sha-2", updatedAt: 60_000 });
+    const linked = session({
+      id: "s1",
+      pr: { ref: ref(), origin: "opened", lastSeenSha: "", lastSeenAt: 0 }
+    });
+    const [row] = buildInboxRows([pr], [linked], () => true);
+
+    expect(rowDeltaText(row, 120_000)).toBe("updated 1m");
+  });
+
   it("prefers the session that opened the PR over a more recently active one", () => {
     const pr = summary({ headRefOid: "sha-2" });
     const opener = session({

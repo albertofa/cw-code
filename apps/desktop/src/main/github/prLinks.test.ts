@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { GitBranchInfo, GitPullRequest, GitStatus, SessionMeta, SessionPrLink } from "@cw-code/contracts";
-import { authorLocalBranch, canOwnAutoLink, hasStaleAutoLink, linkFromStatus, markSeen, prHeadPlan } from "./prLinks.js";
+import { authorLocalBranch, canOwnAutoLink, linkFromStatus, markSeen, prHeadPlan } from "./prLinks.js";
 
 function session(overrides: Partial<SessionMeta> = {}): SessionMeta {
   return {
@@ -144,29 +144,11 @@ describe("linkFromStatus", () => {
 });
 
 describe("auto-link ownership", () => {
-  const opened: SessionPrLink = {
-    ref: { host: "github.com", owner: "acme", repo: "widgets", number: 42 },
-    origin: "opened",
-    lastSeenSha: "",
-    lastSeenAt: 1
-  };
-
   it("only lets live worktree sessions own an auto-link", () => {
     expect(canOwnAutoLink(session())).toBe(true);
     expect(canOwnAutoLink(session({ worktreePath: undefined }))).toBe(false);
     expect(canOwnAutoLink(session({ status: "archived" }))).toBe(false);
     expect(canOwnAutoLink(session({ status: "resolved" }))).toBe(false);
-  });
-
-  it("flags opened links held by sessions that cannot own them", () => {
-    expect(hasStaleAutoLink(session({ pr: opened, worktreePath: undefined }))).toBe(true);
-    expect(hasStaleAutoLink(session({ pr: opened, status: "archived" }))).toBe(true);
-    expect(hasStaleAutoLink(session({ pr: opened }))).toBe(false);
-  });
-
-  it("never flags manual links or sessions without a link", () => {
-    expect(hasStaleAutoLink(session({ pr: { ...opened, origin: "linked" }, worktreePath: undefined }))).toBe(false);
-    expect(hasStaleAutoLink(session({ worktreePath: undefined }))).toBe(false);
   });
 });
 

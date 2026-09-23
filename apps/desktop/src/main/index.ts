@@ -38,7 +38,10 @@ type DriverName = DriverKind;
 
 let mainWindow: BrowserWindow | null = null;
 let pullRequests: PullRequestService;
-const sessions = new SessionManager({ prHead: (ref) => pullRequests.knownHead(ref) });
+const sessions = new SessionManager({
+  prHead: (ref) => pullRequests.knownHead(ref),
+  prHeadRefresh: (ref) => pullRequests.refreshHead(ref)
+});
 const skills = new SkillsStore();
 const files = new FileService();
 const git = new GitService(() => sessions.getSettings());
@@ -113,7 +116,7 @@ function isAppUrl(url: string): boolean {
   const devUrl = process.env["ELECTRON_RENDERER_URL"];
   if (devUrl) return target.origin === new URL(devUrl).origin;
   const indexPath = pathToFileURL(rendererIndexPath()).pathname;
-  return target.protocol === "file:" && target.pathname.toLowerCase() === indexPath.toLowerCase();
+  return target.protocol === "file:" && target.host === "" && target.pathname.toLowerCase() === indexPath.toLowerCase();
 }
 
 function windowFromSender(sender: WebContents): BrowserWindow | null {

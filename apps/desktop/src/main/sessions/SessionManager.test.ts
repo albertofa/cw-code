@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
-import type { CliDriver, HistoryMessage, ModelOption, ThreadEvent, TurnHandle } from "@cw-code/contracts";
+import type { CliDriver, HistoryMessage, ModelOption, SessionMeta, ThreadEvent, TurnHandle } from "@cw-code/contracts";
 import { SessionManager } from "./SessionManager.js";
 import type { SessionStore } from "./SessionStore.js";
 
@@ -169,6 +169,20 @@ async function waitForBranch(manager: SessionManager, projectId: string, session
     await new Promise((r) => setTimeout(r, 50));
   }
   return (await manager.listSessions(projectId)).find((s) => s.id === sessionId)?.branch;
+}
+
+async function waitForSessionPrSeen(
+  manager: SessionManager,
+  projectId: string,
+  sessionId: string,
+  sha: string
+): Promise<SessionMeta | undefined> {
+  for (let i = 0; i < 100; i += 1) {
+    const session = (await manager.listSessions(projectId)).find((s) => s.id === sessionId);
+    if (session?.pr?.lastSeenSha === sha) return session;
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  return (await manager.listSessions(projectId)).find((s) => s.id === sessionId);
 }
 
 function makeGitSandboxManager(prefix: string) {
@@ -1069,6 +1083,31 @@ describe("SessionManager", () => {
     expect(typeof active[0].startedAt).toBe("number");
     fake.complete(turnId);
     expect(manager.listActiveTurns()).toEqual([]);
+    manager.dispose();
+  });
+
+  it("marks a linked pull request seen with a freshly refreshed head instead of the cached one", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cw-test-"));
+    const ref = { host: "github.com", owner: "acme", repo: "widgets", number: 42 };
+    const manager = new SessionManager({
+      dbPath: join(dir, "test.db"),
+      settingsPath: join(dir, "settings.json"),
+      prHead: () => "sha-cached",
+      prHeadRefresh: async () => "sha-fresh"
+    });
+    const fake = new FakeDriver((e) => (manager as unknown as { routeEvent(e: ThreadEvent): void }).routeEvent(e));
+    (manager as unknown as { drivers: Record<string, CliDriver> }).drivers = { claude: fake, opencode: fake, codex: fake };
+    manager.setSettings({ autoTitleEnabled: false });
+
+    const project = manager.addProject(join(dir, "proj"));
+    const session = await manager.createSession(project.id, "claude", { mode: "current" });
+    manager.linkPr(session.id, { ref, origin: "linked", lastSeenSha: "sha-old", lastSeenAt: 0 });
+
+    const turnId = await manager.startTurn(session.id, "hello");
+    fake.complete(turnId);
+
+    const updated = await waitForSessionPrSeen(manager, project.id, session.id, "sha-fresh");
+    expect(updated?.pr?.lastSeenSha).toBe("sha-fresh");
     manager.dispose();
   });
 

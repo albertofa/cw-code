@@ -313,6 +313,18 @@ function parseTimeline(value: unknown, threadIndex: Map<string, string[]>): PrTi
   return items;
 }
 
+export function parseHead(json: string): string | null {
+  let root: Record<string, unknown>;
+  try {
+    root = JSON.parse(json) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+  const pr = asRecord(asRecord(asRecord(root.data).repository).pullRequest);
+  const headRefOid = asString(pr.headRefOid);
+  return headRefOid || null;
+}
+
 export function parseDetail(json: string, viewer: string): PrDetail | null {
   let root: Record<string, unknown>;
   try {

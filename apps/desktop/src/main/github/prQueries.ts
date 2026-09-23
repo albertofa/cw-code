@@ -273,6 +273,16 @@ ${PR_SUMMARY_FIELDS}
 }
 `;
 
+export const HEAD_QUERY = `
+query($owner: String!, $repo: String!, $number: Int!) {
+  repository(owner: $owner, name: $repo) {
+    pullRequest(number: $number) {
+      headRefOid
+    }
+  }
+}
+`;
+
 export function inboxSearchQueries(now: number): string[] {
   const since = new Date(now - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
   return ["is:pr is:open involves:@me archived:false", `is:pr is:merged author:@me merged:>=${since}`];
