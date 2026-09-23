@@ -8,10 +8,54 @@ import {
   claudeDenyResponse,
   claudeQuestionRequest,
   parseClaudeControlRequest,
+  parseClaudeSubagentHandback,
   parseClaudeTaskSystemLine,
   parseTaskNotificationUsage,
   parseStreamLine
 } from "./claudeStreamParser.js";
+
+describe("parseClaudeSubagentHandback", () => {
+  it("maps a nested Handback message to its parent Agent result", () => {
+    expect(
+      parseClaudeSubagentHandback({
+        type: "tool.call",
+        turnId: "t1",
+        toolCallId: "handback-1",
+        name: "SubagentHandback",
+        input: { message: "final report" },
+        parentToolCallId: "agent-1"
+      })
+    ).toEqual({
+      type: "tool.result",
+      turnId: "t1",
+      toolCallId: "agent-1",
+      output: "final report",
+      isError: false
+    });
+  });
+
+  it("ignores non-Handback and malformed events", () => {
+    expect(
+      parseClaudeSubagentHandback({
+        type: "tool.call",
+        turnId: "t1",
+        toolCallId: "read-1",
+        name: "Read",
+        input: { path: "a.ts" }
+      })
+    ).toBeNull();
+    expect(
+      parseClaudeSubagentHandback({
+        type: "tool.call",
+        turnId: "t1",
+        toolCallId: "handback-1",
+        name: "SubagentHandback",
+        input: { message: "" },
+        parentToolCallId: "agent-1"
+      })
+    ).toBeNull();
+  });
+});
 
 describe("parseStreamLine", () => {
   it("maps text deltas to assistant.delta", () => {
@@ -125,6 +169,34 @@ describe("parseStreamLine", () => {
     ]);
   });
 
+  it("normalizes text-block arrays in user tool results", () => {
+    const line = JSON.stringify({
+      type: "user",
+      message: {
+        content: [{ tool_use_id: "tu1", content: [{ type: "text", text: "Async agent launched successfully." }] }]
+      }
+    });
+    expect(parseStreamLine(line, "t1", "s1", () => {})).toEqual([
+      { type: "tool.result", turnId: "t1", toolCallId: "tu1", output: "Async agent launched successfully.", isError: false }
+    ]);
+  });
+
+  it("preserves JSON for non-text tool result content", () => {
+    const line = JSON.stringify({
+      type: "user",
+      message: { content: [{ tool_use_id: "tu1", content: [{ type: "image", source: { data: "abc" } }] }] }
+    });
+    expect(parseStreamLine(line, "t1", "s1", () => {})).toEqual([
+      {
+        type: "tool.result",
+        turnId: "t1",
+        toolCallId: "tu1",
+        output: JSON.stringify([{ type: "image", source: { data: "abc" } }]),
+        isError: false
+      }
+    ]);
+  });
+
   it("emits turn metadata on result", () => {
     const line = JSON.stringify({
       type: "result",
@@ -184,7 +256,45 @@ describe("parseStreamLine", () => {
     expect(ackCalls).toBe(1);
   });
 
-  it("ignores task-notification results even when they report turns", () => {
+  it("accepts a task-notification result when no background work remains", () => {
+    const line = JSON.stringify({
+      type: "result",
+      origin: { kind: "task-notification" },
+      result: "final result",
+      num_turns: 3,
+      is_error: false,
+      session_id: "sess-1",
+      total_cost_usd: 0.03,
+      usage: { input_tokens: 120, output_tokens: 30 }
+    });
+    let captured: Parameters<Parameters<typeof parseStreamLine>[3]>[0] | null = null;
+    let ackCalls = 0;
+    const events = parseStreamLine(
+      line,
+      "t1",
+      "s1",
+      (info) => {
+        captured = info;
+      },
+      () => {
+        ackCalls += 1;
+      },
+      () => false
+    );
+    expect(events).toEqual([]);
+    expect(ackCalls).toBe(0);
+    expect(captured).toEqual({
+      resumeCursor: "sess-1",
+      resultText: "final result",
+      inputTokens: 120,
+      outputTokens: 30,
+      costUsd: 0.03,
+      numTurns: 3,
+      isError: false
+    });
+  });
+
+  it("rejects task-notification results while background work remains", () => {
     const line = JSON.stringify({
       type: "result",
       origin: { kind: "task-notification" },
@@ -203,7 +313,8 @@ describe("parseStreamLine", () => {
       },
       () => {
         ackCalls += 1;
-      }
+      },
+      () => true
     );
     expect(doneCalls).toBe(0);
     expect(ackCalls).toBe(1);
@@ -233,10 +344,14 @@ describe("parseClaudeTaskSystemLine", () => {
       subtype: "background_tasks_changed",
       tasks: [
         { type: "local_agent", id: "a202cd0fd545a319e" },
-        { type: "local_bash", id: "b-1" }
+        { type: "local_bash", task_id: "b-1" }
       ]
     });
-    expect(parseClaudeTaskSystemLine(line)).toEqual({ kind: "tasks", liveTasks: 2 });
+    expect(parseClaudeTaskSystemLine(line)).toEqual({
+      kind: "tasks",
+      liveTasks: 2,
+      liveTaskIds: ["a202cd0fd545a319e", "b-1"]
+    });
   });
 
   it("parses task_started with prompt and background flag", () => {
@@ -245,6 +360,7 @@ describe("parseClaudeTaskSystemLine", () => {
       subtype: "task_started",
       task_id: "a202cd0fd545a319e",
       tool_use_id: "toolu_1",
+      task_type: "local_agent",
       description: "Review the diff",
       subagent_type: "general-purpose",
       is_backgrounded: true,
@@ -254,6 +370,7 @@ describe("parseClaudeTaskSystemLine", () => {
       kind: "started",
       taskId: "a202cd0fd545a319e",
       toolUseId: "toolu_1",
+      taskType: "local_agent",
       description: "Review the diff",
       subagentType: "general-purpose",
       background: true,
