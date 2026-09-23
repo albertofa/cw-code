@@ -80,6 +80,7 @@ export interface CreateSessionOptions {
   useWorktree?: boolean;
   mode?: CreateWorkspaceMode;
   reuseWorktreePath?: string;
+  prHead?: { number: number; headRefName: string; headRefOid: string; viewerIsAuthor: boolean };
 }
 
 export interface SessionCleanupResult {
@@ -455,6 +456,7 @@ export interface CwApi {
   setComposer(sessionId: string, prefs: ComposerPrefs): Promise<ComposerPrefs>;
   getSettings(): Promise<AppSettings>;
   setSettings(patch: SettingsPatch): Promise<AppSettings>;
+  getDefaultPrWorkflows(): Promise<PrWorkflow[]>;
   skills: {
     list(): Promise<SkillsListResult>;
     get(name: string): Promise<SkillDetail>;

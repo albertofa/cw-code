@@ -30,6 +30,7 @@ import { GitService } from "./fs/GitService.js";
 import { assertPrRef, PullRequestService } from "./github/PullRequestService.js";
 import { PtyPool } from "./pty/PtyPool.js";
 import { readWindowsTerminalFontFace } from "./pty/terminalFont.js";
+import { defaultPrWorkflows } from "./settings/prWorkflowDefaults.js";
 import { configuredCliBinaryPath } from "./settings/settingsUtils.js";
 import { initOpencodeModelsCache } from "./providers/opencode/opencodeModels.js";
 
@@ -142,6 +143,7 @@ function registerIpc(): void {
     return verifyBinaryPath(args.binary, args.path);
   });
   ipcMain.handle("settings.get", () => sessions.getSettings());
+  ipcMain.handle("settings.prWorkflowDefaults", () => defaultPrWorkflows());
   ipcMain.handle("skills.list", () => skills.listSkills());
   ipcMain.handle("skills.get", (_e, name: string) => skills.getSkill(name));
   ipcMain.handle("skills.save", (_e, input: SkillSaveInput) => skills.saveSkill(input));

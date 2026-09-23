@@ -1,9 +1,32 @@
-import { useCallback, useEffect, useState } from "react";
-import { AlertTriangle, Bot, CheckCircle2, Gauge, GitBranch, RefreshCw, Sparkles, Star, X, XCircle } from "lucide-react";
+import { useCallback, useEffect, useRef, useState } from "react";
+import {
+  Activity,
+  AlertTriangle,
+  ArrowDown,
+  ArrowUp,
+  Bot,
+  CheckCircle2,
+  Copy,
+  Eye,
+  Gauge,
+  GitBranch,
+  GitMerge,
+  GitPullRequest,
+  MessageSquare,
+  Plus,
+  RefreshCw,
+  RotateCcw,
+  Sparkles,
+  Star,
+  Trash2,
+  Wrench,
+  X,
+  XCircle
+} from "lucide-react";
 import type { AppSettings, DriverName, EffortLevel, ModelOption, SourceControlHealth, WorktreePruneSummary } from "../cw.js";
 import { BinaryPicker } from "./BinaryPicker.js";
 import { TOOL_TABS } from "./toolTabs.js";
-import type { PanelId } from "@cw-code/contracts";
+import type { PanelId, PrSuggestCondition, PrWorkflow, PrWorkflowIcon, PrWorkspaceChoice } from "@cw-code/contracts";
 import { useAppStore } from "../stores/appStore.js";
 import { usePanelStore } from "../stores/panelStore.js";
 import { useNotifs } from "./Notifications.js";
@@ -11,6 +34,44 @@ import { MenuSelect } from "./MenuSelect.js";
 import { DriverIcon } from "./DriverIcon.js";
 import appIcon from "../assets/console-c.svg";
 import { version as appVersion, description as appDescription } from "../../../../package.json";
+import { attributionText, TEMPLATE_VARS } from "./prWorkflows.js";
+import { createWorkflow, deleteWorkflow, duplicateWorkflow, insertAtCursor, moveWorkflow, resetWorkflowTo } from "./prWorkflowEditor.js";
+
+const WORKFLOW_ICONS: Record<PrWorkflowIcon, typeof Eye> = {
+  eye: Eye,
+  activity: Activity,
+  message: MessageSquare,
+  wrench: Wrench,
+  merge: GitMerge,
+  bot: Bot,
+  sparkle: Sparkles
+};
+
+const CONDITION_LABELS: Record<PrSuggestCondition, string> = {
+  "review-requested": "Review requested from me",
+  author: "I'm the author",
+  "checks-failing": "Checks failing",
+  "changes-requested": "Changes requested",
+  conflicts: "Has conflicts",
+  "bot-author": "Author is a bot",
+  draft: "Draft"
+};
+
+const ALL_CONDITIONS: PrSuggestCondition[] = [
+  "review-requested",
+  "author",
+  "checks-failing",
+  "changes-requested",
+  "conflicts",
+  "bot-author",
+  "draft"
+];
+
+const WORKSPACE_OPTIONS: Array<{ id: PrWorkspaceChoice; label: string; hint: string }> = [
+  { id: "checkout", label: "Current checkout", hint: "Use the project folder as-is." },
+  { id: "worktree", label: "Worktree at PR head", hint: "Check the PR head out into a new worktree." },
+  { id: "linked", label: "Linked session's workspace", hint: "Reuse the linked session's workspace; falls back to a worktree." }
+];
 
 // Must match CLAUDE_CURATED_MODELS in apps/desktop/src/main/providers/claude/ClaudeCliDriver.ts.
 // Main drops unknown ids on save, so keep this list in sync with the driver.
@@ -40,7 +101,7 @@ const EFFORTS: Array<{ id: EffortLevel; label: string }> = [
   { id: "max", label: "Max" }
 ];
 
-type Category = "general" | "sourceControl" | "harnesses";
+type Category = "general" | "sourceControl" | "prWorkflows" | "harnesses";
 type Harness = DriverName;
 
 export function SettingsModal({
@@ -70,6 +131,11 @@ export function SettingsModal({
   const [confirmPrune, setConfirmPrune] = useState(false);
   const [pruneSummary, setPruneSummary] = useState<WorktreePruneSummary | null>(null);
   const [pruneError, setPruneError] = useState<string | null>(null);
+  const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null);
+  const [resetBusyId, setResetBusyId] = useState<string | null>(null);
+  const [resetError, setResetError] = useState<string | null>(null);
+  const startPromptRef = useRef<HTMLTextAreaElement | null>(null);
+  const updatePromptRef = useRef<HTMLTextAreaElement | null>(null);
   const activeProjectId = useAppStore((state) => state.activeProjectId);
   const activeProject = useAppStore((state) => state.projects.find((project) => project.id === state.activeProjectId));
   const tabAutoLocation = usePanelStore((s) => s.autoLocation);
@@ -119,6 +185,13 @@ export function SettingsModal({
   useEffect(() => {
     if (category === "sourceControl") loadSourceControlHealth();
   }, [category, loadSourceControlHealth]);
+
+  useEffect(() => {
+    if (category !== "prWorkflows" || !draft) return;
+    if (!draft.prWorkflows.some((w) => w.id === selectedWorkflowId)) {
+      setSelectedWorkflowId(draft.prWorkflows[0]?.id ?? null);
+    }
+  }, [category, draft, selectedWorkflowId]);
 
   useEffect(() => {
     if (category !== "general") return;
@@ -288,6 +361,83 @@ export function SettingsModal({
       useNotifs.getState().push({ kind: "error", title: "Could not prune worktrees", message });
     } finally {
       setPruneBusy(false);
+    }
+  };
+
+  const setWorkflows = (next: PrWorkflow[]) => set({ prWorkflows: next });
+
+  const toggleWorkflowEnabled = (id: string) => {
+    if (!draft) return;
+    setWorkflows(draft.prWorkflows.map((w) => (w.id === id ? { ...w, enabled: !w.enabled } : w)));
+  };
+
+  const moveWorkflowEntry = (id: string, direction: "up" | "down") => {
+    if (!draft) return;
+    setWorkflows(moveWorkflow(draft.prWorkflows, id, direction));
+  };
+
+  const addWorkflow = () => {
+    if (!draft) return;
+    const next = createWorkflow(draft.prWorkflows);
+    setWorkflows(next);
+    setSelectedWorkflowId(next[next.length - 1].id);
+  };
+
+  const duplicateSelectedWorkflow = () => {
+    if (!draft || !selectedWorkflowId) return;
+    const sourceIndex = draft.prWorkflows.findIndex((w) => w.id === selectedWorkflowId);
+    const next = duplicateWorkflow(draft.prWorkflows, selectedWorkflowId);
+    setWorkflows(next);
+    const added = sourceIndex !== -1 ? next[sourceIndex + 1] : undefined;
+    if (added) setSelectedWorkflowId(added.id);
+  };
+
+  const deleteSelectedWorkflow = (id: string) => {
+    if (!draft) return;
+    const next = deleteWorkflow(draft.prWorkflows, id);
+    setWorkflows(next);
+    if (selectedWorkflowId === id) setSelectedWorkflowId(next[0]?.id ?? null);
+  };
+
+  const updateSelectedWorkflow = (patch: Partial<PrWorkflow>) => {
+    if (!draft || !selectedWorkflowId) return;
+    setWorkflows(draft.prWorkflows.map((w) => (w.id === selectedWorkflowId ? { ...w, ...patch } : w)));
+  };
+
+  const toggleCondition = (workflow: PrWorkflow, condition: PrSuggestCondition) => {
+    const has = workflow.suggestWhen.includes(condition);
+    updateSelectedWorkflow({
+      suggestWhen: has ? workflow.suggestWhen.filter((c) => c !== condition) : [...workflow.suggestWhen, condition]
+    });
+  };
+
+  const insertTemplateVar = (field: "startPrompt" | "updatePrompt", workflow: PrWorkflow, token: string) => {
+    const ref = field === "startPrompt" ? startPromptRef : updatePromptRef;
+    const el = ref.current;
+    const current = workflow[field];
+    const start = el?.selectionStart ?? current.length;
+    const end = el?.selectionEnd ?? current.length;
+    const { value, cursor } = insertAtCursor(current, `{{${token}}}`, start, end);
+    updateSelectedWorkflow(field === "startPrompt" ? { startPrompt: value } : { updatePrompt: value });
+    requestAnimationFrame(() => {
+      el?.focus();
+      el?.setSelectionRange(cursor, cursor);
+    });
+  };
+
+  const resetSelectedWorkflow = async (id: string) => {
+    if (!draft) return;
+    setResetBusyId(id);
+    setResetError(null);
+    try {
+      const defaults = await window.cw.getDefaultPrWorkflows();
+      setDraft((d) => (d ? { ...d, prWorkflows: resetWorkflowTo(d.prWorkflows, id, defaults) } : d));
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "Could not reset workflow";
+      setResetError(message);
+      useNotifs.getState().push({ kind: "error", title: "Could not reset workflow", message });
+    } finally {
+      setResetBusyId(null);
     }
   };
 
@@ -740,6 +890,263 @@ export function SettingsModal({
     </>
   );
 
+  const prWorkflowsFields = draft && (() => {
+    const workflows = draft.prWorkflows;
+    const selected = workflows.find((w) => w.id === selectedWorkflowId) ?? null;
+    const SelectedIcon = selected ? WORKFLOW_ICONS[selected.icon] : null;
+    return (
+      <div className="settings-prwf">
+        <div className="settings-prwf-list">
+          <div className="settings-prwf-list-head">
+            <h3>Workflows</h3>
+            <button className="btn" onClick={addWorkflow}>
+              <Plus size={13} aria-hidden="true" /> New
+            </button>
+          </div>
+          <div className="settings-prwf-list-body">
+            {workflows.map((w, index) => {
+              const Icon = WORKFLOW_ICONS[w.icon];
+              return (
+                <div
+                  key={w.id}
+                  className={`settings-prwf-item${selected?.id === w.id ? " active" : ""}`}
+                  onClick={() => setSelectedWorkflowId(w.id)}
+                >
+                  <span className="settings-prwf-item-reorder">
+                    <button
+                      className="icon-btn"
+                      aria-label={`Move ${w.label} up`}
+                      disabled={index === 0}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        moveWorkflowEntry(w.id, "up");
+                      }}
+                    >
+                      <ArrowUp size={12} aria-hidden="true" />
+                    </button>
+                    <button
+                      className="icon-btn"
+                      aria-label={`Move ${w.label} down`}
+                      disabled={index === workflows.length - 1}
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        moveWorkflowEntry(w.id, "down");
+                      }}
+                    >
+                      <ArrowDown size={12} aria-hidden="true" />
+                    </button>
+                  </span>
+                  <Icon size={15} aria-hidden="true" />
+                  <span className="settings-prwf-item-text">
+                    <span className="settings-prwf-item-name">
+                      {w.label}
+                      {!w.builtIn && <span className="settings-tag">custom</span>}
+                    </span>
+                    <span className="settings-prwf-item-hint">
+                      {w.suggestWhen.length > 0 ? w.suggestWhen.map((c) => CONDITION_LABELS[c]).join(", ") : "Manual only"}
+                    </span>
+                  </span>
+                  <span className="settings-switch" onClick={(e) => e.stopPropagation()}>
+                    <input
+                      type="checkbox"
+                      checked={w.enabled}
+                      onChange={() => toggleWorkflowEnabled(w.id)}
+                      aria-label={`Enable ${w.label}`}
+                    />
+                    <span className="track" aria-hidden="true" />
+                  </span>
+                </div>
+              );
+            })}
+          </div>
+          <div className="settings-prwf-global">
+            <h4>Repositories</h4>
+            <label className="settings-row">
+              <span className="settings-label">Clone root</span>
+              <span className="settings-hint">Where repos that aren&apos;t cw-code projects yet get cloned to, as <span className="settings-id">&lt;root&gt;/&lt;owner&gt;/&lt;repo&gt;</span>.</span>
+              <input
+                className="field"
+                value={draft.prCloneRoot}
+                placeholder="~/.cw-code/repos"
+                onChange={(e) => set({ prCloneRoot: e.target.value })}
+              />
+            </label>
+            <h4>Updates</h4>
+            <label className="settings-row">
+              <span className="settings-label">Refresh interval</span>
+              <span className="settings-hint">How often linked PRs and the inbox refresh. 30–3600 seconds.</span>
+              <span className="settings-number-field">
+                <input
+                  className="field"
+                  type="number"
+                  min={30}
+                  max={3600}
+                  value={draft.prRefreshIntervalSeconds}
+                  onChange={(e) => set({ prRefreshIntervalSeconds: Number(e.target.value) })}
+                  onBlur={() => set({ prRefreshIntervalSeconds: Math.min(3600, Math.max(30, draft.prRefreshIntervalSeconds || 30)) })}
+                />
+                <span>seconds</span>
+              </span>
+            </label>
+            <h4>Attribution</h4>
+            <label className="settings-row">
+              <span className="settings-label">Sign what the agent posts</span>
+              <span className="settings-hint">Resolves the <span className="settings-id">{"{{attribution}}"}</span> template variable. Off resolves to nothing.</span>
+              <span className="settings-switch">
+                <input
+                  type="checkbox"
+                  checked={draft.prAttributionEnabled}
+                  onChange={(e) => set({ prAttributionEnabled: e.target.checked })}
+                  aria-label="Sign what the agent posts"
+                />
+                <span className="track" aria-hidden="true" />
+              </span>
+            </label>
+            <label className="settings-row">
+              <span className="settings-label">Attribution text</span>
+              <span className="settings-hint">Use <span className="settings-id">{"{{harness}}"}</span> for the CLI name.</span>
+              <input
+                className="field"
+                value={draft.prAttributionText}
+                disabled={!draft.prAttributionEnabled}
+                onChange={(e) => set({ prAttributionText: e.target.value })}
+              />
+            </label>
+            <div className="settings-prwf-preview">
+              <span className="settings-hint">Preview</span>
+              <span className="settings-prwf-preview-text">
+                {attributionText(draft, "Claude") || "— nothing (attribution is off)"}
+              </span>
+            </div>
+          </div>
+        </div>
+        {selected && SelectedIcon ? (
+          <div className="settings-prwf-editor">
+            <div className="settings-prwf-editor-head">
+              <span className="settings-prwf-editor-icon">
+                <SelectedIcon size={20} aria-hidden="true" />
+              </span>
+              <div className="settings-prwf-editor-title">
+                <input
+                  className="field settings-prwf-name"
+                  value={selected.label}
+                  aria-label="Workflow label"
+                  onChange={(e) => updateSelectedWorkflow({ label: e.target.value })}
+                />
+                <input
+                  className="field settings-prwf-desc"
+                  value={selected.description}
+                  placeholder="Description"
+                  aria-label="Workflow description"
+                  onChange={(e) => updateSelectedWorkflow({ description: e.target.value })}
+                />
+              </div>
+              <MenuSelect
+                label="Icon"
+                title="Workflow icon"
+                direction="down"
+                value={selected.icon}
+                display={selected.icon}
+                icon={<SelectedIcon size={13} aria-hidden="true" />}
+                options={(Object.keys(WORKFLOW_ICONS) as PrWorkflowIcon[]).map((id) => {
+                  const OptionIcon = WORKFLOW_ICONS[id];
+                  return { id, label: id, icon: <OptionIcon size={13} aria-hidden="true" /> };
+                })}
+                onPick={(id) => updateSelectedWorkflow({ icon: id as PrWorkflowIcon })}
+              />
+              <div className="settings-prwf-editor-actions">
+                <button className="btn" onClick={duplicateSelectedWorkflow}>
+                  <Copy size={13} aria-hidden="true" /> Duplicate
+                </button>
+                {selected.builtIn ? (
+                  <button className="btn" disabled={resetBusyId === selected.id} onClick={() => void resetSelectedWorkflow(selected.id)}>
+                    <RotateCcw size={13} aria-hidden="true" /> {resetBusyId === selected.id ? "Resetting…" : "Reset to default"}
+                  </button>
+                ) : (
+                  <button className="btn btn-danger" onClick={() => deleteSelectedWorkflow(selected.id)}>
+                    <Trash2 size={13} aria-hidden="true" /> Delete
+                  </button>
+                )}
+              </div>
+            </div>
+            {resetError && <div className="settings-error">{resetError}</div>}
+
+            <section className="settings-prwf-block">
+              <h4>Suggest when<span className="settings-hint">Shows as the row&apos;s primary action in the inbox and tops the workflow menu.</span></h4>
+              <div className="settings-prwf-conds">
+                {ALL_CONDITIONS.map((c) => (
+                  <button
+                    key={c}
+                    type="button"
+                    className={`settings-prwf-cond${selected.suggestWhen.includes(c) ? " on" : ""}`}
+                    onClick={() => toggleCondition(selected, c)}
+                  >
+                    {CONDITION_LABELS[c]}
+                  </button>
+                ))}
+              </div>
+            </section>
+
+            <section className="settings-prwf-block">
+              <h4>Default workspace</h4>
+              <div className="seg settings-prwf-workspace">
+                {WORKSPACE_OPTIONS.map((opt) => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    className={selected.workspace === opt.id ? "on" : ""}
+                    title={opt.hint}
+                    onClick={() => updateSelectedWorkflow({ workspace: opt.id })}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            </section>
+
+            <section className="settings-prwf-block">
+              <h4>Start prompt<span className="settings-hint">Sent when the workflow starts a new or continued session.</span></h4>
+              <textarea
+                ref={startPromptRef}
+                className="field settings-prwf-textarea"
+                value={selected.startPrompt}
+                spellCheck={false}
+                onChange={(e) => updateSelectedWorkflow({ startPrompt: e.target.value })}
+              />
+              <div className="settings-prwf-vars">
+                {TEMPLATE_VARS.map((v) => (
+                  <button key={v} type="button" className="settings-prwf-var" onClick={() => insertTemplateVar("startPrompt", selected, v)}>
+                    {`{{${v}}}`}
+                  </button>
+                ))}
+              </div>
+            </section>
+
+            <section className="settings-prwf-block">
+              <h4>Follow-up prompt<span className="settings-hint">Sent from the update card for sessions linked to this PR.</span></h4>
+              <textarea
+                ref={updatePromptRef}
+                className="field settings-prwf-textarea"
+                value={selected.updatePrompt}
+                spellCheck={false}
+                onChange={(e) => updateSelectedWorkflow({ updatePrompt: e.target.value })}
+              />
+              <div className="settings-prwf-vars">
+                {TEMPLATE_VARS.map((v) => (
+                  <button key={v} type="button" className="settings-prwf-var" onClick={() => insertTemplateVar("updatePrompt", selected, v)}>
+                    {`{{${v}}}`}
+                  </button>
+                ))}
+              </div>
+            </section>
+          </div>
+        ) : (
+          <div className="side-empty">No workflows configured.</div>
+        )}
+      </div>
+    );
+  })();
+
   return (
     <div className="settings-backdrop" onClick={onClose}>
       <div className="settings-modal" role="dialog" aria-label="Settings" onClick={(e) => e.stopPropagation()}>
@@ -764,6 +1171,13 @@ export function SettingsModal({
               aria-current={category === "sourceControl"}
             >
               Source Control
+            </button>
+            <button
+              className={`settings-nav-item${category === "prWorkflows" ? " active" : ""}`}
+              onClick={() => setCategory("prWorkflows")}
+              aria-current={category === "prWorkflows"}
+            >
+              <GitPullRequest size={14} aria-hidden="true" /> PR workflows
             </button>
             <div className="settings-nav-group">Harnesses</div>
             <button
@@ -820,6 +1234,7 @@ export function SettingsModal({
               </>
             )}
             {!loading && !loadError && draft && category === "sourceControl" && sourceControlFields}
+            {!loading && !loadError && draft && category === "prWorkflows" && prWorkflowsFields}
             {!loading && !loadError && draft && category === "harnesses" && (
               <>
                 <div className="settings-section">

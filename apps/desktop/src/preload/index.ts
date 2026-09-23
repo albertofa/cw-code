@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { AppSettings, CliBinary, CliDiscoveredCandidate, CliDiscoverResult, CreateSessionOptions, GitBranchInfo, GitDiffMode, GitDiffResult, GitStatus, HarnessId, PrDetail, PrInboxResult, PrRef, Project, ProjectGitHubRepo, RetryConnectionResult, SessionCleanupResult, SessionMeta, SessionPrLink, SessionStatus, SkillDetail, SkillMeta, SkillSaveInput, SkillsListResult, SourceControlHealth, SubagentToolsResult, WorktreePruneSummary } from "@cw-code/contracts";
+import type { AppSettings, CliBinary, CliDiscoveredCandidate, CliDiscoverResult, CreateSessionOptions, GitBranchInfo, GitDiffMode, GitDiffResult, GitStatus, HarnessId, PrDetail, PrInboxResult, PrRef, PrWorkflow, Project, ProjectGitHubRepo, RetryConnectionResult, SessionCleanupResult, SessionMeta, SessionPrLink, SessionStatus, SkillDetail, SkillMeta, SkillSaveInput, SkillsListResult, SourceControlHealth, SubagentToolsResult, WorktreePruneSummary } from "@cw-code/contracts";
 
 export type PermissionMode = "auto" | "acceptEdits" | "bypassPermissions" | "manual";
 export type EffortLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
@@ -79,6 +79,7 @@ export interface CwApi {
   setComposer(sessionId: string, prefs: ComposerPrefs): Promise<ComposerPrefs>;
   getSettings(): Promise<AppSettings>;
   setSettings(patch: Partial<AppSettings>): Promise<AppSettings>;
+  getDefaultPrWorkflows(): Promise<PrWorkflow[]>;
   skills: {
     list(): Promise<SkillsListResult>;
     get(name: string): Promise<SkillDetail>;
@@ -191,6 +192,7 @@ const api: CwApi = {
     ipcRenderer.invoke("composer.set", { sessionId, prefs }),
   getSettings: () => ipcRenderer.invoke("settings.get"),
   setSettings: (patch: Partial<AppSettings>) => ipcRenderer.invoke("settings.set", patch),
+  getDefaultPrWorkflows: () => ipcRenderer.invoke("settings.prWorkflowDefaults"),
   skills: {
     list: () => ipcRenderer.invoke("skills.list"),
     get: (name: string) => ipcRenderer.invoke("skills.get", name),
