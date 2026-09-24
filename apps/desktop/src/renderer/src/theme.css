@@ -9368,33 +9368,12 @@ button.gitbar-checkout:hover {
 }
 
 .pr-inbox-body {
-  padding: 10px 16px 16px;
-}
-
-.pr-inbox-toolbar {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 2px 0 10px;
-}
-
-.pr-inbox-toolbar-grow {
-  flex: 1;
-}
-
-.pr-inbox-synced {
-  display: inline-flex;
-  align-items: center;
-  gap: 5px;
-  color: var(--faint);
-  font-size: 11.5px;
-}
-
-.pr-inbox-mono {
-  font-family: var(--mono);
+  padding: 14px 16px 16px;
 }
 
 .pr-inbox-truncated {
+  align-self: center;
+  margin-left: auto;
   color: var(--faint);
   font-size: 11.5px;
 }

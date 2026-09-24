@@ -152,14 +152,20 @@ function Signal({ tone, Icon, text, spin, title, className }: Tone & { title?: s
   );
 }
 
-function SyncedLabel({ fetchedAt, loading }: { fetchedAt: number | null; loading: boolean }) {
+function RefreshButton({ fetchedAt, loading, onRefresh }: { fetchedAt: number | null; loading: boolean; onRefresh: () => void }) {
   const now = useNow();
+  const synced = fetchedAt !== null ? `synced ${formatRelativeAge(fetchedAt, now)} ago via gh` : "not synced yet";
   return (
-    <span className="pr-inbox-synced">
-      <RefreshCw size={12} aria-hidden="true" className={loading ? "pr-inbox-spin" : undefined} />
-      {fetchedAt !== null ? `synced ${formatRelativeAge(fetchedAt, now)} ago via ` : "not synced yet via "}
-      <span className="pr-inbox-mono">gh</span>
-    </span>
+    <button
+      type="button"
+      className="icon-btn pr-inbox-refresh"
+      onClick={onRefresh}
+      disabled={loading}
+      title={`Refresh pull requests · ${synced}`}
+      aria-label={`Refresh pull requests, ${synced}`}
+    >
+      <RefreshCw size={15} aria-hidden="true" className={loading ? "pr-inbox-spin" : undefined} />
+    </button>
   );
 }
 
@@ -373,7 +379,10 @@ export function PrInboxView() {
           </div>
         </div>
         <div className="head-col col-mid" />
-        <div className="head-col col-right">{!rightVisible && <PanelToggles />}</div>
+        <div className="head-col col-right">
+          <RefreshButton fetchedAt={inbox?.fetchedAt ?? null} loading={loading} onRefresh={() => void refreshInbox(true)} />
+          {!rightVisible && <PanelToggles />}
+        </div>
       </div>
       <div className="pr-view-body pr-inbox-body">
         {failure && (
@@ -392,29 +401,6 @@ export function PrInboxView() {
             </button>
           </div>
         )}
-
-        <div className="pr-inbox-toolbar">
-          <SyncedLabel fetchedAt={inbox?.fetchedAt ?? null} loading={loading} />
-          {inbox?.truncated && (
-            <span
-              className="pr-inbox-truncated"
-              title={`GitHub search returns at most ${inbox.limit ?? "N"} pull requests per query; older ones may be missing`}
-            >
-              at most {inbox.limit ?? "N"} per search
-            </span>
-          )}
-          <span className="pr-inbox-toolbar-grow" />
-          <button
-            type="button"
-            className="icon-btn"
-            onClick={() => void refreshInbox(true)}
-            disabled={loading}
-            title="Refresh pull requests"
-            aria-label="Refresh pull requests"
-          >
-            <RefreshCw size={15} aria-hidden="true" />
-          </button>
-        </div>
 
         <div className="pr-inbox-chips">
           {PR_INBOX_FILTERS.map((chipFilter) => {
@@ -437,6 +423,14 @@ export function PrInboxView() {
               </button>
             );
           })}
+          {inbox?.truncated && (
+            <span
+              className="pr-inbox-truncated"
+              title={`GitHub search returns at most ${inbox.limit ?? "N"} pull requests per query; older ones may be missing`}
+            >
+              at most {inbox.limit ?? "N"} per search
+            </span>
+          )}
         </div>
 
         {loading && items.length === 0 && <div className="pr-view-empty">Loading pull requests…</div>}

@@ -1126,7 +1126,6 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
             </>
           )}
         </div>
-      </div>
         <div className="side-quick" role="group" aria-label="Quick filters">
           {QUICK_FILTER_UI.map(({ id, label, Icon }) => (
             <button
@@ -1143,6 +1142,7 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
             </button>
           ))}
         </div>
+      </div>
       <div className="session-list" ref={listRef} onScroll={clearHover}>
         <div className="session-main-list">
           {workingSetShown.length > 0 && (
