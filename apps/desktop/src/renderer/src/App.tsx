@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEven
 import { Eye } from "lucide-react";
 import type { DriverName } from "./cw.js";
 import { collectSubagents } from "./components/subagents.js";
+import { isWorkingSetStatus } from "./components/workingSet.js";
 import { Sidebar } from "./components/Sidebar.js";
 import { WindowControls } from "./components/WindowControls.js";
 import { SkillsModal } from "./components/SkillsModal.js";
@@ -21,7 +22,6 @@ import { useAppStore } from "./stores/appStore.js";
 import { tabsInPanel, DOCKABLE_TABS } from "./stores/panelLayout.js";
 import { selectSessionPanel, usePanelStore } from "./stores/panelStore.js";
 import { usePrStore } from "./stores/prStore.js";
-import { concreteFilterId } from "./components/projectRecency.js";
 import { prKey } from "./components/prInbox.js";
 import { sessionLinks } from "./components/sessionPrLinks.js";
 import type { DockableTabId } from "@cw-code/contracts";
@@ -103,8 +103,6 @@ function handleTurnEvent(msg: { sessionId: string; event: TurnEvent }): void {
 const MODAL_SELECTOR = '[role="dialog"], [role="alertdialog"], [aria-modal="true"]';
 
 export function App() {
-  const activeProjectId = useAppStore((s) => s.activeProjectId);
-  const filterProjectId = useAppStore((s) => concreteFilterId(s.projects, s.projectFilter));
   const activeSessionId = useAppStore((s) => s.activeSessionId);
   const sessionsByProject = useAppStore((s) => s.sessionsByProject);
   const pendingDriver = useAppStore((s) => s.pendingDriver);
@@ -219,23 +217,28 @@ export function App() {
     };
   }, []);
 
-  const refreshProjectKey = [...new Set([activeProjectId, filterProjectId].filter((id): id is string => id !== null))].join("|");
-  const refreshSessionKey = refreshProjectKey
-    .split("|")
-    .flatMap((projectId) => (sessionsByProject[projectId] ?? []).map((session) => session.id))
-    .join("|");
+  const workingSetKey = useMemo(
+    () =>
+      Object.values(sessionsByProject)
+        .flat()
+        .filter((session) => isWorkingSetStatus(session.status))
+        .map((session) => session.id)
+        .sort()
+        .join("|"),
+    [sessionsByProject]
+  );
 
   useEffect(() => {
-    if (!refreshProjectKey || !refreshSessionKey) return;
+    if (!workingSetKey) return;
     let running = false;
     const refresh = async () => {
       if (running || document.hidden) return;
       running = true;
       try {
-        const current = useAppStore.getState();
-        const sessions = refreshProjectKey.split("|").flatMap((projectId) => current.sessionsByProject[projectId] ?? []);
-        for (let i = 0; i < sessions.length; i += 6) {
-          await Promise.all(sessions.slice(i, i + 6).map((session) => current.refreshGitStatus(session.id)));
+        const { refreshGitStatus } = useAppStore.getState();
+        const ids = workingSetKey.split("|");
+        for (let i = 0; i < ids.length; i += 6) {
+          await Promise.all(ids.slice(i, i + 6).map((id) => refreshGitStatus(id)));
         }
       } finally {
         running = false;
@@ -251,7 +254,16 @@ export function App() {
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [refreshProjectKey, refreshSessionKey, sourceControlRefreshIntervalSeconds]);
+  }, [workingSetKey, sourceControlRefreshIntervalSeconds]);
+
+  useEffect(() => {
+    const onFocus = () => {
+      const { activeSessionId: sessionId, refreshGitStatus } = useAppStore.getState();
+      if (sessionId) void refreshGitStatus(sessionId);
+    };
+    window.addEventListener("focus", onFocus);
+    return () => window.removeEventListener("focus", onFocus);
+  }, []);
 
   useEffect(() => {
     if (!window.cw) return;

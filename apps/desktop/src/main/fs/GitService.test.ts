@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { GitService, countUntrackedLines, isAppManagedPath, mapLimit, parseGitHubAccounts, parseGitHubRemote, parseNumstat, parsePrNumber, parsePullRequest, parseWorktreeList, selectGitHubAccount, worktreeNameFor } from "./GitService.js";
+import { GitService, countUntrackedLines, isAppManagedPath, mapLimit, parseGitHubAccounts, parseGitHubRemote, parseNumstat, parsePorcelainV2Status, parsePrNumber, parsePullRequest, parseWorktreeList, selectGitHubAccount, worktreeNameFor } from "./GitService.js";
 
 function initSandbox(): { sandbox: string; repository: string; service: GitService } {
   const sandbox = mkdtempSync(join(tmpdir(), "cw-git-"));
@@ -508,5 +508,40 @@ describe("GitService worktrees", () => {
 
     const noBase = await service.turnDiff(created.path, Date.now(), null);
     expect(noBase).toBe(fallback);
+  });
+});
+
+describe("parsePorcelainV2Status", () => {
+  it("reads branch, upstream, tracking and every entry kind", () => {
+    const stdout = [
+      "# branch.oid 0123456789abcdef0123456789abcdef01234567",
+      "# branch.head feature/x",
+      "# branch.upstream origin/feature/x",
+      "# branch.ab +2 -1",
+      "1 M. N... 100644 100644 100644 aaa bbb staged file.ts",
+      "1 .M N... 100644 100644 100644 aaa aaa unstaged.ts",
+      "2 R. N... 100644 100644 100644 aaa bbb R100 renamed new.ts",
+      "old.ts",
+      "u UU N... 100644 100644 100644 100644 aaa bbb ccc conflict.ts",
+      "? notes with space.md",
+      ""
+    ].join("\0");
+    expect(parsePorcelainV2Status(stdout)).toEqual({
+      branch: "feature/x",
+      upstream: "origin/feature/x",
+      tracking: { ahead: 2, behind: 1 },
+      files: [
+        { path: "staged file.ts", index: "M", untracked: false },
+        { path: "unstaged.ts", index: ".", untracked: false },
+        { path: "renamed new.ts", index: "R", untracked: false },
+        { path: "conflict.ts", index: "U", untracked: false },
+        { path: "notes with space.md", index: "?", untracked: true }
+      ]
+    });
+  });
+
+  it("reports detached HEAD and missing tracking", () => {
+    const stdout = ["# branch.oid 0123", "# branch.head (detached)", "# branch.upstream origin/gone", ""].join("\0");
+    expect(parsePorcelainV2Status(stdout)).toEqual({ branch: "HEAD", upstream: "origin/gone", tracking: null, files: [] });
   });
 });
