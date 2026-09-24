@@ -1,16 +1,19 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   approvalResultFor,
+  buildCodexSkillInput,
   buildCodexUserInput,
   buildCommandApproval,
   buildFileChangeApproval,
   buildPermissionsApproval,
   buildUserInputQuestionRequest,
+  codexReviewTarget,
   codexUserInputResult,
   accumulateCodexUsage,
   mapCodexHistory,
   mapCodexModel,
   mapCodexPlan,
+  mapCodexSkillCommands,
   mapCodexThread,
   mapPermissionMode,
   type CodexThread,
@@ -255,6 +258,41 @@ describe("mapCodexHistory", () => {
       { id: "i7", role: "reasoning", text: "checking\n\nreading files", turnId: "turn_1", timestamp: 7000 }
     ]);
   });
+
+  it("maps exitedReviewMode as assistant text when the turn has no agentMessage item", () => {
+    const thread: CodexThread = {
+      id: "thr_1",
+      turns: [
+        {
+          id: "turn_1",
+          startedAt: 5,
+          items: [{ type: "exitedReviewMode", id: "r1", review: "Looks fine overall." }]
+        }
+      ]
+    };
+    expect(mapCodexHistory(thread)).toEqual([
+      { id: "r1", role: "assistant", text: "Looks fine overall.", turnId: "turn_1", timestamp: 5000 }
+    ]);
+  });
+
+  it("drops exitedReviewMode text when the turn already has an agentMessage item", () => {
+    const thread: CodexThread = {
+      id: "thr_1",
+      turns: [
+        {
+          id: "turn_1",
+          startedAt: 5,
+          items: [
+            { type: "agentMessage", id: "i1", text: "Looks fine overall." },
+            { type: "exitedReviewMode", id: "r1", review: "Looks fine overall." }
+          ]
+        }
+      ]
+    };
+    expect(mapCodexHistory(thread)).toEqual([
+      { id: "i1", role: "assistant", text: "Looks fine overall.", turnId: "turn_1", timestamp: 5000 }
+    ]);
+  });
 });
 
 describe("approval builders", () => {
@@ -383,5 +421,135 @@ describe("codex user input questions", () => {
     expect(codexUserInputResult({ "Preferred color?": "Red", "Which extras?": "Lint" })).toEqual({
       answers: ["Red", "Lint"]
     });
+  });
+});
+
+describe("mapCodexSkillCommands", () => {
+  it("maps enabled skills and skips disabled ones", () => {
+    const res = {
+      data: [
+        {
+          cwd: "C:\\proj",
+          skills: [
+            { name: "plan", description: "Plan the work", path: "/skills/plan", enabled: true },
+            { name: "disabled-skill", description: "Nope", path: "/skills/nope", enabled: false }
+          ],
+          errors: []
+        }
+      ]
+    };
+    const { commands, paths } = mapCodexSkillCommands(res);
+    expect(commands).toEqual([
+      { name: "plan", description: "Plan the work", dispatch: "native" }
+    ]);
+    expect(paths.get("plan")).toBe("/skills/plan");
+    expect(paths.has("disabled-skill")).toBe(false);
+  });
+
+  it("prefers interface.shortDescription, then shortDescription, then description", () => {
+    const res = {
+      data: [
+        {
+          cwd: "C:\\proj",
+          skills: [
+            {
+              name: "a",
+              description: "Long description",
+              shortDescription: "Short a",
+              interface: { shortDescription: "Interface a" },
+              path: "/skills/a",
+              enabled: true
+            },
+            {
+              name: "b",
+              description: "Long description",
+              shortDescription: "Short b",
+              path: "/skills/b",
+              enabled: true
+            },
+            { name: "c", description: "Long description", path: "/skills/c", enabled: true }
+          ],
+          errors: []
+        }
+      ]
+    };
+    const { commands } = mapCodexSkillCommands(res);
+    expect(commands.map((c) => c.description)).toEqual(["Interface a", "Short b", "Long description"]);
+  });
+
+  it("tolerates missing or garbage fields", () => {
+    expect(mapCodexSkillCommands(null)).toEqual({ commands: [], paths: new Map() });
+    expect(mapCodexSkillCommands({})).toEqual({ commands: [], paths: new Map() });
+    expect(mapCodexSkillCommands({ data: "nope" })).toEqual({ commands: [], paths: new Map() });
+    const res = { data: [{ skills: [null, "junk", { name: "", path: "/x", enabled: true }, { name: "x", enabled: true }] }] };
+    expect(mapCodexSkillCommands(res)).toEqual({ commands: [], paths: new Map() });
+  });
+
+  it("skips skills whose name collides with a built-in command", () => {
+    const res = {
+      data: [
+        {
+          cwd: "C:\\proj",
+          skills: [
+            { name: "compact", description: "Custom compact", path: "/skills/compact", enabled: true },
+            { name: "review", description: "Custom review", path: "/skills/review", enabled: true },
+            { name: "plan", description: "Plan the work", path: "/skills/plan", enabled: true }
+          ],
+          errors: []
+        }
+      ]
+    };
+    const { commands, paths } = mapCodexSkillCommands(res);
+    expect(commands.map((c) => c.name)).toEqual(["plan"]);
+    expect(paths.has("compact")).toBe(false);
+    expect(paths.has("review")).toBe(false);
+  });
+
+  it("warns for each reported skill error without dropping the working skills", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const res = {
+      data: [
+        {
+          cwd: "C:\\proj",
+          skills: [{ name: "plan", description: "Plan the work", path: "/skills/plan", enabled: true }],
+          errors: [{ path: "/skills/broken", message: "invalid frontmatter" }]
+        }
+      ]
+    };
+    const { commands } = mapCodexSkillCommands(res);
+    expect(commands.map((c) => c.name)).toEqual(["plan"]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("/skills/broken"));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("invalid frontmatter"));
+    warn.mockRestore();
+  });
+});
+
+describe("codexReviewTarget", () => {
+  it("targets uncommitted changes when args are empty", () => {
+    expect(codexReviewTarget("")).toEqual({ type: "uncommittedChanges" });
+    expect(codexReviewTarget("   ")).toEqual({ type: "uncommittedChanges" });
+  });
+
+  it("targets custom instructions when args are given", () => {
+    expect(codexReviewTarget("  check for race conditions  ")).toEqual({
+      type: "custom",
+      instructions: "check for race conditions"
+    });
+  });
+});
+
+describe("buildCodexSkillInput", () => {
+  it("builds a mention-prefixed text item plus a skill item, trimming args", () => {
+    expect(buildCodexSkillInput("plan", "/skills/plan", "  the migration  ")).toEqual([
+      { type: "text", text: "$plan the migration" },
+      { type: "skill", name: "plan", path: "/skills/plan" }
+    ]);
+  });
+
+  it("omits args from the text when none are given", () => {
+    expect(buildCodexSkillInput("plan", "/skills/plan", "")).toEqual([
+      { type: "text", text: "$plan" },
+      { type: "skill", name: "plan", path: "/skills/plan" }
+    ]);
   });
 });

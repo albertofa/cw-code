@@ -8,6 +8,7 @@ import { formatFileSubject, looksLikeFileMention } from "./pathDisplay.js";
 import { Md } from "./Markdown.js";
 import { ToolCard } from "./ToolCard.js";
 import { useAppStore, type ChatMessage } from "../stores/appStore.js";
+import { usePanelStore } from "../stores/panelStore.js";
 import { subagentAnchorId } from "./SubagentCard.js";
 
 export interface AgentsTarget {
@@ -365,6 +366,8 @@ export function AgentsPanel({ sessionId }: { sessionId: string }) {
   const activeProjectId = useAppStore((s) => s.activeProjectId);
   const sessionsByProject = useAppStore((s) => s.sessionsByProject);
   const openPreview = useAppStore((s) => s.openPreview);
+  const activateOrOpen = usePanelStore((s) => s.activateOrOpen);
+  const setRightVisible = usePanelStore((s) => s.setRightVisible);
   const basePath = (() => {
     for (const [pid, list] of Object.entries(sessionsByProject)) {
       const found = list.find((s) => s.id === sessionId);
@@ -505,7 +508,11 @@ export function AgentsPanel({ sessionId }: { sessionId: string }) {
           fetchedTools={fetchedTools}
           fetchedModel={fetched?.model}
           onBack={() => setView("list")}
-          onPreview={(p) => openPreview(sessionId, p, basePath ?? "")}
+          onPreview={(p) => {
+            openPreview(sessionId, p, basePath ?? "");
+            activateOrOpen(sessionId, "preview");
+            setRightVisible(sessionId, true);
+          }}
         />
       )}
     </div>

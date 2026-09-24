@@ -18,7 +18,7 @@ import { endTabDrag, startTabDrag, useDockDrop } from "./components/useDockDrop.
 import { useNotifs } from "./components/Notifications.js";
 import { useAppStore } from "./stores/appStore.js";
 import { tabsInPanel, DOCKABLE_TABS } from "./stores/panelLayout.js";
-import { usePanelStore } from "./stores/panelStore.js";
+import { selectSessionPanel, usePanelStore } from "./stores/panelStore.js";
 import { usePrStore } from "./stores/prStore.js";
 import { concreteFilterId } from "./components/projectRecency.js";
 import { prKey } from "./components/prInbox.js";
@@ -107,7 +107,7 @@ export function App() {
   const activeSessionId = useAppStore((s) => s.activeSessionId);
   const sessionsByProject = useAppStore((s) => s.sessionsByProject);
   const pendingDriver = useAppStore((s) => s.pendingDriver);
-  const preview = useAppStore((s) => s.preview);
+  const previewBySession = useAppStore((s) => s.previewBySession);
   const sourceControlRefreshIntervalSeconds = useAppStore((s) => s.sourceControlRefreshIntervalSeconds);
   const prRefreshIntervalSeconds = useAppStore((s) => s.prRefreshIntervalSeconds);
   const mainView = usePrStore((s) => s.mainView);
@@ -115,25 +115,28 @@ export function App() {
   const holdingHours = useAppStore((s) => s.holdingHours);
   const settingsVersion = useAppStore((s) => s.settingsVersion);
   const loadProjects = useAppStore((s) => s.loadProjects);
-  const dockByTab = usePanelStore((s) => s.dockByTab);
+  const sessionPanel = usePanelStore((s) => selectSessionPanel(s, activeSessionId ?? undefined));
+  const { dockByTab, activeRight, rightVisible } = sessionPanel;
   const autoLocation = usePanelStore((s) => s.autoLocation);
-  const activeRight = usePanelStore((s) => s.activeRight);
+  const initializeSession = usePanelStore((s) => s.initializeSession);
   const activateOrOpen = usePanelStore((s) => s.activateOrOpen);
   const setActiveTab = usePanelStore((s) => s.setActive);
   const moveTab = usePanelStore((s) => s.moveTab);
-  const dropRight = useDockDrop("right");
-  const tabMenu = useTabMenu();
+  const dropRight = useDockDrop("right", activeSessionId ?? undefined);
+  const tabMenu = useTabMenu(activeSessionId ?? undefined);
   const draggingTab = usePanelStore((s) => s.draggingTab);
-  const rightVisible = usePanelStore((s) => s.rightVisible);
   const setRightVisible = usePanelStore((s) => s.setRightVisible);
+  const revealTab = usePanelStore((s) => s.revealTab);
 
   const openTool = (tab: DockableTabId) => {
-    activateOrOpen(tab);
-    const panels = usePanelStore.getState();
-    if (panels.dockByTab[tab] === "right") setRightVisible(true);
-    if (panels.dockByTab[tab] === "bottom" && panels.bottomCollapsed) panels.setBottomCollapsed(false);
+    if (activeSessionId) revealTab(activeSessionId, tab);
   };
 
+  const preview = activeSessionId ? (previewBySession[activeSessionId] ?? null) : null;
+
+  useEffect(() => {
+    if (activeSessionId) initializeSession(activeSessionId);
+  }, [activeSessionId, initializeSession]);
 
   const [rightWidth, setRightWidth] = useState(loadRightWidth);
   const [preloadError, setPreloadError] = useState<string | null>(null);
@@ -357,20 +360,14 @@ export function App() {
   }, [settingsVersion]);
 
   useEffect(() => {
-    if (preview) {
-      setRightVisible(true);
-      activateOrOpen("preview");
-    }
-  }, [preview]);
-
-  useEffect(() => {
+    if (!activeSessionId) return;
     const onOpenAgents = () => {
-      setRightVisible(true);
-      activateOrOpen("agents");
+      setRightVisible(activeSessionId, true);
+      activateOrOpen(activeSessionId, "agents");
     };
     window.addEventListener("cw:open-agents", onOpenAgents);
     return () => window.removeEventListener("cw:open-agents", onOpenAgents);
-  }, []);
+  }, [activeSessionId, activateOrOpen, setRightVisible]);
 
   const messagesBySession = useAppStore((s) => s.messagesBySession);
   const subagentStats = useMemo(() => {
@@ -471,7 +468,7 @@ export function App() {
                   </button>
                 )}
                 </div>
-                <PanelToggles />
+                <PanelToggles sessionId={activeSessionId ?? undefined} />
               </div>
               {openHeaders.length > 0 && (
               <div
@@ -485,10 +482,10 @@ export function App() {
                     key={t.id}
                     role="tab"
                     aria-selected={effectiveRightTab === t.id}
-                    onClick={() => setActiveTab("right", t.id)}
+                    onClick={() => setActiveTab(activeSessionId ?? undefined, "right", t.id)}
                     onContextMenu={tabMenu.onTabContextMenu(t.id)}
                     draggable
-                    onDragStart={(e) => startTabDrag(e, t.id)}
+                    onDragStart={(e) => startTabDrag(e, t.id, activeSessionId ?? undefined)}
                     onDragEnd={endTabDrag}
                     className={`tab${effectiveRightTab === t.id ? " active" : ""}`}
                     title={`${t.title} - drag to move, right-click for more actions`}
@@ -501,7 +498,7 @@ export function App() {
                       title="Close tab"
                       onClick={(e) => {
                         e.stopPropagation();
-                        moveTab(t.id, "closed");
+                        moveTab(activeSessionId ?? undefined, t.id, "closed");
                       }}
                     >
                       &times;

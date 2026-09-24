@@ -22,7 +22,7 @@ import type { LucideIcon } from "lucide-react";
 import type { PrWorkflowIcon } from "@cw-code/contracts";
 import type { PrCheck, PrDetail, PrRef, PrReviewThread, PrTimelineItem, PrWorkflow, Session } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
-import { usePanelStore } from "../stores/panelStore.js";
+import { selectSessionPanel, usePanelStore } from "../stores/panelStore.js";
 import { usePrStore, type PrDetailTab } from "../stores/prStore.js";
 import { PanelToggles } from "./PanelToggles.js";
 import { DriverIcon } from "./DriverIcon.js";
@@ -172,7 +172,8 @@ export function PrDetailView({ prRef }: { prRef: PrRef }) {
   const loadDiff = usePrStore((s) => s.loadDiff);
   const openRunModal = usePrStore((s) => s.openRunModal);
   const openSessionView = usePrStore((s) => s.openSessionView);
-  const rightVisible = usePanelStore((s) => s.rightVisible);
+  const activeSessionId = useAppStore((s) => s.activeSessionId) ?? undefined;
+  const rightVisible = usePanelStore((s) => selectSessionPanel(s, activeSessionId).rightVisible);
   const sessionsByProject = useAppStore((s) => s.sessionsByProject);
   const selectSession = useAppStore((s) => s.selectSession);
   const { settings, error: settingsError } = usePrSettings();
@@ -305,7 +306,7 @@ export function PrDetailView({ prRef }: { prRef: PrRef }) {
               GitHub
             </button>
           )}
-          {!rightVisible && <PanelToggles />}
+          {!rightVisible && <PanelToggles sessionId={activeSessionId} />}
         </div>
       </div>
       <div className="pr-view-body">

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type DragEvent as ReactDragEvent } from "react";
 import type { DockableTabId, PanelId } from "@cw-code/contracts";
-import { TAB_DRAG_MIME, resolveDrop } from "./dockable.js";
+import { TAB_DRAG_SESSION_MIME, TAB_DRAG_MIME, resolveDrop } from "./dockable.js";
 import { isDockableTabId } from "../stores/panelLayout.js";
 import { usePanelStore } from "../stores/panelStore.js";
 
@@ -11,8 +11,14 @@ export interface DockDropBinding {
   onDrop: (e: ReactDragEvent<HTMLElement>) => void;
 }
 
-export function startTabDrag(e: ReactDragEvent<HTMLElement>, tabId: DockableTabId): void {
+export function startTabDrag(
+  e: ReactDragEvent<HTMLElement>,
+  tabId: DockableTabId,
+  sessionId: string | undefined
+): void {
+  if (!sessionId) return;
   e.dataTransfer.setData(TAB_DRAG_MIME, tabId);
+  e.dataTransfer.setData(TAB_DRAG_SESSION_MIME, sessionId);
   usePanelStore.getState().setDraggingTab(isDockableTabId(tabId) ? tabId : null);
   try {
     e.dataTransfer.effectAllowed = "move";
@@ -26,7 +32,7 @@ export function endTabDrag(e: ReactDragEvent<HTMLElement>): void {
   usePanelStore.getState().setDraggingTab(null);
 }
 
-export function useDockDrop(panel: PanelId): { over: boolean; bind: DockDropBinding } {
+export function useDockDrop(panel: PanelId, sessionId: string | undefined): { over: boolean; bind: DockDropBinding } {
   const [over, setOver] = useState(false);
   const depthRef = useRef(0);
   const moveTab = usePanelStore((s) => s.moveTab);
@@ -68,7 +74,8 @@ export function useDockDrop(panel: PanelId): { over: boolean; bind: DockDropBind
         e.preventDefault();
         e.stopPropagation();
         setOver(false);
-        moveTab(drop.tab, drop.panel);
+        const sourceSessionId = e.dataTransfer.getData(TAB_DRAG_SESSION_MIME);
+        if (sourceSessionId === sessionId && sessionId) moveTab(sessionId, drop.tab, drop.panel);
         usePanelStore.getState().setDraggingTab(null);
       }
     }

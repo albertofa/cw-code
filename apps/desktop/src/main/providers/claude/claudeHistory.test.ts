@@ -206,6 +206,14 @@ describe("parseClaudeTranscriptLine", () => {
       parseClaudeTranscriptLine({ type: "user", uuid: "u10", message: { role: "user", content: text } })
     ).toEqual([{ id: "u10", role: "user", text, turnId: "u10" }]);
   });
+
+  it("renders a slash-command transcript line as /name args", () => {
+    const text =
+      "<command-name>/context</command-name>\n<command-message>context</command-message>\n<command-args></command-args>";
+    expect(
+      parseClaudeTranscriptLine({ type: "user", uuid: "u11", message: { role: "user", content: text } })
+    ).toEqual([{ id: "u11", role: "user", text: "/context", turnId: "u11" }]);
+  });
 });
 
 describe("toEpochMs", () => {

@@ -7,19 +7,16 @@ import { ToolContent } from "./ToolContent.js";
 import { useTabMenu } from "./TabMenu.js";
 import { endTabDrag, startTabDrag, useDockDrop } from "./useDockDrop.js";
 import { BOTTOM_HEIGHT_DEFAULT, tabsInPanel } from "../stores/panelLayout.js";
-import { usePanelStore } from "../stores/panelStore.js";
+import { selectSessionPanel, usePanelStore } from "../stores/panelStore.js";
 
 export function BottomPanel({ sessionId, driver, hasPr }: { sessionId: string; driver: DriverName | undefined; hasPr: boolean }) {
-  const dockByTab = usePanelStore((s) => s.dockByTab);
-  const activeBottom = usePanelStore((s) => s.activeBottom);
-  const bottomHeight = usePanelStore((s) => s.bottomHeight);
+  const { dockByTab, activeBottom, bottomHeight, bottomCollapsed } = usePanelStore((s) => selectSessionPanel(s, sessionId));
   const setActive = usePanelStore((s) => s.setActive);
   const moveTab = usePanelStore((s) => s.moveTab);
   const setBottomHeight = usePanelStore((s) => s.setBottomHeight);
-  const dropBottom = useDockDrop("bottom");
-  const tabMenu = useTabMenu();
+  const dropBottom = useDockDrop("bottom", sessionId);
+  const tabMenu = useTabMenu(sessionId);
   const draggingTab = usePanelStore((s) => s.draggingTab);
-  const bottomCollapsed = usePanelStore((s) => s.bottomCollapsed);
   const setBottomCollapsed = usePanelStore((s) => s.setBottomCollapsed);
   const dragRef = useRef<{ startY: number; startHeight: number } | null>(null);
 
@@ -35,8 +32,9 @@ export function BottomPanel({ sessionId, driver, hasPr }: { sessionId: string; d
     const onMove = (ev: MouseEvent) => {
       const d = dragRef.current;
       if (!d) return;
-      setBottomHeight(d.startHeight + (d.startY - ev.clientY));
+      setBottomHeight(sessionId, d.startHeight + (d.startY - ev.clientY));
     };
+
     const onUp = () => {
       dragRef.current = null;
       window.removeEventListener("mousemove", onMove);
@@ -65,7 +63,7 @@ export function BottomPanel({ sessionId, driver, hasPr }: { sessionId: string; d
       <div
         className="bottom-resizer"
         onMouseDown={onResizeStart}
-        onDoubleClick={() => setBottomHeight(BOTTOM_HEIGHT_DEFAULT)}
+        onDoubleClick={() => setBottomHeight(sessionId, BOTTOM_HEIGHT_DEFAULT)}
         title="Drag to resize - double-click to reset"
       />
       )}
@@ -84,12 +82,12 @@ export function BottomPanel({ sessionId, driver, hasPr }: { sessionId: string; d
               role="tab"
               aria-selected={effectiveActive === id}
               onClick={() => {
-                setActive("bottom", id);
-                if (bottomCollapsed) setBottomCollapsed(false);
+                setActive(sessionId, "bottom", id);
+                if (bottomCollapsed) setBottomCollapsed(sessionId, false);
               }}
               onContextMenu={tabMenu.onTabContextMenu(id)}
               draggable
-              onDragStart={(e) => startTabDrag(e, id)}
+              onDragStart={(e) => startTabDrag(e, id, sessionId)}
               onDragEnd={endTabDrag}
               className={`tab${effectiveActive === id ? " active" : ""}`}
               title={`${def.title} - drag to move, right-click for more actions`}
@@ -102,7 +100,7 @@ export function BottomPanel({ sessionId, driver, hasPr }: { sessionId: string; d
                 title="Close tab"
                 onClick={(e) => {
                   e.stopPropagation();
-                  moveTab(id, "closed");
+                  moveTab(sessionId, id, "closed");
                 }}
               >
                 &times;
@@ -113,7 +111,7 @@ export function BottomPanel({ sessionId, driver, hasPr }: { sessionId: string; d
         })}
         <button
           className="icon-btn bottom-min"
-          onClick={() => setBottomCollapsed(!bottomCollapsed)}
+          onClick={() => setBottomCollapsed(sessionId, !bottomCollapsed)}
           title={bottomCollapsed ? "Expand panel" : "Minimize panel"}
           aria-label={bottomCollapsed ? "Expand bottom panel" : "Minimize bottom panel"}
           aria-expanded={!bottomCollapsed}

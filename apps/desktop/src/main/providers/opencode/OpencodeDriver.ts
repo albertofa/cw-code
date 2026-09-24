@@ -1,5 +1,5 @@
 ﻿import { randomUUID } from "node:crypto";
-import type { AppSettings, ApprovalDecision, CliDriver, HistoryMessage, PermissionMode, PermissionOption, QuestionInfo, QuestionRequest, RetryConnectionRequest, RetryConnectionResult, SessionMeta, ThreadEvent, TurnHandle, TurnRequest } from "@cw-code/contracts";
+import type { AppSettings, ApprovalDecision, CliDriver, CommandOption, HistoryMessage, PermissionMode, PermissionOption, QuestionInfo, QuestionRequest, RetryConnectionRequest, RetryConnectionResult, SessionMeta, ThreadEvent, TurnHandle, TurnRequest } from "@cw-code/contracts";
 import { isAbsolute, join } from "node:path";
 import { opencodeConfigDir } from "../../paths/appPaths.js";
 import {
@@ -37,6 +37,14 @@ import {
   turnMessagesOf
 } from "./opencodeMessage.js";
 import { mapOpencodeMessages } from "./opencodeHistory.js";
+import {
+  buildOpencodeCommandBody,
+  lastOpencodeUserMessageId,
+  mapOpencodeCommands,
+  opencodeBuiltinCommandOf,
+  opencodeRevertMessageId,
+  type OpencodeBuiltinCommand
+} from "./opencodeCommands.js";
 import { assertInside } from "../../fs/FileService.js";
 import { listOpencodeModels, resolveOpencodeVariant } from "./opencodeModels.js";
 import { opencodeFileArgs } from "./opencodeArgs.js";
@@ -50,6 +58,8 @@ import {
   withDirectoryQuery
 } from "./opencodeFetch.js";
 import { previewText, traceHarnessCall, truncateError } from "../../debug/harnessTrace.js";
+
+type SessionCall = (path: string, init?: { method?: "POST"; body?: unknown; timeoutMs?: number }) => Promise<Response>;
 
 interface ServerSession {
   id: string;
@@ -75,7 +85,10 @@ export class OpencodeDriver implements CliDriver {
   private childToolSeen = new Map<string, Map<string, Map<string, LiveSeen>>>();
   private childPollDone = new Map<string, Set<string>>();
   private childModels = new Map<string, Map<string, string>>();
-  private turnMeta = new Map<string, { localSessionId: string; beforeIds: Set<string> | null; startedAt: number; pollWarned: boolean; startedPort: number }>();
+  private turnMeta = new Map<
+    string,
+    { localSessionId: string; beforeIds: Set<string> | null; startedAt: number; pollWarned: boolean; startedPort: number; hasAssistantText: boolean }
+  >();
   private toolSeen = new Map<string, Map<string, LiveSeen>>();
   private partTypes = new Map<string, Map<string, string>>();
   private pollTimers = new Map<string, NodeJS.Timeout>();
@@ -269,7 +282,8 @@ export class OpencodeDriver implements CliDriver {
       beforeIds: params.beforeIds,
       startedAt: params.startedAt,
       pollWarned: false,
-      startedPort: params.port
+      startedPort: params.port,
+      hasAssistantText: false
     });
     this.watchInfo.set(params.turnId, {
       port: params.port,
@@ -464,6 +478,36 @@ export class OpencodeDriver implements CliDriver {
     return models;
   }
 
+  async listCommands(cwd: string): Promise<CommandOption[]> {
+    const start = Date.now();
+    const operation = "opencode.listCommands";
+    try {
+      const res = await this.fetchViaPool(cwd, "/command", {}, OPENCODE_LIST_TIMEOUT_MS);
+      const commands = mapOpencodeCommands(await opencodeJson<unknown>(res, "opencode command list failed"));
+      traceHarnessCall({
+        harness: "opencode",
+        operation,
+        cwd,
+        durationMs: Date.now() - start,
+        ok: true,
+        extra: { count: commands.length }
+      });
+      return commands;
+    } catch (err) {
+      const message = (err as Error).message;
+      console.warn(`opencode command list unavailable, offering builtins only: ${message}`);
+      traceHarnessCall({
+        harness: "opencode",
+        operation,
+        cwd,
+        durationMs: Date.now() - start,
+        ok: false,
+        error: truncateError(message)
+      });
+      return mapOpencodeCommands([]);
+    }
+  }
+
   async listPermissionModes(): Promise<PermissionOption[]> {
     return [
       { id: "manual", label: "Ask", description: "Prompt for approval on restricted actions.", native: true },
@@ -473,6 +517,19 @@ export class OpencodeDriver implements CliDriver {
 
   startTurn(request: TurnRequest): TurnHandle {
     const turnId = randomUUID();
+    const builtin = request.command ? opencodeBuiltinCommandOf(request.command.name) : null;
+    if (builtin && !request.resumeCursor) {
+      traceHarnessCall({
+        harness: "opencode",
+        operation: "opencode.startTurn",
+        sessionId: request.sessionId,
+        turnId,
+        cwd: request.cwd,
+        ok: false,
+        error: `/${builtin} needs an existing opencode session`
+      });
+      throw new Error(`Nothing to ${builtin} yet`);
+    }
     void this.runTurn(turnId, request);
     return { turnId, events: (async function* () {})() };
   }
@@ -709,6 +766,10 @@ export class OpencodeDriver implements CliDriver {
       const delta = partDeltaOf(event, known);
       if (!delta) return;
       const reasoning = isReasoningPartDelta(delta, this.partTypesFor(turnId).get(delta.partID));
+      if (!reasoning) {
+        const meta = this.turnMeta.get(turnId);
+        if (meta) meta.hasAssistantText = true;
+      }
       this.emit(
         reasoning
           ? { type: "reasoning.delta", turnId, text: delta.text }
@@ -928,40 +989,51 @@ export class OpencodeDriver implements CliDriver {
 
     this.startPolling(turnId);
 
-    const files: Array<{ mime: string; url: string }> = [];
-    for (const rel of request.attachments ?? []) {
-      if (!isAbsolute(rel)) {
-        try {
-          assertInside(request.cwd, rel);
-        } catch {
-          console.warn(`attachment escapes project root, skipped: ${rel}`);
-          continue;
-        }
-      }
-      const mime = mimeForOpencodeAttachment(rel);
-      if (!mime) {
-        console.warn(`attachment type unsupported, skipped: ${rel}`);
-        continue;
-      }
-      files.push({ mime, url: isAbsolute(rel) ? rel : join(request.cwd, rel) });
-    }
     const controller = new AbortController();
     this.sends.set(turnId, controller);
+    const command = request.command;
+    const builtin = command ? opencodeBuiltinCommandOf(command.name) : null;
+    if (builtin) {
+      if ((request.attachments ?? []).length > 0) {
+        console.warn(`attachments ignored for /${builtin}`);
+        traceHarnessCall({
+          harness: "opencode",
+          operation: "opencode.startTurn.attachments",
+          sessionId: request.sessionId,
+          turnId,
+          cwd: request.cwd,
+          ok: false,
+          error: `attachments ignored for /${builtin}: ${(request.attachments ?? []).length}`
+        });
+      }
+      void this.runBuiltinCommand(turnId, request.sessionId, builtin, {
+        port: serverPort,
+        authHeader,
+        cwd: request.cwd,
+        serverSessionId,
+        model,
+        signal: controller.signal
+      });
+      return;
+    }
+    const files = attachmentFilesOf(request.cwd, request.attachments ?? []);
     const send = (withFiles: boolean): Promise<Response> =>
-      opencodeFetch(`http://127.0.0.1:${serverPort}/session/${encodeURIComponent(serverSessionId)}/message`, {
+      opencodeFetch(`http://127.0.0.1:${serverPort}/session/${encodeURIComponent(serverSessionId)}/${command ? "command" : "message"}`, {
         method: "POST",
         headers: { "Content-Type": "application/json", Authorization: authHeader },
         body: JSON.stringify(
-          buildOpencodeMessageBody(request.prompt, {
-            ...(model ? { model } : {}),
-            ...(variant ? { variant } : {}),
-            ...(withFiles && files.length > 0 ? { files } : {})
-          })
+          command
+            ? buildOpencodeCommandBody(command, {
+                model,
+                ...(variant ? { variant } : {}),
+                ...(withFiles && files.length > 0 ? { files } : {})
+              })
+            : buildOpencodeMessageBody(request.prompt, {
+                ...(model ? { model } : {}),
+                ...(variant ? { variant } : {}),
+                ...(withFiles && files.length > 0 ? { files } : {})
+              })
         ),
-        // This request stays open until the turn completes and its connection
-        // is cut around the 5-minute mark while the server keeps running the
-        // turn. The outcome is advisory: completion is driven by the SSE watch
-        // and the poll loop, and a dead server surfaces through handleServerGone.
         signal: controller.signal,
         timeoutMs: OPENCODE_NO_TIMEOUT,
         port: serverPort,
@@ -985,7 +1057,13 @@ export class OpencodeDriver implements CliDriver {
           res = await send(false);
         }
         if (controller.signal.aborted || !this.sessionIds.has(turnId)) return;
-        if (!res.ok) throw new Error(`opencode message send failed: ${res.status}`);
+        if (!res.ok) {
+          throw new Error(
+            command
+              ? await opencodeFailureText(`opencode command /${command.name} failed`, res)
+              : `opencode message send failed: ${res.status}`
+          );
+        }
         traceHarnessCall({
           harness: "opencode",
           operation: "opencode.messageSent",
@@ -1013,6 +1091,97 @@ export class OpencodeDriver implements CliDriver {
         }
         this.failTurn(turnId, request.sessionId, serverSessionId, err as Error);
       });
+  }
+
+  private async runBuiltinCommand(
+    turnId: string,
+    localSessionId: string,
+    name: OpencodeBuiltinCommand,
+    target: {
+      port: number;
+      authHeader: string;
+      cwd: string;
+      serverSessionId: string;
+      model: { providerID: string; modelID: string } | null;
+      signal: AbortSignal;
+    }
+  ): Promise<void> {
+    const call: SessionCall = (path, init = {}) =>
+      opencodeFetch(`http://127.0.0.1:${target.port}/session/${encodeURIComponent(target.serverSessionId)}${path}`, {
+        method: init.method ?? "GET",
+        headers:
+          init.body !== undefined
+            ? { "Content-Type": "application/json", Authorization: target.authHeader }
+            : { Authorization: target.authHeader },
+        ...(init.body !== undefined ? { body: JSON.stringify(init.body) } : {}),
+        signal: target.signal,
+        timeoutMs: init.timeoutMs ?? OPENCODE_REQUEST_TIMEOUT_MS,
+        port: target.port,
+        directory: target.cwd
+      });
+    const live = (): boolean => !target.signal.aborted && this.sessionIds.has(turnId);
+    try {
+      const notice = await this.builtinCommandNotice(name, call, target.model);
+      if (!live()) return;
+      const hasAssistantText = this.turnMeta.get(turnId)?.hasAssistantText ?? false;
+      const text = name === "compact" && hasAssistantText ? `\n\n${notice}` : notice;
+      this.emit({ type: "assistant.delta", turnId, text });
+      traceHarnessCall({
+        harness: "opencode",
+        operation: "opencode.commandDone",
+        sessionId: localSessionId,
+        turnId,
+        cwd: target.cwd,
+        ok: true,
+        extra: { command: name, serverSessionId: target.serverSessionId }
+      });
+      void this.finishTurn(turnId);
+    } catch (err) {
+      if (!live()) return;
+      if (name === "compact" && isConnectionError(err)) {
+        traceHarnessCall({
+          harness: "opencode",
+          operation: "opencode.send.detached",
+          sessionId: localSessionId,
+          turnId,
+          cwd: target.cwd,
+          ok: false,
+          error: truncateError((err as Error).message)
+        });
+        return;
+      }
+      this.failTurn(turnId, localSessionId, target.serverSessionId, err as Error);
+    }
+  }
+
+  private async builtinCommandNotice(
+    name: OpencodeBuiltinCommand,
+    call: SessionCall,
+    model: { providerID: string; modelID: string } | null
+  ): Promise<string> {
+    if (name === "compact") {
+      if (!model) throw new Error("Pick a model before compacting");
+      const res = await call("/summarize", { method: "POST", body: model, timeoutMs: OPENCODE_NO_TIMEOUT });
+      if (!res.ok) throw new Error(await opencodeFailureText("opencode compact failed", res));
+      return "Session compacted.";
+    }
+    const sessionRes = await call("");
+    const revertId = opencodeRevertMessageId(await opencodeJson<unknown>(sessionRes, "opencode session lookup failed"));
+    if (name === "redo") {
+      if (!revertId) throw new Error("Nothing to redo");
+      const res = await call("/unrevert", { method: "POST" });
+      if (!res.ok) throw new Error(await opencodeFailureText("opencode redo failed", res));
+      return "Restored the reverted messages.";
+    }
+    const messagesRes = await call("/message");
+    const messageID = lastOpencodeUserMessageId(
+      await opencodeJson<unknown>(messagesRes, "opencode history failed"),
+      revertId
+    );
+    if (!messageID) throw new Error("Nothing to undo");
+    const res = await call("/revert", { method: "POST", body: { messageID } });
+    if (!res.ok) throw new Error(await opencodeFailureText("opencode undo failed", res));
+    return "Reverted the last message and its file changes.";
   }
 
   private failTurn(turnId: string, localSessionId: string, serverSessionId: string, err: Error): void {
@@ -1752,3 +1921,44 @@ function isIdleStatus(event: unknown): boolean {
   return false;
 }
 
+function attachmentFilesOf(cwd: string, attachments: string[]): Array<{ mime: string; url: string }> {
+  const files: Array<{ mime: string; url: string }> = [];
+  for (const rel of attachments) {
+    if (!isAbsolute(rel)) {
+      try {
+        assertInside(cwd, rel);
+      } catch {
+        console.warn(`attachment escapes project root, skipped: ${rel}`);
+        continue;
+      }
+    }
+    const mime = mimeForOpencodeAttachment(rel);
+    if (!mime) {
+      console.warn(`attachment type unsupported, skipped: ${rel}`);
+      continue;
+    }
+    files.push({ mime, url: isAbsolute(rel) ? rel : join(cwd, rel) });
+  }
+  return files;
+}
+
+async function opencodeFailureText(label: string, res: Response): Promise<string> {
+  let detail = "";
+  try {
+    detail = (await res.text()).trim();
+  } catch {
+  }
+  return `${label}: ${res.status}${detail ? ` ${detail.slice(0, 1000)}` : ""}`;
+}
+
+async function opencodeJson<T>(res: Response, label: string): Promise<T> {
+  if (!res.ok) throw new Error(await opencodeFailureText(label, res));
+  if ((res.headers.get("content-type") ?? "").includes("text/html")) {
+    throw new Error(`${label}: server returned an HTML page instead of JSON`);
+  }
+  try {
+    return (await res.json()) as T;
+  } catch (err) {
+    throw new Error(`${label}: invalid JSON response (${(err as Error).message})`);
+  }
+}

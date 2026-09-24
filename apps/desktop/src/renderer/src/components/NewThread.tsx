@@ -116,8 +116,9 @@ export function NewThread({
     loadPermissions: () =>
       projectKey ? window.cw.listPermissionsFor(projectKey, driver) : window.cw.listPermissionsForHarness(driver),
     loadFiles: () => (projectKey ? window.cw.listProjectFiles(projectKey) : Promise.resolve([])),
+    loadCommands: () => (projectKey ? window.cw.listCommandsFor(projectKey, driver) : Promise.resolve([])),
     savePrefs: (p) => store.setPendingPrefs(p),
-    send: (body, attachments) => store.sendPendingPrompt(body, attachments),
+    send: (body, attachments, command) => store.sendPendingPrompt(body, attachments, command),
     savePasteImage: (mime, data) =>
       projectKey ? window.cw.savePasteImage(projectKey, mime, data) : Promise.reject(new Error(NO_PROJECT_HINT)),
     interrupt: () => {}

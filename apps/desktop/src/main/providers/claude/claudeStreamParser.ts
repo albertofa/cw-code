@@ -274,8 +274,10 @@ interface ResultMsg {
 export interface ClaudeTaskSystemInfo {
   kind: "tasks" | "started" | "progress" | "updated" | "notification";
   liveTasks?: number;
+  liveTaskIds?: string[];
   taskId?: string;
   toolUseId?: string;
+  taskType?: string;
   description?: string;
   subagentType?: string;
   background?: boolean;
@@ -304,6 +306,7 @@ interface SystemTaskMsg {
   tasks?: unknown;
   task_id?: unknown;
   tool_use_id?: unknown;
+  task_type?: unknown;
   description?: unknown;
   subagent_type?: unknown;
   is_backgrounded?: unknown;
@@ -336,6 +339,22 @@ function taskUsage(value: unknown): ToolUsage | undefined {
   return Object.keys(mapped).length > 0 ? mapped : undefined;
 }
 
+function claudeToolResultText(content: unknown): string {
+  if (typeof content === "string") return content;
+  if (Array.isArray(content)) {
+    const text = content
+      .map((block) => {
+        if (block === null || typeof block !== "object" || Array.isArray(block)) return undefined;
+        const record = block as Record<string, unknown>;
+        if (record["type"] !== "text" || typeof record["text"] !== "string") return undefined;
+        return record["text"];
+      })
+      .filter((value): value is string => value !== undefined);
+    if (text.length === content.length) return text.join("\n");
+  }
+  return JSON.stringify(content ?? "");
+}
+
 export function parseClaudeTaskSystemLine(line: string): ClaudeTaskSystemInfo | null {
   if (!line.trim().startsWith("{") || !line.includes('"type":"system"')) return null;
   let msg: SystemTaskMsg;
@@ -347,12 +366,22 @@ export function parseClaudeTaskSystemLine(line: string): ClaudeTaskSystemInfo | 
   if (msg === null || typeof msg !== "object" || msg.type !== "system") return null;
   const taskId = str(msg.task_id);
   const toolUseId = str(msg.tool_use_id);
+  const taskType = str(msg.task_type);
   const description = str(msg.description);
   const usage = taskUsage(msg.usage);
   switch (msg.subtype) {
     case "background_tasks_changed": {
       if (!Array.isArray(msg.tasks)) return null;
-      return { kind: "tasks", liveTasks: msg.tasks.length };
+      const liveTaskIds = msg.tasks
+        .map((task) => {
+          if (task !== null && typeof task === "object" && !Array.isArray(task)) {
+            const record = task as Record<string, unknown>;
+            return str(record["id"]) ?? str(record["task_id"]);
+          }
+          return str(task);
+        })
+        .filter((id): id is string => id !== undefined);
+      return { kind: "tasks", liveTasks: msg.tasks.length, liveTaskIds };
     }
     case "task_started": {
       if (!taskId && !toolUseId) return null;
@@ -362,6 +391,7 @@ export function parseClaudeTaskSystemLine(line: string): ClaudeTaskSystemInfo | 
         kind: "started",
         ...(taskId ? { taskId } : {}),
         ...(toolUseId ? { toolUseId } : {}),
+        ...(taskType ? { taskType } : {}),
         ...(description ? { description } : {}),
         ...(subagentType ? { subagentType } : {}),
         ...(typeof msg.is_backgrounded === "boolean" ? { background: msg.is_backgrounded } : {}),
@@ -414,6 +444,31 @@ export function parseClaudeTaskSystemLine(line: string): ClaudeTaskSystemInfo | 
   }
 }
 
+export interface ClaudeSystemInitInfo {
+  terminalSlashCommands: string[];
+}
+
+interface SystemInitMsg {
+  type?: unknown;
+  subtype?: unknown;
+  terminal_slash_commands?: unknown;
+}
+
+export function parseClaudeSystemInit(line: string): ClaudeSystemInitInfo | null {
+  if (!line.trim().startsWith("{") || !line.includes('"subtype":"init"')) return null;
+  let msg: SystemInitMsg;
+  try {
+    msg = JSON.parse(line) as SystemInitMsg;
+  } catch {
+    return null;
+  }
+  if (msg.type !== "system" || msg.subtype !== "init") return null;
+  const terminalSlashCommands = Array.isArray(msg.terminal_slash_commands)
+    ? msg.terminal_slash_commands.filter((c): c is string => typeof c === "string")
+    : [];
+  return { terminalSlashCommands };
+}
+
 const TASK_NOTIFY_USAGE_RE = {
   tokens: /<subagent_tokens>(\d+)<\/subagent_tokens>/,
   toolUses: /<tool_uses>(\d+)<\/tool_uses>/,
@@ -442,6 +497,22 @@ export interface TurnDoneInfo {
 }
 
 const AGENT_ID_RE = /\bagentId:\s*([0-9a-f]{8,64})\b/;
+
+export function parseClaudeSubagentHandback(
+  event: ThreadEvent
+): Extract<ThreadEvent, { type: "tool.result" }> | null {
+  if (event.type !== "tool.call" || event.name.toLowerCase() !== "subagenthandback" || !event.parentToolCallId) return null;
+  if (event.input === null || typeof event.input !== "object" || Array.isArray(event.input)) return null;
+  const message = (event.input as Record<string, unknown>)["message"];
+  if (typeof message !== "string" || !message.trim()) return null;
+  return {
+    type: "tool.result",
+    turnId: event.turnId,
+    toolCallId: event.parentToolCallId,
+    output: message.slice(0, 8000),
+    isError: false
+  };
+}
 
 export function attributeClaudeSubagentEvent(
   event: ThreadEvent,
@@ -475,7 +546,8 @@ export function parseStreamLine(
   turnId: string,
   sessionId: string,
   done: (info: TurnDoneInfo) => void,
-  onNotificationAck?: () => void
+  onNotificationAck?: () => void,
+  shouldIgnoreTaskNotification?: () => boolean
 ): ThreadEvent[] {
   if (!line.trim()) return [];
   let msg: TextDelta | AssistantMsg | UserMsg | ResultMsg;
@@ -542,8 +614,7 @@ export function parseStreamLine(
     const blocks = Array.isArray(raw) ? raw : [];
     for (const block of blocks as Array<{ tool_use_id?: string; content?: unknown; is_error?: boolean }>) {
       if (block.tool_use_id) {
-        const content =
-          typeof block.content === "string" ? block.content : JSON.stringify(block.content ?? "");
+        const content = claudeToolResultText(block.content);
         out.push({
           type: "tool.result",
           turnId,
@@ -557,7 +628,7 @@ export function parseStreamLine(
   }
 
   if (msg.type === "result") {
-    if (msg.origin?.kind === "task-notification") {
+    if (msg.origin?.kind === "task-notification" && (shouldIgnoreTaskNotification?.() ?? true)) {
       onNotificationAck?.();
       return [];
     }

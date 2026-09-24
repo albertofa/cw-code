@@ -39,6 +39,10 @@ export function opencodeModelsCachePath(home?: string, env?: NodeJS.ProcessEnv):
   return join(userdataDir(home, env), "opencode-models.json");
 }
 
+export function claudeCommandsCachePath(home?: string, env?: NodeJS.ProcessEnv): string {
+  return join(userdataDir(home, env), "claude-commands.json");
+}
+
 export function skillsDir(home?: string, env?: NodeJS.ProcessEnv): string {
   return join(userdataDir(home, env), "skills");
 }

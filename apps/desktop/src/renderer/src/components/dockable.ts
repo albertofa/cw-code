@@ -2,6 +2,7 @@ import type { DockableTabId, PanelId } from "@cw-code/contracts";
 import { isDockableTabId } from "../stores/panelLayout.js";
 
 export const TAB_DRAG_MIME = "application/x-cw-tab";
+export const TAB_DRAG_SESSION_MIME = "application/x-cw-tab-session";
 
 export interface DockDrop {
   tab: DockableTabId;

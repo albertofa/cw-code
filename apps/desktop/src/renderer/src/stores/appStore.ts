@@ -1,4 +1,5 @@
 import { create } from "zustand";
+import type { CommandInvocation } from "@cw-code/contracts";
 import type {
   ActiveTurn,
   AppSettings,
@@ -129,9 +130,9 @@ interface AppState {
   holdingHours: number;
   defaultUseWorktree: boolean;
   reasoningExpandedByDriver: Record<DriverName, boolean>;
-  preview: { sessionId: string; path: string; basePath: string } | null;
+  previewBySession: Record<string, { sessionId: string; path: string; basePath: string }>;
   openPreview(sessionId: string, path: string, basePath: string): void;
-  closePreview(): void;
+  closePreview(sessionId: string): void;
   homeDir: string | null;
   ensureHomeDir(): Promise<string>;
   loadProjects(): Promise<void>;
@@ -142,7 +143,7 @@ interface AppState {
   hydrateActiveTurns(): Promise<void>;
   startNewSession(driver?: DriverName): void;
   setPendingDriver(driver: DriverName): void;
-  sendPendingPrompt(prompt: string, attachments?: string[]): Promise<void>;
+  sendPendingPrompt(prompt: string, attachments?: string[], command?: CommandInvocation): Promise<void>;
   ensureHistory(sessionId: string, opts?: { force?: boolean; isRetry?: boolean }): Promise<void>;
   subagentToolsByKey: Record<string, SubagentToolsResult>;
   subagentToolsLoading: Record<string, boolean>;
@@ -164,8 +165,8 @@ interface AppState {
   createSession(driver: DriverName, prefs?: ComposerPrefs, workspace?: CreateSessionOptions): Promise<void>;
   createSessionIn(projectId: string, driver: DriverName, prefs?: ComposerPrefs, workspace?: CreateSessionOptions): Promise<Session>;
   applySession(session: Session): void;
-  sendPrompt(prompt: string, attachments?: string[]): Promise<void>;
-  sendPromptTo(sessionId: string, prompt: string, attachments?: string[], opts?: { prRefs?: PrRef[] }): Promise<void>;
+  sendPrompt(prompt: string, attachments?: string[], command?: CommandInvocation): Promise<void>;
+  sendPromptTo(sessionId: string, prompt: string, attachments?: string[], opts?: { prRefs?: PrRef[]; command?: CommandInvocation }): Promise<void>;
   interrupt(): Promise<void>;
   retryConnection(sessionId: string): Promise<void>;
   respondApproval(requestId: string, decision: ApprovalDecision): Promise<void>;
@@ -315,7 +316,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
-  preview: null,
+  previewBySession: {},
 
   homeDir: null,
 
@@ -329,11 +330,21 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   openPreview(sessionId: string, path: string, basePath: string) {
-    set({ preview: { sessionId, path, basePath } });
+    set((state) => ({
+      previewBySession: {
+        ...state.previewBySession,
+        [sessionId]: { sessionId, path, basePath }
+      }
+    }));
   },
 
-  closePreview() {
-    set({ preview: null });
+  closePreview(sessionId: string) {
+    set((state) => {
+      if (!state.previewBySession[sessionId]) return state;
+      const previewBySession = { ...state.previewBySession };
+      delete previewBySession[sessionId];
+      return { previewBySession };
+    });
   },
 
   async loadProjects() {
@@ -697,7 +708,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ pendingDriver: driver, pendingPrefs: { ...get().pendingPrefs, model: restored } });
   },
 
-  async sendPendingPrompt(prompt: string, attachments: string[] = []) {
+  async sendPendingPrompt(prompt: string, attachments: string[] = [], command?: CommandInvocation) {
     const projectId = get().activeProjectId;
     const driver = get().pendingDriver ?? get().lastDriver;
     const prefs = get().pendingPrefs;
@@ -716,7 +727,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         });
         return;
       }
-      await get().sendPrompt(prompt, attachments);
+      await get().sendPrompt(prompt, attachments, command);
     } finally {
       pendingPromptInFlight = false;
     }
@@ -906,13 +917,13 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ sessionsByProject: replaceSession(sessionsByProject, next) });
   },
 
-  async sendPrompt(prompt: string, attachments?: string[]) {
+  async sendPrompt(prompt: string, attachments?: string[], command?: CommandInvocation) {
     const sessionId = get().activeSessionId;
     if (!sessionId) return;
-    await get().sendPromptTo(sessionId, prompt, attachments);
+    await get().sendPromptTo(sessionId, prompt, attachments, command ? { command } : undefined);
   },
 
-  async sendPromptTo(sessionId: string, prompt: string, attachments?: string[], opts?: { prRefs?: PrRef[] }) {
+  async sendPromptTo(sessionId: string, prompt: string, attachments?: string[], opts?: { prRefs?: PrRef[]; command?: CommandInvocation }) {
     if (!prompt.trim()) return;
     const prefs = get().composerBySession[sessionId] ?? DEFAULT_COMPOSER;
     const previous = Object.values(get().sessionsByProject)
@@ -928,7 +939,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
     let turnId: string;
     try {
-      turnId = await window.cw.startTurn(sessionId, prompt, { prefs, attachments, prRefs: opts?.prRefs });
+      turnId = await window.cw.startTurn(sessionId, prompt, {
+        prefs,
+        attachments,
+        ...(opts?.command ? { command: opts.command } : {}),
+        ...(opts?.prRefs ? { prRefs: opts.prRefs } : {})
+      });
     } catch (err) {
       if (get().busyTurns[sessionId] === pending) {
         const book = closeTurn(
@@ -957,7 +973,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         ...get().messagesBySession,
         [sessionId]: [
           ...(get().messagesBySession[sessionId] ?? []),
-          { id: `${turnId}-u`, role: "user", text: prompt, turnId }
+          { id: `${turnId}-u`, role: "user", text: prompt, turnId, timestamp: Date.now() }
         ]
       }
     });
@@ -1146,12 +1162,13 @@ export const useAppStore = create<AppState>((set, get) => ({
         }
       });
     } else if (event.type === "tool.result") {
-      const idx = messages.findIndex((m) => m.id === event.toolCallId);
+      const idx = messages.findIndex((m) => m.role === "tool" && (m.id === event.toolCallId || m.id === `${event.toolCallId}-r`));
       if (idx >= 0 && messages[idx].role === "tool") {
         const updated = [...messages];
         const call = updated[idx];
         updated[idx] = {
           ...call,
+          ...(call.id === `${event.toolCallId}-r` ? { text: event.output.slice(0, 1000) } : {}),
           toolOutput: event.output.slice(0, 8000),
           toolDone: true,
           toolCompletedAt: Date.now(),

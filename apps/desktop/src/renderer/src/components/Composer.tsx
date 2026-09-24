@@ -1,6 +1,7 @@
 import { useEffect } from "react";
 import type { DriverName } from "../cw.js";
 import { useAppStore, DEFAULT_COMPOSER } from "../stores/appStore.js";
+import { usePanelStore } from "../stores/panelStore.js";
 import { ComposerView, type ComposerBackend } from "./ComposerView.js";
 
 export function Composer({ sessionId, driver }: { sessionId: string; driver: DriverName }) {
@@ -25,10 +26,14 @@ export function Composer({ sessionId, driver }: { sessionId: string; driver: Dri
     loadModels: () => window.cw.listModels(sessionId),
     loadPermissions: () => window.cw.listPermissions(sessionId),
     loadFiles: () => window.cw.listFiles(sessionId),
+    loadCommands: () => window.cw.listCommands(sessionId),
     savePrefs: (p) => {
       void store.setComposerPrefs(sessionId, p);
     },
-    send: (body, attachments) => store.sendPrompt(body, attachments),
+    send: (body, attachments, command) => store.sendPrompt(body, attachments, command),
+    newSession: () => store.startNewSession(driver),
+    rename: (title) => store.renameSession(sessionId, title),
+    openTerminal: () => usePanelStore.getState().revealTab(sessionId, driver),
     savePasteImage: (mime, data) =>
       projectId
         ? window.cw.savePasteImage(projectId, mime, data)

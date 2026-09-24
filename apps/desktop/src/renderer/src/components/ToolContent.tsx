@@ -7,13 +7,14 @@ import { PrSessionPanel } from "./PrSessionPanel.js";
 import { PtyTab } from "./PtyTab.js";
 import { useAppStore } from "../stores/appStore.js";
 import { tabsInPanel } from "../stores/panelLayout.js";
-import { usePanelStore } from "../stores/panelStore.js";
+import { selectSessionPanel, usePanelStore } from "../stores/panelStore.js";
 
 export function ToolContent({ tab, sessionId, panel }: { tab: DockableTabId; sessionId: string; panel: PanelId }) {
-  const preview = useAppStore((s) => s.preview);
+  const preview = useAppStore((s) => s.previewBySession[sessionId] ?? null);
   const closePreview = useAppStore((s) => s.closePreview);
-  const dockByTab = usePanelStore((s) => s.dockByTab);
+  const dockByTab = usePanelStore((s) => selectSessionPanel(s, sessionId).dockByTab);
   const setActive = usePanelStore((s) => s.setActive);
+  const moveTab = usePanelStore((s) => s.moveTab);
 
   if (tab === "files") return <FilePanel sessionId={sessionId} />;
   if (tab === "agents") return <AgentsPanel sessionId={sessionId} />;
@@ -28,10 +29,11 @@ export function ToolContent({ tab, sessionId, panel }: { tab: DockableTabId; ses
         path={preview.path}
         basePath={preview.basePath}
         onClose={() => {
-          closePreview();
           const fallback = tabsInPanel(dockByTab, panel).find((id) => id !== "preview");
-          if (fallback) setActive(panel, fallback);
-          else if (panel === "main") setActive("main", "chat");
+          closePreview(sessionId);
+          moveTab(sessionId, "preview", "closed");
+          if (fallback) setActive(sessionId, panel, fallback);
+          else if (panel === "main") setActive(sessionId, "main", "chat");
         }}
       />
     );

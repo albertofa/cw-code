@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, Sparkles, TriangleAlert } from "lucide-react";
+import { Check, ChevronDown, Copy, Sparkles, TriangleAlert } from "lucide-react";
 import type { DockableTabId } from "@cw-code/contracts";
 import { useAppStore, type ChatMessage } from "../stores/appStore.js";
 import { Notifications, useNotifs } from "./Notifications.js";
@@ -27,13 +27,88 @@ import { TurnBlock } from "./TurnBlock.js";
 import { groupTurns, splitTurn, type ThreadNode } from "./turnGroups.js";
 import { pendingToolsForTurn } from "./toolSummaries.js";
 import { durationFromMessages } from "./turnFormat.js";
-import { usePanelStore } from "../stores/panelStore.js";
+import { selectSessionPanel, usePanelStore } from "../stores/panelStore.js";
 import { PanelToggles } from "./PanelToggles.js";
 import { collectSubagents } from "./subagents.js";
 import { splitImageMentions } from "./imagePreview.js";
 import { ImageThumb } from "./ImageThumb.js";
 
 const EMPTY_MESSAGES: ChatMessage[] = [];
+
+function UserMessage({
+  message,
+  sessionId,
+  projectId
+}: {
+  message: ChatMessage;
+  sessionId: string;
+  projectId: string | undefined;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  const copy = () => {
+    if (!navigator.clipboard) return;
+    void navigator.clipboard
+      .writeText(message.text)
+      .then(() => {
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 1500);
+      })
+      .catch(() => {
+        useNotifs.getState().push({
+          kind: "error",
+          title: "Could not copy message",
+          message: "Clipboard access failed."
+        });
+      });
+  };
+
+  const date = message.timestamp === undefined ? undefined : new Date(message.timestamp);
+  const validDate = date && Number.isFinite(date.getTime()) ? date : undefined;
+
+  return (
+    <div className="msg-user-wrap">
+      <div className="msg-user">
+        {splitImageMentions(message.text).map((seg, i) =>
+          seg.kind === "image" ? (
+            <ImageThumb
+              key={i}
+              target={{ sessionId, projectId }}
+              path={seg.path}
+              className="msg-image-thumb"
+            />
+          ) : (
+            <span key={i}>{seg.value}</span>
+          )
+        )}
+      </div>
+      <div className="msg-user-meta">
+        {validDate && (
+          <time dateTime={validDate.toISOString()} title={validDate.toLocaleString()}>
+            {validDate.toLocaleString(undefined, {
+              month: "numeric",
+              day: "numeric",
+              hour: "numeric",
+              minute: "2-digit"
+            })}
+          </time>
+        )}
+        <button
+          type="button"
+          className="msg-user-copy"
+          onClick={copy}
+          title={copied ? "Copied" : "Copy message"}
+          aria-label="Copy message"
+        >
+          <span className="msg-user-copy-status" aria-live="polite">
+            {copied ? "Copied" : ""}
+          </span>
+          {copied ? <Check aria-hidden="true" size={14} /> : <Copy aria-hidden="true" size={14} />}
+        </button>
+      </div>
+    </div>
+  );
+}
 
 export function ThreadView() {
   const activeProjectId = useAppStore((s) => s.activeProjectId);
@@ -60,11 +135,15 @@ export function ThreadView() {
   const usage = useAppStore((s) => (activeSessionId ? s.usageBySession[activeSessionId] : undefined));
   const reasoningExpanded = useAppStore((s) => (session ? s.reasoningExpandedByDriver[session.driver] : false));
   const openPreview = useAppStore((s) => s.openPreview);
-  const panelActiveMain = usePanelStore((s) => s.activeMain);
-  const panelDockByTab = usePanelStore((s) => s.dockByTab);
-  const panelMainOrder = usePanelStore((s) => s.mainOrder);
-  const rightVisible = usePanelStore((s) => s.rightVisible);
-  const dropMain = useDockDrop("main");
+  const {
+    activeMain: panelActiveMain,
+    dockByTab: panelDockByTab,
+    mainOrder: panelMainOrder,
+    rightVisible
+  } = usePanelStore((s) => selectSessionPanel(s, activeSessionId ?? undefined));
+  const activateOrOpen = usePanelStore((s) => s.activateOrOpen);
+  const setRightVisible = usePanelStore((s) => s.setRightVisible);
+  const dropMain = useDockDrop("main", activeSessionId ?? undefined);
   const draggingTab = usePanelStore((s) => s.draggingTab);
   const setPendingDriver = useAppStore((s) => s.setPendingDriver);
   const turnStartedAt = useAppStore((s) => (activeSessionId ? s.turnStartedAt[activeSessionId] : undefined));
@@ -112,9 +191,12 @@ export function ThreadView() {
   const basePath = session?.worktreePath ?? project?.rootPath ?? "";
   const onOpenPreview = useCallback(
     (path: string) => {
-      if (sessionId) openPreview(sessionId, path, basePath);
+      if (!sessionId) return;
+      openPreview(sessionId, path, basePath);
+      activateOrOpen(sessionId, "preview");
+      setRightVisible(sessionId, true);
     },
-    [openPreview, sessionId, basePath]
+    [openPreview, sessionId, basePath, activateOrOpen, setRightVisible]
   );
   const onOpenExternal = useCallback(
     (path: string) => {
@@ -193,7 +275,7 @@ export function ThreadView() {
       <div className="head-col col-mid" />
       <div className="head-col col-right">
         {!showNew && sessionId && <GitPanelBar key={sessionId} sessionId={sessionId} />}
-        {!rightVisible && <PanelToggles />}
+        {!rightVisible && <PanelToggles sessionId={activeSessionId ?? undefined} />}
       </div>
     </div>
   );
@@ -232,22 +314,7 @@ export function ThreadView() {
     }
     const m = n.msg;
     if (m.role === "user") {
-      return (
-        <div key={m.id} className="msg-user">
-          {splitImageMentions(m.text).map((seg, i) =>
-            seg.kind === "image" ? (
-              <ImageThumb
-                key={i}
-                target={{ sessionId: session.id, projectId: project?.id }}
-                path={seg.path}
-                className="msg-image-thumb"
-              />
-            ) : (
-              <span key={i}>{seg.value}</span>
-            )
-          )}
-        </div>
-      );
+      return <UserMessage key={m.id} message={m} sessionId={session.id} projectId={project?.id} />;
     }
     if (m.role === "tool") {
       return (

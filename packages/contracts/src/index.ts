@@ -54,3 +54,4 @@ export type {
 export type { PanelId, DockLocation, DockableTabId, MainTabId, TabDockState, TabAutoLocation, PanelLayoutSnapshot } from "./panels.js";
 export type { CliBinary, BinarySource, CliDiscoveredCandidate, CliDiscoverResult } from "./cli.js";
 export type { HarnessId, SkillSource, SkillMeta, SkillDetail, SkillsListResult, SkillSaveInput } from "./skills.js";
+export type { CommandDispatch, CommandOption, CommandInvocation } from "./commands.js";

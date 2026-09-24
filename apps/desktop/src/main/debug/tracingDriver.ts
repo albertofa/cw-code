@@ -1,6 +1,7 @@
 import type {
   ApprovalDecision,
   CliDriver,
+  CommandOption,
   DriverKind,
   HistoryMessage,
   ModelOption,
@@ -215,6 +216,11 @@ export class TracingCliDriver implements CliDriver {
   async listPermissionModes(cwd: string): Promise<PermissionOption[]> {
     if (typeof this.inner.listPermissionModes !== "function") return [];
     return this.inner.listPermissionModes(cwd);
+  }
+
+  async listCommands(cwd: string): Promise<CommandOption[]> {
+    if (typeof this.inner.listCommands !== "function") return [];
+    return this.inner.listCommands(cwd);
   }
 
   async respondToApproval(requestId: string, decision: ApprovalDecision): Promise<void> {

@@ -2,6 +2,8 @@ import type {
   CliBinary,
   CliDiscoveredCandidate,
   CliDiscoverResult,
+  CommandInvocation,
+  CommandOption,
   HarnessId,
   PrBucket,
   PrCheck,
@@ -218,6 +220,7 @@ export type TurnEvent =
       name: string;
       input: unknown;
       parentToolCallId?: string;
+      model?: string;
     }
   | {
       type: "tool.result";
@@ -443,10 +446,12 @@ export interface CwApi {
   getSubagentTools(sessionId: string, agentId: string): Promise<SubagentToolsResult>;
   activeTurns(): Promise<ActiveTurn[]>;
   retryConnection(sessionId: string): Promise<RetryConnectionResult>;
-  startTurn(sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[]; prRefs?: PrRef[] }): Promise<string>;
+  startTurn(sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[]; command?: CommandInvocation; prRefs?: PrRef[] }): Promise<string>;
   interrupt(turnId: string): Promise<void>;
   respondApproval(requestId: string, decision: ApprovalDecision): Promise<void>;
   respondQuestion(requestId: string, answers: Record<string, string>): Promise<void>;
+  listCommands(sessionId: string): Promise<CommandOption[]>;
+  listCommandsFor(projectId: string, driver: DriverName): Promise<CommandOption[]>;
   listModels(sessionId: string): Promise<ModelOption[]>;
   listModelsFor(projectId: string, driver: DriverName): Promise<ModelOption[]>;
   listModelsForHarness(driver: DriverName): Promise<ModelOption[]>;

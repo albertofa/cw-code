@@ -6,6 +6,8 @@ import type {
   ApprovalDecision,
   ApprovalKind,
   CliDriver,
+  CommandInvocation,
+  CommandOption,
   HistoryMessage,
   ModelOption,
   PermissionMode,
@@ -24,6 +26,7 @@ import { CodexAppServer, type CodexAppServerLike } from "./codexAppServer.js";
 import {
   accumulateCodexUsage,
   approvalResultFor,
+  buildCodexSkillInput,
   buildCodexUserInput,
   buildCommandApproval,
   buildFileChangeApproval,
@@ -31,11 +34,13 @@ import {
   buildUserInputQuestionRequest,
   codexCollabTool,
   codexReasoningText,
+  codexReviewTarget,
   codexUserInputResult,
   mapCodexEffort,
   mapCodexHistory,
   mapCodexModel,
   mapCodexPlan,
+  mapCodexSkillCommands,
   mapCodexSubagentTools,
   mapCodexThread,
   mapPermissionMode,
@@ -51,6 +56,21 @@ import {
   type CodexUserInputParams
 } from "./codexProtocol.js";
 
+const CODEX_BUILTIN_COMMANDS: CommandOption[] = [
+  { name: "compact", description: "Summarize the thread to free context", dispatch: "native" },
+  {
+    name: "review",
+    description: "Review uncommitted changes, or follow custom instructions",
+    argumentHint: "[instructions]",
+    dispatch: "native"
+  }
+];
+
+type CodexCollaborationMode = {
+  mode: "plan";
+  settings: { model: string; reasoning_effort: string | null; developer_instructions: null };
+} | null;
+
 interface ActiveTurn {
   turnId: string;
   localSessionId: string;
@@ -59,6 +79,8 @@ interface ActiveTurn {
   outputTokens: number;
   numTurns: number;
   permissionMode?: PermissionMode;
+  command?: string;
+  hasAssistantText?: boolean;
 }
 
 interface PendingApproval {
@@ -104,6 +126,7 @@ export class CodexCliDriver implements CliDriver {
   private pendingQuestions = new Map<string, { serverId: string | number; turnId: string }>();
   private reasoningKinds = new Map<string, Map<string, "summary" | "text">>();
   private defaultModelIdCache: string | null = null;
+  private skillPaths = new Map<string, Map<string, string>>();
 
   constructor(
     private emit: (event: ThreadEvent) => void,
@@ -254,8 +277,60 @@ export class CodexCliDriver implements CliDriver {
     }
   }
 
+  async listCommands(cwd: string): Promise<CommandOption[]> {
+    const start = Date.now();
+    const operation = "codex.listCommands";
+    try {
+      const res = await this.client.request<unknown>("skills/list", { cwds: [cwd] });
+      const { commands, paths } = mapCodexSkillCommands(res);
+      this.skillPaths.set(cwd, paths);
+      traceHarnessCall({
+        harness: "codex",
+        operation,
+        cwd,
+        durationMs: Date.now() - start,
+        ok: true,
+        extra: { count: commands.length }
+      });
+      return [...CODEX_BUILTIN_COMMANDS, ...commands];
+    } catch (err) {
+      const message = truncateError((err as Error).message);
+      console.warn(`codex skills/list failed, falling back to built-in commands: ${message}`);
+      traceHarnessCall({
+        harness: "codex",
+        operation,
+        cwd,
+        durationMs: Date.now() - start,
+        ok: false,
+        error: message
+      });
+      return [...CODEX_BUILTIN_COMMANDS];
+    }
+  }
+
+  private async resolveSkillPath(cwd: string, name: string): Promise<string | null> {
+    const cached = this.skillPaths.get(cwd)?.get(name);
+    if (cached) return cached;
+    const res = await this.client.request<unknown>("skills/list", { cwds: [cwd], forceReload: true });
+    const { paths } = mapCodexSkillCommands(res);
+    this.skillPaths.set(cwd, paths);
+    return paths.get(name) ?? null;
+  }
+
   startTurn(request: TurnRequest): TurnHandle {
     const turnId = randomUUID();
+    if (request.command?.name === "compact" && !request.resumeCursor) {
+      traceHarnessCall({
+        harness: "codex",
+        operation: "codex.startTurn",
+        sessionId: request.sessionId,
+        turnId,
+        cwd: request.cwd,
+        ok: false,
+        error: "Nothing to compact yet"
+      });
+      throw new Error("Nothing to compact yet");
+    }
     const preview = previewText(request.prompt);
     traceHarnessCall({
       harness: "codex",
@@ -289,10 +364,11 @@ export class CodexCliDriver implements CliDriver {
         inputTokens: 0,
         outputTokens: 0,
         numTurns: 0,
-        ...(request.permissionMode ? { permissionMode: request.permissionMode } : {})
+        ...(request.permissionMode ? { permissionMode: request.permissionMode } : {}),
+        ...(request.command ? { command: request.command.name } : {})
       };
       this.turns.set(turnId, active);
-      const collaborationMode = perms.planMode
+      const collaborationMode: CodexCollaborationMode = perms.planMode
         ? {
             mode: "plan" as const,
             settings: {
@@ -302,6 +378,23 @@ export class CodexCliDriver implements CliDriver {
             }
           }
         : null;
+
+      if (request.command) {
+        const codexTurnId = await this.startCommandTurn(threadId, request, collaborationMode);
+        if (codexTurnId) this.turnByCodexId.set(codexTurnId, turnId);
+        traceHarnessCall({
+          harness: "codex",
+          operation: "codex.turnStarted",
+          sessionId: request.sessionId,
+          turnId,
+          cwd: request.cwd,
+          durationMs: Date.now() - start,
+          ok: true,
+          extra: { threadId, command: request.command.name, ...(codexTurnId ? { codexTurnId } : {}) }
+        });
+        return;
+      }
+
       const attachments = (request.attachments ?? []).filter((rel) => {
         if (isAbsolute(rel)) {
           if (existsSync(rel)) return true;
@@ -351,6 +444,37 @@ export class CodexCliDriver implements CliDriver {
       });
       this.emit({ type: "turn.error", turnId, message: truncateError((err as Error).message) });
     }
+  }
+
+  private async startCommandTurn(
+    threadId: string,
+    request: TurnRequest,
+    collaborationMode: CodexCollaborationMode
+  ): Promise<string | null> {
+    const command = request.command as CommandInvocation;
+    if (command.name === "compact") {
+      await this.client.request<unknown>("thread/compact/start", { threadId });
+      return null;
+    }
+    if (command.name === "review") {
+      const res = await this.client.request<{ turn: { id: string }; reviewThreadId: string }>("review/start", {
+        threadId,
+        target: codexReviewTarget(command.args),
+        delivery: "inline"
+      });
+      return res.turn.id;
+    }
+    const path = await this.resolveSkillPath(request.cwd, command.name);
+    if (!path) throw new Error(`Unknown command: /${command.name}`);
+    const effort = mapCodexEffort(request.effort);
+    const res = await this.client.request<TurnStartResponse>("turn/start", {
+      threadId,
+      input: buildCodexSkillInput(command.name, path, command.args),
+      ...(request.model ? { model: request.model } : {}),
+      ...(effort ? { effort } : {}),
+      ...(collaborationMode ? { collaborationMode } : {})
+    });
+    return res.turn.id;
   }
 
   private async startThread(
@@ -491,7 +615,10 @@ export class CodexCliDriver implements CliDriver {
       case "item/agentMessage/delta": {
         const active = this.turnForCodexId(String(p["turnId"] ?? ""), typeof p["threadId"] === "string" ? p["threadId"] : undefined);
         const delta = typeof p["delta"] === "string" ? p["delta"] : "";
-        if (active && delta) this.emit({ type: "assistant.delta", turnId: active.turnId, text: delta });
+        if (active && delta) {
+          active.hasAssistantText = true;
+          this.emit({ type: "assistant.delta", turnId: active.turnId, text: delta });
+        }
         break;
       }
       case "item/reasoning/summaryTextDelta":
@@ -529,6 +656,21 @@ export class CodexCliDriver implements CliDriver {
           const streamed = typeof item.id === "string" && kinds?.has(item.id) === true;
           const text = streamed ? "" : codexReasoningText(item);
           if (text) this.emit({ type: "reasoning.delta", turnId: active.turnId, text });
+          break;
+        }
+        if (item.type === "contextCompaction") {
+          if (active.command === "compact") {
+            const text = active.hasAssistantText ? "\n\nContext compacted." : "Context compacted.";
+            active.hasAssistantText = true;
+            this.emit({ type: "assistant.delta", turnId: active.turnId, text });
+          }
+          break;
+        }
+        if (item.type === "exitedReviewMode") {
+          if (item.review && !active.hasAssistantText) {
+            active.hasAssistantText = true;
+            this.emit({ type: "assistant.delta", turnId: active.turnId, text: item.review });
+          }
           break;
         }
         const result = this.toolResultFor(item, active.turnId);

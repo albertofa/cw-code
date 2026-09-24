@@ -1,68 +1,83 @@
 import { create } from "zustand";
-import type { DockableTabId, DockLocation, MainTabId, PanelId, PanelLayoutSnapshot } from "@cw-code/contracts";
+import type { DockableTabId, DockLocation, MainTabId, PanelId } from "@cw-code/contracts";
 import {
   PANEL_LAYOUT_KEY,
+  PANEL_STATE_KEY,
   clampBottomHeight,
-  defaultLayout,
-  parseLayout,
-  sanitizeLayout,
-  serializeLayout,
-  tabsInPanel
+  defaultSessionPanel,
+  parsePanelState,
+  sanitizeSessionPanel,
+  serializePanelState,
+  tabsInPanel,
+  type LoadedPanelState,
+  type PersistedPanelState,
+  type SessionPanelState
 } from "./panelLayout.js";
 
-function loadSnapshot(): PanelLayoutSnapshot {
+const DEFAULT_SESSION_PANEL = defaultSessionPanel();
+
+function loadState(): LoadedPanelState {
   try {
-    return parseLayout(window.localStorage.getItem(PANEL_LAYOUT_KEY));
+    return parsePanelState(
+      window.localStorage.getItem(PANEL_STATE_KEY),
+      window.localStorage.getItem(PANEL_LAYOUT_KEY)
+    );
   } catch {
-    return defaultLayout();
+    return parsePanelState(null, null);
   }
 }
 
-function persist(snapshot: PanelLayoutSnapshot): void {
+function persist(state: PersistedPanelState): void {
   try {
-    window.localStorage.setItem(PANEL_LAYOUT_KEY, serializeLayout(snapshot));
+    window.localStorage.setItem(PANEL_STATE_KEY, serializePanelState(state));
   } catch {
   }
+}
+
+function panelFor(state: PanelStore, sessionId: string | undefined): SessionPanelState {
+  if (!sessionId) return DEFAULT_SESSION_PANEL;
+  return state.sessions[sessionId] ?? state.legacySession ?? DEFAULT_SESSION_PANEL;
 }
 
 export interface PanelActions {
   setDraggingTab(tab: DockableTabId | null): void;
-  moveTab(tab: DockableTabId, panel: DockLocation): void;
-  setActive(panel: PanelId, tab: MainTabId): void;
-  activateOrOpen(tab: DockableTabId): void;
+  initializeSession(sessionId: string): void;
+  moveTab(sessionId: string | undefined, tab: DockableTabId, panel: DockLocation): void;
+  setActive(sessionId: string | undefined, panel: PanelId, tab: MainTabId): void;
+  activateOrOpen(sessionId: string | undefined, tab: DockableTabId): void;
+  revealTab(sessionId: string, tab: DockableTabId): void;
   setAutoLocation(tab: DockableTabId, panel: PanelId): void;
-  setBottomHeight(height: number): void;
-  setBottomCollapsed(collapsed: boolean): void;
-  setRightVisible(visible: boolean): void;
-  resetLayout(): void;
+  setBottomHeight(sessionId: string | undefined, height: number): void;
+  setBottomCollapsed(sessionId: string | undefined, collapsed: boolean): void;
+  setRightVisible(sessionId: string | undefined, visible: boolean): void;
+  resetLayout(sessionId: string | undefined): void;
 }
 
-export type PanelStore = PanelLayoutSnapshot & PanelActions & { draggingTab: DockableTabId | null; bottomCollapsed: boolean; rightVisible: boolean };
-
-function snapshotOf(state: PanelStore): PanelLayoutSnapshot {
-  return {
-    dockByTab: state.dockByTab,
-    autoLocation: state.autoLocation,
-    activeMain: state.activeMain,
-    activeRight: state.activeRight,
-    activeBottom: state.activeBottom,
-    mainOrder: state.mainOrder,
-    bottomHeight: state.bottomHeight
-  };
-}
+export type PanelStore = PersistedPanelState & PanelActions & {
+  legacySession: SessionPanelState | null;
+  draggingTab: DockableTabId | null;
+};
 
 export const usePanelStore = create<PanelStore>((set, get) => ({
-  ...loadSnapshot(),
+  ...loadState(),
   draggingTab: null,
-  bottomCollapsed: false,
-  rightVisible: true,
 
   setDraggingTab: (tab) => {
     set({ draggingTab: tab });
   },
 
-  moveTab: (tab, panel) => {
+  initializeSession: (sessionId) => {
     const current = get();
+    if (current.sessions[sessionId] || !current.legacySession) return;
+    const sessions = { ...current.sessions, [sessionId]: current.legacySession };
+    set({ sessions, legacySession: null });
+    persist({ autoLocation: current.autoLocation, sessions });
+  },
+
+  moveTab: (sessionId, tab, panel) => {
+    if (!sessionId) return;
+    const store = get();
+    const current = panelFor(store, sessionId);
     const dockByTab = { ...current.dockByTab, [tab]: panel };
     let mainOrder = current.mainOrder.filter((id) => id === "chat" || dockByTab[id] === "main");
     if (panel === "main" && !mainOrder.includes(tab)) mainOrder = [...mainOrder, tab];
@@ -84,77 +99,109 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
     } else if (dockByTab[activeBottom] !== "bottom") {
       activeBottom = tabsInPanel(dockByTab, "bottom")[0] ?? activeBottom;
     }
-    const next: PanelLayoutSnapshot = sanitizeLayout({
+    const next = sanitizeSessionPanel({
+      ...current,
       dockByTab,
-      autoLocation: current.autoLocation,
       activeMain,
       activeRight,
       activeBottom,
-      mainOrder,
-      bottomHeight: current.bottomHeight
+      mainOrder
     });
-    set(next);
-    persist(next);
+    const sessions = { ...store.sessions, [sessionId]: next };
+    set({ sessions, legacySession: null });
+    persist({ autoLocation: store.autoLocation, sessions });
   },
 
-  setActive: (panel, tab) => {
-    const current = get();
+  setActive: (sessionId, panel, tab) => {
+    if (!sessionId) return;
+    const store = get();
+    const current = panelFor(store, sessionId);
     if (panel === "main") {
       if (tab !== "chat" && current.dockByTab[tab] !== "main") return;
-      const next = { ...snapshotOf(current), activeMain: tab };
-      set(next);
-      persist(next);
+      const next = { ...current, activeMain: tab };
+      const sessions = { ...store.sessions, [sessionId]: next };
+      set({ sessions, legacySession: null });
+      persist({ autoLocation: store.autoLocation, sessions });
       return;
     }
     if (current.dockByTab[tab as DockableTabId] !== panel) return;
     const next = {
-      ...snapshotOf(current),
+      ...current,
       activeRight: panel === "right" ? (tab as DockableTabId) : current.activeRight,
       activeBottom: panel === "bottom" ? (tab as DockableTabId) : current.activeBottom
     };
-    set(next);
-    persist(next);
+    const sessions = { ...store.sessions, [sessionId]: next };
+    set({ sessions, legacySession: null });
+    persist({ autoLocation: store.autoLocation, sessions });
   },
 
-  activateOrOpen: (tab) => {
+  activateOrOpen: (sessionId, tab) => {
     const current = get();
-    const docked = current.dockByTab[tab];
-    if (docked === "closed") {
-      current.moveTab(tab, current.autoLocation[tab] ?? "right");
+    const panel = panelFor(current, sessionId);
+    if (panel.dockByTab[tab] === "closed") {
+      current.moveTab(sessionId, tab, current.autoLocation[tab] ?? "right");
     } else {
-      current.setActive(docked, tab);
+      current.setActive(sessionId, panel.dockByTab[tab], tab);
     }
+  },
+
+  revealTab: (sessionId, tab) => {
+    get().activateOrOpen(sessionId, tab);
+    const current = get();
+    const panel = panelFor(current, sessionId);
+    if (panel.dockByTab[tab] === "right") current.setRightVisible(sessionId, true);
+    if (panel.dockByTab[tab] === "bottom" && panel.bottomCollapsed) current.setBottomCollapsed(sessionId, false);
   },
 
   setAutoLocation: (tab, panel) => {
     const current = get();
-    const next = { ...snapshotOf(current), autoLocation: { ...current.autoLocation, [tab]: panel } };
-    set(next);
-    persist(next);
+    const autoLocation = { ...current.autoLocation, [tab]: panel };
+    set({ autoLocation });
+    persist({ autoLocation, sessions: current.sessions, legacySession: current.legacySession });
   },
 
-  setBottomHeight: (height) => {
-    const current = get();
-    const next = { ...snapshotOf(current), bottomHeight: clampBottomHeight(height) };
-    set(next);
-    persist(next);
+  setBottomHeight: (sessionId, height) => {
+    if (!sessionId) return;
+    const store = get();
+    const current = panelFor(store, sessionId);
+    const next = { ...current, bottomHeight: clampBottomHeight(height) };
+    const sessions = { ...store.sessions, [sessionId]: next };
+    set({ sessions, legacySession: null });
+    persist({ autoLocation: store.autoLocation, sessions });
   },
 
-  setBottomCollapsed: (collapsed) => {
-    set({ bottomCollapsed: collapsed });
+  setBottomCollapsed: (sessionId, collapsed) => {
+    if (!sessionId) return;
+    const store = get();
+    const current = panelFor(store, sessionId);
+    const sessions = { ...store.sessions, [sessionId]: { ...current, bottomCollapsed: collapsed } };
+    set({ sessions, legacySession: null });
+    persist({ autoLocation: store.autoLocation, sessions });
   },
 
-  setRightVisible: (visible) => {
-    set({ rightVisible: visible });
+  setRightVisible: (sessionId, visible) => {
+    if (!sessionId) return;
+    const store = get();
+    const current = panelFor(store, sessionId);
+    const sessions = { ...store.sessions, [sessionId]: { ...current, rightVisible: visible } };
+    set({ sessions, legacySession: null });
+    persist({ autoLocation: store.autoLocation, sessions });
   },
 
-  resetLayout: () => {
-    const next = defaultLayout();
-    set(next);
-    persist(next);
+  resetLayout: (sessionId) => {
+    if (!sessionId) return;
+    const store = get();
+    const sessions = { ...store.sessions, [sessionId]: defaultSessionPanel() };
+    set({ sessions, legacySession: null });
+    persist({ autoLocation: store.autoLocation, sessions });
   }
 }));
 
-export function selectTabsIn(state: PanelStore, panel: PanelId): DockableTabId[] {
-  return tabsInPanel(state.dockByTab, panel);
+export function selectSessionPanel(state: PanelStore, sessionId: string | undefined): SessionPanelState {
+  if (!sessionId) return DEFAULT_SESSION_PANEL;
+  return state.sessions[sessionId] ?? state.legacySession ?? DEFAULT_SESSION_PANEL;
+}
+
+export function selectTabsIn(state: PanelStore, sessionId: string | undefined, panel: PanelId): DockableTabId[] {
+  return tabsInPanel(selectSessionPanel(state, sessionId).dockByTab, panel);
 }

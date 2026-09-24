@@ -56,6 +56,34 @@ describe("appStore tool.result", () => {
     expect(message.subagentAgentId).toBe("agent-1");
   });
 
+  it("updates a result-only row when a later task notification has details", () => {
+    const session = "sess_task_failure";
+    useAppStore.getState().applyEvent(session, {
+      type: "tool.result",
+      turnId: "turn-1",
+      toolCallId: "call_1",
+      output: "Subagent failed",
+      isError: true
+    });
+    useAppStore.getState().applyEvent(session, {
+      type: "tool.result",
+      turnId: "turn-1",
+      toolCallId: "call_1",
+      output: "Permission denied reading C:/secret.txt",
+      isError: true,
+      usage: { tokens: 1200 }
+    });
+
+    expect(useAppStore.getState().messagesBySession[session]).toEqual([
+      expect.objectContaining({
+        id: "call_1-r",
+        text: "Permission denied reading C:/secret.txt",
+        toolUsage: { tokens: 1200 },
+        isError: true
+      })
+    ]);
+  });
+
   it("appends turn.done resultText when streaming deltas missed the final message", () => {
     const session = "sess_result";
     useAppStore.getState().applyEvent(session, {
@@ -297,5 +325,24 @@ describe("appStore applySession", () => {
     useAppStore.setState({ busyTurns: {} });
     useAppStore.getState().applySession({ ...base, status: "idle", updatedAt: 3 });
     expect(useAppStore.getState().sessionsByProject.proj_busy[0].status).toBe("idle");
+  });
+});
+
+describe("appStore preview per session", () => {
+  beforeEach(() => {
+    useAppStore.setState({ previewBySession: {} });
+  });
+
+  it("keeps preview targets independent and closes only the requested session", () => {
+    useAppStore.getState().openPreview("sess_a", "src/a.ts", "C:\\a");
+    useAppStore.getState().openPreview("sess_b", "src/b.ts", "C:\\b");
+    const previews = useAppStore.getState().previewBySession;
+    expect(previews.sess_a.path).toBe("src/a.ts");
+    expect(previews.sess_b.path).toBe("src/b.ts");
+
+    useAppStore.getState().closePreview("sess_a");
+    const remaining = useAppStore.getState().previewBySession;
+    expect(remaining.sess_a).toBeUndefined();
+    expect(remaining.sess_b.path).toBe("src/b.ts");
   });
 });

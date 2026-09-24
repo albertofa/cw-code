@@ -107,6 +107,25 @@ describe("TracingCliDriver", () => {
     ]);
   });
 
+  it("forwards listCommands to drivers that support it", async () => {
+    const tracing = new TracingCliDriver(new FakeDriver());
+    await expect(tracing.listCommands("C:\\proj")).resolves.toEqual([]);
+    const withCommands = new TracingCliDriver({
+      kind: "opencode",
+      listCommands: async () => [{ name: "compact", description: "Compact", dispatch: "native" as const }]
+    } as unknown as CliDriver);
+    await expect(withCommands.listCommands("C:\\proj")).resolves.toEqual([
+      { name: "compact", description: "Compact", dispatch: "native" }
+    ]);
+    const failing = new TracingCliDriver({
+      kind: "claude",
+      listCommands: async () => {
+        throw new Error("probe failed");
+      }
+    } as unknown as CliDriver);
+    await expect(failing.listCommands("C:\\proj")).rejects.toThrow("probe failed");
+  });
+
   it("forwards approval responses and logs the decision", async () => {
     const seen: Array<{ requestId: string; decision: string }> = [];
     const withApprovals = new TracingCliDriver({

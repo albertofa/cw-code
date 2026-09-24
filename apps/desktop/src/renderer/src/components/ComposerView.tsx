@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
 import {
   ArrowUp,
   AtSign,
@@ -13,6 +13,7 @@ import {
   X,
   Zap
 } from "lucide-react";
+import type { CommandInvocation, CommandOption } from "@cw-code/contracts";
 import type { ComposerPrefs, DriverName, EffortLevel, ModelOption, PermissionMode, PermissionOption } from "../cw.js";
 import { firstDisplayedModelId, getLastModel, setLastModel } from "./lastModel.js";
 import { DriverIcon } from "./DriverIcon.js";
@@ -20,6 +21,12 @@ import { MenuSelect, type MenuOption } from "./MenuSelect.js";
 import { ImageThumb } from "./ImageThumb.js";
 import { displayImagePath, type ImageTarget } from "./imagePreview.js";
 import { useAppStore } from "../stores/appStore.js";
+import { useConfirm } from "./ConfirmDialog.js";
+import { useNotifs } from "./Notifications.js";
+import { SlashMenu, slashOptionId, type SlashMenuItem } from "./SlashMenu.js";
+import { commandDisplay, filterCommands, mergeCommands, parseSlashInput, rankByQuery } from "./slashCommands.js";
+import { harnessLabel } from "./toolTabs.js";
+import { ipcErrorMessage } from "./ipcError.js";
 
 export interface ComposerBackend {
   imageTarget: ImageTarget;
@@ -28,11 +35,25 @@ export interface ComposerBackend {
   loadModels(): Promise<ModelOption[]>;
   loadPermissions(): Promise<PermissionOption[]>;
   loadFiles(): Promise<string[]>;
+  loadCommands(): Promise<CommandOption[]>;
   savePrefs(prefs: ComposerPrefs): void;
-  send(body: string, attachments: string[]): Promise<void>;
+  send(body: string, attachments: string[], command?: CommandInvocation): Promise<void>;
+  newSession?(): void;
+  rename?(title: string): Promise<void>;
+  openTerminal?(): void;
   savePasteImage(mime: string, data: Uint8Array): Promise<string>;
   interrupt(): void;
 }
+
+type SlashEntry = SlashMenuItem & { accept: () => void; complete: () => void };
+
+type CommandsResult = { ok: true; list: CommandOption[] } | { ok: false; error: string };
+
+const MAX_ARG_COMPLETIONS = 50;
+
+const SLASH_NAME = /^\/(\S*)$/;
+const SLASH_ARG = /^\/(model|effort)\s+(\S*)$/;
+const SLASH_PENDING_ARGS = /^\/(\S+) +$/;
 
 const EFFORTS: Array<{ id: EffortLevel; label: string }> = [
   { id: "minimal", label: "Minimal" },
@@ -150,6 +171,24 @@ export function ComposerView({
   const homeDir = useAppStore((s) => s.homeDir);
   const home = homeDir ?? undefined;
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
+  const slashListId = useId();
+  const { confirm, dialog: confirmDialog } = useConfirm();
+  const [inputFocused, setInputFocused] = useState(false);
+  const [driverCommands, setDriverCommands] = useState<CommandOption[] | null>(null);
+  const [commandsLoading, setCommandsLoading] = useState(false);
+  const [commandsError, setCommandsError] = useState<string | null>(null);
+  const [slashDismissed, setSlashDismissed] = useState<string | null>(null);
+  const [slashIndex, setSlashIndex] = useState(0);
+  const commandsRef = useRef<{ key: string; promise: Promise<CommandsResult>; failed: boolean } | null>(null);
+  const commandsKey = `${driver}\n${resetKey}`;
+  const commandsKeyRef = useRef(commandsKey);
+  commandsKeyRef.current = commandsKey;
+  const mountedRef = useRef(true);
+  const commandAvailability = {
+    newSession: backend.newSession !== undefined,
+    rename: backend.rename !== undefined,
+    terminal: backend.openTerminal !== undefined
+  };
 
   const autosizeComposer = () => {
     const el = composerRef.current;
@@ -202,6 +241,56 @@ export function ComposerView({
     setShowCustom(false);
     setCustomModel("");
   }, [driver]);
+
+  useEffect(() => {
+    mountedRef.current = true;
+    return () => {
+      mountedRef.current = false;
+    };
+  }, []);
+
+  const isCurrent = (key: string) => mountedRef.current && commandsKeyRef.current === key;
+
+  useEffect(() => {
+    commandsRef.current = null;
+    setDriverCommands(null);
+    setCommandsLoading(false);
+    setCommandsError(null);
+    setSlashDismissed(null);
+  }, [commandsKey]);
+
+  const ensureCommands = (retryFailed = false): Promise<CommandsResult> => {
+    const current = commandsRef.current;
+    if (current?.key === commandsKey && !(retryFailed && current.failed)) return current.promise;
+    setCommandsLoading(true);
+    setCommandsError(null);
+    const entry: { key: string; promise: Promise<CommandsResult>; failed: boolean } = {
+      key: commandsKey,
+      promise: Promise.resolve()
+        .then(() => backendRef.current.loadCommands())
+        .then(
+          (list) => {
+            if (commandsRef.current === entry) {
+              setDriverCommands(list);
+              setCommandsLoading(false);
+            }
+            return { ok: true as const, list };
+          },
+          (err: unknown) => {
+            const error = ipcErrorMessage(err);
+            if (commandsRef.current === entry) {
+              entry.failed = true;
+              setCommandsError(error);
+              setCommandsLoading(false);
+            }
+            return { ok: false as const, error };
+          }
+        ),
+      failed: false
+    };
+    commandsRef.current = entry;
+    return entry.promise;
+  };
 
   useEffect(() => {
     let cancelled = false;
@@ -278,18 +367,6 @@ export function ComposerView({
     setAttachments((prev) => (prev.includes(rel) ? prev : [...prev, rel]));
   };
 
-  const send = () => {
-    const body = draft.trim();
-    if ((!body && attachments.length === 0) || busy || sending || blockedReason) return;
-    const tagged = attachments.length > 0 ? `${body}${body ? "\n" : ""}${attachments.map((a) => `@${a}`).join("\n")}` : body;
-    setSending(true);
-    void backend.send(tagged, attachments).then(() => {
-      setDraft("");
-      setAttachments([]);
-      setPasteError(null);
-    }).finally(() => setSending(false));
-  };
-
   const pasteFiles = async (clipboard: DataTransfer): Promise<void> => {
     const fromItems = Array.from(clipboard.items)
       .filter((i) => i.kind === "file" && i.type.startsWith("image/"))
@@ -347,9 +424,288 @@ export function ComposerView({
     backendRef.current.savePrefs({ permissionMode: permissionOptions[0].id });
   }, [permissionOptions, effectivePermission]);
 
+  const commandList = useMemo(
+    () => mergeCommands(driver, driverCommands ?? [], commandAvailability),
+    [driver, driverCommands, commandAvailability.newSession, commandAvailability.rename, commandAvailability.terminal]
+  );
+
+  const clearComposer = () => {
+    setDraft("");
+    setAttachments([]);
+    setPasteError(null);
+  };
+
+  const warn = (title: string, message?: string) => {
+    useNotifs.getState().push({ kind: "warning", title, message });
+  };
+
+  const notifyError = (title: string, err: unknown) => {
+    useNotifs.getState().push({ kind: "error", title, message: ipcErrorMessage(err) });
+  };
+
+  const focusComposer = () => {
+    requestAnimationFrame(() => composerRef.current?.focus({ preventScroll: true }));
+  };
+
+  const tagAttachments = (body: string) =>
+    attachments.length > 0 ? `${body}${body ? "\n" : ""}${attachments.map((a) => `@${a}`).join("\n")}` : body;
+
+  const applyModel = (value: string) => {
+    const wanted = value.toLowerCase();
+    const match =
+      models.find((m) => m.id === value) ??
+      models.find((m) => m.id.toLowerCase() === wanted || m.label.toLowerCase() === wanted);
+    if (!match && models.length > 0) {
+      warn(`Unknown model: ${value}`, "Pick one from the list, or use Custom… in the model menu.");
+      return;
+    }
+    const id = match?.id ?? value;
+    if (match) {
+      setShowCustom(false);
+      setLastModel(driver, id);
+    } else {
+      setCustomModel(id);
+      setShowCustom(true);
+    }
+    backendRef.current.savePrefs({ model: id });
+    setDraft("");
+  };
+
+  const applyEffort = (value: string) => {
+    const wanted = value.toLowerCase();
+    const match = effortOptions.find((o) => o.id === wanted || o.label.toLowerCase() === wanted);
+    if (!match) {
+      warn(`Unknown effort level: ${value}`, `Available: ${effortOptions.map((o) => o.id).join(", ")}`);
+      return;
+    }
+    backendRef.current.savePrefs({ effort: match.id });
+    setDraft("");
+  };
+
+  const completeCommand = (command: CommandOption) => {
+    setDraft(`/${command.name} `);
+    focusComposer();
+  };
+
+  const runAppCommand = (command: CommandOption, args: string, key: string) => {
+    const b = backendRef.current;
+    if (command.name === "new" || command.name === "clear") {
+      setDraft("");
+      b.newSession?.();
+      return;
+    }
+    if (!args) {
+      completeCommand(command);
+      return;
+    }
+    if (command.name === "model") {
+      applyModel(args);
+    } else if (command.name === "effort") {
+      applyEffort(args);
+    } else if (command.name === "rename" && b.rename) {
+      void b.rename(args).then(
+        () => {
+          if (isCurrent(key)) setDraft("");
+        },
+        (err: unknown) => notifyError("Rename failed", err)
+      );
+    }
+  };
+
+  const runCommand = async (command: CommandOption, args: string, key: string = commandsKey): Promise<void> => {
+    if (attachments.length > 0) {
+      warn(`Attachments can't be sent with /${command.name}`, "Remove them or send a regular message.");
+      return;
+    }
+    if (command.confirm) {
+      const ok = await confirm({ title: `Run /${command.name}?`, message: command.confirm, confirmLabel: "Run" });
+      if (!ok || !isCurrent(key)) return;
+    }
+    const b = backendRef.current;
+    if (command.dispatch === "app") {
+      runAppCommand(command, args, key);
+      return;
+    }
+    if (command.dispatch === "terminal" && b.openTerminal) {
+      b.openTerminal();
+      useNotifs.getState().push({
+        kind: "info",
+        title: `Run /${command.name} in the ${harnessLabel(driver)} terminal`,
+        message: "This command only works in the interactive CLI."
+      });
+      setDraft("");
+      return;
+    }
+    setSending(true);
+    try {
+      await b.send(commandDisplay(command.name, args), [], { name: command.name, args });
+      if (isCurrent(key)) clearComposer();
+    } catch (err) {
+      notifyError("Could not send", err);
+    } finally {
+      setSending(false);
+    }
+  };
+
+  const sendPlain = (body: string, key: string = commandsKey) => {
+    setSending(true);
+    void backendRef.current
+      .send(tagAttachments(body), attachments)
+      .then(() => {
+        if (isCurrent(key)) clearComposer();
+      })
+      .catch((err: unknown) => notifyError("Could not send", err))
+      .finally(() => setSending(false));
+  };
+
+  const sendSlash = async (body: string): Promise<void> => {
+    const key = commandsKey;
+    const immediate = parseSlashInput(body, commandList);
+    if (immediate) return runCommand(immediate.command, immediate.args, key);
+    if (driverCommands !== null) {
+      sendPlain(body, key);
+      return;
+    }
+    setSending(true);
+    const result = await ensureCommands().finally(() => setSending(false));
+    if (!isCurrent(key)) return;
+    if (!result.ok) {
+      warn("Command list unavailable", `Sent as a regular message: ${result.error}`);
+      sendPlain(body, key);
+      return;
+    }
+    const parsed = parseSlashInput(body, mergeCommands(driver, result.list, commandAvailability));
+    if (parsed) return runCommand(parsed.command, parsed.args, key);
+    sendPlain(body, key);
+  };
+
+  const send = () => {
+    const body = draft.trim();
+    if ((!body && attachments.length === 0) || busy || sending || blockedReason) return;
+    if (body.startsWith("/")) {
+      void sendSlash(body);
+      return;
+    }
+    sendPlain(body);
+  };
+
+  const slashName = SLASH_NAME.exec(draft);
+  const slashArg = SLASH_ARG.exec(draft);
+  const slashOpen = inputFocused && !busy && !sending && (slashName !== null || slashArg !== null) && slashDismissed !== draft;
+  const slashNameOpen = slashOpen && slashName !== null;
+
+  useEffect(() => {
+    if (slashNameOpen) void ensureCommands(true);
+  }, [slashNameOpen, commandsKey]);
+
+  useEffect(() => {
+    setSlashIndex(0);
+  }, [draft]);
+
+  const slashEntries: SlashEntry[] = [];
+  const argCommand = slashArg ? commandList.find((c) => c.name === slashArg[1]) : undefined;
+  const modelArgMode = slashArg?.[1] === "model";
+  let argOverflow = false;
+  if (slashOpen && slashArg && argCommand) {
+    const options = modelArgMode
+      ? rankByQuery(models, slashArg[2], (m) => [m.id, m.label]).map((m) => ({
+          id: m.id,
+          label: m.label,
+          hint: m.label === m.id ? undefined : m.id
+        }))
+      : rankByQuery(effortOptions, slashArg[2], (o) => [o.id, o.label]).map((o) => ({ id: o.id, label: o.label, hint: o.id }));
+    argOverflow = options.length > MAX_ARG_COMPLETIONS;
+    for (const o of options.slice(0, MAX_ARG_COMPLETIONS)) {
+      slashEntries.push({
+        key: o.id,
+        label: o.label,
+        hint: o.hint,
+        accept: () => void runCommand(argCommand, o.id),
+        complete: () => setDraft(`/${argCommand.name} ${o.id}`)
+      });
+    }
+  } else if (slashNameOpen && slashName) {
+    for (const c of filterCommands(commandList, slashName[1])) {
+      slashEntries.push({
+        key: c.name,
+        label: `/${c.name}`,
+        description: c.description || undefined,
+        hint: c.argumentHint,
+        accept: () => {
+          if (c.argumentHint) completeCommand(c);
+          else void runCommand(c, "");
+        },
+        complete: () => completeCommand(c)
+      });
+    }
+  }
+  const slashActive = slashEntries.length > 0 ? Math.min(slashIndex, slashEntries.length - 1) : -1;
+  const slashMenuLabel = slashArg ? (modelArgMode ? "Models" : "Effort levels") : "Commands";
+  const slashError = slashNameOpen
+    ? commandsError && `Commands failed to load: ${commandsError}`
+    : modelArgMode && modelsError
+      ? `Model list failed: ${modelsError}`
+      : null;
+  const slashEmpty = slashArg
+    ? modelArgMode && models.length === 0
+      ? "No models available."
+      : "No matches."
+    : "No matching commands.";
+  const pendingArgs = SLASH_PENDING_ARGS.exec(draft);
+  const argHint = pendingArgs ? commandList.find((c) => c.name === pendingArgs[1])?.argumentHint : undefined;
+
+  const handleSlashKey = (e: ReactKeyboardEvent<HTMLTextAreaElement>): boolean => {
+    if (!slashOpen) return false;
+    if (e.key === "Escape") {
+      e.preventDefault();
+      e.stopPropagation();
+      setSlashDismissed(draft);
+      return true;
+    }
+    if (slashActive < 0) return false;
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      const step = e.key === "ArrowDown" ? 1 : -1;
+      setSlashIndex((slashActive + step + slashEntries.length) % slashEntries.length);
+      return true;
+    }
+    if ((e.key === "Tab" || e.key === "Enter") && !e.shiftKey) {
+      e.preventDefault();
+      const entry = slashEntries[slashActive];
+      const query = slashArg ? slashArg[2] : (slashName?.[1] ?? "");
+      if (e.key === "Tab" || query === "") entry.complete();
+      else entry.accept();
+      return true;
+    }
+    return false;
+  };
+
+  const commandsRowDisabled = draft.trim() !== "" && !draft.startsWith("/");
+  const openCommands = () => {
+    if (commandsRowDisabled) return;
+    setAddOpen(false);
+    if (!draft.startsWith("/")) setDraft("/");
+    setSlashDismissed(null);
+    focusComposer();
+  };
+
   return (
     <>
     <div className="composer composer-recipe">
+      {slashOpen && (
+        <SlashMenu
+          id={slashListId}
+          label={slashMenuLabel}
+          items={slashEntries}
+          activeIndex={slashActive}
+          loading={slashNameOpen && commandsLoading}
+          error={slashError || null}
+          emptyText={slashEmpty}
+          moreText={argOverflow ? "Keep typing to narrow down" : undefined}
+          onHover={setSlashIndex}
+          onPick={(index) => slashEntries[index]?.accept()}
+        />
+      )}
       {attachments.length > 0 && (
         <div className="attach-chips">
           {attachments.map((a) => (
@@ -378,8 +734,15 @@ export function ComposerView({
           <textarea
             ref={composerRef}
             value={draft}
-            onChange={(e) => setDraft(e.target.value)}
+            onChange={(e) => {
+              const next = e.target.value;
+              setDraft(next);
+              if (!next.startsWith("/")) setSlashDismissed(null);
+            }}
+            onFocus={() => setInputFocused(true)}
+            onBlur={() => setInputFocused(false)}
             onKeyDown={(e) => {
+              if (handleSlashKey(e)) return;
               if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "u") {
                 e.preventDefault();
                 setPickerOpen(false);
@@ -398,7 +761,18 @@ export function ComposerView({
             className="composer-input"
             rows={3}
             disabled={busy || sending || blockedReason !== undefined}
+            role="combobox"
+            aria-expanded={slashOpen}
+            aria-autocomplete="list"
+            aria-controls={slashOpen ? slashListId : undefined}
+            aria-activedescendant={slashOpen && slashActive >= 0 ? slashOptionId(slashListId, slashActive) : undefined}
           />
+          {argHint && (
+            <div className="composer-arg-hint" aria-hidden="true">
+              <span className="composer-arg-hint-pad">{draft}</span>
+              {argHint}
+            </div>
+          )}
         </div>
       </div>
       {pasteError && (
@@ -549,7 +923,13 @@ export function ComposerView({
                   </span>
                   <span className="menu-hint">@</span>
                 </div>
-                <div className="menu-row disabled" role="menuitem" aria-disabled="true" title="Slash commands are not supported yet">
+                <div
+                  className={`menu-row${commandsRowDisabled ? " disabled" : ""}`}
+                  role="menuitem"
+                  aria-disabled={commandsRowDisabled || undefined}
+                  title={commandsRowDisabled ? "Clear the draft to pick a command" : "Run a slash command"}
+                  onClick={openCommands}
+                >
                   <span className="menu-icon">
                     <Slash size={14} />
                   </span>
@@ -596,6 +976,7 @@ export function ComposerView({
       </div>
     </div>
     {footer}
+    {confirmDialog}
     </>
   );
 }

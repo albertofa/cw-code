@@ -3,6 +3,7 @@ import { readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { SessionMeta } from "@cw-code/contracts";
+import { claudeCommandText } from "./claudeCommands.js";
 
 export function claudeProjectSlug(rootPath: string): string {
   return rootPath
@@ -31,7 +32,8 @@ export function peekClaudeTitle(file: string): string | null {
         const content = parsed.message?.content;
         const text = typeof content === "string" ? content : "";
         if (text.trim() && !text.includes("<local-command-caveat>")) {
-          return text.trim().slice(0, 60).replace(/\s+/g, " ");
+          const title = claudeCommandText(text) ?? text.trim();
+          return title.slice(0, 60).replace(/\s+/g, " ");
         }
       } catch {
         continue;
