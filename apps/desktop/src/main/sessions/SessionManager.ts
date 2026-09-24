@@ -666,6 +666,7 @@ export class SessionManager {
       };
     }
     if (!removal.removed) {
+      if (!removal.dirtyBlocked) this.store.updateSession(sessionId, { worktreePath: undefined });
       return {
         sessionId,
         status,
@@ -730,8 +731,11 @@ export class SessionManager {
   }
 
   async pruneStaleWorktrees(): Promise<WorktreePruneSummary> {
-    const summary: WorktreePruneSummary = { scanned: 0, removed: 0, skipped: 0, failed: 0, errors: [], keptDirty: [] };
-    if (!existsSync(this.worktreesRoot)) return summary;
+    const summary: WorktreePruneSummary = { scanned: 0, removed: 0, skipped: 0, failed: 0, errors: [], keptDirty: [], clearedSessionIds: [] };
+    if (!existsSync(this.worktreesRoot)) {
+      this.clearMissingWorktrees(summary);
+      return summary;
+    }
     const sessions = this.store.listAllSessions();
     const touchedProjects = new Set<string>();
     for (const projectDir of readdirSync(this.worktreesRoot, { withFileTypes: true })) {
@@ -762,7 +766,17 @@ export class SessionManager {
         summary.errors.push(`${project.rootPath}: worktree prune failed: ${(err as Error).message}`);
       }
     }
+    this.clearMissingWorktrees(summary);
     return summary;
+  }
+
+  private clearMissingWorktrees(summary: WorktreePruneSummary): void {
+    for (const session of this.store.listAllSessions()) {
+      if (session.worktreePath && !pinsWorktree(session) && !existsSync(session.worktreePath)) {
+        this.store.updateSession(session.id, { worktreePath: undefined });
+        summary.clearedSessionIds.push(session.id);
+      }
+    }
   }
 
   private async removeStaleDir(repoRoot: string | null, dirPath: string, summary: WorktreePruneSummary): Promise<void> {

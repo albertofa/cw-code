@@ -130,6 +130,7 @@ export interface WorktreePruneSummary {
   failed: number;
   errors: string[];
   keptDirty: string[];
+  clearedSessionIds: string[];
 }
 
 export interface TodoItem {

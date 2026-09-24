@@ -1207,33 +1207,6 @@ body.session-dragging * {
   background: var(--driver-soft);
 }
 
-.worktree-confirm {
-  min-width: 260px;
-  max-width: 320px;
-  padding: 10px;
-}
-
-.worktree-confirm-title {
-  font-size: 13px;
-  font-weight: 600;
-  color: var(--text);
-  margin-bottom: 4px;
-}
-
-.worktree-confirm-hint {
-  font-size: 11.5px;
-  color: var(--faint);
-  margin-bottom: 8px;
-  line-height: 1.4;
-}
-
-.worktree-confirm-warning {
-  font-size: 11.5px;
-  color: var(--danger);
-  margin-bottom: 8px;
-  line-height: 1.4;
-}
-
 .session-row.active .session-title {
   color: var(--text);
 }

@@ -1,4 +1,4 @@
-import { openSync, readSync, closeSync } from "node:fs";
+import { openSync, readSync, closeSync, existsSync, readdirSync } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
@@ -10,6 +10,34 @@ export function claudeProjectSlug(rootPath: string): string {
     .replace(/[\\/]+$/, "")
     .replace(/[^a-zA-Z0-9]/g, "-")
     .slice(0, 200);
+}
+
+const relocatedTranscripts = new Map<string, string>();
+
+export function claudeTranscriptProjectDir(
+  rootPath: string,
+  resumeCursor: string,
+  projectsDir = join(homedir(), ".claude", "projects")
+): string {
+  const direct = join(projectsDir, claudeProjectSlug(rootPath));
+  const fileName = `${resumeCursor}.jsonl`;
+  if (existsSync(join(direct, fileName))) return direct;
+  const known = relocatedTranscripts.get(resumeCursor);
+  if (known && existsSync(join(known, fileName))) return known;
+  let entries: string[];
+  try {
+    entries = readdirSync(projectsDir);
+  } catch {
+    return direct;
+  }
+  for (const entry of entries) {
+    const dir = join(projectsDir, entry);
+    if (existsSync(join(dir, fileName))) {
+      relocatedTranscripts.set(resumeCursor, dir);
+      return dir;
+    }
+  }
+  return direct;
 }
 
 export function peekClaudeTitle(file: string): string | null {

@@ -32,6 +32,11 @@ import { useNotifs } from "../components/Notifications.js";
 
 const GIT_REFRESH_BATCH = 6;
 const PENDING_PREFIX = "pending:";
+const LOCAL_NOTICE_TURN_ID = "worktree-cleanup";
+
+function hasLoadedMessages(messages: ChatMessage[] | undefined): boolean {
+  return (messages ?? []).some((m) => m.turnId !== LOCAL_NOTICE_TURN_ID);
+}
 let pendingSeq = 0;
 let pendingPromptInFlight = false;
 
@@ -176,11 +181,10 @@ interface AppState {
   importDiscovered(session: Session): Promise<void>;
   renameSession(sessionId: string, title: string): Promise<void>;
   regenerateSessionTitle(sessionId: string): Promise<void>;
-  setSessionStatus(sessionId: string, status: SessionStatus, opts?: { promptWorktree?: boolean }): Promise<void>;
+  setSessionStatus(sessionId: string, status: SessionStatus): Promise<void>;
   expireHoldingSessions(): Promise<void>;
-  worktreeConfirmQueue: Array<{ sessionId: string; status: SessionStatus; unmergedCommitCount?: number }>;
-  confirmWorktreeRemoval(): Promise<void>;
-  dismissWorktreeRemoval(): void;
+  appendSystemNotice(sessionId: string, text: string, isError?: boolean): void;
+  clearSessionWorktrees(sessionIds: string[]): void;
   createSession(driver: DriverName, prefs?: ComposerPrefs, workspace?: CreateSessionOptions): Promise<void>;
   createSessionIn(projectId: string, driver: DriverName, prefs?: ComposerPrefs, workspace?: CreateSessionOptions): Promise<Session>;
   applySession(session: Session): void;
@@ -292,7 +296,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   lastDriver: "claude",
   pendingApprovals: {},
   pendingQuestions: {},
-  worktreeConfirmQueue: [],
   pendingPrefs: { ...DEFAULT_COMPOSER },
   pendingWorkspace: defaultWorkspace(true),
   gitStatusBySession: {},
@@ -325,7 +328,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           .flat()
           .find((s) => s.id === sessionId);
         if (current && current.status !== "resolved" && current.status !== "archived" && sessionId !== get().activeSessionId) {
-          void get().setSessionStatus(sessionId, "resolved", { promptWorktree: false }).catch((err) =>
+          void get().setSessionStatus(sessionId, "resolved").catch((err) =>
             console.warn(`setSessionStatus failed for ${sessionId} -> resolved: ${(err as Error).message}`)
           );
         }
@@ -522,26 +525,28 @@ export const useAppStore = create<AppState>((set, get) => ({
     get().applySessionTitle(sessionId, title);
   },
 
-  async setSessionStatus(sessionId: string, status: SessionStatus, opts: { promptWorktree?: boolean } = {}) {
+  async setSessionStatus(sessionId: string, status: SessionStatus) {
     if (status === "resolved" || status === "archived") {
-      const result = await window.cw.resolveSession(sessionId, status);
+      const result = await window.cw.resolveSession(sessionId, status, true, false);
+      const worktreeKept = Boolean(result.dirtyBlocked || result.error);
       set({
         sessionsByProject: patchSession(get().sessionsByProject, sessionId, {
           status: result.status,
-          updatedAt: Date.now()
+          updatedAt: Date.now(),
+          ...(worktreeKept ? {} : { worktreePath: undefined }),
+          ...(result.branchDeleted ? { branch: undefined } : {})
         })
       });
-      if (result.worktreeOrphaned && opts.promptWorktree !== false) {
-        set({
-          worktreeConfirmQueue: [
-            ...get().worktreeConfirmQueue,
-            {
-              sessionId,
-              status,
-              ...(result.unmergedCommitCount !== undefined ? { unmergedCommitCount: result.unmergedCommitCount } : {})
-            }
-          ]
-        });
+      if (result.dirtyBlocked) {
+        get().appendSystemNotice(
+          sessionId,
+          "Worktree kept: it has uncommitted changes. Commit or clean them, then resolve the session again to prune it.",
+          true
+        );
+      } else if (result.error) {
+        useNotifs.getState().push({ kind: "error", title: "Could not prune worktree", message: result.error });
+      } else if (result.worktreeRemoved && !result.branchDeleted) {
+        get().appendSystemNotice(sessionId, "Worktree pruned; its branch was kept.");
       }
       return;
     }
@@ -574,52 +579,26 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
   },
 
-  async confirmWorktreeRemoval() {
-    const [target] = get().worktreeConfirmQueue;
-    if (!target) return;
-    set({ worktreeConfirmQueue: get().worktreeConfirmQueue.slice(1) });
-    const appendNotice = (text: string, isError = false) => {
-      const notice: ChatMessage = {
-        id: `worktree-notice-${target.sessionId}-${Date.now()}`,
-        role: "system",
-        text,
-        turnId: "worktree-cleanup",
-        isError
-      };
-      set({
-        messagesBySession: {
-          ...get().messagesBySession,
-          [target.sessionId]: [...(get().messagesBySession[target.sessionId] ?? []), notice]
-        }
-      });
+  appendSystemNotice(sessionId: string, text: string, isError = false) {
+    const notice: ChatMessage = {
+      id: `worktree-notice-${sessionId}-${Date.now()}`,
+      role: "system",
+      text,
+      turnId: LOCAL_NOTICE_TURN_ID,
+      isError
     };
-    try {
-      const result = await window.cw.resolveSession(target.sessionId, target.status, true, true);
-      set({
-        sessionsByProject: patchSession(get().sessionsByProject, target.sessionId, {
-          status: result.status,
-          ...(result.worktreeRemoved ? { worktreePath: undefined } : {}),
-          ...(result.branchDeleted ? { branch: undefined } : {})
-        })
-      });
-      if (result.dirtyBlocked) {
-        appendNotice("Worktree kept: it has uncommitted changes. Commit or clean them, then remove the worktree manually.", true);
-      } else if (result.error) {
-        useNotifs.getState().push({ kind: "error", title: "Could not remove worktree", message: result.error });
-      } else if (!result.worktreeRemoved) {
-        appendNotice("Worktree was already gone; nothing to remove.");
-      } else if (result.unmergedCommits) {
-        appendNotice("Worktree removed; its branch was force-deleted and unmerged commits on it were discarded.");
-      } else if (!result.branchDeleted) {
-        appendNotice("Worktree removed; its branch was kept.");
+    set({
+      messagesBySession: {
+        ...get().messagesBySession,
+        [sessionId]: [...(get().messagesBySession[sessionId] ?? []), notice]
       }
-    } catch (err) {
-      useNotifs.getState().push({ kind: "error", title: "Could not remove worktree", message: (err as Error).message });
-    }
+    });
   },
 
-  dismissWorktreeRemoval() {
-    set({ worktreeConfirmQueue: get().worktreeConfirmQueue.slice(1) });
+  clearSessionWorktrees(sessionIds: string[]) {
+    let sessionsByProject = get().sessionsByProject;
+    for (const id of sessionIds) sessionsByProject = patchSession(sessionsByProject, id, { worktreePath: undefined });
+    set({ sessionsByProject });
   },
 
   async hydrateActiveTurns() {
@@ -754,7 +733,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   async ensureHistory(sessionId: string, opts?: { force?: boolean; isRetry?: boolean }) {
     if (!opts?.force) {
-      if ((get().messagesBySession[sessionId] ?? []).length > 0) return;
+      if (hasLoadedMessages(get().messagesBySession[sessionId])) return;
       if (get().loadingHistory[sessionId]) return;
     }
     set({
@@ -765,10 +744,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
     try {
       const history = await window.cw.getHistory(sessionId);
-      if ((get().messagesBySession[sessionId] ?? []).length === 0 && history.length > 0) {
+      const current = get().messagesBySession[sessionId] ?? [];
+      if (!hasLoadedMessages(current) && history.length > 0) {
         const merged = mergeToolPairs(history);
         set({
-          messagesBySession: { ...get().messagesBySession, [sessionId]: merged }
+          messagesBySession: { ...get().messagesBySession, [sessionId]: [...merged, ...current] }
         });
         if (get().todosBySession[sessionId] === undefined) {
           const seeded = [...merged].reverse().find((m) => m.todos !== undefined)?.todos;
