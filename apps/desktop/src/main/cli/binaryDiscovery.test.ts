@@ -1,0 +1,166 @@
+import { describe, expect, it } from "vitest";
+import type { CliBinary } from "@cw-code/contracts";
+import { candidatePaths, dedupeShimCandidates } from "./binaryDiscovery.js";
+import type { CandidatePathsOptions } from "./binaryDiscovery.js";
+
+const POSIX_OPTS: CandidatePathsOptions = {
+  platform: "linux",
+  homeDir: "/home/testuser",
+  env: {}
+};
+
+const WIN_OPTS: CandidatePathsOptions = {
+  platform: "win32",
+  homeDir: "C:\\Users\\testuser",
+  env: {
+    APPDATA: "C:\\Users\\testuser\\AppData\\Roaming",
+    LOCALAPPDATA: "C:\\Users\\testuser\\AppData\\Local",
+    USERPROFILE: "C:\\Users\\testuser",
+    PROGRAMDATA: "C:\\ProgramData",
+    PROGRAMFILES: "C:\\Program Files"
+  }
+};
+
+describe("candidatePaths on posix", () => {
+  for (const platform of ["linux", "darwin"] as const) {
+    it(`lists well-known locations on ${platform}`, () => {
+      const paths = candidatePaths("claude", { ...POSIX_OPTS, platform });
+      expect(paths[0]).toBe("claude");
+      for (const dir of [
+        "/usr/local/bin",
+        "/opt/homebrew/bin",
+        "/usr/bin",
+        "/home/testuser/.local/bin",
+        "/home/testuser/bin",
+        "/home/testuser/.npm-global/bin"
+      ]) {
+        expect(paths).toContain(`${dir}/claude`);
+      }
+      expect(new Set(paths).size).toBe(paths.length);
+    });
+  }
+
+  it("scopes home-only install dirs per binary", () => {
+    expect(candidatePaths("opencode", POSIX_OPTS)).toContain("/home/testuser/.opencode/bin/opencode");
+    expect(candidatePaths("claude", POSIX_OPTS)).toContain("/home/testuser/.claude/local/claude");
+    expect(candidatePaths("codex", POSIX_OPTS)).not.toContain("/home/testuser/.opencode/bin/opencode");
+    expect(candidatePaths("codex", POSIX_OPTS)).not.toContain("/home/testuser/.claude/local/claude");
+    expect(candidatePaths("git", POSIX_OPTS)).toContain("/usr/bin/git");
+  });
+});
+
+describe("candidatePaths on win32", () => {
+  it("expands env vars and includes per-binary executable forms", () => {
+    const paths = candidatePaths("claude", WIN_OPTS);
+    expect(paths).toContain("claude");
+    expect(paths).toContain("claude.exe");
+    expect(paths).toContain("claude.cmd");
+    expect(paths).toContain("claude.ps1");
+    expect(paths).toContain("C:\\Users\\testuser\\AppData\\Roaming\\npm\\claude.cmd");
+    expect(paths).toContain("C:\\Users\\testuser\\AppData\\Roaming\\npm\\claude.ps1");
+    expect(paths).toContain("C:\\Users\\testuser\\AppData\\Roaming\\npm\\claude.exe");
+    expect(paths).toContain("C:\\Users\\testuser\\AppData\\Local\\Microsoft\\WinGet\\Links\\claude.exe");
+    expect(paths).toContain("C:\\Users\\testuser\\scoop\\shims\\claude.exe");
+    expect(paths).toContain("C:\\ProgramData\\chocolatey\\bin\\claude.exe");
+  });
+
+  it("includes tool-specific install locations", () => {
+    expect(candidatePaths("opencode", WIN_OPTS)).toContain(
+      "C:\\Users\\testuser\\.opencode\\bin\\opencode.exe"
+    );
+    expect(candidatePaths("git", WIN_OPTS)).toContain("C:\\Program Files\\Git\\bin\\git.exe");
+    expect(candidatePaths("gh", WIN_OPTS)).toContain("C:\\Program Files\\GitHub CLI\\gh.exe");
+  });
+
+  it("includes nvm-windows and pnpm install locations", () => {
+    const opts: CandidatePathsOptions = {
+      platform: "win32",
+      homeDir: "C:\\Users\\testuser",
+      env: {
+        ...WIN_OPTS.env,
+        NVM_SYMLINK: "C:\\nvm4w\\nodejs",
+        NVM_HOME: "C:\\Users\\testuser\\AppData\\Local\\nvm"
+      }
+    };
+    expect(candidatePaths("opencode", opts)).toContain("C:\\nvm4w\\nodejs\\opencode.cmd");
+    expect(candidatePaths("codex", opts)).toContain("C:\\nvm4w\\nodejs\\codex.ps1");
+    expect(candidatePaths("opencode", opts)).toContain(
+      "C:\\Users\\testuser\\AppData\\Local\\nvm\\nodejs\\opencode.exe"
+    );
+    expect(candidatePaths("codex", opts)).toContain(
+      "C:\\Users\\testuser\\AppData\\Local\\pnpm\\codex.cmd"
+    );
+  });
+
+  it("derives win32 locations from homeDir when env vars are missing", () => {
+    const paths = candidatePaths("claude", { platform: "win32", homeDir: "D:\\work\\me", env: {} });
+    expect(paths).toContain("D:\\work\\me\\AppData\\Roaming\\npm\\claude.cmd");
+    expect(paths).toContain("D:\\work\\me\\AppData\\Local\\Microsoft\\WinGet\\Links\\claude.exe");
+    expect(paths).toContain("D:\\work\\me\\scoop\\shims\\claude.exe");
+  });
+
+  it("resolves mixed-casing Windows env keys to custom drive roots", () => {
+    const env = {
+      ProgramData: "D:\\CustomProgramData",
+      ProgramFiles: "E:\\Custom PF",
+      "ProgramFiles(x86)": "E:\\Custom PF (x86)"
+    };
+    const opts: CandidatePathsOptions = { platform: "win32", homeDir: "C:\\Users\\testuser", env };
+    expect(candidatePaths("claude", opts)).toContain("D:\\CustomProgramData\\chocolatey\\bin\\claude.exe");
+    expect(candidatePaths("git", opts)).toContain("E:\\Custom PF\\Git\\bin\\git.exe");
+    expect(candidatePaths("git", opts)).toContain("E:\\Custom PF (x86)\\Git\\bin\\git.exe");
+    expect(candidatePaths("gh", opts)).toContain("E:\\Custom PF\\GitHub CLI\\gh.exe");
+    expect(candidatePaths("gh", opts)).toContain("E:\\Custom PF (x86)\\GitHub CLI\\gh.exe");
+  });
+
+  it("dedupes case-insensitively and normalizes separators", () => {
+    const paths = candidatePaths("opencode", {
+      platform: "win32",
+      homeDir: "C:\\Users\\TestUser",
+      env: {
+        USERPROFILE: "c:\\users\\testuser",
+        APPDATA: "C:/Users/testuser/AppData/Roaming/"
+      }
+    });
+    expect(paths).toContain("C:\\Users\\testuser\\AppData\\Roaming\\npm\\opencode.cmd");
+    expect(paths.filter((p) => p.toLowerCase().includes("scoop\\shims"))).toHaveLength(3);
+    expect(new Set(paths.map((p) => p.toLowerCase())).size).toBe(paths.length);
+  });
+});
+
+describe("candidatePaths fallback", () => {
+  it("falls back to the bare name for unknown binaries", () => {
+    expect(candidatePaths("mystery-tool" as CliBinary, POSIX_OPTS)).toEqual(["mystery-tool"]);
+    expect(candidatePaths("mystery-tool" as CliBinary, WIN_OPTS)).toEqual(["mystery-tool"]);
+  });
+});
+
+describe("dedupeShimCandidates", () => {
+  const item = (path: string, source: "path" | "common" = "common") => ({ path, source });
+
+  it("collapses same-dir npm shims to one entry preferring .cmd over .ps1", () => {
+    const out = dedupeShimCandidates(
+      [item("C:\\nvm4w\\nodejs\\opencode.cmd", "path"), item("C:\\nvm4w\\nodejs\\opencode.ps1")],
+      "win32"
+    );
+    expect(out).toEqual([item("C:\\nvm4w\\nodejs\\opencode.cmd", "path")]);
+  });
+
+  it("prefers a native .exe and drops the unusable extensionless sh script", () => {
+    const out = dedupeShimCandidates(
+      [item("C:\\tools\\codex.ps1"), item("C:\\tools\\codex"), item("C:\\tools\\codex.exe")],
+      "win32"
+    );
+    expect(out).toEqual([item("C:\\tools\\codex.exe")]);
+  });
+
+  it("keeps installs in different directories and is case-insensitive", () => {
+    const out = dedupeShimCandidates([item("C:\\A\\opencode.cmd"), item("C:\\b\\OPENCODE.ps1")], "win32");
+    expect(out).toHaveLength(2);
+  });
+
+  it("passes posix candidates through untouched", () => {
+    const items = [item("/usr/local/bin/opencode"), item("/home/u/.opencode/bin/opencode")];
+    expect(dedupeShimCandidates(items, "linux")).toEqual(items);
+  });
+});

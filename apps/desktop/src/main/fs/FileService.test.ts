@@ -1,8 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { isAbsolute, join, normalize } from "node:path";
 import { FileService, imageExtMime, pasteImageExt, pasteImageName } from "./FileService.js";
+import { attachmentsDir } from "../paths/appPaths.js";
 
 describe("FileService sandbox", () => {
   const svc = new FileService();
@@ -126,13 +127,22 @@ describe("paste image helpers", () => {
     expect(pasteImageName("image/jpeg", now)).toMatch(/^cw-paste-\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z\.jpg$/);
   });
 
-  it("writes paste bytes and returns a posix relative path", () => {
-    const svc = new FileService();
-    const root = mkdtempSync(join(tmpdir(), "cw-paste-"));
-    const data = Uint8Array.from([1, 2, 3, 4]);
-    const rel = svc.savePasteImage(root, "image/png", data);
-    expect(rel).toMatch(/^\.cw\/pastes\/cw-paste-[\dT-]+Z\.png$/);
-    const written = readFileSync(join(root, rel));
-    expect(Array.from(written)).toEqual(Array.from(data));
+  it("writes paste bytes to the central attachments dir and returns an absolute path", () => {
+    const home = mkdtempSync(join(tmpdir(), "cw-home-"));
+    const previous = process.env["CW_CODE_HOME"];
+    process.env["CW_CODE_HOME"] = home;
+    try {
+      const svc = new FileService();
+      const root = mkdtempSync(join(tmpdir(), "cw-paste-"));
+      const data = Uint8Array.from([1, 2, 3, 4]);
+      const abs = svc.savePasteImage(root, "image/png", data);
+      expect(isAbsolute(abs)).toBe(true);
+      expect(normalize(abs).startsWith(normalize(attachmentsDir()))).toBe(true);
+      expect(abs).toMatch(/cw-paste-[\dT-]+Z\.png$/);
+      expect(Array.from(readFileSync(abs))).toEqual(Array.from(data));
+    } finally {
+      if (previous === undefined) delete process.env["CW_CODE_HOME"];
+      else process.env["CW_CODE_HOME"] = previous;
+    }
   });
 });

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { Image } from "lucide-react";
-import { imageDataUrl, type ImageTarget } from "./imagePreview.js";
+import { displayImagePath, imageDataUrl, type ImageTarget } from "./imagePreview.js";
+import { useAppStore } from "../stores/appStore.js";
 
 export function ImageThumb({
   target,
@@ -12,6 +13,8 @@ export function ImageThumb({
   className: string;
 }) {
   const [src, setSrc] = useState<string | null>(null);
+  const homeDir = useAppStore((s) => s.homeDir);
+  const label = displayImagePath(path, homeDir ?? undefined);
   useEffect(() => {
     let alive = true;
     imageDataUrl(target, path)
@@ -32,5 +35,5 @@ export function ImageThumb({
       </span>
     );
   }
-  return <img className={className} src={src} alt={path} title={path} draggable={false} />;
+  return <img className={className} src={src} alt={label} title={label} draggable={false} />;
 }

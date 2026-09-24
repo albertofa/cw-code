@@ -1,0 +1,8 @@
+{
+  "option": "C",
+  "name": "Console C",
+  "primaryTreatment": "violet",
+  "status": "selected by user",
+  "canonicalAssets": "assets/",
+  "desktopIntegration": "implemented; installer release pending"
+}

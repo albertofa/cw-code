@@ -57,6 +57,11 @@ Suggested surface tokens for the first implementation slice:
 | T3 Conversation | Best reading flow and strongest agent-first identity | Progressive disclosure can hide operational detail | Borrow its thread and composer treatment |
 | VS Code Workbench | Best tooling discoverability and persistent status | Risks feeling generic or overly busy | Borrow its activity rail and bottom-panel behavior selectively |
 
+## Panel studies
+
+- `subagents-panel.html` — three variations of the Subagents right-pane panel (A drill-in detail, B accordion stack, C split list + detail). Shows preview-first prompt/result, tool calls nested inside the agent, and running/completed status sourced from structured stream events. Pick one before implementing the panel rework.
+- `usage-panel.html`: Usage view study. A is the full view: per-harness plan-limit cards, then the cw-code token ledger with a combined per-day chart and a tokens-by-model chart. B is every degraded or limit state. C is the context-window ring in the composer and the dock it opens (context, session totals, plan limits, link to the Usage view). Use the "Show data sources" toggle to see which CLI field feeds each element. Open a variant directly with `#a`, `#b` or `#c`.
+
 ## Recommended synthesis
 
 Start from Rider Focus, use T3 Conversation's centered thread and composer, and adopt the Workbench concept's clear status bar plus optional bottom terminal. Keep the existing app structure and backend contracts unchanged.

@@ -27,6 +27,19 @@ describe("resolveBinary", () => {
     expect(resolveBinary("fakecli", env)?.toLowerCase()).toBe(join(dir, "fakecli.exe").toLowerCase());
   });
 
+  it("finds a .ps1 shim when PATHEXT lacks .PS1", () => {
+    const { dir, env } = makeBin();
+    writeFileSync(join(dir, "onlyps.ps1"), "Write-Host hi\r\n", "utf8");
+    expect(resolveBinary("onlyps", env)?.toLowerCase()).toBe(join(dir, "onlyps.ps1").toLowerCase());
+  });
+
+  it("prefers PATHEXT matches over the .ps1 fallback", () => {
+    const { dir, env } = makeBin();
+    writeFileSync(join(dir, "both.cmd"), "@echo off\r\n", "utf8");
+    writeFileSync(join(dir, "both.ps1"), "Write-Host hi\r\n", "utf8");
+    expect(resolveBinary("both", env)?.toLowerCase()).toBe(join(dir, "both.cmd").toLowerCase());
+  });
+
   it("returns null when missing", () => {
     expect(resolveBinary("definitely-not-a-binary-xyz", makeBin().env)).toBeNull();
   });

@@ -122,6 +122,10 @@ function approvalKindOf(permission: string): ApprovalKind {
   return "permissions";
 }
 
+export function isEditLikePermission(permission: string): boolean {
+  return approvalKindOf(permission) === "fileChange";
+}
+
 export function permissionApprovalOf(parsed: ParsedOpencodePermission, turnId: string, cwd = ""): ThreadEvent {
   const head = parsed.patterns[0];
   const title = head
