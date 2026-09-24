@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { appendCrashLog, initCrashLog } from "./crashLog.js";
@@ -39,6 +39,15 @@ describe("appendCrashLog", () => {
       "window unresponsive",
       "renderer error: boom"
     ]);
+  });
+
+  it("does not treat an entry as logged when the write fails", () => {
+    const dir = join(mkdtempSync(join(tmpdir(), "cw-crash-")), "missing");
+    const filePath = initCrashLog(dir);
+    appendCrashLog("lost");
+    mkdirSync(dir);
+    appendCrashLog("lost");
+    expect(readEntries(filePath)).toEqual(["lost"]);
   });
 
   it("rotates to a .1 file once the log exceeds maxBytes", () => {

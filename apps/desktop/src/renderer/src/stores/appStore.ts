@@ -32,6 +32,11 @@ import { useNotifs } from "../components/Notifications.js";
 
 const GIT_REFRESH_BATCH = 6;
 const PENDING_PREFIX = "pending:";
+const LOCAL_NOTICE_TURN_ID = "worktree-cleanup";
+
+function hasLoadedMessages(messages: ChatMessage[] | undefined): boolean {
+  return (messages ?? []).some((m) => m.turnId !== LOCAL_NOTICE_TURN_ID);
+}
 let pendingSeq = 0;
 let pendingPromptInFlight = false;
 
@@ -579,7 +584,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       id: `worktree-notice-${sessionId}-${Date.now()}`,
       role: "system",
       text,
-      turnId: "worktree-cleanup",
+      turnId: LOCAL_NOTICE_TURN_ID,
       isError
     };
     set({
@@ -728,7 +733,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   async ensureHistory(sessionId: string, opts?: { force?: boolean; isRetry?: boolean }) {
     if (!opts?.force) {
-      if ((get().messagesBySession[sessionId] ?? []).length > 0) return;
+      if (hasLoadedMessages(get().messagesBySession[sessionId])) return;
       if (get().loadingHistory[sessionId]) return;
     }
     set({
@@ -739,10 +744,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
     try {
       const history = await window.cw.getHistory(sessionId);
-      if ((get().messagesBySession[sessionId] ?? []).length === 0 && history.length > 0) {
+      const current = get().messagesBySession[sessionId] ?? [];
+      if (!hasLoadedMessages(current) && history.length > 0) {
         const merged = mergeToolPairs(history);
         set({
-          messagesBySession: { ...get().messagesBySession, [sessionId]: merged }
+          messagesBySession: { ...get().messagesBySession, [sessionId]: [...merged, ...current] }
         });
         if (get().todosBySession[sessionId] === undefined) {
           const seeded = [...merged].reverse().find((m) => m.todos !== undefined)?.todos;

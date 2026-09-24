@@ -29,12 +29,15 @@ export function appendCrashLog(entry: string): void {
   }
   const stamp = new Date().toISOString();
   const summary = repeats > 0 ? `${stamp} previous entry repeated ${repeats} more time${repeats === 1 ? "" : "s"}\n` : "";
-  lastEntry = entry;
-  repeats = 0;
   try {
     rotateIfOversize(logPath, maxBytes);
+  } catch {
+  }
+  try {
     appendFileSync(logPath, `${summary}${stamp} ${entry}\n`, "utf8");
   } catch {
     return;
   }
+  lastEntry = entry;
+  repeats = 0;
 }
