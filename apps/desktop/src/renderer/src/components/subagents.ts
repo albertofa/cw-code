@@ -114,6 +114,24 @@ export function extractJsonStringFragment(text: string, keys: string[]): string 
   return undefined;
 }
 
+const BACKGROUND_KEYS = ["run_in_background", "runInBackground"];
+
+function extractJsonBooleanFragment(text: string, keys: string[]): boolean | undefined {
+  for (const key of keys) {
+    const match = new RegExp(`"${key}"\\s*:\\s*(true|false)\\b`).exec(text);
+    if (match) return match[1] === "true";
+  }
+  return undefined;
+}
+
+function backgroundFlag(args: Record<string, unknown>): boolean | undefined {
+  for (const key of BACKGROUND_KEYS) {
+    const value = args[key];
+    if (typeof value === "boolean") return value;
+  }
+  return undefined;
+}
+
 function resolveInput(m: SubagentMessage): Record<string, unknown> {
   let base: Record<string, unknown> = {};
   if (m.toolInput && typeof m.toolInput === "object" && !Array.isArray(m.toolInput)) {
@@ -129,6 +147,10 @@ function resolveInput(m: SubagentMessage): Record<string, unknown> {
     if (pick(merged, ...keys) !== undefined) continue;
     const fragment = extractJsonStringFragment(m.text, keys);
     if (fragment !== undefined) merged[field] = fragment;
+  }
+  if (backgroundFlag(merged) === undefined) {
+    const flag = extractJsonBooleanFragment(m.text, BACKGROUND_KEYS);
+    if (flag !== undefined) merged["run_in_background"] = flag;
   }
   return merged;
 }
@@ -160,28 +182,23 @@ function isDone(m: SubagentMessage): boolean {
 
 const BACKGROUND_LAUNCH_PHRASE_RE = /async agent launched/i;
 const BACKGROUND_AGENT_ID_RE = /\bagentId:\s*[0-9a-f]{8,64}\b/;
+const FOREGROUND_USAGE_RE = /<usage>[\s\S]*?<\/usage>/;
 
 export function isBackgroundLaunchOutput(output: string | undefined): boolean {
   return typeof output === "string" && BACKGROUND_LAUNCH_PHRASE_RE.test(output);
 }
 
-function isBackgroundLaunch(m: SubagentMessage): boolean {
+function isBackgroundLaunch(m: SubagentMessage, args: Record<string, unknown>): boolean {
   const output = m.toolOutput;
   if (!output) return false;
   if (BACKGROUND_LAUNCH_PHRASE_RE.test(output)) return true;
   if (!BACKGROUND_AGENT_ID_RE.test(output)) return false;
-  const input = m.toolInput;
-  if (input && typeof input === "object" && !Array.isArray(input)) {
-    const raw = (input as Record<string, unknown>)["run_in_background"] ?? (input as Record<string, unknown>)["runInBackground"];
-    if (raw === true) return true;
-    if (raw === false) return false;
-  }
-  return true;
+  return backgroundFlag(args) ?? !FOREGROUND_USAGE_RE.test(output);
 }
 
-export function describeSubagentStatus(m: SubagentMessage): SubagentStatus {
+function describeSubagentStatus(m: SubagentMessage, args: Record<string, unknown>): SubagentStatus {
   if (m.isError === true) return "error";
-  if (isBackgroundLaunch(m)) return "running";
+  if (isBackgroundLaunch(m, args)) return "running";
   return isDone(m) ? "completed" : "running";
 }
 
@@ -219,10 +236,9 @@ export function describeSubagent(m: SubagentMessage): SubagentInfo {
   const prompt = pick(args, "prompt");
   const name = pick(args, "description") || firstLine(prompt ?? "", 80) || "Subagent";
   const agentType = pick(args, "subagent_type", "subagentType", "subagent", "agent", "mode");
-  const runRaw = args["run_in_background"] ?? args["runInBackground"];
-  const runInBackground = typeof runRaw === "boolean" ? runRaw : undefined;
-  const status = describeSubagentStatus(m);
-  const launchAck = isBackgroundLaunch(m);
+  const runInBackground = backgroundFlag(args);
+  const status = describeSubagentStatus(m, args);
+  const launchAck = isBackgroundLaunch(m, args);
   const body = launchAck ? "" : (unwrapTaskOutput(m.toolOutput) ?? "");
   const summary = firstLine(body, 140) || firstLine(prompt ?? "", 140) || name;
   const startedAt = typeof m.toolStartedAt === "number" ? m.toolStartedAt : undefined;
