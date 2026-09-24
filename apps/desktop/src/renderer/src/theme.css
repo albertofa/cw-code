@@ -1,4 +1,6 @@
 :root {
+  --composer-max: 880px;
+  --main-gutter: 20px;
   --bg: #1e1f22;
   --bg-deep: #24262b;
   --raised: #2e3035;
@@ -1764,9 +1766,10 @@ body.session-dragging * {
 }
 
 .thread-inner {
-  max-width: 760px;
+  box-sizing: border-box;
+  max-width: calc(var(--composer-max) + 2 * var(--main-gutter));
   margin: 0 auto;
-  padding: 30px 24px 20px;
+  padding: 30px var(--main-gutter) 20px;
   display: flex;
   flex-direction: column;
   gap: 18px;
@@ -2653,7 +2656,7 @@ body.session-dragging * {
 }
 
 .composer-wrap {
-  padding: 12px 20px 18px;
+  padding: 12px var(--main-gutter) 18px;
 }
 
 .composer-git-stack {
@@ -2671,7 +2674,7 @@ body.session-dragging * {
 .composer {
   position: relative;
   width: 100%;
-  max-width: 880px;
+  max-width: var(--composer-max);
   min-height: 156px;
   margin: 0 auto;
   box-sizing: border-box;
@@ -5671,8 +5674,8 @@ select.field option {
     width: 276px;
   }
 
-  .composer-wrap {
-    padding-inline: 12px;
+  :root {
+    --main-gutter: 12px;
   }
 
   .composer-recipe-row {
@@ -5729,8 +5732,12 @@ select.field option {
     right: 152px;
   }
 
+  :root {
+    --main-gutter: 10px;
+  }
+
   .composer-wrap {
-    padding: 8px 10px 12px;
+    padding-block: 8px 12px;
   }
 
   .composer-writing {
