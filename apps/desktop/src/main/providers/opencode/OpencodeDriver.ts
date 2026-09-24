@@ -1,5 +1,6 @@
 ﻿import { randomUUID } from "node:crypto";
-import type { AppSettings, ApprovalDecision, CliDriver, CommandOption, HistoryMessage, PermissionMode, PermissionOption, QuestionInfo, QuestionRequest, RetryConnectionRequest, RetryConnectionResult, SessionMeta, ThreadEvent, TurnHandle, TurnRequest } from "@cw-code/contracts";
+import { homedir } from "node:os";
+import type { AccountUsageState, AppSettings, ApprovalDecision, CliDriver, CommandOption, ContextUsage, HistoryMessage, PermissionMode, PermissionOption, QuestionInfo, QuestionRequest, RetryConnectionRequest, RetryConnectionResult, SessionMeta, ThreadEvent, TurnHandle, TurnModelUsage, TurnRequest } from "@cw-code/contracts";
 import { isAbsolute, join } from "node:path";
 import { opencodeConfigDir } from "../../paths/appPaths.js";
 import {
@@ -46,7 +47,8 @@ import {
   type OpencodeBuiltinCommand
 } from "./opencodeCommands.js";
 import { assertInside } from "../../fs/FileService.js";
-import { listOpencodeModels, resolveOpencodeVariant } from "./opencodeModels.js";
+import { listOpencodeModels, peekOpencodeModels, resolveOpencodeVariant } from "./opencodeModels.js";
+import { fetchOpencodeGoUsage } from "./opencodeAccountUsage.js";
 import { opencodeFileArgs } from "./opencodeArgs.js";
 import { OpencodeServerPool, type ServerHandle } from "./opencodeServerPool.js";
 import {
@@ -1273,9 +1275,8 @@ export class OpencodeDriver implements CliDriver {
     const taken = this.takeTurn(turnId);
     if (!taken) return;
     let text = "";
-    let inputTokens = 0;
-    let outputTokens = 0;
-    let costUsd = 0;
+    let usage: TurnModelUsage[] = [];
+    let context: ContextUsage | undefined;
     let errorText = "";
     const resultPath = `/session/${encodeURIComponent(taken.serverSessionId)}/message`;
     const loadResult = (port: number, auth: string): Promise<Response> =>
@@ -1318,10 +1319,15 @@ export class OpencodeDriver implements CliDriver {
       }
       const summary = summarizeOpencodeTurn(turnMessagesOf(messages), taken.beforeIds);
       text = summary.text;
-      inputTokens = summary.inputTokens;
-      outputTokens = summary.outputTokens;
-      costUsd = summary.costUsd;
+      usage = summary.usage;
       errorText = summary.errorText;
+      if (summary.lastModel && summary.lastContextTokens !== undefined) {
+        const cached = peekOpencodeModels(this.configuredBinary());
+        const model = cached?.find((m) => m.id.toLowerCase() === summary.lastModel?.toLowerCase());
+        if (model?.contextWindow) {
+          context = { usedTokens: summary.lastContextTokens, windowTokens: model.contextWindow };
+        }
+      }
     } catch (err) {
       traceHarnessCall({
         harness: "opencode",
@@ -1340,9 +1346,8 @@ export class OpencodeDriver implements CliDriver {
       sessionId: taken.localSessionId,
       resumeCursor: taken.serverSessionId,
       resultText: errorText || text,
-      inputTokens,
-      outputTokens,
-      costUsd,
+      usage,
+      ...(context ? { context } : {}),
       numTurns: 1,
       isError: errorText !== "",
       backgroundTasks: 0
@@ -1838,6 +1843,14 @@ export class OpencodeDriver implements CliDriver {
   async renameSession(): Promise<void> {}
 
   async *events(): AsyncIterable<never> {}
+
+  async getAccountUsage(): Promise<AccountUsageState> {
+    return fetchOpencodeGoUsage(this.getSettings().opencodeGoUsage === true, {
+      fetchFn: fetch,
+      env: process.env,
+      home: homedir()
+    });
+  }
 
   stopSession(sessionId: string): void {
     const cwd = this.sessionCwds.get(sessionId);

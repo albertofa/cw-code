@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { AppSettings, CliBinary, CliDiscoveredCandidate, CliDiscoverResult, CommandInvocation, CommandOption, CreateSessionOptions, GitBranchInfo, GitDiffMode, GitDiffResult, GitStatus, HarnessId, PrDetail, PrInboxResult, Project, ProjectGitHubRepo, PrRef, PrWorkflow, RetryConnectionResult, SessionCleanupResult, SessionMeta, SessionPrLink, SessionStatus, SkillDetail, SkillMeta, SkillSaveInput, SkillsListResult, SourceControlHealth, SubagentToolsResult, WorktreePruneSummary } from "@cw-code/contracts";
+import type { AccountUsageSnapshot, AppSettings, CliBinary, CliDiscoveredCandidate, CliDiscoverResult, CommandInvocation, CommandOption, CreateSessionOptions, GitBranchInfo, GitDiffMode, GitDiffResult, GitStatus, HarnessId, PrDetail, PrInboxResult, Project, ProjectGitHubRepo, PrRef, PrWorkflow, RetryConnectionResult, SessionCleanupResult, SessionMeta, SessionPrLink, SessionStatus, SkillDetail, SkillMeta, SkillSaveInput, SkillsListResult, SourceControlHealth, SubagentToolsResult, UsageLedgerQuery, UsageLedgerRow, WorktreePruneSummary } from "@cw-code/contracts";
 
 export type PermissionMode = "auto" | "acceptEdits" | "bypassPermissions" | "manual";
 export type EffortLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
@@ -98,6 +98,8 @@ export interface CwApi {
   getSourceControlHealth(projectId?: string): Promise<SourceControlHealth>;
   setProjectGitHubAccount(projectId: string, account: { host: string; login: string } | null): Promise<Project>;
   setRepositoryGitIdentity(projectId: string, name: string, email: string): Promise<void>;
+  getUsageLedger(query: UsageLedgerQuery): Promise<UsageLedgerRow[]>;
+  getAccountUsage(drivers: DriverName[], force?: boolean): Promise<AccountUsageSnapshot[]>;
   getPrInbox(force?: boolean): Promise<PrInboxResult>;
   getPrDetail(ref: PrRef): Promise<PrDetail>;
   getPrDiff(ref: PrRef): Promise<string>;
@@ -219,6 +221,8 @@ const api: CwApi = {
     ipcRenderer.invoke("git.setProjectAccount", { projectId, account }),
   setRepositoryGitIdentity: (projectId: string, name: string, email: string) =>
     ipcRenderer.invoke("git.setIdentity", { projectId, name, email }),
+  getUsageLedger: (query: UsageLedgerQuery) => ipcRenderer.invoke("usage.ledger", query),
+  getAccountUsage: (drivers: DriverName[], force?: boolean) => ipcRenderer.invoke("usage.account", { drivers, force }),
   getPrInbox: (force?: boolean) => ipcRenderer.invoke("prs.inbox", { force }),
   getPrDetail: (ref: PrRef) => ipcRenderer.invoke("prs.detail", { ref }),
   getPrDiff: (ref: PrRef) => ipcRenderer.invoke("prs.diff", { ref }),

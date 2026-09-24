@@ -3,6 +3,7 @@ import type {
   ApprovalKind,
   ApprovalRequest,
   CommandOption,
+  ContextUsage,
   EffortLevel,
   HistoryMessage,
   ModelOption,
@@ -13,7 +14,8 @@ import type {
   QuestionRequest,
   SessionMeta,
   SubagentToolActivity,
-  TodoItem
+  TodoItem,
+  TokenCounts
 } from "@cw-code/contracts";
 import { todosFromPlan } from "../todos.js";
 
@@ -604,12 +606,29 @@ export function approvalResultFor(
   return { decision };
 }
 
-export function accumulateCodexUsage(
-  acc: { inputTokens: number; outputTokens: number },
-  usage: CodexTokenUsage
-): void {
+export interface CodexTurnUsageAcc {
+  counts: TokenCounts;
+  lastTotal?: number;
+  context?: ContextUsage;
+}
+
+export function accumulateCodexTurnUsage(acc: CodexTurnUsageAcc, usage: CodexTokenUsage): boolean {
+  const totalTokens = usage.total?.totalTokens;
+  if (typeof totalTokens === "number" && totalTokens === acc.lastTotal) return false;
+  if (typeof totalTokens === "number") acc.lastTotal = totalTokens;
+
   const last = usage.last;
-  acc.inputTokens +=
-    (last.inputTokens ?? 0) + (last.cachedInputTokens ?? 0) + (last.cacheWriteInputTokens ?? 0);
-  acc.outputTokens += (last.outputTokens ?? 0) + (last.reasoningOutputTokens ?? 0);
+  const cached = last.cachedInputTokens ?? 0;
+  const cacheWrite = last.cacheWriteInputTokens ?? 0;
+  const input = last.inputTokens ?? 0;
+  acc.counts.inputTokens += Math.max(0, input - cached - cacheWrite);
+  acc.counts.cacheReadTokens += cached;
+  acc.counts.cacheWriteTokens += cacheWrite;
+  acc.counts.outputTokens += last.outputTokens ?? 0;
+  acc.counts.reasoningTokens += last.reasoningOutputTokens ?? 0;
+
+  if (usage.modelContextWindow != null) {
+    acc.context = { usedTokens: last.totalTokens ?? 0, windowTokens: usage.modelContextWindow };
+  }
+  return true;
 }

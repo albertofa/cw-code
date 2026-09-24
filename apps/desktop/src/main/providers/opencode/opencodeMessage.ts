@@ -1,3 +1,5 @@
+import type { TurnModelUsage } from "@cw-code/contracts";
+
 export type OpencodeMessagePartInput = { type: "text"; text: string } | { type: "file"; mime: string; url: string };
 
 export interface OpencodeMessageBody {
@@ -54,6 +56,8 @@ export function buildOpencodeMessageBody(
 export interface OpencodeTurnMessage {
   id: string;
   role?: string;
+  providerID?: string;
+  modelID?: string;
   cost?: number;
   tokens?: {
     input?: number;
@@ -67,9 +71,9 @@ export interface OpencodeTurnMessage {
 
 export interface OpencodeTurnSummary {
   text: string;
-  inputTokens: number;
-  outputTokens: number;
-  costUsd: number;
+  usage: TurnModelUsage[];
+  lastModel?: string;
+  lastContextTokens?: number;
   errorText: string;
 }
 
@@ -103,6 +107,8 @@ export function turnMessagesOf(payload: unknown): OpencodeTurnMessage[] {
     const id = typeof info["id"] === "string" ? info["id"] : "";
     if (!id) continue;
     const role = typeof info["role"] === "string" ? info["role"] : "";
+    const providerID = typeof info["providerID"] === "string" ? info["providerID"] : "";
+    const modelID = typeof info["modelID"] === "string" ? info["modelID"] : "";
     const tokens = asRecord(info["tokens"]);
     const cache = asRecord(tokens?.["cache"]);
     const error = errorMessageOf(info["error"]);
@@ -117,6 +123,8 @@ export function turnMessagesOf(payload: unknown): OpencodeTurnMessage[] {
     out.push({
       id,
       ...(role ? { role } : {}),
+      ...(providerID ? { providerID } : {}),
+      ...(modelID ? { modelID } : {}),
       cost: asNumber(info["cost"]),
       tokens: tokens
         ? {
@@ -169,15 +177,45 @@ export function runEnded(rawMessages: unknown, scopeIds?: Set<string>): boolean 
 export function summarizeOpencodeTurn(messages: OpencodeTurnMessage[], beforeIds: Set<string> | null): OpencodeTurnSummary {
   const fresh = beforeIds === null ? [] : messages.filter((m) => !beforeIds.has(m.id));
   const scoped = beforeIds === null ? [] : fresh.filter((m) => m.role === "assistant");
-  const summary: OpencodeTurnSummary = { text: "", inputTokens: 0, outputTokens: 0, costUsd: 0, errorText: "" };
+  const byModel = new Map<string, TurnModelUsage>();
+  let text = "";
+  let errorText = "";
+  let lastModel: string | undefined;
+  let lastContextTokens: number | undefined;
   for (const m of scoped) {
-    if (m.text) summary.text += (summary.text ? "\n" : "") + m.text;
-    summary.inputTokens += (m.tokens?.input ?? 0) + (m.tokens?.cache?.read ?? 0) + (m.tokens?.cache?.write ?? 0);
-    summary.outputTokens += (m.tokens?.output ?? 0) + (m.tokens?.reasoning ?? 0);
-    summary.costUsd += m.cost ?? 0;
-    if (m.error) summary.errorText = m.error;
+    if (m.text) text += (text ? "\n" : "") + m.text;
+    if (m.error) errorText = m.error;
+    const input = m.tokens?.input ?? 0;
+    const cacheRead = m.tokens?.cache?.read ?? 0;
+    const cacheWrite = m.tokens?.cache?.write ?? 0;
+    const output = m.tokens?.output ?? 0;
+    const reasoning = m.tokens?.reasoning ?? 0;
+    const key = m.providerID && m.modelID ? `${m.providerID}/${m.modelID}` : "unknown";
+    const entry: TurnModelUsage =
+      byModel.get(key) ??
+      ({
+        model: key,
+        inputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        outputTokens: 0,
+        reasoningTokens: 0,
+        costUsd: 0
+      } satisfies TurnModelUsage);
+    entry.inputTokens += input;
+    entry.cacheReadTokens += cacheRead;
+    entry.cacheWriteTokens += cacheWrite;
+    entry.outputTokens += output + reasoning;
+    entry.reasoningTokens += reasoning;
+    entry.costUsd = (entry.costUsd ?? 0) + (m.cost ?? 0);
+    byModel.set(key, entry);
+    const contextTokens = input + cacheRead + cacheWrite + output + reasoning;
+    if (m.providerID && m.modelID && contextTokens > 0) {
+      lastModel = key;
+      lastContextTokens = contextTokens;
+    }
   }
-  return summary;
+  return { text, usage: Array.from(byModel.values()), lastModel, lastContextTokens, errorText };
 }
 
 export interface OpencodePartDelta {

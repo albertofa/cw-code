@@ -3,6 +3,7 @@ import type { DriverName } from "../cw.js";
 import { useAppStore, DEFAULT_COMPOSER } from "../stores/appStore.js";
 import { usePanelStore } from "../stores/panelStore.js";
 import { ComposerView, type ComposerBackend } from "./ComposerView.js";
+import { ContextRing } from "./ContextRing.js";
 
 export function Composer({ sessionId, driver }: { sessionId: string; driver: DriverName }) {
   const store = useAppStore();
@@ -43,5 +44,13 @@ export function Composer({ sessionId, driver }: { sessionId: string; driver: Dri
     }
   };
 
-  return <ComposerView backend={backend} driver={driver} resetKey={sessionId} modelsRefreshKey={useAppStore((s) => s.settingsVersion)} />;
+  return (
+    <ComposerView
+      backend={backend}
+      driver={driver}
+      resetKey={sessionId}
+      modelsRefreshKey={useAppStore((s) => s.settingsVersion)}
+      usageSlot={<ContextRing sessionId={sessionId} driver={driver} />}
+    />
+  );
 }

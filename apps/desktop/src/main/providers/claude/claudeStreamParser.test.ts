@@ -12,7 +12,8 @@ import {
   parseClaudeSystemInit,
   parseClaudeTaskSystemLine,
   parseTaskNotificationUsage,
-  parseStreamLine
+  parseStreamLine,
+  type TurnDoneInfo
 } from "./claudeStreamParser.js";
 
 describe("parseClaudeSubagentHandback", () => {
@@ -217,12 +218,57 @@ describe("parseStreamLine", () => {
     expect(captured).toEqual({
       resumeCursor: "sess-1",
       resultText: "done",
-      inputTokens: 100,
-      outputTokens: 20,
-      costUsd: 0.02,
+      usage: [],
+      modelUsage: {},
       numTurns: 2,
       isError: false
     });
+  });
+
+  it("threads mainModel through to pick the context window", () => {
+    const line = JSON.stringify({
+      type: "result",
+      subtype: "success",
+      result: "done",
+      session_id: "sess-1",
+      num_turns: 1,
+      is_error: false,
+      modelUsage: {
+        "claude-sonnet-5": {
+          inputTokens: 100,
+          outputTokens: 500,
+          cacheReadInputTokens: 0,
+          cacheCreationInputTokens: 0,
+          costUSD: 0.5,
+          contextWindow: 200000
+        },
+        "claude-haiku-4-5-20251001": {
+          inputTokens: 5,
+          outputTokens: 10,
+          cacheReadInputTokens: 0,
+          cacheCreationInputTokens: 0,
+          costUSD: 0.01,
+          contextWindow: 50000
+        }
+      },
+      usage: {
+        iterations: [{ input_tokens: 5, output_tokens: 10, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }]
+      }
+    });
+    const captured: { info?: TurnDoneInfo } = {};
+    parseStreamLine(
+      line,
+      "t1",
+      "s1",
+      (info) => {
+        captured.info = info;
+      },
+      undefined,
+      undefined,
+      {},
+      "claude-haiku-4-5"
+    );
+    expect(captured.info?.context?.windowTokens).toBe(50000);
   });
 
   it("passes through non-JSON lines as text", () => {
@@ -287,9 +333,8 @@ describe("parseStreamLine", () => {
     expect(captured).toEqual({
       resumeCursor: "sess-1",
       resultText: "final result",
-      inputTokens: 120,
-      outputTokens: 30,
-      costUsd: 0.03,
+      usage: [],
+      modelUsage: {},
       numTurns: 3,
       isError: false
     });
@@ -457,6 +502,11 @@ describe("parseClaudeSystemInit", () => {
     expect(parseClaudeSystemInit(line)).toEqual({
       terminalSlashCommands: ["doctor", "color", "reload-plugins"]
     });
+  });
+
+  it("captures the model when present", () => {
+    const line = JSON.stringify({ type: "system", subtype: "init", model: "claude-haiku-4-5" });
+    expect(parseClaudeSystemInit(line)).toEqual({ terminalSlashCommands: [], model: "claude-haiku-4-5" });
   });
 
   it("tolerates a missing or garbage terminal_slash_commands field", () => {

@@ -20,10 +20,11 @@ import { getHarnessTracePath, initHarnessTrace } from "./debug/harnessTrace.js";
 import { appendCrashLog, initCrashLog } from "./debug/crashLog.js";
 import { claudeCommandsCachePath, ensureAppDirs, attachmentsDir, logsDir, migrateFromUserData, opencodeModelsCachePath } from "./paths/appPaths.js";
 import { reapOrphanedServers } from "./orphanServers.js";
-import type { ApprovalDecision, CliBinary, CommandInvocation, CreateSessionOptions, GitDiffMode, ProjectGitHubRepo, PrRef, SessionPrLink, SessionStatus, SettingsPatch } from "@cw-code/contracts";
+import type { ApprovalDecision, CliBinary, CommandInvocation, CreateSessionOptions, GitDiffMode, ProjectGitHubRepo, PrRef, SessionPrLink, SessionStatus, SettingsPatch, UsageLedgerQuery } from "@cw-code/contracts";
 import type { DriverKind, HarnessId, SkillSaveInput } from "@cw-code/contracts";
 import type { PtyKind } from "./pty/PtyPool.js";
 import { SessionManager } from "./sessions/SessionManager.js";
+import { AccountUsageService } from "./usage/AccountUsageService.js";
 import { SkillsStore } from "./skills/SkillsStore.js";
 import { FileService, IMAGE_MAX_BYTES, imageExtMime } from "./fs/FileService.js";
 import { GitService } from "./fs/GitService.js";
@@ -37,6 +38,18 @@ import { initClaudeCommandsCache } from "./providers/claude/claudeCommands.js";
 
 type DriverName = DriverKind;
 
+const DRIVER_KINDS: DriverKind[] = ["claude", "opencode", "codex"];
+const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+
+function isValidUsageLedgerQuery(query: unknown): query is UsageLedgerQuery | undefined {
+  if (query === undefined) return true;
+  if (!query || typeof query !== "object") return false;
+  const q = query as Record<string, unknown>;
+  if (q.sinceDay !== undefined && (typeof q.sinceDay !== "string" || !DAY_RE.test(q.sinceDay))) return false;
+  if (q.sessionId !== undefined && typeof q.sessionId !== "string") return false;
+  return true;
+}
+
 let mainWindow: BrowserWindow | null = null;
 let pullRequests: PullRequestService;
 const sessions = new SessionManager({
@@ -49,6 +62,7 @@ const files = new FileService();
 const git = new GitService(() => sessions.getSettings());
 pullRequests = new PullRequestService(git, () => sessions.getSettings(), (rootPath) => sessions.addProject(rootPath));
 const ptys = new PtyPool(() => sessions.getSettings());
+const accountUsage = new AccountUsageService(() => sessions.getDrivers());
 
 async function createWindow(): Promise<void> {
   mainWindow = new BrowserWindow({
@@ -221,6 +235,7 @@ function registerIpc(): void {
           : `It reported version ${failed.actual ?? "unknown"} but needs >= ${failed.minimum}. Update the CLI to use it.`;
       throw new Error(`${name} CLI could not be verified at '${failed.binaryPath}'. ${reason}`);
     }
+    if (patch.opencodeGoUsage !== undefined) accountUsage.invalidate("opencode");
     return sessions.setSettings(normalized);
   });
   ipcMain.handle(
@@ -397,6 +412,19 @@ function registerIpc(): void {
   ipcMain.handle("git.setIdentity", (_e, args: { projectId: string; name: string; email: string }) =>
     git.setRepositoryIdentity(sessions.rootForProject(args.projectId), args.name, args.email)
   );
+
+  ipcMain.handle("usage.ledger", (_e, query: UsageLedgerQuery) => {
+    if (!isValidUsageLedgerQuery(query)) {
+      throw new Error("usage.ledger requires { sinceDay?: string (YYYY-MM-DD), sessionId?: string }");
+    }
+    return sessions.queryUsageLedger(query ?? {});
+  });
+  ipcMain.handle("usage.account", (_e, args: { drivers: DriverKind[]; force?: boolean }) => {
+    if (!args || !Array.isArray(args.drivers) || !args.drivers.every((driver) => DRIVER_KINDS.includes(driver))) {
+      throw new Error("usage.account requires { drivers: DriverKind[] }");
+    }
+    return accountUsage.get(args.drivers, args.force ?? false);
+  });
 
   ipcMain.handle("prs.inbox", (_e, args: { force?: boolean }) => pullRequests.inbox(args?.force));
   ipcMain.handle("prs.detail", (_e, args: { ref: PrRef }) => pullRequests.detail(args.ref));

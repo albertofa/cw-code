@@ -111,9 +111,7 @@ describe("appStore tool.result", () => {
       sessionId: session,
       resumeCursor: "cursor-1",
       resultText: "I checked both drafts against master. Full plan is in the scratchpad file.",
-      inputTokens: 10,
-      outputTokens: 20,
-      costUsd: 0.01,
+      usage: [],
       numTurns: 1,
       isError: false,
       backgroundTasks: 0
@@ -138,9 +136,7 @@ describe("appStore tool.result", () => {
       sessionId: session,
       resumeCursor: "cursor-1",
       resultText: "Done",
-      inputTokens: 10,
-      outputTokens: 4,
-      costUsd: 0.01,
+      usage: [],
       numTurns: 1,
       isError: false,
       backgroundTasks: 0
@@ -184,9 +180,7 @@ describe("appStore tool.result", () => {
       sessionId: session,
       resumeCursor: "cursor-1",
       resultText: "Checking the wiring in theme.css.\nRefining the token map.",
-      inputTokens: 10,
-      outputTokens: 20,
-      costUsd: 0.01,
+      usage: [],
       numTurns: 1,
       isError: false,
       backgroundTasks: 0

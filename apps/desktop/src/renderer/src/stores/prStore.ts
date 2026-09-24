@@ -5,7 +5,7 @@ import { errorMessage } from "../components/errorMessage.js";
 
 export type PrDetailTab = "conversation" | "commits" | "checks" | "files";
 
-export type MainView = { kind: "session" } | { kind: "inbox" } | { kind: "pr"; ref: PrRef; tab: PrDetailTab };
+export type MainView = { kind: "session" } | { kind: "inbox" } | { kind: "pr"; ref: PrRef; tab: PrDetailTab } | { kind: "usage" };
 
 export interface RunModalState {
   workflowId: string;
@@ -34,6 +34,7 @@ interface PrState {
   openPr(ref: PrRef, tab?: PrDetailTab): void;
   setPrTab(tab: PrDetailTab): void;
   openSessionView(): void;
+  openUsage(): void;
   refreshProjectRepos(): Promise<void>;
   projectIdForRef(ref: PrRef): string | null;
   openRunModal(state: RunModalState): void;
@@ -137,6 +138,10 @@ export const usePrStore = create<PrState>((set, get) => ({
   openSessionView() {
     if (get().mainView.kind === "session") return;
     set({ mainView: { kind: "session" } });
+  },
+
+  openUsage() {
+    set({ mainView: { kind: "usage" } });
   },
 
   async refreshProjectRepos() {

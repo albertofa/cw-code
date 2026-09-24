@@ -49,9 +49,7 @@ class FakeDriver implements CliDriver {
       sessionId: pending.sessionId,
       resumeCursor: `cursor-${turnId}`,
       resultText: `echo:${pending.prompt}`,
-      inputTokens: 1,
-      outputTokens: 1,
-      costUsd: 0,
+      usage: [],
       numTurns: 1,
       isError: false,
       backgroundTasks
@@ -68,9 +66,7 @@ class FakeDriver implements CliDriver {
         sessionId: pending.sessionId,
         resumeCursor: `cursor-${turnId}`,
         resultText: text,
-        inputTokens: 1,
-        outputTokens: 1,
-        costUsd: 0,
+        usage: [],
         numTurns: 1,
         isError: false,
         backgroundTasks: 0
@@ -87,9 +83,7 @@ class FakeDriver implements CliDriver {
         sessionId: pending.sessionId,
         resumeCursor: `cursor-${turnId}`,
         resultText,
-        inputTokens: 1,
-        outputTokens: 1,
-        costUsd: 0,
+        usage: [],
         numTurns: 1,
         isError: true,
         backgroundTasks: 0
@@ -276,6 +270,70 @@ describe("SessionManager", () => {
     const a = await manager.createSession(project.id, "claude");
     expect(a.worktreePath).toBeFalsy();
     await expect(manager.ensureWorktree(a.id)).resolves.toBe("C:\\proj-nowt");
+    manager.dispose();
+  });
+
+  it("records turn usage to the ledger for a known session, tagged with its project and driver", async () => {
+    const { manager } = makeManager();
+    const project = manager.addProject("C:\\proj-usage-known");
+    const session = await manager.createSession(project.id, "claude");
+    (manager as unknown as { routeEvent(e: ThreadEvent): void }).routeEvent({
+      type: "turn.done",
+      turnId: "turn-usage-1",
+      sessionId: session.id,
+      resumeCursor: "cursor-1",
+      resultText: "",
+      usage: [
+        { model: "claude-sonnet-5", inputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 5, reasoningTokens: 0, costUsd: 0.02 }
+      ],
+      numTurns: 1,
+      isError: false,
+      backgroundTasks: 0
+    });
+    const rows = manager.queryUsageLedger({ sessionId: session.id });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ sessionId: session.id, projectId: project.id, driver: "claude", inputTokens: 10, costUsd: 0.02 });
+    manager.dispose();
+  });
+
+  it("does not record usage for an unknown session id, including title-generation session ids", () => {
+    const { manager } = makeManager();
+    for (const sessionId of ["does-not-exist", "title:does-not-exist"]) {
+      (manager as unknown as { routeEvent(e: ThreadEvent): void }).routeEvent({
+        type: "turn.done",
+        turnId: `turn-${sessionId}`,
+        sessionId,
+        resumeCursor: "cursor-1",
+        resultText: "",
+        usage: [
+          { model: "claude-sonnet-5", inputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 5, reasoningTokens: 0, costUsd: null }
+        ],
+        numTurns: 1,
+        isError: false,
+        backgroundTasks: 0
+      });
+    }
+    expect(manager.queryUsageLedger({ sessionId: "does-not-exist" })).toEqual([]);
+    expect(manager.queryUsageLedger({ sessionId: "title:does-not-exist" })).toEqual([]);
+    manager.dispose();
+  });
+
+  it("skips ledger recording when a turn.done carries no usage", async () => {
+    const { manager } = makeManager();
+    const project = manager.addProject("C:\\proj-usage-empty");
+    const session = await manager.createSession(project.id, "claude");
+    (manager as unknown as { routeEvent(e: ThreadEvent): void }).routeEvent({
+      type: "turn.done",
+      turnId: "turn-empty",
+      sessionId: session.id,
+      resumeCursor: "cursor-1",
+      resultText: "",
+      usage: [],
+      numTurns: 1,
+      isError: false,
+      backgroundTasks: 0
+    });
+    expect(manager.queryUsageLedger({ sessionId: session.id })).toEqual([]);
     manager.dispose();
   });
 
@@ -931,9 +989,7 @@ describe("SessionManager", () => {
       sessionId: session.id,
       resumeCursor: "cursor-1",
       resultText: "",
-      inputTokens: 0,
-      outputTokens: 0,
-      costUsd: 0,
+      usage: [],
       numTurns: 1,
       isError: false,
       backgroundTasks: 0
@@ -1188,9 +1244,7 @@ describe("SessionManager", () => {
       sessionId: session.id,
       resumeCursor: "cursor-1",
       resultText: "",
-      inputTokens: 1,
-      outputTokens: 1,
-      costUsd: 0,
+      usage: [],
       numTurns: 1,
       isError: false,
       backgroundTasks: 0

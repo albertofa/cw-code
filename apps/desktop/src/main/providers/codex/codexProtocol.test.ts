@@ -9,7 +9,7 @@ import {
   buildUserInputQuestionRequest,
   codexReviewTarget,
   codexUserInputResult,
-  accumulateCodexUsage,
+  accumulateCodexTurnUsage,
   mapCodexHistory,
   mapCodexModel,
   mapCodexPlan,
@@ -17,7 +17,8 @@ import {
   mapCodexThread,
   mapPermissionMode,
   type CodexThread,
-  type CodexTokenUsage
+  type CodexTokenUsage,
+  type CodexTurnUsageAcc
 } from "./codexProtocol.js";
 
 describe("mapPermissionMode", () => {
@@ -365,31 +366,72 @@ describe("approvalResultFor", () => {
   });
 });
 
-describe("accumulateCodexUsage", () => {
-  it("sums input and output across updates", () => {
-    const usage = (input: number, cached: number, output: number, reasoning: number): CodexTokenUsage => ({
+describe("accumulateCodexTurnUsage", () => {
+  function emptyAcc(): CodexTurnUsageAcc {
+    return { counts: { inputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 0, reasoningTokens: 0 } };
+  }
+
+  it("does not double count cached input tokens", () => {
+    const acc = emptyAcc();
+    const usage: CodexTokenUsage = {
       total: {
-        totalTokens: 0,
-        inputTokens: input,
-        cachedInputTokens: cached,
+        totalTokens: 39934,
+        inputTokens: 39846,
+        cachedInputTokens: 39424,
         cacheWriteInputTokens: 0,
-        outputTokens: output,
-        reasoningOutputTokens: reasoning
+        outputTokens: 88,
+        reasoningOutputTokens: 0
       },
       last: {
-        totalTokens: 0,
-        inputTokens: input,
-        cachedInputTokens: cached,
+        totalTokens: 39934,
+        inputTokens: 39846,
+        cachedInputTokens: 39424,
         cacheWriteInputTokens: 0,
-        outputTokens: output,
-        reasoningOutputTokens: reasoning
+        outputTokens: 88,
+        reasoningOutputTokens: 0
       },
       modelContextWindow: null
+    };
+    accumulateCodexTurnUsage(acc, usage);
+    expect(acc.counts).toEqual({
+      inputTokens: 422,
+      cacheReadTokens: 39424,
+      cacheWriteTokens: 0,
+      outputTokens: 88,
+      reasoningTokens: 0
     });
-    const acc = { inputTokens: 0, outputTokens: 0 };
-    accumulateCodexUsage(acc, usage(100, 50, 10, 5));
-    accumulateCodexUsage(acc, usage(200, 0, 20, 0));
-    expect(acc).toEqual({ inputTokens: 350, outputTokens: 35 });
+  });
+
+  it("ignores a notification whose total is unchanged for the thread", () => {
+    const acc = emptyAcc();
+    const usage: CodexTokenUsage = {
+      total: { totalTokens: 1000, inputTokens: 900, cachedInputTokens: 0, cacheWriteInputTokens: 0, outputTokens: 100, reasoningOutputTokens: 0 },
+      last: { totalTokens: 1000, inputTokens: 900, cachedInputTokens: 0, cacheWriteInputTokens: 0, outputTokens: 100, reasoningOutputTokens: 0 },
+      modelContextWindow: null
+    };
+    accumulateCodexTurnUsage(acc, usage);
+    accumulateCodexTurnUsage(acc, usage);
+    expect(acc.counts).toEqual({ inputTokens: 900, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 100, reasoningTokens: 0 });
+  });
+
+  it("omits context when the model context window is null", () => {
+    const acc = emptyAcc();
+    accumulateCodexTurnUsage(acc, {
+      total: { totalTokens: 500, inputTokens: 400, cachedInputTokens: 0, cacheWriteInputTokens: 0, outputTokens: 100, reasoningOutputTokens: 0 },
+      last: { totalTokens: 500, inputTokens: 400, cachedInputTokens: 0, cacheWriteInputTokens: 0, outputTokens: 100, reasoningOutputTokens: 0 },
+      modelContextWindow: null
+    });
+    expect(acc.context).toBeUndefined();
+  });
+
+  it("sets context from the last breakdown's total and the model context window", () => {
+    const acc = emptyAcc();
+    accumulateCodexTurnUsage(acc, {
+      total: { totalTokens: 500, inputTokens: 400, cachedInputTokens: 0, cacheWriteInputTokens: 0, outputTokens: 100, reasoningOutputTokens: 0 },
+      last: { totalTokens: 500, inputTokens: 400, cachedInputTokens: 0, cacheWriteInputTokens: 0, outputTokens: 100, reasoningOutputTokens: 0 },
+      modelContextWindow: 128_000
+    });
+    expect(acc.context).toEqual({ usedTokens: 500, windowTokens: 128_000 });
   });
 });
 

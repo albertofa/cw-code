@@ -115,14 +115,20 @@ export function parseOpencodeVerboseModels(stdout: string): ModelOption[] {
       continue;
     }
     let variants: string[] | undefined;
+    let contextWindow: number | undefined;
     try {
-      const parsed = JSON.parse(lines.slice(j, end + 1).join("\n")) as { variants?: unknown };
+      const parsed = JSON.parse(lines.slice(j, end + 1).join("\n")) as { variants?: unknown; limit?: unknown };
       if (parsed.variants && typeof parsed.variants === "object" && !Array.isArray(parsed.variants)) {
         variants = Object.keys(parsed.variants as Record<string, unknown>);
       } else if (Array.isArray(parsed.variants)) {
         variants = (parsed.variants as unknown[])
           .map((v) => (typeof v === "string" ? v : (v as { id?: unknown }).id))
           .filter((v): v is string => typeof v === "string" && v.length > 0);
+      }
+      const limit = parsed.limit;
+      if (limit && typeof limit === "object" && !Array.isArray(limit)) {
+        const context = (limit as { context?: unknown }).context;
+        if (typeof context === "number" && Number.isFinite(context) && context > 0) contextWindow = context;
       }
     } catch {
       variants = undefined;
@@ -133,7 +139,8 @@ export function parseOpencodeVerboseModels(stdout: string): ModelOption[] {
         id,
         label: labelForModel(id),
         source: "live",
-        ...(variants !== undefined ? { variants } : {})
+        ...(variants !== undefined ? { variants } : {}),
+        ...(contextWindow !== undefined ? { contextWindow } : {})
       });
     }
     i = end + 1;
@@ -204,13 +211,16 @@ function queryModels(binary: string, args: string[]): Promise<string> {
 
 function isModelOption(value: unknown): value is ModelOption {
   if (!value || typeof value !== "object") return false;
-  const model = value as { id?: unknown; label?: unknown; source?: unknown; variants?: unknown };
+  const model = value as { id?: unknown; label?: unknown; source?: unknown; variants?: unknown; contextWindow?: unknown };
   if (typeof model.id !== "string" || !model.id) return false;
   if (typeof model.label !== "string") return false;
   if (model.source !== "live" && model.source !== "curated" && model.source !== "custom") return false;
   if (model.variants !== undefined) {
     if (!Array.isArray(model.variants)) return false;
     if (!model.variants.every((variant) => typeof variant === "string")) return false;
+  }
+  if (model.contextWindow !== undefined) {
+    if (typeof model.contextWindow !== "number" || !Number.isFinite(model.contextWindow) || model.contextWindow <= 0) return false;
   }
   return true;
 }
@@ -339,6 +349,10 @@ export async function listOpencodeModels(
     return hit.models;
   }
   return refreshOpencodeModels(cwd, binary, query);
+}
+
+export function peekOpencodeModels(binary: string): ModelOption[] | undefined {
+  return cache.get(cacheKey(binary))?.models;
 }
 
 export function clearOpencodeModelsCache(): void {

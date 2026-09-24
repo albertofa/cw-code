@@ -2,6 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync } from "node:fs";
 import { isAbsolute } from "node:path";
 import type {
+  AccountUsageState,
   AppSettings,
   ApprovalDecision,
   ApprovalKind,
@@ -16,6 +17,7 @@ import type {
   SubagentToolsResult,
   ThreadEvent,
   TurnHandle,
+  TurnModelUsage,
   TurnRequest
 } from "@cw-code/contracts";
 import { isFullAccessMode } from "../permissions.js";
@@ -23,8 +25,9 @@ import { assertInside } from "../../fs/FileService.js";
 import { parseExtraArgs } from "../../settings/settingsUtils.js";
 import { previewText, traceHarnessCall, truncateError } from "../../debug/harnessTrace.js";
 import { CodexAppServer, type CodexAppServerLike } from "./codexAppServer.js";
+import { mapCodexAccountGate, mapCodexUsage } from "./codexAccountUsage.js";
 import {
-  accumulateCodexUsage,
+  accumulateCodexTurnUsage,
   approvalResultFor,
   buildCodexSkillInput,
   buildCodexUserInput,
@@ -52,7 +55,9 @@ import {
   type CodexPlanUpdate,
   type CodexThread,
   type CodexThreadItem,
+  type CodexTokenUsage,
   type CodexTurn,
+  type CodexTurnUsageAcc,
   type CodexUserInputParams
 } from "./codexProtocol.js";
 
@@ -75,8 +80,8 @@ interface ActiveTurn {
   turnId: string;
   localSessionId: string;
   threadId: string;
-  inputTokens: number;
-  outputTokens: number;
+  requestedModel: string;
+  usageAcc: CodexTurnUsageAcc;
   numTurns: number;
   permissionMode?: PermissionMode;
   command?: string;
@@ -122,6 +127,7 @@ export class CodexCliDriver implements CliDriver {
   private ownsClient: boolean;
   private turns = new Map<string, ActiveTurn>();
   private turnByCodexId = new Map<string, string>();
+  private threadLastTotal = new Map<string, number>();
   private approvals = new Map<string, PendingApproval>();
   private pendingQuestions = new Map<string, { serverId: string | number; turnId: string }>();
   private reasoningKinds = new Map<string, Map<string, "summary" | "text">>();
@@ -250,6 +256,7 @@ export class CodexCliDriver implements CliDriver {
           ...(cursor ? { cursor } : {})
         });
         for (const model of res.data ?? []) {
+          if (model.isDefault) this.defaultModelIdCache = model.id;
           if (seen.has(model.id) || model.hidden) continue;
           seen.add(model.id);
           models.push(mapCodexModel(model));
@@ -361,8 +368,11 @@ export class CodexCliDriver implements CliDriver {
         turnId,
         localSessionId: request.sessionId,
         threadId,
-        inputTokens: 0,
-        outputTokens: 0,
+        requestedModel: request.model ?? "",
+        usageAcc: {
+          counts: { inputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 0, reasoningTokens: 0 },
+          lastTotal: this.threadLastTotal.get(threadId)
+        },
         numTurns: 0,
         ...(request.permissionMode ? { permissionMode: request.permissionMode } : {}),
         ...(request.command ? { command: request.command.name } : {})
@@ -686,10 +696,11 @@ export class CodexCliDriver implements CliDriver {
       }
       case "thread/tokenUsage/updated": {
         const active = this.turnForCodexId(String(p["turnId"] ?? ""), typeof p["threadId"] === "string" ? p["threadId"] : undefined);
-        const usage = p["tokenUsage"] as { last?: Record<string, unknown> } | undefined;
+        const usage = p["tokenUsage"] as CodexTokenUsage | undefined;
         if (active && usage?.last) {
-          accumulateCodexUsage(active, usage as never);
-          active.numTurns += 1;
+          const applied = accumulateCodexTurnUsage(active.usageAcc, usage);
+          if (active.usageAcc.lastTotal !== undefined) this.threadLastTotal.set(active.threadId, active.usageAcc.lastTotal);
+          if (applied) active.numTurns += 1;
         }
         break;
       }
@@ -743,15 +754,23 @@ export class CodexCliDriver implements CliDriver {
       });
       return;
     }
+    const { counts } = active.usageAcc;
+    const hasUsage =
+      counts.inputTokens > 0 ||
+      counts.cacheReadTokens > 0 ||
+      counts.cacheWriteTokens > 0 ||
+      counts.outputTokens > 0 ||
+      counts.reasoningTokens > 0;
+    const model = active.requestedModel || this.defaultModelIdCache || "codex";
+    const usage: TurnModelUsage[] = hasUsage ? [{ ...counts, model, costUsd: null }] : [];
     this.emit({
       type: "turn.done",
       turnId: driverTurnId,
       sessionId: active.localSessionId,
       resumeCursor: threadId || active.threadId,
       resultText: "",
-      inputTokens: active.inputTokens,
-      outputTokens: active.outputTokens,
-      costUsd: 0,
+      usage,
+      ...(active.usageAcc.context ? { context: active.usageAcc.context } : {}),
       numTurns: Math.max(1, active.numTurns),
       isError: false,
       backgroundTasks: 0
@@ -1004,6 +1023,22 @@ export class CodexCliDriver implements CliDriver {
 
   async listPermissionModes(): Promise<PermissionOption[]> {
     return listCodexPermissionModes();
+  }
+
+  async getAccountUsage(): Promise<AccountUsageState> {
+    try {
+      const accountRes = await this.client.request<unknown>("account/read", { refreshToken: false });
+      const gate = mapCodexAccountGate(accountRes);
+      if (gate) return gate;
+      const rateLimitsRes = await this.client.request<unknown>("account/rateLimits/read", {});
+      return mapCodexUsage(accountRes, rateLimitsRes, Date.now());
+    } catch (err) {
+      const message = truncateError((err as Error).message);
+      if (/ENOENT|failed to spawn/i.test((err as Error).message ?? "")) {
+        return { status: "unavailable", reason: "not-installed", message: "Codex isn't installed. Set its path in Settings → Harnesses → Codex." };
+      }
+      return { status: "error", message };
+    }
   }
 
   dispose(): void {

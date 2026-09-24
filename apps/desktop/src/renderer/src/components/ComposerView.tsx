@@ -137,6 +137,7 @@ export function ComposerView({
   modelsRefreshKey = 0,
   resetStaleModel = false,
   recipePrefix,
+  usageSlot,
   footer,
   blockedReason
 }: {
@@ -146,6 +147,7 @@ export function ComposerView({
   modelsRefreshKey?: number;
   resetStaleModel?: boolean;
   recipePrefix?: ReactNode;
+  usageSlot?: ReactNode;
   footer?: ReactNode;
   blockedReason?: string;
 }) {
@@ -951,6 +953,7 @@ export function ComposerView({
             </>
           )}
         </div>
+        {usageSlot}
         {busy ? (
           <button
             type="button"

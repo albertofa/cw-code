@@ -180,4 +180,78 @@ describe("TracingCliDriver", () => {
     expect(records).toHaveLength(1);
     expect(records[0]).toMatchObject({ operation: "claude.interrupt" });
   });
+
+  it("leaves getAccountUsage undefined for drivers without support", () => {
+    const tracing = new TracingCliDriver(new FakeDriver());
+    expect(tracing.getAccountUsage).toBeUndefined();
+  });
+
+  it("forwards getAccountUsage and traces status without the payload", async () => {
+    const state = { status: "ok" as const, windows: [], balances: [], notes: [] };
+    const withUsage = new TracingCliDriver({
+      kind: "claude",
+      getAccountUsage: async () => state
+    } as unknown as CliDriver);
+    await expect(withUsage.getAccountUsage?.()).resolves.toEqual(state);
+    const records = readRecords();
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      harness: "claude",
+      operation: "claude.getAccountUsage",
+      ok: true,
+      extra: { status: "ok" }
+    });
+    expect(records[0]).not.toHaveProperty("windows");
+    expect(records[0]).not.toHaveProperty("balances");
+  });
+
+  it("includes a truncated error when getAccountUsage resolves to a non-ok state", async () => {
+    const state = { status: "unavailable" as const, reason: "not-installed" as const, message: "Claude isn't installed." };
+    const withUsage = new TracingCliDriver({
+      kind: "claude",
+      getAccountUsage: async () => state
+    } as unknown as CliDriver);
+    await expect(withUsage.getAccountUsage?.()).resolves.toEqual(state);
+    const records = readRecords();
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      harness: "claude",
+      operation: "claude.getAccountUsage",
+      ok: true,
+      extra: { status: "unavailable" },
+      error: "Claude isn't installed."
+    });
+  });
+
+  it("logs getAccountUsage failures with ok:false", async () => {
+    const withUsage = new TracingCliDriver({
+      kind: "codex",
+      getAccountUsage: async () => {
+        throw new Error("probe timed out");
+      }
+    } as unknown as CliDriver);
+    await expect(withUsage.getAccountUsage?.()).rejects.toThrow("probe timed out");
+    const records = readRecords();
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      harness: "codex",
+      operation: "codex.getAccountUsage",
+      ok: false
+    });
+    expect(String(records[0]["error"])).toContain("probe timed out");
+  });
+
+  it("logs getAccountUsage failures for non-Error throws using String(err)", async () => {
+    const withUsage = new TracingCliDriver({
+      kind: "codex",
+      getAccountUsage: async () => {
+        throw "boom";
+      }
+    } as unknown as CliDriver);
+    await expect(withUsage.getAccountUsage?.()).rejects.toBe("boom");
+    const records = readRecords();
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({ harness: "codex", operation: "codex.getAccountUsage", ok: false });
+    expect(String(records[0]["error"])).toContain("boom");
+  });
 });

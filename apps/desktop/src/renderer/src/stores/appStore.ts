@@ -6,6 +6,7 @@ import type {
   ApprovalDecision,
   ApprovalRequest,
   ComposerPrefs,
+  ContextUsage,
   CreateSessionOptions,
   DriverName,
   HistoryMessage,
@@ -18,7 +19,9 @@ import type {
   SettingsPatch,
   SubagentToolsResult,
   TodoItem,
-  TurnEvent
+  TokenCounts,
+  TurnEvent,
+  TurnModelUsage
 } from "../cw.js";
 import { appendAssistantText, appendReasoningText, closeReasoning, upsertToolCall } from "../components/chatMessages.js";
 import { getLastModel, setLastModel } from "../components/lastModel.js";
@@ -91,11 +94,27 @@ function readComposerMirror(sessionId: string): ComposerPrefs | null {
   }
 }
 
-interface Usage {
-  inputTokens: number;
-  outputTokens: number;
-  costUsd: number;
-  numTurns: number;
+export interface TurnUsage {
+  context?: ContextUsage;
+  lastTurn: TokenCounts & { costUsd: number | null; durationMs?: number };
+}
+
+function sumTurnUsage(usage: TurnModelUsage[]): TokenCounts & { costUsd: number | null } {
+  let inputTokens = 0;
+  let cacheReadTokens = 0;
+  let cacheWriteTokens = 0;
+  let outputTokens = 0;
+  let reasoningTokens = 0;
+  let costUsd: number | null = null;
+  for (const entry of usage) {
+    inputTokens += entry.inputTokens;
+    cacheReadTokens += entry.cacheReadTokens;
+    cacheWriteTokens += entry.cacheWriteTokens;
+    outputTokens += entry.outputTokens;
+    reasoningTokens += entry.reasoningTokens;
+    if (entry.costUsd !== null) costUsd = (costUsd ?? 0) + entry.costUsd;
+  }
+  return { inputTokens, cacheReadTokens, cacheWriteTokens, outputTokens, reasoningTokens, costUsd };
 }
 
 interface AppState {
@@ -107,7 +126,7 @@ interface AppState {
   activeSessionId: string | null;
   messagesBySession: Record<string, ChatMessage[]>;
   todosBySession: Record<string, TodoItem[]>;
-  usageBySession: Record<string, Usage>;
+  turnUsageBySession: Record<string, TurnUsage>;
   busyTurns: Record<string, string>;
   loadingHistory: Record<string, boolean>;
   historyErrorBySession: Record<string, string>;
@@ -259,7 +278,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   activeSessionId: null,
   messagesBySession: {},
   todosBySession: {},
-  usageBySession: {},
+  turnUsageBySession: {},
   busyTurns: {},
   loadingHistory: {},
   historyErrorBySession: {},
@@ -1299,15 +1318,16 @@ export const useAppStore = create<AppState>((set, get) => ({
           ...get().messagesBySession,
           [sessionId]: turnMessages
         },
-        usageBySession: superseded
-          ? get().usageBySession
+        turnUsageBySession: superseded
+          ? get().turnUsageBySession
           : {
-              ...get().usageBySession,
+              ...get().turnUsageBySession,
               [sessionId]: {
-                inputTokens: event.inputTokens,
-                outputTokens: event.outputTokens,
-                costUsd: event.costUsd,
-                numTurns: event.numTurns
+                context: event.context ?? get().turnUsageBySession[sessionId]?.context,
+                lastTurn: {
+                  ...sumTurnUsage(event.usage),
+                  durationMs: book.turnDurations[sessionId]?.[event.turnId]
+                }
               }
             }
       });

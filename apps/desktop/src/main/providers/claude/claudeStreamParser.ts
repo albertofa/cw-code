@@ -1,5 +1,6 @@
-import type { ApprovalDecision, ApprovalRequest, QuestionInfo, QuestionOption, QuestionRequest, ThreadEvent, ToolUsage } from "@cw-code/contracts";
+import type { ApprovalDecision, ApprovalRequest, ContextUsage, QuestionInfo, QuestionOption, QuestionRequest, ThreadEvent, ToolUsage, TurnModelUsage } from "@cw-code/contracts";
 import { todosFromToolCall } from "../todos.js";
+import { claudeTurnUsage, type ClaudeModelUsageSnapshot } from "./claudeUsage.js";
 
 interface ControlRequestMsg {
   type: "control_request";
@@ -266,7 +267,8 @@ interface ResultMsg {
   result?: string;
   session_id?: string;
   total_cost_usd?: number;
-  usage?: { input_tokens?: number; output_tokens?: number };
+  usage?: { input_tokens?: number; output_tokens?: number; iterations?: unknown };
+  modelUsage?: unknown;
   num_turns?: number;
   is_error?: boolean;
 }
@@ -446,12 +448,14 @@ export function parseClaudeTaskSystemLine(line: string): ClaudeTaskSystemInfo | 
 
 export interface ClaudeSystemInitInfo {
   terminalSlashCommands: string[];
+  model?: string;
 }
 
 interface SystemInitMsg {
   type?: unknown;
   subtype?: unknown;
   terminal_slash_commands?: unknown;
+  model?: unknown;
 }
 
 export function parseClaudeSystemInit(line: string): ClaudeSystemInitInfo | null {
@@ -466,7 +470,8 @@ export function parseClaudeSystemInit(line: string): ClaudeSystemInitInfo | null
   const terminalSlashCommands = Array.isArray(msg.terminal_slash_commands)
     ? msg.terminal_slash_commands.filter((c): c is string => typeof c === "string")
     : [];
-  return { terminalSlashCommands };
+  const model = typeof msg.model === "string" && msg.model ? msg.model : undefined;
+  return { terminalSlashCommands, ...(model ? { model } : {}) };
 }
 
 const TASK_NOTIFY_USAGE_RE = {
@@ -489,9 +494,9 @@ export function parseTaskNotificationUsage(text: string): ToolUsage | undefined 
 export interface TurnDoneInfo {
   resumeCursor: string;
   resultText: string;
-  inputTokens: number;
-  outputTokens: number;
-  costUsd: number;
+  usage: TurnModelUsage[];
+  context?: ContextUsage;
+  modelUsage: ClaudeModelUsageSnapshot;
   numTurns: number;
   isError: boolean;
 }
@@ -547,7 +552,9 @@ export function parseStreamLine(
   sessionId: string,
   done: (info: TurnDoneInfo) => void,
   onNotificationAck?: () => void,
-  shouldIgnoreTaskNotification?: () => boolean
+  shouldIgnoreTaskNotification?: () => boolean,
+  prevModelUsage: ClaudeModelUsageSnapshot = {},
+  mainModel?: string
 ): ThreadEvent[] {
   if (!line.trim()) return [];
   let msg: TextDelta | AssistantMsg | UserMsg | ResultMsg;
@@ -632,12 +639,13 @@ export function parseStreamLine(
       onNotificationAck?.();
       return [];
     }
+    const { usage, context, next } = claudeTurnUsage(prevModelUsage, msg, mainModel);
     done({
       resumeCursor: msg.session_id ?? sessionId,
       resultText: msg.result ?? "",
-      inputTokens: msg.usage?.input_tokens ?? 0,
-      outputTokens: msg.usage?.output_tokens ?? 0,
-      costUsd: msg.total_cost_usd ?? 0,
+      usage,
+      ...(context ? { context } : {}),
+      modelUsage: next,
       numTurns: msg.num_turns ?? 0,
       isError: msg.is_error === true || msg.subtype === "error"
     });

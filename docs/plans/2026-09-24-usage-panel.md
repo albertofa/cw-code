@@ -137,10 +137,10 @@
   - `apps/desktop/src/preload/index.ts`
   - `apps/desktop/src/renderer/src/cw.ts`
 - **What:**
-  - Storage: monthly files `~/.cw-code/userdata/usage/YYYY-MM.json` with the shape `{ version: 1, rows: UsageLedgerRow[], turnIds: string[] }`.
+  - Storage: monthly files `~/.cw-code/userdata/usage/YYYY-MM.json` with the shape `{ version: 1, rows: UsageLedgerRow[] }`.
   - Aggregation: rows are keyed by `day|sessionId|model` and add together. `costUsd` stays `null` until a priced turn arrives; unpriced turns increment `unpricedTurns`.
   - Writing: atomic (tmp + rename), debounced 2 s, flushed on dispose.
-  - Duplicates: a `turnId` already recorded is ignored.
+  - No per-`turnId` duplicate filter: Claude background-task turns emit two `turn.done` events with the same `turnId` and disjoint deltas, and both must count.
   - Recording: `SessionManager.handleDriverEvent` records every non-title `turn.done` with `usage.length > 0`, using the session's `projectId` and `driver`.
   - IPC `usage.ledger` → `queryLedger(query)` reads only the month files the query needs (all of them when `sessionId` is set).
 - **Interfaces:**
@@ -149,7 +149,7 @@
   - Preload `window.cw.getUsageLedger(q: UsageLedgerQuery): Promise<UsageLedgerRow[]>`.
 - **Tests:**
   - Two turns on the same day, session and model add together.
-  - Duplicate `turnId` is ignored.
+  - Two records with the same `turnId` both count.
   - Null plus priced cost behaves as described.
   - Query by `sinceDay` across two months.
   - Query by `sessionId`.
