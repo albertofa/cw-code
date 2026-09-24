@@ -1,4 +1,4 @@
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { PrRef, PrSummary } from "@cw-code/contracts";
 import { assertPrRef, assertRunId, cloneTargetPath, mergeInboxItems } from "./PullRequestService.js";
@@ -53,14 +53,17 @@ describe("mergeInboxItems", () => {
 });
 
 describe("cloneTargetPath", () => {
+  const home = resolve("/home/tester");
+
   it("expands ~ against the given home directory and appends owner/repo", () => {
-    const target = cloneTargetPath("~/.cw-code/repos", { owner: "acme", repo: "widgets" }, "C:\\Users\\tester");
-    expect(target).toBe(join("C:\\Users\\tester", ".cw-code", "repos", "acme", "widgets"));
+    const target = cloneTargetPath("~/.cw-code/repos", { owner: "acme", repo: "widgets" }, home);
+    expect(target).toBe(join(home, ".cw-code", "repos", "acme", "widgets"));
   });
 
   it("leaves an absolute clone root untouched", () => {
-    const target = cloneTargetPath("C:\\repos", { owner: "acme", repo: "widgets" }, "C:\\Users\\tester");
-    expect(target).toBe(join("C:\\repos", "acme", "widgets"));
+    const root = resolve("/repos");
+    const target = cloneTargetPath(root, { owner: "acme", repo: "widgets" }, home);
+    expect(target).toBe(join(root, "acme", "widgets"));
   });
 
   it("rejects a relative clone root", () => {
