@@ -91,6 +91,7 @@ export interface ModelOption {
   label: string;
   source: "live" | "curated" | "custom";
   variants?: string[];
+  contextWindow?: number;
 }
 
 export interface GitPullRequestChecks {

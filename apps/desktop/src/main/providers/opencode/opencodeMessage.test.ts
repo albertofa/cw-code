@@ -95,6 +95,26 @@ describe("turnMessagesOf", () => {
     expect(turnMessagesOf({})).toEqual([]);
   });
 
+  it("carries providerID and modelID when present", () => {
+    const withModel = turnMessagesOf([
+      {
+        info: { id: "msg_3", role: "assistant", providerID: "anthropic", modelID: "claude-sonnet-4-5" },
+        parts: []
+      }
+    ]);
+    expect(withModel).toEqual([
+      {
+        id: "msg_3",
+        role: "assistant",
+        providerID: "anthropic",
+        modelID: "claude-sonnet-4-5",
+        cost: 0,
+        tokens: undefined,
+        text: ""
+      }
+    ]);
+  });
+
   it("carries the assistant error message", () => {
     const errored = turnMessagesOf([
       {
@@ -173,9 +193,16 @@ describe("latestAssistantOf / runEnded", () => {
 
 describe("summarizeOpencodeTurn", () => {
   const messages = turnMessagesOf([
-    { info: { id: "msg_0", role: "assistant", cost: 1 }, parts: [{ type: "text", text: "old" }] },
+    { info: { id: "msg_0", role: "assistant", cost: 1, providerID: "anthropic", modelID: "claude-sonnet-4-5" }, parts: [{ type: "text", text: "old" }] },
     {
-      info: { id: "msg_1", role: "assistant", cost: 0.003, tokens: { input: 10, output: 5, reasoning: 2, cache: { read: 100, write: 4 } } },
+      info: {
+        id: "msg_1",
+        role: "assistant",
+        cost: 0.003,
+        providerID: "anthropic",
+        modelID: "claude-sonnet-4-5",
+        tokens: { input: 10, output: 5, reasoning: 2, cache: { read: 100, write: 4 } }
+      },
       parts: [{ type: "text", text: "new" }]
     },
     { info: { id: "msg_2", role: "user" }, parts: [{ type: "text", text: "q" }] }
@@ -184,35 +211,140 @@ describe("summarizeOpencodeTurn", () => {
   it("counts only new assistant messages", () => {
     expect(summarizeOpencodeTurn(messages, new Set(["msg_0"]))).toEqual({
       text: "new",
-      inputTokens: 114,
-      outputTokens: 7,
-      costUsd: 0.003,
+      usage: [
+        {
+          model: "anthropic/claude-sonnet-4-5",
+          inputTokens: 10,
+          cacheReadTokens: 100,
+          cacheWriteTokens: 4,
+          outputTokens: 7,
+          reasoningTokens: 2,
+          costUsd: 0.003
+        }
+      ],
+      lastModel: "anthropic/claude-sonnet-4-5",
+      lastContextTokens: 121,
       errorText: ""
     });
   });
 
-  it("returns zeros when the baseline is unknown", () => {
+  it("groups usage by model across messages", () => {
+    const twoModels = turnMessagesOf([
+      {
+        info: { id: "msg_0", role: "assistant", cost: 0.001, providerID: "anthropic", modelID: "claude-sonnet-4-5", tokens: { input: 4, output: 2, reasoning: 0, cache: { read: 0, write: 0 } } },
+        parts: []
+      },
+      {
+        info: { id: "msg_1", role: "assistant", cost: 0.002, providerID: "openai", modelID: "gpt-5.2", tokens: { input: 6, output: 3, reasoning: 1, cache: { read: 0, write: 0 } } },
+        parts: []
+      }
+    ]);
+    expect(summarizeOpencodeTurn(twoModels, new Set())).toEqual({
+      text: "",
+      usage: [
+        {
+          model: "anthropic/claude-sonnet-4-5",
+          inputTokens: 4,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+          outputTokens: 2,
+          reasoningTokens: 0,
+          costUsd: 0.001
+        },
+        {
+          model: "openai/gpt-5.2",
+          inputTokens: 6,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+          outputTokens: 4,
+          reasoningTokens: 1,
+          costUsd: 0.002
+        }
+      ],
+      lastModel: "openai/gpt-5.2",
+      lastContextTokens: 10,
+      errorText: ""
+    });
+  });
+
+  it("returns empty usage when the baseline is unknown", () => {
     expect(summarizeOpencodeTurn(messages, null)).toEqual({
       text: "",
-      inputTokens: 0,
-      outputTokens: 0,
-      costUsd: 0,
+      usage: [],
+      lastModel: undefined,
+      lastContextTokens: undefined,
       errorText: ""
     });
   });
 
-  it("reports the last fresh assistant error", () => {
+  it("excludes messages seen before the turn", () => {
+    expect(summarizeOpencodeTurn(messages, new Set(["msg_0", "msg_1"]))).toEqual({
+      text: "",
+      usage: [],
+      lastModel: undefined,
+      lastContextTokens: undefined,
+      errorText: ""
+    });
+  });
+
+  it("reports the last fresh assistant error without inventing context usage", () => {
     const errored = turnMessagesOf([
       { info: { id: "msg_0", role: "assistant" }, parts: [] },
       { info: { id: "msg_1", role: "assistant", error: { name: "APIError", data: { message: "rate limited" } } }, parts: [] }
     ]);
     expect(summarizeOpencodeTurn(errored, new Set(["msg_0"]))).toEqual({
       text: "",
-      inputTokens: 0,
-      outputTokens: 0,
-      costUsd: 0,
+      usage: [{ model: "unknown", inputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 0, reasoningTokens: 0, costUsd: 0 }],
+      lastModel: undefined,
+      lastContextTokens: undefined,
       errorText: "rate limited"
     });
+  });
+
+  it("groups messages missing providerID/modelID under model \"unknown\" instead of dropping their tokens", () => {
+    const noModel = turnMessagesOf([
+      {
+        info: { id: "msg_0", role: "assistant", cost: 0.001, tokens: { input: 8, output: 3, reasoning: 0, cache: { read: 0, write: 0 } } },
+        parts: []
+      }
+    ]);
+    expect(summarizeOpencodeTurn(noModel, new Set())).toEqual({
+      text: "",
+      usage: [{ model: "unknown", inputTokens: 8, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 3, reasoningTokens: 0, costUsd: 0.001 }],
+      lastModel: undefined,
+      lastContextTokens: undefined,
+      errorText: ""
+    });
+  });
+
+  it("skips a zeroed-out context message (aborted turn) instead of reporting a fake 0 used", () => {
+    const aborted = turnMessagesOf([
+      {
+        info: {
+          id: "msg_0",
+          role: "assistant",
+          providerID: "anthropic",
+          modelID: "claude-sonnet-4-5",
+          cost: 0.003,
+          tokens: { input: 10, output: 5, reasoning: 0, cache: { read: 0, write: 0 } }
+        },
+        parts: []
+      },
+      {
+        info: {
+          id: "msg_1",
+          role: "assistant",
+          providerID: "anthropic",
+          modelID: "claude-sonnet-4-5",
+          error: { name: "MessageAbortedError" },
+          tokens: { input: 0, output: 0, reasoning: 0, cache: { read: 0, write: 0 } }
+        },
+        parts: []
+      }
+    ]);
+    const result = summarizeOpencodeTurn(aborted, new Set());
+    expect(result.lastModel).toBe("anthropic/claude-sonnet-4-5");
+    expect(result.lastContextTokens).toBe(15);
   });
 });
 

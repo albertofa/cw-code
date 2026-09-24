@@ -1,4 +1,5 @@
 import type {
+  AccountUsageState,
   ApprovalDecision,
   CliDriver,
   CommandOption,
@@ -275,6 +276,36 @@ export class TracingCliDriver implements CliDriver {
       });
       throw err;
     }
+  }
+
+  get getAccountUsage(): (() => Promise<AccountUsageState>) | undefined {
+    const inner = this.inner;
+    if (typeof inner.getAccountUsage !== "function") return undefined;
+    return async () => {
+      const start = Date.now();
+      const operation = `${this.kind}.getAccountUsage`;
+      try {
+        const state = await inner.getAccountUsage!();
+        traceHarnessCall({
+          harness: this.kind,
+          operation,
+          durationMs: Date.now() - start,
+          ok: true,
+          extra: { status: state.status },
+          ...(state.status === "ok" ? {} : { error: truncateError(state.message) })
+        });
+        return state;
+      } catch (err) {
+        traceHarnessCall({
+          harness: this.kind,
+          operation,
+          durationMs: Date.now() - start,
+          ok: false,
+          error: truncateError(err instanceof Error ? err.message : String(err))
+        });
+        throw err;
+      }
+    };
   }
 
   dispose(): void {

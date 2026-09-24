@@ -5,6 +5,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join, normalize } from "node:path";
 import type {
+  AccountUsageState,
   AppSettings,
   ApprovalDecision,
   CliDriver,
@@ -22,11 +23,13 @@ import { parseExtraArgs } from "../../settings/settingsUtils.js";
 import { killProcessTree } from "../../processTree.js";
 import { attributeClaudeSubagentEvent, buildClaudeAllowRule, claudeAllowResponse, claudeApprovalRequest, claudeQuestionRequest, claudeDenyResponse, claudeControlResponse, parseClaudeControlRequest, parseClaudeSubagentHandback, parseClaudeSystemInit, parseClaudeTaskSystemLine, parseStreamLine, type ClaudeControlRequest, type ClaudeTaskSystemInfo, type TurnDoneInfo } from "./claudeStreamParser.js";
 import { CLAUDE_COMMANDS_PROBE_ARGS, listClaudeCommands, probeClaudeCommands, recordClaudeTerminalCommands } from "./claudeCommands.js";
+import { CLAUDE_ACCOUNT_USAGE_PROBE_ARGS, probeClaudeAccountUsage } from "./claudeAccountUsage.js";
 import { describeClaudeExit } from "./claudeExit.js";
 import { claudeProjectSlug, listClaudeSessions } from "./claudeSessions.js";
 import { readClaudeHistory, readSidecarAgent, readClaudeTaskResult, findSidecarModel, type SidecarAgent } from "./claudeHistory.js";
 import { buildClaudeUserContent } from "./claudeUserContent.js";
 import { previewText, traceHarnessCall, truncateError } from "../../debug/harnessTrace.js";
+import type { ClaudeModelUsageSnapshot } from "./claudeUsage.js";
 
 export const CLAUDE_CURATED_MODELS = [
   { id: "sonnet", label: "Sonnet" },
@@ -144,6 +147,8 @@ interface ClaudeProcessState {
   handbackCallIds: Set<string>;
   permissionMode: PermissionMode;
   idleTimer?: NodeJS.Timeout;
+  modelUsage: ClaudeModelUsageSnapshot;
+  mainModel?: string;
 }
 
 export class ClaudeCliDriver implements CliDriver {
@@ -410,6 +415,7 @@ export class ClaudeCliDriver implements CliDriver {
     const systemInit = parseClaudeSystemInit(line);
     if (systemInit) {
       recordClaudeTerminalCommands(state.binary, state.cwd, systemInit.terminalSlashCommands);
+      if (systemInit.model) state.mainModel = systemInit.model;
       return;
     }
     const control = parseClaudeControlRequest(line);
@@ -423,7 +429,9 @@ export class ClaudeCliDriver implements CliDriver {
       state.resumeCursor,
       (info) => this.handleTurnDone(state, info),
       () => this.clearIdleTimer(state),
-      () => this.shouldIgnoreTaskNotification(state)
+      () => this.shouldIgnoreTaskNotification(state),
+      state.modelUsage,
+      state.mainModel
     );
     for (const event of events) {
       if (event.type === "tool.call") this.trackBackgroundToolCall(state, event);
@@ -544,6 +552,7 @@ export class ClaudeCliDriver implements CliDriver {
     }
     const interrupted = this.interruptedTurns.delete(turnId);
     const backgroundTasks = this.liveTaskCount(state);
+    state.modelUsage = info.modelUsage;
     if (!interrupted) {
       this.emit({
         type: "turn.done",
@@ -551,9 +560,8 @@ export class ClaudeCliDriver implements CliDriver {
         sessionId: state.sessionId,
         resumeCursor: info.resumeCursor,
         resultText: info.resultText || this.latestTaskReport(state),
-        inputTokens: info.inputTokens,
-        outputTokens: info.outputTokens,
-        costUsd: info.costUsd,
+        usage: info.usage,
+        ...(info.context ? { context: info.context } : {}),
         numTurns: info.numTurns,
         isError: info.isError,
         backgroundTasks
@@ -733,7 +741,8 @@ export class ClaudeCliDriver implements CliDriver {
       backgroundCallStartedAt: new Map(),
       reportedTaskCalls: new Set(),
       handbackCallIds: new Set(),
-      permissionMode: request.permissionMode ?? "auto"
+      permissionMode: request.permissionMode ?? "auto",
+      modelUsage: {}
     };
     this.processes.set(request.sessionId, state);
     this.turnToSession.set(turnId, request.sessionId);
@@ -814,6 +823,19 @@ export class ClaudeCliDriver implements CliDriver {
     this.clearIdleTimer(state);
     this.processes.delete(sessionId);
     this.killFn(state.child);
+  }
+
+  async getAccountUsage(): Promise<AccountUsageState> {
+    const binary = this.configuredBinary();
+    const args = [...this.extraArgs(), ...CLAUDE_ACCOUNT_USAGE_PROBE_ARGS];
+    try {
+      return await probeClaudeAccountUsage(binary, args, this.spawnFn, this.killFn);
+    } catch (err) {
+      const enoent = (err as NodeJS.ErrnoException).code === "ENOENT";
+      return enoent
+        ? { status: "unavailable", reason: "not-installed", message: "Claude isn't installed. Set its path in Settings → Harnesses → Claude." }
+        : { status: "error", message: `failed to spawn ${binary}: ${(err as Error).message}` };
+    }
   }
 
   dispose(): void {

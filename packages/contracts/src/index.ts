@@ -55,3 +55,17 @@ export type { PanelId, DockLocation, DockableTabId, MainTabId, TabDockState, Tab
 export type { CliBinary, BinarySource, CliDiscoveredCandidate, CliDiscoverResult } from "./cli.js";
 export type { HarnessId, SkillSource, SkillMeta, SkillDetail, SkillsListResult, SkillSaveInput } from "./skills.js";
 export type { CommandDispatch, CommandOption, CommandInvocation } from "./commands.js";
+export type {
+  TokenCounts,
+  TurnModelUsage,
+  ContextUsage,
+  UsageSeverity,
+  UsageWindow,
+  UsageBalance,
+  AccountUsageUnavailableReason,
+  AccountUsageOk,
+  AccountUsageState,
+  AccountUsageSnapshot,
+  UsageLedgerRow,
+  UsageLedgerQuery
+} from "./usage.js";

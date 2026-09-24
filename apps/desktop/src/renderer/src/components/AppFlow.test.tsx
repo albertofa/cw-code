@@ -276,9 +276,7 @@ describe("new-session crash repro (interactive)", () => {
       sessionId: "sess_new",
       resumeCursor: "ses_x",
       resultText: "Done. See [docs](https://example.com).",
-      inputTokens: 1,
-      outputTokens: 1,
-      costUsd: 0.01,
+      usage: [],
       numTurns: 1,
       isError: false,
       backgroundTasks: 0
@@ -403,9 +401,7 @@ describe("new-session crash repro (interactive)", () => {
         sessionId: firstId!,
         resumeCursor: "ses_y",
         resultText: "done",
-        inputTokens: 1,
-        outputTokens: 1,
-        costUsd: 0,
+        usage: [],
         numTurns: 1,
         isError: false,
         backgroundTasks: 0
@@ -438,9 +434,7 @@ describe("new-session crash repro (interactive)", () => {
         sessionId: "sess_stale",
         resumeCursor: "",
         resultText: "done",
-        inputTokens: 0,
-        outputTokens: 0,
-        costUsd: 0,
+        usage: [],
         numTurns: 1,
         isError: false,
         backgroundTasks: 0

@@ -18,6 +18,7 @@ const SETTINGS: AppSettings = {
   claudeReasoningExpanded: false,
   opencodeReasoningExpanded: false,
   codexReasoningExpanded: false,
+  opencodeGoUsage: false,
   gitBinaryPath: "git",
   githubCliBinaryPath: "gh",
   sourceControlRefreshIntervalSeconds: 30,
@@ -768,5 +769,34 @@ describe("ClaudeCliDriver persistent process", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+});
+
+describe("ClaudeCliDriver getAccountUsage", () => {
+  it("resolves a not-installed state instead of throwing when spawnFn throws ENOENT synchronously", async () => {
+    const events: ThreadEvent[] = [];
+    const spawnFn = (() => {
+      throw Object.assign(new Error("ENOENT"), { code: "ENOENT" });
+    }) as unknown as ClaudeSpawnFn;
+    const driver = new ClaudeCliDriver((event) => events.push(event), () => SETTINGS, spawnFn, () => {});
+    await expect(driver.getAccountUsage()).resolves.toEqual({
+      status: "unavailable",
+      reason: "not-installed",
+      message: "Claude isn't installed. Set its path in Settings → Harnesses → Claude."
+    });
+    driver.dispose();
+  });
+
+  it("resolves an error state instead of throwing when spawnFn throws a non-ENOENT error synchronously", async () => {
+    const events: ThreadEvent[] = [];
+    const spawnFn = (() => {
+      throw new Error("boom");
+    }) as unknown as ClaudeSpawnFn;
+    const driver = new ClaudeCliDriver((event) => events.push(event), () => SETTINGS, spawnFn, () => {});
+    await expect(driver.getAccountUsage()).resolves.toEqual({
+      status: "error",
+      message: "failed to spawn claude: boom"
+    });
+    driver.dispose();
   });
 });

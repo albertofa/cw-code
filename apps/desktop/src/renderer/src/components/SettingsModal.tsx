@@ -584,6 +584,19 @@ export function SettingsModal({
           aria-label="Expand OpenCode reasoning by default"
         />
       </label>
+      <label className="settings-row">
+        <span className="settings-label">Show OpenCode Go plan limits</span>
+        <span className="settings-hint">
+          Reads your OpenCode Go key from opencode&apos;s auth file. The key stays on this device and is only sent to opencode.ai.
+        </span>
+        <input
+          className="settings-toggle"
+          type="checkbox"
+          checked={draft.opencodeGoUsage}
+          onChange={(e) => set({ opencodeGoUsage: e.target.checked })}
+          aria-label="Show OpenCode Go plan limits"
+        />
+      </label>
     </>
   );
 

@@ -1,4 +1,5 @@
 import type { CommandOption } from "./commands.js";
+import type { AccountUsageState } from "./usage.js";
 import type { ModelOption, PermissionMode, PermissionOption, SessionMeta, TurnRequest } from "./session.js";
 import type {
   ApprovalDecision,
@@ -52,6 +53,7 @@ export interface CliDriver {
   listCommands?(cwd: string): Promise<CommandOption[]>;
   respondToApproval?(requestId: string, decision: ApprovalDecision): Promise<void>;
   respondToQuestion?(requestId: string, answers: Record<string, string>): Promise<void>;
+  getAccountUsage?(): Promise<AccountUsageState>;
   dispose?(): void;
 }
 

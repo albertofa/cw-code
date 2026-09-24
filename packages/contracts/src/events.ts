@@ -1,3 +1,5 @@
+import type { ContextUsage, TurnModelUsage } from "./usage.js";
+
 export interface TodoItem {
   content: string;
   status: "pending" | "in_progress" | "completed" | "cancelled";
@@ -119,9 +121,8 @@ export type ThreadEvent =
       sessionId: string;
       resumeCursor: string;
       resultText: string;
-      inputTokens: number;
-      outputTokens: number;
-      costUsd: number;
+      usage: TurnModelUsage[];
+      context?: ContextUsage;
       numTurns: number;
       isError: boolean;
       backgroundTasks: number;

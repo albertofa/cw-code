@@ -51,6 +51,10 @@ export function titleGenDir(home?: string, env?: NodeJS.ProcessEnv): string {
   return join(userdataDir(home, env), "title-gen");
 }
 
+export function usageDir(home?: string, env?: NodeJS.ProcessEnv): string {
+  return join(userdataDir(home, env), "usage");
+}
+
 export function ensureAppDirs(
   home?: string,
   env?: NodeJS.ProcessEnv

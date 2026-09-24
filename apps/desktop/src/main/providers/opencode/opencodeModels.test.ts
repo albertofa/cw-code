@@ -13,6 +13,7 @@ import {
   OPENCODE_MODELS_CACHE_TTL_MS,
   parseOpencodeModels,
   parseOpencodeVerboseModels,
+  peekOpencodeModels,
   prettyModelLabel,
   resolveOpencodeVariant,
   type OpencodeModelsQuery
@@ -108,6 +109,18 @@ describe("parseOpencodeVerboseModels", () => {
     expect(out.find((m) => m.id === "opencode-go/kimi-k3")?.variants).toEqual(["max"]);
     expect(out.find((m) => m.id === "opencode-go/glm-5.1")?.variants).toEqual([]);
   });
+
+  it("fills contextWindow from the model's limit.context", () => {
+    const stdout = [
+      "anthropic/claude-sonnet-4-5",
+      '{ "limit": { "context": 1000000, "output": 64000 } }',
+      "openai/gpt-5.2",
+      '{ "variants": {} }'
+    ].join("\n");
+    const out = parseOpencodeVerboseModels(stdout);
+    expect(out.find((m) => m.id === "anthropic/claude-sonnet-4-5")?.contextWindow).toBe(1000000);
+    expect(out.find((m) => m.id === "openai/gpt-5.2")?.contextWindow).toBeUndefined();
+  });
 });
 
 describe("OPENCODE_CURATED_MODELS", () => {
@@ -168,6 +181,14 @@ describe("listOpencodeModels cache", () => {
     const fresh = await listOpencodeModels("one", "opencode", query);
     expect(fresh.map((m) => m.id)).toEqual(["provider/beta"]);
     now.mockRestore();
+  });
+
+  it("peeks the cached list without triggering a query", async () => {
+    expect(peekOpencodeModels("opencode.cmd")).toBeUndefined();
+    const query: OpencodeModelsQuery = async (_binary, args) =>
+      args.includes("--verbose") ? "" : "anthropic/claude-sonnet-4-5\n";
+    const fetched = await listOpencodeModels("one", "opencode.cmd", query);
+    expect(peekOpencodeModels("opencode.cmd")).toBe(fetched);
   });
 
   it("does not cache a failed query", async () => {

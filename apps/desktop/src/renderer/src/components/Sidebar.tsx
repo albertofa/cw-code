@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
-import { Bell, Check, ChevronDown, ChevronRight, ChevronUp, CircleHelp, Clock, GitBranch, GitPullRequest, Hash, ListFilter, LoaderCircle, Plus, Search, Settings, X } from "lucide-react";
+import { Bell, ChartColumn, Check, ChevronDown, ChevronRight, ChevronUp, CircleHelp, Clock, GitBranch, GitPullRequest, Hash, ListFilter, LoaderCircle, Plus, Search, Settings, X } from "lucide-react";
 import type { DriverName, PrSummary, Project, Session, SessionStatus } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import { usePrStore } from "../stores/prStore.js";
@@ -245,6 +245,7 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
   const mainView = usePrStore((s) => s.mainView);
   const openInbox = usePrStore((s) => s.openInbox);
   const openSessionView = usePrStore((s) => s.openSessionView);
+  const openUsage = usePrStore((s) => s.openUsage);
   const [query, setQuery] = useState("");
   const [quickFilter, setQuickFilter] = useState<QuickFilter>("all");
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -437,8 +438,9 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
   }
   const attentionCount = needsAttentionCount(inboxItems);
   const anyUnseen = Object.values(sessionsByProject).some((list) => list.some((s) => sessionHasUnseen(s, summaryByKey)));
-  const inboxActive = mainView.kind !== "session";
-  const newSessionActive = !inboxActive && (pendingDriver !== null || !activeSessionId);
+  const inboxActive = mainView.kind === "inbox" || mainView.kind === "pr";
+  const usageActive = mainView.kind === "usage";
+  const newSessionActive = !inboxActive && !usageActive && (pendingDriver !== null || !activeSessionId);
   const liveCount = (list: Session[] | undefined): number => (list ?? []).filter((s) => s.status !== "archived").length;
   const totalCount = Object.values(sessionsByProject).reduce((sum, list) => sum + liveCount(list), 0);
   const inboxNotes = [
@@ -1271,6 +1273,15 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
       <div className="side-footer">
         <button className="side-footer-btn" title="Settings" aria-label="Settings" onClick={onOpenSettings}>
           <Settings size={15} />
+        </button>
+        <button
+          className={`side-footer-btn${usageActive ? " active" : ""}`}
+          title="Usage"
+          aria-label="Usage"
+          aria-pressed={usageActive}
+          onClick={openUsage}
+        >
+          <ChartColumn size={15} />
         </button>
         <button
           className={`side-footer-btn${skillsOpen ? " active" : ""}`}

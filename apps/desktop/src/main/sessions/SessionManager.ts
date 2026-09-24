@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type {
   AppSettings,
   ApprovalDecision,
@@ -26,6 +26,8 @@ import type {
   SubagentToolsResult,
   ThreadEvent,
   TurnHandle,
+  UsageLedgerQuery,
+  UsageLedgerRow,
   WorktreePruneSummary
 } from "@cw-code/contracts";
 import { SessionStore } from "./SessionStore.js";
@@ -58,7 +60,8 @@ import { resolveAttachments } from "./attachments.js";
 import { AUTO_TITLE_TIMEOUT_MS, buildTitlePrompt, sanitizeGeneratedTitle } from "./autoTitle.js";
 import { branchNameForTitle, TEMP_BRANCH_PATTERN } from "./branchName.js";
 import { NEW_SESSION_TITLE, pickRestoreCandidate } from "./sessionRestore.js";
-import { opencodeServerDir, titleGenDir, userdataDir, worktreesDir } from "../paths/appPaths.js";
+import { opencodeServerDir, titleGenDir, userdataDir, usageDir, worktreesDir } from "../paths/appPaths.js";
+import { UsageLedger } from "../usage/UsageLedger.js";
 
 export interface SessionManagerOptions {
   dbPath?: string;
@@ -71,6 +74,7 @@ export interface SessionManagerOptions {
   prHead?: (ref: PrRef) => string | null;
   prHeadRefresh?: (ref: PrRef) => Promise<string | null>;
   prState?: (ref: PrRef) => PrSummary["state"] | null;
+  usageLedger?: UsageLedger;
 }
 
 interface TitleTurn {
@@ -114,6 +118,7 @@ export class SessionManager {
   private prHeadRefresh?: (ref: PrRef) => Promise<string | null>;
   private prState: (ref: PrRef) => PrSummary["state"] | null;
   private turnPrRefs = new Map<string, PrRef[]>();
+  private usageLedger: UsageLedger;
 
   constructor(opts: SessionManagerOptions = {}) {
     const dbPath = opts.dbPath ?? join(userdataDir(), "cw-code.db");
@@ -127,6 +132,7 @@ export class SessionManager {
     this.prHead = opts.prHead ?? (() => null);
     this.prHeadRefresh = opts.prHeadRefresh;
     this.prState = opts.prState ?? (() => null);
+    this.usageLedger = opts.usageLedger ?? new UsageLedger(opts.dbPath ? join(dirname(dbPath), "usage") : usageDir());
     const getSettings = (): AppSettings => this.settings.get();
     this.drivers = {
       claude: opts.drivers?.claude ?? new TracingCliDriver(new ClaudeCliDriver((e) => this.routeEvent(e), getSettings)),
@@ -261,6 +267,7 @@ export class SessionManager {
 
   private handleDriverEvent(sessionId: string, event: ThreadEvent): void {
     if (event.type === "turn.done") {
+      this.recordUsage(event);
       const backgroundTasks = event.backgroundTasks ?? 0;
       if (backgroundTasks > 0) {
         this.store.updateSession(event.sessionId, {
@@ -299,6 +306,32 @@ export class SessionManager {
       }
     }
     this.onEvent(sessionId, event);
+  }
+
+  private recordUsage(event: Extract<ThreadEvent, { type: "turn.done" }>): void {
+    if (event.usage.length === 0) return;
+    const session = this.store.getSession(event.sessionId);
+    if (!session) return;
+    try {
+      this.usageLedger.record({
+        turnId: event.turnId,
+        sessionId: event.sessionId,
+        projectId: session.projectId,
+        driver: session.driver,
+        at: new Date(),
+        usage: event.usage
+      });
+    } catch (err) {
+      console.warn(`usage ledger record failed for session ${event.sessionId}: ${(err as Error).message}`);
+    }
+  }
+
+  queryUsageLedger(query: UsageLedgerQuery): UsageLedgerRow[] {
+    return this.usageLedger.query(query);
+  }
+
+  getDrivers(): Record<DriverKind, CliDriver> {
+    return this.drivers;
   }
 
   listProjects(): Project[] {
@@ -1383,6 +1416,11 @@ export class SessionManager {
     this.titleTurns.clear();
     this.firstPrompts.clear();
     this.turnBaseShas.clear();
+    try {
+      this.usageLedger.flush();
+    } catch (err) {
+      console.warn(`usage ledger flush failed: ${(err as Error).message}`);
+    }
     for (const driver of Object.values(this.drivers)) driver.dispose?.();
     this.store.close();
   }

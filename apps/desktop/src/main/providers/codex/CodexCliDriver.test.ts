@@ -19,6 +19,7 @@ const SETTINGS: AppSettings = {
   claudeReasoningExpanded: false,
   opencodeReasoningExpanded: false,
   codexReasoningExpanded: false,
+  opencodeGoUsage: false,
   gitBinaryPath: "git",
   githubCliBinaryPath: "gh",
   sourceControlRefreshIntervalSeconds: 30,
@@ -191,6 +192,27 @@ class ThrowingSkillsClient extends FakeClient {
   }
 }
 
+class AccountUsageClient extends FakeClient {
+  constructor(
+    private accountRes: unknown,
+    private rateLimitsRes?: unknown
+  ) {
+    super();
+  }
+
+  override async request<T>(method: string, params?: unknown): Promise<T> {
+    this.requests.push({ method, params });
+    if (method === "account/read") return this.accountRes as T;
+    if (method === "account/rateLimits/read") {
+      if (this.rateLimitsRes === undefined) {
+        throw new Error("account/rateLimits/read should not be called for this account");
+      }
+      return this.rateLimitsRes as T;
+    }
+    return super.request<T>(method, params);
+  }
+}
+
 function makeDriver(client: FakeClient) {
   const events: ThreadEvent[] = [];
   const driver = new CodexCliDriver(
@@ -285,9 +307,17 @@ describe("CodexCliDriver", () => {
       turnId: handle.turnId,
       sessionId: "local-1",
       resumeCursor: "thr_1",
-      inputTokens: 140,
-      outputTokens: 15,
-      costUsd: 0,
+      usage: [
+        {
+          model: "gpt-6-astra",
+          inputTokens: 60,
+          cacheReadTokens: 40,
+          cacheWriteTokens: 0,
+          outputTokens: 12,
+          reasoningTokens: 3,
+          costUsd: null
+        }
+      ],
       numTurns: 1,
       isError: false,
       backgroundTasks: 0
@@ -955,5 +985,116 @@ describe("CodexCliDriver", () => {
     await settle();
     expect(events).toContainEqual({ type: "turn.error", turnId: handle.turnId, message: "skills/list boom" });
     driver.dispose();
+  });
+
+  describe("getAccountUsage", () => {
+    it("reads the account before rate limits and never queries rate limits for an apiKey account", async () => {
+      const apiKeyClient = new AccountUsageClient({ account: { type: "apiKey" }, requiresOpenaiAuth: false });
+      const { driver } = makeDriver(apiKeyClient);
+      const state = await driver.getAccountUsage();
+      expect(state).toEqual({
+        status: "unavailable",
+        reason: "api-key",
+        message: "Signed in with an API key; plan limits aren't available."
+      });
+      expect(apiKeyClient.requests.map((r) => r.method)).toEqual(["account/read"]);
+      driver.dispose();
+    });
+
+    it("reads the account before rate limits and never queries rate limits for a logged-out account", async () => {
+      const loggedOutClient = new AccountUsageClient({ account: null, requiresOpenaiAuth: true });
+      const { driver } = makeDriver(loggedOutClient);
+      const state = await driver.getAccountUsage();
+      expect(state).toEqual({
+        status: "unavailable",
+        reason: "logged-out",
+        message: "Sign in to Codex CLI to see plan usage."
+      });
+      expect(loggedOutClient.requests.map((r) => r.method)).toEqual(["account/read"]);
+      driver.dispose();
+    });
+
+    it("queries rate limits, in order, after the account read for a chatgpt account", async () => {
+      const rateLimitsClient = new AccountUsageClient(
+        { account: { type: "chatgpt" }, requiresOpenaiAuth: false },
+        {
+          rateLimits: {
+            limitId: "codex",
+            limitName: null,
+            primary: { usedPercent: 12, windowDurationMins: 300, resetsAt: 1790235336 },
+            secondary: null,
+            credits: null,
+            planType: "plus",
+            rateLimitReachedType: null
+          },
+          rateLimitsByLimitId: null,
+          rateLimitResetCredits: null
+        }
+      );
+      const { driver } = makeDriver(rateLimitsClient);
+      const state = await driver.getAccountUsage();
+      expect(state).toMatchObject({ status: "ok", plan: "ChatGPT Plus" });
+      expect(rateLimitsClient.requests).toEqual([
+        { method: "account/read", params: { refreshToken: false } },
+        { method: "account/rateLimits/read", params: {} }
+      ]);
+      driver.dispose();
+    });
+  });
+
+  describe("token usage across turns and threads", () => {
+    function tokenUsageNotification(threadId: string, turnId: string, totalTokens: number, inputTokens: number, outputTokens: number) {
+      return {
+        threadId,
+        turnId,
+        tokenUsage: {
+          total: { totalTokens, inputTokens: 0, cachedInputTokens: 0, cacheWriteInputTokens: 0, outputTokens: 0, reasoningOutputTokens: 0 },
+          last: { totalTokens, inputTokens, cachedInputTokens: 0, cacheWriteInputTokens: 0, outputTokens, reasoningOutputTokens: 0 },
+          modelContextWindow: null
+        }
+      };
+    }
+
+    it("carries the thread's lastTotal across turns and isolates it from other threads", async () => {
+      const { driver, events } = makeDriver(client);
+
+      const handle1 = driver.startTurn({ sessionId: "s1", prompt: "go", cwd: "C:\\proj", resumeCursor: "thr_x" });
+      await settle();
+      client.notify("thread/tokenUsage/updated", tokenUsageNotification("thr_resume", "turn_2", 500, 400, 100));
+      client.notify("turn/completed", { threadId: "thr_resume", turn: { id: "turn_2", status: "completed", items: [] } });
+      await settle();
+      const done1 = events.find((e) => e.type === "turn.done" && e.turnId === handle1.turnId);
+      expect(done1).toMatchObject({
+        usage: [expect.objectContaining({ inputTokens: 400, outputTokens: 100 })],
+        numTurns: 1
+      });
+
+      const handle2 = driver.startTurn({ sessionId: "s1", prompt: "continue", cwd: "C:\\proj", resumeCursor: "thr_x" });
+      await settle();
+      client.notify("thread/tokenUsage/updated", tokenUsageNotification("thr_resume", "turn_4", 500, 400, 100));
+      client.notify("thread/tokenUsage/updated", tokenUsageNotification("thr_resume", "turn_4", 650, 150, 20));
+      client.notify("turn/completed", { threadId: "thr_resume", turn: { id: "turn_4", status: "completed", items: [] } });
+      await settle();
+      const done2 = events.find((e) => e.type === "turn.done" && e.turnId === handle2.turnId);
+      expect(done2).toMatchObject({
+        usage: [expect.objectContaining({ inputTokens: 150, outputTokens: 20 })],
+        numTurns: 1
+      });
+
+      const handle3 = driver.startTurn({ sessionId: "s1", prompt: "fresh thread", cwd: "C:\\proj" });
+      await settle();
+      const start3 = client.requests.find((r) => r.method === "thread/start");
+      expect(start3).toBeDefined();
+      client.notify("thread/tokenUsage/updated", tokenUsageNotification("thr_5", "turn_6", 500, 400, 100));
+      client.notify("turn/completed", { threadId: "thr_5", turn: { id: "turn_6", status: "completed", items: [] } });
+      await settle();
+      const done3 = events.find((e) => e.type === "turn.done" && e.turnId === handle3.turnId);
+      expect(done3).toMatchObject({
+        usage: [expect.objectContaining({ inputTokens: 400, outputTokens: 100 })],
+        numTurns: 1
+      });
+
+      driver.dispose();
+    });
   });
 });

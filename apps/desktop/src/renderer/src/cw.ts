@@ -1,9 +1,14 @@
 import type {
+  AccountUsageOk,
+  AccountUsageSnapshot,
+  AccountUsageState,
+  AccountUsageUnavailableReason,
   CliBinary,
   CliDiscoveredCandidate,
   CliDiscoverResult,
   CommandInvocation,
   CommandOption,
+  ContextUsage,
   HarnessId,
   PrBucket,
   PrCheck,
@@ -26,10 +31,22 @@ import type {
   SkillDetail,
   SkillMeta,
   SkillSaveInput,
-  SkillsListResult
+  SkillsListResult,
+  TokenCounts,
+  TurnModelUsage,
+  UsageBalance,
+  UsageLedgerQuery,
+  UsageLedgerRow,
+  UsageSeverity,
+  UsageWindow
 } from "@cw-code/contracts";
 
 export type {
+  AccountUsageOk,
+  AccountUsageSnapshot,
+  AccountUsageState,
+  AccountUsageUnavailableReason,
+  ContextUsage,
   PrBucket,
   PrCheck,
   PrCiState,
@@ -47,7 +64,14 @@ export type {
   PrThreadComment,
   PrTimelineItem,
   PrWorkflow,
-  SessionPrLink
+  SessionPrLink,
+  TokenCounts,
+  TurnModelUsage,
+  UsageBalance,
+  UsageLedgerQuery,
+  UsageLedgerRow,
+  UsageSeverity,
+  UsageWindow
 };
 
 export interface Project {
@@ -248,9 +272,8 @@ export type TurnEvent =
       sessionId: string;
       resumeCursor: string;
       resultText: string;
-      inputTokens: number;
-      outputTokens: number;
-      costUsd: number;
+      usage: TurnModelUsage[];
+      context?: ContextUsage;
       numTurns: number;
       isError: boolean;
       backgroundTasks: number;
@@ -283,6 +306,7 @@ export interface ModelOption {
   label: string;
   source: "live" | "curated" | "custom";
   variants?: string[];
+  contextWindow?: number;
 }
 
 export interface PermissionOption {
@@ -405,6 +429,7 @@ export interface AppSettings {
   prAttributionEnabled: boolean;
   prAttributionText: string;
   prWorkflows: PrWorkflow[];
+  opencodeGoUsage: boolean;
 }
 
 export type SettingsPatch = Partial<AppSettings>;
@@ -479,6 +504,8 @@ export interface CwApi {
   getSourceControlHealth(projectId?: string): Promise<SourceControlHealth>;
   setProjectGitHubAccount(projectId: string, account: { host: string; login: string } | null): Promise<Project>;
   setRepositoryGitIdentity(projectId: string, name: string, email: string): Promise<void>;
+  getUsageLedger(query: UsageLedgerQuery): Promise<UsageLedgerRow[]>;
+  getAccountUsage(drivers: DriverName[], force?: boolean): Promise<AccountUsageSnapshot[]>;
   getPrInbox(force?: boolean): Promise<PrInboxResult>;
   getPrDetail(ref: PrRef): Promise<PrDetail>;
   getPrDiff(ref: PrRef): Promise<string>;

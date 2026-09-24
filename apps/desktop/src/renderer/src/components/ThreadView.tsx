@@ -132,7 +132,6 @@ export function ThreadView() {
   const historyError = useAppStore((s) => (activeSessionId ? s.historyErrorBySession[activeSessionId] : undefined));
   const ensureHistory = useAppStore((s) => s.ensureHistory);
   const retryConnection = useAppStore((s) => s.retryConnection);
-  const usage = useAppStore((s) => (activeSessionId ? s.usageBySession[activeSessionId] : undefined));
   const reasoningExpanded = useAppStore((s) => (session ? s.reasoningExpandedByDriver[session.driver] : false));
   const openPreview = useAppStore((s) => s.openPreview);
   const {
@@ -438,12 +437,6 @@ export function ThreadView() {
           )}
           </div>
         </div>
-      {usage && (
-        <div className="usage">
-          in <b>{usage.inputTokens}</b> · out <b>{usage.outputTokens}</b> · <b>${usage.costUsd.toFixed(4)}</b> ·{" "}
-          {usage.numTurns} turns
-        </div>
-      )}
       </div>
       )}
       {showMainTool === null && (
