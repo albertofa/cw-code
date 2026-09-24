@@ -1,0 +1,535 @@
+import { useEffect, useState } from "react";
+import { Loader2, Plus, RefreshCw, Save, Trash2, X } from "lucide-react";
+import type { HarnessId, SkillMeta } from "@cw-code/contracts";
+import type { DriverName } from "../cw.js";
+import { toggleKey, useSkillsStore } from "../stores/skillsStore.js";
+import { DriverIcon } from "./DriverIcon.js";
+import { useConfirm, type ConfirmRequest } from "./ConfirmDialog.js";
+import { Md } from "./Markdown.js";
+import { useNotifs } from "./Notifications.js";
+
+const HARNESSES: Array<{ id: HarnessId; label: string }> = [
+  { id: "claude", label: "Claude" },
+  { id: "opencode", label: "OpenCode" },
+  { id: "codex", label: "Codex" }
+];
+
+const SKILL_PATH: Record<HarnessId, string> = {
+  claude: "~/.claude/skills",
+  opencode: "~/.config/opencode/skills",
+  codex: "~/.agents/skills"
+};
+
+const SKILL_NAME_PATTERN = /^[a-z0-9-]{1,64}$/;
+
+type EditorTab = "preview" | "source";
+
+function harnessTip(harness: HarnessId, name: string): string {
+  const label = HARNESSES.find((h) => h.id === harness)?.label ?? harness;
+  return `${label} — ${SKILL_PATH[harness]}/${name || "new-skill"}/SKILL.md`;
+}
+
+function enabledCount(enabled: Record<HarnessId, boolean>): number {
+  return HARNESSES.filter((h) => enabled[h.id]).length;
+}
+
+function SkillRow({ meta, selected, onPick }: { meta: SkillMeta; selected: boolean; onPick: (name: string) => void }) {
+  const toggle = useSkillsStore((s) => s.toggle);
+  const pending = useSkillsStore((s) => s.pending);
+  return (
+    <div
+      className={`skill-item${selected ? " sel" : ""}`}
+      onClick={() => onPick(meta.name)}
+      onKeyDown={(e) => {
+        if (e.key === "Enter" || e.key === " ") {
+          e.preventDefault();
+          onPick(meta.name);
+        }
+      }}
+      role="button"
+      tabIndex={0}
+      aria-label={`Edit skill ${meta.name}`}
+    >
+      <div className="skill-top">
+        <span className="skill-name">/{meta.name}</span>
+        <span className="skill-toggles">
+          {HARNESSES.map(({ id, label }) => {
+            const on = meta.enabled[id];
+            const busy = Boolean(pending[toggleKey(meta.name, id)]);
+            return (
+              <button
+                key={id}
+                type="button"
+                className={`skill-htoggle${on ? "" : " off"}${busy ? " pending" : ""}`}
+                title={harnessTip(id, meta.name)}
+                aria-label={`${label} ${on ? "enabled" : "disabled"}`}
+                aria-pressed={on}
+                disabled={busy}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  void toggle(meta.name, id, !on);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") e.stopPropagation();
+                }}
+              >
+                <span className={on ? undefined : "skill-icon-off"}>
+                  <DriverIcon driver={id as DriverName} size={15} />
+                </span>
+              </button>
+            );
+          })}
+        </span>
+      </div>
+      <div className="skill-desc" title={meta.description || undefined}>
+        {meta.description || "No description yet"}
+      </div>
+    </div>
+  );
+}
+
+function ExtraKeyInput({ rowKey, onCommit }: { rowKey: string; onCommit: (oldKey: string, newKey: string) => boolean }) {
+  const [text, setText] = useState(rowKey);
+  const commit = () => {
+    if (text !== rowKey && !onCommit(rowKey, text)) setText(rowKey);
+  };
+  return (
+    <input
+      className="prop-input prop-mono prop-key-input"
+      value={text}
+      placeholder="key"
+      spellCheck={false}
+      aria-label="Property key"
+      onChange={(e) => setText(e.target.value)}
+      onBlur={commit}
+      onKeyDown={(e) => {
+        if (e.key === "Enter") (e.target as HTMLInputElement).blur();
+      }}
+    />
+  );
+}
+
+function SkillEditor({
+  tab,
+  setTab,
+  confirm
+}: {
+  tab: EditorTab;
+  setTab: (tab: EditorTab) => void;
+  confirm: (request: ConfirmRequest) => Promise<boolean>;
+}) {
+  const draft = useSkillsStore((s) => s.draft);
+  const selectedName = useSkillsStore((s) => s.selectedName);
+  const dirty = useSkillsStore((s) => s.dirty);
+  const setDraft = useSkillsStore((s) => s.setDraft);
+  const saveDraft = useSkillsStore((s) => s.saveDraft);
+  const remove = useSkillsStore((s) => s.remove);
+  const [saving, setSaving] = useState(false);
+  const [removing, setRemoving] = useState(false);
+  if (!draft) {
+    return (
+      <div className="skills-editor">
+        <div className="skills-editor-empty">Select a skill to edit, or create a new one.</div>
+      </div>
+    );
+  }
+  const isNew = selectedName === null;
+  const extras = draft.frontmatter ?? {};
+  const count = enabledCount(draft.enabled);
+
+  const setExtraValue = (key: string, value: string) => {
+    setDraft({ frontmatter: { ...extras, [key]: value } });
+  };
+
+  const renameExtra = (oldKey: string, newKey: string): boolean => {
+    if (newKey === oldKey) return true;
+    if (newKey !== "" && newKey in extras) {
+      useNotifs.getState().push({
+        kind: "error",
+        title: `Could not rename property '${oldKey || "(new)"}'`,
+        message: `Property '${newKey}' already exists.`
+      });
+      return false;
+    }
+    setDraft({
+      frontmatter: Object.fromEntries(Object.entries(extras).map(([k, v]) => [k === oldKey ? newKey : k, v]))
+    });
+    return true;
+  };
+
+  const removeExtra = (key: string) => {
+    const next = { ...extras };
+    delete next[key];
+    setDraft({ frontmatter: next });
+  };
+
+  const addExtra = () => {
+    if ("" in extras) return;
+    setDraft({ frontmatter: { ...extras, "": "" } });
+  };
+
+  const onSave = async () => {
+    if (saving) return;
+    const name = draft.name.trim();
+    if (!SKILL_NAME_PATTERN.test(name)) {
+      useNotifs.getState().push({
+        kind: "error",
+        title: `Could not save skill '${draft.name || "(new)"}'`,
+        message: "Use 1–64 lowercase letters, numbers, or hyphens."
+      });
+      return;
+    }
+    setSaving(true);
+    try {
+      const payload = name === draft.name ? draft : { ...draft, name };
+      await saveDraft(payload);
+      if (!useSkillsStore.getState().error) {
+        const n = enabledCount(payload.enabled);
+        useNotifs.getState().push({
+          kind: "success",
+          title: `/${name} saved — propagated to ${n} harness${n === 1 ? "" : "es"}`
+        });
+      }
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const onRemove = async () => {
+    if (removing || saving || isNew) return;
+    const name = selectedName ?? draft.name;
+    const confirmed = await confirm({
+      title: `Remove /${name} from all harnesses?`,
+      message:
+        "This deletes the skill folder from Claude, OpenCode and Codex, plus the app's own copy. This cannot be undone.",
+      confirmLabel: "Remove",
+      danger: true
+    });
+    if (!confirmed) return;
+    setRemoving(true);
+    try {
+      await remove(name);
+      if (!useSkillsStore.getState().error) {
+        useNotifs.getState().push({ kind: "success", title: `/${name} removed from every harness` });
+      }
+    } finally {
+      setRemoving(false);
+    }
+  };
+
+  return (
+    <div className="skills-editor">
+      <div className="crumb-row">
+        <span className="path">
+          … <span className="sep">›</span> userData <span className="sep">›</span> skills <span className="sep">›</span>{" "}
+          <b>{draft.name || "new-skill"}</b> <span className="sep">›</span> <b>SKILL.md</b>
+        </span>
+        <span className="seg" role="tablist" aria-label="Editor view">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "preview"}
+            className={tab === "preview" ? "on" : ""}
+            onClick={() => setTab("preview")}
+          >
+            Preview
+          </button>
+          <button
+            type="button"
+            role="tab"
+            aria-selected={tab === "source"}
+            className={tab === "source" ? "on" : ""}
+            onClick={() => setTab("source")}
+          >
+            Source
+          </button>
+        </span>
+      </div>
+      <div className="harness-row">
+        <span className="lbl">Sync to</span>
+        {HARNESSES.map(({ id, label }) => {
+          const on = draft.enabled[id];
+          return (
+            <button
+              key={id}
+              type="button"
+              className={`skill-htoggle-lg${on ? " on" : ""}`}
+              data-h={id}
+              title={harnessTip(id, draft.name)}
+              aria-label={`Sync to ${label}`}
+              aria-pressed={on}
+              onClick={() => setDraft({ enabled: { ...draft.enabled, [id]: !on } })}
+            >
+              <span className={on ? undefined : "skill-icon-off"}>
+                <DriverIcon driver={id as DriverName} size={20} />
+              </span>
+              {label}
+            </button>
+          );
+        })}
+      </div>
+      <div className="ed-scroll">
+        <div className="props">
+          <h3>Properties</h3>
+          <div className="prop-row">
+            <span className="grip" aria-hidden="true">
+              ☰
+            </span>
+            <span className="prop-key">name</span>
+            <input
+              className="prop-input prop-mono"
+              value={draft.name}
+              disabled={!isNew}
+              spellCheck={false}
+              autoFocus={isNew}
+              aria-label="Skill name"
+              onChange={(e) => setDraft({ name: e.target.value })}
+            />
+          </div>
+          <div className="prop-row">
+            <span className="grip" aria-hidden="true">
+              ☰
+            </span>
+            <span className="prop-key">description</span>
+            <input
+              className="prop-input"
+              value={draft.description}
+              aria-label="Skill description"
+              onChange={(e) => setDraft({ description: e.target.value })}
+            />
+          </div>
+          {Object.entries(extras).map(([key, value]) => (
+            <div className="prop-row" key={key}>
+              <span className="grip" aria-hidden="true">
+                ☰
+              </span>
+              <ExtraKeyInput rowKey={key} onCommit={renameExtra} />
+              <input
+                className="prop-input"
+                value={value}
+                placeholder="value"
+                aria-label={`Value for ${key || "new property"}`}
+                onChange={(e) => setExtraValue(key, e.target.value)}
+              />
+              <button
+                type="button"
+                className="icon-btn prop-remove"
+                aria-label={`Remove ${key || "new property"}`}
+                title={`Remove ${key || "new property"}`}
+                onClick={() => removeExtra(key)}
+              >
+                <X size={14} />
+              </button>
+            </div>
+          ))}
+          <button type="button" className="add-prop" onClick={addExtra} disabled={"" in extras}>
+            + Add property
+          </button>
+        </div>
+        {tab === "preview" ? (
+          <div className="skills-preview">
+            {draft.body.trim() ? (
+              <Md text={draft.body} />
+            ) : (
+              <div className="side-empty">Nothing to preview yet — switch to Source to write.</div>
+            )}
+          </div>
+        ) : (
+          <textarea
+            className="skills-src"
+            value={draft.body}
+            spellCheck={false}
+            aria-label="Skill body markdown"
+            onChange={(e) => setDraft({ body: e.target.value })}
+          />
+        )}
+      </div>
+      <div className="ed-foot">
+        {!isNew && (
+          <button
+            type="button"
+            className="btn btn-danger btn-icon"
+            onClick={() => void onRemove()}
+            disabled={saving || removing}
+            title="Remove this skill from every harness"
+            aria-label="Remove skill"
+          >
+            {removing ? (
+              <Loader2 size={16} className="skills-spin" aria-hidden="true" />
+            ) : (
+              <Trash2 size={16} aria-hidden="true" />
+            )}
+          </button>
+        )}
+        {(dirty || isNew) && (
+          <span className="status">
+            Unsaved changes · will propagate to <b>{count}/3</b>
+          </span>
+        )}
+        <span className="sp" />
+        <button
+          type="button"
+          className="btn btn-primary btn-icon"
+          onClick={() => void onSave()}
+          disabled={(!dirty && !isNew) || saving}
+          title="Save & propagate to the enabled harnesses"
+          aria-label="Save & propagate"
+        >
+          {saving ? (
+            <Loader2 size={16} className="skills-spin" aria-hidden="true" />
+          ) : (
+            <Save size={16} aria-hidden="true" />
+          )}
+        </button>
+      </div>
+    </div>
+  );
+}
+
+export function SkillsModal({ onClose }: { onClose: () => void }) {
+  const items = useSkillsStore((s) => s.items);
+  const filter = useSkillsStore((s) => s.filter);
+  const selectedName = useSkillsStore((s) => s.selectedName);
+  const draft = useSkillsStore((s) => s.draft);
+  const dirty = useSkillsStore((s) => s.dirty);
+  const status = useSkillsStore((s) => s.status);
+  const error = useSkillsStore((s) => s.error);
+  const load = useSkillsStore((s) => s.load);
+  const select = useSkillsStore((s) => s.select);
+  const setFilter = useSkillsStore((s) => s.setFilter);
+  const createNew = useSkillsStore((s) => s.createNew);
+  const importAll = useSkillsStore((s) => s.importAll);
+  const [tab, setTab] = useState<EditorTab>("preview");
+  const [importing, setImporting] = useState(false);
+
+  useEffect(() => {
+    void load();
+  }, [load]);
+
+  const { confirm, confirmOpen, dialog } = useConfirm();
+
+  useEffect(() => {
+    if (status === "ready" && selectedName === null && draft === null && items.length > 0) {
+      void select(items[0].name);
+    }
+  }, [status, selectedName, draft, items, select]);
+
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === "Escape" && !confirmOpen) void requestClose();
+    };
+    window.addEventListener("keydown", onKey);
+    return () => window.removeEventListener("keydown", onKey);
+  }, [confirmOpen, dirty, onClose]);
+
+  const discardDirty = (): Promise<boolean> =>
+    dirty
+      ? confirm({
+          title: "Discard unsaved changes?",
+          message: "Your edits to this skill will be lost.",
+          confirmLabel: "Discard",
+          danger: true
+        })
+      : Promise.resolve(true);
+
+  const requestClose = async () => {
+    if (!(await discardDirty())) return;
+    onClose();
+  };
+
+  const pick = async (name: string) => {
+    if (name === selectedName) return;
+    if (!(await discardDirty())) return;
+    setTab("preview");
+    void select(name);
+  };
+
+  const onNew = async () => {
+    if (!(await discardDirty())) return;
+    createNew();
+    setTab("source");
+  };
+
+  const onImport = async () => {
+    if (importing) return;
+    setImporting(true);
+    try {
+      await importAll();
+      if (!useSkillsStore.getState().error) {
+        useNotifs.getState().push({ kind: "success", title: "Skills re-imported" });
+      }
+    } finally {
+      setImporting(false);
+    }
+  };
+
+  const query = filter.trim().toLowerCase();
+  const visible = query
+    ? items.filter((item) => `${item.name} ${item.description}`.toLowerCase().includes(query))
+    : items;
+
+  return (
+    <div className="settings-backdrop" onClick={requestClose}>
+      <div className="settings-modal skills-modal" role="dialog" aria-label="Skills" onClick={(e) => e.stopPropagation()}>
+        <div className="settings-head">
+          <h2>✦ Skills</h2>
+          <span className="sp" />
+          <button type="button" className="icon-btn" aria-label="Close skills" onClick={requestClose}>
+            <X size={16} />
+          </button>
+        </div>
+        <div className="skills-main">
+          <div className="skills-list">
+            <div className="skills-search">
+              <input
+                className="field"
+                value={filter}
+                placeholder="Filter skills…"
+                aria-label="Filter skills"
+                onChange={(e) => setFilter(e.target.value)}
+              />
+              <button
+                type="button"
+                className="icon-btn skills-search-btn"
+                onClick={() => void onImport()}
+                disabled={importing}
+                title="Re-import skills from all harnesses"
+                aria-label="Re-import skills"
+              >
+                <RefreshCw size={15} className={importing ? "skills-spin" : undefined} aria-hidden="true" />
+              </button>
+              <button
+                type="button"
+                className="icon-btn skills-search-btn"
+                onClick={onNew}
+                title="New skill"
+                aria-label="New skill"
+              >
+                <Plus size={15} aria-hidden="true" />
+              </button>
+            </div>
+            <div className="skills-items">
+              {status === "loading" && items.length === 0 && <div className="side-empty">Loading skills…</div>}
+              {status === "error" && items.length === 0 && (
+                <div className="skills-list-error">
+                  <div className="settings-error">{error ?? "Could not load skills"}</div>
+                  <button type="button" className="btn" onClick={() => void load()}>
+                    Retry
+                  </button>
+                </div>
+              )}
+              {status === "ready" && visible.length === 0 && (
+                <div className="side-empty">{query ? "No matches." : "No skills yet — create one."}</div>
+              )}
+              {visible.map((item) => (
+                <SkillRow key={item.name} meta={item} selected={item.name === selectedName} onPick={pick} />
+              ))}
+            </div>
+          </div>
+          <SkillEditor key={selectedName ?? "__new"} tab={tab} setTab={setTab} confirm={confirm} />
+        </div>
+        {dialog}
+      </div>
+    </div>
+  );
+}

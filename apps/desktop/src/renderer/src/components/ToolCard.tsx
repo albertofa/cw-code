@@ -1,15 +1,18 @@
-import { memo, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
-import { Check, ChevronDown, ChevronRight, Circle, CircleDot, Monitor, TriangleAlert } from "lucide-react";
+import { memo, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { Check, ChevronDown, ChevronRight, Circle, CircleDot, Monitor, TriangleAlert, Wrench, type LucideIcon } from "lucide-react";
 import type { ChatMessage } from "../stores/appStore.js";
+import { useAppStore } from "../stores/appStore.js";
 import {
   describeToolCall,
   extractCommandFragment,
+  extractFileDiff,
+  extractFileDiffFromText,
   extractFileFragment,
   recoverToolInput,
   relativizeInText,
-  relativizeToBase,
   stripToolNamePrefix
 } from "./toolSummaries.js";
+import { formatFileSubject, looksLikeFileMention, shortenHomeInText, stripMentionMarker } from "./pathDisplay.js";
 import { FileIcon } from "./fileIcons.js";
 import { isPreviewablePath } from "./Markdown.js";
 
@@ -28,12 +31,19 @@ function LegacyHead({ name, text, open }: { name: string; text: string; open: bo
   );
 }
 
-function ToolState({ state }: { state: "complete" | "error" | "running" | "pending" }) {
-  const label = state === "complete" ? "Completed" : state === "error" ? "Error" : state === "running" ? "Running" : "Pending";
-  const Icon = state === "complete" ? Check : state === "error" ? TriangleAlert : state === "running" ? CircleDot : Circle;
+function ToolState({ state, Icon }: { state: "complete" | "error" | "running" | "pending"; Icon?: LucideIcon }) {
+  if (state === "complete") {
+    return (
+      <span className="tool-state complete" aria-hidden="true">
+        {Icon && <Icon size={13} />}
+      </span>
+    );
+  }
+  const label = state === "error" ? "Error" : state === "running" ? "Running" : "Pending";
+  const StateIcon = state === "error" ? TriangleAlert : state === "running" ? CircleDot : Circle;
   return (
     <span className={`tool-state ${state}`} role="img" aria-label={label} title={label}>
-      <Icon size={13} aria-hidden="true" />
+      <StateIcon size={13} aria-hidden="true" />
     </span>
   );
 }
@@ -56,8 +66,18 @@ export const ToolCard = memo(function ToolCard({
   const isError = message.isError === true;
   const done = message.toolDone === true || message.toolOutput !== undefined;
   const running = message.toolInput !== undefined && !done;
+  const wasRunning = useRef(running);
+  useEffect(() => {
+    if (wasRunning.current && !running) setOpen(false);
+    wasRunning.current = running;
+  }, [running]);
   const state = isError ? "error" : running ? "running" : done ? "complete" : "pending";
-  const summary = describeToolCall(name, message.toolInput ?? recoverToolInput(name, message.text));
+  const toolInput = message.toolInput ?? recoverToolInput(name, message.text);
+  const summary = describeToolCall(name, toolInput);
+  const fileDiff = extractFileDiff(name, toolInput) ?? extractFileDiffFromText(name, message.text);
+  const MAX_DIFF_LINES = 120;
+  const visibleDiff = fileDiff?.slice(0, MAX_DIFF_LINES) ?? [];
+  const hiddenDiffCount = fileDiff && fileDiff.length > visibleDiff.length ? fileDiff.length - visibleDiff.length : 0;
   if (summary && !summary.subject) {
     if (name.toLowerCase() === "bash" || name.toLowerCase() === "shell") {
       const command = extractCommandFragment(message.text);
@@ -86,10 +106,12 @@ export const ToolCard = memo(function ToolCard({
   }
   const lowerName = name.toLowerCase();
   const isShell = lowerName === "bash" || lowerName === "shell";
+  const homeDir = useAppStore((s) => s.homeDir);
+  const home = homeDir ?? undefined;
+  const formatText = (value: string): string =>
+    shortenHomeInText(basePath ? relativizeInText(basePath, value) : value, home);
   const isTodo = lowerName === "todowrite" || lowerName === "todo";
-  const todoRaw = (isTodo ? message.toolInput ?? recoverToolInput(name, message.text) : undefined) as
-    | Record<string, unknown>
-    | undefined;
+  const todoRaw = (isTodo ? toolInput : undefined) as Record<string, unknown> | undefined;
   const todoItems = isTodo
     ? (Array.isArray(todoRaw?.["todos"]) ? (todoRaw?.["todos"] as Array<Record<string, unknown>>) : [])
         .map((t) => ({
@@ -117,11 +139,12 @@ export const ToolCard = memo(function ToolCard({
     );
   }
   const displaySubject =
-    summary?.subject && summary.subjectKind === "file" && basePath
-      ? relativizeToBase(basePath, summary.subject)
-      : summary?.subject && summary.subjectKind !== "file" && isShell && basePath
-        ? relativizeInText(basePath, summary.subject)
+    summary?.subject && (summary.subjectKind === "file" || looksLikeFileMention(summary.subject))
+      ? formatFileSubject(summary.subject, basePath, home)
+      : summary?.subject && summary.subjectKind !== "file" && isShell
+        ? formatText(summary.subject)
         : summary?.subject;
+  const previewPath = summary?.subject ? stripMentionMarker(summary.subject) : undefined;
   const output = (message.toolOutput ?? "").slice(0, 2000);
 
   let head: ReactNode;
@@ -152,7 +175,8 @@ export const ToolCard = memo(function ToolCard({
         ))}
         {summary.subject &&
           summary.subjectKind === "file" &&
-          isPreviewablePath(summary.subject) &&
+          previewPath &&
+          isPreviewablePath(previewPath) &&
           sessionId &&
           onPreview && (
             <button
@@ -161,7 +185,7 @@ export const ToolCard = memo(function ToolCard({
               aria-label="Preview rendered file"
               onClick={(e: ReactMouseEvent<HTMLButtonElement>) => {
                 e.stopPropagation();
-                onPreview(summary.subject as string);
+                onPreview(previewPath);
               }}
             >
               <Monitor size={13} />
@@ -180,7 +204,7 @@ export const ToolCard = memo(function ToolCard({
       title={open ? "Collapse" : "Expand"}
     >
       <div className="tool-head">
-        <ToolState state={state} />
+        <ToolState state={state} Icon={summary?.Icon ?? Wrench} />
         {head}
         <span className="tool-caret" aria-hidden="true">{open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</span>
       </div>
@@ -188,12 +212,12 @@ export const ToolCard = memo(function ToolCard({
         <div className="tool-detail" onClick={(e) => e.stopPropagation()}>
           {summary?.fullSubject && (
             <div className="tool-meta">
-              {basePath ? relativizeInText(basePath, summary.fullSubject) : summary.fullSubject}
+              {formatText(summary.fullSubject)}
             </div>
           )}
           {summary?.meta?.map((m) => (
             <div key={m} className="tool-meta">
-              {basePath ? relativizeInText(basePath, m) : m}
+              {formatText(m)}
             </div>
           ))}
           {!summary && <pre className="tool-output">{message.text}</pre>}
@@ -201,6 +225,20 @@ export const ToolCard = memo(function ToolCard({
             <div className="tool-pending">
               <span className="pulse" /> Running…
             </div>
+          )}
+          {visibleDiff.length > 0 && (
+            <>
+              <div className="tool-output-label">diff</div>
+              <div className="diff-body tool-diff">
+                {visibleDiff.map((line, i) => (
+                  <div key={i} className={`diff-line ${line.type}`}>
+                    <span className="diff-gutter">{line.type === "add" ? "+" : "−"}</span>
+                    <span className="diff-text">{line.text || " "}</span>
+                  </div>
+                ))}
+              </div>
+              {hiddenDiffCount > 0 && <div className="tool-meta">… {hiddenDiffCount} more lines</div>}
+            </>
           )}
           {summary && done && output && (
             <>

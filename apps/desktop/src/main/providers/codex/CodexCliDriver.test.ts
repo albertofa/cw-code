@@ -1,4 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { mkdtempSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { AppSettings, ThreadEvent } from "@cw-code/contracts";
 import type { CodexAppServerLike } from "./codexAppServer.js";
 import { CodexCliDriver } from "./CodexCliDriver.js";
@@ -13,14 +16,24 @@ const SETTINGS: AppSettings = {
   claudeDefaultModel: "",
   claudeEnabledModels: [],
   claudeCustomModel: { id: "", name: "" },
+  claudeReasoningExpanded: false,
+  opencodeReasoningExpanded: false,
+  codexReasoningExpanded: false,
+  opencodeGoUsage: false,
   gitBinaryPath: "git",
   githubCliBinaryPath: "gh",
   sourceControlRefreshIntervalSeconds: 30,
   defaultUseWorktree: true,
+  holdingHours: 6,
   autoTitleEnabled: true,
   autoTitleDriver: "claude",
   autoTitleModel: "claude-sonnet-5",
-  autoTitleEffort: "low"
+  autoTitleEffort: "low",
+  prRefreshIntervalSeconds: 120,
+  prCloneRoot: "~/.cw-code/repos",
+  prAttributionEnabled: true,
+  prAttributionText: "",
+  prWorkflows: []
 };
 
 class FakeClient implements CodexAppServerLike {
@@ -52,6 +65,21 @@ class FakeClient implements CodexAppServerLike {
         return {} as T;
       case "thread/name/set":
         return {} as T;
+      case "review/start":
+        return {
+          turn: { id: `turn_${id}` },
+          reviewThreadId: (params as { threadId?: string } | undefined)?.threadId ?? ""
+        } as T;
+      case "skills/list":
+        return {
+          data: [
+            {
+              cwd: (params as { cwds?: string[] } | undefined)?.cwds?.[0] ?? "",
+              skills: [{ name: "ship", description: "Ship it", path: "/skills/ship", enabled: true }],
+              errors: []
+            }
+          ]
+        } as T;
       case "thread/list":
         return {
           data: [
@@ -75,7 +103,40 @@ class FakeClient implements CodexAppServerLike {
           ],
           nextCursor: null
         } as T;
-      case "thread/read":
+      case "thread/read": {
+        const threadId = (params as { threadId?: string } | undefined)?.threadId;
+        if (threadId === "thr_child") {
+          return {
+            thread: {
+              id: "thr_child",
+              model: "gpt-6-astra",
+              turns: [
+                {
+                  id: "turn_c",
+                  startedAt: 10,
+                  completedAt: 12,
+                  items: [
+                    {
+                      type: "commandExecution",
+                      id: "cc1",
+                      command: "ls",
+                      cwd: "C:\\proj",
+                      aggregatedOutput: "a.ts\nb.ts",
+                      exitCode: 0,
+                      status: "completed"
+                    },
+                    {
+                      type: "fileChange",
+                      id: "cf1",
+                      status: "completed",
+                      changes: [{ path: "a.ts", kind: "update", diff: "@@" }]
+                    }
+                  ]
+                }
+              ]
+            }
+          } as T;
+        }
         return {
           thread: {
             id: "thr_history",
@@ -91,6 +152,7 @@ class FakeClient implements CodexAppServerLike {
             ]
           }
         } as T;
+      }
       default:
         return {} as T;
     }
@@ -120,6 +182,34 @@ class FakeClient implements CodexAppServerLike {
 
   serverRequest(method: string, params: unknown, id: string | number): void {
     this.serverRequestHandler?.(method, params, id);
+  }
+}
+
+class ThrowingSkillsClient extends FakeClient {
+  override async request<T>(method: string, params?: unknown): Promise<T> {
+    if (method === "skills/list") throw new Error("skills/list boom");
+    return super.request<T>(method, params);
+  }
+}
+
+class AccountUsageClient extends FakeClient {
+  constructor(
+    private accountRes: unknown,
+    private rateLimitsRes?: unknown
+  ) {
+    super();
+  }
+
+  override async request<T>(method: string, params?: unknown): Promise<T> {
+    this.requests.push({ method, params });
+    if (method === "account/read") return this.accountRes as T;
+    if (method === "account/rateLimits/read") {
+      if (this.rateLimitsRes === undefined) {
+        throw new Error("account/rateLimits/read should not be called for this account");
+      }
+      return this.rateLimitsRes as T;
+    }
+    return super.request<T>(method, params);
   }
 }
 
@@ -217,11 +307,20 @@ describe("CodexCliDriver", () => {
       turnId: handle.turnId,
       sessionId: "local-1",
       resumeCursor: "thr_1",
-      inputTokens: 140,
-      outputTokens: 15,
-      costUsd: 0,
+      usage: [
+        {
+          model: "gpt-6-astra",
+          inputTokens: 60,
+          cacheReadTokens: 40,
+          cacheWriteTokens: 0,
+          outputTokens: 12,
+          reasoningTokens: 3,
+          costUsd: null
+        }
+      ],
       numTurns: 1,
-      isError: false
+      isError: false,
+      backgroundTasks: 0
     });
     const deltas = events.filter((e) => e.type === "assistant.delta");
     expect(deltas.map((d) => ("text" in d ? d.text : ""))).toEqual(["Hello ", "world"]);
@@ -232,6 +331,195 @@ describe("CodexCliDriver", () => {
         name: "shell"
       })
     );
+    driver.dispose();
+  });
+
+  it("maps collab tool calls to subagent tool events", async () => {
+    const { driver, events } = makeDriver(client);
+    driver.startTurn({ sessionId: "local-1", prompt: "spawn", cwd: "C:\\proj" });
+    await settle();
+    client.notify("item/started", {
+      threadId: "thr_1",
+      turnId: "turn_2",
+      item: {
+        type: "collabToolCall",
+        id: "co1",
+        tool: "spawn_agent",
+        prompt: "review the diff",
+        receiverThreadIds: ["thr_child"],
+        status: "in_progress"
+      }
+    });
+    client.notify("item/completed", {
+      threadId: "thr_1",
+      turnId: "turn_2",
+      item: {
+        type: "collabToolCall",
+        id: "co1",
+        tool: "spawn_agent",
+        receiverThreadIds: ["thr_child"],
+        status: "completed",
+        agentsStates: { thr_child: { status: "running" } }
+      }
+    });
+    await settle();
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "tool.call",
+        toolCallId: "co1",
+        name: "collab:spawn_agent",
+        input: expect.objectContaining({ prompt: "review the diff", receiverThreadIds: ["thr_child"] })
+      })
+    );
+    expect(events).toContainEqual(
+      expect.objectContaining({
+        type: "tool.result",
+        toolCallId: "co1",
+        agentId: "thr_child",
+        isError: false
+      })
+    );
+    driver.dispose();
+  });
+
+  it("maps the snake_case collab item shape", async () => {
+    const { driver, events } = makeDriver(client);
+    driver.startTurn({ sessionId: "local-1", prompt: "spawn", cwd: "C:\\proj" });
+    await settle();
+    client.notify("item/started", {
+      threadId: "thr_1",
+      turnId: "turn_2",
+      item: {
+        type: "collab_tool_call",
+        id: "co2",
+        tool: "wait",
+        receiver_thread_ids: ["thr_child"],
+        status: "in_progress"
+      }
+    });
+    await settle();
+    expect(events).toContainEqual(
+      expect.objectContaining({ type: "tool.call", toolCallId: "co2", name: "collab:wait" })
+    );
+    driver.dispose();
+  });
+
+  it("reads subagent tool activity from the child thread", async () => {
+    const { driver } = makeDriver(client);
+    const result = await driver.getSubagentTools("C:\\proj", "thr_parent", "thr_child");
+    expect(result.model).toBe("gpt-6-astra");
+    expect(result.items.map((item) => item.name)).toEqual(["shell", "edit"]);
+    expect(result.items[0].output).toBe("a.ts\nb.ts");
+    expect(result.items[0].timestamp).toBe(10000);
+    expect(result.items[0].completedAt).toBe(12000);
+    expect(result.items[1].input).toEqual({ changes: [{ path: "a.ts", kind: "update", diff: "@@" }] });
+    driver.dispose();
+  });
+
+  it("maps reasoning notifications to reasoning.delta and sticks to one stream per item", async () => {
+    const { driver, events } = makeDriver(client);
+    driver.startTurn({ sessionId: "local-1", prompt: "think", cwd: "C:\\proj" });
+    await settle();
+    client.notify("item/reasoning/summaryTextDelta", {
+      threadId: "thr_1",
+      turnId: "turn_2",
+      itemId: "r1",
+      delta: "**Planning**",
+      summaryIndex: 0
+    });
+    client.notify("item/reasoning/summaryTextDelta", {
+      threadId: "thr_1",
+      turnId: "turn_2",
+      itemId: "r1",
+      delta: " more",
+      summaryIndex: 0
+    });
+    client.notify("item/reasoning/textDelta", {
+      threadId: "thr_1",
+      turnId: "turn_2",
+      itemId: "r1",
+      delta: "raw reasoning",
+      contentIndex: 0
+    });
+    await settle();
+    const reasoning = events.filter((e) => e.type === "reasoning.delta");
+    expect(reasoning.map((e) => ("text" in e ? e.text : ""))).toEqual(["**Planning**", " more"]);
+    expect(events.some((e) => e.type === "assistant.delta")).toBe(false);
+    driver.dispose();
+  });
+
+  it("emits the full reasoning text from item/completed when nothing streamed", async () => {
+    const { driver, events } = makeDriver(client);
+    driver.startTurn({ sessionId: "local-1", prompt: "think", cwd: "C:\\proj" });
+    await settle();
+    client.notify("item/completed", {
+      threadId: "thr_1",
+      turnId: "turn_2",
+      item: { type: "reasoning", id: "r2", summary: [{ type: "summary_text", text: "Summary body" }] }
+    });
+    await settle();
+    expect(events).toContainEqual({
+      type: "reasoning.delta",
+      turnId: expect.any(String),
+      text: "Summary body"
+    });
+    driver.dispose();
+  });
+
+  it("emits todo.updated from a turn/plan/updated notification for the active turn", async () => {
+    const { driver, events } = makeDriver(client);
+    const handle = driver.startTurn({ sessionId: "local-1", prompt: "plan the work", cwd: "C:\\proj" });
+    await settle();
+    client.notify("turn/plan/updated", {
+      threadId: "thr_1",
+      turnId: "turn_2",
+      explanation: "here is the plan",
+      plan: [
+        { step: "Inspect the repo", status: "completed" },
+        { step: "Write the fix", status: "in_progress" },
+        { step: "Add tests", status: "queued" }
+      ]
+    });
+    await settle();
+    expect(events).toContainEqual({
+      type: "todo.updated",
+      turnId: handle.turnId,
+      todos: [
+        { content: "Inspect the repo", status: "completed" },
+        { content: "Write the fix", status: "in_progress" },
+        { content: "Add tests", status: "pending" }
+      ]
+    });
+    driver.dispose();
+  });
+
+  it("emits an empty todo.updated when the active turn's plan is empty", async () => {
+    const { driver, events } = makeDriver(client);
+    const handle = driver.startTurn({ sessionId: "local-1", prompt: "plan the work", cwd: "C:\\proj" });
+    await settle();
+    client.notify("turn/plan/updated", {
+      threadId: "thr_1",
+      turnId: "turn_2",
+      plan: []
+    });
+    await settle();
+    expect(events).toContainEqual({
+      type: "todo.updated",
+      turnId: handle.turnId,
+      todos: []
+    });
+    driver.dispose();
+  });
+
+  it("drops plan updates for unknown turns", async () => {
+    const { driver, events } = makeDriver(client);
+    client.notify("turn/plan/updated", {
+      threadId: "thr_zzz",
+      turnId: "turn_zzz",
+      plan: [{ step: "Nope", status: "pending" }]
+    });
+    await settle();
+    expect(events.filter((e) => e.type === "todo.updated")).toEqual([]);
     driver.dispose();
   });
 
@@ -399,6 +687,32 @@ describe("CodexCliDriver", () => {
     driver.dispose();
   });
 
+  it("auto-accepts approvals in the background for full access mode", async () => {
+    const { driver, events } = makeDriver(client);
+    driver.startTurn({ sessionId: "local-1", prompt: "work", cwd: "C:\\proj", permissionMode: "bypassPermissions" });
+    await settle();
+    client.serverRequest("item/commandExecution/requestApproval", {
+      threadId: "thr_1",
+      turnId: "turn_2",
+      itemId: "c1",
+      command: "rm -rf build"
+    }, 11);
+    await settle();
+    expect(events.some((e) => e.type === "approval.request")).toBe(false);
+    expect(client.responses).toEqual([{ id: 11, result: { decision: "accept" } }]);
+    expect(events).toContainEqual(expect.objectContaining({ type: "approval.resolved" }));
+    driver.dispose();
+  });
+
+  it("lists native permission modes including full access", async () => {
+    const { driver } = makeDriver(client);
+    const modes = await driver.listPermissionModes();
+    expect(modes.map((m) => m.id)).toEqual(["manual", "auto", "bypassPermissions"]);
+    expect(modes.map((m) => m.label)).toEqual(["Read Only", "Auto", "Full Access"]);
+    expect(modes.every((m) => m.native)).toBe(true);
+    driver.dispose();
+  });
+
   it("applies each turn's env to the next app-server spawn and never restarts a live shared server", async () => {
     const shared = new FakeClient();
     const { driver } = makeDriver(shared);
@@ -412,5 +726,375 @@ describe("CodexCliDriver", () => {
     await settle();
     expect(shared.spawnEnvs).toEqual([{ CW_SESSION_ID: "s1" }, { CW_SESSION_ID: "s3" }]);
     driver.dispose();
+  });
+
+  it("passes existing absolute attachments through and drops escapes", async () => {
+    const { driver } = makeDriver(client);
+    const outside = mkdtempSync(join(tmpdir(), "cw-codex-outside-"));
+    const abs = join(outside, "paste.png");
+    writeFileSync(abs, "x", "utf8");
+    driver.startTurn({
+      sessionId: "local-1",
+      prompt: "look",
+      cwd: "C:\\proj",
+      attachments: [abs, join("..", "secret.png")]
+    });
+    await settle();
+    const turn = client.requests.find((r) => r.method === "turn/start");
+    const input = (turn?.params as { input?: Array<{ type: string; path?: string }> } | undefined)?.input ?? [];
+    expect(input).toContainEqual({ type: "localImage", path: abs });
+    expect(input.some((entry) => entry.path === join("..", "secret.png"))).toBe(false);
+    driver.dispose();
+  });
+
+  it("lists codex built-in commands plus enabled skills", async () => {
+    const { driver } = makeDriver(client);
+    const commands = await driver.listCommands("C:\\proj");
+    expect(client.requests[0]).toMatchObject({ method: "skills/list", params: { cwds: ["C:\\proj"] } });
+    expect(commands).toEqual([
+      { name: "compact", description: "Summarize the thread to free context", dispatch: "native" },
+      {
+        name: "review",
+        description: "Review uncommitted changes, or follow custom instructions",
+        argumentHint: "[instructions]",
+        dispatch: "native"
+      },
+      { name: "ship", description: "Ship it", dispatch: "native" }
+    ]);
+    driver.dispose();
+  });
+
+  it("falls back to built-in commands and warns when skills/list fails", async () => {
+    const throwingClient = new ThrowingSkillsClient();
+    const { driver } = makeDriver(throwingClient);
+    const commands = await driver.listCommands("C:\\proj");
+    expect(commands).toEqual([
+      { name: "compact", description: "Summarize the thread to free context", dispatch: "native" },
+      {
+        name: "review",
+        description: "Review uncommitted changes, or follow custom instructions",
+        argumentHint: "[instructions]",
+        dispatch: "native"
+      }
+    ]);
+    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining("skills/list boom"));
+    driver.dispose();
+  });
+
+  it("compacts an existing thread via thread/compact/start and emits the compaction note", async () => {
+    const { driver, events } = makeDriver(client);
+    const handle = driver.startTurn({
+      sessionId: "local-1",
+      prompt: "/compact",
+      cwd: "C:\\proj",
+      resumeCursor: "thr_9",
+      command: { name: "compact", args: "" }
+    });
+    await settle();
+    expect(client.requests.map((r) => r.method)).toEqual(["thread/resume", "thread/compact/start"]);
+    expect(client.requests[1].params).toMatchObject({ threadId: "thr_resume" });
+
+    client.notify("turn/started", { threadId: "thr_resume", turn: { id: "turn_c1" } });
+    client.notify("item/completed", {
+      threadId: "thr_resume",
+      turnId: "turn_c1",
+      item: { type: "contextCompaction", id: "cc1" }
+    });
+    client.notify("turn/completed", {
+      threadId: "thr_resume",
+      turn: { id: "turn_c1", status: "completed", items: [] }
+    });
+    await settle();
+
+    expect(events).toContainEqual({ type: "assistant.delta", turnId: handle.turnId, text: "Context compacted." });
+    expect(events.find((e) => e.type === "turn.done")).toMatchObject({
+      turnId: handle.turnId,
+      resumeCursor: "thr_resume"
+    });
+    driver.dispose();
+  });
+
+  it("prefixes the compaction note with a blank line when the turn already streamed assistant text", async () => {
+    const { driver, events } = makeDriver(client);
+    driver.startTurn({
+      sessionId: "local-1",
+      prompt: "/compact",
+      cwd: "C:\\proj",
+      resumeCursor: "thr_9",
+      command: { name: "compact", args: "" }
+    });
+    await settle();
+    client.notify("turn/started", { threadId: "thr_resume", turn: { id: "turn_c2" } });
+    client.notify("item/agentMessage/delta", {
+      threadId: "thr_resume",
+      turnId: "turn_c2",
+      delta: "Summarizing the thread..."
+    });
+    client.notify("item/completed", {
+      threadId: "thr_resume",
+      turnId: "turn_c2",
+      item: { type: "contextCompaction", id: "cc2" }
+    });
+    await settle();
+
+    const deltas = events.filter((e) => e.type === "assistant.delta").map((e) => ("text" in e ? e.text : ""));
+    expect(deltas).toEqual(["Summarizing the thread...", "\n\nContext compacted."]);
+    driver.dispose();
+  });
+
+  it("ignores contextCompaction items on a normal turn (auto-compaction mid-turn)", async () => {
+    const { driver, events } = makeDriver(client);
+    driver.startTurn({ sessionId: "local-1", prompt: "keep going", cwd: "C:\\proj" });
+    await settle();
+    client.notify("item/completed", {
+      threadId: "thr_1",
+      turnId: "turn_2",
+      item: { type: "contextCompaction", id: "cc1" }
+    });
+    await settle();
+    expect(events.some((e) => e.type === "assistant.delta")).toBe(false);
+    driver.dispose();
+  });
+
+  it("throws synchronously when compacting a thread with no history, without creating a thread", () => {
+    const { driver, events } = makeDriver(client);
+    expect(() =>
+      driver.startTurn({
+        sessionId: "local-1",
+        prompt: "/compact",
+        cwd: "C:\\proj",
+        command: { name: "compact", args: "" }
+      })
+    ).toThrow("Nothing to compact yet");
+    expect(events).toEqual([]);
+    expect(client.requests).toEqual([]);
+    driver.dispose();
+  });
+
+  it("starts a review turn via review/start and emits the review text", async () => {
+    const { driver, events } = makeDriver(client);
+    const handle = driver.startTurn({
+      sessionId: "local-1",
+      prompt: "/review check races",
+      cwd: "C:\\proj",
+      command: { name: "review", args: "check races" }
+    });
+    await settle();
+    const review = client.requests.find((r) => r.method === "review/start");
+    expect(review?.params).toMatchObject({
+      threadId: "thr_1",
+      target: { type: "custom", instructions: "check races" },
+      delivery: "inline"
+    });
+
+    client.notify("item/completed", {
+      threadId: "thr_1",
+      turnId: "turn_2",
+      item: { type: "exitedReviewMode", id: "r1", review: "Looks fine overall." }
+    });
+    client.notify("turn/completed", {
+      threadId: "thr_1",
+      turn: { id: "turn_2", status: "completed", items: [] }
+    });
+    await settle();
+
+    expect(events).toContainEqual({ type: "assistant.delta", turnId: handle.turnId, text: "Looks fine overall." });
+    expect(events.find((e) => e.type === "turn.done")).toMatchObject({ turnId: handle.turnId });
+    driver.dispose();
+  });
+
+  it("does not duplicate the review text when agentMessage deltas already streamed it", async () => {
+    const { driver, events } = makeDriver(client);
+    const handle = driver.startTurn({
+      sessionId: "local-1",
+      prompt: "/review check races",
+      cwd: "C:\\proj",
+      command: { name: "review", args: "check races" }
+    });
+    await settle();
+
+    client.notify("item/agentMessage/delta", {
+      threadId: "thr_1",
+      turnId: "turn_2",
+      delta: "Looks fine overall."
+    });
+    client.notify("item/completed", {
+      threadId: "thr_1",
+      turnId: "turn_2",
+      item: { type: "exitedReviewMode", id: "r1", review: "Looks fine overall." }
+    });
+    client.notify("turn/completed", {
+      threadId: "thr_1",
+      turn: { id: "turn_2", status: "completed", items: [] }
+    });
+    await settle();
+
+    const deltas = events.filter((e) => e.type === "assistant.delta").map((e) => ("text" in e ? e.text : ""));
+    expect(deltas).toEqual(["Looks fine overall."]);
+    expect(events.find((e) => e.type === "turn.done")).toMatchObject({ turnId: handle.turnId });
+    driver.dispose();
+  });
+
+  it("dispatches a skill command through turn/start with a skill item", async () => {
+    const { driver } = makeDriver(client);
+    const commands = await driver.listCommands("C:\\proj");
+    expect(commands.map((c) => c.name)).toEqual(["compact", "review", "ship"]);
+
+    driver.startTurn({
+      sessionId: "local-1",
+      prompt: "/ship the release",
+      cwd: "C:\\proj",
+      command: { name: "ship", args: "the release" }
+    });
+    await settle();
+    const turn = client.requests.find((r) => r.method === "turn/start");
+    expect(turn?.params).toMatchObject({
+      threadId: "thr_2",
+      input: [
+        { type: "text", text: "$ship the release" },
+        { type: "skill", name: "ship", path: "/skills/ship" }
+      ]
+    });
+    driver.dispose();
+  });
+
+  it("errors when a skill command cannot be resolved even after refetching skills/list", async () => {
+    const { driver, events } = makeDriver(client);
+    const handle = driver.startTurn({
+      sessionId: "local-1",
+      prompt: "/nope",
+      cwd: "C:\\proj",
+      command: { name: "nope", args: "" }
+    });
+    await settle();
+    const refetch = client.requests.find((r) => r.method === "skills/list");
+    expect(refetch?.params).toMatchObject({ cwds: ["C:\\proj"], forceReload: true });
+    expect(events).toContainEqual({ type: "turn.error", turnId: handle.turnId, message: "Unknown command: /nope" });
+    driver.dispose();
+  });
+
+  it("propagates skills/list errors from resolveSkillPath into turn.error", async () => {
+    const throwingClient = new ThrowingSkillsClient();
+    const { driver, events } = makeDriver(throwingClient);
+    const handle = driver.startTurn({
+      sessionId: "local-1",
+      prompt: "/ship",
+      cwd: "C:\\proj",
+      command: { name: "ship", args: "" }
+    });
+    await settle();
+    expect(events).toContainEqual({ type: "turn.error", turnId: handle.turnId, message: "skills/list boom" });
+    driver.dispose();
+  });
+
+  describe("getAccountUsage", () => {
+    it("reads the account before rate limits and never queries rate limits for an apiKey account", async () => {
+      const apiKeyClient = new AccountUsageClient({ account: { type: "apiKey" }, requiresOpenaiAuth: false });
+      const { driver } = makeDriver(apiKeyClient);
+      const state = await driver.getAccountUsage();
+      expect(state).toEqual({
+        status: "unavailable",
+        reason: "api-key",
+        message: "Signed in with an API key; plan limits aren't available."
+      });
+      expect(apiKeyClient.requests.map((r) => r.method)).toEqual(["account/read"]);
+      driver.dispose();
+    });
+
+    it("reads the account before rate limits and never queries rate limits for a logged-out account", async () => {
+      const loggedOutClient = new AccountUsageClient({ account: null, requiresOpenaiAuth: true });
+      const { driver } = makeDriver(loggedOutClient);
+      const state = await driver.getAccountUsage();
+      expect(state).toEqual({
+        status: "unavailable",
+        reason: "logged-out",
+        message: "Sign in to Codex CLI to see plan usage."
+      });
+      expect(loggedOutClient.requests.map((r) => r.method)).toEqual(["account/read"]);
+      driver.dispose();
+    });
+
+    it("queries rate limits, in order, after the account read for a chatgpt account", async () => {
+      const rateLimitsClient = new AccountUsageClient(
+        { account: { type: "chatgpt" }, requiresOpenaiAuth: false },
+        {
+          rateLimits: {
+            limitId: "codex",
+            limitName: null,
+            primary: { usedPercent: 12, windowDurationMins: 300, resetsAt: 1790235336 },
+            secondary: null,
+            credits: null,
+            planType: "plus",
+            rateLimitReachedType: null
+          },
+          rateLimitsByLimitId: null,
+          rateLimitResetCredits: null
+        }
+      );
+      const { driver } = makeDriver(rateLimitsClient);
+      const state = await driver.getAccountUsage();
+      expect(state).toMatchObject({ status: "ok", plan: "ChatGPT Plus" });
+      expect(rateLimitsClient.requests).toEqual([
+        { method: "account/read", params: { refreshToken: false } },
+        { method: "account/rateLimits/read", params: {} }
+      ]);
+      driver.dispose();
+    });
+  });
+
+  describe("token usage across turns and threads", () => {
+    function tokenUsageNotification(threadId: string, turnId: string, totalTokens: number, inputTokens: number, outputTokens: number) {
+      return {
+        threadId,
+        turnId,
+        tokenUsage: {
+          total: { totalTokens, inputTokens: 0, cachedInputTokens: 0, cacheWriteInputTokens: 0, outputTokens: 0, reasoningOutputTokens: 0 },
+          last: { totalTokens, inputTokens, cachedInputTokens: 0, cacheWriteInputTokens: 0, outputTokens, reasoningOutputTokens: 0 },
+          modelContextWindow: null
+        }
+      };
+    }
+
+    it("carries the thread's lastTotal across turns and isolates it from other threads", async () => {
+      const { driver, events } = makeDriver(client);
+
+      const handle1 = driver.startTurn({ sessionId: "s1", prompt: "go", cwd: "C:\\proj", resumeCursor: "thr_x" });
+      await settle();
+      client.notify("thread/tokenUsage/updated", tokenUsageNotification("thr_resume", "turn_2", 500, 400, 100));
+      client.notify("turn/completed", { threadId: "thr_resume", turn: { id: "turn_2", status: "completed", items: [] } });
+      await settle();
+      const done1 = events.find((e) => e.type === "turn.done" && e.turnId === handle1.turnId);
+      expect(done1).toMatchObject({
+        usage: [expect.objectContaining({ inputTokens: 400, outputTokens: 100 })],
+        numTurns: 1
+      });
+
+      const handle2 = driver.startTurn({ sessionId: "s1", prompt: "continue", cwd: "C:\\proj", resumeCursor: "thr_x" });
+      await settle();
+      client.notify("thread/tokenUsage/updated", tokenUsageNotification("thr_resume", "turn_4", 500, 400, 100));
+      client.notify("thread/tokenUsage/updated", tokenUsageNotification("thr_resume", "turn_4", 650, 150, 20));
+      client.notify("turn/completed", { threadId: "thr_resume", turn: { id: "turn_4", status: "completed", items: [] } });
+      await settle();
+      const done2 = events.find((e) => e.type === "turn.done" && e.turnId === handle2.turnId);
+      expect(done2).toMatchObject({
+        usage: [expect.objectContaining({ inputTokens: 150, outputTokens: 20 })],
+        numTurns: 1
+      });
+
+      const handle3 = driver.startTurn({ sessionId: "s1", prompt: "fresh thread", cwd: "C:\\proj" });
+      await settle();
+      const start3 = client.requests.find((r) => r.method === "thread/start");
+      expect(start3).toBeDefined();
+      client.notify("thread/tokenUsage/updated", tokenUsageNotification("thr_5", "turn_6", 500, 400, 100));
+      client.notify("turn/completed", { threadId: "thr_5", turn: { id: "turn_6", status: "completed", items: [] } });
+      await settle();
+      const done3 = events.find((e) => e.type === "turn.done" && e.turnId === handle3.turnId);
+      expect(done3).toMatchObject({
+        usage: [expect.objectContaining({ inputTokens: 400, outputTokens: 100 })],
+        numTurns: 1
+      });
+
+      driver.dispose();
+    });
   });
 });

@@ -35,14 +35,33 @@ describe("resolveAttachments", () => {
     warn.mockRestore();
   });
 
-  it("drops escaping paths", () => {
+  it("drops relative paths escaping the project root", () => {
     const { projectRoot, cwd } = makeDirs();
-    const outside = mkdtempSync(join(tmpdir(), "cw-att-out-"));
-    writeFileSync(join(outside, "x.png"), "secret");
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
-    expect(resolveAttachments(projectRoot, cwd, ["../x.png", outside])).toEqual([]);
-    expect(warn).toHaveBeenCalledTimes(2);
+    expect(resolveAttachments(projectRoot, cwd, ["../x.png"])).toEqual([]);
+    expect(warn).toHaveBeenCalledTimes(1);
     expect(existsSync(join(cwd, "x.png"))).toBe(false);
+    warn.mockRestore();
+  });
+
+  it("keeps existing absolute paths as-is without copying", () => {
+    const { cwd } = makeDirs();
+    const outside = mkdtempSync(join(tmpdir(), "cw-att-abs-"));
+    const abs = join(outside, "pic.png");
+    writeFileSync(abs, "bytes");
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect(resolveAttachments("C:\\proj", cwd, [abs])).toEqual([abs]);
+    expect(warn).not.toHaveBeenCalled();
+    expect(existsSync(join(cwd, "pic.png"))).toBe(false);
+    warn.mockRestore();
+  });
+
+  it("drops missing absolute paths with a warning", () => {
+    const { projectRoot, cwd } = makeDirs();
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const missing = join(mkdtempSync(join(tmpdir(), "cw-att-abs-")), "missing.png");
+    expect(resolveAttachments(projectRoot, cwd, [missing])).toEqual([]);
+    expect(warn).toHaveBeenCalledWith(`attachment not found, skipped: ${missing}`);
     warn.mockRestore();
   });
 

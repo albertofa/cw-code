@@ -1,0 +1,800 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>cw-code — Subagents panel redesign</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #1e1f22;
+    --bg-deep: #24262b;
+    --panel: #1e1f22;
+    --raised: #2e3035;
+    --overlay: #24262b;
+    --border: #393b40;
+    --border-soft: #2b2d30;
+    --text: #dfe1e5;
+    --dim: #bcbec4;
+    --muted: #868a93;
+    --faint: #62666e;
+    --claude: #e8835a;
+    --claude-soft: rgba(232, 131, 90, 0.14);
+    --success: #59a659;
+    --warning: #e8b44f;
+    --danger: #e06c60;
+    --accent: #548af7;
+    --driver: var(--claude);
+    --driver-soft: var(--claude-soft);
+    --mono: "JetBrains Mono", "Cascadia Code", ui-monospace, Consolas, monospace;
+    --sans: "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --r-sm: 6px;
+    --r-md: 8px;
+    --r-lg: 12px;
+    --gutter: #141518;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body {
+    background: var(--gutter);
+    color: var(--text);
+    font-family: var(--sans);
+    font-size: 13px;
+    -webkit-font-smoothing: antialiased;
+  }
+  button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+  svg { display: block; }
+
+  /* ---------- mock chrome ---------- */
+  .mockbar {
+    position: sticky; top: 0; z-index: 20;
+    display: flex; align-items: center; gap: 16px;
+    padding: 10px 16px;
+    background: #17181b;
+    border-bottom: 1px solid var(--border-soft);
+  }
+  .mock-title { display: flex; align-items: baseline; gap: 8px; }
+  .mock-title b { font-size: 14px; letter-spacing: -0.01em; }
+  .mock-title .sub { color: var(--faint); font-size: 12px; }
+  .variants { display: flex; gap: 4px; margin-left: auto; }
+  .variants button {
+    padding: 6px 12px; border-radius: var(--r-sm);
+    color: var(--muted); font-size: 12px; border: 1px solid transparent;
+  }
+  .variants button:hover { color: var(--text); background: #23252a; }
+  .variants button.active {
+    color: var(--text); background: var(--raised); border-color: var(--border);
+    box-shadow: inset 0 -2px 0 var(--driver);
+  }
+  .density { display: flex; align-items: center; gap: 6px; color: var(--faint); font-size: 11.5px; }
+  .density input { accent-color: var(--accent); }
+
+  .stage { padding: 18px; display: flex; flex-direction: column; gap: 16px; }
+  .window {
+    width: min(1240px, 100%); margin: 0 auto;
+    border: 1px solid #303237; border-radius: 14px; overflow: hidden;
+    background: var(--gutter);
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.45);
+  }
+  .win-bar { display: flex; align-items: center; gap: 10px; height: 40px; padding: 0 12px; background: #1a1b1e; border-bottom: 1px solid var(--border-soft); }
+  .dots { display: flex; gap: 5px; }
+  .dots i { width: 10px; height: 10px; border-radius: 50%; background: #3a3d43; display: block; }
+  .win-crumb { color: var(--faint); font-size: 12px; }
+  .win-crumb b { color: var(--dim); font-weight: 550; }
+  .win-driver { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--driver); background: var(--driver-soft); border: 1px solid rgba(232,131,90,.35); padding: 3px 8px; border-radius: 999px; }
+  .win-body { display: grid; grid-template-columns: minmax(360px, 1fr) 580px; height: 720px; }
+  body.compact .win-body { height: 640px; font-size: 12.5px; }
+
+  /* ---------- thread side (context) ---------- */
+  .thread { display: flex; flex-direction: column; min-width: 0; border-right: 1px solid var(--border-soft); background: radial-gradient(700px 300px at 55% 0, #232529 0%, #1a1b1e 65%); }
+  .thread-head { display: flex; align-items: center; gap: 10px; padding: 12px 16px; border-bottom: 1px solid var(--border-soft); }
+  .thread-head h1 { margin: 0; font-size: 14px; font-weight: 650; }
+  .thread-head .meta { margin-top: 2px; color: var(--faint); font-size: 11px; }
+  .thread-scroll { flex: 1; overflow: hidden; padding: 16px; display: flex; flex-direction: column; gap: 14px; }
+  .msg { color: var(--dim); line-height: 1.6; max-width: 620px; }
+  .msg .who { display: flex; align-items: center; gap: 7px; color: var(--faint); font-size: 11px; margin-bottom: 4px; }
+  .avatar { width: 20px; height: 20px; border-radius: 6px; display: grid; place-items: center; font-size: 10px; font-weight: 700; background: #2f333a; color: var(--dim); }
+  .avatar.agent { background: var(--driver-soft); color: var(--driver); }
+  .subagent-card {
+    border: 1px solid var(--border); border-radius: var(--r-md); background: var(--bg-deep);
+    padding: 9px 11px; display: flex; align-items: center; gap: 9px; cursor: pointer;
+  }
+  .subagent-card:hover { border-color: #4a4e56; }
+  .subagent-card .sc-icon { color: var(--driver); }
+  .subagent-card .sc-title { font-weight: 600; font-size: 12.5px; }
+  .subagent-card .sc-meta { color: var(--faint); font-size: 11.5px; margin-left: 2px; }
+  .subagent-card .sc-view { margin-left: auto; color: var(--accent); font-size: 11.5px; }
+  .thread-note {
+    border: 1px dashed #3c3f45; border-radius: var(--r-md); padding: 10px 12px;
+    color: var(--faint); font-size: 11.5px; line-height: 1.5; background: rgba(36, 38, 43, 0.4);
+  }
+  .thread-note b { color: var(--muted); font-weight: 600; }
+  .hidden-tool {
+    margin-left: 22px; opacity: .35; text-decoration: line-through;
+    font-family: var(--mono); font-size: 11px; color: var(--muted);
+    border-left: 2px solid #3a3d43; padding: 2px 0 2px 8px;
+  }
+
+  /* ---------- right pane ---------- */
+  .pane { display: flex; flex-direction: column; min-width: 0; background: var(--panel); }
+  .tabbar { display: flex; align-items: center; gap: 2px; height: 40px; padding: 0 8px; border-bottom: 1px solid var(--border-soft); }
+  .tabbar .tab { width: 30px; height: 30px; display: grid; place-items: center; border-radius: var(--r-sm); color: var(--faint); }
+  .tabbar .tab:hover { color: var(--dim); background: #26282d; }
+  .tabbar .tab.active { color: var(--text); background: var(--raised); }
+  .tabbar .tab.active::after { content: ""; position: absolute; }
+  .tabbar .spacer { flex: 1; }
+  .tabbar .tab-label { display: none; }
+  .panels { position: relative; flex: 1; min-height: 0; overflow: hidden; }
+
+  .panel { position: absolute; inset: 0; overflow-y: auto; }
+  .panel[hidden] { display: none; }
+  body:not([data-variant="a"]) .panel-a { display: none; }
+  body:not([data-variant="b"]) .panel-b { display: none; }
+  body:not([data-variant="c"]) .panel-c { display: none; }
+  body[data-variant="a"] .panel-a { display: block; }
+  body[data-variant="b"] .panel-b { display: block; }
+  body[data-variant="c"] .panel-c { display: block; }
+
+  .panel-head {
+    position: sticky; top: 0; z-index: 3;
+    display: flex; align-items: center; gap: 8px;
+    padding: 10px 14px; background: var(--panel); border-bottom: 1px solid var(--border-soft);
+  }
+  .panel-head h2 { margin: 0; font-size: 11px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; color: var(--dim); }
+  .panel-head .count { color: var(--faint); font-size: 11.5px; }
+  .running-pill { margin-left: auto; display: inline-flex; align-items: center; gap: 5px; color: var(--muted); font-size: 11px; }
+  .pulse { width: 6px; height: 6px; border-radius: 50%; background: var(--driver); animation: pulse 1.4s ease-in-out infinite; }
+  @keyframes pulse { 0%, 100% { opacity: 1; } 50% { opacity: .3; } }
+
+  .status-dot { width: 7px; height: 7px; border-radius: 50%; flex: none; }
+  .status-dot.completed { background: var(--success); }
+  .status-dot.running { background: var(--driver); animation: pulse 1.4s ease-in-out infinite; }
+  .status-dot.error { background: var(--danger); }
+
+  .chip {
+    flex: none; padding: 1px 8px; border-radius: 999px;
+    border: 1px solid var(--border); background: var(--raised);
+    color: var(--muted); font-size: 10.5px; white-space: nowrap;
+  }
+  .chip.model { border-color: rgba(232,131,90,.35); background: var(--driver-soft); color: #f0b28f; }
+
+  /* ---------- common rows ---------- */
+  .agent-row {
+    width: 100%; display: flex; align-items: center; gap: 9px; text-align: left;
+    padding: 10px 14px; border-bottom: 1px solid var(--border-soft);
+  }
+  .agent-row:hover { background: #24262b; }
+  .agent-row.selected { background: #292c31; box-shadow: inset 3px 0 0 var(--driver); }
+  .agent-row .name { font-weight: 600; font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .agent-row .excerpt { color: var(--muted); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; margin-top: 2px; }
+  .agent-row .grow { min-width: 0; flex: 1; }
+  .agent-row .right { display: flex; align-items: center; gap: 8px; flex: none; color: var(--faint); font-size: 11.5px; font-family: var(--mono); }
+
+  .tool-row { width: 100%; display: flex; align-items: center; gap: 7px; padding: 7px 10px; text-align: left; border-top: 1px solid var(--border-soft); }
+  .tool-row:first-of-type { border-top: 0; }
+  .tool-row:hover { background: var(--raised); }
+  .tool-row .tico { flex: none; color: var(--muted); }
+  .tool-row .tico.run { color: var(--driver); animation: pulse 1.4s ease-in-out infinite; }
+  .tool-row .tico.err { color: var(--danger); }
+  .tool-row .verb { color: var(--dim); font-size: 11.5px; font-weight: 600; flex: none; }
+  .tool-row .subj { color: var(--muted); font-family: var(--mono); font-size: 11px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; min-width: 0; }
+  .tool-row .dur { color: var(--faint); font-family: var(--mono); font-size: 10.5px; flex: none; }
+
+  .clamp { position: relative; color: var(--dim); font-size: 12.5px; line-height: 1.55; overflow: hidden; }
+  .clamp .fade { position: absolute; left: 0; right: 0; bottom: 0; height: 22px; background: linear-gradient(transparent, var(--bg-deep)); }
+  .clamp.lines-2 { max-height: 42px; }
+  .clamp.lines-3 { max-height: 62px; }
+  .clamp.lines-4 { max-height: 82px; }
+  .clamp pre { margin: 0; font-family: var(--mono); font-size: 11px; line-height: 1.5; white-space: pre-wrap; color: var(--dim); }
+  .showmore { margin-top: 6px; display: inline-flex; align-items: center; gap: 5px; color: var(--accent); font-size: 11.5px; }
+  .showmore:hover { text-decoration: underline; }
+
+  .block { padding: 12px 14px; border-top: 1px solid var(--border-soft); }
+  .block:first-child { border-top: 0; }
+  .block h4 {
+    margin: 0 0 8px; display: flex; align-items: center; gap: 7px;
+    color: var(--faint); font-size: 10.5px; font-weight: 650; letter-spacing: .07em; text-transform: uppercase;
+  }
+  .block h4 .n { color: var(--muted); font-family: var(--mono); letter-spacing: 0; }
+
+  .btn {
+    display: inline-flex; align-items: center; gap: 6px;
+    padding: 5px 10px; border: 1px solid var(--border); border-radius: var(--r-sm);
+    background: var(--raised); color: var(--dim); font-size: 11.5px;
+  }
+  .btn:hover { color: var(--text); border-color: #4a4e56; }
+  .btn.ghost { background: transparent; }
+  .actions { display: flex; gap: 6px; flex-wrap: wrap; }
+
+  /* ================= A — drill-in (chosen: detail IS the panel) ================= */
+  .pa-list .list-hint { padding: 10px 14px; color: var(--faint); font-size: 11.5px; }
+
+  .agent-row .nameline { display: flex; align-items: center; gap: 7px; min-width: 0; }
+  .agent-row .nameline .name { flex: 0 1 auto; }
+  .agent-row .nameline .chip { flex: none; }
+  .agent-row .rowmeta { display: block; margin-top: 3px; color: var(--faint); font-size: 11px; font-family: var(--mono); }
+  .agent-row .rowmeta b { color: var(--muted); font-weight: 600; }
+  .agent-row .chev { color: var(--faint); flex: none; }
+  .agent-row.is-open { background: #292c31; box-shadow: inset 3px 0 0 var(--driver); }
+  .agent-row.is-open .chev { color: var(--driver); }
+  .agent-row.is-open .chev svg { transform: rotate(90deg); }
+
+  .pa-detail .backrow {
+    position: sticky; top: 0; z-index: 4;
+    display: flex; align-items: center; gap: 10px;
+    padding: 8px 10px 8px 8px; background: var(--panel); border-bottom: 1px solid var(--border-soft);
+  }
+  .back { display: inline-flex; align-items: center; gap: 6px; color: var(--dim); font-size: 12px; padding: 4px 8px; border-radius: var(--r-sm); }
+  .back:hover { background: var(--raised); color: var(--text); }
+  .pa-detail .crumb { margin-left: auto; color: var(--faint); font-size: 11px; }
+
+  .agent-hero { padding: 14px 14px 13px; }
+  .agent-hero .top { display: flex; align-items: center; gap: 10px; }
+  .agent-badge {
+    width: 30px; height: 30px; border-radius: 8px; flex: none;
+    display: grid; place-items: center;
+    background: var(--driver-soft); color: var(--driver);
+  }
+  .agent-hero h3 { margin: 0; flex: 1; min-width: 0; font-size: 15px; font-weight: 650; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .agent-hero .chips { display: flex; align-items: center; gap: 6px; margin-top: 9px; flex-wrap: wrap; }
+  .agent-hero .state { display: inline-flex; align-items: center; gap: 7px; margin-left: 4px; color: var(--dim); font-size: 12px; }
+  .agent-hero .state.running { color: var(--driver); }
+  .agent-hero .state.error { color: var(--danger); }
+  .agent-hero .actions { display: flex; gap: 6px; margin-top: 12px; }
+
+  .section { padding: 12px 14px 14px; border-top: 1px solid var(--border-soft); }
+  .section h4 {
+    margin: 0 0 8px; display: flex; align-items: center; gap: 8px;
+    color: var(--faint); font-size: 10.5px; font-weight: 650; letter-spacing: .07em; text-transform: uppercase;
+  }
+  .section h4 .n { color: var(--muted); font-family: var(--mono); letter-spacing: 0; }
+  .section h4::after { content: ""; flex: 1; height: 1px; background: var(--border-soft); }
+  .pa-detail .clamp .fade { background: linear-gradient(transparent, var(--panel)); }
+  .more-note { padding: 7px 2px 0; color: var(--faint); font-size: 11px; }
+
+  /* ================= B — accordion ================= */
+  .acc-row { border-bottom: 1px solid var(--border-soft); }
+  .acc-head { width: 100%; display: flex; align-items: center; gap: 9px; text-align: left; padding: 11px 14px; }
+  .acc-head:hover { background: #24262b; }
+  .acc-row.open .acc-head { background: #26282d; }
+  .acc-body {
+    position: relative; margin: 0 10px 12px 24px; padding: 0 0 2px 12px;
+    border-left: 2px solid rgba(232,131,90,.45);
+  }
+  .acc-body .nested-label {
+    display: inline-flex; align-items: center; gap: 6px; margin: 2px 0 8px;
+    color: var(--driver); font-size: 10px; font-weight: 700; letter-spacing: .08em;
+  }
+  .acc-body .surface { border: 1px solid var(--border); border-radius: var(--r-md); background: var(--bg-deep); overflow: hidden; }
+  .acc-body .meta-strip {
+    display: flex; flex-wrap: wrap; gap: 6px; padding: 10px 12px; border-bottom: 1px solid var(--border-soft);
+  }
+  .metric { border: 1px solid var(--border-soft); background: #202227; border-radius: var(--r-sm); padding: 3px 8px; color: var(--muted); font-size: 11px; font-family: var(--mono); }
+  .metric b { color: var(--dim); font-weight: 600; }
+  .acc-foot { display: flex; gap: 6px; padding: 10px 12px; border-top: 1px solid var(--border-soft); }
+
+  /* ================= C — split ================= */
+  .panel-c { display: grid; grid-template-columns: 196px 1fr; }
+  body:not([data-variant="c"]) .panel-c { display: none; }
+  .pc-list { border-right: 1px solid var(--border-soft); overflow-y: auto; background: #1c1d21; }
+  .pc-list .pc-head { padding: 10px 12px; color: var(--faint); font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; border-bottom: 1px solid var(--border-soft); position: sticky; top: 0; background: #1c1d21; }
+  .pc-item { width: 100%; text-align: left; padding: 10px 12px; display: flex; gap: 8px; border-bottom: 1px solid #232529; }
+  .pc-item:hover { background: #23252a; }
+  .pc-item.selected { background: #282b31; box-shadow: inset 3px 0 0 var(--driver); }
+  .pc-item .nm { font-size: 12px; font-weight: 600; line-height: 1.35; }
+  .pc-item .sb { margin-top: 3px; color: var(--faint); font-size: 10.5px; font-family: var(--mono); }
+  .pc-detail { display: flex; flex-direction: column; min-width: 0; }
+  .pc-detail-head { padding: 11px 14px; border-bottom: 1px solid var(--border-soft); background: var(--panel); position: sticky; top: 0; z-index: 3; }
+  .pc-detail-head .kicker { color: var(--driver); font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+  .pc-detail-head h3 { margin: 4px 0 0; font-size: 14px; }
+  .pc-detail-head .sub { margin-top: 3px; color: var(--muted); font-size: 11.5px; font-family: var(--mono); }
+  .segments { display: flex; gap: 2px; padding: 8px 10px; border-bottom: 1px solid var(--border-soft); background: var(--panel); }
+  .seg { flex: 1; padding: 6px 8px; border-radius: var(--r-sm); color: var(--muted); font-size: 11.5px; text-align: center; }
+  .seg:hover { background: #26282d; color: var(--dim); }
+  .seg.active { background: var(--raised); color: var(--text); box-shadow: inset 0 -2px 0 var(--driver); }
+  .pc-body { flex: 1; overflow-y: auto; }
+  .kv { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 6px; padding: 12px 14px 4px; }
+  .kv .cell { border: 1px solid var(--border-soft); border-radius: var(--r-sm); background: #202227; padding: 7px 9px; }
+  .kv .k { color: var(--faint); font-size: 10px; letter-spacing: .05em; text-transform: uppercase; }
+  .kv .v { margin-top: 3px; color: var(--dim); font-size: 12px; font-family: var(--mono); }
+
+  /* notes */
+  .notes { width: min(1240px, 100%); margin: 0 auto; display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 12px; }
+  .note { border: 1px solid var(--border-soft); border-radius: var(--r-lg); background: #1b1c20; padding: 14px; }
+  .note h5 { margin: 0 0 6px; font-size: 12.5px; }
+  .note p { margin: 0 0 8px; color: var(--muted); font-size: 12px; line-height: 1.5; }
+  .note ul { margin: 0; padding-left: 16px; color: var(--muted); font-size: 11.5px; line-height: 1.6; }
+  .note li b { color: var(--dim); font-weight: 600; }
+  .note.active { border-color: #4a4e56; }
+  .note .tag { display: inline-block; margin-bottom: 8px; padding: 2px 8px; border-radius: 999px; background: var(--driver-soft); color: #f0b28f; font-size: 10px; font-weight: 700; letter-spacing: .06em; }
+  .footer-note { width: min(1240px, 100%); margin: 0 auto 24px; color: var(--faint); font-size: 11.5px; line-height: 1.6; }
+  .footer-note b { color: var(--muted); }
+</style>
+</head>
+<body data-variant="a">
+  <header class="mockbar">
+    <div class="mock-title"><b>Subagents panel</b><span class="sub">redesign options · click rows, tabs and “show full” controls</span></div>
+    <nav class="variants">
+      <button data-variant="a" class="active">A · Drill-in detail</button>
+      <button data-variant="b">B · Accordion stack</button>
+      <button data-variant="c">C · Split list + detail</button>
+    </nav>
+    <div class="density"><input type="checkbox" id="density" /><label for="density">Compact</label></div>
+  </header>
+
+  <main class="stage">
+    <section class="window">
+      <div class="win-bar">
+        <span class="dots"><i></i><i></i><i></i></span>
+        <span class="win-crumb"><b>nuria-hub</b> / Review PR #15 · subagent audit</span>
+        <span class="win-driver">claude</span>
+      </div>
+      <div class="win-body">
+
+        <!-- ============ thread context ============ -->
+        <aside class="thread">
+          <div class="thread-head">
+            <div class="avatar agent">C</div>
+            <div>
+              <h1>Review PR #15 · subagent audit</h1>
+              <div class="meta">Working · Sonnet 5 · 24.1k / 200k tokens</div>
+            </div>
+          </div>
+          <div class="thread-scroll">
+            <div class="msg">
+              <div class="who"><span class="avatar">AL</span> You · 12:41</div>
+              Review PR #15 and #14 with two background agents, then fix the PACKAGE-FORMAT doc drift.
+            </div>
+            <div class="msg">
+              <div class="who"><span class="avatar agent">C</span> Claude · 12:42</div>
+              I launched both reviews in the background and will fix the doc drift while they run.
+            </div>
+            <div class="subagent-card" title="Opens the Subagents panel">
+              <span class="sc-icon">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="4" y="8" width="16" height="12" rx="3"/><path d="M12 8V4M9 4h6"/><circle cx="9" cy="14" r="1"/><circle cx="15" cy="14" r="1"/></svg>
+              </span>
+              <span class="sc-title">Ran 3 subagents</span>
+              <span class="sc-meta">high effort · 45 tools · 239K tokens</span>
+              <span class="sc-view">View</span>
+            </div>
+            <div class="hidden-tool">Read apps/desktop/src/main/providers/claude/claudeHistory.ts</div>
+            <div class="hidden-tool">Grep "task-notification" in providers/claude</div>
+            <div class="thread-note">
+              <b>Fixed in this redesign:</b> these two rows are a subagent’s own tool calls. They no longer render in the
+              main thread — they live inside the subagent that ran them, in the panel on the right.
+            </div>
+            <div class="msg">
+              <div class="who"><span class="avatar agent">C</span> Claude · now</div>
+              The background reviews are done. Both reports are in the Subagents panel; I’m applying the doc fixes next.
+            </div>
+          </div>
+        </aside>
+
+        <!-- ============ right pane ============ -->
+        <aside class="pane">
+          <div class="tabbar">
+            <span class="tab" title="Files"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v8a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/></svg></span>
+            <span class="tab active" title="Subagents"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="4" y="8" width="16" height="12" rx="3"/><path d="M12 8V4M9 4h6"/><circle cx="9" cy="14" r="1"/><circle cx="15" cy="14" r="1"/></svg></span>
+            <span class="tab" title="Git diff"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><circle cx="6" cy="6" r="2"/><circle cx="6" cy="18" r="2"/><path d="M6 8v8M18 8a4 4 0 0 1-4 4H9"/><circle cx="18" cy="6" r="2"/></svg></span>
+            <span class="tab" title="Terminal"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M5 7l5 5-5 5M13 17h6"/></svg></span>
+            <span class="spacer"></span>
+            <span class="tab" title="Minimize"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 12h16"/></svg></span>
+          </div>
+
+          <div class="panels">
+
+            <!-- ==================== A ==================== -->
+            <div class="panel panel-a">
+              <!-- list state -->
+              <div class="pa-list" id="pa-list">
+                <div class="panel-head">
+                  <h2>Subagents</h2>
+                  <span class="count">3 total</span>
+                  <span class="running-pill"><span class="pulse"></span>1 running</span>
+                </div>
+                <button class="agent-row is-open" data-goto="pa-detail">
+                  <span class="status-dot completed"></span>
+                  <span class="grow">
+                    <span class="nameline">
+                      <span class="name">Review PR #15 PackageKit diff</span>
+                      <span class="chip">general-purpose</span>
+                    </span>
+                    <span class="excerpt">Crypto, docs and packaging wiring verified; 7 findings.</span>
+                    <span class="rowmeta"><b>Sonnet 5</b> · high effort · 136k tok · 12 tools</span>
+                  </span>
+                  <span class="right">4m 47s</span>
+                  <span class="chev"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 6l6 6-6 6"/></svg></span>
+                </button>
+                <button class="agent-row" data-goto="pa-detail">
+                  <span class="status-dot completed"></span>
+                  <span class="grow">
+                    <span class="nameline">
+                      <span class="name">Review PR #14 skill descriptions</span>
+                      <span class="chip">general-purpose</span>
+                    </span>
+                    <span class="excerpt">Approve with nits; 3 trigger phrases dropped.</span>
+                    <span class="rowmeta"><b>Sonnet 5</b> · high effort · 103k tok · 33 tools</span>
+                  </span>
+                  <span class="right">5m 24s</span>
+                  <span class="chev"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 6l6 6-6 6"/></svg></span>
+                </button>
+                <button class="agent-row" data-goto="pa-detail">
+                  <span class="status-dot running"></span>
+                  <span class="grow">
+                    <span class="nameline">
+                      <span class="name">Trace session routing</span>
+                      <span class="chip">Explore</span>
+                    </span>
+                    <span class="excerpt">Following resolveSession through main and preload.</span>
+                    <span class="rowmeta"><b>Haiku 4.5</b> · low effort · 8 tools so far</span>
+                  </span>
+                  <span class="right">1m 12s</span>
+                  <span class="chev"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 6l6 6-6 6"/></svg></span>
+                </button>
+                <div class="list-hint">Selecting an agent replaces the list — one agent on screen at a time.</div>
+              </div>
+
+              <!-- detail state -->
+              <div class="pa-detail" id="pa-detail" hidden>
+                <div class="backrow">
+                  <button class="back" data-goto="pa-list">
+                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M15 6l-6 6 6 6"/></svg>
+                    All subagents
+                  </button>
+                  <span class="crumb">Agent 1 of 3 · completed 12:47</span>
+                </div>
+                <div class="agent-hero">
+                  <div class="top">
+                    <span class="agent-badge">
+                      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="4" y="8" width="16" height="12" rx="3"/><path d="M12 8V4M9 4h6"/><circle cx="9" cy="14" r="1"/><circle cx="15" cy="14" r="1"/></svg>
+                    </span>
+                    <h3>Review PR #15 PackageKit diff</h3>
+                  </div>
+                  <div class="chips">
+                    <span class="chip">general-purpose</span>
+                    <span class="chip model">Sonnet 5</span>
+                    <span class="chip">high effort</span>
+                    <span class="chip">136,099 tok</span>
+                    <span class="chip">12 tools</span>
+                    <span class="state"><span class="status-dot completed"></span>completed · 4m 47s</span>
+                  </div>
+                  <div class="actions">
+                    <button class="btn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>Copy prompt</button>
+                    <button class="btn ghost"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><path d="M4 12h16M12 4v16"/></svg>Show in thread</button>
+                  </div>
+                </div>
+
+                  <div class="section">
+                    <h4>Prompt</h4>
+                    <div class="clamp lines-3" data-clamp="3">
+                      Review the PR #15 diff for PackageKit: verify the crypto against the head-branch source, check the
+                      doc claims, inspect the csproj/sln wiring and the S3 split, then report findings with file:line
+                      references and a merge verdict.
+                      <span class="fade"></span>
+                    </div>
+                    <button class="showmore" data-expand>Show full prompt</button>
+                  </div>
+
+                  <div class="section">
+                    <h4>Result</h4>
+                    <div class="clamp lines-4" data-clamp="4">
+                      Approve with nits. Encrypt-then-MAC, verify-before-decrypt and constant-time comparisons are all
+                      correct. Important: PACKAGE-FORMAT.md:49 contradicts the implemented signature policy, and
+                      Nuria.DevKit.targets:21 never copies the .nur.sha256 sidecar.
+                      <span class="fade"></span>
+                    </div>
+                    <button class="showmore" data-expand>Show full result</button>
+                  </div>
+
+                  <div class="section">
+                    <h4>Tool calls <span class="n">12</span></h4>
+                    <button class="tool-row"><span class="tico ok"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 12s3.6-5.5 9.5-5.5S21.5 12 21.5 12s-3.6 5.5-9.5 5.5S2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.4"/></svg></span><span class="verb">Read</span><span class="subj">dotnet-kit/PACKAGE-FORMAT.md</span><span class="dur">0.3s</span></button>
+                    <button class="tool-row"><span class="tico ok"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 12s3.6-5.5 9.5-5.5S21.5 12 21.5 12s-3.6 5.5-9.5 5.5S2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.4"/></svg></span><span class="verb">Read</span><span class="subj">dotnet-kit/PackageKit/PackageUtil.cs</span><span class="dur">0.4s</span></button>
+                    <button class="tool-row"><span class="tico ok"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.2-4.2"/></svg></span><span class="verb">Grep</span><span class="subj">"VerifyMac|DecryptContent" in PackageKit</span><span class="dur">0.2s</span></button>
+                    <button class="tool-row"><span class="tico ok"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 10l2.5 2L7 14M12.5 14h4.5"/></svg></span><span class="verb">Bash</span><span class="subj">git diff --stat origin/master...HEAD</span><span class="dur">0.6s</span></button>
+                    <button class="tool-row"><span class="tico ok"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 12s3.6-5.5 9.5-5.5S21.5 12 21.5 12s-3.6 5.5-9.5 5.5S2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.4"/></svg></span><span class="verb">Read</span><span class="subj">dotnet-kit/PackageKit/PackageTrust.cs</span><span class="dur">0.3s</span></button>
+                    <button class="tool-row"><span class="tico ok"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 10l2.5 2L7 14M12.5 14h4.5"/></svg></span><span class="verb">Bash</span><span class="subj">dotnet test PackageKit.Tests</span><span class="dur">11.8s</span></button>
+                    <div class="more-note">6 more tool calls — scroll the agent, not the thread</div>
+                  </div>
+
+                  <div class="section">
+                    <h4>Messages <span class="n">2</span></h4>
+                    <button class="tool-row"><span class="tico ok"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 10l2.5 2L7 14M12.5 14h4.5"/></svg></span><span class="verb">SendMessage</span><span class="subj">to a36e7282 → "recheck the sha256 wiring"</span><span class="dur">0.9s</span></button>
+                    <button class="tool-row"><span class="tico ok"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 10l2.5 2L7 14M12.5 14h4.5"/></svg></span><span class="verb">SendMessage</span><span class="subj">to a36e7282 → "confirm no .nur in buckets"</span><span class="dur">1.2s</span></button>
+                  </div>
+              </div>
+            </div>
+
+            <!-- ==================== B ==================== -->
+            <div class="panel panel-b">
+              <div class="panel-head">
+                <h2>Subagents</h2>
+                <span class="count">3 total</span>
+                <span class="running-pill"><span class="pulse"></span>1 running</span>
+              </div>
+
+              <div class="acc-row open">
+                <button class="acc-head" data-acc>
+                  <span class="status-dot completed"></span>
+                  <span class="grow">
+                    <span class="name">Review PR #15 PackageKit diff</span>
+                    <span class="excerpt">Approve with nits; PACKAGE-FORMAT.md drifts from the code.</span>
+                  </span>
+                  <span class="right">4m 47s · 136k · 12 tools</span>
+                  <span style="color:var(--faint);transform:rotate(90deg)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 6l6 6-6 6"/></svg></span>
+                </button>
+                <div class="acc-body">
+                  <span class="nested-label">
+                    <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M7 7h7v7"/><path d="M14 7l-9 9"/></svg>
+                    SUBAGENT DETAIL · general-purpose
+                  </span>
+                  <div class="surface">
+                    <div class="meta-strip">
+                      <span class="metric"><b>Sonnet 5</b></span>
+                      <span class="metric">effort <b>high</b></span>
+                      <span class="metric"><b>136k</b> tokens</span>
+                      <span class="metric"><b>12</b> tools</span>
+                      <span class="metric">started <b>12:42</b></span>
+                    </div>
+                    <div class="block">
+                      <h4>Prompt</h4>
+                      <div class="clamp lines-2" data-clamp="2">Review the PR #15 diff for PackageKit: crypto, doc claims, csproj wiring and the S3 split — report findings with file:line references.<span class="fade"></span></div>
+                      <button class="showmore" data-expand>Show full prompt</button>
+                    </div>
+                    <div class="block">
+                      <h4>Result</h4>
+                      <div class="clamp lines-2" data-clamp="2">Approve with nits. Crypto is correct and defensively layered; the doc drift and the sha256 sidecar are the only merge blockers.<span class="fade"></span></div>
+                      <button class="showmore" data-expand>Show full result</button>
+                    </div>
+                    <div class="block" style="padding:0">
+                      <h4 style="padding:12px 14px 8px">Tool calls <span class="n">12</span></h4>
+                      <button class="tool-row"><span class="tico ok"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 12s3.6-5.5 9.5-5.5S21.5 12 21.5 12s-3.6 5.5-9.5 5.5S2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.4"/></svg></span><span class="verb">Read</span><span class="subj">dotnet-kit/PackageKit/PackageUtil.cs</span><span class="dur">0.4s</span></button>
+                      <button class="tool-row"><span class="tico ok"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.2-4.2"/></svg></span><span class="verb">Grep</span><span class="subj">"VerifyMac" in PackageKit</span><span class="dur">0.2s</span></button>
+                      <button class="tool-row"><span class="tico ok"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 10l2.5 2L7 14M12.5 14h4.5"/></svg></span><span class="verb">Bash</span><span class="subj">dotnet test PackageKit.Tests</span><span class="dur">11.8s</span></button>
+                      <button class="tool-row"><span class="tico ok"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 12s3.6-5.5 9.5-5.5S21.5 12 21.5 12s-3.6 5.5-9.5 5.5S2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.4"/></svg></span><span class="verb">Read</span><span class="subj">Nuria.DevKit.targets</span><span class="dur">0.3s</span></button>
+                    </div>
+                    <div class="acc-foot">
+                      <button class="btn"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"><rect x="9" y="9" width="11" height="11" rx="2"/><path d="M5 15V5a2 2 0 0 1 2-2h10"/></svg>Copy prompt</button>
+                      <button class="btn ghost">Show 8 more tools</button>
+                      <button class="btn ghost">Show in thread</button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="acc-row">
+                <button class="acc-head" data-acc>
+                  <span class="status-dot completed"></span>
+                  <span class="grow">
+                    <span class="name">Review PR #14 skill descriptions</span>
+                    <span class="excerpt">Approve with nits; 3 trigger phrases dropped needlessly.</span>
+                  </span>
+                  <span class="right">5m 24s · 103k · 33 tools</span>
+                  <span style="color:var(--faint)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 6l6 6-6 6"/></svg></span>
+                </button>
+                <div class="acc-body" hidden>
+                  <span class="nested-label">SUBAGENT DETAIL · general-purpose</span>
+                  <div class="surface">
+                    <div class="block">
+                      <h4>Prompt</h4>
+                      <div class="clamp lines-2" data-clamp="2">Validate the 7 skill description rewrites, the YAML safety claims, the line wrapping and the version bump in PR #14.<span class="fade"></span></div>
+                      <button class="showmore" data-expand>Show full prompt</button>
+                    </div>
+                    <div class="block" style="padding:0">
+                      <h4 style="padding:12px 14px 8px">Tool calls <span class="n">33</span></h4>
+                      <button class="tool-row"><span class="tico ok"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.2-4.2"/></svg></span><span class="verb">Grep</span><span class="subj">"description:" in skills/*/SKILL.md</span><span class="dur">0.3s</span></button>
+                      <button class="tool-row"><span class="tico ok"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 12s3.6-5.5 9.5-5.5S21.5 12 21.5 12s-3.6 5.5-9.5 5.5S2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.4"/></svg></span><span class="verb">Read</span><span class="subj">yaml-safety-check list</span><span class="dur">0.5s</span></button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <div class="acc-row">
+                <button class="acc-head" data-acc>
+                  <span class="status-dot running"></span>
+                  <span class="grow">
+                    <span class="name">Trace session routing</span>
+                    <span class="excerpt">Running · Grep "createTerminal|resolveSession"</span>
+                  </span>
+                  <span class="right">1m 12s · 8 tools</span>
+                  <span style="color:var(--faint)"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M9 6l6 6-6 6"/></svg></span>
+                </button>
+                <div class="acc-body" hidden>
+                  <span class="nested-label">SUBAGENT DETAIL · Explore</span>
+                  <div class="surface">
+                    <div class="block" style="padding:0">
+                      <h4 style="padding:12px 14px 8px">Tool calls <span class="n">8 so far</span></h4>
+                      <button class="tool-row"><span class="tico run"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.2-4.2"/></svg></span><span class="verb">Grep</span><span class="subj">"createTerminal|resolveSession"</span><span class="dur">running</span></button>
+                      <button class="tool-row"><span class="tico ok"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 12s3.6-5.5 9.5-5.5S21.5 12 21.5 12s-3.6 5.5-9.5 5.5S2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.4"/></svg></span><span class="verb">Read</span><span class="subj">src/main/terminal.ts</span><span class="dur">0.3s</span></button>
+                    </div>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+            <!-- ==================== C ==================== -->
+            <div class="panel panel-c">
+              <div class="pc-list">
+                <div class="pc-head">3 subagents · 1 running</div>
+                <button class="pc-item selected">
+                  <span class="status-dot completed" style="margin-top:3px"></span>
+                  <span>
+                    <span class="nm">Review PR #15 PackageKit diff</span>
+                    <span class="sb">4m 47s · 136k · 12 tools</span>
+                  </span>
+                </button>
+                <button class="pc-item">
+                  <span class="status-dot completed" style="margin-top:3px"></span>
+                  <span>
+                    <span class="nm">Review PR #14 skill descriptions</span>
+                    <span class="sb">5m 24s · 103k · 33 tools</span>
+                  </span>
+                </button>
+                <button class="pc-item">
+                  <span class="status-dot running" style="margin-top:3px"></span>
+                  <span>
+                    <span class="nm">Trace session routing</span>
+                    <span class="sb">1m 12s · running</span>
+                  </span>
+                </button>
+              </div>
+              <div class="pc-detail">
+                <div class="pc-detail-head">
+                  <div class="kicker">Selected subagent</div>
+                  <h3>Review PR #15 PackageKit diff</h3>
+                  <div class="sub">general-purpose · Sonnet 5 · high effort · completed in 4m 47s</div>
+                </div>
+                <div class="segments">
+                  <button class="seg active" data-seg="overview">Overview</button>
+                  <button class="seg" data-seg="tools">Tools 12</button>
+                  <button class="seg" data-seg="messages">Messages 2</button>
+                </div>
+                <div class="pc-body">
+                  <div data-segbody="overview">
+                    <div class="kv">
+                      <div class="cell"><div class="k">Status</div><div class="v" style="color:var(--success)">completed</div></div>
+                      <div class="cell"><div class="k">Duration</div><div class="v">4m 47s</div></div>
+                      <div class="cell"><div class="k">Tokens</div><div class="v">136,099</div></div>
+                      <div class="cell"><div class="k">Tool calls</div><div class="v">12</div></div>
+                    </div>
+                    <div class="block">
+                      <h4>Prompt</h4>
+                      <div class="clamp lines-3" data-clamp="3">Review the PR #15 diff for PackageKit: verify the crypto against the head-branch source, check the doc claims, inspect the csproj/sln wiring and the S3 split, then report findings with file:line references.<span class="fade"></span></div>
+                      <button class="showmore" data-expand>Show full prompt</button>
+                    </div>
+                    <div class="block">
+                      <h4>Result</h4>
+                      <div class="clamp lines-3" data-clamp="3">Approve with nits: crypto correct, docs drift in PACKAGE-FORMAT.md, sha256 sidecar never copied by the targets file.<span class="fade"></span></div>
+                      <button class="showmore" data-expand>Show full result</button>
+                    </div>
+                    <div class="block actions">
+                      <button class="btn">Copy prompt</button>
+                      <button class="btn ghost">Show in thread</button>
+                    </div>
+                  </div>
+                  <div data-segbody="tools" hidden>
+                    <button class="tool-row"><span class="tico ok"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 12s3.6-5.5 9.5-5.5S21.5 12 21.5 12s-3.6 5.5-9.5 5.5S2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.4"/></svg></span><span class="verb">Read</span><span class="subj">PackageUtil.cs</span><span class="dur">0.4s</span></button>
+                    <button class="tool-row"><span class="tico ok"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="6"/><path d="M20 20l-4.2-4.2"/></svg></span><span class="verb">Grep</span><span class="subj">"VerifyMac" in PackageKit</span><span class="dur">0.2s</span></button>
+                    <button class="tool-row"><span class="tico ok"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 10l2.5 2L7 14M12.5 14h4.5"/></svg></span><span class="verb">Bash</span><span class="subj">dotnet test PackageKit.Tests</span><span class="dur">11.8s</span></button>
+                    <button class="tool-row"><span class="tico ok"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 12s3.6-5.5 9.5-5.5S21.5 12 21.5 12s-3.6 5.5-9.5 5.5S2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.4"/></svg></span><span class="verb">Read</span><span class="subj">PackageTrust.cs</span><span class="dur">0.3s</span></button>
+                    <button class="tool-row"><span class="tico ok"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><path d="M2.5 12s3.6-5.5 9.5-5.5S21.5 12 21.5 12s-3.6 5.5-9.5 5.5S2.5 12 2.5 12z"/><circle cx="12" cy="12" r="2.4"/></svg></span><span class="verb">Read</span><span class="subj">Nuria.DevKit.targets</span><span class="dur">0.3s</span></button>
+                    <button class="tool-row"><span class="tico ok"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 10l2.5 2L7 14M12.5 14h4.5"/></svg></span><span class="verb">Bash</span><span class="subj">git diff --stat origin/master...HEAD</span><span class="dur">0.6s</span></button>
+                  </div>
+                  <div data-segbody="messages" hidden>
+                    <button class="tool-row"><span class="tico ok"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 10l2.5 2L7 14M12.5 14h4.5"/></svg></span><span class="verb">SendMessage</span><span class="subj">"recheck the sha256 wiring"</span><span class="dur">0.9s</span></button>
+                    <button class="tool-row"><span class="tico ok"><svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.9" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="5" width="18" height="14" rx="2"/><path d="M7 10l2.5 2L7 14M12.5 14h4.5"/></svg></span><span class="verb">SendMessage</span><span class="subj">"confirm no .nur in buckets"</span><span class="dur">1.2s</span></button>
+                  </div>
+                </div>
+              </div>
+            </div>
+
+          </div>
+        </aside>
+      </div>
+    </section>
+
+    <section class="notes">
+      <div class="note active" data-note="a">
+        <span class="tag">CHOSEN · A</span>
+        <h5>Drill-in, flat panel</h5>
+        <p>The list replaces itself with the agent. The detail is the panel itself: no nested card, no box-in-box — one header row, hairline sections, and the agent's own content on the pane background.</p>
+        <ul>
+          <li><b>Roster shows model + effort</b> (and tokens/tools) on every row, so agents are identifiable before opening.</li>
+          <li><b>Preview first:</b> prompt/result clamp to 3–4 lines with “Show full”.</li>
+          <li><b>Borders only where they separate:</b> section hairlines and tool rows; nothing wraps the agent.</li>
+        </ul>
+      </div>
+      <div class="note" data-note="b">
+        <span class="tag">OPTION B</span>
+        <h5>Accordion stack</h5>
+        <p>One list; expanding a row reveals the detail nested underneath it, indented on a connector rail with a “SUBAGENT DETAIL” label.</p>
+        <ul>
+          <li><b>Best continuity:</b> previous agents stay visible while reading one.</li>
+          <li><b>No navigation:</b> everything happens in place.</li>
+          <li><b>Tradeoff:</b> a long agent makes the column tall; tools collapse behind “Show N more”.</li>
+        </ul>
+      </div>
+      <div class="note" data-note="c">
+        <span class="tag">OPTION C</span>
+        <h5>Split list + detail</h5>
+        <p>A slim agent column on the left, detail on the right with Overview / Tools / Messages segments and a metrics grid.</p>
+        <ul>
+          <li><b>Fastest switching:</b> selection is always visible, good for 10+ agents.</li>
+          <li><b>Most like the rest of the app:</b> reuses the pane’s tab/segment language.</li>
+          <li><b>Tradeoff:</b> the narrowest text column (≈340px).</li>
+        </ul>
+      </div>
+    </section>
+
+    <div class="footer-note">
+      Shared across all three: <b>running/completed/error come from structured stream events</b> (<span style="font-family:var(--mono)">system/task_started·task_updated·task_notification</span>), not from the launch text, so a finished Claude Code agent never stays “running”;
+      <b>subagent tool calls render inside the agent</b> and are removed from the main thread;
+      prompt and result are always preview-first with an explicit expand control; the thread card stays a one-line entry point.
+    </div>
+  </main>
+
+  <script>
+    const body = document.body;
+    const notes = [...document.querySelectorAll(".note")];
+    document.querySelectorAll("[data-variant]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const v = btn.dataset.variant;
+        body.dataset.variant = v;
+        document.querySelectorAll("[data-variant]").forEach((b) => b.classList.toggle("active", b === btn));
+        notes.forEach((n) => n.classList.toggle("active", n.dataset.note === v));
+      });
+    });
+
+    document.getElementById("density").addEventListener("change", (e) => {
+      body.classList.toggle("compact", e.target.checked);
+    });
+
+    document.querySelectorAll("[data-goto]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const target = document.getElementById(btn.dataset.goto);
+        document.getElementById("pa-list").hidden = target.id !== "pa-list";
+        document.getElementById("pa-detail").hidden = target.id !== "pa-detail";
+      });
+    });
+
+    document.querySelectorAll("[data-acc]").forEach((head) => {
+      head.addEventListener("click", () => {
+        const row = head.closest(".acc-row");
+        row.classList.toggle("open");
+        const panel = row.querySelector(".acc-body");
+        panel.hidden = !row.classList.contains("open");
+      });
+    });
+
+    document.querySelectorAll(".seg").forEach((seg) => {
+      seg.addEventListener("click", () => {
+        seg.parentElement.querySelectorAll(".seg").forEach((s) => s.classList.toggle("active", s === seg));
+        seg.closest(".pc-detail").querySelectorAll("[data-segbody]").forEach((el) => {
+          el.hidden = el.dataset.segbody !== seg.dataset.seg;
+        });
+      });
+    });
+
+    document.querySelectorAll("[data-expand]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const clamp = btn.previousElementSibling;
+        const open = clamp.dataset.open === "1";
+        clamp.dataset.open = open ? "0" : "1";
+        clamp.classList.toggle("lines-2", open && clamp.dataset.clamp === "2");
+        clamp.classList.toggle("lines-3", open && clamp.dataset.clamp === "3");
+        clamp.classList.toggle("lines-4", open && clamp.dataset.clamp === "4");
+        const fade = clamp.querySelector(".fade");
+        if (fade) fade.style.display = open ? "" : "none";
+        if (!btn.dataset.orig) btn.dataset.orig = btn.textContent;
+        btn.textContent = open ? btn.dataset.orig : "Collapse";
+      });
+    });
+
+    document.querySelectorAll(".tool-row").forEach((row) => {
+      row.addEventListener("click", (e) => {
+        e.stopPropagation();
+      });
+    });
+  </script>
+</body>
+</html>

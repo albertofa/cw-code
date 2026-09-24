@@ -2,14 +2,22 @@ appId: com.cwcode.app
 productName: cw-code
 directories:
   output: dist
+  buildResources: resources
 npmRebuild: false
 files:
   - "out/**"
   - "package.json"
+extraResources:
+  - from: resources
+    to: branding
 win:
+  icon: resources/icon.ico
   target:
     - NSIS
     - dir
 nsis:
+  installerIcon: resources/icon.ico
+  uninstallerIcon: resources/icon.ico
+  installerHeaderIcon: resources/icon.ico
   oneClick: false
   allowToChangeInstallationDirectory: true
