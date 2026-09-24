@@ -34,6 +34,7 @@ export interface AppSettings {
   prAttributionEnabled: boolean;
   prAttributionText: string;
   prWorkflows: PrWorkflow[];
+  opencodeGoUsage: boolean;
 }
 
 export type SettingsPatch = Partial<AppSettings>;

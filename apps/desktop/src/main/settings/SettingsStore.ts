@@ -92,7 +92,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   prCloneRoot: "~/.cw-code/repos",
   prAttributionEnabled: true,
   prAttributionText: "— drafted with {{harness}} in cw-code",
-  prWorkflows: defaultPrWorkflows()
+  prWorkflows: defaultPrWorkflows(),
+  opencodeGoUsage: false
 };
 
 function sanitize(patch: SettingsPatch): SettingsPatch {
@@ -144,6 +145,7 @@ function sanitize(patch: SettingsPatch): SettingsPatch {
     out.holdingHours = Number.isFinite(value) ? Math.min(168, Math.max(0, value)) : 6;
   }
   if (patch.autoTitleEnabled !== undefined) out.autoTitleEnabled = patch.autoTitleEnabled === true;
+  if (patch.opencodeGoUsage !== undefined) out.opencodeGoUsage = patch.opencodeGoUsage === true;
   if (patch.autoTitleDriver !== undefined) {
     out.autoTitleDriver =
       patch.autoTitleDriver === "claude" || patch.autoTitleDriver === "opencode" || patch.autoTitleDriver === "codex"
