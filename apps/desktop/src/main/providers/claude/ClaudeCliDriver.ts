@@ -2,7 +2,6 @@ import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from "n
 import { createInterface } from "node:readline";
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { homedir } from "node:os";
 import { dirname, join, normalize } from "node:path";
 import type {
   AccountUsageState,
@@ -25,7 +24,7 @@ import { CLAUDE_SHELL_TASK_TYPE, attributeClaudeSubagentEvent, buildClaudeAllowR
 import { CLAUDE_COMMANDS_PROBE_ARGS, listClaudeCommands, probeClaudeCommands, recordClaudeTerminalCommands } from "./claudeCommands.js";
 import { CLAUDE_ACCOUNT_USAGE_PROBE_ARGS, probeClaudeAccountUsage } from "./claudeAccountUsage.js";
 import { describeClaudeExit } from "./claudeExit.js";
-import { claudeProjectSlug, listClaudeSessions } from "./claudeSessions.js";
+import { claudeTranscriptProjectDir, listClaudeSessions } from "./claudeSessions.js";
 import { readClaudeHistory, readSidecarAgent, readClaudeTaskResult, findSidecarModel, type SidecarAgent } from "./claudeHistory.js";
 import { buildClaudeUserContent } from "./claudeUserContent.js";
 import { previewText, traceHarnessCall, truncateError } from "../../debug/harnessTrace.js";
@@ -460,7 +459,7 @@ export class ClaudeCliDriver implements CliDriver {
 
   private subagentModel(state: ClaudeProcessState, agentId: string): string | undefined {
     if (!state.resumeCursor) return undefined;
-    const transcriptDir = join(homedir(), ".claude", "projects", claudeProjectSlug(state.cwd), state.resumeCursor);
+    const transcriptDir = join(claudeTranscriptProjectDir(state.cwd, state.resumeCursor), state.resumeCursor);
     return findSidecarModel(transcriptDir, agentId) ?? findSidecarModel(dirname(transcriptDir), agentId);
   }
 
@@ -664,7 +663,7 @@ export class ClaudeCliDriver implements CliDriver {
 
   async getSubagentTools(projectRoot: string, resumeCursor: string, agentId: string): Promise<SubagentToolsResult> {
     if (!resumeCursor || !agentId) return { items: [] };
-    const transcriptDir = join(homedir(), ".claude", "projects", claudeProjectSlug(projectRoot), resumeCursor);
+    const transcriptDir = join(claudeTranscriptProjectDir(projectRoot, resumeCursor), resumeCursor);
     const agent = readSidecarAgent(transcriptDir, agentId) ?? readSidecarAgent(dirname(transcriptDir), agentId);
     return subagentToolsResult(agent);
   }

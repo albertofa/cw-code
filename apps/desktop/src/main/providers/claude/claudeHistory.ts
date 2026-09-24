@@ -1,11 +1,10 @@
 import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { HistoryMessage } from "@cw-code/contracts";
 import { todosFromToolCall } from "../todos.js";
 import { claudeCommandText } from "./claudeCommands.js";
 import { parseClaudeTaskNotification, parseTaskNotificationUsage } from "./claudeStreamParser.js";
-import { claudeProjectSlug } from "./claudeSessions.js";
+import { claudeTranscriptProjectDir } from "./claudeSessions.js";
 
 type ContentBlock =
   | { type: "text"; text?: string }
@@ -301,7 +300,7 @@ export function assignReasoningDurations(
 }
 
 export function readClaudeHistory(rootPath: string, resumeCursor: string, limit = 300): HistoryMessage[] {
-  const file = join(homedir(), ".claude", "projects", claudeProjectSlug(rootPath), `${resumeCursor}.jsonl`);
+  const file = join(claudeTranscriptProjectDir(rootPath, resumeCursor), `${resumeCursor}.jsonl`);
   let raw: string;
   try {
     raw = readFileSync(file, "utf8");
@@ -383,7 +382,7 @@ export function readClaudeTaskResult(
   toolUseId: string
 ): { result?: string; status?: string } | undefined {
   if (!resumeCursor || !toolUseId || !/^[\w-]+$/.test(resumeCursor)) return undefined;
-  const file = join(homedir(), ".claude", "projects", claudeProjectSlug(rootPath), `${resumeCursor}.jsonl`);
+  const file = join(claudeTranscriptProjectDir(rootPath, resumeCursor), `${resumeCursor}.jsonl`);
   let raw: string;
   try {
     raw = readFileSync(file, "utf8");
