@@ -21,7 +21,7 @@ import type {
 } from "@cw-code/contracts";
 import { parseExtraArgs } from "../../settings/settingsUtils.js";
 import { killProcessTree } from "../../processTree.js";
-import { attributeClaudeSubagentEvent, buildClaudeAllowRule, claudeAllowResponse, claudeApprovalRequest, claudeQuestionRequest, claudeDenyResponse, claudeControlResponse, parseClaudeControlRequest, parseClaudeSubagentHandback, parseClaudeSystemInit, parseClaudeTaskSystemLine, parseStreamLine, type ClaudeControlRequest, type ClaudeTaskSystemInfo, type TurnDoneInfo } from "./claudeStreamParser.js";
+import { CLAUDE_SHELL_TASK_TYPE, attributeClaudeSubagentEvent, buildClaudeAllowRule, claudeAllowResponse, claudeApprovalRequest, claudeQuestionRequest, claudeDenyResponse, claudeControlResponse, parseClaudeControlRequest, parseClaudeSubagentHandback, parseClaudeSystemInit, parseClaudeTaskSystemLine, parseStreamLine, type ClaudeControlRequest, type ClaudeTaskSystemInfo, type TurnDoneInfo } from "./claudeStreamParser.js";
 import { CLAUDE_COMMANDS_PROBE_ARGS, listClaudeCommands, probeClaudeCommands, recordClaudeTerminalCommands } from "./claudeCommands.js";
 import { CLAUDE_ACCOUNT_USAGE_PROBE_ARGS, probeClaudeAccountUsage } from "./claudeAccountUsage.js";
 import { describeClaudeExit } from "./claudeExit.js";
@@ -487,7 +487,7 @@ export class ClaudeCliDriver implements CliDriver {
         if (agentTask) state.agentByCall.set(info.toolUseId, info.taskId);
       }
       if (info.toolUseId) {
-        if (info.background === false) {
+        if (info.background === false || info.taskType === CLAUDE_SHELL_TASK_TYPE) {
           state.backgroundCallIds.delete(info.toolUseId);
           state.backgroundAgentCallIds.delete(info.toolUseId);
           state.backgroundCallStartedAt.delete(info.toolUseId);
