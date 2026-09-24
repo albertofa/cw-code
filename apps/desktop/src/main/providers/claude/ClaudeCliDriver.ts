@@ -134,6 +134,7 @@ interface ClaudeProcessState {
   liveTasks: number;
   liveTaskIds: Set<string>;
   completedTurn: boolean;
+  heldByBackgroundWork: boolean;
   errored: boolean;
   stderr: string;
   startedAt: number;
@@ -280,6 +281,7 @@ export class ClaudeCliDriver implements CliDriver {
   private trackBackgroundCall(state: ClaudeProcessState, callId: string, background = true): void {
     if (!background || state.reportedTaskCalls.has(callId) || state.taskReports.has(callId)) return;
     state.backgroundCallIds.add(callId);
+    state.heldByBackgroundWork = true;
     if (!state.backgroundCallStartedAt.has(callId)) state.backgroundCallStartedAt.set(callId, Date.now());
   }
 
@@ -290,6 +292,7 @@ export class ClaudeCliDriver implements CliDriver {
   ): void {
     state.liveTasks = liveTasks;
     state.liveTaskIds = new Set(liveTaskIds ?? []);
+    if (liveTasks > 0) state.heldByBackgroundWork = true;
     const trackedCallIds = [...state.backgroundCallIds];
     const removeCall = (callId: string): void => {
       state.backgroundCallIds.delete(callId);
@@ -375,7 +378,7 @@ export class ClaudeCliDriver implements CliDriver {
   }
 
   private shouldIgnoreTaskNotification(state: ClaudeProcessState): boolean {
-    return this.liveTaskCount(state) > 0;
+    return this.liveTaskCount(state) > 0 || (!state.completedTurn && !state.heldByBackgroundWork);
   }
 
   private emitTaskResultOnce(
@@ -688,6 +691,7 @@ export class ClaudeCliDriver implements CliDriver {
       if (this.liveTaskCount(existing) === 0) this.clearTaskTracking(existing);
       existing.activeTurnId = turnId;
       existing.completedTurn = false;
+      existing.heldByBackgroundWork = this.liveTaskCount(existing) > 0;
       existing.permissionMode = request.permissionMode ?? "auto";
       this.clearIdleTimer(existing);
       this.turnToSession.set(turnId, request.sessionId);
@@ -730,6 +734,7 @@ export class ClaudeCliDriver implements CliDriver {
       liveTasks: 0,
       liveTaskIds: new Set(),
       completedTurn: false,
+      heldByBackgroundWork: false,
       errored: false,
       stderr: "",
       startedAt: start,

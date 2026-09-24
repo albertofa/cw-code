@@ -296,6 +296,32 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
+  it("routes a late tool result from the session's settled turn to that session", async () => {
+    const { manager, received } = makeManager();
+    const project = manager.addProject("C:\\proj-late-result");
+    const session = await manager.createSession(project.id, "claude");
+    const turnId = await manager.startTurn(session.id, "start a background shell");
+    const route = (manager as unknown as { routeEvent(e: ThreadEvent): void }).routeEvent.bind(manager);
+    route({
+      type: "turn.done",
+      turnId,
+      sessionId: session.id,
+      resumeCursor: "cursor-1",
+      resultText: "STARTED",
+      usage: [],
+      numTurns: 1,
+      isError: false,
+      backgroundTasks: 0
+    });
+    route({ type: "tool.result", turnId, toolCallId: "call-bash", output: "Background command completed (exit code 0)", isError: false });
+
+    expect(received).toContainEqual({
+      sessionId: session.id,
+      event: expect.objectContaining({ type: "tool.result", toolCallId: "call-bash" })
+    });
+    manager.dispose();
+  });
+
   it("does not record usage for an unknown session id, including title-generation session ids", () => {
     const { manager } = makeManager();
     for (const sessionId of ["does-not-exist", "title:does-not-exist"]) {
