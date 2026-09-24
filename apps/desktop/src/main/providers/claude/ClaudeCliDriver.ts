@@ -21,7 +21,7 @@ import type {
 } from "@cw-code/contracts";
 import { parseExtraArgs } from "../../settings/settingsUtils.js";
 import { killProcessTree } from "../../processTree.js";
-import { attributeClaudeSubagentEvent, buildClaudeAllowRule, claudeAllowResponse, claudeApprovalRequest, claudeQuestionRequest, claudeDenyResponse, claudeControlResponse, parseClaudeControlRequest, parseClaudeSubagentHandback, parseClaudeSystemInit, parseClaudeTaskSystemLine, parseStreamLine, type ClaudeControlRequest, type ClaudeTaskSystemInfo, type TurnDoneInfo } from "./claudeStreamParser.js";
+import { CLAUDE_SHELL_TASK_TYPE, attributeClaudeSubagentEvent, buildClaudeAllowRule, claudeAllowResponse, claudeApprovalRequest, claudeQuestionRequest, claudeDenyResponse, claudeControlResponse, parseClaudeControlRequest, parseClaudeSubagentHandback, parseClaudeSystemInit, parseClaudeTaskSystemLine, parseStreamLine, type ClaudeControlRequest, type ClaudeTaskSystemInfo, type TurnDoneInfo } from "./claudeStreamParser.js";
 import { CLAUDE_COMMANDS_PROBE_ARGS, listClaudeCommands, probeClaudeCommands, recordClaudeTerminalCommands } from "./claudeCommands.js";
 import { CLAUDE_ACCOUNT_USAGE_PROBE_ARGS, probeClaudeAccountUsage } from "./claudeAccountUsage.js";
 import { describeClaudeExit } from "./claudeExit.js";
@@ -134,6 +134,7 @@ interface ClaudeProcessState {
   liveTasks: number;
   liveTaskIds: Set<string>;
   completedTurn: boolean;
+  heldByBackgroundWork: boolean;
   errored: boolean;
   stderr: string;
   startedAt: number;
@@ -280,6 +281,7 @@ export class ClaudeCliDriver implements CliDriver {
   private trackBackgroundCall(state: ClaudeProcessState, callId: string, background = true): void {
     if (!background || state.reportedTaskCalls.has(callId) || state.taskReports.has(callId)) return;
     state.backgroundCallIds.add(callId);
+    state.heldByBackgroundWork = true;
     if (!state.backgroundCallStartedAt.has(callId)) state.backgroundCallStartedAt.set(callId, Date.now());
   }
 
@@ -290,6 +292,7 @@ export class ClaudeCliDriver implements CliDriver {
   ): void {
     state.liveTasks = liveTasks;
     state.liveTaskIds = new Set(liveTaskIds ?? []);
+    if (liveTasks > 0) state.heldByBackgroundWork = true;
     const trackedCallIds = [...state.backgroundCallIds];
     const removeCall = (callId: string): void => {
       state.backgroundCallIds.delete(callId);
@@ -375,7 +378,7 @@ export class ClaudeCliDriver implements CliDriver {
   }
 
   private shouldIgnoreTaskNotification(state: ClaudeProcessState): boolean {
-    return this.liveTaskCount(state) > 0;
+    return this.liveTaskCount(state) > 0 || (!state.completedTurn && !state.heldByBackgroundWork);
   }
 
   private emitTaskResultOnce(
@@ -487,7 +490,7 @@ export class ClaudeCliDriver implements CliDriver {
         if (agentTask) state.agentByCall.set(info.toolUseId, info.taskId);
       }
       if (info.toolUseId) {
-        if (info.background === false) {
+        if (info.background === false || info.taskType === CLAUDE_SHELL_TASK_TYPE) {
           state.backgroundCallIds.delete(info.toolUseId);
           state.backgroundAgentCallIds.delete(info.toolUseId);
           state.backgroundCallStartedAt.delete(info.toolUseId);
@@ -688,6 +691,7 @@ export class ClaudeCliDriver implements CliDriver {
       if (this.liveTaskCount(existing) === 0) this.clearTaskTracking(existing);
       existing.activeTurnId = turnId;
       existing.completedTurn = false;
+      existing.heldByBackgroundWork = this.liveTaskCount(existing) > 0;
       existing.permissionMode = request.permissionMode ?? "auto";
       this.clearIdleTimer(existing);
       this.turnToSession.set(turnId, request.sessionId);
@@ -730,6 +734,7 @@ export class ClaudeCliDriver implements CliDriver {
       liveTasks: 0,
       liveTaskIds: new Set(),
       completedTurn: false,
+      heldByBackgroundWork: false,
       errored: false,
       stderr: "",
       startedAt: start,

@@ -390,14 +390,28 @@ describe("parseClaudeTaskSystemLine", () => {
       subtype: "background_tasks_changed",
       tasks: [
         { type: "local_agent", id: "a202cd0fd545a319e" },
-        { type: "local_bash", task_id: "b-1" }
+        { task_id: "t-2" },
+        "t-3"
       ]
     });
     expect(parseClaudeTaskSystemLine(line)).toEqual({
       kind: "tasks",
-      liveTasks: 2,
-      liveTaskIds: ["a202cd0fd545a319e", "b-1"]
+      liveTasks: 3,
+      liveTaskIds: ["a202cd0fd545a319e", "t-2", "t-3"]
     });
+  });
+
+  it("leaves background shells out of the live task snapshot", () => {
+    const line = JSON.stringify({
+      type: "system",
+      subtype: "background_tasks_changed",
+      tasks: [
+        { task_id: "agent-1", task_type: "local_agent" },
+        { task_id: "bb3lof10o", task_type: "local_bash", description: "sleep 20 && echo bgdone" },
+        { type: "local_bash", task_id: "b-1" }
+      ]
+    });
+    expect(parseClaudeTaskSystemLine(line)).toEqual({ kind: "tasks", liveTasks: 1, liveTaskIds: ["agent-1"] });
   });
 
   it("parses task_started with prompt and background flag", () => {

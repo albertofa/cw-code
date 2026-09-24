@@ -324,6 +324,14 @@ function str(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value : undefined;
 }
 
+export const CLAUDE_SHELL_TASK_TYPE = "local_bash";
+
+function isShellTaskEntry(task: unknown): boolean {
+  if (task === null || typeof task !== "object" || Array.isArray(task)) return false;
+  const record = task as Record<string, unknown>;
+  return (record["task_type"] ?? record["type"]) === CLAUDE_SHELL_TASK_TYPE;
+}
+
 function taskNumber(value: unknown): number | undefined {
   return typeof value === "number" && Number.isFinite(value) ? value : undefined;
 }
@@ -374,7 +382,8 @@ export function parseClaudeTaskSystemLine(line: string): ClaudeTaskSystemInfo | 
   switch (msg.subtype) {
     case "background_tasks_changed": {
       if (!Array.isArray(msg.tasks)) return null;
-      const liveTaskIds = msg.tasks
+      const turnTasks = msg.tasks.filter((task) => !isShellTaskEntry(task));
+      const liveTaskIds = turnTasks
         .map((task) => {
           if (task !== null && typeof task === "object" && !Array.isArray(task)) {
             const record = task as Record<string, unknown>;
@@ -383,7 +392,7 @@ export function parseClaudeTaskSystemLine(line: string): ClaudeTaskSystemInfo | 
           return str(task);
         })
         .filter((id): id is string => id !== undefined);
-      return { kind: "tasks", liveTasks: msg.tasks.length, liveTaskIds };
+      return { kind: "tasks", liveTasks: turnTasks.length, liveTaskIds };
     }
     case "task_started": {
       if (!taskId && !toolUseId) return null;

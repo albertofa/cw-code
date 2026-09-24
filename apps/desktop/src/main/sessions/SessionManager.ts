@@ -100,6 +100,7 @@ export class SessionManager {
   private settings: SettingsStore;
   private drivers: Record<DriverKind, CliDriver>;
   private activeTurns = new Map<string, { sessionId: string; startedAt: number }>();
+  private settledTurns = new Map<string, string>();
   private titleTurns = new Map<string, TitleTurn>();
   private firstPrompts = new Map<string, string>();
   private pendingTurns = new Set<string>();
@@ -162,8 +163,19 @@ export class SessionManager {
       return;
     }
     this.flushDelta(event.turnId);
-    const sessionId = this.activeTurns.get(event.turnId)?.sessionId ?? "";
+    const sessionId =
+      this.activeTurns.get(event.turnId)?.sessionId ??
+      (event.type === "tool.result" ? this.settledTurns.get(event.turnId) : undefined) ??
+      "";
     this.handleDriverEvent(sessionId, event);
+  }
+
+  private settleTurn(turnId: string, sessionId: string): void {
+    this.activeTurns.delete(turnId);
+    for (const [settledTurnId, owner] of this.settledTurns) {
+      if (owner === sessionId) this.settledTurns.delete(settledTurnId);
+    }
+    this.settledTurns.set(turnId, sessionId);
   }
 
   private handleTitleTurnEvent(event: ThreadEvent): void {
@@ -275,7 +287,8 @@ export class SessionManager {
           status: "working"
         });
       } else {
-        const wasActive = this.activeTurns.delete(event.turnId);
+        const wasActive = this.activeTurns.has(event.turnId);
+        this.settleTurn(event.turnId, event.sessionId);
         const stillActive = [...this.activeTurns.values()].some((entry) => entry.sessionId === event.sessionId);
         this.store.updateSession(event.sessionId, {
           resumeCursor: event.resumeCursor,
@@ -288,7 +301,8 @@ export class SessionManager {
       }
     }
     if (event.type === "turn.error") {
-      this.activeTurns.delete(event.turnId);
+      if (sessionId) this.settleTurn(event.turnId, sessionId);
+      else this.activeTurns.delete(event.turnId);
       this.turnPrRefs.delete(event.turnId);
       if (sessionId) {
         this.store.updateSession(sessionId, {
@@ -1237,7 +1251,7 @@ export class SessionManager {
     if (!sessionId) return;
     const session = this.store.getSession(sessionId);
     if (session) this.drivers[session.driver].interrupt(turnId);
-    this.activeTurns.delete(turnId);
+    this.settleTurn(turnId, sessionId);
     this.turnPrRefs.delete(turnId);
     this.store.updateSession(sessionId, { status: "holding" });
   }
