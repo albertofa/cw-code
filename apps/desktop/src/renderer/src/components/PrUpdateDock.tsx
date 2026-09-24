@@ -53,6 +53,14 @@ function omittedReason(entry: DockEntry): string {
   return entry.logsNeeded ? "needs failed CI logs, use Review and send" : "no follow-up prompt, pick one with Other workflow";
 }
 
+function seenAt(entry: DockEntry): number | null {
+  return seenThrough(entry.item.detail ?? entry.item.summary, entry.updates);
+}
+
+function sendSignature(entries: DockEntry[]): string {
+  return entries.map((entry) => `${entry.item.key}@${seenHead(entry) ?? ""}:${seenAt(entry) ?? ""}`).join(" ");
+}
+
 function seenHead(entry: DockEntry): string | null {
   return entry.item.detail?.headRefOid ?? entry.item.summary?.headRefOid ?? null;
 }
@@ -79,7 +87,7 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [working, setWorking] = useState<"send" | "dismiss" | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
-  const [sentPrompt, setSentPrompt] = useState<string | null>(null);
+  const [sentSignature, setSentSignature] = useState<string | null>(null);
 
   const harness = session ? harnessLabel(session.driver) : "";
   const entries = useMemo(() => items.map((item) => dockEntry(item, settings, harness)), [items, settings, harness]);
@@ -95,12 +103,14 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
     [changed, settings]
   );
   const prompt = useMemo(() => (single ? single.prompt : combinedPrompt(sendable)), [single, sendable]);
+  const covered = useMemo(() => (single ? [single] : sendable), [single, sendable]);
+  const alreadySent = sentSignature !== null && sentSignature === sendSignature(covered);
 
   if (!session || (changed.length === 0 && failed.length === 0)) return null;
 
   const markSeen = async (targets: DockEntry[]) => {
     for (const entry of targets) {
-      applySession(await window.cw.markSessionPrSeen(sessionId, entry.item.link.ref, seenHead(entry), seenThrough(entry.item.detail ?? entry.item.summary, entry.updates)));
+      applySession(await window.cw.markSessionPrSeen(sessionId, entry.item.link.ref, seenHead(entry), seenAt(entry)));
     }
   };
 
@@ -156,10 +166,9 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
   };
 
   const send = async () => {
-    if (!prompt || busy || working || prompt === sentPrompt) return;
+    if (!prompt || busy || working || alreadySent) return;
     setWorking("send");
     setActionError(null);
-    const covered = single ? [single] : sendable;
     try {
       await sendPromptTo(sessionId, prompt, undefined, { prRefs: covered.map((entry) => entry.item.link.ref) });
     } catch (err) {
@@ -167,7 +176,7 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
       setWorking(null);
       return;
     }
-    setSentPrompt(prompt);
+    setSentSignature(sendSignature(covered));
     try {
       await markSeen(covered);
     } catch (err) {
@@ -192,7 +201,6 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
         ? `Send update to ${harness}`
         : `Send ${sendable.length} ${sendable.length === 1 ? "update" : "updates"} to ${harness}`;
   const PrimaryIcon = allReview ? RefreshCw : Send;
-  const alreadySent = prompt !== null && prompt === sentPrompt;
   const primaryDisabled = singleLogs ? busy : busy || prompt === null || working !== null || alreadySent;
   const now = Date.now();
   const previewText = singleLogs
