@@ -666,6 +666,7 @@ export class SessionManager {
       };
     }
     if (!removal.removed) {
+      if (!removal.dirtyBlocked) this.store.updateSession(sessionId, { worktreePath: undefined });
       return {
         sessionId,
         status,
@@ -730,7 +731,7 @@ export class SessionManager {
   }
 
   async pruneStaleWorktrees(): Promise<WorktreePruneSummary> {
-    const summary: WorktreePruneSummary = { scanned: 0, removed: 0, skipped: 0, failed: 0, errors: [], keptDirty: [] };
+    const summary: WorktreePruneSummary = { scanned: 0, removed: 0, skipped: 0, failed: 0, errors: [], keptDirty: [], clearedSessionIds: [] };
     if (!existsSync(this.worktreesRoot)) return summary;
     const sessions = this.store.listAllSessions();
     const touchedProjects = new Set<string>();
@@ -760,6 +761,12 @@ export class SessionManager {
         await this.git.pruneWorktrees(project.rootPath, this.worktreesRoot);
       } catch (err) {
         summary.errors.push(`${project.rootPath}: worktree prune failed: ${(err as Error).message}`);
+      }
+    }
+    for (const session of this.store.listAllSessions()) {
+      if (session.worktreePath && !pinsWorktree(session) && !existsSync(session.worktreePath)) {
+        this.store.updateSession(session.id, { worktreePath: undefined });
+        summary.clearedSessionIds.push(session.id);
       }
     }
     return summary;

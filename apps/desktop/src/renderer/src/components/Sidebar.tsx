@@ -236,9 +236,8 @@ function DebugMenu() {
 }
 
 export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { onOpenSettings: () => void; onOpenSkills: () => void; skillsOpen?: boolean }) {
-  const { projects, sessionsByProject, discoveredByProject, activeProjectId, activeSessionId, gitStatusBySession, projectFilter, worktreeConfirmQueue, homeDir, pendingDriver } = useAppStore();
+  const { projects, sessionsByProject, discoveredByProject, activeProjectId, activeSessionId, gitStatusBySession, projectFilter, homeDir, pendingDriver } = useAppStore();
   const shortPath = (value: string): string => shortenHome(value, homeDir ?? undefined);
-  const worktreeConfirm = worktreeConfirmQueue[0] ?? null;
   const store = useAppStore();
   const inbox = usePrStore((s) => s.inbox);
   const detailByKey = usePrStore((s) => s.detailByKey);
@@ -1237,35 +1236,6 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
             </button>
             <button className="ctx-item" onClick={() => copySessionId(menu.sessionId)}>
               Copy session id
-            </button>
-          </div>
-        </>
-      )}
-      {worktreeConfirm && (
-        <>
-          <div className="ctx-backdrop" onClick={() => store.dismissWorktreeRemoval()} />
-          <div
-            className="ctx-menu worktree-confirm"
-            style={{ left: Math.max(12, window.innerWidth / 2 - 140), top: window.innerHeight / 2 - 70 }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="worktree-confirm-title">Remove the worktree too?</div>
-            <div className="worktree-confirm-hint">
-              {[...workingSetShown, ...shown, ...resolved].find((s) => s.id === worktreeConfirm.sessionId)?.title ??
-                worktreeConfirm.sessionId}{" "}
-              is {worktreeConfirm.status === "archived" ? "archived" : "resolved"} and no other session uses its isolated worktree.
-            </div>
-            {typeof worktreeConfirm.unmergedCommitCount === "number" && worktreeConfirm.unmergedCommitCount > 0 && (
-              <div className="worktree-confirm-warning">
-                This branch has {worktreeConfirm.unmergedCommitCount} unmerged{" "}
-                {worktreeConfirm.unmergedCommitCount === 1 ? "commit" : "commits"} that will be permanently deleted.
-              </div>
-            )}
-            <button className="ctx-item" onClick={() => void store.confirmWorktreeRemoval()}>
-              Remove worktree and branch
-            </button>
-            <button className="ctx-item" onClick={() => store.dismissWorktreeRemoval()}>
-              Keep it
             </button>
           </div>
         </>

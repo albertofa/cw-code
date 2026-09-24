@@ -211,6 +211,7 @@ export interface WorktreePruneSummary {
   failed: number;
   errors: string[];
   keptDirty: string[];
+  clearedSessionIds: string[];
 }
 
 export type GitDiffMode = "working" | "staged" | "branch";

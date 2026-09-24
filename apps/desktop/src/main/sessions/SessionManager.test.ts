@@ -1806,6 +1806,26 @@ describe("SessionManager", () => {
 
     expect(summary.removed).toBe(1);
     expect(existsSync(worktreePath)).toBe(false);
+    expect(summary.clearedSessionIds).toEqual([session.id]);
+    const pruned = (await manager.listSessions(project.id)).find((s) => s.id === session.id);
+    expect(pruned?.worktreePath).toBeUndefined();
+    expect(manager.rootFor(session.id)).toBe(project.rootPath);
+    manager.dispose();
+  });
+
+  it("returns a resolved session to the project checkout when its worktree is already gone", async () => {
+    const { manager, project } = makeGitSandboxManager("cw-resolve-gone-");
+    const session = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    const worktreePath = session.worktreePath;
+    if (!worktreePath) throw new Error("expected a worktree-backed session");
+    rmSync(worktreePath, { recursive: true, force: true });
+
+    const result = await manager.resolveSession(session.id, "resolved", { removeWorktree: true });
+
+    expect(result.error).toBeUndefined();
+    expect(result.dirtyBlocked).toBeUndefined();
+    const stored = (await manager.listSessions(project.id)).find((s) => s.id === session.id);
+    expect(stored?.worktreePath).toBeUndefined();
     manager.dispose();
   });
 
