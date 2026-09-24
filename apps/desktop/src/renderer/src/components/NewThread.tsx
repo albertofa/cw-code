@@ -7,7 +7,7 @@ import { shortenHome } from "./pathDisplay.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { ComposerView, type ComposerBackend } from "./ComposerView.js";
 import { MenuSelect } from "./MenuSelect.js";
-import { NewSessionProjectPicker } from "./NewSessionProjectPicker.js";
+import { NewSessionAddProject, NewSessionProjectPicker } from "./NewSessionProjectPicker.js";
 
 const NO_PROJECT_HINT = "Choose a project to start a session";
 const NO_SESSIONS: Session[] = [];
@@ -184,16 +184,11 @@ export function NewThread({
 
   return (
     <div className="newthread">
-      {project ? (
-        <h1 className="newthread-title">
-          What should we build in <NewSessionProjectPicker project={project} />?
-        </h1>
-      ) : (
-        <div className="newthread-head">
-          <h1 className="newthread-title">What should we build?</h1>
-          <NewSessionProjectPicker project={undefined} />
-        </div>
-      )}
+      <h1 className="newthread-title">What should we build?</h1>
+      <div className="newthread-context">
+        <NewSessionProjectPicker project={project} />
+        <NewSessionAddProject />
+      </div>
       <div className="newthread-composer">
         <ComposerView
           backend={backend}

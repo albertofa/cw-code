@@ -12,10 +12,8 @@ export function NewSessionProjectPicker({ project }: { project: Project | undefi
   const sessionsByProject = useAppStore((s) => s.sessionsByProject);
   const homeDir = useAppStore((s) => s.homeDir);
   const setPendingProject = useAppStore((s) => s.setPendingProject);
-  const addProjectForNewSession = useAppStore((s) => s.addProjectForNewSession);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const [adding, setAdding] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
 
   const close = () => {
@@ -35,20 +33,6 @@ export function NewSessionProjectPicker({ project }: { project: Project | undefi
     void setPendingProject(id).catch((err: Error) => {
       useNotifs.getState().push({ kind: "error", title: "Could not switch project", message: err.message });
     });
-  };
-
-  const addFolder = () => {
-    setAdding(true);
-    void window.cw
-      .pickProjectDir()
-      .then((dir) => {
-        if (!dir) return;
-        return addProjectForNewSession(dir).then(() => close());
-      })
-      .catch((err: Error) => {
-        useNotifs.getState().push({ kind: "error", title: "Could not add project", message: err.message });
-      })
-      .finally(() => setAdding(false));
   };
 
   return (
@@ -73,6 +57,7 @@ export function NewSessionProjectPicker({ project }: { project: Project | undefi
           <Folder size={18} aria-hidden="true" />
         )}
         <span className="newthread-project-name">{project?.name ?? "Choose a project"}</span>
+        {project && <span className="newthread-project-path">{shortenHome(project.rootPath, homeDir ?? undefined)}</span>}
         <span className="newthread-project-chevron" aria-hidden="true">
           {open ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
         </span>
@@ -128,13 +113,32 @@ export function NewSessionProjectPicker({ project }: { project: Project | undefi
                 <span className="side-empty">{projects.length === 0 ? "No projects yet." : "No matches."}</span>
               )}
             </span>
-            <button type="button" className="add-project newthread-add-project" onClick={addFolder} disabled={adding}>
-              <FolderPlus size={14} aria-hidden="true" />
-              Add project…
-            </button>
           </span>
         </>
       )}
     </span>
+  );
+}
+
+export function NewSessionAddProject() {
+  const addProjectForNewSession = useAppStore((s) => s.addProjectForNewSession);
+  const [adding, setAdding] = useState(false);
+
+  const addFolder = () => {
+    setAdding(true);
+    void window.cw
+      .pickProjectDir()
+      .then((dir) => (dir ? addProjectForNewSession(dir) : undefined))
+      .catch((err: Error) => {
+        useNotifs.getState().push({ kind: "error", title: "Could not add project", message: err.message });
+      })
+      .finally(() => setAdding(false));
+  };
+
+  return (
+    <button type="button" className="newthread-add-project" onClick={addFolder} disabled={adding} title="Add a project folder">
+      <FolderPlus size={15} aria-hidden="true" />
+      Add project
+    </button>
   );
 }

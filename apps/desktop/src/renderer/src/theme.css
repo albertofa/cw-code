@@ -2687,54 +2687,78 @@ body.session-dragging * {
   text-align: center;
 }
 
-.newthread-head {
+.newthread-context {
+  width: min(860px, 100%);
   display: flex;
-  flex-direction: column;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
+  margin-bottom: -10px;
 }
 
 .newthread-picker {
-  display: inline-block;
+  display: inline-flex;
+  min-width: 0;
 }
 
 .newthread-project-btn {
   display: inline-flex;
   align-items: center;
-  gap: 8px;
-  padding: 2px 8px;
-  background: transparent;
-  border: 1px solid transparent;
+  gap: 9px;
+  min-width: 0;
+  max-width: 560px;
+  height: 36px;
+  padding: 0 10px 0 8px;
+  background: var(--raised);
+  border: 1px solid var(--border);
   border-radius: var(--r-md);
-  color: var(--dim);
-  font: inherit;
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: 14px;
+  font-weight: 600;
   cursor: pointer;
 }
 
 .newthread-project-btn:hover,
 .newthread-project-btn.open {
-  background: var(--raised);
-  color: var(--text);
+  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
 }
 
 .newthread-project-btn.unset {
-  padding: 5px 10px;
-  border-color: var(--border);
   color: var(--warning);
-  font-size: 14px;
-  font-weight: 600;
+  border-color: color-mix(in srgb, var(--warning) 45%, var(--border));
+}
+
+.newthread-project-name {
+  flex: none;
+  max-width: 220px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.newthread-project-path {
+  flex: 1;
+  min-width: 0;
+  color: var(--faint);
+  font-family: var(--mono);
+  font-size: 11.5px;
+  font-weight: 400;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .newthread-project-chevron {
+  flex: none;
   display: inline-flex;
-  color: var(--faint);
+  color: var(--muted);
 }
 
 .newthread-picker-panel {
-  left: 50%;
+  left: 0;
   right: auto;
+  top: calc(100% + 6px);
   width: min(460px, 90vw);
-  transform: translateX(-50%);
   font-size: 13px;
   font-weight: 400;
   text-align: left;
@@ -2769,10 +2793,25 @@ body.session-dragging * {
 }
 
 .newthread-add-project {
-  display: flex;
+  flex: none;
+  display: inline-flex;
   align-items: center;
-  justify-content: center;
-  gap: 6px;
+  gap: 7px;
+  height: 36px;
+  padding: 0 12px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--r-md);
+  color: var(--dim);
+  font-family: var(--sans);
+  font-size: 13px;
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.newthread-add-project:hover:not(:disabled) {
+  background: var(--raised);
+  color: var(--text);
 }
 
 .newthread-add-project:disabled {
