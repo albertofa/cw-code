@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
-import { Check, ChevronDown, ChevronRight, ChevronUp, Clock, Folder, GitBranch, GitPullRequest, Hash, Plus, Search, Settings, SquarePen, X } from "lucide-react";
+import { Check, ChevronDown, ChevronRight, ChevronUp, Clock, GitBranch, GitPullRequest, Hash, ListFilter, Plus, Search, Settings, X } from "lucide-react";
 import type { DriverName, PrSummary, Project, Session, SessionStatus } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import { usePrStore } from "../stores/prStore.js";
@@ -10,6 +10,7 @@ import { hashHue, projectAvatarStyle as avatarStyle, projectInitials as initials
 import { mergeAwayIds } from "./sidebarOrder.js";
 import { compareWorkingSet, isWorkingSetStatus } from "./workingSet.js";
 import { shortenHome } from "./pathDisplay.js";
+import { discoveryProjectId } from "./projectRecency.js";
 import { prChip } from "./prChip.js";
 import { PrChipBadge } from "./PrChipBadge.js";
 import { needsAttentionCount, prKey } from "./prInbox.js";
@@ -233,7 +234,7 @@ function DebugMenu() {
 }
 
 export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { onOpenSettings: () => void; onOpenSkills: () => void; skillsOpen?: boolean }) {
-  const { projects, sessionsByProject, discoveredByProject, activeProjectId, activeSessionId, gitStatusBySession, projectFilter, worktreeConfirmQueue, homeDir } = useAppStore();
+  const { projects, sessionsByProject, discoveredByProject, activeProjectId, activeSessionId, gitStatusBySession, projectFilter, worktreeConfirmQueue, homeDir, pendingDriver } = useAppStore();
   const shortPath = (value: string): string => shortenHome(value, homeDir ?? undefined);
   const worktreeConfirm = worktreeConfirmQueue[0] ?? null;
   const store = useAppStore();
@@ -295,6 +296,7 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
   const detachRef = useRef<(() => void) | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  const filterBtnRef = useRef<HTMLButtonElement>(null);
   const toggleRefs = useRef(new Map<string, HTMLButtonElement>());
   const slotSnap = useRef<SlotSnapshot | null>(null);
   const rowRefs = useRef(new Map<string, HTMLDivElement>());
@@ -378,12 +380,12 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
     };
   }, []);
 
-  const activeProject = projects.find((p) => p.id === activeProjectId);
   const filterProject = projectFilter === "all" ? undefined : projects.find((p) => p.id === projectFilter);
   const projectNameById: Record<string, string> = Object.fromEntries(projects.map((p) => [p.id, p.name]));
   const source: Session[] =
     projectFilter === "all" ? Object.values(sessionsByProject).flat() : (sessionsByProject[projectFilter] ?? []);
-  const discovered = activeProjectId ? (discoveredByProject[activeProjectId] ?? []) : [];
+  const discoveredProjectId = discoveryProjectId(projectFilter, activeProjectId);
+  const discovered = discoveredProjectId ? (discoveredByProject[discoveredProjectId] ?? []) : [];
   const matchesQuery = (s: Session) =>
     !query || s.title.toLowerCase().includes(query.toLowerCase());
   const byRecency = (a: Session, b: Session) => b.updatedAt - a.updatedAt;
@@ -430,11 +432,15 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
   const attentionCount = needsAttentionCount(inboxItems);
   const anyUnseen = Object.values(sessionsByProject).some((list) => list.some((s) => sessionHasUnseen(s, summaryByKey)));
   const inboxActive = mainView.kind !== "session";
-  const inboxTitle = [
-    "Pull request inbox",
+  const newSessionActive = !inboxActive && (pendingDriver !== null || !activeSessionId);
+  const liveCount = (list: Session[] | undefined): number => (list ?? []).filter((s) => s.status !== "archived").length;
+  const totalCount = Object.values(sessionsByProject).reduce((sum, list) => sum + liveCount(list), 0);
+  const inboxNotes = [
     attentionCount > 0 ? `${attentionCount} need${attentionCount === 1 ? "s" : ""} you` : null,
-    anyUnseen ? "linked sessions have updates" : null
-  ].filter(Boolean).join(" · ");
+    anyUnseen ? "updates available" : null
+  ].filter(Boolean);
+  const inboxTitle = ["Pull requests", ...inboxNotes].join(" · ");
+  const inboxLabel = ["Pull requests", ...inboxNotes].join(", ");
   const selectSession = (sessionId: string) => {
     openSessionView();
     store.selectSession(sessionId);
@@ -530,9 +536,9 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
     setManagedId(null);
   };
 
-  const pick = (id: string) => {
+  const pick = (id: string | "all") => {
     closePicker();
-    void store.selectProject(id);
+    store.setProjectFilter(id);
   };
 
   const pickAndAdd = () => {
@@ -545,6 +551,12 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
       .catch((err: Error) => {
         useNotifs.getState().push({ kind: "error", title: "Could not add project", message: err.message });
       });
+  };
+
+  const importDiscovered = (session: Session) => {
+    void store.importDiscovered(session).catch((err: Error) => {
+      useNotifs.getState().push({ kind: "error", title: "Could not import session", message: err.message });
+    });
   };
 
   const copyPath = (p: Project) => {
@@ -949,99 +961,124 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
         <DebugMenu />
       </div>
       <div className="brand">
-        <div className="search-row ghost">
-          <Search className="search-icon" aria-hidden="true" size={15} />
-          <input
-            ref={searchRef}
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search"
-          />
-          {query ? (
-            <button className="icon-btn" aria-label="Clear search" onClick={() => setQuery("")}>
-              <X aria-hidden="true" size={15} />
-            </button>
-          ) : (
-            <span className="search-kbd">Ctrl+K</span>
-          )}
+        <button
+          type="button"
+          className={`side-new-session${newSessionActive ? " active" : ""}`}
+          onClick={() => {
+            openSessionView();
+            store.startNewSession();
+          }}
+          title="New session (Ctrl+N)"
+        >
+          <Plus size={15} aria-hidden="true" />
+          <span>New session</span>
+          <span className="side-kbd">Ctrl N</span>
+        </button>
+        <div className="side-nav">
           <button
-            className="new-session-btn"
-            disabled={!activeProjectId}
-            onClick={() => {
-              openSessionView();
-              store.startNewSession();
-            }}
-            title={`New session in ${activeProject?.name ?? "…"}`}
-            aria-label="New session"
-          >
-            <SquarePen size={16} />
-          </button>
-          <button
-            className={`pr-inbox-btn${inboxActive ? " active" : ""}`}
+            type="button"
+            className={`side-nav-row${inboxActive ? " active" : ""}`}
             onClick={openInbox}
             title={inboxTitle}
-            aria-label={inboxTitle}
+            aria-label={inboxLabel}
             aria-pressed={inboxActive}
           >
-            <GitPullRequest size={16} aria-hidden="true" />
-            {attentionCount > 0 && <span className="pr-inbox-count">{attentionCount > 99 ? "99+" : attentionCount}</span>}
-            {anyUnseen && <span className="pr-inbox-dot" aria-hidden="true" />}
+            <GitPullRequest size={15} aria-hidden="true" />
+            <span className="side-nav-label">Pull requests</span>
+            <span className="side-nav-end">
+              {anyUnseen && <span className="pr-unseen-dot" aria-hidden="true" />}
+              {attentionCount > 0 && (
+                <span className="side-nav-badge" aria-hidden="true">
+                  {attentionCount > 99 ? "99+" : attentionCount}
+                </span>
+              )}
+            </span>
           </button>
+          <label className="side-nav-row side-nav-search">
+            <Search size={15} aria-hidden="true" />
+            <input
+              ref={searchRef}
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search"
+              aria-label="Search sessions"
+            />
+            <span className="side-nav-end">
+              {query ? (
+                <button type="button" className="icon-btn" aria-label="Clear search" onClick={() => setQuery("")}>
+                  <X aria-hidden="true" size={14} />
+                </button>
+              ) : (
+                <span className="side-kbd">Ctrl K</span>
+              )}
+            </span>
+          </label>
         </div>
-        <div className="project-bar">
-          <div className="picker">
-            <button className="picker-btn" onClick={() => setPickerOpen((o) => !o)} aria-haspopup="listbox" aria-expanded={pickerOpen}>
-            <Folder className="picker-icon" aria-hidden="true" size={16} />
-            <span className="picker-name">{projectFilter === "all" ? "All projects" : (filterProject?.name ?? activeProject?.name ?? "Select project…")}</span>
-            <span className="picker-chevron">{pickerOpen ? <ChevronUp aria-hidden="true" size={14} /> : <ChevronDown aria-hidden="true" size={14} />}</span>
+      </div>
+      <div className="side-list-head">
+        <span className="side-list-title">Sessions</span>
+        <div className="picker side-filter">
+          <button
+            ref={filterBtnRef}
+            type="button"
+            className={`side-filter-btn${filterProject ? " filtered" : ""}${pickerOpen ? " open" : ""}`}
+            onClick={() => setPickerOpen((o) => !o)}
+            aria-haspopup="listbox"
+            aria-expanded={pickerOpen}
+            title="Filter sessions by project"
+          >
+            <ListFilter size={12} aria-hidden="true" />
+            <span className="side-filter-name">{filterProject?.name ?? "All projects"}</span>
+            {pickerOpen ? <ChevronUp aria-hidden="true" size={12} /> : <ChevronDown aria-hidden="true" size={12} />}
           </button>
           {pickerOpen && (
             <>
               <div className="picker-backdrop" onClick={closePicker} />
               <div
                 className="picker-panel"
-                role="listbox"
                 onKeyDown={(e) => {
-                  if (e.key === "Escape") closePicker();
+                  if (e.key === "Escape") {
+                    e.stopPropagation();
+                    closePicker();
+                    filterBtnRef.current?.focus();
+                    return;
+                  }
                   if (e.key === "Enter" && visibleProjects.length > 0 && document.activeElement?.tagName === "INPUT") {
                     pick(visibleProjects[0].id);
                   }
                 }}
               >
-        <div className="search-row">
+                <div className="search-row">
                   <Search className="search-icon" aria-hidden="true" size={15} />
                   <input
                     autoFocus
                     value={projectQuery}
                     onChange={(e) => setProjectQuery(e.target.value)}
-                    placeholder="Search projects…"
+                    placeholder="Filter by project…"
                   />
                 </div>
                 <div className="picker-list">
                   <div
                     className={`picker-row${projectFilter === "all" ? " active" : ""}`}
-                    onClick={() => {
-                      closePicker();
-                      store.setProjectFilter("all");
-                    }}
-                    role="option"
-                    aria-selected={projectFilter === "all"}
+                    onClick={() => pick("all")}
+                    aria-current={projectFilter === "all" ? "true" : undefined}
                   >
                     <span className="name">All projects</span>
+                    <span className="picker-count">{totalCount}</span>
                   </div>
                   {visibleProjects.map((p) => (
                     <div key={p.id}>
                       <div
                         className={`picker-row${p.id === projectFilter ? " active" : ""}`}
                         onClick={() => pick(p.id)}
-                        role="option"
-                        aria-selected={p.id === projectFilter}
+                        aria-current={p.id === projectFilter ? "true" : undefined}
                         title={p.rootPath}
                       >
                         <span className="avatar" style={avatarStyle(p.name)}>
                           {initials(p.name)}
                         </span>
                         <span className="name">{p.name}</span>
+                        <span className="picker-count">{liveCount(sessionsByProject[p.id])}</span>
                         <button
                           className={`gear${managedId === p.id ? " open" : ""}`}
                           title="Project details"
@@ -1080,7 +1117,6 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
               </div>
             </>
           )}
-          </div>
         </div>
       </div>
       <div className="session-list" ref={listRef} onScroll={clearHover}>
@@ -1121,7 +1157,7 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
               <div key={s.id} className="discovered-row" title={s.title}>
                 <DriverIcon driver={s.driver} size={14} />
                 <span className="session-title">{s.title}</span>
-                <button className="btn" style={{ fontSize: 11, padding: "3px 8px" }} onClick={() => void store.importDiscovered(s)} title="Import into cw-code">
+                <button className="btn" style={{ fontSize: 11, padding: "3px 8px" }} onClick={() => importDiscovered(s)} title="Import into cw-code">
                   Import
                 </button>
               </div>

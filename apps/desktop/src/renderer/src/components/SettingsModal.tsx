@@ -28,6 +28,7 @@ import { BinaryPicker } from "./BinaryPicker.js";
 import { TOOL_TABS } from "./toolTabs.js";
 import type { PanelId, PrSuggestCondition, PrWorkflow, PrWorkflowIcon, PrWorkspaceChoice } from "@cw-code/contracts";
 import { useAppStore } from "../stores/appStore.js";
+import { concreteFilterId } from "./projectRecency.js";
 import { usePanelStore } from "../stores/panelStore.js";
 import { useNotifs } from "./Notifications.js";
 import { MenuSelect } from "./MenuSelect.js";
@@ -136,8 +137,13 @@ export function SettingsModal({
   const [resetError, setResetError] = useState<string | null>(null);
   const startPromptRef = useRef<HTMLTextAreaElement | null>(null);
   const updatePromptRef = useRef<HTMLTextAreaElement | null>(null);
-  const activeProjectId = useAppStore((state) => state.activeProjectId);
-  const activeProject = useAppStore((state) => state.projects.find((project) => project.id === state.activeProjectId));
+  const projects = useAppStore((state) => state.projects);
+  const [configProjectId, setConfigProjectId] = useState<string | null>(() => {
+    const state = useAppStore.getState();
+    return state.activeProjectId ?? concreteFilterId(state.projects, state.projectFilter) ?? state.projects[0]?.id ?? null;
+  });
+  const configProject = projects.find((project) => project.id === configProjectId) ?? projects[0];
+  const configId = configProject?.id ?? null;
   const tabAutoLocation = usePanelStore((s) => s.autoLocation);
   const setTabAutoLocation = usePanelStore((s) => s.setAutoLocation);
 
@@ -161,26 +167,35 @@ export function SettingsModal({
   }, [initialHarness]);
 
   useEffect(() => {
-    setProjectAccount(activeProject?.githubAccount ? `${activeProject.githubAccount.host}\t${activeProject.githubAccount.login}` : "");
-  }, [activeProject?.id, activeProject?.githubAccount?.host, activeProject?.githubAccount?.login]);
+    setProjectAccount(configProject?.githubAccount ? `${configProject.githubAccount.host}\t${configProject.githubAccount.login}` : "");
+  }, [configProject?.id, configProject?.githubAccount?.host, configProject?.githubAccount?.login]);
 
+  const healthRequest = useRef(0);
   const loadSourceControlHealth = useCallback(() => {
+    const request = ++healthRequest.current;
+    const current = () => request === healthRequest.current;
     setHealthLoading(true);
-    void window.cw.getSourceControlHealth(activeProjectId ?? undefined)
+    void window.cw.getSourceControlHealth(configId ?? undefined)
       .then((next) => {
+        if (!current()) return;
         setHealth(next);
         setGitUserName(next.repository.userName ?? "");
         setGitUserEmail(next.repository.userEmail ?? "");
       })
-      .catch((error: Error) => setHealth({
-        git: { path: "git", available: false, version: null, error: error.message },
-        githubCli: { path: "gh", available: false, version: null, error: error.message },
-        repository: { available: false, root: null, branch: null, remoteUrl: null, githubHost: null, githubRepository: null, userName: null, userEmail: null, error: error.message },
-        github: { accounts: [], selectedAccount: null, selectionSource: "none", error: error.message },
-        issues: [{ level: "error", message: error.message }]
-      }))
-      .finally(() => setHealthLoading(false));
-  }, [activeProjectId]);
+      .catch((error: Error) => {
+        if (!current()) return;
+        setHealth({
+          git: { path: "git", available: false, version: null, error: error.message },
+          githubCli: { path: "gh", available: false, version: null, error: error.message },
+          repository: { available: false, root: null, branch: null, remoteUrl: null, githubHost: null, githubRepository: null, userName: null, userEmail: null, error: error.message },
+          github: { accounts: [], selectedAccount: null, selectionSource: "none", error: error.message },
+          issues: [{ level: "error", message: error.message }]
+        });
+      })
+      .finally(() => {
+        if (current()) setHealthLoading(false);
+      });
+  }, [configId]);
 
   useEffect(() => {
     if (category === "sourceControl") loadSourceControlHealth();
@@ -319,11 +334,11 @@ export function SettingsModal({
     try {
       const store = useAppStore.getState();
       await store.saveSettings(draft);
-      if (activeProjectId) {
+      if (configId) {
         const [host, login] = projectAccount.split("\t");
-        await store.setProjectGitHubAccount(activeProjectId, host && login ? { host, login } : null);
+        await store.setProjectGitHubAccount(configId, host && login ? { host, login } : null);
         if (health?.repository.available && (gitUserName.trim() !== (health.repository.userName ?? "") || gitUserEmail.trim() !== (health.repository.userEmail ?? ""))) {
-          await window.cw.setRepositoryGitIdentity(activeProjectId, gitUserName, gitUserEmail);
+          await window.cw.setRepositoryGitIdentity(configId, gitUserName, gitUserEmail);
         }
       }
       onClose();
@@ -852,9 +867,34 @@ export function SettingsModal({
         )}
       </section>
 
-      {activeProjectId && health?.repository.available && (
+      {configProject && (
         <section className="settings-section">
-          <h3>{activeProject?.name ?? "Current project"}</h3>
+          <h3>Project</h3>
+          <label className="settings-row">
+            <span className="settings-label">Configure</span>
+            <span className="settings-hint">Repository and GitHub account settings below apply to this project.</span>
+            <select
+              className="field"
+              value={configProject.id}
+              onChange={(e) => {
+                setHealth(null);
+                setConfigProjectId(e.target.value);
+              }}
+            >
+              {projects.map((project) => (
+                <option key={project.id} value={project.id}>{project.name}</option>
+              ))}
+            </select>
+          </label>
+          {!health && healthLoading && <div className="side-empty">Inspecting repository…</div>}
+          {health && !health.repository.available && (
+            <div className="side-empty">{health.repository.error ?? "This project is not a Git repository."}</div>
+          )}
+        </section>
+      )}
+      {configProject && health?.repository.available && (
+        <section className="settings-section">
+          <h3>{configProject.name}</h3>
           <div className="settings-repo-summary">
             <GitBranch size={14} />
             <span><b>{health.repository.githubRepository ?? health.repository.root}</b><small>{health.repository.remoteUrl ?? "No remote"}</small></span>
@@ -864,8 +904,8 @@ export function SettingsModal({
             <span className="settings-hint">Auto discovery currently resolves {health.github.selectedAccount ? `@${health.github.selectedAccount}` : "no account"}{health.github.selectionSource !== "none" ? ` by ${health.github.selectionSource}` : ""}.</span>
             <select className="field" value={projectAccount} onChange={(e) => setProjectAccount(e.target.value)}>
               <option value="">Automatic (recommended)</option>
-              {activeProject?.githubAccount && !health.github.accounts.some((account) => account.host === activeProject.githubAccount?.host && account.login === activeProject.githubAccount?.login) && (
-                <option value={`${activeProject.githubAccount.host}\t${activeProject.githubAccount.login}`} disabled>{activeProject.githubAccount.login} · {activeProject.githubAccount.host} · unavailable</option>
+              {configProject.githubAccount && !health.github.accounts.some((account) => account.host === configProject.githubAccount?.host && account.login === configProject.githubAccount?.login) && (
+                <option value={`${configProject.githubAccount.host}\t${configProject.githubAccount.login}`} disabled>{configProject.githubAccount.login} · {configProject.githubAccount.host} · unavailable</option>
               )}
               {health.github.accounts.map((account) => (
                 <option key={`${account.host}:${account.login}`} value={`${account.host}\t${account.login}`} disabled={!account.authenticated}>
@@ -886,7 +926,7 @@ export function SettingsModal({
           </label>
         </section>
       )}
-      {!activeProjectId && <div className="side-empty">Select a project to configure its repository and GitHub account.</div>}
+      {!configProject && <div className="side-empty">Add a project to configure its repository and GitHub account.</div>}
     </>
   );
 

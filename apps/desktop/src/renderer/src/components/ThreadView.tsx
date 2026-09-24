@@ -206,8 +206,7 @@ export function ThreadView() {
         <Notifications />
         <NewThread
           key={activeProjectId}
-          projectId={activeProjectId ?? ""}
-          projectName={project?.name ?? "this project"}
+          projectId={activeProjectId}
           driver={heroDriver}
           onDriverChange={setPendingDriver}
         />

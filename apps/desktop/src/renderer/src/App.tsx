@@ -20,6 +20,7 @@ import { useAppStore } from "./stores/appStore.js";
 import { tabsInPanel, DOCKABLE_TABS } from "./stores/panelLayout.js";
 import { usePanelStore } from "./stores/panelStore.js";
 import { usePrStore } from "./stores/prStore.js";
+import { concreteFilterId } from "./components/projectRecency.js";
 import { prKey } from "./components/prInbox.js";
 import type { DockableTabId } from "@cw-code/contracts";
 import type { TurnEvent } from "./cw.js";
@@ -97,8 +98,11 @@ function handleTurnEvent(msg: { sessionId: string; event: TurnEvent }): void {
   useAppStore.getState().applyEvent(msg.sessionId, msg.event);
 }
 
+const MODAL_SELECTOR = '[role="dialog"], [role="alertdialog"], [aria-modal="true"]';
+
 export function App() {
   const activeProjectId = useAppStore((s) => s.activeProjectId);
+  const filterProjectId = useAppStore((s) => concreteFilterId(s.projects, s.projectFilter));
   const activeSessionId = useAppStore((s) => s.activeSessionId);
   const sessionsByProject = useAppStore((s) => s.sessionsByProject);
   const pendingDriver = useAppStore((s) => s.pendingDriver);
@@ -194,6 +198,10 @@ export function App() {
       } else if (e.key === "0") {
         e.preventDefault();
         window.cw.zoomReset();
+      } else if (e.key.toLowerCase() === "n" && !e.shiftKey && !document.querySelector(MODAL_SELECTOR)) {
+        e.preventDefault();
+        usePrStore.getState().openSessionView();
+        useAppStore.getState().startNewSession();
       }
     };
     window.addEventListener("keydown", onKey);
@@ -206,19 +214,21 @@ export function App() {
     };
   }, []);
 
-  const activeSessionKey = activeProjectId
-    ? (sessionsByProject[activeProjectId] ?? []).map((session) => session.id).join("|")
-    : "";
+  const refreshProjectKey = [...new Set([activeProjectId, filterProjectId].filter((id): id is string => id !== null))].join("|");
+  const refreshSessionKey = refreshProjectKey
+    .split("|")
+    .flatMap((projectId) => (sessionsByProject[projectId] ?? []).map((session) => session.id))
+    .join("|");
 
   useEffect(() => {
-    if (!activeProjectId || !activeSessionKey) return;
+    if (!refreshProjectKey || !refreshSessionKey) return;
     let running = false;
     const refresh = async () => {
       if (running || document.hidden) return;
       running = true;
       try {
         const current = useAppStore.getState();
-        const sessions = current.sessionsByProject[activeProjectId] ?? [];
+        const sessions = refreshProjectKey.split("|").flatMap((projectId) => current.sessionsByProject[projectId] ?? []);
         for (let i = 0; i < sessions.length; i += 6) {
           await Promise.all(sessions.slice(i, i + 6).map((session) => current.refreshGitStatus(session.id)));
         }
@@ -236,7 +246,7 @@ export function App() {
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [activeProjectId, activeSessionKey, sourceControlRefreshIntervalSeconds]);
+  }, [refreshProjectKey, refreshSessionKey, sourceControlRefreshIntervalSeconds]);
 
   useEffect(() => {
     if (!window.cw) return;

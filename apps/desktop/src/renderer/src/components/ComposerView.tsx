@@ -116,7 +116,8 @@ export function ComposerView({
   modelsRefreshKey = 0,
   resetStaleModel = false,
   recipePrefix,
-  footer
+  footer,
+  blockedReason
 }: {
   backend: ComposerBackend;
   driver: DriverName;
@@ -125,6 +126,7 @@ export function ComposerView({
   resetStaleModel?: boolean;
   recipePrefix?: ReactNode;
   footer?: ReactNode;
+  blockedReason?: string;
 }) {
   const { prefs, busy } = backend;
   const backendRef = useRef(backend);
@@ -278,7 +280,7 @@ export function ComposerView({
 
   const send = () => {
     const body = draft.trim();
-    if ((!body && attachments.length === 0) || busy || sending) return;
+    if ((!body && attachments.length === 0) || busy || sending || blockedReason) return;
     const tagged = attachments.length > 0 ? `${body}${body ? "\n" : ""}${attachments.map((a) => `@${a}`).join("\n")}` : body;
     setSending(true);
     void backend.send(tagged, attachments).then(() => {
@@ -392,10 +394,10 @@ export function ComposerView({
             onPaste={(e) => {
               void pasteFiles(e.clipboardData);
             }}
-            placeholder="Ask cw-code — @ files, / commands, $ skills"
+            placeholder={blockedReason ?? "Ask cw-code — @ files, / commands, $ skills"}
             className="composer-input"
             rows={3}
-            disabled={busy || sending}
+            disabled={busy || sending || blockedReason !== undefined}
           />
         </div>
       </div>
@@ -584,8 +586,8 @@ export function ComposerView({
             type="button"
             className="composer-action composer-send"
             onClick={send}
-            disabled={sending || (!draft.trim() && attachments.length === 0)}
-            title="Send"
+            disabled={sending || blockedReason !== undefined || (!draft.trim() && attachments.length === 0)}
+            title={blockedReason ?? "Send"}
             aria-label="Send"
           >
             <ArrowUp size={18} />
