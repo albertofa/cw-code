@@ -1,23 +1,41 @@
 appId: com.cwcode.app
 productName: cw-code
+copyright: Copyright (C) 2026 cw-code
 directories:
   output: dist
   buildResources: resources
 npmRebuild: false
+asar: true
 files:
   - "out/**"
   - "package.json"
+  - "!node_modules/node-pty/deps/**"
+  - "!node_modules/node-pty/src/**"
+  - "!node_modules/node-pty/third_party/**"
+  - "!node_modules/node-pty/scripts/**"
+  - "!node_modules/node-pty/binding.gyp"
+  - "!node_modules/node-pty/build/**"
+  - "!node_modules/node-pty/prebuilds/darwin-arm64/**"
+  - "!node_modules/node-pty/prebuilds/darwin-x64/**"
+  - "!node_modules/node-pty/prebuilds/win32-arm64/**"
+asarUnpack:
+  - "node_modules/node-pty/prebuilds/win32-x64/**"
 extraResources:
   - from: resources
     to: branding
 win:
   icon: resources/icon.ico
+  executableName: cw-code
   target:
-    - NSIS
-    - dir
+    - target: nsis
+      arch:
+        - x64
 nsis:
   installerIcon: resources/icon.ico
   uninstallerIcon: resources/icon.ico
   installerHeaderIcon: resources/icon.ico
   oneClick: false
+  perMachine: false
   allowToChangeInstallationDirectory: true
+  differentialPackage: true
+  artifactName: "${productName}-Setup-${version}-${arch}.${ext}"
