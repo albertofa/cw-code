@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { attributeSendMessages, extractAgentId, findSidecarModel, foldTaskNotifications, parseClaudeTranscriptLine, readSidecarAgent, toEpochMs } from "./claudeHistory.js";
+import { assignReasoningDurations, attributeSendMessages, extractAgentId, findSidecarModel, foldTaskNotifications, parseClaudeTranscriptLine, readClaudeTaskResult, readSidecarAgent, toEpochMs } from "./claudeHistory.js";
 import type { HistoryMessage } from "@cw-code/contracts";
 
 function toolMessage(partial: Partial<HistoryMessage> & { id: string }): HistoryMessage {
@@ -36,8 +36,7 @@ describe("parseClaudeTranscriptLine", () => {
         role: "assistant",
         content: [
           { type: "text", text: "looking" },
-          { type: "tool_use", id: "tu1", name: "Read", input: { path: "a.ts" } },
-          { type: "thinking", thinking: "..." }
+          { type: "tool_use", id: "tu1", name: "Read", input: { path: "a.ts" } }
         ]
       }
     });
@@ -51,6 +50,73 @@ describe("parseClaudeTranscriptLine", () => {
         toolName: "Read"
       }
     ]);
+  });
+
+  it("maps thinking blocks to reasoning messages and skips empty ones", () => {
+    const out = parseClaudeTranscriptLine({
+      type: "assistant",
+      uuid: "a1",
+      timestamp: "2026-09-09T11:21:21.422Z",
+      message: {
+        role: "assistant",
+        content: [
+          { type: "thinking", thinking: "" },
+          { type: "thinking", thinking: "weighing options" }
+        ]
+      }
+    });
+    expect(out).toEqual([
+      {
+        id: "a1-th1",
+        role: "reasoning",
+        text: "weighing options",
+        turnId: "a1",
+        timestamp: 1788952881422
+      }
+    ]);
+  });
+
+  it("attaches normalized todos to TodoWrite tool_use messages", () => {
+    const input = {
+      todos: [
+        { content: "Write tests", status: "in_progress", activeForm: "Writing tests" },
+        { content: "Ship it", status: "completed", activeForm: "Shipping it" }
+      ]
+    };
+    const out = parseClaudeTranscriptLine({
+      type: "assistant",
+      uuid: "a1",
+      message: {
+        role: "assistant",
+        content: [{ type: "tool_use", id: "tu1", name: "TodoWrite", input }]
+      }
+    });
+    expect(out).toEqual([
+      {
+        id: "tu1",
+        role: "tool",
+        text: `TodoWrite ${JSON.stringify(input)}`,
+        turnId: "a1",
+        toolName: "TodoWrite",
+        todos: [
+          { content: "Write tests", status: "in_progress" },
+          { content: "Ship it", status: "completed" }
+        ]
+      }
+    ]);
+  });
+
+  it("omits the todos field for non-todo tool calls", () => {
+    const out = parseClaudeTranscriptLine({
+      type: "assistant",
+      uuid: "a1",
+      message: {
+        role: "assistant",
+        content: [{ type: "tool_use", id: "tu1", name: "Read", input: { path: "a.ts" } }]
+      }
+    });
+    expect(out).toHaveLength(1);
+    expect("todos" in out[0]).toBe(false);
   });
 
   it("maps tool_result blocks to tool messages", () => {
@@ -140,6 +206,14 @@ describe("parseClaudeTranscriptLine", () => {
       parseClaudeTranscriptLine({ type: "user", uuid: "u10", message: { role: "user", content: text } })
     ).toEqual([{ id: "u10", role: "user", text, turnId: "u10" }]);
   });
+
+  it("renders a slash-command transcript line as /name args", () => {
+    const text =
+      "<command-name>/context</command-name>\n<command-message>context</command-message>\n<command-args></command-args>";
+    expect(
+      parseClaudeTranscriptLine({ type: "user", uuid: "u11", message: { role: "user", content: text } })
+    ).toEqual([{ id: "u11", role: "user", text: "/context", turnId: "u11" }]);
+  });
 });
 
 describe("toEpochMs", () => {
@@ -153,6 +227,26 @@ describe("toEpochMs", () => {
     expect(toEpochMs(undefined)).toBeUndefined();
     expect(toEpochMs("not a date")).toBeUndefined();
     expect(toEpochMs(Number.NaN)).toBeUndefined();
+  });
+});
+
+describe("assignReasoningDurations", () => {
+  it("stamps the span from first thinking line to the last block of the same message", () => {
+    const first: HistoryMessage = { id: "a-th0", role: "reasoning", text: "step one", turnId: "a" };
+    const second: HistoryMessage = { id: "a-th1", role: "reasoning", text: "step two", turnId: "a" };
+    assignReasoningDurations(
+      new Map([["msg_1", [first, second]]]),
+      new Map([["msg_1", 1000]]),
+      new Map([["msg_1", 4200]])
+    );
+    expect(first.reasoningMs).toBe(3200);
+    expect(second.reasoningMs).toBe(3200);
+  });
+
+  it("leaves durations unset when the end stamp is missing", () => {
+    const only: HistoryMessage = { id: "a-th0", role: "reasoning", text: "step", turnId: "a" };
+    assignReasoningDurations(new Map([["msg_1", [only]]]), new Map([["msg_1", 1000]]), new Map());
+    expect(only.reasoningMs).toBeUndefined();
   });
 });
 
@@ -210,6 +304,27 @@ describe("foldTaskNotifications", () => {
     expect(out[0].text).toBe("second");
     expect(out[0].timestamp).toBe(9500);
     expect(out[0].isError).toBe(true);
+  });
+
+  it("carries the usage block onto the folded result", () => {
+    const withUsage = toolMessage({
+      id: "n1",
+      toolName: "task-notification",
+      timestamp: 9000,
+      text: `<task-notification>\n<tool-use-id>tu1</tool-use-id>\n<status>completed</status>\n<result>done</result>\n<usage><subagent_tokens>136099</subagent_tokens><tool_uses>12</tool_uses><duration_ms>287602</duration_ms></usage>`
+    });
+    const out = foldTaskNotifications([
+      toolMessage({ id: "tu1-r", toolName: "result", text: "Async agent launched" }),
+      withUsage
+    ]);
+    expect(out[0].toolUsage).toEqual({ tokens: 136099, toolUses: 12, durationMs: 287602 });
+  });
+});
+
+describe("readClaudeTaskResult", () => {
+  it("returns undefined for unsafe cursors or missing transcripts", () => {
+    expect(readClaudeTaskResult("C:\\proj", "../escape", "tu1")).toBeUndefined();
+    expect(readClaudeTaskResult("C:\\proj", "no-such-session", "tu1")).toBeUndefined();
   });
 });
 

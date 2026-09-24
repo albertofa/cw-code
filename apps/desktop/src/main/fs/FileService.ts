@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
+import { attachmentsDir } from "../paths/appPaths.js";
 
 function assertInside(root: string, target: string): string {
   const abs = resolve(root, target.replace(/\\/g, "/"));
@@ -29,7 +30,7 @@ export const IMAGE_MIME_BY_EXT: Record<string, string> = {
   gif: "image/gif",
 };
 
-const IMAGE_MAX_BYTES = 8 * 1024 * 1024;
+export const IMAGE_MAX_BYTES = 8 * 1024 * 1024;
 
 export function imageExtMime(ext: string): string | null {
   return IMAGE_MIME_BY_EXT[ext.toLowerCase()] ?? null;
@@ -43,10 +44,6 @@ export function pasteImageExt(mime: string): string {
 
 export function pasteImageName(mime: string, now: Date = new Date()): string {
   return `cw-paste-${now.toISOString().replaceAll(":", "-").replace(".", "-")}.${pasteImageExt(mime)}`;
-}
-
-function toPosixRelative(p: string): string {
-  return p.replaceAll("\\", "/");
 }
 
 export interface DirEntry {
@@ -96,11 +93,13 @@ export class FileService {
   }
 
   savePasteImage(root: string, mime: string, data: Uint8Array): string {
-    const dir = join(root, ".cw", "pastes");
+    void root;
+    const dir = attachmentsDir();
     mkdirSync(dir, { recursive: true });
     const name = pasteImageName(mime);
-    writeFileSync(join(dir, name), data);
-    return toPosixRelative(join(".cw", "pastes", name));
+    const abs = normalize(join(dir, name));
+    writeFileSync(abs, data);
+    return abs;
   }
 
   listFiles(root: string): string[] {

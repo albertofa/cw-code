@@ -15,13 +15,22 @@ export interface LiveToolPart {
 }
 
 export interface LiveMessage {
-  info?: { id?: string };
+  info?: { id?: string; role?: string; modelID?: string; providerID?: string };
   parts?: LiveToolPart[];
 }
 
 export interface LiveSeen {
   call: boolean;
   result: boolean;
+  input: boolean;
+  model?: string;
+}
+
+function hasInput(input: unknown): boolean {
+  if (input === null || input === undefined) return false;
+  if (typeof input === "string") return input.length > 0;
+  if (typeof input === "object") return Object.keys(input).length > 0;
+  return true;
 }
 
 function partCallId(part: LiveToolPart, turnId: string): string {
@@ -38,26 +47,59 @@ function partInput(part: LiveToolPart): unknown {
   return state ?? null;
 }
 
+export function collectPartTypes(messages: LiveMessage[], into: Map<string, string>): void {
+  for (const msg of messages) {
+    for (const part of msg.parts ?? []) {
+      if (typeof part.id === "string" && part.id && typeof part.type === "string" && part.type) {
+        into.set(part.id, part.type);
+      }
+    }
+  }
+}
+
+export function childModelOf(messages: LiveMessage[]): string | undefined {
+  for (const msg of messages) {
+    const info = msg.info;
+    if (!info || info.role !== "assistant") continue;
+    if (typeof info.modelID === "string" && info.modelID) return info.modelID;
+  }
+  return undefined;
+}
+
 export function diffLiveTools(
   seen: Map<string, LiveSeen>,
   messages: LiveMessage[],
-  turnId: string
+  turnId: string,
+  beforeIds: Set<string> | null,
+  parentToolCallId?: string,
+  modelForCall?: (toolCallId: string) => string | undefined
 ): ThreadEvent[] {
   const events: ThreadEvent[] = [];
   for (const msg of messages) {
+    const msgId = msg.info?.id;
+    if (beforeIds !== null && typeof msgId === "string" && beforeIds.has(msgId)) continue;
     for (const part of msg.parts ?? []) {
       if (part.type !== "tool") continue;
       const id = partCallId(part, turnId);
-      const entry = seen.get(id) ?? { call: false, result: false };
-      if (!entry.call) {
+      const entry = seen.get(id) ?? { call: false, result: false, input: false };
+      const input = partInput(part);
+      const model = modelForCall?.(id);
+      const newCall = !entry.call;
+      const newInput = !entry.input && hasInput(input);
+      const newModel = !!model && model !== entry.model;
+      if (newCall || newInput || newModel) {
         entry.call = true;
+        entry.input = entry.input || hasInput(input);
+        if (model) entry.model = model;
         seen.set(id, entry);
         events.push({
           type: "tool.call",
           turnId,
           toolCallId: id,
           name: part.tool ?? "tool",
-          input: partInput(part)
+          input,
+          ...(parentToolCallId ? { parentToolCallId } : {}),
+          ...(model ? { model } : {})
         });
       }
       if (!entry.result) {
@@ -70,11 +112,35 @@ export function diffLiveTools(
             turnId,
             toolCallId: id,
             output: result.output,
-            isError: result.isError
+            isError: result.isError,
+            ...(model ? { model } : {})
           });
         }
       }
     }
   }
   return events;
+}
+
+export interface LiveTaskPart {
+  callId: string;
+  status?: string;
+}
+
+export function collectTaskParts(messages: LiveMessage[]): LiveTaskPart[] {
+  const out: LiveTaskPart[] = [];
+  for (const msg of messages) {
+    for (const part of msg.parts ?? []) {
+      if (part.type !== "tool" || (part.tool ?? "").toLowerCase() !== "task") continue;
+      const id =
+        typeof part.callID === "string" && part.callID
+          ? part.callID
+          : typeof part.id === "string" && part.id
+            ? part.id
+            : "";
+      if (!id) continue;
+      out.push({ callId: id, ...(part.state?.status ? { status: part.state.status } : {}) });
+    }
+  }
+  return out;
 }

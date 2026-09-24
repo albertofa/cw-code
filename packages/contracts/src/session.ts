@@ -1,6 +1,9 @@
+import type { SessionPrLink } from "./pullRequests.js";
+import type { CommandInvocation } from "./commands.js";
+
 export type DriverKind = "claude" | "opencode" | "codex";
 
-export type SessionStatus = "idle" | "working" | "input-required" | "done" | "resolved" | "archived";
+export type SessionStatus = "idle" | "working" | "input-required" | "done" | "holding" | "resolved" | "archived";
 
 export interface Project {
   id: string;
@@ -27,6 +30,9 @@ export interface SessionMeta {
   worktreePath?: string;
   /** Last known branch. Live Git status remains the source of truth. */
   branch?: string;
+  prs?: SessionPrLink[];
+  /** prKeys of PRs the user explicitly unlinked from this session, so auto-link does not re-attach them. */
+  prUnlinked?: string[];
 }
 
 export type CreateWorkspaceMode = "current" | "new" | "previous";
@@ -40,6 +46,8 @@ export interface CreateSessionOptions {
   mode?: CreateWorkspaceMode;
   /** Worktree to reuse when mode is "previous". Must be an app-managed worktree of the project. */
   reuseWorktreePath?: string;
+  /** Start the worktree from a pull request head instead of baseBranch. */
+  prHead?: { number: number; headRefName: string; headRefOid: string; viewerIsAuthor: boolean };
 }
 
 export interface TurnRequest {
@@ -54,13 +62,22 @@ export interface TurnRequest {
   attachments?: string[];
   allowedTools?: string[];
   maxTurns?: number;
+  command?: CommandInvocation;
   /** Complete spawn environment (process env plus cw-code injections). When omitted, the child inherits the parent env. */
   env?: Record<string, string>;
 }
 
-export type PermissionMode = "auto" | "acceptEdits" | "bypassPermissions" | "manual" | "plan";
+export type PermissionMode = "auto" | "acceptEdits" | "bypassPermissions" | "manual";
 
-export type EffortLevel = "low" | "medium" | "high" | "xhigh" | "max";
+export interface PermissionOption {
+  id: PermissionMode;
+  label: string;
+  description: string;
+  /** False when cw-code synthesizes the mode via background auto-accept. */
+  native: boolean;
+}
+
+export type EffortLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
 export interface ComposerPrefs {
   model?: string;
@@ -73,6 +90,8 @@ export interface ModelOption {
   id: string;
   label: string;
   source: "live" | "curated" | "custom";
+  variants?: string[];
+  contextWindow?: number;
 }
 
 export interface GitPullRequestChecks {
@@ -104,6 +123,12 @@ export interface GitStatus {
   stagedCount: number;
   ahead: number;
   behind: number;
+  /** Reference branch used for branch comparison (e.g. main). Null when none is available. */
+  baseRef: string | null;
+  /** Commits on HEAD not reachable from baseRef. */
+  baseAhead: number;
+  /** Commits on baseRef not reachable from HEAD. */
+  baseBehind: number;
   isWorktree: boolean;
   worktreeName: string;
   worktreePath: string;
@@ -186,6 +211,7 @@ export interface WorktreePruneSummary {
   failed: number;
   errors: string[];
   keptDirty: string[];
+  clearedSessionIds: string[];
 }
 
 export type GitDiffMode = "working" | "staged" | "branch";

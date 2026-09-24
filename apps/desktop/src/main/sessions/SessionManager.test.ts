@@ -1,16 +1,17 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
-import type { CliDriver, HistoryMessage, ModelOption, ThreadEvent, TurnHandle } from "@cw-code/contracts";
-import { SessionManager } from "./SessionManager.js";
+import type { CliDriver, HistoryMessage, ModelOption, SessionMeta, ThreadEvent, TurnHandle } from "@cw-code/contracts";
+import { SessionManager, type SessionManagerOptions } from "./SessionManager.js";
 import type { SessionStore } from "./SessionStore.js";
 
 class FakeDriver implements CliDriver {
   readonly kind = "claude" as const;
   seen: string[] = [];
+  stoppedSessions: string[] = [];
   lastRequest: Record<string, unknown> | null = null;
   history: HistoryMessage[] = [];
   private pending = new Map<string, { sessionId: string; prompt: string }>();
@@ -20,6 +21,11 @@ class FakeDriver implements CliDriver {
   }
   async getHistory(): Promise<HistoryMessage[]> {
     return this.history;
+  }
+  subagentCalls: Array<{ rootPath: string; resumeCursor: string; agentId: string }> = [];
+  async getSubagentTools(rootPath: string, resumeCursor: string, agentId: string) {
+    this.subagentCalls.push({ rootPath, resumeCursor, agentId });
+    return { items: [{ id: "tu1", name: "Read", input: null, output: "file" }], model: "claude-sonnet-5" };
   }
   startTurn(request: { sessionId: string; prompt: string }): TurnHandle {
     const turnId = randomUUID();
@@ -33,21 +39,20 @@ class FakeDriver implements CliDriver {
     });
     return { turnId, events: (async function* () {})() };
   }
-  complete(turnId: string): void {
+  complete(turnId: string, backgroundTasks = 0): void {
     const pending = this.pending.get(turnId);
     if (!pending) return;
-    this.pending.delete(turnId);
+    if (backgroundTasks === 0) this.pending.delete(turnId);
     this.emit({
       type: "turn.done",
       turnId,
       sessionId: pending.sessionId,
       resumeCursor: `cursor-${turnId}`,
       resultText: `echo:${pending.prompt}`,
-      inputTokens: 1,
-      outputTokens: 1,
-      costUsd: 0,
+      usage: [],
       numTurns: 1,
-      isError: false
+      isError: false,
+      backgroundTasks
     });
   }
   completeTitle(text: string): void {
@@ -61,11 +66,10 @@ class FakeDriver implements CliDriver {
         sessionId: pending.sessionId,
         resumeCursor: `cursor-${turnId}`,
         resultText: text,
-        inputTokens: 1,
-        outputTokens: 1,
-        costUsd: 0,
+        usage: [],
         numTurns: 1,
-        isError: false
+        isError: false,
+        backgroundTasks: 0
       });
     }
   }
@@ -79,11 +83,10 @@ class FakeDriver implements CliDriver {
         sessionId: pending.sessionId,
         resumeCursor: `cursor-${turnId}`,
         resultText,
-        inputTokens: 1,
-        outputTokens: 1,
-        costUsd: 0,
+        usage: [],
         numTurns: 1,
-        isError: true
+        isError: true,
+        backgroundTasks: 0
       });
     }
   }
@@ -99,6 +102,9 @@ class FakeDriver implements CliDriver {
     for (const turnId of [...this.pending.keys()]) this.complete(turnId);
   }
   interrupt(): void {}
+  stopSession(sessionId: string): void {
+    this.stoppedSessions.push(sessionId);
+  }
   async renameSession(): Promise<void> {}
   async *events(): AsyncIterable<never> {}
 }
@@ -106,6 +112,7 @@ class FakeDriver implements CliDriver {
 class ModelRecordingDriver implements CliDriver {
   readonly kind = "opencode" as const;
   modelCwds: string[] = [];
+  stoppedSessions: string[] = [];
   constructor(private emit: (event: ThreadEvent) => void) {}
   async listSessions(): Promise<[]> {
     return [];
@@ -122,6 +129,9 @@ class ModelRecordingDriver implements CliDriver {
     return { turnId, events: (async function* () {})() };
   }
   interrupt(): void {}
+  stopSession(sessionId: string): void {
+    this.stoppedSessions.push(sessionId);
+  }
   async renameSession(): Promise<void> {}
   async *events(): AsyncIterable<never> {}
 }
@@ -153,6 +163,31 @@ async function waitForBranch(manager: SessionManager, projectId: string, session
     await new Promise((r) => setTimeout(r, 50));
   }
   return (await manager.listSessions(projectId)).find((s) => s.id === sessionId)?.branch;
+}
+
+async function waitForSessionPrSeen(
+  manager: SessionManager,
+  projectId: string,
+  sessionId: string,
+  sha: string,
+  number = 42
+): Promise<SessionMeta | undefined> {
+  for (let i = 0; i < 100; i += 1) {
+    const session = (await manager.listSessions(projectId)).find((s) => s.id === sessionId);
+    if (session?.prs?.find((link) => link.ref.number === number)?.lastSeenSha === sha) return session;
+    await new Promise((r) => setTimeout(r, 10));
+  }
+  return (await manager.listSessions(projectId)).find((s) => s.id === sessionId);
+}
+
+function makePrManager(opts: Pick<SessionManagerOptions, "prHead" | "prHeadRefresh" | "prState">) {
+  const dir = mkdtempSync(join(tmpdir(), "cw-test-"));
+  const manager = new SessionManager({ dbPath: join(dir, "test.db"), settingsPath: join(dir, "settings.json"), ...opts });
+  const fake = new FakeDriver((e) => (manager as unknown as { routeEvent(e: ThreadEvent): void }).routeEvent(e));
+  (manager as unknown as { drivers: Record<string, CliDriver> }).drivers = { claude: fake, opencode: fake, codex: fake };
+  manager.setSettings({ autoTitleEnabled: false });
+  const project = manager.addProject(join(dir, "proj"));
+  return { manager, fake, project, dir };
 }
 
 function makeGitSandboxManager(prefix: string) {
@@ -238,6 +273,125 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
+  it("records turn usage to the ledger for a known session, tagged with its project and driver", async () => {
+    const { manager } = makeManager();
+    const project = manager.addProject("C:\\proj-usage-known");
+    const session = await manager.createSession(project.id, "claude");
+    (manager as unknown as { routeEvent(e: ThreadEvent): void }).routeEvent({
+      type: "turn.done",
+      turnId: "turn-usage-1",
+      sessionId: session.id,
+      resumeCursor: "cursor-1",
+      resultText: "",
+      usage: [
+        { model: "claude-sonnet-5", inputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 5, reasoningTokens: 0, costUsd: 0.02 }
+      ],
+      numTurns: 1,
+      isError: false,
+      backgroundTasks: 0
+    });
+    const rows = manager.queryUsageLedger({ sessionId: session.id });
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ sessionId: session.id, projectId: project.id, driver: "claude", inputTokens: 10, costUsd: 0.02 });
+    manager.dispose();
+  });
+
+  it("routes a late tool result from the session's settled turn to that session", async () => {
+    const { manager, received } = makeManager();
+    const project = manager.addProject("C:\\proj-late-result");
+    const session = await manager.createSession(project.id, "claude");
+    const turnId = await manager.startTurn(session.id, "start a background shell");
+    const route = (manager as unknown as { routeEvent(e: ThreadEvent): void }).routeEvent.bind(manager);
+    route({
+      type: "turn.done",
+      turnId,
+      sessionId: session.id,
+      resumeCursor: "cursor-1",
+      resultText: "STARTED",
+      usage: [],
+      numTurns: 1,
+      isError: false,
+      backgroundTasks: 0
+    });
+    route({ type: "tool.result", turnId, toolCallId: "call-bash", output: "Background command completed (exit code 0)", isError: false });
+
+    expect(received).toContainEqual({
+      sessionId: session.id,
+      event: expect.objectContaining({ type: "tool.result", toolCallId: "call-bash" })
+    });
+    manager.dispose();
+  });
+
+  it("does not record usage for an unknown session id, including title-generation session ids", () => {
+    const { manager } = makeManager();
+    for (const sessionId of ["does-not-exist", "title:does-not-exist"]) {
+      (manager as unknown as { routeEvent(e: ThreadEvent): void }).routeEvent({
+        type: "turn.done",
+        turnId: `turn-${sessionId}`,
+        sessionId,
+        resumeCursor: "cursor-1",
+        resultText: "",
+        usage: [
+          { model: "claude-sonnet-5", inputTokens: 10, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 5, reasoningTokens: 0, costUsd: null }
+        ],
+        numTurns: 1,
+        isError: false,
+        backgroundTasks: 0
+      });
+    }
+    expect(manager.queryUsageLedger({ sessionId: "does-not-exist" })).toEqual([]);
+    expect(manager.queryUsageLedger({ sessionId: "title:does-not-exist" })).toEqual([]);
+    manager.dispose();
+  });
+
+  it("skips ledger recording when a turn.done carries no usage", async () => {
+    const { manager } = makeManager();
+    const project = manager.addProject("C:\\proj-usage-empty");
+    const session = await manager.createSession(project.id, "claude");
+    (manager as unknown as { routeEvent(e: ThreadEvent): void }).routeEvent({
+      type: "turn.done",
+      turnId: "turn-empty",
+      sessionId: session.id,
+      resumeCursor: "cursor-1",
+      resultText: "",
+      usage: [],
+      numTurns: 1,
+      isError: false,
+      backgroundTasks: 0
+    });
+    expect(manager.queryUsageLedger({ sessionId: session.id })).toEqual([]);
+    manager.dispose();
+  });
+
+  it("routes subagent tool lookups through the session driver", async () => {
+    const { manager, fake } = makeManager();
+    const project = manager.addProject("C:\\proj-subagents");
+    const a = await manager.createSession(project.id, "claude");
+    const result = await manager.getSubagentTools(a.id, "agent-1");
+    expect(result.model).toBe("claude-sonnet-5");
+    expect(fake.subagentCalls).toEqual([{ rootPath: "C:\\proj-subagents", resumeCursor: "", agentId: "agent-1" }]);
+    manager.dispose();
+  });
+
+  it("returns an empty result when the driver has no subagent source", async () => {
+    const { manager } = makeManager();
+    const project = manager.addProject("C:\\proj-subagents-none");
+    const a = await manager.createSession(project.id, "claude");
+    (manager as unknown as { drivers: Record<string, CliDriver> }).drivers.claude = {
+      kind: "claude",
+      listSessions: async () => [],
+      getHistory: async () => [],
+      startTurn: () => {
+        throw new Error("not used");
+      },
+      interrupt: () => {},
+      renameSession: async () => {},
+      async *events() {}
+    };
+    await expect(manager.getSubagentTools(a.id, "agent-1")).resolves.toEqual({ items: [] });
+    manager.dispose();
+  });
+
   it("lists CLI-native sessions as discovered without storing them", async () => {
     const { manager } = makeManager();
     const project = manager.addProject("C:\\proj4");
@@ -290,10 +444,29 @@ describe("SessionManager", () => {
     const project = manager.addProject("C:\\proj5");
     const a = await manager.createSession(project.id, "claude");
     expect(manager.getComposer(a.id)).toMatchObject({ effort: "medium", permissionMode: "auto" });
-    manager.setComposer(a.id, { model: "sonnet", effort: "high", permissionMode: "plan" });
-    expect(manager.getComposer(a.id)).toMatchObject({ model: "sonnet", effort: "high", permissionMode: "plan" });
+    manager.setComposer(a.id, { model: "sonnet", effort: "high", permissionMode: "manual" });
+    expect(manager.getComposer(a.id)).toMatchObject({ model: "sonnet", effort: "high", permissionMode: "manual" });
     const b = await manager.createSession(project.id, "claude");
     expect(manager.getComposer(b.id)).toMatchObject({ effort: "medium", permissionMode: "auto" });
+    manager.dispose();
+  });
+
+  it("returns undefined model when unset without falling back to the claude default", async () => {
+    const { manager } = makeManager();
+    manager.setSettings({ claudeDefaultModel: "should-not-appear" });
+    const project = manager.addProject("C:\\proj5-unset-model");
+    const a = await manager.createSession(project.id, "claude");
+    expect(manager.getComposer(a.id).model).toBeUndefined();
+    manager.dispose();
+  });
+
+  it("maps a retired stored plan permission to manual", async () => {
+    const { manager } = makeManager();
+    const project = manager.addProject("C:\\proj-plan-legacy");
+    const session = await manager.createSession(project.id, "claude");
+    const store = (manager as unknown as { store: SessionStore }).store;
+    store.updateSession(session.id, { permissionMode: "plan" as never });
+    expect(manager.getComposer(session.id)).toMatchObject({ permissionMode: "manual" });
     manager.dispose();
   });
 
@@ -302,9 +475,9 @@ describe("SessionManager", () => {
     const root = mkdtempSync(join(tmpdir(), "cw-session-prefs-"));
     const project = manager.addProject(root);
     const a = await manager.createSession(project.id, "claude");
-    manager.setComposer(a.id, { model: "sonnet", effort: "high", permissionMode: "plan" });
+    manager.setComposer(a.id, { model: "sonnet", effort: "high", permissionMode: "manual" });
     await manager.startTurn(a.id, "stored");
-    expect(fake.lastRequest).toMatchObject({ model: "sonnet", effort: "high", permissionMode: "plan" });
+    expect(fake.lastRequest).toMatchObject({ model: "sonnet", effort: "high", permissionMode: "manual" });
     fake.completeAll();
     await new Promise((r) => setTimeout(r, 20));
     writeFileSync(join(root, "a.ts"), "x", "utf8");
@@ -325,6 +498,78 @@ describe("SessionManager", () => {
     await expect(manager.listModelsFor("missing", "opencode")).rejects.toThrow("unknown project");
     expect(() => manager.rootForProject("missing")).toThrow("unknown project");
     manager.dispose();
+  });
+
+  it("injects synthetic full access when a harness lacks a native bypass mode", async () => {
+    const { manager } = makeManager();
+    const drivers = (manager as unknown as { drivers: Record<string, CliDriver> }).drivers;
+    drivers["opencode"] = {
+      kind: "opencode",
+      listSessions: async () => [],
+      getHistory: async () => [],
+      startTurn: () => ({ turnId: "t", events: (async function* () {})() }),
+      interrupt: () => {},
+      renameSession: async () => {},
+      events: (async function* () {})(),
+      listPermissionModes: async () => [
+        { id: "manual", label: "Supervised", description: "Ask.", native: true },
+        { id: "auto", label: "Auto", description: "Auto.", native: true }
+      ]
+    } as unknown as CliDriver;
+    drivers["claude"] = {
+      kind: "claude",
+      listSessions: async () => [],
+      getHistory: async () => [],
+      startTurn: () => ({ turnId: "t", events: (async function* () {})() }),
+      interrupt: () => {},
+      renameSession: async () => {},
+      events: (async function* () {})(),
+      listPermissionModes: async () => [
+        { id: "manual", label: "Supervised", description: "Ask.", native: true },
+        { id: "bypassPermissions", label: "Full access", description: "Native.", native: true }
+      ]
+    } as unknown as CliDriver;
+    const project = manager.addProject("C:\\proj-perms");
+    const opencodeModes = await manager.listPermissionModesFor(project.id, "opencode");
+    expect(opencodeModes.map((m) => m.id)).toEqual(["manual", "auto", "bypassPermissions"]);
+    expect(opencodeModes.find((m) => m.id === "bypassPermissions")?.native).toBe(false);
+    const claudeModes = await manager.listPermissionModesFor(project.id, "claude");
+    expect(claudeModes).toHaveLength(2);
+    expect(claudeModes.find((m) => m.id === "bypassPermissions")?.native).toBe(true);
+    manager.dispose();
+  });
+
+  it("reports each real harness driver permission list with opencode lacking native bypass", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cw-test-perms-"));
+    const manager = new SessionManager({
+      dbPath: join(dir, "test.db"),
+      settingsPath: join(dir, "settings.json")
+    });
+    manager.setSettings({ autoTitleEnabled: false });
+    try {
+      const project = manager.addProject("C:\\proj-perms-real");
+      const claudeModes = await manager.listPermissionModesFor(project.id, "claude");
+      expect(claudeModes.map((m) => m.id)).toEqual(["manual", "acceptEdits", "auto", "bypassPermissions"]);
+      expect(claudeModes.find((m) => m.id === "bypassPermissions")).toMatchObject({
+        label: "Bypass permissions",
+        native: true
+      });
+      const codexModes = await manager.listPermissionModesFor(project.id, "codex");
+      expect(codexModes.map((m) => m.id)).toEqual(["manual", "auto", "bypassPermissions"]);
+      expect(codexModes.find((m) => m.id === "bypassPermissions")).toMatchObject({
+        label: "Full Access",
+        native: true
+      });
+      const opencodeModes = await manager.listPermissionModesFor(project.id, "opencode");
+      expect(opencodeModes.map((m) => m.id)).toEqual(["manual", "auto", "bypassPermissions"]);
+      expect(opencodeModes.find((m) => m.id === "manual")).toMatchObject({ label: "Ask", native: true });
+      expect(opencodeModes.find((m) => m.id === "bypassPermissions")).toMatchObject({
+        label: "Full Access",
+        native: false
+      });
+    } finally {
+      manager.dispose();
+    }
   });
 
   it("creates Git sessions in isolated worktrees and routes turns there", async () => {
@@ -499,25 +744,41 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
-  it("builds a cwd-only env for unknown sessions instead of throwing", () => {
+  it("builds a complete fallback env for unknown sessions instead of throwing", () => {
     const { manager } = makeManager();
     const env = manager.turnEnv("missing-session", "C:\\somewhere");
     expect(env["CW_WORKTREE_PATH"]).toBe("C:\\somewhere");
-    expect(env["CW_SESSION_ID"]).toBeUndefined();
-    expect(env["CW_PROJECT_ROOT"]).toBeUndefined();
+    expect(env["CW_PROJECT_ROOT"]).toBe("C:\\somewhere");
+    expect(env["CW_SESSION_ID"]).toBe("missing-session");
     manager.dispose();
   });
 
-  it("omits CW_PROJECT_ROOT when the session's project is gone but keeps the session id", async () => {
+  it("overrides stale CW_* values inherited from the process env", () => {
+    const { manager } = makeManager();
+    vi.stubEnv("CW_WORKTREE_PATH", "C:\\stale-worktree");
+    vi.stubEnv("CW_PROJECT_ROOT", "C:\\stale-root");
+    vi.stubEnv("CW_SESSION_ID", "stale-session");
+    try {
+      const env = manager.turnEnv("missing-session", "C:\\somewhere");
+      expect(env["CW_WORKTREE_PATH"]).toBe("C:\\somewhere");
+      expect(env["CW_PROJECT_ROOT"]).toBe("C:\\somewhere");
+      expect(env["CW_SESSION_ID"]).toBe("missing-session");
+    } finally {
+      vi.unstubAllEnvs();
+      manager.dispose();
+    }
+  });
+
+  it("keeps every CW_* var when the session's project is gone", async () => {
     const { manager } = makeManager();
     const project = manager.addProject("C:\\proj-env-orphan");
     const session = await manager.createSession(project.id, "claude");
     const store = (manager as unknown as { store: { data: { projects: unknown[] } } }).store;
     store.data.projects = [];
     const env = manager.turnEnv(session.id, "C:\\proj-env-orphan");
-    expect(env["CW_SESSION_ID"]).toBe(session.id);
     expect(env["CW_WORKTREE_PATH"]).toBe("C:\\proj-env-orphan");
-    expect(env["CW_PROJECT_ROOT"]).toBeUndefined();
+    expect(env["CW_PROJECT_ROOT"]).toBe("C:\\proj-env-orphan");
+    expect(env["CW_SESSION_ID"]).toBe(session.id);
     manager.dispose();
   });
 
@@ -754,11 +1015,10 @@ describe("SessionManager", () => {
       sessionId: session.id,
       resumeCursor: "cursor-1",
       resultText: "",
-      inputTokens: 0,
-      outputTokens: 0,
-      costUsd: 0,
+      usage: [],
       numTurns: 1,
-      isError: false
+      isError: false,
+      backgroundTasks: 0
     });
     await new Promise((r) => setTimeout(r, 50));
 
@@ -865,6 +1125,295 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
+  it("reports the active turn with its start time while it runs", async () => {
+    const { manager } = makeManager();
+    const project = manager.addProject("C:\\proj-active-list");
+    const a = await manager.createSession(project.id, "claude");
+    const before = Date.now();
+    const turnId = await manager.startTurn(a.id, "hello");
+    const active = manager.listActiveTurns();
+    expect(active).toHaveLength(1);
+    expect(active[0]).toMatchObject({ sessionId: a.id, turnId });
+    expect(active[0].startedAt).toBeGreaterThanOrEqual(before);
+    manager.dispose();
+  });
+
+  it("drops the active turn when turn.done completes without background tasks", async () => {
+    const { manager, fake } = makeManager();
+    const project = manager.addProject("C:\\proj-active-done");
+    const a = await manager.createSession(project.id, "claude");
+    const turnId = await manager.startTurn(a.id, "hello");
+    fake.complete(turnId);
+    expect(manager.listActiveTurns()).toEqual([]);
+    manager.dispose();
+  });
+
+  it("drops the active turn on interrupt and on turn.error", async () => {
+    const { manager } = makeManager();
+    const project = manager.addProject("C:\\proj-active-drop");
+    const a = await manager.createSession(project.id, "claude");
+    const turnId = await manager.startTurn(a.id, "hello");
+    manager.interrupt(turnId);
+    expect(manager.listActiveTurns()).toEqual([]);
+
+    const b = await manager.createSession(project.id, "claude");
+    const errorTurnId = await manager.startTurn(b.id, "boom");
+    const routeEvent = (manager as unknown as { routeEvent(e: ThreadEvent): void }).routeEvent.bind(manager);
+    routeEvent({ type: "turn.error", turnId: errorTurnId, message: "boom" });
+    expect(manager.listActiveTurns()).toEqual([]);
+    manager.dispose();
+  });
+
+  it("keeps the active turn while background tasks run", async () => {
+    const { manager, fake } = makeManager();
+    const project = manager.addProject("C:\\proj-active-bg");
+    const a = await manager.createSession(project.id, "claude");
+    const turnId = await manager.startTurn(a.id, "hello");
+    fake.complete(turnId, 2);
+    const active = manager.listActiveTurns();
+    expect(active).toHaveLength(1);
+    expect(active[0]).toMatchObject({ sessionId: a.id, turnId });
+    expect(typeof active[0].startedAt).toBe("number");
+    fake.complete(turnId);
+    expect(manager.listActiveTurns()).toEqual([]);
+    manager.dispose();
+  });
+
+  it("marks a linked pull request seen with a freshly refreshed head instead of the cached one", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cw-test-"));
+    const ref = { host: "github.com", owner: "acme", repo: "widgets", number: 42 };
+    const manager = new SessionManager({
+      dbPath: join(dir, "test.db"),
+      settingsPath: join(dir, "settings.json"),
+      prHead: () => "sha-cached",
+      prHeadRefresh: async () => "sha-fresh"
+    });
+    const fake = new FakeDriver((e) => (manager as unknown as { routeEvent(e: ThreadEvent): void }).routeEvent(e));
+    (manager as unknown as { drivers: Record<string, CliDriver> }).drivers = { claude: fake, opencode: fake, codex: fake };
+    manager.setSettings({ autoTitleEnabled: false });
+
+    const project = manager.addProject(join(dir, "proj"));
+    const session = await manager.createSession(project.id, "claude", { mode: "current" });
+    manager.linkPr(session.id, { ref, origin: "linked", lastSeenSha: "sha-old", lastSeenAt: 0 });
+
+    const turnId = await manager.startTurn(session.id, "hello");
+    fake.complete(turnId);
+
+    const updated = await waitForSessionPrSeen(manager, project.id, session.id, "sha-fresh");
+    expect(updated?.prs?.[0]?.lastSeenSha).toBe("sha-fresh");
+    manager.dispose();
+  });
+
+  it("marks only the pull requests the turn covered, skips head refresh for merged ones, and emits once", async () => {
+    const widgets = { host: "github.com", owner: "acme", repo: "widgets", number: 42 };
+    const gadgets = { host: "github.com", owner: "acme", repo: "gadgets", number: 7 };
+    const merged = { host: "github.com", owner: "acme", repo: "legacy", number: 9 };
+    const refreshed: number[] = [];
+    const { manager, fake, project } = makePrManager({
+      prHead: (ref) => `cached-${ref.number}`,
+      prHeadRefresh: async (ref) => {
+        refreshed.push(ref.number);
+        return `fresh-${ref.number}`;
+      },
+      prState: (ref) => (ref.number === 9 ? "MERGED" : "OPEN")
+    });
+    const session = await manager.createSession(project.id, "claude", { mode: "current" });
+    manager.linkPr(session.id, { ref: widgets, origin: "linked", lastSeenSha: "old-42", lastSeenAt: 0 });
+    manager.linkPr(session.id, { ref: gadgets, origin: "linked", lastSeenSha: "old-7", lastSeenAt: 0 });
+    manager.linkPr(session.id, { ref: merged, origin: "linked", lastSeenSha: "old-9", lastSeenAt: 0 });
+    const emitted: SessionMeta[] = [];
+    manager.setSessionEmitter((meta) => emitted.push(meta));
+
+    const turnId = await manager.startTurn(session.id, "hello", { prRefs: [widgets, merged] });
+    fake.complete(turnId);
+
+    const updated = await waitForSessionPrSeen(manager, project.id, session.id, "fresh-42", 42);
+    expect(updated?.prs?.map((link) => [link.ref.number, link.lastSeenSha, link.lastSeenAt > 0])).toEqual([
+      [42, "fresh-42", true],
+      [7, "old-7", false],
+      [9, "cached-9", true]
+    ]);
+    expect(refreshed.sort()).toEqual([42, 7].sort());
+    expect(emitted.filter((meta) => meta.prs?.some((link) => link.lastSeenSha === "fresh-42"))).toHaveLength(1);
+    manager.dispose();
+  });
+
+  it("marks the only link seen even when the turn names no pull request", async () => {
+    const widgets = { host: "github.com", owner: "acme", repo: "widgets", number: 42 };
+    const { manager, fake, project } = makePrManager({ prHeadRefresh: async () => "fresh-42" });
+    const session = await manager.createSession(project.id, "claude", { mode: "current" });
+    manager.linkPr(session.id, { ref: widgets, origin: "linked", lastSeenSha: "old-42", lastSeenAt: 0 });
+
+    const turnId = await manager.startTurn(session.id, "hello");
+    fake.complete(turnId);
+
+    const updated = await waitForSessionPrSeen(manager, project.id, session.id, "fresh-42");
+    expect(updated?.prs?.[0]?.lastSeenAt).toBeGreaterThan(0);
+    manager.dispose();
+  });
+
+  it("absorbs the session's own push on an uncovered link without advancing lastSeenAt", async () => {
+    const widgets = { host: "github.com", owner: "acme", repo: "widgets", number: 42 };
+    const gadgets = { host: "github.com", owner: "acme", repo: "gadgets", number: 7 };
+    const { manager, project, dir } = makePrManager({
+      prHeadRefresh: async (ref) => (ref.number === 7 ? "own-head" : "remote-42")
+    });
+    const session = await manager.createSession(project.id, "claude", { mode: "current" });
+    manager.linkPr(session.id, { ref: widgets, origin: "linked", lastSeenSha: "old-42", lastSeenAt: 5 });
+    manager.linkPr(session.id, { ref: gadgets, origin: "opened", lastSeenSha: "old-7", lastSeenAt: 5 });
+    (manager as unknown as { store: SessionStore }).store.updateSession(session.id, { worktreePath: dir });
+    (manager as unknown as { git: { headSha(root: string): Promise<string> } }).git.headSha = async () => "own-head";
+
+    (manager as unknown as { routeEvent(e: ThreadEvent): void }).routeEvent({
+      type: "turn.done",
+      turnId: "turn-unscoped",
+      sessionId: session.id,
+      resumeCursor: "cursor-1",
+      resultText: "",
+      usage: [],
+      numTurns: 1,
+      isError: false,
+      backgroundTasks: 0
+    });
+
+    const updated = await waitForSessionPrSeen(manager, project.id, session.id, "own-head", 7);
+    expect(updated?.prs?.map((link) => [link.ref.number, link.lastSeenSha, link.lastSeenAt])).toEqual([
+      [42, "old-42", 5],
+      [7, "own-head", 5]
+    ]);
+    manager.dispose();
+  });
+
+  it("does not resurrect a link that was removed while its head was refreshing", async () => {
+    const widgets = { host: "github.com", owner: "acme", repo: "widgets", number: 42 };
+    const gadgets = { host: "github.com", owner: "acme", repo: "gadgets", number: 7 };
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { manager, fake, project } = makePrManager({
+      prHeadRefresh: async (ref) => {
+        await gate;
+        return `fresh-${ref.number}`;
+      }
+    });
+    const session = await manager.createSession(project.id, "claude", { mode: "current" });
+    manager.linkPr(session.id, { ref: widgets, origin: "linked", lastSeenSha: "old-42", lastSeenAt: 0 });
+    manager.linkPr(session.id, { ref: gadgets, origin: "linked", lastSeenSha: "old-7", lastSeenAt: 0 });
+
+    const turnId = await manager.startTurn(session.id, "hello", { prRefs: [widgets, gadgets] });
+    fake.complete(turnId);
+    manager.unlinkPr(session.id, gadgets);
+    release();
+
+    const updated = await waitForSessionPrSeen(manager, project.id, session.id, "fresh-42");
+    expect(updated?.prs?.map((link) => link.ref.number)).toEqual([42]);
+    manager.dispose();
+  });
+
+  it("marks a pull request seen through the snapshot it was given, not the local clock", async () => {
+    const { manager } = makeManager();
+    const project = manager.addProject("C:\\proj-seen-at");
+    const session = await manager.createSession(project.id, "claude");
+    const widgets = { host: "github.com", owner: "acme", repo: "widgets", number: 42 };
+    manager.linkPr(session.id, { ref: widgets, origin: "linked", lastSeenSha: "a", lastSeenAt: 0 });
+
+    const meta = manager.markPrSeen(session.id, widgets, "a2", 12_345);
+    expect(meta.prs?.[0]).toMatchObject({ lastSeenSha: "a2", lastSeenAt: 12_345 });
+    manager.dispose();
+  });
+
+  it("links, marks seen and unlinks pull requests independently", async () => {
+    const { manager } = makeManager();
+    const project = manager.addProject("C:\\proj-multi-pr");
+    const session = await manager.createSession(project.id, "claude");
+    const widgets = { host: "github.com", owner: "acme", repo: "widgets", number: 42 };
+    const gadgets = { host: "github.com", owner: "acme", repo: "gadgets", number: 7 };
+
+    manager.linkPr(session.id, { ref: widgets, origin: "linked", lastSeenSha: "a", lastSeenAt: 0 });
+    manager.linkPr(session.id, { ref: gadgets, origin: "workflow", workflowId: "review", lastSeenSha: "b", lastSeenAt: 0 });
+    manager.linkPr(session.id, { ref: widgets, origin: "opened", lastSeenSha: "a2", lastSeenAt: 1 });
+    let meta = manager.markPrSeen(session.id, gadgets, "b2", null);
+    expect(meta.prs?.map((link) => [link.ref.number, link.origin, link.lastSeenSha])).toEqual([
+      [42, "opened", "a2"],
+      [7, "workflow", "b2"]
+    ]);
+
+    meta = manager.unlinkPr(session.id, widgets);
+    expect(meta.prs?.map((link) => link.ref.number)).toEqual([7]);
+    expect(meta.prUnlinked).toEqual(["github.com/acme/widgets#42"]);
+
+    meta = manager.linkPr(session.id, { ref: widgets, origin: "linked", lastSeenSha: "a3", lastSeenAt: 2 });
+    expect(meta.prs?.map((link) => link.ref.number)).toEqual([7, 42]);
+    expect(meta.prUnlinked).toBeUndefined();
+
+    meta = manager.unlinkPr(session.id, widgets);
+    meta = manager.unlinkPr(session.id, gadgets);
+    expect(meta).not.toHaveProperty("prs");
+    expect(meta.prUnlinked).toEqual(["github.com/acme/widgets#42", "github.com/acme/gadgets#7"]);
+    manager.dispose();
+  });
+
+  it("moves interrupted and errored sessions into holding", async () => {
+    const { manager } = makeManager();
+    const project = manager.addProject("C:\\proj-holding");
+    const a = await manager.createSession(project.id, "claude");
+    const turnId = await manager.startTurn(a.id, "hello");
+    manager.interrupt(turnId);
+    let sessions = await manager.listSessions(project.id);
+    expect(sessions.find((s) => s.id === a.id)?.status).toBe("holding");
+
+    const b = await manager.createSession(project.id, "claude");
+    const errorTurnId = await manager.startTurn(b.id, "boom");
+    const routeEvent = (manager as unknown as { routeEvent(e: ThreadEvent): void }).routeEvent.bind(manager);
+    routeEvent({ type: "turn.error", turnId: errorTurnId, message: "boom" });
+    sessions = await manager.listSessions(project.id);
+    expect(sessions.find((s) => s.id === b.id)?.status).toBe("holding");
+    manager.dispose();
+  });
+
+  it("expires holding sessions and reports only the changed records", async () => {
+    const { manager } = makeManager();
+    const project = manager.addProject("C:\\proj-expire");
+    const a = await manager.createSession(project.id, "claude");
+    const b = await manager.createSession(project.id, "claude");
+    const c = await manager.createSession(project.id, "claude");
+    const store = (manager as unknown as { store: SessionStore }).store;
+    store.updateSession(a.id, { status: "holding" });
+    store.updateSession(b.id, { status: "done" });
+    const before = (await manager.listSessions(project.id)).find((s) => s.id === a.id);
+    if (!before) throw new Error("expected the holding session");
+
+    const expired = manager.expireHoldingSessions([a.id, b.id, c.id, "missing"]);
+
+    expect(expired).toHaveLength(1);
+    expect(expired[0]).toMatchObject({ id: a.id, status: "idle", updatedAt: before.updatedAt });
+    const sessions = await manager.listSessions(project.id);
+    expect(sessions.find((s) => s.id === a.id)?.status).toBe("idle");
+    expect(sessions.find((s) => s.id === b.id)?.status).toBe("done");
+    expect(sessions.find((s) => s.id === c.id)?.status).toBe("idle");
+    manager.dispose();
+  });
+
+  it("keeps the session working while background tasks run and completes on the final turn.done", async () => {
+    const { manager, fake } = makeManager();
+    const project = manager.addProject("C:\\proj-background");
+    const a = await manager.createSession(project.id, "claude");
+    const turnId = await manager.startTurn(a.id, "hello");
+
+    fake.complete(turnId, 2);
+    let sessions = await manager.listSessions(project.id);
+    expect(sessions.find((s) => s.id === a.id)?.status).toBe("working");
+    expect(sessions.find((s) => s.id === a.id)?.resumeCursor).toMatch(/^cursor-/);
+    await expect(manager.startTurn(a.id, "second")).rejects.toThrow(/busy/);
+
+    fake.complete(turnId);
+    sessions = await manager.listSessions(project.id);
+    expect(sessions.find((s) => s.id === a.id)?.status).toBe("done");
+    await expect(manager.startTurn(a.id, "second")).resolves.toEqual(expect.any(String));
+    manager.dispose();
+  });
+
   it("generates a title for the first message and emits it", async () => {
     const { manager, received, fake, titles } = makeManager();
     manager.setSettings({ autoTitleEnabled: true });
@@ -925,6 +1474,24 @@ describe("SessionManager", () => {
     const sessions = await manager.listSessions(project.id);
     expect(sessions.find((s) => s.id === a.id)?.title).toBe("Fix the login redirect loop");
     expect(titles).toEqual([{ sessionId: a.id, title: "Fix the login redirect loop" }]);
+    manager.dispose();
+  });
+
+  it("forwards a slash command and leaves the title for the first real prompt", async () => {
+    const { manager, fake, titles } = makeManager();
+    manager.setSettings({ autoTitleEnabled: true });
+    const project = manager.addProject("C:\\proj-title-command");
+    const a = await manager.createSession(project.id, "claude");
+    await manager.startTurn(a.id, "/review focus on auth", { command: { name: "review", args: "focus on auth" } });
+    expect(fake.seen).toHaveLength(1);
+    expect(fake.lastRequest).toMatchObject({
+      sessionId: a.id,
+      prompt: "/review focus on auth",
+      command: { name: "review", args: "focus on auth" }
+    });
+    const sessions = await manager.listSessions(project.id);
+    expect(sessions.find((s) => s.id === a.id)?.title).toBe("New session");
+    expect(titles).toEqual([]);
     manager.dispose();
   });
 
@@ -1183,6 +1750,15 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
+  it("stops the driver process when resolving a session", async () => {
+    const { manager, fake } = makeManager();
+    const project = manager.addProject("C:\\proj-resolve-stop");
+    const a = await manager.createSession(project.id, "claude");
+    await manager.resolveSession(a.id, "resolved");
+    expect(fake.stoppedSessions).toEqual([a.id]);
+    manager.dispose();
+  });
+
   it("prunes stale worktrees, keeps live session worktrees, skips non-worktree dirs", async () => {
     const { manager, project, repository } = makeGitSandboxManager("cw-prune-");
     const live = await manager.createSession(project.id, "claude", { baseBranch: "main" });
@@ -1242,6 +1818,41 @@ describe("SessionManager", () => {
 
     expect(summary.removed).toBe(1);
     expect(existsSync(worktreePath)).toBe(false);
+    expect(summary.clearedSessionIds).toEqual([session.id]);
+    const pruned = (await manager.listSessions(project.id)).find((s) => s.id === session.id);
+    expect(pruned?.worktreePath).toBeUndefined();
+    expect(manager.rootFor(session.id)).toBe(project.rootPath);
+    manager.dispose();
+  });
+
+  it("clears resolved sessions' missing worktrees even when the worktrees root is gone", async () => {
+    const { manager, project } = makeGitSandboxManager("cw-prune-noroot-");
+    const session = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    const worktreePath = session.worktreePath;
+    if (!worktreePath) throw new Error("expected a worktree-backed session");
+    await manager.resolveSession(session.id, "resolved");
+    rmSync(join(worktreePath, "..", ".."), { recursive: true, force: true });
+
+    const summary = await manager.pruneStaleWorktrees();
+
+    expect(summary.clearedSessionIds).toEqual([session.id]);
+    expect((await manager.listSessions(project.id)).find((s) => s.id === session.id)?.worktreePath).toBeUndefined();
+    manager.dispose();
+  });
+
+  it("returns a resolved session to the project checkout when its worktree is already gone", async () => {
+    const { manager, project } = makeGitSandboxManager("cw-resolve-gone-");
+    const session = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    const worktreePath = session.worktreePath;
+    if (!worktreePath) throw new Error("expected a worktree-backed session");
+    rmSync(worktreePath, { recursive: true, force: true });
+
+    const result = await manager.resolveSession(session.id, "resolved", { removeWorktree: true });
+
+    expect(result.error).toBeUndefined();
+    expect(result.dirtyBlocked).toBeUndefined();
+    const stored = (await manager.listSessions(project.id)).find((s) => s.id === session.id);
+    expect(stored?.worktreePath).toBeUndefined();
     manager.dispose();
   });
 
@@ -1306,6 +1917,31 @@ describe("SessionManager", () => {
     expect(forcedResult.unmergedCommits).toBe(true);
     const goneBranches = execFileSync("git", ["-C", project.rootPath, "branch", "--list", forced.branch], { encoding: "utf8" });
     expect(goneBranches.trim()).toBe("");
+    manager.dispose();
+  });
+
+  it("attaches the author's matching PR branch and keeps it when the worktree is removed with force", async () => {
+    const { manager, project, repository } = makeGitSandboxManager("cw-resolve-pr-branch-");
+    execFileSync("git", ["-C", repository, "branch", "feature/pr"]);
+    const headRefOid = execFileSync("git", ["-C", repository, "rev-parse", "feature/pr"], { encoding: "utf8" }).trim();
+    const session = await manager.createSession(project.id, "claude", {
+      mode: "new",
+      prHead: { number: 7, headRefName: "feature/pr", headRefOid, viewerIsAuthor: true }
+    });
+    expect(session.branch).toBe("feature/pr");
+    const worktreePath = session.worktreePath;
+    if (!worktreePath) throw new Error("expected a worktree-backed session");
+    writeFileSync(join(worktreePath, "pr.txt"), "work\n", "utf8");
+    execFileSync("git", ["-C", worktreePath, "add", "pr.txt"]);
+    execFileSync("git", ["-C", worktreePath, "-c", "user.name=cw-code", "-c", "user.email=test@cw-code.local", "commit", "-m", "pr work"]);
+
+    const result = await manager.resolveSession(session.id, "archived", { removeWorktree: true, forceBranch: true });
+
+    expect(result.worktreeRemoved).toBe(true);
+    expect(result.branchDeleted).toBe(false);
+    expect(existsSync(worktreePath)).toBe(false);
+    const kept = execFileSync("git", ["-C", repository, "branch", "--list", "feature/pr"], { encoding: "utf8" });
+    expect(kept.trim()).not.toBe("");
     manager.dispose();
   });
 

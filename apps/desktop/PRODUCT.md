@@ -38,6 +38,7 @@ The application is a visual desktop shell over the user's installed CLI binaries
 ## Brand Commitments
 
 - Keep the product name `cw-code`.
+- Use the selected Console C logo (Option C) with the violet app-icon treatment and lowercase Inter wordmark. Canonical assets and usage rules live in `design/brand/` at the repository root; desktop integration is tracked there separately.
 - Structural and usability behavior should be heavily inspired by T3 Code because both products solve similar project-and-session orchestration problems.
 - Preserve cw-code's current three-region shell: project-grouped sessions on the left, the active conversation in the center, and a contextual tool workspace on the right. Design variations may change emphasis, density, and whether the tool workspace is expanded, collapsed, or split, but must not replace this topology with a new navigation metaphor.
 - VS Code is a reference for user-controlled, movable, resizable, and hideable work regions.

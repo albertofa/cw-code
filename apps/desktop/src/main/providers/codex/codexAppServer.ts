@@ -1,5 +1,7 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { type ChildProcess } from "node:child_process";
 import { createInterface } from "node:readline";
+import { spawnCli } from "../../cli/spawnCli.js";
+import { killProcessTree } from "../../processTree.js";
 
 export class CodexAppServerError extends Error {
   readonly code: number | null;
@@ -95,8 +97,15 @@ export class CodexAppServer implements CodexAppServerLike {
     const proc = this.proc;
     this.proc = null;
     if (proc && proc.exitCode === null) {
-      proc.kill();
+      killProcessTree(proc);
     }
+    this.starting?.then(
+      (started) => {
+        killProcessTree(started);
+      },
+      () => {}
+    );
+    this.starting = null;
   }
 
   private rejectAllPending(err: Error): void {
@@ -124,7 +133,7 @@ export class CodexAppServer implements CodexAppServerLike {
 
   private async spawnAndInitialize(): Promise<ChildProcess> {
     const args = [...(this.opts.args ?? []), "app-server"];
-    const proc = spawn(this.opts.binary, args, {
+    const proc = spawnCli(this.opts.binary, args, {
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
       ...(this.opts.env ? { env: this.opts.env } : {})
@@ -178,6 +187,10 @@ export class CodexAppServer implements CodexAppServerLike {
       }
     });
     await initialized;
+    if (this.disposed) {
+      killProcessTree(proc);
+      throw new CodexAppServerError("codex app-server disposed");
+    }
     this.writeLine(proc, { method: "initialized" });
     this.proc = proc;
     return proc;
