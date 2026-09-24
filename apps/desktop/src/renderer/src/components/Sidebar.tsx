@@ -968,11 +968,11 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
             openSessionView();
             store.startNewSession();
           }}
-          title="New session (Ctrl+N)"
+          title="New session (Ctrl+T)"
         >
           <Plus size={15} aria-hidden="true" />
           <span>New session</span>
-          <span className="side-kbd">Ctrl N</span>
+          <span className="side-kbd">Ctrl T</span>
         </button>
         <div className="side-nav">
           <button

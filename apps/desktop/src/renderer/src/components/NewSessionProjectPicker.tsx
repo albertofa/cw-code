@@ -57,7 +57,6 @@ export function NewSessionProjectPicker({ project }: { project: Project | undefi
           <Folder size={18} aria-hidden="true" />
         )}
         <span className="newthread-project-name">{project?.name ?? "Choose a project"}</span>
-        {project && <span className="newthread-project-path">{shortenHome(project.rootPath, homeDir ?? undefined)}</span>}
         <span className="newthread-project-chevron" aria-hidden="true">
           {open ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
         </span>
@@ -136,9 +135,8 @@ export function NewSessionAddProject() {
   };
 
   return (
-    <button type="button" className="newthread-add-project" onClick={addFolder} disabled={adding} title="Add a project folder">
-      <FolderPlus size={15} aria-hidden="true" />
-      Add project
+    <button type="button" className="newthread-add-project" onClick={addFolder} disabled={adding} title="Add project" aria-label="Add project">
+      <FolderPlus size={16} aria-hidden="true" />
     </button>
   );
 }

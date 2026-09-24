@@ -198,7 +198,7 @@ export function App() {
       } else if (e.key === "0") {
         e.preventDefault();
         window.cw.zoomReset();
-      } else if (e.key.toLowerCase() === "n" && !e.shiftKey && !document.querySelector(MODAL_SELECTOR)) {
+      } else if (e.key.toLowerCase() === "t" && !e.shiftKey && !document.querySelector(MODAL_SELECTOR)) {
         e.preventDefault();
         usePrStore.getState().openSessionView();
         useAppStore.getState().startNewSession();
