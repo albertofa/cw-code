@@ -8,6 +8,7 @@ import {
   CLAUDE_COMMANDS_CACHE_PRUNE_MS,
   CLAUDE_COMMANDS_CACHE_TTL_MS,
   claudeCommandText,
+  claudeCommandsCacheKey,
   clearClaudeCommandsCache,
   decodeClaudeCommandsCache,
   initClaudeCommandsCache,
@@ -373,8 +374,8 @@ describe("claude commands disk cache", () => {
       JSON.stringify({
         version: 1,
         entries: {
-          "claude::c:\\stale": { at: stale, raw: [{ name: "old" }], terminal: [] },
-          "claude::c:\\fresh": { at: now, raw: [{ name: "new" }], terminal: [] }
+          [claudeCommandsCacheKey("claude", "C:\\stale")]: { at: stale, raw: [{ name: "old" }], terminal: [] },
+          [claudeCommandsCacheKey("claude", "C:\\fresh")]: { at: now, raw: [{ name: "new" }], terminal: [] }
         }
       }),
       "utf8"
@@ -397,7 +398,7 @@ describe("claude commands disk cache", () => {
       JSON.stringify({
         version: 1,
         entries: {
-          "claude::c:\\one": { at: 0, raw: [], terminal: ["doctor"] }
+          [claudeCommandsCacheKey("claude", "C:\\one")]: { at: 0, raw: [], terminal: ["doctor"] }
         }
       }),
       "utf8"

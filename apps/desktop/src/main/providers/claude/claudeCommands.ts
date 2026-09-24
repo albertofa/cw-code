@@ -2,7 +2,7 @@ import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from "n
 import { createInterface } from "node:readline";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
-import { dirname, normalize } from "node:path";
+import { dirname, normalize, win32 } from "node:path";
 import type { CommandOption } from "@cw-code/contracts";
 import { killProcessTree } from "../../processTree.js";
 import { describeClaudeExit } from "./claudeExit.js";
@@ -65,9 +65,14 @@ const cache = new Map<string, ClaudeCommandsCacheEntry>();
 const inflight = new Map<string, Promise<ClaudeCommandsCacheEntry>>();
 let cacheFile: string | null = null;
 
+export function claudeCommandsCacheKey(binary: string, cwd: string): string {
+  const windowsPath = process.platform === "win32" || /^[a-zA-Z]:[\\/]/.test(cwd) || cwd.includes("\\");
+  const normCwd = windowsPath ? win32.normalize(cwd) : normalize(cwd);
+  return windowsPath ? `${binary.toLowerCase()}::${normCwd.toLowerCase()}` : `${binary}::${normCwd}`;
+}
+
 function cacheKey(binary: string, cwd: string): string {
-  const normCwd = normalize(cwd);
-  return process.platform === "win32" ? `${binary.toLowerCase()}::${normCwd.toLowerCase()}` : `${binary}::${normCwd}`;
+  return claudeCommandsCacheKey(binary, cwd);
 }
 
 export function decodeClaudeCommandsCache(
