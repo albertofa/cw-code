@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
-import { Check, ChevronDown, ChevronRight, ChevronUp, Clock, GitBranch, GitPullRequest, Hash, ListFilter, Plus, Search, Settings, X } from "lucide-react";
+import { Bell, Check, ChevronDown, ChevronRight, ChevronUp, CircleHelp, Clock, GitBranch, GitPullRequest, Hash, ListFilter, LoaderCircle, Plus, Search, Settings, X } from "lucide-react";
 import type { DriverName, PrSummary, Project, Session, SessionStatus } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import { usePrStore } from "../stores/prStore.js";
@@ -14,6 +14,7 @@ import { discoveryProjectId } from "./projectRecency.js";
 import { PrChipBadge } from "./PrChipBadge.js";
 import { needsAttentionCount } from "./prInbox.js";
 import { anyLinkUnseen, displayChip, linksTitle, mostUrgentLink, prSummaryLookup, sessionLinks } from "./sessionPrLinks.js";
+import { matchesQuickFilter, quickFilterCounts, toggleQuickFilter, type QuickFilter } from "./sidebarQuickFilters.js";
 import appIcon from "../assets/console-c.svg";
 
 const GROUP_VISIBLE = 6;
@@ -62,6 +63,13 @@ const DRIVER_LABEL: Record<DriverName, string> = {
 function sessionHasUnseen(session: Session, summaryByKey: Map<string, PrSummary>): boolean {
   return anyLinkUnseen(sessionLinks(session), summaryByKey);
 }
+
+const QUICK_FILTER_UI: Array<{ id: Exclude<QuickFilter, "all">; label: string; Icon: typeof Bell }> = [
+  { id: "running", label: "Running", Icon: LoaderCircle },
+  { id: "input", label: "Needs input", Icon: CircleHelp },
+  { id: "pr", label: "Linked to a PR", Icon: GitPullRequest },
+  { id: "updated", label: "PR updated", Icon: Bell }
+];
 
 const HOVER_DELAY = 350;
 const HOVER_FALLBACK_HEIGHT = 280;
@@ -238,6 +246,7 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
   const openInbox = usePrStore((s) => s.openInbox);
   const openSessionView = usePrStore((s) => s.openSessionView);
   const [query, setQuery] = useState("");
+  const [quickFilter, setQuickFilter] = useState<QuickFilter>("all");
   const [pickerOpen, setPickerOpen] = useState(false);
   const [projectQuery, setProjectQuery] = useState("");
   const [managedId, setManagedId] = useState<string | null>(null);
@@ -381,8 +390,12 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
     projectFilter === "all" ? Object.values(sessionsByProject).flat() : (sessionsByProject[projectFilter] ?? []);
   const discoveredProjectId = discoveryProjectId(projectFilter, activeProjectId);
   const discovered = discoveredProjectId ? (discoveredByProject[discoveredProjectId] ?? []) : [];
+  const inboxItems = inbox?.items ?? [];
+  const summaryByKey = prSummaryLookup(inboxItems, detailByKey);
+  const quickFacts = (s: Session) => ({ status: s.status, linkCount: sessionLinks(s).length, unseen: sessionHasUnseen(s, summaryByKey) });
+  const quickCounts = quickFilterCounts(source.map(quickFacts));
   const matchesQuery = (s: Session) =>
-    !query || s.title.toLowerCase().includes(query.toLowerCase());
+    (!query || s.title.toLowerCase().includes(query.toLowerCase())) && matchesQuickFilter(quickFilter, quickFacts(s));
   const byRecency = (a: Session, b: Session) => b.updatedAt - a.updatedAt;
   const workingSetAll = source.filter((s) => isWorkingSetStatus(s.status)).sort(compareWorkingSet);
   const workingSetShown = workingSetAll.filter(matchesQuery);
@@ -422,8 +435,6 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
     if (existing) existing.push(s);
     else resolvedByProject.set(s.projectId, [s]);
   }
-  const inboxItems = inbox?.items ?? [];
-  const summaryByKey = prSummaryLookup(inboxItems, detailByKey);
   const attentionCount = needsAttentionCount(inboxItems);
   const anyUnseen = Object.values(sessionsByProject).some((list) => list.some((s) => sessionHasUnseen(s, summaryByKey)));
   const inboxActive = mainView.kind !== "session";
@@ -1014,7 +1025,6 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
         </div>
       </div>
       <div className="side-list-head">
-        <span className="side-list-title">Sessions</span>
         <div className="picker side-filter">
           <button
             ref={filterBtnRef}
@@ -1117,6 +1127,22 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
           )}
         </div>
       </div>
+        <div className="side-quick" role="group" aria-label="Quick filters">
+          {QUICK_FILTER_UI.map(({ id, label, Icon }) => (
+            <button
+              key={id}
+              type="button"
+              className={`side-quick-btn${quickFilter === id ? " on" : ""}${quickCounts[id] === 0 ? " is-zero" : ""}`}
+              onClick={() => setQuickFilter((current) => toggleQuickFilter(current, id))}
+              aria-pressed={quickFilter === id}
+              title={`${label} (${quickCounts[id]})`}
+              aria-label={`${label}, ${quickCounts[id]}`}
+            >
+              <Icon size={12} aria-hidden="true" />
+              <span>{quickCounts[id]}</span>
+            </button>
+          ))}
+        </div>
       <div className="session-list" ref={listRef} onScroll={clearHover}>
         <div className="session-main-list">
           {workingSetShown.length > 0 && (
@@ -1140,7 +1166,7 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
           {renderRows(shownPreview, "main")}
           {projectFilter !== "all" && renderResolvedToggle(projectFilter, resolvedPreview)}
           {shownPreview.length === 0 && resolvedPreview.length === 0 && workingSetShown.length === 0 && (
-            <div className="side-empty">{query ? "No matches." : "No sessions yet."}</div>
+            <div className="side-empty">{query || quickFilter !== "all" ? "No matches." : "No sessions yet."}</div>
           )}
         </div>
         {resolvedPreview.length === 0 && dragged && (
