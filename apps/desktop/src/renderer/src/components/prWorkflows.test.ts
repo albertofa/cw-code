@@ -40,6 +40,7 @@ function prDetail(overrides: Partial<PrDetail> = {}): PrDetail {
     checkRuns: [],
     commits: [],
     reviewers: [],
+    viewerLogin: "",
     ...overrides
   };
 }

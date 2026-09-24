@@ -111,6 +111,7 @@ export interface PrDetail extends PrSummary {
   checkRuns: PrCheck[];
   commits: PrCommit[];
   reviewers: PrReviewer[];
+  viewerLogin: string;
 }
 
 export type PrLinkOrigin = "opened" | "workflow" | "linked";

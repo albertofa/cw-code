@@ -279,6 +279,7 @@ query($owner: String!, $repo: String!, $number: Int!) {
     pullRequest(number: $number) {
       headRefOid
       state
+      updatedAt
     }
   }
 }

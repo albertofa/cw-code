@@ -442,10 +442,10 @@ export function ThreadView() {
       {showMainTool === null && (
       <div className="composer-wrap">
         <TodoDock sessionId={session.id} />
-        <PrUpdateDock key={session.id} sessionId={session.id} />
+        <PrUpdateDock key={`pr-dock:${session.id}`} sessionId={session.id} />
         <ApprovalDock sessionId={session.id} />
         <QuestionDock sessionId={session.id} />
-        <Composer key={session.id} sessionId={session.id} driver={session.driver} />
+        <Composer key={`composer:${session.id}`} sessionId={session.id} driver={session.driver} />
       </div>
       )}
       {(isBottomOpen(panelDockByTab) || draggingTab !== null) && (

@@ -211,8 +211,8 @@ describe("applyTurnSeen", () => {
     const next = applyTurnSeen(
       [covered, other],
       [
-        { ref: covered.ref, covered: true, head: "new-42" },
-        { ref: other.ref, covered: false, head: "new-7" }
+        { ref: covered.ref, covered: true, head: "new-42", seenAt: null },
+        { ref: other.ref, covered: false, head: "new-7", seenAt: null }
       ],
       "worktree-head",
       100
@@ -221,14 +221,19 @@ describe("applyTurnSeen", () => {
   });
 
   it("absorbs the session's own push on an uncovered link without touching lastSeenAt", () => {
-    const next = applyTurnSeen([covered, other], [{ ref: other.ref, covered: false, head: "own" }], "own", 100);
+    const next = applyTurnSeen([covered, other], [{ ref: other.ref, covered: false, head: "own", seenAt: 500 }], "own", 100);
     expect(next).toEqual([covered, { ...other, lastSeenSha: "own" }]);
   });
 
   it("returns the same list when nothing changed or the link is gone", () => {
     const prs = [covered];
-    expect(applyTurnSeen(prs, [{ ref: other.ref, covered: true, head: "x" }], null, 100)).toBe(prs);
-    expect(applyTurnSeen(prs, [{ ref: covered.ref, covered: false, head: null }], null, 100)).toBe(prs);
+    expect(applyTurnSeen(prs, [{ ref: other.ref, covered: true, head: "x", seenAt: null }], null, 100)).toBe(prs);
+    expect(applyTurnSeen(prs, [{ ref: covered.ref, covered: false, head: null, seenAt: null }], null, 100)).toBe(prs);
+  });
+
+  it("marks covered links seen through GitHub's updatedAt when the local clock is behind", () => {
+    const next = applyTurnSeen([covered], [{ ref: covered.ref, covered: true, head: "new-42", seenAt: 111 }], null, 100);
+    expect(next).toEqual([{ ...covered, lastSeenSha: "new-42", lastSeenAt: 111 }]);
   });
 });
 

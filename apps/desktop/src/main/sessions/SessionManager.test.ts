@@ -1311,6 +1311,18 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
+  it("marks a pull request seen through the snapshot it was given, not the local clock", async () => {
+    const { manager } = makeManager();
+    const project = manager.addProject("C:\\proj-seen-at");
+    const session = await manager.createSession(project.id, "claude");
+    const widgets = { host: "github.com", owner: "acme", repo: "widgets", number: 42 };
+    manager.linkPr(session.id, { ref: widgets, origin: "linked", lastSeenSha: "a", lastSeenAt: 0 });
+
+    const meta = manager.markPrSeen(session.id, widgets, "a2", 12_345);
+    expect(meta.prs?.[0]).toMatchObject({ lastSeenSha: "a2", lastSeenAt: 12_345 });
+    manager.dispose();
+  });
+
   it("links, marks seen and unlinks pull requests independently", async () => {
     const { manager } = makeManager();
     const project = manager.addProject("C:\\proj-multi-pr");
@@ -1321,7 +1333,7 @@ describe("SessionManager", () => {
     manager.linkPr(session.id, { ref: widgets, origin: "linked", lastSeenSha: "a", lastSeenAt: 0 });
     manager.linkPr(session.id, { ref: gadgets, origin: "workflow", workflowId: "review", lastSeenSha: "b", lastSeenAt: 0 });
     manager.linkPr(session.id, { ref: widgets, origin: "opened", lastSeenSha: "a2", lastSeenAt: 1 });
-    let meta = manager.markPrSeen(session.id, gadgets, "b2");
+    let meta = manager.markPrSeen(session.id, gadgets, "b2", null);
     expect(meta.prs?.map((link) => [link.ref.number, link.origin, link.lastSeenSha])).toEqual([
       [42, "opened", "a2"],
       [7, "workflow", "b2"]
