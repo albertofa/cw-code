@@ -22,6 +22,7 @@ import { usePanelStore } from "./stores/panelStore.js";
 import { usePrStore } from "./stores/prStore.js";
 import { concreteFilterId } from "./components/projectRecency.js";
 import { prKey } from "./components/prInbox.js";
+import { sessionLinks } from "./components/sessionPrLinks.js";
 import type { DockableTabId } from "@cw-code/contracts";
 import type { TurnEvent } from "./cw.js";
 
@@ -384,7 +385,7 @@ export function App() {
   const allSessions = Object.values(sessionsByProject).flat();
   const activeSession = allSessions.find((s) => s.id === activeSessionId);
   const driver = pendingDriver ?? activeSession?.driver;
-  const hasPr = pendingDriver === null && activeSession?.pr !== undefined;
+  const hasPr = pendingDriver === null && sessionLinks(activeSession).length > 0;
 
   const visibleTabs = TABS.filter((t) => isToolTabAvailable(t, driver, hasPr));
   const activeTab: RightTab = isHarnessTabId(activeRight) && activeRight !== driver ? (driver ?? "files") : activeRight;

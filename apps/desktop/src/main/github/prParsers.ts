@@ -313,16 +313,24 @@ function parseTimeline(value: unknown, threadIndex: Map<string, string[]>): PrTi
   return items;
 }
 
-export function parseHead(json: string): string | null {
+export interface PrHeadInfo {
+  headRefOid: string | null;
+  state: PrSummary["state"] | null;
+}
+
+export function parseHead(json: string): PrHeadInfo {
   let root: Record<string, unknown>;
   try {
     root = JSON.parse(json) as Record<string, unknown>;
   } catch {
-    return null;
+    return { headRefOid: null, state: null };
   }
   const pr = asRecord(asRecord(asRecord(root.data).repository).pullRequest);
-  const headRefOid = asString(pr.headRefOid);
-  return headRefOid || null;
+  const state = asString(pr.state);
+  return {
+    headRefOid: asString(pr.headRefOid) || null,
+    state: state === "OPEN" || state === "CLOSED" || state === "MERGED" ? state : null
+  };
 }
 
 export function parseDetail(json: string, viewer: string): PrDetail | null {

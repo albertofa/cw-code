@@ -94,6 +94,32 @@ describe("updatesSince", () => {
     expect(updatesSince(detail, baseLink())).toEqual([{ kind: "commits", at: 1_500, actor: "mbarros", summary: "mbarros pushed 3 commits" }]);
   });
 
+  it("drops a commits item ending at the last-seen sha because it is the session's own push", () => {
+    const timeline: PrTimelineItem[] = [
+      {
+        kind: "commits",
+        at: 1_500,
+        actor: "mbarros",
+        commits: [
+          { oid: "a", headline: "fix a", author: "mbarros", committedAt: 1_100, ci: "none" },
+          { oid: "own", headline: "fix b", author: "mbarros", committedAt: 1_200, ci: "none" }
+        ]
+      },
+      { kind: "comment", at: 1_600, actor: "rcosta", body: "thanks" }
+    ];
+    const detail = basePr({ timeline, headRefOid: "own", updatedAt: 1_600 });
+    expect(updatesSince(detail, baseLink({ lastSeenSha: "own" }))).toEqual([
+      { kind: "comment", at: 1_600, actor: "rcosta", summary: "rcosta commented" }
+    ]);
+  });
+
+  it("keeps a commits item when the last-seen sha is unknown", () => {
+    const timeline: PrTimelineItem[] = [
+      { kind: "commits", at: 1_500, actor: "mbarros", commits: [{ oid: "x", headline: "x", author: "mbarros", committedAt: 1_100, ci: "none" }] }
+    ];
+    expect(updatesSince(basePr({ timeline, headRefOid: "x" }), baseLink({ lastSeenSha: "" }))).toHaveLength(1);
+  });
+
   it("returns a review update with the count of unresolved threads it left", () => {
     const timeline: PrTimelineItem[] = [
       { kind: "review", at: 1_500, actor: "rcosta", state: "CHANGES_REQUESTED", body: "", threadIds: ["t1", "t2", "t3", "t4"] }

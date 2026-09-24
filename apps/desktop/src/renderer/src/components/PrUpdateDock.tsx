@@ -1,20 +1,64 @@
 import { useMemo, useState } from "react";
 import { Bell, ExternalLink, RefreshCw, Send, TriangleAlert, X } from "lucide-react";
-import type { PrUpdate } from "@cw-code/contracts";
+import type { AppSettings, PrSummary, PrUpdate, PrWorkflow } from "@cw-code/contracts";
 import { useAppStore } from "../stores/appStore.js";
 import { usePrStore } from "../stores/prStore.js";
 import { formatRelativeAge } from "./prInboxModel.js";
 import { PrUpdateIcon } from "./PrUpdateIcon.js";
 import { defaultFollowUpWorkflowId, followUpPrompt, followUpWorkflow, needsFailedLogs } from "./prSessionModel.js";
 import { updatesSince } from "./prUpdates.js";
+import { prRefLabel } from "./sessionPrLinks.js";
 import { harnessLabel } from "./toolTabs.js";
-import { useLinkedPr, usePrSettings } from "./useLinkedPr.js";
+import { useLinkedPrs, usePrSettings, type LinkedPr } from "./useLinkedPr.js";
 import { errorMessage } from "./errorMessage.js";
 
 const EMPTY_UPDATES: PrUpdate[] = [];
 
+interface DockEntry {
+  item: LinkedPr;
+  pr: PrSummary | null;
+  updates: PrUpdate[];
+  workflow: PrWorkflow | null;
+  workflowId: string;
+  isReview: boolean;
+  logsNeeded: boolean;
+  prompt: string | null;
+}
+
+function dockEntry(item: LinkedPr, settings: AppSettings | null, harness: string): DockEntry {
+  const { link, detail } = item;
+  const pr = item.summary ?? detail ?? null;
+  const updates = detail ? updatesSince(detail, link) : EMPTY_UPDATES;
+  const workflow = settings ? followUpWorkflow(link, pr, settings.prWorkflows) : null;
+  const workflowId = workflow?.id ?? defaultFollowUpWorkflowId(link, pr);
+  const prompt = detail && workflow && settings ? followUpPrompt(detail, link, workflow, updates, settings, harness) : null;
+  return {
+    item,
+    pr,
+    updates,
+    workflow,
+    workflowId,
+    isReview: workflowId === "review",
+    logsNeeded: workflow !== null && needsFailedLogs(workflow.updatePrompt),
+    prompt
+  };
+}
+
+function combinedPrompt(entries: DockEntry[]): string | null {
+  if (entries.length === 0) return null;
+  return entries.map((entry) => `## ${prRefLabel(entry.item.link.ref)}\n\n${entry.prompt ?? ""}`).join("\n\n");
+}
+
+function omittedReason(entry: DockEntry): string {
+  return entry.logsNeeded ? "needs failed CI logs, use Review and send" : "no follow-up prompt, pick one with Other workflow";
+}
+
+function seenHead(entry: DockEntry): string | null {
+  return entry.item.detail?.headRefOid ?? entry.item.summary?.headRefOid ?? null;
+}
+
 export function PrUpdateDock({ sessionId }: { sessionId: string }) {
-  const { session, link, summary, detail, loading, error, unseen } = useLinkedPr(sessionId);
+  const { session, items } = useLinkedPrs(sessionId);
   const busy = useAppStore((s) => s.busyTurns[sessionId] !== undefined);
   const sendPromptTo = useAppStore((s) => s.sendPromptTo);
   const applySession = useAppStore((s) => s.applySession);
@@ -26,64 +70,31 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
   const [working, setWorking] = useState<"send" | "dismiss" | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
 
-  const updates = useMemo(() => (detail && link ? updatesSince(detail, link) : EMPTY_UPDATES), [detail, link]);
-  const pr = summary ?? detail ?? null;
-  const workflow = useMemo(
-    () => (link && settings ? followUpWorkflow(link, pr, settings.prWorkflows) : null),
-    [link, pr, settings]
-  );
   const harness = session ? harnessLabel(session.driver) : "";
-  const prompt = useMemo(
-    () => (detail && link && workflow && settings ? followUpPrompt(detail, link, workflow, updates, settings, harness) : null),
-    [detail, link, workflow, settings, updates, harness]
+  const entries = useMemo(() => items.map((item) => dockEntry(item, settings, harness)), [items, settings, harness]);
+  const changed = useMemo(() => entries.filter((entry) => entry.updates.length > 0), [entries]);
+  const failed = useMemo(
+    () => entries.filter((entry) => entry.updates.length === 0 && entry.item.error !== undefined && entry.item.unseen),
+    [entries]
   );
+  const single = changed.length === 1 ? changed[0] : null;
+  const sendable = useMemo(() => changed.filter((entry) => !entry.logsNeeded && entry.prompt !== null), [changed]);
+  const omitted = useMemo(
+    () => (settings ? changed.filter((entry) => entry.logsNeeded || entry.prompt === null) : []),
+    [changed, settings]
+  );
+  const prompt = useMemo(() => (single ? single.prompt : combinedPrompt(sendable)), [single, sendable]);
 
-  if (!session || !link) return null;
+  if (!session || (changed.length === 0 && failed.length === 0)) return null;
 
-  if (updates.length === 0) {
-    if (!error || !unseen) return null;
-    return (
-      <section className="pr-dock pr-dock-failed" aria-label="Pull request update">
-        <div className="pr-dock-head">
-          <TriangleAlert size={14} className="pr-dock-head-icon bad" aria-hidden="true" />
-          <span className="pr-dock-title">PR #{link.ref.number} changed, but its details could not be loaded</span>
-          <button className="pr-detail-btn ghost sm" onClick={() => void loadDetail(link.ref)} disabled={loading}>
-            Retry
-          </button>
-        </div>
-        <div className="pr-dock-error" role="alert">{error}</div>
-      </section>
-    );
-  }
-
-  const workflowId = workflow?.id ?? defaultFollowUpWorkflowId(link, pr);
-  const isReview = workflowId === "review";
-  const logsNeeded = workflow !== null && needsFailedLogs(workflow.updatePrompt);
-  const since = isReview ? "your review" : "your last turn";
-
-  const send = async () => {
-    if (!prompt || busy || working) return;
-    setWorking("send");
-    setActionError(null);
-    try {
-      await sendPromptTo(sessionId, prompt);
-    } catch (err) {
-      setActionError(`Could not send the update: ${errorMessage(err)}`);
-    } finally {
-      setWorking(null);
-    }
-  };
-
-  const openInModal = () => {
-    openRunModal({ workflowId, ref: link.ref, continueSessionId: sessionId });
-  };
-
-  const dismiss = async () => {
-    if (!detail || working) return;
+  const dismiss = async (targets: DockEntry[]) => {
+    if (working) return;
     setWorking("dismiss");
     setActionError(null);
     try {
-      applySession(await window.cw.markSessionPrSeen(sessionId, detail.headRefOid));
+      for (const entry of targets) {
+        applySession(await window.cw.markSessionPrSeen(sessionId, entry.item.link.ref, seenHead(entry)));
+      }
     } catch (err) {
       setActionError(`Could not dismiss the update: ${errorMessage(err)}`);
     } finally {
@@ -91,57 +102,166 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
     }
   };
 
-  const primaryLabel = logsNeeded ? "Review and send…" : isReview ? "Re-review changes" : `Send update to ${harness}`;
-  const PrimaryIcon = isReview ? RefreshCw : Send;
-  const primaryDisabled = logsNeeded ? busy : busy || prompt === null || working !== null;
+  const failedRows = failed.map((entry) => (
+    <div key={entry.item.key} className="pr-dock-error" role="alert">
+      <b>{prRefLabel(entry.item.link.ref)}</b> changed, but its details could not be loaded: {entry.item.error}{" "}
+      <button className="pr-detail-btn ghost sm" onClick={() => void loadDetail(entry.item.link.ref)} disabled={entry.item.loading}>
+        Retry
+      </button>
+      <button
+        className="icon-btn pr-dock-dismiss"
+        onClick={() => void dismiss([entry])}
+        disabled={working !== null}
+        title="Dismiss until the next change"
+        aria-label={`Dismiss update for ${prRefLabel(entry.item.link.ref)}`}
+      >
+        <X size={14} aria-hidden="true" />
+      </button>
+    </div>
+  ));
+
+  if (changed.length === 0) {
+    return (
+      <section className="pr-dock pr-dock-failed" aria-label="Pull request update">
+        <div className="pr-dock-head">
+          <TriangleAlert size={14} className="pr-dock-head-icon bad" aria-hidden="true" />
+          <span className="pr-dock-title">
+            {failed.length === 1
+              ? `PR #${failed[0].item.link.ref.number} changed, but its details could not be loaded`
+              : `${failed.length} pull requests changed, but their details could not be loaded`}
+          </span>
+        </div>
+        {failedRows}
+      </section>
+    );
+  }
+
+  const openInModal = (entry: DockEntry) => {
+    openRunModal({ workflowId: entry.workflowId, ref: entry.item.link.ref, continueSessionId: sessionId });
+  };
+
+  const send = async () => {
+    if (!prompt || busy || working) return;
+    setWorking("send");
+    setActionError(null);
+    const covered = (single ? [single] : sendable).map((entry) => entry.item.link.ref);
+    try {
+      await sendPromptTo(sessionId, prompt, undefined, { prRefs: covered });
+    } catch (err) {
+      setActionError(`Could not send the update: ${errorMessage(err)}`);
+    } finally {
+      setWorking(null);
+    }
+  };
+
+  const allReview = changed.every((entry) => entry.isReview);
+  const since = allReview ? "your review" : "your last turn";
+  const title = single
+    ? `PR #${single.item.link.ref.number} changed since ${since}`
+    : `${changed.length} pull requests changed since ${since}`;
+  const totalUpdates = changed.reduce((sum, entry) => sum + entry.updates.length, 0);
+  const singleLogs = single !== null && single.logsNeeded;
+  const primaryLabel = singleLogs
+    ? "Review and send…"
+    : allReview
+      ? "Re-review changes"
+      : single
+        ? `Send update to ${harness}`
+        : `Send ${sendable.length} ${sendable.length === 1 ? "update" : "updates"} to ${harness}`;
+  const PrimaryIcon = allReview ? RefreshCw : Send;
+  const primaryDisabled = singleLogs ? busy : busy || prompt === null || working !== null;
   const now = Date.now();
-  const previewText = logsNeeded
+  const previewText = singleLogs
     ? "This follow-up prompt includes failed CI logs. They are fetched when you open it with Review and send."
-    : (prompt ?? (settingsError ? "Workflows could not be loaded." : "Resolving prompt…"));
+    : (prompt ??
+      (settingsError
+        ? "Workflows could not be loaded."
+        : settings && sendable.length === 0
+          ? "None of the changed pull requests has a prompt that can be sent together. Send each one from its section."
+          : "Resolving prompt…"));
+  const hint = single ? (
+    single.workflow ? (
+      <>
+        uses the <b>{single.workflow.label}</b> workflow's follow-up prompt
+      </>
+    ) : (
+      "follow-up prompt unavailable"
+    )
+  ) : (
+    `combines the follow-up prompts of ${sendable.length} pull ${sendable.length === 1 ? "request" : "requests"}`
+  );
 
   return (
     <section className="pr-dock" aria-label="Pull request update">
       <div className="pr-dock-head">
         <Bell size={14} className="pr-dock-head-icon" aria-hidden="true" />
-        <span className="pr-dock-title">
-          PR #{link.ref.number} changed since {since}
-        </span>
-        <span className="pr-dock-badge">{updates.length}</span>
+        <span className="pr-dock-title">{title}</span>
+        <span className="pr-dock-badge">{totalUpdates}</span>
         <span className="pr-dock-spacer" />
-        <button className="pr-detail-btn ghost sm" onClick={() => (isReview ? openPr(link.ref, "files") : openPr(link.ref))}>
-          <ExternalLink size={12} aria-hidden="true" />
-          {isReview ? "Diff since review" : "View PR"}
-        </button>
-        <button
-          className="icon-btn pr-dock-dismiss"
-          onClick={() => void dismiss()}
-          disabled={working !== null}
-          title="Dismiss until the next change"
-          aria-label="Dismiss PR update"
-        >
-          <X size={14} aria-hidden="true" />
-        </button>
+        {!single && (
+          <button className="pr-detail-btn ghost sm" onClick={() => void dismiss(changed)} disabled={working !== null}>
+            Dismiss all
+          </button>
+        )}
       </div>
-      <ul className="pr-dock-list">
-        {updates.map((update, index) => (
-          <li key={`${update.kind}-${update.at}-${index}`} className="pr-dock-item">
-            <PrUpdateIcon kind={update.kind} />
-            <span className="pr-dock-item-text">{update.summary}</span>
-            <span className="pr-dock-item-age">{formatRelativeAge(update.at, now)} ago</span>
-          </li>
-        ))}
-      </ul>
-      {previewOpen && (
-        <pre className="pr-dock-preview">{previewText}</pre>
-      )}
+      {changed.map((entry) => {
+        const ref = entry.item.link.ref;
+        return (
+          <div key={entry.item.key} className="pr-dock-group">
+            <div className="pr-dock-group-head">
+              <span className="pr-dock-group-title" title={entry.pr?.title}>
+                <b>{prRefLabel(ref)}</b>
+                {entry.pr ? ` ${entry.pr.title}` : ""}
+              </span>
+              {!single && <span className="pr-dock-badge">{entry.updates.length}</span>}
+              <span className="pr-dock-spacer" />
+              <button className="pr-detail-btn ghost sm" onClick={() => (entry.isReview ? openPr(ref, "files") : openPr(ref))}>
+                <ExternalLink size={12} aria-hidden="true" />
+                {entry.isReview ? "Diff since review" : "View"}
+              </button>
+              {!single && (
+                <button className="pr-detail-btn ghost sm" onClick={() => openInModal(entry)}>
+                  {entry.logsNeeded ? "Review and send…" : "Other workflow"}
+                </button>
+              )}
+              <button
+                className="icon-btn pr-dock-dismiss"
+                onClick={() => void dismiss([entry])}
+                disabled={working !== null}
+                title="Dismiss until the next change"
+                aria-label={`Dismiss update for ${prRefLabel(ref)}`}
+              >
+                <X size={14} aria-hidden="true" />
+              </button>
+            </div>
+            <ul className="pr-dock-list">
+              {entry.updates.map((update, index) => (
+                <li key={`${update.kind}-${update.at}-${index}`} className="pr-dock-item">
+                  <PrUpdateIcon kind={update.kind} />
+                  <span className="pr-dock-item-text">{update.summary}</span>
+                  <span className="pr-dock-item-age">{formatRelativeAge(update.at, now)} ago</span>
+                </li>
+              ))}
+            </ul>
+            {settings && !entry.workflow && (
+              <div className="pr-dock-error" role="alert">
+                No follow-up workflow found for #{ref.number}; pick one with Other workflow.
+              </div>
+            )}
+          </div>
+        );
+      })}
+      {failedRows}
+      {previewOpen && <pre className="pr-dock-preview">{previewText}</pre>}
       {settingsError && (
         <div className="pr-dock-error" role="alert">
           Could not load workflows: {settingsError}
         </div>
       )}
-      {settings && !workflow && (
-        <div className="pr-dock-error" role="alert">
-          No follow-up workflow found; pick one with Other workflow.
+      {!single && omitted.length > 0 && (
+        <div className="pr-dock-error" role="status">
+          Not included: {omitted.map((entry) => `#${entry.item.link.ref.number} (${omittedReason(entry)})`).join(", ")}. Send{" "}
+          {omitted.length === 1 ? "it" : "them"} afterwards.
         </div>
       )}
       {actionError && (
@@ -150,25 +270,19 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
         </div>
       )}
       <div className="pr-dock-foot">
-        <span className="pr-dock-hint">
-          {workflow ? (
-            <>
-              uses the <b>{workflow.label}</b> workflow's follow-up prompt
-            </>
-          ) : (
-            "follow-up prompt unavailable"
-          )}
-        </span>
+        <span className="pr-dock-hint">{hint}</span>
         <button className="pr-detail-btn ghost sm" onClick={() => setPreviewOpen(!previewOpen)} aria-expanded={previewOpen}>
           {previewOpen ? "Hide preview" : "Preview"}
         </button>
         <span className="pr-dock-spacer" />
-        <button className="pr-detail-btn sm" onClick={openInModal}>
-          Other workflow
-        </button>
+        {single && (
+          <button className="pr-detail-btn sm" onClick={() => openInModal(single)}>
+            Other workflow
+          </button>
+        )}
         <button
           className="pr-detail-btn primary sm"
-          onClick={logsNeeded ? openInModal : () => void send()}
+          onClick={single && singleLogs ? () => openInModal(single) : () => void send()}
           disabled={primaryDisabled}
           title={busy ? "Wait for the current turn to finish" : undefined}
         >

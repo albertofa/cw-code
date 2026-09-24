@@ -61,9 +61,9 @@ describe("buildInboxRows", () => {
     const pr = summary({ headRefOid: "sha-2", review: "approved" });
     const linked = session({
       id: "s1",
-      pr: { ref: ref(), origin: "opened", lastSeenSha: "sha-1", lastSeenAt: 0 }
+      prs: [{ ref: ref(), origin: "opened", lastSeenSha: "sha-1", lastSeenAt: 0 }]
     });
-    const other = session({ id: "s2", pr: { ref: ref({ number: 7 }), origin: "linked", lastSeenSha: "x", lastSeenAt: 0 } });
+    const other = session({ id: "s2", prs: [{ ref: ref({ number: 7 }), origin: "linked", lastSeenSha: "x", lastSeenAt: 0 }] });
 
     const [row] = buildInboxRows([pr], [linked, other], () => true);
 
@@ -75,7 +75,7 @@ describe("buildInboxRows", () => {
 
   it("marks a PR unseen-free when the linked session already saw the current head", () => {
     const pr = summary({ headRefOid: "sha-1", updatedAt: 100 });
-    const linked = session({ pr: { ref: ref(), origin: "opened", lastSeenSha: "sha-1", lastSeenAt: 200 } });
+    const linked = session({ prs: [{ ref: ref(), origin: "opened", lastSeenSha: "sha-1", lastSeenAt: 200 }] });
 
     const [row] = buildInboxRows([pr], [linked], () => false);
 
@@ -83,9 +83,29 @@ describe("buildInboxRows", () => {
     expect(row.cloned).toBe(false);
   });
 
+  it("uses the link for this PR when a session is linked to several PRs", () => {
+    const first = summary({ headRefOid: "sha-1", updatedAt: 100 });
+    const second = summary({ ref: ref({ number: 7 }), headRefOid: "sha-7b", updatedAt: 100 });
+    const multi = session({
+      id: "multi",
+      prs: [
+        { ref: ref(), origin: "opened", lastSeenSha: "sha-1", lastSeenAt: 200 },
+        { ref: ref({ number: 7 }), origin: "linked", lastSeenSha: "sha-7a", lastSeenAt: 200 }
+      ]
+    });
+
+    const [firstRow, secondRow] = buildInboxRows([first, second], [multi], () => true);
+
+    expect(firstRow.linkedSessions.map((s) => s.id)).toEqual(["multi"]);
+    expect(firstRow.hasUnseenSession).toBe(false);
+    expect(secondRow.linkedSessions.map((s) => s.id)).toEqual(["multi"]);
+    expect(secondRow.hasUnseenSession).toBe(true);
+    expect(rowDeltaText(secondRow, 1_000)).toBe("new commits");
+  });
+
   it("ignores sessions linked to a different PR", () => {
     const pr = summary();
-    const unrelated = session({ pr: { ref: ref({ number: 99 }), origin: "opened", lastSeenSha: "x", lastSeenAt: 0 } });
+    const unrelated = session({ prs: [{ ref: ref({ number: 99 }), origin: "opened", lastSeenSha: "x", lastSeenAt: 0 }] });
 
     const [row] = buildInboxRows([pr], [unrelated], () => false);
 
@@ -155,7 +175,7 @@ describe("groupRowsByBucket", () => {
 describe("rowDeltaText", () => {
   it("returns null when the row has no unseen session", () => {
     const pr = summary({ headRefOid: "sha-1", updatedAt: 100 });
-    const linked = session({ pr: { ref: ref(), origin: "opened", lastSeenSha: "sha-1", lastSeenAt: 200 } });
+    const linked = session({ prs: [{ ref: ref(), origin: "opened", lastSeenSha: "sha-1", lastSeenAt: 200 }] });
     const [row] = buildInboxRows([pr], [linked], () => true);
 
     expect(rowDeltaText(row, 500)).toBeNull();
@@ -163,7 +183,7 @@ describe("rowDeltaText", () => {
 
   it("returns null when no linked session carries a pr link", () => {
     const pr = summary({ headRefOid: "sha-2" });
-    const row = { pr, bucket: "waiting" as const, linkedSessions: [session({ pr: undefined })], hasUnseenSession: true, cloned: true };
+    const row = { pr, bucket: "waiting" as const, linkedSessions: [session({ prs: undefined })], hasUnseenSession: true, cloned: true };
 
     expect(rowDeltaText(row, 500)).toBeNull();
   });
@@ -172,7 +192,7 @@ describe("rowDeltaText", () => {
     const pr = summary({ headRefOid: "sha-2" });
     const linked = session({
       id: "s1",
-      pr: { ref: ref(), origin: "opened", lastSeenSha: "sha-1", lastSeenAt: 0 }
+      prs: [{ ref: ref(), origin: "opened", lastSeenSha: "sha-1", lastSeenAt: 0 }]
     });
     const [row] = buildInboxRows([pr], [linked], () => true);
 
@@ -183,7 +203,7 @@ describe("rowDeltaText", () => {
     const pr = summary({ headRefOid: "sha-1", updatedAt: 60_000 });
     const linked = session({
       id: "s1",
-      pr: { ref: ref(), origin: "opened", lastSeenSha: "sha-1", lastSeenAt: 0 }
+      prs: [{ ref: ref(), origin: "opened", lastSeenSha: "sha-1", lastSeenAt: 0 }]
     });
     const [row] = buildInboxRows([pr], [linked], () => true);
 
@@ -194,7 +214,7 @@ describe("rowDeltaText", () => {
     const pr = summary({ headRefOid: "sha-2", updatedAt: 60_000 });
     const linked = session({
       id: "s1",
-      pr: { ref: ref(), origin: "opened", lastSeenSha: "", lastSeenAt: 0 }
+      prs: [{ ref: ref(), origin: "opened", lastSeenSha: "", lastSeenAt: 0 }]
     });
     const [row] = buildInboxRows([pr], [linked], () => true);
 
@@ -206,12 +226,12 @@ describe("rowDeltaText", () => {
     const opener = session({
       id: "s1",
       updatedAt: 10,
-      pr: { ref: ref(), origin: "opened", lastSeenSha: "sha-1", lastSeenAt: 0 }
+      prs: [{ ref: ref(), origin: "opened", lastSeenSha: "sha-1", lastSeenAt: 0 }]
     });
     const active = session({
       id: "s2",
       updatedAt: 9_999,
-      pr: { ref: ref(), origin: "linked", lastSeenSha: "sha-2", lastSeenAt: 0 }
+      prs: [{ ref: ref(), origin: "linked", lastSeenSha: "sha-2", lastSeenAt: 0 }]
     });
     const [row] = buildInboxRows([pr], [opener, active], () => true);
 

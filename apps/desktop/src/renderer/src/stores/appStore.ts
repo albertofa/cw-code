@@ -9,6 +9,7 @@ import type {
   DriverName,
   HistoryMessage,
   GitStatus,
+  PrRef,
   Project,
   QuestionRequest,
   Session,
@@ -164,7 +165,7 @@ interface AppState {
   createSessionIn(projectId: string, driver: DriverName, prefs?: ComposerPrefs, workspace?: CreateSessionOptions): Promise<Session>;
   applySession(session: Session): void;
   sendPrompt(prompt: string, attachments?: string[]): Promise<void>;
-  sendPromptTo(sessionId: string, prompt: string, attachments?: string[]): Promise<void>;
+  sendPromptTo(sessionId: string, prompt: string, attachments?: string[], opts?: { prRefs?: PrRef[] }): Promise<void>;
   interrupt(): Promise<void>;
   retryConnection(sessionId: string): Promise<void>;
   respondApproval(requestId: string, decision: ApprovalDecision): Promise<void>;
@@ -911,7 +912,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     await get().sendPromptTo(sessionId, prompt, attachments);
   },
 
-  async sendPromptTo(sessionId: string, prompt: string, attachments?: string[]) {
+  async sendPromptTo(sessionId: string, prompt: string, attachments?: string[], opts?: { prRefs?: PrRef[] }) {
     if (!prompt.trim()) return;
     const prefs = get().composerBySession[sessionId] ?? DEFAULT_COMPOSER;
     const previous = Object.values(get().sessionsByProject)
@@ -927,7 +928,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
     let turnId: string;
     try {
-      turnId = await window.cw.startTurn(sessionId, prompt, { prefs, attachments });
+      turnId = await window.cw.startTurn(sessionId, prompt, { prefs, attachments, prRefs: opts?.prRefs });
     } catch (err) {
       if (get().busyTurns[sessionId] === pending) {
         const book = closeTurn(

@@ -7,7 +7,7 @@ export function hasUnseen(pr: PrSummary, link: SessionPrLink): boolean {
 export function updatesSince(detail: PrDetail, link: SessionPrLink): PrUpdate[] {
   const updates: PrUpdate[] = [];
   for (const item of detail.timeline) {
-    if (item.at <= link.lastSeenAt) continue;
+    if (item.at <= link.lastSeenAt || isOwnPush(item, link)) continue;
     const update = toUpdate(item, detail);
     if (update) updates.push(update);
   }
@@ -21,6 +21,11 @@ export function updatesSince(detail: PrDetail, link: SessionPrLink): PrUpdate[] 
     updates.push({ kind: "comment", at: detail.updatedAt, actor: null, summary: "PR updated" });
   }
   return updates.sort((a, b) => b.at - a.at);
+}
+
+function isOwnPush(item: PrTimelineItem, link: SessionPrLink): boolean {
+  if (item.kind !== "commits" || link.lastSeenSha === "") return false;
+  return item.commits[item.commits.length - 1]?.oid === link.lastSeenSha;
 }
 
 export function firstUnseenIndex(timeline: PrTimelineItem[], lastSeenAt: number): number {

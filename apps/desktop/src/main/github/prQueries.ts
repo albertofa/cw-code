@@ -278,6 +278,7 @@ query($owner: String!, $repo: String!, $number: Int!) {
   repository(owner: $owner, name: $repo) {
     pullRequest(number: $number) {
       headRefOid
+      state
     }
   }
 }

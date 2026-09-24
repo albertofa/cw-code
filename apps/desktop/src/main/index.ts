@@ -40,7 +40,8 @@ let mainWindow: BrowserWindow | null = null;
 let pullRequests: PullRequestService;
 const sessions = new SessionManager({
   prHead: (ref) => pullRequests.knownHead(ref),
-  prHeadRefresh: (ref) => pullRequests.refreshHead(ref)
+  prHeadRefresh: (ref) => pullRequests.refreshHead(ref),
+  prState: (ref) => pullRequests.knownState(ref)
 });
 const skills = new SkillsStore();
 const files = new FileService();
@@ -286,8 +287,13 @@ function registerIpc(): void {
         prompt: string;
         prefs?: { model?: string; effort?: "minimal" | "low" | "medium" | "high" | "xhigh" | "max"; variant?: string; permissionMode?: "auto" | "acceptEdits" | "bypassPermissions" | "manual" };
         attachments?: string[];
+        prRefs?: PrRef[];
       }
-    ) => sessions.startTurn(args.sessionId, args.prompt, { prefs: args.prefs, attachments: args.attachments })
+    ) => {
+      if (args.prRefs !== undefined && !Array.isArray(args.prRefs)) throw new Error("invalid prRefs");
+      for (const ref of args.prRefs ?? []) assertPrRef(ref);
+      return sessions.startTurn(args.sessionId, args.prompt, { prefs: args.prefs, attachments: args.attachments, prRefs: args.prRefs });
+    }
   );
   ipcMain.handle("turns.interrupt", (_e, args: { turnId: string }) => sessions.interrupt(args.turnId));
   ipcMain.handle("models.list", (_e, args: { sessionId: string }) => sessions.listModels(args.sessionId));
@@ -345,10 +351,14 @@ function registerIpc(): void {
       lastSeenAt: link.lastSeenAt
     });
   });
-  ipcMain.handle("sessions.unlinkPr", (_e, args: { sessionId: string }) => sessions.unlinkPr(args.sessionId));
-  ipcMain.handle("sessions.markPrSeen", (_e, args: { sessionId: string; headSha: string | null }) => {
+  ipcMain.handle("sessions.unlinkPr", (_e, args: { sessionId: string; ref: PrRef }) => {
+    assertPrRef(args.ref);
+    return sessions.unlinkPr(args.sessionId, args.ref);
+  });
+  ipcMain.handle("sessions.markPrSeen", (_e, args: { sessionId: string; ref: PrRef; headSha: string | null }) => {
+    assertPrRef(args.ref);
     if (args.headSha !== null && typeof args.headSha !== "string") throw new Error("invalid headSha");
-    return sessions.markPrSeen(args.sessionId, args.headSha);
+    return sessions.markPrSeen(args.sessionId, args.ref, args.headSha);
   });
   ipcMain.handle("git.branches", (_e, args: { sessionId: string }) =>
     sessions.ensureWorktree(args.sessionId).then((root) => git.branches(root))

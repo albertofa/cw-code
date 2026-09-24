@@ -205,18 +205,21 @@ describe("ciFromRollup", () => {
 });
 
 describe("parseHead", () => {
-  it("extracts the head sha", () => {
-    const json = JSON.stringify({ data: { repository: { pullRequest: { headRefOid: "sha-1" } } } });
-    expect(parseHead(json)).toBe("sha-1");
+  it("extracts the head sha and state", () => {
+    const json = JSON.stringify({ data: { repository: { pullRequest: { headRefOid: "sha-1", state: "MERGED" } } } });
+    expect(parseHead(json)).toEqual({ headRefOid: "sha-1", state: "MERGED" });
   });
 
-  it("returns null when the head sha is missing", () => {
-    const json = JSON.stringify({ data: { repository: { pullRequest: {} } } });
-    expect(parseHead(json)).toBeNull();
+  it("returns nulls when the head sha and state are missing or unknown", () => {
+    expect(parseHead(JSON.stringify({ data: { repository: { pullRequest: {} } } }))).toEqual({ headRefOid: null, state: null });
+    expect(parseHead(JSON.stringify({ data: { repository: { pullRequest: { headRefOid: "sha-1", state: "DRAFT" } } } }))).toEqual({
+      headRefOid: "sha-1",
+      state: null
+    });
   });
 
-  it("returns null for malformed JSON", () => {
-    expect(parseHead("not-json")).toBeNull();
+  it("returns nulls for malformed JSON", () => {
+    expect(parseHead("not-json")).toEqual({ headRefOid: null, state: null });
   });
 });
 

@@ -1,4 +1,5 @@
 import type { AppSettings, PrDetail, PrSuggestCondition, PrSummary, PrUpdate, PrWorkflow, SessionMeta, SessionPrLink } from "@cw-code/contracts";
+import { linkFor, pickMainSession } from "./sessionPrLinks.js";
 
 export const TEMPLATE_VARS = [
   "pr.number",
@@ -108,19 +109,11 @@ export type PrPrimaryAction =
   | { kind: "run"; workflowId: string }
   | { kind: "none" };
 
-function mainSession(linked: SessionMeta[]): SessionMeta | null {
-  if (linked.length === 0) return null;
-  const opened = linked.find((s) => s.pr?.origin === "opened");
-  if (opened) return opened;
-  const review = linked.find((s) => s.pr?.workflowId === "review");
-  if (review) return review;
-  return linked.reduce((latest, s) => (s.updatedAt > latest.updatedAt ? s : latest));
-}
-
 export function primaryAction(pr: PrSummary, linked: SessionMeta[], workflows: PrWorkflow[]): PrPrimaryAction {
   if (pr.state === "MERGED") return { kind: "none" };
-  const session = mainSession(linked);
-  if (session && session.pr?.workflowId === "review" && pr.headRefOid !== session.pr.lastSeenSha) {
+  const session = pickMainSession(linked, pr.ref);
+  const link = session ? linkFor(session, pr.ref) : undefined;
+  if (session && link?.workflowId === "review" && pr.headRefOid !== link.lastSeenSha) {
     return { kind: "continue", sessionId: session.id, workflowId: "review" };
   }
   if (session) return { kind: "open", sessionId: session.id };

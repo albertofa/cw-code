@@ -11,10 +11,9 @@ import { mergeAwayIds } from "./sidebarOrder.js";
 import { compareWorkingSet, isWorkingSetStatus } from "./workingSet.js";
 import { shortenHome } from "./pathDisplay.js";
 import { discoveryProjectId } from "./projectRecency.js";
-import { prChip } from "./prChip.js";
 import { PrChipBadge } from "./PrChipBadge.js";
-import { needsAttentionCount, prKey } from "./prInbox.js";
-import { hasUnseen } from "./prUpdates.js";
+import { needsAttentionCount } from "./prInbox.js";
+import { anyLinkUnseen, displayChip, linksTitle, mostUrgentLink, prSummaryLookup, sessionLinks } from "./sessionPrLinks.js";
 import appIcon from "../assets/console-c.svg";
 
 const GROUP_VISIBLE = 6;
@@ -60,13 +59,8 @@ const DRIVER_LABEL: Record<DriverName, string> = {
   codex: "Codex"
 };
 
-function sessionPrSummary(session: Session, summaryByKey: Map<string, PrSummary>): PrSummary | null {
-  return session.pr ? (summaryByKey.get(prKey(session.pr.ref)) ?? null) : null;
-}
-
 function sessionHasUnseen(session: Session, summaryByKey: Map<string, PrSummary>): boolean {
-  const summary = sessionPrSummary(session, summaryByKey);
-  return summary !== null && session.pr !== undefined && hasUnseen(summary, session.pr);
+  return anyLinkUnseen(sessionLinks(session), summaryByKey);
 }
 
 const HOVER_DELAY = 350;
@@ -239,6 +233,7 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
   const worktreeConfirm = worktreeConfirmQueue[0] ?? null;
   const store = useAppStore();
   const inbox = usePrStore((s) => s.inbox);
+  const detailByKey = usePrStore((s) => s.detailByKey);
   const mainView = usePrStore((s) => s.mainView);
   const openInbox = usePrStore((s) => s.openInbox);
   const openSessionView = usePrStore((s) => s.openSessionView);
@@ -428,7 +423,7 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
     else resolvedByProject.set(s.projectId, [s]);
   }
   const inboxItems = inbox?.items ?? [];
-  const summaryByKey = new Map(inboxItems.map((pr) => [prKey(pr.ref), pr]));
+  const summaryByKey = prSummaryLookup(inboxItems, detailByKey);
   const attentionCount = needsAttentionCount(inboxItems);
   const anyUnseen = Object.values(sessionsByProject).some((list) => list.some((s) => sessionHasUnseen(s, summaryByKey)));
   const inboxActive = mainView.kind !== "session";
@@ -653,15 +648,18 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
 
   const renderRow = (s: Session, section: SidebarSection, hideState = false) => {
     const git = gitStatusBySession[s.id];
-    const gitPr = git?.pullRequest && s.pr && git.pullRequest.number === s.pr.ref.number ? git.pullRequest : null;
-    const chip = prChip({ pr: sessionPrSummary(s, summaryByKey), git: gitPr });
+    const links = sessionLinks(s);
+    const gitPr = git?.pullRequest ?? null;
+    const urgent = mostUrgentLink(links, summaryByKey, gitPr);
+    const chip = urgent ? displayChip(urgent, summaryByKey, gitPr) : null;
+    const chipTitle = chip ? (links.length > 1 ? linksTitle(links, summaryByKey, gitPr) : chip.title) : null;
     const unseen = sessionHasUnseen(s, summaryByKey);
     const status = s.status ?? "idle";
     const projectName = projectNameById[s.projectId] ?? "";
     const gitSummary = [
       git?.branch ?? s.branch ? `Branch: ${git?.branch ?? s.branch}` : null,
       git?.worktreePath ?? s.worktreePath ? `Worktree: ${git?.worktreeName ?? shortPath(git?.worktreePath ?? s.worktreePath ?? "")}` : null,
-      chip ? chip.title : null,
+      chipTitle,
       unseen ? "PR updated since last visit" : null,
       git && !git.clean ? `${git.dirtyCount} changed ${git.dirtyCount === 1 ? "file" : "files"}` : null
     ].filter((value): value is string => Boolean(value));
@@ -793,7 +791,7 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
       )}
       <span className="session-side">
         {unseen && <span className="pr-unseen-dot" title="PR updated since last visit" />}
-        {chip && <PrChipBadge chip={chip} />}
+        {chip && <PrChipBadge chip={chip} extra={links.length - 1} title={chipTitle ?? undefined} />}
         {(status === "working" || status === "input-required") && <span className={`session-dot status-${status}`} />}
         {status === "idle" || hideState ? (
           <span className="session-age">{ageLabel(s.updatedAt)}</span>

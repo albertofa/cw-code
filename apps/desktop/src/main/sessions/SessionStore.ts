@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { ComposerPrefs, DriverKind, Project, SessionMeta, SessionPrLink } from "@cw-code/contracts";
+import type { ComposerPrefs, DriverKind, Project, SessionMeta } from "@cw-code/contracts";
+import { isValidPrLink, upsertLink } from "../github/prLinks.js";
 import { expandHome } from "../skills/skillPaths.js";
 
 interface StoreShape {
@@ -12,6 +13,17 @@ interface StoreShape {
 export function normalizeRoot(rootPath: string): string {
   const stripped = rootPath.replace(/[\\/]+$/, "");
   return stripped || rootPath;
+}
+
+type LegacySessionMeta = SessionMeta & { pr?: unknown };
+
+function migrateLegacyPrLink(session: LegacySessionMeta): boolean {
+  if (!("pr" in session)) return false;
+  const legacy = session.pr;
+  delete session.pr;
+  if (isValidPrLink(legacy)) session.prs = upsertLink(session.prs, legacy);
+  else if (legacy !== undefined && legacy !== null) console.warn(`dropping malformed legacy pull request link on session ${session.id}`);
+  return true;
 }
 
 export class SessionStore {
@@ -50,6 +62,7 @@ export class SessionStore {
       }
     }
     for (const session of this.data.sessions) {
+      if (migrateLegacyPrLink(session)) migrated = true;
       if (!session.status) {
         session.status = "idle";
         migrated = true;
@@ -158,10 +171,8 @@ export class SessionStore {
   updateSession(
     id: string,
     patch: Partial<
-      Pick<SessionMeta, "title" | "status" | "resumeCursor" | "model" | "effort" | "variant" | "permissionMode" | "worktreePath" | "branch" | "prUnlinked">
-    > & {
-      pr?: SessionPrLink | null;
-    }
+      Pick<SessionMeta, "title" | "status" | "resumeCursor" | "model" | "effort" | "variant" | "permissionMode" | "worktreePath" | "branch" | "prs" | "prUnlinked">
+    >
   ): void {
     const current = this.getSession(id);
     if (!current) return;
@@ -176,10 +187,10 @@ export class SessionStore {
     else if ("worktreePath" in patch) delete current.worktreePath;
     if (patch.branch !== undefined) current.branch = patch.branch;
     else if ("branch" in patch) delete current.branch;
-    if (patch.pr !== undefined) {
-      if (patch.pr === null) delete current.pr;
-      else current.pr = patch.pr;
-    }
+    if (patch.prs !== undefined) {
+      if (patch.prs.length === 0) delete current.prs;
+      else current.prs = patch.prs;
+    } else if ("prs" in patch) delete current.prs;
     if (patch.prUnlinked !== undefined) current.prUnlinked = patch.prUnlinked;
     else if ("prUnlinked" in patch) delete current.prUnlinked;
     current.updatedAt = Date.now();

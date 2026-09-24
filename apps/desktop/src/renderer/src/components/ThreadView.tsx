@@ -22,6 +22,7 @@ import { TodoDock } from "./TodoDock.js";
 import { PrUpdateDock } from "./PrUpdateDock.js";
 import { PrSessionChip } from "./PrSessionPanel.js";
 import { useLinkedPrLoader } from "./useLinkedPr.js";
+import { sessionLinks } from "./sessionPrLinks.js";
 import { TurnBlock } from "./TurnBlock.js";
 import { groupTurns, splitTurn, type ThreadNode } from "./turnGroups.js";
 import { pendingToolsForTurn } from "./toolSummaries.js";
@@ -95,7 +96,7 @@ export function ThreadView() {
     return null;
   }, [messages, busyTurn]);
   const showNew = pendingDriver !== null || !session;
-  const hasPr = !showNew && session?.pr !== undefined;
+  const hasPr = !showNew && sessionLinks(session).length > 0;
   useLinkedPrLoader(showNew ? undefined : session?.id);
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
@@ -303,7 +304,7 @@ export function ThreadView() {
         sessionId={session.id}
         driver={session.driver}
         hasPr={hasPr}
-        trailing={hasPr ? <PrSessionChip sessionId={session.id} /> : undefined}
+        trailing={hasPr ? <PrSessionChip key={session.id} sessionId={session.id} /> : undefined}
       />
       <Notifications />
       {showMainTool !== null ? (

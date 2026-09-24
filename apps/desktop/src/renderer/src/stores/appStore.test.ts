@@ -270,12 +270,12 @@ describe("appStore applySession", () => {
       updatedAt: 1
     };
     const other = { ...base, id: "sess_other" };
-    const pr = { ref: { host: "github.com", owner: "acme", repo: "widgets", number: 7 }, origin: "opened" as const, lastSeenSha: "a", lastSeenAt: 1 };
-    useAppStore.setState({ sessionsByProject: { proj_apply: [{ ...base, pr }, other] } });
+    const prs = [{ ref: { host: "github.com", owner: "acme", repo: "widgets", number: 7 }, origin: "opened" as const, lastSeenSha: "a", lastSeenAt: 1 }];
+    useAppStore.setState({ sessionsByProject: { proj_apply: [{ ...base, prs }, other] } });
     useAppStore.getState().applySession({ ...base, updatedAt: 2 });
     const [updated, untouched] = useAppStore.getState().sessionsByProject.proj_apply;
     expect(updated).toEqual({ ...base, updatedAt: 2 });
-    expect("pr" in updated).toBe(false);
+    expect("prs" in updated).toBe(false);
     expect(untouched).toBe(other);
   });
 

@@ -33,7 +33,8 @@ import { prKey } from "./prInbox.js";
 import { firstUnseenIndex } from "./prUpdates.js";
 import { usePrSettings } from "./useLinkedPr.js";
 import { suggestedWorkflow } from "./prWorkflows.js";
-import { linkedSessionsBarState, mergeBoxState, pickMainSession, threadQuoteText, threadSendTarget, type LinkedBarState } from "./prDetailModel.js";
+import { linkedSessionsBarState, mergeBoxState, threadQuoteText, threadSendTarget, type LinkedBarState } from "./prDetailModel.js";
+import { linkFor, pickMainSession, sessionsLinkedTo } from "./sessionPrLinks.js";
 
 const WORKFLOW_ICONS: Record<PrWorkflowIcon, LucideIcon> = {
   eye: Eye,
@@ -184,13 +185,11 @@ export function PrDetailView({ prRef }: { prRef: PrRef }) {
   const lastHeadRef = useRef<string | null>(null);
 
   const allSessions = useMemo(() => Object.values(sessionsByProject).flat(), [sessionsByProject]);
-  const linkedSessions = useMemo(
-    () => allSessions.filter((s): s is Session & { pr: NonNullable<Session["pr"]> } => !!s.pr && prKey(s.pr.ref) === key),
-    [allSessions, key]
-  );
+  const linkedSessions = useMemo(() => sessionsLinkedTo(allSessions, prRef), [allSessions, key]);
 
   const barState: LinkedBarState = detail ? linkedSessionsBarState(detail, linkedSessions, workflows) : { kind: "none" };
-  const mainSession = useMemo(() => pickMainSession(linkedSessions), [linkedSessions]);
+  const mainSession = useMemo(() => pickMainSession(linkedSessions, prRef), [linkedSessions, key]);
+  const mainLink = mainSession ? linkFor(mainSession, prRef) : undefined;
   const suggested = detail ? suggestedWorkflow(detail, workflows) : null;
   const fixCiWorkflow = workflows.find((w) => w.id === "fix-ci" && w.enabled) ?? suggested;
 
@@ -217,7 +216,7 @@ export function PrDetailView({ prRef }: { prRef: PrRef }) {
   };
 
   const sendThreadToSession = (thread: PrReviewThread) => {
-    const target = threadSendTarget(mainSession, suggested);
+    const target = threadSendTarget(mainSession, prRef, suggested);
     openRunModal({ ...target, ref: prRef, promptOverride: threadQuoteText(thread, prRef) });
   };
 
@@ -275,7 +274,7 @@ export function PrDetailView({ prRef }: { prRef: PrRef }) {
     return Array.from(groups.entries());
   }, [detail]);
 
-  const newSinceIndex = detail && mainSession?.pr ? firstUnseenIndex(detail.timeline, mainSession.pr.lastSeenAt) : -1;
+  const newSinceIndex = detail && mainLink ? firstUnseenIndex(detail.timeline, mainLink.lastSeenAt) : -1;
 
   return (
     <div className="thread-col pr-view">
@@ -418,7 +417,7 @@ function LinkedSessionsBar({
   onRunWorkflow
 }: {
   barState: LinkedBarState;
-  mainSession: ReturnType<typeof pickMainSession>;
+  mainSession: Session | null;
   onOpenSession: (sessionId: string) => void;
   onRunWorkflow: (workflowId: string, continueSessionId?: string) => void;
 }) {
@@ -796,7 +795,7 @@ function SideColumn({
   onRunWorkflow
 }: {
   detail: PrDetail;
-  linkedSessions: Array<Session & { pr: NonNullable<Session["pr"]> }>;
+  linkedSessions: Session[];
   workflows: PrWorkflow[];
   suggested: PrWorkflow | null;
   onOpenSession: (sessionId: string) => void;
@@ -818,7 +817,7 @@ function SideColumn({
             <DriverIcon driver={session.driver} size={13} />
             <span className="pr-detail-session-copy">
               <span>{session.title}</span>
-              <span className="pr-detail-session-meta">{session.pr.origin} · {ageLabel(session.updatedAt)} ago</span>
+              <span className="pr-detail-session-meta">{linkFor(session, detail.ref)?.origin ?? "linked"} · {ageLabel(session.updatedAt)} ago</span>
             </span>
             <ChevronRight size={13} aria-hidden="true" />
           </button>

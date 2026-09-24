@@ -5,7 +5,7 @@ import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import type { CliDriver, HistoryMessage, ModelOption, SessionMeta, ThreadEvent, TurnHandle } from "@cw-code/contracts";
-import { SessionManager } from "./SessionManager.js";
+import { SessionManager, type SessionManagerOptions } from "./SessionManager.js";
 import type { SessionStore } from "./SessionStore.js";
 
 class FakeDriver implements CliDriver {
@@ -175,14 +175,25 @@ async function waitForSessionPrSeen(
   manager: SessionManager,
   projectId: string,
   sessionId: string,
-  sha: string
+  sha: string,
+  number = 42
 ): Promise<SessionMeta | undefined> {
   for (let i = 0; i < 100; i += 1) {
     const session = (await manager.listSessions(projectId)).find((s) => s.id === sessionId);
-    if (session?.pr?.lastSeenSha === sha) return session;
+    if (session?.prs?.find((link) => link.ref.number === number)?.lastSeenSha === sha) return session;
     await new Promise((r) => setTimeout(r, 10));
   }
   return (await manager.listSessions(projectId)).find((s) => s.id === sessionId);
+}
+
+function makePrManager(opts: Pick<SessionManagerOptions, "prHead" | "prHeadRefresh" | "prState">) {
+  const dir = mkdtempSync(join(tmpdir(), "cw-test-"));
+  const manager = new SessionManager({ dbPath: join(dir, "test.db"), settingsPath: join(dir, "settings.json"), ...opts });
+  const fake = new FakeDriver((e) => (manager as unknown as { routeEvent(e: ThreadEvent): void }).routeEvent(e));
+  (manager as unknown as { drivers: Record<string, CliDriver> }).drivers = { claude: fake, opencode: fake, codex: fake };
+  manager.setSettings({ autoTitleEnabled: false });
+  const project = manager.addProject(join(dir, "proj"));
+  return { manager, fake, project, dir };
 }
 
 function makeGitSandboxManager(prefix: string) {
@@ -1107,7 +1118,147 @@ describe("SessionManager", () => {
     fake.complete(turnId);
 
     const updated = await waitForSessionPrSeen(manager, project.id, session.id, "sha-fresh");
-    expect(updated?.pr?.lastSeenSha).toBe("sha-fresh");
+    expect(updated?.prs?.[0]?.lastSeenSha).toBe("sha-fresh");
+    manager.dispose();
+  });
+
+  it("marks only the pull requests the turn covered, skips head refresh for merged ones, and emits once", async () => {
+    const widgets = { host: "github.com", owner: "acme", repo: "widgets", number: 42 };
+    const gadgets = { host: "github.com", owner: "acme", repo: "gadgets", number: 7 };
+    const merged = { host: "github.com", owner: "acme", repo: "legacy", number: 9 };
+    const refreshed: number[] = [];
+    const { manager, fake, project } = makePrManager({
+      prHead: (ref) => `cached-${ref.number}`,
+      prHeadRefresh: async (ref) => {
+        refreshed.push(ref.number);
+        return `fresh-${ref.number}`;
+      },
+      prState: (ref) => (ref.number === 9 ? "MERGED" : "OPEN")
+    });
+    const session = await manager.createSession(project.id, "claude", { mode: "current" });
+    manager.linkPr(session.id, { ref: widgets, origin: "linked", lastSeenSha: "old-42", lastSeenAt: 0 });
+    manager.linkPr(session.id, { ref: gadgets, origin: "linked", lastSeenSha: "old-7", lastSeenAt: 0 });
+    manager.linkPr(session.id, { ref: merged, origin: "linked", lastSeenSha: "old-9", lastSeenAt: 0 });
+    const emitted: SessionMeta[] = [];
+    manager.setSessionEmitter((meta) => emitted.push(meta));
+
+    const turnId = await manager.startTurn(session.id, "hello", { prRefs: [widgets, merged] });
+    fake.complete(turnId);
+
+    const updated = await waitForSessionPrSeen(manager, project.id, session.id, "fresh-42", 42);
+    expect(updated?.prs?.map((link) => [link.ref.number, link.lastSeenSha, link.lastSeenAt > 0])).toEqual([
+      [42, "fresh-42", true],
+      [7, "old-7", false],
+      [9, "cached-9", true]
+    ]);
+    expect(refreshed.sort()).toEqual([42, 7].sort());
+    expect(emitted.filter((meta) => meta.prs?.some((link) => link.lastSeenSha === "fresh-42"))).toHaveLength(1);
+    manager.dispose();
+  });
+
+  it("marks the only link seen even when the turn names no pull request", async () => {
+    const widgets = { host: "github.com", owner: "acme", repo: "widgets", number: 42 };
+    const { manager, fake, project } = makePrManager({ prHeadRefresh: async () => "fresh-42" });
+    const session = await manager.createSession(project.id, "claude", { mode: "current" });
+    manager.linkPr(session.id, { ref: widgets, origin: "linked", lastSeenSha: "old-42", lastSeenAt: 0 });
+
+    const turnId = await manager.startTurn(session.id, "hello");
+    fake.complete(turnId);
+
+    const updated = await waitForSessionPrSeen(manager, project.id, session.id, "fresh-42");
+    expect(updated?.prs?.[0]?.lastSeenAt).toBeGreaterThan(0);
+    manager.dispose();
+  });
+
+  it("absorbs the session's own push on an uncovered link without advancing lastSeenAt", async () => {
+    const widgets = { host: "github.com", owner: "acme", repo: "widgets", number: 42 };
+    const gadgets = { host: "github.com", owner: "acme", repo: "gadgets", number: 7 };
+    const { manager, project, dir } = makePrManager({
+      prHeadRefresh: async (ref) => (ref.number === 7 ? "own-head" : "remote-42")
+    });
+    const session = await manager.createSession(project.id, "claude", { mode: "current" });
+    manager.linkPr(session.id, { ref: widgets, origin: "linked", lastSeenSha: "old-42", lastSeenAt: 5 });
+    manager.linkPr(session.id, { ref: gadgets, origin: "opened", lastSeenSha: "old-7", lastSeenAt: 5 });
+    (manager as unknown as { store: SessionStore }).store.updateSession(session.id, { worktreePath: dir });
+    (manager as unknown as { git: { headSha(root: string): Promise<string> } }).git.headSha = async () => "own-head";
+
+    (manager as unknown as { routeEvent(e: ThreadEvent): void }).routeEvent({
+      type: "turn.done",
+      turnId: "turn-unscoped",
+      sessionId: session.id,
+      resumeCursor: "cursor-1",
+      resultText: "",
+      inputTokens: 1,
+      outputTokens: 1,
+      costUsd: 0,
+      numTurns: 1,
+      isError: false,
+      backgroundTasks: 0
+    });
+
+    const updated = await waitForSessionPrSeen(manager, project.id, session.id, "own-head", 7);
+    expect(updated?.prs?.map((link) => [link.ref.number, link.lastSeenSha, link.lastSeenAt])).toEqual([
+      [42, "old-42", 5],
+      [7, "own-head", 5]
+    ]);
+    manager.dispose();
+  });
+
+  it("does not resurrect a link that was removed while its head was refreshing", async () => {
+    const widgets = { host: "github.com", owner: "acme", repo: "widgets", number: 42 };
+    const gadgets = { host: "github.com", owner: "acme", repo: "gadgets", number: 7 };
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const { manager, fake, project } = makePrManager({
+      prHeadRefresh: async (ref) => {
+        await gate;
+        return `fresh-${ref.number}`;
+      }
+    });
+    const session = await manager.createSession(project.id, "claude", { mode: "current" });
+    manager.linkPr(session.id, { ref: widgets, origin: "linked", lastSeenSha: "old-42", lastSeenAt: 0 });
+    manager.linkPr(session.id, { ref: gadgets, origin: "linked", lastSeenSha: "old-7", lastSeenAt: 0 });
+
+    const turnId = await manager.startTurn(session.id, "hello", { prRefs: [widgets, gadgets] });
+    fake.complete(turnId);
+    manager.unlinkPr(session.id, gadgets);
+    release();
+
+    const updated = await waitForSessionPrSeen(manager, project.id, session.id, "fresh-42");
+    expect(updated?.prs?.map((link) => link.ref.number)).toEqual([42]);
+    manager.dispose();
+  });
+
+  it("links, marks seen and unlinks pull requests independently", async () => {
+    const { manager } = makeManager();
+    const project = manager.addProject("C:\\proj-multi-pr");
+    const session = await manager.createSession(project.id, "claude");
+    const widgets = { host: "github.com", owner: "acme", repo: "widgets", number: 42 };
+    const gadgets = { host: "github.com", owner: "acme", repo: "gadgets", number: 7 };
+
+    manager.linkPr(session.id, { ref: widgets, origin: "linked", lastSeenSha: "a", lastSeenAt: 0 });
+    manager.linkPr(session.id, { ref: gadgets, origin: "workflow", workflowId: "review", lastSeenSha: "b", lastSeenAt: 0 });
+    manager.linkPr(session.id, { ref: widgets, origin: "opened", lastSeenSha: "a2", lastSeenAt: 1 });
+    let meta = manager.markPrSeen(session.id, gadgets, "b2");
+    expect(meta.prs?.map((link) => [link.ref.number, link.origin, link.lastSeenSha])).toEqual([
+      [42, "opened", "a2"],
+      [7, "workflow", "b2"]
+    ]);
+
+    meta = manager.unlinkPr(session.id, widgets);
+    expect(meta.prs?.map((link) => link.ref.number)).toEqual([7]);
+    expect(meta.prUnlinked).toEqual(["github.com/acme/widgets#42"]);
+
+    meta = manager.linkPr(session.id, { ref: widgets, origin: "linked", lastSeenSha: "a3", lastSeenAt: 2 });
+    expect(meta.prs?.map((link) => link.ref.number)).toEqual([7, 42]);
+    expect(meta.prUnlinked).toBeUndefined();
+
+    meta = manager.unlinkPr(session.id, widgets);
+    meta = manager.unlinkPr(session.id, gadgets);
+    expect(meta).not.toHaveProperty("prs");
+    expect(meta.prUnlinked).toEqual(["github.com/acme/widgets#42", "github.com/acme/gadgets#7"]);
     manager.dispose();
   });
 

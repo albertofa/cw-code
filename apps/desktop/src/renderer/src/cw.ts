@@ -70,7 +70,7 @@ export interface Session {
   updatedAt: number;
   worktreePath?: string;
   branch?: string;
-  pr?: SessionPrLink;
+  prs?: SessionPrLink[];
   prUnlinked?: string[];
 }
 
@@ -443,7 +443,7 @@ export interface CwApi {
   getSubagentTools(sessionId: string, agentId: string): Promise<SubagentToolsResult>;
   activeTurns(): Promise<ActiveTurn[]>;
   retryConnection(sessionId: string): Promise<RetryConnectionResult>;
-  startTurn(sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[] }): Promise<string>;
+  startTurn(sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[]; prRefs?: PrRef[] }): Promise<string>;
   interrupt(turnId: string): Promise<void>;
   respondApproval(requestId: string, decision: ApprovalDecision): Promise<void>;
   respondQuestion(requestId: string, answers: Record<string, string>): Promise<void>;
@@ -481,8 +481,8 @@ export interface CwApi {
   clonePrRepo(ref: PrRef): Promise<Project>;
   getProjectGitHubRepos(): Promise<ProjectGitHubRepo[]>;
   linkSessionPr(sessionId: string, link: SessionPrLink): Promise<Session>;
-  unlinkSessionPr(sessionId: string): Promise<Session>;
-  markSessionPrSeen(sessionId: string, headSha: string | null): Promise<Session>;
+  unlinkSessionPr(sessionId: string, ref: PrRef): Promise<Session>;
+  markSessionPrSeen(sessionId: string, ref: PrRef, headSha: string | null): Promise<Session>;
   onTurnEvent(cb: (msg: { sessionId: string; event: TurnEvent }) => void): () => void;
   onSessionTitle(cb: (msg: { sessionId: string; title: string }) => void): () => void;
   onSessionUpdated(cb: (session: Session) => void): () => void;

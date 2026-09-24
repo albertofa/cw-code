@@ -36,6 +36,7 @@ import type { PrWorkflowIcon, PrWorkspaceChoice } from "@cw-code/contracts";
 import { useAppStore, DEFAULT_COMPOSER } from "../stores/appStore.js";
 import { usePrStore, type RunModalState } from "../stores/prStore.js";
 import { prKey } from "./prInbox.js";
+import { linkFor } from "./sessionPrLinks.js";
 import { prChip } from "./prChip.js";
 import { updatesSince } from "./prUpdates.js";
 import { attributionText, resolveTemplate, templateVars } from "./prWorkflows.js";
@@ -224,7 +225,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
   const linkedSessions = useMemo(
     () =>
       allSessions
-        .filter((s) => s.status !== "archived" && s.pr && prKey(s.pr.ref) === key)
+        .filter((s) => s.status !== "archived" && linkFor(s, ref) !== undefined)
         .sort((a, b) => b.updatedAt - a.updatedAt),
     [allSessions, key]
   );
@@ -306,7 +307,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
 
   const resolved = useMemo(() => {
     if (!detail || !workflow || !settings || !logsReady) return null;
-    const link = continueSession?.pr;
+    const link = continueSession ? linkFor(continueSession, ref) : undefined;
     const vars = templateVars(detail, {
       link,
       updates: continueSession && link ? updatesSince(detail, link) : undefined,
@@ -387,10 +388,10 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
         current = "send";
         setStage(current);
         await app.ensureComposer(continueSession.id);
-        await app.sendPromptTo(continueSession.id, prompt);
+        await app.sendPromptTo(continueSession.id, prompt, undefined, { prRefs: [ref] });
         current = "seen";
         setStage(current);
-        app.applySession(await window.cw.markSessionPrSeen(continueSession.id, detail.headRefOid));
+        app.applySession(await window.cw.markSessionPrSeen(continueSession.id, ref, detail.headRefOid));
         finish(continueSession.id);
         return;
       }
@@ -432,7 +433,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
       }
       current = "send";
       setStage(current);
-      await useAppStore.getState().sendPromptTo(sessionId, note ? `${prompt}\n\n${note}` : prompt);
+      await useAppStore.getState().sendPromptTo(sessionId, note ? `${prompt}\n\n${note}` : prompt, undefined, { prRefs: [ref] });
       finish(sessionId);
     } catch (err) {
       const message = errorMessage(err);
@@ -599,12 +600,15 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
                 onPick={pickTarget}
                 options={[
                   { id: "", icon: <Plus size={14} />, title: "New session", hint: `linked to #${ref.number}` },
-                  ...targetOptions.map((s) => ({
-                    id: s.id,
-                    icon: <DriverIcon driver={s.driver} size={14} />,
-                    title: `Continue “${s.title}”`,
-                    hint: s.pr ? ORIGIN_LABEL[s.pr.origin] : "not linked to this pull request"
-                  }))
+                  ...targetOptions.map((s) => {
+                    const link = linkFor(s, ref);
+                    return {
+                      id: s.id,
+                      icon: <DriverIcon driver={s.driver} size={14} />,
+                      title: `Continue “${s.title}”`,
+                      hint: link ? ORIGIN_LABEL[link.origin] : "not linked to this pull request"
+                    };
+                  })
                 ]}
               />
             </div>

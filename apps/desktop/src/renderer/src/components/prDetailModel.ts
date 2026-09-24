@@ -12,6 +12,7 @@ import type {
   SessionMeta
 } from "@cw-code/contracts";
 import { primaryAction, suggestedWorkflow } from "./prWorkflows.js";
+import { linkFor } from "./sessionPrLinks.js";
 
 export interface MergeRow {
   ok: boolean;
@@ -86,15 +87,6 @@ export function threadQuoteText(thread: PrReviewThread, ref: PrRef): string {
   return body.length > 0 ? `${header}\n\n${body}` : header;
 }
 
-export function pickMainSession(linkedSessions: SessionMeta[]): SessionMeta | null {
-  if (linkedSessions.length === 0) return null;
-  const opened = linkedSessions.find((s) => s.pr?.origin === "opened");
-  if (opened) return opened;
-  const review = linkedSessions.find((s) => s.pr?.workflowId === "review");
-  if (review) return review;
-  return linkedSessions.reduce((latest, s) => (s.updatedAt > latest.updatedAt ? s : latest));
-}
-
 export type LinkedBarState =
   | { kind: "continue"; session: SessionMeta; workflowId: string }
   | { kind: "open"; session: SessionMeta; suggested: PrWorkflow | null }
@@ -119,9 +111,9 @@ export interface ThreadSendTarget {
   continueSessionId?: string;
 }
 
-export function threadSendTarget(mainSession: SessionMeta | null, suggested: PrWorkflow | null): ThreadSendTarget {
+export function threadSendTarget(mainSession: SessionMeta | null, ref: PrRef, suggested: PrWorkflow | null): ThreadSendTarget {
   if (mainSession) {
-    return { workflowId: mainSession.pr?.workflowId ?? "babysit", continueSessionId: mainSession.id };
+    return { workflowId: linkFor(mainSession, ref)?.workflowId ?? "babysit", continueSessionId: mainSession.id };
   }
   return { workflowId: suggested?.id ?? "review" };
 }

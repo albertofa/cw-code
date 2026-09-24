@@ -65,7 +65,7 @@ export interface CwApi {
   getSubagentTools(sessionId: string, agentId: string): Promise<SubagentToolsResult>;
   activeTurns(): Promise<Array<{ sessionId: string; turnId: string; startedAt: number }>>;
   retryConnection(sessionId: string): Promise<RetryConnectionResult>;
-  startTurn(sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[] }): Promise<string>;
+  startTurn(sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[]; prRefs?: PrRef[] }): Promise<string>;
   interrupt(turnId: string): Promise<void>;
   respondApproval(requestId: string, decision: "accept" | "acceptForSession" | "acceptGlobal" | "decline" | "cancel"): Promise<void>;
   respondQuestion(requestId: string, answers: Record<string, string>): Promise<void>;
@@ -103,8 +103,8 @@ export interface CwApi {
   clonePrRepo(ref: PrRef): Promise<Project>;
   getProjectGitHubRepos(): Promise<ProjectGitHubRepo[]>;
   linkSessionPr(sessionId: string, link: SessionPrLink): Promise<SessionMeta>;
-  unlinkSessionPr(sessionId: string): Promise<SessionMeta>;
-  markSessionPrSeen(sessionId: string, headSha: string | null): Promise<SessionMeta>;
+  unlinkSessionPr(sessionId: string, ref: PrRef): Promise<SessionMeta>;
+  markSessionPrSeen(sessionId: string, ref: PrRef, headSha: string | null): Promise<SessionMeta>;
   onTurnEvent(cb: (event: unknown) => void): () => void;
   onSessionTitle(cb: (msg: { sessionId: string; title: string }) => void): () => void;
   onSessionUpdated(cb: (session: SessionMeta) => void): () => void;
@@ -171,8 +171,8 @@ const api: CwApi = {
     ipcRenderer.invoke("sessions.subagentTools", { sessionId, agentId }),
   activeTurns: () => ipcRenderer.invoke("sessions.activeTurns"),
   retryConnection: (sessionId: string) => ipcRenderer.invoke("sessions.retryConnection", { sessionId }),
-  startTurn: (sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[] }) =>
-    ipcRenderer.invoke("turns.start", { sessionId, prompt, prefs: opts?.prefs, attachments: opts?.attachments }),
+  startTurn: (sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[]; prRefs?: PrRef[] }) =>
+    ipcRenderer.invoke("turns.start", { sessionId, prompt, prefs: opts?.prefs, attachments: opts?.attachments, prRefs: opts?.prRefs }),
   interrupt: (turnId: string) => ipcRenderer.invoke("turns.interrupt", { turnId }),
   respondApproval: (requestId: string, decision: "accept" | "acceptForSession" | "acceptGlobal" | "decline" | "cancel") =>
     ipcRenderer.invoke("approvals.respond", { requestId, decision }),
@@ -221,9 +221,9 @@ const api: CwApi = {
   clonePrRepo: (ref: PrRef) => ipcRenderer.invoke("prs.clone", { ref }),
   getProjectGitHubRepos: () => ipcRenderer.invoke("prs.projectRepos"),
   linkSessionPr: (sessionId: string, link: SessionPrLink) => ipcRenderer.invoke("sessions.linkPr", { sessionId, link }),
-  unlinkSessionPr: (sessionId: string) => ipcRenderer.invoke("sessions.unlinkPr", { sessionId }),
-  markSessionPrSeen: (sessionId: string, headSha: string | null) =>
-    ipcRenderer.invoke("sessions.markPrSeen", { sessionId, headSha }),
+  unlinkSessionPr: (sessionId: string, ref: PrRef) => ipcRenderer.invoke("sessions.unlinkPr", { sessionId, ref }),
+  markSessionPrSeen: (sessionId: string, ref: PrRef, headSha: string | null) =>
+    ipcRenderer.invoke("sessions.markPrSeen", { sessionId, ref, headSha }),
   onTurnEvent: (cb) => {
     const listener = (_e: unknown, event: unknown) => cb(event);
     ipcRenderer.on("turn.event", listener as never);

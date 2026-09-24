@@ -9945,6 +9945,31 @@ button.gitbar-checkout:hover {
   list-style: none;
 }
 
+.pr-dock-group + .pr-dock-group {
+  border-top: 1px solid var(--border-soft);
+}
+
+.pr-dock-group-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 10px 0 12px;
+}
+
+.pr-dock-group-title {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dim);
+  font-size: 12.5px;
+}
+
+.pr-dock-group-title b {
+  color: var(--text);
+  font-weight: 650;
+}
+
 .pr-dock-item,
 .pr-panel-update {
   display: flex;
@@ -10068,6 +10093,47 @@ button.gitbar-checkout:hover {
 }
 
 .pr-panel-chip:hover {
+  background: var(--raised);
+  border-color: var(--border);
+}
+
+.pr-panel-chip-wrap {
+  position: relative;
+  display: inline-flex;
+}
+
+.pr-links-menu {
+  left: auto;
+  right: 0;
+  max-width: 360px;
+}
+
+.pr-chip-more {
+  margin-left: 2px;
+  opacity: 0.8;
+}
+
+.pr-panel-switch {
+  flex: none;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 8px 14px 0;
+}
+
+.pr-panel-switch-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 3px 4px;
+  background: transparent;
+  border: 1px solid transparent;
+  border-radius: var(--r-sm);
+  cursor: pointer;
+}
+
+.pr-panel-switch-btn:hover,
+.pr-panel-switch-btn.active {
   background: var(--raised);
   border-color: var(--border);
 }

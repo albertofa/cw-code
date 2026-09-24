@@ -2,12 +2,13 @@ import type { GitPullRequest, PrSummary } from "../cw.js";
 
 export type PrChipTone = "bad" | "ok" | "info" | "warn" | "neutral";
 
-export type PrChipIcon = "x" | "message" | "check" | "draft" | "eye" | "clock" | "merge";
+export type PrChipIcon = "x" | "message" | "check" | "draft" | "eye" | "clock" | "merge" | "pr";
 
 export interface PrChip {
   tone: PrChipTone;
   icon: PrChipIcon;
   label: string;
+  reason: string;
   title: string;
 }
 
@@ -64,5 +65,5 @@ export function prChip(input: { pr: PrSummary | null; git: GitPullRequest | null
   const facts = input.pr ? summaryFacts(input.pr) : input.git ? gitFacts(input.git) : null;
   if (!facts) return null;
   const { tone, icon, reason } = classify(facts);
-  return { tone, icon, label: `#${facts.number}`, title: `PR #${facts.number} · ${reason}` };
+  return { tone, icon, label: `#${facts.number}`, reason, title: `PR #${facts.number} · ${reason}` };
 }

@@ -91,6 +91,7 @@ export class PullRequestService {
   private accountCache = new Map<string, { expiresAt: number; value: { account: GitHubAccountInfo; token: string } }>();
   private cloneInFlight = new Map<string, Promise<Project>>();
   private knownHeads = new Map<string, string>();
+  private knownStates = new Map<string, PrSummary["state"]>();
 
   constructor(
     private git: GitService,
@@ -160,7 +161,7 @@ export class PullRequestService {
         return { account: accountInfo, items: [], fetchedAt, error: "Unexpected response from GitHub" };
       }
       const items = mergeInboxItems(parsed.map((entry) => entry.items));
-      for (const item of items) this.knownHeads.set(prKey(item.ref), item.headRefOid);
+      for (const item of items) this.remember(item.ref, item.headRefOid, item.state);
       const truncated = parsed.some((entry) => entry.truncated);
       return { account: accountInfo, items, fetchedAt, error: null, truncated, limit: INBOX_SEARCH_LIMIT };
     } catch (error) {
@@ -182,7 +183,7 @@ export class PullRequestService {
     );
     const detail = parseDetail(stdout, account.login);
     if (!detail) throw new Error(`Could not load pull request #${ref.number}`);
-    this.knownHeads.set(prKey(ref), detail.headRefOid);
+    this.remember(ref, detail.headRefOid, detail.state);
     return detail;
   }
 
@@ -261,6 +262,16 @@ export class PullRequestService {
     return this.knownHeads.get(prKey(ref)) ?? null;
   }
 
+  knownState(ref: PrRef): PrSummary["state"] | null {
+    return this.knownStates.get(prKey(ref)) ?? null;
+  }
+
+  private remember(ref: PrRef, head: string | null, state: PrSummary["state"] | null): void {
+    const key = prKey(ref);
+    if (head) this.knownHeads.set(key, head);
+    if (state) this.knownStates.set(key, state);
+  }
+
   async refreshHead(ref: PrRef): Promise<string | null> {
     try {
       assertPrRef(ref);
@@ -274,9 +285,9 @@ export class PullRequestService {
         REQUEST_TIMEOUT_MS,
         authenticatedEnvironment(account.host, token)
       );
-      const head = parseHead(stdout);
-      if (head) this.knownHeads.set(prKey(ref), head);
-      return head;
+      const { headRefOid, state } = parseHead(stdout);
+      this.remember(ref, headRefOid, state);
+      return headRefOid;
     } catch {
       return null;
     }

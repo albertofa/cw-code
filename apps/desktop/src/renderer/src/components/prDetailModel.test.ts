@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PrDetail, PrReviewThread, PrSummary, PrWorkflow, SessionMeta } from "@cw-code/contracts";
-import { linkedSessionsBarState, mergeBoxState, pickMainSession, threadQuoteText, threadSendTarget } from "./prDetailModel.js";
+import { linkedSessionsBarState, mergeBoxState, threadQuoteText, threadSendTarget } from "./prDetailModel.js";
 
 function prSummary(overrides: Partial<PrSummary> = {}): PrSummary {
   return {
@@ -151,13 +151,13 @@ describe("threadQuoteText", () => {
 describe("linkedSessionsBarState", () => {
   it("returns continue with the stale review session", () => {
     const pr = prSummary({ headRefOid: "sha2" });
-    const s = session({ pr: { ref: pr.ref, origin: "workflow", workflowId: "review", lastSeenSha: "sha1", lastSeenAt: 0 } });
+    const s = session({ prs: [{ ref: pr.ref, origin: "workflow", workflowId: "review", lastSeenSha: "sha1", lastSeenAt: 0 }] });
     expect(linkedSessionsBarState(pr, [s], [])).toEqual({ kind: "continue", session: s, workflowId: "review" });
   });
 
   it("returns open with the suggested workflow when the main session is current", () => {
     const pr = prSummary({ headRefOid: "sha1", viewerIsAuthor: true });
-    const s = session({ pr: { ref: pr.ref, origin: "opened", lastSeenSha: "sha1", lastSeenAt: 0 } });
+    const s = session({ prs: [{ ref: pr.ref, origin: "opened", lastSeenSha: "sha1", lastSeenAt: 0 }] });
     const babysit = workflow({ id: "babysit", suggestWhen: ["author"] });
     expect(linkedSessionsBarState(pr, [s], [babysit])).toEqual({ kind: "open", session: s, suggested: babysit });
   });
@@ -176,45 +176,21 @@ describe("linkedSessionsBarState", () => {
 
 describe("threadSendTarget", () => {
   it("continues the main session with its workflow id", () => {
-    const s = session({ pr: { ref: { host: "github.com", owner: "a", repo: "b", number: 1 }, origin: "workflow", workflowId: "address-feedback", lastSeenSha: "s", lastSeenAt: 0 } });
-    expect(threadSendTarget(s, null)).toEqual({ workflowId: "address-feedback", continueSessionId: "s1" });
+    const s = session({ prs: [{ ref: { host: "github.com", owner: "a", repo: "b", number: 1 }, origin: "workflow", workflowId: "address-feedback", lastSeenSha: "s", lastSeenAt: 0 }] });
+    expect(threadSendTarget(s, { host: "github.com", owner: "a", repo: "b", number: 1 }, null)).toEqual({ workflowId: "address-feedback", continueSessionId: "s1" });
   });
 
   it("falls back to babysit when the main session has no workflow id", () => {
-    const s = session({ pr: { ref: { host: "github.com", owner: "a", repo: "b", number: 1 }, origin: "opened", lastSeenSha: "s", lastSeenAt: 0 } });
-    expect(threadSendTarget(s, null)).toEqual({ workflowId: "babysit", continueSessionId: "s1" });
+    const s = session({ prs: [{ ref: { host: "github.com", owner: "a", repo: "b", number: 1 }, origin: "opened", lastSeenSha: "s", lastSeenAt: 0 }] });
+    expect(threadSendTarget(s, { host: "github.com", owner: "a", repo: "b", number: 1 }, null)).toEqual({ workflowId: "babysit", continueSessionId: "s1" });
   });
 
   it("uses the suggested workflow when there is no main session", () => {
     const suggested = workflow({ id: "address-feedback" });
-    expect(threadSendTarget(null, suggested)).toEqual({ workflowId: "address-feedback" });
+    expect(threadSendTarget(null, { host: "github.com", owner: "a", repo: "b", number: 1 }, suggested)).toEqual({ workflowId: "address-feedback" });
   });
 
   it("falls back to review when there is no main session and no suggestion", () => {
-    expect(threadSendTarget(null, null)).toEqual({ workflowId: "review" });
-  });
-});
-
-describe("pickMainSession", () => {
-  it("returns null when there are no linked sessions", () => {
-    expect(pickMainSession([])).toBeNull();
-  });
-
-  it("prefers the session that opened the PR", () => {
-    const opened = session({ id: "opened", pr: { ref: { host: "github.com", owner: "a", repo: "b", number: 1 }, origin: "opened", lastSeenSha: "s", lastSeenAt: 0 } });
-    const review = session({ id: "review", updatedAt: 100, pr: { ref: { host: "github.com", owner: "a", repo: "b", number: 1 }, origin: "workflow", workflowId: "review", lastSeenSha: "s", lastSeenAt: 0 } });
-    expect(pickMainSession([review, opened])?.id).toBe("opened");
-  });
-
-  it("falls back to the review-workflow session when none opened the PR", () => {
-    const review = session({ id: "review", pr: { ref: { host: "github.com", owner: "a", repo: "b", number: 1 }, origin: "workflow", workflowId: "review", lastSeenSha: "s", lastSeenAt: 0 } });
-    const other = session({ id: "other", updatedAt: 100, pr: { ref: { host: "github.com", owner: "a", repo: "b", number: 1 }, origin: "workflow", workflowId: "babysit", lastSeenSha: "s", lastSeenAt: 0 } });
-    expect(pickMainSession([other, review])?.id).toBe("review");
-  });
-
-  it("falls back to the most recently updated session otherwise", () => {
-    const older = session({ id: "older", updatedAt: 1, pr: { ref: { host: "github.com", owner: "a", repo: "b", number: 1 }, origin: "workflow", workflowId: "babysit", lastSeenSha: "s", lastSeenAt: 0 } });
-    const newer = session({ id: "newer", updatedAt: 2, pr: { ref: { host: "github.com", owner: "a", repo: "b", number: 1 }, origin: "workflow", workflowId: "babysit", lastSeenSha: "s", lastSeenAt: 0 } });
-    expect(pickMainSession([older, newer])?.id).toBe("newer");
+    expect(threadSendTarget(null, { host: "github.com", owner: "a", repo: "b", number: 1 }, null)).toEqual({ workflowId: "review" });
   });
 });

@@ -1,6 +1,7 @@
 import type { PrBucket, PrRef, PrSummary, Session } from "../cw.js";
-import { prBucket, prKey } from "./prInbox.js";
+import { prBucket } from "./prInbox.js";
 import { hasUnseen } from "./prUpdates.js";
+import { linkFor, pickMainSession, sessionsLinkedTo } from "./sessionPrLinks.js";
 
 export type PrInboxFilterId = "all" | "review" | "action" | "updated" | "with-session" | "not-cloned";
 
@@ -28,9 +29,11 @@ export interface PrInboxRow {
 
 export function buildInboxRows(items: PrSummary[], sessions: Session[], isCloned: (ref: PrRef) => boolean): PrInboxRow[] {
   return items.map((pr) => {
-    const key = prKey(pr.ref);
-    const linkedSessions = sessions.filter((session) => session.pr !== undefined && prKey(session.pr.ref) === key);
-    const hasUnseenSession = linkedSessions.some((session) => session.pr !== undefined && hasUnseen(pr, session.pr));
+    const linkedSessions = sessionsLinkedTo(sessions, pr.ref);
+    const hasUnseenSession = linkedSessions.some((session) => {
+      const link = linkFor(session, pr.ref);
+      return link !== undefined && hasUnseen(pr, link);
+    });
     return { pr, bucket: prBucket(pr), linkedSessions, hasUnseenSession, cloned: isCloned(pr.ref) };
   });
 }
@@ -93,20 +96,11 @@ export function groupRowsByBucket(rows: PrInboxRow[]): PrInboxGroup[] {
   );
 }
 
-function mainLinkedSession(sessions: Session[]): Session | null {
-  if (sessions.length === 0) return null;
-  const opened = sessions.find((session) => session.pr?.origin === "opened");
-  if (opened) return opened;
-  const review = sessions.find((session) => session.pr?.workflowId === "review");
-  if (review) return review;
-  return sessions.reduce((latest, session) => (session.updatedAt > latest.updatedAt ? session : latest));
-}
-
 export function rowDeltaText(row: PrInboxRow, nowMs: number): string | null {
   if (!row.hasUnseenSession) return null;
-  const session = mainLinkedSession(row.linkedSessions);
-  if (!session?.pr) return null;
-  if (session.pr.lastSeenSha !== "" && row.pr.headRefOid !== session.pr.lastSeenSha) return "new commits";
+  const link = linkFor(pickMainSession(row.linkedSessions, row.pr.ref) ?? undefined, row.pr.ref);
+  if (!link) return null;
+  if (link.lastSeenSha !== "" && row.pr.headRefOid !== link.lastSeenSha) return "new commits";
   return `updated ${formatRelativeAge(row.pr.updatedAt, nowMs)}`;
 }
 

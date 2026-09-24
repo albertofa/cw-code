@@ -43,6 +43,7 @@ import {
   type PrInboxRow
 } from "./prInboxModel.js";
 import { primaryAction, suggestedWorkflow } from "./prWorkflows.js";
+import { linkFor } from "./sessionPrLinks.js";
 import { errorMessage } from "./errorMessage.js";
 import { usePrSettings } from "./useLinkedPr.js";
 
@@ -105,8 +106,8 @@ function reviewTone(pr: PrSummary): Tone {
   return { tone: "neutral", Icon: Circle, text: "No reviewers" };
 }
 
-function originLabel(session: Session, workflows: PrWorkflow[]): string {
-  const link = session.pr;
+function originLabel(session: Session, ref: PrRef, workflows: PrWorkflow[]): string {
+  const link = linkFor(session, ref);
   if (!link) return "Linked";
   if (link.origin === "opened") return "Opened this PR";
   if (link.origin === "workflow") {
@@ -240,14 +241,15 @@ function SessionsPopoverContent({
       <div className="pr-inbox-popover-head">Sessions linked to #{row.pr.ref.number}</div>
       {row.linkedSessions.length === 0 && <div className="pr-inbox-popover-empty">No linked sessions.</div>}
       {row.linkedSessions.map((session) => {
-        const unseen = session.pr ? hasUnseen(row.pr, session.pr) : false;
+        const link = linkFor(session, row.pr.ref);
+        const unseen = link ? hasUnseen(row.pr, link) : false;
         return (
           <button key={session.id} type="button" className="pr-inbox-popover-row" onClick={() => onSelect(session.id)}>
             <DriverIcon driver={session.driver} size={14} />
             <span className="pr-inbox-popover-row-text">
               <span className="pr-inbox-popover-row-title">{session.title}</span>
               <span className="pr-inbox-popover-row-sub">
-                {originLabel(session, workflows)} · active {formatRelativeAge(session.updatedAt, now)} ago
+                {originLabel(session, row.pr.ref, workflows)} · active {formatRelativeAge(session.updatedAt, now)} ago
               </span>
             </span>
             {unseen && <span className="pr-inbox-popover-badge">new</span>}

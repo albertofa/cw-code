@@ -1,19 +1,26 @@
-import { useCallback, useEffect, useRef, useState } from "react";
-import type { AppSettings, PrDetail, PrSummary, Session, SessionPrLink } from "../cw.js";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import type { AppSettings, PrDetail, PrInboxResult, PrSummary, Session, SessionPrLink } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import { usePrStore } from "../stores/prStore.js";
 import { prKey } from "./prInbox.js";
 import { hasUnseen } from "./prUpdates.js";
 import { errorMessage } from "./errorMessage.js";
+import { sessionLinks, type PrSummaryLookup } from "./sessionPrLinks.js";
 
 export interface LinkedPr {
-  session: Session | undefined;
-  link: SessionPrLink | undefined;
+  key: string;
+  link: SessionPrLink;
   summary: PrSummary | undefined;
   detail: PrDetail | undefined;
   loading: boolean;
   error: string | undefined;
   unseen: boolean;
+}
+
+export interface LinkedPrs {
+  session: Session | undefined;
+  items: LinkedPr[];
+  summaryByKey: PrSummaryLookup;
 }
 
 function findSession(sessionsByProject: Record<string, Session[]>, sessionId: string): Session | undefined {
@@ -24,45 +31,89 @@ function findSession(sessionsByProject: Record<string, Session[]>, sessionId: st
   return undefined;
 }
 
-function useLinkedSummary(link: SessionPrLink | undefined): PrSummary | undefined {
-  const key = link ? prKey(link.ref) : null;
-  return usePrStore((s) => (key ? s.inbox?.items.find((item) => prKey(item.ref) === key) : undefined));
+function inboxSummaryByKey(inbox: PrInboxResult | null, links: SessionPrLink[]): Map<string, PrSummary> {
+  const wanted = new Set(links.map((link) => prKey(link.ref)));
+  const byKey = new Map<string, PrSummary>();
+  for (const item of inbox?.items ?? []) {
+    const key = prKey(item.ref);
+    if (wanted.has(key)) byKey.set(key, item);
+  }
+  return byKey;
 }
 
-export function useLinkedPr(sessionId: string): LinkedPr {
+export function useLinkedPrs(sessionId: string): LinkedPrs {
   const session = useAppStore((s) => findSession(s.sessionsByProject, sessionId));
-  const link = session?.pr;
-  const key = link ? prKey(link.ref) : null;
-  const summary = useLinkedSummary(link);
-  const detail = usePrStore((s) => (key ? s.detailByKey[key] : undefined));
-  const loading = usePrStore((s) => (key ? (s.detailLoadingByKey[key] ?? false) : false));
-  const error = usePrStore((s) => (key ? s.detailErrorByKey[key] : undefined));
-  const basis = summary ?? detail;
-  const unseen = link !== undefined && basis !== undefined && hasUnseen(basis, link);
-  return { session, link, summary, detail, loading, error, unseen };
+  const links = sessionLinks(session);
+  const inbox = usePrStore((s) => s.inbox);
+  const detailByKey = usePrStore((s) => s.detailByKey);
+  const loadingByKey = usePrStore((s) => s.detailLoadingByKey);
+  const errorByKey = usePrStore((s) => s.detailErrorByKey);
+
+  return useMemo(() => {
+    const inboxByKey = inboxSummaryByKey(inbox, links);
+    const summaryByKey = new Map<string, PrSummary>();
+    const items = links.map((link): LinkedPr => {
+      const key = prKey(link.ref);
+      const summary = inboxByKey.get(key);
+      const detail = detailByKey[key];
+      const basis = summary ?? detail;
+      if (basis) summaryByKey.set(key, basis);
+      return {
+        key,
+        link,
+        summary,
+        detail,
+        loading: loadingByKey[key] ?? false,
+        error: errorByKey[key],
+        unseen: basis !== undefined && hasUnseen(basis, link)
+      };
+    });
+    return { session, items, summaryByKey };
+  }, [session, links, inbox, detailByKey, loadingByKey, errorByKey]);
+}
+
+function unseenKeys(links: SessionPrLink[], inboxByKey: Map<string, PrSummary>): string[] {
+  return links
+    .filter((link) => {
+      const summary = inboxByKey.get(prKey(link.ref));
+      return summary !== undefined && hasUnseen(summary, link);
+    })
+    .map((link) => prKey(link.ref));
+}
+
+function isFinishedAndCached(detail: PrDetail | undefined): boolean {
+  return detail !== undefined && detail.state !== "OPEN";
 }
 
 export function useLinkedPrLoader(sessionId: string | undefined): void {
-  const link = useAppStore((s) => (sessionId ? findSession(s.sessionsByProject, sessionId)?.pr : undefined));
-  const key = link ? prKey(link.ref) : null;
-  const summary = useLinkedSummary(link);
-  const inboxUnseen = link !== undefined && summary !== undefined && hasUnseen(summary, link);
-  const lastUnseenRef = useRef(inboxUnseen);
+  const session = useAppStore((s) => (sessionId ? findSession(s.sessionsByProject, sessionId) : undefined));
+  const links = sessionLinks(session);
+  const inbox = usePrStore((s) => s.inbox);
+  const keySignature = links.map((link) => prKey(link.ref)).join(" ");
+  const unseen = unseenKeys(links, inboxSummaryByKey(inbox, links));
+  const unseenSignature = unseen.join(" ");
+  const lastUnseenRef = useRef(new Set(unseen));
 
   useEffect(() => {
-    lastUnseenRef.current = inboxUnseen;
-    if (!link || !key) return;
+    lastUnseenRef.current = new Set(unseen);
     const store = usePrStore.getState();
-    if (store.detailErrorByKey[key] !== undefined) return;
-    void store.loadDetail(link.ref);
-  }, [sessionId, key]);
+    for (const link of links) {
+      const key = prKey(link.ref);
+      if (store.detailErrorByKey[key] !== undefined || isFinishedAndCached(store.detailByKey[key])) continue;
+      void store.loadDetail(link.ref);
+    }
+  }, [sessionId, keySignature]);
 
   useEffect(() => {
-    const wasUnseen = lastUnseenRef.current;
-    lastUnseenRef.current = inboxUnseen;
-    if (!link || !inboxUnseen || wasUnseen) return;
-    void usePrStore.getState().loadDetail(link.ref);
-  }, [inboxUnseen]);
+    const previous = lastUnseenRef.current;
+    lastUnseenRef.current = new Set(unseen);
+    const store = usePrStore.getState();
+    for (const link of links) {
+      const key = prKey(link.ref);
+      if (!unseen.includes(key) || previous.has(key) || isFinishedAndCached(store.detailByKey[key])) continue;
+      void store.loadDetail(link.ref);
+    }
+  }, [unseenSignature]);
 }
 
 export function usePrSettings(): { settings: AppSettings | null; error: string | null; reload: () => void } {

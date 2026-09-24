@@ -56,6 +56,7 @@ describe("prChip", () => {
       tone: "bad",
       icon: "x",
       label: "#42",
+      reason: "checks failing",
       title: "PR #42 · checks failing"
     });
   });
@@ -86,7 +87,7 @@ describe("prChip", () => {
   });
 
   it("marks other open pull requests as warn with a clock", () => {
-    expect(prChip({ pr: summary(), git: null })).toEqual({ tone: "warn", icon: "clock", label: "#42", title: "PR #42 · awaiting review" });
+    expect(prChip({ pr: summary(), git: null })).toEqual({ tone: "warn", icon: "clock", label: "#42", reason: "awaiting review", title: "PR #42 · awaiting review" });
     expect(prChip({ pr: summary({ ci: "pending" }), git: null })).toMatchObject({ tone: "warn", icon: "clock", title: "PR #42 · checks pending" });
   });
 
@@ -100,7 +101,7 @@ describe("prChip", () => {
   describe("fallback from GitPullRequest", () => {
     it("uses failed checks", () => {
       const git = gitPr({ checks: { total: 2, passed: 1, failed: 1, pending: 0 } });
-      expect(prChip({ pr: null, git })).toEqual({ tone: "bad", icon: "x", label: "#7", title: "PR #7 · checks failing" });
+      expect(prChip({ pr: null, git })).toEqual({ tone: "bad", icon: "x", label: "#7", reason: "checks failing", title: "PR #7 · checks failing" });
     });
 
     it("uses the review decision", () => {

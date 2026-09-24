@@ -13,6 +13,7 @@ import type {
   ModelOption,
   PermissionOption,
   PrRef,
+  PrSummary,
   Project,
   RetryConnectionResult,
   SessionCleanupResult,
@@ -26,7 +27,20 @@ import type {
   WorktreePruneSummary
 } from "@cw-code/contracts";
 import { SessionStore } from "./SessionStore.js";
-import { addUnlinkedKey, authorLocalBranch, linkFromStatus, markSeen, prHeadPlan, removeUnlinkedKey, type PrHeadPlan } from "../github/prLinks.js";
+import {
+  addUnlinkedKey,
+  applyTurnSeen,
+  authorLocalBranch,
+  findLink,
+  isFinishedPrState,
+  linkFromStatus,
+  markSeen,
+  prHeadPlan,
+  removeLink,
+  removeUnlinkedKey,
+  upsertLink,
+  type PrHeadPlan
+} from "../github/prLinks.js";
 import { prKey, prRefFromUrl } from "../github/prParsers.js";
 import { buildTurnEnv } from "./env.js";
 import { isWorktreeOrphaned, looksLikeWorktree, pinsWorktree, sameWorktreePath } from "./worktreeCleanup.js";
@@ -54,6 +68,7 @@ export interface SessionManagerOptions {
   worktreesRoot?: string;
   prHead?: (ref: PrRef) => string | null;
   prHeadRefresh?: (ref: PrRef) => Promise<string | null>;
+  prState?: (ref: PrRef) => PrSummary["state"] | null;
 }
 
 interface TitleTurn {
@@ -95,6 +110,8 @@ export class SessionManager {
   private disposed = false;
   private prHead: (ref: PrRef) => string | null;
   private prHeadRefresh?: (ref: PrRef) => Promise<string | null>;
+  private prState: (ref: PrRef) => PrSummary["state"] | null;
+  private turnPrRefs = new Map<string, PrRef[]>();
 
   constructor(opts: SessionManagerOptions = {}) {
     const dbPath = opts.dbPath ?? join(userdataDir(), "cw-code.db");
@@ -107,6 +124,7 @@ export class SessionManager {
     this.worktreesRoot = opts.worktreesRoot ?? worktreesDir();
     this.prHead = opts.prHead ?? (() => null);
     this.prHeadRefresh = opts.prHeadRefresh;
+    this.prState = opts.prState ?? (() => null);
     const getSettings = (): AppSettings => this.settings.get();
     this.drivers = {
       claude: opts.drivers?.claude ?? new TracingCliDriver(new ClaudeCliDriver((e) => this.routeEvent(e), getSettings)),
@@ -255,11 +273,14 @@ export class SessionManager {
           ...(stillActive ? {} : { status: "done" as const })
         });
         if (wasActive && !event.isError) void this.renameBranchForTitle(event.sessionId, event.turnId);
-        this.syncPrSeenAfterTurn(event.sessionId);
+        const covered = this.turnPrRefs.get(event.turnId) ?? [];
+        this.turnPrRefs.delete(event.turnId);
+        this.syncPrSeenAfterTurn(event.sessionId, covered);
       }
     }
     if (event.type === "turn.error") {
       this.activeTurns.delete(event.turnId);
+      this.turnPrRefs.delete(event.turnId);
       if (sessionId) {
         this.store.updateSession(sessionId, {
           status: "holding",
@@ -449,7 +470,7 @@ export class SessionManager {
     const headSha = ref ? this.prHead(ref) : null;
     const link = linkFromStatus(session, status, Date.now(), headSha);
     if (!link) return null;
-    this.store.updateSession(sessionId, { pr: link });
+    this.store.updateSession(sessionId, { prs: upsertLink(session.prs, link) });
     return this.emitSession(sessionId);
   }
 
@@ -457,38 +478,54 @@ export class SessionManager {
     const session = this.store.getSession(sessionId);
     if (!session) throw new Error(`unknown session ${sessionId}`);
     const prUnlinked = removeUnlinkedKey(session.prUnlinked, prKey(link.ref));
-    this.store.updateSession(sessionId, { pr: link, prUnlinked });
+    this.store.updateSession(sessionId, { prs: upsertLink(session.prs, link), prUnlinked });
     return this.emitSession(sessionId);
   }
 
-  unlinkPr(sessionId: string): SessionMeta {
+  unlinkPr(sessionId: string, ref: PrRef): SessionMeta {
     const session = this.store.getSession(sessionId);
     if (!session) throw new Error(`unknown session ${sessionId}`);
-    const prUnlinked = session.pr ? addUnlinkedKey(session.prUnlinked, prKey(session.pr.ref)) : session.prUnlinked;
-    this.store.updateSession(sessionId, { pr: null, prUnlinked });
+    const prUnlinked = addUnlinkedKey(session.prUnlinked, prKey(ref));
+    this.store.updateSession(sessionId, { prs: removeLink(session.prs, ref), prUnlinked });
     return this.emitSession(sessionId);
   }
 
-  markPrSeen(sessionId: string, headSha: string | null): SessionMeta {
+  markPrSeen(sessionId: string, ref: PrRef, headSha: string | null): SessionMeta {
     const session = this.store.getSession(sessionId);
     if (!session) throw new Error(`unknown session ${sessionId}`);
-    if (session.pr) this.store.updateSession(sessionId, { pr: markSeen(session.pr, headSha, Date.now()) });
+    const link = findLink(session.prs, ref);
+    if (link) this.store.updateSession(sessionId, { prs: upsertLink(session.prs, markSeen(link, headSha, Date.now())) });
     return this.emitSession(sessionId);
   }
 
-  private syncPrSeenAfterTurn(sessionId: string): void {
+  private syncPrSeenAfterTurn(sessionId: string, coveredRefs: PrRef[]): void {
     const session = this.store.getSession(sessionId);
-    if (!session?.pr) return;
-    const ref = session.pr.ref;
-    const key = prKey(ref);
+    const links = session?.prs ?? [];
+    if (links.length === 0) return;
+    const coveredKeys = new Set(coveredRefs.map((ref) => prKey(ref)));
+    const targets = links.map((link) => ({ ref: link.ref, covered: links.length === 1 || coveredKeys.has(prKey(link.ref)) }));
+    const worktreePath = session?.worktreePath;
     const now = Date.now();
     void (async () => {
-      const headSha = (await this.prHeadRefresh?.(ref).catch(() => null)) ?? this.prHead(ref);
+      const [heads, worktreeHead] = await Promise.all([
+        Promise.all(targets.map((target) => this.turnEndHead(target.ref))),
+        worktreePath && targets.some((target) => !target.covered)
+          ? this.git.headSha(worktreePath).catch(() => null)
+          : Promise.resolve(null)
+      ]);
       const current = this.store.getSession(sessionId);
-      if (!current?.pr || prKey(current.pr.ref) !== key) return;
-      this.store.updateSession(sessionId, { pr: markSeen(current.pr, headSha, now) });
+      if (!current?.prs) return;
+      const results = targets.map((target, index) => ({ ...target, head: heads[index] }));
+      const prs = applyTurnSeen(current.prs, results, worktreeHead, now);
+      if (prs === current.prs) return;
+      this.store.updateSession(sessionId, { prs });
       this.emitSession(sessionId);
     })();
+  }
+
+  private async turnEndHead(ref: PrRef): Promise<string | null> {
+    if (isFinishedPrState(this.prState(ref))) return this.prHead(ref);
+    return (await this.prHeadRefresh?.(ref).catch(() => null)) ?? this.prHead(ref);
   }
 
   expireHoldingSessions(sessionIds: string[]): SessionMeta[] {
@@ -894,7 +931,11 @@ export class SessionManager {
     }
   }
 
-  async startTurn(sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[] }): Promise<string> {
+  async startTurn(
+    sessionId: string,
+    prompt: string,
+    opts?: { prefs?: ComposerPrefs; attachments?: string[]; prRefs?: PrRef[] }
+  ): Promise<string> {
     const session = this.store.getSession(sessionId);
     if (!session) throw new Error(`unknown session ${sessionId}`);
     if (session.status === "resolved" || session.status === "archived") {
@@ -934,6 +975,7 @@ export class SessionManager {
         env: buildTurnEnv(process.env, this.sessionEnvVars(session.id, session, project, cwd))
       });
       this.activeTurns.set(handle.turnId, { sessionId, startedAt: Date.now() });
+      if (opts?.prRefs && opts.prRefs.length > 0) this.turnPrRefs.set(handle.turnId, opts.prRefs);
       this.store.updateSession(sessionId, { status: "working" });
       if (firstMessage) this.maybeAutoTitle(sessionId, prompt, placeholder);
       return handle.turnId;
@@ -1142,6 +1184,7 @@ export class SessionManager {
     const session = this.store.getSession(sessionId);
     if (session) this.drivers[session.driver].interrupt(turnId);
     this.activeTurns.delete(turnId);
+    this.turnPrRefs.delete(turnId);
     this.store.updateSession(sessionId, { status: "holding" });
   }
 

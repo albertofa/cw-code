@@ -1,6 +1,17 @@
 import { describe, expect, it } from "vitest";
 import type { GitBranchInfo, GitPullRequest, GitStatus, SessionMeta, SessionPrLink } from "@cw-code/contracts";
-import { authorLocalBranch, canOwnAutoLink, linkFromStatus, markSeen, prHeadPlan } from "./prLinks.js";
+import {
+  applyTurnSeen,
+  authorLocalBranch,
+  canOwnAutoLink,
+  findLink,
+  isValidPrLink,
+  linkFromStatus,
+  markSeen,
+  prHeadPlan,
+  removeLink,
+  upsertLink
+} from "./prLinks.js";
 
 function session(overrides: Partial<SessionMeta> = {}): SessionMeta {
   return {
@@ -72,7 +83,7 @@ describe("linkFromStatus", () => {
     expect(linkFromStatus(session(), merged, 100)).toBeNull();
   });
 
-  it("keeps an existing link instead of overwriting it", () => {
+  it("links the branch pull request alongside links to other pull requests", () => {
     const existing: SessionPrLink = {
       ref: { host: "github.com", owner: "acme", repo: "widgets", number: 7 },
       origin: "linked",
@@ -80,7 +91,21 @@ describe("linkFromStatus", () => {
       lastSeenAt: 1
     };
     const open = status({ pullRequest: pullRequest() });
-    expect(linkFromStatus(session({ pr: existing }), open, 100)).toBeNull();
+    expect(linkFromStatus(session({ prs: [existing] }), open, 100)).toMatchObject({
+      ref: { number: 42 },
+      origin: "opened"
+    });
+  });
+
+  it("returns null when the branch pull request is already linked", () => {
+    const existing: SessionPrLink = {
+      ref: { host: "github.com", owner: "acme", repo: "widgets", number: 42 },
+      origin: "linked",
+      lastSeenSha: "sha-old",
+      lastSeenAt: 1
+    };
+    const open = status({ pullRequest: pullRequest() });
+    expect(linkFromStatus(session({ prs: [existing] }), open, 100)).toBeNull();
   });
 
   it("parses the pull request URL into a ref and links with origin opened", () => {
@@ -167,6 +192,69 @@ describe("markSeen", () => {
   it("keeps the old sha when the head is null", () => {
     expect(markSeen(link, null, 200)).toEqual({ ...link, lastSeenSha: "sha-old", lastSeenAt: 200 });
   });
+
+  it("never moves lastSeenAt backwards when syncs overlap", () => {
+    expect(markSeen({ ...link, lastSeenAt: 500 }, "sha-new", 200)).toMatchObject({ lastSeenSha: "sha-new", lastSeenAt: 500 });
+  });
+});
+
+describe("applyTurnSeen", () => {
+  const covered: SessionPrLink = {
+    ref: { host: "github.com", owner: "acme", repo: "widgets", number: 42 },
+    origin: "opened",
+    lastSeenSha: "sha-42",
+    lastSeenAt: 10
+  };
+  const other: SessionPrLink = { ...covered, ref: { ...covered.ref, number: 7 }, lastSeenSha: "sha-7" };
+
+  it("marks covered links seen and leaves uncovered ones alone", () => {
+    const next = applyTurnSeen(
+      [covered, other],
+      [
+        { ref: covered.ref, covered: true, head: "new-42" },
+        { ref: other.ref, covered: false, head: "new-7" }
+      ],
+      "worktree-head",
+      100
+    );
+    expect(next).toEqual([{ ...covered, lastSeenSha: "new-42", lastSeenAt: 100 }, other]);
+  });
+
+  it("absorbs the session's own push on an uncovered link without touching lastSeenAt", () => {
+    const next = applyTurnSeen([covered, other], [{ ref: other.ref, covered: false, head: "own" }], "own", 100);
+    expect(next).toEqual([covered, { ...other, lastSeenSha: "own" }]);
+  });
+
+  it("returns the same list when nothing changed or the link is gone", () => {
+    const prs = [covered];
+    expect(applyTurnSeen(prs, [{ ref: other.ref, covered: true, head: "x" }], null, 100)).toBe(prs);
+    expect(applyTurnSeen(prs, [{ ref: covered.ref, covered: false, head: null }], null, 100)).toBe(prs);
+  });
+});
+
+describe("isValidPrLink", () => {
+  const valid: SessionPrLink = {
+    ref: { host: "github.com", owner: "acme", repo: "widgets", number: 42 },
+    origin: "workflow",
+    workflowId: "review",
+    lastSeenSha: "",
+    lastSeenAt: 0
+  };
+
+  it("accepts a well-formed link", () => {
+    expect(isValidPrLink(valid)).toBe(true);
+  });
+
+  it("rejects malformed links", () => {
+    expect(isValidPrLink(null)).toBe(false);
+    expect(isValidPrLink("github.com/acme/widgets#42")).toBe(false);
+    expect(isValidPrLink({ ...valid, ref: undefined })).toBe(false);
+    expect(isValidPrLink({ ...valid, ref: { ...valid.ref, number: 0 } })).toBe(false);
+    expect(isValidPrLink({ ...valid, ref: { ...valid.ref, owner: "" } })).toBe(false);
+    expect(isValidPrLink({ ...valid, origin: "imported" })).toBe(false);
+    expect(isValidPrLink({ ...valid, lastSeenSha: undefined })).toBe(false);
+    expect(isValidPrLink({ ...valid, lastSeenAt: Number.NaN })).toBe(false);
+  });
 });
 
 describe("prHeadPlan", () => {
@@ -225,5 +313,48 @@ describe("authorLocalBranch", () => {
     const prHead = { number: 1, headRefName: "feature", headRefOid: "sha", viewerIsAuthor: true };
     expect(authorLocalBranch({ prHead }, [local])).toBe(local);
     expect(authorLocalBranch({ prHead: { ...prHead, viewerIsAuthor: false } }, [local])).toBeNull();
+  });
+});
+
+describe("session pull request link list helpers", () => {
+  const widgets42: SessionPrLink = {
+    ref: { host: "github.com", owner: "acme", repo: "widgets", number: 42 },
+    origin: "opened",
+    lastSeenSha: "sha-1",
+    lastSeenAt: 1
+  };
+  const gadgets7: SessionPrLink = {
+    ref: { host: "github.com", owner: "acme", repo: "gadgets", number: 7 },
+    origin: "linked",
+    lastSeenSha: "sha-7",
+    lastSeenAt: 2
+  };
+
+  it("appends a link for a new pull request", () => {
+    expect(upsertLink([widgets42], gadgets7)).toEqual([widgets42, gadgets7]);
+    expect(upsertLink(undefined, widgets42)).toEqual([widgets42]);
+  });
+
+  it("replaces the link for the same pull request in place", () => {
+    const refreshed = { ...widgets42, lastSeenSha: "sha-2", lastSeenAt: 5 };
+    expect(upsertLink([widgets42, gadgets7], refreshed)).toEqual([refreshed, gadgets7]);
+  });
+
+  it("does not mutate the input list", () => {
+    const prs = [widgets42];
+    upsertLink(prs, gadgets7);
+    removeLink(prs, widgets42.ref);
+    expect(prs).toEqual([widgets42]);
+  });
+
+  it("removes only the link for the given ref", () => {
+    expect(removeLink([widgets42, gadgets7], { ...widgets42.ref })).toEqual([gadgets7]);
+    expect(removeLink(undefined, widgets42.ref)).toEqual([]);
+  });
+
+  it("finds a link by ref value", () => {
+    expect(findLink([widgets42, gadgets7], { host: "github.com", owner: "acme", repo: "gadgets", number: 7 })).toBe(gadgets7);
+    expect(findLink([widgets42], gadgets7.ref)).toBeUndefined();
+    expect(findLink(undefined, gadgets7.ref)).toBeUndefined();
   });
 });

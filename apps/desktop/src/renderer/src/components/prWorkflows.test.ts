@@ -165,19 +165,19 @@ describe("primaryAction", () => {
 
   it("returns open when a main session has seen the current head", () => {
     const pr = prSummary({ headRefOid: "sha1" });
-    const linked = [session({ pr: { ref: pr.ref, origin: "opened", lastSeenSha: "sha1", lastSeenAt: 0 } })];
+    const linked = [session({ prs: [{ ref: pr.ref, origin: "opened", lastSeenSha: "sha1", lastSeenAt: 0 }] })];
     expect(primaryAction(pr, linked, [])).toEqual({ kind: "open", sessionId: "s1" });
   });
 
   it("returns continue when the main session is a review link behind the head", () => {
     const pr = prSummary({ headRefOid: "sha2" });
-    const linked = [session({ pr: { ref: pr.ref, origin: "workflow", workflowId: "review", lastSeenSha: "sha1", lastSeenAt: 0 } })];
+    const linked = [session({ prs: [{ ref: pr.ref, origin: "workflow", workflowId: "review", lastSeenSha: "sha1", lastSeenAt: 0 }] })];
     expect(primaryAction(pr, linked, [])).toEqual({ kind: "continue", sessionId: "s1", workflowId: "review" });
   });
 
   it("returns open when the review session already saw the current head", () => {
     const pr = prSummary({ headRefOid: "sha1" });
-    const linked = [session({ pr: { ref: pr.ref, origin: "workflow", workflowId: "review", lastSeenSha: "sha1", lastSeenAt: 0 } })];
+    const linked = [session({ prs: [{ ref: pr.ref, origin: "workflow", workflowId: "review", lastSeenSha: "sha1", lastSeenAt: 0 }] })];
     expect(primaryAction(pr, linked, [])).toEqual({ kind: "open", sessionId: "s1" });
   });
 
