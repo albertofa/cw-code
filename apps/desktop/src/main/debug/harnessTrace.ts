@@ -1,7 +1,8 @@
-import { appendFileSync, mkdirSync, renameSync, rmSync, statSync } from "node:fs";
+import { appendFileSync, mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { DriverKind } from "@cw-code/contracts";
 import { logsDir } from "../paths/appPaths.js";
+import { rotateIfOversize } from "./logRotation.js";
 
 export type HarnessKind = DriverKind | "system";
 
@@ -75,31 +76,6 @@ export function sanitizeArgs(args: string[]): string[] {
   });
 }
 
-function rotationPath(filePath: string): string {
-  return filePath.endsWith(".jsonl") ? filePath.replace(/\.jsonl$/, ".1.jsonl") : `${filePath}.1`;
-}
-
-function rotateIfNeeded(): void {
-  if (!traceFilePath) return;
-  let size = 0;
-  try {
-    size = statSync(traceFilePath).size;
-  } catch {
-    return;
-  }
-  if (size < maxBytes) return;
-  try {
-    const dest = rotationPath(traceFilePath);
-    try {
-      rmSync(dest, { force: true });
-    } catch {
-    }
-    renameSync(traceFilePath, dest);
-  } catch (err) {
-    console.warn(`harness trace rotation failed: ${(err as Error).message}`);
-  }
-}
-
 export function traceHarnessCall(entry: Omit<HarnessTraceCall, "seq" | "ts">): void {
   if (!traceFilePath) return;
   const record: HarnessTraceCall = {
@@ -110,7 +86,11 @@ export function traceHarnessCall(entry: Omit<HarnessTraceCall, "seq" | "ts">): v
     extra: { pid: process.pid, ...entry.extra }
   };
   try {
-    rotateIfNeeded();
+    rotateIfOversize(traceFilePath, maxBytes);
+  } catch (err) {
+    console.warn(`harness trace rotation failed: ${(err as Error).message}`);
+  }
+  try {
     appendFileSync(traceFilePath, `${JSON.stringify(record)}\n`, "utf8");
   } catch (err) {
     console.warn(`harness trace write failed: ${(err as Error).message}`);
