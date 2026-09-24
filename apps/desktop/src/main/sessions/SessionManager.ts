@@ -532,8 +532,7 @@ export class SessionManager {
     const session = this.store.getSession(sessionId);
     if (!session) throw new Error(`unknown session ${sessionId}`);
     const link = findLink(session.prs, ref);
-    const at = Math.max(Date.now(), seenAt ?? 0, this.prUpdatedAt(ref) ?? 0);
-    if (link) this.store.updateSession(sessionId, { prs: upsertLink(session.prs, markSeen(link, headSha, at)) });
+    if (link) this.store.updateSession(sessionId, { prs: upsertLink(session.prs, markSeen(link, headSha, seenAt ?? Date.now())) });
     return this.emitSession(sessionId);
   }
 

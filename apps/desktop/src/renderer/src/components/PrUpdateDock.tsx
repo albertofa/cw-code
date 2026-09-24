@@ -79,6 +79,7 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
   const [previewOpen, setPreviewOpen] = useState(false);
   const [working, setWorking] = useState<"send" | "dismiss" | null>(null);
   const [actionError, setActionError] = useState<string | null>(null);
+  const [sentPrompt, setSentPrompt] = useState<string | null>(null);
 
   const harness = session ? harnessLabel(session.driver) : "";
   const entries = useMemo(() => items.map((item) => dockEntry(item, settings, harness)), [items, settings, harness]);
@@ -99,7 +100,7 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
 
   const markSeen = async (targets: DockEntry[]) => {
     for (const entry of targets) {
-      applySession(await window.cw.markSessionPrSeen(sessionId, entry.item.link.ref, seenHead(entry), seenThrough(entry.pr, entry.updates)));
+      applySession(await window.cw.markSessionPrSeen(sessionId, entry.item.link.ref, seenHead(entry), seenThrough(entry.item.detail ?? entry.item.summary, entry.updates)));
     }
   };
 
@@ -155,15 +156,22 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
   };
 
   const send = async () => {
-    if (!prompt || busy || working) return;
+    if (!prompt || busy || working || prompt === sentPrompt) return;
     setWorking("send");
     setActionError(null);
     const covered = single ? [single] : sendable;
     try {
       await sendPromptTo(sessionId, prompt, undefined, { prRefs: covered.map((entry) => entry.item.link.ref) });
-      await markSeen(covered);
     } catch (err) {
       setActionError(`Could not send the update: ${errorMessage(err)}`);
+      setWorking(null);
+      return;
+    }
+    setSentPrompt(prompt);
+    try {
+      await markSeen(covered);
+    } catch (err) {
+      setActionError(`The update was sent, but could not be cleared: ${errorMessage(err)}. Use × to clear it.`);
     } finally {
       setWorking(null);
     }
@@ -184,7 +192,8 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
         ? `Send update to ${harness}`
         : `Send ${sendable.length} ${sendable.length === 1 ? "update" : "updates"} to ${harness}`;
   const PrimaryIcon = allReview ? RefreshCw : Send;
-  const primaryDisabled = singleLogs ? busy : busy || prompt === null || working !== null;
+  const alreadySent = prompt !== null && prompt === sentPrompt;
+  const primaryDisabled = singleLogs ? busy : busy || prompt === null || working !== null || alreadySent;
   const now = Date.now();
   const previewText = singleLogs
     ? "This follow-up prompt includes failed CI logs. They are fetched when you open it with Review and send."
@@ -303,7 +312,7 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
           className="pr-detail-btn primary sm"
           onClick={single && singleLogs ? () => openInModal(single) : () => void send()}
           disabled={primaryDisabled}
-          title={busy ? "Wait for the current turn to finish" : undefined}
+          title={busy ? "Wait for the current turn to finish" : alreadySent ? "This update was already sent" : undefined}
         >
           <PrimaryIcon size={12} aria-hidden="true" />
           {primaryLabel}
