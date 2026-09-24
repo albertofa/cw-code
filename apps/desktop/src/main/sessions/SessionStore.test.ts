@@ -1,8 +1,8 @@
-import { describe, expect, it } from "vitest";
-import { mkdtempSync, writeFileSync } from "node:fs";
+import { describe, expect, it, vi } from "vitest";
+import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import type { SessionMeta } from "@cw-code/contracts";
+import type { SessionMeta, SessionPrLink } from "@cw-code/contracts";
 import { SessionStore } from "./SessionStore.js";
 
 function makeStore(): SessionStore {
@@ -71,5 +71,89 @@ describe("SessionStore", () => {
       status: "idle",
       updatedAt: 1234
     });
+  });
+
+  it("round-trips a session's pull request links", () => {
+    const store = makeStore();
+    const project = store.addProject("C:/proj1");
+    const session = store.createSession(project.id, "claude", "a");
+    const links: SessionPrLink[] = [
+      { ref: { host: "github.com", owner: "acme", repo: "widgets", number: 42 }, origin: "opened", lastSeenSha: "sha-1", lastSeenAt: 1000 },
+      { ref: { host: "github.com", owner: "acme", repo: "widgets", number: 43 }, origin: "linked", lastSeenSha: "sha-2", lastSeenAt: 2000 }
+    ];
+
+    store.updateSession(session.id, { prs: links });
+    expect(store.getSession(session.id)?.prs).toEqual(links);
+
+    store.updateSession(session.id, { prs: [] });
+    expect(store.getSession(session.id)).not.toHaveProperty("prs");
+  });
+
+  it("migrates a legacy single pull request link into the link list and persists it", () => {
+    const legacy: SessionPrLink = {
+      ref: { host: "github.com", owner: "acme", repo: "widgets", number: 42 },
+      origin: "workflow",
+      workflowId: "review",
+      lastSeenSha: "sha-1",
+      lastSeenAt: 1000
+    };
+    const { dir, store } = seedStore([
+      { id: "sess_legacy", updatedAt: 555, ...({ pr: legacy } as Partial<SessionMeta>) },
+      { id: "sess_plain" }
+    ]);
+
+    const migrated = store.getSession("sess_legacy");
+    expect(migrated?.prs).toEqual([legacy]);
+    expect(migrated).not.toHaveProperty("pr");
+    expect(migrated?.updatedAt).toBe(555);
+    expect(store.getSession("sess_plain")).not.toHaveProperty("prs");
+
+    const persisted = JSON.parse(readFileSync(join(dir, "test.db.json"), "utf8")) as { sessions: Array<Record<string, unknown>> };
+    const raw = persisted.sessions.find((s) => s.id === "sess_legacy");
+    expect(raw).not.toHaveProperty("pr");
+    expect(raw?.prs).toEqual([legacy]);
+
+    const reloaded = new SessionStore(join(dir, "test.db"));
+    expect(reloaded.getSession("sess_legacy")?.prs).toEqual([legacy]);
+  });
+
+  it("drops a malformed legacy link with a warning instead of failing to load", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { dir, store } = seedStore([
+      { id: "sess_bad", ...({ pr: { ref: { host: "github.com", owner: "acme" }, origin: "opened" } } as Partial<SessionMeta>) },
+      { id: "sess_null", ...({ pr: null } as Partial<SessionMeta>) }
+    ]);
+
+    expect(store.getSession("sess_bad")).not.toHaveProperty("pr");
+    expect(store.getSession("sess_bad")).not.toHaveProperty("prs");
+    expect(store.getSession("sess_null")).not.toHaveProperty("pr");
+    expect(warn).toHaveBeenCalledTimes(1);
+    const persisted = JSON.parse(readFileSync(join(dir, "test.db.json"), "utf8")) as { sessions: Array<Record<string, unknown>> };
+    expect(persisted.sessions.every((s) => !("pr" in s))).toBe(true);
+    warn.mockRestore();
+  });
+
+  it("merges a legacy link into existing links without duplicating the same pull request", () => {
+    const legacy: SessionPrLink = {
+      ref: { host: "github.com", owner: "acme", repo: "widgets", number: 42 },
+      origin: "opened",
+      lastSeenSha: "sha-legacy",
+      lastSeenAt: 1
+    };
+    const other: SessionPrLink = { ...legacy, ref: { ...legacy.ref, number: 7 }, lastSeenSha: "sha-7" };
+    const { store } = seedStore([{ id: "sess_both", prs: [other], ...({ pr: legacy } as Partial<SessionMeta>) }]);
+    expect(store.getSession("sess_both")?.prs).toEqual([other, legacy]);
+  });
+
+  it("round-trips a session's unlinked pull request keys", () => {
+    const store = makeStore();
+    const project = store.addProject("C:/proj1");
+    const session = store.createSession(project.id, "claude", "a");
+
+    store.updateSession(session.id, { prUnlinked: ["github.com/acme/widgets#42"] });
+    expect(store.getSession(session.id)?.prUnlinked).toEqual(["github.com/acme/widgets#42"]);
+
+    store.updateSession(session.id, { prUnlinked: undefined });
+    expect(store.getSession(session.id)?.prUnlinked).toBeUndefined();
   });
 });

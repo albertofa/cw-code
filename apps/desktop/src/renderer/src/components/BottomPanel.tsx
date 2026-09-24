@@ -2,14 +2,14 @@ import { ChevronDown, ChevronUp } from "lucide-react";
 import { useRef, type MouseEvent as ReactMouseEvent } from "react";
 import type { DockableTabId } from "@cw-code/contracts";
 import type { DriverName } from "../cw.js";
-import { TOOL_TABS } from "./toolTabs.js";
+import { TOOL_TABS, isToolTabAvailable } from "./toolTabs.js";
 import { ToolContent } from "./ToolContent.js";
 import { useTabMenu } from "./TabMenu.js";
 import { endTabDrag, startTabDrag, useDockDrop } from "./useDockDrop.js";
 import { BOTTOM_HEIGHT_DEFAULT, tabsInPanel } from "../stores/panelLayout.js";
 import { selectSessionPanel, usePanelStore } from "../stores/panelStore.js";
 
-export function BottomPanel({ sessionId, driver }: { sessionId: string; driver: DriverName | undefined }) {
+export function BottomPanel({ sessionId, driver, hasPr }: { sessionId: string; driver: DriverName | undefined; hasPr: boolean }) {
   const { dockByTab, activeBottom, bottomHeight, bottomCollapsed } = usePanelStore((s) => selectSessionPanel(s, sessionId));
   const setActive = usePanelStore((s) => s.setActive);
   const moveTab = usePanelStore((s) => s.moveTab);
@@ -22,8 +22,7 @@ export function BottomPanel({ sessionId, driver }: { sessionId: string; driver: 
 
   const tabs = tabsInPanel(dockByTab, "bottom").filter((id) => {
     const def = TOOL_TABS.find((item) => item.id === id);
-    if (!def) return false;
-    return def.driver === undefined || def.driver === driver;
+    return def !== undefined && isToolTabAvailable(def, driver, hasPr);
   });
   const effectiveActive: DockableTabId | null = tabs.includes(activeBottom) ? activeBottom : (tabs[0] ?? null);
 

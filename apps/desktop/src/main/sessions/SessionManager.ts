@@ -10,13 +10,17 @@ import type {
   ComposerPrefs,
   CreateSessionOptions,
   DriverKind,
+  GitStatus,
   HistoryMessage,
   ModelOption,
   PermissionOption,
+  PrRef,
+  PrSummary,
   Project,
   RetryConnectionResult,
   SessionCleanupResult,
   SessionMeta,
+  SessionPrLink,
   SessionStatus,
   SettingsPatch,
   SubagentToolsResult,
@@ -25,6 +29,21 @@ import type {
   WorktreePruneSummary
 } from "@cw-code/contracts";
 import { SessionStore } from "./SessionStore.js";
+import {
+  addUnlinkedKey,
+  applyTurnSeen,
+  authorLocalBranch,
+  findLink,
+  isFinishedPrState,
+  linkFromStatus,
+  markSeen,
+  prHeadPlan,
+  removeLink,
+  removeUnlinkedKey,
+  upsertLink,
+  type PrHeadPlan
+} from "../github/prLinks.js";
+import { prKey, prRefFromUrl } from "../github/prParsers.js";
 import { buildTurnEnv } from "./env.js";
 import { isWorktreeOrphaned, looksLikeWorktree, pinsWorktree, sameWorktreePath } from "./worktreeCleanup.js";
 import { SettingsStore } from "../settings/SettingsStore.js";
@@ -34,7 +53,7 @@ import { TracingCliDriver } from "../debug/tracingDriver.js";
 import { CLAUDE_CURATED_MODELS, ClaudeCliDriver } from "../providers/claude/ClaudeCliDriver.js";
 import { OpencodeDriver } from "../providers/opencode/OpencodeDriver.js";
 import { CodexCliDriver } from "../providers/codex/CodexCliDriver.js";
-import { GitService, safeSegment, type CreatedWorktree, type RemoveWorktreeResult } from "../fs/GitService.js";
+import { defaultBinary, execText, GitService, safeSegment, type CreatedWorktree, type RemoveWorktreeResult } from "../fs/GitService.js";
 import { resolveAttachments } from "./attachments.js";
 import { AUTO_TITLE_TIMEOUT_MS, buildTitlePrompt, sanitizeGeneratedTitle } from "./autoTitle.js";
 import { branchNameForTitle, TEMP_BRANCH_PATTERN } from "./branchName.js";
@@ -49,6 +68,9 @@ export interface SessionManagerOptions {
   drivers?: Partial<Record<DriverKind, CliDriver>>;
   gitService?: GitService;
   worktreesRoot?: string;
+  prHead?: (ref: PrRef) => string | null;
+  prHeadRefresh?: (ref: PrRef) => Promise<string | null>;
+  prState?: (ref: PrRef) => PrSummary["state"] | null;
 }
 
 interface TitleTurn {
@@ -82,11 +104,16 @@ export class SessionManager {
   private branchRenamed = new Set<string>();
   private onEvent: (sessionId: string, event: ThreadEvent) => void;
   private onTitle: (sessionId: string, title: string) => void;
+  private onSession: (session: SessionMeta) => void = () => {};
   private git: GitService;
   private worktreesRoot: string;
   private deltaBuffer = new Map<string, { sessionId: string; text: string; timer: NodeJS.Timeout }>();
   private turnBaseShas = new Map<string, string>();
   private disposed = false;
+  private prHead: (ref: PrRef) => string | null;
+  private prHeadRefresh?: (ref: PrRef) => Promise<string | null>;
+  private prState: (ref: PrRef) => PrSummary["state"] | null;
+  private turnPrRefs = new Map<string, PrRef[]>();
 
   constructor(opts: SessionManagerOptions = {}) {
     const dbPath = opts.dbPath ?? join(userdataDir(), "cw-code.db");
@@ -97,6 +124,9 @@ export class SessionManager {
     this.onTitle = opts.onTitle ?? (() => {});
     this.git = opts.gitService ?? new GitService(() => this.settings.get());
     this.worktreesRoot = opts.worktreesRoot ?? worktreesDir();
+    this.prHead = opts.prHead ?? (() => null);
+    this.prHeadRefresh = opts.prHeadRefresh;
+    this.prState = opts.prState ?? (() => null);
     const getSettings = (): AppSettings => this.settings.get();
     this.drivers = {
       claude: opts.drivers?.claude ?? new TracingCliDriver(new ClaudeCliDriver((e) => this.routeEvent(e), getSettings)),
@@ -210,6 +240,17 @@ export class SessionManager {
     this.onTitle = onTitle;
   }
 
+  setSessionEmitter(onSession: (session: SessionMeta) => void): void {
+    this.onSession = onSession;
+  }
+
+  private emitSession(sessionId: string): SessionMeta {
+    const updated = this.store.getSession(sessionId);
+    if (!updated) throw new Error(`unknown session ${sessionId}`);
+    this.onSession(updated);
+    return updated;
+  }
+
   getSettings(): AppSettings {
     return this.settings.get();
   }
@@ -234,10 +275,14 @@ export class SessionManager {
           ...(stillActive ? {} : { status: "done" as const })
         });
         if (wasActive && !event.isError) void this.renameBranchForTitle(event.sessionId, event.turnId);
+        const covered = this.turnPrRefs.get(event.turnId) ?? [];
+        this.turnPrRefs.delete(event.turnId);
+        this.syncPrSeenAfterTurn(event.sessionId, covered);
       }
     }
     if (event.type === "turn.error") {
       this.activeTurns.delete(event.turnId);
+      this.turnPrRefs.delete(event.turnId);
       if (sessionId) {
         this.store.updateSession(sessionId, {
           status: "holding",
@@ -343,18 +388,44 @@ export class SessionManager {
         });
       }
     }
-    const worktree = await this.git.createWorktree(
-      project.rootPath,
-      project.id,
-      id,
-      this.worktreesRoot,
-      options.baseBranch
-    );
+    const worktree = await this.createSessionWorktree(project, id, options);
     return this.store.createSession(projectId, driver, "New session", {
       id,
       worktreePath: worktree.path,
       branch: worktree.branch
     });
+  }
+
+  private async createSessionWorktree(project: Project, id: string, options: CreateSessionOptions): Promise<CreatedWorktree> {
+    const plan = options.prHead ? await this.planPrHead(project, options) : null;
+    if (plan?.kind === "attach") {
+      const target = join(this.worktreesRoot, safeSegment(project.id), safeSegment(id));
+      return this.git.attachWorktree(project.rootPath, target, plan.branch);
+    }
+    const base =
+      plan?.kind === "base"
+        ? plan.branch
+        : plan?.kind === "fetch"
+          ? await this.git.fetchPullRequestHead(project.rootPath, plan.number)
+          : options.baseBranch;
+    return this.git.createWorktree(project.rootPath, project.id, id, this.worktreesRoot, base);
+  }
+
+  private async planPrHead(project: Project, options: CreateSessionOptions): Promise<PrHeadPlan | null> {
+    const branches = await this.git.branches(project.rootPath);
+    const local = authorLocalBranch(options, branches);
+    const tip = local ? await this.localBranchTip(project.rootPath, local.name) : null;
+    return prHeadPlan(options, branches, local && tip ? { [local.name]: tip } : {});
+  }
+
+  private async localBranchTip(root: string, branch: string): Promise<string | null> {
+    const binary = this.settings.get().gitBinaryPath?.trim() || defaultBinary("git");
+    try {
+      return (await execText(binary, ["-C", root, "rev-parse", "--verify", "--quiet", `refs/heads/${branch}^{commit}`], root)).trim() || null;
+    } catch (err) {
+      console.warn(`could not resolve local branch '${branch}': ${(err as Error).message}`);
+      return null;
+    }
   }
 
   private async reusableWorktree(project: Project, requested: string): Promise<CreatedWorktree | null> {
@@ -392,6 +463,71 @@ export class SessionManager {
     const updated = this.store.getSession(sessionId);
     if (!updated) throw new Error(`unknown session ${sessionId}`);
     return updated;
+  }
+
+  syncPrLink(sessionId: string, status: GitStatus): SessionMeta | null {
+    const session = this.store.getSession(sessionId);
+    if (!session) return null;
+    const ref = status.pullRequest ? prRefFromUrl(status.pullRequest.url) : null;
+    const headSha = ref ? this.prHead(ref) : null;
+    const link = linkFromStatus(session, status, Date.now(), headSha);
+    if (!link) return null;
+    this.store.updateSession(sessionId, { prs: upsertLink(session.prs, link) });
+    return this.emitSession(sessionId);
+  }
+
+  linkPr(sessionId: string, link: SessionPrLink): SessionMeta {
+    const session = this.store.getSession(sessionId);
+    if (!session) throw new Error(`unknown session ${sessionId}`);
+    const prUnlinked = removeUnlinkedKey(session.prUnlinked, prKey(link.ref));
+    this.store.updateSession(sessionId, { prs: upsertLink(session.prs, link), prUnlinked });
+    return this.emitSession(sessionId);
+  }
+
+  unlinkPr(sessionId: string, ref: PrRef): SessionMeta {
+    const session = this.store.getSession(sessionId);
+    if (!session) throw new Error(`unknown session ${sessionId}`);
+    const prUnlinked = addUnlinkedKey(session.prUnlinked, prKey(ref));
+    this.store.updateSession(sessionId, { prs: removeLink(session.prs, ref), prUnlinked });
+    return this.emitSession(sessionId);
+  }
+
+  markPrSeen(sessionId: string, ref: PrRef, headSha: string | null): SessionMeta {
+    const session = this.store.getSession(sessionId);
+    if (!session) throw new Error(`unknown session ${sessionId}`);
+    const link = findLink(session.prs, ref);
+    if (link) this.store.updateSession(sessionId, { prs: upsertLink(session.prs, markSeen(link, headSha, Date.now())) });
+    return this.emitSession(sessionId);
+  }
+
+  private syncPrSeenAfterTurn(sessionId: string, coveredRefs: PrRef[]): void {
+    const session = this.store.getSession(sessionId);
+    const links = session?.prs ?? [];
+    if (links.length === 0) return;
+    const coveredKeys = new Set(coveredRefs.map((ref) => prKey(ref)));
+    const targets = links.map((link) => ({ ref: link.ref, covered: links.length === 1 || coveredKeys.has(prKey(link.ref)) }));
+    const worktreePath = session?.worktreePath;
+    const now = Date.now();
+    void (async () => {
+      const [heads, worktreeHead] = await Promise.all([
+        Promise.all(targets.map((target) => this.turnEndHead(target.ref))),
+        worktreePath && targets.some((target) => !target.covered)
+          ? this.git.headSha(worktreePath).catch(() => null)
+          : Promise.resolve(null)
+      ]);
+      const current = this.store.getSession(sessionId);
+      if (!current?.prs) return;
+      const results = targets.map((target, index) => ({ ...target, head: heads[index] }));
+      const prs = applyTurnSeen(current.prs, results, worktreeHead, now);
+      if (prs === current.prs) return;
+      this.store.updateSession(sessionId, { prs });
+      this.emitSession(sessionId);
+    })();
+  }
+
+  private async turnEndHead(ref: PrRef): Promise<string | null> {
+    if (isFinishedPrState(this.prState(ref))) return this.prHead(ref);
+    return (await this.prHeadRefresh?.(ref).catch(() => null)) ?? this.prHead(ref);
   }
 
   expireHoldingSessions(sessionIds: string[]): SessionMeta[] {
@@ -530,6 +666,7 @@ export class SessionManager {
     removedPath: string,
     force: boolean
   ): Promise<BranchOutcome> {
+    if (!branch.startsWith("cw/")) return { deleted: false };
     try {
       const branches = await this.git.branches(repoRoot);
       const info = branches.find((b) => b.name === branch && !b.remote);
@@ -799,7 +936,7 @@ export class SessionManager {
   async startTurn(
     sessionId: string,
     prompt: string,
-    opts?: { prefs?: ComposerPrefs; attachments?: string[]; command?: CommandInvocation }
+    opts?: { prefs?: ComposerPrefs; attachments?: string[]; command?: CommandInvocation; prRefs?: PrRef[] }
   ): Promise<string> {
     const session = this.store.getSession(sessionId);
     if (!session) throw new Error(`unknown session ${sessionId}`);
@@ -841,6 +978,7 @@ export class SessionManager {
         env: buildTurnEnv(process.env, this.sessionEnvVars(session.id, session, project, cwd))
       });
       this.activeTurns.set(handle.turnId, { sessionId, startedAt: Date.now() });
+      if (opts?.prRefs && opts.prRefs.length > 0) this.turnPrRefs.set(handle.turnId, opts.prRefs);
       this.store.updateSession(sessionId, { status: "working" });
       if (firstMessage) this.maybeAutoTitle(sessionId, prompt, placeholder);
       return handle.turnId;
@@ -1067,6 +1205,7 @@ export class SessionManager {
     const session = this.store.getSession(sessionId);
     if (session) this.drivers[session.driver].interrupt(turnId);
     this.activeTurns.delete(turnId);
+    this.turnPrRefs.delete(turnId);
     this.store.updateSession(sessionId, { status: "holding" });
   }
 

@@ -1,12 +1,16 @@
 import { useEffect, useState } from "react";
 import { GitBranch, GitFork, History } from "lucide-react";
 import { useAppStore } from "../stores/appStore.js";
-import type { CreateSessionOptions, CreateWorkspaceMode, DriverName, GitBranchInfo } from "../cw.js";
+import type { CreateSessionOptions, CreateWorkspaceMode, DriverName, GitBranchInfo, Session } from "../cw.js";
 import { worktreeCandidates } from "./worktreeCandidates.js";
 import { shortenHome } from "./pathDisplay.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { ComposerView, type ComposerBackend } from "./ComposerView.js";
 import { MenuSelect } from "./MenuSelect.js";
+import { NewSessionAddProject, NewSessionProjectPicker } from "./NewSessionProjectPicker.js";
+
+const NO_PROJECT_HINT = "Choose a project to start a session";
+const NO_SESSIONS: Session[] = [];
 
 const HARNESS: Array<{ id: DriverName; label: string; blurb: string }> = [
   { id: "claude", label: "Claude", blurb: "Anthropic CLI harness" },
@@ -16,12 +20,10 @@ const HARNESS: Array<{ id: DriverName; label: string; blurb: string }> = [
 
 export function NewThread({
   projectId,
-  projectName,
   driver,
   onDriverChange
 }: {
-  projectId: string;
-  projectName: string;
+  projectId: string | null;
   driver: DriverName;
   onDriverChange: (d: DriverName) => void;
 }) {
@@ -30,17 +32,20 @@ export function NewThread({
   const modelsRefreshKey = useAppStore((s) => s.settingsVersion);
   const workspace = useAppStore((s) => s.pendingWorkspace);
   const homeDir = useAppStore((s) => s.homeDir);
+  const project = useAppStore((s) => (projectId ? s.projects.find((p) => p.id === projectId) : undefined));
   const [branches, setBranches] = useState<GitBranchInfo[]>([]);
   const [branchError, setBranchError] = useState("");
 
-  const sessions = store.sessionsByProject[projectId] ?? [];
+  const projectKey = project?.id ?? null;
+  const sessions = projectKey ? (store.sessionsByProject[projectKey] ?? NO_SESSIONS) : NO_SESSIONS;
   const candidates = worktreeCandidates(sessions);
 
   useEffect(() => {
     let active = true;
     setBranches([]);
     setBranchError("");
-    window.cw.listProjectBranches(projectId).then((items) => {
+    if (!projectKey) return;
+    window.cw.listProjectBranches(projectKey).then((items) => {
       if (!active) return;
       setBranches(items);
       const current = items.find((item) => item.current) ?? items[0];
@@ -51,7 +56,7 @@ export function NewThread({
       if (active) setBranchError(error.message);
     });
     return () => { active = false; };
-  }, [projectId]);
+  }, [projectKey]);
 
   const candidatePaths = candidates.map((c) => c.worktreePath).join("\n");
   useEffect(() => {
@@ -104,16 +109,18 @@ export function NewThread({
   };
 
   const backend: ComposerBackend = {
-    imageTarget: { projectId },
+    imageTarget: projectKey ? { projectId: projectKey } : {},
     prefs,
     busy: false,
-    loadModels: () => window.cw.listModelsFor(projectId, driver),
-    loadPermissions: () => window.cw.listPermissionsFor(projectId, driver),
-    loadFiles: () => window.cw.listProjectFiles(projectId),
-    loadCommands: () => window.cw.listCommandsFor(projectId, driver),
+    loadModels: () => (projectKey ? window.cw.listModelsFor(projectKey, driver) : window.cw.listModelsForHarness(driver)),
+    loadPermissions: () =>
+      projectKey ? window.cw.listPermissionsFor(projectKey, driver) : window.cw.listPermissionsForHarness(driver),
+    loadFiles: () => (projectKey ? window.cw.listProjectFiles(projectKey) : Promise.resolve([])),
+    loadCommands: () => (projectKey ? window.cw.listCommandsFor(projectKey, driver) : Promise.resolve([])),
     savePrefs: (p) => store.setPendingPrefs(p),
     send: (body, attachments, command) => store.sendPendingPrompt(body, attachments, command),
-    savePasteImage: (mime, data) => window.cw.savePasteImage(projectId, mime, data),
+    savePasteImage: (mime, data) =>
+      projectKey ? window.cw.savePasteImage(projectKey, mime, data) : Promise.reject(new Error(NO_PROJECT_HINT)),
     interrupt: () => {}
   };
 
@@ -178,14 +185,17 @@ export function NewThread({
 
   return (
     <div className="newthread">
-      <h1 className="newthread-title">
-        What should we build in <span>{projectName}</span>?
-      </h1>
+      <h1 className="newthread-title">What should we build?</h1>
+      <div className="newthread-context">
+        <NewSessionProjectPicker project={project} />
+        <NewSessionAddProject />
+      </div>
       <div className="newthread-composer">
         <ComposerView
           backend={backend}
           driver={driver}
-          resetKey={`pending:${projectId}`}
+          resetKey={`pending:${projectKey ?? ""}`}
+          blockedReason={project ? undefined : NO_PROJECT_HINT}
           resetStaleModel
           modelsRefreshKey={modelsRefreshKey}
           recipePrefix={
@@ -206,7 +216,9 @@ export function NewThread({
           }
           footer={
             <div className="composer-footer">
-              {branchError ? (
+              {!project ? (
+                <span className="workspace-hint">{NO_PROJECT_HINT}</span>
+              ) : branchError ? (
                 <span className="workspace-hint" title={branchError}>Not a Git repository</span>
               ) : (
                 <>

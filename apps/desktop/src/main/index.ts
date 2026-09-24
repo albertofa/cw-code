@@ -20,15 +20,17 @@ import { getHarnessTracePath, initHarnessTrace } from "./debug/harnessTrace.js";
 import { appendCrashLog, initCrashLog } from "./debug/crashLog.js";
 import { claudeCommandsCachePath, ensureAppDirs, attachmentsDir, logsDir, migrateFromUserData, opencodeModelsCachePath } from "./paths/appPaths.js";
 import { reapOrphanedServers } from "./orphanServers.js";
-import type { ApprovalDecision, CliBinary, CommandInvocation, CreateSessionOptions, GitDiffMode, SessionStatus, SettingsPatch } from "@cw-code/contracts";
+import type { ApprovalDecision, CliBinary, CommandInvocation, CreateSessionOptions, GitDiffMode, ProjectGitHubRepo, PrRef, SessionPrLink, SessionStatus, SettingsPatch } from "@cw-code/contracts";
 import type { DriverKind, HarnessId, SkillSaveInput } from "@cw-code/contracts";
 import type { PtyKind } from "./pty/PtyPool.js";
 import { SessionManager } from "./sessions/SessionManager.js";
 import { SkillsStore } from "./skills/SkillsStore.js";
 import { FileService, IMAGE_MAX_BYTES, imageExtMime } from "./fs/FileService.js";
 import { GitService } from "./fs/GitService.js";
+import { assertPrRef, PullRequestService } from "./github/PullRequestService.js";
 import { PtyPool } from "./pty/PtyPool.js";
 import { readWindowsTerminalFontFace } from "./pty/terminalFont.js";
+import { defaultPrWorkflows } from "./settings/prWorkflowDefaults.js";
 import { configuredCliBinaryPath } from "./settings/settingsUtils.js";
 import { initOpencodeModelsCache } from "./providers/opencode/opencodeModels.js";
 import { initClaudeCommandsCache } from "./providers/claude/claudeCommands.js";
@@ -36,10 +38,16 @@ import { initClaudeCommandsCache } from "./providers/claude/claudeCommands.js";
 type DriverName = DriverKind;
 
 let mainWindow: BrowserWindow | null = null;
-const sessions = new SessionManager();
+let pullRequests: PullRequestService;
+const sessions = new SessionManager({
+  prHead: (ref) => pullRequests.knownHead(ref),
+  prHeadRefresh: (ref) => pullRequests.refreshHead(ref),
+  prState: (ref) => pullRequests.knownState(ref)
+});
 const skills = new SkillsStore();
 const files = new FileService();
 const git = new GitService(() => sessions.getSettings());
+pullRequests = new PullRequestService(git, () => sessions.getSettings(), (rootPath) => sessions.addProject(rootPath));
 const ptys = new PtyPool(() => sessions.getSettings());
 
 async function createWindow(): Promise<void> {
@@ -78,12 +86,39 @@ async function createWindow(): Promise<void> {
       appendCrashLog(`renderer error: ${event.message} (${event.sourceId}:${event.lineNumber})`);
     }
   });
+  webContents.setWindowOpenHandler(({ url }) => {
+    if (/^https?:/i.test(url)) void shell.openExternal(url);
+    return { action: "deny" };
+  });
+  webContents.on("will-navigate", (event, url) => {
+    if (isAppUrl(url)) return;
+    event.preventDefault();
+    if (/^https?:/i.test(url)) void shell.openExternal(url);
+  });
 
-  if (process.env["ELECTRON_RENDERER_URL"]) {
-    await mainWindow.loadURL(process.env["ELECTRON_RENDERER_URL"]);
+  const devUrl = process.env["ELECTRON_RENDERER_URL"];
+  if (devUrl) {
+    await mainWindow.loadURL(devUrl);
   } else {
-    await mainWindow.loadFile(join(__dirname, "../renderer/index.html"));
+    await mainWindow.loadFile(rendererIndexPath());
   }
+}
+
+function rendererIndexPath(): string {
+  return join(__dirname, "../renderer/index.html");
+}
+
+function isAppUrl(url: string): boolean {
+  let target: URL;
+  try {
+    target = new URL(url);
+  } catch {
+    return false;
+  }
+  const devUrl = process.env["ELECTRON_RENDERER_URL"];
+  if (devUrl) return target.origin === new URL(devUrl).origin;
+  const indexPath = pathToFileURL(rendererIndexPath()).pathname;
+  return target.protocol === "file:" && target.host === "" && target.pathname.toLowerCase() === indexPath.toLowerCase();
 }
 
 function windowFromSender(sender: WebContents): BrowserWindow | null {
@@ -120,6 +155,9 @@ function registerIpc(): void {
   sessions.setTitleEmitter((sessionId, title) => {
     mainWindow?.webContents.send("session.title", { sessionId, title });
   });
+  sessions.setSessionEmitter((session) => {
+    mainWindow?.webContents.send("session.updated", session);
+  });
   ptys.setExitEmitter((ptyId, token, exitCode) => {
     if (!mainWindow || mainWindow.isDestroyed()) return;
     mainWindow.webContents.send("pty.exit", { ptyId, token, exitCode });
@@ -140,6 +178,7 @@ function registerIpc(): void {
     return verifyBinaryPath(args.binary, args.path);
   });
   ipcMain.handle("settings.get", () => sessions.getSettings());
+  ipcMain.handle("settings.prWorkflowDefaults", () => defaultPrWorkflows());
   ipcMain.handle("skills.list", () => skills.listSkills());
   ipcMain.handle("skills.get", (_e, name: string) => skills.getSkill(name));
   ipcMain.handle("skills.save", (_e, input: SkillSaveInput) => skills.saveSkill(input));
@@ -250,13 +289,18 @@ function registerIpc(): void {
         prefs?: { model?: string; effort?: "minimal" | "low" | "medium" | "high" | "xhigh" | "max"; variant?: string; permissionMode?: "auto" | "acceptEdits" | "bypassPermissions" | "manual" };
         attachments?: string[];
         command?: CommandInvocation;
+        prRefs?: PrRef[];
       }
-    ) =>
-      sessions.startTurn(args.sessionId, args.prompt, {
+    ) => {
+      if (args.prRefs !== undefined && !Array.isArray(args.prRefs)) throw new Error("invalid prRefs");
+      for (const ref of args.prRefs ?? []) assertPrRef(ref);
+      return sessions.startTurn(args.sessionId, args.prompt, {
         prefs: args.prefs,
         attachments: args.attachments,
-        ...(args.command ? { command: args.command } : {})
-      })
+        ...(args.command ? { command: args.command } : {}),
+        prRefs: args.prRefs
+      });
+    }
   );
   ipcMain.handle("turns.interrupt", (_e, args: { turnId: string }) => sessions.interrupt(args.turnId));
   ipcMain.handle("commands.list", (_e, args: { sessionId: string }) => sessions.listCommands(args.sessionId));
@@ -289,9 +333,44 @@ function registerIpc(): void {
     (_e, args: { sessionId: string; prefs: { model?: string; effort?: "minimal" | "low" | "medium" | "high" | "xhigh" | "max"; variant?: string; permissionMode?: "auto" | "acceptEdits" | "bypassPermissions" | "manual" } }) =>
       sessions.setComposer(args.sessionId, args.prefs)
   );
-  ipcMain.handle("git.status", (_e, args: { sessionId: string }) =>
-    sessions.ensureWorktree(args.sessionId).then((root) => git.status(root, sessions.projectForSession(args.sessionId)))
-  );
+  ipcMain.handle("git.status", async (_e, args: { sessionId: string }) => {
+    const root = await sessions.ensureWorktree(args.sessionId);
+    const status = await git.status(root, sessions.projectForSession(args.sessionId));
+    try {
+      sessions.syncPrLink(args.sessionId, status);
+    } catch (error) {
+      console.warn(`syncPrLink failed for ${args.sessionId}: ${(error as Error).message}`);
+    }
+    return status;
+  });
+  ipcMain.handle("sessions.linkPr", (_e, args: { sessionId: string; link: SessionPrLink }) => {
+    const link = args.link;
+    assertPrRef(link.ref);
+    if (link.origin !== "opened" && link.origin !== "workflow" && link.origin !== "linked") {
+      throw new Error(`invalid pull request link origin '${String(link.origin)}'`);
+    }
+    if (link.workflowId !== undefined && typeof link.workflowId !== "string") {
+      throw new Error("invalid workflowId");
+    }
+    if (typeof link.lastSeenSha !== "string") throw new Error("invalid lastSeenSha");
+    if (typeof link.lastSeenAt !== "number" || !Number.isFinite(link.lastSeenAt)) throw new Error("invalid lastSeenAt");
+    return sessions.linkPr(args.sessionId, {
+      ref: link.ref,
+      origin: link.origin,
+      ...(link.workflowId !== undefined ? { workflowId: link.workflowId } : {}),
+      lastSeenSha: link.lastSeenSha,
+      lastSeenAt: link.lastSeenAt
+    });
+  });
+  ipcMain.handle("sessions.unlinkPr", (_e, args: { sessionId: string; ref: PrRef }) => {
+    assertPrRef(args.ref);
+    return sessions.unlinkPr(args.sessionId, args.ref);
+  });
+  ipcMain.handle("sessions.markPrSeen", (_e, args: { sessionId: string; ref: PrRef; headSha: string | null }) => {
+    assertPrRef(args.ref);
+    if (args.headSha !== null && typeof args.headSha !== "string") throw new Error("invalid headSha");
+    return sessions.markPrSeen(args.sessionId, args.ref, args.headSha);
+  });
   ipcMain.handle("git.branches", (_e, args: { sessionId: string }) =>
     sessions.ensureWorktree(args.sessionId).then((root) => git.branches(root))
   );
@@ -318,6 +397,21 @@ function registerIpc(): void {
   ipcMain.handle("git.setIdentity", (_e, args: { projectId: string; name: string; email: string }) =>
     git.setRepositoryIdentity(sessions.rootForProject(args.projectId), args.name, args.email)
   );
+
+  ipcMain.handle("prs.inbox", (_e, args: { force?: boolean }) => pullRequests.inbox(args?.force));
+  ipcMain.handle("prs.detail", (_e, args: { ref: PrRef }) => pullRequests.detail(args.ref));
+  ipcMain.handle("prs.diff", (_e, args: { ref: PrRef }) => pullRequests.diff(args.ref));
+  ipcMain.handle("prs.checkLog", (_e, args: { ref: PrRef; runId: number }) => pullRequests.failedCheckLog(args.ref, args.runId));
+  ipcMain.handle("prs.clone", (_e, args: { ref: PrRef }) => pullRequests.clone(args.ref));
+  ipcMain.handle("prs.projectRepos", async (): Promise<ProjectGitHubRepo[]> => {
+    const repos = await Promise.all(
+      sessions.listProjects().map(async (project) => {
+        const remote = await git.githubRemote(project.rootPath).catch(() => null);
+        return remote ? { projectId: project.id, host: remote.host, owner: remote.owner, repo: remote.repository } : null;
+      })
+    );
+    return repos.filter((repo): repo is ProjectGitHubRepo => repo !== null);
+  });
 
   ipcMain.handle("fs.readFile", (_e, args: { sessionId: string; path: string }) =>
     sessions.ensureWorktree(args.sessionId).then((root) => files.readFile(root, args.path))

@@ -1,3 +1,4 @@
+import type { SessionPrLink } from "./pullRequests.js";
 import type { CommandInvocation } from "./commands.js";
 
 export type DriverKind = "claude" | "opencode" | "codex";
@@ -29,6 +30,9 @@ export interface SessionMeta {
   worktreePath?: string;
   /** Last known branch. Live Git status remains the source of truth. */
   branch?: string;
+  prs?: SessionPrLink[];
+  /** prKeys of PRs the user explicitly unlinked from this session, so auto-link does not re-attach them. */
+  prUnlinked?: string[];
 }
 
 export type CreateWorkspaceMode = "current" | "new" | "previous";
@@ -42,6 +46,8 @@ export interface CreateSessionOptions {
   mode?: CreateWorkspaceMode;
   /** Worktree to reuse when mode is "previous". Must be an app-managed worktree of the project. */
   reuseWorktreePath?: string;
+  /** Start the worktree from a pull request head instead of baseBranch. */
+  prHead?: { number: number; headRefName: string; headRefOid: string; viewerIsAuthor: boolean };
 }
 
 export interface TurnRequest {

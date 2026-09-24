@@ -7,15 +7,22 @@ import { WindowControls } from "./components/WindowControls.js";
 import { SkillsModal } from "./components/SkillsModal.js";
 import { SettingsModal } from "./components/SettingsModal.js";
 import { ThreadView } from "./components/ThreadView.js";
+import { PrInboxView } from "./components/PrInboxView.js";
+import { PrDetailView } from "./components/PrDetailView.js";
+import { WorkflowRunModal } from "./components/WorkflowRunModal.js";
 import { PanelToggles } from "./components/PanelToggles.js";
 import { ToolContent } from "./components/ToolContent.js";
-import { TOOL_TABS, isHarnessTabId } from "./components/toolTabs.js";
+import { TOOL_TABS, isHarnessTabId, isToolTabAvailable } from "./components/toolTabs.js";
 import { useTabMenu } from "./components/TabMenu.js";
 import { endTabDrag, startTabDrag, useDockDrop } from "./components/useDockDrop.js";
 import { useNotifs } from "./components/Notifications.js";
 import { useAppStore } from "./stores/appStore.js";
 import { tabsInPanel, DOCKABLE_TABS } from "./stores/panelLayout.js";
 import { selectSessionPanel, usePanelStore } from "./stores/panelStore.js";
+import { usePrStore } from "./stores/prStore.js";
+import { concreteFilterId } from "./components/projectRecency.js";
+import { prKey } from "./components/prInbox.js";
+import { sessionLinks } from "./components/sessionPrLinks.js";
 import type { DockableTabId } from "@cw-code/contracts";
 import type { TurnEvent } from "./cw.js";
 
@@ -92,13 +99,19 @@ function handleTurnEvent(msg: { sessionId: string; event: TurnEvent }): void {
   useAppStore.getState().applyEvent(msg.sessionId, msg.event);
 }
 
+const MODAL_SELECTOR = '[role="dialog"], [role="alertdialog"], [aria-modal="true"]';
+
 export function App() {
   const activeProjectId = useAppStore((s) => s.activeProjectId);
+  const filterProjectId = useAppStore((s) => concreteFilterId(s.projects, s.projectFilter));
   const activeSessionId = useAppStore((s) => s.activeSessionId);
   const sessionsByProject = useAppStore((s) => s.sessionsByProject);
   const pendingDriver = useAppStore((s) => s.pendingDriver);
   const previewBySession = useAppStore((s) => s.previewBySession);
   const sourceControlRefreshIntervalSeconds = useAppStore((s) => s.sourceControlRefreshIntervalSeconds);
+  const prRefreshIntervalSeconds = useAppStore((s) => s.prRefreshIntervalSeconds);
+  const mainView = usePrStore((s) => s.mainView);
+  const runModal = usePrStore((s) => s.runModal);
   const holdingHours = useAppStore((s) => s.holdingHours);
   const settingsVersion = useAppStore((s) => s.settingsVersion);
   const loadProjects = useAppStore((s) => s.loadProjects);
@@ -175,6 +188,7 @@ export function App() {
     void loadProjects();
     const off = window.cw.onTurnEvent(handleTurnEvent);
     const offTitle = window.cw.onSessionTitle(({ sessionId, title }) => useAppStore.getState().applySessionTitle(sessionId, title));
+    const offSession = window.cw.onSessionUpdated((session) => useAppStore.getState().applySession(session));
     const onKey = (e: KeyboardEvent) => {
       if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
       const target = e.target as HTMLElement | null;
@@ -188,30 +202,37 @@ export function App() {
       } else if (e.key === "0") {
         e.preventDefault();
         window.cw.zoomReset();
+      } else if (e.key.toLowerCase() === "t" && !e.shiftKey && !document.querySelector(MODAL_SELECTOR)) {
+        e.preventDefault();
+        usePrStore.getState().openSessionView();
+        useAppStore.getState().startNewSession();
       }
     };
     window.addEventListener("keydown", onKey);
     return () => {
       off();
       offTitle();
+      offSession();
       flushPendingDeltas();
       window.removeEventListener("keydown", onKey);
     };
   }, []);
 
-  const activeSessionKey = activeProjectId
-    ? (sessionsByProject[activeProjectId] ?? []).map((session) => session.id).join("|")
-    : "";
+  const refreshProjectKey = [...new Set([activeProjectId, filterProjectId].filter((id): id is string => id !== null))].join("|");
+  const refreshSessionKey = refreshProjectKey
+    .split("|")
+    .flatMap((projectId) => (sessionsByProject[projectId] ?? []).map((session) => session.id))
+    .join("|");
 
   useEffect(() => {
-    if (!activeProjectId || !activeSessionKey) return;
+    if (!refreshProjectKey || !refreshSessionKey) return;
     let running = false;
     const refresh = async () => {
       if (running || document.hidden) return;
       running = true;
       try {
         const current = useAppStore.getState();
-        const sessions = current.sessionsByProject[activeProjectId] ?? [];
+        const sessions = refreshProjectKey.split("|").flatMap((projectId) => current.sessionsByProject[projectId] ?? []);
         for (let i = 0; i < sessions.length; i += 6) {
           await Promise.all(sessions.slice(i, i + 6).map((session) => current.refreshGitStatus(session.id)));
         }
@@ -229,7 +250,24 @@ export function App() {
       window.clearInterval(timer);
       document.removeEventListener("visibilitychange", onVisibility);
     };
-  }, [activeProjectId, activeSessionKey, sourceControlRefreshIntervalSeconds]);
+  }, [refreshProjectKey, refreshSessionKey, sourceControlRefreshIntervalSeconds]);
+
+  useEffect(() => {
+    if (!window.cw) return;
+    const refresh = () => {
+      if (!document.hidden) void usePrStore.getState().refreshInbox();
+    };
+    const onVisibility = () => {
+      if (!document.hidden) refresh();
+    };
+    refresh();
+    const timer = window.setInterval(refresh, Math.max(30, prRefreshIntervalSeconds || 120) * 1000);
+    document.addEventListener("visibilitychange", onVisibility);
+    return () => {
+      window.clearInterval(timer);
+      document.removeEventListener("visibilitychange", onVisibility);
+    };
+  }, [prRefreshIntervalSeconds]);
 
   useEffect(() => {
     if (!window.cw) return;
@@ -342,14 +380,16 @@ export function App() {
   }, [messagesBySession, activeSessionId]);
 
   const allSessions = Object.values(sessionsByProject).flat();
-  const driver = pendingDriver ?? allSessions.find((s) => s.id === activeSessionId)?.driver;
+  const activeSession = allSessions.find((s) => s.id === activeSessionId);
+  const driver = pendingDriver ?? activeSession?.driver;
+  const hasPr = pendingDriver === null && sessionLinks(activeSession).length > 0;
 
-  const visibleTabs = TABS.filter((t) => t.driver === undefined || t.driver === driver);
+  const visibleTabs = TABS.filter((t) => isToolTabAvailable(t, driver, hasPr));
   const activeTab: RightTab = isHarnessTabId(activeRight) && activeRight !== driver ? (driver ?? "files") : activeRight;
 
-  const rightIds = tabsInPanel(dockByTab, "right");
+  const rightIds = tabsInPanel(dockByTab, "right").filter((id) => id !== "pr" || hasPr);
   const effectiveRightTab: RightTab = rightIds.includes(activeTab) ? activeTab : (rightIds[0] ?? activeTab);
-  const allTabsClosed = DOCKABLE_TABS.every((id) => dockByTab[id] === "closed");
+  const allTabsClosed = DOCKABLE_TABS.every((id) => dockByTab[id] === "closed" || (id === "pr" && !hasPr));
 
   const visibleIds = new Set(visibleTabs.map((t) => t.id));
   const openHeaders = rightIds
@@ -367,7 +407,7 @@ export function App() {
         <>
           <div className="app-body">
           <Sidebar onOpenSettings={() => openSettings()} onOpenSkills={() => setSkillsOpen(true)} skillsOpen={skillsOpen} />
-          <ThreadView />
+          {mainView.kind === "inbox" ? <PrInboxView /> : mainView.kind === "pr" ? <PrDetailView key={prKey(mainView.ref)} prRef={mainView.ref} /> : <ThreadView />}
           {rightVisible && (
             <aside className={`right${dropRight.over || draggingTab !== null ? " drop-target-active" : ""}`} style={{ width: rightWidth }}>
               <div
@@ -491,6 +531,7 @@ export function App() {
             <SettingsModal initialHarness={settingsHarness} onClose={() => setSettingsOpen(false)} />
           )}
           {skillsOpen && <SkillsModal onClose={() => setSkillsOpen(false)} />}
+          {runModal && <WorkflowRunModal request={runModal} />}
         </>
       )}
     </div>

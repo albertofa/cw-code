@@ -2,7 +2,7 @@ import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import type { DriverKind, EffortLevel } from "@cw-code/contracts";
+import type { DriverKind, EffortLevel, PrWorkflow } from "@cw-code/contracts";
 import { DEFAULT_SETTINGS, SettingsStore } from "./SettingsStore.js";
 
 function tempFilePath(): string {
@@ -108,6 +108,88 @@ describe("SettingsStore", () => {
     const store = new SettingsStore(tempFilePath());
     expect(store.set({ autoTitleEnabled: "yes" as unknown as boolean }).autoTitleEnabled).toBe(false);
     expect(store.set({ autoTitleEnabled: true }).autoTitleEnabled).toBe(true);
+  });
+
+  it("includes default PR workflow settings", () => {
+    const settings = new SettingsStore(tempFilePath()).get();
+    expect(settings.prRefreshIntervalSeconds).toBe(120);
+    expect(settings.prCloneRoot).toBe("~/.cw-code/repos");
+    expect(settings.prAttributionEnabled).toBe(true);
+    expect(settings.prWorkflows.map((w) => w.id)).toEqual(["resolve-conflicts", "fix-ci", "address-feedback", "review", "babysit"]);
+    expect(settings.prWorkflows.every((w) => w.builtIn && w.enabled)).toBe(true);
+  });
+
+  it("clamps the PR refresh interval and trims the clone root", () => {
+    const store = new SettingsStore(tempFilePath());
+    expect(store.set({ prRefreshIntervalSeconds: 1 }).prRefreshIntervalSeconds).toBe(30);
+    expect(store.set({ prRefreshIntervalSeconds: 50_000 }).prRefreshIntervalSeconds).toBe(3600);
+    expect(store.set({ prRefreshIntervalSeconds: 45.6 }).prRefreshIntervalSeconds).toBe(46);
+    expect(store.set({ prCloneRoot: "  ~/repos  " }).prCloneRoot).toBe("~/repos");
+    expect(store.set({ prCloneRoot: "   " }).prCloneRoot).toBe(DEFAULT_SETTINGS.prCloneRoot);
+  });
+
+  it("coerces PR attribution settings", () => {
+    const store = new SettingsStore(tempFilePath());
+    expect(store.set({ prAttributionEnabled: "yes" as unknown as boolean }).prAttributionEnabled).toBe(false);
+    expect(store.set({ prAttributionText: "  custom {{harness}}  " }).prAttributionText).toBe("custom {{harness}}");
+  });
+
+  it("falls back to PR defaults for non-string values without resetting other settings", () => {
+    const filePath = tempFilePath();
+    writeFileSync(
+      filePath,
+      JSON.stringify({ claudeBinaryPath: "custom-claude", prCloneRoot: 42, prAttributionText: { text: "x" } }),
+      "utf8"
+    );
+    const settings = new SettingsStore(filePath).get();
+    expect(settings.claudeBinaryPath).toBe("custom-claude");
+    expect(settings.prCloneRoot).toBe(DEFAULT_SETTINGS.prCloneRoot);
+    expect(settings.prAttributionText).toBe(DEFAULT_SETTINGS.prAttributionText);
+  });
+
+  it("drops PR workflow entries with an empty or duplicate id or an invalid shape", () => {
+    const store = new SettingsStore(tempFilePath());
+    const valid = {
+      id: "custom",
+      label: "Custom",
+      description: "desc",
+      icon: "sparkle",
+      builtIn: false,
+      enabled: true,
+      suggestWhen: ["draft"],
+      workspace: "checkout",
+      startPrompt: "start",
+      updatePrompt: "update"
+    };
+    const updated = store.set({
+      prWorkflows: [
+        valid,
+        { ...valid, id: "" },
+        { ...valid, id: "custom" },
+        { ...valid, id: "bad-shape", icon: "not-an-icon" },
+        "not-an-object" as unknown as typeof valid
+      ] as unknown as typeof DEFAULT_SETTINGS.prWorkflows
+    });
+    const ids = updated.prWorkflows.map((w) => w.id);
+    expect(ids.filter((id) => id === "custom")).toEqual(["custom"]);
+    expect(ids).not.toContain("");
+    expect(ids).not.toContain("bad-shape");
+  });
+
+  it("restores missing built-in PR workflows while keeping user order", () => {
+    const store = new SettingsStore(tempFilePath());
+    const babysit = DEFAULT_SETTINGS.prWorkflows.find((w) => w.id === "babysit")!;
+    const updated = store.set({ prWorkflows: [{ ...babysit, enabled: false }] });
+    expect(updated.prWorkflows[0]).toMatchObject({ id: "babysit", enabled: false });
+    expect(updated.prWorkflows.map((w) => w.id).sort()).toEqual(
+      DEFAULT_SETTINGS.prWorkflows.map((w) => w.id).sort()
+    );
+  });
+
+  it("keeps the enabled flag of a malformed built-in PR workflow when restoring it", () => {
+    const store = new SettingsStore(tempFilePath());
+    const updated = store.set({ prWorkflows: [{ id: "review", enabled: false, icon: "nope" } as unknown as PrWorkflow] });
+    expect(updated.prWorkflows.find((w) => w.id === "review")).toMatchObject({ enabled: false, workspace: "checkout" });
   });
 
   it("defaults reasoning to collapsed per harness and coerces with strict true", () => {

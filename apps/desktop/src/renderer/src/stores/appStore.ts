@@ -10,6 +10,7 @@ import type {
   DriverName,
   HistoryMessage,
   GitStatus,
+  PrRef,
   Project,
   QuestionRequest,
   Session,
@@ -23,6 +24,7 @@ import { appendAssistantText, appendReasoningText, closeReasoning, upsertToolCal
 import { getLastModel, setLastModel } from "../components/lastModel.js";
 import { formatDuration, mergeToolPairs } from "../components/toolSummaries.js";
 import { expiredHoldingIds } from "../components/workingSet.js";
+import { defaultNewSessionProjectId, discoveredOwnerId, discoveryProjectId } from "../components/projectRecency.js";
 import { useNotifs } from "../components/Notifications.js";
 
 const GIT_REFRESH_BATCH = 6;
@@ -63,6 +65,12 @@ export const DEFAULT_COMPOSER: Required<Pick<ComposerPrefs, "effort" | "permissi
 
 function defaultWorkspace(defaultUseWorktree: boolean): CreateSessionOptions {
   return { mode: defaultUseWorktree ? "new" : "current" };
+}
+
+function withProject(projects: Project[], project: Project): Project[] {
+  return projects.some((p) => p.id === project.id)
+    ? projects.map((p) => (p.id === project.id ? project : p))
+    : [...projects, project];
 }
 
 function reasoningExpandedFrom(settings: AppSettings): Record<DriverName, boolean> {
@@ -118,6 +126,7 @@ interface AppState {
   gitStatusBySession: Record<string, GitStatus>;
   refreshGitStatus(sessionId: string): Promise<void>;
   sourceControlRefreshIntervalSeconds: number;
+  prRefreshIntervalSeconds: number;
   holdingHours: number;
   defaultUseWorktree: boolean;
   reasoningExpandedByDriver: Record<DriverName, boolean>;
@@ -128,7 +137,8 @@ interface AppState {
   ensureHomeDir(): Promise<string>;
   loadProjects(): Promise<void>;
   addProject(rootPath: string): Promise<void>;
-  selectProject(projectId: string): Promise<void>;
+  addProjectForNewSession(rootPath: string): Promise<void>;
+  setPendingProject(projectId: string): Promise<void>;
   selectSession(sessionId: string): void;
   hydrateActiveTurns(): Promise<void>;
   startNewSession(driver?: DriverName): void;
@@ -153,7 +163,10 @@ interface AppState {
   confirmWorktreeRemoval(): Promise<void>;
   dismissWorktreeRemoval(): void;
   createSession(driver: DriverName, prefs?: ComposerPrefs, workspace?: CreateSessionOptions): Promise<void>;
+  createSessionIn(projectId: string, driver: DriverName, prefs?: ComposerPrefs, workspace?: CreateSessionOptions): Promise<Session>;
+  applySession(session: Session): void;
   sendPrompt(prompt: string, attachments?: string[], command?: CommandInvocation): Promise<void>;
+  sendPromptTo(sessionId: string, prompt: string, attachments?: string[], opts?: { prRefs?: PrRef[]; command?: CommandInvocation }): Promise<void>;
   interrupt(): Promise<void>;
   retryConnection(sessionId: string): Promise<void>;
   respondApproval(requestId: string, decision: ApprovalDecision): Promise<void>;
@@ -199,6 +212,14 @@ function patchSession(
   const next: Record<string, Session[]> = {};
   for (const [pid, list] of Object.entries(byProject)) {
     next[pid] = list.map((s) => (s.id === sessionId ? { ...s, ...patch } : s));
+  }
+  return next;
+}
+
+function replaceSession(byProject: Record<string, Session[]>, session: Session): Record<string, Session[]> {
+  const next: Record<string, Session[]> = {};
+  for (const [pid, list] of Object.entries(byProject)) {
+    next[pid] = list.map((s) => (s.id === session.id ? session : s));
   }
   return next;
 }
@@ -257,6 +278,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   pendingWorkspace: defaultWorkspace(true),
   gitStatusBySession: {},
   sourceControlRefreshIntervalSeconds: 30,
+  prRefreshIntervalSeconds: 120,
   holdingHours: 6,
   defaultUseWorktree: true,
   reasoningExpandedByDriver: { claude: false, opencode: false, codex: false },
@@ -270,7 +292,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   setProjectFilter(filter: string | "all") {
+    if (filter === get().projectFilter) return;
     set({ projectFilter: filter });
+    void get().loadDiscovered();
   },
 
   async refreshGitStatus(sessionId: string) {
@@ -329,6 +353,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({
       projects,
       sourceControlRefreshIntervalSeconds: settings.sourceControlRefreshIntervalSeconds,
+      prRefreshIntervalSeconds: settings.prRefreshIntervalSeconds,
       holdingHours: settings.holdingHours,
       defaultUseWorktree: settings.defaultUseWorktree,
       reasoningExpandedByDriver: reasoningExpandedFrom(settings),
@@ -393,63 +418,56 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   async addProject(rootPath: string) {
     const project = await window.cw.addProject(rootPath);
-    set({ projects: [...get().projects, project] });
-    await get().selectProject(project.id);
+    set({ projects: withProject(get().projects, project) });
+    if (!get().activeProjectId) await get().setPendingProject(project.id);
   },
 
-  async selectProject(projectId: string) {
-    const sessions = await window.cw.listSessions(projectId);
-    const picked = sessions.find((s) => s.status !== "archived");
-    if (picked) {
-      set({
-        activeProjectId: projectId,
-        projectFilter: projectId,
-        sessionsByProject: { ...get().sessionsByProject, [projectId]: sessions },
-        activeSessionId: picked.id,
-        pendingDriver: null
-      });
-      if (picked.status === "resolved") {
-        void get().setSessionStatus(picked.id, "idle").catch((err) =>
-          console.warn(`setSessionStatus failed for ${picked.id} -> idle: ${(err as Error).message}`)
-        );
-      } else if (picked.status === "done") {
-        void get().setSessionStatus(picked.id, "holding").catch((err) =>
-          console.warn(`setSessionStatus failed for ${picked.id} -> holding: ${(err as Error).message}`)
-        );
+  async addProjectForNewSession(rootPath: string) {
+    const project = await window.cw.addProject(rootPath);
+    set({ projects: withProject(get().projects, project) });
+    await get().setPendingProject(project.id);
+  },
+
+  async setPendingProject(projectId: string) {
+    const projectChanged = get().activeProjectId !== projectId;
+    set({
+      activeProjectId: projectId,
+      activeSessionId: null,
+      pendingWorkspace: defaultWorkspace(get().defaultUseWorktree)
+    });
+    if (projectChanged) void get().loadDiscovered();
+    if (get().sessionsByProject[projectId]) return;
+    try {
+      const sessions = await window.cw.listSessions(projectId);
+      if (!get().sessionsByProject[projectId]) {
+        set({ sessionsByProject: { ...get().sessionsByProject, [projectId]: sessions } });
       }
-      void get().ensureHistory(picked.id);
-      void get().ensureComposer(picked.id);
-      const ordered = [picked.id, ...sessions.filter((s) => s.id !== picked.id).map((s) => s.id)];
-      void refreshGitStatusInBatches(ordered, (id) => get().refreshGitStatus(id));
-    } else {
-      set({
-        activeProjectId: projectId,
-        projectFilter: projectId,
-        sessionsByProject: { ...get().sessionsByProject, [projectId]: sessions },
-        activeSessionId: null,
-        pendingDriver: get().lastDriver,
-        pendingWorkspace: defaultWorkspace(get().defaultUseWorktree)
+    } catch (err) {
+      const name = get().projects.find((p) => p.id === projectId)?.name ?? projectId;
+      useNotifs.getState().push({
+        kind: "error",
+        title: "Could not load sessions",
+        message: `${name}: ${(err as Error).message}`
       });
     }
-    void get().loadDiscovered();
-    void get().hydrateActiveTurns();
   },
 
   async loadDiscovered() {
-    const projectId = get().activeProjectId;
+    const projectId = discoveryProjectId(get().projectFilter, get().activeProjectId);
     if (!projectId) return;
     try {
       const discovered = await window.cw.listDiscovered(projectId);
-      if (get().activeProjectId === projectId) {
-        set({ discoveredByProject: { ...get().discoveredByProject, [projectId]: discovered } });
-      }
+      set({ discoveredByProject: { ...get().discoveredByProject, [projectId]: discovered } });
     } catch {
     }
   },
 
   async importDiscovered(session: Session) {
-    const projectId = get().activeProjectId;
-    if (!projectId) return;
+    const projectId = discoveredOwnerId(get().discoveredByProject, session);
+    if (!get().projects.some((p) => p.id === projectId)) {
+      throw new Error("The project for this CLI session is no longer registered.");
+    }
+    const projectChanged = get().activeProjectId !== projectId;
     const imported = await window.cw.importSession(projectId, session.driver, session.resumeCursor, session.title);
     set({
       sessionsByProject: {
@@ -460,9 +478,11 @@ export const useAppStore = create<AppState>((set, get) => ({
         ...get().discoveredByProject,
         [projectId]: (get().discoveredByProject[projectId] ?? []).filter((d) => d.id !== session.id)
       },
+      activeProjectId: projectId,
       activeSessionId: imported.id,
       pendingDriver: null
     });
+    if (projectChanged) void get().loadDiscovered();
     void get().ensureHistory(imported.id);
   },
 
@@ -641,7 +661,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   startNewSession(driver?: DriverName) {
-    if (!get().activeProjectId) return;
+    const currentProjectId = get().activeProjectId;
+    const projectId =
+      currentProjectId ??
+      defaultNewSessionProjectId(get().projects, get().sessionsByProject, get().activeSessionId, get().projectFilter);
     const target = driver ?? get().lastDriver;
     const previous = get().pendingDriver ?? get().lastDriver;
     const currentModel = get().pendingPrefs.model;
@@ -663,10 +686,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       pendingWorkspace: defaultWorkspace(get().defaultUseWorktree),
       pendingPrefs: { ...get().pendingPrefs, model: restored }
     });
+    if (projectId && projectId !== currentProjectId) void get().setPendingProject(projectId);
   },
 
   setPendingDriver(driver: DriverName) {
-    if (!get().activeProjectId) return;
     const current = get().pendingDriver ?? get().lastDriver;
     if (current === driver && get().pendingDriver !== null) return;
     const currentModel = get().pendingPrefs.model;
@@ -828,6 +851,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({
       settingsVersion: get().settingsVersion + 1,
       sourceControlRefreshIntervalSeconds: saved.sourceControlRefreshIntervalSeconds,
+      prRefreshIntervalSeconds: saved.prRefreshIntervalSeconds,
       holdingHours: saved.holdingHours,
       defaultUseWorktree: saved.defaultUseWorktree,
       reasoningExpandedByDriver: reasoningExpandedFrom(saved)
@@ -845,6 +869,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   async createSession(driver: DriverName, prefs?: ComposerPrefs, workspace?: CreateSessionOptions) {
     const projectId = get().activeProjectId;
     if (!projectId) return;
+    await get().createSessionIn(projectId, driver, prefs, workspace);
+  },
+
+  async createSessionIn(projectId: string, driver: DriverName, prefs?: ComposerPrefs, workspace?: CreateSessionOptions) {
     const session = await window.cw.createSession(projectId, driver, workspace);
     if (
       workspace?.mode === "previous" &&
@@ -860,23 +888,43 @@ export const useAppStore = create<AppState>((set, get) => ({
         ...(stillHeld ? {} : { message: "The requested worktree no longer exists." })
       });
     }
+    const projectChanged = get().activeProjectId !== projectId;
     set({
       sessionsByProject: {
         ...get().sessionsByProject,
         [projectId]: [session, ...(get().sessionsByProject[projectId] ?? [])]
       },
+      activeProjectId: projectId,
       activeSessionId: session.id,
       pendingDriver: null,
       lastDriver: driver
     });
+    if (projectChanged) void get().loadDiscovered();
     await get().ensureComposer(session.id);
     if (prefs) await get().setComposerPrefs(session.id, { ...prefs });
     void get().refreshGitStatus(session.id);
+    return session;
+  },
+
+  applySession(session: Session) {
+    const { busyTurns, sessionsByProject } = get();
+    const current = busyTurns[session.id]
+      ? Object.values(sessionsByProject)
+          .flat()
+          .find((s) => s.id === session.id)
+      : undefined;
+    const next = current ? { ...session, status: current.status } : session;
+    set({ sessionsByProject: replaceSession(sessionsByProject, next) });
   },
 
   async sendPrompt(prompt: string, attachments?: string[], command?: CommandInvocation) {
     const sessionId = get().activeSessionId;
-    if (!sessionId || !prompt.trim()) return;
+    if (!sessionId) return;
+    await get().sendPromptTo(sessionId, prompt, attachments, command ? { command } : undefined);
+  },
+
+  async sendPromptTo(sessionId: string, prompt: string, attachments?: string[], opts?: { prRefs?: PrRef[]; command?: CommandInvocation }) {
+    if (!prompt.trim()) return;
     const prefs = get().composerBySession[sessionId] ?? DEFAULT_COMPOSER;
     const previous = Object.values(get().sessionsByProject)
       .flat()
@@ -891,7 +939,12 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
     let turnId: string;
     try {
-      turnId = await window.cw.startTurn(sessionId, prompt, { prefs, attachments, ...(command ? { command } : {}) });
+      turnId = await window.cw.startTurn(sessionId, prompt, {
+        prefs,
+        attachments,
+        ...(opts?.command ? { command: opts.command } : {}),
+        ...(opts?.prRefs ? { prRefs: opts.prRefs } : {})
+      });
     } catch (err) {
       if (get().busyTurns[sessionId] === pending) {
         const book = closeTurn(

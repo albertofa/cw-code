@@ -51,7 +51,10 @@ function installBridge(): void {
     interrupt: async () => {},
     getComposer: async () => delayed({}, 400),
     setComposer: async (_id: string, prefs: unknown) => delayed(prefs, 200),
-    getSettings: async () => ({ sourceControlRefreshIntervalSeconds: 30, defaultUseWorktree: true }),
+    getSettings: async () => ({ sourceControlRefreshIntervalSeconds: 30, prRefreshIntervalSeconds: 120, defaultUseWorktree: true }),
+    getDefaultPrWorkflows: async () => [],
+    getPrInbox: async () => ({ account: null, items: [], fetchedAt: 0, error: null }),
+    getProjectGitHubRepos: async () => [],
     getHomeDir: async () => "C:\\Users\\test",
     getGitStatus: async () => {
       throw new Error("no git");

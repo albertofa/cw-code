@@ -1,14 +1,25 @@
+import type { ReactNode } from "react";
 import { MessageSquare } from "lucide-react";
 import type { DockableTabId, MainTabId } from "@cw-code/contracts";
 import type { DriverName } from "../cw.js";
 import { DriverIcon } from "./DriverIcon.js";
-import { TOOL_TABS, harnessLabel } from "./toolTabs.js";
+import { TOOL_TABS, harnessLabel, isToolTabAvailable } from "./toolTabs.js";
 import { useTabMenu } from "./TabMenu.js";
 import { endTabDrag, startTabDrag, useDockDrop } from "./useDockDrop.js";
 import { resolveMainTab } from "../stores/panelLayout.js";
 import { selectSessionPanel, usePanelStore } from "../stores/panelStore.js";
 
-export function MainTabStrip({ sessionId, driver }: { sessionId: string | undefined; driver: DriverName | undefined }) {
+export function MainTabStrip({
+  sessionId,
+  driver,
+  hasPr,
+  trailing
+}: {
+  sessionId: string | undefined;
+  driver: DriverName | undefined;
+  hasPr: boolean;
+  trailing?: ReactNode;
+}) {
   const { mainOrder, activeMain, dockByTab } = usePanelStore((s) => selectSessionPanel(s, sessionId));
   const setActive = usePanelStore((s) => s.setActive);
   const moveTab = usePanelStore((s) => s.moveTab);
@@ -17,7 +28,7 @@ export function MainTabStrip({ sessionId, driver }: { sessionId: string | undefi
   const draggingTab = usePanelStore((s) => s.draggingTab);
 
   const effectiveActive: MainTabId =
-    sessionId === undefined ? "chat" : resolveMainTab(mainOrder, dockByTab, driver, activeMain);
+    sessionId === undefined ? "chat" : resolveMainTab(mainOrder, dockByTab, driver, activeMain, hasPr);
   const chatLabel = driver === undefined ? "Chat" : harnessLabel(driver);
 
   return (
@@ -42,8 +53,7 @@ export function MainTabStrip({ sessionId, driver }: { sessionId: string | undefi
           if (id === "chat") return null;
           if (dockByTab[id] !== "main") return null;
           const def = TOOL_TABS.find((item) => item.id === id);
-          if (!def) return null;
-          if (def.driver !== undefined && def.driver !== driver) return null;
+          if (!def || !isToolTabAvailable(def, driver, hasPr)) return null;
           const tabId = id as DockableTabId;
           return (
             <button
@@ -75,6 +85,7 @@ export function MainTabStrip({ sessionId, driver }: { sessionId: string | undefi
             </button>
           );
         })}
+      {trailing && <div className="main-tabbar-trailing">{trailing}</div>}
       {tabMenu.menuNode}
     </div>
   );

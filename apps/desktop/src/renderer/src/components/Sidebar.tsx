@@ -1,7 +1,8 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
-import { Check, ChevronDown, ChevronRight, ChevronUp, Clock, Folder, GitBranch, Hash, Plus, Search, Settings, SquarePen, X } from "lucide-react";
-import type { DriverName, Project, Session, SessionStatus } from "../cw.js";
+import { Bell, Check, ChevronDown, ChevronRight, ChevronUp, CircleHelp, Clock, GitBranch, GitPullRequest, Hash, ListFilter, LoaderCircle, Plus, Search, Settings, X } from "lucide-react";
+import type { DriverName, PrSummary, Project, Session, SessionStatus } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
+import { usePrStore } from "../stores/prStore.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { useNotifs } from "./Notifications.js";
 import { getLastModel } from "./lastModel.js";
@@ -9,6 +10,11 @@ import { hashHue, projectAvatarStyle as avatarStyle, projectInitials as initials
 import { mergeAwayIds } from "./sidebarOrder.js";
 import { compareWorkingSet, isWorkingSetStatus } from "./workingSet.js";
 import { shortenHome } from "./pathDisplay.js";
+import { discoveryProjectId } from "./projectRecency.js";
+import { PrChipBadge } from "./PrChipBadge.js";
+import { needsAttentionCount } from "./prInbox.js";
+import { anyLinkUnseen, displayChip, linksTitle, mostUrgentLink, prSummaryLookup, sessionLinks } from "./sessionPrLinks.js";
+import { matchesQuickFilter, quickFilterCounts, toggleQuickFilter, type QuickFilter } from "./sidebarQuickFilters.js";
 import appIcon from "../assets/console-c.svg";
 
 const GROUP_VISIBLE = 6;
@@ -53,6 +59,17 @@ const DRIVER_LABEL: Record<DriverName, string> = {
   opencode: "OpenCode",
   codex: "Codex"
 };
+
+function sessionHasUnseen(session: Session, summaryByKey: Map<string, PrSummary>): boolean {
+  return anyLinkUnseen(sessionLinks(session), summaryByKey);
+}
+
+const QUICK_FILTER_UI: Array<{ id: Exclude<QuickFilter, "all">; label: string; Icon: typeof Bell }> = [
+  { id: "running", label: "Running", Icon: LoaderCircle },
+  { id: "input", label: "Needs input", Icon: CircleHelp },
+  { id: "pr", label: "Linked to a PR", Icon: GitPullRequest },
+  { id: "updated", label: "PR updated", Icon: Bell }
+];
 
 const HOVER_DELAY = 350;
 const HOVER_FALLBACK_HEIGHT = 280;
@@ -219,11 +236,17 @@ function DebugMenu() {
 }
 
 export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { onOpenSettings: () => void; onOpenSkills: () => void; skillsOpen?: boolean }) {
-  const { projects, sessionsByProject, discoveredByProject, activeProjectId, activeSessionId, gitStatusBySession, projectFilter, worktreeConfirmQueue, homeDir } = useAppStore();
+  const { projects, sessionsByProject, discoveredByProject, activeProjectId, activeSessionId, gitStatusBySession, projectFilter, worktreeConfirmQueue, homeDir, pendingDriver } = useAppStore();
   const shortPath = (value: string): string => shortenHome(value, homeDir ?? undefined);
   const worktreeConfirm = worktreeConfirmQueue[0] ?? null;
   const store = useAppStore();
+  const inbox = usePrStore((s) => s.inbox);
+  const detailByKey = usePrStore((s) => s.detailByKey);
+  const mainView = usePrStore((s) => s.mainView);
+  const openInbox = usePrStore((s) => s.openInbox);
+  const openSessionView = usePrStore((s) => s.openSessionView);
   const [query, setQuery] = useState("");
+  const [quickFilter, setQuickFilter] = useState<QuickFilter>("all");
   const [pickerOpen, setPickerOpen] = useState(false);
   const [projectQuery, setProjectQuery] = useState("");
   const [managedId, setManagedId] = useState<string | null>(null);
@@ -277,6 +300,7 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
   const detachRef = useRef<(() => void) | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  const filterBtnRef = useRef<HTMLButtonElement>(null);
   const toggleRefs = useRef(new Map<string, HTMLButtonElement>());
   const slotSnap = useRef<SlotSnapshot | null>(null);
   const rowRefs = useRef(new Map<string, HTMLDivElement>());
@@ -360,14 +384,18 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
     };
   }, []);
 
-  const activeProject = projects.find((p) => p.id === activeProjectId);
   const filterProject = projectFilter === "all" ? undefined : projects.find((p) => p.id === projectFilter);
   const projectNameById: Record<string, string> = Object.fromEntries(projects.map((p) => [p.id, p.name]));
   const source: Session[] =
     projectFilter === "all" ? Object.values(sessionsByProject).flat() : (sessionsByProject[projectFilter] ?? []);
-  const discovered = activeProjectId ? (discoveredByProject[activeProjectId] ?? []) : [];
+  const discoveredProjectId = discoveryProjectId(projectFilter, activeProjectId);
+  const discovered = discoveredProjectId ? (discoveredByProject[discoveredProjectId] ?? []) : [];
+  const inboxItems = inbox?.items ?? [];
+  const summaryByKey = prSummaryLookup(inboxItems, detailByKey);
+  const quickFacts = (s: Session) => ({ status: s.status, linkCount: sessionLinks(s).length, unseen: sessionHasUnseen(s, summaryByKey) });
+  const quickCounts = quickFilterCounts(source.map(quickFacts));
   const matchesQuery = (s: Session) =>
-    !query || s.title.toLowerCase().includes(query.toLowerCase());
+    (!query || s.title.toLowerCase().includes(query.toLowerCase())) && matchesQuickFilter(quickFilter, quickFacts(s));
   const byRecency = (a: Session, b: Session) => b.updatedAt - a.updatedAt;
   const workingSetAll = source.filter((s) => isWorkingSetStatus(s.status)).sort(compareWorkingSet);
   const workingSetShown = workingSetAll.filter(matchesQuery);
@@ -407,6 +435,22 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
     if (existing) existing.push(s);
     else resolvedByProject.set(s.projectId, [s]);
   }
+  const attentionCount = needsAttentionCount(inboxItems);
+  const anyUnseen = Object.values(sessionsByProject).some((list) => list.some((s) => sessionHasUnseen(s, summaryByKey)));
+  const inboxActive = mainView.kind !== "session";
+  const newSessionActive = !inboxActive && (pendingDriver !== null || !activeSessionId);
+  const liveCount = (list: Session[] | undefined): number => (list ?? []).filter((s) => s.status !== "archived").length;
+  const totalCount = Object.values(sessionsByProject).reduce((sum, list) => sum + liveCount(list), 0);
+  const inboxNotes = [
+    attentionCount > 0 ? `${attentionCount} need${attentionCount === 1 ? "s" : ""} you` : null,
+    anyUnseen ? "updates available" : null
+  ].filter(Boolean);
+  const inboxTitle = ["Pull requests", ...inboxNotes].join(" · ");
+  const inboxLabel = ["Pull requests", ...inboxNotes].join(", ");
+  const selectSession = (sessionId: string) => {
+    openSessionView();
+    store.selectSession(sessionId);
+  };
   const hoverSession = hover ? (source.find((s) => s.id === hover.id) ?? null) : null;
   const hoverStatus = hoverSession?.status ?? "idle";
   const hoverProject = hoverSession ? (projectNameById[hoverSession.projectId] ?? "") : "";
@@ -498,9 +542,9 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
     setManagedId(null);
   };
 
-  const pick = (id: string) => {
+  const pick = (id: string | "all") => {
     closePicker();
-    void store.selectProject(id);
+    store.setProjectFilter(id);
   };
 
   const pickAndAdd = () => {
@@ -513,6 +557,12 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
       .catch((err: Error) => {
         useNotifs.getState().push({ kind: "error", title: "Could not add project", message: err.message });
       });
+  };
+
+  const importDiscovered = (session: Session) => {
+    void store.importDiscovered(session).catch((err: Error) => {
+      useNotifs.getState().push({ kind: "error", title: "Could not import session", message: err.message });
+    });
   };
 
   const copyPath = (p: Project) => {
@@ -609,24 +659,19 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
 
   const renderRow = (s: Session, section: SidebarSection, hideState = false) => {
     const git = gitStatusBySession[s.id];
-    const pr = git?.pullRequest;
-    const prState = pr?.isDraft
-      ? "draft"
-      : pr?.state !== "OPEN"
-        ? pr?.state.toLowerCase()
-        : pr?.checks.failed
-          ? "failing"
-          : pr?.checks.pending
-            ? "pending"
-            : pr?.reviewDecision === "APPROVED"
-              ? "approved"
-              : pr?.reviewDecision === "CHANGES_REQUESTED" ? "changes-requested" : "open";
+    const links = sessionLinks(s);
+    const gitPr = git?.pullRequest ?? null;
+    const urgent = mostUrgentLink(links, summaryByKey, gitPr);
+    const chip = urgent ? displayChip(urgent, summaryByKey, gitPr) : null;
+    const chipTitle = chip ? (links.length > 1 ? linksTitle(links, summaryByKey, gitPr) : chip.title) : null;
+    const unseen = sessionHasUnseen(s, summaryByKey);
     const status = s.status ?? "idle";
     const projectName = projectNameById[s.projectId] ?? "";
     const gitSummary = [
       git?.branch ?? s.branch ? `Branch: ${git?.branch ?? s.branch}` : null,
       git?.worktreePath ?? s.worktreePath ? `Worktree: ${git?.worktreeName ?? shortPath(git?.worktreePath ?? s.worktreePath ?? "")}` : null,
-      pr ? `PR #${pr.number} ${prState?.replace("-", " ") ?? ""}`.trim() : null,
+      chipTitle,
+      unseen ? "PR updated since last visit" : null,
       git && !git.clean ? `${git.dirtyCount} changed ${git.dirtyCount === 1 ? "file" : "files"}` : null
     ].filter((value): value is string => Boolean(value));
     const rowTitle = [s.title, projectName ? `Project: ${projectName}` : null, ...gitSummary].filter(Boolean).join("\n");
@@ -727,7 +772,7 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
           suppressClickRef.current = false;
           return;
         }
-        store.selectSession(s.id);
+        selectSession(s.id);
       }}
       onContextMenu={(e) => {
         e.preventDefault();
@@ -756,6 +801,8 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
         <span className="session-title">{s.title}</span>
       )}
       <span className="session-side">
+        {unseen && <span className="pr-unseen-dot" title="PR updated since last visit" />}
+        {chip && <PrChipBadge chip={chip} extra={links.length - 1} title={chipTitle ?? undefined} />}
         {(status === "working" || status === "input-required") && <span className={`session-dot status-${status}`} />}
         {status === "idle" || hideState ? (
           <span className="session-age">{ageLabel(s.updatedAt)}</span>
@@ -786,7 +833,7 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
             suppressClickRef.current = false;
             return;
           }
-          store.selectSession(s.id);
+          selectSession(s.id);
         }}
         onContextMenu={(e) => {
           e.preventDefault();
@@ -923,85 +970,123 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
         <DebugMenu />
       </div>
       <div className="brand">
-        <div className="search-row ghost">
-          <Search className="search-icon" aria-hidden="true" size={15} />
-          <input
-            ref={searchRef}
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search"
-          />
-          {query ? (
-            <button className="icon-btn" aria-label="Clear search" onClick={() => setQuery("")}>
-              <X aria-hidden="true" size={15} />
-            </button>
-          ) : (
-            <span className="search-kbd">Ctrl+K</span>
-          )}
+        <button
+          type="button"
+          className={`side-new-session${newSessionActive ? " active" : ""}`}
+          onClick={() => {
+            openSessionView();
+            store.startNewSession();
+          }}
+          title="New session (Ctrl+T)"
+        >
+          <Plus size={15} aria-hidden="true" />
+          <span>New session</span>
+          <span className="side-kbd">Ctrl T</span>
+        </button>
+        <div className="side-nav">
           <button
-            className="new-session-btn"
-            disabled={!activeProjectId}
-            onClick={() => store.startNewSession()}
-            title={`New session in ${activeProject?.name ?? "…"}`}
-            aria-label="New session"
+            type="button"
+            className={`side-nav-row${inboxActive ? " active" : ""}`}
+            onClick={openInbox}
+            title={inboxTitle}
+            aria-label={inboxLabel}
+            aria-pressed={inboxActive}
           >
-            <SquarePen size={16} />
+            <GitPullRequest size={15} aria-hidden="true" />
+            <span className="side-nav-label">Pull requests</span>
+            <span className="side-nav-end">
+              {anyUnseen && <span className="pr-unseen-dot" aria-hidden="true" />}
+              {attentionCount > 0 && (
+                <span className="side-nav-badge" aria-hidden="true">
+                  {attentionCount > 99 ? "99+" : attentionCount}
+                </span>
+              )}
+            </span>
           </button>
+          <label className="side-nav-row side-nav-search">
+            <Search size={15} aria-hidden="true" />
+            <input
+              ref={searchRef}
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search"
+              aria-label="Search sessions"
+            />
+            <span className="side-nav-end">
+              {query ? (
+                <button type="button" className="icon-btn" aria-label="Clear search" onClick={() => setQuery("")}>
+                  <X aria-hidden="true" size={14} />
+                </button>
+              ) : (
+                <span className="side-kbd">Ctrl K</span>
+              )}
+            </span>
+          </label>
         </div>
-        <div className="project-bar">
-          <div className="picker">
-            <button className="picker-btn" onClick={() => setPickerOpen((o) => !o)} aria-haspopup="listbox" aria-expanded={pickerOpen}>
-            <Folder className="picker-icon" aria-hidden="true" size={16} />
-            <span className="picker-name">{projectFilter === "all" ? "All projects" : (filterProject?.name ?? activeProject?.name ?? "Select project…")}</span>
-            <span className="picker-chevron">{pickerOpen ? <ChevronUp aria-hidden="true" size={14} /> : <ChevronDown aria-hidden="true" size={14} />}</span>
+      </div>
+      <div className="side-list-head">
+        <div className="picker side-filter">
+          <button
+            ref={filterBtnRef}
+            type="button"
+            className={`side-filter-btn${filterProject ? " filtered" : ""}${pickerOpen ? " open" : ""}`}
+            onClick={() => setPickerOpen((o) => !o)}
+            aria-haspopup="listbox"
+            aria-expanded={pickerOpen}
+            title="Filter sessions by project"
+          >
+            <ListFilter size={12} aria-hidden="true" />
+            <span className="side-filter-name">{filterProject?.name ?? "All projects"}</span>
+            {pickerOpen ? <ChevronUp aria-hidden="true" size={12} /> : <ChevronDown aria-hidden="true" size={12} />}
           </button>
           {pickerOpen && (
             <>
               <div className="picker-backdrop" onClick={closePicker} />
               <div
                 className="picker-panel"
-                role="listbox"
                 onKeyDown={(e) => {
-                  if (e.key === "Escape") closePicker();
+                  if (e.key === "Escape") {
+                    e.stopPropagation();
+                    closePicker();
+                    filterBtnRef.current?.focus();
+                    return;
+                  }
                   if (e.key === "Enter" && visibleProjects.length > 0 && document.activeElement?.tagName === "INPUT") {
                     pick(visibleProjects[0].id);
                   }
                 }}
               >
-        <div className="search-row">
+                <div className="search-row">
                   <Search className="search-icon" aria-hidden="true" size={15} />
                   <input
                     autoFocus
                     value={projectQuery}
                     onChange={(e) => setProjectQuery(e.target.value)}
-                    placeholder="Search projects…"
+                    placeholder="Filter by project…"
                   />
                 </div>
                 <div className="picker-list">
                   <div
                     className={`picker-row${projectFilter === "all" ? " active" : ""}`}
-                    onClick={() => {
-                      closePicker();
-                      store.setProjectFilter("all");
-                    }}
-                    role="option"
-                    aria-selected={projectFilter === "all"}
+                    onClick={() => pick("all")}
+                    aria-current={projectFilter === "all" ? "true" : undefined}
                   >
                     <span className="name">All projects</span>
+                    <span className="picker-count">{totalCount}</span>
                   </div>
                   {visibleProjects.map((p) => (
                     <div key={p.id}>
                       <div
                         className={`picker-row${p.id === projectFilter ? " active" : ""}`}
                         onClick={() => pick(p.id)}
-                        role="option"
-                        aria-selected={p.id === projectFilter}
+                        aria-current={p.id === projectFilter ? "true" : undefined}
                         title={p.rootPath}
                       >
                         <span className="avatar" style={avatarStyle(p.name)}>
                           {initials(p.name)}
                         </span>
                         <span className="name">{p.name}</span>
+                        <span className="picker-count">{liveCount(sessionsByProject[p.id])}</span>
                         <button
                           className={`gear${managedId === p.id ? " open" : ""}`}
                           title="Project details"
@@ -1040,7 +1125,22 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
               </div>
             </>
           )}
-          </div>
+        </div>
+        <div className="side-quick" role="group" aria-label="Quick filters">
+          {QUICK_FILTER_UI.map(({ id, label, Icon }) => (
+            <button
+              key={id}
+              type="button"
+              className={`side-quick-btn${quickFilter === id ? " on" : ""}${quickCounts[id] === 0 ? " is-zero" : ""}`}
+              onClick={() => setQuickFilter((current) => toggleQuickFilter(current, id))}
+              aria-pressed={quickFilter === id}
+              title={`${label} (${quickCounts[id]})`}
+              aria-label={`${label}, ${quickCounts[id]}`}
+            >
+              <Icon size={12} aria-hidden="true" />
+              <span>{quickCounts[id]}</span>
+            </button>
+          ))}
         </div>
       </div>
       <div className="session-list" ref={listRef} onScroll={clearHover}>
@@ -1066,7 +1166,7 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
           {renderRows(shownPreview, "main")}
           {projectFilter !== "all" && renderResolvedToggle(projectFilter, resolvedPreview)}
           {shownPreview.length === 0 && resolvedPreview.length === 0 && workingSetShown.length === 0 && (
-            <div className="side-empty">{query ? "No matches." : "No sessions yet."}</div>
+            <div className="side-empty">{query || quickFilter !== "all" ? "No matches." : "No sessions yet."}</div>
           )}
         </div>
         {resolvedPreview.length === 0 && dragged && (
@@ -1081,7 +1181,7 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
               <div key={s.id} className="discovered-row" title={s.title}>
                 <DriverIcon driver={s.driver} size={14} />
                 <span className="session-title">{s.title}</span>
-                <button className="btn" style={{ fontSize: 11, padding: "3px 8px" }} onClick={() => void store.importDiscovered(s)} title="Import into cw-code">
+                <button className="btn" style={{ fontSize: 11, padding: "3px 8px" }} onClick={() => importDiscovered(s)} title="Import into cw-code">
                   Import
                 </button>
               </div>

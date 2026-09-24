@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { AppSettings, CliBinary, CliDiscoveredCandidate, CliDiscoverResult, CommandInvocation, CommandOption, CreateSessionOptions, GitBranchInfo, GitDiffMode, GitDiffResult, GitStatus, HarnessId, Project, RetryConnectionResult, SessionCleanupResult, SessionMeta, SessionStatus, SkillDetail, SkillMeta, SkillSaveInput, SkillsListResult, SourceControlHealth, SubagentToolsResult, WorktreePruneSummary } from "@cw-code/contracts";
+import type { AppSettings, CliBinary, CliDiscoveredCandidate, CliDiscoverResult, CommandInvocation, CommandOption, CreateSessionOptions, GitBranchInfo, GitDiffMode, GitDiffResult, GitStatus, HarnessId, PrDetail, PrInboxResult, Project, ProjectGitHubRepo, PrRef, PrWorkflow, RetryConnectionResult, SessionCleanupResult, SessionMeta, SessionPrLink, SessionStatus, SkillDetail, SkillMeta, SkillSaveInput, SkillsListResult, SourceControlHealth, SubagentToolsResult, WorktreePruneSummary } from "@cw-code/contracts";
 
 export type PermissionMode = "auto" | "acceptEdits" | "bypassPermissions" | "manual";
 export type EffortLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
@@ -65,7 +65,7 @@ export interface CwApi {
   getSubagentTools(sessionId: string, agentId: string): Promise<SubagentToolsResult>;
   activeTurns(): Promise<Array<{ sessionId: string; turnId: string; startedAt: number }>>;
   retryConnection(sessionId: string): Promise<RetryConnectionResult>;
-  startTurn(sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[]; command?: CommandInvocation }): Promise<string>;
+  startTurn(sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[]; command?: CommandInvocation; prRefs?: PrRef[] }): Promise<string>;
   interrupt(turnId: string): Promise<void>;
   respondApproval(requestId: string, decision: "accept" | "acceptForSession" | "acceptGlobal" | "decline" | "cancel"): Promise<void>;
   respondQuestion(requestId: string, answers: Record<string, string>): Promise<void>;
@@ -81,6 +81,7 @@ export interface CwApi {
   setComposer(sessionId: string, prefs: ComposerPrefs): Promise<ComposerPrefs>;
   getSettings(): Promise<AppSettings>;
   setSettings(patch: Partial<AppSettings>): Promise<AppSettings>;
+  getDefaultPrWorkflows(): Promise<PrWorkflow[]>;
   skills: {
     list(): Promise<SkillsListResult>;
     get(name: string): Promise<SkillDetail>;
@@ -97,8 +98,18 @@ export interface CwApi {
   getSourceControlHealth(projectId?: string): Promise<SourceControlHealth>;
   setProjectGitHubAccount(projectId: string, account: { host: string; login: string } | null): Promise<Project>;
   setRepositoryGitIdentity(projectId: string, name: string, email: string): Promise<void>;
+  getPrInbox(force?: boolean): Promise<PrInboxResult>;
+  getPrDetail(ref: PrRef): Promise<PrDetail>;
+  getPrDiff(ref: PrRef): Promise<string>;
+  getPrCheckLog(ref: PrRef, runId: number): Promise<string>;
+  clonePrRepo(ref: PrRef): Promise<Project>;
+  getProjectGitHubRepos(): Promise<ProjectGitHubRepo[]>;
+  linkSessionPr(sessionId: string, link: SessionPrLink): Promise<SessionMeta>;
+  unlinkSessionPr(sessionId: string, ref: PrRef): Promise<SessionMeta>;
+  markSessionPrSeen(sessionId: string, ref: PrRef, headSha: string | null): Promise<SessionMeta>;
   onTurnEvent(cb: (event: unknown) => void): () => void;
   onSessionTitle(cb: (msg: { sessionId: string; title: string }) => void): () => void;
+  onSessionUpdated(cb: (session: SessionMeta) => void): () => void;
   readFile(sessionId: string, path: string): Promise<string>;
   readOutsideFile(path: string): Promise<string>;
   saveFile(sessionId: string, path: string, content: string): Promise<void>;
@@ -162,8 +173,8 @@ const api: CwApi = {
     ipcRenderer.invoke("sessions.subagentTools", { sessionId, agentId }),
   activeTurns: () => ipcRenderer.invoke("sessions.activeTurns"),
   retryConnection: (sessionId: string) => ipcRenderer.invoke("sessions.retryConnection", { sessionId }),
-  startTurn: (sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[]; command?: CommandInvocation }) =>
-    ipcRenderer.invoke("turns.start", { sessionId, prompt, prefs: opts?.prefs, attachments: opts?.attachments, command: opts?.command }),
+  startTurn: (sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[]; command?: CommandInvocation; prRefs?: PrRef[] }) =>
+    ipcRenderer.invoke("turns.start", { sessionId, prompt, prefs: opts?.prefs, attachments: opts?.attachments, command: opts?.command, prRefs: opts?.prRefs }),
   interrupt: (turnId: string) => ipcRenderer.invoke("turns.interrupt", { turnId }),
   respondApproval: (requestId: string, decision: "accept" | "acceptForSession" | "acceptGlobal" | "decline" | "cancel") =>
     ipcRenderer.invoke("approvals.respond", { requestId, decision }),
@@ -187,6 +198,7 @@ const api: CwApi = {
     ipcRenderer.invoke("composer.set", { sessionId, prefs }),
   getSettings: () => ipcRenderer.invoke("settings.get"),
   setSettings: (patch: Partial<AppSettings>) => ipcRenderer.invoke("settings.set", patch),
+  getDefaultPrWorkflows: () => ipcRenderer.invoke("settings.prWorkflowDefaults"),
   skills: {
     list: () => ipcRenderer.invoke("skills.list"),
     get: (name: string) => ipcRenderer.invoke("skills.get", name),
@@ -207,6 +219,16 @@ const api: CwApi = {
     ipcRenderer.invoke("git.setProjectAccount", { projectId, account }),
   setRepositoryGitIdentity: (projectId: string, name: string, email: string) =>
     ipcRenderer.invoke("git.setIdentity", { projectId, name, email }),
+  getPrInbox: (force?: boolean) => ipcRenderer.invoke("prs.inbox", { force }),
+  getPrDetail: (ref: PrRef) => ipcRenderer.invoke("prs.detail", { ref }),
+  getPrDiff: (ref: PrRef) => ipcRenderer.invoke("prs.diff", { ref }),
+  getPrCheckLog: (ref: PrRef, runId: number) => ipcRenderer.invoke("prs.checkLog", { ref, runId }),
+  clonePrRepo: (ref: PrRef) => ipcRenderer.invoke("prs.clone", { ref }),
+  getProjectGitHubRepos: () => ipcRenderer.invoke("prs.projectRepos"),
+  linkSessionPr: (sessionId: string, link: SessionPrLink) => ipcRenderer.invoke("sessions.linkPr", { sessionId, link }),
+  unlinkSessionPr: (sessionId: string, ref: PrRef) => ipcRenderer.invoke("sessions.unlinkPr", { sessionId, ref }),
+  markSessionPrSeen: (sessionId: string, ref: PrRef, headSha: string | null) =>
+    ipcRenderer.invoke("sessions.markPrSeen", { sessionId, ref, headSha }),
   onTurnEvent: (cb) => {
     const listener = (_e: unknown, event: unknown) => cb(event);
     ipcRenderer.on("turn.event", listener as never);
@@ -216,6 +238,11 @@ const api: CwApi = {
     const listener = (_e: unknown, msg: { sessionId: string; title: string }) => cb(msg);
     ipcRenderer.on("session.title", listener as never);
     return () => ipcRenderer.removeListener("session.title", listener as never);
+  },
+  onSessionUpdated: (cb) => {
+    const listener = (_e: unknown, session: SessionMeta) => cb(session);
+    ipcRenderer.on("session.updated", listener as never);
+    return () => ipcRenderer.removeListener("session.updated", listener as never);
   },
   readFile: (sessionId: string, path: string) => ipcRenderer.invoke("fs.readFile", { sessionId, path }),
   readOutsideFile: (path: string) => ipcRenderer.invoke("fs.readOutsideFile", { path }),

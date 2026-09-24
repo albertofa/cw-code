@@ -285,6 +285,49 @@ describe("appStore pending model per harness", () => {
   });
 });
 
+describe("appStore applySession", () => {
+  it("replaces the stored session so removed keys disappear", () => {
+    const base = {
+      id: "sess_apply",
+      projectId: "proj_apply",
+      driver: "claude" as const,
+      title: "Linked",
+      status: "idle" as const,
+      resumeCursor: "",
+      createdAt: 1,
+      updatedAt: 1
+    };
+    const other = { ...base, id: "sess_other" };
+    const prs = [{ ref: { host: "github.com", owner: "acme", repo: "widgets", number: 7 }, origin: "opened" as const, lastSeenSha: "a", lastSeenAt: 1 }];
+    useAppStore.setState({ sessionsByProject: { proj_apply: [{ ...base, prs }, other] } });
+    useAppStore.getState().applySession({ ...base, updatedAt: 2 });
+    const [updated, untouched] = useAppStore.getState().sessionsByProject.proj_apply;
+    expect(updated).toEqual({ ...base, updatedAt: 2 });
+    expect("prs" in updated).toBe(false);
+    expect(untouched).toBe(other);
+  });
+
+  it("keeps the renderer's status while a turn is busy for that session", () => {
+    const base = {
+      id: "sess_busy",
+      projectId: "proj_busy",
+      driver: "claude" as const,
+      title: "Busy",
+      status: "working" as const,
+      resumeCursor: "",
+      createdAt: 1,
+      updatedAt: 1
+    };
+    useAppStore.setState({ sessionsByProject: { proj_busy: [base] }, busyTurns: { sess_busy: "turn_1" } });
+    useAppStore.getState().applySession({ ...base, status: "idle", title: "Renamed", updatedAt: 2 });
+    expect(useAppStore.getState().sessionsByProject.proj_busy[0]).toEqual({ ...base, title: "Renamed", updatedAt: 2 });
+
+    useAppStore.setState({ busyTurns: {} });
+    useAppStore.getState().applySession({ ...base, status: "idle", updatedAt: 3 });
+    expect(useAppStore.getState().sessionsByProject.proj_busy[0].status).toBe("idle");
+  });
+});
+
 describe("appStore preview per session", () => {
   beforeEach(() => {
     useAppStore.setState({ previewBySession: {} });

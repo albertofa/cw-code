@@ -5,11 +5,50 @@ import type {
   CommandInvocation,
   CommandOption,
   HarnessId,
+  PrBucket,
+  PrCheck,
+  PrCiState,
+  PrCommit,
+  PrDetail,
+  PrInboxResult,
+  ProjectGitHubRepo,
+  PrLinkOrigin,
+  PrMergeable,
+  PrRef,
+  PrReviewer,
+  PrReviewState,
+  PrReviewThread,
+  PrSummary,
+  PrThreadComment,
+  PrTimelineItem,
+  PrWorkflow,
+  SessionPrLink,
   SkillDetail,
   SkillMeta,
   SkillSaveInput,
   SkillsListResult
 } from "@cw-code/contracts";
+
+export type {
+  PrBucket,
+  PrCheck,
+  PrCiState,
+  PrCommit,
+  PrDetail,
+  PrInboxResult,
+  ProjectGitHubRepo,
+  PrLinkOrigin,
+  PrMergeable,
+  PrRef,
+  PrReviewer,
+  PrReviewState,
+  PrReviewThread,
+  PrSummary,
+  PrThreadComment,
+  PrTimelineItem,
+  PrWorkflow,
+  SessionPrLink
+};
 
 export interface Project {
   id: string;
@@ -33,6 +72,8 @@ export interface Session {
   updatedAt: number;
   worktreePath?: string;
   branch?: string;
+  prs?: SessionPrLink[];
+  prUnlinked?: string[];
 }
 
 export type CreateWorkspaceMode = "current" | "new" | "previous";
@@ -42,6 +83,7 @@ export interface CreateSessionOptions {
   useWorktree?: boolean;
   mode?: CreateWorkspaceMode;
   reuseWorktreePath?: string;
+  prHead?: { number: number; headRefName: string; headRefOid: string; viewerIsAuthor: boolean };
 }
 
 export interface SessionCleanupResult {
@@ -358,6 +400,11 @@ export interface AppSettings {
   autoTitleDriver: DriverName;
   autoTitleModel: string;
   autoTitleEffort: EffortLevel;
+  prRefreshIntervalSeconds: number;
+  prCloneRoot: string;
+  prAttributionEnabled: boolean;
+  prAttributionText: string;
+  prWorkflows: PrWorkflow[];
 }
 
 export type SettingsPatch = Partial<AppSettings>;
@@ -399,7 +446,7 @@ export interface CwApi {
   getSubagentTools(sessionId: string, agentId: string): Promise<SubagentToolsResult>;
   activeTurns(): Promise<ActiveTurn[]>;
   retryConnection(sessionId: string): Promise<RetryConnectionResult>;
-  startTurn(sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[]; command?: CommandInvocation }): Promise<string>;
+  startTurn(sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[]; command?: CommandInvocation; prRefs?: PrRef[] }): Promise<string>;
   interrupt(turnId: string): Promise<void>;
   respondApproval(requestId: string, decision: ApprovalDecision): Promise<void>;
   respondQuestion(requestId: string, answers: Record<string, string>): Promise<void>;
@@ -415,6 +462,7 @@ export interface CwApi {
   setComposer(sessionId: string, prefs: ComposerPrefs): Promise<ComposerPrefs>;
   getSettings(): Promise<AppSettings>;
   setSettings(patch: SettingsPatch): Promise<AppSettings>;
+  getDefaultPrWorkflows(): Promise<PrWorkflow[]>;
   skills: {
     list(): Promise<SkillsListResult>;
     get(name: string): Promise<SkillDetail>;
@@ -431,8 +479,18 @@ export interface CwApi {
   getSourceControlHealth(projectId?: string): Promise<SourceControlHealth>;
   setProjectGitHubAccount(projectId: string, account: { host: string; login: string } | null): Promise<Project>;
   setRepositoryGitIdentity(projectId: string, name: string, email: string): Promise<void>;
+  getPrInbox(force?: boolean): Promise<PrInboxResult>;
+  getPrDetail(ref: PrRef): Promise<PrDetail>;
+  getPrDiff(ref: PrRef): Promise<string>;
+  getPrCheckLog(ref: PrRef, runId: number): Promise<string>;
+  clonePrRepo(ref: PrRef): Promise<Project>;
+  getProjectGitHubRepos(): Promise<ProjectGitHubRepo[]>;
+  linkSessionPr(sessionId: string, link: SessionPrLink): Promise<Session>;
+  unlinkSessionPr(sessionId: string, ref: PrRef): Promise<Session>;
+  markSessionPrSeen(sessionId: string, ref: PrRef, headSha: string | null): Promise<Session>;
   onTurnEvent(cb: (msg: { sessionId: string; event: TurnEvent }) => void): () => void;
   onSessionTitle(cb: (msg: { sessionId: string; title: string }) => void): () => void;
+  onSessionUpdated(cb: (session: Session) => void): () => void;
   readFile(sessionId: string, path: string): Promise<string>;
   readOutsideFile(path: string): Promise<string>;
   saveFile(sessionId: string, path: string, content: string): Promise<void>;

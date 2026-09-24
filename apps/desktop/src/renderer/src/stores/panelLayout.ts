@@ -15,7 +15,8 @@ export const DOCKABLE_TABS: readonly DockableTabId[] = [
   "opencode",
   "codex",
   "shell",
-  "preview"
+  "preview",
+  "pr"
 ];
 
 export const PANELS: readonly PanelId[] = ["main", "right", "bottom"];
@@ -56,7 +57,8 @@ export const DEFAULT_DOCK: TabDockState = {
   opencode: "closed",
   codex: "closed",
   shell: "closed",
-  preview: "closed"
+  preview: "closed",
+  pr: "closed"
 };
 
 export const DEFAULT_AUTO: TabAutoLocation = {
@@ -67,7 +69,8 @@ export const DEFAULT_AUTO: TabAutoLocation = {
   opencode: "right",
   codex: "right",
   shell: "bottom",
-  preview: "right"
+  preview: "right",
+  pr: "right"
 };
 
 export function defaultLayout(): PanelLayoutSnapshot {
@@ -292,10 +295,13 @@ export function resolveMainTab(
   mainOrder: MainTabId[],
   dockByTab: TabDockState,
   driver: DockableTabId | undefined,
-  activeMain: MainTabId
+  activeMain: MainTabId,
+  hasPr: boolean
 ): MainTabId {
   const visible = mainOrder.filter(
-    (id) => id === "chat" || (dockByTab[id] === "main" && (!HARNESS_TABS.includes(id) || id === driver))
+    (id) =>
+      id === "chat" ||
+      (dockByTab[id] === "main" && (!HARNESS_TABS.includes(id) || id === driver) && (id !== "pr" || hasPr))
   );
   return visible.includes(activeMain) ? activeMain : "chat";
 }
