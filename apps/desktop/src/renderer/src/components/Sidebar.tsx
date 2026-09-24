@@ -659,14 +659,18 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
     window.setTimeout(() => setLandedId((id) => (id === fromId ? null : id)), 850);
   };
 
-  const renderRow = (s: Session, section: SidebarSection, hideState = false) => {
-    const git = gitStatusBySession[s.id];
+  const prBadge = (s: Session) => {
     const links = sessionLinks(s);
-    const gitPr = git?.pullRequest ?? null;
+    const gitPr = gitStatusBySession[s.id]?.pullRequest ?? null;
     const urgent = mostUrgentLink(links, summaryByKey, gitPr);
     const chip = urgent ? displayChip(urgent, summaryByKey, gitPr) : null;
     const chipTitle = chip ? (links.length > 1 ? linksTitle(links, summaryByKey, gitPr) : chip.title) : null;
-    const unseen = sessionHasUnseen(s, summaryByKey);
+    return { links, chip, chipTitle, unseen: sessionHasUnseen(s, summaryByKey) };
+  };
+
+  const renderRow = (s: Session, section: SidebarSection, hideState = false) => {
+    const git = gitStatusBySession[s.id];
+    const { links, chip, chipTitle, unseen } = prBadge(s);
     const status = s.status ?? "idle";
     const projectName = projectNameById[s.projectId] ?? "";
     const gitSummary = [
@@ -820,6 +824,7 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
     const projectName = projectNameById[s.projectId] ?? "";
     const branch = gitStatusBySession[s.id]?.branch ?? s.branch;
     const badge = s.status === "holding" ? ageLabel(s.updatedAt) : stateLabel(s.status);
+    const { links, chip, chipTitle, unseen } = prBadge(s);
     return (
       <div
         key={s.id}
@@ -874,7 +879,11 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
               {branch}
             </span>
           ) : null}
-          <DriverIcon driver={s.driver} size={14} />
+          <span className="working-card-side">
+            {unseen && <span className="pr-unseen-dot" title="PR updated since last visit" />}
+            {chip && <PrChipBadge chip={chip} extra={links.length - 1} title={chipTitle ?? undefined} />}
+            <DriverIcon driver={s.driver} size={14} />
+          </span>
         </div>
       </div>
     );

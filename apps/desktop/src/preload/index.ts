@@ -108,7 +108,7 @@ export interface CwApi {
   getProjectGitHubRepos(): Promise<ProjectGitHubRepo[]>;
   linkSessionPr(sessionId: string, link: SessionPrLink): Promise<SessionMeta>;
   unlinkSessionPr(sessionId: string, ref: PrRef): Promise<SessionMeta>;
-  markSessionPrSeen(sessionId: string, ref: PrRef, headSha: string | null): Promise<SessionMeta>;
+  markSessionPrSeen(sessionId: string, ref: PrRef, headSha: string | null, seenAt: number | null): Promise<SessionMeta>;
   onTurnEvent(cb: (event: unknown) => void): () => void;
   onSessionTitle(cb: (msg: { sessionId: string; title: string }) => void): () => void;
   onSessionUpdated(cb: (session: SessionMeta) => void): () => void;
@@ -231,8 +231,8 @@ const api: CwApi = {
   getProjectGitHubRepos: () => ipcRenderer.invoke("prs.projectRepos"),
   linkSessionPr: (sessionId: string, link: SessionPrLink) => ipcRenderer.invoke("sessions.linkPr", { sessionId, link }),
   unlinkSessionPr: (sessionId: string, ref: PrRef) => ipcRenderer.invoke("sessions.unlinkPr", { sessionId, ref }),
-  markSessionPrSeen: (sessionId: string, ref: PrRef, headSha: string | null) =>
-    ipcRenderer.invoke("sessions.markPrSeen", { sessionId, ref, headSha }),
+  markSessionPrSeen: (sessionId: string, ref: PrRef, headSha: string | null, seenAt: number | null) =>
+    ipcRenderer.invoke("sessions.markPrSeen", { sessionId, ref, headSha, seenAt }),
   onTurnEvent: (cb) => {
     const listener = (_e: unknown, event: unknown) => cb(event);
     ipcRenderer.on("turn.event", listener as never);

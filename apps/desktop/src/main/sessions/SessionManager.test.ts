@@ -1295,7 +1295,7 @@ describe("SessionManager", () => {
     manager.linkPr(session.id, { ref: widgets, origin: "linked", lastSeenSha: "a", lastSeenAt: 0 });
     manager.linkPr(session.id, { ref: gadgets, origin: "workflow", workflowId: "review", lastSeenSha: "b", lastSeenAt: 0 });
     manager.linkPr(session.id, { ref: widgets, origin: "opened", lastSeenSha: "a2", lastSeenAt: 1 });
-    let meta = manager.markPrSeen(session.id, gadgets, "b2");
+    let meta = manager.markPrSeen(session.id, gadgets, "b2", null);
     expect(meta.prs?.map((link) => [link.ref.number, link.origin, link.lastSeenSha])).toEqual([
       [42, "opened", "a2"],
       [7, "workflow", "b2"]

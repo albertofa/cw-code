@@ -6,8 +6,13 @@ export function hasUnseen(pr: PrSummary, link: SessionPrLink): boolean {
 
 export function updatesSince(detail: PrDetail, link: SessionPrLink): PrUpdate[] {
   const updates: PrUpdate[] = [];
+  let ownActivity = false;
   for (const item of detail.timeline) {
     if (item.at <= link.lastSeenAt || isOwnPush(item, link)) continue;
+    if (isViewerItem(detail, item)) {
+      ownActivity = true;
+      continue;
+    }
     const update = toUpdate(item, detail);
     if (update) updates.push(update);
   }
@@ -15,12 +20,38 @@ export function updatesSince(detail: PrDetail, link: SessionPrLink): PrUpdate[] 
   if (checks) updates.push(checks);
   const headMoved = link.lastSeenSha !== "" && detail.headRefOid !== link.lastSeenSha;
   if (headMoved && !updates.some((update) => update.kind === "commits")) {
-    updates.push({ kind: "commits", at: detail.updatedAt, actor: null, summary: "New commits since the session last ran" });
+    if (onlyViewerCommits(detail, link)) {
+      ownActivity = true;
+    } else {
+      updates.push({ kind: "commits", at: detail.updatedAt, actor: null, summary: "New commits since the session last ran" });
+    }
   }
-  if (updates.length === 0 && hasUnseen(detail, link)) {
+  if (updates.length === 0 && !ownActivity && hasUnseen(detail, link)) {
     updates.push({ kind: "comment", at: detail.updatedAt, actor: null, summary: "PR updated" });
   }
   return updates.sort((a, b) => b.at - a.at);
+}
+
+export function seenThrough(pr: PrSummary | null | undefined, updates: PrUpdate[]): number | null {
+  const times = updates.map((update) => update.at);
+  if (pr) times.push(pr.updatedAt);
+  return times.length > 0 ? Math.max(...times) : null;
+}
+
+function isViewer(detail: PrDetail, login: string): boolean {
+  return detail.viewerLogin !== "" && login === detail.viewerLogin;
+}
+
+function isViewerItem(detail: PrDetail, item: PrTimelineItem): boolean {
+  if (item.kind === "commits") return item.commits.every((commit) => isViewer(detail, commit.author));
+  return isViewer(detail, item.actor);
+}
+
+function onlyViewerCommits(detail: PrDetail, link: SessionPrLink): boolean {
+  const seenIndex = detail.commits.findIndex((commit) => commit.oid === link.lastSeenSha);
+  const fresh =
+    seenIndex >= 0 ? detail.commits.slice(seenIndex + 1) : detail.commits.filter((commit) => commit.committedAt > link.lastSeenAt);
+  return fresh.length > 0 && fresh.every((commit) => isViewer(detail, commit.author));
 }
 
 function isOwnPush(item: PrTimelineItem, link: SessionPrLink): boolean {

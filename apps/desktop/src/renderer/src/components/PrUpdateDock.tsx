@@ -6,7 +6,7 @@ import { usePrStore } from "../stores/prStore.js";
 import { formatRelativeAge } from "./prInboxModel.js";
 import { PrUpdateIcon } from "./PrUpdateIcon.js";
 import { defaultFollowUpWorkflowId, followUpPrompt, followUpWorkflow, needsFailedLogs } from "./prSessionModel.js";
-import { updatesSince } from "./prUpdates.js";
+import { seenThrough, updatesSince } from "./prUpdates.js";
 import { prRefLabel } from "./sessionPrLinks.js";
 import { harnessLabel } from "./toolTabs.js";
 import { useLinkedPrs, usePrSettings, type LinkedPr } from "./useLinkedPr.js";
@@ -57,13 +57,23 @@ function seenHead(entry: DockEntry): string | null {
   return entry.item.detail?.headRefOid ?? entry.item.summary?.headRefOid ?? null;
 }
 
+function ViewButton({ entry }: { entry: DockEntry }) {
+  const openPr = usePrStore((s) => s.openPr);
+  const ref = entry.item.link.ref;
+  return (
+    <button className="pr-detail-btn ghost sm" onClick={() => (entry.isReview ? openPr(ref, "files") : openPr(ref))}>
+      <ExternalLink size={12} aria-hidden="true" />
+      {entry.isReview ? "Diff since review" : "View"}
+    </button>
+  );
+}
+
 export function PrUpdateDock({ sessionId }: { sessionId: string }) {
   const { session, items } = useLinkedPrs(sessionId);
   const busy = useAppStore((s) => s.busyTurns[sessionId] !== undefined);
   const sendPromptTo = useAppStore((s) => s.sendPromptTo);
   const applySession = useAppStore((s) => s.applySession);
   const openRunModal = usePrStore((s) => s.openRunModal);
-  const openPr = usePrStore((s) => s.openPr);
   const loadDetail = usePrStore((s) => s.loadDetail);
   const { settings, error: settingsError } = usePrSettings();
   const [previewOpen, setPreviewOpen] = useState(false);
@@ -87,14 +97,18 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
 
   if (!session || (changed.length === 0 && failed.length === 0)) return null;
 
+  const markSeen = async (targets: DockEntry[]) => {
+    for (const entry of targets) {
+      applySession(await window.cw.markSessionPrSeen(sessionId, entry.item.link.ref, seenHead(entry), seenThrough(entry.pr, entry.updates)));
+    }
+  };
+
   const dismiss = async (targets: DockEntry[]) => {
     if (working) return;
     setWorking("dismiss");
     setActionError(null);
     try {
-      for (const entry of targets) {
-        applySession(await window.cw.markSessionPrSeen(sessionId, entry.item.link.ref, seenHead(entry)));
-      }
+      await markSeen(targets);
     } catch (err) {
       setActionError(`Could not dismiss the update: ${errorMessage(err)}`);
     } finally {
@@ -144,9 +158,10 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
     if (!prompt || busy || working) return;
     setWorking("send");
     setActionError(null);
-    const covered = (single ? [single] : sendable).map((entry) => entry.item.link.ref);
+    const covered = single ? [single] : sendable;
     try {
-      await sendPromptTo(sessionId, prompt, undefined, { prRefs: covered });
+      await sendPromptTo(sessionId, prompt, undefined, { prRefs: covered.map((entry) => entry.item.link.ref) });
+      await markSeen(covered);
     } catch (err) {
       setActionError(`Could not send the update: ${errorMessage(err)}`);
     } finally {
@@ -198,11 +213,16 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
         <span className="pr-dock-title">{title}</span>
         <span className="pr-dock-badge">{totalUpdates}</span>
         <span className="pr-dock-spacer" />
-        {!single && (
-          <button className="pr-detail-btn ghost sm" onClick={() => void dismiss(changed)} disabled={working !== null}>
-            Dismiss all
-          </button>
-        )}
+        {single && <ViewButton entry={single} />}
+        <button
+          className="icon-btn pr-dock-dismiss"
+          onClick={() => void dismiss(changed)}
+          disabled={working !== null}
+          title={single ? "Dismiss until the next change" : "Dismiss all until the next change"}
+          aria-label={single ? `Dismiss update for ${prRefLabel(single.item.link.ref)}` : "Dismiss all pull request updates"}
+        >
+          <X size={14} aria-hidden="true" />
+        </button>
       </div>
       {changed.map((entry) => {
         const ref = entry.item.link.ref;
@@ -213,26 +233,25 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
                 <b>{prRefLabel(ref)}</b>
                 {entry.pr ? ` ${entry.pr.title}` : ""}
               </span>
-              {!single && <span className="pr-dock-badge">{entry.updates.length}</span>}
-              <span className="pr-dock-spacer" />
-              <button className="pr-detail-btn ghost sm" onClick={() => (entry.isReview ? openPr(ref, "files") : openPr(ref))}>
-                <ExternalLink size={12} aria-hidden="true" />
-                {entry.isReview ? "Diff since review" : "View"}
-              </button>
               {!single && (
-                <button className="pr-detail-btn ghost sm" onClick={() => openInModal(entry)}>
-                  {entry.logsNeeded ? "Review and send…" : "Other workflow"}
-                </button>
+                <>
+                  <span className="pr-dock-badge">{entry.updates.length}</span>
+                  <span className="pr-dock-spacer" />
+                  <ViewButton entry={entry} />
+                  <button className="pr-detail-btn ghost sm" onClick={() => openInModal(entry)}>
+                    {entry.logsNeeded ? "Review and send…" : "Other workflow"}
+                  </button>
+                  <button
+                    className="icon-btn pr-dock-dismiss"
+                    onClick={() => void dismiss([entry])}
+                    disabled={working !== null}
+                    title="Dismiss until the next change"
+                    aria-label={`Dismiss update for ${prRefLabel(ref)}`}
+                  >
+                    <X size={14} aria-hidden="true" />
+                  </button>
+                </>
               )}
-              <button
-                className="icon-btn pr-dock-dismiss"
-                onClick={() => void dismiss([entry])}
-                disabled={working !== null}
-                title="Dismiss until the next change"
-                aria-label={`Dismiss update for ${prRefLabel(ref)}`}
-              >
-                <X size={14} aria-hidden="true" />
-              </button>
             </div>
             <ul className="pr-dock-list">
               {entry.updates.map((update, index) => (

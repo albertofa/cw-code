@@ -316,6 +316,7 @@ function parseTimeline(value: unknown, threadIndex: Map<string, string[]>): PrTi
 export interface PrHeadInfo {
   headRefOid: string | null;
   state: PrSummary["state"] | null;
+  updatedAt: number | null;
 }
 
 export function parseHead(json: string): PrHeadInfo {
@@ -323,13 +324,14 @@ export function parseHead(json: string): PrHeadInfo {
   try {
     root = JSON.parse(json) as Record<string, unknown>;
   } catch {
-    return { headRefOid: null, state: null };
+    return { headRefOid: null, state: null, updatedAt: null };
   }
   const pr = asRecord(asRecord(asRecord(root.data).repository).pullRequest);
   const state = asString(pr.state);
   return {
     headRefOid: asString(pr.headRefOid) || null,
-    state: state === "OPEN" || state === "CLOSED" || state === "MERGED" ? state : null
+    state: state === "OPEN" || state === "CLOSED" || state === "MERGED" ? state : null,
+    updatedAt: asEpochMs(pr.updatedAt) || null
   };
 }
 
@@ -352,6 +354,7 @@ export function parseDetail(json: string, viewer: string): PrDetail | null {
     threads: parseThreads(pr.threads),
     checkRuns: parseCheckRuns(pr.checkRunCommits),
     commits: asNodes(pr.commits).map(parseCommitNode).filter((commit) => commit.oid),
-    reviewers: parseReviewers(pr.latestReviews)
+    reviewers: parseReviewers(pr.latestReviews),
+    viewerLogin: viewer
   };
 }

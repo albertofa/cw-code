@@ -514,7 +514,7 @@ export interface CwApi {
   getProjectGitHubRepos(): Promise<ProjectGitHubRepo[]>;
   linkSessionPr(sessionId: string, link: SessionPrLink): Promise<Session>;
   unlinkSessionPr(sessionId: string, ref: PrRef): Promise<Session>;
-  markSessionPrSeen(sessionId: string, ref: PrRef, headSha: string | null): Promise<Session>;
+  markSessionPrSeen(sessionId: string, ref: PrRef, headSha: string | null, seenAt: number | null): Promise<Session>;
   onTurnEvent(cb: (msg: { sessionId: string; event: TurnEvent }) => void): () => void;
   onSessionTitle(cb: (msg: { sessionId: string; title: string }) => void): () => void;
   onSessionUpdated(cb: (session: Session) => void): () => void;

@@ -55,7 +55,8 @@ let pullRequests: PullRequestService;
 const sessions = new SessionManager({
   prHead: (ref) => pullRequests.knownHead(ref),
   prHeadRefresh: (ref) => pullRequests.refreshHead(ref),
-  prState: (ref) => pullRequests.knownState(ref)
+  prState: (ref) => pullRequests.knownState(ref),
+  prUpdatedAt: (ref) => pullRequests.knownUpdatedAt(ref)
 });
 const skills = new SkillsStore();
 const files = new FileService();
@@ -381,10 +382,11 @@ function registerIpc(): void {
     assertPrRef(args.ref);
     return sessions.unlinkPr(args.sessionId, args.ref);
   });
-  ipcMain.handle("sessions.markPrSeen", (_e, args: { sessionId: string; ref: PrRef; headSha: string | null }) => {
+  ipcMain.handle("sessions.markPrSeen", (_e, args: { sessionId: string; ref: PrRef; headSha: string | null; seenAt: number | null }) => {
     assertPrRef(args.ref);
     if (args.headSha !== null && typeof args.headSha !== "string") throw new Error("invalid headSha");
-    return sessions.markPrSeen(args.sessionId, args.ref, args.headSha);
+    if (args.seenAt !== null && !Number.isFinite(args.seenAt)) throw new Error("invalid seenAt");
+    return sessions.markPrSeen(args.sessionId, args.ref, args.headSha, args.seenAt);
   });
   ipcMain.handle("git.branches", (_e, args: { sessionId: string }) =>
     sessions.ensureWorktree(args.sessionId).then((root) => git.branches(root))

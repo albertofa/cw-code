@@ -92,6 +92,7 @@ export class PullRequestService {
   private cloneInFlight = new Map<string, Promise<Project>>();
   private knownHeads = new Map<string, string>();
   private knownStates = new Map<string, PrSummary["state"]>();
+  private knownUpdatedAts = new Map<string, number>();
 
   constructor(
     private git: GitService,
@@ -161,7 +162,7 @@ export class PullRequestService {
         return { account: accountInfo, items: [], fetchedAt, error: "Unexpected response from GitHub" };
       }
       const items = mergeInboxItems(parsed.map((entry) => entry.items));
-      for (const item of items) this.remember(item.ref, item.headRefOid, item.state);
+      for (const item of items) this.remember(item.ref, item.headRefOid, item.state, item.updatedAt);
       const truncated = parsed.some((entry) => entry.truncated);
       return { account: accountInfo, items, fetchedAt, error: null, truncated, limit: INBOX_SEARCH_LIMIT };
     } catch (error) {
@@ -183,7 +184,7 @@ export class PullRequestService {
     );
     const detail = parseDetail(stdout, account.login);
     if (!detail) throw new Error(`Could not load pull request #${ref.number}`);
-    this.remember(ref, detail.headRefOid, detail.state);
+    this.remember(ref, detail.headRefOid, detail.state, detail.updatedAt);
     return detail;
   }
 
@@ -266,10 +267,15 @@ export class PullRequestService {
     return this.knownStates.get(prKey(ref)) ?? null;
   }
 
-  private remember(ref: PrRef, head: string | null, state: PrSummary["state"] | null): void {
+  knownUpdatedAt(ref: PrRef): number | null {
+    return this.knownUpdatedAts.get(prKey(ref)) ?? null;
+  }
+
+  private remember(ref: PrRef, head: string | null, state: PrSummary["state"] | null, updatedAt: number | null): void {
     const key = prKey(ref);
     if (head) this.knownHeads.set(key, head);
     if (state) this.knownStates.set(key, state);
+    if (updatedAt !== null) this.knownUpdatedAts.set(key, Math.max(updatedAt, this.knownUpdatedAts.get(key) ?? 0));
   }
 
   async refreshHead(ref: PrRef): Promise<string | null> {
@@ -285,8 +291,8 @@ export class PullRequestService {
         REQUEST_TIMEOUT_MS,
         authenticatedEnvironment(account.host, token)
       );
-      const { headRefOid, state } = parseHead(stdout);
-      this.remember(ref, headRefOid, state);
+      const { headRefOid, state, updatedAt } = parseHead(stdout);
+      this.remember(ref, headRefOid, state, updatedAt);
       return headRefOid;
     } catch {
       return null;

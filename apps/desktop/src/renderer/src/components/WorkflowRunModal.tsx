@@ -391,7 +391,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
         await app.sendPromptTo(continueSession.id, prompt, undefined, { prRefs: [ref] });
         current = "seen";
         setStage(current);
-        app.applySession(await window.cw.markSessionPrSeen(continueSession.id, ref, detail.headRefOid));
+        app.applySession(await window.cw.markSessionPrSeen(continueSession.id, ref, detail.headRefOid, detail.updatedAt));
         finish(continueSession.id);
         return;
       }
@@ -426,7 +426,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
           origin: "workflow",
           workflowId: workflow.id,
           lastSeenSha: detail.headRefOid,
-          lastSeenAt: Date.now()
+          lastSeenAt: Math.max(Date.now(), detail.updatedAt)
         });
         useAppStore.getState().applySession(linked);
         setCreated({ sessionId, linked: true, note });

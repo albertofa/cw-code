@@ -965,7 +965,11 @@ body {
   white-space: nowrap;
 }
 
-.working-card-foot .driver-icon {
+.working-card-side {
+  display: inline-flex;
+  align-items: center;
+  flex: none;
+  gap: 5px;
   margin-left: auto;
 }
 

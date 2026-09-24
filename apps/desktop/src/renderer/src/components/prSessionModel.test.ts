@@ -59,6 +59,7 @@ function detail(overrides: Partial<PrDetail> = {}): PrDetail {
     checkRuns: [],
     commits: [],
     reviewers: [],
+    viewerLogin: "",
     ...overrides
   };
 }

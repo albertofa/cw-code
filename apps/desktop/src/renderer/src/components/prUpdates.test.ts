@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PrCheck, PrDetail, PrTimelineItem, SessionPrLink } from "@cw-code/contracts";
-import { firstUnseenIndex, hasUnseen, updatesSince } from "./prUpdates.js";
+import { firstUnseenIndex, hasUnseen, seenThrough, updatesSince } from "./prUpdates.js";
 
 function basePr(overrides: Partial<PrDetail> = {}): PrDetail {
   return {
@@ -33,6 +33,7 @@ function basePr(overrides: Partial<PrDetail> = {}): PrDetail {
     checkRuns: [],
     commits: [],
     reviewers: [],
+    viewerLogin: "",
     ...overrides
   };
 }
@@ -280,6 +281,47 @@ describe("updatesSince", () => {
     const link = baseLink();
     expect(hasUnseen(detail, link)).toBe(true);
     expect(updatesSince(detail, link)).toEqual([{ kind: "comment", at: 2_000, actor: null, summary: "PR updated" }]);
+  });
+
+  it("ignores reviews and comments posted by the viewer", () => {
+    const timeline: PrTimelineItem[] = [
+      { kind: "review", at: 1_500, actor: "albertofa", state: "CHANGES_REQUESTED", body: "", threadIds: [] },
+      { kind: "comment", at: 1_600, actor: "albertofa", body: "done" }
+    ];
+    const detail = basePr({ timeline, viewerLogin: "albertofa", updatedAt: 1_600 });
+    expect(updatesSince(detail, baseLink())).toEqual([]);
+  });
+
+  it("still reports other people's activity next to the viewer's", () => {
+    const timeline: PrTimelineItem[] = [
+      { kind: "comment", at: 1_500, actor: "albertofa", body: "mine" },
+      { kind: "comment", at: 1_600, actor: "rcosta", body: "theirs" }
+    ];
+    const detail = basePr({ timeline, viewerLogin: "albertofa", updatedAt: 1_600 });
+    expect(updatesSince(detail, baseLink()).map((update) => update.summary)).toEqual(["rcosta commented"]);
+  });
+
+  it("ignores commits the viewer pushed, even when the head moved past lastSeenSha", () => {
+    const commit = { oid: "sha-2", headline: "fix", author: "albertofa", committedAt: 900, ci: "none" as const };
+    const timeline: PrTimelineItem[] = [{ kind: "commits", at: 900, actor: "albertofa", commits: [commit] }];
+    const detail = basePr({ timeline, commits: [{ ...commit, oid: "sha-1" }, commit], headRefOid: "sha-2", updatedAt: 1_200, viewerLogin: "albertofa" });
+    expect(updatesSince(detail, baseLink({ lastSeenSha: "sha-1", lastSeenAt: 1_000 }))).toEqual([]);
+  });
+
+  it("reports a mixed commit group that includes someone else's commits", () => {
+    const mine = { oid: "sha-3", headline: "mine", author: "albertofa", committedAt: 1_600, ci: "none" as const };
+    const theirs = { oid: "sha-2", headline: "theirs", author: "rcosta", committedAt: 1_500, ci: "none" as const };
+    const timeline: PrTimelineItem[] = [{ kind: "commits", at: 1_600, actor: "albertofa", commits: [theirs, mine] }];
+    const detail = basePr({ timeline, headRefOid: "sha-3", viewerLogin: "albertofa" });
+    expect(updatesSince(detail, baseLink()).map((update) => update.kind)).toEqual(["commits"]);
+  });
+});
+
+describe("seenThrough", () => {
+  it("takes the newest of the PR's updatedAt and the shown updates", () => {
+    expect(seenThrough(basePr({ updatedAt: 1_000 }), [{ kind: "comment", at: 1_500, actor: "x", summary: "" }])).toBe(1_500);
+    expect(seenThrough(basePr({ updatedAt: 2_000 }), [])).toBe(2_000);
+    expect(seenThrough(null, [])).toBeNull();
   });
 });
 

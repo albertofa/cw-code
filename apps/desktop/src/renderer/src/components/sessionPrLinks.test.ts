@@ -149,7 +149,7 @@ describe("chip data sources", () => {
 
   it("prefers the inbox summary over a cached detail for the same pull request", () => {
     const inbox = summary(1, { title: "from inbox" });
-    const detail = { ...summary(1, { title: "from detail" }), body: "", createdAt: 0, timeline: [], threads: [], checkRuns: [], commits: [], reviewers: [] };
+    const detail = { ...summary(1, { title: "from detail" }), body: "", createdAt: 0, timeline: [], threads: [], checkRuns: [], commits: [], reviewers: [], viewerLogin: "" };
     const onlyDetail = { ...detail, ref: ref(2), title: "detail only" };
     const byKey = prSummaryLookup([inbox], { [prKey(detail.ref)]: detail, [prKey(onlyDetail.ref)]: onlyDetail });
     expect(byKey.get(prKey(ref(1)))?.title).toBe("from inbox");

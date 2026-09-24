@@ -74,6 +74,7 @@ export interface SessionManagerOptions {
   prHead?: (ref: PrRef) => string | null;
   prHeadRefresh?: (ref: PrRef) => Promise<string | null>;
   prState?: (ref: PrRef) => PrSummary["state"] | null;
+  prUpdatedAt?: (ref: PrRef) => number | null;
   usageLedger?: UsageLedger;
 }
 
@@ -117,6 +118,7 @@ export class SessionManager {
   private prHead: (ref: PrRef) => string | null;
   private prHeadRefresh?: (ref: PrRef) => Promise<string | null>;
   private prState: (ref: PrRef) => PrSummary["state"] | null;
+  private prUpdatedAt: (ref: PrRef) => number | null;
   private turnPrRefs = new Map<string, PrRef[]>();
   private usageLedger: UsageLedger;
 
@@ -132,6 +134,7 @@ export class SessionManager {
     this.prHead = opts.prHead ?? (() => null);
     this.prHeadRefresh = opts.prHeadRefresh;
     this.prState = opts.prState ?? (() => null);
+    this.prUpdatedAt = opts.prUpdatedAt ?? (() => null);
     this.usageLedger = opts.usageLedger ?? new UsageLedger(opts.dbPath ? join(dirname(dbPath), "usage") : usageDir());
     const getSettings = (): AppSettings => this.settings.get();
     this.drivers = {
@@ -525,11 +528,12 @@ export class SessionManager {
     return this.emitSession(sessionId);
   }
 
-  markPrSeen(sessionId: string, ref: PrRef, headSha: string | null): SessionMeta {
+  markPrSeen(sessionId: string, ref: PrRef, headSha: string | null, seenAt: number | null): SessionMeta {
     const session = this.store.getSession(sessionId);
     if (!session) throw new Error(`unknown session ${sessionId}`);
     const link = findLink(session.prs, ref);
-    if (link) this.store.updateSession(sessionId, { prs: upsertLink(session.prs, markSeen(link, headSha, Date.now())) });
+    const at = Math.max(Date.now(), seenAt ?? 0, this.prUpdatedAt(ref) ?? 0);
+    if (link) this.store.updateSession(sessionId, { prs: upsertLink(session.prs, markSeen(link, headSha, at)) });
     return this.emitSession(sessionId);
   }
 
@@ -550,7 +554,7 @@ export class SessionManager {
       ]);
       const current = this.store.getSession(sessionId);
       if (!current?.prs) return;
-      const results = targets.map((target, index) => ({ ...target, head: heads[index] }));
+      const results = targets.map((target, index) => ({ ...target, head: heads[index], seenAt: this.prUpdatedAt(target.ref) }));
       const prs = applyTurnSeen(current.prs, results, worktreeHead, now);
       if (prs === current.prs) return;
       this.store.updateSession(sessionId, { prs });
