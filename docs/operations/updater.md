@@ -199,8 +199,10 @@ release yet".
 - A timer that fires while a download holds the lock reschedules itself for the
   regular interval.
 - A timer that fires while the shutdown coordinator is not idle (a quit or
-  restart is being prepared) is postponed by 60 s, so a background check can
-  never supersede an update after the user already stopped their turns.
+  restart is being prepared) is postponed by 60 s. The coordinator is still
+  idle while the shutdown dialog is only reviewing blockers or waiting, so a
+  check in that window can still make a newer version available; the restart
+  is then cancelled after prepare and the user is asked to try again.
 - `dispose()` cancels the timer and any active download, detaches adapter
   listeners, disposes the adapter and stops publishing state.
 

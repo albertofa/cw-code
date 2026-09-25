@@ -147,7 +147,13 @@ function createServices(stores: { sessionStore: SessionStore; settingsStore: Set
   const settings = stores.settingsStore.get();
   const updates = createUpdateService(settings);
   const firstRunChannel = firstRunChannelPatch(settings, app.getVersion(), updates.getState().phase !== "disabled");
-  if (firstRunChannel) stores.settingsStore.set(firstRunChannel);
+  if (firstRunChannel) {
+    try {
+      stores.settingsStore.set(firstRunChannel);
+    } catch (err) {
+      console.warn(`could not save the default update channel: ${(err as Error).message}`);
+    }
+  }
   return {
     sessions,
     skills: new SkillsStore(),

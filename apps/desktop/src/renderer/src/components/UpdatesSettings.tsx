@@ -43,14 +43,17 @@ export function UpdatesSettings({
   };
 
   const changeChannel = async (next: UpdateChannel) => {
+    const previous = draft.updateChannel;
     setSavingPreference(true);
     onDraftChange({ updateChannel: next });
     try {
       const result = await useAppStore.getState().setUpdateChannel(next);
+      if (!result.ok) onDraftChange({ updateChannel: previous });
       if (!result.ok && result.code !== "disabled") {
         useNotifs.getState().push({ kind: "error", title: "Could not change the update channel", message: result.message });
       }
     } catch (err) {
+      onDraftChange({ updateChannel: previous });
       useNotifs.getState().push({ kind: "error", title: "Could not change the update channel", message: ipcErrorMessage(err) });
     } finally {
       setSavingPreference(false);
