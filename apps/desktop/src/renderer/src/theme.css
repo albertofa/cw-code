@@ -2178,6 +2178,39 @@ body.session-dragging * {
   background: rgba(255, 107, 97, 0.22);
 }
 
+.msg-compaction {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  color: var(--dim);
+  border: 1px dashed var(--border);
+  background: var(--bg-deep);
+  border-radius: var(--r-md);
+  padding: 6px 12px;
+}
+
+.msg-compaction-label {
+  font-weight: 600;
+  color: var(--text);
+}
+
+.msg-compaction-tag {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  color: var(--muted);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 1px 6px;
+}
+
+.msg-compaction-detail {
+  margin-left: auto;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
 .tool-group {
   border: none;
   border-radius: var(--r-md);

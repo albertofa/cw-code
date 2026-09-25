@@ -669,11 +669,11 @@ export class CodexCliDriver implements CliDriver {
           break;
         }
         if (item.type === "contextCompaction") {
-          if (active.command === "compact") {
-            const text = active.hasAssistantText ? "\n\nContext compacted." : "Context compacted.";
-            active.hasAssistantText = true;
-            this.emit({ type: "assistant.delta", turnId: active.turnId, text });
-          }
+          this.emit({
+            type: "context.compacted",
+            turnId: active.turnId,
+            compaction: { trigger: active.command === "compact" ? "manual" : "auto" }
+          });
           break;
         }
         if (item.type === "exitedReviewMode") {
