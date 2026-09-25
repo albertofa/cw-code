@@ -1,4 +1,4 @@
-import type { ContextUsage, TurnModelUsage } from "./usage.js";
+import type { ContextCompactionInfo, ContextUsage, TurnModelUsage } from "./usage.js";
 
 export interface TodoItem {
   content: string;
@@ -27,6 +27,7 @@ export interface HistoryMessage {
   toolUsage?: ToolUsage;
   todos?: TodoItem[];
   reasoningMs?: number;
+  compaction?: ContextCompactionInfo;
 }
 
 export interface SubagentToolActivity {
@@ -115,6 +116,12 @@ export type ThreadEvent =
       answers: Record<string, string> | null;
     }
   | { type: "todo.updated"; turnId: string; todos: TodoItem[] }
+  | {
+      type: "context.compacted";
+      turnId: string;
+      compaction: ContextCompactionInfo;
+      context?: ContextUsage;
+    }
   | {
       type: "turn.done";
       turnId: string;

@@ -192,6 +192,86 @@ describe("OpencodeDriver detached send", () => {
     }
   });
 
+  it("emits context.compacted once when the poll finds a compaction summary", async () => {
+    const events: ThreadEvent[] = [];
+    const withSummary = [
+      { info: { id: "msg_u1", role: "user" }, parts: [{ type: "text", text: "hi" }] },
+      {
+        info: { id: "msg_c1", role: "assistant", mode: "compaction", summary: true },
+        parts: [{ type: "text", text: "This session is being continued..." }]
+      }
+    ];
+    let plainGets = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+        if (url.endsWith("/event")) return Promise.resolve({ ok: false, status: 500, body: null });
+        if (init?.method === "POST" && url.includes("/message")) return new Promise<Response>(() => {});
+        if (url.includes("limit=50")) return Promise.resolve(json(withSummary));
+        if (url.includes("/message")) {
+          plainGets += 1;
+          return Promise.resolve(json(plainGets === 1 ? appendText() : withSummary));
+        }
+        return Promise.resolve(json({ id: "ses_1" }));
+      })
+    );
+    const driver = startDriver(events);
+    try {
+      const { turnId } = driver.startTurn({ sessionId: "sess_1", cwd: "C:\\proj", prompt: "hello", resumeCursor: "ses_1" });
+      await waitFor(() => events.some((e) => e.type === "context.compacted"), 7000);
+      expect(events.filter((e) => e.type === "context.compacted")).toEqual([
+        { type: "context.compacted", turnId, compaction: { trigger: "auto" } }
+      ]);
+      await sleep(2200);
+      expect(events.filter((e) => e.type === "context.compacted")).toHaveLength(1);
+    } finally {
+      driver.dispose();
+    }
+  });
+
+  it("drops streamed text deltas for compaction summary messages", async () => {
+    const events: ThreadEvent[] = [];
+    const sse = controllableSse();
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+        if (url.endsWith("/event")) return Promise.resolve(sse.response);
+        if (init?.method === "POST" && url.includes("/message")) return new Promise<Response>(() => {});
+        if (url.includes("/message")) return Promise.resolve(json(appendText()));
+        return Promise.resolve(json({ id: "ses_1" }));
+      })
+    );
+    const driver = startDriver(events);
+    try {
+      driver.startTurn({ sessionId: "sess_1", cwd: "C:\\proj", prompt: "hello", resumeCursor: "ses_1" });
+      await sleep(150);
+      sse.push({
+        type: "message.updated",
+        properties: {
+          sessionID: "ses_1",
+          info: { id: "msg_c1", role: "assistant", mode: "compaction", summary: true }
+        }
+      });
+      sse.push({
+        type: "message.part.delta",
+        properties: { sessionID: "ses_1", messageID: "msg_c1", field: "text", delta: "summary body", partID: "p_c1" }
+      });
+      await sleep(50);
+      expect(events.filter((e) => e.type === "assistant.delta")).toEqual([]);
+
+      sse.push({
+        type: "message.part.delta",
+        properties: { sessionID: "ses_1", messageID: "msg_a1", field: "text", delta: "real answer", partID: "p_a1" }
+      });
+      await sleep(50);
+      expect(
+        events.filter((e) => e.type === "assistant.delta").map((e) => ("text" in e ? e.text : ""))
+      ).toEqual(["real answer"]);
+    } finally {
+      driver.dispose();
+    }
+  });
+
   it("finishes from the poll when the last new assistant message is terminal", async () => {
     const events: ThreadEvent[] = [];
     const terminal = [

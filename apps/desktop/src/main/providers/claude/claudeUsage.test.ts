@@ -186,10 +186,11 @@ describe("claudeTurnUsage", () => {
     expect(context).toBeUndefined();
   });
 
-  it("omits context when there are no usage iterations", () => {
+  it("omits context but still reports the window when there are no usage iterations", () => {
     const result = haikuResult({ usage: { iterations: [] } });
-    const { context } = claudeTurnUsage({}, result);
+    const { context, windowTokens } = claudeTurnUsage({}, result);
     expect(context).toBeUndefined();
+    expect(windowTokens).toBe(200000);
   });
 
   it("keeps the previous snapshot and reports no usage when modelUsage is missing, null, or not an object", () => {
@@ -312,5 +313,42 @@ describe("claudeTurnUsage", () => {
       reasoningTokens: 35,
       costUsd: 0.057254
     });
+  });
+});
+
+describe("claudeTurnUsage window fallback", () => {
+  it("keeps the window even when every delta is zero and no main model is known", () => {
+    const prev: ClaudeModelUsageSnapshot = {
+      "claude-sonnet-5": {
+        inputTokens: 100,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 500,
+        outputTokens: 20,
+        reasoningTokens: 0,
+        costUsd: 0.02
+      }
+    };
+    const result = {
+      modelUsage: {
+        "claude-sonnet-5": {
+          inputTokens: 100,
+          outputTokens: 20,
+          cacheReadInputTokens: 0,
+          cacheCreationInputTokens: 500,
+          costUSD: 0.02,
+          contextWindow: 200000,
+          thinkingTokens: 0
+        }
+      },
+      usage: {
+        iterations: [
+          { input_tokens: 100, output_tokens: 20, cache_read_input_tokens: 0, cache_creation_input_tokens: 500 }
+        ]
+      }
+    };
+    const { usage, context, windowTokens } = claudeTurnUsage(prev, result);
+    expect(usage).toEqual([]);
+    expect(windowTokens).toBe(200000);
+    expect(context).toEqual({ usedTokens: 620, windowTokens: 200000 });
   });
 });

@@ -15,6 +15,25 @@ describe("mapOpencodeMessages", () => {
     ]);
   });
 
+  it("maps compaction messages to a system marker instead of the summary body", () => {
+    const out = mapOpencodeMessages([
+      {
+        info: { id: "m2", role: "assistant", mode: "compaction", summary: true, time: { created: 1000, completed: 2000 } },
+        parts: [{ id: "p2", type: "text", text: "This session is being continued from a previous conversation..." }]
+      }
+    ]);
+    expect(out).toEqual([
+      {
+        id: "m2-compact",
+        role: "system",
+        text: "Context compacted",
+        turnId: "m2",
+        compaction: {},
+        timestamp: 2000
+      }
+    ]);
+  });
+
   it("maps tool parts to call cards with outputs", () => {
     const out = mapOpencodeMessages([
       {
