@@ -168,35 +168,61 @@ Record:
 1. B and C are complete for the same source SHA, and `main` still points at
    it. An alpha always builds `main`'s head at dispatch time; if `main` moved,
    repeat B and C for the new head or hold merges until D is done.
-2. Turn production on:
+2. A green `upgrade-test.yml` run with every automated scenario exists for
+   that exact SHA. This is required, not optional. For the bootstrap,
+   `verify-candidate` skips the N -> N+1 upgrade (there is no pipeline-built N),
+   and the packaged startup probe exits before the app's first update check,
+   so the upgrade-test scenarios are the only proof that the bundled
+   `electron-updater` runtime checks, downloads, installs and relaunches.
+   Dispatch it on `main` with the scenarios input empty (empty runs every
+   automated scenario), then confirm the run's head SHA:
+
+   ```sh
+   gh workflow run upgrade-test.yml --repo albertofa/cw-code --ref main -f scenarios=
+   gh run list --repo albertofa/cw-code --workflow upgrade-test.yml --branch main --event workflow_dispatch --limit 1 --json databaseId,headSha,conclusion,url
+   ```
+
+   `headSha` must equal the source SHA from B and `conclusion` must be
+   `success`. A nightly scheduled run on the same SHA counts too. Download
+   the evidence before it expires (7 days):
+   `gh run download <run id> --repo albertofa/cw-code --name upgrade-test-evidence-<run id>-<attempt>`.
+3. Turn production on:
 
    ```sh
    gh variable set CW_RELEASE_PUBLISHING_ENABLED --repo albertofa/cw-code --body true
    ```
 
-3. Dispatch:
+4. Dispatch:
 
    ```sh
    gh workflow run release.yml --repo albertofa/cw-code --ref main -f channel=alpha -f mode=publish -f force=false
    ```
 
-4. Approve `release-signing` twice and SignPath twice. Before approving
+5. Approve `release-signing` twice and SignPath twice. Before approving
    `release-publish`, read the plan summary (version, tag, source SHA equal to
-   B) and the `verify-candidate` summary.
-5. `publish` and `verify-publication` pass. Then dispatch Actions > Check
+   B and to the upgrade-test run in step 2) and the `verify-candidate` summary.
+6. `publish` and `verify-publication` pass. Then dispatch Actions > Check
    update feed. Expected summary:
    `Update feed ok: stable: no pipeline-built release yet; alpha v<version> (<sha>) ok`.
-6. Edit the release notes to add the bootstrap note from
+7. Edit the release notes to add the bootstrap note from
    [Communication templates](#communication-templates), and update README.md's
    "Updating cw-code" section so it no longer says the release is coming.
-7. In a fresh VM, download the published installer from the release page and
+   Keep the last line of the notes, `<!-- cw-release-plan sha=<40-hex> -->`,
+   exactly as it is. Without that marker the release no longer counts as
+   pipeline-built: `select-upgrade-base` stops using it as N for the next
+   upgrade gate, the feed monitor ignores it and then fails because clients
+   resolve a release it does not recognize, and a rerun of `publish` no
+   longer accepts it as already published. The same rule applies to every
+   later edit of release notes, including the withdrawal note.
+8. In a fresh VM, download the published installer from the release page and
    repeat the interactive part of C once with those exact bytes.
-8. Leave production on only if E follows soon; otherwise turn it off (G).
+9. Leave production on only if E follows soon; otherwise turn it off (G).
 
 Record:
 
 | Item | Value |
 | --- | --- |
+| `upgrade-test.yml` run URL, head SHA, conclusion, `passed` in `installed.json`, skipped scenarios | `<fill>` |
 | Release URL, tag, version | `<fill>` |
 | Source SHA, run id | `<fill>` |
 | Published installer size and sha512 (`alpha.yml`) | `<fill>` |
@@ -364,7 +390,8 @@ Steps:
    - Alpha: alpha clients follow the Atom feed in creation order, and hiding a
      release there means deleting or re-drafting it, which we do not do. Roll
      forward instead.
-3. Edit the bad release's notes with the withdrawal template below. Do not
+3. Edit the bad release's notes with the withdrawal template below, keeping
+   the `<!-- cw-release-plan sha=... -->` marker line (see D.7). Do not
    delete its tag or assets, do not turn it back into a draft, do not reuse
    its number.
 4. Fix on `main` and roll forward with a higher version:
@@ -526,9 +553,14 @@ tab.
 - **CI minutes.** Every job has a timeout: CI `windows` 45 min,
   `upgrade-test.yml` 150 min (nightly at 03:17 UTC and on PRs touching the
   update path), release jobs 15 to 120 min, feed monitor 20 min (usually a
-  few minutes, 4 runs a day). Automatic alpha validation coalesces to one run
-  per 6 hours. To cut minutes: disable the nightly schedule of
-  `upgrade-test.yml`, or `gh workflow disable` a workflow temporarily.
+  few minutes, 4 runs a day). Automatic alpha validation is not throttled in
+  practice: the 6-hour window counts from the last *published* alpha, and
+  automatic runs never publish, so every successful CI push to `main` starts
+  a full validation run (two Windows jobs plus the unsigned signing jobs) once
+  that window has passed (see [releases.md](releases.md#triggers)). Whether to
+  gate or batch those runs is the owner's decision. To cut minutes: disable
+  the nightly schedule of `upgrade-test.yml`, or `gh workflow disable` a
+  workflow temporarily.
 - **Costs.** To be confirmed by the owner for the account's actual plan:
   GitHub Actions minutes and artifact storage (public-repository terms and
   Windows runner multipliers depend on the plan), GitHub release bandwidth,

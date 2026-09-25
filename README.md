@@ -61,7 +61,7 @@ configuration.
 - Node.js 24.x and pnpm 11.5.3 for development.
 - At least one supported CLI installed and authenticated:
   - Claude Code `2.1.260` or newer (`claude`)
-  - OpenCode `1.18.23` or newer (`opencode`)
+  - OpenCode `1.18.31` or newer (`opencode`)
   - Codex `0.153.4` or newer (`codex`)
 
 The providers are optional. The app reports missing or outdated CLIs in its

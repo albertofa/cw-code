@@ -221,7 +221,7 @@ Checked once at construction, in this order:
 | `process.resourcesPath/app-update.yml` missing | No update feed is configured for this build |
 | No `Uninstall *.exe` next to `process.execPath` (portable copy, `win-unpacked`) | This copy of cw-code was not installed with the Windows installer |
 
-Any NSIS uninstaller name counts, so the step 06 update-test build
+Any NSIS uninstaller name counts, so the update-test build
 (`Uninstall cw-code-updatetest.exe`) is detected too. An unreadable install
 directory counts as "not installed".
 
@@ -322,7 +322,7 @@ updaterCacheDirName: '@cw-codedesktop-updater'
 ```
 
 - No `publisherName` yet, so `electron-updater` skips the Authenticode
-  publisher check and only verifies the sha512. Step 07 injects `publisherName`
+  publisher check and only verifies the sha512. `sign-windows.yml` injects `publisherName`
   at the signed build.
 - `updaterCacheDirName` comes from the package name `@cw-code/desktop`.
   Downloads are cached under `%LOCALAPPDATA%\@cw-codedesktop-updater\pending`.
@@ -353,9 +353,9 @@ updaterCacheDirName: '@cw-codedesktop-updater'
   `provider === "github"`, and the channel is not derived from the version for
   the GitHub provider. Alpha clients still work: they ask for `alpha.yml`, get a
   404, and fall back to `latest.yml` in the same release. The setting does
-  apply to the generic provider (the step 06 loopback feed builds). The release
-  pipeline (steps 08/09) decides whether alpha releases should also upload a
-  copy of `latest.yml` as `alpha.yml` to avoid the extra 404.
+  apply to the generic provider (the update-test builds for the loopback feed).
+  The release pipeline (`release.yml`) uploads a byte copy of `latest.yml` as
+  `alpha.yml` on every release, so alpha clients never hit that 404.
 
 ## Settings
 
@@ -539,7 +539,7 @@ throw, one toast per failure, pending and open-flow guards),
 `updateThrottle.test.ts`, `updateChannel.test.ts`, `releaseNotes.test.ts` and
 `shutdownFlow.test.ts` (expired lease).
 
-Manual checklist, pending. Run it with the step 06 local feed and update-test
+Manual checklist, pending. Run it with the local feed server and update-test
 build ([update-testing.md](update-testing.md)) in a disposable Windows environment,
 never against the live install:
 

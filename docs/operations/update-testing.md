@@ -8,7 +8,7 @@ when the relaunched app reports the new version, the registry shows it, and the
 seeded projects, sessions, settings and worktree references are still there.
 
 `release.yml` runs the signed N -> N+1 upgrade with the final candidate bytes
-before any publication (see [Production bytes](#production-bytes-step-09) and
+before any publication (see [Production bytes](#production-bytes) and
 [releases.md](releases.md#upgrade-gate)). Nothing in this document publishes a
 release, reads a token or touches a real account.
 
@@ -288,7 +288,8 @@ update can be differential as soon as the feed serves the old blockmap
 running one in the new installer URL). `differential-fallback` removes that
 blockmap. The builds come from the same commit and differ only in version, so
 the differential numbers are a lower bound for real releases; the numbers for
-consecutive real releases come from step 09 and 10.
+consecutive real releases come from the production-bytes gate in
+`release.yml` and the in-app update evidence in [rollout.md](rollout.md).
 
 Local reference (2026-09-25, `electron-updater` 6.8.9's
 `GenericDifferentialDownloader` against the feed server, no install): N+1 to
@@ -346,7 +347,7 @@ Use a snapshot, the update-test builds from a dry run, and a feed started with
    hand. The legacy build has no updater, so this step is always a manual
    install; the exact commands and evidence are step C of
    [rollout.md](rollout.md#c-bootstrap-candidate-over-the-real-legacy-installer-disposable-vm).
-8. **Wrong publisher** (`signed-wrong-publisher`, step 09): serve a candidate
+8. **Wrong publisher** (`signed-wrong-publisher`): serve a candidate
    signed by a different controlled certificate; the download must fail with
    `ERR_UPDATER_INVALID_SIGNATURE` and N stay intact. Verification is never
    turned off to run this.
@@ -354,7 +355,7 @@ Use a snapshot, the update-test builds from a dry run, and a feed started with
 Also still pending from `updater.md`: the keyboard, progress, opt-out, Later and
 channel UI checks, done by hand against the same feed.
 
-## Production bytes (step 09)
+## Production bytes
 
 ```sh
 node scripts/verify-installed-upgrade.mjs --production-bytes --installer <cw-code-Setup-N-x64.exe> --candidate-dir <signed N+1 release set> --disposable-environment [--feed-port 47613] [--devtools-port 9339] --evidence <file>
