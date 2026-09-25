@@ -779,6 +779,10 @@ export class ClaudeCliDriver implements CliDriver {
     const argsKey = this.claudeArgsKey(request);
     const existing = this.processes.get(request.sessionId);
 
+    if (existing?.postCompletionOutputPending) {
+      throw new Error("Claude is still finishing output for this session");
+    }
+
     if (!request.maxTurns && existing && existing.argsKey === argsKey && this.isProcessAlive(existing)) {
       if (this.liveTaskCount(existing) === 0) this.clearTaskTracking(existing);
       existing.activeTurnId = turnId;
