@@ -436,10 +436,11 @@ async function cmdPublish(options: Map<string, string>, repoRoot: string): Promi
       client: createGitHubReleaseClient(owner, repo),
       source: buildSource(repoRoot),
       workDir,
-      log: (line) => process.stderr.write(`${line}\n`)
+      log: (line) => process.stderr.write(`${line}\n`),
+      onPublic: (release) => writeGithubOutput({ published: "true", url: release.htmlUrl })
     });
     printJson(result);
-    writeGithubOutput({ status: result.status, url: result.htmlUrl });
+    writeGithubOutput({ status: result.status });
     appendStepSummary(
       [
         `### Published ${plan.tag} (${result.status})`,

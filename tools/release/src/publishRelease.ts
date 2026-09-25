@@ -9,6 +9,8 @@ import { verifyPlan } from "./releasePlan.ts";
 import type { ReleaseSource } from "./releaseSource.ts";
 
 export const RECOVERY_RUNBOOK = "docs/operations/releases.md#recovery";
+const CONFIRM_ATTEMPTS = 5;
+const CONFIRM_DELAY_MS = 2000;
 
 export interface PublishInput {
   plan: ReleasePlan;
@@ -18,6 +20,8 @@ export interface PublishInput {
   source: ReleaseSource;
   workDir: string;
   log?: (line: string) => void;
+  onPublic?: (release: RemoteRelease) => void;
+  sleep?: (ms: number) => Promise<void>;
 }
 
 export interface PublishResult {
@@ -83,13 +87,24 @@ async function assetMismatches(context: PublishContext, release: RemoteRelease):
   return problems;
 }
 
-async function confirmPublishedState(context: PublishContext, release: RemoteRelease): Promise<void> {
+async function publishedStateProblems(context: PublishContext, release: RemoteRelease): Promise<string[]> {
   const { plan, client } = context.input;
   const problems: string[] = [];
   if (release.draft) problems.push("the release is still a draft");
   if (release.prerelease !== plan.prerelease) problems.push(`prerelease is ${release.prerelease}, expected ${plan.prerelease}`);
   const tagSha = await client.remoteTagSha(plan.tag);
   if (tagSha !== plan.sourceSha) problems.push(`tag ${plan.tag} points at ${tagSha ?? "nothing"}, expected ${plan.sourceSha}`);
+  return problems;
+}
+
+async function confirmPublishedState(context: PublishContext, release: RemoteRelease): Promise<void> {
+  const { plan, client } = context.input;
+  const sleep = context.input.sleep ?? ((ms: number) => new Promise<void>((done) => setTimeout(done, ms)));
+  let problems = await publishedStateProblems(context, release);
+  for (let attempt = 1; attempt < CONFIRM_ATTEMPTS && problems.length > 0; attempt += 1) {
+    await sleep(CONFIRM_DELAY_MS);
+    problems = await publishedStateProblems(context, await client.getRelease(release.id));
+  }
   if (problems.length > 0) {
     throw new Error(`Release ${plan.tag} is public but inconsistent; follow ${RECOVERY_RUNBOOK}:\n${describeReasons(problems)}`);
   }
@@ -184,7 +199,10 @@ export async function publishRelease(input: PublishInput): Promise<PublishResult
   const matching = (await client.listReleases()).filter((release) => release.tagName === plan.tag);
   if (matching.length > 1) throw new Error(`${matching.length} releases use tag ${plan.tag}; resolve the duplicates by hand, see ${RECOVERY_RUNBOOK}`);
   const [existing] = matching;
-  if (existing && !existing.draft) return confirmAlreadyPublished(context, existing);
+  if (existing && !existing.draft) {
+    input.onPublic?.(existing);
+    return confirmAlreadyPublished(context, existing);
+  }
 
   await requireFreshPlan(context, existing?.id ?? null);
   const body = releaseBody(plan.notes, plan.sourceSha);
@@ -212,6 +230,7 @@ export async function publishRelease(input: PublishInput): Promise<PublishResult
 
   await requireFreshPlan(context, refreshed.id);
   const published = await client.publish(refreshed.id, { prerelease: plan.prerelease, makeLatest: plan.makeLatest });
+  input.onPublic?.(published);
   await confirmPublishedState(context, published);
   context.log(`published ${plan.tag} (${published.htmlUrl})`);
   return { status: "published", releaseId: published.id, htmlUrl: published.htmlUrl, resumed: existing !== undefined, ...sync };

@@ -34,6 +34,22 @@ function latestPublishedOverall(classified: ClassifiedRelease[]): ClassifiedRele
   return compareVersions(alpha.version, stable.version) > 0 ? alpha : stable;
 }
 
+async function monotonicSourceReasons(source: ReleaseSource, classified: ClassifiedRelease[], sourceSha: string): Promise<string[]> {
+  const reasons: string[] = [];
+  for (const channel of ["alpha", "stable"] as const) {
+    const latest = highestPublished(classified, channel);
+    if (!latest) continue;
+    const tag = latest.release.tagName;
+    const tagSha = await source.tagSha(tag);
+    if (!tagSha) {
+      reasons.push(`Published ${channel} ${tag} has no git tag, so the source commit cannot be proven to move forward from it`);
+    } else if (!(await source.isAncestor(tagSha, sourceSha))) {
+      reasons.push(`Published ${channel} ${tag} (${tagSha}) is not an ancestor of ${sourceSha}; an alpha must never be built from older or unrelated history`);
+    }
+  }
+  return reasons;
+}
+
 export interface BuildAlphaPlanOptions {
   source: ReleaseSource;
   now: Date;
@@ -47,7 +63,7 @@ export async function buildAlphaPlan(options: BuildAlphaPlanOptions): Promise<Pl
   const releases = await source.listReleases();
   const classified = classifyReleases(releases);
 
-  const nextAlpha = planNextAlpha(desktopVersion, classified);
+  const nextAlpha = planNextAlpha(desktopVersion, classified, await source.listTags());
   if (!nextAlpha.ok) {
     throw new Error(nextAlpha.reason);
   }
@@ -66,6 +82,10 @@ export async function buildAlphaPlan(options: BuildAlphaPlanOptions): Promise<Pl
   });
   if (throttle.skip) {
     return { status: "skip", reason: throttle.reason };
+  }
+  const regression = await monotonicSourceReasons(source, classified, headSha);
+  if (regression.length > 0) {
+    return { status: "skip", reason: regression.join("; ") };
   }
 
   const previousTag = latestAlpha?.release.tagName ?? null;
@@ -123,9 +143,13 @@ export async function buildStablePromotionPlan(options: BuildStablePlanOptions):
     throw new Error(newerCheck.reason);
   }
 
+  const tag = tagOf(desktopBase);
+  const existingTagSha = await source.tagSha(tag);
+  if (existingTagSha) {
+    throw new Error(`Tag ${tag} already exists in git (at ${existingTagSha}); a version is never reused, bump the base with set-base`);
+  }
   const previousTag = highestStable?.release.tagName ?? null;
   const notes = buildReleaseNotes(await source.logSubjects(previousTag, resolution.candidate.sha));
-  const tag = tagOf(desktopBase);
 
   return {
     status: "planned",
@@ -194,9 +218,10 @@ export async function verifyPlan(rawPlan: unknown, source: ReleaseSource): Promi
         `Stable ${formatVersion(highestStable.version)} is newer than ${plan.version}; publishing the alpha after it would hide it from alpha clients`
       );
     }
-    if (!(await source.isAncestorOfMain(plan.sourceSha))) {
+    if (!(await source.isAncestor(plan.sourceSha, "main"))) {
       reasons.push(`Source SHA ${plan.sourceSha} is not reachable from main on GitHub`);
     }
+    reasons.push(...(await monotonicSourceReasons(source, classified, plan.sourceSha)));
   } else if (plan.candidate) {
     const candidateSha = await source.tagSha(plan.candidate.tag);
     if (candidateSha !== plan.sourceSha) {

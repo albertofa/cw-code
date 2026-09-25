@@ -135,6 +135,7 @@ describe("checkPublishedRelease", () => {
     const responses = published(ALPHA, null);
     const atom = responses.get(`${BASE}/releases.atom`);
     responses.set(`${BASE}/releases.atom`, { status: 200, body: Buffer.from("<feed></feed>") });
+    responses.set("https://api.github.com/repos/albertofa/cw-code/releases?per_page=1", { status: 200, body: Buffer.from(JSON.stringify([{ tag_name: ALPHA.tag }])) });
     const sleeps: number[] = [];
     const report = await checkPublishedReleaseWithRetries(
       { plan: ALPHA, owner: "albertofa", repo: "cw-code", http: httpFor(responses) },
@@ -149,6 +150,21 @@ describe("checkPublishedRelease", () => {
     );
     expect(report).toMatchObject({ ok: true, attempts: 2 });
     expect(sleeps).toEqual([5]);
+  });
+
+  it("only requires the tag in the Atom feed while the release is within the feed's window", async () => {
+    const responses = published(ALPHA, null);
+    const newer = Array.from({ length: 10 }, (_, index) => `v1.2.0-alpha.${20 + index}`);
+    responses.set(`${BASE}/releases.atom`, { status: 200, body: Buffer.from(newer.map((tag) => `<link href="${BASE}/releases/tag/${tag}"/>`).join("")) });
+    const recentUrl = "https://api.github.com/repos/albertofa/cw-code/releases?per_page=10";
+    responses.set(recentUrl, { status: 200, body: Buffer.from(JSON.stringify(newer.map((tag) => ({ tag_name: tag })))) });
+    const outside = await checkPublishedRelease({ plan: ALPHA, owner: "albertofa", repo: "cw-code", http: httpFor(responses) });
+    expect(failures(outside)).toEqual([]);
+    expect(outside.find((entry) => entry.name === "atom-feed")?.detail).toMatch(/older than the 10 releases the feed lists/);
+
+    responses.set(recentUrl, { status: 200, body: Buffer.from(JSON.stringify([{ tag_name: ALPHA.tag }, ...newer.slice(1).map((tag) => ({ tag_name: tag }))])) });
+    const inside = await checkPublishedRelease({ plan: ALPHA, owner: "albertofa", repo: "cw-code", http: httpFor(responses) });
+    expect(failures(inside).join()).toMatch(/atom-feed: v1.2.0-alpha.3 is among the 10 most recent releases but not in the feed yet/);
   });
 
   it("gives up after the last attempt with the failing checks", async () => {

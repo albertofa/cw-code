@@ -22,7 +22,9 @@ interface RawRelease {
   assets: RemoteAsset[];
 }
 
-class GhError extends Error {
+export type GhRunner = (args: string[]) => Promise<string>;
+
+export class GhError extends Error {
   readonly notFound: boolean;
 
   constructor(args: string[], stderr: string) {
@@ -31,7 +33,7 @@ class GhError extends Error {
   }
 }
 
-async function gh(args: string[]): Promise<string> {
+export const runGh: GhRunner = async (args) => {
   try {
     const { stdout } = await execFileAsync("gh", args, { maxBuffer: 64 * 1024 * 1024 });
     return stdout;
@@ -39,7 +41,7 @@ async function gh(args: string[]): Promise<string> {
     const stderr = typeof error === "object" && error !== null && "stderr" in error ? String(error.stderr) : String(error);
     throw new GhError(args, stderr);
   }
-}
+};
 
 function toRelease(raw: RawRelease): RemoteRelease {
   return {
@@ -59,7 +61,7 @@ function parseRelease(stdout: string): RemoteRelease {
   return toRelease(JSON.parse(stdout) as RawRelease);
 }
 
-export function createGitHubReleaseClient(owner: string, repo: string): GitHubReleaseClient {
+export function createGitHubReleaseClient(owner: string, repo: string, gh: GhRunner = runGh): GitHubReleaseClient {
   const slug = `${owner}/${repo}`;
   const api = `repos/${slug}`;
 

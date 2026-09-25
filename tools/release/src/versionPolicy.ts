@@ -38,20 +38,20 @@ export function highestPublished(
   return best;
 }
 
-export function nextAlphaNumberForBase(classified: ClassifiedRelease[], base: StableVersion): number {
+export function nextAlphaNumberForBase(classified: ClassifiedRelease[], base: StableVersion, usedTags: readonly string[] = []): number {
+  const used = [...classified.map((entry) => entry.version), ...usedTags.map(parseTag).filter((version): version is ParsedVersion => version !== null)];
   let max = -1;
-  for (const entry of classified) {
-    if (entry.release.draft) continue;
-    if (entry.version.channel !== "alpha") continue;
-    if (!sameBase(entry.version, base)) continue;
-    if (entry.version.alphaNumber > max) max = entry.version.alphaNumber;
+  for (const version of used) {
+    if (version.channel !== "alpha") continue;
+    if (!sameBase(version, base)) continue;
+    if (version.alphaNumber > max) max = version.alphaNumber;
   }
   return max + 1;
 }
 
 export type NextAlphaResult = { ok: true; version: AlphaVersion } | { ok: false; reason: string };
 
-export function planNextAlpha(desktopVersion: ParsedVersion, classified: ClassifiedRelease[]): NextAlphaResult {
+export function planNextAlpha(desktopVersion: ParsedVersion, classified: ClassifiedRelease[], usedTags: readonly string[] = []): NextAlphaResult {
   const base = baseOf(desktopVersion);
   const publishedStable = highestPublished(classified, "stable");
   if (publishedStable && compareVersions(publishedStable.version, base) >= 0) {
@@ -70,7 +70,7 @@ export function planNextAlpha(desktopVersion: ParsedVersion, classified: Classif
       };
     }
   }
-  const alphaNumber = nextAlphaNumberForBase(classified, base);
+  const alphaNumber = nextAlphaNumberForBase(classified, base, usedTags);
   return {
     ok: true,
     version: { channel: "alpha", major: base.major, minor: base.minor, patch: base.patch, alphaNumber }

@@ -186,7 +186,12 @@ function sourceFor(github: FakeGitHub, onList?: (call: number) => void): Release
     },
     tagSha: async (tag) => github.tags.get(tag) ?? null,
     headSha: unused,
-    isAncestorOfMain: async (sha) => sha === SOURCE_SHA || sha === OLDER_SHA,
+    isAncestor: async (ancestor, descendant) => {
+      const order = [OLDER_SHA, SOURCE_SHA];
+      if (descendant === "main") return order.includes(ancestor);
+      return order.includes(ancestor) && order.includes(descendant) && order.indexOf(ancestor) <= order.indexOf(descendant);
+    },
+    listTags: async () => [...github.tags.keys()],
     logSubjects: unused,
     showFile: unused
   };
@@ -210,8 +215,22 @@ describe("publishRelease", () => {
     return { dir, assets };
   }
 
+  let madePublic: string[];
+  let sleeps: number[];
+
   function run(plan: ReleasePlan, set: { dir: string; assets: ReleaseAssetFile[] }, source = sourceFor(github)) {
-    return publishRelease({ plan, dir: set.dir, assets: set.assets, client: github, source, workDir: join(root, "work") });
+    return publishRelease({
+      plan,
+      dir: set.dir,
+      assets: set.assets,
+      client: github,
+      source,
+      workDir: join(root, "work"),
+      onPublic: (release) => madePublic.push(release.tagName),
+      sleep: async (ms) => {
+        sleeps.push(ms);
+      }
+    });
   }
 
   function draftOf(tag: string): FakeRelease | undefined {
@@ -222,6 +241,8 @@ describe("publishRelease", () => {
     root = await mkdtemp(join(tmpdir(), "cw-publish-"));
     github = new FakeGitHub();
     github.addPublished("v1.2.0-alpha.2", OLDER_SHA, true);
+    madePublic = [];
+    sleeps = [];
   });
 
   afterEach(async () => {
@@ -369,6 +390,35 @@ describe("publishRelease", () => {
       return publish(releaseId, flags);
     };
     await expect(run(ALPHA_PLAN, set, source)).rejects.toThrow(/public but inconsistent[\s\S]*points at b{40}/);
+    expect(madePublic).toEqual([ALPHA_PLAN.tag]);
+    expect(sleeps).toEqual([2000, 2000, 2000, 2000]);
+  });
+
+  it("waits briefly for GitHub to show the new tag after publishing", async () => {
+    const set = await writeSet(ALPHA_PLAN, "set");
+    const publish = github.publish.bind(github);
+    github.publish = async (releaseId, flags) => {
+      const result = await publish(releaseId, flags);
+      github.tags.delete(ALPHA_PLAN.tag);
+      let reads = 0;
+      const remoteTagSha = github.remoteTagSha.bind(github);
+      github.remoteTagSha = async (tag) => {
+        reads += 1;
+        if (tag === ALPHA_PLAN.tag && reads === 2) github.tags.set(tag, SOURCE_SHA);
+        return remoteTagSha(tag);
+      };
+      return result;
+    };
+    expect(await run(ALPHA_PLAN, set)).toMatchObject({ status: "published" });
+    expect(sleeps).toEqual([2000]);
+    expect(madePublic).toEqual([ALPHA_PLAN.tag]);
+  });
+
+  it("reports nothing public when it stops before publishing", async () => {
+    const set = await writeSet(ALPHA_PLAN, "set");
+    github.corruptDownloadsOf = set.assets[0].name;
+    await expect(run(ALPHA_PLAN, set)).rejects.toThrow(/downloaded bytes differ/);
+    expect(madePublic).toEqual([]);
   });
 
   it("keeps working files out of the release set directory", async () => {

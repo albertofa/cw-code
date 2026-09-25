@@ -83,8 +83,23 @@ async function latestReleaseCheck({ plan, owner, repo, http }: PublishedCheckInp
 async function atomFeedCheck({ plan, owner, repo, http }: PublishedCheckInput): Promise<PublishedCheck> {
   const url = `https://github.com/${owner}/${repo}/releases.atom`;
   const response = await http.text(url, TEXT_ACCEPT);
-  const problems = response.status !== 200 ? [`HTTP ${response.status}`] : response.body.includes(`/releases/tag/${plan.tag}`) ? [] : [`${plan.tag} is not in the feed yet`];
-  return check("atom-feed", url, problems, `${plan.tag} listed`);
+  if (response.status !== 200) return check("atom-feed", url, [`HTTP ${response.status}`], "");
+  const listed = [...new Set([...response.body.matchAll(/\/releases\/tag\/([^"'<>\s]+)/g)].map((match) => match[1]))];
+  if (listed.includes(plan.tag)) return check("atom-feed", url, [], `${plan.tag} listed`);
+  const recentUrl = `https://api.github.com/repos/${owner}/${repo}/releases?per_page=${Math.max(listed.length, 1)}`;
+  const recent = await http.text(recentUrl, API_ACCEPT);
+  let recentTags: string[] | null = null;
+  try {
+    const parsed: unknown = JSON.parse(recent.body);
+    if (recent.status === 200 && Array.isArray(parsed)) recentTags = parsed.map((entry) => String((entry as { tag_name?: unknown }).tag_name));
+  } catch {
+    recentTags = null;
+  }
+  if (recentTags === null) return check("atom-feed", url, [`${plan.tag} is not in the feed and ${recentUrl} answered HTTP ${recent.status}`], "");
+  if (recentTags.includes(plan.tag)) {
+    return check("atom-feed", url, [`${plan.tag} is among the ${Math.max(listed.length, 1)} most recent releases but not in the feed yet`], "");
+  }
+  return check("atom-feed", url, [], `${plan.tag} is older than the ${listed.length} releases the feed lists; covered by the release and channel-manifest checks`);
 }
 
 async function channelManifestCheck(input: PublishedCheckInput): Promise<{ result: PublishedCheck; sha512: string | null; size: number | null }> {

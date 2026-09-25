@@ -81,18 +81,26 @@ export function createGitHubReleaseSource(options: GitHubReleaseSourceOptions): 
       return stdout.trim();
     },
 
-    async isAncestorOfMain(sha: string): Promise<boolean> {
+    async isAncestor(ancestor: string, descendant: string): Promise<boolean> {
       let status: string;
       try {
-        status = (await run("gh", ["api", `repos/${owner}/${repo}/compare/${sha}...main`, "--jq", ".status"], cwd)).trim();
+        status = (await run("gh", ["api", `repos/${owner}/${repo}/compare/${ancestor}...${descendant}`, "--jq", ".status"], cwd)).trim();
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        throw new Error(`gh api could not compare ${sha} with main on GitHub: ${message}`);
+        throw new Error(`gh api could not compare ${ancestor} with ${descendant} on GitHub: ${message}`);
       }
       if (!["identical", "ahead", "behind", "diverged"].includes(status)) {
-        throw new Error(`GitHub compare ${sha}...main returned an unexpected status "${status}"`);
+        throw new Error(`GitHub compare ${ancestor}...${descendant} returned an unexpected status "${status}"`);
       }
       return status === "identical" || status === "ahead";
+    },
+
+    async listTags(): Promise<string[]> {
+      const stdout = await run("git", ["tag", "--list", "v*"], cwd);
+      return stdout
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0);
     },
 
     async logSubjects(fromRef: string | null, toRef: string): Promise<string[]> {

@@ -37,10 +37,31 @@ describe("release.yml policy", () => {
     expect(job("plan")).toMatch(/PUBLISHING_ENABLED: \$\{\{ vars\.CW_RELEASE_PUBLISHING_ENABLED \}\}/);
     expect(job("plan")).toContain('[ "$PUBLISHING_ENABLED" = "true" ] || fail');
     expect(job("publish")).toMatch(/if: needs\.plan\.outputs\.mode == 'publish' && vars\.CW_RELEASE_PUBLISHING_ENABLED == 'true'/);
+    expect(job("publish")).toMatch(/PUBLISHING_ENABLED: \$\{\{ vars\.CW_RELEASE_PUBLISHING_ENABLED \}\}[\s\S]*if \[ "\$PUBLISHING_ENABLED" != "true" \]; then[\s\S]*exit 1[\s\S]*release\.ts publish/);
   });
 
-  it("serializes per channel without cancelling a running publisher", () => {
-    expect(topLevelBlock(lines, "concurrency").map((line) => line.trim()).filter(Boolean)).toEqual(["group: release-${{ inputs.channel || 'alpha' }}", "cancel-in-progress: false"]);
+  it("rejects stable-only inputs on an alpha run", () => {
+    expect(job("plan")).toContain('if [ "$CHANNEL" = "alpha" ] && { [ -n "$CANDIDATE" ] || [ -n "$EXPECTED_SHA" ]; }; then');
+  });
+
+  it("keeps validation and publication in separate per-channel groups and serializes every publish job", () => {
+    expect(topLevelBlock(lines, "concurrency").map((line) => line.trim()).filter(Boolean)).toEqual([
+      "group: release-${{ inputs.mode == 'publish' && 'publish' || 'validate' }}-${{ inputs.channel || 'alpha' }}",
+      "cancel-in-progress: false"
+    ]);
+    expect(job("publish")).toMatch(/concurrency:\n\s+group: release-publish\n\s+cancel-in-progress: false/);
+  });
+
+  it("runs the gate tooling from the workflow's own commit; only verify-source checks out the source SHA", () => {
+    const checkoutRefs = [...text.matchAll(/uses: actions\/checkout@[^\n]+\n(?:\s+#[^\n]*\n)?\s+with:\n\s+ref: ([^\n]+)/g)].map((match) => match[1].trim());
+    expect(checkoutRefs).toHaveLength(lines.filter((line) => line.includes("uses: actions/checkout@")).length);
+    expect(checkoutRefs.filter((ref) => ref !== "${{ github.workflow_sha }}")).toEqual(["${{ needs.plan.outputs.sha }}"]);
+    expect(job("verify-source")).toContain("node tooling/scripts/verify-installed-upgrade.mjs --assert-production-bundle");
+    expect(job("plan")).toContain('--sha "$SOURCE"');
+  });
+
+  it("installs without lifecycle scripts wherever only the release tooling runs", () => {
+    for (const name of ["plan", "publish", "verify-publication"]) expect(job(name)).toContain("pnpm install --frozen-lockfile --ignore-scripts");
   });
 
   it("reads the repository by default and grants contents: write only to the protected publish job", () => {
@@ -76,6 +97,8 @@ describe("release.yml policy", () => {
     expect(check).toContain("check-published");
     expect(check).not.toMatch(/GH_TOKEN|GITHUB_TOKEN|github\.token/);
     expect(check).toMatch(/contents: read/);
+    expect(check).toContain("if: always() && needs.publish.outputs.published == 'true'");
+    expect(job("publish")).toContain("published: ${{ steps.publish.outputs.published }}");
   });
 
   it("pins every action to a full commit SHA and never persists checkout credentials", () => {

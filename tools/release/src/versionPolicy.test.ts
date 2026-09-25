@@ -92,6 +92,13 @@ describe("planNextAlpha", () => {
     expect(nextAlphaNumberForBase(classified, { channel: "stable", major: 0, minor: 0, patch: 1 })).toBe(22);
     expect(nextAlphaNumberForBase(classified, { channel: "stable", major: 0, minor: 0, patch: 2 })).toBe(0);
   });
+
+  it("treats draft releases and leftover tags of the same base as used numbers", () => {
+    const base = { channel: "stable", major: 0, minor: 0, patch: 1 } as const;
+    const classified = classifyReleases([...ALPHA_HISTORY, release("v0.0.1-alpha.30", { draft: true })]);
+    expect(nextAlphaNumberForBase(classified, base)).toBe(31);
+    expect(nextAlphaNumberForBase(classifyReleases(ALPHA_HISTORY), base, ["v0.0.1-alpha.40", "v0.0.2-alpha.90", "v0.0.1", "not-a-tag"])).toBe(41);
+  });
 });
 
 describe("shouldSkipAutomaticAlpha", () => {

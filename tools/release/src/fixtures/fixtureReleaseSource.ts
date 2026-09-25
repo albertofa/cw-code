@@ -8,6 +8,7 @@ export interface FixtureReleaseSourceOptions {
   releases: FixtureRelease[];
   head: string;
   mainHistory?: string[];
+  extraTags?: Record<string, string>;
   commitLog: Array<{ sha: string; subject: string }>;
   filesAtSha?: Record<string, Record<string, string>>;
 }
@@ -26,7 +27,8 @@ function commitsBetween(commitLog: Array<{ sha: string; subject: string }>, from
 
 export function createFixtureReleaseSource(options: FixtureReleaseSourceOptions): ReleaseSource {
   const { releases, head, commitLog, filesAtSha = {} } = options;
-  const tagShas = new Map(releases.map((release) => [release.tagName, release.sha]));
+  const tagShas = new Map([...releases.map((release): [string, string] => [release.tagName, release.sha]), ...Object.entries(options.extraTags ?? {})]);
+  const shas = commitLog.map((entry) => entry.sha);
 
   return {
     async listReleases(): Promise<ReleaseInfo[]> {
@@ -39,8 +41,14 @@ export function createFixtureReleaseSource(options: FixtureReleaseSourceOptions)
       if (ref === "HEAD") return head;
       return tagShas.get(ref) ?? ref;
     },
-    async isAncestorOfMain(sha: string): Promise<boolean> {
-      return (options.mainHistory ?? commitLog.map((entry) => entry.sha)).includes(sha);
+    async isAncestor(ancestor: string, descendant: string): Promise<boolean> {
+      if (descendant === "main") return (options.mainHistory ?? shas).includes(ancestor);
+      const from = shas.indexOf(ancestor);
+      const to = shas.indexOf(descendant);
+      return from !== -1 && to !== -1 && from <= to;
+    },
+    async listTags(): Promise<string[]> {
+      return [...tagShas].filter(([, sha]) => sha !== "").map(([tag]) => tag);
     },
     async logSubjects(fromRef: string | null, toRef: string): Promise<string[]> {
       const toSha = tagShas.get(toRef) ?? toRef;
