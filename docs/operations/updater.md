@@ -454,7 +454,8 @@ flags, synchronous failure, `autoInstallOnAppQuit` off), `updatePreferences.test
 (expired lease).
 
 Manual checklist, pending. Run it with the step 06 local feed and update-test
-build in a disposable Windows environment, never against the live install:
+build ([update-testing.md](update-testing.md)) in a disposable Windows environment,
+never against the live install:
 
 - [ ] Keyboard only: Tab reaches the sidebar indicator and every Settings >
   Updates control; Enter/Space activates them; Escape closes Settings and the
