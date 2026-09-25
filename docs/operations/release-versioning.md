@@ -3,7 +3,7 @@
 `tools/release` (`@cw-code/release-tools`) computes candidate versions, builds release
 plans and notes, and validates stable promotion. It never creates tags, GitHub releases,
 npm publications or commits by itself — it only produces a `ReleasePlan` JSON artifact
-that a later, separately-gated publish step (step 09) consumes.
+that a later, separately-gated publish job in `release.yml` consumes.
 
 ## Channels and versions
 
@@ -27,7 +27,7 @@ Either case is a hard error, not a skip — bump the base first with a normal PR
 
 The version applied to the three `package.json` files happens only inside the CI workspace
 at build time, via `apply`, and is never committed. Because there is no version-bump commit,
-there is no recursive CI trigger. The publish job (step 09) creates the git tag `v<version>`
+there is no recursive CI trigger. The publish job of `release.yml` creates the git tag `v<version>`
 at the exact source SHA recorded in the plan — the tag is never created here.
 
 ## Stable promotion
@@ -121,19 +121,24 @@ only becomes a typed `ReleasePlan` after passing this validator.
 Once the shape is confirmed, `verify-plan --plan <file>` re-checks, against the live
 repository/GitHub state, that:
 
-- the planned tag is not already reserved — by an existing git tag *or* by any existing
-  GitHub release with that tag name, **including drafts** (a draft release still reserves the
-  tag for publication purposes);
+- the planned tag is not already a git tag;
+- the planned tag is not reserved by a GitHub release, drafts included, with one
+  exception: a single **draft** whose `target_commitish` equals `sourceSha` and whose body
+  carries `<!-- cw-release-plan sha=<sourceSha> -->` is returned as `resumeDraft` so a rerun
+  continues it. Any other release with that tag (published, unmarked, another SHA, or more
+  than one) rejects the plan;
 - no higher-or-equal version has been published in the same channel since the plan was
-  created; and
-- the source SHA is still current: for alpha, compared against `origin/main`'s real remote
-  HEAD (`git ls-remote origin refs/heads/main`, exposed as `ReleaseSource.remoteMainSha()`) —
-  **not** the local checkout's `HEAD`, which could differ if the runner's checkout is stale or
-  was created from a different ref; for stable, the candidate tag's resolved commit must still
-  equal the recorded `sourceSha`.
+  created, and, for alpha, no stable newer than the alpha has been published (the alpha
+  would land after it in the Atom feed and stay hidden from alpha clients); and
+- the source SHA is still acceptable: for alpha, `sourceSha` must be reachable from `main`
+  on GitHub (`gh api repos/<owner>/<repo>/compare/<sha>...main` is `identical` or `ahead`,
+  exposed as `ReleaseSource.isAncestorOfMain()`). `main` moving on after the plan is fine;
+  a force-push or a side-branch SHA is not. For stable, the candidate tag's resolved commit
+  must still equal the recorded `sourceSha`.
 
-A stale result rejects the plan instead of publishing it. Step 09 must run `verify-plan`
-immediately before creating any tag/release.
+A stale result rejects the plan instead of publishing it. `release.yml`'s publish step runs
+the same checks before creating the draft and again right before publishing
+([releases.md](releases.md#publication)).
 
 ## CLI
 
@@ -152,7 +157,8 @@ the heredoc delimiter format, so values are never corrupted or split by embedded
   historical or out-of-band commit cannot pick up an unrelated local edit. `--force` only
   applies to `--channel alpha` (see "Automatic alpha policy" above).
 - `verify-plan --plan <file>` — re-validates a previously written plan against the current
-  repository state; exits non-zero when invalid or stale.
+  repository state; exits non-zero when invalid or stale, and sets the `resume` output when
+  a marked draft can be resumed.
 - `apply --plan <file>` (preferred) applies a plan's version after re-validating its shape;
   `apply --version <version>` remains for local/manual use but is rejected unless `<version>`
   is on the current desktop base (use `set-base` to change the base, or pass `--plan`).
@@ -162,6 +168,9 @@ the heredoc delimiter format, so values are never corrupted or split by embedded
 - `check-sync` — verifies the three `package.json` files agree on a single version.
 - `rehash`, `signing-manifest`, `check-signing-manifest` — Windows signing post-processing
   and the `signing.json` gate; documented in [windows-signing.md](windows-signing.md).
+- `stage-release-set`, `validate-release-assets`, `select-upgrade-base`, `publish`,
+  `check-published` — the release set, publication and post-publication checks;
+  documented in [releases.md](releases.md).
 
 `pnpm release:plan` is a root convenience alias for `plan`. `gh api` calls use whatever auth `gh` has
 (a read-only `GH_TOKEN` in CI, or `gh auth login` locally); any `gh api` failure is reported with
@@ -170,11 +179,13 @@ projection limited to the fields the tool actually reads.
 
 ## Workflow
 
-`.github/workflows/release-plan.yml` runs on `workflow_run` (workflow `CI`, on completion) for
-automatic alpha planning, and on `workflow_dispatch` (`channel`, `candidate`, `expected_sha`,
-`force` inputs) for manual alpha or stable planning. It has `permissions: contents: read`
-only — it cannot create tags, releases or commits — and checks out with
-`persist-credentials: false` so the ephemeral token is never written to disk.
+Planning is the first job (`plan`) of `.github/workflows/release.yml`
+([releases.md](releases.md)); there is no separate planning workflow. It runs on
+`workflow_run` (workflow `CI`, on completion) for automatic alpha planning, and on
+`workflow_dispatch` (`channel`, `candidate`, `expected_sha`, `force`, `mode` inputs) for
+manual alpha or stable runs. The job has `permissions: contents: read` only — it cannot
+create tags, releases or commits — and checks out with `persist-credentials: false` so the
+ephemeral token is never written to disk.
 
 The job only runs when:
 
@@ -194,6 +205,6 @@ through `env:` and referenced as quoted shell variables, so a crafted input (e.g
 string containing shell metacharacters) cannot break out of its argument position.
 
 The job checks out the exact commit that triggered it (or `main`'s current head for manual
-dispatch) with full history and tags, runs `plan`, uploads `plan.json` as a 14-day artifact,
-and writes a job summary. The `release-plan-<channel>` concurrency group serializes plans per
-channel without cancelling an in-progress run.
+dispatch) with full history and tags, runs `plan`, uploads `plan.json` as a 30-day artifact,
+and writes a job summary. The workflow's `release-<channel>` concurrency group serializes
+runs per channel without cancelling an in-progress run.

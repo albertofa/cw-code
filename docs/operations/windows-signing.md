@@ -9,10 +9,10 @@ rotation, outages, and what is still blocked on the owner.
 ## Status
 
 The pipeline code is in place, but nothing has been signed yet: every item under
-"Blocked on the owner" is still open. **No workflow calls `sign-windows.yml` yet.** Step 09
-adds the release workflow that does. Until the owner finishes enrollment, only
-`signing-mode: unsigned` can run, and it only produces non-production artifacts that the
-step-09 validator refuses to publish.
+"Blocked on the owner" is still open. `.github/workflows/release.yml` is the only caller
+(see [releases.md](releases.md)). Until the owner finishes enrollment, only
+`signing-mode: unsigned` can run, and it only produces non-production artifacts that
+`validate-release-assets --require-production` and `publish` refuse.
 
 ## Signing scope: first-party only
 
@@ -82,7 +82,10 @@ SignPath's origin verification records the workflow run's `GITHUB_SHA` and ref. 
 build `source-sha`. These are equal for an alpha built from `main`'s head, but they differ
 when a `workflow_run` or a stable promotion builds an older, already-tested commit. The
 guard requires `source-sha` to be an ancestor of `origin/main`, and `source-sha` is
-recorded in `package-info.json`, in `signing.json` and in both job summaries. **The owner
+recorded in `package-info.json`, in `signing.json` and in both job summaries. The ancestor
+check accepts any historical `main` commit by design: the plan picks the SHA (the
+`workflow_run` head or the tested stable candidate), and this guard only proves the SHA
+went through `main`. **The owner
 must confirm with SignPath during enrollment that building an ancestor of the run's commit
 satisfies its origin policy.** If it does not, stable promotion must be restructured so
 that the run's own commit is the one built.
@@ -140,11 +143,13 @@ without the owner's explicit approval.
 6. **finalize**:
    - Puts the metadata, the final installer and the app in `release/`, then runs:
      `rehash`, `verify-signatures.ps1`, `signing-manifest` (checks `package-info.json`
-     against the workflow inputs and the update info version), and `check-signing-manifest
-     --release-dir release` (plus `--require-production` for production).
+     against the workflow inputs and the update info version, and records the blockmap's
+     sha512 and size), and `check-signing-manifest --release-dir release
+     --expected-version --expected-source-sha --expected-run-id` (plus
+     `--require-production` for production).
    - Uploads the release set: installer, blockmap, update info, `signing.json`,
      `verify-signatures.json`, `rehash.json`, `package-info.json`, and the verified
-     `win-unpacked/`, which step 09 needs to re-hash every listed file.
+     `win-unpacked/`, which `release.yml` needs to re-hash every listed file.
 
 **Gate tooling comes from the signing workflow's own commit.** `package-installer` and
 `finalize` check out `job.workflow_sha` into `tooling/`: the commit of `sign-windows.yml`
@@ -161,7 +166,10 @@ older, its blockmap chunking could in theory differ from the installer's builder
 The blockmap still describes the final installer bytes exactly; only differential
 download efficiency could change.
 
-Intermediate artifacts are kept for 1 day, the final set for 14 days. Artifacts are never
+Intermediate artifacts are kept for 3 days, the final set for 14 days. Three days, not
+one, because a signing request can wait on the `release-signing` environment approval
+(and SignPath's own approval) for more than 24 hours, and the next job still needs the
+previous artifact. Artifacts are never
 overwritten, and names include the run attempt. After a failure, use **Re-run all jobs**
 so every artifact gets a fresh name. "Re-run failed jobs" can collide with an artifact
 that a partially failed job already uploaded.
@@ -247,21 +255,13 @@ level. It ends up in `app-update.yml` and is the expected publisher for verifica
   validate them in SignPath's UI.
 - A release-signing policy with manual approval that applies an RFC 3161 timestamp.
 
-### Caller (step 09, not written yet)
+### Caller
 
-```yaml
-jobs:
-  sign:
-    uses: ./.github/workflows/sign-windows.yml
-    permissions:
-      contents: read
-      actions: read
-    with:
-      signing-mode: signpath
-      production: true
-      version: ${{ needs.plan.outputs.version }}
-      source-sha: ${{ needs.plan.outputs.sha }}
-```
+The `sign` job of `.github/workflows/release.yml` calls this workflow with
+`contents: read` and `actions: read`, passing the plan's version and source SHA. The
+plan job picks the mode: `signpath` + production for `mode: publish`, `signpath`
+non-production for a manual validation when `CW_WINDOWS_PUBLISHER_NAME` is set, and
+`unsigned` otherwise (see [releases.md](releases.md#validation-only-and-publish)).
 
 ## Credentials
 
@@ -294,7 +294,9 @@ jobs:
 | `package-info.json` differs from inputs (version, sourceSha, runId, mode, production), or update info version differs | `signing-manifest` |
 | Installer bytes differ from `latest.yml`/`alpha.yml` | `signing-manifest`, `check-signing-manifest` |
 | Any listed file changed after `signing.json` was written, or first-party set incomplete | `check-signing-manifest --release-dir` |
-| Non-production manifest handed to publishing | `check-signing-manifest --require-production --release-dir` (step 09) |
+| Blockmap changed after `signing.json` was written | `check-signing-manifest --release-dir`, `validate-release-assets` |
+| `signing.json` from another version, source SHA or run | `check-signing-manifest --expected-*` (finalize and `release.yml`), `validate-release-assets` |
+| Non-production manifest handed to publishing | `validate-release-assets --require-production` and `publish` in `release.yml` |
 
 ## Tooling
 
@@ -322,17 +324,24 @@ file or both may be present.
   "files": [
     { "path": "win-unpacked/cw-code.exe", "role": "first-party", "sha512": "<base64>", "status": "Valid", "signed": true, "subject": "<signer DN>", "timestamped": true },
     { "path": "win-unpacked/ffmpeg.dll", "role": "third-party", "sha512": "<base64>", "status": "NotSigned", "signed": false, "subject": null, "timestamped": false }
-  ]
+  ],
+  "blockMap": { "path": "cw-code-Setup-1.2.0-x64.exe.blockmap", "sha512": "<base64>", "size": 110684 }
 }
 ```
 
 - `release signing-manifest --mode <m> --production <true|false> [--publisher <p>]
   --version <v> --source-sha <sha> --run-id <id> --package-info <file> --report
-  <verify.json> --release-dir <dir> [--app-update <app-update.yml>] --out <file>`
+  <verify.json> --release-dir <dir> [--app-update <app-update.yml>] --out <file>`.
+  The blockmap is not a PE file, so `verify-signatures.ps1` does not list it; the command
+  hashes `<installer>.blockmap` from `--release-dir` into `blockMap` and fails if it is
+  missing (run `rehash` first).
 - `release check-signing-manifest --manifest <file> [--release-dir <dir>]
-  [--require-production]` re-validates the manifest. With `--release-dir` it also re-hashes
-  every listed file, checks the installer and version against `latest.yml`/`alpha.yml`, and
-  requires the first-party set. `--require-production` requires `--release-dir`.
+  [--require-production] [--expected-version <v>] [--expected-source-sha <sha>]
+  [--expected-run-id <id>]` re-validates the manifest. The `--expected-*` flags fail when
+  the manifest belongs to another version, commit or run. With `--release-dir` it also
+  re-hashes every listed file and the blockmap, checks the installer and version against
+  `latest.yml`/`alpha.yml`, and requires the first-party set. `--require-production`
+  requires `--release-dir`.
 
 Validation recomputes each file's role from its path, so a relabelled role is rejected. It
 also requires `signed` to be true exactly when `status` is `Valid`, and applies the rules in
@@ -415,7 +424,7 @@ signed test build (non-production `signpath` run):
   which the production policy must not. Otherwise this rule is covered by the script logic
   and the validator tests.
 - **Updater rejection**: in a disposable VM, serve an installer signed by another subject.
-  electron-updater must refuse it. This is part of step 09's installed upgrade gate.
+  electron-updater must refuse it. Run it by hand in a disposable VM (`signed-wrong-publisher` in update-testing.md); the `release.yml` gate only covers the correct publisher.
 
 Record the commands and redacted output (signer subject, thumbprint, timestamp authority;
 never the token) in the PR.
@@ -475,5 +484,5 @@ it signs nothing. Keep those unset for local builds. Signed builds only come fro
       (recommended: `SignPath Foundation`).
 - [ ] Protect `main` (required review, no direct or force push, no admin bypass) and add
       `CODEOWNERS` for `.github/workflows/`, `.signpath/`, `scripts/` and `tools/release/`.
-- [ ] Run a first non-production `signpath` build (after step 09 adds a caller), and
+- [ ] Run a first non-production `signpath` build (a `release.yml` dispatch with `mode: validate`), and
       record the redacted proof and the negative fixtures.
