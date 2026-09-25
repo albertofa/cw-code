@@ -117,6 +117,9 @@ importers:
       electron-updater:
         specifier: 6.8.9
         version: 6.8.9
+      js-yaml:
+        specifier: 4.3.2
+        version: 4.3.2
       typescript:
         specifier: ^5.6.3
         version: 5.9.3

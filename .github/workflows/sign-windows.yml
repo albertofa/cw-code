@@ -188,7 +188,8 @@ jobs:
         run: |
           for file in cw-code.exe resources/app-update.yml resources/elevate.exe; do
             [ -f "apps/desktop/dist/win-unpacked/$file" ] || { echo "::error::win-unpacked/$file is missing"; exit 1; }
-          done      - name: Check out the gate tooling from the signing workflow's commit
+          done
+      - name: Check out the gate tooling from the signing workflow's commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           ref: ${{ job.workflow_sha }}
