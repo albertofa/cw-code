@@ -44,7 +44,7 @@ import type { SettingsStore } from "./settings/SettingsStore.js";
 import { ElectronUpdaterAdapter } from "./updates/ElectronUpdaterAdapter.js";
 import { UpdateService } from "./updates/UpdateService.js";
 import { createUpdateLogFile } from "./updates/updateLog.js";
-import { touchesUpdatePreferences, updatePreferences } from "./updates/updatePreferences.js";
+import { firstRunChannelPatch, touchesUpdatePreferences, updatePreferences } from "./updates/updatePreferences.js";
 import { isUpdateChannel } from "./updates/updateState.js";
 
 type DriverName = DriverKind;
@@ -126,7 +126,8 @@ function createUpdateService(settings: AppSettings): UpdateService {
     files: { fileExists: existsSync, listDirectory: (path) => readdirSync(path) },
     createAdapter: () => new ElectronUpdaterAdapter({ homeDir: homedir(), sink: logger }),
     logger,
-    homeDir: homedir()
+    homeDir: homedir(),
+    canRunScheduledCheck: () => services?.shutdown.isIdle() !== false
   });
 }
 
@@ -143,6 +144,10 @@ function createServices(stores: { sessionStore: SessionStore; settingsStore: Set
   const git = new GitService(() => sessions.getSettings());
   pullRequests = new PullRequestService(git, () => sessions.getSettings(), (rootPath) => sessions.addProject(rootPath));
   const ptys = new PtyPool(() => sessions.getSettings());
+  const settings = stores.settingsStore.get();
+  const updates = createUpdateService(settings);
+  const firstRunChannel = firstRunChannelPatch(settings, app.getVersion(), updates.getState().phase !== "disabled");
+  if (firstRunChannel) stores.settingsStore.set(firstRunChannel);
   return {
     sessions,
     skills: new SkillsStore(),
@@ -152,7 +157,7 @@ function createServices(stores: { sessionStore: SessionStore; settingsStore: Set
     ptys,
     accountUsage: new AccountUsageService(() => sessions.getDrivers()),
     shutdown: new ShutdownCoordinator({ sessions, ptys, onRecovered: handleShutdownRecovered, onExpired: handleShutdownExpired }),
-    updates: createUpdateService(stores.settingsStore.get())
+    updates
   };
 }
 
@@ -457,6 +462,7 @@ function registerUpdateIpc({ updates, sessions, shutdown }: Services): void {
     const token = parseShutdownToken(args, "updates.install");
     return updates.install(args, {
       commit: (action) => commitShutdown(token, action),
+      reason: () => shutdown.currentReason(),
       release: () => releaseShutdownToken(shutdown, token)
     });
   });
@@ -467,10 +473,11 @@ function registerUpdateIpc({ updates, sessions, shutdown }: Services): void {
   ipcMain.handle("updates.state", (): UpdateState => updates.getState());
   ipcMain.handle("updates.check", (): Promise<UpdateActionResult> => updates.check());
   ipcMain.handle("updates.download", (): Promise<UpdateActionResult> => updates.download());
-  ipcMain.handle("updates.setChannel", (_e, args: unknown): Promise<UpdateActionResult> => {
+  ipcMain.handle("updates.setChannel", async (_e, args: unknown): Promise<UpdateActionResult> => {
     const channel = args && typeof args === "object" ? (args as { channel?: unknown }).channel : undefined;
-    if (isUpdateChannel(channel)) sessions.setSettings({ updateChannel: channel });
-    return updates.setChannel(channel);
+    const result = await updates.setChannel(channel);
+    if (result.ok && isUpdateChannel(channel)) sessions.setSettings({ updateChannel: channel });
+    return result;
   });
 }
 

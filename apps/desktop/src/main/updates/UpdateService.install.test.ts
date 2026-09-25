@@ -1,8 +1,14 @@
 import { describe, expect, it } from "vitest";
-import type { ShutdownActiveTurn, ShutdownTerminal, UpdateChannel, UpdateProgress } from "@cw-code/contracts";
+import type { ShutdownActiveTurn, ShutdownReason, ShutdownTerminal, UpdateChannel, UpdateProgress } from "@cw-code/contracts";
 import { ShutdownCoordinator, type ShutdownClock, type ShutdownPtys, type ShutdownSessions } from "../shutdown/ShutdownCoordinator.js";
 import type { UpdaterAdapter, UpdaterCheckOutcome, UpdaterDownloadHandle } from "./ElectronUpdaterAdapter.js";
-import { UpdateService, type UpdateInstallSession, type UpdateServiceOptions } from "./UpdateService.js";
+import {
+  INSTALLER_STARTED_MESSAGE,
+  SUSPENDED_CHECK_RETRY_MS,
+  UpdateService,
+  type UpdateInstallSession,
+  type UpdateServiceOptions
+} from "./UpdateService.js";
 
 const COMMIT_EXIT_TIMEOUT_MS = 30_000;
 
@@ -134,6 +140,7 @@ function setup(overrides: Partial<UpdateServiceOptions> = {}) {
   const released: string[] = [];
   const committed: string[] = [];
   const sessionFor = (token: string): UpdateInstallSession => ({
+    reason: () => coordinator.currentReason(),
     commit: (action) => {
       committed.push(token);
       return coordinator.commit(token, action);
@@ -146,8 +153,8 @@ function setup(overrides: Partial<UpdateServiceOptions> = {}) {
       }
     }
   });
-  const prepare = async (): Promise<string> => {
-    const result = await coordinator.prepare({ reason: "update", stopActiveTurns: true, timeoutMs: 1000 });
+  const prepare = async (reason: ShutdownReason = "update"): Promise<string> => {
+    const result = await coordinator.prepare({ reason, stopActiveTurns: true, timeoutMs: 1000 });
     if (!result.ok) throw new Error(`prepare failed: ${JSON.stringify(result)}`);
     return result.token;
   };
@@ -228,19 +235,87 @@ describe("UpdateService.install", () => {
     expect(await h.service.setChannel("alpha")).toMatchObject({ ok: false, code: "busy" });
     expect(await h.service.install({ version: "1.1.0", channel: "stable" }, h.sessionFor(token))).toMatchObject({ ok: false, code: "busy" });
 
+    h.service.dispose();
     h.clock.fire(COMMIT_EXIT_TIMEOUT_MS);
     const result = await pending;
 
-    expect(result).toMatchObject({ ok: false, code: "failed" });
+    expect(result).toMatchObject({ ok: false, code: "failed", message: INSTALLER_STARTED_MESSAGE });
     expect(h.service.getState()).toMatchObject({
       phase: "ready",
       downloadedVersion: "1.1.0",
-      error: { context: "install", retryable: true }
+      error: { context: "install", retryable: false, message: INSTALLER_STARTED_MESSAGE }
     });
-    expect(h.service.getState().error?.message).toMatch(/did not exit/);
     expect(h.coordinator.isIdle()).toBe(true);
     expect(h.sessions.calls).toContain("reinitialize");
     expect(h.sessions.reserved).toBe(false);
+  });
+
+  it("stays alive but refuses further installs and checks once the installer was started and cw-code did not exit", async () => {
+    const h = setup();
+    await h.ready();
+    const pending = h.service.install({ version: "1.1.0", channel: "stable" }, h.sessionFor(await h.prepare()));
+    await settle();
+    h.service.dispose();
+    h.clock.fire(COMMIT_EXIT_TIMEOUT_MS);
+    await pending;
+
+    const token = await h.prepare();
+    expect(await h.service.install({ version: "1.1.0", channel: "stable" }, h.sessionFor(token))).toMatchObject({
+      ok: false,
+      code: "failed",
+      message: INSTALLER_STARTED_MESSAGE
+    });
+    expect(h.released).toContain(token);
+    expect(h.coordinator.isIdle()).toBe(true);
+    expect(await h.service.check()).toMatchObject({ ok: false, code: "failed", message: INSTALLER_STARTED_MESSAGE });
+    expect(h.adapter.installs).toHaveLength(1);
+    expect(h.service.getState().error).toMatchObject({ context: "install", retryable: false });
+  });
+
+  it("refuses a restart request that was prepared for a quit and leaves it untouched", async () => {
+    const h = setup();
+    await h.ready();
+    const token = await h.prepare("quit");
+    expect(await h.service.install({ version: "1.1.0", channel: "stable" }, h.sessionFor(token))).toMatchObject({
+      ok: false,
+      code: "invalid"
+    });
+    expect(h.released).toEqual([]);
+    expect(h.committed).toEqual([]);
+    expect(h.coordinator.isIdle()).toBe(false);
+  });
+
+  it("postpones scheduled checks while a shutdown is being prepared", async () => {
+    const tasks: Array<{ callback: () => void; delay: number }> = [];
+    let idle = false;
+    const h = setup({
+      scheduler: {
+        schedule: (callback, delay) => {
+          tasks.push({ callback, delay });
+          return () => {};
+        }
+      },
+      canRunScheduledCheck: () => idle
+    });
+    h.service.start();
+    tasks.shift()?.callback();
+    await settle();
+    expect(h.service.getState().phase).toBe("idle");
+    expect(tasks.map((task) => task.delay)).toEqual([SUSPENDED_CHECK_RETRY_MS]);
+    idle = true;
+    tasks.shift()?.callback();
+    await settle();
+    expect(h.service.getState().phase).toBe("up-to-date");
+  });
+
+  it("starts the download when background downloads are turned on while an update is available", async () => {
+    const h = setup({ autoDownload: false });
+    h.adapter.checkResults.push(available("1.1.0"));
+    await h.service.check();
+    expect(h.service.getState().phase).toBe("available");
+    h.service.setAutoDownload(true);
+    await settle();
+    expect(h.service.getState()).toMatchObject({ phase: "ready", downloadedVersion: "1.1.0" });
   });
 
   it("returns to ready with the error when the installer fails to start, and allows a retry", async () => {
@@ -265,10 +340,11 @@ describe("UpdateService.install", () => {
   it("reports a commit rejected by the coordinator without calling the installer", async () => {
     const h = setup();
     await h.ready();
+    await h.prepare();
     const result = await h.service.install({ version: "1.1.0", channel: "stable" }, h.sessionFor("stale-token"));
     expect(result).toMatchObject({ ok: false, code: "failed" });
     expect(h.adapter.installs).toEqual([]);
-    expect(h.service.getState()).toMatchObject({ phase: "ready", error: { context: "install" } });
+    expect(h.service.getState()).toMatchObject({ phase: "ready", error: { context: "install", retryable: true } });
   });
 
   it("refuses to install in a disabled build", async () => {

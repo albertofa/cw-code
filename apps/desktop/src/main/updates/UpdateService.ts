@@ -1,6 +1,7 @@
 import { dirname, join } from "node:path";
 import type {
   ShutdownCommitResult,
+  ShutdownReason,
   UpdateActionCode,
   UpdateActionResult,
   UpdateChannel,
@@ -40,6 +41,8 @@ const RELEASE_NAME_MAX_CHARS = 200;
 const RELEASE_DATE_MAX_CHARS = 64;
 const INSTALL_VERSION_MAX_CHARS = 64;
 const INSTALL_ERROR_MAX_CHARS = 300;
+export const SUSPENDED_CHECK_RETRY_MS = 60_000;
+export const INSTALLER_STARTED_MESSAGE = "The installer was started; restart cw-code if it is still open";
 
 export interface UpdateEnvironment {
   isPackaged: boolean;
@@ -68,6 +71,7 @@ export interface UpdateServiceOptions {
   scheduler?: UpdateScheduler;
   now?: () => number;
   random?: () => number;
+  canRunScheduledCheck?: () => boolean;
 }
 
 interface ActiveDownload {
@@ -82,6 +86,7 @@ type CheckTrigger = "manual" | "scheduled" | "channel" | "startup";
 type UpdateActionFailure = Extract<UpdateActionResult, { ok: false }>;
 
 export interface UpdateInstallSession {
+  reason(): ShutdownReason | null;
   commit(action: () => void): Promise<ShutdownCommitResult>;
   release(): void;
 }
@@ -135,6 +140,7 @@ export class UpdateService {
   private consecutiveFailures = 0;
   private cancelScheduled: (() => void) | null = null;
   private started = false;
+  private installerStarted = false;
   private disposed = false;
   private readonly scheduler: UpdateScheduler;
   private readonly now: () => number;
@@ -210,6 +216,9 @@ export class UpdateService {
   }
 
   install(request: unknown, session: UpdateInstallSession): Promise<UpdateActionResult> {
+    if (session.reason() !== "update") {
+      return Promise.resolve(this.fail("invalid", "This restart request was not prepared for an update"));
+    }
     const blocked = this.blockedResult();
     if (blocked) {
       session.release();
@@ -232,6 +241,10 @@ export class UpdateService {
 
   dispose(): void {
     if (this.disposed) return;
+    if (this.state.phase === "installing") {
+      this.log("info", "keeping the updater alive while the installer takes over, in case cw-code does not exit");
+      return;
+    }
     this.disposed = true;
     this.cancelScheduled?.();
     this.cancelScheduled = null;
@@ -370,17 +383,24 @@ export class UpdateService {
     }
     this.dispatch({ type: "install-started", version: target.version });
     this.log("info", `installing ${target.version} through the shutdown coordinator`);
+    let invoked = false;
     let committed: ShutdownCommitResult;
     try {
-      committed = await session.commit(() => this.ensureAdapter().quitAndInstall(false, true));
+      committed = await session.commit(() => {
+        this.ensureAdapter().quitAndInstall(false, true);
+        invoked = true;
+      });
     } catch (error) {
       committed = { ok: false, message: describeUpdateError(error, this.options.homeDir).message };
     }
     if (committed.ok) return this.ok();
-    const failure: UpdateFailure = {
-      message: boundedText(redactUpdateText(committed.message, this.options.homeDir), INSTALL_ERROR_MAX_CHARS) ?? "The installer could not be started",
-      retryable: true
-    };
+    if (invoked) this.installerStarted = true;
+    const failure: UpdateFailure = invoked
+      ? { message: INSTALLER_STARTED_MESSAGE, retryable: false }
+      : {
+          message: boundedText(redactUpdateText(committed.message, this.options.homeDir), INSTALL_ERROR_MAX_CHARS) ?? "The installer could not be started",
+          retryable: true
+        };
     this.dispatch({ type: "install-failed", failure });
     this.log("warn", `install of ${target.version} failed: ${failure.message}`);
     return this.fail("failed", failure.message);
@@ -459,6 +479,11 @@ export class UpdateService {
     this.cancelScheduled?.();
     this.cancelScheduled = this.scheduler.schedule(() => {
       this.cancelScheduled = null;
+      if (this.options.canRunScheduledCheck && !this.options.canRunScheduledCheck()) {
+        this.log("info", `scheduled check postponed while cw-code is preparing to restart`);
+        this.scheduleCheck(SUSPENDED_CHECK_RETRY_MS, trigger);
+        return;
+      }
       void this.requestCheck(trigger).then((result) => {
         if (!result.ok && (result.code === "busy" || result.code === "superseded")) {
           this.scheduleCheck(this.intervalDelay(), "scheduled");
@@ -525,6 +550,7 @@ export class UpdateService {
 
   private blockedResult(): UpdateActionResult | null {
     if (this.disposed) return this.fail("disabled", "The updater has shut down");
+    if (this.installerStarted) return this.fail("failed", INSTALLER_STARTED_MESSAGE);
     if (this.state.phase === "disabled") {
       return this.fail("disabled", this.state.disabledReason ?? DISABLED_IN_DEVELOPMENT);
     }
