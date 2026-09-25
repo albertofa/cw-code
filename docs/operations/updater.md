@@ -175,6 +175,24 @@ How the GitHub provider resolves releases (from the 6.8.9 source):
   top would also hide older alphas, because `isEligible` rejects betas. The
   release pipeline has to publish in version order.
 
+Release name and notes. `GitHubProvider.getLatestVersion` only takes the title and
+notes from the Atom feed when the channel file has none: after parsing
+`latest.yml`/`alpha.yml` it sets `releaseName` from the chosen feed entry's `<title>`
+only if `releaseName == null`, and `releaseNotes` from the feed only if
+`releaseNotes == null`. On the stable path that "chosen entry" is the entry whose tag
+matches `/releases/latest`; when that tag is no longer in the feed (it lists recent
+releases only), the entry falls back to the feed's first one, which is usually the
+newest alpha. A stable client would then show an alpha's title and notes for a stable
+update. electron-builder's `latest.yml` has neither field, so `stage-release-set` in
+the release pipeline writes both into `latest.yml` (and its byte copy `alpha.yml`)
+before upload: `releaseName` is the tag and `releaseNotes` is the plan's notes as a
+`|2-` block scalar (line endings normalized to LF, control characters removed,
+trailing spaces trimmed). The feed then never supplies the text. The installer bytes,
+`sha512`, `size` and the blockmap are unchanged, and `signing.json` does not hash the
+channel files, so nothing downstream moves. `validate-release-assets` and the
+post-publication check fail when the text is missing or belongs to another release
+(see [releases.md](releases.md#the-release-set)).
+
 Missing releases on the stable channel:
 
 | Code | Cause | Stable channel | Alpha channel |

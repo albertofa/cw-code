@@ -8,7 +8,7 @@ when the relaunched app reports the new version, the registry shows it, and the
 seeded projects, sessions, settings and worktree references are still there.
 
 `release.yml` runs the signed N -> N+1 upgrade with the final candidate bytes
-before any publication (see [Production bytes](#production-bytes-step-09) and
+before any publication (see [Production bytes](#production-bytes) and
 [releases.md](releases.md#upgrade-gate)). Nothing in this document publishes a
 release, reads a token or touches a real account.
 
@@ -351,7 +351,7 @@ Use a snapshot, the update-test builds from a dry run, and a feed started with
 Also still pending from `updater.md`: the keyboard, progress, opt-out, Later and
 channel UI checks, done by hand against the same feed.
 
-## Production bytes (step 09)
+## Production bytes
 
 ```sh
 node scripts/verify-installed-upgrade.mjs --production-bytes --installer <cw-code-Setup-N-x64.exe> --candidate-dir <signed N+1 release set> --disposable-environment [--feed-port 47613] [--devtools-port 9339] --evidence <file>
