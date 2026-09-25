@@ -70,3 +70,12 @@ export type {
   UsageLedgerQuery
 } from "./usage.js";
 export type { MetadataStore, MetadataIssueKind, MetadataBackup, MetadataIssue, StartupState } from "./startup.js";
+export type {
+  UpdateChannel,
+  UpdatePhase,
+  UpdateErrorContext,
+  UpdateProgress,
+  UpdateState,
+  UpdateActionCode,
+  UpdateActionResult
+} from "./updates.js";
