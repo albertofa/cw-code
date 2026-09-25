@@ -17,18 +17,26 @@ import type {
   Session,
   SessionStatus,
   SettingsPatch,
+  ShutdownAssessment,
+  ShutdownReason,
   SubagentToolsResult,
   TodoItem,
   TokenCounts,
   TurnEvent,
-  TurnModelUsage
+  TurnModelUsage,
+  UpdateActionResult,
+  UpdateChannel,
+  UpdateState
 } from "../cw.js";
+import type { DirtyBuffer } from "./editorBuffers.js";
 import { appendAssistantText, appendReasoningText, closeReasoning, upsertToolCall } from "../components/chatMessages.js";
 import { getLastModel, setLastModel } from "../components/lastModel.js";
 import { formatDuration, mergeToolPairs } from "../components/toolSummaries.js";
 import { expiredHoldingIds } from "../components/workingSet.js";
 import { defaultNewSessionProjectId, discoveredOwnerId, discoveryProjectId } from "../components/projectRecency.js";
 import { useNotifs } from "../components/Notifications.js";
+import { ipcErrorMessage } from "../components/ipcError.js";
+import { shouldApplyUpdateState } from "./updateThrottle.js";
 
 const GIT_REFRESH_BATCH = 6;
 const PENDING_PREFIX = "pending:";
@@ -38,6 +46,7 @@ function hasLoadedMessages(messages: ChatMessage[] | undefined): boolean {
   return (messages ?? []).some((m) => m.turnId !== LOCAL_NOTICE_TURN_ID);
 }
 let pendingSeq = 0;
+let lastUpdateAppliedAt = 0;
 let pendingPromptInFlight = false;
 
 function nextPendingTurnId(): string {
@@ -122,7 +131,19 @@ function sumTurnUsage(usage: TurnModelUsage[]): TokenCounts & { costUsd: number 
   return { inputTokens, cacheReadTokens, cacheWriteTokens, outputTokens, reasoningTokens, costUsd };
 }
 
+export type ShutdownPhase = "review" | "waiting" | "saving" | "preparing" | "timeout";
+
+export interface ShutdownUiState {
+  reason: ShutdownReason;
+  assessment: ShutdownAssessment;
+  dirty: DirtyBuffer[];
+  phase: ShutdownPhase;
+  error: string | null;
+  pending: string[];
+}
+
 interface AppState {
+  shutdown: ShutdownUiState | null;
   projects: Project[];
   sessionsByProject: Record<string, Session[]>;
   discoveredByProject: Record<string, Session[]>;
@@ -192,11 +213,20 @@ interface AppState {
   sendPrompt(prompt: string, attachments?: string[], command?: CommandInvocation): Promise<void>;
   sendPromptTo(sessionId: string, prompt: string, attachments?: string[], opts?: { prRefs?: PrRef[]; command?: CommandInvocation }): Promise<void>;
   interrupt(): Promise<void>;
+  markTurnsInterrupted(sessionIds: string[]): void;
   retryConnection(sessionId: string): Promise<void>;
   respondApproval(requestId: string, decision: ApprovalDecision): Promise<void>;
   respondQuestion(sessionId: string, requestId: string, answers: Record<string, string>): Promise<void>;
   applyEvent(sessionId: string, event: TurnEvent): void;
   applySessionTitle(sessionId: string, title: string): void;
+  updates: UpdateState | null;
+  subscribeUpdates(): () => void;
+  applyUpdateState(state: UpdateState): void;
+  checkForUpdates(): Promise<UpdateActionResult>;
+  downloadUpdate(): Promise<UpdateActionResult>;
+  setUpdateChannel(channel: UpdateChannel): Promise<UpdateActionResult>;
+  setUpdateBackgroundDownload(enabled: boolean): Promise<AppSettings>;
+  updateRestartPending: boolean;
 }
 
 function isSubagentToolName(name?: string): boolean {
@@ -275,6 +305,7 @@ function knownTurnId(value: string | undefined): string | undefined {
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
+  shutdown: null,
   projects: [],
   sessionsByProject: {},
   discoveredByProject: {},
@@ -306,6 +337,46 @@ export const useAppStore = create<AppState>((set, get) => ({
   holdingHours: 6,
   defaultUseWorktree: true,
   reasoningExpandedByDriver: { claude: false, opencode: false, codex: false },
+  updates: null,
+  updateRestartPending: false,
+
+  subscribeUpdates() {
+    const off = window.cw.updates.onChanged((state) => get().applyUpdateState(state));
+    window.cw.updates
+      .getState()
+      .then((state) => get().applyUpdateState(state))
+      .catch((err: unknown) => console.warn(`update state unavailable: ${ipcErrorMessage(err)}`));
+    return off;
+  },
+
+  applyUpdateState(state: UpdateState) {
+    const now = Date.now();
+    if (!shouldApplyUpdateState(get().updates, state, lastUpdateAppliedAt, now)) return;
+    lastUpdateAppliedAt = now;
+    set({ updates: state });
+  },
+
+  async checkForUpdates() {
+    const result = await window.cw.updates.check();
+    get().applyUpdateState(result.state);
+    return result;
+  },
+
+  async downloadUpdate() {
+    const result = await window.cw.updates.download();
+    get().applyUpdateState(result.state);
+    return result;
+  },
+
+  async setUpdateChannel(channel: UpdateChannel) {
+    const result = await window.cw.updates.setChannel(channel);
+    get().applyUpdateState(result.state);
+    return result;
+  },
+
+  setUpdateBackgroundDownload(enabled: boolean) {
+    return window.cw.setSettings({ updateBackgroundDownload: enabled });
+  },
 
   setPendingPrefs(prefs: ComposerPrefs) {
     set({ pendingPrefs: { ...get().pendingPrefs, ...prefs } });
@@ -1003,6 +1074,17 @@ export const useAppStore = create<AppState>((set, get) => ({
         ? { sessionsByProject: patchSession(get().sessionsByProject, sessionId, { status: "holding", updatedAt: Date.now() }) }
         : {})
     });
+  },
+
+  markTurnsInterrupted(sessionIds: string[]) {
+    let book: TurnBookkeeping = { busyTurns: get().busyTurns, turnStartedAt: get().turnStartedAt, turnDurations: get().turnDurations };
+    let sessionsByProject = get().sessionsByProject;
+    for (const sessionId of sessionIds) {
+      const turnId = book.busyTurns[sessionId];
+      if (turnId) book = closeTurn(book, sessionId, knownTurnId(turnId));
+      sessionsByProject = patchSession(sessionsByProject, sessionId, { status: "holding", updatedAt: Date.now() });
+    }
+    set({ ...book, sessionsByProject });
   },
 
   async retryConnection(sessionId: string) {
