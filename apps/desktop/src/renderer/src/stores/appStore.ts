@@ -1086,6 +1086,43 @@ export const useAppStore = create<AppState>((set, get) => ({
           [sessionId]: appendAssistantText(messages, event.turnId, event.text)
         }
       });
+    } else if (event.type === "context.compacted") {
+      const id = `${event.turnId}-compaction`;
+      const marker: ChatMessage = {
+        id,
+        role: "system",
+        text: "Context compacted",
+        turnId: event.turnId,
+        compaction: event.compaction
+      };
+      const idx = messages.findIndex((m) => m.id === id);
+      const nextMessages =
+        idx >= 0
+          ? [...messages.slice(0, idx), marker, ...messages.slice(idx + 1)]
+          : [...messages, marker];
+      const usage = get().turnUsageBySession[sessionId];
+      set({
+        messagesBySession: { ...get().messagesBySession, [sessionId]: nextMessages },
+        ...(event.context
+          ? {
+              turnUsageBySession: {
+                ...get().turnUsageBySession,
+                [sessionId]: {
+                  context: event.context,
+                  lastTurn:
+                    usage?.lastTurn ?? {
+                      inputTokens: 0,
+                      cacheReadTokens: 0,
+                      cacheWriteTokens: 0,
+                      outputTokens: 0,
+                      reasoningTokens: 0,
+                      costUsd: null
+                    }
+                }
+              }
+            }
+          : {})
+      });
     } else if (event.type === "approval.request") {
       const pending = get().pendingApprovals[sessionId] ?? [];
       if (pending.some((p) => p.requestId === event.request.requestId)) return;

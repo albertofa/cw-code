@@ -95,6 +95,26 @@ describe("turnMessagesOf", () => {
     expect(turnMessagesOf({})).toEqual([]);
   });
 
+  it("flags compaction summary messages", () => {
+    const summary = turnMessagesOf([
+      {
+        info: { id: "msg_c", role: "assistant", mode: "compaction", summary: true },
+        parts: [{ type: "text", text: "This session is being continued..." }]
+      }
+    ]);
+    expect(summary).toEqual([
+      {
+        id: "msg_c",
+        role: "assistant",
+        mode: "compaction",
+        summary: true,
+        cost: 0,
+        tokens: undefined,
+        text: "This session is being continued..."
+      }
+    ]);
+  });
+
   it("carries providerID and modelID when present", () => {
     const withModel = turnMessagesOf([
       {
@@ -314,6 +334,44 @@ describe("summarizeOpencodeTurn", () => {
       lastModel: undefined,
       lastContextTokens: undefined,
       errorText: ""
+    });
+  });
+
+  it("excludes compaction summaries from text and usage and reports the flag", () => {
+    const compacted = turnMessagesOf([
+      {
+        info: { id: "msg_0", role: "assistant", mode: "compaction", summary: true, providerID: "anthropic", modelID: "claude-sonnet-4-5" },
+        parts: [{ type: "text", text: "This session is being continued from a previous conversation..." }]
+      },
+      {
+        info: {
+          id: "msg_1",
+          role: "assistant",
+          cost: 0.003,
+          providerID: "anthropic",
+          modelID: "claude-sonnet-4-5",
+          tokens: { input: 10, output: 5, reasoning: 0, cache: { read: 0, write: 0 } }
+        },
+        parts: [{ type: "text", text: "after compaction" }]
+      }
+    ]);
+    expect(summarizeOpencodeTurn(compacted, new Set())).toEqual({
+      text: "after compaction",
+      usage: [
+        {
+          model: "anthropic/claude-sonnet-4-5",
+          inputTokens: 10,
+          cacheReadTokens: 0,
+          cacheWriteTokens: 0,
+          outputTokens: 5,
+          reasoningTokens: 0,
+          costUsd: 0.003
+        }
+      ],
+      lastModel: "anthropic/claude-sonnet-4-5",
+      lastContextTokens: 15,
+      errorText: "",
+      compacted: true
     });
   });
 

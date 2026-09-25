@@ -7,6 +7,7 @@ import {
   claudeControlResponse,
   claudeDenyResponse,
   claudeQuestionRequest,
+  parseClaudeCompactBoundary,
   parseClaudeControlRequest,
   parseClaudeSubagentHandback,
   parseClaudeSystemInit,
@@ -536,6 +537,58 @@ describe("parseClaudeSystemInit", () => {
     expect(parseClaudeSystemInit(JSON.stringify({ type: "system", subtype: "background_tasks_changed" }))).toBeNull();
     expect(parseClaudeSystemInit(JSON.stringify({ type: "assistant" }))).toBeNull();
     expect(parseClaudeSystemInit("plain text")).toBeNull();
+  });
+});
+
+describe("parseClaudeCompactBoundary", () => {
+  it("parses the compact metadata from a boundary line", () => {
+    const line = JSON.stringify({
+      type: "system",
+      subtype: "compact_boundary",
+      session_id: "sess-1",
+      compact_metadata: {
+        trigger: "manual",
+        pre_tokens: 633409,
+        post_tokens: 16048,
+        cumulative_dropped_tokens: 617361,
+        duration_ms: 80261
+      }
+    });
+    expect(parseClaudeCompactBoundary(line)).toEqual({
+      trigger: "manual",
+      preTokens: 633409,
+      postTokens: 16048,
+      droppedTokens: 617361,
+      durationMs: 80261
+    });
+  });
+
+  it("keeps auto trigger and tolerates missing optional counts", () => {
+    const line = JSON.stringify({
+      type: "system",
+      subtype: "compact_boundary",
+      compact_metadata: { trigger: "auto", pre_tokens: 12000 }
+    });
+    expect(parseClaudeCompactBoundary(line)).toEqual({ trigger: "auto", preTokens: 12000 });
+  });
+
+  it("ignores unknown triggers and non-numeric fields", () => {
+    const line = JSON.stringify({
+      type: "system",
+      subtype: "compact_boundary",
+      compact_metadata: { trigger: "weird", pre_tokens: "lots", post_tokens: 10 }
+    });
+    expect(parseClaudeCompactBoundary(line)).toEqual({ postTokens: 10 });
+  });
+
+  it("returns null without usable metadata, for other subtypes, and for non-JSON", () => {
+    expect(
+      parseClaudeCompactBoundary(JSON.stringify({ type: "system", subtype: "compact_boundary" }))
+    ).toBeNull();
+    expect(
+      parseClaudeCompactBoundary(JSON.stringify({ type: "system", subtype: "status", compact_result: "success" }))
+    ).toBeNull();
+    expect(parseClaudeCompactBoundary("plain text")).toBeNull();
   });
 });
 
