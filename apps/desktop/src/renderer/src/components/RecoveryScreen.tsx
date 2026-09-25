@@ -9,6 +9,16 @@ const STORE_LABELS: Record<MetadataStore, string> = {
   settings: "Settings"
 };
 
+const START_FRESH_LABELS: Record<MetadataStore, string> = {
+  sessions: "Start with no projects",
+  settings: "Start with default settings"
+};
+
+const START_FRESH_EFFECTS: Record<MetadataStore, string> = {
+  sessions: "cw-code starts with an empty project and session list. CLI sessions, repositories and worktrees stay on disk; projects can be added again and CLI sessions imported.",
+  settings: "cw-code starts with default settings."
+};
+
 function fileName(path: string): string {
   return path.split(/[\\/]/).pop() ?? path;
 }
@@ -21,6 +31,8 @@ function explainIssue(issue: MetadataIssue): string {
       return "The file is valid JSON but does not have the structure cw-code expects.";
     case "future-schema":
       return `A newer version of cw-code wrote this file (schema ${issue.foundVersion ?? "?"}; this version supports up to ${issue.supportedVersion}). Update cw-code or restore an older backup.`;
+    case "missing":
+      return "The file is missing, but backups of it exist next to it. cw-code did not start empty so the backups are not ignored by mistake.";
     case "io":
       return "cw-code could not read, back up or write this file.";
   }
@@ -73,6 +85,19 @@ export function RecoveryScreen({ issues, dataDir }: { issues: MetadataIssue[]; d
     if (ok) await run(() => window.cw.recovery.restore(issue.file, backup.path));
   };
 
+  const startFresh = async (issue: MetadataIssue) => {
+    const kept = issue.kind === "missing"
+      ? "There is no current file to keep; existing backups stay in place."
+      : `The current file is kept next to it as ${fileName(issue.file)}.broken-<timestamp> and is not deleted.`;
+    const ok = await confirm({
+      title: `${START_FRESH_LABELS[issue.store]}?`,
+      message: `${START_FRESH_EFFECTS[issue.store]} ${kept} cw-code restarts afterwards.`,
+      confirmLabel: START_FRESH_LABELS[issue.store],
+      danger: true
+    });
+    if (ok) await run(() => window.cw.recovery.startFresh(issue.file));
+  };
+
   return (
     <div className="recovery-screen">
       <div className="recovery-drag" />
@@ -81,7 +106,7 @@ export function RecoveryScreen({ issues, dataDir }: { issues: MetadataIssue[]; d
         <h1 className="recovery-title">cw-code could not load its local data</h1>
         <p className="recovery-lead">
           Nothing was overwritten: the files below were left exactly as they were found. CLI sessions, repositories and
-          worktrees are not affected. Restore a backup, or fix the file and retry.
+          worktrees are not affected. Restore a backup, fix the file and retry, or start that file fresh.
         </p>
         {issues.map((issue) => (
           <section key={issue.file} className="recovery-issue">
@@ -98,6 +123,11 @@ export function RecoveryScreen({ issues, dataDir }: { issues: MetadataIssue[]; d
                 ))}
               </ul>
             )}
+            <div className="recovery-actions">
+              <button type="button" className="btn btn-danger" disabled={busy} onClick={() => void startFresh(issue)}>
+                {START_FRESH_LABELS[issue.store]}
+              </button>
+            </div>
           </section>
         ))}
         <div className="recovery-actions">

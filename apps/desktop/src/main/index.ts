@@ -20,7 +20,7 @@ import { getHarnessTracePath, initHarnessTrace } from "./debug/harnessTrace.js";
 import { appendCrashLog, initCrashLog } from "./debug/crashLog.js";
 import { claudeCommandsCachePath, ensureAppDirs, attachmentsDir, logsDir, migrateFromUserData, opencodeModelsCachePath, sessionDbPath, settingsFilePath, userdataDir } from "./paths/appPaths.js";
 import { reapOrphanedServers } from "./orphanServers.js";
-import type { ApprovalDecision, CliBinary, CommandInvocation, CreateSessionOptions, GitDiffMode, ProjectGitHubRepo, PrRef, SessionPrLink, SessionStatus, SettingsPatch, StartupState, UsageLedgerQuery } from "@cw-code/contracts";
+import type { ApprovalDecision, CliBinary, CommandInvocation, CreateSessionOptions, GitDiffMode, ProjectGitHubRepo, PrRef, SessionPrLink, MetadataIssue, SessionStatus, SettingsPatch, StartupState, UsageLedgerQuery } from "@cw-code/contracts";
 import type { DriverKind, HarnessId, SkillSaveInput } from "@cw-code/contracts";
 import type { PtyKind } from "./pty/PtyPool.js";
 import { SessionManager } from "./sessions/SessionManager.js";
@@ -36,7 +36,7 @@ import { configuredCliBinaryPath } from "./settings/settingsUtils.js";
 import { initOpencodeModelsCache } from "./providers/opencode/opencodeModels.js";
 import { initClaudeCommandsCache } from "./providers/claude/claudeCommands.js";
 import { metadataSchemaFor, openMetadataStores } from "./storage/metadataStores.js";
-import { restoreBackup } from "./storage/recovery.js";
+import { restoreBackup, startFresh } from "./storage/recovery.js";
 import type { SessionStore } from "./sessions/SessionStore.js";
 import type { SettingsStore } from "./settings/SettingsStore.js";
 
@@ -210,6 +210,15 @@ function registerWindowIpc(): void {
   ipcMain.on("win.zoom-reset", (e) => windowFromSender(e.sender)?.webContents.setZoomLevel(0));
 }
 
+function recoveryIssueFor(args: { file?: unknown } | undefined): MetadataIssue {
+  if (startupState.mode !== "recovery") throw new Error("cw-code is not in recovery mode");
+  if (!args || typeof args.file !== "string") throw new Error("a recovery action requires { file }");
+  const file = args.file;
+  const issue = startupState.issues.find((candidate) => candidate.file === file);
+  if (!issue) throw new Error(`${file} is not a file that needs recovery`);
+  return issue;
+}
+
 function registerStartupIpc(): void {
   ipcMain.handle("startup.state", (): StartupState => startupState);
   ipcMain.handle("recovery.openDataDir", async (): Promise<void> => {
@@ -217,15 +226,19 @@ function registerStartupIpc(): void {
     if (failure) throw new Error(`could not open ${userdataDir()}: ${failure}`);
   });
   ipcMain.handle("recovery.restore", (_e, args: { file: string; backupPath: string }): void => {
-    if (startupState.mode !== "recovery") throw new Error("cw-code is not in recovery mode");
-    if (!args || typeof args.file !== "string" || typeof args.backupPath !== "string") {
-      throw new Error("recovery.restore requires { file, backupPath }");
-    }
-    const issue = startupState.issues.find((candidate) => candidate.file === args.file);
-    if (!issue) throw new Error(`${args.file} is not a file that needs recovery`);
+    if (!args || typeof args.backupPath !== "string") throw new Error("recovery.restore requires { file, backupPath }");
+    const issue = recoveryIssueFor(args);
     const result = restoreBackup(issue.file, args.backupPath, metadataSchemaFor(issue.store));
     console.warn(
       `restored ${result.file} from ${result.restoredFrom}${result.brokenPath ? `; previous file kept at ${result.brokenPath}` : ""}`
+    );
+    relaunch();
+  });
+  ipcMain.handle("recovery.startFresh", (_e, args: { file: string }): void => {
+    const issue = recoveryIssueFor(args);
+    const result = startFresh(issue.file, metadataSchemaFor(issue.store));
+    console.warn(
+      `started ${result.file} fresh${result.brokenPath ? `; previous file kept at ${result.brokenPath}` : ""}`
     );
     relaunch();
   });
@@ -652,7 +665,18 @@ function registerIpc({ sessions, skills, files, git, pullRequests, ptys, account
   });
 }
 
-app.whenReady().then(async () => {
+function reportFatalStartupError(error: unknown): void {
+  const detail = error instanceof Error ? (error.stack ?? error.message) : String(error);
+  appendCrashLog(`fatal startup error: ${detail}`);
+  console.error(`fatal startup error: ${detail}`);
+  dialog.showErrorBox(
+    "cw-code could not start",
+    `${error instanceof Error ? error.message : String(error)}\n\nDetails were written to ${join(logsDir(), "crash.log")}. Nothing in your data folder was deleted.`
+  );
+  app.exit(1);
+}
+
+async function startApp(): Promise<void> {
   ensureAppDirs();
   migrateFromUserData(app.getPath("userData"));
   try {
@@ -704,7 +728,9 @@ app.whenReady().then(async () => {
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) void createWindow();
   });
-});
+}
+
+app.whenReady().then(startApp).catch(reportFatalStartupError);
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();

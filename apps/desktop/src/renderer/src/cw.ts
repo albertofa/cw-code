@@ -447,6 +447,7 @@ export interface CwApi {
   recovery: {
     openDataDir(): Promise<void>;
     restore(file: string, backupPath: string): Promise<void>;
+    startFresh(file: string): Promise<void>;
     retry(): Promise<void>;
   };
   checkVersions(): Promise<Array<{

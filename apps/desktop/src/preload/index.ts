@@ -39,6 +39,7 @@ export interface CwApi {
   recovery: {
     openDataDir(): Promise<void>;
     restore(file: string, backupPath: string): Promise<void>;
+    startFresh(file: string): Promise<void>;
     retry(): Promise<void>;
   };
   checkVersions(): Promise<Array<{
@@ -154,6 +155,7 @@ const api: CwApi = {
   recovery: {
     openDataDir: () => ipcRenderer.invoke("recovery.openDataDir"),
     restore: (file: string, backupPath: string) => ipcRenderer.invoke("recovery.restore", { file, backupPath }),
+    startFresh: (file: string) => ipcRenderer.invoke("recovery.startFresh", { file }),
     retry: () => ipcRenderer.invoke("recovery.retry")
   },
   checkVersions: () => ipcRenderer.invoke("cli.checkVersions"),
