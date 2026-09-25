@@ -3,7 +3,7 @@ import { ipcErrorMessage } from "../components/ipcError.js";
 import { useNotifs } from "../components/Notifications.js";
 import { installTarget, matchesInstallTarget } from "../components/updateModel.js";
 import { useAppStore } from "./appStore.js";
-import { runShutdownFlow } from "./shutdownFlow.js";
+import { isShutdownFlowActive, runShutdownFlow } from "./shutdownFlow.js";
 
 const INSTALL_FAILURE_TITLE = "cw-code could not install the update";
 
@@ -25,13 +25,34 @@ async function freshUpdateState(): Promise<UpdateState> {
   return state;
 }
 
+function notifyUpdateChanged(): void {
+  useNotifs.getState().push({
+    kind: "info",
+    title: "The update changed",
+    message: "The downloaded update changed while cw-code was getting ready, so nothing was installed. cw-code is back to normal use."
+  });
+}
+
 export async function restartToUpdate(): Promise<void> {
   const store = useAppStore.getState();
   if (store.updateRestartPending) return;
+  if (isShutdownFlowActive()) {
+    useNotifs.getState().push({ kind: "info", title: "Already closing", message: "A quit or restart is already in progress. Finish or cancel it first." });
+    return;
+  }
   const target = installTarget(store.updates);
   if (!target) return;
   useAppStore.setState({ updateRestartPending: true });
   try {
+    try {
+      if (!matchesInstallTarget(await freshUpdateState(), target)) {
+        notifyUpdateChanged();
+        return;
+      }
+    } catch (err) {
+      notifyInstallFailure(ipcErrorMessage(err));
+      return;
+    }
     const flow = await runShutdownFlow("update");
     if (!flow) return;
     let fresh: UpdateState;
@@ -44,11 +65,7 @@ export async function restartToUpdate(): Promise<void> {
     }
     if (!matchesInstallTarget(fresh, target)) {
       await releaseRestart(flow.token);
-      useNotifs.getState().push({
-        kind: "info",
-        title: "The update changed",
-        message: "The downloaded update changed while cw-code was getting ready, so nothing was installed. cw-code is back to normal use."
-      });
+      notifyUpdateChanged();
       return;
     }
     let result: UpdateActionResult;
