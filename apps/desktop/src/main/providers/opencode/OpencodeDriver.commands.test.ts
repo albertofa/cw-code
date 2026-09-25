@@ -182,10 +182,14 @@ describe("OpencodeDriver command dispatch", () => {
       await waitFor(() => ofType(events, "turn.done").length === 1);
       expect(posts(calls, "/summarize")[0]?.body).toEqual({ providerID: "anthropic", modelID: "claude-opus-5" });
       expect(posts(calls, "/message")).toEqual([]);
-      expect(ofType(events, "assistant.delta").map((e) => e.text.trim())).toEqual(["Session compacted."]);
+      expect(ofType(events, "context.compacted")).toEqual([
+        { type: "context.compacted", turnId, compaction: { trigger: "manual" } }
+      ]);
+      expect(ofType(events, "assistant.delta")).toEqual([]);
       sse.push({ type: "session.idle", properties: { sessionID: "ses_1" } });
       await sleep(100);
       expect(ofType(events, "turn.done")).toHaveLength(1);
+      expect(ofType(events, "context.compacted")).toHaveLength(1);
       expect(ofType(events, "turn.done")[0]).toMatchObject({ turnId, isError: false });
     } finally {
       driver.dispose();
@@ -216,7 +220,7 @@ describe("OpencodeDriver command dispatch", () => {
     }
   });
 
-  it("prefixes the compact notice with a blank line when assistant text already streamed for the turn", async () => {
+  it("keeps streamed assistant text and emits the compaction marker once", async () => {
     const events: ThreadEvent[] = [];
     const sse = controllableSse();
     let release: (res: Response) => void = () => {};
@@ -226,7 +230,7 @@ describe("OpencodeDriver command dispatch", () => {
     );
     const driver = startDriver(events);
     try {
-      driver.startTurn({ ...BASE, prompt: "/compact", command: { name: "compact", args: "" } });
+      const { turnId } = driver.startTurn({ ...BASE, prompt: "/compact", command: { name: "compact", args: "" } });
       await waitFor(() => posts(calls, "/summarize").length === 1);
       sse.push({
         type: "message.part.delta",
@@ -235,9 +239,41 @@ describe("OpencodeDriver command dispatch", () => {
       await sleep(50);
       release(json(true));
       await waitFor(() => ofType(events, "turn.done").length === 1);
-      expect(ofType(events, "assistant.delta").map((e) => e.text)).toEqual([
-        "Working on it...",
-        "\n\nSession compacted."
+      expect(ofType(events, "assistant.delta").map((e) => e.text)).toEqual(["Working on it..."]);
+      expect(ofType(events, "context.compacted")).toEqual([
+        { type: "context.compacted", turnId, compaction: { trigger: "manual" } }
+      ]);
+    } finally {
+      driver.dispose();
+    }
+  });
+
+  it("does not let the poll report a manual compact as auto", async () => {
+    const events: ThreadEvent[] = [];
+    const sse = controllableSse();
+    const summaryPayload = [
+      { info: { id: "msg_u1", role: "user" }, parts: [{ type: "text", text: "hi" }] },
+      {
+        info: { id: "msg_c1", role: "assistant", mode: "compaction", summary: true },
+        parts: []
+      }
+    ];
+    let release: (res: Response) => void = () => {};
+    const calls = stubFetch((call) => {
+      if (call.url.endsWith("/summarize")) return new Promise<Response>((r) => (release = r));
+      if (call.url.includes("limit=50")) return json(summaryPayload);
+      return undefined;
+    }, sse.response);
+    const driver = startDriver(events);
+    try {
+      const { turnId } = driver.startTurn({ ...BASE, prompt: "/compact", command: { name: "compact", args: "" } });
+      await waitFor(() => posts(calls, "/summarize").length === 1);
+      await sleep(2300);
+      expect(ofType(events, "context.compacted")).toEqual([]);
+      release(json(true));
+      await waitFor(() => ofType(events, "turn.done").length === 1);
+      expect(ofType(events, "context.compacted")).toEqual([
+        { type: "context.compacted", turnId, compaction: { trigger: "manual" } }
       ]);
     } finally {
       driver.dispose();
