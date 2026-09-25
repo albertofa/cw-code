@@ -607,11 +607,17 @@ export class ClaudeCliDriver implements CliDriver {
 
   private handleTurnDone(state: ClaudeProcessState, info: TurnDoneInfo): void {
     const turnId = state.activeTurnId;
+    const interrupted = this.interruptedTurns.delete(turnId);
     if (state.completedTurn) {
+      state.resumeCursor = info.resumeCursor;
+      state.modelUsage = info.modelUsage;
+      if (interrupted) {
+        state.postCompletionOutputPending = false;
+        this.armIdleTimer(state);
+        return;
+      }
       if (state.postCompletionOutputPending) {
         const backgroundTasks = this.liveTaskCount(state);
-        state.resumeCursor = info.resumeCursor;
-        state.modelUsage = info.modelUsage;
         if (backgroundTasks === 0) {
           this.emit({
             type: "turn.done",
@@ -626,13 +632,11 @@ export class ClaudeCliDriver implements CliDriver {
             backgroundTasks
           });
           state.postCompletionOutputPending = false;
-          this.armIdleTimer(state);
         }
       }
-      this.interruptedTurns.delete(turnId);
+      this.armIdleTimer(state);
       return;
     }
-    const interrupted = this.interruptedTurns.delete(turnId);
     const backgroundTasks = this.liveTaskCount(state);
     state.modelUsage = info.modelUsage;
     if (info.windowTokens !== undefined) state.lastWindowTokens = info.windowTokens;
