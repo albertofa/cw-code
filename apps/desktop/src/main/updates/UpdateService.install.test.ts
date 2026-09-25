@@ -1,29 +1,40 @@
 import { describe, expect, it } from "vitest";
 import type { ShutdownActiveTurn, ShutdownReason, ShutdownTerminal, UpdateChannel, UpdateProgress } from "@cw-code/contracts";
 import { ShutdownCoordinator, type ShutdownClock, type ShutdownPtys, type ShutdownSessions } from "../shutdown/ShutdownCoordinator.js";
-import type { UpdaterAdapter, UpdaterCheckOutcome, UpdaterDownloadHandle } from "./ElectronUpdaterAdapter.js";
+import type { UpdaterAdapter, UpdaterCheckOutcome, UpdaterDownloadedInfo, UpdaterDownloadHandle } from "./ElectronUpdaterAdapter.js";
 import {
+  INSTALLER_MISSING_MESSAGE,
   INSTALLER_STARTED_MESSAGE,
   SUSPENDED_CHECK_RETRY_MS,
   UpdateService,
+  type InstallerFileFacts,
   type UpdateInstallSession,
   type UpdateServiceOptions
 } from "./UpdateService.js";
 
 const COMMIT_EXIT_TIMEOUT_MS = 30_000;
+const INSTALLER_FILE = "C:\\Users\\Jane\\AppData\\Local\\@cw-codedesktop-updater\\pending\\cw-code-Setup-1.1.0-x64.exe";
+const INSTALLER_SIZE = 104_857_600;
 
 class InstallAdapter implements UpdaterAdapter {
   checkResults: UpdaterCheckOutcome[] = [];
   installs: Array<[boolean, boolean]> = [];
   installError: Error | null = null;
+  downloadedFile: string | null = INSTALLER_FILE;
+  downloadedSize: number | null = INSTALLER_SIZE;
+  private lastVersion = "1.0.0";
+  private readonly downloaded = new Set<(info: UpdaterDownloadedInfo) => void>();
 
   configure(): void {}
 
   async check(): Promise<UpdaterCheckOutcome | null> {
-    return this.checkResults.shift() ?? { available: false, info: { version: "1.0.0", releaseName: null, releaseNotes: null, releaseDate: null } };
+    const result = this.checkResults.shift() ?? { available: false, info: { version: "1.0.0", releaseName: null, releaseNotes: null, releaseDate: null } };
+    this.lastVersion = result.info.version;
+    return result;
   }
 
   download(): UpdaterDownloadHandle {
+    for (const listener of this.downloaded) listener({ version: this.lastVersion, file: this.downloadedFile, size: this.downloadedSize });
     return { done: Promise.resolve(), cancel: () => {} };
   }
 
@@ -35,8 +46,9 @@ class InstallAdapter implements UpdaterAdapter {
     return () => {};
   }
 
-  onDownloaded(_listener: (info: { version: string }) => void): () => void {
-    return () => {};
+  onDownloaded(listener: (info: UpdaterDownloadedInfo) => void): () => void {
+    this.downloaded.add(listener);
+    return () => this.downloaded.delete(listener);
   }
 
   quitAndInstall(isSilent: boolean, isForceRunAfter: boolean): void {
@@ -115,6 +127,7 @@ function available(version: string): UpdaterCheckOutcome {
 
 function setup(overrides: Partial<UpdateServiceOptions> = {}) {
   const adapter = new InstallAdapter();
+  const disk = new Map<string, InstallerFileFacts>([[INSTALLER_FILE, { isFile: true, size: INSTALLER_SIZE }]]);
   const sessions = new Sessions();
   const ptys = new Ptys();
   const clock = new ManualClock();
@@ -135,6 +148,7 @@ function setup(overrides: Partial<UpdateServiceOptions> = {}) {
     logger: { info: () => {}, warn: () => {} },
     homeDir: "C:\\Users\\Jane",
     scheduler: { schedule: () => () => {} },
+    inspectFile: (path) => disk.get(path) ?? null,
     ...overrides
   });
   const released: string[] = [];
@@ -163,7 +177,7 @@ function setup(overrides: Partial<UpdateServiceOptions> = {}) {
     await service.check();
     await service.download();
   };
-  return { adapter, sessions, ptys, clock, coordinator, service, released, committed, sessionFor, prepare, ready };
+  return { adapter, disk, sessions, ptys, clock, coordinator, service, released, committed, sessionFor, prepare, ready };
 }
 
 describe("UpdateService.install", () => {
@@ -222,14 +236,14 @@ describe("UpdateService.install", () => {
     expect(h.adapter.installs).toEqual([]);
   });
 
-  it("installs through the coordinator commit with the normal installer UI and a relaunch", async () => {
+  it("installs silently through the coordinator commit with a forced relaunch", async () => {
     const h = setup();
     await h.ready();
     const token = await h.prepare();
     const pending = h.service.install({ version: "1.1.0", channel: "stable" }, h.sessionFor(token));
     await settle();
     expect(h.committed).toEqual([token]);
-    expect(h.adapter.installs).toEqual([[false, true]]);
+    expect(h.adapter.installs).toEqual([[true, true]]);
     expect(h.coordinator.isCommitted()).toBe(true);
     expect(h.service.getState().phase).toBe("installing");
     expect(await h.service.setChannel("alpha")).toMatchObject({ ok: false, code: "busy" });
@@ -345,6 +359,61 @@ describe("UpdateService.install", () => {
     expect(result).toMatchObject({ ok: false, code: "failed" });
     expect(h.adapter.installs).toEqual([]);
     expect(h.service.getState()).toMatchObject({ phase: "ready", error: { context: "install", retryable: true } });
+  });
+
+  it("checks the cached installer before handing off and asks for a new download when it is gone", async () => {
+    const cases: Array<(h: ReturnType<typeof setup>) => void> = [
+      (h) => h.disk.delete(INSTALLER_FILE),
+      (h) => h.disk.set(INSTALLER_FILE, { isFile: false, size: 0 }),
+      (h) => h.disk.set(INSTALLER_FILE, { isFile: true, size: INSTALLER_SIZE - 1 })
+    ];
+    for (const breakInstaller of cases) {
+      const h = setup();
+      await h.ready();
+      breakInstaller(h);
+      const token = await h.prepare();
+      const result = await h.service.install({ version: "1.1.0", channel: "stable" }, h.sessionFor(token));
+      expect(result).toMatchObject({ ok: false, code: "not-ready", message: INSTALLER_MISSING_MESSAGE });
+      expect(h.service.getState()).toMatchObject({
+        phase: "available",
+        availableVersion: "1.1.0",
+        downloadedVersion: null,
+        error: { context: "download", retryable: true, message: INSTALLER_MISSING_MESSAGE }
+      });
+      expect(h.committed).toEqual([]);
+      expect(h.adapter.installs).toEqual([]);
+      expect(h.released).toEqual([token]);
+      expect(h.coordinator.isIdle()).toBe(true);
+    }
+  });
+
+  it("treats an installer the updater never reported as missing, and recovers after a new download", async () => {
+    const h = setup();
+    h.adapter.downloadedFile = null;
+    await h.ready();
+    const first = await h.service.install({ version: "1.1.0", channel: "stable" }, h.sessionFor(await h.prepare()));
+    expect(first).toMatchObject({ ok: false, code: "not-ready" });
+    expect(h.service.getState().phase).toBe("available");
+
+    h.adapter.downloadedFile = INSTALLER_FILE;
+    expect(await h.service.download()).toMatchObject({ ok: true, state: { phase: "ready", downloadedVersion: "1.1.0", error: null } });
+    const retry = h.service.install({ version: "1.1.0", channel: "stable" }, h.sessionFor(await h.prepare()));
+    await settle();
+    expect(h.adapter.installs).toEqual([[true, true]]);
+    h.clock.fire(COMMIT_EXIT_TIMEOUT_MS);
+    await retry;
+  });
+
+  it("skips the size comparison when the feed did not report a size", async () => {
+    const h = setup();
+    h.adapter.downloadedSize = null;
+    await h.ready();
+    h.disk.set(INSTALLER_FILE, { isFile: true, size: 5 });
+    const pending = h.service.install({ version: "1.1.0", channel: "stable" }, h.sessionFor(await h.prepare()));
+    await settle();
+    expect(h.adapter.installs).toHaveLength(1);
+    h.clock.fire(COMMIT_EXIT_TIMEOUT_MS);
+    await pending;
   });
 
   it("refuses to install in a disabled build", async () => {

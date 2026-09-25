@@ -33,7 +33,8 @@ export type UpdateEvent =
   | { type: "channel-changed"; channel: UpdateChannel }
   | { type: "auto-download-changed"; autoDownload: boolean }
   | { type: "install-started"; version: string }
-  | { type: "install-failed"; failure: UpdateFailure };
+  | { type: "install-failed"; failure: UpdateFailure }
+  | { type: "installer-missing"; failure: UpdateFailure };
 
 function parseVersion(value: string): ParsedVersion | null {
   if (typeof value !== "string") return null;
@@ -238,6 +239,15 @@ export function reduceUpdate(state: UpdateState, event: UpdateEvent): UpdateStat
     case "install-started":
       if (state.phase !== "ready" || state.downloadedVersion !== event.version) return state;
       return commit(state, { phase: "installing", error: null });
+    case "installer-missing":
+      if (state.phase !== "ready" || state.downloadedVersion === null) return state;
+      return commit(state, {
+        phase: "available",
+        availableVersion: state.downloadedVersion,
+        downloadedVersion: null,
+        progress: null,
+        error: { message: event.failure.message, context: "download", retryable: event.failure.retryable }
+      });
     case "install-failed":
       if (state.phase !== "installing") return state;
       return commit(state, {

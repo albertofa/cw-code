@@ -414,7 +414,7 @@ is disabled is visible text that the buttons reference with
    few calls that follow. The dialog appears only when something needs a
    decision: active turns in any session (Wait or Stop), open terminals (they
    will be closed) and unsaved files (Save, Discard or Cancel). For the update
-   reason it also explains that cw-code closes, runs the installer and reopens,
+   reason it also explains that cw-code closes, installs in the background and reopens,
    that projects, sessions and settings are kept, that live terminals stop and
    that nothing is resent. Cancel returns to normal use and nothing is
    installed.
@@ -429,14 +429,65 @@ is disabled is visible text that the buttons reference with
    the same current or pending channel and no newer `available` version
    (`superseded`). Any rejection before the commit releases the token itself,
    so services are always restored.
-5. The phase becomes `installing` and main runs
-   `shutdown.commit(token, () => adapter.quitAndInstall(false, true))`.
-   `isSilent = false` shows the normal NSIS window with progress;
-   `isForceRunAfter = true` is passed as well, and because the install is not
-   silent `electron-updater` uses `autoRunAppAfterInstall` (default true), so
-   the installer relaunches cw-code. The library then calls `app.quit()`; the
-   quit is approved because the coordinator is committing, so there is no
-   second dialog.
+5. Before the commit, main checks the cached installer (see
+   [Installer pre-check](#installer-pre-check)). If it is missing the token is
+   released and nothing is stopped for good.
+6. The phase becomes `installing` and main runs
+   `shutdown.commit(token, () => adapter.quitAndInstall(true, true))`, a silent
+   install with a forced relaunch. The user already consented with Update and
+   restart; the assisted wizard would otherwise show its install-mode page in
+   the middle of an update and relaunch only from its finish page.
+   `electron-updater` starts the installer with `--updated /S --force-run` and
+   then calls `app.quit()`; the quit is approved because the coordinator is
+   committing, so there is no second dialog.
+
+### What the silent NSIS upgrade does
+
+Checked against the app-builder-lib 26.15.3 templates
+(`templates/nsis/assistedInstaller.nsh`, `multiUser.nsh`, `installer.nsi`,
+`installSection.nsh`):
+
+- **Install scope and directory are kept.** `.onInit` runs `initMultiUser`,
+  which reads `InstallLocation` from `HKLM\Software\<APP_GUID>` and
+  `HKCU\Software\<APP_GUID>`. Only a per-machine install selects per-machine
+  mode; only a per-user install selects per-user mode. `setInstallModePerUser`
+  / `setInstallModePerAllUsers` then set `$INSTDIR` from that
+  `InstallLocation`, so a custom directory chosen at first install is reused.
+  With both a per-user and a per-machine install present (or neither), it
+  falls back to per-user because `perMachine` is not set in
+  `electron-builder.yml`. The installer is not given `/D=`, so nothing
+  overrides the directory.
+- **Per-machine installs still elevate.** The install section checks
+  `$hasPerMachineInstallation == "1"` and `${Silent}` and, when not admin, runs
+  `UAC_RunElevated`, so Windows shows the UAC prompt. If the user declines
+  (1223) the outer installer quits and nothing is installed. cw-code has
+  already quit by then and is not relaunched; starting it by hand shows the
+  old version with the update still `ready`.
+- **No installer window.** `SpiderBanner` and the wizard pages are skipped in
+  silent mode, so the user sees cw-code close and, after the copy, reopen.
+- **Relaunch.** The assisted template starts the app when `${isForceRun}` and
+  `${Silent}` are both true, which is the case with `--force-run /S`.
+- **`--updated`** keeps user data during the old version's uninstall step and
+  skips the pages that only a fresh install shows.
+
+## Installer pre-check
+
+`electron-updater` spawns the installer asynchronously and calls `app.quit()`
+right away, so a cached installer that disappeared (cleaned temp folder,
+antivirus quarantine) would close cw-code without installing anything. Before
+the commit, `UpdateService.install` therefore checks the file the library
+reported in its `update-downloaded` event (`downloadedFile`, recorded by the
+adapter with the size of the matching `files[]` entry from the feed):
+
+- it must exist and be a regular file;
+- its size must match the feed size, when the feed reported one.
+
+If any check fails, or no downloaded file was reported for that version, the
+token is released, the result is `not-ready`, and the state goes back to
+`available` with `downloadedVersion` cleared and a retryable `download` error:
+"The downloaded update is missing; download it again". Download (or a
+background download on the next check) fetches it again, and
+`electron-updater` re-validates its cache by sha512 before reusing anything.
 
 After the restart, projects, settings and resume cursors are on disk as
 before. Interrupted turns stay `holding`/interrupted and are never restarted.
@@ -478,9 +529,10 @@ real coordinator and fakes: validation, update-reason tokens only, not-ready,
 superseded, commit through the coordinator, dispose skipped while installing,
 non-retryable failure after the installer started, retryable failure before,
 disabled builds, scheduled checks postponed during a shutdown, background
-download turned on while available, no install from other operations),
-`ElectronUpdaterAdapter.test.ts` (install flags, synchronous failure,
-`autoInstallOnAppQuit` off), `updatePreferences.test.ts` (including the
+download turned on while available, missing / non-file / wrong-size /
+unreported installer back to `available`, no install from other operations),
+`ElectronUpdaterAdapter.test.ts` (silent install flags, synchronous failure,
+downloaded file and feed size, `autoInstallOnAppQuit` off), `updatePreferences.test.ts` (including the
 first-run channel freeze), `SettingsStore.test.ts` (defaults, sanitize, no
 migration), `updateFlow.test.ts` (token released on a state mismatch or an IPC
 throw, one toast per failure, pending and open-flow guards),
@@ -511,21 +563,25 @@ build in a disposable Windows environment, never against the live install:
   with a message.
 - [ ] A superseded update (new version published while the dialog is open)
   cancels the restart and restores services.
-- [ ] Installer start failure (remove the cached installer before clicking)
-  returns to ready with one toast; a second failure does not add a second toast.
-- [ ] Successful update: NSIS progress window, app relaunches on the new
-  version, projects, settings and resume cursors are intact, interrupted turns
-  are not resent.
-- [ ] Assisted NSIS installer started with `--updated` (non-silent): record
-  whether it needs any clicks or runs straight through with only the progress
-  page, and whether `--force-run` relaunches cw-code on its own after the
-  installer finishes. If clicks are needed, write down which pages appear.
-- [ ] Per-machine install (legacy "all users" choice): Update and restart shows
-  the UAC prompt. Declining it: record what happens (installer exits, cw-code
-  already quit). Expected: cw-code does not relaunch; starting it by hand shows
-  the old version, still `ready`, and the next Update and restart works. If
-  cw-code is still open after 30 s, the indicator shows "The installer was
-  started; restart cw-code if it is still open".
+- [ ] Missing installer: delete the cached installer under
+  `%LOCALAPPDATA%\@cw-codedesktop-updater\pending` (or the update-test build's
+  cache) before clicking Update and restart. cw-code does not close; the
+  indicator shows "The downloaded update is missing; download it again" with
+  Download, and after downloading, Update and restart works.
+- [ ] Successful silent update: no installer window appears, cw-code closes,
+  reopens by itself on the new version (from `--force-run`), and projects,
+  settings and resume cursors are intact; interrupted turns are not resent.
+  Record how long the gap between close and reopen is.
+- [ ] Silent upgrade keeps the install scope and directory: repeat for a
+  per-user install in the default folder, a per-user install in a custom
+  folder, and a per-machine install. After the update, the uninstall entry is
+  still under the same hive (HKCU / HKLM) and `InstallLocation` is unchanged.
+- [ ] Per-machine install: Update and restart shows the UAC prompt. Accepting
+  it updates and relaunches cw-code. Declining it: nothing is installed,
+  cw-code stays closed; starting it by hand shows the old version, still
+  `ready`, and the next Update and restart works. If cw-code is still open
+  after 30 s, the indicator shows "The installer was started; restart cw-code
+  if it is still open".
 - [ ] Leave cw-code running after a restart that did not exit (block the quit):
   after 30 s there is no Try again, and Check for updates reports the same
   message until cw-code is restarted.

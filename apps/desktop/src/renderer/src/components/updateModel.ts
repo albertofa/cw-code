@@ -49,8 +49,9 @@ export function updateIndicatorView(state: UpdateState | null, restartPending: b
     case "available":
       return {
         ...base,
+        tone: state.error ? "error" : "info",
         title: state.availableVersion ? `cw-code ${state.availableVersion} is available` : "An update is available",
-        detail: state.autoDownload ? "Downloading in the background" : null,
+        detail: state.error?.message ?? (state.autoDownload ? "Downloading in the background" : null),
         action: "download",
         actionLabel: "Download"
       };

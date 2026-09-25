@@ -1,3 +1,4 @@
+import { statSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type {
   ShutdownCommitResult,
@@ -8,7 +9,7 @@ import type {
   UpdateProgress,
   UpdateState
 } from "@cw-code/contracts";
-import type { UpdaterAdapter, UpdaterCheckOutcome, UpdaterDownloadHandle } from "./ElectronUpdaterAdapter.js";
+import type { UpdaterAdapter, UpdaterCheckOutcome, UpdaterDownloadedInfo, UpdaterDownloadHandle } from "./ElectronUpdaterAdapter.js";
 import { describeUpdateError, formatLogValue, isMissingReleaseError, redactUpdateText, updateErrorCode, type UpdateLogSink } from "./updateLog.js";
 import {
   boundedText,
@@ -42,6 +43,7 @@ const RELEASE_DATE_MAX_CHARS = 64;
 const INSTALL_VERSION_MAX_CHARS = 64;
 const INSTALL_ERROR_MAX_CHARS = 300;
 export const SUSPENDED_CHECK_RETRY_MS = 60_000;
+export const INSTALLER_MISSING_MESSAGE = "The downloaded update is missing; download it again";
 export const INSTALLER_STARTED_MESSAGE = "The installer was started; restart cw-code if it is still open";
 
 export interface UpdateEnvironment {
@@ -72,6 +74,21 @@ export interface UpdateServiceOptions {
   now?: () => number;
   random?: () => number;
   canRunScheduledCheck?: () => boolean;
+  inspectFile?: (path: string) => InstallerFileFacts | null;
+}
+
+export interface InstallerFileFacts {
+  isFile: boolean;
+  size: number;
+}
+
+function inspectFileOnDisk(path: string): InstallerFileFacts | null {
+  try {
+    const stats = statSync(path);
+    return { isFile: stats.isFile(), size: stats.size };
+  } catch {
+    return null;
+  }
 }
 
 interface ActiveDownload {
@@ -141,6 +158,7 @@ export class UpdateService {
   private cancelScheduled: (() => void) | null = null;
   private started = false;
   private installerStarted = false;
+  private installer: UpdaterDownloadedInfo | null = null;
   private disposed = false;
   private readonly scheduler: UpdateScheduler;
   private readonly now: () => number;
@@ -341,6 +359,7 @@ export class UpdateService {
       return this.fail("not-ready", "Check for updates before downloading");
     }
     const op = ++this.opCounter;
+    this.installer = null;
     this.dispatch({ type: "download-started", version: availableVersion });
     let handle: UpdaterDownloadHandle;
     try {
@@ -381,13 +400,20 @@ export class UpdateService {
       this.log("info", `install of ${target.version} rejected: ${rejection.message}`);
       return rejection;
     }
+    const missing = this.installerProblem(target.version);
+    if (missing) {
+      session.release();
+      this.dispatch({ type: "installer-missing", failure: { message: INSTALLER_MISSING_MESSAGE, retryable: true } });
+      this.log("warn", `install of ${target.version} refused: ${missing}`);
+      return this.fail("not-ready", INSTALLER_MISSING_MESSAGE);
+    }
     this.dispatch({ type: "install-started", version: target.version });
     this.log("info", `installing ${target.version} through the shutdown coordinator`);
     let invoked = false;
     let committed: ShutdownCommitResult;
     try {
       committed = await session.commit(() => {
-        this.ensureAdapter().quitAndInstall(false, true);
+        this.ensureAdapter().quitAndInstall(true, true);
         invoked = true;
       });
     } catch (error) {
@@ -404,6 +430,19 @@ export class UpdateService {
     this.dispatch({ type: "install-failed", failure });
     this.log("warn", `install of ${target.version} failed: ${failure.message}`);
     return this.fail("failed", failure.message);
+  }
+
+  private installerProblem(version: string): string | null {
+    const installer = this.installer;
+    if (!installer || installer.version !== version) return `no downloaded installer was reported for ${version}`;
+    if (!installer.file) return "the updater did not report where the installer was saved";
+    const facts = (this.options.inspectFile ?? inspectFileOnDisk)(installer.file);
+    if (!facts) return `the installer ${installer.file} does not exist`;
+    if (!facts.isFile) return `the installer ${installer.file} is not a regular file`;
+    if (installer.size !== null && facts.size !== installer.size) {
+      return `the installer ${installer.file} has ${facts.size} bytes, expected ${installer.size}`;
+    }
+    return null;
   }
 
   private installRejection(target: InstallTarget): UpdateActionFailure | null {
@@ -456,7 +495,10 @@ export class UpdateService {
     this.adapterDetachers = [
       adapter.onProgress((progress) => this.handleProgress(progress)),
       adapter.onError((error) => this.log("warn", `updater error: ${formatLogValue(error)}`)),
-      adapter.onDownloaded((info) => this.log("info", `updater cached installer for ${String(info.version).slice(0, 64)}`))
+      adapter.onDownloaded((info) => {
+        this.installer = info;
+        this.log("info", `updater cached installer for ${String(info.version).slice(0, 64)}`);
+      })
     ];
     this.adapter = adapter;
     return adapter;

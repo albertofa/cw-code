@@ -149,8 +149,8 @@ calls `cw.shutdown.quit(token)` afterwards.
 
 Update and restart (`stores/updateFlow.ts`) runs the same flow with reason
 `"update"` before anything is installed, and only once the installer is
-already downloaded. The dialog then also explains that cw-code closes, runs the
-installer and reopens, that sessions keep their context and that live
+already downloaded. The dialog then also explains that cw-code closes, installs the
+update silently in the background and reopens, that sessions keep their context and that live
 terminals stop. With the token it re-reads the update state; if the download
 changed it cancels the token, otherwise it calls
 `cw.updates.install({ version, channel, token })` right away, well within the
