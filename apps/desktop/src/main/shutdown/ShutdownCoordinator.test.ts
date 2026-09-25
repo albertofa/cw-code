@@ -99,7 +99,7 @@ class ManualClock implements ShutdownClock {
   }
 }
 
-function setup(opts: { clock?: ShutdownClock; commitExitTimeoutMs?: number } = {}) {
+function setup(opts: { clock?: ShutdownClock; commitExitTimeoutMs?: number; onRecovered?: (failure: string | null) => void } = {}) {
   const log: string[] = [];
   const sessions = new FakeSessions(log);
   const ptys = new FakePtys(log);
@@ -111,6 +111,8 @@ function setup(opts: { clock?: ShutdownClock; commitExitTimeoutMs?: number } = {
     clock,
     createToken: () => `token-${++tokens}`,
     commitExitTimeoutMs: opts.commitExitTimeoutMs ?? 5000,
+    leaseMs: 60_000,
+    onRecovered: opts.onRecovered,
     log: () => {}
   });
   return { coordinator, sessions, ptys, log, clock };
@@ -361,5 +363,69 @@ describe("ShutdownCoordinator.commit", () => {
       ok: false,
       message: "this restart request is no longer valid; start it again"
     });
+  });
+});
+
+describe("ShutdownCoordinator lease and approvals", () => {
+  it("restores services when a prepared token is never used", async () => {
+    const clock = new ManualClock();
+    const { coordinator, sessions, ptys } = setup({ clock });
+    const prepared = await coordinator.prepare({ reason: "update", stopActiveTurns: true, timeoutMs: 1000 });
+    expect(prepared.ok).toBe(true);
+    clock.fire(60_000);
+    await settle();
+    expect(coordinator.isIdle()).toBe(true);
+    expect(sessions.calls).toContain("reinitialize");
+    expect(sessions.reserved).toBe(false);
+    expect(ptys.reserved).toBe(false);
+  });
+
+  it("restores services when a timeout decision is never made", async () => {
+    const clock = new ManualClock();
+    const { coordinator, sessions } = setup({ clock });
+    sessions.timedOut = ["claude"];
+    await coordinator.prepare({ reason: "update", stopActiveTurns: true, timeoutMs: 1000 });
+    clock.fire(60_000);
+    await settle();
+    expect(coordinator.isIdle()).toBe(true);
+  });
+
+  it("does not expire a token that is already committing", async () => {
+    const clock = new ManualClock();
+    const { coordinator, sessions } = setup({ clock });
+    const prepared = await coordinator.prepare({ reason: "quit", stopActiveTurns: true, timeoutMs: 1000 });
+    if (!prepared.ok) throw new Error("expected ok");
+    void coordinator.commit(prepared.token, () => {});
+    await settle();
+    clock.fire(60_000);
+    await settle();
+    expect(coordinator.isCommitted()).toBe(true);
+    expect(sessions.calls).not.toContain("reinitialize");
+  });
+
+  it("blocks instead of stopping turns that started after the user approved the stop", async () => {
+    const { coordinator, sessions } = setup();
+    sessions.turns = [turn("sess_a", "t1"), turn("sess_b", "t-new")];
+    const result = await coordinator.prepare({ reason: "update", stopActiveTurns: true, approvedTurnIds: ["t1"], timeoutMs: 1000 });
+    expect(result).toMatchObject({ ok: false, code: "blocked" });
+    expect(sessions.calls.some((call) => call.startsWith("interrupt"))).toBe(false);
+    expect(sessions.reserved).toBe(false);
+    const approvedAll = await coordinator.prepare({ reason: "update", stopActiveTurns: true, approvedTurnIds: ["t1", "t-new"], timeoutMs: 1000 });
+    expect(approvedAll.ok).toBe(true);
+  });
+
+  it("reports a driver restart failure while still releasing reservations", async () => {
+    const failures: Array<string | null> = [];
+    const { coordinator, sessions, ptys } = setup({ onRecovered: (failure) => failures.push(failure) });
+    sessions.reinitializeDrivers = () => {
+      throw new Error("claude binary vanished");
+    };
+    const prepared = await coordinator.prepare({ reason: "update", stopActiveTurns: true, timeoutMs: 1000 });
+    if (!prepared.ok) throw new Error("expected ok");
+    coordinator.cancel(prepared.token);
+    expect(failures).toEqual(["claude binary vanished"]);
+    expect(sessions.reserved).toBe(false);
+    expect(ptys.calls).toContain("reopen");
+    expect(coordinator.isIdle()).toBe(true);
   });
 });

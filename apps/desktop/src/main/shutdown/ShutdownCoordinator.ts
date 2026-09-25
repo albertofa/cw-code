@@ -40,12 +40,15 @@ export interface ShutdownCoordinatorDeps {
   clock?: ShutdownClock;
   createToken?: () => string;
   commitExitTimeoutMs?: number;
+  leaseMs?: number;
   log?: (message: string) => void;
+  onRecovered?: (failure: string | null) => void;
 }
 
 type Phase = "idle" | "preparing" | "prepared" | "timeout" | "committing";
 
 const DEFAULT_COMMIT_EXIT_TIMEOUT_MS = 30_000;
+const DEFAULT_LEASE_MS = 120_000;
 const PREPARE_GRACE_MS = 2_000;
 
 const realClock: ShutdownClock = {
@@ -63,12 +66,15 @@ export class ShutdownCoordinator {
   private servicesStopped = false;
   private generation = 0;
   private commitInFlight: Promise<ShutdownCommitResult> | null = null;
+  private leaseId = 0;
   private readonly sessions: ShutdownSessions;
   private readonly ptys: ShutdownPtys;
   private readonly clock: ShutdownClock;
   private readonly createToken: () => string;
   private readonly commitExitTimeoutMs: number;
+  private readonly leaseMs: number;
   private readonly log: (message: string) => void;
+  private readonly onRecovered: (failure: string | null) => void;
 
   constructor(deps: ShutdownCoordinatorDeps) {
     this.sessions = deps.sessions;
@@ -76,7 +82,20 @@ export class ShutdownCoordinator {
     this.clock = deps.clock ?? realClock;
     this.createToken = deps.createToken ?? randomUUID;
     this.commitExitTimeoutMs = deps.commitExitTimeoutMs ?? DEFAULT_COMMIT_EXIT_TIMEOUT_MS;
+    this.leaseMs = deps.leaseMs ?? DEFAULT_LEASE_MS;
     this.log = deps.log ?? ((message) => console.warn(message));
+    this.onRecovered = deps.onRecovered ?? (() => {});
+  }
+
+  private startLease(): void {
+    const lease = ++this.leaseId;
+    const generation = this.generation;
+    void this.clock.sleep(this.leaseMs).then(() => {
+      if (lease !== this.leaseId || generation !== this.generation) return;
+      if (this.phase !== "prepared" && this.phase !== "timeout") return;
+      this.log(`shutdown (${this.reason ?? "quit"}): token not used within ${this.leaseMs}ms; restoring services`);
+      this.recover();
+    });
   }
 
   assess(): ShutdownAssessment {
@@ -107,7 +126,9 @@ export class ShutdownCoordinator {
     this.sessions.beginShutdownReservation();
     this.ptys.beginShutdownReservation();
     const assessment = this.assess();
-    if (assessment.activeTurns.length > 0 && !request.stopActiveTurns) {
+    const approved = request.approvedTurnIds ? new Set(request.approvedTurnIds) : null;
+    const unapproved = approved !== null && assessment.activeTurns.some((turn) => !approved.has(turn.turnId));
+    if (assessment.activeTurns.length > 0 && (!request.stopActiveTurns || unapproved)) {
       this.releaseReservations();
       this.reset();
       return { ok: false, code: "blocked", assessment };
@@ -118,9 +139,7 @@ export class ShutdownCoordinator {
     this.servicesStopped = true;
     let timedOut: string[];
     try {
-      for (const turn of assessment.activeTurns) {
-        if (turn.turnId) this.sessions.interrupt(turn.turnId);
-      }
+      for (const turn of assessment.activeTurns) this.sessions.interrupt(turn.turnId);
       this.sessions.cancelBackgroundWork();
       this.sessions.flush();
       this.ptys.dispose();
@@ -133,6 +152,7 @@ export class ShutdownCoordinator {
     if (this.generation !== generation) return { ok: false, code: "busy" };
     const token = this.createToken();
     this.token = token;
+    this.startLease();
     if (timedOut.length > 0) {
       this.phase = "timeout";
       this.log(`shutdown (${request.reason}): graceful stop timed out for ${timedOut.join(", ")}`);
@@ -154,6 +174,7 @@ export class ShutdownCoordinator {
       this.log(`shutdown (${this.reason ?? "quit"}): force-stopping owned processes`);
       this.sessions.forceStopDrivers();
       this.phase = "prepared";
+      this.startLease();
     }
     return { ok: true, token };
   }
@@ -201,21 +222,24 @@ export class ShutdownCoordinator {
     };
   }
 
-  recover(): void {
-    if (this.phase === "idle") return;
+  recover(): string | null {
+    if (this.phase === "idle") return null;
     const restart = this.servicesStopped;
     this.generation += 1;
     this.reset();
-    try {
-      if (restart) {
+    let failure: string | null = null;
+    if (restart) {
+      try {
         this.sessions.reinitializeDrivers();
-        this.ptys.reopen();
+      } catch (err) {
+        failure = (err as Error).message;
+        this.log(`shutdown recovery could not restart CLI drivers: ${failure}`);
       }
-    } catch (err) {
-      this.log(`shutdown recovery could not restart services: ${(err as Error).message}`);
-    } finally {
-      this.releaseReservations();
+      this.ptys.reopen();
     }
+    this.releaseReservations();
+    this.onRecovered(failure);
+    return failure;
   }
 
   private reset(): void {

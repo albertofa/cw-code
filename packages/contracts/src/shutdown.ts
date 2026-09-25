@@ -30,6 +30,7 @@ export type ShutdownCommitResult = { ok: true } | { ok: false; message: string }
 export interface ShutdownPrepareRequest {
   reason: ShutdownReason;
   stopActiveTurns: boolean;
+  approvedTurnIds?: string[];
   timeoutMs: number;
 }
 
