@@ -74,7 +74,7 @@ vi.mock("electron-updater", async () => {
   return { CancellationToken, NsisUpdater };
 });
 
-import { ElectronUpdaterAdapter } from "./ElectronUpdaterAdapter.js";
+import { ElectronUpdaterAdapter, STAGING_ID_PLACEHOLDER } from "./ElectronUpdaterAdapter.js";
 
 function create(): { adapter: ElectronUpdaterAdapter; logs: string[]; instance: (typeof updaterMock.instances)[number] } {
   const logs: string[] = [];
@@ -114,13 +114,26 @@ describe("ElectronUpdaterAdapter", () => {
       channel: "alpha",
       allowDowngrade: false,
       forceDevUpdateConfig: false,
-      fullChangelog: false
+      fullChangelog: false,
+      disableWebInstaller: true,
+      requestHeaders: { "x-user-staging-id": STAGING_ID_PLACEHOLDER }
     });
     adapter.configure({ channel: "stable" });
     expect(instance.target).toMatchObject({ allowPrerelease: false, channel: "latest", allowDowngrade: false });
     const touched = new Set(instance.writes.map((write) => write.split("=")[0]));
     expect([...touched].sort()).toEqual(
-      ["allowDowngrade", "allowPrerelease", "autoDownload", "autoInstallOnAppQuit", "channel", "forceDevUpdateConfig", "fullChangelog", "logger"].sort()
+      [
+        "allowDowngrade",
+        "allowPrerelease",
+        "autoDownload",
+        "autoInstallOnAppQuit",
+        "channel",
+        "disableWebInstaller",
+        "forceDevUpdateConfig",
+        "fullChangelog",
+        "logger",
+        "requestHeaders"
+      ].sort()
     );
   });
 

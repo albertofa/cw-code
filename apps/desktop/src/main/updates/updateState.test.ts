@@ -209,14 +209,22 @@ describe("reduceUpdate", () => {
     expect(afterOlder).toMatchObject({ phase: "ready", downloadedVersion: "1.1.0", availableVersion: "1.1.0" });
   });
 
-  it("offers a newer version while keeping the older download usable", () => {
+  it("offers a newer version and drops the older download once the new one starts", () => {
     const state = run(readyAt("1.1.0"), [{ type: "check-started" }, { type: "check-succeeded", at: 12, candidate: candidate("1.2.0") }]);
     expect(state).toMatchObject({ phase: "available", availableVersion: "1.2.0", downloadedVersion: "1.1.0" });
-    const failed = run(state, [
-      { type: "download-started", version: "1.2.0" },
-      { type: "download-failed", failure: FAILURE }
+    const downloading = reduceUpdate(state, { type: "download-started", version: "1.2.0" });
+    expect(downloading).toMatchObject({ phase: "downloading", downloadedVersion: null });
+    const failed = reduceUpdate(downloading, { type: "download-failed", failure: FAILURE });
+    expect(failed).toMatchObject({ phase: "error", downloadedVersion: null, error: { context: "download" } });
+  });
+
+  it("does not restart a download that is already ready", () => {
+    const ready = readyAt("1.1.0");
+    const retried = run(ready, [
+      { type: "check-started" },
+      { type: "check-failed", at: 2, failure: FAILURE }
     ]);
-    expect(failed).toMatchObject({ phase: "ready", downloadedVersion: "1.1.0", error: { context: "download" } });
+    expect(reduceUpdate(retried, { type: "download-started", version: "1.1.0" })).toBe(retried);
   });
 
   it("ignores events that do not fit the current phase without bumping seq", () => {

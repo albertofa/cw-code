@@ -1,5 +1,5 @@
 import { app, BrowserWindow, dialog, ipcMain, shell, type WebContents } from "electron";
-import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
@@ -41,7 +41,8 @@ import { restoreBackup, startFresh } from "./storage/recovery.js";
 import type { SessionStore } from "./sessions/SessionStore.js";
 import type { SettingsStore } from "./settings/SettingsStore.js";
 import { ElectronUpdaterAdapter } from "./updates/ElectronUpdaterAdapter.js";
-import { UpdateService, type UpdateLogger } from "./updates/UpdateService.js";
+import { UpdateService } from "./updates/UpdateService.js";
+import { createUpdateLogFile } from "./updates/updateLog.js";
 
 type DriverName = DriverKind;
 
@@ -73,14 +74,14 @@ let services: Services | null = null;
 let startupState: StartupState = { mode: "ready" };
 
 function createUpdateService(): UpdateService {
-  const logger: UpdateLogger = {
-    info: (message) => console.warn(`[updates] ${message}`),
-    warn: (message) => console.warn(`[updates] ${message}`)
-  };
+  const logger = createUpdateLogFile({
+    filePath: join(logsDir(), "updater.log"),
+    console: { info: (message) => console.warn(message), warn: (message) => console.warn(message) }
+  });
   return new UpdateService({
     runningVersion: app.getVersion(),
     environment: { isPackaged: app.isPackaged, resourcesPath: process.resourcesPath, execPath: process.execPath },
-    fileExists: existsSync,
+    files: { fileExists: existsSync, listDirectory: (path) => readdirSync(path) },
     createAdapter: () => new ElectronUpdaterAdapter({ homeDir: homedir(), sink: logger }),
     logger,
     homeDir: homedir()

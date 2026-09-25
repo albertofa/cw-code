@@ -213,9 +213,10 @@ export function reduceUpdate(state: UpdateState, event: UpdateEvent): UpdateStat
       });
     case "download-started":
       if (state.phase === "checking" || state.phase === "downloading" || state.phase === "installing") return state;
-      if (state.availableVersion !== event.version) return state;
+      if (state.availableVersion !== event.version || state.downloadedVersion === event.version) return state;
       return commit(state, {
         phase: "downloading",
+        downloadedVersion: null,
         progress: { percent: 0, transferred: 0, total: 0, bytesPerSecond: 0 },
         error: null
       });

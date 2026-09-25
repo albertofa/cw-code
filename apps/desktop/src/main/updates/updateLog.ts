@@ -1,7 +1,12 @@
+import { appendFileSync } from "node:fs";
+import { rotateIfOversize } from "../debug/logRotation.js";
 import type { UpdateFailure } from "./updateState.js";
 
 const LOG_MAX_CHARS = 2_000;
 const ERROR_MESSAGE_MAX_CHARS = 300;
+export const UPDATE_LOG_MAX_BYTES = 1024 * 1024;
+
+const MISSING_RELEASE_CODES = new Set(["ERR_UPDATER_CHANNEL_FILE_NOT_FOUND", "ERR_UPDATER_LATEST_VERSION_NOT_FOUND"]);
 
 const NON_RETRYABLE_CODES = new Set([
   "ERR_UPDATER_INVALID_SIGNATURE",
@@ -30,6 +35,7 @@ export function redactUpdateText(text: string, homeDir: string): string {
     .replace(/(https?:\/\/[^\s?#"'<>]+)[?#][^\s"'<>]*/gi, "$1")
     .replace(/\b(?:gh[pousr]_[A-Za-z0-9]{16,}|github_pat_[A-Za-z0-9_]{16,})\b/g, "<redacted-token>")
     .replace(/\b(bearer|basic)\s+[A-Za-z0-9._~+/=-]{8,}/gi, "$1 <redacted>")
+    .replace(/(staging user id:?\s*)[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, "$1<redacted>")
     .replace(/\b(authorization|x-github-token|access_token|token|password|secret)(["']?\s*[:=]\s*["']?)[^\s"',;}]+/gi, "$1$2<redacted>");
   const home = homeDirPattern(homeDir);
   if (home) out = out.replace(home, "~");
@@ -52,6 +58,38 @@ function errorCode(error: unknown): string | null {
   if (!error || typeof error !== "object") return null;
   const code = (error as { code?: unknown }).code;
   return typeof code === "string" ? code : null;
+}
+
+export function isMissingReleaseError(error: unknown): boolean {
+  const code = errorCode(error);
+  if (code === null || !MISSING_RELEASE_CODES.has(code)) return false;
+  const message = error instanceof Error ? error.message : "";
+  return !NETWORK_ERROR_RE.test(message);
+}
+
+export interface UpdateLogSink {
+  info(message: string): void;
+  warn(message: string): void;
+}
+
+export function createUpdateLogFile(options: {
+  filePath: string;
+  maxBytes?: number;
+  console?: UpdateLogSink;
+  now?: () => Date;
+}): UpdateLogSink {
+  const maxBytes = options.maxBytes ?? UPDATE_LOG_MAX_BYTES;
+  const now = options.now ?? (() => new Date());
+  const write = (level: "info" | "warn", message: string): void => {
+    options.console?.[level](`[updates] ${message}`);
+    try {
+      rotateIfOversize(options.filePath, maxBytes);
+      appendFileSync(options.filePath, `${now().toISOString()} ${level} ${message}\n`, "utf8");
+    } catch (error) {
+      options.console?.warn(`[updates] could not write ${options.filePath}: ${(error as Error).message}`);
+    }
+  };
+  return { info: (message) => write("info", message), warn: (message) => write("warn", message) };
 }
 
 export function describeUpdateError(error: unknown, homeDir: string): UpdateFailure {

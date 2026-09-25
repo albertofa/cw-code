@@ -1,6 +1,8 @@
 import { CancellationToken, NsisUpdater, type Logger, type ProgressInfo, type UpdateDownloadedEvent, type UpdateInfo } from "electron-updater";
 import type { UpdateChannel, UpdateProgress } from "@cw-code/contracts";
-import { formatLogValue, redactUpdateText } from "./updateLog.js";
+import { formatLogValue, redactUpdateText, type UpdateLogSink } from "./updateLog.js";
+
+export const STAGING_ID_PLACEHOLDER = "00000000-0000-0000-0000-000000000000";
 
 export interface UpdaterReleaseInfo {
   version: string;
@@ -30,11 +32,6 @@ export interface UpdaterAdapter {
   dispose(): void;
 }
 
-export interface UpdaterLogSink {
-  info(message: string): void;
-  warn(message: string): void;
-}
-
 function releaseInfo(info: UpdateInfo): UpdaterReleaseInfo {
   return {
     version: info.version,
@@ -50,7 +47,7 @@ export class ElectronUpdaterAdapter implements UpdaterAdapter {
   private readonly detachers: Array<() => void> = [];
   private readonly logger: Logger;
 
-  constructor(options: { homeDir: string; sink: UpdaterLogSink }) {
+  constructor(options: { homeDir: string; sink: UpdateLogSink }) {
     const write = (level: "info" | "warn", message: unknown): void => {
       options.sink[level](`electron-updater: ${redactUpdateText(formatLogValue(message), options.homeDir)}`);
     };
@@ -74,6 +71,8 @@ export class ElectronUpdaterAdapter implements UpdaterAdapter {
     this.updater.allowDowngrade = false;
     this.updater.forceDevUpdateConfig = false;
     this.updater.fullChangelog = false;
+    this.updater.disableWebInstaller = true;
+    this.updater.requestHeaders = { "x-user-staging-id": STAGING_ID_PLACEHOLDER };
     this.updater.logger = this.logger;
   }
 

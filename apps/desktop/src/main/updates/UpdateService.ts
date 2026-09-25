@@ -1,7 +1,7 @@
 import { dirname, join } from "node:path";
 import type { UpdateActionCode, UpdateActionResult, UpdateChannel, UpdateProgress, UpdateState } from "@cw-code/contracts";
 import type { UpdaterAdapter, UpdaterCheckOutcome, UpdaterDownloadHandle } from "./ElectronUpdaterAdapter.js";
-import { describeUpdateError, formatLogValue, redactUpdateText } from "./updateLog.js";
+import { describeUpdateError, formatLogValue, isMissingReleaseError, redactUpdateText, type UpdateLogSink } from "./updateLog.js";
 import {
   boundedText,
   channelOfVersion,
@@ -25,9 +25,9 @@ export const BACKOFF_MAX_MS = CHECK_INTERVAL_MS;
 export const DISABLED_IN_DEVELOPMENT = "Updates are disabled in development builds";
 export const DISABLED_WITHOUT_FEED = "No update feed is configured for this build";
 export const DISABLED_WITHOUT_INSTALLER = "This copy of cw-code was not installed with the Windows installer";
-export const UNINSTALLER_FILE_NAME = "Uninstall cw-code.exe";
 export const UPDATE_CONFIG_FILE_NAME = "app-update.yml";
 
+const UNINSTALLER_RE = /^Uninstall .+\.exe$/i;
 const PROGRESS_MILESTONES = [25, 50, 75, 100];
 const RELEASE_NAME_MAX_CHARS = 200;
 const RELEASE_DATE_MAX_CHARS = 64;
@@ -38,13 +38,13 @@ export interface UpdateEnvironment {
   execPath: string;
 }
 
-export interface UpdateLogger {
-  info(message: string): void;
-  warn(message: string): void;
-}
-
 export interface UpdateScheduler {
   schedule(callback: () => void, delayMs: number): () => void;
+}
+
+export interface UpdateFileChecks {
+  fileExists(path: string): boolean;
+  listDirectory(path: string): string[];
 }
 
 export interface UpdateServiceOptions {
@@ -52,9 +52,9 @@ export interface UpdateServiceOptions {
   channel?: UpdateChannel;
   autoDownload?: boolean;
   environment: UpdateEnvironment;
-  fileExists: (path: string) => boolean;
+  files: UpdateFileChecks;
   createAdapter: () => UpdaterAdapter;
-  logger: UpdateLogger;
+  logger: UpdateLogSink;
   homeDir: string;
   scheduler?: UpdateScheduler;
   now?: () => number;
@@ -70,10 +70,18 @@ interface ActiveDownload {
 
 type CheckTrigger = "manual" | "scheduled" | "channel" | "startup";
 
-export function detectDisabledReason(environment: UpdateEnvironment, fileExists: (path: string) => boolean): string | null {
+function hasUninstaller(files: UpdateFileChecks, directory: string): boolean {
+  try {
+    return files.listDirectory(directory).some((name) => UNINSTALLER_RE.test(name));
+  } catch {
+    return false;
+  }
+}
+
+export function detectDisabledReason(environment: UpdateEnvironment, files: UpdateFileChecks): string | null {
   if (!environment.isPackaged) return DISABLED_IN_DEVELOPMENT;
-  if (!fileExists(join(environment.resourcesPath, UPDATE_CONFIG_FILE_NAME))) return DISABLED_WITHOUT_FEED;
-  if (!fileExists(join(dirname(environment.execPath), UNINSTALLER_FILE_NAME))) return DISABLED_WITHOUT_INSTALLER;
+  if (!files.fileExists(join(environment.resourcesPath, UPDATE_CONFIG_FILE_NAME))) return DISABLED_WITHOUT_FEED;
+  if (!hasUninstaller(files, dirname(environment.execPath))) return DISABLED_WITHOUT_INSTALLER;
   return null;
 }
 
@@ -95,7 +103,6 @@ export class UpdateService {
   private adapterDetachers: Array<() => void> = [];
   private activeDownload: ActiveDownload | null = null;
   private opCounter = 0;
-  private channelGeneration = 0;
   private consecutiveFailures = 0;
   private cancelScheduled: (() => void) | null = null;
   private started = false;
@@ -108,7 +115,7 @@ export class UpdateService {
     this.scheduler = options.scheduler ?? timerScheduler;
     this.now = options.now ?? Date.now;
     this.random = options.random ?? Math.random;
-    const disabledReason = detectDisabledReason(options.environment, options.fileExists);
+    const disabledReason = detectDisabledReason(options.environment, options.files);
     this.state = initialUpdateState({
       runningVersion: options.runningVersion,
       channel: options.channel ?? channelOfVersion(options.runningVersion),
@@ -142,8 +149,7 @@ export class UpdateService {
   download(): Promise<UpdateActionResult> {
     const blocked = this.blockedResult();
     if (blocked) return Promise.resolve(blocked);
-    const generation = this.channelGeneration;
-    return this.dedupe("download", () => this.enqueue(() => this.performDownload(generation)));
+    return this.dedupe("download", () => this.enqueue(() => this.performDownload()));
   }
 
   setChannel(channel: unknown): Promise<UpdateActionResult> {
@@ -154,8 +160,16 @@ export class UpdateService {
     if (blocked) return Promise.resolve(blocked);
     if (this.pendingChannel?.channel === channel) return this.pendingChannel.promise;
     if (!this.pendingChannel && channel === this.state.channel) return Promise.resolve(this.ok());
-    this.channelGeneration += 1;
-    this.cancelActiveDownload(`update channel changed to ${channel}`);
+    const active = this.activeDownload;
+    if (active && !isEligible(active.version, this.state.runningVersion, channel)) {
+      try {
+        this.adapter?.configure({ channel });
+      } catch (error) {
+        return Promise.resolve(this.fail("failed", describeUpdateError(error, this.options.homeDir).message));
+      }
+      this.cancelActiveDownload(`update channel changed to ${channel}`);
+    }
+    this.inflight.delete("download");
     const promise = this.enqueue(() => this.applyChannel(channel)).finally(() => {
       if (this.pendingChannel?.promise === promise) this.pendingChannel = null;
     });
@@ -185,9 +199,15 @@ export class UpdateService {
   private requestCheck(trigger: CheckTrigger): Promise<UpdateActionResult> {
     const blocked = this.blockedResult();
     if (blocked) return Promise.resolve(blocked);
-    if (this.inflight.has("download")) {
+    const running = this.inflight.get("check");
+    if (running) return running;
+    if (this.activeDownload || this.inflight.has("download")) {
       return Promise.resolve(this.fail("busy", "An update is downloading; check again after it finishes"));
     }
+    return this.queueCheck(trigger);
+  }
+
+  private queueCheck(trigger: CheckTrigger): Promise<UpdateActionResult> {
     return this.dedupe("check", () => this.enqueue(() => this.performCheck(trigger)));
   }
 
@@ -202,14 +222,21 @@ export class UpdateService {
       outcome = await this.ensureAdapter().check();
     } catch (error) {
       if (this.disposed) return this.fail("superseded", "The updater shut down during the check");
+      if (this.state.channel === "stable" && isMissingReleaseError(error)) {
+        return this.checkSucceeded(null, "no stable release yet");
+      }
       return this.checkFailed(describeUpdateError(error, this.options.homeDir));
     }
     if (this.disposed) return this.fail("superseded", "The updater shut down during the check");
     if (!outcome) return this.checkFailed({ message: "The updater is not active in this build", retryable: false });
     const candidate = this.candidateFrom(outcome);
+    return this.checkSucceeded(candidate, candidate ? `update ${candidate.version} is available` : "no eligible update found");
+  }
+
+  private checkSucceeded(candidate: UpdateCandidate | null, summary: string): UpdateActionResult {
     this.consecutiveFailures = 0;
     this.dispatch({ type: "check-succeeded", at: this.now(), candidate });
-    this.log("info", candidate ? `update ${candidate.version} is available` : "no eligible update found");
+    this.log("info", summary);
     this.scheduleCheck(this.intervalDelay(), "scheduled");
     if (this.state.autoDownload && this.state.phase === "available") void this.download();
     return this.ok();
@@ -239,18 +266,20 @@ export class UpdateService {
     };
   }
 
-  private async performDownload(generation: number): Promise<UpdateActionResult> {
+  private async performDownload(): Promise<UpdateActionResult> {
     if (this.disposed) return this.fail("superseded", "The updater shut down before the download started");
-    if (generation !== this.channelGeneration) {
-      return this.fail("superseded", "The update channel changed before the download started");
-    }
-    const { availableVersion, downloadedVersion, phase, error } = this.state;
+    const { availableVersion, downloadedVersion, phase, error, runningVersion } = this.state;
     if (availableVersion !== null && availableVersion === downloadedVersion) return this.ok();
     if (availableVersion === null) return this.fail("no-update", "No update is available to download");
+    const targetChannel = this.pendingChannel?.channel ?? this.state.channel;
+    if (!isEligible(availableVersion, runningVersion, targetChannel)) {
+      return this.fail("superseded", "The update channel changed before the download started");
+    }
     if (phase !== "available" && error?.context !== "download") {
       return this.fail("not-ready", "Check for updates before downloading");
     }
     const op = ++this.opCounter;
+    this.dispatch({ type: "download-started", version: availableVersion });
     let handle: UpdaterDownloadHandle;
     try {
       handle = this.ensureAdapter().download();
@@ -258,7 +287,6 @@ export class UpdateService {
       return this.downloadFailed(describeUpdateError(err, this.options.homeDir));
     }
     this.activeDownload = { op, version: availableVersion, handle, milestones: new Set() };
-    this.dispatch({ type: "download-started", version: availableVersion });
     this.log("info", `download started for ${availableVersion}`);
     try {
       await handle.done;
@@ -294,7 +322,7 @@ export class UpdateService {
     }
     this.dispatch({ type: "channel-changed", channel });
     this.log("info", `channel changed to ${channel}`);
-    void this.requestCheck("channel");
+    void this.queueCheck("channel");
     return this.ok();
   }
 
@@ -374,13 +402,20 @@ export class UpdateService {
   }
 
   private enqueue(operation: () => Promise<UpdateActionResult>): Promise<UpdateActionResult> {
-    const result = this.tail.then(operation).catch((error: unknown) => {
-      const failure = describeUpdateError(error, this.options.homeDir);
-      this.log("warn", `update operation failed unexpectedly: ${failure.message}`);
-      return this.fail("failed", failure.message);
-    });
+    const result = this.tail.then(operation).catch((error: unknown) => this.operationCrashed(error));
     this.tail = result;
     return result;
+  }
+
+  private operationCrashed(error: unknown): UpdateActionResult {
+    const failure = describeUpdateError(error, this.options.homeDir);
+    this.log("warn", `update operation failed unexpectedly: ${failure.message}`);
+    if (!this.disposed) {
+      this.dispatch({ type: "check-failed", at: this.now(), failure });
+      this.dispatch({ type: "download-failed", failure });
+      if (!this.cancelScheduled) this.scheduleCheck(this.backoffDelay(), "scheduled");
+    }
+    return this.fail("failed", failure.message);
   }
 
   private dispatch(event: UpdateEvent): void {

@@ -44,12 +44,15 @@ class FakeAdapter implements UpdaterAdapter {
   disposed = false;
   quitAndInstallCalls = 0;
   checkResults: Array<UpdaterCheckOutcome | null | Error | Deferred<UpdaterCheckOutcome | null>> = [];
+  configureError: Error | null = null;
+  downloadError: Error | null = null;
   downloads: Array<{ deferred: Deferred<void>; cancelled: boolean }> = [];
   private readonly progress = new Set<(progress: UpdateProgress) => void>();
   private readonly errors = new Set<(error: Error) => void>();
   private readonly downloaded = new Set<(info: { version: string }) => void>();
 
   configure(options: { channel: UpdateChannel }): void {
+    if (this.configureError) throw this.configureError;
     this.configured.push(options.channel);
   }
 
@@ -64,6 +67,7 @@ class FakeAdapter implements UpdaterAdapter {
 
   download(): UpdaterDownloadHandle {
     this.downloadCalls += 1;
+    if (this.downloadError) throw this.downloadError;
     const entry = { deferred: deferred<void>(), cancelled: false };
     this.downloads.push(entry);
     return {
@@ -160,7 +164,7 @@ function harness(overrides: Partial<UpdateServiceOptions> = {}): Harness {
   const service = new UpdateService({
     runningVersion: "1.0.0",
     environment: INSTALLED,
-    fileExists: () => true,
+    files: { fileExists: () => true, listDirectory: () => ["cw-code.exe", "Uninstall cw-code.exe"] },
     createAdapter: () => {
       created += 1;
       return adapter;
@@ -182,18 +186,41 @@ async function settle(): Promise<void> {
 }
 
 describe("detectDisabledReason", () => {
+  const installedFiles = { fileExists: () => true, listDirectory: () => ["cw-code.exe", "Uninstall cw-code.exe"] };
+
   it("explains development, missing feed, and non-installer copies in that order", () => {
-    expect(detectDisabledReason({ ...INSTALLED, isPackaged: false }, () => true)).toBe(DISABLED_IN_DEVELOPMENT);
-    expect(detectDisabledReason(INSTALLED, (path) => !path.endsWith("app-update.yml"))).toBe(DISABLED_WITHOUT_FEED);
-    const seen: string[] = [];
+    expect(detectDisabledReason({ ...INSTALLED, isPackaged: false }, installedFiles)).toBe(DISABLED_IN_DEVELOPMENT);
     expect(
-      detectDisabledReason(INSTALLED, (path) => {
-        seen.push(path);
-        return path.endsWith("app-update.yml");
+      detectDisabledReason(INSTALLED, { ...installedFiles, fileExists: (path) => !path.endsWith("app-update.yml") })
+    ).toBe(DISABLED_WITHOUT_FEED);
+    const listed: string[] = [];
+    expect(
+      detectDisabledReason(INSTALLED, {
+        fileExists: () => true,
+        listDirectory: (path) => {
+          listed.push(path);
+          return ["cw-code.exe", "resources", "Uninstall.txt"];
+        }
       })
     ).toBe(DISABLED_WITHOUT_INSTALLER);
-    expect(seen[1]).toMatch(/cw-code[\\/]Uninstall cw-code\.exe$/);
-    expect(detectDisabledReason(INSTALLED, () => true)).toBeNull();
+    expect(listed).toHaveLength(1);
+    expect(listed[0]).toMatch(/Programs[\\/]cw-code$/);
+    expect(detectDisabledReason(INSTALLED, installedFiles)).toBeNull();
+  });
+
+  it("accepts any NSIS uninstaller name, such as the update-test build", () => {
+    const files = { fileExists: () => true, listDirectory: () => ["Uninstall cw-code-updatetest.exe"] };
+    expect(detectDisabledReason(INSTALLED, files)).toBeNull();
+  });
+
+  it("treats an unreadable install directory as not installed", () => {
+    const files = {
+      fileExists: () => true,
+      listDirectory: (): string[] => {
+        throw new Error("EACCES");
+      }
+    };
+    expect(detectDisabledReason(INSTALLED, files)).toBe(DISABLED_WITHOUT_INSTALLER);
   });
 });
 
@@ -291,6 +318,56 @@ describe("UpdateService checks", () => {
       state: { phase: "error", error: { context: "check", retryable: true } }
     });
     expect(h.logs.join("\n")).not.toMatch(/token=abc|Users\\Jane/);
+  });
+
+  it("treats a missing stable release as up to date on the stable channel", async () => {
+    const h = harness();
+    h.service.start();
+    for (const code of ["ERR_UPDATER_LATEST_VERSION_NOT_FOUND", "ERR_UPDATER_CHANNEL_FILE_NOT_FOUND"]) {
+      h.adapter.checkResults.push(Object.assign(new Error("Unable to find latest version on GitHub"), { code }));
+      expect(await h.service.check()).toMatchObject({ ok: true, state: { phase: "up-to-date", error: null } });
+      expect(h.scheduler.pending().map((task) => task.delay)).toEqual([CHECK_INTERVAL_MS]);
+    }
+    expect(h.logs.filter((line) => line.includes("no stable release yet"))).toHaveLength(2);
+  });
+
+  it("keeps offline and alpha-channel missing releases as errors", async () => {
+    const stable = harness();
+    stable.adapter.checkResults.push(
+      Object.assign(new Error("Unable to find latest version on GitHub: net::ERR_INTERNET_DISCONNECTED"), {
+        code: "ERR_UPDATER_LATEST_VERSION_NOT_FOUND"
+      })
+    );
+    expect(await stable.service.check()).toMatchObject({ ok: false, code: "failed", state: { phase: "error" } });
+    const alpha = harness({ runningVersion: "1.0.0-alpha.1" });
+    alpha.adapter.checkResults.push(Object.assign(new Error("Cannot find alpha.yml"), { code: "ERR_UPDATER_CHANNEL_FILE_NOT_FOUND" }));
+    expect(await alpha.service.check()).toMatchObject({ ok: false, code: "failed", state: { phase: "error" } });
+  });
+
+  it("lets a check requested during a running check join it even with a download queued", async () => {
+    const h = harness();
+    const gate = deferred<UpdaterCheckOutcome | null>();
+    h.adapter.checkResults.push(gate);
+    const first = h.service.check();
+    const download = h.service.download();
+    expect(h.service.check()).toBe(first);
+    gate.resolve(outcome("1.1.0"));
+    await first;
+    await settle();
+    h.adapter.downloads[0].deferred.resolve();
+    await download;
+    expect(h.adapter.checkCalls).toBe(1);
+  });
+
+  it("reschedules and reports an operation that throws unexpectedly", async () => {
+    const h = harness();
+    h.service.start();
+    h.adapter.checkResults.push({ available: true } as unknown as UpdaterCheckOutcome);
+    h.scheduler.fire();
+    await settle();
+    expect(h.service.getState()).toMatchObject({ phase: "error", error: { context: "check" } });
+    expect(h.scheduler.pending().map((task) => task.delay)).toEqual([BACKOFF_BASE_MS]);
+    expect(h.logs.some((line) => line.includes("failed unexpectedly"))).toBe(true);
   });
 
   it("treats an inactive updater as a non-retryable failure", async () => {
@@ -442,6 +519,60 @@ describe("UpdateService downloads", () => {
     });
     await settle();
     expect(h.service.getState().phase).toBe("up-to-date");
+  });
+
+  it("keeps downloading a version the new channel still accepts, then retries the channel check", async () => {
+    const h = harness();
+    await available(h);
+    const pending = h.service.download();
+    await settle();
+    const switched = h.service.setChannel("alpha");
+    expect(h.adapter.downloads[0].cancelled).toBe(false);
+    h.adapter.downloads[0].deferred.resolve();
+    expect(await pending).toMatchObject({ ok: true, state: { phase: "ready", downloadedVersion: "1.1.0" } });
+    expect(await switched).toMatchObject({ ok: true, state: { channel: "alpha", phase: "ready", downloadedVersion: "1.1.0" } });
+    await settle();
+    expect(h.adapter.checkCalls).toBe(2);
+    expect(h.service.getState()).toMatchObject({ channel: "alpha", phase: "ready" });
+  });
+
+  it("gives a download requested after a channel change its own operation", async () => {
+    const h = harness({ runningVersion: "1.0.0-alpha.1" });
+    await available(h, "1.0.0-alpha.2");
+    const old = h.service.download();
+    await settle();
+    const switched = h.service.setChannel("stable");
+    const fresh = h.service.download();
+    expect(fresh).not.toBe(old);
+    expect(await old).toMatchObject({ ok: false, code: "superseded" });
+    await switched;
+    expect(await fresh).toMatchObject({ ok: false, code: "no-update" });
+    await settle();
+    expect(h.adapter.checkCalls).toBe(2);
+  });
+
+  it("leaves the download and channel alone when reconfiguring the updater fails", async () => {
+    const h = harness({ runningVersion: "1.0.0-alpha.1" });
+    await available(h, "1.0.0-alpha.2");
+    const pending = h.service.download();
+    await settle();
+    h.adapter.configureError = new Error("bad channel");
+    expect(await h.service.setChannel("stable")).toMatchObject({ ok: false, code: "failed", state: { channel: "alpha" } });
+    expect(h.adapter.downloads[0].cancelled).toBe(false);
+    h.adapter.configureError = null;
+    h.adapter.downloads[0].deferred.resolve();
+    expect(await pending).toMatchObject({ ok: true, state: { phase: "ready" } });
+  });
+
+  it("shows a download that could not start as a download error", async () => {
+    const h = harness();
+    await available(h);
+    h.adapter.downloadError = new Error("updater could not start");
+    expect(await h.service.download()).toMatchObject({
+      ok: false,
+      code: "failed",
+      state: { phase: "error", error: { context: "download", message: "updater could not start" } }
+    });
   });
 
   it("supersedes a queued download when the channel changes before it starts", async () => {
