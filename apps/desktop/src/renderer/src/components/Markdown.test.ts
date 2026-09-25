@@ -2,10 +2,14 @@ import { describe, expect, it } from "vitest";
 import {
   buildPreviewHtml,
   isAbsolutePath,
+  isGitHubLink,
+  isHtmlPath,
+  isHttpLink,
   isLocalPreviewLink,
   isPathInsideBase,
   isPreviewablePath,
-  resolvePreviewPaths
+  resolvePreviewPaths,
+  sanitizeStreamingMarkdown
 } from "./Markdown.js";
 
 describe("isPreviewablePath", () => {
@@ -19,6 +23,21 @@ describe("isPreviewablePath", () => {
   it("rejects other files", () => {
     expect(isPreviewablePath("a.ts")).toBe(false);
     expect(isPreviewablePath("noext")).toBe(false);
+  });
+});
+
+describe("isHtmlPath", () => {
+  it("accepts html and htm extensions", () => {
+    expect(isHtmlPath("x.html")).toBe(true);
+    expect(isHtmlPath("dir/page.HTM")).toBe(true);
+    expect(isHtmlPath("page.html#frag")).toBe(true);
+    expect(isHtmlPath("page.html?q=1")).toBe(true);
+  });
+
+  it("rejects other extensions", () => {
+    expect(isHtmlPath("x.md")).toBe(false);
+    expect(isHtmlPath("x.ts")).toBe(false);
+    expect(isHtmlPath("noext")).toBe(false);
   });
 });
 
@@ -37,6 +56,24 @@ describe("isLocalPreviewLink", () => {
     expect(isLocalPreviewLink("//x.com/a.md")).toBe(false);
     expect(isLocalPreviewLink("a.ts")).toBe(false);
     expect(isLocalPreviewLink("#frag")).toBe(false);
+  });
+});
+
+describe("isHttpLink / isGitHubLink", () => {
+  it("detects http(s) links only", () => {
+    expect(isHttpLink("https://example.com/x")).toBe(true);
+    expect(isHttpLink("http://example.com/x")).toBe(true);
+    expect(isHttpLink("mailto:a@b.c")).toBe(false);
+    expect(isHttpLink("docs/a.md")).toBe(false);
+  });
+
+  it("detects GitHub hosts", () => {
+    expect(isGitHubLink("https://github.com/org/repo/pull/15")).toBe(true);
+    expect(isGitHubLink("https://www.github.com/org/repo")).toBe(true);
+    expect(isGitHubLink("https://gist.github.com/user/abc")).toBe(true);
+    expect(isGitHubLink("https://gitlab.com/org/repo")).toBe(false);
+    expect(isGitHubLink("https://github.com.evil.test/org")).toBe(false);
+    expect(isGitHubLink("not a url")).toBe(false);
   });
 });
 
@@ -90,5 +127,26 @@ describe("isPathInsideBase / isAbsolutePath", () => {
     expect(isAbsolutePath("C:/x/a.md")).toBe(true);
     expect(isAbsolutePath("/x/a.md")).toBe(true);
     expect(isAbsolutePath("rel/a.md")).toBe(false);
+  });
+});
+
+describe("sanitizeStreamingMarkdown", () => {
+  it("returns closed fence unchanged", () => {
+    const text = "before\n```ts\nconst x = 1;\n```\nafter";
+    expect(sanitizeStreamingMarkdown(text)).toBe(text);
+  });
+
+  it("closes unclosed fence", () => {
+    expect(sanitizeStreamingMarkdown("before\n```ts\nconst x = 1;")).toBe("before\n```ts\nconst x = 1;\n```");
+  });
+
+  it("returns text without fence unchanged", () => {
+    const text = "just **some** text";
+    expect(sanitizeStreamingMarkdown(text)).toBe(text);
+  });
+
+  it("leaves unclosed inline code alone", () => {
+    const text = "use `inline code here";
+    expect(sanitizeStreamingMarkdown(text)).toBe(text);
   });
 });

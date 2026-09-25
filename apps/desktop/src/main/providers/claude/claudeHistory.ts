@@ -1,8 +1,10 @@
 import { readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import type { HistoryMessage } from "@cw-code/contracts";
-import { claudeProjectSlug } from "./claudeSessions.js";
+import { todosFromToolCall } from "../todos.js";
+import { claudeCommandText } from "./claudeCommands.js";
+import { parseClaudeTaskNotification, parseTaskNotificationUsage } from "./claudeStreamParser.js";
+import { claudeTranscriptProjectDir } from "./claudeSessions.js";
 
 type ContentBlock =
   | { type: "text"; text?: string }
@@ -222,7 +224,10 @@ export function parseClaudeTranscriptLine(line: TranscriptLine): HistoryMessage[
   if (line.type === "user") {
     if (typeof content === "string") {
       if (!content.trim()) return out;
-      if (content.trimStart().startsWith("<task-notification>")) {
+      const commandText = claudeCommandText(content);
+      if (commandText !== null) {
+        out.push({ id: baseId, role: "user", text: commandText, turnId: baseId, ...stamp });
+      } else if (content.trimStart().startsWith("<task-notification>")) {
         out.push({ id: `${baseId}-n`, role: "tool", text: content, turnId: baseId, toolName: "task-notification", ...stamp });
       } else {
         out.push({ id: baseId, role: "user", text: content, turnId: baseId, ...stamp });
@@ -258,14 +263,19 @@ export function parseClaudeTranscriptLine(line: TranscriptLine): HistoryMessage[
       if (block.type === "text") {
         const text = (block as { text?: string }).text ?? "";
         if (text) out.push({ id: `${baseId}-a${i}`, role: "assistant", text, turnId: baseId, ...stamp });
+      } else if (block.type === "thinking") {
+        const text = (block as { thinking?: string }).thinking ?? "";
+        if (text) out.push({ id: `${baseId}-th${i}`, role: "reasoning", text, turnId: baseId, ...stamp });
       } else if (block.type === "tool_use") {
         const tool = block as { id?: string; name?: string; input?: unknown };
+        const todos = todosFromToolCall(tool.name ?? "", tool.input ?? null);
         out.push({
           id: tool.id ?? `${baseId}-c${i}`,
           role: "tool",
           text: `${tool.name ?? "tool"} ${JSON.stringify(tool.input ?? null)?.slice(0, 2000) ?? ""}`,
           turnId: baseId,
           toolName: tool.name ?? "tool",
+          ...(todos !== null ? { todos } : {}),
           ...stamp
         });
       }
@@ -276,8 +286,21 @@ export function parseClaudeTranscriptLine(line: TranscriptLine): HistoryMessage[
   return [];
 }
 
+export function assignReasoningDurations(
+  reasoningByMsgId: Map<string, HistoryMessage[]>,
+  thinkingStart: Map<string, number>,
+  lastStamp: Map<string, number>
+): void {
+  for (const [msgId, messages] of reasoningByMsgId) {
+    const start = thinkingStart.get(msgId);
+    const end = lastStamp.get(msgId);
+    if (start === undefined || end === undefined || end <= start) continue;
+    for (const msg of messages) msg.reasoningMs = end - start;
+  }
+}
+
 export function readClaudeHistory(rootPath: string, resumeCursor: string, limit = 300): HistoryMessage[] {
-  const file = join(homedir(), ".claude", "projects", claudeProjectSlug(rootPath), `${resumeCursor}.jsonl`);
+  const file = join(claudeTranscriptProjectDir(rootPath, resumeCursor), `${resumeCursor}.jsonl`);
   let raw: string;
   try {
     raw = readFileSync(file, "utf8");
@@ -286,11 +309,28 @@ export function readClaudeHistory(rootPath: string, resumeCursor: string, limit 
     return [];
   }
   const out: HistoryMessage[] = [];
+  const reasoningByMsgId = new Map<string, HistoryMessage[]>();
+  const thinkingStart = new Map<string, number>();
+  const lastStamp = new Map<string, number>();
   for (const line of raw.split("\n")) {
     if (!line.trim()) continue;
     try {
       const parsed = JSON.parse(line) as TranscriptLine;
+      const msgId = typeof parsed.message?.id === "string" ? parsed.message.id : "";
+      const stamp = toEpochMs(parsed.timestamp);
+      if (msgId && stamp !== undefined) {
+        const blocks = Array.isArray(parsed.message?.content) ? parsed.message.content : [];
+        if (blocks.some((block) => block.type === "thinking") && !thinkingStart.has(msgId)) {
+          thinkingStart.set(msgId, stamp);
+        }
+        lastStamp.set(msgId, Math.max(lastStamp.get(msgId) ?? 0, stamp));
+      }
       for (const msg of parseClaudeTranscriptLine(parsed)) {
+        if (msg.role === "reasoning" && msgId) {
+          const group = reasoningByMsgId.get(msgId);
+          if (group) group.push(msg);
+          else reasoningByMsgId.set(msgId, [msg]);
+        }
         out.push(msg);
         if (out.length > limit * 2) out.splice(0, out.length - limit * 2);
       }
@@ -298,6 +338,7 @@ export function readClaudeHistory(rootPath: string, resumeCursor: string, limit 
       continue;
     }
   }
+  assignReasoningDurations(reasoningByMsgId, thinkingStart, lastStamp);
   const trimmed = out.slice(-limit);
   const agentByCall = mapAgentCalls(trimmed);
   attachSidecarInfo(file, resumeCursor, trimmed, agentByCall);
@@ -333,26 +374,59 @@ export function attributeSendMessages(messages: HistoryMessage[], agentByCall: M
   }
 }
 
-const TASK_NOTIFY_RE = {
-  toolUseId: /<tool-use-id>([\s\S]*?)<\/tool-use-id>/,
-  status: /<status>([\s\S]*?)<\/status>/,
-  result: /<result>([\s\S]*?)<\/result>/
-};
+const TASK_RESULT_SCAN_LINES = 400;
+
+export function readClaudeTaskResult(
+  rootPath: string,
+  resumeCursor: string,
+  toolUseId: string
+): { result?: string; status?: string } | undefined {
+  if (!resumeCursor || !toolUseId || !/^[\w-]+$/.test(resumeCursor)) return undefined;
+  const file = join(claudeTranscriptProjectDir(rootPath, resumeCursor), `${resumeCursor}.jsonl`);
+  let raw: string;
+  try {
+    raw = readFileSync(file, "utf8");
+  } catch {
+    return undefined;
+  }
+  const lines = raw.split("\n");
+  for (let i = lines.length - 1, scanned = 0; i >= 0 && scanned < TASK_RESULT_SCAN_LINES; i--) {
+    const line = lines[i];
+    if (!line.includes("<task-notification>") || !line.includes(toolUseId)) continue;
+    scanned++;
+    let content: unknown;
+    try {
+      content = (JSON.parse(line) as TranscriptLine).message?.content;
+    } catch {
+      continue;
+    }
+    if (typeof content !== "string") continue;
+    const notification = parseClaudeTaskNotification(content);
+    if (!notification || notification.toolUseId !== toolUseId) continue;
+    return {
+      result: notification.result,
+      ...(notification.status ? { status: notification.status } : {})
+    };
+  }
+  return undefined;
+}
 
 export function foldTaskNotifications(messages: HistoryMessage[]): HistoryMessage[] {
   const byId = new Map(messages.map((m) => [m.id, m]));
   const drop = new Set<string>();
   for (const m of messages) {
     if (m.role !== "tool" || m.toolName !== "task-notification") continue;
-    const toolUseId = TASK_NOTIFY_RE.toolUseId.exec(m.text)?.[1]?.trim();
-    const result = TASK_NOTIFY_RE.result.exec(m.text)?.[1];
+    const notification = parseClaudeTaskNotification(m.text);
+    const toolUseId = notification?.toolUseId;
+    const result = notification?.result;
     const target = toolUseId ? byId.get(`${toolUseId}-r`) : undefined;
-    const status = TASK_NOTIFY_RE.status.exec(m.text)?.[1]?.trim();
-    const isError = status ? status.toLowerCase() !== "completed" : undefined;
+    const isError = notification?.status ? notification.status.toLowerCase() !== "completed" : undefined;
+    const usage = parseTaskNotificationUsage(m.text);
     if (target && result !== undefined) {
       target.text = result.slice(0, 8000);
       if (m.timestamp !== undefined) target.timestamp = m.timestamp;
       if (isError !== undefined) target.isError = isError;
+      if (usage) target.toolUsage = usage;
       drop.add(m.id);
       continue;
     }
@@ -363,6 +437,7 @@ export function foldTaskNotifications(messages: HistoryMessage[]): HistoryMessag
       m.turnId = call.turnId;
       m.toolName = "result";
       if (isError !== undefined) m.isError = isError;
+      if (usage) m.toolUsage = usage;
       byId.set(m.id, m);
       continue;
     }

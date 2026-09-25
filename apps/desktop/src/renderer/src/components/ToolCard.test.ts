@@ -1,16 +1,21 @@
 import { describe, expect, it } from "vitest";
 import {
   describeToolCall,
+  describeWaitingTools,
   extractCommandFragment,
+  extractFileDiff,
+  extractFileDiffFromText,
   extractFileFragment,
   extractPatchFiles,
   formatDuration,
   mergeToolPairs,
   orderToolsForDisplay,
+  pendingToolsForTurn,
   recoverToolInput,
   relativizeInText,
   relativizeToBase,
-  stripToolNamePrefix
+  stripToolNamePrefix,
+  summarizeToolGroup
 } from "./toolSummaries.js";
 import type { ChatMessage } from "../stores/appStore.js";
 
@@ -113,6 +118,63 @@ describe("describeToolCall", () => {
     });
     expect(s?.verb).toBe("Question");
     expect(s?.subject).toBe("Asked 2 questions");
+  });
+});
+
+describe("extractFileDiff", () => {
+  it("maps Write content to added lines", () => {
+    expect(extractFileDiff("Write", { file_path: "a.ts", content: "one\ntwo\nthree" })).toEqual([
+      { type: "add", text: "one" },
+      { type: "add", text: "two" },
+      { type: "add", text: "three" }
+    ]);
+  });
+
+  it("maps Edit old/new strings to removed then added lines", () => {
+    expect(extractFileDiff("Edit", { file_path: "x.ts", old_string: "a\nb", new_string: "c" })).toEqual([
+      { type: "del", text: "a" },
+      { type: "del", text: "b" },
+      { type: "add", text: "c" }
+    ]);
+    expect(extractFileDiff("edit", { filePath: "x.ts", oldString: "a", newString: "b\nc" })).toEqual([
+      { type: "del", text: "a" },
+      { type: "add", text: "b" },
+      { type: "add", text: "c" }
+    ]);
+  });
+
+  it("flattens MultiEdit edits arrays", () => {
+    expect(
+      extractFileDiff("MultiEdit", { edits: [{ old_string: "a", new_string: "b" }, { oldString: "c", newString: "d\ne" }] })
+    ).toEqual([
+      { type: "del", text: "a" },
+      { type: "add", text: "b" },
+      { type: "del", text: "c" },
+      { type: "add", text: "d" },
+      { type: "add", text: "e" }
+    ]);
+  });
+
+  it("returns null for other tools and empty inputs", () => {
+    expect(extractFileDiff("Bash", { command: "ls" })).toBeNull();
+    expect(extractFileDiff("Write", { file_path: "a.ts" })).toBeNull();
+    expect(extractFileDiff("Edit", { file_path: "a.ts" })).toBeNull();
+    expect(extractFileDiff("Write", null)).toBeNull();
+  });
+
+  it("recovers diff lines from truncated history text", () => {
+    expect(extractFileDiffFromText("Write", 'Write {"file_path":"a.ts","content":"one\\ntwo"}')).toEqual([
+      { type: "add", text: "one" },
+      { type: "add", text: "two" }
+    ]);
+    expect(
+      extractFileDiffFromText("Edit", 'Edit {"file_path":"x.ts","old_string":"a\\nb","new_string":"c"}')
+    ).toEqual([
+      { type: "del", text: "a" },
+      { type: "del", text: "b" },
+      { type: "add", text: "c" }
+    ]);
+    expect(extractFileDiffFromText("Bash", 'Bash {"command":"ls"}')).toBeNull();
   });
 });
 
@@ -283,5 +345,85 @@ describe("formatDuration", () => {
     expect(formatDuration(3000)).toBe("3s");
     expect(formatDuration(806000)).toBe("13m 26s");
     expect(formatDuration(3723000)).toBe("1h 2m 3s");
+  });
+});
+
+describe("summarizeToolGroup", () => {
+  const done = (toolName: string): ChatMessage =>
+    msg({ id: `${toolName}-${Math.random()}`, toolName, text: toolName, toolInput: {}, toolOutput: "out", toolDone: true });
+
+  it("counts commands with Ran prefix", () => {
+    const s = summarizeToolGroup([done("Bash"), done("shell")]);
+    expect(s?.text).toBe("Ran 2 commands");
+    expect(s?.status).toBe("complete");
+    expect(s?.hasRunning).toBe(false);
+  });
+
+  it("combines reads and commands in first-appearance order", () => {
+    const s = summarizeToolGroup([done("Read"), done("Read"), done("Bash")]);
+    expect(s?.text).toBe("Read 2 files, ran 1 command");
+  });
+
+  it("uses present tense while running", () => {
+    const running = msg({ id: "r1", toolName: "Bash", text: "x", toolInput: { command: "ls" } });
+    const s = summarizeToolGroup([done("Read"), running]);
+    expect(s?.text).toBe("Reading 1 file, running 1 command");
+    expect(s?.status).toBe("running");
+    expect(s?.hasRunning).toBe(true);
+  });
+
+  it("reports errors", () => {
+    const err = msg({ id: "e1", toolName: "Bash", text: "x", toolInput: {}, toolOutput: "nope", toolDone: true, isError: true });
+    const s = summarizeToolGroup([done("Read"), err]);
+    expect(s?.status).toBe("error");
+  });
+
+  it("returns null for empty groups", () => {
+    expect(summarizeToolGroup([])).toBe(null);
+  });
+});
+
+describe("pendingToolsForTurn", () => {
+  it("lists running tools for the turn with their start times", () => {
+    const messages = [
+      msg({ id: "c1", turnId: "t1", toolName: "Bash", toolInput: { command: "sleep 600" }, toolStartedAt: 1000 }),
+      msg({ id: "c2", turnId: "t1", toolName: "Read", toolInput: { path: "a.ts" }, timestamp: 2000 }),
+      msg({ id: "c3", turnId: "t2", toolName: "Bash", toolInput: { command: "ls" }, toolStartedAt: 3000 })
+    ];
+    expect(pendingToolsForTurn(messages, "t1")).toEqual([
+      { id: "c1", name: "Bash", startedAt: 1000 },
+      { id: "c2", name: "Read", startedAt: 2000 }
+    ]);
+  });
+
+  it("excludes completed tools and calls without input", () => {
+    const messages = [
+      msg({ id: "done", toolName: "Bash", toolInput: { command: "ls" }, toolOutput: "out" }),
+      msg({ id: "flag", toolName: "Bash", toolInput: { command: "ls" }, toolDone: true }),
+      msg({ id: "noinput", toolName: "Bash", toolStartedAt: 1000 }),
+      msg({ id: "unnamed", toolInput: { command: "ls" }, toolStartedAt: 1000 })
+    ];
+    expect(pendingToolsForTurn(messages, "t1")).toEqual([{ id: "unnamed", name: "tool", startedAt: 1000 }]);
+  });
+});
+
+describe("describeWaitingTools", () => {
+  it("returns undefined when nothing is pending", () => {
+    expect(describeWaitingTools([], 90000)).toBeUndefined();
+  });
+
+  it("names pending tools with elapsed times and caps the list", () => {
+    const tools = [
+      { id: "a", name: "Bash", startedAt: 1000 },
+      { id: "b", name: "Bash", startedAt: 2000 },
+      { id: "c", name: "Read", startedAt: 3000 },
+      { id: "d", name: "Grep", startedAt: 4000 }
+    ];
+    expect(describeWaitingTools(tools, 301000)).toBe("waiting on Bash (5m 0s), Bash (4m 59s), Read (4m 58s) +1 more");
+  });
+
+  it("falls back to the turn start and then to bare names", () => {
+    expect(describeWaitingTools([{ id: "a", name: "Bash" }], 61000, 1000)).toBe("waiting on Bash (1m 0s)");
+    expect(describeWaitingTools([{ id: "a", name: "Bash" }], 61000)).toBe("waiting on Bash");
   });
 });

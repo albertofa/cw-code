@@ -107,6 +107,25 @@ describe("TracingCliDriver", () => {
     ]);
   });
 
+  it("forwards listCommands to drivers that support it", async () => {
+    const tracing = new TracingCliDriver(new FakeDriver());
+    await expect(tracing.listCommands("C:\\proj")).resolves.toEqual([]);
+    const withCommands = new TracingCliDriver({
+      kind: "opencode",
+      listCommands: async () => [{ name: "compact", description: "Compact", dispatch: "native" as const }]
+    } as unknown as CliDriver);
+    await expect(withCommands.listCommands("C:\\proj")).resolves.toEqual([
+      { name: "compact", description: "Compact", dispatch: "native" }
+    ]);
+    const failing = new TracingCliDriver({
+      kind: "claude",
+      listCommands: async () => {
+        throw new Error("probe failed");
+      }
+    } as unknown as CliDriver);
+    await expect(failing.listCommands("C:\\proj")).rejects.toThrow("probe failed");
+  });
+
   it("forwards approval responses and logs the decision", async () => {
     const seen: Array<{ requestId: string; decision: string }> = [];
     const withApprovals = new TracingCliDriver({
@@ -130,5 +149,134 @@ describe("TracingCliDriver", () => {
   it("resolves to no-op for drivers without approval support", async () => {
     const tracing = new TracingCliDriver(new FakeDriver());
     await expect(tracing.respondToApproval("req-1", "decline")).resolves.toBeUndefined();
+  });
+
+  it("forwards stopSession and logs the call", () => {
+    const seen: string[] = [];
+    const withStop = new TracingCliDriver({
+      kind: "claude",
+      stopSession: (sessionId: string) => {
+        seen.push(sessionId);
+      }
+    } as unknown as CliDriver);
+    withStop.stopSession("s1");
+    expect(seen).toEqual(["s1"]);
+    const records = readRecords();
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      harness: "claude",
+      operation: "claude.stopSession",
+      sessionId: "s1",
+      ok: true
+    });
+    expect(typeof records[0]["durationMs"]).toBe("number");
+  });
+
+  it("writes no trace for drivers without stopSession support", () => {
+    const tracing = new TracingCliDriver(new FakeDriver());
+    tracing.interrupt("t0");
+    tracing.stopSession("s1");
+    const records = readRecords();
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({ operation: "claude.interrupt" });
+  });
+
+  it("leaves getAccountUsage undefined for drivers without support", () => {
+    const tracing = new TracingCliDriver(new FakeDriver());
+    expect(tracing.getAccountUsage).toBeUndefined();
+  });
+
+  it("forwards getAccountUsage and traces status without the payload", async () => {
+    const state = { status: "ok" as const, windows: [], balances: [], notes: [] };
+    const withUsage = new TracingCliDriver({
+      kind: "claude",
+      getAccountUsage: async () => state
+    } as unknown as CliDriver);
+    await expect(withUsage.getAccountUsage?.()).resolves.toEqual(state);
+    const records = readRecords();
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      harness: "claude",
+      operation: "claude.getAccountUsage",
+      ok: true,
+      extra: { status: "ok" }
+    });
+    expect(records[0]).not.toHaveProperty("windows");
+    expect(records[0]).not.toHaveProperty("balances");
+  });
+
+  it("includes a truncated error when getAccountUsage resolves to a non-ok state", async () => {
+    const state = { status: "unavailable" as const, reason: "not-installed" as const, message: "Claude isn't installed." };
+    const withUsage = new TracingCliDriver({
+      kind: "claude",
+      getAccountUsage: async () => state
+    } as unknown as CliDriver);
+    await expect(withUsage.getAccountUsage?.()).resolves.toEqual(state);
+    const records = readRecords();
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      harness: "claude",
+      operation: "claude.getAccountUsage",
+      ok: true,
+      extra: { status: "unavailable" },
+      error: "Claude isn't installed."
+    });
+  });
+
+  it("logs getAccountUsage failures with ok:false", async () => {
+    const withUsage = new TracingCliDriver({
+      kind: "codex",
+      getAccountUsage: async () => {
+        throw new Error("probe timed out");
+      }
+    } as unknown as CliDriver);
+    await expect(withUsage.getAccountUsage?.()).rejects.toThrow("probe timed out");
+    const records = readRecords();
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      harness: "codex",
+      operation: "codex.getAccountUsage",
+      ok: false
+    });
+    expect(String(records[0]["error"])).toContain("probe timed out");
+  });
+
+  it("logs getAccountUsage failures for non-Error throws using String(err)", async () => {
+    const withUsage = new TracingCliDriver({
+      kind: "codex",
+      getAccountUsage: async () => {
+        throw "boom";
+      }
+    } as unknown as CliDriver);
+    await expect(withUsage.getAccountUsage?.()).rejects.toBe("boom");
+    const records = readRecords();
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({ harness: "codex", operation: "codex.getAccountUsage", ok: false });
+    expect(String(records[0]["error"])).toContain("boom");
+  });
+});
+
+describe("TracingCliDriver lifecycle passthrough", () => {
+  it("exposes activity and shutdown only when the inner driver has them", () => {
+    const tracing = new TracingCliDriver(new FakeDriver());
+    expect(tracing.activity).toBeUndefined();
+    expect(tracing.shutdown).toBeUndefined();
+  });
+
+  it("delegates activity and traces the shutdown outcome", async () => {
+    const inner = Object.assign(new FakeDriver(), {
+      activity: () => ({ busySessionIds: ["s1"], ownedProcesses: 2 }),
+      shutdown: vi.fn(async () => ({ timedOut: true }))
+    });
+    const tracing = new TracingCliDriver(inner);
+    expect(tracing.activity?.()).toEqual({ busySessionIds: ["s1"], ownedProcesses: 2 });
+    expect(await tracing.shutdown?.({ timeoutMs: 500 })).toEqual({ timedOut: true });
+    expect(inner.shutdown).toHaveBeenCalledWith({ timeoutMs: 500 });
+    expect(readRecords().at(-1)).toMatchObject({
+      harness: "claude",
+      operation: "claude.shutdown",
+      ok: false,
+      extra: { timeoutMs: 500, timedOut: true }
+    });
   });
 });

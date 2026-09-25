@@ -1,0 +1,472 @@
+name: Release
+
+on:
+  workflow_run:
+    workflows: ["CI"]
+    branches: [main]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: "Release channel"
+        required: true
+        type: choice
+        options:
+          - alpha
+          - stable
+      candidate:
+        description: "channel=stable only: candidate alpha tag or its full 40-hex commit SHA"
+        required: false
+        type: string
+      expected_sha:
+        description: "channel=stable only: full 40-hex SHA the candidate must resolve to"
+        required: false
+        type: string
+      force:
+        description: "channel=alpha only: bypass the 6-hour coalescing window"
+        required: false
+        type: boolean
+        default: false
+      mode:
+        description: "validate builds, signs and verifies without publishing; publish also needs CW_RELEASE_PUBLISHING_ENABLED=true"
+        required: true
+        type: choice
+        default: validate
+        options:
+          - validate
+          - publish
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ inputs.mode == 'publish' && 'publish' || 'validate' }}-${{ inputs.channel || 'alpha' }}
+  cancel-in-progress: false
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  plan:
+    if: >-
+      (github.event_name == 'workflow_dispatch' && github.ref == 'refs/heads/main') ||
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.event == 'push' &&
+       github.event.workflow_run.head_branch == 'main' &&
+       github.event.workflow_run.head_repository.full_name == github.repository)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: read
+    outputs:
+      skip: ${{ steps.plan.outputs.skip }}
+      channel: ${{ steps.plan.outputs.channel }}
+      version: ${{ steps.plan.outputs.version }}
+      tag: ${{ steps.plan.outputs.tag }}
+      sha: ${{ steps.plan.outputs.sha }}
+      mode: ${{ steps.mode.outputs.mode }}
+      signing-mode: ${{ steps.mode.outputs.signing-mode }}
+      production: ${{ steps.mode.outputs.production }}
+      plan-artifact: ${{ steps.mode.outputs.plan-artifact }}
+    steps:
+      - name: Resolve the run mode
+        id: mode
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          MODE_INPUT: ${{ inputs.mode }}
+          CHANNEL: ${{ inputs.channel || 'alpha' }}
+          CANDIDATE: ${{ inputs.candidate }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          PUBLISHING_ENABLED: ${{ vars.CW_RELEASE_PUBLISHING_ENABLED }}
+          PUBLISHER: ${{ vars.CW_WINDOWS_PUBLISHER_NAME }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          fail() { echo "::error::$1"; exit 1; }
+          mode=validate
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then mode="$MODE_INPUT"; fi
+          case "$mode" in
+            validate|publish) ;;
+            *) fail "mode must be validate or publish, got '$mode'" ;;
+          esac
+          case "$CHANNEL" in
+            alpha|stable) ;;
+            *) fail "channel must be alpha or stable, got '$CHANNEL'" ;;
+          esac
+          if [ "$CHANNEL" = "alpha" ] && { [ -n "$CANDIDATE" ] || [ -n "$EXPECTED_SHA" ]; }; then
+            fail "candidate and expected_sha only apply to channel=stable; an alpha always builds the triggering main commit"
+          fi
+          if [ "$mode" = "publish" ]; then
+            [ "$PUBLISHING_ENABLED" = "true" ] || fail "mode=publish needs the repository variable CW_RELEASE_PUBLISHING_ENABLED=true (docs/operations/releases.md); nothing was built"
+            [ -n "$PUBLISHER" ] || fail "mode=publish needs the repository variable CW_WINDOWS_PUBLISHER_NAME"
+            signing=signpath
+            production=true
+          elif [ "$EVENT_NAME" = "workflow_dispatch" ] && [ -n "$PUBLISHER" ]; then
+            signing=signpath
+            production=false
+          else
+            signing=unsigned
+            production=false
+          fi
+          {
+            echo "mode=$mode"
+            echo "signing-mode=$signing"
+            echo "production=$production"
+            echo "plan-artifact=release-plan-attempt${RUN_ATTEMPT}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Check out the gate tooling from the workflow's own commit (full history and tags)
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 11.5.3
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - name: Install the release tooling
+        run: pnpm install --frozen-lockfile --ignore-scripts
+
+      - name: Plan the release
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+          CHANNEL: ${{ inputs.channel || 'alpha' }}
+          SOURCE: ${{ github.event.workflow_run.head_sha || github.sha }}
+          CANDIDATE: ${{ inputs.candidate }}
+          EXPECTED_SHA: ${{ inputs.expected_sha }}
+          FORCE: ${{ inputs.force }}
+        run: |
+          args=(plan --channel "$CHANNEL" --sha "$SOURCE" --out plan.json)
+          if [ -n "$CANDIDATE" ]; then args+=(--candidate "$CANDIDATE"); fi
+          if [ -n "$EXPECTED_SHA" ]; then args+=(--expected-sha "$EXPECTED_SHA"); fi
+          if [ "$FORCE" = "true" ]; then args+=(--force); fi
+          node tools/release/src/cli/release.ts "${args[@]}"
+
+      - name: Upload the plan
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.mode.outputs.plan-artifact }}
+          path: plan.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Job summary
+        if: always()
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          MODE: ${{ steps.mode.outputs.mode }}
+          SIGNING: ${{ steps.mode.outputs.signing-mode }}
+          PRODUCTION: ${{ steps.mode.outputs.production }}
+          SKIP: ${{ steps.plan.outputs.skip }}
+          REASON: ${{ steps.plan.outputs.reason }}
+          CHANNEL: ${{ steps.plan.outputs.channel }}
+          VERSION: ${{ steps.plan.outputs.version }}
+          TAG: ${{ steps.plan.outputs.tag }}
+          SHA: ${{ steps.plan.outputs.sha }}
+          RUN_SHA: ${{ github.workflow_sha }}
+        run: |
+          {
+            echo "### Release plan"
+            echo "- trigger: ${EVENT_NAME}; mode: ${MODE:-?}; signing: ${SIGNING:-?}; production: ${PRODUCTION:-?}"
+            echo "- workflow commit (gate tooling): ${RUN_SHA}"
+            if [ "$SKIP" = "true" ]; then
+              echo "- skipped: ${REASON}"
+            else
+              echo "- channel ${CHANNEL}, version ${VERSION}, tag ${TAG}"
+              echo "- source-sha (built): ${SHA}"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  verify-source:
+    needs: plan
+    if: needs.plan.outputs.skip == 'false'
+    runs-on: windows-latest
+    timeout-minutes: 60
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ needs.plan.outputs.sha }}
+          persist-credentials: false
+      - name: Confirm the source commit
+        env:
+          SOURCE_SHA: ${{ needs.plan.outputs.sha }}
+        run: |
+          actual="$(git rev-parse HEAD)"
+          [ "$actual" = "$SOURCE_SHA" ] || { echo "::error::checked out $actual, the plan builds $SOURCE_SHA"; exit 1; }
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 11.5.3
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - run: pnpm install --frozen-lockfile
+      - name: Download the plan
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.plan.outputs.plan-artifact }}
+          path: plan
+      - name: Apply the planned version to the workspace
+        run: node tools/release/src/cli/release.ts apply --plan plan/plan.json
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+      - name: Check out the gate tooling from the workflow's own commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          path: tooling
+          persist-credentials: false
+      - name: Production main bundle carries no update autotest path
+        run: node tooling/scripts/verify-installed-upgrade.mjs --assert-production-bundle apps/desktop/out/main --desktop-dir apps/desktop
+
+  sign:
+    needs: [plan, verify-source]
+    uses: ./.github/workflows/sign-windows.yml
+    permissions:
+      contents: read
+      actions: read
+    with:
+      signing-mode: ${{ needs.plan.outputs.signing-mode }}
+      production: ${{ needs.plan.outputs.production == 'true' }}
+      version: ${{ needs.plan.outputs.version }}
+      source-sha: ${{ needs.plan.outputs.sha }}
+
+  verify-candidate:
+    needs: [plan, sign]
+    runs-on: windows-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+    outputs:
+      release-set: ${{ steps.names.outputs.release-set }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 11.5.3
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - run: pnpm install --frozen-lockfile
+      - name: Name the release artifacts
+        id: names
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          {
+            echo "release-set=cw-code-${VERSION}-release-set-attempt${RUN_ATTEMPT}"
+            echo "evidence=cw-code-${VERSION}-release-evidence-attempt${RUN_ATTEMPT}"
+          } >> "$GITHUB_OUTPUT"
+      - name: Download the plan
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.plan.outputs.plan-artifact }}
+          path: plan
+      - name: Download the signed release set
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.sign.outputs.release-artifact }}
+          path: release-full
+      - name: Re-check signing.json against the full set, the plan and this run
+        env:
+          VERSION: ${{ needs.plan.outputs.version }}
+          SOURCE_SHA: ${{ needs.plan.outputs.sha }}
+          RUN_ID: ${{ github.run_id }}
+          PRODUCTION: ${{ needs.plan.outputs.production }}
+        run: |
+          args=(check-signing-manifest --manifest release-full/signing.json --release-dir release-full
+            --expected-version "$VERSION" --expected-source-sha "$SOURCE_SHA" --expected-run-id "$RUN_ID")
+          if [ "$PRODUCTION" = "true" ]; then args+=(--require-production); fi
+          node tools/release/src/cli/release.ts "${args[@]}"
+      - name: Stage the publishable set (alpha.yml is a byte copy of latest.yml)
+        run: node tools/release/src/cli/release.ts stage-release-set --from release-full --to release-set --plan plan/plan.json
+      - name: Validate the release set
+        env:
+          RUN_ID: ${{ github.run_id }}
+          PRODUCTION: ${{ needs.plan.outputs.production }}
+          SIGNING: ${{ needs.plan.outputs.signing-mode }}
+          PUBLISHER: ${{ vars.CW_WINDOWS_PUBLISHER_NAME }}
+        run: |
+          args=(validate-release-assets --dir release-set --plan plan/plan.json --run-id "$RUN_ID" --unpacked-root release-full
+            --report "$RUNNER_TEMP/validate-release-assets.json")
+          if [ "$PRODUCTION" = "true" ]; then args+=(--require-production); fi
+          if [ "$SIGNING" = "signpath" ]; then args+=(--expected-publisher "$PUBLISHER"); fi
+          node tools/release/src/cli/release.ts "${args[@]}"
+      - name: Native-load probe on the final bytes (unpacked app, then install, start, node-pty, uninstall)
+        run: node scripts/verify-windows-package.mjs --dist release-full --install
+      - name: Select the published release to upgrade from
+        id: base
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node tools/release/src/cli/release.ts select-upgrade-base --plan plan/plan.json
+      - name: Download N
+        if: steps.base.outputs.status == 'found' && needs.plan.outputs.signing-mode == 'signpath'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          TAG: ${{ steps.base.outputs.tag }}
+          INSTALLER: ${{ steps.base.outputs.installer }}
+          BASE_VERSION: ${{ steps.base.outputs.version }}
+        run: |
+          gh release download "$TAG" --repo "$REPO" --pattern "$INSTALLER" --pattern latest.yml --pattern alpha.yml --dir upgrade-base
+          node tools/release/src/cli/release.ts validate-feed --dir upgrade-base --version "$BASE_VERSION"
+      - name: N -> N+1 upgrade with the production bytes through the loopback feed
+        if: steps.base.outputs.status == 'found' && needs.plan.outputs.signing-mode == 'signpath'
+        env:
+          INSTALLER: ${{ steps.base.outputs.installer }}
+        run: |
+          node scripts/verify-installed-upgrade.mjs --production-bytes --installer "upgrade-base/$INSTALLER" --candidate-dir release-set \
+            --work-dir "$RUNNER_TEMP/production-bytes" --evidence "$RUNNER_TEMP/release-evidence/production-bytes.json"
+      - name: Require the upgrade gate before publication
+        env:
+          STATUS: ${{ steps.base.outputs.status }}
+          REASON: ${{ steps.base.outputs.reason }}
+          BASE_TAG: ${{ steps.base.outputs.tag }}
+          MODE: ${{ needs.plan.outputs.mode }}
+          SIGNING: ${{ needs.plan.outputs.signing-mode }}
+        run: |
+          case "$STATUS" in
+            found)
+              if [ "$SIGNING" = "signpath" ]; then
+                echo "- N -> N+1 production-bytes upgrade from ${BASE_TAG}: passed" >> "$GITHUB_STEP_SUMMARY"
+              else
+                echo "::warning::N -> N+1 skipped: an unsigned candidate cannot pass the publisher check of ${BASE_TAG}"
+                echo "- N -> N+1 skipped (unsigned candidate, N is ${BASE_TAG})" >> "$GITHUB_STEP_SUMMARY"
+              fi
+              ;;
+            bootstrap)
+              echo "::notice::N -> N+1 skipped: ${REASON}"
+              echo "- N -> N+1 skipped (bootstrap): ${REASON}" >> "$GITHUB_STEP_SUMMARY"
+              ;;
+            *)
+              if [ "$MODE" = "publish" ]; then echo "::error::${REASON}"; exit 1; fi
+              echo "::warning::${REASON}"
+              echo "- N -> N+1 not possible: ${REASON}" >> "$GITHUB_STEP_SUMMARY"
+              ;;
+          esac
+      - name: Record tool versions and keep the evidence
+        if: always()
+        env:
+          SOURCE_SHA: ${{ needs.plan.outputs.sha }}
+          RUN_SHA: ${{ github.workflow_sha }}
+        run: |
+          mkdir -p "$RUNNER_TEMP/release-evidence"
+          for file in release-full/verify-windows-package.json release-full/verify-signatures.json release-full/rehash.json release-full/package-info.json release-full/signing.json "$RUNNER_TEMP/validate-release-assets.json"; do
+            if [ -f "$file" ]; then cp "$file" "$RUNNER_TEMP/release-evidence/"; fi
+          done
+          {
+            echo "### Candidate verification"
+            echo "- source-sha: ${SOURCE_SHA}; gate tooling: ${RUN_SHA}"
+            echo "- node $(node --version), pnpm $(pnpm --version), runner $(uname -srm)"
+            if [ -f release-full/rehash.json ]; then
+              node -p '"- electron-builder " + require("./release-full/rehash.json").electronBuilder + ", app-builder-lib " + require("./release-full/rehash.json").appBuilderLib'
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Upload the release set
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.names.outputs.release-set }}
+          path: release-set/
+          if-no-files-found: error
+          retention-days: 30
+      - name: Upload the verification evidence
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ steps.names.outputs.evidence }}
+          path: ${{ runner.temp }}/release-evidence
+          if-no-files-found: warn
+          retention-days: 30
+
+  publish:
+    needs: [plan, verify-candidate]
+    if: needs.plan.outputs.mode == 'publish' && vars.CW_RELEASE_PUBLISHING_ENABLED == 'true'
+    runs-on: ubuntu-latest
+    environment: release-publish
+    concurrency:
+      group: release-publish
+      cancel-in-progress: false
+    timeout-minutes: 60
+    permissions:
+      contents: write
+    outputs:
+      published: ${{ steps.publish.outputs.published }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          fetch-depth: 0
+          fetch-tags: true
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 11.5.3
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - name: Install the release tooling
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Download the plan
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.plan.outputs.plan-artifact }}
+          path: plan
+      - name: Download the verified release set
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.verify-candidate.outputs.release-set }}
+          path: release-set
+      - name: Publish (draft, upload, re-download, re-check ordering, publish)
+        id: publish
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.run_id }}
+          PUBLISHER: ${{ vars.CW_WINDOWS_PUBLISHER_NAME }}
+          PUBLISHING_ENABLED: ${{ vars.CW_RELEASE_PUBLISHING_ENABLED }}
+        run: |
+          if [ "$PUBLISHING_ENABLED" != "true" ]; then
+            echo "::error::CW_RELEASE_PUBLISHING_ENABLED is no longer 'true' after the environment approval; nothing was published"
+            exit 1
+          fi
+          node tools/release/src/cli/release.ts publish --plan plan/plan.json --dir release-set --run-id "$RUN_ID" \
+            --expected-publisher "$PUBLISHER" --work-dir "$RUNNER_TEMP/publish"
+
+  verify-publication:
+    needs: [plan, publish]
+    if: always() && needs.publish.outputs.published == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.workflow_sha }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 11.5.3
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - name: Install the release tooling
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Download the plan
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.plan.outputs.plan-artifact }}
+          path: plan
+      - name: Check the client-facing URLs anonymously (no token)
+        run: node tools/release/src/cli/release.ts check-published --plan plan/plan.json

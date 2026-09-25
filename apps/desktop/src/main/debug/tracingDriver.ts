@@ -1,9 +1,15 @@
 import type {
+  AccountUsageState,
   ApprovalDecision,
   CliDriver,
+  CommandOption,
+  DriverActivity,
   DriverKind,
   HistoryMessage,
   ModelOption,
+  PermissionOption,
+  RetryConnectionRequest,
+  RetryConnectionResult,
   SessionEvent,
   SessionMeta,
   TurnHandle,
@@ -116,6 +122,65 @@ export class TracingCliDriver implements CliDriver {
     this.inner.interrupt(turnId);
   }
 
+  get retryConnection(): ((request: RetryConnectionRequest) => Promise<RetryConnectionResult>) | undefined {
+    const inner = this.inner;
+    if (typeof inner.retryConnection !== "function") return undefined;
+    return async (request) => {
+      const start = Date.now();
+      const operation = `${this.kind}.retryConnection`;
+      try {
+        const result = await inner.retryConnection!(request);
+        traceHarnessCall({
+          harness: this.kind,
+          operation,
+          sessionId: request.sessionId,
+          cwd: request.cwd,
+          durationMs: Date.now() - start,
+          ok: true,
+          extra: { status: result.status, messageCount: result.history.length }
+        });
+        return result;
+      } catch (err) {
+        traceHarnessCall({
+          harness: this.kind,
+          operation,
+          sessionId: request.sessionId,
+          cwd: request.cwd,
+          durationMs: Date.now() - start,
+          ok: false,
+          error: truncateError((err as Error).message)
+        });
+        throw err;
+      }
+    };
+  }
+
+  stopSession(sessionId: string): void {
+    if (typeof this.inner.stopSession !== "function") return;
+    const start = Date.now();
+    const operation = `${this.kind}.stopSession`;
+    try {
+      this.inner.stopSession(sessionId);
+      traceHarnessCall({
+        harness: this.kind,
+        operation,
+        sessionId,
+        durationMs: Date.now() - start,
+        ok: true
+      });
+    } catch (err) {
+      traceHarnessCall({
+        harness: this.kind,
+        operation,
+        sessionId,
+        durationMs: Date.now() - start,
+        ok: false,
+        error: truncateError((err as Error).message)
+      });
+      throw err;
+    }
+  }
+
   async renameSession(sessionId: string, title: string): Promise<void> {
     const start = Date.now();
     const operation = `${this.kind}.renameSession`;
@@ -148,6 +213,16 @@ export class TracingCliDriver implements CliDriver {
   async listModels(cwd: string): Promise<ModelOption[]> {
     if (typeof this.inner.listModels !== "function") return [];
     return this.inner.listModels(cwd);
+  }
+
+  async listPermissionModes(cwd: string): Promise<PermissionOption[]> {
+    if (typeof this.inner.listPermissionModes !== "function") return [];
+    return this.inner.listPermissionModes(cwd);
+  }
+
+  async listCommands(cwd: string): Promise<CommandOption[]> {
+    if (typeof this.inner.listCommands !== "function") return [];
+    return this.inner.listCommands(cwd);
   }
 
   async respondToApproval(requestId: string, decision: ApprovalDecision): Promise<void> {
@@ -202,6 +277,71 @@ export class TracingCliDriver implements CliDriver {
       });
       throw err;
     }
+  }
+
+  get getAccountUsage(): (() => Promise<AccountUsageState>) | undefined {
+    const inner = this.inner;
+    if (typeof inner.getAccountUsage !== "function") return undefined;
+    return async () => {
+      const start = Date.now();
+      const operation = `${this.kind}.getAccountUsage`;
+      try {
+        const state = await inner.getAccountUsage!();
+        traceHarnessCall({
+          harness: this.kind,
+          operation,
+          durationMs: Date.now() - start,
+          ok: true,
+          extra: { status: state.status },
+          ...(state.status === "ok" ? {} : { error: truncateError(state.message) })
+        });
+        return state;
+      } catch (err) {
+        traceHarnessCall({
+          harness: this.kind,
+          operation,
+          durationMs: Date.now() - start,
+          ok: false,
+          error: truncateError(err instanceof Error ? err.message : String(err))
+        });
+        throw err;
+      }
+    };
+  }
+
+  get activity(): (() => DriverActivity) | undefined {
+    const inner = this.inner;
+    if (typeof inner.activity !== "function") return undefined;
+    return () => inner.activity!();
+  }
+
+  get shutdown(): ((opts: { timeoutMs: number }) => Promise<{ timedOut: boolean }>) | undefined {
+    const inner = this.inner;
+    if (typeof inner.shutdown !== "function") return undefined;
+    return async (opts) => {
+      const start = Date.now();
+      const operation = `${this.kind}.shutdown`;
+      try {
+        const result = await inner.shutdown!(opts);
+        traceHarnessCall({
+          harness: this.kind,
+          operation,
+          durationMs: Date.now() - start,
+          ok: !result.timedOut,
+          extra: { timeoutMs: opts.timeoutMs, timedOut: result.timedOut }
+        });
+        return result;
+      } catch (err) {
+        traceHarnessCall({
+          harness: this.kind,
+          operation,
+          durationMs: Date.now() - start,
+          ok: false,
+          error: truncateError((err as Error).message)
+        });
+        throw err;
+      }
+    };
   }
 
   dispose(): void {
