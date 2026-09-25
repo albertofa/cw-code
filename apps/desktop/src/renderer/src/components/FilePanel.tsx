@@ -116,7 +116,9 @@ export function FilePanel({ sessionId }: { sessionId: string }) {
   const [dirErrors, setDirErrors] = useState<Record<string, string>>({});
   const [openFile, setOpenFile] = useState<string | null>(null);
   const [openKey, setOpenKey] = useState<string | null>(null);
-  const content = useEditorBuffers((s) => (openKey ? (s.buffers[openKey]?.content ?? "") : ""));
+  const openBuffer = useEditorBuffers((s) => (openKey ? s.buffers[openKey] : undefined));
+  const editable = openBuffer !== undefined && openBuffer.path === openFile;
+  const content = editable ? openBuffer.content : "";
   const [filter, setFilter] = useState("");
   const [allFiles, setAllFiles] = useState<string[] | null>(null);
   const [searching, setSearching] = useState(false);
@@ -235,16 +237,19 @@ export function FilePanel({ sessionId }: { sessionId: string }) {
         registeredKeyRef.current = key;
         setOpenKey(key);
       })
-      .catch((err: Error) => setStatus(`read failed: ${err.message}`));
+      .catch((err: Error) => {
+        if (seqRef.current !== seq || requestedFileRef.current !== path) return;
+        setStatus(`read failed for ${path}: ${err.message}`);
+      });
   };
 
   const save = () => {
-    if (!openFile || !openKey) return;
+    const buffer = editable && openKey ? useEditorBuffers.getState().buffers[openKey] : undefined;
+    if (!buffer || !openKey) return;
     const key = openKey;
-    const path = openFile;
-    const text = content;
+    const { sessionId: bufferSession, path, content: text } = buffer;
     window.cw
-      .saveFile(sessionId, path, text)
+      .saveFile(bufferSession, path, text)
       .then(() => {
         useEditorBuffers.getState().markSaved(key, text);
         setStatus(`saved ${path}`);
@@ -305,7 +310,7 @@ export function FilePanel({ sessionId }: { sessionId: string }) {
       <div className="editor-col">
         <div className="editor-bar">
           <span className="path">{openFile ?? "no file open"}</span>
-          {openFile && (
+          {editable && (
             <button className="btn" style={{ fontSize: 11, padding: "3px 8px" }} onClick={save}>
               Save
             </button>
@@ -315,9 +320,9 @@ export function FilePanel({ sessionId }: { sessionId: string }) {
         <textarea
           value={content}
           onChange={(e) => {
-            if (openKey) useEditorBuffers.getState().update(openKey, e.target.value);
+            if (editable && openKey) useEditorBuffers.getState().update(openKey, e.target.value);
           }}
-          readOnly={!openKey}
+          readOnly={!editable}
           spellCheck={false}
           className="editor"
         />
