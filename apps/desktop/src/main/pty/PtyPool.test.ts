@@ -130,6 +130,9 @@ describe("PtyPool shutdown support", () => {
     expect(spawned.map((pty) => pty.kills)).toEqual([1, 1]);
     expect(pool.list()).toEqual([]);
     await expect(pool.open("sess_a", ".", "shell", "", undefined, noData)).rejects.toThrow("pty pool disposed");
+    pool.beginShutdownReservation();
+    await expect(pool.open("sess_a", ".", "shell", "", undefined, noData)).rejects.toThrow(SHUTDOWN_RESERVED_MESSAGE);
+    pool.clearShutdownReservation();
     pool.reopen();
     await pool.open("sess_a", ".", "shell", "", undefined, noData);
     expect(pool.list()).toEqual([{ ptyId: "sess_a:shell", sessionId: "sess_a", kind: "shell" }]);

@@ -106,8 +106,8 @@ export class PtyPool {
   }
 
   private assertCanOpen(): void {
-    if (this.disposed) throw new Error("pty pool disposed");
     if (this.shutdownReserved) throw shutdownReservedError();
+    if (this.disposed) throw new Error("pty pool disposed");
   }
 
   async open(
@@ -118,9 +118,8 @@ export class PtyPool {
     env: Record<string, string> | undefined,
     onData: (ptyId: string, data: string) => void
   ): Promise<PtyAttachResult> {
-    if (this.disposed) throw new Error("pty pool disposed");
     const ptyId = `${sessionId}:${kind}`;
-    const existing = this.ptys.get(ptyId);
+    const existing = this.disposed ? undefined : this.ptys.get(ptyId);
     if (existing) return this.attach(existing, ptyId);
     this.assertCanOpen();
     let task = this.openings.get(ptyId);
