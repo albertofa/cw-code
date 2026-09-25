@@ -1,5 +1,5 @@
 import { statSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { win32 } from "node:path";
 import type {
   ShutdownCommitResult,
   ShutdownReason,
@@ -131,8 +131,8 @@ function hasUninstaller(files: UpdateFileChecks, directory: string): boolean {
 
 export function detectDisabledReason(environment: UpdateEnvironment, files: UpdateFileChecks): string | null {
   if (!environment.isPackaged) return DISABLED_IN_DEVELOPMENT;
-  if (!files.fileExists(join(environment.resourcesPath, UPDATE_CONFIG_FILE_NAME))) return DISABLED_WITHOUT_FEED;
-  if (!hasUninstaller(files, dirname(environment.execPath))) return DISABLED_WITHOUT_INSTALLER;
+  if (!files.fileExists(win32.join(environment.resourcesPath, UPDATE_CONFIG_FILE_NAME))) return DISABLED_WITHOUT_FEED;
+  if (!hasUninstaller(files, win32.dirname(environment.execPath))) return DISABLED_WITHOUT_INSTALLER;
   return null;
 }
 
