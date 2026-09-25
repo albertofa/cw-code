@@ -329,9 +329,9 @@ export const useAppStore = create<AppState>((set, get) => ({
         const current = Object.values(get().sessionsByProject)
           .flat()
           .find((s) => s.id === sessionId);
-        if (current && current.status !== "resolved" && current.status !== "archived" && sessionId !== get().activeSessionId) {
-          void get().setSessionStatus(sessionId, "resolved").catch((err) =>
-            console.warn(`setSessionStatus failed for ${sessionId} -> resolved: ${(err as Error).message}`)
+        if (current && (current.status === "holding" || current.status === "done") && sessionId !== get().activeSessionId) {
+          void get().setSessionStatus(sessionId, "idle").catch((err) =>
+            console.warn(`setSessionStatus failed for ${sessionId} -> idle: ${(err as Error).message}`)
           );
         }
       }
