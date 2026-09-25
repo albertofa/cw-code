@@ -8,6 +8,7 @@ import type {
   CliDiscoverResult,
   CommandInvocation,
   CommandOption,
+  ContextCompactionInfo,
   ContextUsage,
   HarnessId,
   PrBucket,
@@ -53,6 +54,7 @@ export type {
   AccountUsageSnapshot,
   AccountUsageState,
   AccountUsageUnavailableReason,
+  ContextCompactionInfo,
   ContextUsage,
   PrBucket,
   PrCheck,
@@ -173,6 +175,7 @@ export interface HistoryMessage {
   toolUsage?: ToolUsage;
   todos?: TodoItem[];
   reasoningMs?: number;
+  compaction?: ContextCompactionInfo;
 }
 
 export interface SubagentToolActivity {
@@ -280,6 +283,12 @@ export type TurnEvent =
       answers: Record<string, string> | null;
     }
   | { type: "todo.updated"; turnId: string; todos: TodoItem[] }
+  | {
+      type: "context.compacted";
+      turnId: string;
+      compaction: ContextCompactionInfo;
+      context?: ContextUsage;
+    }
   | {
       type: "turn.done";
       turnId: string;
@@ -432,6 +441,7 @@ export interface AppSettings {
   githubCliBinaryPath: string;
   sourceControlRefreshIntervalSeconds: number;
   defaultUseWorktree: boolean;
+  holdingAutoExpireEnabled: boolean;
   /** Hours a session stays in the holding state before returning to idle. */
   holdingHours: number;
   autoTitleEnabled: boolean;

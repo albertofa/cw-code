@@ -494,9 +494,9 @@ function registerIpc({ sessions, skills, files, git, pullRequests, ptys, account
     const root = await sessions.ensureWorktree(args.sessionId);
     const status = await git.status(root, sessions.projectForSession(args.sessionId));
     try {
-      sessions.syncPrLink(args.sessionId, status);
+      sessions.syncFromStatus(args.sessionId, status);
     } catch (error) {
-      console.warn(`syncPrLink failed for ${args.sessionId}: ${(error as Error).message}`);
+      console.warn(`syncFromStatus failed for ${args.sessionId}: ${(error as Error).message}`);
     }
     return status;
   });

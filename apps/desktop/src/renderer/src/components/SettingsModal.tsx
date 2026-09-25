@@ -753,14 +753,25 @@ export function SettingsModal({
   const holdingFields = draft && (
     <section className="settings-section">
       <h3>Sessions</h3>
-      <label className="settings-row">
-        <span className="settings-label">Working set hold</span>
-        <span className="settings-hint">Sessions stay in the Working set for this long after their last activity before returning to their project. 0 disables.</span>
-        <span className="settings-number-field">
-          <input className="field" type="number" min={0} max={168} value={draft.holdingHours} onChange={(e) => set({ holdingHours: Number(e.target.value) })} />
-          <span>hours</span>
-        </span>
-      </label>
+      <div className="settings-card">
+        <label className="settings-card-head">
+          <span className="settings-card-text">
+            <span className="settings-label">Automatically return holding sessions to their project</span>
+            <span className="settings-hint">Changes a session from Holding to Idle after the delay below.</span>
+          </span>
+          <span className="settings-switch">
+            <input type="checkbox" checked={draft.holdingAutoExpireEnabled} onChange={(e) => set({ holdingAutoExpireEnabled: e.target.checked })} aria-label="Automatically return holding sessions to their project" />
+            <span className="track" aria-hidden="true" />
+          </span>
+        </label>
+        <label className="settings-card-controls">
+          <span className="settings-label">Delay</span>
+          <span className="settings-number-field">
+            <input className="field" type="number" min={1} max={168} value={draft.holdingHours} onChange={(e) => set({ holdingHours: Number(e.target.value) })} aria-label="Holding delay in hours" />
+            <span>hours</span>
+          </span>
+        </label>
+      </div>
     </section>
   );
 
