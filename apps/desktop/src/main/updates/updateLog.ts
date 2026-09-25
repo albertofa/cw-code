@@ -6,8 +6,6 @@ const LOG_MAX_CHARS = 2_000;
 const ERROR_MESSAGE_MAX_CHARS = 300;
 export const UPDATE_LOG_MAX_BYTES = 1024 * 1024;
 
-const MISSING_RELEASE_CODES = new Set(["ERR_UPDATER_CHANNEL_FILE_NOT_FOUND", "ERR_UPDATER_LATEST_VERSION_NOT_FOUND"]);
-
 const NON_RETRYABLE_CODES = new Set([
   "ERR_UPDATER_INVALID_SIGNATURE",
   "ERR_UPDATER_INVALID_VERSION",
@@ -54,17 +52,18 @@ export function formatLogValue(value: unknown): string {
   }
 }
 
-function errorCode(error: unknown): string | null {
+export function updateErrorCode(error: unknown): string | null {
   if (!error || typeof error !== "object") return null;
   const code = (error as { code?: unknown }).code;
   return typeof code === "string" ? code : null;
 }
 
 export function isMissingReleaseError(error: unknown): boolean {
-  const code = errorCode(error);
-  if (code === null || !MISSING_RELEASE_CODES.has(code)) return false;
+  const code = updateErrorCode(error);
   const message = error instanceof Error ? error.message : "";
-  return !NETWORK_ERROR_RE.test(message);
+  if (code === "ERR_UPDATER_LATEST_VERSION_NOT_FOUND") return /HttpError: 404\b/.test(message);
+  if (code === "ERR_UPDATER_CHANNEL_FILE_NOT_FOUND") return !NETWORK_ERROR_RE.test(message);
+  return false;
 }
 
 export interface UpdateLogSink {
@@ -84,6 +83,10 @@ export function createUpdateLogFile(options: {
     options.console?.[level](`[updates] ${message}`);
     try {
       rotateIfOversize(options.filePath, maxBytes);
+    } catch (error) {
+      options.console?.warn(`[updates] could not rotate ${options.filePath}: ${(error as Error).message}`);
+    }
+    try {
       appendFileSync(options.filePath, `${now().toISOString()} ${level} ${message}\n`, "utf8");
     } catch (error) {
       options.console?.warn(`[updates] could not write ${options.filePath}: ${(error as Error).message}`);
@@ -99,7 +102,7 @@ export function describeUpdateError(error: unknown, homeDir: string): UpdateFail
   const message = network
     ? `Could not reach the update server (${network[0]}). Check your connection and try again.`
     : redactUpdateText(firstLine, homeDir);
-  const code = errorCode(error);
+  const code = updateErrorCode(error);
   return {
     message: message.length > ERROR_MESSAGE_MAX_CHARS ? `${message.slice(0, ERROR_MESSAGE_MAX_CHARS)}…` : message,
     retryable: code === null || !NON_RETRYABLE_CODES.has(code)

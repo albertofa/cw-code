@@ -1,4 +1,4 @@
-import { existsSync, mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -51,12 +51,21 @@ describe("formatLogValue", () => {
 });
 
 describe("isMissingReleaseError", () => {
-  it("matches the two missing-release codes unless the cause is a network failure", () => {
-    const missing = (code: string, message = "Unable to find latest version on GitHub") => Object.assign(new Error(message), { code });
-    expect(isMissingReleaseError(missing("ERR_UPDATER_LATEST_VERSION_NOT_FOUND"))).toBe(true);
-    expect(isMissingReleaseError(missing("ERR_UPDATER_CHANNEL_FILE_NOT_FOUND"))).toBe(true);
-    expect(isMissingReleaseError(missing("ERR_UPDATER_LATEST_VERSION_NOT_FOUND", "failed: net::ERR_NAME_NOT_RESOLVED"))).toBe(false);
-    expect(isMissingReleaseError(missing("ERR_UPDATER_INVALID_SIGNATURE"))).toBe(false);
+  it("counts only a 404 from /releases/latest, or a missing channel file, as a missing release", () => {
+    const missing = (code: string, message: string) => Object.assign(new Error(message), { code });
+    const latest = (cause: string) =>
+      missing("ERR_UPDATER_LATEST_VERSION_NOT_FOUND", `Unable to find latest version on GitHub (url), please ensure a production release exists: ${cause}`);
+    expect(isMissingReleaseError(latest("HttpError: 404 Not Found\nHeaders: {}"))).toBe(true);
+    expect(isMissingReleaseError(latest("HttpError: 404\n"))).toBe(true);
+    expect(isMissingReleaseError(latest("HttpError: 4040 odd"))).toBe(false);
+    expect(isMissingReleaseError(latest("HttpError: 503 Service Unavailable"))).toBe(false);
+    expect(isMissingReleaseError(latest("HttpError: 403 Forbidden rate limit exceeded"))).toBe(false);
+    expect(isMissingReleaseError(latest("Error: Request timed out"))).toBe(false);
+    expect(isMissingReleaseError(latest("SyntaxError: Unexpected token < in JSON at position 0"))).toBe(false);
+    expect(isMissingReleaseError(latest("Error: net::ERR_NAME_NOT_RESOLVED"))).toBe(false);
+    expect(isMissingReleaseError(missing("ERR_UPDATER_CHANNEL_FILE_NOT_FOUND", "Cannot find latest.yml"))).toBe(true);
+    expect(isMissingReleaseError(missing("ERR_UPDATER_CHANNEL_FILE_NOT_FOUND", "net::ERR_TIMED_OUT"))).toBe(false);
+    expect(isMissingReleaseError(missing("ERR_UPDATER_INVALID_SIGNATURE", "HttpError: 404"))).toBe(false);
     expect(isMissingReleaseError(new Error("plain"))).toBe(false);
   });
 });
@@ -82,6 +91,23 @@ describe("createUpdateLogFile", () => {
     sink.info("after rotation");
     expect(existsSync(rotationPath(filePath))).toBe(true);
     expect(readFileSync(filePath, "utf8")).toBe("2026-09-24T12:00:00.000Z info after rotation\n");
+  });
+
+  it("still appends when rotation fails", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cw-updater-log-"));
+    const filePath = join(dir, "updater.log");
+    mkdirSync(rotationPath(filePath));
+    writeFileSync(rotationPath(filePath) + "/keep", "x");
+    writeFileSync(filePath, "y".repeat(200));
+    const mirrored: string[] = [];
+    const sink = createUpdateLogFile({
+      filePath,
+      maxBytes: 100,
+      console: { info: (message) => mirrored.push(message), warn: (message) => mirrored.push(message) }
+    });
+    sink.info("after failed rotation");
+    expect(mirrored.some((line) => line.includes("could not rotate"))).toBe(true);
+    expect(readFileSync(filePath, "utf8")).toContain("after failed rotation");
   });
 
   it("reports write failures on the console instead of throwing", () => {

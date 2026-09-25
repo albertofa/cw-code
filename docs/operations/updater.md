@@ -114,9 +114,10 @@ service, whether it came from IPC or from a timer.
   whatever is already queued, including a download, so the check is never
   dropped as `busy`.
 - Setting the channel that is already active returns `ok` and cancels nothing.
-- If an operation throws unexpectedly, the service logs it, moves a running
-  check or download to `error`, and schedules the next check with backoff so
-  the timer never stops.
+- If an operation throws unexpectedly, the service logs it, counts it as a
+  failure for backoff, cancels and releases an active download so the lock
+  cannot stick, moves a running check or download to `error`, and schedules the
+  next check with backoff so the timer never stops.
 
 ## Channels
 
@@ -162,13 +163,14 @@ Missing releases on the stable channel:
 
 | Code | Cause | Stable channel | Alpha channel |
 | --- | --- | --- | --- |
-| `ERR_UPDATER_LATEST_VERSION_NOT_FOUND` | `/releases/latest` failed, typically because no stable release exists yet | `up-to-date`, logged as "no stable release yet", normal 6 h schedule | error with backoff |
-| `ERR_UPDATER_CHANNEL_FILE_NOT_FOUND` | The chosen release has no `latest.yml`/`alpha.yml` | `up-to-date`, same as above | error with backoff |
+| `ERR_UPDATER_LATEST_VERSION_NOT_FOUND` wrapping `HttpError: 404` | `/releases/latest` returned 404: no stable release exists yet | `up-to-date`, warn log `no stable release yet (<code>)`, normal 6 h schedule | error with backoff |
+| `ERR_UPDATER_LATEST_VERSION_NOT_FOUND`, any other cause | 5xx, 403/429 rate limit, `Request timed out`, a captive portal's HTML failing `JSON.parse`, `net::ERR_...` | retryable error with backoff | error with backoff |
+| `ERR_UPDATER_CHANNEL_FILE_NOT_FOUND` | The chosen release has no `latest.yml`/`alpha.yml` (a `net::ERR_...` cause stays an error) | `up-to-date`, same warn log | error with backoff |
 
-The library wraps every failure of the `/releases/latest` request, including
-network errors, in `ERR_UPDATER_LATEST_VERSION_NOT_FOUND`. When the message
-contains a Chromium network error (`net::ERR_...`), the service keeps it as an
-error so offline users see the problem.
+The library wraps every failure of the `/releases/latest` request in
+`ERR_UPDATER_LATEST_VERSION_NOT_FOUND` and appends the cause's stack to the
+message. The service only trusts the wrapped `HttpError: 404` as "no stable
+release yet".
 
 ## Schedule
 
@@ -208,7 +210,8 @@ Every action then returns code `disabled` with that message.
 Updater lines go to `~/.cw-code/logs/updater.log` (under `CW_CODE_HOME` when
 set) and to the main-process console with an `[updates]` prefix. The file
 rotates at 1 MB to `updater.1.log`, so it never exceeds about 2 MB. A failed
-write is reported on the console and never throws. `electron-updater`'s own
+rotation or write is reported on the console and never throws; the line is
+still appended when only the rotation failed. `electron-updater`'s own
 logger goes through the same sink with an `electron-updater:` prefix. Every
 line passes through `redactUpdateText` before it reaches the sink, which:
 
