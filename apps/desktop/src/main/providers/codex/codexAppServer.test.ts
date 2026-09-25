@@ -139,4 +139,34 @@ process.stdin.on("data", (chunk) => {
       envClient.dispose();
     }
   });
+
+  it("waits for a starting app-server to finish initializing before stopping it gracefully", async () => {
+    const starting = new CodexAppServer({ binary: process.execPath, args: [scriptPath] });
+    starting.onNotification(() => {});
+    starting.onServerRequest(() => {});
+    const request = starting.request("greet", {}).catch((err: Error) => err);
+    expect(starting.ownedProcessCount()).toBe(1);
+    try {
+      expect(await starting.shutdown(10_000)).toEqual({ timedOut: false });
+      expect(starting.ownedProcessCount()).toBe(0);
+      await request;
+    } finally {
+      starting.dispose();
+    }
+  });
+
+  it("reports a timeout when the app-server does not finish starting in time", async () => {
+    const stuckScript = join(tmpDir, "stuck.mjs");
+    writeFileSync(stuckScript, 'process.stdin.on("data", () => {});\n', "utf8");
+    const stuck = new CodexAppServer({ binary: process.execPath, args: [stuckScript] });
+    stuck.onNotification(() => {});
+    stuck.onServerRequest(() => {});
+    const request = stuck.request("greet", {}).catch((err: Error) => err);
+    try {
+      expect(await stuck.shutdown(200)).toEqual({ timedOut: true });
+    } finally {
+      stuck.dispose();
+    }
+    expect(await request).toBeInstanceOf(Error);
+  });
 });

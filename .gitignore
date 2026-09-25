@@ -1,6 +1,9 @@
 node_modules/
 dist/
+dist-ci/
+dist-updatetest/
 out/
+out-updatetest/
 coverage/
 .cache/
 .vite/
@@ -19,8 +22,6 @@ npm-debug.log*
 yarn-debug.log*
 yarn-error.log*
 
-# Desktop build output
-release/
 *.asar
 *.msi
 *.nsis.7z
