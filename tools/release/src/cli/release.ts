@@ -1,15 +1,19 @@
 import { randomBytes } from "node:crypto";
-import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
+import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "./args.ts";
+import { loadElectronBuilderBlockMap } from "../blockMapBuilder.ts";
 import { createGitHubReleaseSource } from "../gitHubReleaseSource.ts";
 import { applyVersion, checkSync, DEFAULT_PACKAGE_RELATIVE_PATHS, readPackageVersions, setBase } from "../packageVersions.ts";
 import { validatePlanShape } from "../planValidation.ts";
+import { readReleaseUpdateInfo, rehashRelease } from "../rehash.ts";
 import { buildAlphaPlan, buildStablePromotionPlan, verifyPlan } from "../releasePlan.ts";
 import type { ReleaseSource } from "../releaseSource.ts";
 import { parseGitHubHomepage } from "../repoInfo.ts";
 import { type ParsedVersion, FULL_SHA_PATTERN, baseOf, formatVersion, parseVersion, sameBase } from "../semver.ts";
+import { buildSigningManifest, parseVerificationReport, validateSigningManifest } from "../signingManifest.ts";
+import { readPublisherNames } from "../updateInfoYaml.ts";
 
 const __filename = fileURLToPath(import.meta.url);
 const REPO_ROOT = resolve(dirname(__filename), "../../../../");
@@ -167,6 +171,66 @@ async function cmdCheckSync(repoRoot: string): Promise<void> {
   if (!result.inSync) process.exitCode = 1;
 }
 
+function readJsonFile(path: string): unknown {
+  return JSON.parse(readFileSync(resolve(path), "utf8").replace(/^﻿/, ""));
+}
+
+function requireOption(options: Map<string, string>, name: string): string {
+  const value = options.get(name);
+  if (!value) fail(`--${name} is required`);
+  return value;
+}
+
+function parseBooleanOption(options: Map<string, string>, name: string): boolean {
+  const value = requireOption(options, name);
+  if (value !== "true" && value !== "false") fail(`--${name} must be "true" or "false", got "${value}"`);
+  return value === "true";
+}
+
+async function cmdRehash(options: Map<string, string>, repoRoot: string): Promise<void> {
+  const dir = resolve(requireOption(options, "dir"));
+  const blockMap = loadElectronBuilderBlockMap(resolve(repoRoot, "apps/desktop/package.json"));
+  const result = await rehashRelease(dir, blockMap.build);
+  printJson({ ...result, electronBuilder: blockMap.electronBuilderVersion, appBuilderLib: blockMap.appBuilderLibVersion });
+}
+
+async function cmdSigningManifest(options: Map<string, string>): Promise<void> {
+  const mode = requireOption(options, "mode");
+  if (mode !== "signpath" && mode !== "unsigned") fail(`--mode must be "signpath" or "unsigned", got "${mode}"`);
+  const production = parseBooleanOption(options, "production");
+  const releaseDir = resolve(requireOption(options, "release-dir"));
+  const outPath = resolve(requireOption(options, "out"));
+
+  const report = parseVerificationReport(readJsonFile(requireOption(options, "report")));
+  if (!report.ok) fail(`Invalid verification report: ${report.errors.join("; ")}`);
+
+  const appUpdatePath = options.get("app-update");
+  const appUpdatePublisherNames =
+    appUpdatePath && existsSync(resolve(appUpdatePath)) ? readPublisherNames(readFileSync(resolve(appUpdatePath), "utf8")) : null;
+
+  const updateInfo = await readReleaseUpdateInfo(releaseDir);
+  const result = buildSigningManifest({
+    mode,
+    production,
+    publisher: options.get("publisher") ?? null,
+    report: report.value,
+    installer: { path: updateInfo.installerName, sha512: updateInfo.sha512 },
+    appUpdatePublisherNames
+  });
+  if (!result.ok) fail(`Signing manifest rejected: ${result.errors.join("; ")}`);
+  writeFileSync(outPath, `${JSON.stringify(result.value, null, 2)}\n`);
+  printJson(result.value);
+}
+
+async function cmdCheckSigningManifest(options: Map<string, string>): Promise<void> {
+  const result = validateSigningManifest(readJsonFile(requireOption(options, "manifest")));
+  if (!result.ok) fail(`Invalid signing manifest: ${result.errors.join("; ")}`);
+  if (options.get("require-production") === "true" && !result.value.production) {
+    fail(`Signing manifest is not production (mode ${result.value.mode}); refusing to treat it as a publishable release`);
+  }
+  printJson({ ok: true, mode: result.value.mode, production: result.value.production, publisher: result.value.publisher, files: result.value.files.length });
+}
+
 async function main(): Promise<void> {
   const { command, options } = parseArgs(process.argv.slice(2));
   switch (command) {
@@ -185,8 +249,19 @@ async function main(): Promise<void> {
     case "check-sync":
       await cmdCheckSync(REPO_ROOT);
       return;
+    case "rehash":
+      await cmdRehash(options, REPO_ROOT);
+      return;
+    case "signing-manifest":
+      await cmdSigningManifest(options);
+      return;
+    case "check-signing-manifest":
+      await cmdCheckSigningManifest(options);
+      return;
     default:
-      fail(`Unknown command "${command}". Expected: plan | verify-plan | apply | set-base | check-sync`);
+      fail(
+        `Unknown command "${command}". Expected: plan | verify-plan | apply | set-base | check-sync | rehash | signing-manifest | check-signing-manifest`
+      );
   }
 }
 
