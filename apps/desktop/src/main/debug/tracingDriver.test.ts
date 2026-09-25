@@ -255,3 +255,28 @@ describe("TracingCliDriver", () => {
     expect(String(records[0]["error"])).toContain("boom");
   });
 });
+
+describe("TracingCliDriver lifecycle passthrough", () => {
+  it("exposes activity and shutdown only when the inner driver has them", () => {
+    const tracing = new TracingCliDriver(new FakeDriver());
+    expect(tracing.activity).toBeUndefined();
+    expect(tracing.shutdown).toBeUndefined();
+  });
+
+  it("delegates activity and traces the shutdown outcome", async () => {
+    const inner = Object.assign(new FakeDriver(), {
+      activity: () => ({ busySessionIds: ["s1"], ownedProcesses: 2, backgroundTurns: 1 }),
+      shutdown: vi.fn(async () => ({ timedOut: true }))
+    });
+    const tracing = new TracingCliDriver(inner);
+    expect(tracing.activity?.()).toEqual({ busySessionIds: ["s1"], ownedProcesses: 2, backgroundTurns: 1 });
+    expect(await tracing.shutdown?.({ timeoutMs: 500 })).toEqual({ timedOut: true });
+    expect(inner.shutdown).toHaveBeenCalledWith({ timeoutMs: 500 });
+    expect(readRecords().at(-1)).toMatchObject({
+      harness: "claude",
+      operation: "claude.shutdown",
+      ok: false,
+      extra: { timeoutMs: 500, timedOut: true }
+    });
+  });
+});

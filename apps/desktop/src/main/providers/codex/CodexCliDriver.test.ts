@@ -1098,3 +1098,26 @@ describe("CodexCliDriver", () => {
     });
   });
 });
+
+describe("CodexCliDriver shutdown", () => {
+  it("reports busy sessions and background title turns separately", async () => {
+    const client = new FakeClient();
+    const { driver } = makeDriver(client);
+    driver.startTurn({ sessionId: "local-1", prompt: "work", cwd: "C:\proj", permissionMode: "auto" });
+    driver.startTurn({ sessionId: "title:local-1", prompt: "title", cwd: "C:\titles", permissionMode: "auto" });
+    await settle();
+    expect(driver.activity()).toEqual({ busySessionIds: ["local-1"], ownedProcesses: 0, backgroundTurns: 1 });
+    driver.dispose();
+  });
+
+  it("leaves an injected app-server client it does not own untouched", async () => {
+    const client = new FakeClient();
+    const shutdown = vi.fn(async () => ({ timedOut: false }));
+    const dispose = vi.spyOn(client, "dispose");
+    Object.assign(client, { shutdown });
+    const { driver } = makeDriver(client);
+    expect(await driver.shutdown({ timeoutMs: 100 })).toEqual({ timedOut: false });
+    expect(shutdown).not.toHaveBeenCalled();
+    expect(dispose).not.toHaveBeenCalled();
+  });
+});

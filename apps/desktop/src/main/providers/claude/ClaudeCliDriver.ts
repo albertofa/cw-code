@@ -9,6 +9,7 @@ import type {
   ApprovalDecision,
   CliDriver,
   CommandOption,
+  DriverActivity,
   EffortLevel,
   HistoryMessage,
   PermissionMode,
@@ -19,7 +20,7 @@ import type {
   TurnRequest
 } from "@cw-code/contracts";
 import { parseExtraArgs } from "../../settings/settingsUtils.js";
-import { killProcessTree } from "../../processTree.js";
+import { killProcessTree, waitForExit } from "../../processTree.js";
 import { CLAUDE_SHELL_TASK_TYPE, attributeClaudeSubagentEvent, buildClaudeAllowRule, claudeAllowResponse, claudeApprovalRequest, claudeQuestionRequest, claudeDenyResponse, claudeControlResponse, parseClaudeControlRequest, parseClaudeSubagentHandback, parseClaudeSystemInit, parseClaudeTaskSystemLine, parseStreamLine, type ClaudeControlRequest, type ClaudeTaskSystemInfo, type TurnDoneInfo } from "./claudeStreamParser.js";
 import { CLAUDE_COMMANDS_PROBE_ARGS, listClaudeCommands, probeClaudeCommands, recordClaudeTerminalCommands } from "./claudeCommands.js";
 import { CLAUDE_ACCOUNT_USAGE_PROBE_ARGS, probeClaudeAccountUsage } from "./claudeAccountUsage.js";
@@ -840,6 +841,31 @@ export class ClaudeCliDriver implements CliDriver {
         ? { status: "unavailable", reason: "not-installed", message: "Claude isn't installed. Set its path in Settings → Harnesses → Claude." }
         : { status: "error", message: `failed to spawn ${binary}: ${(err as Error).message}` };
     }
+  }
+
+  activity(): DriverActivity {
+    const busySessionIds = new Set<string>();
+    let backgroundTurns = 0;
+    for (const state of this.processes.values()) {
+      if (state.completedTurn && this.liveTaskCount(state) === 0) continue;
+      if (state.sessionId.startsWith("title:")) backgroundTurns += 1;
+      else busySessionIds.add(state.sessionId);
+    }
+    return { busySessionIds: [...busySessionIds], ownedProcesses: this.processes.size, backgroundTurns };
+  }
+
+  async shutdown({ timeoutMs }: { timeoutMs: number }): Promise<{ timedOut: boolean }> {
+    const states = [...this.processes.values()];
+    traceHarnessCall({ harness: "claude", operation: "claude.shutdown", ok: true, extra: { processes: states.length } });
+    for (const state of states) {
+      this.clearIdleTimer(state);
+      try {
+        state.child.stdin.end();
+      } catch {
+      }
+    }
+    const exited = await Promise.all(states.map((state) => waitForExit(state.child, timeoutMs)));
+    return { timedOut: exited.some((done) => !done) };
   }
 
   dispose(): void {

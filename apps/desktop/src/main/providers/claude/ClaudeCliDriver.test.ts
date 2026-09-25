@@ -878,3 +878,37 @@ describe("ClaudeCliDriver getAccountUsage", () => {
     driver.dispose();
   });
 });
+
+describe("ClaudeCliDriver shutdown", () => {
+  it("reports busy sessions and background title turns it owns", () => {
+    const { driver } = makeDriver();
+    driver.startTurn({ sessionId: "sess_1", prompt: "work", cwd: "C:\proj" });
+    driver.startTurn({ sessionId: "title:sess_1", prompt: "title", cwd: "C:\titles", maxTurns: 1 });
+    expect(driver.activity()).toEqual({ busySessionIds: ["sess_1"], ownedProcesses: 2, backgroundTurns: 1 });
+    driver.dispose();
+  });
+
+  it("closes stdin of every owned process and waits for them to exit without killing", async () => {
+    const { driver, children, killed } = makeDriver();
+    driver.startTurn({ sessionId: "sess_1", prompt: "work", cwd: "C:\proj" });
+    driver.startTurn({ sessionId: "sess_2", prompt: "more", cwd: "C:\proj" });
+    const pending = driver.shutdown({ timeoutMs: 1000 });
+    for (const child of children) {
+      expect(child.stdin.writableEnded).toBe(true);
+      child.exitCode = 0;
+      child.emit("exit", 0);
+    }
+    expect(await pending).toEqual({ timedOut: false });
+    expect(killed).toEqual([]);
+  });
+
+  it("reports a timeout and leaves the stragglers for dispose to force-stop", async () => {
+    const { driver, children, killed } = makeDriver();
+    driver.startTurn({ sessionId: "sess_1", prompt: "work", cwd: "C:\proj" });
+    expect(await driver.shutdown({ timeoutMs: 10 })).toEqual({ timedOut: true });
+    expect(killed).toEqual([]);
+    driver.dispose();
+    expect(killed).toEqual([children[0]]);
+    expect(driver.activity().ownedProcesses).toBe(0);
+  });
+});
