@@ -103,7 +103,7 @@ describe("runShutdownFlow", () => {
   it("prepares immediately without showing a dialog when nothing blocks", async () => {
     const result = await runShutdownFlow("quit");
     expect(result).toEqual({ token: "token-1" });
-    expect(api.prepareCalls).toEqual([{ reason: "quit", stopActiveTurns: false, timeoutMs: 10_000 }]);
+    expect(api.prepareCalls).toEqual([{ reason: "quit", stopActiveTurns: false, approvedTurnIds: [], timeoutMs: 10_000 }]);
     expect(useAppStore.getState().shutdown).toBeNull();
   });
 
@@ -121,9 +121,11 @@ describe("runShutdownFlow", () => {
     await settle();
     expect(useAppStore.getState().shutdown).toMatchObject({ reason: "update", phase: "review", assessment: BUSY });
     expect(api.prepareCalls).toHaveLength(0);
+    useAppStore.setState({ busyTurns: { sess_bg: "t1" } });
     await shutdownProceed();
-    expect(api.prepareCalls).toEqual([{ reason: "update", stopActiveTurns: true, timeoutMs: 10_000 }]);
+    expect(api.prepareCalls).toEqual([{ reason: "update", stopActiveTurns: true, approvedTurnIds: ["t1"], timeoutMs: 10_000 }]);
     expect(await pending).toEqual({ token: "token-1" });
+    expect(useAppStore.getState().busyTurns).toEqual({});
   });
 
   it("saves every dirty file before continuing", async () => {
@@ -200,7 +202,7 @@ describe("runShutdownFlow", () => {
       useAppStore.setState({ busyTurns: { sess_bg: "t1" } });
       useAppStore.setState({ busyTurns: {} });
       await settle();
-      expect(api.prepareCalls).toEqual([{ reason: "update", stopActiveTurns: false, timeoutMs: 10_000 }]);
+      expect(api.prepareCalls).toEqual([{ reason: "update", stopActiveTurns: false, approvedTurnIds: [], timeoutMs: 10_000 }]);
       expect(await pending).toEqual({ token: "token-1" });
     } finally {
       vi.useRealTimers();

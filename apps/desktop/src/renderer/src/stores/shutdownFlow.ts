@@ -89,7 +89,12 @@ async function prepare(flow: ActiveFlow, assessment: ShutdownAssessment, stopAct
   patchUi({ phase: "preparing", error: null });
   let result: ShutdownPrepareResult;
   try {
-    result = await window.cw.shutdown.prepare({ reason: flow.reason, stopActiveTurns, timeoutMs: SHUTDOWN_PREPARE_TIMEOUT_MS });
+    result = await window.cw.shutdown.prepare({
+      reason: flow.reason,
+      stopActiveTurns,
+      approvedTurnIds: stopActiveTurns ? assessment.activeTurns.map((turn) => turn.turnId) : [],
+      timeoutMs: SHUTDOWN_PREPARE_TIMEOUT_MS
+    });
   } catch (err) {
     if (active !== flow) return;
     showUi({
@@ -101,6 +106,9 @@ async function prepare(flow: ActiveFlow, assessment: ShutdownAssessment, stopAct
       pending: []
     });
     return;
+  }
+  if (stopActiveTurns && (result.ok || result.code === "timeout")) {
+    useAppStore.getState().markTurnsInterrupted(assessment.activeTurns.map((turn) => turn.sessionId));
   }
   if (active !== flow) {
     if (result.ok || result.code === "timeout") void window.cw.shutdown.cancel(result.token).catch(() => {});
@@ -116,7 +124,7 @@ async function prepare(flow: ActiveFlow, assessment: ShutdownAssessment, stopAct
       assessment: result.assessment,
       dirty: useEditorBuffers.getState().dirty(),
       phase: "review",
-      error: "New work started in the meantime. Review it before continuing.",
+      error: "New work started in the meantime and was not stopped. Review it before continuing.",
       pending: []
     });
     return;

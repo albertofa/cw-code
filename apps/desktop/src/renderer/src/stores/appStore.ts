@@ -206,6 +206,7 @@ interface AppState {
   sendPrompt(prompt: string, attachments?: string[], command?: CommandInvocation): Promise<void>;
   sendPromptTo(sessionId: string, prompt: string, attachments?: string[], opts?: { prRefs?: PrRef[]; command?: CommandInvocation }): Promise<void>;
   interrupt(): Promise<void>;
+  markTurnsInterrupted(sessionIds: string[]): void;
   retryConnection(sessionId: string): Promise<void>;
   respondApproval(requestId: string, decision: ApprovalDecision): Promise<void>;
   respondQuestion(sessionId: string, requestId: string, answers: Record<string, string>): Promise<void>;
@@ -1014,6 +1015,17 @@ export const useAppStore = create<AppState>((set, get) => ({
         ? { sessionsByProject: patchSession(get().sessionsByProject, sessionId, { status: "holding", updatedAt: Date.now() }) }
         : {})
     });
+  },
+
+  markTurnsInterrupted(sessionIds: string[]) {
+    let book: TurnBookkeeping = { busyTurns: get().busyTurns, turnStartedAt: get().turnStartedAt, turnDurations: get().turnDurations };
+    let sessionsByProject = get().sessionsByProject;
+    for (const sessionId of sessionIds) {
+      const turnId = book.busyTurns[sessionId];
+      if (turnId) book = closeTurn(book, sessionId, knownTurnId(turnId));
+      sessionsByProject = patchSession(sessionsByProject, sessionId, { status: "holding", updatedAt: Date.now() });
+    }
+    set({ ...book, sessionsByProject });
   },
 
   async retryConnection(sessionId: string) {
