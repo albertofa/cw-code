@@ -146,6 +146,27 @@ describe("splitTurn", () => {
     expect(pieces.activity).toEqual([]);
   });
 
+  it("keeps compaction markers in activity order instead of the system slot", () => {
+    const pieces = splitTurn(
+      [
+        msg({ id: "u", role: "user", turnId: "t1" }),
+        msg({ id: "a1", role: "assistant", turnId: "t1", text: "before" }),
+        msg({
+          id: "cmp",
+          role: "system",
+          turnId: "t1",
+          text: "Context compacted",
+          compaction: { trigger: "auto" }
+        }),
+        msg({ id: "a2", role: "assistant", turnId: "t1", text: "after" })
+      ],
+      nestedIds
+    );
+    expect(pieces.system).toEqual([]);
+    expect(pieces.activity.map((n) => (n.kind === "msg" ? n.msg.id : n.kind))).toEqual(["a1", "cmp"]);
+    expect(pieces.pinned?.id).toBe("a2");
+  });
+
   it("pins the final assistant message, not interim ones or trailing reasoning", () => {
     const pieces = splitTurn(
       [

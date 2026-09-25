@@ -21,7 +21,7 @@ import type {
 } from "@cw-code/contracts";
 import { parseExtraArgs } from "../../settings/settingsUtils.js";
 import { hasExited, killProcessTree, waitForExit } from "../../processTree.js";
-import { CLAUDE_SHELL_TASK_TYPE, attributeClaudeSubagentEvent, buildClaudeAllowRule, claudeAllowResponse, claudeApprovalRequest, claudeQuestionRequest, claudeDenyResponse, claudeControlResponse, parseClaudeControlRequest, parseClaudeSubagentHandback, parseClaudeSystemInit, parseClaudeTaskSystemLine, parseStreamLine, type ClaudeControlRequest, type ClaudeTaskSystemInfo, type TurnDoneInfo } from "./claudeStreamParser.js";
+import { CLAUDE_SHELL_TASK_TYPE, attributeClaudeSubagentEvent, buildClaudeAllowRule, claudeAllowResponse, claudeApprovalRequest, claudeQuestionRequest, claudeDenyResponse, claudeControlResponse, parseClaudeCompactBoundary, parseClaudeControlRequest, parseClaudeSubagentHandback, parseClaudeSystemInit, parseClaudeTaskSystemLine, parseStreamLine, type ClaudeControlRequest, type ClaudeTaskSystemInfo, type TurnDoneInfo } from "./claudeStreamParser.js";
 import { CLAUDE_COMMANDS_PROBE_ARGS, listClaudeCommands, probeClaudeCommands, recordClaudeTerminalCommands } from "./claudeCommands.js";
 import { CLAUDE_ACCOUNT_USAGE_PROBE_ARGS, probeClaudeAccountUsage } from "./claudeAccountUsage.js";
 import { describeClaudeExit } from "./claudeExit.js";
@@ -138,6 +138,8 @@ interface ClaudeProcessState {
   errored: boolean;
   stderr: string;
   startedAt: number;
+  lastActivityAt: number;
+  postCompletionOutputPending: boolean;
   agentByCall: Map<string, string>;
   taskToolCalls: Map<string, string>;
   taskReports: Map<string, string>;
@@ -150,6 +152,8 @@ interface ClaudeProcessState {
   idleTimer?: NodeJS.Timeout;
   modelUsage: ClaudeModelUsageSnapshot;
   mainModel?: string;
+  compactedPostTokens?: number;
+  lastWindowTokens?: number;
 }
 
 export class ClaudeCliDriver implements CliDriver {
@@ -160,6 +164,7 @@ export class ClaudeCliDriver implements CliDriver {
   private pendingQuestions = new Map<string, { turnId: string; sessionId: string; control: ClaudeControlRequest }>();
   private pendingApprovals = new Map<string, PendingClaudeApproval>();
   private sessionAllows = new Map<string, Set<string>>();
+  private shuttingDown = false;
 
   constructor(
     private emit: (event: ThreadEvent) => void,
@@ -219,13 +224,54 @@ export class ClaudeCliDriver implements CliDriver {
     state.idleTimer = undefined;
   }
 
-  private armIdleTimer(state: ClaudeProcessState): void {
+  private isTopLevelAssistantActivity(line: string): boolean {
+    try {
+      const message = JSON.parse(line) as { type?: unknown; parent_tool_use_id?: unknown };
+      if (message.type !== "assistant" && message.type !== "stream_event") return false;
+      return typeof message.parent_tool_use_id !== "string" || message.parent_tool_use_id.length === 0;
+    } catch {
+      return false;
+    }
+  }
+
+  private noteProcessActivity(state: ClaudeProcessState, line: string): void {
+    state.lastActivityAt = Date.now();
+    if (state.completedTurn && this.isTopLevelAssistantActivity(line)) {
+      state.postCompletionOutputPending = true;
+    }
+    if (state.idleTimer && (state.completedTurn || state.postCompletionOutputPending)) {
+      this.armIdleTimer(state);
+    }
+  }
+
+  private noteTaskNotificationActivity(state: ClaudeProcessState): void {
+    state.lastActivityAt = Date.now();
+    if (state.completedTurn || state.postCompletionOutputPending) this.armIdleTimer(state);
+  }
+
+  private armIdleTimer(state: ClaudeProcessState, delayMs = CLAUDE_IDLE_EVICT_MS): void {
     this.clearIdleTimer(state);
+    if (this.shuttingDown) return;
     const timer = setTimeout(() => {
+      if (state.idleTimer !== timer) return;
       state.idleTimer = undefined;
       if (this.processes.get(state.sessionId) !== state) return;
-      if (this.liveTaskCount(state) > 0 || !state.completedTurn || this.hasPendingForSession(state.sessionId)) {
+      if (!this.isProcessAlive(state)) {
+        this.processes.delete(state.sessionId);
+        return;
+      }
+      if (
+        this.liveTaskCount(state) > 0 ||
+        !state.completedTurn ||
+        (state.postCompletionOutputPending && Date.now() - state.lastActivityAt < CLAUDE_IDLE_EVICT_MS) ||
+        this.hasPendingForSession(state.sessionId)
+      ) {
         this.armIdleTimer(state);
+        return;
+      }
+      const idleForMs = Date.now() - state.lastActivityAt;
+      if (idleForMs < CLAUDE_IDLE_EVICT_MS) {
+        this.armIdleTimer(state, CLAUDE_IDLE_EVICT_MS - idleForMs);
         return;
       }
       traceHarnessCall({
@@ -238,7 +284,7 @@ export class ClaudeCliDriver implements CliDriver {
       });
       this.processes.delete(state.sessionId);
       this.killChild(state);
-    }, CLAUDE_IDLE_EVICT_MS);
+    }, delayMs);
     timer.unref?.();
     state.idleTimer = timer;
   }
@@ -415,6 +461,21 @@ export class ClaudeCliDriver implements CliDriver {
   }
 
   private handleProcessLine(state: ClaudeProcessState, line: string): void {
+    this.noteProcessActivity(state, line);
+    const compactBoundary = parseClaudeCompactBoundary(line);
+    if (compactBoundary) {
+      state.compactedPostTokens = compactBoundary.postTokens;
+      const windowTokens = state.lastWindowTokens;
+      this.emit({
+        type: "context.compacted",
+        turnId: state.activeTurnId,
+        compaction: compactBoundary,
+        ...(compactBoundary.postTokens !== undefined && windowTokens !== undefined
+          ? { context: { usedTokens: compactBoundary.postTokens, windowTokens } }
+          : {})
+      });
+      return;
+    }
     const taskSystem = parseClaudeTaskSystemLine(line);
     if (taskSystem) {
       this.handleTaskSystem(state, taskSystem);
@@ -436,7 +497,7 @@ export class ClaudeCliDriver implements CliDriver {
       state.activeTurnId,
       state.resumeCursor,
       (info) => this.handleTurnDone(state, info),
-      () => this.clearIdleTimer(state),
+      () => this.noteTaskNotificationActivity(state),
       () => this.shouldIgnoreTaskNotification(state),
       state.modelUsage,
       state.mainModel
@@ -554,14 +615,47 @@ export class ClaudeCliDriver implements CliDriver {
 
   private handleTurnDone(state: ClaudeProcessState, info: TurnDoneInfo): void {
     const turnId = state.activeTurnId;
+    const interrupted = this.interruptedTurns.delete(turnId);
     if (state.completedTurn) {
-      this.interruptedTurns.delete(turnId);
+      state.resumeCursor = info.resumeCursor;
+      state.modelUsage = info.modelUsage;
+      if (interrupted) {
+        state.postCompletionOutputPending = false;
+        this.armIdleTimer(state);
+        return;
+      }
+      if (state.postCompletionOutputPending) {
+        const backgroundTasks = this.liveTaskCount(state);
+        if (backgroundTasks === 0) {
+          this.emit({
+            type: "turn.done",
+            turnId,
+            sessionId: state.sessionId,
+            resumeCursor: info.resumeCursor,
+            resultText: info.resultText || this.latestTaskReport(state),
+            usage: info.usage,
+            ...(info.context ? { context: info.context } : {}),
+            numTurns: info.numTurns,
+            isError: info.isError,
+            backgroundTasks
+          });
+          state.postCompletionOutputPending = false;
+        }
+      }
+      this.armIdleTimer(state);
       return;
     }
-    const interrupted = this.interruptedTurns.delete(turnId);
     const backgroundTasks = this.liveTaskCount(state);
     state.modelUsage = info.modelUsage;
+    if (info.windowTokens !== undefined) state.lastWindowTokens = info.windowTokens;
+    const compactedPostTokens = state.compactedPostTokens;
+    state.compactedPostTokens = undefined;
     if (!interrupted) {
+      const context =
+        info.context ??
+        (compactedPostTokens !== undefined && info.windowTokens !== undefined
+          ? { usedTokens: compactedPostTokens, windowTokens: info.windowTokens }
+          : undefined);
       this.emit({
         type: "turn.done",
         turnId,
@@ -569,13 +663,14 @@ export class ClaudeCliDriver implements CliDriver {
         resumeCursor: info.resumeCursor,
         resultText: info.resultText || this.latestTaskReport(state),
         usage: info.usage,
-        ...(info.context ? { context: info.context } : {}),
+        ...(context ? { context } : {}),
         numTurns: info.numTurns,
         isError: info.isError,
         backgroundTasks
       });
     }
     state.resumeCursor = info.resumeCursor;
+    state.postCompletionOutputPending = false;
     if (backgroundTasks > 0) {
       return;
     }
@@ -692,12 +787,19 @@ export class ClaudeCliDriver implements CliDriver {
     const argsKey = this.claudeArgsKey(request);
     const existing = this.processes.get(request.sessionId);
 
+    if (existing?.postCompletionOutputPending) {
+      throw new Error("Claude is still finishing output for this session");
+    }
+
     if (!request.maxTurns && existing && existing.argsKey === argsKey && this.isProcessAlive(existing)) {
       if (this.liveTaskCount(existing) === 0) this.clearTaskTracking(existing);
       existing.activeTurnId = turnId;
       existing.completedTurn = false;
+      existing.postCompletionOutputPending = false;
+      existing.lastActivityAt = Date.now();
       existing.heldByBackgroundWork = this.liveTaskCount(existing) > 0;
       existing.permissionMode = request.permissionMode ?? "auto";
+      existing.compactedPostTokens = undefined;
       this.clearIdleTimer(existing);
       this.turnToSession.set(turnId, request.sessionId);
       this.writeUserMessage(existing, request);
@@ -743,6 +845,8 @@ export class ClaudeCliDriver implements CliDriver {
       errored: false,
       stderr: "",
       startedAt: start,
+      lastActivityAt: start,
+      postCompletionOutputPending: false,
       agentByCall: new Map(),
       taskToolCalls: new Map(),
       taskReports: new Map(),
@@ -823,6 +927,7 @@ export class ClaudeCliDriver implements CliDriver {
     }
     this.resolvePendingForTurn(turnId);
     state.completedTurn = true;
+    state.postCompletionOutputPending = false;
     this.turnToSession.delete(turnId);
   }
 
@@ -851,7 +956,7 @@ export class ClaudeCliDriver implements CliDriver {
   activity(): DriverActivity {
     const busySessionIds = new Set<string>();
     for (const state of this.processes.values()) {
-      if (state.completedTurn && this.liveTaskCount(state) === 0) continue;
+      if (state.completedTurn && !state.postCompletionOutputPending && this.liveTaskCount(state) === 0) continue;
       busySessionIds.add(state.sessionId);
     }
     return { busySessionIds: [...busySessionIds], ownedProcesses: this.processes.size };
@@ -860,6 +965,7 @@ export class ClaudeCliDriver implements CliDriver {
   async shutdown({ timeoutMs }: { timeoutMs: number }): Promise<{ timedOut: boolean }> {
     const states = [...this.processes.values()];
     traceHarnessCall({ harness: "claude", operation: "claude.shutdown", ok: true, extra: { processes: states.length } });
+    this.shuttingDown = true;
     for (const state of states) {
       this.clearIdleTimer(state);
       try {
