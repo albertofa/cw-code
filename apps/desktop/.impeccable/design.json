@@ -3,6 +3,7 @@
   "generatedAt": "2026-09-13T14:30:11.896Z",
   "title": "Design System: cw-code",
   "extensions": {
+    "brandIdentity": {"name": "Console C", "selectedOption": "C", "tileColor": "#7c42ff", "symbolColor": "#ffffff", "wordmarkFont": "Inter", "wordmarkWeight": 600, "titlebarIconSize": 22, "aboutIconSize": 40, "canonicalAsset": "design/brand/assets/app-icon.svg", "rendererAsset": "src/renderer/src/assets/console-c.svg", "windowsIcon": "resources/icon.ico", "scope": "Logo integration only; existing desktop theme remains authoritative"},
     "colorMeta": {
       "bg": { "role": "neutral", "displayName": "Workbench Blue-Graphite", "tonalRamp": ["#07101b", "#09121f", "#0d1725", "#101826", "#182132", "#303a50", "#9ca4bd", "#f2f1f8"] },
       "bg-deep": { "role": "neutral", "displayName": "Conversation Deep", "tonalRamp": ["#050a12", "#080f1b", "#09121f", "#0d1725", "#182132", "#303a50", "#9ca4bd", "#f2f1f8"] },
@@ -44,7 +45,8 @@
     "motion": [
       { "name": "utility-transition", "value": "120ms ease", "purpose": "Compact opacity, filter, and state changes." },
       { "name": "composer-transition", "value": "140ms cubic-bezier(0.22, 1, 0.36, 1)", "purpose": "Composer focus lift and surface change." },
-      { "name": "tool-sweep", "value": "2.8s ease-in-out infinite", "purpose": "Active tool-card and working-pill sweep; disabled by reduced-motion preferences." },
+      { "name": "tool-sweep", "value": "2.8s ease-in-out infinite", "purpose": "Active tool-card sweep; disabled by reduced-motion preferences." },
+      { "name": "turn-text-sweep", "value": "2.2s linear infinite", "purpose": "Live turn-header label sweep; disabled by reduced-motion preferences." },
       { "name": "status-pulse", "value": "1.2s ease-in-out infinite", "purpose": "Current-driver and running-status pulse." }
     ],
     "breakpoints": [

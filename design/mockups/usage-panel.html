@@ -1,0 +1,792 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>cw-code — Usage panel study</title>
+<style>
+  :root {
+    color-scheme: dark;
+    --bg: #1e1f22;
+    --bg-deep: #24262b;
+    --panel: #1e1f22;
+    --raised: #2e3035;
+    --overlay: #24262b;
+    --border: #393b40;
+    --border-soft: #2b2d30;
+    --text: #dfe1e5;
+    --dim: #bcbec4;
+    --muted: #868a93;
+    --faint: #62666e;
+    --claude: #e8835a;
+    --claude-soft: rgba(232, 131, 90, 0.14);
+    --opencode: #5ab8ff;
+    --opencode-soft: rgba(90, 184, 255, 0.14);
+    --codex: #b49cff;
+    --codex-soft: rgba(180, 156, 255, 0.14);
+    --success: #59a659;
+    --warning: #e8b44f;
+    --danger: #e06c60;
+    --accent: #548af7;
+    --violet: #7c42ff;
+    --mono: "JetBrains Mono", "Cascadia Code", ui-monospace, Consolas, monospace;
+    --sans: "Segoe UI Variable", "Inter", system-ui, -apple-system, "Segoe UI", sans-serif;
+    --r-sm: 6px;
+    --r-md: 8px;
+    --r-lg: 12px;
+    --gutter: #141518;
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; height: 100%; }
+  body { background: var(--gutter); color: var(--text); font-family: var(--sans); font-size: 13.5px; -webkit-font-smoothing: antialiased; }
+  button { font: inherit; color: inherit; background: none; border: 0; cursor: pointer; }
+  svg { display: block; }
+  .mono { font-family: var(--mono); }
+
+  .mockbar { position: sticky; top: 0; z-index: 30; display: flex; align-items: center; gap: 16px; padding: 10px 16px; background: #17181b; border-bottom: 1px solid var(--border-soft); }
+  .mock-title b { font-size: 14px; }
+  .mock-title .sub { color: var(--faint); font-size: 12px; margin-left: 8px; }
+  .variants { display: flex; gap: 4px; margin-left: auto; }
+  .variants button { padding: 6px 12px; border-radius: var(--r-sm); color: var(--muted); font-size: 12px; border: 1px solid transparent; }
+  .variants button:hover { color: var(--text); background: #23252a; }
+  .variants button.active { color: var(--text); background: var(--raised); border-color: var(--border); box-shadow: inset 0 -2px 0 var(--violet); }
+  .toggle { display: flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; }
+  .toggle input { accent-color: var(--violet); }
+
+  .stage { padding: 18px; }
+  .window { width: min(1320px, 100%); margin: 0 auto; border: 1px solid #303237; border-radius: 14px; overflow: hidden; background: var(--gutter); box-shadow: 0 20px 60px rgba(0,0,0,.45); }
+  .win-bar { display: flex; align-items: center; gap: 10px; height: 42px; padding: 0 12px; background: #1a1b1e; border-bottom: 1px solid var(--border-soft); }
+  .dots { display: flex; gap: 5px; }
+  .dots i { width: 10px; height: 10px; border-radius: 50%; background: #3a3d43; display: block; }
+  .win-crumb { color: var(--faint); font-size: 12px; }
+  .win-crumb b { color: var(--dim); font-weight: 600; }
+  .win-body { display: grid; grid-template-columns: 272px 1fr; min-height: 860px; gap: 6px; padding: 6px; }
+
+  /* ---------- sidebar ---------- */
+  .side { background: var(--panel); border-radius: var(--r-lg); display: flex; flex-direction: column; overflow: hidden; }
+  .side-nav { padding: 10px 8px 6px; display: flex; flex-direction: column; gap: 2px; }
+  .nav-row { display: flex; align-items: center; gap: 10px; height: 36px; padding: 0 10px; border-radius: var(--r-sm); color: var(--dim); font-size: 13.5px; }
+  .nav-row:hover { background: #26282d; }
+  .nav-row.active { background: #2b2d36; color: var(--text); box-shadow: inset 2px 0 0 var(--violet); }
+  .nav-row .count { margin-left: auto; font-family: var(--mono); font-size: 11px; color: var(--faint); }
+  .side-sec { padding: 12px 18px 4px; color: var(--faint); font-size: 11px; text-transform: uppercase; letter-spacing: .06em; }
+  .sess { display: flex; align-items: center; gap: 9px; height: 36px; padding: 0 10px 0 18px; margin: 0 8px; border-radius: var(--r-sm); color: var(--dim); font-size: 13px; }
+  .sess:hover { background: #26282d; }
+  .sess.active { background: #2b2d36; color: var(--text); }
+  .sess .t { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .proj { display: flex; align-items: center; gap: 8px; height: 32px; padding: 0 18px; color: var(--muted); font-size: 12.5px; font-weight: 600; }
+
+  .dicon { width: 18px; height: 18px; border-radius: 5px; display: grid; place-items: center; font-family: var(--mono); font-size: 10px; font-weight: 700; flex: none; }
+  .dicon.claude { background: var(--claude-soft); color: var(--claude); }
+  .dicon.codex { background: var(--codex-soft); color: var(--codex); }
+  .dicon.opencode { background: var(--opencode-soft); color: var(--opencode); }
+
+  /* ---------- main surface ---------- */
+  .main { background: #1a1b1e; border-radius: var(--r-lg); overflow: hidden; display: flex; flex-direction: column; min-width: 0; }
+  .view { display: none; flex: 1; min-height: 0; }
+  .view.show { display: flex; flex-direction: column; }
+  .uv-head { display: flex; align-items: flex-start; gap: 16px; padding: 20px 28px 14px; }
+  .uv-head h1 { margin: 0; font-size: 20px; font-weight: 600; }
+  .uv-head p { margin: 4px 0 0; color: var(--muted); font-size: 13px; max-width: 640px; line-height: 1.5; }
+  .uv-head .right { margin-left: auto; display: flex; align-items: center; gap: 8px; color: var(--faint); font-size: 12px; }
+  .icon-btn { width: 32px; height: 32px; display: grid; place-items: center; border-radius: var(--r-sm); color: var(--muted); }
+  .icon-btn:hover { background: var(--raised); color: var(--text); }
+  .uv-scroll { padding: 0 28px 28px; display: flex; flex-direction: column; gap: 22px; overflow: auto; }
+  .sec-h { display: flex; align-items: baseline; gap: 10px; margin: 0 0 10px; }
+  .sec-h h2 { margin: 0; font-size: 14px; font-weight: 650; }
+  .sec-h span { color: var(--faint); font-size: 12px; }
+
+  /* ---------- subscription cards ---------- */
+  .subs { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+  .card { background: var(--panel); border-radius: var(--r-lg); padding: 14px 16px 12px; display: flex; flex-direction: column; gap: 12px; border: 1px solid var(--border-soft); }
+  .card.claude { --driver: var(--claude); --driver-soft: var(--claude-soft); }
+  .card.codex { --driver: var(--codex); --driver-soft: var(--codex-soft); }
+  .card.opencode { --driver: var(--opencode); --driver-soft: var(--opencode-soft); }
+  .c-head { display: flex; align-items: center; gap: 10px; }
+  .c-head .dicon { width: 24px; height: 24px; font-size: 11px; border-radius: 7px; }
+  .c-name { font-weight: 650; font-size: 14px; }
+  .plan { margin-left: auto; font-size: 11.5px; color: var(--dim); background: var(--raised); border: 1px solid var(--border); border-radius: 999px; padding: 2px 9px; white-space: nowrap; }
+  .meters { display: flex; flex-direction: column; gap: 12px; }
+  .meter .m-top { display: flex; align-items: baseline; gap: 8px; font-size: 13px; }
+  .meter .m-top .lbl { color: var(--dim); }
+  .meter .m-top .val { margin-left: auto; font-family: var(--mono); font-size: 12.5px; color: var(--text); }
+  .track { position: relative; height: 6px; margin-top: 6px; border-radius: 3px; background: #33353b; overflow: hidden; }
+  .track i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 3px; background: var(--driver); }
+  .meter.warn .track i { background: var(--warning); }
+  .meter.block .track i { background: var(--danger); }
+  .meter .m-sub { display: flex; gap: 8px; margin-top: 5px; font-size: 11.5px; color: var(--faint); }
+  .tag { font-size: 10.5px; font-weight: 600; letter-spacing: .02em; padding: 1px 6px; border-radius: 4px; display: inline-flex; align-items: center; gap: 4px; }
+  .tag.warn { color: var(--warning); background: rgba(232,180,79,.12); }
+  .tag.block { color: var(--danger); background: rgba(224,108,96,.12); }
+  .tag.live { color: var(--success); background: rgba(89,166,89,.12); }
+  .tag.info { color: var(--muted); background: #2a2c31; }
+  .kv { display: flex; align-items: baseline; gap: 8px; font-size: 12.5px; color: var(--dim); }
+  .kv .v { margin-left: auto; font-family: var(--mono); font-size: 12px; color: var(--text); }
+  .c-div { height: 1px; background: var(--border-soft); margin: 0 -16px; }
+  .c-note { color: var(--faint); font-size: 11.5px; line-height: 1.5; }
+  .c-note a, .link { color: var(--accent); text-decoration: none; }
+  .c-foot { display: flex; align-items: center; gap: 8px; margin-top: auto; padding-top: 2px; color: var(--faint); font-size: 11px; }
+  .c-foot .src { font-family: var(--mono); font-size: 10.5px; }
+  .c-foot .when { margin-left: auto; }
+  .pulse { width: 6px; height: 6px; border-radius: 50%; background: var(--success); box-shadow: 0 0 0 3px rgba(89,166,89,.18); }
+
+  .how { display: none; font-family: var(--mono); font-size: 10.5px; color: #8fa3c9; background: rgba(84,138,247,.08); border: 1px dashed rgba(84,138,247,.35); border-radius: 5px; padding: 4px 7px; margin-top: 6px; line-height: 1.5; overflow-wrap: anywhere; }
+  body.annot .how { display: block; }
+  .how.block-how { margin-top: 0; }
+
+  /* ---------- token tracker ---------- */
+  .filters { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; flex-wrap: wrap; }
+  .seg { display: inline-flex; background: var(--panel); border: 1px solid var(--border-soft); border-radius: var(--r-sm); padding: 2px; }
+  .seg button { height: 28px; padding: 0 12px; border-radius: 4px; color: var(--muted); font-size: 12.5px; }
+  .seg button.on { background: var(--raised); color: var(--text); }
+  .chip { height: 30px; display: inline-flex; align-items: center; gap: 7px; padding: 0 11px; border-radius: 999px; border: 1px solid var(--border-soft); background: var(--panel); color: var(--muted); font-size: 12.5px; }
+  .chip.on { color: var(--text); border-color: var(--border); background: var(--raised); }
+  .chip .dicon { width: 16px; height: 16px; font-size: 9px; }
+  .select { height: 30px; display: inline-flex; align-items: center; gap: 6px; padding: 0 10px; border-radius: var(--r-sm); border: 1px solid var(--border-soft); background: var(--panel); color: var(--dim); font-size: 12.5px; margin-left: auto; }
+
+  .tiles { display: grid; grid-template-columns: repeat(5, minmax(0,1fr)); gap: 10px; }
+  .tile { background: var(--panel); border-radius: var(--r-md); padding: 12px 14px; border: 1px solid var(--border-soft); }
+  .tile .k { color: var(--muted); font-size: 12px; }
+  .tile .n { font-size: 22px; font-weight: 600; margin-top: 4px; letter-spacing: -.01em; font-variant-numeric: tabular-nums; }
+  .tile .s { color: var(--faint); font-size: 11.5px; margin-top: 2px; }
+
+  .charts { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 12px; margin-top: 12px; }
+  .chart { background: var(--panel); border-radius: var(--r-md); padding: 12px 14px 10px; border: 1px solid var(--border-soft); position: relative; }
+  .chart.claude { --driver: var(--claude); }
+  .chart.codex { --driver: var(--codex); }
+  .chart.opencode { --driver: var(--opencode); }
+  .chart.dim { opacity: .35; }
+  .ch-h { display: flex; align-items: center; gap: 8px; font-size: 13px; font-weight: 600; }
+  .ch-h .tot { margin-left: auto; font-family: var(--mono); font-size: 12px; color: var(--dim); font-weight: 400; }
+  .ch-sub { color: var(--faint); font-size: 11.5px; margin: 2px 0 8px; }
+  .chart svg .bar { fill: var(--driver); }
+  .chart svg .bar.cache { fill: var(--driver); opacity: .38; }
+  .chart svg .hit { fill: transparent; }
+  .chart svg .hit:hover + .col .bar, .chart svg g.col:hover .bar { filter: brightness(1.18); }
+  .chart svg .grid { stroke: #2d2f34; stroke-width: 1; }
+  .chart svg .axis { fill: var(--faint); font-family: var(--mono); font-size: 9.5px; }
+  .chart.wide { margin-top: 12px; padding: 14px 16px 10px; }
+  .legend-inline { display: inline-flex; gap: 14px; margin-left: 16px; color: var(--muted); font-size: 12px; font-weight: 400; }
+  .legend-inline span { display: inline-flex; align-items: center; gap: 6px; }
+  .legend-inline span.off { opacity: .35; }
+  .sw { width: 10px; height: 10px; border-radius: 2px; display: inline-block; vertical-align: -1px; }
+  .plot { margin-top: 4px; }
+  .plot svg .seg-claude { fill: var(--claude); }
+  .plot svg .seg-codex { fill: var(--codex); }
+  .plot svg .seg-opencode { fill: var(--opencode); }
+  .plot svg g.col:hover .s { filter: brightness(1.15); }
+  .plot svg .grid { stroke: #2d2f34; stroke-width: 1; }
+  .plot svg .axis, .plot svg .ylab { fill: var(--faint); font-family: var(--mono); font-size: 10px; }
+  .hbars { display: flex; flex-direction: column; gap: 2px; margin-top: 2px; }
+  .hb { display: grid; grid-template-columns: 180px 1fr 56px; align-items: center; gap: 10px; height: 32px; padding: 0 6px; border-radius: 5px; font-size: 12.5px; color: var(--text); cursor: default; }
+  .hb:hover { background: #26282d; }
+  .hb .nm { display: flex; align-items: center; gap: 8px; min-width: 0; }
+  .hb .nm span:last-child { overflow: hidden; white-space: nowrap; text-overflow: ellipsis; }
+  .hb .tr { height: 10px; position: relative; }
+  .hb .tr i { position: absolute; left: 0; top: 0; bottom: 0; border-radius: 0 3px 3px 0; }
+  .hb .v { font-family: var(--mono); font-size: 12px; color: var(--dim); text-align: right; }
+  .hb.other .nm { color: var(--muted); }
+  .legend { display: flex; gap: 14px; margin-top: 6px; color: var(--muted); font-size: 11.5px; }
+  .legend i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; background: var(--driver); margin-right: 5px; vertical-align: -1px; }
+  .legend i.cache { opacity: .38; }
+  .tip { position: fixed; z-index: 50; pointer-events: none; background: #2b2d33; border: 1px solid var(--border); border-radius: var(--r-sm); padding: 8px 10px; font-size: 12px; color: var(--text); box-shadow: 0 8px 24px rgba(0,0,0,.4); display: none; min-width: 170px; }
+  .tip b { display: block; margin-bottom: 4px; font-weight: 600; }
+  .tip .r { display: flex; gap: 12px; color: var(--dim); }
+  .tip .r span:last-child { margin-left: auto; font-family: var(--mono); color: var(--text); }
+
+  .tables { display: grid; grid-template-columns: 1fr 1.2fr; gap: 12px; margin-top: 12px; }
+  table { width: 100%; border-collapse: collapse; font-size: 12.5px; }
+  .tbl { background: var(--panel); border-radius: var(--r-md); padding: 10px 6px 6px; border: 1px solid var(--border-soft); }
+  .tbl h3 { margin: 0 10px 6px; font-size: 13px; font-weight: 600; }
+  th { text-align: left; color: var(--faint); font-weight: 500; font-size: 11.5px; padding: 6px 10px; }
+  td { padding: 0 10px; height: 36px; color: var(--dim); border-top: 1px solid var(--border-soft); }
+  td.num, th.num { text-align: right; font-family: var(--mono); font-size: 12px; }
+  td .cell { display: flex; align-items: center; gap: 8px; }
+  td .t { color: var(--text); }
+  td .p { color: var(--faint); font-size: 11.5px; }
+  tr:hover td { background: #222327; }
+  .share { display: inline-block; width: 60px; height: 4px; border-radius: 2px; background: #33353b; vertical-align: middle; margin-right: 8px; overflow: hidden; }
+  .share i { display: block; height: 100%; background: var(--muted); border-radius: 2px; }
+  .foot-note { color: var(--faint); font-size: 11.5px; margin-top: 8px; line-height: 1.5; }
+
+  /* ---------- states variant ---------- */
+  .states { display: grid; grid-template-columns: repeat(3, minmax(0,1fr)); gap: 12px; }
+  .state-lbl { font-family: var(--mono); font-size: 10.5px; color: var(--faint); text-transform: uppercase; letter-spacing: .06em; margin-bottom: 6px; }
+  .empty { display: flex; gap: 10px; align-items: flex-start; background: var(--bg-deep); border-radius: var(--r-md); padding: 10px 12px; color: var(--dim); font-size: 12.5px; line-height: 1.5; }
+  .empty .ic { color: var(--muted); flex: none; margin-top: 2px; }
+  .empty b { color: var(--text); font-weight: 600; display: block; }
+  .btn { height: 28px; padding: 0 10px; border-radius: var(--r-sm); background: var(--raised); border: 1px solid var(--border); color: var(--text); font-size: 12px; display: inline-flex; align-items: center; gap: 6px; }
+  .btn:hover { background: #363940; }
+  .stale { opacity: .55; }
+
+  /* ---------- inline variant ---------- */
+  .thread-wrap { display: grid; grid-template-columns: 1fr; flex: 1; min-height: 0; position: relative; }
+  .th-head { display: flex; align-items: center; gap: 10px; padding: 12px 22px; border-bottom: 1px solid var(--border-soft); }
+  .th-head h1 { margin: 0; font-size: 14.5px; font-weight: 650; }
+  .th-head .br { font-family: var(--mono); font-size: 11.5px; color: var(--faint); }
+  .th-body { padding: 22px; display: flex; flex-direction: column; gap: 14px; max-width: 860px; margin: 0 auto; width: 100%; }
+  .msg { color: var(--dim); line-height: 1.6; font-size: 14.5px; }
+  .msg.user { align-self: flex-end; background: var(--bg-deep); padding: 10px 14px; border-radius: var(--r-md); max-width: 70%; }
+  .toolcard { font-family: var(--mono); font-size: 12px; color: var(--muted); background: var(--bg-deep); border-radius: var(--r-md); padding: 8px 12px; }
+  .composer { margin: auto auto 0; width: min(860px, 100% - 44px); background: var(--bg-deep); border-radius: var(--r-lg); border: 1px solid var(--border-soft); padding: 12px 14px; color: var(--faint); font-size: 14px; }
+  .composer .row { display: flex; align-items: center; gap: 8px; margin-top: 18px; font-size: 12px; }
+  .composer .row .ring, .composer .row .cbtn { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; color: var(--muted); }
+  .composer .row .ring { margin-left: auto; cursor: pointer; }
+  .composer .row .ring:hover, .composer .row .ring.open { background: var(--raised); }
+  .composer .row .send { width: 30px; height: 30px; display: grid; place-items: center; border-radius: 50%; background: var(--violet); color: #fff; }
+  .dock { position: absolute; bottom: 132px; right: calc(50% - 430px + 50px); width: 300px; z-index: 5; background: #24262b; border: 1px solid var(--border); border-radius: var(--r-lg); box-shadow: 0 16px 40px rgba(0,0,0,.5); font-size: 12.5px; }
+  body:not(.annot) .dock { bottom: 96px; }
+  .dock[hidden] { display: none; }
+  @media (max-width: 1200px) { .dock { right: 60px; } }
+  .dock.claude { --driver: var(--claude); }
+  .d-sec { padding: 12px 14px; border-bottom: 1px solid var(--border-soft); display: flex; flex-direction: column; gap: 6px; }
+  .d-h { font-weight: 650; font-size: 13px; }
+  .d-big { font-size: 15px; font-weight: 650; }
+  .d-sub { color: var(--faint); font-size: 11.5px; }
+  .track.thin { height: 4px; margin-top: 2px; }
+  .d-grid { display: grid; grid-template-columns: 1fr auto; row-gap: 5px; color: var(--muted); }
+  .d-grid b { font-family: var(--mono); font-size: 11.5px; font-weight: 500; color: var(--text); text-align: right; }
+  .d-plan { display: flex; align-items: center; gap: 8px; margin-bottom: 2px; }
+  .d-plan .plan { margin-left: 0; }
+  .d-row { display: flex; align-items: baseline; gap: 6px; color: var(--muted); }
+  .d-row .r { margin-left: auto; color: var(--faint); font-size: 11.5px; }
+  .d-row .r b { color: var(--text); font-family: var(--mono); font-weight: 600; }
+  .d-meter { display: flex; flex-direction: column; gap: 3px; }
+  .d-meter.warn .track i { background: var(--warning); }
+  .d-foot { display: flex; align-items: center; gap: 8px; padding: 10px 14px; color: var(--faint); font-size: 11.5px; }
+  .d-foot .link { margin-left: auto; }
+
+  .notes { width: min(1320px, 100%); margin: 16px auto 0; color: var(--muted); font-size: 12.5px; line-height: 1.6; }
+  .notes b { color: var(--dim); }
+</style>
+</head>
+<body class="annot">
+<div class="mockbar">
+  <div class="mock-title"><b>Usage panel</b><span class="sub">cw-code panel study · mock data</span></div>
+  <label class="toggle"><input type="checkbox" id="annot" checked /> Show data sources ("how")</label>
+  <div class="variants" role="tablist">
+    <button class="active" data-v="a">A · Usage view</button>
+    <button data-v="b">B · Harness states</button>
+    <button data-v="c">C · Inline in thread</button>
+  </div>
+</div>
+
+<div class="stage">
+<div class="window">
+  <div class="win-bar"><div class="dots"><i></i><i></i><i></i></div><div class="win-crumb" id="crumb"><b>cw-code</b> · Usage</div></div>
+  <div class="win-body">
+    <aside class="side">
+      <nav class="side-nav">
+        <div class="nav-row"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M8 3v10M3 8h10"/></svg>New session</div>
+        <div class="nav-row"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2.5 9.5h3l1 2h3l1-2h3M2.5 9.5 4 3.5h8l1.5 6v3h-11z"/></svg>PR inbox<span class="count">4</span></div>
+      </nav>
+      <div class="side-sec">Projects</div>
+      <div class="proj">cw-code</div>
+      <div class="sess" id="sess-active"><span class="dicon claude">C</span><span class="t">Usage panel research</span></div>
+      <div class="sess"><span class="dicon codex">X</span><span class="t">Fix worktree cleanup race</span></div>
+      <div class="sess"><span class="dicon opencode">O</span><span class="t">Sidebar quick filters</span></div>
+      <div class="proj">nuria-agents-converse</div>
+      <div class="sess"><span class="dicon claude">C</span><span class="t">Kernel operation refactor</span></div>
+      <div class="sess"><span class="dicon codex">X</span><span class="t">Add EF migration</span></div>
+
+    </aside>
+
+    <main class="main">
+      <!-- ================= A · USAGE VIEW ================= -->
+      <section class="view show" id="v-a">
+        <div class="uv-head">
+          <div>
+            <h1>Usage</h1>
+            <p>Plan limits come from each CLI's own account data. Token totals are counted by cw-code from the turns it ran on this device.</p>
+            <div class="how">opened from the context dock's "Open usage" link (variant C) · no sidebar entry</div>
+          </div>
+          <div class="right">Updated 1m ago
+            <button class="icon-btn" title="Refresh all"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M13 8a5 5 0 1 1-1.5-3.6M13 2.5v2.5h-2.5"/></svg></button>
+          </div>
+        </div>
+        <div class="uv-scroll">
+          <div>
+            <div class="sec-h"><h2>Plan limits</h2><span>Account-wide, includes usage from other devices and apps</span></div>
+            <div class="subs">
+              <!-- Claude -->
+              <article class="card claude">
+                <div class="c-head"><span class="dicon claude">C</span><span class="c-name">Claude Code</span><span class="plan">Team · Max 5×</span></div>
+                <div class="how block-how">claude auth status --json → subscriptionType · get_usage → subscription_type</div>
+                <div class="meters">
+                  <div class="meter warn">
+                    <div class="m-top"><span class="lbl">Current session</span><span class="tag warn">▲ Near limit</span><span class="val">89%</span></div>
+                    <div class="track"><i style="width:89%"></i></div>
+                    <div class="m-sub"><span>Resets in 2h 14m</span><span>· limiting now</span></div>
+                    <div class="how">limits[kind=session] → percent, severity, resets_at, is_active</div>
+                  </div>
+                  <div class="meter">
+                    <div class="m-top"><span class="lbl">Weekly · all models</span><span class="val">62%</span></div>
+                    <div class="track"><i style="width:62%"></i></div>
+                    <div class="m-sub"><span>Resets Mon 09:00</span></div>
+                    <div class="how">limits[kind=weekly_all]</div>
+                  </div>
+                  <div class="meter">
+                    <div class="m-top"><span class="lbl">Weekly · Fable</span><span class="val">56%</span></div>
+                    <div class="track"><i style="width:56%"></i></div>
+                    <div class="m-sub"><span>Resets Mon 09:00</span></div>
+                    <div class="how">limits[kind=weekly_scoped].scope.model.display_name · one row per model bucket, never hardcoded</div>
+                  </div>
+                </div>
+                <div class="c-div"></div>
+                <div class="kv">Extra usage<span class="tag info">On</span><span class="v">$12.40 / $50.00</span></div>
+                <div class="track" style="margin-top:-6px"><i style="width:25%"></i></div>
+                <div class="how" style="margin-top:-6px">extra_usage → is_enabled, used_credits, monthly_limit, currency (minor units)</div>
+                <div class="c-foot"><span class="pulse" title="Updated live from the last turn"></span><span>Live from last turn</span><span class="when mono">1m ago</span></div>
+                <div class="how block-how">poll: probe `claude -p --input-format stream-json` → control_request get_usage {skip_behaviors:true} every 5 min + on focus · live: rate_limit_event.unifiedWindows (0–1, epoch s) between polls</div>
+              </article>
+
+              <!-- Codex -->
+              <article class="card codex">
+                <div class="c-head"><span class="dicon codex">X</span><span class="c-name">Codex</span><span class="plan">ChatGPT Plus</span></div>
+                <div class="how block-how">account/read → account.type=chatgpt, planType</div>
+                <div class="meters">
+                  <div class="meter">
+                    <div class="m-top"><span class="lbl">5-hour window</span><span class="val">34%</span></div>
+                    <div class="track"><i style="width:34%"></i></div>
+                    <div class="m-sub"><span>Resets in 3h 02m</span></div>
+                    <div class="how">window where windowDurationMins=300 → usedPercent, resetsAt (epoch s) · classify by duration, not primary/secondary</div>
+                  </div>
+                  <div class="meter">
+                    <div class="m-top"><span class="lbl">Weekly window</span><span class="val">9%</span></div>
+                    <div class="track"><i style="width:9%"></i></div>
+                    <div class="m-sub"><span>Resets Wed, Sep 30</span></div>
+                    <div class="how">window where windowDurationMins=10080</div>
+                  </div>
+                </div>
+                <div class="c-div"></div>
+                <div class="kv">Credits<span class="v">None</span></div>
+                <div class="kv">Limit reset credits<span class="v">1 available</span></div>
+                <div class="how" style="margin-top:-6px">credits {hasCredits, unlimited, balance} · rateLimitResetCredits.availableCount · extra buckets from rateLimitsByLimitId render as more meters</div>
+                <div class="c-foot"><span class="pulse"></span><span>Live from last turn</span><span class="when mono">1m ago</span></div>
+                <div class="how block-how">poll: account/rateLimits/read on the running `codex app-server` (no turn, no quota) · live: account/rateLimits/updated merged into last snapshot</div>
+              </article>
+
+              <!-- OpenCode Go -->
+              <article class="card opencode">
+                <div class="c-head"><span class="dicon opencode">O</span><span class="c-name">OpenCode Go</span><span class="plan">Go · $10/mo</span></div>
+                <div class="how block-how">auth.json has an "opencode-go" entry → Go subscriber (key stays in main process)</div>
+                <div class="meters">
+                  <div class="meter">
+                    <div class="m-top"><span class="lbl">5-hour</span><span class="val">41%</span></div>
+                    <div class="track"><i style="width:41%"></i></div>
+                    <div class="m-sub"><span>Resets in 1h 50m</span></div>
+                    <div class="how">usage.rolling → percent (int), status, resetsAt (ISO)</div>
+                  </div>
+                  <div class="meter">
+                    <div class="m-top"><span class="lbl">Weekly</span><span class="val">18%</span></div>
+                    <div class="track"><i style="width:18%"></i></div>
+                    <div class="m-sub"><span>Resets Mon 00:00 UTC</span></div>
+                    <div class="how">usage.weekly</div>
+                  </div>
+                  <div class="meter">
+                    <div class="m-top"><span class="lbl">Monthly</span><span class="val">7%</span></div>
+                    <div class="track"><i style="width:7%"></i></div>
+                    <div class="m-sub"><span>Resets Oct 12</span></div>
+                    <div class="how">usage.monthly</div>
+                  </div>
+                </div>
+                <div class="c-div"></div>
+                <div class="c-note">Percent only. Dollar caps depend on the model ($15–$60 a month). Zen balance isn't available outside the console. <a href="#">Open console ↗</a></div>
+                <div class="c-foot"><span>Polled</span><span class="when mono">1m ago</span></div>
+                <div class="how block-how">poll: GET opencode.ai/zen/go/v1/usage (Bearer opencode-go key) every 5 min + after each opencode-go turn · live: GoUsageLimitError 429 → retry action marks window "Limit reached"</div>
+              </article>
+            </div>
+          </div>
+
+          <div>
+            <div class="sec-h"><h2>Token consumption</h2><span>Tracked by cw-code · this device only</span></div>
+            <div class="filters">
+              <div class="seg" id="range"><button data-d="7">7 days</button><button class="on" data-d="30">30 days</button><button data-d="90">90 days</button></div>
+              <div class="seg" id="metric"><button class="on" data-m="all">All tokens</button><button data-m="fresh">Excluding cache reads</button></div>
+              <button class="chip on" data-h="all">All harnesses</button>
+              <button class="chip" data-h="claude"><span class="dicon claude">C</span>Claude</button>
+              <button class="chip" data-h="codex"><span class="dicon codex">X</span>Codex</button>
+              <button class="chip" data-h="opencode"><span class="dicon opencode">O</span>OpenCode</button>
+              <span class="select">All projects <svg width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5"><path d="m3 4.5 3 3 3-3"/></svg></span>
+            </div>
+            <div class="tiles">
+              <div class="tile"><div class="k">Total tokens</div><div class="n" id="t-total">48.2M</div><div class="s">312 turns · 41 sessions</div></div>
+              <div class="tile"><div class="k">Input</div><div class="n" id="t-in">3.1M</div><div class="s">new, uncached</div></div>
+              <div class="tile"><div class="k">Cache read</div><div class="n" id="t-cache">43.6M</div><div class="s">90% of input side</div></div>
+              <div class="tile"><div class="k">Output</div><div class="n" id="t-out">1.5M</div><div class="s">incl. reasoning</div></div>
+              <div class="tile"><div class="k">API-equivalent cost</div><div class="n" id="t-cost">$182.40</div><div class="s">list prices · not billed on a plan</div></div>
+            </div>
+            <div class="how">ledger: one record per turn.done → {sessionId, projectId, driver, model, provider, input, cacheRead, cacheWrite, output, reasoning, costUsd, costSource} · ~/.cw-code/userdata/usage/YYYY-MM.json · Codex has no cost field → priced by cw-code or shown "—"</div>
+
+            <div class="chart wide" id="combined">
+              <div class="ch-h">Tokens per day<span class="legend-inline" id="legend"></span><span class="tot" id="combined-tot"></span></div>
+              <div class="ch-sub" id="combined-sub">All harnesses · stacked</div>
+              <div class="plot" id="combined-plot"></div>
+            </div>
+            <div class="how">stack order Codex → Claude → OpenCode (bottom→top) so the two look-alike hues never touch (validator: worst adjacent ΔE 22.8 deutan) · 2px gaps between segments · legend + tooltip carry identity</div>
+
+            <div class="tables">
+              <div class="tbl">
+                <h3>Top sessions</h3>
+                <table>
+                  <thead><tr><th>Session</th><th class="num">Turns</th><th class="num">Tokens</th><th class="num">API-eq. cost</th></tr></thead>
+                  <tbody>
+                    <tr><td><div class="cell"><span class="dicon claude">C</span><div><div class="t">Usage panel research</div><div class="p">cw-code</div></div></div></td><td class="num">18</td><td class="num">9.8M</td><td class="num">$41.20</td></tr>
+                    <tr><td><div class="cell"><span class="dicon claude">C</span><div><div class="t">Kernel operation refactor</div><div class="p">nuria-agents-converse</div></div></div></td><td class="num">26</td><td class="num">7.1M</td><td class="num">$29.85</td></tr>
+                    <tr><td><div class="cell"><span class="dicon codex">X</span><div><div class="t">Fix worktree cleanup race</div><div class="p">cw-code</div></div></div></td><td class="num">31</td><td class="num">6.4M</td><td class="num">$18.10</td></tr>
+                    <tr><td><div class="cell"><span class="dicon opencode">O</span><div><div class="t">Sidebar quick filters</div><div class="p">cw-code</div></div></div></td><td class="num">12</td><td class="num">2.2M</td><td class="num">$0.94</td></tr>
+                    <tr><td><div class="cell"><span class="dicon codex">X</span><div><div class="t">Add EF migration</div><div class="p">nuria-agents-converse</div></div></div></td><td class="num">9</td><td class="num">1.3M</td><td class="num">$3.72</td></tr>
+                  </tbody>
+                </table>
+              </div>
+              <div class="chart" id="models">
+                <div class="ch-h">Tokens by model<span class="tot" id="models-tot"></span></div>
+                <div class="ch-sub">All harnesses · ranked · top 6, the rest folded into Other</div>
+                <div id="models-plot" class="hbars"></div>
+                <div class="how">ledger grouped by model (driver kept for the icon) · bar hue = owning harness, always next to its icon + name</div>
+              </div>
+            </div>
+            <div class="foot-note">API-equivalent cost is what the same tokens would cost at API list prices. Subscription plans aren't billed this way, so treat it as a rough guide to relative weight.</div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= B · STATES ================= -->
+      <section class="view" id="v-b">
+        <div class="uv-head"><div><h1>Harness states</h1><p>Every non-happy path shows a visible message instead of an empty or zero meter. Token tracking keeps working in all of these.</p></div></div>
+        <div class="uv-scroll">
+          <div class="states">
+            <div>
+              <div class="state-lbl">Claude · API key / Bedrock / Vertex</div>
+              <article class="card claude">
+                <div class="c-head"><span class="dicon claude">C</span><span class="c-name">Claude Code</span><span class="plan">API key</span></div>
+                <div class="empty"><span class="ic">ⓘ</span><div><b>No plan limits for this login</b>Claude Code is using an API key, so usage is billed per token. Costs appear under Token consumption.</div></div>
+                <div class="how block-how">get_usage → rate_limits_available=false, subscription_type=null</div>
+              </article>
+            </div>
+            <div>
+              <div class="state-lbl">Codex · API key login</div>
+              <article class="card codex">
+                <div class="c-head"><span class="dicon codex">X</span><span class="c-name">Codex</span><span class="plan">API key</span></div>
+                <div class="empty"><span class="ic">ⓘ</span><div><b>No plan limits for this login</b>Codex is signed in with an OpenAI API key. Sign in with ChatGPT to see plan windows.</div></div>
+                <div class="how block-how">account/read → account.type=apiKey</div>
+              </article>
+            </div>
+            <div>
+              <div class="state-lbl">OpenCode · no Go subscription</div>
+              <article class="card opencode">
+                <div class="c-head"><span class="dicon opencode">O</span><span class="c-name">OpenCode</span><span class="plan">openrouter</span></div>
+                <div class="empty"><span class="ic">ⓘ</span><div><b>No OpenCode Go subscription</b>OpenCode is set up with other providers. Their limits are managed by those providers.</div></div>
+                <div class="how block-how">auth.json has no opencode-go entry, or /usage → 403 EntitlementError</div>
+              </article>
+            </div>
+
+            <div>
+              <div class="state-lbl">Codex · limit reached</div>
+              <article class="card codex">
+                <div class="c-head"><span class="dicon codex">X</span><span class="c-name">Codex</span><span class="plan">ChatGPT Plus</span></div>
+                <div class="meter block">
+                  <div class="m-top"><span class="lbl">5-hour window</span><span class="tag block">■ Limit reached</span><span class="val">100%</span></div>
+                  <div class="track"><i style="width:100%"></i></div>
+                  <div class="m-sub"><span>Resets in 42m · new Codex turns will fail until then</span></div>
+                </div>
+                <div class="kv">Limit reset credits<span class="v">1 available</span></div>
+                <div class="how block-how">rateLimitReachedType=rate_limit_reached · ordinaryUsageAllowed=false</div>
+              </article>
+            </div>
+            <div>
+              <div class="state-lbl">OpenCode Go · 5h cap hit mid-turn</div>
+              <article class="card opencode">
+                <div class="c-head"><span class="dicon opencode">O</span><span class="c-name">OpenCode Go</span><span class="plan">Go · $10/mo</span></div>
+                <div class="meter block">
+                  <div class="m-top"><span class="lbl">5-hour</span><span class="tag block">■ Limit reached</span><span class="val">100%</span></div>
+                  <div class="track"><i style="width:100%"></i></div>
+                  <div class="m-sub"><span>Resets in 1h 12m · free models still work</span></div>
+                </div>
+                <div class="how block-how">429 GoUsageLimitError metadata.limitName="5 hour" + retry-after, via session.status retry action (already wired as turn.retry)</div>
+              </article>
+            </div>
+            <div>
+              <div class="state-lbl">Claude · refresh failed (stale)</div>
+              <article class="card claude">
+                <div class="c-head"><span class="dicon claude">C</span><span class="c-name">Claude Code</span><span class="plan">Max 20×</span></div>
+                <div class="meters stale">
+                  <div class="meter"><div class="m-top"><span class="lbl">Current session</span><span class="val">47%</span></div><div class="track"><i style="width:47%"></i></div></div>
+                  <div class="meter"><div class="m-top"><span class="lbl">Weekly · all models</span><span class="val">30%</span></div><div class="track"><i style="width:30%"></i></div></div>
+                </div>
+                <div class="empty"><span class="ic">!</span><div><b>Couldn't refresh · showing data from 14m ago</b>The get_usage response had an unexpected shape. Details are in the dev log.</div></div>
+                <button class="btn" style="align-self:flex-start">Retry</button>
+                <div class="how block-how">mapper tolerates drift: unknown keys ignored, missing limits[] → stale + dev-log warning, never 0%</div>
+              </article>
+            </div>
+
+            <div>
+              <div class="state-lbl">Claude · CLI too old</div>
+              <article class="card claude">
+                <div class="c-head"><span class="dicon claude">C</span><span class="c-name">Claude Code</span><span class="plan mono">2.1.40</span></div>
+                <div class="empty"><span class="ic">ⓘ</span><div><b>Update Claude Code to see plan limits</b>This version can't report usage headlessly. Run <span class="mono">claude update</span>.</div></div>
+                <div class="how block-how">control_request get_usage → error "unsupported subtype"</div>
+              </article>
+            </div>
+            <div>
+              <div class="state-lbl">OpenCode Go · key rejected</div>
+              <article class="card opencode">
+                <div class="c-head"><span class="dicon opencode">O</span><span class="c-name">OpenCode Go</span><span class="plan">Go</span></div>
+                <div class="empty"><span class="ic">!</span><div><b>OpenCode rejected the stored key</b>Run <span class="mono">opencode auth login</span> and pick OpenCode Go.</div></div>
+                <div class="how block-how">/usage → 401 AuthError</div>
+              </article>
+            </div>
+            <div>
+              <div class="state-lbl">Any · binary not found</div>
+              <article class="card codex">
+                <div class="c-head"><span class="dicon codex">X</span><span class="c-name">Codex</span></div>
+                <div class="empty"><span class="ic">ⓘ</span><div><b>Codex isn't installed</b>Set its path in Settings → Harnesses → Codex.</div></div>
+                <button class="btn" style="align-self:flex-start">Open settings</button>
+              </article>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <!-- ================= C · INLINE ================= -->
+      <section class="view" id="v-c">
+        <div class="thread-wrap">
+          <div style="display:flex;flex-direction:column;min-height:0">
+            <div class="th-head"><span class="dicon claude">C</span><h1>Usage panel research</h1><span class="br">cw/f3110684</span></div>
+            <div class="th-body">
+              <div class="msg user">Lets build a usage/cost viewer panel in the application…</div>
+              <div class="toolcard">▸ Explore · Map codebase usage/token plumbing · 60 tool uses</div>
+              <div class="msg">All four reports are in. The key finding is that every harness exposes plan limits headlessly, but only as percentages…</div>
+            </div>
+            <div class="composer">Ask for follow-up changes
+              <div class="row"><span class="mono">opus-5.5</span><span>·</span><span>high</span>
+                <button class="ring open" id="ring" title="Context window · 4% used"><svg width="20" height="20" viewBox="0 0 20 20"><circle cx="10" cy="10" r="7.5" fill="none" stroke="#3a3d43" stroke-width="2.5"/><circle cx="10" cy="10" r="7.5" fill="none" stroke="var(--dim)" stroke-width="2.5" stroke-linecap="round" stroke-dasharray="1.9 47.1" transform="rotate(-90 10 10)"/></svg></button>
+                <span class="cbtn" title="Voice"><svg width="16" height="16" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="5.5" y="2" width="5" height="8" rx="2.5"/><path d="M3.5 7.5a4.5 4.5 0 0 0 9 0M8 12v2"/></svg></span>
+                <span class="send" title="Send"><svg width="14" height="14" viewBox="0 0 14 14" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M7 11.5v-9M3 6.5l4-4 4 4"/></svg></span>
+              </div>
+            </div>
+            <div class="how" style="width:min(860px,100% - 44px);margin:8px auto 14px">replaces today's footer ("in · out · $ · turns") with one ring. Fill = context window used (neutral; amber at 80%, red at 95%). Click opens the dock.</div>
+          </div>
+          <article class="dock claude" id="dock">
+            <section class="d-sec">
+              <div class="d-h">Context window</div>
+              <div class="d-big">4% used</div>
+              <div class="d-sub mono">44k / 1M tokens</div>
+              <div class="track thin"><i style="width:4%;background:var(--dim)"></i></div>
+              <div class="how">Claude: last assistant usage (input + cache read + cache write) ÷ result.modelUsage[model].contextWindow · Codex: thread/tokenUsage/updated last ÷ modelContextWindow · OpenCode: last message tokens ÷ model limit.context</div>
+            </section>
+            <section class="d-sec">
+              <div class="d-h">This session</div>
+              <div class="d-grid">
+                <span>Turns</span><b>18</b>
+                <span>Input</span><b>612k</b>
+                <span>Cache read</span><b>8.9M</b>
+                <span>Output</span><b>288k</b>
+                <span>API-equivalent cost</span><b>$41.20</b>
+                <span>Last turn</span><b>412k tok · 2m 10s</b>
+              </div>
+              <div class="how">cw-code ledger rows for this sessionId, same meaning on every harness</div>
+            </section>
+            <section class="d-sec">
+              <div class="d-plan"><span class="dicon claude">C</span><b>Claude</b><span class="plan">Team · Max 5×</span></div>
+              <div class="d-meter warn"><div class="d-row"><span>Session</span><span class="tag warn">▲ Near limit</span><span class="r"><b>89%</b> · resets 2h 14m</span></div><div class="track thin"><i style="width:89%"></i></div></div>
+              <div class="d-meter"><div class="d-row"><span>Weekly</span><span class="r"><b>62%</b> · resets Mon</span></div><div class="track thin"><i style="width:62%"></i></div></div>
+              <div class="d-meter"><div class="d-row"><span>Weekly · Fable</span><span class="r"><b>56%</b> · resets Mon</span></div><div class="track thin"><i style="width:56%"></i></div></div>
+              <div class="d-row"><span>Extra usage</span><span class="r"><b>$12.40 / $50.00</b></span></div>
+              <div class="how">same data as the Usage view's Claude card, for the active session's harness only</div>
+            </section>
+            <div class="d-foot"><span class="pulse"></span><span>Updated 1m ago</span><a class="link" href="#" id="open-usage">Open usage →</a></div>
+          </article>
+        </div>
+      </section>
+    </main>
+  </div>
+</div>
+
+<div class="notes">
+  <b>What each harness can show:</b> Claude shows the 5h session, the weekly all-models window, a weekly window per model and extra usage (money). Codex shows the 5h and weekly windows, credits and reset credits. OpenCode Go shows 5h, weekly and monthly windows as percentages only.
+  Every source gives percentages and reset times, never absolute quotas. Token and cost data comes from cw-code's own per-turn ledger, not from the harnesses.
+</div>
+</div>
+
+<div class="tip" id="tip"></div>
+
+<script>
+  const $ = (s, r = document) => r.querySelector(s);
+  const $$ = (s, r = document) => [...r.querySelectorAll(s)];
+
+  $$(".variants button").forEach((b) => b.addEventListener("click", () => {
+    $$(".variants button").forEach((x) => x.classList.toggle("active", x === b));
+    $$(".view").forEach((v) => v.classList.toggle("show", v.id === "v-" + b.dataset.v));
+    const inline = b.dataset.v === "c";
+    $("#sess-active").classList.toggle("active", inline);
+    $("#crumb").innerHTML = inline ? "<b>cw-code</b> · Usage panel research" : "<b>cw-code</b> · Usage";
+    if (b.dataset.v === "a") renderCombined();
+  }));
+  $("#open-usage").addEventListener("click", (e) => { e.preventDefault(); $('.variants button[data-v="a"]').click(); });
+  $("#ring").addEventListener("click", () => { $("#dock").hidden = !$("#dock").hidden; $("#ring").classList.toggle("open", !$("#dock").hidden); });
+  $("#annot").addEventListener("change", (e) => document.body.classList.toggle("annot", e.target.checked));
+
+  function rng(seed) { return () => ((seed = (seed * 16807) % 2147483647) / 2147483647); }
+  const DAYS = 90;
+  const harnesses = [
+    { id: "codex", name: "Codex", icon: "X", scale: 0.55, seed: 19 },
+    { id: "claude", name: "Claude", icon: "C", scale: 1.0, seed: 7 },
+    { id: "opencode", name: "OpenCode", icon: "O", scale: 0.22, seed: 31 },
+  ];
+  const models = [
+    { id: "claude-opus-5-5", h: "claude", share: 0.55, price: 1 },
+    { id: "claude-fable-5-1", h: "claude", share: 0.25, price: 1.4 },
+    { id: "claude-sonnet-5", h: "claude", share: 0.2, price: 0.6 },
+    { id: "gpt-5.5-codex", h: "codex", share: 0.8, price: 0.5 },
+    { id: "gpt-5.5-mini", h: "codex", share: 0.2, price: 0.15 },
+    { id: "opencode-go/glm-5.3", h: "opencode", share: 0.6, price: 0.1 },
+    { id: "opencode-go/kimi-k3", h: "opencode", share: 0.25, price: 0.1 },
+    { id: "openrouter/qwen3.8", h: "opencode", share: 0.15, price: 0.08 },
+  ];
+  const H = Object.fromEntries(harnesses.map((h) => [h.id, h]));
+  const today = new Date(2026, 8, 24);
+  const days = Array.from({ length: DAYS }, (_, i) => { const d = new Date(today); d.setDate(today.getDate() - (DAYS - 1 - i)); return d; });
+  const data = Object.fromEntries(harnesses.map((h) => {
+    const r = rng(h.seed);
+    return [h.id, days.map((d) => {
+      const weekend = d.getDay() === 0 || d.getDay() === 6;
+      const base = (weekend ? 0.2 : 1) * h.scale * (0.4 + r() * 1.2) * 1.6e6;
+      return { cache: Math.round(base * 0.9), fresh: Math.round(base * 0.1), turns: Math.max(1, Math.round(base / 1.5e5)) };
+    })];
+  }));
+  const fmt = (n) => n >= 1e6 ? (n / 1e6).toFixed(1) + "M" : n >= 1e3 ? Math.round(n / 1e3) + "k" : String(Math.round(n));
+  const dfmt = (d) => d.toLocaleDateString("en-US", { month: "short", day: "numeric" });
+
+  let range = 30, filter = "all", metric = "all";
+  const visible = () => harnesses.filter((h) => filter === "all" || filter === h.id);
+  const val = (p) => metric === "all" ? p.cache + p.fresh : p.fresh;
+
+  function niceMax(v) { const e = Math.pow(10, Math.floor(Math.log10(v))); return Math.ceil(v / e / 2) * 2 * e; }
+
+  function renderCombined() {
+    const host = $("#combined-plot");
+    const W = Math.max(400, host.clientWidth || 900), Hh = 200, padL = 44, padB = 20, padT = 6;
+    const idx = days.map((_, i) => i).slice(DAYS - range);
+    const vis = visible();
+    const totals = idx.map((i) => vis.reduce((a, h) => a + val(data[h.id][i]), 0));
+    const yMax = niceMax(Math.max(...totals));
+    const plotH = Hh - padB - padT;
+    const bw = (W - padL) / idx.length;
+    const barW = Math.max(3, Math.min(22, bw - (range > 60 ? 1.5 : 4)));
+    const y = (v) => padT + plotH - (v / yMax) * plotH;
+    let out = "";
+    [0, 0.5, 1].forEach((f) => {
+      const yy = y(yMax * f);
+      out += `<line class="grid" x1="${padL}" x2="${W}" y1="${yy}" y2="${yy}"/><text class="ylab" x="${padL - 8}" y="${yy + 3}" text-anchor="end">${fmt(yMax * f)}</text>`;
+    });
+    idx.forEach((i, k) => {
+      const x = padL + k * bw + (bw - barW) / 2;
+      let acc = 0, segs = "";
+      const present = vis.filter((h) => val(data[h.id][i]) > 0);
+      present.forEach((h, j) => {
+        const v = val(data[h.id][i]);
+        const top = y(acc + v), bottom = y(acc) - (j > 0 ? 2 : 0);
+        const hgt = Math.max(0, bottom - top);
+        const last = j === present.length - 1;
+        segs += last
+          ? `<path class="s seg-${h.id}" d="M${x},${bottom} V${top + 3} Q${x},${top} ${x + 3},${top} H${x + barW - 3} Q${x + barW},${top} ${x + barW},${top + 3} V${bottom} Z"/>`
+          : `<rect class="s seg-${h.id}" x="${x}" y="${top}" width="${barW}" height="${hgt}"/>`;
+        acc += v;
+      });
+      out += `<g class="col" data-i="${i}"><rect fill="transparent" x="${padL + k * bw}" y="${padT}" width="${bw}" height="${plotH}"/>${segs}</g>`;
+    });
+    const ticks = range <= 7 ? idx.map((_, k) => k) : [0, Math.floor(idx.length / 4), Math.floor(idx.length / 2), Math.floor((3 * idx.length) / 4), idx.length - 1];
+    ticks.forEach((k, n) => {
+      const x = padL + k * bw + bw / 2;
+      const anchor = n === ticks.length - 1 && range > 7 ? "end" : "middle";
+      out += `<text class="axis" x="${anchor === "end" ? W - 2 : x}" y="${Hh - 4}" text-anchor="${anchor}">${dfmt(days[idx[k]])}</text>`;
+    });
+    host.innerHTML = `<svg width="${W}" height="${Hh}" viewBox="0 0 ${W} ${Hh}">${out}</svg>`;
+    const sum = totals.reduce((a, b) => a + b, 0);
+    $("#combined-tot").textContent = fmt(sum);
+    $("#combined-sub").textContent = `${filter === "all" ? "All harnesses" : H[filter].name} · ${metric === "all" ? "input + cache + output" : "input + output, cache reads excluded"} · last ${range} days`;
+    $("#legend").innerHTML = [...harnesses].reverse().map((h) => `<span class="${vis.includes(h) ? "" : "off"}"><i class="sw" style="background:var(--${h.id})"></i>${h.name}</span>`).join("");
+  }
+
+  function renderModels() {
+    const idx = days.map((_, i) => i).slice(DAYS - range);
+    const vis = visible().map((h) => h.id);
+    const rows = models.filter((m) => vis.includes(m.h)).map((m) => {
+      const pts = idx.map((i) => data[m.h][i]);
+      const cache = pts.reduce((a, p) => a + p.cache, 0) * m.share;
+      const fresh = pts.reduce((a, p) => a + p.fresh, 0) * m.share;
+      const turns = Math.round(pts.reduce((a, p) => a + p.turns, 0) * m.share);
+      return { ...m, cache, fresh, turns, v: metric === "all" ? cache + fresh : fresh, cost: (cache * 0.5 + fresh * 9) * m.price / 1e6 };
+    }).sort((a, b) => b.v - a.v);
+    let shown = rows.slice(0, 6);
+    const rest = rows.slice(6);
+    if (rest.length) shown.push({ id: `Other (${rest.length})`, h: null, v: rest.reduce((a, r) => a + r.v, 0), cache: rest.reduce((a, r) => a + r.cache, 0), fresh: rest.reduce((a, r) => a + r.fresh, 0), turns: rest.reduce((a, r) => a + r.turns, 0), cost: rest.reduce((a, r) => a + r.cost, 0) });
+    const max = Math.max(...shown.map((r) => r.v));
+    const total = rows.reduce((a, r) => a + r.v, 0);
+    $("#models-tot").textContent = fmt(total);
+    $("#models-plot").innerHTML = shown.map((r, k) =>
+      `<div class="hb${r.h ? "" : " other"}" data-k="${k}"><div class="nm">${r.h ? `<span class="dicon ${r.h}">${H[r.h].icon}</span>` : `<span class="dicon" style="background:#2a2c31;color:var(--muted)">…</span>`}<span>${r.id}</span></div>` +
+      `<div class="tr"><i style="width:${(r.v / max) * 100}%;background:${r.h ? `var(--${r.h})` : "var(--muted)"}"></i></div>` +
+      `<div class="v">${fmt(r.v)}</div></div>`).join("");
+    $("#models-plot")._rows = shown;
+  }
+
+  function render() {
+    renderCombined();
+    renderModels();
+    const idx = days.map((_, i) => i).slice(DAYS - range);
+    const pts = visible().flatMap((h) => idx.map((i) => data[h.id][i]));
+    const cache = pts.reduce((a, p) => a + p.cache, 0), fresh = pts.reduce((a, p) => a + p.fresh, 0);
+    $("#t-total").textContent = fmt(cache + fresh);
+    $("#t-cache").textContent = fmt(cache);
+    $("#t-in").textContent = fmt(fresh * 0.67);
+    $("#t-out").textContent = fmt(fresh * 0.33);
+    $("#t-cost").textContent = "$" + ((cache * 0.5 + fresh * 9) / 1e6).toFixed(2);
+  }
+  render();
+  addEventListener("resize", renderCombined);
+
+  const tip = $("#tip");
+  const place = (e) => { tip.style.display = "block"; tip.style.left = Math.min(innerWidth - 220, e.clientX + 14) + "px"; tip.style.top = e.clientY + 14 + "px"; };
+  $("#combined-plot").addEventListener("mousemove", (e) => {
+    const g = e.target.closest("g.col");
+    if (!g) { tip.style.display = "none"; return; }
+    const i = +g.dataset.i;
+    const vis = visible();
+    const rows = [...vis].reverse().map((h) => `<div class="r"><span><i class="sw" style="background:var(--${h.id});margin-right:6px"></i>${h.name}</span><span>${fmt(val(data[h.id][i]))}</span></div>`).join("");
+    const tot = vis.reduce((a, h) => a + val(data[h.id][i]), 0);
+    const turns = vis.reduce((a, h) => a + data[h.id][i].turns, 0);
+    tip.innerHTML = `<b>${dfmt(days[i])}</b>${rows}<div class="r" style="border-top:1px solid var(--border);margin-top:4px;padding-top:4px"><span>Total · ${turns} turns</span><span>${fmt(tot)}</span></div>`;
+    place(e);
+  });
+  $("#combined-plot").addEventListener("mouseleave", () => (tip.style.display = "none"));
+  $("#models-plot").addEventListener("mousemove", (e) => {
+    const row = e.target.closest(".hb");
+    if (!row) { tip.style.display = "none"; return; }
+    const r = $("#models-plot")._rows[+row.dataset.k];
+    tip.innerHTML = `<b>${r.id}</b>` +
+      `<div class="r"><span>Input + output</span><span>${fmt(r.fresh)}</span></div>` +
+      `<div class="r"><span>Cache read</span><span>${fmt(r.cache)}</span></div>` +
+      `<div class="r"><span>Turns</span><span>${r.turns}</span></div>` +
+      `<div class="r"><span>API-eq. cost</span><span>$${r.cost.toFixed(2)}</span></div>`;
+    place(e);
+  });
+  $("#models-plot").addEventListener("mouseleave", () => (tip.style.display = "none"));
+  $$("#range button").forEach((b) => b.addEventListener("click", () => {
+    $$("#range button").forEach((x) => x.classList.toggle("on", x === b));
+    range = +b.dataset.d; render();
+  }));
+  $$("#metric button").forEach((b) => b.addEventListener("click", () => {
+    $$("#metric button").forEach((x) => x.classList.toggle("on", x === b));
+    metric = b.dataset.m; render();
+  }));
+  $$(".chip").forEach((c) => c.addEventListener("click", () => {
+    $$(".chip").forEach((x) => x.classList.toggle("on", x === c));
+    filter = c.dataset.h; render();
+  }));
+  const initial = location.hash.slice(1);
+  if (initial) $(`.variants button[data-v="${initial}"]`)?.click();
+</script>
+</body>
+</html>

@@ -1,8 +1,20 @@
+import type { TodoItem } from "@cw-code/contracts";
+import { normalizeTodos } from "../todos.js";
+
 interface ToolPartState {
   status?: string;
   input?: unknown;
   output?: string;
   error?: unknown;
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
+  return value as Record<string, unknown>;
+}
+
+function asString(value: unknown): string {
+  return typeof value === "string" ? value : "";
 }
 
 function errorText(error: unknown): string | undefined {
@@ -35,4 +47,91 @@ export function toolResultFromState(
   const err = errorText(typed.error);
   if (err !== undefined) return { output: err.slice(0, 8000), isError: true };
   return { output: "", isError: typed.status === "error" };
+}
+
+export function parseOpencodeTodosUpdated(
+  event: unknown
+): { sessionID: string; todos: TodoItem[] } | null {
+  if (event === null || typeof event !== "object" || Array.isArray(event)) return null;
+  const args = event as Record<string, unknown>;
+  if (args["type"] !== "todo.updated") return null;
+  const props = args["properties"];
+  if (props === null || typeof props !== "object" || Array.isArray(props)) return null;
+  const sessionID = (props as Record<string, unknown>)["sessionID"];
+  if (typeof sessionID !== "string" || !sessionID) return null;
+  const todos = normalizeTodos(props);
+  if (todos === null) return null;
+  return { sessionID, todos };
+}
+
+export function parseOpencodeSessionParent(event: unknown): { sessionID: string; parentID: string } | null {
+  const args = asRecord(event);
+  if (!args) return null;
+  const type = args["type"];
+  if (type !== "session.created" && type !== "session.updated") return null;
+  const props = asRecord(args["properties"]) ?? asRecord(args["data"]);
+  if (!props) return null;
+  const info = asRecord(props["info"]) ?? props;
+  const sessionID = asString(info["id"]) || asString(info["sessionID"]) || asString(props["sessionID"]);
+  const parentID = asString(info["parentID"]) || asString(info["parentId"]);
+  if (!sessionID || !parentID) return null;
+  return { sessionID, parentID };
+}
+
+export function opencodeSessionParentId(payload: unknown): string | null {
+  const record = asRecord(payload);
+  const containers = [record, asRecord(record?.["data"]), asRecord(record?.["info"])];
+  for (const container of containers) {
+    const parentID = asString(container?.["parentID"]);
+    if (parentID) return parentID;
+  }
+  return null;
+}
+
+export interface OpencodeRetryStatus {
+  sessionID: string;
+  attempt: number;
+  message: string;
+  detail?: string;
+  retryAt: number;
+  link?: string;
+}
+
+export function parseOpencodeStatusRetry(event: unknown): OpencodeRetryStatus | null {
+  const args = asRecord(event);
+  if (!args || args["type"] !== "session.status") return null;
+  const props = asRecord(args["properties"]) ?? asRecord(args["data"]);
+  const status = asRecord(props?.["status"]);
+  if (!props || !status || status["type"] !== "retry") return null;
+  const sessionID = asString(props["sessionID"]);
+  const message = asString(status["message"]);
+  if (!sessionID || !message) return null;
+  const action = asRecord(status["action"]);
+  const attempt = typeof status["attempt"] === "number" && status["attempt"] > 0 ? Math.floor(status["attempt"]) : 0;
+  const next = status["next"];
+  const retryAt = typeof next === "number" && Number.isFinite(next) ? next : 0;
+  const detail = asString(action?.["message"]);
+  const link = asString(action?.["link"]);
+  return {
+    sessionID,
+    attempt,
+    message,
+    retryAt,
+    ...(detail ? { detail } : {}),
+    ...(link ? { link } : {})
+  };
+}
+
+export function parseOpencodeSessionError(event: unknown): { sessionID: string; name: string; message: string } | null {
+  const args = asRecord(event);
+  if (!args || args["type"] !== "session.error") return null;
+  const props = asRecord(args["properties"]) ?? asRecord(args["data"]);
+  const error = asRecord(props?.["error"]);
+  if (!props || !error) return null;
+  const sessionID = asString(props["sessionID"]);
+  const name = asString(error["name"]);
+  const data = asRecord(error["data"]);
+  const message = asString(data?.["message"]) || name;
+  if (!sessionID || !message) return null;
+  return { sessionID, name, message };
 }

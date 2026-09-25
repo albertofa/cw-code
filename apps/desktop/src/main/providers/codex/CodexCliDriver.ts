@@ -1,51 +1,91 @@
 import { randomUUID } from "node:crypto";
+import { existsSync } from "node:fs";
+import { isAbsolute } from "node:path";
 import type {
+  AccountUsageState,
   AppSettings,
   ApprovalDecision,
   ApprovalKind,
   CliDriver,
+  CommandInvocation,
+  CommandOption,
   HistoryMessage,
   ModelOption,
+  PermissionMode,
+  PermissionOption,
   SessionMeta,
+  SubagentToolsResult,
   ThreadEvent,
   TurnHandle,
+  TurnModelUsage,
   TurnRequest
 } from "@cw-code/contracts";
+import { isFullAccessMode } from "../permissions.js";
 import { assertInside } from "../../fs/FileService.js";
 import { parseExtraArgs } from "../../settings/settingsUtils.js";
 import { previewText, traceHarnessCall, truncateError } from "../../debug/harnessTrace.js";
 import { CodexAppServer, type CodexAppServerLike } from "./codexAppServer.js";
+import { mapCodexAccountGate, mapCodexUsage } from "./codexAccountUsage.js";
 import {
-  accumulateCodexUsage,
+  accumulateCodexTurnUsage,
   approvalResultFor,
+  buildCodexSkillInput,
   buildCodexUserInput,
   buildCommandApproval,
   buildFileChangeApproval,
   buildPermissionsApproval,
   buildUserInputQuestionRequest,
+  codexCollabTool,
+  codexReasoningText,
+  codexReviewTarget,
   codexUserInputResult,
   mapCodexEffort,
   mapCodexHistory,
   mapCodexModel,
+  mapCodexPlan,
+  mapCodexSkillCommands,
+  mapCodexSubagentTools,
   mapCodexThread,
   mapPermissionMode,
+  listCodexPermissionModes,
   type CodexCommandApprovalParams,
   type CodexFileChangeApprovalParams,
   type CodexModel,
   type CodexPermissionsApprovalParams,
+  type CodexPlanUpdate,
   type CodexThread,
   type CodexThreadItem,
+  type CodexTokenUsage,
   type CodexTurn,
+  type CodexTurnUsageAcc,
   type CodexUserInputParams
 } from "./codexProtocol.js";
+
+const CODEX_BUILTIN_COMMANDS: CommandOption[] = [
+  { name: "compact", description: "Summarize the thread to free context", dispatch: "native" },
+  {
+    name: "review",
+    description: "Review uncommitted changes, or follow custom instructions",
+    argumentHint: "[instructions]",
+    dispatch: "native"
+  }
+];
+
+type CodexCollaborationMode = {
+  mode: "plan";
+  settings: { model: string; reasoning_effort: string | null; developer_instructions: null };
+} | null;
 
 interface ActiveTurn {
   turnId: string;
   localSessionId: string;
   threadId: string;
-  inputTokens: number;
-  outputTokens: number;
+  requestedModel: string;
+  usageAcc: CodexTurnUsageAcc;
   numTurns: number;
+  permissionMode?: PermissionMode;
+  command?: string;
+  hasAssistantText?: boolean;
 }
 
 interface PendingApproval {
@@ -87,9 +127,12 @@ export class CodexCliDriver implements CliDriver {
   private ownsClient: boolean;
   private turns = new Map<string, ActiveTurn>();
   private turnByCodexId = new Map<string, string>();
+  private threadLastTotal = new Map<string, number>();
   private approvals = new Map<string, PendingApproval>();
   private pendingQuestions = new Map<string, { serverId: string | number; turnId: string }>();
+  private reasoningKinds = new Map<string, Map<string, "summary" | "text">>();
   private defaultModelIdCache: string | null = null;
+  private skillPaths = new Map<string, Map<string, string>>();
 
   constructor(
     private emit: (event: ThreadEvent) => void,
@@ -188,6 +231,18 @@ export class CodexCliDriver implements CliDriver {
     }
   }
 
+  async getSubagentTools(_projectRoot: string, _resumeCursor: string, agentId: string): Promise<SubagentToolsResult> {
+    if (!agentId) return { items: [] };
+    const res = await this.client.request<ThreadReadResponse>("thread/read", {
+      threadId: agentId,
+      includeTurns: true
+    });
+    return {
+      items: mapCodexSubagentTools(res.thread),
+      ...(res.thread.model ? { model: res.thread.model } : {})
+    };
+  }
+
   async listModels(_cwd: string): Promise<ModelOption[]> {
     const start = Date.now();
     const operation = "codex.listModels";
@@ -201,6 +256,7 @@ export class CodexCliDriver implements CliDriver {
           ...(cursor ? { cursor } : {})
         });
         for (const model of res.data ?? []) {
+          if (model.isDefault) this.defaultModelIdCache = model.id;
           if (seen.has(model.id) || model.hidden) continue;
           seen.add(model.id);
           models.push(mapCodexModel(model));
@@ -228,8 +284,60 @@ export class CodexCliDriver implements CliDriver {
     }
   }
 
+  async listCommands(cwd: string): Promise<CommandOption[]> {
+    const start = Date.now();
+    const operation = "codex.listCommands";
+    try {
+      const res = await this.client.request<unknown>("skills/list", { cwds: [cwd] });
+      const { commands, paths } = mapCodexSkillCommands(res);
+      this.skillPaths.set(cwd, paths);
+      traceHarnessCall({
+        harness: "codex",
+        operation,
+        cwd,
+        durationMs: Date.now() - start,
+        ok: true,
+        extra: { count: commands.length }
+      });
+      return [...CODEX_BUILTIN_COMMANDS, ...commands];
+    } catch (err) {
+      const message = truncateError((err as Error).message);
+      console.warn(`codex skills/list failed, falling back to built-in commands: ${message}`);
+      traceHarnessCall({
+        harness: "codex",
+        operation,
+        cwd,
+        durationMs: Date.now() - start,
+        ok: false,
+        error: message
+      });
+      return [...CODEX_BUILTIN_COMMANDS];
+    }
+  }
+
+  private async resolveSkillPath(cwd: string, name: string): Promise<string | null> {
+    const cached = this.skillPaths.get(cwd)?.get(name);
+    if (cached) return cached;
+    const res = await this.client.request<unknown>("skills/list", { cwds: [cwd], forceReload: true });
+    const { paths } = mapCodexSkillCommands(res);
+    this.skillPaths.set(cwd, paths);
+    return paths.get(name) ?? null;
+  }
+
   startTurn(request: TurnRequest): TurnHandle {
     const turnId = randomUUID();
+    if (request.command?.name === "compact" && !request.resumeCursor) {
+      traceHarnessCall({
+        harness: "codex",
+        operation: "codex.startTurn",
+        sessionId: request.sessionId,
+        turnId,
+        cwd: request.cwd,
+        ok: false,
+        error: "Nothing to compact yet"
+      });
+      throw new Error("Nothing to compact yet");
+    }
     const preview = previewText(request.prompt);
     traceHarnessCall({
       harness: "codex",
@@ -260,12 +368,17 @@ export class CodexCliDriver implements CliDriver {
         turnId,
         localSessionId: request.sessionId,
         threadId,
-        inputTokens: 0,
-        outputTokens: 0,
-        numTurns: 0
+        requestedModel: request.model ?? "",
+        usageAcc: {
+          counts: { inputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 0, reasoningTokens: 0 },
+          lastTotal: this.threadLastTotal.get(threadId)
+        },
+        numTurns: 0,
+        ...(request.permissionMode ? { permissionMode: request.permissionMode } : {}),
+        ...(request.command ? { command: request.command.name } : {})
       };
       this.turns.set(turnId, active);
-      const collaborationMode = perms.planMode
+      const collaborationMode: CodexCollaborationMode = perms.planMode
         ? {
             mode: "plan" as const,
             settings: {
@@ -275,7 +388,29 @@ export class CodexCliDriver implements CliDriver {
             }
           }
         : null;
+
+      if (request.command) {
+        const codexTurnId = await this.startCommandTurn(threadId, request, collaborationMode);
+        if (codexTurnId) this.turnByCodexId.set(codexTurnId, turnId);
+        traceHarnessCall({
+          harness: "codex",
+          operation: "codex.turnStarted",
+          sessionId: request.sessionId,
+          turnId,
+          cwd: request.cwd,
+          durationMs: Date.now() - start,
+          ok: true,
+          extra: { threadId, command: request.command.name, ...(codexTurnId ? { codexTurnId } : {}) }
+        });
+        return;
+      }
+
       const attachments = (request.attachments ?? []).filter((rel) => {
+        if (isAbsolute(rel)) {
+          if (existsSync(rel)) return true;
+          console.warn(`attachment escapes project root, skipped: ${rel}`);
+          return false;
+        }
         try {
           assertInside(request.cwd, rel);
           return true;
@@ -306,6 +441,7 @@ export class CodexCliDriver implements CliDriver {
       });
     } catch (err) {
       this.turns.delete(turnId);
+      this.reasoningKinds.delete(turnId);
       traceHarnessCall({
         harness: "codex",
         operation: "codex.startTurn",
@@ -318,6 +454,37 @@ export class CodexCliDriver implements CliDriver {
       });
       this.emit({ type: "turn.error", turnId, message: truncateError((err as Error).message) });
     }
+  }
+
+  private async startCommandTurn(
+    threadId: string,
+    request: TurnRequest,
+    collaborationMode: CodexCollaborationMode
+  ): Promise<string | null> {
+    const command = request.command as CommandInvocation;
+    if (command.name === "compact") {
+      await this.client.request<unknown>("thread/compact/start", { threadId });
+      return null;
+    }
+    if (command.name === "review") {
+      const res = await this.client.request<{ turn: { id: string }; reviewThreadId: string }>("review/start", {
+        threadId,
+        target: codexReviewTarget(command.args),
+        delivery: "inline"
+      });
+      return res.turn.id;
+    }
+    const path = await this.resolveSkillPath(request.cwd, command.name);
+    if (!path) throw new Error(`Unknown command: /${command.name}`);
+    const effort = mapCodexEffort(request.effort);
+    const res = await this.client.request<TurnStartResponse>("turn/start", {
+      threadId,
+      input: buildCodexSkillInput(command.name, path, command.args),
+      ...(request.model ? { model: request.model } : {}),
+      ...(effort ? { effort } : {}),
+      ...(collaborationMode ? { collaborationMode } : {})
+    });
+    return res.turn.id;
   }
 
   private async startThread(
@@ -458,7 +625,28 @@ export class CodexCliDriver implements CliDriver {
       case "item/agentMessage/delta": {
         const active = this.turnForCodexId(String(p["turnId"] ?? ""), typeof p["threadId"] === "string" ? p["threadId"] : undefined);
         const delta = typeof p["delta"] === "string" ? p["delta"] : "";
-        if (active && delta) this.emit({ type: "assistant.delta", turnId: active.turnId, text: delta });
+        if (active && delta) {
+          active.hasAssistantText = true;
+          this.emit({ type: "assistant.delta", turnId: active.turnId, text: delta });
+        }
+        break;
+      }
+      case "item/reasoning/summaryTextDelta":
+      case "item/reasoning/textDelta": {
+        const active = this.turnForCodexId(String(p["turnId"] ?? ""), typeof p["threadId"] === "string" ? p["threadId"] : undefined);
+        const delta = typeof p["delta"] === "string" ? p["delta"] : "";
+        if (!active || !delta) break;
+        const kind = method === "item/reasoning/summaryTextDelta" ? "summary" : "text";
+        const itemId = String(p["itemId"] ?? "");
+        let kinds = this.reasoningKinds.get(active.turnId);
+        if (!kinds) {
+          kinds = new Map();
+          this.reasoningKinds.set(active.turnId, kinds);
+        }
+        const seen = kinds.get(itemId);
+        if (seen !== undefined && seen !== kind) break;
+        kinds.set(itemId, kind);
+        this.emit({ type: "reasoning.delta", turnId: active.turnId, text: delta });
         break;
       }
       case "item/started": {
@@ -473,16 +661,46 @@ export class CodexCliDriver implements CliDriver {
         const item = p["item"] as CodexThreadItem | undefined;
         const active = this.turnForCodexId(String(p["turnId"] ?? ""), typeof p["threadId"] === "string" ? p["threadId"] : undefined);
         if (!item || !active) break;
+        if (item.type === "reasoning") {
+          const kinds = this.reasoningKinds.get(active.turnId);
+          const streamed = typeof item.id === "string" && kinds?.has(item.id) === true;
+          const text = streamed ? "" : codexReasoningText(item);
+          if (text) this.emit({ type: "reasoning.delta", turnId: active.turnId, text });
+          break;
+        }
+        if (item.type === "contextCompaction") {
+          if (active.command === "compact") {
+            const text = active.hasAssistantText ? "\n\nContext compacted." : "Context compacted.";
+            active.hasAssistantText = true;
+            this.emit({ type: "assistant.delta", turnId: active.turnId, text });
+          }
+          break;
+        }
+        if (item.type === "exitedReviewMode") {
+          if (item.review && !active.hasAssistantText) {
+            active.hasAssistantText = true;
+            this.emit({ type: "assistant.delta", turnId: active.turnId, text: item.review });
+          }
+          break;
+        }
         const result = this.toolResultFor(item, active.turnId);
         if (result) this.emit(result);
         break;
       }
+      case "turn/plan/updated": {
+        const active = this.turnForCodexId(String(p["turnId"] ?? ""), typeof p["threadId"] === "string" ? p["threadId"] : undefined);
+        if (!active) break;
+        const todos = mapCodexPlan((p as unknown as CodexPlanUpdate)["plan"]);
+        if (todos !== null) this.emit({ type: "todo.updated", turnId: active.turnId, todos });
+        break;
+      }
       case "thread/tokenUsage/updated": {
         const active = this.turnForCodexId(String(p["turnId"] ?? ""), typeof p["threadId"] === "string" ? p["threadId"] : undefined);
-        const usage = p["tokenUsage"] as { last?: Record<string, unknown> } | undefined;
+        const usage = p["tokenUsage"] as CodexTokenUsage | undefined;
         if (active && usage?.last) {
-          accumulateCodexUsage(active, usage as never);
-          active.numTurns += 1;
+          const applied = accumulateCodexTurnUsage(active.usageAcc, usage);
+          if (active.usageAcc.lastTotal !== undefined) this.threadLastTotal.set(active.threadId, active.usageAcc.lastTotal);
+          if (applied) active.numTurns += 1;
         }
         break;
       }
@@ -519,6 +737,7 @@ export class CodexCliDriver implements CliDriver {
     if (!active) return;
     const driverTurnId = active.turnId;
     this.turns.delete(driverTurnId);
+    this.reasoningKinds.delete(driverTurnId);
     for (const codexId of [...this.turnByCodexId].filter(([, id]) => id === driverTurnId).map(([codexId]) => codexId)) {
       this.turnByCodexId.delete(codexId);
     }
@@ -535,17 +754,26 @@ export class CodexCliDriver implements CliDriver {
       });
       return;
     }
+    const { counts } = active.usageAcc;
+    const hasUsage =
+      counts.inputTokens > 0 ||
+      counts.cacheReadTokens > 0 ||
+      counts.cacheWriteTokens > 0 ||
+      counts.outputTokens > 0 ||
+      counts.reasoningTokens > 0;
+    const model = active.requestedModel || this.defaultModelIdCache || "codex";
+    const usage: TurnModelUsage[] = hasUsage ? [{ ...counts, model, costUsd: null }] : [];
     this.emit({
       type: "turn.done",
       turnId: driverTurnId,
       sessionId: active.localSessionId,
       resumeCursor: threadId || active.threadId,
       resultText: "",
-      inputTokens: active.inputTokens,
-      outputTokens: active.outputTokens,
-      costUsd: 0,
+      usage,
+      ...(active.usageAcc.context ? { context: active.usageAcc.context } : {}),
       numTurns: Math.max(1, active.numTurns),
-      isError: false
+      isError: false,
+      backgroundTasks: 0
     });
   }
 
@@ -592,8 +820,23 @@ export class CodexCliDriver implements CliDriver {
           name: "request_user_input",
           input: item.questions ?? null
         };
-      default:
-        return null;
+      default: {
+        const collab = codexCollabTool(item);
+        if (!collab) return null;
+        return {
+          type: "tool.call",
+          turnId,
+          toolCallId: item.id ?? `codex-collab-${collab.tool}`,
+          name: `collab:${collab.tool}`,
+          input: {
+            tool: collab.tool,
+            prompt: collab.prompt ?? "",
+            receiverThreadIds: collab.receiverThreadIds,
+            ...(collab.senderThreadId ? { senderThreadId: collab.senderThreadId } : {}),
+            ...(collab.agentsStates !== undefined ? { agentsStates: collab.agentsStates } : {})
+          }
+        };
+      }
     }
   }
 
@@ -635,8 +878,24 @@ export class CodexCliDriver implements CliDriver {
           isError
         };
       }
-      default:
-        return null;
+      default: {
+        const collab = codexCollabTool(item);
+        if (!collab) return null;
+        const isError = item.status === "failed" || item.status === "declined";
+        const target = collab.receiverThreadIds[0];
+        const output =
+          collab.agentsStates !== undefined
+            ? truncateError(JSON.stringify(collab.agentsStates), 8000)
+            : `${collab.tool}${target ? ` → ${target}` : ""}`;
+        return {
+          type: "tool.result",
+          turnId,
+          toolCallId: item.id ?? `codex-collab-${collab.tool}`,
+          output,
+          isError,
+          ...(target ? { agentId: target } : {})
+        };
+      }
     }
   }
 
@@ -729,6 +988,19 @@ export class CodexCliDriver implements CliDriver {
         return;
     }
     this.approvals.set(requestId, approval);
+    if (isFullAccessMode(active.permissionMode)) {
+      this.approvals.delete(requestId);
+      this.client.respond(id, approvalResultFor(approval.kind, "accept", approval.requestedPermissions));
+      this.emit({ type: "approval.resolved", turnId: active.turnId, requestId });
+      traceHarnessCall({
+        harness: "codex",
+        operation: "codex.permissions.autoApprove",
+        resumeCursor: String(id),
+        ok: true,
+        extra: { kind: approval.kind }
+      });
+      return;
+    }
     this.emit(requestEvent);
   }
 
@@ -748,6 +1020,26 @@ export class CodexCliDriver implements CliDriver {
   }
 
   async *events(): AsyncIterable<never> {}
+
+  async listPermissionModes(): Promise<PermissionOption[]> {
+    return listCodexPermissionModes();
+  }
+
+  async getAccountUsage(): Promise<AccountUsageState> {
+    try {
+      const accountRes = await this.client.request<unknown>("account/read", { refreshToken: false });
+      const gate = mapCodexAccountGate(accountRes);
+      if (gate) return gate;
+      const rateLimitsRes = await this.client.request<unknown>("account/rateLimits/read", {});
+      return mapCodexUsage(accountRes, rateLimitsRes, Date.now());
+    } catch (err) {
+      const message = truncateError((err as Error).message);
+      if (/ENOENT|failed to spawn/i.test((err as Error).message ?? "")) {
+        return { status: "unavailable", reason: "not-installed", message: "Codex isn't installed. Set its path in Settings → Harnesses → Codex." };
+      }
+      return { status: "error", message };
+    }
+  }
 
   dispose(): void {
     if (this.ownsClient) this.client.dispose();
