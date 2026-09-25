@@ -71,8 +71,10 @@ config-schema changes relevant to this app:
   `win.signingHashAlgorithms`, `win.rfc3161TimeStampServer`/`timeStampServer`,
   `win.additionalCertificateFile` were all removed in favor of `win.signExecutable`
   and the broader `signtoolOptions`/Azure signing configuration. None of these were
-  set in our config, so this is a no-op for step 01; it matters once production
-  signing (a later step) configures `win`.
+  set in our config, so this was a no-op for step 01. Production signing does not
+  use them either: electron-builder never signs (`win.signExecutable: false`), and
+  only `signtoolOptions.publisherName` is injected in CI. See
+  [windows-signing.md](windows-signing.md).
 - Top-level `includeSubNodeModules` was removed; not used here.
 - `includePdb` now defaults to `false` (previously PDB files could leak into the
   package unless manually filtered). This is why `*.pdb` files that ship alongside
@@ -129,6 +131,12 @@ pnpm --filter @cw-code/desktop dist:dir   # same, but --dir (unpacked win-unpack
 
 Both always pass `--publish never`; no credentials are read or required. Root
 `pnpm dist` forwards to the desktop package's `dist` script.
+
+Local builds are **unsigned and non-production**. `win.signExecutable: false` stops
+electron-builder from signing anything, even with `CSC_LINK` set, and no
+`publisherName` is written to `app-update.yml`, so updater signature verification is
+off in these builds. Signed releases only come from `.github/workflows/sign-windows.yml`;
+see [windows-signing.md](windows-signing.md).
 
 ## Verifying a build
 
