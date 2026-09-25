@@ -12,11 +12,13 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         with:
           version: 11.5.3
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
           cache: pnpm
@@ -31,11 +33,13 @@ jobs:
     runs-on: windows-latest
     timeout-minutes: 45
     steps:
-      - uses: actions/checkout@v4
-      - uses: pnpm/action-setup@v4
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
         with:
           version: 11.5.3
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
         with:
           node-version: 24
           cache: pnpm
@@ -52,9 +56,15 @@ jobs:
       - name: Compute a CI-only upgrade-test version above the package version, below the next release
         id: ci_version
         shell: bash
+        env:
+          RUN_NUMBER: ${{ github.run_number }}
         run: |
           BASE=$(node -p "require('./apps/desktop/package.json').version")
-          echo "value=${BASE}.ci.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+          if [[ "$BASE" == *-* ]]; then
+            echo "value=${BASE}.ci.${RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+          else
+            echo "value=${BASE}-0.ci.${RUN_NUMBER}" >> "$GITHUB_OUTPUT"
+          fi
       - name: Package installer for upgrade tests (separate output dir, CI-only version)
         run: pnpm --filter @cw-code/desktop exec electron-builder --win nsis --x64 --publish never -c.extraMetadata.version=${{ steps.ci_version.outputs.value }} -c.directories.output=dist-ci
       - name: Reject any update autotest path in the upgrade-test package
@@ -69,7 +79,7 @@ jobs:
         run: node scripts/verify-windows-package.mjs --dist apps/desktop/dist-ci --upgrade-from legacy-installer/cw-code.Setup.0.0.1-alpha.21.exe --custom-dir "${{ runner.temp }}\cw-code-custom"
       - name: Upgrade test (per-machine /allusers)
         run: node scripts/verify-windows-package.mjs --dist apps/desktop/dist-ci --upgrade-from legacy-installer/cw-code.Setup.0.0.1-alpha.21.exe --per-machine
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
           name: windows-package
