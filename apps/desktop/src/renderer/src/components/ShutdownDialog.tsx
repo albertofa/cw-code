@@ -84,6 +84,12 @@ export function ShutdownDialog() {
           </div>
         ) : (
           <>
+            {state.reason === "update" && (
+              <div className="confirm-message">
+                cw-code will close, run the installer and reopen. Your projects, sessions and settings are kept, and sessions
+                resume their CLI context afterwards. Live terminals are stopped, and nothing is resent automatically.
+              </div>
+            )}
             {activeTurns.length > 0 && (
               <section className="shutdown-section" aria-label="Active turns">
                 <div className="shutdown-section-title">{plural(activeTurns.length, "turn")} still running</div>

@@ -36,6 +36,7 @@ import { expiredHoldingIds } from "../components/workingSet.js";
 import { defaultNewSessionProjectId, discoveredOwnerId, discoveryProjectId } from "../components/projectRecency.js";
 import { useNotifs } from "../components/Notifications.js";
 import { ipcErrorMessage } from "../components/ipcError.js";
+import { shouldApplyUpdateState } from "./updateThrottle.js";
 
 const GIT_REFRESH_BATCH = 6;
 const PENDING_PREFIX = "pending:";
@@ -45,6 +46,7 @@ function hasLoadedMessages(messages: ChatMessage[] | undefined): boolean {
   return (messages ?? []).some((m) => m.turnId !== LOCAL_NOTICE_TURN_ID);
 }
 let pendingSeq = 0;
+let lastUpdateAppliedAt = 0;
 let pendingPromptInFlight = false;
 
 function nextPendingTurnId(): string {
@@ -222,6 +224,8 @@ interface AppState {
   checkForUpdates(): Promise<UpdateActionResult>;
   downloadUpdate(): Promise<UpdateActionResult>;
   setUpdateChannel(channel: UpdateChannel): Promise<UpdateActionResult>;
+  setUpdateBackgroundDownload(enabled: boolean): Promise<AppSettings>;
+  updateRestartPending: boolean;
 }
 
 function isSubagentToolName(name?: string): boolean {
@@ -332,6 +336,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   defaultUseWorktree: true,
   reasoningExpandedByDriver: { claude: false, opencode: false, codex: false },
   updates: null,
+  updateRestartPending: false,
 
   subscribeUpdates() {
     const off = window.cw.updates.onChanged((state) => get().applyUpdateState(state));
@@ -343,8 +348,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   applyUpdateState(state: UpdateState) {
-    const current = get().updates;
-    if (current && state.seq < current.seq) return;
+    const now = Date.now();
+    if (!shouldApplyUpdateState(get().updates, state, lastUpdateAppliedAt, now)) return;
+    lastUpdateAppliedAt = now;
     set({ updates: state });
   },
 
@@ -364,6 +370,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     const result = await window.cw.updates.setChannel(channel);
     get().applyUpdateState(result.state);
     return result;
+  },
+
+  setUpdateBackgroundDownload(enabled: boolean) {
+    return window.cw.setSettings({ updateBackgroundDownload: enabled });
   },
 
   setPendingPrefs(prefs: ComposerPrefs) {

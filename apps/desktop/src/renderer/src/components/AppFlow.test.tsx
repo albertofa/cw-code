@@ -76,7 +76,7 @@ function installBridge(): void {
       return () => {};
     },
     onSessionTitle: noop,
-    shutdown: { onRequested: noop },
+    shutdown: { onRequested: noop, onExpired: noop },
     onWindowMaximized: noop,
     isWindowMaximized: async () => false,
     getTerminalFont: async () => null

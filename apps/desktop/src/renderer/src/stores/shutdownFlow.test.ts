@@ -4,6 +4,7 @@ import type { ShutdownAssessment, ShutdownPrepareRequest, ShutdownPrepareResult 
 import { useAppStore } from "./appStore.js";
 import { useEditorBuffers } from "./editorBuffers.js";
 import {
+  handleShutdownExpired,
   hasShutdownBlockers,
   runShutdownFlow,
   shutdownCancel,
@@ -177,6 +178,24 @@ describe("runShutdownFlow", () => {
     await shutdownForce();
     expect(api.forceCalls).toEqual(["token-9"]);
     expect(await pending).toEqual({ token: "token-9" });
+  });
+
+  it("closes a stale timeout dialog when main reports the lease expired", async () => {
+    api.prepareResults = [{ ok: false, code: "timeout", pending: ["claude"], token: "token-3" }];
+    const pending = runShutdownFlow("update");
+    await settle();
+    handleShutdownExpired();
+    expect(await pending).toBeNull();
+    expect(useAppStore.getState().shutdown).toBeNull();
+    expect(api.cancelCalls).toEqual([]);
+  });
+
+  it("ignores an expiry while the dialog is still waiting for a decision without a token", async () => {
+    api.assessments = [BUSY];
+    void runShutdownFlow("quit");
+    await settle();
+    handleShutdownExpired();
+    expect(useAppStore.getState().shutdown).toMatchObject({ phase: "review" });
   });
 
   it("cancelling after a timeout restores services and returns to normal use", async () => {

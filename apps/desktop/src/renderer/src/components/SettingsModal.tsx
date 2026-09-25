@@ -32,6 +32,7 @@ import { concreteFilterId } from "./projectRecency.js";
 import { usePanelStore } from "../stores/panelStore.js";
 import { useNotifs } from "./Notifications.js";
 import { MenuSelect } from "./MenuSelect.js";
+import { UpdatesSettings } from "./UpdatesSettings.js";
 import { DriverIcon } from "./DriverIcon.js";
 import appIcon from "../assets/console-c.svg";
 import { version as appVersion, description as appDescription } from "../../../../package.json";
@@ -102,7 +103,7 @@ const EFFORTS: Array<{ id: EffortLevel; label: string }> = [
   { id: "max", label: "Max" }
 ];
 
-type Category = "general" | "sourceControl" | "prWorkflows" | "harnesses";
+type Category = "general" | "updates" | "sourceControl" | "prWorkflows" | "harnesses";
 type Harness = DriverName;
 
 export function SettingsModal({
@@ -1220,6 +1221,13 @@ export function SettingsModal({
               General
             </button>
             <button
+              className={`settings-nav-item${category === "updates" ? " active" : ""}`}
+              onClick={() => setCategory("updates")}
+              aria-current={category === "updates"}
+            >
+              Updates
+            </button>
+            <button
               className={`settings-nav-item${category === "sourceControl" ? " active" : ""}`}
               onClick={() => setCategory("sourceControl")}
               aria-current={category === "sourceControl"}
@@ -1287,6 +1295,7 @@ export function SettingsModal({
                 </section>
               </>
             )}
+            {!loading && !loadError && draft && category === "updates" && <UpdatesSettings draft={draft} fallbackVersion={appVersion} onDraftChange={set} />}
             {!loading && !loadError && draft && category === "sourceControl" && sourceControlFields}
             {!loading && !loadError && draft && category === "prWorkflows" && prWorkflowsFields}
             {!loading && !loadError && draft && category === "harnesses" && (

@@ -267,6 +267,16 @@ export async function shutdownCancel(): Promise<void> {
   }
 }
 
+export function handleShutdownExpired(): void {
+  const flow = active;
+  if (!flow || !flow.token) return;
+  flow.token = null;
+  finish(null, {
+    title: `${actionLabel(flow.reason)} cancelled`,
+    message: "cw-code waited too long for a decision and restored normal use. Start again when you are ready."
+  });
+}
+
 export async function handleQuitRequest(): Promise<void> {
   if (active) {
     await refreshShutdownAssessment();
