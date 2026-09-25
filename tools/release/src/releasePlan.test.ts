@@ -1,20 +1,26 @@
 import { describe, expect, it } from "vitest";
 import { createFixtureReleaseSource, type FixtureRelease } from "./fixtures/fixtureReleaseSource.ts";
-import { buildAlphaPlan, buildStablePromotionPlan, verifyPlan, type ReleasePlan } from "./releasePlan.ts";
+import type { ReleasePlan } from "./planValidation.ts";
+import { buildAlphaPlan, buildStablePromotionPlan, verifyPlan } from "./releasePlan.ts";
+import type { ReleaseSource } from "./releaseSource.ts";
 import { parseVersion } from "./semver.ts";
 
+function sha(label: string): string {
+  return label.repeat(40).slice(0, 40);
+}
+
 const SHA = {
-  c1: "1111111",
-  c2: "2222222",
-  c3: "3333333",
-  c4: "4444444",
-  c5: "5555555",
-  c6: "6666666",
-  c7: "7777777",
-  c8: "8888888",
-  c9: "9999999",
-  c10: "aaaaaaa",
-  c11: "bbbbbbb"
+  c1: sha("1"),
+  c2: sha("2"),
+  c3: sha("3"),
+  c4: sha("4"),
+  c5: sha("5"),
+  c6: sha("6"),
+  c7: sha("7"),
+  c8: sha("8"),
+  c9: sha("9"),
+  c10: sha("a"),
+  c11: sha("b")
 };
 
 const BASE_COMMIT_LOG = [
@@ -29,7 +35,7 @@ const BASE_COMMIT_LOG = [
   { sha: SHA.c9, subject: "chore(release): v0.0.1-alpha.21" }
 ];
 
-function baseRelease(tag: string, sha: string, overrides: Partial<FixtureRelease> = {}): FixtureRelease {
+function baseRelease(tag: string, releaseSha: string, overrides: Partial<FixtureRelease> = {}): FixtureRelease {
   return {
     tagName: tag,
     targetCommitish: "main",
@@ -37,7 +43,7 @@ function baseRelease(tag: string, sha: string, overrides: Partial<FixtureRelease
     prerelease: false,
     publishedAt: "2026-09-24T00:00:00Z",
     htmlUrl: `https://github.com/albertofa/cw-code/releases/tag/${tag}`,
-    sha,
+    sha: releaseSha,
     ...overrides
   };
 }
@@ -77,14 +83,36 @@ describe("buildAlphaPlan", () => {
     const source = createFixtureReleaseSource({ releases: BASE_RELEASES, head: SHA.c9, commitLog: BASE_COMMIT_LOG });
     const now = new Date("2026-09-25T06:00:00Z");
     const result = await buildAlphaPlan({ source, now, desktopVersion: parseVersion("0.0.1-alpha.21") });
-    expect(result.status).toBe("skip");
+    expect(result).toEqual({ status: "skip", reason: expect.stringContaining("matches the latest published release") });
   });
 
   it("skips within the 6-hour coalescing window even with a new commit", async () => {
     const source = createFixtureReleaseSource({ releases: BASE_RELEASES, head: SHA.c10, commitLog });
     const now = new Date("2026-09-24T23:30:00Z");
     const result = await buildAlphaPlan({ source, now, desktopVersion: parseVersion("0.0.1-alpha.21") });
-    expect(result.status).toBe("skip");
+    expect(result).toEqual({ status: "skip", reason: expect.stringContaining("6-hour coalescing window") });
+  });
+
+  it("force bypasses the 6-hour window but not the unchanged-HEAD skip", async () => {
+    const withinWindow = new Date("2026-09-24T23:30:00Z");
+
+    const unchangedSource = createFixtureReleaseSource({ releases: BASE_RELEASES, head: SHA.c9, commitLog: BASE_COMMIT_LOG });
+    const stillSkipped = await buildAlphaPlan({
+      source: unchangedSource,
+      now: withinWindow,
+      desktopVersion: parseVersion("0.0.1-alpha.21"),
+      force: true
+    });
+    expect(stillSkipped.status).toBe("skip");
+
+    const changedSource = createFixtureReleaseSource({ releases: BASE_RELEASES, head: SHA.c10, commitLog });
+    const planned = await buildAlphaPlan({
+      source: changedSource,
+      now: withinWindow,
+      desktopVersion: parseVersion("0.0.1-alpha.21"),
+      force: true
+    });
+    expect(planned.status).toBe("planned");
   });
 
   it("is deterministic across reruns given the same inputs", async () => {
@@ -105,6 +133,22 @@ describe("buildAlphaPlan", () => {
     await expect(
       buildAlphaPlan({ source, now: new Date("2026-09-25T06:00:00Z"), desktopVersion: parseVersion("0.0.1-alpha.21") })
     ).rejects.toThrow();
+  });
+
+  it("rejects a base that is behind the highest published alpha base, even with force", async () => {
+    const source = createFixtureReleaseSource({
+      releases: [...BASE_RELEASES, baseRelease("v0.0.2-alpha.0", SHA.c10)],
+      head: SHA.c10,
+      commitLog
+    });
+    await expect(
+      buildAlphaPlan({
+        source,
+        now: new Date("2026-09-25T06:00:00Z"),
+        desktopVersion: parseVersion("0.0.1-alpha.21"),
+        force: true
+      })
+    ).rejects.toThrow(/behind the highest published alpha base/);
   });
 });
 
@@ -140,6 +184,44 @@ describe("buildStablePromotionPlan", () => {
       candidateInput: SHA.c9
     });
     expect(result.status).toBe("planned");
+  });
+
+  it("accepts a tag candidate whose resolved SHA matches an explicit --expected-sha", async () => {
+    const source = createFixtureReleaseSource({ releases: BASE_RELEASES, head: SHA.c9, commitLog: BASE_COMMIT_LOG });
+    const result = await buildStablePromotionPlan({
+      source,
+      now: new Date("2026-09-25T06:00:00Z"),
+      desktopVersion: parseVersion("0.0.1-alpha.21"),
+      candidateInput: "v0.0.1-alpha.21",
+      expectedSha: SHA.c9
+    });
+    expect(result.status).toBe("planned");
+  });
+
+  it("rejects a tag candidate whose resolved SHA does not match an explicit --expected-sha", async () => {
+    const source = createFixtureReleaseSource({ releases: BASE_RELEASES, head: SHA.c9, commitLog: BASE_COMMIT_LOG });
+    await expect(
+      buildStablePromotionPlan({
+        source,
+        now: new Date("2026-09-25T06:00:00Z"),
+        desktopVersion: parseVersion("0.0.1-alpha.21"),
+        candidateInput: "v0.0.1-alpha.21",
+        expectedSha: SHA.c8
+      })
+    ).rejects.toThrow(/does not match --expected-sha/);
+  });
+
+  it("rejects an ambiguous SHA that resolves to more than one published alpha tag", async () => {
+    const releases = BASE_RELEASES.map((entry) => (entry.tagName === "v0.0.1-alpha.20" ? { ...entry, sha: SHA.c9 } : entry));
+    const source = createFixtureReleaseSource({ releases, head: SHA.c9, commitLog: BASE_COMMIT_LOG });
+    await expect(
+      buildStablePromotionPlan({
+        source,
+        now: new Date("2026-09-25T06:00:00Z"),
+        desktopVersion: parseVersion("0.0.1-alpha.21"),
+        candidateInput: SHA.c9
+      })
+    ).rejects.toThrow(/matches multiple published alpha tags/);
   });
 
   it("rejects a candidate whose base does not match the intended stable base", async () => {
@@ -184,6 +266,18 @@ describe("buildStablePromotionPlan", () => {
     ).rejects.toThrow(/missing tag/);
   });
 
+  it("rejects a SHA shorter than 40 hex characters even if a tag resolves to a matching prefix", async () => {
+    const source = createFixtureReleaseSource({ releases: BASE_RELEASES, head: SHA.c9, commitLog: BASE_COMMIT_LOG });
+    await expect(
+      buildStablePromotionPlan({
+        source,
+        now: new Date("2026-09-25T06:00:00Z"),
+        desktopVersion: parseVersion("0.0.1-alpha.21"),
+        candidateInput: SHA.c9.slice(0, 10)
+      })
+    ).rejects.toThrow(/does not match any published release tag/);
+  });
+
   it("rejects a SHA that does not resolve to any published candidate", async () => {
     const source = createFixtureReleaseSource({ releases: BASE_RELEASES, head: SHA.c9, commitLog: BASE_COMMIT_LOG });
     await expect(
@@ -191,7 +285,7 @@ describe("buildStablePromotionPlan", () => {
         source,
         now: new Date("2026-09-25T06:00:00Z"),
         desktopVersion: parseVersion("0.0.1-alpha.21"),
-        candidateInput: "ffffffffffffffffffffffffffffffffffffff"
+        candidateInput: "f".repeat(40)
       })
     ).rejects.toThrow(/does not match any published release tag/);
   });
@@ -237,7 +331,33 @@ describe("verifyPlan", () => {
     expect(result).toEqual({ ok: true });
   });
 
-  it("rejects when the planned tag already exists", async () => {
+  it("validates the plan's own shape before touching the release source at all", async () => {
+    const throwingSource: ReleaseSource = {
+      listReleases: () => {
+        throw new Error("should not be called");
+      },
+      tagSha: () => {
+        throw new Error("should not be called");
+      },
+      headSha: () => {
+        throw new Error("should not be called");
+      },
+      remoteMainSha: () => {
+        throw new Error("should not be called");
+      },
+      logSubjects: () => {
+        throw new Error("should not be called");
+      },
+      showFile: () => {
+        throw new Error("should not be called");
+      }
+    };
+    const result = await verifyPlan({ ...buildPlan(), sourceSha: "not-a-sha" }, throwingSource);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reasons.join(" ")).toMatch(/sourceSha/);
+  });
+
+  it("rejects when the planned tag already exists as a git tag", async () => {
     const releases = [...BASE_RELEASES, baseRelease("v0.0.1-alpha.22", SHA.c10)];
     const source = createFixtureReleaseSource({
       releases,
@@ -246,6 +366,17 @@ describe("verifyPlan", () => {
     });
     const result = await verifyPlan(buildPlan(), source);
     expect(result.ok).toBe(false);
+  });
+
+  it("rejects when the planned tag is already reserved by a draft release with no git tag yet", async () => {
+    const releases = [...BASE_RELEASES, baseRelease("v0.0.1-alpha.22", "", { draft: true })];
+    const source = createFixtureReleaseSource({
+      releases,
+      head: SHA.c10,
+      commitLog: [...BASE_COMMIT_LOG, { sha: SHA.c10, subject: "feat: add cool feature" }]
+    });
+    const result = await verifyPlan(buildPlan(), source);
+    expect(result).toEqual({ ok: false, reasons: [expect.stringContaining("draft release")] });
   });
 
   it("rejects when a higher alpha has been published since the plan was created", async () => {
@@ -263,10 +394,11 @@ describe("verifyPlan", () => {
     expect(result.ok).toBe(false);
   });
 
-  it("rejects when HEAD moved past the planned source SHA", async () => {
+  it("rejects when origin/main moved past the planned source SHA", async () => {
     const source = createFixtureReleaseSource({
       releases: BASE_RELEASES,
-      head: SHA.c11,
+      head: SHA.c10,
+      remoteMainSha: SHA.c11,
       commitLog: [
         ...BASE_COMMIT_LOG,
         { sha: SHA.c10, subject: "feat: add cool feature" },
@@ -274,7 +406,22 @@ describe("verifyPlan", () => {
       ]
     });
     const result = await verifyPlan(buildPlan(), source);
-    expect(result.ok).toBe(false);
+    expect(result).toEqual({ ok: false, reasons: [expect.stringContaining("origin/main is now")] });
+  });
+
+  it("does not use the local checkout HEAD for alpha staleness, only origin/main", async () => {
+    const source = createFixtureReleaseSource({
+      releases: BASE_RELEASES,
+      head: SHA.c11,
+      remoteMainSha: SHA.c10,
+      commitLog: [
+        ...BASE_COMMIT_LOG,
+        { sha: SHA.c10, subject: "feat: add cool feature" },
+        { sha: SHA.c11, subject: "feat: a local-only commit" }
+      ]
+    });
+    const result = await verifyPlan(buildPlan(), source);
+    expect(result).toEqual({ ok: true });
   });
 
   it("rejects a stable plan whose candidate tag has moved to a different commit", async () => {

@@ -3,6 +3,7 @@ import {
   type AlphaVersion,
   type ParsedVersion,
   type StableVersion,
+  FULL_SHA_PATTERN,
   baseOf,
   compareVersions,
   formatVersion,
@@ -59,6 +60,16 @@ export function planNextAlpha(desktopVersion: ParsedVersion, classified: Classif
       reason: `Base ${formatVersion(base)} is already published as stable (${formatVersion(publishedStable.version)}); bump the base version via a normal PR first`
     };
   }
+  const publishedAlpha = highestPublished(classified, "alpha");
+  if (publishedAlpha) {
+    const alphaBase = baseOf(publishedAlpha.version);
+    if (compareVersions(base, alphaBase) < 0) {
+      return {
+        ok: false,
+        reason: `Base ${formatVersion(base)} is behind the highest published alpha base ${formatVersion(alphaBase)}; the desktop version must never move backwards`
+      };
+    }
+  }
   const alphaNumber = nextAlphaNumberForBase(classified, base);
   return {
     ok: true,
@@ -73,6 +84,7 @@ export interface AlphaThrottleInput {
   headSha: string;
   latestChangeSha: string | null;
   latestAlphaPublishedAt: string | null;
+  force?: boolean;
 }
 
 export type AlphaThrottleResult = { skip: true; reason: string } | { skip: false };
@@ -81,7 +93,7 @@ export function shouldSkipAutomaticAlpha(input: AlphaThrottleInput): AlphaThrott
   if (input.latestChangeSha && input.latestChangeSha === input.headSha) {
     return { skip: true, reason: `HEAD (${input.headSha}) matches the latest published release; nothing changed since then` };
   }
-  if (input.latestAlphaPublishedAt) {
+  if (!input.force && input.latestAlphaPublishedAt) {
     const elapsedMs = input.now.getTime() - new Date(input.latestAlphaPublishedAt).getTime();
     if (elapsedMs < SIX_HOURS_MS) {
       const remainingMinutes = Math.ceil((SIX_HOURS_MS - elapsedMs) / 60_000);
@@ -102,24 +114,31 @@ export interface CandidateResolution {
 
 export type CandidateResolutionResult = { ok: true; candidate: CandidateResolution } | { ok: false; reason: string };
 
-const SHA_PATTERN = /^[0-9a-f]{7,40}$/i;
-
 export function resolveCandidate(input: {
   candidateInput: string;
   classified: ClassifiedRelease[];
   tagShas: Map<string, string>;
   desktopBase: StableVersion;
+  expectedSha?: string;
 }): CandidateResolutionResult {
-  const { candidateInput, classified, tagShas, desktopBase } = input;
+  const { candidateInput, classified, tagShas, desktopBase, expectedSha } = input;
 
   const byTag = classified.find((entry) => entry.release.tagName === candidateInput);
   let matched = byTag ?? null;
 
-  if (!matched && SHA_PATTERN.test(candidateInput)) {
-    matched =
-      classified.find(
-        (entry) => entry.version.channel === "alpha" && tagShas.get(entry.release.tagName) === candidateInput
-      ) ?? null;
+  if (!matched && FULL_SHA_PATTERN.test(candidateInput)) {
+    const shaInput = candidateInput.toLowerCase();
+    const matches = classified.filter(
+      (entry) => entry.version.channel === "alpha" && tagShas.get(entry.release.tagName)?.toLowerCase() === shaInput
+    );
+    if (matches.length > 1) {
+      const tags = matches.map((entry) => entry.release.tagName).join(", ");
+      return {
+        ok: false,
+        reason: `Candidate SHA "${candidateInput}" matches multiple published alpha tags (${tags}); specify the tag explicitly`
+      };
+    }
+    matched = matches[0] ?? null;
   }
 
   if (!matched) {
@@ -147,6 +166,13 @@ export function resolveCandidate(input: {
   const sha = tagShas.get(matched.release.tagName);
   if (!sha) {
     return { ok: false, reason: `Candidate tag "${matched.release.tagName}" does not exist in git (missing tag)` };
+  }
+
+  if (expectedSha && sha.toLowerCase() !== expectedSha.toLowerCase()) {
+    return {
+      ok: false,
+      reason: `Candidate tag "${matched.release.tagName}" resolves to ${sha}, which does not match --expected-sha ${expectedSha}`
+    };
   }
 
   return { ok: true, candidate: { release: matched.release, version: matched.version, sha } };

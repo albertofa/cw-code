@@ -89,3 +89,9 @@ export function parseTag(tag: string): ParsedVersion | null {
   if (!tag.startsWith("v")) return null;
   return tryParseVersion(tag.slice(1));
 }
+
+export const FULL_SHA_PATTERN = /^[0-9a-f]{40}$/i;
+
+export function isFullSha(value: string): boolean {
+  return FULL_SHA_PATTERN.test(value);
+}

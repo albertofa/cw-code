@@ -11,6 +11,18 @@ import {
   validateCandidateIsNewerThanStable
 } from "./versionPolicy.ts";
 
+function sha(label: string): string {
+  return label.repeat(40).slice(0, 40);
+}
+
+const SHA_18 = sha("1");
+const SHA_19 = sha("2");
+const SHA_20 = sha("3");
+const SHA_21 = sha("4");
+const SHA_22 = sha("5");
+const SHA_X = sha("6");
+const SHA_UNKNOWN = sha("f");
+
 function release(tag: string, overrides: Partial<ReleaseInfo> = {}): ReleaseInfo {
   return {
     tagName: tag,
@@ -61,6 +73,18 @@ describe("planNextAlpha", () => {
     expect(result.ok).toBe(false);
   });
 
+  it("rejects a base that is behind the highest published alpha base", () => {
+    const classified = classifyReleases([...ALPHA_HISTORY, release("v0.0.2-alpha.0")]);
+    const result = planNextAlpha(parseVersion("0.0.1-alpha.21"), classified);
+    expect(result).toEqual({ ok: false, reason: expect.stringContaining("behind the highest published alpha base") });
+  });
+
+  it("does not reject a base equal to the highest published alpha base", () => {
+    const classified = classifyReleases(ALPHA_HISTORY);
+    const result = planNextAlpha(parseVersion("0.0.1"), classified);
+    expect(result.ok).toBe(true);
+  });
+
   it("computes nextAlphaNumberForBase directly", () => {
     const classified = classifyReleases(ALPHA_HISTORY);
     expect(nextAlphaNumberForBase(classified, { channel: "stable", major: 0, minor: 0, patch: 1 })).toBe(22);
@@ -71,31 +95,31 @@ describe("planNextAlpha", () => {
 describe("shouldSkipAutomaticAlpha", () => {
   const now = new Date("2026-09-24T23:00:00Z");
 
-  it("skips when HEAD matches the latest published change", () => {
+  it("skips when HEAD matches the latest published change, and the reason explains why", () => {
     const result = shouldSkipAutomaticAlpha({
       now,
-      headSha: "abc123",
-      latestChangeSha: "abc123",
+      headSha: SHA_21,
+      latestChangeSha: SHA_21,
       latestAlphaPublishedAt: "2026-09-24T22:56:04Z"
     });
     expect(result).toEqual({ skip: true, reason: expect.stringContaining("matches the latest published release") });
   });
 
-  it("skips within the 6-hour coalescing window even for a new commit", () => {
+  it("skips within the 6-hour coalescing window even for a new commit, and the reason explains why", () => {
     const result = shouldSkipAutomaticAlpha({
       now,
-      headSha: "def456",
-      latestChangeSha: "abc123",
+      headSha: SHA_22,
+      latestChangeSha: SHA_21,
       latestAlphaPublishedAt: "2026-09-24T22:56:04Z"
     });
-    expect(result.skip).toBe(true);
+    expect(result).toEqual({ skip: true, reason: expect.stringContaining("6-hour coalescing window") });
   });
 
   it("does not skip once 6 hours have passed and the commit changed", () => {
     const result = shouldSkipAutomaticAlpha({
       now: new Date("2026-09-25T05:00:00Z"),
-      headSha: "def456",
-      latestChangeSha: "abc123",
+      headSha: SHA_22,
+      latestChangeSha: SHA_21,
       latestAlphaPublishedAt: "2026-09-24T22:56:04Z"
     });
     expect(result).toEqual({ skip: false });
@@ -104,11 +128,31 @@ describe("shouldSkipAutomaticAlpha", () => {
   it("does not skip when there is no prior alpha at all", () => {
     const result = shouldSkipAutomaticAlpha({
       now,
-      headSha: "def456",
+      headSha: SHA_22,
       latestChangeSha: null,
       latestAlphaPublishedAt: null
     });
     expect(result).toEqual({ skip: false });
+  });
+
+  it("force bypasses only the 6-hour window, never the unchanged-HEAD skip", () => {
+    const stillUnchanged = shouldSkipAutomaticAlpha({
+      now,
+      headSha: SHA_21,
+      latestChangeSha: SHA_21,
+      latestAlphaPublishedAt: "2026-09-24T22:56:04Z",
+      force: true
+    });
+    expect(stillUnchanged.skip).toBe(true);
+
+    const bypassesWindow = shouldSkipAutomaticAlpha({
+      now,
+      headSha: SHA_22,
+      latestChangeSha: SHA_21,
+      latestAlphaPublishedAt: "2026-09-24T22:56:04Z",
+      force: true
+    });
+    expect(bypassesWindow).toEqual({ skip: false });
   });
 });
 
@@ -124,7 +168,7 @@ describe("resolveCandidate", () => {
     const result = resolveCandidate({
       candidateInput: "v0.0.1-alpha.21",
       classified,
-      tagShas: tagShaMap([["v0.0.1-alpha.21", "9999999"]]),
+      tagShas: tagShaMap([["v0.0.1-alpha.21", SHA_21]]),
       desktopBase
     });
     expect(result).toEqual({
@@ -132,17 +176,66 @@ describe("resolveCandidate", () => {
       candidate: {
         release: ALPHA_HISTORY[3],
         version: { channel: "alpha", major: 0, minor: 0, patch: 1, alphaNumber: 21 },
-        sha: "9999999"
+        sha: SHA_21
       }
     });
   });
 
-  it("resolves a valid candidate given as its resolved SHA", () => {
+  it("resolves a valid candidate given as its resolved SHA, case-insensitively", () => {
     const classified = classifyReleases(ALPHA_HISTORY);
     const result = resolveCandidate({
-      candidateInput: "9999999",
+      candidateInput: SHA_21.toUpperCase(),
       classified,
-      tagShas: tagShaMap([["v0.0.1-alpha.21", "9999999"]]),
+      tagShas: tagShaMap([["v0.0.1-alpha.21", SHA_21]]),
+      desktopBase
+    });
+    expect(result).toEqual({
+      ok: true,
+      candidate: {
+        release: ALPHA_HISTORY[3],
+        version: { channel: "alpha", major: 0, minor: 0, patch: 1, alphaNumber: 21 },
+        sha: SHA_21
+      }
+    });
+  });
+
+  it("rejects a SHA shorter than 40 hex characters, even if it would otherwise match", () => {
+    const classified = classifyReleases(ALPHA_HISTORY);
+    const result = resolveCandidate({
+      candidateInput: SHA_21.slice(0, 12),
+      classified,
+      tagShas: tagShaMap([["v0.0.1-alpha.21", SHA_21]]),
+      desktopBase
+    });
+    expect(result.ok).toBe(false);
+  });
+
+  it("rejects an ambiguous SHA that resolves to more than one published alpha tag", () => {
+    const classified = classifyReleases(ALPHA_HISTORY);
+    const result = resolveCandidate({
+      candidateInput: SHA_21,
+      classified,
+      tagShas: tagShaMap([
+        ["v0.0.1-alpha.20", SHA_21],
+        ["v0.0.1-alpha.21", SHA_21]
+      ]),
+      desktopBase
+    });
+    expect(result).toEqual({
+      ok: false,
+      reason: expect.stringContaining("matches multiple published alpha tags")
+    });
+  });
+
+  it("is not ambiguous when the same SHA is given explicitly as a tag", () => {
+    const classified = classifyReleases(ALPHA_HISTORY);
+    const result = resolveCandidate({
+      candidateInput: "v0.0.1-alpha.21",
+      classified,
+      tagShas: tagShaMap([
+        ["v0.0.1-alpha.20", SHA_21],
+        ["v0.0.1-alpha.21", SHA_21]
+      ]),
       desktopBase
     });
     expect(result.ok).toBe(true);
@@ -153,7 +246,7 @@ describe("resolveCandidate", () => {
     const result = resolveCandidate({
       candidateInput: "v0.0.2-alpha.0",
       classified,
-      tagShas: tagShaMap([["v0.0.2-alpha.0", "aaaaaaa"]]),
+      tagShas: tagShaMap([["v0.0.2-alpha.0", SHA_X]]),
       desktopBase
     });
     expect(result).toEqual({ ok: false, reason: expect.stringContaining("does not match the intended stable base") });
@@ -164,7 +257,7 @@ describe("resolveCandidate", () => {
     const result = resolveCandidate({
       candidateInput: "v0.0.1-alpha.22",
       classified,
-      tagShas: tagShaMap([["v0.0.1-alpha.22", "bbbbbbb"]]),
+      tagShas: tagShaMap([["v0.0.1-alpha.22", SHA_22]]),
       desktopBase
     });
     expect(result).toEqual({ ok: false, reason: expect.stringContaining("draft release") });
@@ -181,18 +274,50 @@ describe("resolveCandidate", () => {
     expect(result).toEqual({ ok: false, reason: expect.stringContaining("missing tag") });
   });
 
+  it("fixture tagSha treats a tag absent from the map the same as a missing tag", () => {
+    const classified = classifyReleases(ALPHA_HISTORY);
+    const tagShas = tagShaMap([["v0.0.1-alpha.20", SHA_20]]);
+    expect(tagShas.get("v0.0.1-alpha.21")).toBeUndefined();
+    const result = resolveCandidate({ candidateInput: "v0.0.1-alpha.21", classified, tagShas, desktopBase });
+    expect(result).toEqual({ ok: false, reason: expect.stringContaining("missing tag") });
+  });
+
   it("rejects a SHA that does not match any published candidate", () => {
     const classified = classifyReleases(ALPHA_HISTORY);
     const result = resolveCandidate({
-      candidateInput: "0123456789abcdef0123456789abcdef01234567",
+      candidateInput: SHA_UNKNOWN,
       classified,
-      tagShas: tagShaMap([["v0.0.1-alpha.21", "9999999"]]),
+      tagShas: tagShaMap([["v0.0.1-alpha.21", SHA_21]]),
       desktopBase
     });
     expect(result).toEqual({
       ok: false,
       reason: expect.stringContaining("does not match any published release tag")
     });
+  });
+
+  it("accepts a candidate tag whose resolved SHA matches --expected-sha", () => {
+    const classified = classifyReleases(ALPHA_HISTORY);
+    const result = resolveCandidate({
+      candidateInput: "v0.0.1-alpha.21",
+      classified,
+      tagShas: tagShaMap([["v0.0.1-alpha.21", SHA_21]]),
+      desktopBase,
+      expectedSha: SHA_21.toUpperCase()
+    });
+    expect(result.ok).toBe(true);
+  });
+
+  it("rejects a candidate tag whose resolved SHA does not match --expected-sha", () => {
+    const classified = classifyReleases(ALPHA_HISTORY);
+    const result = resolveCandidate({
+      candidateInput: "v0.0.1-alpha.21",
+      classified,
+      tagShas: tagShaMap([["v0.0.1-alpha.21", SHA_21]]),
+      desktopBase,
+      expectedSha: SHA_20
+    });
+    expect(result).toEqual({ ok: false, reason: expect.stringContaining("does not match --expected-sha") });
   });
 });
 

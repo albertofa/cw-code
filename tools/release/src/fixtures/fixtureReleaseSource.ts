@@ -7,7 +7,9 @@ export interface FixtureRelease extends ReleaseInfo {
 export interface FixtureReleaseSourceOptions {
   releases: FixtureRelease[];
   head: string;
+  remoteMainSha?: string;
   commitLog: Array<{ sha: string; subject: string }>;
+  filesAtSha?: Record<string, Record<string, string>>;
 }
 
 function commitsBetween(commitLog: Array<{ sha: string; subject: string }>, fromSha: string | null, toSha: string): string[] {
@@ -23,7 +25,7 @@ function commitsBetween(commitLog: Array<{ sha: string; subject: string }>, from
 }
 
 export function createFixtureReleaseSource(options: FixtureReleaseSourceOptions): ReleaseSource {
-  const { releases, head, commitLog } = options;
+  const { releases, head, commitLog, filesAtSha = {} } = options;
   const tagShas = new Map(releases.map((release) => [release.tagName, release.sha]));
 
   return {
@@ -37,10 +39,20 @@ export function createFixtureReleaseSource(options: FixtureReleaseSourceOptions)
       if (ref === "HEAD") return head;
       return tagShas.get(ref) ?? ref;
     },
+    async remoteMainSha(): Promise<string> {
+      return options.remoteMainSha ?? head;
+    },
     async logSubjects(fromRef: string | null, toRef: string): Promise<string[]> {
       const toSha = tagShas.get(toRef) ?? toRef;
       const fromSha = fromRef ? (tagShas.get(fromRef) ?? fromRef) : null;
       return commitsBetween(commitLog, fromSha, toSha).reverse();
+    },
+    async showFile(sha: string, path: string): Promise<string> {
+      const contents = filesAtSha[sha]?.[path];
+      if (contents === undefined) {
+        throw new Error(`Unknown file "${path}" at "${sha}" in fixture`);
+      }
+      return contents;
     }
   };
 }

@@ -1,3 +1,4 @@
+import { type ReleasePlan, type ReleasePlanCandidate, validatePlanShape } from "./planValidation.ts";
 import { buildReleaseNotes } from "./releaseNotes.ts";
 import type { ReleaseSource } from "./releaseSource.ts";
 import {
@@ -20,24 +21,7 @@ import {
   validateCandidateIsNewerThanStable
 } from "./versionPolicy.ts";
 
-export interface ReleasePlanCandidate {
-  tag: string;
-  sha: string;
-}
-
-export interface ReleasePlan {
-  schema: 1;
-  channel: "alpha" | "stable";
-  version: string;
-  tag: string;
-  sourceSha: string;
-  candidate?: ReleasePlanCandidate;
-  previousTag: string | null;
-  prerelease: boolean;
-  makeLatest: boolean;
-  notes: string;
-  createdAt: string;
-}
+export type { ReleasePlan, ReleasePlanCandidate };
 
 export type PlanResult = { status: "planned"; plan: ReleasePlan } | { status: "skip"; reason: string };
 
@@ -54,6 +38,7 @@ export interface BuildAlphaPlanOptions {
   now: Date;
   desktopVersion: ParsedVersion;
   sha?: string;
+  force?: boolean;
 }
 
 export async function buildAlphaPlan(options: BuildAlphaPlanOptions): Promise<PlanResult> {
@@ -75,7 +60,8 @@ export async function buildAlphaPlan(options: BuildAlphaPlanOptions): Promise<Pl
     now,
     headSha,
     latestChangeSha,
-    latestAlphaPublishedAt: latestAlpha?.release.publishedAt ?? null
+    latestAlphaPublishedAt: latestAlpha?.release.publishedAt ?? null,
+    force: options.force ?? false
   });
   if (throttle.skip) {
     return { status: "skip", reason: throttle.reason };
@@ -107,10 +93,11 @@ export interface BuildStablePlanOptions {
   now: Date;
   desktopVersion: ParsedVersion;
   candidateInput: string;
+  expectedSha?: string;
 }
 
 export async function buildStablePromotionPlan(options: BuildStablePlanOptions): Promise<PlanResult> {
-  const { source, now, desktopVersion, candidateInput } = options;
+  const { source, now, desktopVersion, candidateInput, expectedSha } = options;
   const releases = await source.listReleases();
   const classified = classifyReleases(releases);
   const desktopBase: StableVersion = baseOf(desktopVersion);
@@ -124,7 +111,7 @@ export async function buildStablePromotionPlan(options: BuildStablePlanOptions):
     if (sha) tagShas.set(entry.release.tagName, sha);
   }
 
-  const resolution = resolveCandidate({ candidateInput, classified, tagShas, desktopBase });
+  const resolution = resolveCandidate({ candidateInput, classified, tagShas, desktopBase, expectedSha });
   if (!resolution.ok) {
     throw new Error(resolution.reason);
   }
@@ -159,15 +146,25 @@ export async function buildStablePromotionPlan(options: BuildStablePlanOptions):
 
 export type VerifyPlanResult = { ok: true } | { ok: false; reasons: string[] };
 
-export async function verifyPlan(plan: ReleasePlan, source: ReleaseSource): Promise<VerifyPlanResult> {
+export async function verifyPlan(rawPlan: unknown, source: ReleaseSource): Promise<VerifyPlanResult> {
+  const shape = validatePlanShape(rawPlan);
+  if (!shape.ok) {
+    return { ok: false, reasons: shape.errors };
+  }
+  const plan = shape.plan;
   const reasons: string[] = [];
+
+  const releases = await source.listReleases();
 
   const existingTagSha = await source.tagSha(plan.tag);
   if (existingTagSha) {
-    reasons.push(`Tag "${plan.tag}" already exists (points at ${existingTagSha})`);
+    reasons.push(`Tag "${plan.tag}" already exists in git (points at ${existingTagSha})`);
+  }
+  const reservingRelease = releases.find((release) => release.tagName === plan.tag);
+  if (reservingRelease) {
+    reasons.push(`Tag "${plan.tag}" is already reserved by an existing${reservingRelease.draft ? " draft" : ""} release`);
   }
 
-  const releases = await source.listReleases();
   const classified = classifyReleases(releases);
   const planVersion = parseVersion(plan.version);
   const highest = highestPublished(classified, plan.channel);
@@ -178,9 +175,9 @@ export async function verifyPlan(plan: ReleasePlan, source: ReleaseSource): Prom
   }
 
   if (plan.channel === "alpha") {
-    const currentHead = await source.headSha();
-    if (currentHead !== plan.sourceSha) {
-      reasons.push(`Source SHA changed: plan expected ${plan.sourceSha}, HEAD is now ${currentHead}`);
+    const remoteMainSha = await source.remoteMainSha();
+    if (remoteMainSha !== plan.sourceSha) {
+      reasons.push(`Source SHA changed: plan expected ${plan.sourceSha}, origin/main is now ${remoteMainSha}`);
     }
   } else if (plan.candidate) {
     const candidateSha = await source.tagSha(plan.candidate.tag);

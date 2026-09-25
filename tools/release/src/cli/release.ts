@@ -1,33 +1,18 @@
+import { randomBytes } from "node:crypto";
 import { appendFileSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { parseArgs } from "./args.ts";
 import { createGitHubReleaseSource } from "../gitHubReleaseSource.ts";
 import { applyVersion, checkSync, DEFAULT_PACKAGE_RELATIVE_PATHS, readPackageVersions, setBase } from "../packageVersions.ts";
-import { buildAlphaPlan, buildStablePromotionPlan, verifyPlan, type ReleasePlan } from "../releasePlan.ts";
+import { validatePlanShape } from "../planValidation.ts";
+import { buildAlphaPlan, buildStablePromotionPlan, verifyPlan } from "../releasePlan.ts";
 import type { ReleaseSource } from "../releaseSource.ts";
 import { parseGitHubHomepage } from "../repoInfo.ts";
-import { parseVersion } from "../semver.ts";
+import { type ParsedVersion, FULL_SHA_PATTERN, baseOf, formatVersion, parseVersion, sameBase } from "../semver.ts";
 
 const __filename = fileURLToPath(import.meta.url);
 const REPO_ROOT = resolve(dirname(__filename), "../../../../");
-
-interface ParsedArgs {
-  command: string;
-  options: Map<string, string>;
-}
-
-function parseArgs(argv: string[]): ParsedArgs {
-  const [command, ...rest] = argv;
-  const options = new Map<string, string>();
-  for (let i = 0; i < rest.length; i += 1) {
-    const token = rest[i];
-    if (!token.startsWith("--")) continue;
-    const value = rest[i + 1];
-    options.set(token.slice(2), value ?? "");
-    i += 1;
-  }
-  return { command: command ?? "", options };
-}
 
 function fail(message: string): never {
   process.stderr.write(`${JSON.stringify({ error: message })}\n`);
@@ -41,10 +26,18 @@ function printJson(value: unknown): void {
 function writeGithubOutput(entries: Record<string, string>): void {
   const file = process.env.GITHUB_OUTPUT;
   if (!file) return;
-  const lines = `${Object.entries(entries)
-    .map(([key, value]) => `${key}=${value}`)
-    .join("\n")}\n`;
-  appendFileSync(file, lines);
+  const blocks = Object.entries(entries).map(([key, value]) => {
+    const delimiter = `ghadelim_${randomBytes(8).toString("hex")}`;
+    return `${key}<<${delimiter}\n${value}\n${delimiter}`;
+  });
+  appendFileSync(file, `${blocks.join("\n")}\n`);
+}
+
+function requireFullSha(value: string, flag: string): string {
+  if (!FULL_SHA_PATTERN.test(value)) {
+    fail(`--${flag} must be a full 40-character hex commit SHA, got "${value}"`);
+  }
+  return value.toLowerCase();
 }
 
 function buildSource(repoRoot: string): ReleaseSource {
@@ -60,9 +53,18 @@ function packagePaths(repoRoot: string): string[] {
   return DEFAULT_PACKAGE_RELATIVE_PATHS.map((relativePath) => resolve(repoRoot, relativePath));
 }
 
-async function readDesktopVersion(repoRoot: string) {
+async function readDesktopVersion(repoRoot: string): Promise<ParsedVersion> {
   const [entry] = await readPackageVersions([resolve(repoRoot, "apps/desktop/package.json")]);
   return parseVersion(entry.version);
+}
+
+async function readDesktopVersionAtSha(source: ReleaseSource, sha: string): Promise<ParsedVersion> {
+  const contents = await source.showFile(sha, "apps/desktop/package.json");
+  const parsed = JSON.parse(contents) as { version?: unknown };
+  if (typeof parsed.version !== "string") {
+    fail(`apps/desktop/package.json at ${sha} has no string "version" field`);
+  }
+  return parseVersion(parsed.version);
 }
 
 async function cmdPlan(options: Map<string, string>, repoRoot: string): Promise<void> {
@@ -77,16 +79,21 @@ async function cmdPlan(options: Map<string, string>, repoRoot: string): Promise<
   const now = nowRaw ? new Date(nowRaw) : new Date();
   if (Number.isNaN(now.getTime())) fail(`Invalid --now value "${nowRaw}"`);
 
+  const shaOption = options.get("sha");
+  const sha = shaOption ? requireFullSha(shaOption, "sha") : undefined;
+
   const source = buildSource(repoRoot);
-  const desktopVersion = await readDesktopVersion(repoRoot);
+  const desktopVersion = sha ? await readDesktopVersionAtSha(source, sha) : await readDesktopVersion(repoRoot);
 
   const result =
     channel === "alpha"
-      ? await buildAlphaPlan({ source, now, desktopVersion, sha: options.get("sha") })
+      ? await buildAlphaPlan({ source, now, desktopVersion, sha, force: options.get("force") === "true" })
       : await (async () => {
           const candidateInput = options.get("candidate");
           if (!candidateInput) fail("--candidate is required for --channel stable");
-          return buildStablePromotionPlan({ source, now, desktopVersion, candidateInput });
+          const expectedShaOption = options.get("expected-sha");
+          const expectedSha = expectedShaOption ? requireFullSha(expectedShaOption, "expected-sha") : undefined;
+          return buildStablePromotionPlan({ source, now, desktopVersion, candidateInput, expectedSha });
         })();
 
   if (result.status === "skip") {
@@ -111,18 +118,37 @@ async function cmdPlan(options: Map<string, string>, repoRoot: string): Promise<
 async function cmdVerifyPlan(options: Map<string, string>, repoRoot: string): Promise<void> {
   const planPath = options.get("plan");
   if (!planPath) fail("--plan is required");
-  const plan = JSON.parse(readFileSync(resolve(planPath), "utf8")) as ReleasePlan;
+  const raw: unknown = JSON.parse(readFileSync(resolve(planPath), "utf8"));
   const source = buildSource(repoRoot);
-  const result = await verifyPlan(plan, source);
+  const result = await verifyPlan(raw, source);
   printJson(result);
   writeGithubOutput({ stale: result.ok ? "false" : "true" });
   if (!result.ok) process.exitCode = 1;
 }
 
 async function cmdApply(options: Map<string, string>, repoRoot: string): Promise<void> {
-  const version = options.get("version");
-  if (!version) fail("--version is required");
+  const planPath = options.get("plan");
+  const versionOption = options.get("version");
+  if (!planPath && !versionOption) fail("either --plan or --version is required");
   const paths = packagePaths(repoRoot);
+
+  let version: string;
+  if (planPath) {
+    const raw: unknown = JSON.parse(readFileSync(resolve(planPath), "utf8"));
+    const shape = validatePlanShape(raw);
+    if (!shape.ok) fail(`Invalid plan: ${shape.errors.join("; ")}`);
+    version = shape.plan.version;
+  } else {
+    version = versionOption as string;
+    const desktopVersion = await readDesktopVersion(repoRoot);
+    const parsed = parseVersion(version);
+    if (!sameBase(parsed, baseOf(desktopVersion))) {
+      fail(
+        `--version ${version} is not on the current base ${formatVersion(baseOf(desktopVersion))}; use set-base to change the base via a normal PR, or pass --plan`
+      );
+    }
+  }
+
   await applyVersion(paths, version);
   printJson({ applied: version, paths });
 }

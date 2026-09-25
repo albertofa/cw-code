@@ -29,11 +29,23 @@ export function createGitHubReleaseSource(options: GitHubReleaseSourceOptions): 
 
   return {
     async listReleases(): Promise<ReleaseInfo[]> {
-      const stdout = await run(
-        "gh",
-        ["api", `repos/${owner}/${repo}/releases`, "--paginate", "--jq", ".[]"],
-        cwd
-      );
+      let stdout: string;
+      try {
+        stdout = await run(
+          "gh",
+          [
+            "api",
+            `repos/${owner}/${repo}/releases?per_page=100`,
+            "--paginate",
+            "--jq",
+            ".[] | {tag_name, target_commitish, draft, prerelease, published_at, html_url}"
+          ],
+          cwd
+        );
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new Error(`GH_TOKEN (read-only) is required for gh api: ${message}`);
+      }
       return stdout
         .split("\n")
         .map((line) => line.trim())
@@ -65,6 +77,15 @@ export function createGitHubReleaseSource(options: GitHubReleaseSourceOptions): 
       return stdout.trim();
     },
 
+    async remoteMainSha(): Promise<string> {
+      const stdout = await run("git", ["ls-remote", "origin", "refs/heads/main"], cwd);
+      const sha = stdout.split(/\s+/)[0]?.trim();
+      if (!sha) {
+        throw new Error('git ls-remote origin refs/heads/main returned no SHA');
+      }
+      return sha;
+    },
+
     async logSubjects(fromRef: string | null, toRef: string): Promise<string[]> {
       const range = fromRef ? `${fromRef}..${toRef}` : toRef;
       const stdout = await run("git", ["log", "--first-parent", "--pretty=%s", range], cwd);
@@ -72,6 +93,10 @@ export function createGitHubReleaseSource(options: GitHubReleaseSourceOptions): 
         .split("\n")
         .map((line) => line.trim())
         .filter((line) => line.length > 0);
+    },
+
+    async showFile(sha: string, path: string): Promise<string> {
+      return run("git", ["show", `${sha}:${path}`], cwd);
     }
   };
 }
