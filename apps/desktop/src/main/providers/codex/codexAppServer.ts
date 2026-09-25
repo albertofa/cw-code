@@ -98,7 +98,9 @@ export class CodexAppServer implements CodexAppServerLike {
   }
 
   async shutdown(timeoutMs: number): Promise<{ timedOut: boolean }> {
-    if (this.starting) return { timedOut: true };
+    const startedAt = Date.now();
+    if (!(await this.waitForStartup(timeoutMs))) return { timedOut: true };
+    const remainingMs = Math.max(0, timeoutMs - (Date.now() - startedAt));
     const proc = this.proc;
     if (!proc || hasExited(proc)) {
       this.dispose();
@@ -110,9 +112,24 @@ export class CodexAppServer implements CodexAppServerLike {
       proc.stdin?.end();
     } catch {
     }
-    const exited = await waitForExit(proc, timeoutMs);
+    const exited = await waitForExit(proc, remainingMs);
     if (exited && this.proc === proc) this.proc = null;
     return { timedOut: !exited };
+  }
+
+  private async waitForStartup(timeoutMs: number): Promise<boolean> {
+    const starting = this.starting;
+    if (!starting) return true;
+    let timer: NodeJS.Timeout | undefined;
+    const deadline = new Promise<false>((resolve) => {
+      timer = setTimeout(() => resolve(false), Math.max(0, timeoutMs));
+      timer.unref?.();
+    });
+    try {
+      return await Promise.race([starting.then(() => true, () => true), deadline]);
+    } finally {
+      clearTimeout(timer);
+    }
   }
 
   dispose(): void {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { ShutdownActiveTurn, ShutdownTerminal } from "@cw-code/contracts";
+import type { ShutdownActiveTurn, ShutdownReason, ShutdownTerminal } from "@cw-code/contracts";
 import { ShutdownCoordinator, type ShutdownClock, type ShutdownPtys, type ShutdownSessions } from "./ShutdownCoordinator.js";
 
 class FakeSessions implements ShutdownSessions {
@@ -99,7 +99,7 @@ class ManualClock implements ShutdownClock {
   }
 }
 
-function setup(opts: { clock?: ShutdownClock; commitExitTimeoutMs?: number; onRecovered?: (failure: string | null) => void } = {}) {
+function setup(opts: { clock?: ShutdownClock; commitExitTimeoutMs?: number; onRecovered?: (failure: string | null) => void; onExpired?: (reason: ShutdownReason) => void } = {}) {
   const log: string[] = [];
   const sessions = new FakeSessions(log);
   const ptys = new FakePtys(log);
@@ -113,6 +113,7 @@ function setup(opts: { clock?: ShutdownClock; commitExitTimeoutMs?: number; onRe
     commitExitTimeoutMs: opts.commitExitTimeoutMs ?? 5000,
     leaseMs: 60_000,
     onRecovered: opts.onRecovered,
+    onExpired: opts.onExpired,
     log: () => {}
   });
   return { coordinator, sessions, ptys, log, clock };
@@ -369,12 +370,14 @@ describe("ShutdownCoordinator.commit", () => {
 describe("ShutdownCoordinator lease and approvals", () => {
   it("restores services when a prepared token is never used", async () => {
     const clock = new ManualClock();
-    const { coordinator, sessions, ptys } = setup({ clock });
+    const expired: ShutdownReason[] = [];
+    const { coordinator, sessions, ptys } = setup({ clock, onExpired: (reason) => expired.push(reason) });
     const prepared = await coordinator.prepare({ reason: "update", stopActiveTurns: true, timeoutMs: 1000 });
     expect(prepared.ok).toBe(true);
     clock.fire(60_000);
     await settle();
     expect(coordinator.isIdle()).toBe(true);
+    expect(expired).toEqual(["update"]);
     expect(sessions.calls).toContain("reinitialize");
     expect(sessions.reserved).toBe(false);
     expect(ptys.reserved).toBe(false);
@@ -392,7 +395,8 @@ describe("ShutdownCoordinator lease and approvals", () => {
 
   it("does not expire a token that is already committing", async () => {
     const clock = new ManualClock();
-    const { coordinator, sessions } = setup({ clock });
+    const expired: ShutdownReason[] = [];
+    const { coordinator, sessions } = setup({ clock, onExpired: (reason) => expired.push(reason) });
     const prepared = await coordinator.prepare({ reason: "quit", stopActiveTurns: true, timeoutMs: 1000 });
     if (!prepared.ok) throw new Error("expected ok");
     void coordinator.commit(prepared.token, () => {});
@@ -400,6 +404,7 @@ describe("ShutdownCoordinator lease and approvals", () => {
     clock.fire(60_000);
     await settle();
     expect(coordinator.isCommitted()).toBe(true);
+    expect(expired).toEqual([]);
     expect(sessions.calls).not.toContain("reinitialize");
   });
 

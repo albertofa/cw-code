@@ -37,3 +37,7 @@ export interface ShutdownPrepareRequest {
 export interface ShutdownRequestedEvent {
   reason: ShutdownReason;
 }
+
+export interface ShutdownExpiredEvent {
+  reason: ShutdownReason;
+}

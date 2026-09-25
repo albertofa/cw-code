@@ -43,6 +43,7 @@ export interface ShutdownCoordinatorDeps {
   leaseMs?: number;
   log?: (message: string) => void;
   onRecovered?: (failure: string | null) => void;
+  onExpired?: (reason: ShutdownReason) => void;
 }
 
 type Phase = "idle" | "preparing" | "prepared" | "timeout" | "committing";
@@ -75,6 +76,7 @@ export class ShutdownCoordinator {
   private readonly leaseMs: number;
   private readonly log: (message: string) => void;
   private readonly onRecovered: (failure: string | null) => void;
+  private readonly onExpired: (reason: ShutdownReason) => void;
 
   constructor(deps: ShutdownCoordinatorDeps) {
     this.sessions = deps.sessions;
@@ -85,6 +87,7 @@ export class ShutdownCoordinator {
     this.leaseMs = deps.leaseMs ?? DEFAULT_LEASE_MS;
     this.log = deps.log ?? ((message) => console.warn(message));
     this.onRecovered = deps.onRecovered ?? (() => {});
+    this.onExpired = deps.onExpired ?? (() => {});
   }
 
   private startLease(): void {
@@ -93,8 +96,10 @@ export class ShutdownCoordinator {
     void this.clock.sleep(this.leaseMs).then(() => {
       if (lease !== this.leaseId || generation !== this.generation) return;
       if (this.phase !== "prepared" && this.phase !== "timeout") return;
-      this.log(`shutdown (${this.reason ?? "quit"}): token not used within ${this.leaseMs}ms; restoring services`);
+      const reason = this.reason ?? "quit";
+      this.log(`shutdown (${reason}): token not used within ${this.leaseMs}ms; restoring services`);
       this.recover();
+      this.onExpired(reason);
     });
   }
 
