@@ -11349,3 +11349,115 @@ button.gitbar-checkout:hover {
 .context-dock-link:hover {
   text-decoration: underline;
 }
+
+.recovery-screen {
+  position: relative;
+  height: 100vh;
+  overflow-y: auto;
+  background: var(--bg);
+  color: var(--text);
+}
+
+.recovery-drag {
+  position: sticky;
+  top: 0;
+  height: 40px;
+  -webkit-app-region: drag;
+}
+
+.recovery-body {
+  max-width: 720px;
+  margin: 0 auto;
+  padding: 8px 24px 40px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.recovery-title {
+  margin: 0;
+  font-size: 18px;
+  font-weight: 700;
+}
+
+.recovery-lead,
+.recovery-explain {
+  margin: 0;
+  color: var(--muted);
+  font-size: 12.5px;
+  line-height: 1.55;
+}
+
+.recovery-issue {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 14px;
+  background: var(--bg-deep);
+  border: 1px solid var(--border);
+  border-left: 3px solid var(--danger);
+  border-radius: var(--r-lg);
+}
+
+.recovery-issue-title {
+  font-weight: 700;
+  font-size: 13px;
+}
+
+.recovery-path {
+  font-family: var(--mono);
+  font-size: 11.5px;
+  color: var(--dim);
+  word-break: break-all;
+}
+
+.recovery-backups {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.recovery-backup {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 8px 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-md);
+}
+
+.recovery-backup-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 12px;
+  min-width: 0;
+}
+
+.recovery-backup-label {
+  font-weight: 600;
+}
+
+.recovery-backup-time {
+  color: var(--muted);
+}
+
+.recovery-backup-invalid {
+  color: var(--warning);
+  word-break: break-word;
+}
+
+.recovery-actions {
+  display: flex;
+  gap: 8px;
+}
+
+.recovery-error {
+  color: var(--danger);
+  font-size: 12.5px;
+  white-space: pre-wrap;
+}

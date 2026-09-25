@@ -69,3 +69,4 @@ export type {
   UsageLedgerRow,
   UsageLedgerQuery
 } from "./usage.js";
+export type { MetadataStore, MetadataIssueKind, MetadataBackup, MetadataIssue, StartupState } from "./startup.js";
