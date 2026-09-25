@@ -1,4 +1,4 @@
-import { useState } from "react";
+import { useId, useState } from "react";
 import { useAppStore } from "../stores/appStore.js";
 import { restartToUpdate, runUpdateAction } from "../stores/updateFlow.js";
 import { updateIndicatorView, type UpdateIndicatorAction } from "./updateModel.js";
@@ -21,6 +21,7 @@ export function UpdateIndicator() {
   const restartPending = useAppStore((s) => s.updateRestartPending);
   const [hiddenKey, setHiddenKey] = useState<string | null>(null);
   const [running, setRunning] = useState(false);
+  const reasonId = useId();
   const view = updateIndicatorView(state, restartPending);
   if (!view || view.key === hiddenKey) return null;
 
@@ -35,15 +36,20 @@ export function UpdateIndicator() {
   };
 
   const disabledReason = view.busyLabel ?? (running ? "Working on it…" : null);
+  const detail = [view.detail, disabledReason].filter(Boolean).join(" · ");
 
   return (
-    <section className={`notif ${view.tone}`} style={{ margin: "0 8px 8px" }} aria-label="cw-code update" aria-live="polite">
-      <div className="notif-head">
+    <section className={`notif ${view.tone}`} style={{ margin: "0 8px 8px" }} aria-label="cw-code update">
+      <div className="notif-head" aria-live="polite">
         <span className="notif-title" title={view.title}>
           {view.title}
         </span>
       </div>
-      {view.detail && <div className="notif-msg">{view.detail}</div>}
+      {detail && (
+        <div className="notif-msg" id={reasonId}>
+          {detail}
+        </div>
+      )}
       {view.progress !== null && (
         <div
           className="usage-track thin"
@@ -57,25 +63,25 @@ export function UpdateIndicator() {
         </div>
       )}
       <div className="notif-actions">
-        <button type="button" className="btn" onClick={() => setHiddenKey(view.key)} disabled={restartPending}>
+        <button
+          type="button"
+          className="btn"
+          onClick={() => setHiddenKey(view.key)}
+          disabled={restartPending}
+          aria-describedby={restartPending && detail ? reasonId : undefined}
+        >
           Later
         </button>
-        {view.actionLabel ? (
+        {view.actionLabel && (
           <button
             type="button"
             className="btn btn-primary"
             onClick={() => void run()}
             disabled={disabledReason !== null}
-            title={disabledReason ?? undefined}
+            aria-describedby={detail ? reasonId : undefined}
           >
             {view.actionLabel}
           </button>
-        ) : (
-          view.busyLabel && (
-            <button type="button" className="btn" disabled title={view.busyLabel}>
-              {view.progress !== null ? "Downloading…" : "Restarting…"}
-            </button>
-          )
         )}
       </div>
     </section>

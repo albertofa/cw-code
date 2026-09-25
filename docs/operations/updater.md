@@ -27,7 +27,8 @@ The contract types live in `packages/contracts/src/updates.ts`.
 `main/index.ts` creates the service in `createServices()`, so it exists only in
 normal startup. Recovery mode has no updater on purpose: the user has to fix the
 metadata first, and an update must not replace the app while its data files are
-broken. The service is disposed on `before-quit`. The adapter, and with it the `NsisUpdater` instance, is created
+broken. The service is disposed on `before-quit`, except while `installing`
+(see [Failure recovery](#failure-recovery)). The adapter, and with it the `NsisUpdater` instance, is created
 lazily on the first check, so disabled builds never create an updater object.
 
 ### IPC
@@ -37,7 +38,7 @@ lazily on the first check, so disabled builds never create an updater object.
 | `updates.state` | invoke | returns `UpdateState` |
 | `updates.check` | invoke | returns `UpdateActionResult` |
 | `updates.download` | invoke | returns `UpdateActionResult` |
-| `updates.setChannel` | invoke `{ channel }` | saves `updateChannel` and returns `UpdateActionResult`; anything other than `"stable"`/`"alpha"` returns code `invalid` and saves nothing |
+| `updates.setChannel` | invoke `{ channel }` | returns `UpdateActionResult` and saves `updateChannel` only when the result is ok; anything other than `"stable"`/`"alpha"` returns code `invalid`, and `busy` or `failed` save nothing either |
 | `updates.install` | invoke `{ version, channel, token }` | returns `UpdateActionResult`; see [Install flow](#install-flow) |
 | `updates.changed` | main → renderer event | `UpdateState` |
 
@@ -137,8 +138,13 @@ service, whether it came from IPC or from a timer.
 | `alpha` | true | `alpha` | Stable or `X.Y.Z-alpha.N` newer than the running version |
 
 - The default channel is derived from the running version
-  (`0.0.1-alpha.21` → `alpha`) while the `updateChannel` setting is `null`.
-  Choosing a channel in Settings saves it; from then on the saved channel wins.
+  (`0.0.1-alpha.21` → `alpha`) and frozen: on the first start with updates
+  enabled and `updateChannel` still `null`, main saves the derived channel. An
+  alpha tester who later receives a stable build through the alpha channel
+  therefore stays on alpha instead of silently moving to stable. Choosing a
+  channel in Settings overwrites it. Dev and other disabled builds never save
+  it. The renderer uses the same rule (`components/updateChannel.ts`, parity
+  tested against `channelOfVersion` in main).
 - The adapter sets `allowDowngrade = false` after setting `channel`, because the
   `electron-updater` channel setter turns downgrades on. A unit test fails if
   that order is reversed.
@@ -192,6 +198,11 @@ release yet".
 - A manual check skips the schedule but not the lock, and resets the timer.
 - A timer that fires while a download holds the lock reschedules itself for the
   regular interval.
+- A timer that fires while the shutdown coordinator is not idle (a quit or
+  restart is being prepared) is postponed by 60 s. The coordinator is still
+  idle while the shutdown dialog is only reviewing blockers or waiting, so a
+  check in that window can still make a newer version available; the restart
+  is then cancelled after prepare and the user is asked to try again.
 - `dispose()` cancels the timer and any active download, detaches adapter
   listeners, disposes the adapter and stops publishing state.
 
@@ -350,7 +361,7 @@ updaterCacheDirName: '@cw-codedesktop-updater'
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| `updateChannel` | `null` | `"stable"`, `"alpha"`, or `null` to derive the channel from the running version |
+| `updateChannel` | `null` | `"stable"` or `"alpha"`; `null` until the first enabled start saves the channel derived from the running version |
 | `updateBackgroundDownload` | `true` | Download an available update without asking; installing still needs a click |
 
 Both are sanitized per field in `SettingsStore` (an invalid channel falls back
@@ -377,27 +388,33 @@ Channel and download changes apply immediately, like binary picks.
 | State | Shows | Action |
 | --- | --- | --- |
 | `available` | "cw-code X is available" | Download |
-| `downloading` | progress bar and percentage | disabled "Downloading…" with the reason as tooltip |
+| `downloading` | progress bar, percentage and "The download is in progress" | none |
 | `ready` | "cw-code X is ready" | Update and restart |
-| `ready` with an install error | the error | Try again |
+| `ready` with a retryable install error | the error | Try again |
+| `ready` after the installer started but cw-code did not exit | "The installer was started; restart cw-code if it is still open" | none |
 | `error` | the check or download error | Retry when `retryable`; otherwise the message says retrying will not help |
-| restart pending / `installing` | "Restarting to update" | disabled |
+| restart pending / `installing` | "Restarting to update" | none; Later disabled |
 
 Later hides the indicator until the state changes (phase, versions or error).
 Everything is a native button, so it is reachable with Tab and activated with
-Enter or Space; progress uses `role="progressbar"`.
+Enter or Space. Only the title is an `aria-live` region; the reason a control
+is disabled is visible text that the buttons reference with
+`aria-describedby`. Progress uses `role="progressbar"`.
 
 ## Install flow
 
-1. Update and restart is only offered in `ready`. The renderer takes the
-   downloaded version and channel as the install target and sets
-   `updateRestartPending`.
+1. Update and restart is only offered in `ready`, and not after an install
+   error that is not retryable. If a quit or restart flow is already open it
+   does nothing except say so. The renderer takes the downloaded version and
+   channel as the install target, sets `updateRestartPending` and re-reads
+   `updates.state`; if the download already changed, it stops here without
+   touching any session.
 2. It runs `runShutdownFlow("update")` first. The installer is already
    downloaded at this point, so the prepare lease (120 s) is only held for the
    few calls that follow. The dialog appears only when something needs a
    decision: active turns in any session (Wait or Stop), open terminals (they
    will be closed) and unsaved files (Save, Discard or Cancel). For the update
-   reason it also explains that cw-code closes, runs the installer and reopens,
+   reason it also explains that cw-code closes, installs in the background and reopens,
    that projects, sessions and settings are kept, that live terminals stop and
    that nothing is resent. Cancel returns to normal use and nothing is
    installed.
@@ -405,19 +422,72 @@ Enter or Space; progress uses `role="progressbar"`.
    longer `ready` or the downloaded version or channel changed, it cancels the
    token (services come back) and shows "The update changed".
 4. Otherwise it calls `updates.install({ version, channel, token })`. Main
-   validates the arguments (`invalid`), queues the install behind any running
+   requires the coordinator's current reason to be `update` (a quit token is
+   answered `invalid` and left alone), validates the arguments (`invalid`),
+   queues the install behind any running
    check, then requires a downloaded update (`not-ready`), the same version,
    the same current or pending channel and no newer `available` version
    (`superseded`). Any rejection before the commit releases the token itself,
    so services are always restored.
-5. The phase becomes `installing` and main runs
-   `shutdown.commit(token, () => adapter.quitAndInstall(false, true))`.
-   `isSilent = false` shows the normal NSIS window with progress;
-   `isForceRunAfter = true` is passed as well, and because the install is not
-   silent `electron-updater` uses `autoRunAppAfterInstall` (default true), so
-   the installer relaunches cw-code. The library then calls `app.quit()`; the
-   quit is approved because the coordinator is committing, so there is no
-   second dialog.
+5. Before the commit, main checks the cached installer (see
+   [Installer pre-check](#installer-pre-check)). If it is missing the token is
+   released and nothing is stopped for good.
+6. The phase becomes `installing` and main runs
+   `shutdown.commit(token, () => adapter.quitAndInstall(true, true))`, a silent
+   install with a forced relaunch. The user already consented with Update and
+   restart; the assisted wizard would otherwise show its install-mode page in
+   the middle of an update and relaunch only from its finish page.
+   `electron-updater` starts the installer with `--updated /S --force-run` and
+   then calls `app.quit()`; the quit is approved because the coordinator is
+   committing, so there is no second dialog.
+
+### What the silent NSIS upgrade does
+
+Checked against the app-builder-lib 26.15.3 templates
+(`templates/nsis/assistedInstaller.nsh`, `multiUser.nsh`, `installer.nsi`,
+`installSection.nsh`):
+
+- **Install scope and directory are kept.** `.onInit` runs `initMultiUser`,
+  which reads `InstallLocation` from `HKLM\Software\<APP_GUID>` and
+  `HKCU\Software\<APP_GUID>`. Only a per-machine install selects per-machine
+  mode; only a per-user install selects per-user mode. `setInstallModePerUser`
+  / `setInstallModePerAllUsers` then set `$INSTDIR` from that
+  `InstallLocation`, so a custom directory chosen at first install is reused.
+  With both a per-user and a per-machine install present (or neither), it
+  falls back to per-user because `perMachine` is not set in
+  `electron-builder.yml`. The installer is not given `/D=`, so nothing
+  overrides the directory.
+- **Per-machine installs still elevate.** The install section checks
+  `$hasPerMachineInstallation == "1"` and `${Silent}` and, when not admin, runs
+  `UAC_RunElevated`, so Windows shows the UAC prompt. If the user declines
+  (1223) the outer installer quits and nothing is installed. cw-code has
+  already quit by then and is not relaunched; starting it by hand shows the
+  old version with the update still `ready`.
+- **No installer window.** `SpiderBanner` and the wizard pages are skipped in
+  silent mode, so the user sees cw-code close and, after the copy, reopen.
+- **Relaunch.** The assisted template starts the app when `${isForceRun}` and
+  `${Silent}` are both true, which is the case with `--force-run /S`.
+- **`--updated`** keeps user data during the old version's uninstall step and
+  skips the pages that only a fresh install shows.
+
+## Installer pre-check
+
+`electron-updater` spawns the installer asynchronously and calls `app.quit()`
+right away, so a cached installer that disappeared (cleaned temp folder,
+antivirus quarantine) would close cw-code without installing anything. Before
+the commit, `UpdateService.install` therefore checks the file the library
+reported in its `update-downloaded` event (`downloadedFile`, recorded by the
+adapter with the size of the matching `files[]` entry from the feed):
+
+- it must exist and be a regular file;
+- its size must match the feed size, when the feed reported one.
+
+If any check fails, or no downloaded file was reported for that version, the
+token is released, the result is `not-ready`, and the state goes back to
+`available` with `downloadedVersion` cleared and a retryable `download` error:
+"The downloaded update is missing; download it again". Download (or a
+background download on the next check) fetches it again, and
+`electron-updater` re-validates its cache by sha512 before reusing anything.
 
 After the restart, projects, settings and resume cursors are on disk as
 before. Interrupted turns stay `holding`/interrupted and are never restarted.
@@ -429,15 +499,25 @@ before. Interrupted turns stay `holding`/interrupted and are never restarted.
   that error into an exception) makes the commit fail at once. The coordinator
   recovers the drivers and terminal pool, and the service returns to `ready`
   with `error.context` `install`, retryable.
-- A process that is still alive 30 s after `quitAndInstall` (the installer did
-  not start or the quit was blocked) gets the same recovery with "cw-code did
-  not exit within 30s. Normal use has been restored."
+- A process that is still alive 30 s after `quitAndInstall` returned (the
+  installer may be running, or the quit was blocked) gets the same service
+  recovery, but the install error is not retryable: "The installer was
+  started; restart cw-code if it is still open". `electron-updater` latches
+  `quitAndInstallCalled` once an installer was spawned, so a second call would
+  silently do nothing. From then on the service refuses installs, checks and
+  channel changes with that message, the UI hides Update and restart, and a
+  restart of cw-code clears it.
+- The library's `app.quit()` fires `before-quit`, which disposes services.
+  `UpdateService.dispose()` does nothing while the phase is `installing`, so if
+  cw-code survives the exit timeout the updater is still alive to report the
+  failure instead of leaving a dead UI.
 - A token that was not committed within the 120 s lease is recovered by the
   coordinator; main sends `shutdown.expired` and a stale dialog closes with a
   message. A later install call with that token fails and restores `ready`.
 - The renderer shows one sticky toast per failure. Its id is derived from the
   message, so retrying into the same failure updates that toast instead of
-  stacking new ones. Update and restart stays available for a retry.
+  stacking new ones. Update and restart stays available for a retry when the
+  error is retryable.
 - `autoInstallOnAppQuit` is always false (asserted in
   `ElectronUpdaterAdapter.test.ts`), so closing the window, quitting, `SIGINT`
   or an OS session end never runs the installer.
@@ -445,13 +525,19 @@ before. Interrupted turns stay `holding`/interrupted and are never restarted.
 ## Verification
 
 Automated (vitest): `UpdateService.install.test.ts` (install contract with the
-real coordinator and fakes: validation, not-ready, superseded, commit through
-the coordinator, failure back to `ready` with an error, retry, disabled builds,
-no install from other operations), `ElectronUpdaterAdapter.test.ts` (install
-flags, synchronous failure, `autoInstallOnAppQuit` off), `updatePreferences.test.ts`,
-`SettingsStore.test.ts` (defaults, sanitize, no migration),
-`updateThrottle.test.ts`, `releaseNotes.test.ts` and `shutdownFlow.test.ts`
-(expired lease).
+real coordinator and fakes: validation, update-reason tokens only, not-ready,
+superseded, commit through the coordinator, dispose skipped while installing,
+non-retryable failure after the installer started, retryable failure before,
+disabled builds, scheduled checks postponed during a shutdown, background
+download turned on while available, missing / non-file / wrong-size /
+unreported installer back to `available`, no install from other operations),
+`ElectronUpdaterAdapter.test.ts` (silent install flags, synchronous failure,
+downloaded file and feed size, `autoInstallOnAppQuit` off), `updatePreferences.test.ts` (including the
+first-run channel freeze), `SettingsStore.test.ts` (defaults, sanitize, no
+migration), `updateFlow.test.ts` (token released on a state mismatch or an IPC
+throw, one toast per failure, pending and open-flow guards),
+`updateThrottle.test.ts`, `updateChannel.test.ts`, `releaseNotes.test.ts` and
+`shutdownFlow.test.ts` (expired lease).
 
 Manual checklist, pending. Run it with the step 06 local feed and update-test
 build ([update-testing.md](update-testing.md)) in a disposable Windows environment,
@@ -478,8 +564,28 @@ never against the live install:
   with a message.
 - [ ] A superseded update (new version published while the dialog is open)
   cancels the restart and restores services.
-- [ ] Installer start failure (remove the cached installer before clicking)
-  returns to ready with one toast; a second failure does not add a second toast.
-- [ ] Successful update: NSIS progress window, app relaunches on the new
-  version, projects, settings and resume cursors are intact, interrupted turns
-  are not resent.
+- [ ] Missing installer: delete the cached installer under
+  `%LOCALAPPDATA%\@cw-codedesktop-updater\pending` (or the update-test build's
+  cache) before clicking Update and restart. cw-code does not close; the
+  indicator shows "The downloaded update is missing; download it again" with
+  Download, and after downloading, Update and restart works.
+- [ ] Successful silent update: no installer window appears, cw-code closes,
+  reopens by itself on the new version (from `--force-run`), and projects,
+  settings and resume cursors are intact; interrupted turns are not resent.
+  Record how long the gap between close and reopen is.
+- [ ] Silent upgrade keeps the install scope and directory: repeat for a
+  per-user install in the default folder, a per-user install in a custom
+  folder, and a per-machine install. After the update, the uninstall entry is
+  still under the same hive (HKCU / HKLM) and `InstallLocation` is unchanged.
+- [ ] Per-machine install: Update and restart shows the UAC prompt. Accepting
+  it updates and relaunches cw-code. Declining it: nothing is installed,
+  cw-code stays closed; starting it by hand shows the old version, still
+  `ready`, and the next Update and restart works. If cw-code is still open
+  after 30 s, the indicator shows "The installer was started; restart cw-code
+  if it is still open".
+- [ ] Leave cw-code running after a restart that did not exit (block the quit):
+  after 30 s there is no Try again, and Check for updates reports the same
+  message until cw-code is restarted.
+- [ ] First start of an alpha build with no saved channel: `cw-settings.json`
+  gets `"updateChannel": "alpha"`; a later stable build installed through alpha
+  keeps offering alphas.

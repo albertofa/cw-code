@@ -79,7 +79,7 @@ vi.mock("electron-updater", async () => {
   return { CancellationToken, NsisUpdater };
 });
 
-import { ElectronUpdaterAdapter, STAGING_ID_PLACEHOLDER } from "./ElectronUpdaterAdapter.js";
+import { downloadedInfo, ElectronUpdaterAdapter, STAGING_ID_PLACEHOLDER } from "./ElectronUpdaterAdapter.js";
 
 function create(): { adapter: ElectronUpdaterAdapter; logs: string[]; instance: (typeof updaterMock.instances)[number] } {
   const logs: string[] = [];
@@ -188,11 +188,32 @@ describe("ElectronUpdaterAdapter", () => {
 
   it("passes the install flags through and throws when the library reports a synchronous install failure", () => {
     const { adapter, instance } = create();
-    adapter.quitAndInstall(false, true);
-    expect(updaterMock.installCalls).toEqual([[false, true]]);
+    adapter.quitAndInstall(true, true);
+    expect(updaterMock.installCalls).toEqual([[true, true]]);
     updaterMock.installError = new Error("No update filepath provided, can't quit and install");
-    expect(() => adapter.quitAndInstall(false, true)).toThrow("No update filepath provided");
+    expect(() => adapter.quitAndInstall(true, true)).toThrow("No update filepath provided");
     expect(instance.listenerCount("error")).toBe(1);
+  });
+
+  it("reports the cached installer path and the size of the matching feed file", () => {
+    const file = "C:\\Users\\Jane\\AppData\\Local\\@cw-codedesktop-updater\\pending\\cw-code-Setup-1.1.0-x64.exe";
+    const files = [
+      { url: "cw-code-Setup-1.1.0-x64.exe.blockmap", size: 9, sha512: "b" },
+      { url: "cw-code-Setup-1.1.0-x64.exe", size: 1234, sha512: "a" }
+    ];
+    expect(downloadedInfo({ version: "1.1.0", downloadedFile: file, files, path: "", sha512: "", releaseDate: "" })).toEqual({
+      version: "1.1.0",
+      file,
+      size: 1234
+    });
+    expect(
+      downloadedInfo({ version: "1.1.0", downloadedFile: file, files: [{ url: "https://x/other%20name.exe", size: 7, sha512: "a" }], path: "", sha512: "", releaseDate: "" })
+    ).toEqual({ version: "1.1.0", file, size: 7 });
+    expect(downloadedInfo({ version: "1.1.0", downloadedFile: "", files: [], path: "", sha512: "", releaseDate: "" })).toEqual({
+      version: "1.1.0",
+      file: null,
+      size: null
+    });
   });
 
   it("keeps an error listener installed and forwards events until disposed", () => {

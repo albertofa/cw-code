@@ -53,16 +53,26 @@ function htmlToText(html: string): string {
     .replace(/<li\b[^>]*>/gi, "\n- ")
     .replace(/<\/(?:p|div|h[1-6]|ul|ol|blockquote|pre|table|tr)\s*>/gi, "\n\n")
     .replace(/<(?:p|div|ul|ol|blockquote|pre|table|tr)\b[^>]*>/gi, "\n\n");
-  const lines = decodeEntities(stripTags(structured))
-    .split("\n")
-    .map((line) => line.replace(/[ \t]+/g, " ").trim());
-  const tight = lines.filter((line, index) => {
-    if (line !== "") return true;
-    const before = lines.slice(0, index).reverse().find((candidate) => candidate !== "");
-    const after = lines.slice(index + 1).find((candidate) => candidate !== "");
-    return !(before?.startsWith("- ") && after?.startsWith("- "));
-  });
-  return tight.join("\n").replace(/\n{3,}/g, "\n\n").trim();
+  return joinBlocks(decodeEntities(stripTags(structured)).split("\n"));
+}
+
+function joinBlocks(rawLines: string[]): string {
+  const out: string[] = [];
+  let previous: string | null = null;
+  let blank = false;
+  for (const raw of rawLines) {
+    const line = raw.replace(/[ \t]+/g, " ").trim();
+    if (line === "") {
+      blank = previous !== null;
+      continue;
+    }
+    const sameList = previous !== null && previous.startsWith("- ") && line.startsWith("- ");
+    if (blank && !sameList) out.push("");
+    out.push(line);
+    previous = line;
+    blank = false;
+  }
+  return out.join("\n");
 }
 
 export function releaseNotesMarkdown(notes: string | null): string | null {

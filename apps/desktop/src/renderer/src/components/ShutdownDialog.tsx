@@ -86,8 +86,9 @@ export function ShutdownDialog() {
           <>
             {state.reason === "update" && (
               <div className="confirm-message">
-                cw-code will close, run the installer and reopen. Your projects, sessions and settings are kept, and sessions
-                resume their CLI context afterwards. Live terminals are stopped, and nothing is resent automatically.
+                cw-code will close, install the update in the background (no installer window; it can take a minute) and reopen
+                on its own. Your projects, sessions and settings are kept, and sessions resume their CLI context afterwards. Live
+                terminals are stopped, and nothing is resent automatically.
               </div>
             )}
             {activeTurns.length > 0 && (

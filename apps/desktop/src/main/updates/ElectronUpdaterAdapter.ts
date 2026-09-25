@@ -1,3 +1,4 @@
+import { basename } from "node:path";
 import { CancellationToken, NsisUpdater, type Logger, type ProgressInfo, type UpdateDownloadedEvent, type UpdateInfo } from "electron-updater";
 import type { UpdateChannel, UpdateProgress } from "@cw-code/contracts";
 import { formatLogValue, redactUpdateText, type UpdateLogSink } from "./updateLog.js";
@@ -21,13 +22,19 @@ export interface UpdaterDownloadHandle {
   cancel(): void;
 }
 
+export interface UpdaterDownloadedInfo {
+  version: string;
+  file: string | null;
+  size: number | null;
+}
+
 export interface UpdaterAdapter {
   configure(options: { channel: UpdateChannel }): void;
   check(): Promise<UpdaterCheckOutcome | null>;
   download(): UpdaterDownloadHandle;
   onProgress(listener: (progress: UpdateProgress) => void): () => void;
   onError(listener: (error: Error) => void): () => void;
-  onDownloaded(listener: (info: { version: string }) => void): () => void;
+  onDownloaded(listener: (info: UpdaterDownloadedInfo) => void): () => void;
   quitAndInstall(isSilent: boolean, isForceRunAfter: boolean): void;
   dispose(): void;
 }
@@ -39,6 +46,23 @@ function releaseInfo(info: UpdateInfo): UpdaterReleaseInfo {
     releaseNotes: info.releaseNotes ?? null,
     releaseDate: info.releaseDate ?? null
   };
+}
+
+function urlFileName(url: string): string | null {
+  try {
+    return basename(decodeURIComponent(url.split(/[?#]/)[0] ?? "")).toLowerCase();
+  } catch {
+    return null;
+  }
+}
+
+export function downloadedInfo(event: UpdateDownloadedEvent): UpdaterDownloadedInfo {
+  const file = typeof event.downloadedFile === "string" && event.downloadedFile.length > 0 ? event.downloadedFile : null;
+  const files = Array.isArray(event.files) ? event.files : [];
+  const name = file ? basename(file).toLowerCase() : null;
+  const match = files.find((entry) => typeof entry.url === "string" && name !== null && urlFileName(entry.url) === name) ?? (files.length === 1 ? files[0] : undefined);
+  const size = typeof match?.size === "number" && Number.isFinite(match.size) && match.size > 0 ? match.size : null;
+  return { version: event.version, file, size };
 }
 
 export class ElectronUpdaterAdapter implements UpdaterAdapter {
@@ -100,8 +124,8 @@ export class ElectronUpdaterAdapter implements UpdaterAdapter {
     return this.track(() => this.errorListeners.delete(listener));
   }
 
-  onDownloaded(listener: (info: { version: string }) => void): () => void {
-    const handler = (event: UpdateDownloadedEvent): void => listener({ version: event.version });
+  onDownloaded(listener: (info: UpdaterDownloadedInfo) => void): () => void {
+    const handler = (event: UpdateDownloadedEvent): void => listener(downloadedInfo(event));
     this.updater.on("update-downloaded", handler);
     return this.track(() => this.updater.removeListener("update-downloaded", handler));
   }
