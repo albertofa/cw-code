@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { AccountUsageSnapshot, AppSettings, CliBinary, CliDiscoveredCandidate, CliDiscoverResult, CommandInvocation, CommandOption, CreateSessionOptions, GitBranchInfo, GitDiffMode, GitDiffResult, GitStatus, HarnessId, PrDetail, PrInboxResult, Project, ProjectGitHubRepo, PrRef, PrWorkflow, RetryConnectionResult, SessionCleanupResult, SessionMeta, SessionPrLink, SessionStatus, SkillDetail, SkillMeta, SkillSaveInput, SkillsListResult, SourceControlHealth, StartupState, SubagentToolsResult, UsageLedgerQuery, UsageLedgerRow, WorktreePruneSummary } from "@cw-code/contracts";
+import type { AccountUsageSnapshot, AppSettings, CliBinary, CliDiscoveredCandidate, CliDiscoverResult, CommandInvocation, CommandOption, CreateSessionOptions, GitBranchInfo, GitDiffMode, GitDiffResult, GitStatus, HarnessId, PrDetail, PrInboxResult, Project, ProjectGitHubRepo, PrRef, PrWorkflow, RetryConnectionResult, SessionCleanupResult, SessionMeta, SessionPrLink, SessionStatus, ShutdownAssessment, ShutdownCommitResult, ShutdownPrepareRequest, ShutdownPrepareResult, ShutdownRequestedEvent, SkillDetail, SkillMeta, SkillSaveInput, SkillsListResult, SourceControlHealth, StartupState, SubagentToolsResult, UsageLedgerQuery, UsageLedgerRow, WorktreePruneSummary } from "@cw-code/contracts";
 
 export type PermissionMode = "auto" | "acceptEdits" | "bypassPermissions" | "manual";
 export type EffortLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
@@ -41,6 +41,14 @@ export interface CwApi {
     restore(file: string, backupPath: string): Promise<void>;
     startFresh(file: string): Promise<void>;
     retry(): Promise<void>;
+  };
+  shutdown: {
+    assess(): Promise<ShutdownAssessment>;
+    prepare(request: ShutdownPrepareRequest): Promise<ShutdownPrepareResult>;
+    force(token: string): Promise<ShutdownPrepareResult>;
+    cancel(token: string): Promise<void>;
+    quit(token: string): Promise<ShutdownCommitResult>;
+    onRequested(cb: (event: ShutdownRequestedEvent) => void): () => void;
   };
   checkVersions(): Promise<Array<{
     binary: DriverName;
@@ -157,6 +165,18 @@ const api: CwApi = {
     restore: (file: string, backupPath: string) => ipcRenderer.invoke("recovery.restore", { file, backupPath }),
     startFresh: (file: string) => ipcRenderer.invoke("recovery.startFresh", { file }),
     retry: () => ipcRenderer.invoke("recovery.retry")
+  },
+  shutdown: {
+    assess: () => ipcRenderer.invoke("shutdown.assess"),
+    prepare: (request: ShutdownPrepareRequest) => ipcRenderer.invoke("shutdown.prepare", request),
+    force: (token: string) => ipcRenderer.invoke("shutdown.force", { token }),
+    cancel: (token: string) => ipcRenderer.invoke("shutdown.cancel", { token }),
+    quit: (token: string) => ipcRenderer.invoke("shutdown.quit", { token }),
+    onRequested: (cb) => {
+      const listener = (_e: unknown, event: ShutdownRequestedEvent) => cb(event);
+      ipcRenderer.on("shutdown.requested", listener as never);
+      return () => ipcRenderer.removeListener("shutdown.requested", listener as never);
+    }
   },
   checkVersions: () => ipcRenderer.invoke("cli.checkVersions"),
   discoverBinaries: (binaries?: CliBinary[]) => ipcRenderer.invoke("cli.discover", { binaries }),
