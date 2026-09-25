@@ -182,6 +182,8 @@ the heredoc delimiter format, so values are never corrupted or split by embedded
 - `stage-release-set`, `validate-release-assets`, `select-upgrade-base`, `publish`,
   `check-published` — the release set, publication and post-publication checks;
   documented in [releases.md](releases.md).
+- `monitor-feed` — the scheduled read-only feed check; documented in
+  [rollout.md](rollout.md#feed-monitor).
 
 `pnpm release:plan` is a root convenience alias for `plan`. `gh api` calls use whatever auth `gh` has
 (a read-only `GH_TOKEN` in CI, or `gh auth login` locally); any `gh api` failure is reported with

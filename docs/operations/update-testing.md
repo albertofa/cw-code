@@ -342,7 +342,10 @@ Use a snapshot, the update-test builds from a dry run, and a feed started with
    project and a throwaway `CW_CODE_HOME`, run one short turn with each
    installed CLI on your own subscription. Never do this on CI.
 7. **Legacy identity** (`legacy-identity`): install the legacy
-   `v0.0.1-alpha.21` release and update it with production bytes (below).
+   `v0.0.1-alpha.21` release, then the signed bootstrap installer over it by
+   hand. The legacy build has no updater, so this step is always a manual
+   install; the exact commands and evidence are step C of
+   [rollout.md](rollout.md#c-bootstrap-candidate-over-the-real-legacy-installer-disposable-vm).
 8. **Wrong publisher** (`signed-wrong-publisher`, step 09): serve a candidate
    signed by a different controlled certificate; the download must fail with
    `ERR_UPDATER_INVALID_SIGNATURE` and N stay intact. Verification is never

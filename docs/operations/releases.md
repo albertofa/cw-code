@@ -2,7 +2,8 @@
 
 `.github/workflows/release.yml` builds, signs, verifies and (only when explicitly
 enabled) publishes a Windows release from one immutable commit. Nothing is uploaded
-by hand. Until commissioning (step 10) finishes, every run is validation-only.
+by hand. Until the commissioning checklist in [rollout.md](rollout.md#commissioning-checklist)
+is done, every run is validation-only.
 
 ## Status
 
@@ -123,7 +124,7 @@ is fixed in `plan`, and `publish` refuses any `signing.json` that is not
 
 | Item | Where | Value |
 | --- | --- | --- |
-| `CW_RELEASE_PUBLISHING_ENABLED` | repository variable | `true` only after step 10 commissioning; unset means validation-only |
+| `CW_RELEASE_PUBLISHING_ENABLED` | repository variable | `true` only from step D of the [commissioning checklist](rollout.md#commissioning-checklist); unset or `false` means validation-only and is the pause switch |
 | `CW_WINDOWS_PUBLISHER_NAME` | repository variable | see [windows-signing.md](windows-signing.md) |
 | `release-signing` | environment | see [windows-signing.md](windows-signing.md) |
 | `release-publish` | environment | required reviewer (the owner, "prevent self-review" with a co-maintainer), deployment branches: `main` only, no admin bypass, no secrets |
@@ -238,6 +239,10 @@ GitHub's CDN lags. It checks:
 Failures show up as error annotations and in the job summary, with a link to
 [Recovery](#recovery).
 
+After that, `.github/workflows/check-update-feed.yml` runs `monitor-feed` every 6
+hours against whatever stable and alpha clients currently resolve (see
+[rollout.md](rollout.md#feed-monitor)).
+
 ## Upgrade gate
 
 `select-upgrade-base` lists published releases and picks N: the highest release
@@ -252,7 +257,8 @@ never accepts an alpha. A stable candidate takes the highest N of either channel
 - `found` and `unsigned` mode: skipped with a warning, because N would reject an
   unsigned candidate by publisher.
 - `bootstrap` (no pipeline release exists yet): skipped with a notice. The first
-  published release is the bootstrap; step 10 records its evidence by hand.
+  published release is the bootstrap; its evidence is recorded by hand in
+  [rollout.md](rollout.md#c-bootstrap-candidate-over-the-real-legacy-installer-disposable-vm).
 - `none-compatible`: a warning in validate mode, a failure in publish mode.
 
 ## Artifacts and retention
@@ -317,8 +323,12 @@ and never embed any token in the app.
 
 ## Recovery
 
-Step 10 completes this runbook. The one rule behind every entry: a version number is
-used once. Nothing is ever re-drafted, re-tagged or re-uploaded under a number that
+This section covers pipeline failures. A published release that turns out to be bad
+(crashes, data damage, broken CLI, security problem) follows the
+[bad-release response in rollout.md](rollout.md#bad-release-response), and failures
+reported by the scheduled feed monitor are in
+[rollout.md](rollout.md#feed-monitor-failures). The one rule behind every entry: a
+version number is used once. Nothing is ever re-drafted, re-tagged or re-uploaded under a number that
 may have been public; problems are fixed by rolling forward to a higher version.
 
 - **Signing, verification or upgrade gate failed**: nothing was published. Fix the
@@ -343,8 +353,8 @@ may have been public; problems are fixed by rolling forward to a higher version.
   soon as possible. For a stable release, make sure the previous good stable or the
   fix is marked latest. Do not turn the release back into a draft, do not delete its
   tag or assets and do not reuse its number: clients may already hold the installer
-  in their updater cache and will install it on the next restart unless a higher
-  version supersedes it. electron-updater still verifies sha512 and the publisher
+  in their updater cache and can still install it with Update and restart until a
+  higher version supersedes it. electron-updater still verifies sha512 and the publisher
   before installing, so this is about bad content, not tampering.
 - **A leftover tag or deleted release**: the planner treats every existing
   `v<base>-alpha.*` git tag and every visible draft as a used alpha number and plans
@@ -391,8 +401,6 @@ Result on 2026-09-25 (unsigned local build of `0.0.1-alpha.22`, logs in
 
 ## Blocked on the owner
 
-- [ ] Everything under "Blocked on the owner" in [windows-signing.md](windows-signing.md).
-- [ ] Create the `release-publish` environment (reviewers, `main` only, no bypass).
-- [ ] Run a dispatch `validate` with SignPath configured and record the evidence.
-- [ ] Step 10: set `CW_RELEASE_PUBLISHING_ENABLED=true` and dispatch the first
-      `publish`.
+The owner's steps, from SignPath enrollment to the first stable, are the
+[commissioning checklist](rollout.md#commissioning-checklist) in rollout.md. None of
+them is done yet.
