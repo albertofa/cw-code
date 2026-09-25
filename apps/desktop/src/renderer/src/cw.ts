@@ -31,6 +31,7 @@ import type {
   ShutdownActiveTurn,
   ShutdownAssessment,
   ShutdownCommitResult,
+  ShutdownExpiredEvent,
   ShutdownPrepareRequest,
   ShutdownPrepareResult,
   ShutdownReason,
@@ -46,6 +47,7 @@ import type {
   UpdateActionCode,
   UpdateActionResult,
   UpdateChannel,
+  UpdateInstallRequest,
   UpdatePhase,
   UpdateProgress,
   UpdateState,
@@ -60,6 +62,7 @@ export type {
   ShutdownActiveTurn,
   ShutdownAssessment,
   ShutdownCommitResult,
+  ShutdownExpiredEvent,
   ShutdownPrepareRequest,
   ShutdownPrepareResult,
   ShutdownReason,
@@ -92,6 +95,7 @@ export type {
   UpdateActionCode,
   UpdateActionResult,
   UpdateChannel,
+  UpdateInstallRequest,
   UpdatePhase,
   UpdateProgress,
   UpdateState,
@@ -459,6 +463,8 @@ export interface AppSettings {
   prAttributionText: string;
   prWorkflows: PrWorkflow[];
   opencodeGoUsage: boolean;
+  updateChannel: UpdateChannel | null;
+  updateBackgroundDownload: boolean;
 }
 
 export type SettingsPatch = Partial<AppSettings>;
@@ -482,6 +488,7 @@ export interface CwApi {
     check(): Promise<UpdateActionResult>;
     download(): Promise<UpdateActionResult>;
     setChannel(channel: UpdateChannel): Promise<UpdateActionResult>;
+    install(request: UpdateInstallRequest): Promise<UpdateActionResult>;
     onChanged(cb: (state: UpdateState) => void): () => void;
   };
   shutdown: {
@@ -491,6 +498,7 @@ export interface CwApi {
     cancel(token: string): Promise<void>;
     quit(token: string): Promise<ShutdownCommitResult>;
     onRequested(cb: (event: ShutdownRequestedEvent) => void): () => void;
+    onExpired(cb: (event: ShutdownExpiredEvent) => void): () => void;
   };
   checkVersions(): Promise<Array<{
     binary: DriverName;

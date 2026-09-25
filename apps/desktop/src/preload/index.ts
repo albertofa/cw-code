@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { AccountUsageSnapshot, AppSettings, CliBinary, CliDiscoveredCandidate, CliDiscoverResult, CommandInvocation, CommandOption, CreateSessionOptions, GitBranchInfo, GitDiffMode, GitDiffResult, GitStatus, HarnessId, PrDetail, PrInboxResult, Project, ProjectGitHubRepo, PrRef, PrWorkflow, RetryConnectionResult, SessionCleanupResult, SessionMeta, SessionPrLink, SessionStatus, ShutdownAssessment, ShutdownCommitResult, ShutdownPrepareRequest, ShutdownPrepareResult, ShutdownRequestedEvent, SkillDetail, SkillMeta, SkillSaveInput, SkillsListResult, SourceControlHealth, StartupState, SubagentToolsResult, UpdateActionResult, UpdateChannel, UpdateState, UsageLedgerQuery, UsageLedgerRow, WorktreePruneSummary } from "@cw-code/contracts";
+import type { AccountUsageSnapshot, AppSettings, CliBinary, CliDiscoveredCandidate, CliDiscoverResult, CommandInvocation, CommandOption, CreateSessionOptions, GitBranchInfo, GitDiffMode, GitDiffResult, GitStatus, HarnessId, PrDetail, PrInboxResult, Project, ProjectGitHubRepo, PrRef, PrWorkflow, RetryConnectionResult, SessionCleanupResult, SessionMeta, SessionPrLink, SessionStatus, ShutdownAssessment, ShutdownCommitResult, ShutdownExpiredEvent, ShutdownPrepareRequest, ShutdownPrepareResult, ShutdownRequestedEvent, SkillDetail, SkillMeta, SkillSaveInput, SkillsListResult, SourceControlHealth, StartupState, SubagentToolsResult, UpdateActionResult, UpdateChannel, UpdateInstallRequest, UpdateState, UsageLedgerQuery, UsageLedgerRow, WorktreePruneSummary } from "@cw-code/contracts";
 
 export type PermissionMode = "auto" | "acceptEdits" | "bypassPermissions" | "manual";
 export type EffortLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
@@ -47,6 +47,7 @@ export interface CwApi {
     check(): Promise<UpdateActionResult>;
     download(): Promise<UpdateActionResult>;
     setChannel(channel: UpdateChannel): Promise<UpdateActionResult>;
+    install(request: UpdateInstallRequest): Promise<UpdateActionResult>;
     onChanged(cb: (state: UpdateState) => void): () => void;
   };
   shutdown: {
@@ -56,6 +57,7 @@ export interface CwApi {
     cancel(token: string): Promise<void>;
     quit(token: string): Promise<ShutdownCommitResult>;
     onRequested(cb: (event: ShutdownRequestedEvent) => void): () => void;
+    onExpired(cb: (event: ShutdownExpiredEvent) => void): () => void;
   };
   checkVersions(): Promise<Array<{
     binary: DriverName;
@@ -178,6 +180,7 @@ const api: CwApi = {
     check: () => ipcRenderer.invoke("updates.check"),
     download: () => ipcRenderer.invoke("updates.download"),
     setChannel: (channel: UpdateChannel) => ipcRenderer.invoke("updates.setChannel", { channel }),
+    install: (request: UpdateInstallRequest) => ipcRenderer.invoke("updates.install", request),
     onChanged: (cb) => {
       const listener = (_e: unknown, state: UpdateState) => cb(state);
       ipcRenderer.on("updates.changed", listener as never);
@@ -194,6 +197,11 @@ const api: CwApi = {
       const listener = (_e: unknown, event: ShutdownRequestedEvent) => cb(event);
       ipcRenderer.on("shutdown.requested", listener as never);
       return () => ipcRenderer.removeListener("shutdown.requested", listener as never);
+    },
+    onExpired: (cb) => {
+      const listener = (_e: unknown, event: ShutdownExpiredEvent) => cb(event);
+      ipcRenderer.on("shutdown.expired", listener as never);
+      return () => ipcRenderer.removeListener("shutdown.expired", listener as never);
     }
   },
   checkVersions: () => ipcRenderer.invoke("cli.checkVersions"),

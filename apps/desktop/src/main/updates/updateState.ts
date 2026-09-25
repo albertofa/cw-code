@@ -31,7 +31,9 @@ export type UpdateEvent =
   | { type: "download-succeeded"; version: string }
   | { type: "download-failed"; failure: UpdateFailure }
   | { type: "channel-changed"; channel: UpdateChannel }
-  | { type: "auto-download-changed"; autoDownload: boolean };
+  | { type: "auto-download-changed"; autoDownload: boolean }
+  | { type: "install-started"; version: string }
+  | { type: "install-failed"; failure: UpdateFailure };
 
 function parseVersion(value: string): ParsedVersion | null {
   if (typeof value !== "string") return null;
@@ -232,6 +234,15 @@ export function reduceUpdate(state: UpdateState, event: UpdateEvent): UpdateStat
         phase: state.downloadedVersion !== null ? "ready" : "error",
         progress: null,
         error: { message: event.failure.message, context: "download", retryable: event.failure.retryable }
+      });
+    case "install-started":
+      if (state.phase !== "ready" || state.downloadedVersion !== event.version) return state;
+      return commit(state, { phase: "installing", error: null });
+    case "install-failed":
+      if (state.phase !== "installing") return state;
+      return commit(state, {
+        phase: state.downloadedVersion !== null ? "ready" : "error",
+        error: { message: event.failure.message, context: "install", retryable: event.failure.retryable }
       });
   }
 }

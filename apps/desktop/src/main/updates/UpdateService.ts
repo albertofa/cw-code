@@ -1,5 +1,12 @@
 import { dirname, join } from "node:path";
-import type { UpdateActionCode, UpdateActionResult, UpdateChannel, UpdateProgress, UpdateState } from "@cw-code/contracts";
+import type {
+  ShutdownCommitResult,
+  UpdateActionCode,
+  UpdateActionResult,
+  UpdateChannel,
+  UpdateProgress,
+  UpdateState
+} from "@cw-code/contracts";
 import type { UpdaterAdapter, UpdaterCheckOutcome, UpdaterDownloadHandle } from "./ElectronUpdaterAdapter.js";
 import { describeUpdateError, formatLogValue, isMissingReleaseError, redactUpdateText, type UpdateLogSink } from "./updateLog.js";
 import {
@@ -31,6 +38,8 @@ const UNINSTALLER_RE = /^Uninstall .+\.exe$/i;
 const PROGRESS_MILESTONES = [25, 50, 75, 100];
 const RELEASE_NAME_MAX_CHARS = 200;
 const RELEASE_DATE_MAX_CHARS = 64;
+const INSTALL_VERSION_MAX_CHARS = 64;
+const INSTALL_ERROR_MAX_CHARS = 300;
 
 export interface UpdateEnvironment {
   isPackaged: boolean;
@@ -69,6 +78,26 @@ interface ActiveDownload {
 }
 
 type CheckTrigger = "manual" | "scheduled" | "channel" | "startup";
+
+type UpdateActionFailure = Extract<UpdateActionResult, { ok: false }>;
+
+export interface UpdateInstallSession {
+  commit(action: () => void): Promise<ShutdownCommitResult>;
+  release(): void;
+}
+
+interface InstallTarget {
+  version: string;
+  channel: UpdateChannel;
+}
+
+function parseInstallTarget(request: unknown): InstallTarget | null {
+  if (!request || typeof request !== "object") return null;
+  const { version, channel } = request as { version?: unknown; channel?: unknown };
+  if (typeof version !== "string" || version.length === 0 || version.length > INSTALL_VERSION_MAX_CHARS) return null;
+  if (!isUpdateChannel(channel)) return null;
+  return { version, channel };
+}
 
 function hasUninstaller(files: UpdateFileChecks, directory: string): boolean {
   try {
@@ -158,6 +187,9 @@ export class UpdateService {
     }
     const blocked = this.blockedResult();
     if (blocked) return Promise.resolve(blocked);
+    if (this.state.phase === "installing" || this.inflight.has("install")) {
+      return Promise.resolve(this.fail("busy", "cw-code is restarting to install an update"));
+    }
     if (this.pendingChannel?.channel === channel) return this.pendingChannel.promise;
     if (!this.pendingChannel && channel === this.state.channel) return Promise.resolve(this.ok());
     const active = this.activeDownload;
@@ -177,8 +209,24 @@ export class UpdateService {
     return promise;
   }
 
+  install(request: unknown, session: UpdateInstallSession): Promise<UpdateActionResult> {
+    const blocked = this.blockedResult();
+    if (blocked) {
+      session.release();
+      return Promise.resolve(blocked);
+    }
+    const target = parseInstallTarget(request);
+    if (!target) {
+      session.release();
+      return Promise.resolve(this.fail("invalid", "An install request needs the downloaded version and its channel"));
+    }
+    if (this.inflight.has("install")) return Promise.resolve(this.fail("busy", "An update is already being installed"));
+    return this.dedupe("install", () => this.enqueue(() => this.performInstall(target, session)));
+  }
+
   setAutoDownload(autoDownload: boolean): UpdateActionResult {
     this.dispatch({ type: "auto-download-changed", autoDownload });
+    if (autoDownload && this.state.phase === "available") void this.download();
     return this.ok();
   }
 
@@ -312,6 +360,47 @@ export class UpdateService {
     return this.fail("failed", failure.message);
   }
 
+  private async performInstall(target: InstallTarget, session: UpdateInstallSession): Promise<UpdateActionResult> {
+    const rejection = this.installRejection(target);
+    if (rejection) {
+      session.release();
+      this.log("info", `install of ${target.version} rejected: ${rejection.message}`);
+      return rejection;
+    }
+    this.dispatch({ type: "install-started", version: target.version });
+    this.log("info", `installing ${target.version} through the shutdown coordinator`);
+    let committed: ShutdownCommitResult;
+    try {
+      committed = await session.commit(() => this.ensureAdapter().quitAndInstall(false, true));
+    } catch (error) {
+      committed = { ok: false, message: describeUpdateError(error, this.options.homeDir).message };
+    }
+    if (committed.ok) return this.ok();
+    const failure: UpdateFailure = {
+      message: boundedText(redactUpdateText(committed.message, this.options.homeDir), INSTALL_ERROR_MAX_CHARS) ?? "The installer could not be started",
+      retryable: true
+    };
+    this.dispatch({ type: "install-failed", failure });
+    this.log("warn", `install of ${target.version} failed: ${failure.message}`);
+    return this.fail("failed", failure.message);
+  }
+
+  private installRejection(target: InstallTarget): UpdateActionFailure | null {
+    if (this.disposed) return this.fail("superseded", "The updater shut down before the install started");
+    const { phase, downloadedVersion, availableVersion, channel } = this.state;
+    if (downloadedVersion === null) return this.fail("not-ready", "The update has not been downloaded yet");
+    if (downloadedVersion !== target.version) {
+      return this.fail("superseded", `Version ${target.version} is no longer the downloaded update`);
+    }
+    const targetChannel = this.pendingChannel?.channel ?? channel;
+    if (targetChannel !== target.channel) return this.fail("superseded", `The update channel changed to ${targetChannel}`);
+    if (phase === "available") {
+      return this.fail("superseded", `A newer version (${availableVersion ?? "unknown"}) was found; download it before restarting`);
+    }
+    if (phase !== "ready") return this.fail("not-ready", `The update is not ready to install (${phase})`);
+    return null;
+  }
+
   private async applyChannel(channel: UpdateChannel): Promise<UpdateActionResult> {
     if (this.disposed) return this.fail("superseded", "The updater shut down before the channel changed");
     if (channel === this.state.channel) return this.ok();
@@ -443,7 +532,7 @@ export class UpdateService {
     return { ok: true, state: this.state };
   }
 
-  private fail(code: UpdateActionCode, message: string): UpdateActionResult {
+  private fail(code: UpdateActionCode, message: string): UpdateActionFailure {
     return { ok: false, code, message, state: this.state };
   }
 

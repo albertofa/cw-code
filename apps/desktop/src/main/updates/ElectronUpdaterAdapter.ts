@@ -107,7 +107,17 @@ export class ElectronUpdaterAdapter implements UpdaterAdapter {
   }
 
   quitAndInstall(isSilent: boolean, isForceRunAfter: boolean): void {
-    this.updater.quitAndInstall(isSilent, isForceRunAfter);
+    const failures: Error[] = [];
+    const capture = (error: Error): void => {
+      failures.push(error);
+    };
+    this.updater.on("error", capture);
+    try {
+      this.updater.quitAndInstall(isSilent, isForceRunAfter);
+    } finally {
+      this.updater.removeListener("error", capture);
+    }
+    if (failures.length > 0) throw failures[0];
   }
 
   dispose(): void {

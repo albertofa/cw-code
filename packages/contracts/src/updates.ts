@@ -42,3 +42,9 @@ export type UpdateActionCode = "disabled" | "busy" | "no-update" | "not-ready" |
 export type UpdateActionResult =
   | { ok: true; state: UpdateState }
   | { ok: false; code: UpdateActionCode; message: string; state: UpdateState };
+
+export interface UpdateInstallRequest {
+  version: string;
+  channel: UpdateChannel;
+  token: string;
+}

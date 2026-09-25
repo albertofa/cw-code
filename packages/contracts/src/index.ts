@@ -77,7 +77,8 @@ export type {
   UpdateProgress,
   UpdateState,
   UpdateActionCode,
-  UpdateActionResult
+  UpdateActionResult,
+  UpdateInstallRequest
 } from "./updates.js";
 export type {
   ShutdownReason,
@@ -87,5 +88,6 @@ export type {
   ShutdownPrepareResult,
   ShutdownCommitResult,
   ShutdownPrepareRequest,
-  ShutdownRequestedEvent
+  ShutdownRequestedEvent,
+  ShutdownExpiredEvent
 } from "./shutdown.js";

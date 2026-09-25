@@ -9,7 +9,9 @@ const updaterMock = vi.hoisted(() => ({
   }>,
   tokens: [] as Array<{ cancelled: boolean }>,
   checkResult: null as unknown,
-  downloadArgs: [] as unknown[]
+  downloadArgs: [] as unknown[],
+  installCalls: [] as Array<[boolean, boolean]>,
+  installError: null as Error | null
 }));
 
 vi.mock("electron-updater", async () => {
@@ -68,7 +70,10 @@ vi.mock("electron-updater", async () => {
       return ["C:/cache/installer.exe"];
     }
 
-    quitAndInstall(): void {}
+    quitAndInstall(isSilent: boolean, isForceRunAfter: boolean): void {
+      updaterMock.installCalls.push([isSilent, isForceRunAfter]);
+      if (updaterMock.installError) this.emit("error", updaterMock.installError);
+    }
   }
 
   return { CancellationToken, NsisUpdater };
@@ -92,6 +97,8 @@ describe("ElectronUpdaterAdapter", () => {
     updaterMock.tokens.length = 0;
     updaterMock.downloadArgs.length = 0;
     updaterMock.checkResult = null;
+    updaterMock.installCalls.length = 0;
+    updaterMock.installError = null;
   });
 
   it("forbids downgrades after the channel setter re-enables them", () => {
@@ -167,6 +174,25 @@ describe("ElectronUpdaterAdapter", () => {
     handle.cancel();
     expect(updaterMock.tokens[0].cancelled).toBe(true);
     await expect(handle.done).resolves.toBeUndefined();
+  });
+
+  it("never installs on an ordinary quit: every configure keeps autoInstallOnAppQuit off", () => {
+    const { adapter, instance } = create();
+    for (const channel of ["alpha", "stable", "alpha"] as const) {
+      adapter.configure({ channel });
+      expect(instance.target.autoInstallOnAppQuit).toBe(false);
+      expect(instance.target.autoDownload).toBe(false);
+    }
+    expect(updaterMock.installCalls).toEqual([]);
+  });
+
+  it("passes the install flags through and throws when the library reports a synchronous install failure", () => {
+    const { adapter, instance } = create();
+    adapter.quitAndInstall(false, true);
+    expect(updaterMock.installCalls).toEqual([[false, true]]);
+    updaterMock.installError = new Error("No update filepath provided, can't quit and install");
+    expect(() => adapter.quitAndInstall(false, true)).toThrow("No update filepath provided");
+    expect(instance.listenerCount("error")).toBe(1);
   });
 
   it("keeps an error listener installed and forwards events until disposed", () => {

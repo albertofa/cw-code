@@ -21,7 +21,7 @@ import { appendCrashLog, initCrashLog } from "./debug/crashLog.js";
 import { runPackageProbe } from "./debug/packageProbe.js";
 import { claudeCommandsCachePath, ensureAppDirs, attachmentsDir, logsDir, migrateFromUserData, opencodeModelsCachePath, sessionDbPath, settingsFilePath, userdataDir } from "./paths/appPaths.js";
 import { reapOrphanedServers } from "./orphanServers.js";
-import type { ApprovalDecision, CliBinary, CommandInvocation, CreateSessionOptions, GitDiffMode, ProjectGitHubRepo, PrRef, SessionPrLink, MetadataIssue, SessionStatus, SettingsPatch, ShutdownCommitResult, ShutdownPrepareRequest, ShutdownReason, ShutdownRequestedEvent, StartupState, UpdateActionResult, UpdateState, UsageLedgerQuery } from "@cw-code/contracts";
+import type { AppSettings, ApprovalDecision, CliBinary, CommandInvocation, CreateSessionOptions, GitDiffMode, ProjectGitHubRepo, PrRef, SessionPrLink, MetadataIssue, SessionStatus, SettingsPatch, ShutdownCommitResult, ShutdownExpiredEvent, ShutdownPrepareRequest, ShutdownReason, ShutdownRequestedEvent, StartupState, UpdateActionResult, UpdateState, UsageLedgerQuery } from "@cw-code/contracts";
 import type { DriverKind, HarnessId, SkillSaveInput } from "@cw-code/contracts";
 import type { PtyKind } from "./pty/PtyPool.js";
 import { SessionManager } from "./sessions/SessionManager.js";
@@ -44,6 +44,8 @@ import type { SettingsStore } from "./settings/SettingsStore.js";
 import { ElectronUpdaterAdapter } from "./updates/ElectronUpdaterAdapter.js";
 import { UpdateService } from "./updates/UpdateService.js";
 import { createUpdateLogFile } from "./updates/updateLog.js";
+import { touchesUpdatePreferences, updatePreferences } from "./updates/updatePreferences.js";
+import { isUpdateChannel } from "./updates/updateState.js";
 
 type DriverName = DriverKind;
 
@@ -110,13 +112,16 @@ let quitApproved = false;
 let servicesDisposed = false;
 let shutdownAckTimer: NodeJS.Timeout | null = null;
 
-function createUpdateService(): UpdateService {
+function createUpdateService(settings: AppSettings): UpdateService {
   const logger = createUpdateLogFile({
     filePath: join(logsDir(), "updater.log"),
     console: { info: (message) => console.warn(message), warn: (message) => console.warn(message) }
   });
+  const preferences = updatePreferences(settings, app.getVersion());
   return new UpdateService({
     runningVersion: app.getVersion(),
+    channel: preferences.channel,
+    autoDownload: preferences.autoDownload,
     environment: { isPackaged: app.isPackaged, resourcesPath: process.resourcesPath, execPath: process.execPath },
     files: { fileExists: existsSync, listDirectory: (path) => readdirSync(path) },
     createAdapter: () => new ElectronUpdaterAdapter({ homeDir: homedir(), sink: logger }),
@@ -146,9 +151,17 @@ function createServices(stores: { sessionStore: SessionStore; settingsStore: Set
     pullRequests,
     ptys,
     accountUsage: new AccountUsageService(() => sessions.getDrivers()),
-    shutdown: new ShutdownCoordinator({ sessions, ptys, onRecovered: handleShutdownRecovered }),
-    updates: createUpdateService()
+    shutdown: new ShutdownCoordinator({ sessions, ptys, onRecovered: handleShutdownRecovered, onExpired: handleShutdownExpired }),
+    updates: createUpdateService(stores.settingsStore.get())
   };
+}
+
+function applyUpdatePreferences(updates: UpdateService, settings: AppSettings): void {
+  const preferences = updatePreferences(settings, app.getVersion());
+  updates.setAutoDownload(preferences.autoDownload);
+  void updates.setChannel(preferences.channel).then((result) => {
+    if (!result.ok && result.code !== "disabled") console.warn(`[updates] could not apply the saved channel: ${result.message}`);
+  });
 }
 
 function handleShutdownRecovered(failure: string | null): void {
@@ -161,6 +174,12 @@ function handleShutdownRecovered(failure: string | null): void {
   const options = { type: "error" as const, title: "cw-code", message: "cw-code could not restart its CLI drivers", detail: failure };
   const window = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
   void (window ? dialog.showMessageBox(window, options) : dialog.showMessageBox(options));
+}
+
+function handleShutdownExpired(reason: ShutdownReason): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  const event: ShutdownExpiredEvent = { reason };
+  mainWindow.webContents.send("shutdown.expired", event);
 }
 
 function isQuitApproved(): boolean {
@@ -276,9 +295,8 @@ async function createWindow(): Promise<void> {
     recoverAbandonedShutdown();
     void webContents.reload();
   });
-  webContents.on("did-start-navigation", (details) => {
-    if (details.isMainFrame && !details.isSameDocument) recoverAbandonedShutdown();
-  });
+  webContents.on("did-navigate", () => recoverAbandonedShutdown());
+  webContents.on("did-finish-load", () => recoverAbandonedShutdown());
   webContents.on("console-message", (event) => {
     if (event.level === "error") {
       appendCrashLog(`renderer error: ${event.message} (${event.sourceId}:${event.lineNumber})`);
@@ -426,7 +444,22 @@ function registerStartupIpc(): void {
   });
 }
 
-function registerUpdateIpc(updates: UpdateService): void {
+function releaseShutdownToken(shutdown: ShutdownCoordinator, token: string): void {
+  try {
+    shutdown.cancel(token);
+  } catch (err) {
+    console.warn(`[updates] could not release the restart request: ${(err as Error).message}`);
+  }
+}
+
+function registerUpdateIpc({ updates, sessions, shutdown }: Services): void {
+  ipcMain.handle("updates.install", (_e, args: unknown): Promise<UpdateActionResult> => {
+    const token = parseShutdownToken(args, "updates.install");
+    return updates.install(args, {
+      commit: (action) => commitShutdown(token, action),
+      release: () => releaseShutdownToken(shutdown, token)
+    });
+  });
   updates.subscribe((state) => {
     if (!mainWindow || mainWindow.isDestroyed()) return;
     mainWindow.webContents.send("updates.changed", state);
@@ -434,9 +467,11 @@ function registerUpdateIpc(updates: UpdateService): void {
   ipcMain.handle("updates.state", (): UpdateState => updates.getState());
   ipcMain.handle("updates.check", (): Promise<UpdateActionResult> => updates.check());
   ipcMain.handle("updates.download", (): Promise<UpdateActionResult> => updates.download());
-  ipcMain.handle("updates.setChannel", (_e, args: unknown): Promise<UpdateActionResult> =>
-    updates.setChannel(args && typeof args === "object" ? (args as { channel?: unknown }).channel : undefined)
-  );
+  ipcMain.handle("updates.setChannel", (_e, args: unknown): Promise<UpdateActionResult> => {
+    const channel = args && typeof args === "object" ? (args as { channel?: unknown }).channel : undefined;
+    if (isUpdateChannel(channel)) sessions.setSettings({ updateChannel: channel });
+    return updates.setChannel(channel);
+  });
 }
 
 function registerShutdownIpc({ shutdown }: Services): void {
@@ -459,8 +494,9 @@ function registerShutdownIpc({ shutdown }: Services): void {
   );
 }
 
-function registerIpc({ sessions, skills, files, git, pullRequests, ptys, accountUsage, updates }: Services): void {
-  registerUpdateIpc(updates);
+function registerIpc(services: Services): void {
+  const { sessions, skills, files, git, pullRequests, ptys, accountUsage, updates } = services;
+  registerUpdateIpc(services);
   sessions.setEmitter((sessionId, event) => {
     mainWindow?.webContents.send("turn.event", { sessionId, event });
   });
@@ -534,7 +570,9 @@ function registerIpc({ sessions, skills, files, git, pullRequests, ptys, account
       throw new Error(`${name} CLI could not be verified at '${failed.binaryPath}'. ${reason}`);
     }
     if (patch.opencodeGoUsage !== undefined) accountUsage.invalidate("opencode");
-    return sessions.setSettings(normalized);
+    const saved = sessions.setSettings(normalized);
+    if (touchesUpdatePreferences(patch)) applyUpdatePreferences(updates, saved);
+    return saved;
   });
   ipcMain.handle(
     "approvals.respond",
