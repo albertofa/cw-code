@@ -59,6 +59,7 @@ export type {
   TokenCounts,
   TurnModelUsage,
   ContextUsage,
+  ContextCompactionInfo,
   UsageSeverity,
   UsageWindow,
   UsageBalance,
