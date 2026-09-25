@@ -1,9 +1,7 @@
 import { readFileSync } from "node:fs";
 
 export function readWorkflowText(path: string): string {
-  return readFileSync(path, "utf8").replace(/
-/g, "
-");
+  return readFileSync(path, "utf8").replace(/\r\n/g, "\n");
 }
 
 export function topLevelBlock(lines: string[], key: string): string[] {
