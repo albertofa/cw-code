@@ -18,9 +18,9 @@ import { checkCliVersion, checkCliVersions, type CliVersionCheck } from "./cliVe
 import { discoverBinaries, verifyBinaryPath } from "./cli/binaryDiscovery.js";
 import { getHarnessTracePath, initHarnessTrace } from "./debug/harnessTrace.js";
 import { appendCrashLog, initCrashLog } from "./debug/crashLog.js";
-import { claudeCommandsCachePath, ensureAppDirs, attachmentsDir, logsDir, migrateFromUserData, opencodeModelsCachePath } from "./paths/appPaths.js";
+import { claudeCommandsCachePath, ensureAppDirs, attachmentsDir, logsDir, migrateFromUserData, opencodeModelsCachePath, sessionDbPath, settingsFilePath, userdataDir } from "./paths/appPaths.js";
 import { reapOrphanedServers } from "./orphanServers.js";
-import type { ApprovalDecision, CliBinary, CommandInvocation, CreateSessionOptions, GitDiffMode, ProjectGitHubRepo, PrRef, SessionPrLink, SessionStatus, SettingsPatch, UsageLedgerQuery } from "@cw-code/contracts";
+import type { ApprovalDecision, CliBinary, CommandInvocation, CreateSessionOptions, GitDiffMode, ProjectGitHubRepo, PrRef, SessionPrLink, MetadataIssue, SessionStatus, SettingsPatch, StartupState, UsageLedgerQuery } from "@cw-code/contracts";
 import type { DriverKind, HarnessId, SkillSaveInput } from "@cw-code/contracts";
 import type { PtyKind } from "./pty/PtyPool.js";
 import { SessionManager } from "./sessions/SessionManager.js";
@@ -35,6 +35,10 @@ import { defaultPrWorkflows } from "./settings/prWorkflowDefaults.js";
 import { configuredCliBinaryPath } from "./settings/settingsUtils.js";
 import { initOpencodeModelsCache } from "./providers/opencode/opencodeModels.js";
 import { initClaudeCommandsCache } from "./providers/claude/claudeCommands.js";
+import { metadataSchemaFor, openMetadataStores } from "./storage/metadataStores.js";
+import { restoreBackup, startFresh } from "./storage/recovery.js";
+import type { SessionStore } from "./sessions/SessionStore.js";
+import type { SettingsStore } from "./settings/SettingsStore.js";
 
 type DriverName = DriverKind;
 
@@ -50,20 +54,42 @@ function isValidUsageLedgerQuery(query: unknown): query is UsageLedgerQuery | un
   return true;
 }
 
+interface Services {
+  sessions: SessionManager;
+  skills: SkillsStore;
+  files: FileService;
+  git: GitService;
+  pullRequests: PullRequestService;
+  ptys: PtyPool;
+  accountUsage: AccountUsageService;
+}
+
 let mainWindow: BrowserWindow | null = null;
-let pullRequests: PullRequestService;
-const sessions = new SessionManager({
-  prHead: (ref) => pullRequests.knownHead(ref),
-  prHeadRefresh: (ref) => pullRequests.refreshHead(ref),
-  prState: (ref) => pullRequests.knownState(ref),
-  prUpdatedAt: (ref) => pullRequests.knownUpdatedAt(ref)
-});
-const skills = new SkillsStore();
-const files = new FileService();
-const git = new GitService(() => sessions.getSettings());
-pullRequests = new PullRequestService(git, () => sessions.getSettings(), (rootPath) => sessions.addProject(rootPath));
-const ptys = new PtyPool(() => sessions.getSettings());
-const accountUsage = new AccountUsageService(() => sessions.getDrivers());
+let services: Services | null = null;
+let startupState: StartupState = { mode: "ready" };
+
+function createServices(stores: { sessionStore: SessionStore; settingsStore: SettingsStore }): Services {
+  let pullRequests: PullRequestService;
+  const sessions = new SessionManager({
+    sessionStore: stores.sessionStore,
+    settingsStore: stores.settingsStore,
+    prHead: (ref) => pullRequests.knownHead(ref),
+    prHeadRefresh: (ref) => pullRequests.refreshHead(ref),
+    prState: (ref) => pullRequests.knownState(ref),
+    prUpdatedAt: (ref) => pullRequests.knownUpdatedAt(ref)
+  });
+  const git = new GitService(() => sessions.getSettings());
+  pullRequests = new PullRequestService(git, () => sessions.getSettings(), (rootPath) => sessions.addProject(rootPath));
+  return {
+    sessions,
+    skills: new SkillsStore(),
+    files: new FileService(),
+    git,
+    pullRequests,
+    ptys: new PtyPool(() => sessions.getSettings()),
+    accountUsage: new AccountUsageService(() => sessions.getDrivers())
+  };
+}
 
 async function createWindow(): Promise<void> {
   mainWindow = new BrowserWindow({
@@ -93,7 +119,7 @@ async function createWindow(): Promise<void> {
     appendCrashLog(
       `render-process-gone: reason=${details.reason} exitCode=${details.exitCode}`
     );
-    ptys.detachAll();
+    services?.ptys.detachAll();
     void webContents.reload();
   });
   webContents.on("console-message", (event) => {
@@ -163,7 +189,67 @@ function isInsideAttachmentsDir(target: string): boolean {
   return true;
 }
 
-function registerIpc(): void {
+function relaunch(): void {
+  app.relaunch();
+  app.exit(0);
+}
+
+function registerWindowIpc(): void {
+  ipcMain.on("win.minimize", (e) => windowFromSender(e.sender)?.minimize());
+  ipcMain.on("win.toggle-maximize", (e) => {
+    const w = windowFromSender(e.sender);
+    if (!w) return;
+    if (w.isMaximized()) w.unmaximize();
+    else w.maximize();
+  });
+  ipcMain.on("win.close", (e) => windowFromSender(e.sender)?.close());
+  ipcMain.handle("win.is-maximized", (e) => windowFromSender(e.sender)?.isMaximized() ?? false);
+
+  ipcMain.on("win.zoom-in", (e) => bumpZoom(e.sender, 1));
+  ipcMain.on("win.zoom-out", (e) => bumpZoom(e.sender, -1));
+  ipcMain.on("win.zoom-reset", (e) => windowFromSender(e.sender)?.webContents.setZoomLevel(0));
+}
+
+function recoveryIssueFor(args: { file?: unknown } | undefined): MetadataIssue {
+  if (startupState.mode !== "recovery") throw new Error("cw-code is not in recovery mode");
+  if (!args || typeof args.file !== "string") throw new Error("a recovery action requires { file }");
+  const file = args.file;
+  const issue = startupState.issues.find((candidate) => candidate.file === file);
+  if (!issue) throw new Error(`${file} is not a file that needs recovery`);
+  return issue;
+}
+
+function registerStartupIpc(): void {
+  ipcMain.handle("startup.state", (): StartupState => startupState);
+  ipcMain.handle("recovery.openDataDir", async (): Promise<void> => {
+    const failure = await shell.openPath(userdataDir());
+    if (failure) throw new Error(`could not open ${userdataDir()}: ${failure}`);
+  });
+  ipcMain.handle("recovery.restore", (_e, args: { file: string; backupPath: string }): void => {
+    if (!args || typeof args.backupPath !== "string") throw new Error("recovery.restore requires { file, backupPath }");
+    const issue = recoveryIssueFor(args);
+    const result = restoreBackup(issue.file, args.backupPath, metadataSchemaFor(issue.store));
+    console.warn(
+      `restored ${result.file} from ${result.restoredFrom}${result.brokenPath ? `; previous file kept at ${result.brokenPath}` : ""}${result.archivedLastGood ? `; last good backup kept at ${result.archivedLastGood}` : ""}`
+    );
+    relaunch();
+  });
+  ipcMain.handle("recovery.startFresh", (_e, args: { file: string }): void => {
+    const issue = recoveryIssueFor(args);
+    if (issue.kind === "io") throw new Error(`${issue.file} may be intact behind a lock; retry instead of starting fresh`);
+    const result = startFresh(issue.file, metadataSchemaFor(issue.store));
+    console.warn(
+      `started ${result.file} fresh${result.brokenPath ? `; previous file kept at ${result.brokenPath}` : ""}${result.archivedLastGood ? `; last good backup kept at ${result.archivedLastGood}` : ""}`
+    );
+    relaunch();
+  });
+  ipcMain.handle("recovery.retry", (): void => {
+    if (startupState.mode !== "recovery") throw new Error("cw-code is not in recovery mode");
+    relaunch();
+  });
+}
+
+function registerIpc({ sessions, skills, files, git, pullRequests, ptys, accountUsage }: Services): void {
   sessions.setEmitter((sessionId, event) => {
     mainWindow?.webContents.send("turn.event", { sessionId, event });
   });
@@ -536,20 +622,6 @@ function registerIpc(): void {
   ipcMain.on("pty.detach", (_e, args: { ptyId: string; token: string }) => ptys.detach(args.ptyId, args.token));
   ipcMain.on("pty.kill", (_e, args: { ptyId: string }) => ptys.kill(args.ptyId));
 
-  ipcMain.on("win.minimize", (e) => windowFromSender(e.sender)?.minimize());
-  ipcMain.on("win.toggle-maximize", (e) => {
-    const w = windowFromSender(e.sender);
-    if (!w) return;
-    if (w.isMaximized()) w.unmaximize();
-    else w.maximize();
-  });
-  ipcMain.on("win.close", (e) => windowFromSender(e.sender)?.close());
-  ipcMain.handle("win.is-maximized", (e) => windowFromSender(e.sender)?.isMaximized() ?? false);
-
-  ipcMain.on("win.zoom-in", (e) => bumpZoom(e.sender, 1));
-  ipcMain.on("win.zoom-out", (e) => bumpZoom(e.sender, -1));
-  ipcMain.on("win.zoom-reset", (e) => windowFromSender(e.sender)?.webContents.setZoomLevel(0));
-
   ipcMain.handle("term.font", () => readWindowsTerminalFontFace());
 
   ipcMain.handle("debug.openTrace", async (): Promise<{ ok: boolean; path?: string; error?: string }> => {
@@ -594,7 +666,18 @@ function registerIpc(): void {
   });
 }
 
-app.whenReady().then(async () => {
+function reportFatalStartupError(error: unknown): void {
+  const detail = error instanceof Error ? (error.stack ?? error.message) : String(error);
+  appendCrashLog(`fatal startup error: ${detail}`);
+  console.error(`fatal startup error: ${detail}`);
+  dialog.showErrorBox(
+    "cw-code could not start",
+    `${error instanceof Error ? error.message : String(error)}\n\nDetails were written to ${join(logsDir(), "crash.log")}. Nothing in your data folder was deleted.`
+  );
+  app.exit(1);
+}
+
+async function startApp(): Promise<void> {
   ensureAppDirs();
   migrateFromUserData(app.getPath("userData"));
   try {
@@ -604,28 +687,39 @@ app.whenReady().then(async () => {
     console.warn(`harness trace init failed: ${(err as Error).message}`);
   }
   initCrashLog(logsDir());
-  initOpencodeModelsCache(opencodeModelsCachePath());
-  initClaudeCommandsCache(claudeCommandsCachePath());
-  sessions.warmOpencodeModels();
   process.on("uncaughtException", (err) => {
     appendCrashLog(`uncaughtException: ${err.stack ?? err.message}`);
   });
   process.on("unhandledRejection", (reason) => {
     appendCrashLog(`unhandledRejection: ${String(reason)}`);
   });
-  reapOrphanedServers()
-    .then((reaped) => {
-      if (reaped.length > 0) console.warn(`reaped ${reaped.length} orphaned CLI server(s) from a previous run`);
-    })
-    .catch((err) => {
-      console.warn(`orphan server sweep failed: ${(err as Error).message}`);
-    });
+  const stores = openMetadataStores({ dbPath: sessionDbPath(), settingsPath: settingsFilePath() });
+  if (stores.ok) {
+    initOpencodeModelsCache(opencodeModelsCachePath());
+    initClaudeCommandsCache(claudeCommandsCachePath());
+    services = createServices(stores);
+    services.sessions.warmOpencodeModels();
+    reapOrphanedServers()
+      .then((reaped) => {
+        if (reaped.length > 0) console.warn(`reaped ${reaped.length} orphaned CLI server(s) from a previous run`);
+      })
+      .catch((err) => {
+        console.warn(`orphan server sweep failed: ${(err as Error).message}`);
+      });
+    registerIpc(services);
+  } else {
+    startupState = { mode: "recovery", issues: stores.issues, dataDir: userdataDir() };
+    for (const issue of stores.issues) {
+      appendCrashLog(`metadata recovery required: ${issue.store} ${issue.file} (${issue.kind}): ${issue.message}`);
+    }
+  }
+  registerWindowIpc();
+  registerStartupIpc();
   const quitOnSignal = (): void => {
     app.quit();
   };
   process.once("SIGINT", quitOnSignal);
   process.once("SIGTERM", quitOnSignal);
-  registerIpc();
   app.on("child-process-gone", (_e, details) => {
     appendCrashLog(
       `child-process-gone: type=${details.type} reason=${details.reason} exitCode=${details.exitCode}`
@@ -635,13 +729,15 @@ app.whenReady().then(async () => {
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) void createWindow();
   });
-});
+}
+
+app.whenReady().then(startApp).catch(reportFatalStartupError);
 
 app.on("window-all-closed", () => {
   if (process.platform !== "darwin") app.quit();
 });
 
 app.on("before-quit", () => {
-  sessions.dispose();
-  ptys.dispose();
+  services?.sessions.dispose();
+  services?.ptys.dispose();
 });
