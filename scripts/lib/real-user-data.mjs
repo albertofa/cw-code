@@ -3,6 +3,7 @@ import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 
 export const FIXTURE_MARKER = "cw-verify";
+export const REAL_FIXTURE_SETTINGS_KEYS = ["claudeBinaryPath", "holdingHours", "autoTitleEnabled", "updateBackgroundDownload", "cwVerifyUnknownKey"];
 
 export function cwCodeHomeDir() {
   return join(process.env.USERPROFILE ?? homedir(), ".cw-code");
@@ -50,6 +51,9 @@ export function seedRealUserData() {
           projectId: "proj_verify_fake",
           driver: "claude",
           worktreePath: "C:\\verify\\fake-worktree",
+          branch: "cw/verify-fake",
+          resumeCursor: "00000000-0000-4000-8000-00000000c0de",
+          status: "idle",
           title: "verify fixture"
         }
       ]
@@ -58,7 +62,15 @@ export function seedRealUserData() {
     2
   )}\n`;
   const settingsContent = `${JSON.stringify(
-    { schemaVersion: 1, claudeBinaryPath: "claude.exe", _fixture: FIXTURE_MARKER },
+    {
+      schemaVersion: 1,
+      claudeBinaryPath: "claude.exe",
+      holdingHours: 12,
+      autoTitleEnabled: false,
+      updateBackgroundDownload: false,
+      cwVerifyUnknownKey: "kept-across-updates",
+      _fixture: FIXTURE_MARKER
+    },
     null,
     2
   )}\n`;

@@ -2,7 +2,7 @@ import { spawn, spawnSync } from "node:child_process";
 import { copyFileSync, existsSync, linkSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { request } from "node:http";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { fileURLToPath } from "node:url";
 import { parseFaults } from "../../tools/release/src/feedFaults.ts";
@@ -26,7 +26,7 @@ import { parseAppUpdateYaml } from "./upgrade-builds.mjs";
 import {
   UNINSTALL_POLL_TIMEOUT_MS,
   isProcessAlive,
-  killProcessTree,
+  killProcessTreeIfImage,
   nsisGuid,
   readRegistryValue,
   registryPaths,
@@ -41,7 +41,6 @@ const scriptsDir = resolve(libDir, "..");
 const repoRoot = resolve(scriptsDir, "..");
 const FIXTURES_DIR = join(repoRoot, "apps", "desktop", "src", "main", "storage", "__fixtures__");
 const FAKE_CLAUDE = join(scriptsDir, "fixtures", "fake-claude.mjs");
-const WIZARD_DRIVER = join(libDir, "drive-installer-wizard.ps1");
 
 export const TEST_GUID = nsisGuid(UPDATE_TEST_APP_ID);
 export const BUSY_SESSION_ID = "sess_fx000001";
@@ -318,12 +317,18 @@ function sabotageInstaller(kind, installerPath) {
   return { kind, applied: true };
 }
 
-function startWizardDriver(installerDir, logPath) {
-  return spawn(
-    "powershell.exe",
-    ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", WIZARD_DRIVER, "-InstallerDir", installerDir, "-LogPath", logPath, "-TimeoutSeconds", "480"],
-    { stdio: "ignore", windowsHide: true }
-  );
+
+function samePath(a, b) {
+  const normalize = (value) => String(value).replace(/\//g, "\\").replace(/\\+$/, "").toLowerCase();
+  return typeof a === "string" && normalize(a) === normalize(b);
+}
+
+function isUpdateTestImage(image) {
+  return basename(image).toLowerCase() === UPDATE_TEST_EXECUTABLE.toLowerCase();
+}
+
+function isNodeImage(image) {
+  return image.toLowerCase() === process.execPath.toLowerCase();
 }
 
 function readJsonLines(path) {
@@ -364,7 +369,6 @@ function scenarioPaths(dir) {
     outPath: join(dir, "autotest.jsonl"),
     recoveryOutPath: join(dir, "autotest-recovery.jsonl"),
     pauseFile: join(dir, "resume-install"),
-    wizardLog: join(dir, "installer-wizard.jsonl"),
     customInstallDir: join(dir, "custom", "cw-code-updatetest")
   };
 }
@@ -384,7 +388,6 @@ export async function runScenario(entry, context) {
   const keys = registryPaths(TEST_GUID, entry.scope === "per-machine");
   const knownPids = new Set();
   let feed = null;
-  let wizard = null;
   let staged = null;
   try {
     record.notes.push(...cleanupTestIdentity(identity));
@@ -407,7 +410,6 @@ export async function runScenario(entry, context) {
 
     staged = stageFeed(entry, builds, versions, paths.feedRoot);
     feed = await startFeedServer({ root: staged.root, port, faults: staged.faults });
-    if (entry.mode === "install") wizard = startWizardDriver(pendingDir, paths.wizardLog);
 
     let sabotage = null;
     const first = await runAppToResult(exe, [], appEnv(paths, entry, entry.mode, paths.outPath), paths.outPath, FIRST_RUN_TIMEOUT_MS, async (runs) => {
@@ -424,8 +426,9 @@ export async function runScenario(entry, context) {
     if (has(runs[0], "installing")) {
       const exited = await waitForExit(first.app.pid, EXIT_TIMEOUT_MS);
       if (!exited) record.problems.push("N did not exit after Update and restart");
+      runs = readRuns(paths.outPath);
       const exitedAt = first.app.exitedAt ?? Date.now();
-      const waitMs = entry.sabotage ? NO_RELAUNCH_GRACE_MS : RELAUNCH_TIMEOUT_MS;
+      const waitMs = has(runs[0], "result") ? 0 : entry.sabotage ? NO_RELAUNCH_GRACE_MS : RELAUNCH_TIMEOUT_MS;
       while (Date.now() - exitedAt < waitMs) {
         runs = readRuns(paths.outPath);
         if (runs.length > 1 && has(runs[1], "result")) break;
@@ -447,7 +450,7 @@ export async function runScenario(entry, context) {
     if (downloadStartedAt && downloadDoneAt !== null) record.timings.downloadMs = downloadDoneAt - Date.parse(downloadStartedAt.at);
 
     let recoveryEvents = null;
-    if (entry.sabotage) {
+    if (entry.expect.outcome === "installer-did-not-start") {
       const handoff = join(identity.userDataDir, UPDATE_AUTOTEST_HANDOFF_FILE);
       record.handoffLeftBehind = existsSync(handoff);
       rmSync(handoff, { force: true });
@@ -470,7 +473,9 @@ export async function runScenario(entry, context) {
       transfers,
       metadataProblems: checkPreservedData(paths, seed),
       fakeCli: entry.busyTurn ? fakeCliObservation(paths.fakeLog) : null,
-      recoveryEvents
+      recoveryEvents,
+      expectedCwCodeHome: paths.cwCodeHome,
+      expectedUserDataDir: identity.userDataDir
     };
     if (!existsSync(exe) && !existsSync(join(observation.installLocationAfter ?? installLocationBefore, UPDATE_TEST_EXECUTABLE))) {
       record.problems.push("the installed executable is gone after the scenario");
@@ -491,16 +496,18 @@ export async function runScenario(entry, context) {
       advertisedInstaller: observation.advertisedInstaller,
       advertisedInstallerSize: observation.advertisedInstallerSize,
       transfers,
-      fakeCli: observation.fakeCli,
-      wizard: readJsonLines(paths.wizardLog)
+      fakeCli: observation.fakeCli
     };
   } catch (err) {
     record.problems.push(`scenario aborted: ${err.message}`);
   } finally {
-    if (wizard?.pid && isProcessAlive(wizard.pid)) killProcessTree(wizard.pid);
     if (feed) await feed.close();
-    for (const pid of knownPids) if (isProcessAlive(pid)) killProcessTree(pid);
-    for (const fake of readJsonLines(paths.fakeLog)) if (fake.event === "turn-start" && isProcessAlive(fake.pid)) killProcessTree(fake.pid);
+    const stopped = [];
+    for (const pid of knownPids) stopped.push(killProcessTreeIfImage(pid, isUpdateTestImage));
+    for (const fake of readJsonLines(paths.fakeLog)) {
+      if (fake.event === "turn-start") stopped.push(killProcessTreeIfImage(fake.pid, isNodeImage));
+    }
+    record.stoppedProcesses = stopped.filter((entry) => entry.killed);
     try {
       record.notes.push(...cleanupTestIdentity(identity));
     } catch (err) {
@@ -519,11 +526,16 @@ export async function runUnpackedAutotestSmoke(unpackedExe, workDir) {
   const env = appEnv({ cwCodeHome: paths.cwCodeHome }, null, "check-only", paths.outPath);
   const result = await runAppToResult(unpackedExe, [`--user-data-dir=${paths.userDataDir}`], env, paths.outPath, EXIT_TIMEOUT_MS);
   const exited = await waitForExit(result.app.pid, 30_000);
-  if (!exited && result.app.pid) killProcessTree(result.app.pid);
+  if (!exited && result.app.pid) killProcessTreeIfImage(result.app.pid, isUpdateTestImage);
   const events = result.runs[0] ?? [];
   const outcome = [...events].reverse().find((event) => event.event === "result") ?? null;
+  const started = events.find((event) => event.event === "started");
   const problems = [];
-  if (!has(events, "started")) problems.push("the unpacked update-test build did not write the autotest started event");
+  if (!started) problems.push("the unpacked update-test build did not write the autotest started event");
+  else {
+    if (!samePath(started.cwCodeHome, paths.cwCodeHome)) problems.push(`the unpacked build used CW_CODE_HOME ${started.cwCodeHome}, expected ${paths.cwCodeHome}`);
+    if (!samePath(started.userDataDir, paths.userDataDir)) problems.push(`the unpacked build used userData ${started.userDataDir}, expected ${paths.userDataDir}`);
+  }
   if (outcome?.outcome !== "disabled") problems.push(`the unpacked build reported ${outcome?.outcome ?? "nothing"} instead of disabled updates`);
   if (!exited) problems.push("the unpacked build did not quit by itself");
   return { events: events.map((event) => event.event), result: outcome, exitCode: result.app.exitCode, problems };
