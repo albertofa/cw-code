@@ -1,5 +1,6 @@
 import type { DriverKind, EffortLevel } from "./session.js";
 import type { PrWorkflow } from "./pullRequests.js";
+import type { UpdateChannel } from "./updates.js";
 
 export interface CustomModel {
   id: string;
@@ -37,6 +38,8 @@ export interface AppSettings {
   prAttributionText: string;
   prWorkflows: PrWorkflow[];
   opencodeGoUsage: boolean;
+  updateChannel: UpdateChannel | null;
+  updateBackgroundDownload: boolean;
 }
 
 export type SettingsPatch = Partial<AppSettings>;

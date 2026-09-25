@@ -3,6 +3,7 @@ import { ChevronDown, ChevronRight } from "lucide-react";
 import type { DirEntry } from "../cw.js";
 import { FileIcon } from "./fileIcons.js";
 import { parseUnifiedDiff } from "./diffParser.js";
+import { useEditorBuffers } from "../stores/editorBuffers.js";
 
 interface FileTreeProps {
   dir: string;
@@ -114,13 +115,25 @@ export function FilePanel({ sessionId }: { sessionId: string }) {
   const [loading, setLoading] = useState<Set<string>>(new Set());
   const [dirErrors, setDirErrors] = useState<Record<string, string>>({});
   const [openFile, setOpenFile] = useState<string | null>(null);
-  const [content, setContent] = useState("");
+  const [openKey, setOpenKey] = useState<string | null>(null);
+  const openBuffer = useEditorBuffers((s) => (openKey ? s.buffers[openKey] : undefined));
+  const editable = openBuffer !== undefined && openBuffer.path === openFile;
+  const content = editable ? openBuffer.content : "";
   const [filter, setFilter] = useState("");
   const [allFiles, setAllFiles] = useState<string[] | null>(null);
   const [searching, setSearching] = useState(false);
   const [status, setStatus] = useState("");
   const seqRef = useRef(0);
   const pendingRef = useRef<Set<string>>(new Set());
+  const registeredKeyRef = useRef<string | null>(null);
+  const requestedFileRef = useRef<string | null>(null);
+
+  const releaseBuffer = useCallback(() => {
+    if (registeredKeyRef.current) useEditorBuffers.getState().unregister(registeredKeyRef.current);
+    registeredKeyRef.current = null;
+  }, []);
+
+  useEffect(() => releaseBuffer, [sessionId, releaseBuffer]);
 
   const loadDir = useCallback((sid: string, seq: number, dir: string) => {
     const key = `${seq}:${dir}`;
@@ -164,7 +177,8 @@ export function FilePanel({ sessionId }: { sessionId: string }) {
     setLoading(new Set());
     setDirErrors({});
     setOpenFile(null);
-    setContent("");
+    setOpenKey(null);
+    requestedFileRef.current = null;
     setAllFiles(null);
     setSearching(false);
     loadDir(sessionId, seq, "");
@@ -210,18 +224,36 @@ export function FilePanel({ sessionId }: { sessionId: string }) {
   };
 
   const open = (path: string) => {
+    const sid = sessionId;
+    const seq = seqRef.current;
+    requestedFileRef.current = path;
     setOpenFile(path);
     window.cw
-      .readFile(sessionId, path)
-      .then(setContent)
-      .catch((err: Error) => setStatus(`read failed: ${err.message}`));
+      .readFile(sid, path)
+      .then((text) => {
+        if (seqRef.current !== seq || requestedFileRef.current !== path) return;
+        const key = useEditorBuffers.getState().register(sid, path, text);
+        releaseBuffer();
+        registeredKeyRef.current = key;
+        setOpenKey(key);
+      })
+      .catch((err: Error) => {
+        if (seqRef.current !== seq || requestedFileRef.current !== path) return;
+        setStatus(`read failed for ${path}: ${err.message}`);
+      });
   };
 
   const save = () => {
-    if (!openFile) return;
+    const buffer = editable && openKey ? useEditorBuffers.getState().buffers[openKey] : undefined;
+    if (!buffer || !openKey) return;
+    const key = openKey;
+    const { sessionId: bufferSession, path, content: text } = buffer;
     window.cw
-      .saveFile(sessionId, openFile, content)
-      .then(() => setStatus(`saved ${openFile}`))
+      .saveFile(bufferSession, path, text)
+      .then(() => {
+        useEditorBuffers.getState().markSaved(key, text);
+        setStatus(`saved ${path}`);
+      })
       .catch((err: Error) => setStatus(`save failed: ${err.message}`));
   };
 
@@ -278,7 +310,7 @@ export function FilePanel({ sessionId }: { sessionId: string }) {
       <div className="editor-col">
         <div className="editor-bar">
           <span className="path">{openFile ?? "no file open"}</span>
-          {openFile && (
+          {editable && (
             <button className="btn" style={{ fontSize: 11, padding: "3px 8px" }} onClick={save}>
               Save
             </button>
@@ -287,7 +319,10 @@ export function FilePanel({ sessionId }: { sessionId: string }) {
         </div>
         <textarea
           value={content}
-          onChange={(e) => setContent(e.target.value)}
+          onChange={(e) => {
+            if (editable && openKey) useEditorBuffers.getState().update(openKey, e.target.value);
+          }}
+          readOnly={!editable}
           spellCheck={false}
           className="editor"
         />

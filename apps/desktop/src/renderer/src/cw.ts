@@ -29,12 +29,29 @@ import type {
   PrTimelineItem,
   PrWorkflow,
   SessionPrLink,
+  ShutdownActiveTurn,
+  ShutdownAssessment,
+  ShutdownCommitResult,
+  ShutdownExpiredEvent,
+  ShutdownPrepareRequest,
+  ShutdownPrepareResult,
+  ShutdownReason,
+  ShutdownRequestedEvent,
+  ShutdownTerminal,
   SkillDetail,
   SkillMeta,
   SkillSaveInput,
   SkillsListResult,
+  StartupState,
   TokenCounts,
   TurnModelUsage,
+  UpdateActionCode,
+  UpdateActionResult,
+  UpdateChannel,
+  UpdateInstallRequest,
+  UpdatePhase,
+  UpdateProgress,
+  UpdateState,
   UsageBalance,
   UsageLedgerQuery,
   UsageLedgerRow,
@@ -43,6 +60,14 @@ import type {
 } from "@cw-code/contracts";
 
 export type {
+  ShutdownActiveTurn,
+  ShutdownAssessment,
+  ShutdownCommitResult,
+  ShutdownExpiredEvent,
+  ShutdownPrepareRequest,
+  ShutdownPrepareResult,
+  ShutdownReason,
+  ShutdownTerminal,
   AccountUsageOk,
   AccountUsageSnapshot,
   AccountUsageState,
@@ -69,6 +94,13 @@ export type {
   SessionPrLink,
   TokenCounts,
   TurnModelUsage,
+  UpdateActionCode,
+  UpdateActionResult,
+  UpdateChannel,
+  UpdateInstallRequest,
+  UpdatePhase,
+  UpdateProgress,
+  UpdateState,
   UsageBalance,
   UsageLedgerQuery,
   UsageLedgerRow,
@@ -441,6 +473,8 @@ export interface AppSettings {
   prAttributionText: string;
   prWorkflows: PrWorkflow[];
   opencodeGoUsage: boolean;
+  updateChannel: UpdateChannel | null;
+  updateBackgroundDownload: boolean;
 }
 
 export type SettingsPatch = Partial<AppSettings>;
@@ -452,6 +486,30 @@ export interface DirEntry {
 }
 
 export interface CwApi {
+  getStartupState(): Promise<StartupState>;
+  recovery: {
+    openDataDir(): Promise<void>;
+    restore(file: string, backupPath: string): Promise<void>;
+    startFresh(file: string): Promise<void>;
+    retry(): Promise<void>;
+  };
+  updates: {
+    getState(): Promise<UpdateState>;
+    check(): Promise<UpdateActionResult>;
+    download(): Promise<UpdateActionResult>;
+    setChannel(channel: UpdateChannel): Promise<UpdateActionResult>;
+    install(request: UpdateInstallRequest): Promise<UpdateActionResult>;
+    onChanged(cb: (state: UpdateState) => void): () => void;
+  };
+  shutdown: {
+    assess(): Promise<ShutdownAssessment>;
+    prepare(request: ShutdownPrepareRequest): Promise<ShutdownPrepareResult>;
+    force(token: string): Promise<ShutdownPrepareResult>;
+    cancel(token: string): Promise<void>;
+    quit(token: string): Promise<ShutdownCommitResult>;
+    onRequested(cb: (event: ShutdownRequestedEvent) => void): () => void;
+    onExpired(cb: (event: ShutdownExpiredEvent) => void): () => void;
+  };
   checkVersions(): Promise<Array<{
     binary: DriverName;
     binaryPath: string;

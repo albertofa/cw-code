@@ -321,6 +321,10 @@ export class OpencodeServerPool {
     killProcessTree(entry.proc);
   }
 
+  ownedProcessCount(): number {
+    return this.servers.size + this.pending.size;
+  }
+
   dispose(): void {
     this.disposed = true;
     if (this.sweepTimer) {
