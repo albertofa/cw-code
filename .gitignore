@@ -21,6 +21,7 @@ yarn-error.log*
 
 # Desktop build output
 release/
+!tools/release/
 *.asar
 *.msi
 *.nsis.7z
