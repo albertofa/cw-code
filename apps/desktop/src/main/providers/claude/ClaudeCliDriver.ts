@@ -137,6 +137,8 @@ interface ClaudeProcessState {
   errored: boolean;
   stderr: string;
   startedAt: number;
+  lastActivityAt: number;
+  postCompletionOutputPending: boolean;
   agentByCall: Map<string, string>;
   taskToolCalls: Map<string, string>;
   taskReports: Map<string, string>;
@@ -215,13 +217,53 @@ export class ClaudeCliDriver implements CliDriver {
     state.idleTimer = undefined;
   }
 
-  private armIdleTimer(state: ClaudeProcessState): void {
+  private isTopLevelAssistantActivity(line: string): boolean {
+    try {
+      const message = JSON.parse(line) as { type?: unknown; parent_tool_use_id?: unknown };
+      if (message.type !== "assistant" && message.type !== "stream_event") return false;
+      return typeof message.parent_tool_use_id !== "string" || message.parent_tool_use_id.length === 0;
+    } catch {
+      return false;
+    }
+  }
+
+  private noteProcessActivity(state: ClaudeProcessState, line: string): void {
+    state.lastActivityAt = Date.now();
+    if (state.completedTurn && this.isTopLevelAssistantActivity(line)) {
+      state.postCompletionOutputPending = true;
+    }
+    if (state.idleTimer && (state.completedTurn || state.postCompletionOutputPending)) {
+      this.armIdleTimer(state);
+    }
+  }
+
+  private noteTaskNotificationActivity(state: ClaudeProcessState): void {
+    state.lastActivityAt = Date.now();
+    if (state.completedTurn || state.postCompletionOutputPending) this.armIdleTimer(state);
+  }
+
+  private armIdleTimer(state: ClaudeProcessState, delayMs = CLAUDE_IDLE_EVICT_MS): void {
     this.clearIdleTimer(state);
     const timer = setTimeout(() => {
+      if (state.idleTimer !== timer) return;
       state.idleTimer = undefined;
       if (this.processes.get(state.sessionId) !== state) return;
-      if (this.liveTaskCount(state) > 0 || !state.completedTurn || this.hasPendingForSession(state.sessionId)) {
+      if (!this.isProcessAlive(state)) {
+        this.processes.delete(state.sessionId);
+        return;
+      }
+      if (
+        this.liveTaskCount(state) > 0 ||
+        !state.completedTurn ||
+        state.postCompletionOutputPending ||
+        this.hasPendingForSession(state.sessionId)
+      ) {
         this.armIdleTimer(state);
+        return;
+      }
+      const idleForMs = Date.now() - state.lastActivityAt;
+      if (idleForMs < CLAUDE_IDLE_EVICT_MS) {
+        this.armIdleTimer(state, CLAUDE_IDLE_EVICT_MS - idleForMs);
         return;
       }
       traceHarnessCall({
@@ -234,7 +276,7 @@ export class ClaudeCliDriver implements CliDriver {
       });
       this.processes.delete(state.sessionId);
       this.killFn(state.child);
-    }, CLAUDE_IDLE_EVICT_MS);
+    }, delayMs);
     timer.unref?.();
     state.idleTimer = timer;
   }
@@ -411,6 +453,7 @@ export class ClaudeCliDriver implements CliDriver {
   }
 
   private handleProcessLine(state: ClaudeProcessState, line: string): void {
+    this.noteProcessActivity(state, line);
     const compactBoundary = parseClaudeCompactBoundary(line);
     if (compactBoundary) {
       state.compactedPostTokens = compactBoundary.postTokens;
@@ -446,7 +489,7 @@ export class ClaudeCliDriver implements CliDriver {
       state.activeTurnId,
       state.resumeCursor,
       (info) => this.handleTurnDone(state, info),
-      () => this.clearIdleTimer(state),
+      () => this.noteTaskNotificationActivity(state),
       () => this.shouldIgnoreTaskNotification(state),
       state.modelUsage,
       state.mainModel
@@ -565,6 +608,12 @@ export class ClaudeCliDriver implements CliDriver {
   private handleTurnDone(state: ClaudeProcessState, info: TurnDoneInfo): void {
     const turnId = state.activeTurnId;
     if (state.completedTurn) {
+      if (state.postCompletionOutputPending) {
+        state.postCompletionOutputPending = false;
+        state.resumeCursor = info.resumeCursor;
+        state.modelUsage = info.modelUsage;
+        this.armIdleTimer(state);
+      }
       this.interruptedTurns.delete(turnId);
       return;
     }
@@ -594,6 +643,7 @@ export class ClaudeCliDriver implements CliDriver {
       });
     }
     state.resumeCursor = info.resumeCursor;
+    state.postCompletionOutputPending = false;
     if (backgroundTasks > 0) {
       return;
     }
@@ -714,6 +764,8 @@ export class ClaudeCliDriver implements CliDriver {
       if (this.liveTaskCount(existing) === 0) this.clearTaskTracking(existing);
       existing.activeTurnId = turnId;
       existing.completedTurn = false;
+      existing.postCompletionOutputPending = false;
+      existing.lastActivityAt = Date.now();
       existing.heldByBackgroundWork = this.liveTaskCount(existing) > 0;
       existing.permissionMode = request.permissionMode ?? "auto";
       existing.compactedPostTokens = undefined;
@@ -762,6 +814,8 @@ export class ClaudeCliDriver implements CliDriver {
       errored: false,
       stderr: "",
       startedAt: start,
+      lastActivityAt: start,
+      postCompletionOutputPending: false,
       agentByCall: new Map(),
       taskToolCalls: new Map(),
       taskReports: new Map(),
@@ -842,6 +896,7 @@ export class ClaudeCliDriver implements CliDriver {
     }
     this.resolvePendingForTurn(turnId);
     state.completedTurn = true;
+    state.postCompletionOutputPending = false;
     this.turnToSession.delete(turnId);
   }
 
