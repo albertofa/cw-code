@@ -1,4 +1,4 @@
-import { createHash, randomBytes } from "node:crypto";
+import { randomBytes } from "node:crypto";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,7 +8,9 @@ import { createGitHubReleaseClient } from "../gitHubReleaseClient.ts";
 import { createGitHubReleaseSource } from "../gitHubReleaseSource.ts";
 import { applyVersion, checkSync, DEFAULT_PACKAGE_RELATIVE_PATHS, readPackageVersions, setBase } from "../packageVersions.ts";
 import { type ReleasePlan, validatePlanShape } from "../planValidation.ts";
-import { type AnonymousHttp, checkPublishedReleaseWithRetries } from "../publishedCheck.ts";
+import { createClientHttp } from "../clientHttp.ts";
+import { checkPublishedReleaseWithRetries } from "../publishedCheck.ts";
+import { FEED_MONITOR_RUNBOOK, monitorUpdateFeedWithRetries } from "../updateFeedMonitor.ts";
 import { RECOVERY_RUNBOOK, publishRelease } from "../publishRelease.ts";
 import { readReleaseUpdateInfo, rehashRelease, sha512Base64 } from "../rehash.ts";
 import { type ReleaseAssetsReport, SIGNING_MANIFEST_NAME, stageReleaseSet, validateReleaseAssets } from "../releaseAssets.ts";
@@ -65,10 +67,14 @@ function appendStepSummary(markdown: string): void {
   if (file) appendFileSync(file, `${markdown.trimEnd()}\n`);
 }
 
-function annotateError(title: string, message: string): void {
+function annotate(level: "error" | "notice", title: string, message: string): void {
   if (process.env.GITHUB_ACTIONS !== "true") return;
   const escaped = message.replaceAll("%", "%25").replaceAll("\r", "%0D").replaceAll("\n", "%0A");
-  process.stdout.write(`::error title=${title}::${escaped}\n`);
+  process.stdout.write(`::${level} title=${title}::${escaped}\n`);
+}
+
+function annotateError(title: string, message: string): void {
+  annotate("error", title, message);
 }
 
 function resolveRepo(repoRoot: string): RepoInfo {
@@ -460,33 +466,6 @@ async function cmdPublish(options: Map<string, string>, repoRoot: string): Promi
   }
 }
 
-async function readAll(response: Response): Promise<{ sha512: string; size: number }> {
-  const hash = createHash("sha512");
-  let size = 0;
-  if (response.body) {
-    for await (const chunk of response.body) {
-      hash.update(chunk);
-      size += chunk.byteLength;
-    }
-  }
-  return { sha512: hash.digest("base64"), size };
-}
-
-const anonymousHttp: AnonymousHttp = {
-  async text(url, accept) {
-    const response = await fetch(url, { headers: { Accept: accept, "User-Agent": "cw-code-release-check" }, redirect: "follow" });
-    return { status: response.status, body: await response.text() };
-  },
-  async digest(url) {
-    const response = await fetch(url, { headers: { "User-Agent": "cw-code-release-check" }, redirect: "follow" });
-    if (response.status !== 200) {
-      await response.body?.cancel();
-      return { status: response.status, sha512: "", size: 0 };
-    }
-    return { status: response.status, ...(await readAll(response)) };
-  }
-};
-
 async function cmdCheckPublished(options: Map<string, string>, repoRoot: string): Promise<void> {
   const token = ["GH_TOKEN", "GITHUB_TOKEN"].find((name) => process.env[name]);
   if (token) fail(`${token} is set; the post-publication check must run anonymously, exactly like an installed client`);
@@ -496,7 +475,7 @@ async function cmdCheckPublished(options: Map<string, string>, repoRoot: string)
   const delaySeconds = Number(options.get("delay-seconds") ?? "30");
   if (!Number.isInteger(attempts) || attempts < 1 || !Number.isFinite(delaySeconds) || delaySeconds < 0) fail("--attempts must be a positive integer and --delay-seconds a non-negative number");
   const report = await checkPublishedReleaseWithRetries(
-    { plan, owner, repo, http: anonymousHttp },
+    { plan, owner, repo, http: createClientHttp({ fetch }) },
     { attempts, delayMs: delaySeconds * 1000, sleep: (ms) => new Promise((done) => setTimeout(done, ms)) }
   );
   printJson(report);
@@ -514,6 +493,37 @@ async function cmdCheckPublished(options: Map<string, string>, repoRoot: string)
     for (const entry of report.checks.filter((item) => !item.ok)) annotateError(`Published ${entry.name} check failed`, `${entry.detail} (${entry.url}); recovery: ${runbook}`);
     process.exitCode = 1;
   }
+}
+
+function reportLine(level: "error" | "notice", title: string, message: string): void {
+  if (process.env.GITHUB_ACTIONS === "true") annotate(level, title, message);
+  else process.stdout.write(`${level}: ${title}: ${message}\n`);
+}
+
+async function cmdMonitorFeed(options: Map<string, string>, repoRoot: string): Promise<void> {
+  const { owner, repo } = resolveRepo(repoRoot);
+  const attempts = Number(options.get("attempts") ?? "3");
+  const delaySeconds = Number(options.get("delay-seconds") ?? "30");
+  if (!Number.isInteger(attempts) || attempts < 1 || attempts > 5 || !Number.isFinite(delaySeconds) || delaySeconds < 0 || delaySeconds > 300) {
+    fail("--attempts must be an integer from 1 to 5 and --delay-seconds a number from 0 to 300");
+  }
+  const http = createClientHttp({ fetch, apiToken: process.env.GH_TOKEN || undefined });
+  const report = await monitorUpdateFeedWithRetries(
+    { owner, repo, http, verifyInstallerDigest: options.get("verify-installer-digest") === "true" },
+    { attempts, initialDelayMs: delaySeconds * 1000, sleep: (ms) => new Promise((done) => setTimeout(done, ms)) }
+  );
+  const reportPath = options.get("report");
+  if (reportPath) writeFileSync(resolve(reportPath), `${JSON.stringify(report, null, 2)}\n`);
+  const runbook = `https://github.com/${owner}/${repo}/blob/main/${FEED_MONITOR_RUNBOOK}`;
+  for (const channel of report.channels) {
+    if (channel.notice) reportLine("notice", `No ${channel.channel} feed yet`, channel.notice);
+  }
+  const failed = [report.listing, ...report.channels.flatMap((channel) => channel.checks.map((entry) => ({ ...entry, name: `${channel.channel} ${entry.name}` })))].filter((entry) => !entry.ok);
+  for (const entry of failed) reportLine("error", `Update feed ${entry.name} check failed`, `${entry.detail} (${entry.url}); runbook: ${runbook}`);
+  const line = `${report.summary} (attempt ${report.attempts} of ${attempts})`;
+  process.stdout.write(`${line}\n`);
+  appendStepSummary(report.ok ? line : `${line}\n\nRunbook: ${runbook}`);
+  if (!report.ok) process.exitCode = 1;
 }
 
 async function main(): Promise<void> {
@@ -564,9 +574,12 @@ async function main(): Promise<void> {
     case "check-published":
       await cmdCheckPublished(options, REPO_ROOT);
       return;
+    case "monitor-feed":
+      await cmdMonitorFeed(options, REPO_ROOT);
+      return;
     default:
       fail(
-        `Unknown command "${command}". Expected: plan | verify-plan | apply | set-base | check-sync | rehash | signing-manifest | check-signing-manifest | feed-serve | validate-feed | stage-release-set | validate-release-assets | select-upgrade-base | publish | check-published`
+        `Unknown command "${command}". Expected: plan | verify-plan | apply | set-base | check-sync | rehash | signing-manifest | check-signing-manifest | feed-serve | validate-feed | stage-release-set | validate-release-assets | select-upgrade-base | publish | check-published | monitor-feed`
       );
   }
 }
