@@ -157,19 +157,21 @@ export class SessionManager {
       return;
     }
     if (event.type === "assistant.delta") {
-      this.bufferDelta(event.turnId, this.activeTurns.get(event.turnId)?.sessionId ?? "", event.text);
+      this.bufferDelta(
+        event.turnId,
+        this.activeTurns.get(event.turnId)?.sessionId ?? this.settledTurns.get(event.turnId) ?? "",
+        event.text
+      );
       return;
     }
     if (event.type === "turn.done") {
+      const countUsageTurn = !this.settledTurns.has(event.turnId);
       this.flushDelta(event.turnId);
-      this.handleDriverEvent(event.sessionId, event);
+      this.handleDriverEvent(event.sessionId, event, countUsageTurn);
       return;
     }
     this.flushDelta(event.turnId);
-    const sessionId =
-      this.activeTurns.get(event.turnId)?.sessionId ??
-      (event.type === "tool.result" ? this.settledTurns.get(event.turnId) : undefined) ??
-      "";
+    const sessionId = this.activeTurns.get(event.turnId)?.sessionId ?? this.settledTurns.get(event.turnId) ?? "";
     this.handleDriverEvent(sessionId, event);
   }
 
@@ -280,9 +282,9 @@ export class SessionManager {
     return this.settings.set(patch);
   }
 
-  private handleDriverEvent(sessionId: string, event: ThreadEvent): void {
+  private handleDriverEvent(sessionId: string, event: ThreadEvent, countUsageTurn = true): void {
     if (event.type === "turn.done") {
-      this.recordUsage(event);
+      this.recordUsage(event, countUsageTurn);
       const backgroundTasks = event.backgroundTasks ?? 0;
       if (backgroundTasks > 0) {
         this.store.updateSession(event.sessionId, {
@@ -325,7 +327,7 @@ export class SessionManager {
     this.onEvent(sessionId, event);
   }
 
-  private recordUsage(event: Extract<ThreadEvent, { type: "turn.done" }>): void {
+  private recordUsage(event: Extract<ThreadEvent, { type: "turn.done" }>, countTurn = true): void {
     if (event.usage.length === 0) return;
     const session = this.store.getSession(event.sessionId);
     if (!session) return;
@@ -336,7 +338,8 @@ export class SessionManager {
         projectId: session.projectId,
         driver: session.driver,
         at: new Date(),
-        usage: event.usage
+        usage: event.usage,
+        countTurn
       });
     } catch (err) {
       console.warn(`usage ledger record failed for session ${event.sessionId}: ${(err as Error).message}`);
