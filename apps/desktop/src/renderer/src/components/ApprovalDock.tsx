@@ -2,9 +2,12 @@ import { useState } from "react";
 import { Check, ShieldAlert } from "lucide-react";
 import type { ApprovalDecision, ApprovalRequest } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
+import { shortenHome } from "./pathDisplay.js";
 
-function ApprovalPanel({ request, total }: { request: ApprovalRequest; total: number }) {
+function ApprovalPanel({ request, position, total }: { request: ApprovalRequest; position: number; total: number }) {
   const respond = useAppStore((s) => s.respondApproval);
+  const homeDir = useAppStore((s) => s.homeDir);
+  const shortCwd = request.cwd ? shortenHome(request.cwd, homeDir ?? undefined) : "";
   const [chosen, setChosen] = useState<ApprovalDecision | null>(null);
 
   const act = (decision: ApprovalDecision) => {
@@ -18,18 +21,20 @@ function ApprovalPanel({ request, total }: { request: ApprovalRequest; total: nu
       <header className="approval-panel-head">
         <ShieldAlert size={15} className="approval-panel-icon" />
         <span className="approval-panel-title">Approval needed</span>
-        <span className="approval-panel-count chip">{total > 1 ? `${total} approvals` : "1 approval"}</span>
+        <span className="approval-panel-count chip">
+          {total > 1 ? `${position} of ${total} approvals` : "1 approval"}
+        </span>
         <span className="approval-kind chip">{request.kind}</span>
       </header>
       <div className="approval-panel-body">
         <div className="approval-title">{request.title}</div>
         {request.toolName ? (
-          <div className="approval-meta">
+          <div className="approval-meta" title={request.cwd ?? undefined}>
             {request.toolName}
-            {request.cwd ? ` · ${request.cwd}` : ""}
+            {request.cwd ? ` · ${shortCwd}` : ""}
           </div>
         ) : request.cwd ? (
-          <div className="approval-meta">{request.cwd}</div>
+          <div className="approval-meta" title={request.cwd}>{shortCwd}</div>
         ) : null}
         {request.permission ? <div className="approval-meta">{request.permission}</div> : null}
         {request.reason && <div className="approval-reason">{request.reason}</div>}
@@ -84,12 +89,11 @@ const NO_REQUESTS: ApprovalRequest[] = [];
 
 export function ApprovalDock({ sessionId }: { sessionId: string }) {
   const requests = useAppStore((s) => s.pendingApprovals[sessionId] ?? NO_REQUESTS);
-  if (requests.length === 0) return null;
+  const current = requests[0];
+  if (!current) return null;
   return (
     <div className="approval-dock">
-      {requests.map((r) => (
-        <ApprovalPanel key={r.requestId} request={r} total={requests.length} />
-      ))}
+      <ApprovalPanel key={current.requestId} request={current} position={1} total={requests.length} />
     </div>
   );
 }

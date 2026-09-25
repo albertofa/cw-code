@@ -1,22 +1,22 @@
 import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
-import { Check, ChevronDown, ChevronRight, ChevronUp, Clock, Folder, GitBranch, Hash, Plus, RefreshCw, Search, Settings, SquarePen, X } from "lucide-react";
-import type { DriverName, Project, Session, SessionStatus } from "../cw.js";
+import { Bell, ChartColumn, Check, ChevronDown, ChevronRight, ChevronUp, CircleHelp, Clock, GitBranch, GitPullRequest, Hash, ListFilter, LoaderCircle, Plus, Search, Settings, X } from "lucide-react";
+import type { DriverName, PrSummary, Project, Session, SessionStatus } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
+import { usePrStore } from "../stores/prStore.js";
 import { DriverIcon } from "./DriverIcon.js";
+import { UpdateIndicator } from "./UpdateIndicator.js";
 import { useNotifs } from "./Notifications.js";
-
-function hashHue(s: string): number {
-  let h = 0;
-  for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) >>> 0;
-  return h % 360;
-}
-
-function initials(name: string): string {
-  const parts = name.split(/[^A-Za-z0-9]+/).filter(Boolean);
-  if (parts.length === 0) return name.slice(0, 1).toUpperCase() || "?";
-  if (parts.length === 1) return parts[0].slice(0, 2).toUpperCase();
-  return (parts[0][0] + parts[1][0]).toUpperCase();
-}
+import { getLastModel } from "./lastModel.js";
+import { hashHue, projectAvatarStyle as avatarStyle, projectInitials as initials } from "./avatar.js";
+import { mergeAwayIds } from "./sidebarOrder.js";
+import { compareWorkingSet, isWorkingSetStatus } from "./workingSet.js";
+import { shortenHome } from "./pathDisplay.js";
+import { discoveryProjectId } from "./projectRecency.js";
+import { PrChipBadge } from "./PrChipBadge.js";
+import { needsAttentionCount } from "./prInbox.js";
+import { anyLinkUnseen, displayChip, linksTitle, mostUrgentLink, prSummaryLookup, sessionLinks } from "./sessionPrLinks.js";
+import { matchesQuickFilter, quickFilterCounts, toggleQuickFilter, type QuickFilter } from "./sidebarQuickFilters.js";
+import appIcon from "../assets/console-c.svg";
 
 const GROUP_VISIBLE = 6;
 
@@ -27,13 +27,11 @@ function groupTintStyle(name: string): CSSProperties {
   };
 }
 
-function avatarStyle(name: string): CSSProperties {
-  return { background: `hsl(${hashHue(name)}, 32%, 36%)` };
-}
-
 function stateLabel(status: SessionStatus): string {
   if (status === "input-required") return "Input";
   if (status === "working") return "Running";
+  if (status === "done") return "Done";
+  if (status === "holding") return "Holding";
   return status;
 }
 
@@ -63,6 +61,17 @@ const DRIVER_LABEL: Record<DriverName, string> = {
   codex: "Codex"
 };
 
+function sessionHasUnseen(session: Session, summaryByKey: Map<string, PrSummary>): boolean {
+  return anyLinkUnseen(sessionLinks(session), summaryByKey);
+}
+
+const QUICK_FILTER_UI: Array<{ id: Exclude<QuickFilter, "all">; label: string; Icon: typeof Bell }> = [
+  { id: "running", label: "Running", Icon: LoaderCircle },
+  { id: "input", label: "Needs input", Icon: CircleHelp },
+  { id: "pr", label: "Linked to a PR", Icon: GitPullRequest },
+  { id: "updated", label: "PR updated", Icon: Bell }
+];
+
 const HOVER_DELAY = 350;
 const HOVER_FALLBACK_HEIGHT = 280;
 
@@ -71,7 +80,6 @@ type SidebarSection = "main" | "resolved";
 interface SidebarOrder {
   main: string[];
   resolved: string[];
-  snap: Record<string, number>;
   pinned: string[];
 }
 
@@ -142,12 +150,10 @@ function readStoredOrder(key: string): SidebarOrder | null {
     if (!raw) return null;
     const parsed = JSON.parse(raw) as Partial<SidebarOrder>;
     if (!Array.isArray(parsed.main) || !Array.isArray(parsed.resolved)) return null;
-    const snap = parsed.snap && typeof parsed.snap === "object" ? (parsed.snap as Record<string, number>) : {};
     const pinned = Array.isArray(parsed.pinned) ? parsed.pinned.filter((id): id is string => typeof id === "string") : [];
     return {
       main: parsed.main.filter((id): id is string => typeof id === "string"),
       resolved: parsed.resolved.filter((id): id is string => typeof id === "string"),
-      snap,
       pinned,
     };
   } catch {
@@ -172,30 +178,76 @@ function orderByStored(current: Session[], ids: string[]): Session[] {
   return [...known, ...unknown];
 }
 
-function isStoredOrderValid(mainAll: Session[], resolvedAll: Session[], stored: SidebarOrder): boolean {
-  if (stored.main.length !== mainAll.length || stored.resolved.length !== resolvedAll.length) return false;
-  if (new Set(stored.main).size !== stored.main.length) return false;
-  if (new Set(stored.resolved).size !== stored.resolved.length) return false;
-  const mainIds = new Set(mainAll.map((s) => s.id));
-  const resolvedIds = new Set(resolvedAll.map((s) => s.id));
-  const storedMain = new Set(stored.main);
-  const storedResolved = new Set(stored.resolved);
-  if (stored.main.some((id) => !mainIds.has(id)) || stored.resolved.some((id) => !resolvedIds.has(id))) return false;
-  if (mainAll.some((s) => !storedMain.has(s.id)) || resolvedAll.some((s) => !storedResolved.has(s.id))) return false;
-  if (stored.main.some((id) => storedResolved.has(id))) return false;
-  const pinned = new Set(stored.pinned);
-  for (const s of [...mainAll, ...resolvedAll]) {
-    if (pinned.has(s.id)) continue;
-    if (stored.snap[s.id] !== s.updatedAt) return false;
-  }
-  return true;
+function DebugMenu() {
+  const [open, setOpen] = useState(false);
+  if (!window.cw.isDev) return null;
+
+  const openTrace = async (): Promise<void> => {
+    setOpen(false);
+    try {
+      const res = await window.cw.openHarnessTrace();
+      if (!res.ok) {
+        useNotifs.getState().push({
+          kind: "error",
+          title: "Could not open trace",
+          message: res.error ?? res.path ?? "unknown error"
+        });
+      }
+    } catch (err) {
+      useNotifs.getState().push({
+        kind: "error",
+        title: "Could not open trace",
+        message: (err as Error).message
+      });
+    }
+  };
+
+  return (
+    <div className="menu titlebar-menu">
+      <button
+        className="menu-btn"
+        aria-label="Debug"
+        title="Debug"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        onClick={() => setOpen((o) => !o)}
+      >
+        <span className="menu-value">Debug</span>
+        <span className="menu-chevron">{open ? <ChevronUp aria-hidden="true" size={14} /> : <ChevronDown aria-hidden="true" size={14} />}</span>
+      </button>
+      {open && (
+        <>
+          <div className="menu-backdrop" onClick={() => setOpen(false)} />
+          <div className="menu-panel" role="menu" aria-label="Debug">
+            <div
+              className="menu-row"
+              role="menuitem"
+              title="Open harness-trace.jsonl"
+              onClick={() => void openTrace()}
+            >
+              <span className="menu-text">
+                <span className="name">Open trace</span>
+              </span>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
+  );
 }
 
-export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
-  const { projects, sessionsByProject, discoveredByProject, activeProjectId, activeSessionId, gitStatusBySession, projectFilter, worktreeConfirmQueue } = useAppStore();
-  const worktreeConfirm = worktreeConfirmQueue[0] ?? null;
+export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { onOpenSettings: () => void; onOpenSkills: () => void; skillsOpen?: boolean }) {
+  const { projects, sessionsByProject, discoveredByProject, activeProjectId, activeSessionId, gitStatusBySession, projectFilter, homeDir, pendingDriver } = useAppStore();
+  const shortPath = (value: string): string => shortenHome(value, homeDir ?? undefined);
   const store = useAppStore();
+  const inbox = usePrStore((s) => s.inbox);
+  const detailByKey = usePrStore((s) => s.detailByKey);
+  const mainView = usePrStore((s) => s.mainView);
+  const openInbox = usePrStore((s) => s.openInbox);
+  const openSessionView = usePrStore((s) => s.openSessionView);
+  const openUsage = usePrStore((s) => s.openUsage);
   const [query, setQuery] = useState("");
+  const [quickFilter, setQuickFilter] = useState<QuickFilter>("all");
   const [pickerOpen, setPickerOpen] = useState(false);
   const [projectQuery, setProjectQuery] = useState("");
   const [managedId, setManagedId] = useState<string | null>(null);
@@ -209,6 +261,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
   const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
   const [resolvedOpen, setResolvedOpen] = useState<Set<string>>(new Set());
+  const [workingSetOpen, setWorkingSetOpen] = useState(true);
   const [hover, setHover] = useState<{ id: string; x: number; y: number } | null>(null);
   const hoverTimer = useRef<number | null>(null);
 
@@ -248,6 +301,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
   const detachRef = useRef<(() => void) | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
+  const filterBtnRef = useRef<HTMLButtonElement>(null);
   const toggleRefs = useRef(new Map<string, HTMLButtonElement>());
   const slotSnap = useRef<SlotSnapshot | null>(null);
   const rowRefs = useRef(new Map<string, HTMLDivElement>());
@@ -331,25 +385,30 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
     };
   }, []);
 
-  const refreshAll = () => {
-    void store.loadProjects();
-    void store.loadDiscovered();
-  };
-
-  const activeProject = projects.find((p) => p.id === activeProjectId);
   const filterProject = projectFilter === "all" ? undefined : projects.find((p) => p.id === projectFilter);
   const projectNameById: Record<string, string> = Object.fromEntries(projects.map((p) => [p.id, p.name]));
   const source: Session[] =
     projectFilter === "all" ? Object.values(sessionsByProject).flat() : (sessionsByProject[projectFilter] ?? []);
-  const discovered = activeProjectId ? (discoveredByProject[activeProjectId] ?? []) : [];
+  const discoveredProjectId = discoveryProjectId(projectFilter, activeProjectId);
+  const discovered = discoveredProjectId ? (discoveredByProject[discoveredProjectId] ?? []) : [];
+  const inboxItems = inbox?.items ?? [];
+  const summaryByKey = prSummaryLookup(inboxItems, detailByKey);
+  const quickFacts = (s: Session) => ({ status: s.status, linkCount: sessionLinks(s).length, unseen: sessionHasUnseen(s, summaryByKey) });
+  const quickCounts = quickFilterCounts(source.map(quickFacts));
   const matchesQuery = (s: Session) =>
-    !query || s.title.toLowerCase().includes(query.toLowerCase());
+    (!query || s.title.toLowerCase().includes(query.toLowerCase())) && matchesQuickFilter(quickFilter, quickFacts(s));
   const byRecency = (a: Session, b: Session) => b.updatedAt - a.updatedAt;
+  const workingSetAll = source.filter((s) => isWorkingSetStatus(s.status)).sort(compareWorkingSet);
+  const workingSetShown = workingSetAll.filter(matchesQuery);
+  const workingSetIds = new Set(workingSetAll.map((s) => s.id));
   const orderKey = orderKeyFor(projectFilter);
   const storedOrder = readStoredOrder(orderKey);
-  const pinnedSet = new Set(storedOrder?.pinned ?? []);
-  const storedMainSet = new Set(storedOrder?.main ?? []);
-  const storedResolvedSet = new Set(storedOrder?.resolved ?? []);
+  const storedMain = (storedOrder?.main ?? []).filter((id) => !workingSetIds.has(id));
+  const storedResolved = (storedOrder?.resolved ?? []).filter((id) => !workingSetIds.has(id));
+  const storedPinned = (storedOrder?.pinned ?? []).filter((id) => !workingSetIds.has(id));
+  const pinnedSet = new Set(storedPinned);
+  const storedMainSet = new Set(storedMain);
+  const storedResolvedSet = new Set(storedResolved);
   const effectiveSection = (s: Session): SidebarSection | null => {
     if (s.status === "archived") return null;
     if (pinnedSet.has(s.id)) {
@@ -360,13 +419,10 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
     if (s.status === "resolved") return "resolved";
     return "main";
   };
-  const mainAll = source.filter((s) => effectiveSection(s) === "main");
-  const resolvedAll = source.filter((s) => effectiveSection(s) === "resolved");
-  const storedValid = storedOrder ? isStoredOrderValid(mainAll, resolvedAll, storedOrder) : false;
-  const orderedMainAll =
-    storedValid && storedOrder ? orderByStored(mainAll, storedOrder.main) : [...mainAll].sort(byRecency);
-  const orderedResolvedAll =
-    storedValid && storedOrder ? orderByStored(resolvedAll, storedOrder.resolved) : [...resolvedAll].sort(byRecency);
+  const mainAll = source.filter((s) => !workingSetIds.has(s.id) && effectiveSection(s) === "main");
+  const resolvedAll = source.filter((s) => !workingSetIds.has(s.id) && effectiveSection(s) === "resolved");
+  const orderedMainAll = [...mainAll].sort(byRecency);
+  const orderedResolvedAll = storedOrder ? orderByStored(resolvedAll, storedResolved) : [...resolvedAll].sort(byRecency);
   const shown = orderedMainAll.filter(matchesQuery);
   const resolved = orderedResolvedAll.filter(matchesQuery);
   const previewMainAll = previewPlacement(orderedMainAll, orderedResolvedAll, dragged, preview, "main");
@@ -380,6 +436,23 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
     if (existing) existing.push(s);
     else resolvedByProject.set(s.projectId, [s]);
   }
+  const attentionCount = needsAttentionCount(inboxItems);
+  const anyUnseen = Object.values(sessionsByProject).some((list) => list.some((s) => sessionHasUnseen(s, summaryByKey)));
+  const inboxActive = mainView.kind === "inbox" || mainView.kind === "pr";
+  const usageActive = mainView.kind === "usage";
+  const newSessionActive = !inboxActive && !usageActive && (pendingDriver !== null || !activeSessionId);
+  const liveCount = (list: Session[] | undefined): number => (list ?? []).filter((s) => s.status !== "archived").length;
+  const totalCount = Object.values(sessionsByProject).reduce((sum, list) => sum + liveCount(list), 0);
+  const inboxNotes = [
+    attentionCount > 0 ? `${attentionCount} need${attentionCount === 1 ? "s" : ""} you` : null,
+    anyUnseen ? "updates available" : null
+  ].filter(Boolean);
+  const inboxTitle = ["Pull requests", ...inboxNotes].join(" · ");
+  const inboxLabel = ["Pull requests", ...inboxNotes].join(", ");
+  const selectSession = (sessionId: string) => {
+    openSessionView();
+    store.selectSession(sessionId);
+  };
   const hoverSession = hover ? (source.find((s) => s.id === hover.id) ?? null) : null;
   const hoverStatus = hoverSession?.status ?? "idle";
   const hoverProject = hoverSession ? (projectNameById[hoverSession.projectId] ?? "") : "";
@@ -471,9 +544,9 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
     setManagedId(null);
   };
 
-  const pick = (id: string) => {
+  const pick = (id: string | "all") => {
     closePicker();
-    void store.selectProject(id);
+    store.setProjectFilter(id);
   };
 
   const pickAndAdd = () => {
@@ -486,6 +559,12 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
       .catch((err: Error) => {
         useNotifs.getState().push({ kind: "error", title: "Could not add project", message: err.message });
       });
+  };
+
+  const importDiscovered = (session: Session) => {
+    void store.importDiscovered(session).catch((err: Error) => {
+      useNotifs.getState().push({ kind: "error", title: "Could not import session", message: err.message });
+    });
   };
 
   const copyPath = (p: Project) => {
@@ -565,15 +644,14 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
         nextResolved.push(moving);
       }
     }
-    const snap: Record<string, number> = {};
-    for (const s of [...nextMain, ...nextResolved]) snap[s.id] = s.updatedAt;
+    const nextMainIds = nextMain.map((s) => s.id);
+    const nextResolvedIds = nextResolved.map((s) => s.id);
     const cross = fromSection !== toSection;
     const prevPinned = readStoredOrder(orderKey)?.pinned ?? storedOrder?.pinned ?? [];
     const pinned = cross ? Array.from(new Set([...prevPinned, fromId])) : [];
     writeStoredOrder(orderKey, {
-      main: nextMain.map((s) => s.id),
-      resolved: nextResolved.map((s) => s.id),
-      snap,
+      main: mergeAwayIds(storedOrder?.main ?? nextMainIds, nextMainIds, workingSetIds),
+      resolved: mergeAwayIds(storedOrder?.resolved ?? nextResolvedIds, nextResolvedIds, workingSetIds),
       pinned,
     });
     if (cross) setStatus(fromId, toSection === "main" ? "idle" : "resolved");
@@ -581,26 +659,25 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
     window.setTimeout(() => setLandedId((id) => (id === fromId ? null : id)), 850);
   };
 
+  const prBadge = (s: Session) => {
+    const links = sessionLinks(s);
+    const gitPr = gitStatusBySession[s.id]?.pullRequest ?? null;
+    const urgent = mostUrgentLink(links, summaryByKey, gitPr);
+    const chip = urgent ? displayChip(urgent, summaryByKey, gitPr) : null;
+    const chipTitle = chip ? (links.length > 1 ? linksTitle(links, summaryByKey, gitPr) : chip.title) : null;
+    return { links, chip, chipTitle, unseen: sessionHasUnseen(s, summaryByKey) };
+  };
+
   const renderRow = (s: Session, section: SidebarSection, hideState = false) => {
     const git = gitStatusBySession[s.id];
-    const pr = git?.pullRequest;
-    const prState = pr?.isDraft
-      ? "draft"
-      : pr?.state !== "OPEN"
-        ? pr?.state.toLowerCase()
-        : pr?.checks.failed
-          ? "failing"
-          : pr?.checks.pending
-            ? "pending"
-            : pr?.reviewDecision === "APPROVED"
-              ? "approved"
-              : pr?.reviewDecision === "CHANGES_REQUESTED" ? "changes-requested" : "open";
+    const { links, chip, chipTitle, unseen } = prBadge(s);
     const status = s.status ?? "idle";
     const projectName = projectNameById[s.projectId] ?? "";
     const gitSummary = [
       git?.branch ?? s.branch ? `Branch: ${git?.branch ?? s.branch}` : null,
-      git?.worktreePath ?? s.worktreePath ? `Worktree: ${git?.worktreeName ?? git?.worktreePath ?? s.worktreePath}` : null,
-      pr ? `PR #${pr.number} ${prState?.replace("-", " ") ?? ""}`.trim() : null,
+      git?.worktreePath ?? s.worktreePath ? `Worktree: ${git?.worktreeName ?? shortPath(git?.worktreePath ?? s.worktreePath ?? "")}` : null,
+      chipTitle,
+      unseen ? "PR updated since last visit" : null,
       git && !git.clean ? `${git.dirtyCount} changed ${git.dirtyCount === 1 ? "file" : "files"}` : null
     ].filter((value): value is string => Boolean(value));
     const rowTitle = [s.title, projectName ? `Project: ${projectName}` : null, ...gitSummary].filter(Boolean).join("\n");
@@ -701,7 +778,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
           suppressClickRef.current = false;
           return;
         }
-        store.selectSession(s.id);
+        selectSession(s.id);
       }}
       onContextMenu={(e) => {
         e.preventDefault();
@@ -730,6 +807,8 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
         <span className="session-title">{s.title}</span>
       )}
       <span className="session-side">
+        {unseen && <span className="pr-unseen-dot" title="PR updated since last visit" />}
+        {chip && <PrChipBadge chip={chip} extra={links.length - 1} title={chipTitle ?? undefined} />}
         {(status === "working" || status === "input-required") && <span className={`session-dot status-${status}`} />}
         {status === "idle" || hideState ? (
           <span className="session-age">{ageLabel(s.updatedAt)}</span>
@@ -739,6 +818,75 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
         <DriverIcon driver={s.driver} size={16} />
       </span>
     </div>
+  };
+
+  const renderWorkingCard = (s: Session) => {
+    const projectName = projectNameById[s.projectId] ?? "";
+    const branch = gitStatusBySession[s.id]?.branch ?? s.branch;
+    const badge = s.status === "holding" ? ageLabel(s.updatedAt) : stateLabel(s.status);
+    const { links, chip, chipTitle, unseen } = prBadge(s);
+    return (
+      <div
+        key={s.id}
+        ref={(el) => {
+          if (el) rowRefs.current.set(s.id, el);
+          else rowRefs.current.delete(s.id);
+        }}
+        className={`working-card status-${s.status}${s.id === activeSessionId ? " active" : ""}`}
+        onMouseEnter={() => scheduleHover(s.id)}
+        onMouseLeave={clearHover}
+        onClick={() => {
+          if (suppressClickRef.current) {
+            suppressClickRef.current = false;
+            return;
+          }
+          selectSession(s.id);
+        }}
+        onContextMenu={(e) => {
+          e.preventDefault();
+          e.stopPropagation();
+          setRenamingId(null);
+          setMenu({ sessionId: s.id, x: e.clientX, y: e.clientY });
+        }}
+        aria-label={`${s.title}${projectName ? ` · ${projectName}` : ""}`}
+      >
+        <div className="working-card-head">
+          <span className="avatar sm" style={avatarStyle(projectName)}>{initials(projectName)}</span>
+          <span className="working-card-project">{projectName}</span>
+          <span className={`working-card-badge status-${s.status}`}>{badge}</span>
+        </div>
+        {renamingId === s.id ? (
+          <input
+            autoFocus
+            className="session-rename"
+            value={renameDraft}
+            onChange={(e) => setRenameDraft(e.target.value)}
+            onClick={(e) => e.stopPropagation()}
+            onKeyDown={(e) => {
+              e.stopPropagation();
+              if (e.key === "Enter") commitRename(s.id);
+              if (e.key === "Escape") setRenamingId(null);
+            }}
+            onBlur={() => commitRename(s.id)}
+          />
+        ) : (
+          <div className="working-card-title">{s.title}</div>
+        )}
+        <div className="working-card-foot">
+          {branch ? (
+            <span className="working-card-branch">
+              <GitBranch size={11} aria-hidden="true" />
+              {branch}
+            </span>
+          ) : null}
+          <span className="working-card-side">
+            {unseen && <span className="pr-unseen-dot" title="PR updated since last visit" />}
+            {chip && <PrChipBadge chip={chip} extra={links.length - 1} title={chipTitle ?? undefined} />}
+            <DriverIcon driver={s.driver} size={14} />
+          </span>
+        </div>
+      </div>
+    );
   };
 
   const renderResolvedToggle = (projectId: string, items: Session[]) => {
@@ -825,86 +973,131 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
       className="side"
       onClick={() => setMenu(null)}
     >
-      <div className="brand">
-        <div className="search-row ghost">
-          <Search className="search-icon" aria-hidden="true" size={15} />
-          <input
-            ref={searchRef}
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder="Search"
-          />
-          {query ? (
-            <button className="icon-btn" aria-label="Clear search" onClick={() => setQuery("")}>
-              <X aria-hidden="true" size={15} />
-            </button>
-          ) : (
-            <span className="search-kbd">Ctrl+K</span>
-          )}
-          <button
-            className="new-session-btn"
-            disabled={!activeProjectId}
-            onClick={() => store.startNewSession()}
-            title={`New session in ${activeProject?.name ?? "…"}`}
-            aria-label="New session"
-          >
-            <SquarePen size={16} />
-          </button>
+      <div className="head-seg side-seg" onDoubleClick={() => window.cw.toggleMaximizeWindow()}>
+        <div className="titlebar-brand">
+          <img className="titlebar-logo" src={appIcon} alt="" aria-hidden="true" draggable={false} />
+          <span>cw-code</span>
         </div>
-        <div className="project-bar">
-          <div className="picker">
-            <button className="picker-btn" onClick={() => setPickerOpen((o) => !o)} aria-haspopup="listbox" aria-expanded={pickerOpen}>
-            <Folder className="picker-icon" aria-hidden="true" size={16} />
-            <span className="picker-name">{projectFilter === "all" ? "All projects" : (filterProject?.name ?? activeProject?.name ?? "Select project…")}</span>
-            <span className="picker-chevron">{pickerOpen ? <ChevronUp aria-hidden="true" size={14} /> : <ChevronDown aria-hidden="true" size={14} />}</span>
+        <DebugMenu />
+      </div>
+      <div className="brand">
+        <button
+          type="button"
+          className={`side-new-session${newSessionActive ? " active" : ""}`}
+          onClick={() => {
+            openSessionView();
+            store.startNewSession();
+          }}
+          title="New session (Ctrl+T)"
+        >
+          <Plus size={15} aria-hidden="true" />
+          <span>New session</span>
+          <span className="side-kbd">Ctrl T</span>
+        </button>
+        <div className="side-nav">
+          <button
+            type="button"
+            className={`side-nav-row${inboxActive ? " active" : ""}`}
+            onClick={openInbox}
+            title={inboxTitle}
+            aria-label={inboxLabel}
+            aria-pressed={inboxActive}
+          >
+            <GitPullRequest size={15} aria-hidden="true" />
+            <span className="side-nav-label">Pull requests</span>
+            <span className="side-nav-end">
+              {anyUnseen && <span className="pr-unseen-dot" aria-hidden="true" />}
+              {attentionCount > 0 && (
+                <span className="side-nav-badge" aria-hidden="true">
+                  {attentionCount > 99 ? "99+" : attentionCount}
+                </span>
+              )}
+            </span>
+          </button>
+          <label className="side-nav-row side-nav-search">
+            <Search size={15} aria-hidden="true" />
+            <input
+              ref={searchRef}
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+              placeholder="Search"
+              aria-label="Search sessions"
+            />
+            <span className="side-nav-end">
+              {query ? (
+                <button type="button" className="icon-btn" aria-label="Clear search" onClick={() => setQuery("")}>
+                  <X aria-hidden="true" size={14} />
+                </button>
+              ) : (
+                <span className="side-kbd">Ctrl K</span>
+              )}
+            </span>
+          </label>
+        </div>
+      </div>
+      <div className="side-list-head">
+        <div className="picker side-filter">
+          <button
+            ref={filterBtnRef}
+            type="button"
+            className={`side-filter-btn${filterProject ? " filtered" : ""}${pickerOpen ? " open" : ""}`}
+            onClick={() => setPickerOpen((o) => !o)}
+            aria-haspopup="listbox"
+            aria-expanded={pickerOpen}
+            title="Filter sessions by project"
+          >
+            <ListFilter size={12} aria-hidden="true" />
+            <span className="side-filter-name">{filterProject?.name ?? "All projects"}</span>
+            {pickerOpen ? <ChevronUp aria-hidden="true" size={12} /> : <ChevronDown aria-hidden="true" size={12} />}
           </button>
           {pickerOpen && (
             <>
               <div className="picker-backdrop" onClick={closePicker} />
               <div
                 className="picker-panel"
-                role="listbox"
                 onKeyDown={(e) => {
-                  if (e.key === "Escape") closePicker();
+                  if (e.key === "Escape") {
+                    e.stopPropagation();
+                    closePicker();
+                    filterBtnRef.current?.focus();
+                    return;
+                  }
                   if (e.key === "Enter" && visibleProjects.length > 0 && document.activeElement?.tagName === "INPUT") {
                     pick(visibleProjects[0].id);
                   }
                 }}
               >
-        <div className="search-row">
+                <div className="search-row">
                   <Search className="search-icon" aria-hidden="true" size={15} />
                   <input
                     autoFocus
                     value={projectQuery}
                     onChange={(e) => setProjectQuery(e.target.value)}
-                    placeholder="Search projects…"
+                    placeholder="Filter by project…"
                   />
                 </div>
                 <div className="picker-list">
                   <div
                     className={`picker-row${projectFilter === "all" ? " active" : ""}`}
-                    onClick={() => {
-                      closePicker();
-                      store.setProjectFilter("all");
-                    }}
-                    role="option"
-                    aria-selected={projectFilter === "all"}
+                    onClick={() => pick("all")}
+                    aria-current={projectFilter === "all" ? "true" : undefined}
                   >
                     <span className="name">All projects</span>
+                    <span className="picker-count">{totalCount}</span>
                   </div>
                   {visibleProjects.map((p) => (
                     <div key={p.id}>
                       <div
                         className={`picker-row${p.id === projectFilter ? " active" : ""}`}
                         onClick={() => pick(p.id)}
-                        role="option"
-                        aria-selected={p.id === projectFilter}
+                        aria-current={p.id === projectFilter ? "true" : undefined}
                         title={p.rootPath}
                       >
                         <span className="avatar" style={avatarStyle(p.name)}>
                           {initials(p.name)}
                         </span>
                         <span className="name">{p.name}</span>
+                        <span className="picker-count">{liveCount(sessionsByProject[p.id])}</span>
                         <button
                           className={`gear${managedId === p.id ? " open" : ""}`}
                           title="Project details"
@@ -919,7 +1112,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
                       {managedId === p.id && (
                         <div className="manage">
                           <span className="path" title={p.rootPath}>
-                            {p.rootPath}
+                            {shortPath(p.rootPath)}
                           </span>
                           <button
                             className="btn"
@@ -943,15 +1136,48 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
               </div>
             </>
           )}
-          </div>
+        </div>
+        <div className="side-quick" role="group" aria-label="Quick filters">
+          {QUICK_FILTER_UI.map(({ id, label, Icon }) => (
+            <button
+              key={id}
+              type="button"
+              className={`side-quick-btn${quickFilter === id ? " on" : ""}${quickCounts[id] === 0 ? " is-zero" : ""}`}
+              onClick={() => setQuickFilter((current) => toggleQuickFilter(current, id))}
+              aria-pressed={quickFilter === id}
+              title={`${label} (${quickCounts[id]})`}
+              aria-label={`${label}, ${quickCounts[id]}`}
+            >
+              <Icon size={12} aria-hidden="true" />
+              <span>{quickCounts[id]}</span>
+            </button>
+          ))}
         </div>
       </div>
       <div className="session-list" ref={listRef} onScroll={clearHover}>
         <div className="session-main-list">
+          {workingSetShown.length > 0 && (
+            <div className="working-set">
+              <button
+                type="button"
+                className="working-set-heading"
+                onClick={() => setWorkingSetOpen((o) => !o)}
+                aria-expanded={workingSetOpen}
+                aria-label={`${workingSetOpen ? "Collapse" : "Expand"} working set`}
+              >
+                <span className="group-chevron" aria-hidden="true">
+                  {workingSetOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
+                </span>
+                <span>Working set</span>
+                <span className="working-set-count">{workingSetShown.length}</span>
+              </button>
+              {workingSetOpen && workingSetShown.map((s) => renderWorkingCard(s))}
+            </div>
+          )}
           {renderRows(shownPreview, "main")}
           {projectFilter !== "all" && renderResolvedToggle(projectFilter, resolvedPreview)}
-          {shownPreview.length === 0 && resolvedPreview.length === 0 && (
-            <div className="side-empty">{query ? "No matches." : "No sessions yet."}</div>
+          {shownPreview.length === 0 && resolvedPreview.length === 0 && workingSetShown.length === 0 && (
+            <div className="side-empty">{query || quickFilter !== "all" ? "No matches." : "No sessions yet."}</div>
           )}
         </div>
         {resolvedPreview.length === 0 && dragged && (
@@ -966,7 +1192,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
               <div key={s.id} className="discovered-row" title={s.title}>
                 <DriverIcon driver={s.driver} size={14} />
                 <span className="session-title">{s.title}</span>
-                <button className="btn" style={{ fontSize: 11, padding: "3px 8px" }} onClick={() => void store.importDiscovered(s)} title="Import into cw-code">
+                <button className="btn" style={{ fontSize: 11, padding: "3px 8px" }} onClick={() => importDiscovered(s)} title="Import into cw-code">
                   Import
                 </button>
               </div>
@@ -995,7 +1221,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
             <button
               className="ctx-item"
               onClick={() => {
-                const target = [...shown, ...resolved].find((s) => s.id === menu.sessionId);
+                const target = [...workingSetShown, ...shown, ...resolved].find((s) => s.id === menu.sessionId);
                 setRenameDraft(target?.title ?? "");
                 setRenamingId(menu.sessionId);
                 setMenu(null);
@@ -1024,43 +1250,29 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
           </div>
         </>
       )}
-      {worktreeConfirm && (
-        <>
-          <div className="ctx-backdrop" onClick={() => store.dismissWorktreeRemoval()} />
-          <div
-            className="ctx-menu worktree-confirm"
-            style={{ left: Math.max(12, window.innerWidth / 2 - 140), top: window.innerHeight / 2 - 70 }}
-            onClick={(e) => e.stopPropagation()}
-          >
-            <div className="worktree-confirm-title">Remove the worktree too?</div>
-            <div className="worktree-confirm-hint">
-              {[...shown, ...resolved].find((s) => s.id === worktreeConfirm.sessionId)?.title ??
-                worktreeConfirm.sessionId}{" "}
-              is {worktreeConfirm.status === "archived" ? "archived" : "resolved"} and no other session uses its isolated worktree.
-            </div>
-            {typeof worktreeConfirm.unmergedCommitCount === "number" && worktreeConfirm.unmergedCommitCount > 0 && (
-              <div className="worktree-confirm-warning">
-                This branch has {worktreeConfirm.unmergedCommitCount} unmerged{" "}
-                {worktreeConfirm.unmergedCommitCount === 1 ? "commit" : "commits"} that will be permanently deleted.
-              </div>
-            )}
-            <button className="ctx-item" onClick={() => void store.confirmWorktreeRemoval()}>
-              Remove worktree and branch
-            </button>
-            <button className="ctx-item" onClick={() => store.dismissWorktreeRemoval()}>
-              Keep it
-            </button>
-          </div>
-        </>
-      )}
+      <UpdateIndicator />
       <div className="side-footer">
         <button className="side-footer-btn" title="Settings" aria-label="Settings" onClick={onOpenSettings}>
           <Settings size={15} />
-          Settings
         </button>
-        <button className="side-footer-btn" title="Refresh projects and sessions" aria-label="Refresh" onClick={refreshAll}>
-          <RefreshCw size={14} />
-          Refresh
+        <button
+          className={`side-footer-btn${usageActive ? " active" : ""}`}
+          title="Usage"
+          aria-label="Usage"
+          aria-pressed={usageActive}
+          onClick={openUsage}
+        >
+          <ChartColumn size={15} />
+        </button>
+        <button
+          className={`side-footer-btn${skillsOpen ? " active" : ""}`}
+          title="Skills"
+          aria-label="Skills"
+          aria-pressed={skillsOpen}
+          onClick={onOpenSkills}
+        >
+          <span aria-hidden="true">✦</span>
+          <span>Skills</span>
         </button>
       </div>
       {hover && hoverSession && (
@@ -1083,7 +1295,7 @@ export function Sidebar({ onOpenSettings }: { onOpenSettings: () => void }) {
           <div className="session-hovercard-row">
             <DriverIcon driver={hoverSession.driver} size={16} />
             <span className="hovercard-text">
-              {hoverModel ?? "Default model"} · {DRIVER_LABEL[hoverSession.driver]}
+              {hoverModel ?? getLastModel(hoverSession.driver) ?? "No model"} · {DRIVER_LABEL[hoverSession.driver]}
             </span>
           </div>
           <div className="session-hovercard-row">

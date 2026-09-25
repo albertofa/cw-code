@@ -1,6 +1,20 @@
+import type { ContextUsage, TurnModelUsage } from "./usage.js";
+
+export interface TodoItem {
+  content: string;
+  status: "pending" | "in_progress" | "completed" | "cancelled";
+  priority?: "high" | "medium" | "low";
+}
+
+export interface ToolUsage {
+  tokens?: number;
+  toolUses?: number;
+  durationMs?: number;
+}
+
 export interface HistoryMessage {
   id: string;
-  role: "user" | "assistant" | "tool" | "system";
+  role: "user" | "assistant" | "tool" | "system" | "reasoning";
   text: string;
   turnId: string;
   toolName?: string;
@@ -8,7 +22,11 @@ export interface HistoryMessage {
   timestamp?: number;
   subagentModel?: string;
   subagentTools?: SubagentToolSummary;
+  subagentAgentId?: string;
   parentToolCallId?: string;
+  toolUsage?: ToolUsage;
+  todos?: TodoItem[];
+  reasoningMs?: number;
 }
 
 export interface SubagentToolActivity {
@@ -67,6 +85,7 @@ export interface QuestionRequest {
 
 export type ThreadEvent =
   | { type: "assistant.delta"; turnId: string; text: string }
+  | { type: "reasoning.delta"; turnId: string; text: string }
   | {
       type: "tool.call";
       turnId: string;
@@ -74,8 +93,18 @@ export type ThreadEvent =
       name: string;
       input: unknown;
       parentToolCallId?: string;
+      model?: string;
     }
-  | { type: "tool.result"; turnId: string; toolCallId: string; output: string; isError: boolean }
+  | {
+      type: "tool.result";
+      turnId: string;
+      toolCallId: string;
+      output: string;
+      isError: boolean;
+      usage?: ToolUsage;
+      agentId?: string;
+      model?: string;
+    }
   | { type: "approval.request"; turnId: string; request: ApprovalRequest }
   | { type: "approval.resolved"; turnId: string; requestId: string }
   | { type: "question.request"; turnId: string; request: QuestionRequest }
@@ -84,19 +113,30 @@ export type ThreadEvent =
       turnId: string;
       requestId: string;
       answers: Record<string, string> | null;
-    } | {
+    }
+  | { type: "todo.updated"; turnId: string; todos: TodoItem[] }
+  | {
       type: "turn.done";
       turnId: string;
       sessionId: string;
       resumeCursor: string;
       resultText: string;
-      inputTokens: number;
-      outputTokens: number;
-      costUsd: number;
+      usage: TurnModelUsage[];
+      context?: ContextUsage;
       numTurns: number;
       isError: boolean;
+      backgroundTasks: number;
     }
-  | { type: "turn.error"; turnId: string; message: string; resumeCursor?: string }
+  | { type: "turn.error"; turnId: string; message: string; resumeCursor?: string; retryable?: boolean }
+  | {
+      type: "turn.retry";
+      turnId: string;
+      attempt: number;
+      message: string;
+      detail?: string;
+      retryAt: number;
+      link?: string;
+    }
   | { type: "session.branch.updated"; turnId: string; sessionId: string; branch: string };
 
 export type SessionEvent =

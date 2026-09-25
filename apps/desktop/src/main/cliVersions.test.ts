@@ -57,11 +57,12 @@ describe("checkCliVersions", () => {
     expect(check.actual).toMatch(/^\d+\.\d+\.\d+$/);
   });
 
-  it.skipIf(process.platform !== "win32")("contains synchronous Windows launcher failures per binary", async () => {
+  it.skipIf(process.platform !== "win32")("probes a Windows .cmd shim through cmd.exe", async () => {
     const file = join(mkdtempSync(join(tmpdir(), "cw-version-")), "cli.cmd");
     writeFileSync(file, "@echo 1.2.3\r\n", "utf8");
     const checks = await checkCliVersions({ claudeBinary: file, opencodeBinary: file, codexBinary: file });
     expect(checks).toHaveLength(3);
-    expect(checks.every((check) => !check.available && check.actual === null)).toBe(true);
+    expect(checks.every((check) => check.available && check.error === null)).toBe(true);
+    expect(checks.every((check) => check.actual === "1.2.3")).toBe(true);
   });
 });

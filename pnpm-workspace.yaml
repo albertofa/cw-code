@@ -10,5 +10,6 @@ onlyBuiltDependencies:
 allowBuilds:
   better-sqlite3: true
   electron: true
+  electron-winstaller: false
   esbuild: true
   node-pty: true

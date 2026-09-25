@@ -1,5 +1,7 @@
-import { execFile } from "node:child_process";
+import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { dirname } from "node:path";
 import type { EffortLevel, ModelOption } from "@cw-code/contracts";
+import { execCliFile } from "../../cli/spawnCli.js";
 import { traceHarnessCall, truncateError } from "../../debug/harnessTrace.js";
 
 export const OPENCODE_CURATED_MODELS: ModelOption[] = [
@@ -9,8 +11,22 @@ export const OPENCODE_CURATED_MODELS: ModelOption[] = [
   { id: "openai/gpt-5.2", label: "GPT 5.2", source: "curated" }
 ];
 
-const CACHE_TTL_MS = 60_000;
-const cache = new Map<string, { at: number; models: ModelOption[] }>();
+export const OPENCODE_MODELS_CACHE_TTL_MS = 10 * 60_000;
+
+export type OpencodeModelsQuery = (binary: string, args: string[]) => Promise<string>;
+
+interface CacheEntry {
+  at: number;
+  models: ModelOption[];
+}
+
+const cache = new Map<string, CacheEntry>();
+const inflight = new Map<string, Promise<ModelOption[]>>();
+let cacheFile: string | null = null;
+
+function cacheKey(binary: string): string {
+  return process.platform === "win32" ? binary.toLowerCase() : binary;
+}
 
 const LABEL_ACRONYMS = new Set(["gpt", "llm", "ai", "api", "mcp", "ocr", "tts"]);
 
@@ -41,6 +57,7 @@ export function parseOpencodeModels(stdout: string): ModelOption[] {
   for (const raw of stdout.split(/\r?\n/)) {
     const line = raw.trim();
     if (!line) continue;
+    if (line.startsWith("{") || line.startsWith("}")) continue;
     const match = line.match(/^([a-z0-9][a-z0-9-_]*)\/(\S+)$/i);
     if (!match) continue;
     const id = `${match[1]}/${match[2]}`;
@@ -51,49 +68,228 @@ export function parseOpencodeModels(stdout: string): ModelOption[] {
   return out.sort((a, b) => a.id.localeCompare(b.id));
 }
 
-export function mapEffortToVariant(effort: EffortLevel | string): string {
-  if (effort === "low") return "minimal";
-  if (effort === "medium") return "balanced";
-  if (effort === "high") return "high";
-  if (effort === "xhigh") return "xhigh";
-  if (effort === "max") return "max";
-  return "balanced";
-}
+const MODEL_ID_LINE_RE = /^([a-z0-9][a-z0-9-_]*\/\S+)$/i;
 
-function queryModels(binary: string): Promise<string> {
-  return new Promise((resolve, reject) => {
-    execFile(binary, ["models"], { timeout: 15000 }, (error, stdout) => {
-      if (error) {
-        reject(error);
-        return;
+export function parseOpencodeVerboseModels(stdout: string): ModelOption[] {
+  const seen = new Set<string>();
+  const out: ModelOption[] = [];
+  const lines = stdout.split(/\r?\n/);
+  let i = 0;
+  while (i < lines.length) {
+    const line = lines[i].trim();
+    const idMatch = MODEL_ID_LINE_RE.exec(line);
+    if (!idMatch) {
+      i += 1;
+      continue;
+    }
+    const id = idMatch[1];
+    let j = i + 1;
+    while (j < lines.length && !lines[j].trim()) j += 1;
+    if (j >= lines.length || !lines[j].trimStart().startsWith("{")) {
+      if (!seen.has(id)) {
+        seen.add(id);
+        out.push({ id, label: labelForModel(id), source: "live" });
       }
-      resolve(String(stdout));
-    });
-  });
+      i = j;
+      continue;
+    }
+    let depth = 0;
+    let end = -1;
+    for (let k = j; k < lines.length; k += 1) {
+      for (const ch of lines[k]) {
+        if (ch === "{") depth += 1;
+        else if (ch === "}") depth -= 1;
+      }
+      if (depth === 0) {
+        end = k;
+        break;
+      }
+      if (depth < 0) break;
+    }
+    if (end === -1) {
+      if (!seen.has(id)) {
+        seen.add(id);
+        out.push({ id, label: labelForModel(id), source: "live" });
+      }
+      i = j + 1;
+      continue;
+    }
+    let variants: string[] | undefined;
+    let contextWindow: number | undefined;
+    try {
+      const parsed = JSON.parse(lines.slice(j, end + 1).join("\n")) as { variants?: unknown; limit?: unknown };
+      if (parsed.variants && typeof parsed.variants === "object" && !Array.isArray(parsed.variants)) {
+        variants = Object.keys(parsed.variants as Record<string, unknown>);
+      } else if (Array.isArray(parsed.variants)) {
+        variants = (parsed.variants as unknown[])
+          .map((v) => (typeof v === "string" ? v : (v as { id?: unknown }).id))
+          .filter((v): v is string => typeof v === "string" && v.length > 0);
+      }
+      const limit = parsed.limit;
+      if (limit && typeof limit === "object" && !Array.isArray(limit)) {
+        const context = (limit as { context?: unknown }).context;
+        if (typeof context === "number" && Number.isFinite(context) && context > 0) contextWindow = context;
+      }
+    } catch {
+      variants = undefined;
+    }
+    if (!seen.has(id)) {
+      seen.add(id);
+      out.push({
+        id,
+        label: labelForModel(id),
+        source: "live",
+        ...(variants !== undefined ? { variants } : {}),
+        ...(contextWindow !== undefined ? { contextWindow } : {})
+      });
+    }
+    i = end + 1;
+  }
+  return out.sort((a, b) => a.id.localeCompare(b.id));
 }
 
-export async function listOpencodeModels(cwd: string, binary: string): Promise<ModelOption[]> {
-  const key = process.platform === "win32"
-    ? `${binary.toLowerCase()}\0${cwd.toLowerCase()}`
-    : `${binary}\0${cwd}`;
-  const hit = cache.get(key);
-  if (hit && Date.now() - hit.at < CACHE_TTL_MS) {
-    traceHarnessCall({
-      harness: "opencode",
-      operation: "opencode.listModels",
-      cwd,
-      binary,
-      ok: true,
-      extra: { cached: true, count: hit.models.length }
-    });
-    return hit.models;
+const EFFORT_RANK = ["minimal", "low", "medium", "high", "xhigh", "max"] as const;
+
+function normalizeEffort(effort: string): string {
+  const low = effort.trim().toLowerCase();
+  if (low === "balanced") return "medium";
+  return low;
+}
+
+function rankOf(variant: string): number {
+  return EFFORT_RANK.indexOf(variant.trim().toLowerCase() as (typeof EFFORT_RANK)[number]);
+}
+
+function nearestRankedVariant(desired: string, available: string[]): string | undefined {
+  const ranked = available
+    .map((v) => ({ original: v, rank: rankOf(v) }))
+    .filter((v) => v.rank >= 0)
+    .sort((a, b) => a.rank - b.rank);
+  if (ranked.length === 0) return undefined;
+  const want = rankOf(desired);
+  if (want < 0) return undefined;
+  if (want <= ranked[0].rank) return ranked[0].original;
+  if (want >= ranked[ranked.length - 1].rank) return ranked[ranked.length - 1].original;
+  let best = ranked[0];
+  for (const candidate of ranked) {
+    if (Math.abs(candidate.rank - want) < Math.abs(best.rank - want)) best = candidate;
   }
+  return best.original;
+}
+
+export function mapEffortToVariant(effort: EffortLevel | string, availableVariants?: string[]): string | undefined {
+  const desired = normalizeEffort(effort);
+  if (!desired) return undefined;
+  if (availableVariants !== undefined) {
+    const match = availableVariants.find((v) => v.toLowerCase() === desired);
+    if (match) return match;
+    return nearestRankedVariant(desired, availableVariants);
+  }
+  if ((EFFORT_RANK as readonly string[]).includes(desired)) return desired;
+  return undefined;
+}
+
+export function resolveOpencodeVariant(
+  modelVariants: string[] | undefined,
+  effort: EffortLevel | string | undefined,
+  explicitVariant?: string
+): string | undefined {
+  if (explicitVariant?.trim()) {
+    if (modelVariants === undefined) return explicitVariant;
+    const match = modelVariants.find((v) => v.toLowerCase() === explicitVariant.trim().toLowerCase());
+    if (match) return match;
+  }
+  if (!effort) return undefined;
+  return mapEffortToVariant(effort, modelVariants);
+}
+
+function queryModels(binary: string, args: string[]): Promise<string> {
+  return execCliFile(binary, args, { timeout: 20000, maxBuffer: 16 * 1024 * 1024 }).then(
+    ({ stdout }) => String(stdout)
+  );
+}
+
+function isModelOption(value: unknown): value is ModelOption {
+  if (!value || typeof value !== "object") return false;
+  const model = value as { id?: unknown; label?: unknown; source?: unknown; variants?: unknown; contextWindow?: unknown };
+  if (typeof model.id !== "string" || !model.id) return false;
+  if (typeof model.label !== "string") return false;
+  if (model.source !== "live" && model.source !== "curated" && model.source !== "custom") return false;
+  if (model.variants !== undefined) {
+    if (!Array.isArray(model.variants)) return false;
+    if (!model.variants.every((variant) => typeof variant === "string")) return false;
+  }
+  if (model.contextWindow !== undefined) {
+    if (typeof model.contextWindow !== "number" || !Number.isFinite(model.contextWindow) || model.contextWindow <= 0) return false;
+  }
+  return true;
+}
+
+export function decodeOpencodeModelsCache(raw: string): Array<{ binary: string; at: number; models: ModelOption[] }> {
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return [];
+  }
+  if (!parsed || typeof parsed !== "object") return [];
+  const entries = (parsed as { entries?: unknown }).entries;
+  if (!entries || typeof entries !== "object") return [];
+  const out: Array<{ binary: string; at: number; models: ModelOption[] }> = [];
+  for (const [binary, value] of Object.entries(entries as Record<string, unknown>)) {
+    if (!value || typeof value !== "object") continue;
+    const entry = value as { at?: unknown; models?: unknown };
+    if (typeof entry.at !== "number" || !Array.isArray(entry.models)) continue;
+    if (!binary.trim() || entry.models.length === 0 || !entry.models.every(isModelOption)) continue;
+    out.push({ binary, at: entry.at, models: entry.models });
+  }
+  return out;
+}
+
+export function initOpencodeModelsCache(filePath: string): void {
+  cacheFile = filePath;
+  try {
+    if (!existsSync(filePath)) return;
+    const entries = decodeOpencodeModelsCache(readFileSync(filePath, "utf8"));
+    for (const entry of entries) {
+      const key = cacheKey(entry.binary);
+      const existing = cache.get(key);
+      if (!existing || existing.at < entry.at) cache.set(key, { at: entry.at, models: entry.models });
+    }
+  } catch (err) {
+    console.warn(`opencode models cache read failed: ${(err as Error).message}`);
+  }
+}
+
+function persistCache(): void {
+  if (!cacheFile) return;
+  const entries: Record<string, CacheEntry> = {};
+  for (const [key, entry] of cache) entries[key] = entry;
+  try {
+    mkdirSync(dirname(cacheFile), { recursive: true });
+    const tmp = `${cacheFile}.${process.pid}.tmp`;
+    writeFileSync(tmp, JSON.stringify({ version: 1, entries }), "utf8");
+    renameSync(tmp, cacheFile);
+  } catch (err) {
+    console.warn(`opencode models cache write failed: ${(err as Error).message}`);
+  }
+}
+
+async function fetchOpencodeModels(cwd: string, binary: string, query: OpencodeModelsQuery): Promise<ModelOption[]> {
   const start = Date.now();
   try {
-    const stdout = await queryModels(binary);
-    const parsed = parseOpencodeModels(stdout);
+    let parsed: ModelOption[] = [];
+    try {
+      parsed = parseOpencodeVerboseModels(await query(binary, ["models", "--verbose"]));
+    } catch {
+      parsed = [];
+    }
+    if (parsed.length === 0) {
+      parsed = parseOpencodeModels(await query(binary, ["models"]));
+    }
     const models = parsed.length > 0 ? parsed : OPENCODE_CURATED_MODELS;
-    cache.set(key, { at: Date.now(), models });
+    cache.set(cacheKey(binary), { at: Date.now(), models });
+    persistCache();
     traceHarnessCall({
       harness: "opencode",
       operation: "opencode.listModels",
@@ -122,6 +318,45 @@ export async function listOpencodeModels(cwd: string, binary: string): Promise<M
   }
 }
 
+function refreshOpencodeModels(cwd: string, binary: string, query: OpencodeModelsQuery): Promise<ModelOption[]> {
+  const key = cacheKey(binary);
+  const pending = inflight.get(key);
+  if (pending) return pending;
+  const promise = fetchOpencodeModels(cwd, binary, query).finally(() => {
+    if (inflight.get(key) === promise) inflight.delete(key);
+  });
+  inflight.set(key, promise);
+  return promise;
+}
+
+export async function listOpencodeModels(
+  cwd: string,
+  binary: string,
+  query: OpencodeModelsQuery = queryModels
+): Promise<ModelOption[]> {
+  const hit = cache.get(cacheKey(binary));
+  if (hit) {
+    const stale = Date.now() - hit.at >= OPENCODE_MODELS_CACHE_TTL_MS;
+    if (stale) void refreshOpencodeModels(cwd, binary, query);
+    traceHarnessCall({
+      harness: "opencode",
+      operation: "opencode.listModels",
+      cwd,
+      binary,
+      ok: true,
+      extra: { cached: true, stale, count: hit.models.length }
+    });
+    return hit.models;
+  }
+  return refreshOpencodeModels(cwd, binary, query);
+}
+
+export function peekOpencodeModels(binary: string): ModelOption[] | undefined {
+  return cache.get(cacheKey(binary))?.models;
+}
+
 export function clearOpencodeModelsCache(): void {
   cache.clear();
+  inflight.clear();
+  cacheFile = null;
 }

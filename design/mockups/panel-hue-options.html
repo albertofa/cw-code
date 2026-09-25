@@ -1,0 +1,177 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>cw-code — Panel hue options</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --page: #0e1013;
+      --ink: #e8eaee;
+      --ink-dim: #aab0bb;
+      --ink-faint: #7c838f;
+      --ui: Inter, ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
+      --mono: "Cascadia Code", "JetBrains Mono", ui-monospace, Consolas, monospace;
+    }
+    * { box-sizing: border-box; }
+    body { margin: 0; background: var(--page); color: var(--ink); font-family: var(--ui); font-size: 14px; line-height: 1.5; }
+    .page { max-width: 1240px; margin: 0 auto; padding: 28px 24px 60px; }
+    .eyebrow { color: var(--ink-faint); font-size: 12px; letter-spacing: .1em; text-transform: uppercase; font-weight: 700; }
+    h1 { margin: 6px 0 4px; font-size: 26px; letter-spacing: -.02em; }
+    .lede { color: var(--ink-dim); max-width: 78ch; margin: 0 0 20px; }
+    .lede code { font-family: var(--mono); font-size: 12.5px; color: var(--ink); }
+    .grid { display: grid; grid-template-columns: 1fr 1fr; gap: 18px; }
+    @media (max-width: 980px) { .grid { grid-template-columns: 1fr; } }
+    .opt { border: 1px solid #2b2f37; border-radius: 14px; overflow: hidden; background: #14161a; }
+    .opt.selected { border-color: #548af7; box-shadow: 0 0 0 1px #548af7; }
+    .opt-head { padding: 14px 16px 12px; border-bottom: 1px solid #24272e; }
+    .opt-head h2 { margin: 0 0 2px; font-size: 16px; }
+    .opt-head p { margin: 0 0 8px; color: var(--ink-dim); font-size: 13px; }
+    .tokens { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+    .tokens code { font-family: var(--mono); font-size: 11px; background: #1d2026; border: 1px solid #2e333c; border-radius: 6px; padding: 2px 7px; color: #c9d2e0; }
+    .pick { font: inherit; font-size: 13px; font-weight: 600; background: #232936; color: var(--ink); border: 1px solid #39424f; border-radius: 8px; padding: 7px 12px; cursor: pointer; }
+    .pick:hover { background: #2b3342; }
+    .opt.selected .pick { background: #548af7; border-color: #548af7; color: #fff; }
+
+    .mini { display: grid; grid-template-columns: 190px minmax(0, 1fr) 200px; height: 400px; font-size: 12px; }
+    .m-side { background: var(--side); border-right: 1px solid var(--div); display: flex; flex-direction: column; min-width: 0; }
+    .m-main { background: var(--center); display: flex; flex-direction: column; min-width: 0; }
+    .m-right { background: var(--side); border-left: 1px solid var(--div); display: flex; flex-direction: column; min-width: 0; }
+    .m-h { height: 34px; flex: none; display: flex; align-items: center; gap: 6px; padding: 0 10px; font-weight: 650; font-size: 11.5px; color: var(--side-text, var(--ink)); background: var(--side-h, var(--side)); border-bottom: 1px solid var(--div); white-space: nowrap; overflow: hidden; }
+    .m-main .m-h { background: var(--center-h, var(--center)); color: var(--center-text, var(--ink)); }
+    .m-h .dot { width: 8px; height: 8px; border-radius: 50%; background: #59a659; flex: none; }
+    .m-h .pill { margin-left: auto; font-family: var(--mono); font-size: 10px; border: 1px solid var(--div); border-radius: 5px; padding: 1px 6px; color: var(--side-dim, var(--ink-dim)); flex: none; }
+    .m-main .m-h .pill { color: var(--center-dim, var(--ink-dim)); }
+    .m-tabs { height: 30px; flex: none; display: flex; align-items: stretch; gap: 2px; padding: 0 8px; background: var(--center-h, var(--center)); border-bottom: 1px solid var(--div); }
+    .m-tabs span { display: inline-flex; align-items: center; padding: 0 8px; color: var(--ink-faint); font-size: 11px; border-bottom: 2px solid transparent; }
+    .m-tabs span.on { color: var(--center-text, var(--ink)); border-bottom-color: #a06bff; }
+    .m-right .m-tabs { background: var(--side-h, var(--side)); }
+    .m-right .m-tabs span.on { color: var(--side-text, var(--ink)); }
+    .m-body { flex: 1; overflow: hidden; padding: 10px; display: flex; flex-direction: column; gap: 7px; }
+    .m-search { border: 1px solid var(--card-border, var(--div)); border-radius: 7px; padding: 5px 8px; color: var(--ink-faint); font-size: 11px; background: var(--search, transparent); }
+    .m-card { border: 1px solid var(--card-border, var(--div)); border-radius: 9px; padding: 7px 9px; background: var(--card, transparent); }
+    .m-card.on { border-color: var(--card-active-border, #a06bff); }
+    .m-card b { display: block; font-size: 11.5px; color: var(--side-text, var(--ink)); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .m-card small { color: var(--side-dim, var(--ink-dim)); font-family: var(--mono); font-size: 10px; }
+    .m-row { padding: 6px 9px; border-radius: 7px; color: var(--side-dim, var(--ink-dim)); font-size: 11.5px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+    .m-row.on { background: var(--row-active, #2e3035); color: var(--side-text, var(--ink)); box-shadow: inset 3px 0 0 #a06bff; }
+    .m-u { align-self: flex-end; max-width: 80%; background: #2b2d30; border-radius: 10px; padding: 6px 10px; color: var(--center-text, var(--ink)); font-size: 11.5px; }
+    .m-a { color: var(--center-dim, var(--ink-dim)); font-size: 11.5px; line-height: 1.55; }
+    .m-a strong { color: var(--center-text, var(--ink)); }
+    .m-composer { margin-top: auto; border: 1px solid var(--div); border-radius: 9px; padding: 7px 10px; color: var(--ink-faint); font-size: 11px; background: var(--composer, #1b1e23); }
+    .m-file { display: flex; align-items: center; gap: 7px; padding: 5px 8px; border-radius: 6px; color: var(--side-dim, var(--ink-dim)); font-family: var(--mono); font-size: 10.5px; }
+    .m-file.on { background: var(--row-active, #2e3035); color: var(--side-text, var(--ink)); }
+    .m-sec { color: var(--ink-faint); font-size: 10px; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; padding: 4px 8px 0; }
+
+    .opt-a { --side: #20232c; --side-h: #20232c; --side-text: #e4e7ed; --side-dim: #bcc3cf; --center: #101214; --center-h: #101214; --center-text: #dfe1e5; --center-dim: #a7adb8; --div: #2c313b; --card: #272b35; --card-border: #363c48; --card-active-border: rgba(160,107,255,.55); --row-active: #2b303b; --search: #23262e; --composer: #1b1e23; }
+    .opt-b { --side: #1e1f22; --side-h: #1e1f22; --side-text: #dfe1e5; --side-dim: #a9afba; --center: #161a23; --center-h: #222a3d; --center-text: #e8ebf1; --center-dim: #aeb8cc; --div: #2b2d30; --card: #24262b; --card-border: #2b2d30; --row-active: #2e3035; --composer: #202636; }
+    .opt-c { --side: #1e1f22; --side-h: #1e1f22; --side-text: #dfe1e5; --side-dim: #a9afba; --center: #101214; --center-h: #101214; --center-text: #dfe1e5; --center-dim: #a7adb8; --div: #393b40; --card: #24262b; --card-border: #393b40; --row-active: #2e3035; --composer: #24262b; }
+    .opt-d { --side: #1f2330; --side-h: #1f2330; --side-text: #dfe1e5; --side-dim: #9aa3b5; --center: #101214; --center-h: #101214; --center-text: #dfe1e5; --center-dim: #a7adb8; --div: #2b2d30; --card: #24262b; --card-border: #2b2d30; --row-active: #2e3035; --composer: #24262b; }
+
+    .notes { margin-top: 18px; border: 1px solid #2b2f37; border-radius: 14px; padding: 16px 18px; background: #14161a; }
+    .notes h2 { margin: 0 0 6px; font-size: 15px; }
+    .notes table { width: 100%; border-collapse: collapse; font-size: 13px; }
+    .notes th, .notes td { text-align: left; padding: 7px 10px; border-bottom: 1px solid #22262d; vertical-align: top; }
+    .notes th { color: var(--ink-faint); font-size: 11px; text-transform: uppercase; letter-spacing: .07em; }
+    .out { margin-top: 14px; border: 1px dashed #39424f; border-radius: 12px; padding: 12px 14px; font-size: 13px; color: var(--ink-dim); }
+    .out b { color: var(--ink); }
+    .out pre { margin: 8px 0 0; padding: 10px 12px; background: #101216; border: 1px solid #262b33; border-radius: 8px; font-family: var(--mono); font-size: 11.5px; color: #c9d2e0; overflow-x: auto; }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <div class="eyebrow">cw-code design study</div>
+    <h1>Panel hue — four options</h1>
+    <p class="lede">Same layout in all four: gapless 3-panel shell, faint 1px separations, per-column 40px headers. Only the surface logic changes. Current production is <code>Option D</code>. Click <b>Select</b> on the one you want and copy the tokens at the bottom into <code>theme.css</code>.</p>
+
+    <div class="grid">
+      <section class="opt opt-a" data-name="A · Soft side tint + touch-up">
+        <div class="opt-head">
+          <h2>A · Soft side tint + touch-up (recommended)</h2>
+          <p>Hue stays on the side panels but weaker (<code>#20232c</code> instead of <code>#1f2330</code>), and side text, cards, search, and hovers are retuned for it so nothing looks washed out.</p>
+          <div class="tokens"><code>--side #20232c</code><code>--div #2c313b</code><code>cards #272b35 / #363c48</code><code>center #101214</code></div>
+          <button class="pick" type="button">Select A</button>
+        </div>
+        <div class="mini" aria-hidden="true">
+          <div class="m-side"><div class="m-h"><span class="dot"></span>cw-code<span class="pill">⌘K</span></div><div class="m-body"><div class="m-search">Search sessions…</div><div class="m-card on"><b>Seamless header layout</b><small>⎇ cw/seamless-header</small></div><div class="m-row on">Seamless header layout</div><div class="m-row">Queue AskUser dock</div><div class="m-row">Diff tab smart focus</div></div></div>
+          <div class="m-main"><div class="m-h">cw-code / <b>&nbsp;Seamless header</b><span class="pill">↓0 · +128 −40</span></div><div class="m-tabs"><span class="on">Claude</span><span>Files</span><span>Diff</span></div><div class="m-body"><div class="m-u">Add faint dividers, keep it gapless</div><div class="m-a"><strong>Claude</strong> — done. Dividers use the soft border token so they read as seams, not frames.</div><div class="m-composer">Prompt Claude…</div></div></div>
+          <div class="m-right"><div class="m-tabs"><span class="on">Files</span><span>Diff</span><span>Agents</span></div><div class="m-body"><div class="m-sec">Workspace</div><div class="m-file on">▸ App.tsx</div><div class="m-file">▸ Sidebar.tsx</div><div class="m-file">▸ theme.css</div><div class="m-file">▸ panelStore.ts</div></div></div>
+        </div>
+      </section>
+
+      <section class="opt opt-b" data-name="B · Hue in main panel">
+        <div class="opt-head">
+          <h2>B · Hue in the main panel</h2>
+          <p>Sides go fully neutral (<code>#1e1f22</code>). The bluish tint moves to the conversation column: tinted header + tab strip (<code>#222a3d</code>), faintly tinted thread (<code>#161a23</code>), tinted composer.</p>
+          <div class="tokens"><code>sides #1e1f22</code><code>center-h #222a3d</code><code>center #161a23</code><code>composer #202636</code></div>
+          <button class="pick" type="button">Select B</button>
+        </div>
+        <div class="mini" aria-hidden="true">
+          <div class="m-side"><div class="m-h"><span class="dot"></span>cw-code<span class="pill">⌘K</span></div><div class="m-body"><div class="m-search">Search sessions…</div><div class="m-card on"><b>Seamless header layout</b><small>⎇ cw/seamless-header</small></div><div class="m-row on">Seamless header layout</div><div class="m-row">Queue AskUser dock</div><div class="m-row">Diff tab smart focus</div></div></div>
+          <div class="m-main"><div class="m-h">cw-code / <b>&nbsp;Seamless header</b><span class="pill">↓0 · +128 −40</span></div><div class="m-tabs"><span class="on">Claude</span><span>Files</span><span>Diff</span></div><div class="m-body"><div class="m-u">Add faint dividers, keep it gapless</div><div class="m-a"><strong>Claude</strong> — done. The tint marks “this is where the conversation lives”.</div><div class="m-composer">Prompt Claude…</div></div></div>
+          <div class="m-right"><div class="m-tabs"><span class="on">Files</span><span>Diff</span><span>Agents</span></div><div class="m-body"><div class="m-sec">Workspace</div><div class="m-file on">▸ App.tsx</div><div class="m-file">▸ Sidebar.tsx</div><div class="m-file">▸ theme.css</div><div class="m-file">▸ panelStore.ts</div></div></div>
+        </div>
+      </section>
+
+      <section class="opt opt-c" data-name="C · Neutral, dividers do the work">
+        <div class="opt-head">
+          <h2>C · Neutral, dividers do the work</h2>
+          <p>No hue at all. Sides stay <code>#1e1f22</code>, center stays <code>#101214</code>, separations use the stronger <code>--border #393b40</code> instead of the faint soft token.</p>
+          <div class="tokens"><code>sides #1e1f22</code><code>center #101214</code><code>--div #393b40</code><code>no tint</code></div>
+          <button class="pick" type="button">Select C</button>
+        </div>
+        <div class="mini" aria-hidden="true">
+          <div class="m-side"><div class="m-h"><span class="dot"></span>cw-code<span class="pill">⌘K</span></div><div class="m-body"><div class="m-search">Search sessions…</div><div class="m-card on"><b>Seamless header layout</b><small>⎇ cw/seamless-header</small></div><div class="m-row on">Seamless header layout</div><div class="m-row">Queue AskUser dock</div><div class="m-row">Diff tab smart focus</div></div></div>
+          <div class="m-main"><div class="m-h">cw-code / <b>&nbsp;Seamless header</b><span class="pill">↓0 · +128 −40</span></div><div class="m-tabs"><span class="on">Claude</span><span>Files</span><span>Diff</span></div><div class="m-body"><div class="m-u">Add faint dividers, keep it gapless</div><div class="m-a"><strong>Claude</strong> — done. Separation comes from surface + line weight only.</div><div class="m-composer">Prompt Claude…</div></div></div>
+          <div class="m-right"><div class="m-tabs"><span class="on">Files</span><span>Diff</span><span>Agents</span></div><div class="m-body"><div class="m-sec">Workspace</div><div class="m-file on">▸ App.tsx</div><div class="m-file">▸ Sidebar.tsx</div><div class="m-file">▸ theme.css</div><div class="m-file">▸ panelStore.ts</div></div></div>
+        </div>
+      </section>
+
+      <section class="opt opt-d" data-name="D · Current (strong side tint)">
+        <div class="opt-head">
+          <h2>D · Current (strong side tint, no touch-up)</h2>
+          <p>What is in the branch right now: full-height <code>#1f2330</code> sides on untuned cards/text, dark <code>#101214</code> center. Kept here as the baseline to compare against.</p>
+          <div class="tokens"><code>--side #1f2330</code><code>--div #2b2d30</code><code>center #101214</code><code>cards untuned</code></div>
+          <button class="pick" type="button">Select D</button>
+        </div>
+        <div class="mini" aria-hidden="true">
+          <div class="m-side"><div class="m-h"><span class="dot"></span>cw-code<span class="pill">⌘K</span></div><div class="m-body"><div class="m-search">Search sessions…</div><div class="m-card on"><b>Seamless header layout</b><small>⎇ cw/seamless-header</small></div><div class="m-row on">Seamless header layout</div><div class="m-row">Queue AskUser dock</div><div class="m-row">Diff tab smart focus</div></div></div>
+          <div class="m-main"><div class="m-h">cw-code / <b>&nbsp;Seamless header</b><span class="pill">↓0 · +128 −40</span></div><div class="m-tabs"><span class="on">Claude</span><span>Files</span><span>Diff</span></div><div class="m-body"><div class="m-u">Add faint dividers, keep it gapless</div><div class="m-a"><strong>Claude</strong> — done. Baseline: strongest tint, cards not retuned.</div><div class="m-composer">Prompt Claude…</div></div></div>
+          <div class="m-right"><div class="m-tabs"><span class="on">Files</span><span>Diff</span><span>Agents</span></div><div class="m-body"><div class="m-sec">Workspace</div><div class="m-file on">▸ App.tsx</div><div class="m-file">▸ Sidebar.tsx</div><div class="m-file">▸ theme.css</div><div class="m-file">▸ panelStore.ts</div></div></div>
+        </div>
+      </section>
+    </div>
+
+    <div class="notes">
+      <h2>Trade-offs</h2>
+      <table>
+        <tr><th>Option</th><th>Wins</th><th>Risks</th></tr>
+        <tr><td><b>A</b> · Soft side tint</td><td>Keeps your hue idea, fixes the washed-out cards/text, weakest visual risk.</td><td>Still two surface hues to maintain.</td></tr>
+        <tr><td><b>B</b> · Hue in main</td><td>Conversation is the hero; sides recede into neutral chrome.</td><td>Tinted reading surface can fatigue over long sessions; code/diff contrast needs re-checking.</td></tr>
+        <tr><td><b>C</b> · Neutral + lines</td><td>Zero tint maintenance; calmest, most IDE-like.</td><td>Relies on divider weight; can feel flat if lines are too faint.</td></tr>
+        <tr><td><b>D</b> · Current</td><td>Baseline for comparison.</td><td>Strongest tint with untuned side content — the thing that looks off.</td></tr>
+      </table>
+      <div class="out" id="out">No selection yet — click <b>Select</b> on any option.</div>
+    </div>
+  </main>
+
+  <script>
+    const snippets = {
+      "A · Soft side tint + touch-up": "--side: #20232c;\n--border-soft: #2c313b  (dividers)\n.side / .right / .tabbar / .right-body → var(--side)\n.side text #e4e7ed · dim #bcc3cf · cards #272b35 / border #363c48\n.thread-col / .main-seg / .main-tabbar → var(--editor) #101214",
+      "B · Hue in main panel": "--side: #1e1f22  (sides neutral)\n.main-seg / .main-tabbar → #222a3d\n.thread-col → #161a23\n.composer → #202636\ndividers stay var(--border-soft)",
+      "C · Neutral, dividers do the work": "--side: #1e1f22  (remove tint)\n.thread-col → #101214\ndividers → var(--border) #393b40\nno other token changes",
+      "D · Current (strong side tint)": "keep --side: #1f2330, dividers var(--border-soft), center var(--editor)"
+    };
+    const out = document.getElementById("out");
+    document.querySelectorAll(".opt").forEach((el) => {
+      el.querySelector(".pick").addEventListener("click", () => {
+        document.querySelectorAll(".opt").forEach((o) => o.classList.remove("selected"));
+        el.classList.add("selected");
+        const name = el.dataset.name;
+        out.innerHTML = "Selected <b>" + name + "</b> — paste into theme.css:<pre>" + snippets[name].replace(/</g, "&lt;") + "</pre>";
+      });
+    });
+  </script>
+</body>
+</html>
