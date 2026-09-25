@@ -1,17 +1,25 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
-import { createRequire } from "node:module";
-import { homedir, tmpdir } from "node:os";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
-import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
+import { assertDataPreserved, cleanupSeededFixtures, seedRealUserData } from "./lib/real-user-data.mjs";
+import {
+  UNINSTALL_POLL_TIMEOUT_MS,
+  isElevated,
+  resolveAsarLib,
+  readRegistryValue,
+  registryPaths,
+  requireDisposableEnvironment,
+  runPackageProbe,
+  runSilent,
+  runUninstallSync,
+  waitForRegistryValueGone
+} from "./lib/windows-install.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, "..");
 const desktopDir = join(repoRoot, "apps", "desktop");
 const UPDATER_GUID = "d6e18d04-bf35-5bfe-9145-b95301660833";
-const PROBE_TIMEOUT_MS = 30_000;
-const UNINSTALL_POLL_TIMEOUT_MS = 30_000;
-const UNINSTALL_POLL_INTERVAL_MS = 500;
 
 function parseArgs(argv) {
   const args = {
@@ -67,86 +75,6 @@ function fileSize(path) {
   return existsSync(path) ? statSync(path).size : null;
 }
 
-async function resolveAsarLib() {
-  try {
-    return await import("@electron/asar");
-  } catch (primaryErr) {
-    try {
-      const desktopRequire = createRequire(join(desktopDir, "package.json"));
-      const builderPkgPath = desktopRequire.resolve("electron-builder/package.json");
-      const builderRequire = createRequire(builderPkgPath);
-      return builderRequire("@electron/asar");
-    } catch (fallbackErr) {
-      console.warn(
-        `warning: @electron/asar not resolvable, skipping app.asar content listing ` +
-          `(direct import: ${primaryErr.message}; via electron-builder: ${fallbackErr.message})`
-      );
-      return null;
-    }
-  }
-}
-
-function safePathWithoutClis() {
-  const systemRoot = process.env["SystemRoot"] ?? "C:\\Windows";
-  return [
-    join(systemRoot, "System32"),
-    systemRoot,
-    join(systemRoot, "System32", "Wbem"),
-    join(systemRoot, "System32", "WindowsPowerShell", "v1.0")
-  ].join(";");
-}
-
-function killProcessTree(pid) {
-  spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"]);
-}
-
-function isElevated() {
-  return spawnSync("net", ["session"], { encoding: "utf8" }).status === 0;
-}
-
-async function runPackageProbe(exePath, opts = {}) {
-  const workDir = mkdtempSync(join(tmpdir(), "cw-verify-probe-"));
-  try {
-    const cwCodeHome = join(workDir, "cw-code-home");
-    const userDataDir = join(workDir, "user-data");
-    const probeOutPath = join(workDir, "probe.json");
-    mkdirSync(cwCodeHome, { recursive: true });
-    mkdirSync(userDataDir, { recursive: true });
-
-    const env = {
-      ...process.env,
-      ...opts.env,
-      CW_CODE_HOME: cwCodeHome,
-      CW_PACKAGE_PROBE_OUT: probeOutPath,
-      PATH: opts.stripCliPath === false ? process.env.PATH : safePathWithoutClis()
-    };
-
-    const result = await new Promise((resolvePromise, rejectPromise) => {
-      const child = spawn(exePath, [`--user-data-dir=${userDataDir}`], { env });
-      const timer = setTimeout(() => {
-        if (child.pid) killProcessTree(child.pid);
-        rejectPromise(new Error(`packaged app did not exit within ${PROBE_TIMEOUT_MS}ms`));
-      }, PROBE_TIMEOUT_MS);
-      child.on("exit", (exitCode) => {
-        clearTimeout(timer);
-        resolvePromise({ exitCode });
-      });
-      child.on("error", (err) => {
-        clearTimeout(timer);
-        rejectPromise(err);
-      });
-    });
-
-    if (!existsSync(probeOutPath)) {
-      throw new Error(`packaged app exited (code ${result.exitCode}) without writing a probe result to ${probeOutPath}`);
-    }
-    const probe = JSON.parse(readFileSync(probeOutPath, "utf8"));
-    return { exitCode: result.exitCode, probe };
-  } finally {
-    rmSync(workDir, { recursive: true, force: true });
-  }
-}
-
 async function checkPackage(distDir) {
   const version = findInstallerVersion(distDir);
   const installerName = `cw-code-Setup-${version}-x64.exe`;
@@ -176,7 +104,7 @@ async function checkPackage(distDir) {
   if (!report.nodePtyNative.exists) problems.push(`node-pty win32-x64 native binary not found: ${ptyNativePath}`);
 
   if (report.asar.exists) {
-    const asarLib = await resolveAsarLib();
+    const asarLib = await resolveAsarLib(desktopDir);
     if (asarLib) {
       const entries = asarLib.listPackage(asarPath);
       report.asar.containsMainEntry = entries.some((entry) => entry.replace(/\\/g, "/").endsWith("out/main/index.js"));
@@ -196,167 +124,6 @@ async function checkPackage(distDir) {
   }
 
   return { report, problems };
-}
-
-function requireDisposableEnvironment(modeName, disposableEnvironment) {
-  if (process.env.CI === "true" || disposableEnvironment) return;
-  throw new Error(
-    `${modeName} installs and uninstalls the packaged app; refusing to run outside CI. ` +
-      "Set CI=true or pass --disposable-environment only in a disposable Windows environment."
-  );
-}
-
-function runSilent(command, args) {
-  const result = spawnSync(command, args, { encoding: "utf8" });
-  if (result.status !== 0) {
-    throw new Error(`${command} ${args.join(" ")} failed (exit ${result.status}): ${result.stderr || result.stdout}`);
-  }
-  return result;
-}
-
-function registryPaths(perMachine) {
-  const hive = perMachine ? "HKLM" : "HKCU";
-  return {
-    install: `${hive}\\Software\\${UPDATER_GUID}`,
-    uninstall: `${hive}\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\${UPDATER_GUID}`
-  };
-}
-
-function readRegistryValue(keyPath, name) {
-  const result = spawnSync("reg", ["query", keyPath, "/v", name], { encoding: "utf8" });
-  if (result.status !== 0) return null;
-  const match = result.stdout.match(new RegExp(`${name}\\s+REG_SZ\\s+(.+)`));
-  return match ? match[1].trim() : null;
-}
-
-function sleepSync(ms) {
-  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
-}
-
-function waitForRegistryValueGone(keyPath, name, timeoutMs) {
-  const start = Date.now();
-  while (Date.now() - start < timeoutMs) {
-    if (readRegistryValue(keyPath, name) === null) return;
-    sleepSync(UNINSTALL_POLL_INTERVAL_MS);
-  }
-  throw new Error(`registry value '${name}' at ${keyPath} did not clear within ${timeoutMs}ms after uninstall`);
-}
-
-function runUninstallSync(uninstallerPath, installDir) {
-  runSilent(uninstallerPath, ["/S", `_?=${installDir}`]);
-  try {
-    rmSync(uninstallerPath, { force: true });
-  } catch (err) {
-    console.warn(`warning: could not remove leftover uninstaller ${uninstallerPath}: ${err.message}`);
-  }
-  try {
-    rmSync(installDir, { recursive: true, force: true });
-  } catch (err) {
-    console.warn(`warning: could not remove leftover install directory ${installDir}: ${err.message}`);
-  }
-}
-
-function cwCodeHomeDir() {
-  return join(process.env.USERPROFILE ?? homedir(), ".cw-code");
-}
-
-function electronUserDataDir() {
-  return join(process.env.APPDATA ?? join(homedir(), "AppData", "Roaming"), "@cw-code", "desktop");
-}
-
-const FIXTURE_MARKER = "cw-verify";
-
-function assertSafeToSeed(path) {
-  if (!existsSync(path)) return;
-  const content = readFileSync(path, "utf8");
-  if (!content.includes(FIXTURE_MARKER)) {
-    throw new Error(
-      `refusing to seed over existing file that is not a cw-verify fixture: ${path}. ` +
-        "This looks like real user data; aborting before writing anything."
-    );
-  }
-}
-
-function seedRealUserData() {
-  const home = cwCodeHomeDir();
-  const userdataDir = join(home, "userdata");
-  const worktreeMarkerPath = join(home, "worktrees", "cw-verify-fake-worktree", "marker.txt");
-  const electronMarkerPath = join(electronUserDataDir(), "marker.txt");
-  const dbPath = join(userdataDir, "cw-code.db.json");
-  const settingsPath = join(userdataDir, "cw-settings.json");
-
-  for (const path of [dbPath, settingsPath, worktreeMarkerPath, electronMarkerPath]) {
-    assertSafeToSeed(path);
-  }
-
-  mkdirSync(userdataDir, { recursive: true });
-  mkdirSync(dirname(worktreeMarkerPath), { recursive: true });
-  mkdirSync(dirname(electronMarkerPath), { recursive: true });
-
-  const dbContent = `${JSON.stringify(
-    {
-      schemaVersion: 1,
-      _fixture: FIXTURE_MARKER,
-      projects: [{ id: "proj_verify_fake", rootPath: "C:\\verify\\fake-project" }],
-      sessions: [
-        {
-          id: "sess_verify_fake",
-          projectId: "proj_verify_fake",
-          driver: "claude",
-          worktreePath: "C:\\verify\\fake-worktree",
-          title: "verify fixture"
-        }
-      ]
-    },
-    null,
-    2
-  )}\n`;
-  const settingsContent = `${JSON.stringify(
-    { schemaVersion: 1, claudeBinaryPath: "claude.exe", _fixture: FIXTURE_MARKER },
-    null,
-    2
-  )}\n`;
-  const markerContent = `${FIXTURE_MARKER} marker ${Date.now()}\n`;
-
-  writeFileSync(dbPath, dbContent, "utf8");
-  writeFileSync(settingsPath, settingsContent, "utf8");
-  writeFileSync(worktreeMarkerPath, markerContent, "utf8");
-  writeFileSync(electronMarkerPath, markerContent, "utf8");
-
-  return { dbPath, settingsPath, worktreeMarkerPath, electronMarkerPath, dbContent, settingsContent, markerContent };
-}
-
-function cleanupSeededFixtures(seed) {
-  for (const path of [seed.dbPath, seed.settingsPath, seed.electronMarkerPath]) {
-    try {
-      rmSync(path, { force: true });
-    } catch (err) {
-      console.warn(`warning: could not remove seeded fixture ${path}: ${err.message}`);
-    }
-  }
-  try {
-    rmSync(dirname(seed.worktreeMarkerPath), { recursive: true, force: true });
-  } catch (err) {
-    console.warn(`warning: could not remove seeded fixture worktree ${dirname(seed.worktreeMarkerPath)}: ${err.message}`);
-  }
-}
-
-function assertDataPreserved(seed, problems) {
-  const checks = [
-    ["userdata db", seed.dbPath, seed.dbContent],
-    ["settings", seed.settingsPath, seed.settingsContent],
-    ["worktree marker", seed.worktreeMarkerPath, seed.markerContent],
-    ["Electron userData marker", seed.electronMarkerPath, seed.markerContent]
-  ];
-  for (const [label, path, expected] of checks) {
-    if (!existsSync(path)) {
-      problems.push(`${label} missing after upgrade: ${path}`);
-      continue;
-    }
-    if (readFileSync(path, "utf8") !== expected) {
-      problems.push(`${label} changed after upgrade: ${path}`);
-    }
-  }
 }
 
 async function installMode(distDir, disposableEnvironment) {
@@ -387,7 +154,7 @@ async function installMode(distDir, disposableEnvironment) {
     if (existsSync(uninstallerPath)) {
       try {
         runUninstallSync(uninstallerPath, installDir);
-        waitForRegistryValueGone(registryPaths(false).install, "InstallLocation", UNINSTALL_POLL_TIMEOUT_MS);
+        waitForRegistryValueGone(registryPaths(UPDATER_GUID, false).install, "InstallLocation", UNINSTALL_POLL_TIMEOUT_MS);
       } catch (err) {
         problems.push(`install mode cleanup uninstall failed: ${err.message}`);
       }
@@ -412,7 +179,7 @@ async function upgradeFromMode(distDir, legacyInstallerPath, disposableEnvironme
         "Re-run from an elevated shell (hosted GitHub Windows runners are elevated by default)."
     );
   }
-  const registryKeys = registryPaths(perMachine);
+  const registryKeys = registryPaths(UPDATER_GUID, perMachine);
   const legacyArgs = perMachine ? ["/S", "/allusers"] : customDir ? ["/S", `/D=${customDir}`] : ["/S"];
   const upgradeArgs = perMachine ? ["/S", "/allusers"] : ["/S"];
 
