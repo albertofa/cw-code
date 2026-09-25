@@ -1,11 +1,17 @@
 import { statSync } from "node:fs";
 import { join, resolve } from "node:path";
-import type { SessionMeta } from "@cw-code/contracts";
+import type { GitStatus, SessionMeta } from "@cw-code/contracts";
 
 export function sameWorktreePath(a: string, b: string): boolean {
   const left = resolve(a).replace(/[\\/]+$/, "");
   const right = resolve(b).replace(/[\\/]+$/, "");
   return process.platform === "win32" ? left.toLowerCase() === right.toLowerCase() : left === right;
+}
+
+export function changedWorktreeBranch(session: SessionMeta, status: GitStatus): string | null {
+  if (!session.worktreePath || !status.available || status.branch === "HEAD") return null;
+  if (!sameWorktreePath(session.worktreePath, status.worktreePath)) return null;
+  return status.branch !== session.branch ? status.branch : null;
 }
 
 export function looksLikeWorktree(dirPath: string): boolean {

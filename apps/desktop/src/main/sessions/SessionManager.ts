@@ -47,7 +47,7 @@ import {
 } from "../github/prLinks.js";
 import { prKey, prRefFromUrl } from "../github/prParsers.js";
 import { buildTurnEnv } from "./env.js";
-import { isWorktreeOrphaned, looksLikeWorktree, pinsWorktree, sameWorktreePath } from "./worktreeCleanup.js";
+import { changedWorktreeBranch, isWorktreeOrphaned, looksLikeWorktree, pinsWorktree, sameWorktreePath } from "./worktreeCleanup.js";
 import { SettingsStore } from "../settings/SettingsStore.js";
 import { resolveClaudeModels } from "../settings/settingsUtils.js";
 import { permissionOption, withSyntheticFullAccess } from "../providers/permissions.js";
@@ -515,15 +515,17 @@ export class SessionManager {
     return updated;
   }
 
-  syncPrLink(sessionId: string, status: GitStatus): SessionMeta | null {
-    const session = this.store.getSession(sessionId);
-    if (!session) return null;
+  syncFromStatus(sessionId: string, status: GitStatus): SessionMeta | null {
+    const stored = this.store.getSession(sessionId);
+    if (!stored) return null;
+    const branch = changedWorktreeBranch(stored, status);
+    if (branch) this.store.updateSession(sessionId, { branch });
+    const session = this.store.getSession(sessionId) ?? stored;
     const ref = status.pullRequest ? prRefFromUrl(status.pullRequest.url) : null;
     const headSha = ref ? this.prHead(ref) : null;
     const link = linkFromStatus(session, status, Date.now(), headSha);
-    if (!link) return null;
-    this.store.updateSession(sessionId, { prs: upsertLink(session.prs, link) });
-    return this.emitSession(sessionId);
+    if (link) this.store.updateSession(sessionId, { prs: upsertLink(session.prs, link) });
+    return branch || link ? this.emitSession(sessionId) : null;
   }
 
   linkPr(sessionId: string, link: SessionPrLink): SessionMeta {
