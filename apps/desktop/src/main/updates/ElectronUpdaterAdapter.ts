@@ -1,4 +1,4 @@
-import { basename } from "node:path";
+import { win32 } from "node:path";
 import { CancellationToken, NsisUpdater, type Logger, type ProgressInfo, type UpdateDownloadedEvent, type UpdateInfo } from "electron-updater";
 import type { UpdateChannel, UpdateProgress } from "@cw-code/contracts";
 import { formatLogValue, redactUpdateText, type UpdateLogSink } from "./updateLog.js";
@@ -50,7 +50,7 @@ function releaseInfo(info: UpdateInfo): UpdaterReleaseInfo {
 
 function urlFileName(url: string): string | null {
   try {
-    return basename(decodeURIComponent(url.split(/[?#]/)[0] ?? "")).toLowerCase();
+    return win32.basename(decodeURIComponent(url.split(/[?#]/)[0] ?? "")).toLowerCase();
   } catch {
     return null;
   }
@@ -59,7 +59,7 @@ function urlFileName(url: string): string | null {
 export function downloadedInfo(event: UpdateDownloadedEvent): UpdaterDownloadedInfo {
   const file = typeof event.downloadedFile === "string" && event.downloadedFile.length > 0 ? event.downloadedFile : null;
   const files = Array.isArray(event.files) ? event.files : [];
-  const name = file ? basename(file).toLowerCase() : null;
+  const name = file ? win32.basename(file).toLowerCase() : null;
   const match = files.find((entry) => typeof entry.url === "string" && name !== null && urlFileName(entry.url) === name) ?? (files.length === 1 ? files[0] : undefined);
   const size = typeof match?.size === "number" && Number.isFinite(match.size) && match.size > 0 ? match.size : null;
   return { version: event.version, file, size };
