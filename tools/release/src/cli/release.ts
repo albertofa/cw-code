@@ -12,7 +12,7 @@ import { type AnonymousHttp, checkPublishedReleaseWithRetries } from "../publish
 import { RECOVERY_RUNBOOK, publishRelease } from "../publishRelease.ts";
 import { readReleaseUpdateInfo, rehashRelease, sha512Base64 } from "../rehash.ts";
 import { type ReleaseAssetsReport, SIGNING_MANIFEST_NAME, stageReleaseSet, validateReleaseAssets } from "../releaseAssets.ts";
-import { buildAlphaPlan, buildStablePromotionPlan, verifyPlan } from "../releasePlan.ts";
+import { type PlanResult, DivergedHistoryError, buildAlphaPlan, buildStablePromotionPlan, verifyPlan } from "../releasePlan.ts";
 import type { ReleaseSource } from "../releaseSource.ts";
 import { type RepoInfo, parseGitHubHomepage } from "../repoInfo.ts";
 import { type ParsedVersion, FULL_SHA_PATTERN, baseOf, formatVersion, parseVersion, sameBase } from "../semver.ts";
@@ -129,10 +129,24 @@ async function cmdPlan(options: Map<string, string>, repoRoot: string): Promise<
   if (channel === "alpha" && (options.has("candidate") || options.has("expected-sha"))) {
     fail("--candidate and --expected-sha only apply to --channel stable");
   }
+  if (channel === "stable" && options.has("acknowledge-diverged-tag")) fail("--acknowledge-diverged-tag only applies to --channel alpha");
+  const acknowledgedDivergedTags = (options.get("acknowledge-diverged-tag") ?? "")
+    .split(",")
+    .map((tag) => tag.trim())
+    .filter(Boolean);
+
+  const planAlpha = async (): Promise<PlanResult> => {
+    try {
+      return await buildAlphaPlan({ source, now, desktopVersion, sha, force: options.get("force") === "true", acknowledgedDivergedTags });
+    } catch (error: unknown) {
+      if (error instanceof DivergedHistoryError) annotateError("Diverged release history", error.message);
+      throw error;
+    }
+  };
 
   const result =
     channel === "alpha"
-      ? await buildAlphaPlan({ source, now, desktopVersion, sha, force: options.get("force") === "true" })
+      ? await planAlpha()
       : await (async () => {
           const candidateInput = options.get("candidate");
           if (!candidateInput) fail("--candidate is required for --channel stable");
@@ -156,6 +170,7 @@ async function cmdPlan(options: Map<string, string>, repoRoot: string): Promise<
     version: result.plan.version,
     tag: result.plan.tag,
     sha: result.plan.sourceSha,
+    acknowledged: (result.plan.acknowledgedDivergedTags ?? []).join(","),
     skip: "false"
   });
 }

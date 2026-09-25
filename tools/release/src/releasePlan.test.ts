@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { createFixtureReleaseSource, type FixtureRelease } from "./fixtures/fixtureReleaseSource.ts";
 import { planMarker } from "./planMarker.ts";
 import type { ReleasePlan } from "./planValidation.ts";
-import { buildAlphaPlan, buildStablePromotionPlan, verifyPlan } from "./releasePlan.ts";
+import { DivergedHistoryError, buildAlphaPlan, buildStablePromotionPlan, verifyPlan } from "./releasePlan.ts";
 import type { ReleaseSource } from "./releaseSource.ts";
 import { parseVersion } from "./semver.ts";
 
@@ -57,6 +57,22 @@ const BASE_RELEASES: FixtureRelease[] = [
   baseRelease("v0.0.1-alpha.20", SHA.c7, { publishedAt: "2026-09-24T15:13:57Z" }),
   baseRelease("v0.0.1-alpha.21", SHA.c9, { publishedAt: "2026-09-24T22:56:04Z" })
 ];
+
+function buildPlanFor(sourceSha: string, acknowledgedDivergedTags: string[]): ReleasePlan {
+  return {
+    schema: 1,
+    channel: "alpha",
+    version: "0.0.1-alpha.23",
+    tag: "v0.0.1-alpha.23",
+    sourceSha,
+    acknowledgedDivergedTags,
+    previousTag: "v0.0.1-alpha.22",
+    prerelease: true,
+    makeLatest: false,
+    notes: "",
+    createdAt: "2026-09-25T06:00:00.000Z"
+  };
+}
 
 describe("buildAlphaPlan", () => {
   const commitLog = [...BASE_COMMIT_LOG, { sha: SHA.c10, subject: "feat: add cool feature" }];
@@ -154,22 +170,70 @@ describe("buildAlphaPlan", () => {
     ).rejects.toThrow(/behind the highest published alpha base/);
   });
 
-  it("skips a rerun of an old CI run whose commit is older than the latest published alpha", async () => {
+  it("fails a rerun of an old CI run whose commit is older than the latest published alpha", async () => {
     const releases = [...BASE_RELEASES, baseRelease("v0.0.1-alpha.22", SHA.c10, { publishedAt: "2026-09-24T23:00:00Z" })];
     const source = createFixtureReleaseSource({ releases, head: SHA.c10, commitLog: [...commitLog, { sha: SHA.c11, subject: "feat: later" }] });
-    const result = await buildAlphaPlan({ source, now: new Date("2026-09-25T12:00:00Z"), desktopVersion: parseVersion("0.0.1-alpha.21"), sha: SHA.c8, force: true });
-    expect(result).toEqual({ status: "skip", reason: expect.stringContaining(`v0.0.1-alpha.22 (${SHA.c10}) is not an ancestor of ${SHA.c8}`) });
+    const attempt = buildAlphaPlan({ source, now: new Date("2026-09-25T12:00:00Z"), desktopVersion: parseVersion("0.0.1-alpha.21"), sha: SHA.c8, force: true });
+    await expect(attempt).rejects.toBeInstanceOf(DivergedHistoryError);
+    await expect(attempt).rejects.toThrow(new RegExp(`v0.0.1-alpha.22 \\(${SHA.c10}\\) is not an ancestor of ${SHA.c8}.*releases.md#recovery`));
   });
 
-  it("skips an alpha whose commit does not descend from the latest published stable", async () => {
+  it("fails an alpha whose commit does not descend from the latest published stable", async () => {
     const releases = [...BASE_RELEASES, baseRelease("v0.0.1", SHA.c10)];
     const source = createFixtureReleaseSource({
       releases,
       head: SHA.c9,
       commitLog: [...commitLog, { sha: SHA.c11, subject: "feat: next" }]
     });
-    const result = await buildAlphaPlan({ source, now: new Date("2026-09-25T12:00:00Z"), desktopVersion: parseVersion("0.0.2"), sha: SHA.c9 });
-    expect(result).toEqual({ status: "skip", reason: expect.stringContaining("Published stable v0.0.1") });
+    await expect(buildAlphaPlan({ source, now: new Date("2026-09-25T12:00:00Z"), desktopVersion: parseVersion("0.0.2"), sha: SHA.c9 })).rejects.toThrow(
+      /Published stable v0.0.1/
+    );
+  });
+
+  describe("with a published tag that ended off main", () => {
+    const OFF_MAIN = sha("e");
+    const now = new Date("2026-09-25T12:00:00Z");
+    const offMainAlpha = baseRelease("v0.0.1-alpha.22", OFF_MAIN);
+    const plan = (acknowledgedDivergedTags: string[] | undefined, releases: FixtureRelease[] = [...BASE_RELEASES, offMainAlpha]) =>
+      buildAlphaPlan({
+        source: createFixtureReleaseSource({ releases, head: SHA.c10, commitLog, detachedShas: [OFF_MAIN] }),
+        now,
+        desktopVersion: parseVersion("0.0.1-alpha.21"),
+        acknowledgedDivergedTags
+      });
+
+    it("fails without an acknowledgement and names the tag and both SHAs", async () => {
+      await expect(plan(undefined)).rejects.toThrow(new RegExp(`v0.0.1-alpha.22 \\(${OFF_MAIN}\\) is not an ancestor of ${SHA.c10}`));
+    });
+
+    it("proceeds when exactly that tag is acknowledged and records it in the plan, keeping the numbering", async () => {
+      const result = await plan(["v0.0.1-alpha.22"]);
+      expect(result.status).toBe("planned");
+      if (result.status !== "planned") return;
+      expect(result.plan).toMatchObject({ version: "0.0.1-alpha.23", sourceSha: SHA.c10, acknowledgedDivergedTags: ["v0.0.1-alpha.22"] });
+      const verify = createFixtureReleaseSource({ releases: [...BASE_RELEASES, offMainAlpha], head: SHA.c10, commitLog });
+      expect(await verifyPlan(result.plan, verify)).toEqual({ ok: true, resumeDraft: null });
+    });
+
+    it("fails a wrong, extra or partial acknowledgement", async () => {
+      await expect(plan(["v0.0.1-alpha.21"])).rejects.toThrow(/v0.0.1-alpha.22 .* not an ancestor[\s\S]*v0.0.1-alpha.21, which has not diverged/);
+      await expect(plan(["v0.0.1-alpha.22", "v0.0.1-alpha.21"])).rejects.toThrow(/names v0.0.1-alpha.21, which has not diverged/);
+      const bothDiverged = [...BASE_RELEASES, offMainAlpha, baseRelease("v0.0.0", OFF_MAIN)];
+      await expect(plan(["v0.0.1-alpha.22"], bothDiverged)).rejects.toThrow(/Published stable v0.0.0 .* unless the operator acknowledges v0.0.0/);
+      const both = await plan(["v0.0.1-alpha.22", "v0.0.0"], bothDiverged);
+      expect(both.status === "planned" && both.plan.acknowledgedDivergedTags).toEqual(["v0.0.0", "v0.0.1-alpha.22"]);
+    });
+
+    it("fails an acknowledgement when nothing diverged", async () => {
+      await expect(plan(["v0.0.1-alpha.21"], BASE_RELEASES)).rejects.toThrow(/which has not diverged/);
+    });
+
+    it("lets verifyPlan honor only the tags the plan recorded", async () => {
+      const verify = createFixtureReleaseSource({ releases: [...BASE_RELEASES, offMainAlpha], head: SHA.c10, commitLog });
+      const recordedOther = await verifyPlan(buildPlanFor(SHA.c10, ["v0.0.1-alpha.21"]), verify);
+      expect(recordedOther.ok).toBe(false);
+      if (!recordedOther.ok) expect(recordedOther.reasons.join("\n")).toMatch(/the plan did not acknowledge v0.0.1-alpha.22/);
+    });
   });
 
   it("never reuses an alpha number held by a leftover git tag or a draft release", async () => {

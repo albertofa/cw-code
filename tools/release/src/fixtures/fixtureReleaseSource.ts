@@ -9,6 +9,7 @@ export interface FixtureReleaseSourceOptions {
   head: string;
   mainHistory?: string[];
   extraTags?: Record<string, string>;
+  detachedShas?: string[];
   commitLog: Array<{ sha: string; subject: string }>;
   filesAtSha?: Record<string, Record<string, string>>;
 }
@@ -53,7 +54,8 @@ export function createFixtureReleaseSource(options: FixtureReleaseSourceOptions)
     async logSubjects(fromRef: string | null, toRef: string): Promise<string[]> {
       const toSha = tagShas.get(toRef) ?? toRef;
       const fromSha = fromRef ? (tagShas.get(fromRef) ?? fromRef) : null;
-      return commitsBetween(commitLog, fromSha, toSha).reverse();
+      const reachableFrom = fromSha && options.detachedShas?.includes(fromSha) ? null : fromSha;
+      return commitsBetween(commitLog, reachableFrom, toSha).reverse();
     },
     async showFile(sha: string, path: string): Promise<string> {
       const contents = filesAtSha[sha]?.[path];

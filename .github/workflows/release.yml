@@ -27,6 +27,11 @@ on:
         required: false
         type: boolean
         default: false
+      acknowledge_diverged_tag:
+        description: "channel=alpha only: comma-separated published tag(s) that are not ancestors of the source commit and were checked by hand (docs/operations/releases.md#recovery)"
+        required: false
+        type: string
+        default: ""
       mode:
         description: "validate builds, signs and verifies without publishing; publish also needs CW_RELEASE_PUBLISHING_ENABLED=true"
         required: true
@@ -79,6 +84,7 @@ jobs:
           CHANNEL: ${{ inputs.channel || 'alpha' }}
           CANDIDATE: ${{ inputs.candidate }}
           EXPECTED_SHA: ${{ inputs.expected_sha }}
+          ACKNOWLEDGED: ${{ inputs.acknowledge_diverged_tag }}
           PUBLISHING_ENABLED: ${{ vars.CW_RELEASE_PUBLISHING_ENABLED }}
           PUBLISHER: ${{ vars.CW_WINDOWS_PUBLISHER_NAME }}
           RUN_ATTEMPT: ${{ github.run_attempt }}
@@ -96,6 +102,9 @@ jobs:
           esac
           if [ "$CHANNEL" = "alpha" ] && { [ -n "$CANDIDATE" ] || [ -n "$EXPECTED_SHA" ]; }; then
             fail "candidate and expected_sha only apply to channel=stable; an alpha always builds the triggering main commit"
+          fi
+          if [ "$CHANNEL" = "stable" ] && [ -n "$ACKNOWLEDGED" ]; then
+            fail "acknowledge_diverged_tag only applies to channel=alpha"
           fi
           if [ "$mode" = "publish" ]; then
             [ "$PUBLISHING_ENABLED" = "true" ] || fail "mode=publish needs the repository variable CW_RELEASE_PUBLISHING_ENABLED=true (docs/operations/releases.md); nothing was built"
@@ -141,8 +150,11 @@ jobs:
           CANDIDATE: ${{ inputs.candidate }}
           EXPECTED_SHA: ${{ inputs.expected_sha }}
           FORCE: ${{ inputs.force }}
+          EVENT_NAME: ${{ github.event_name }}
+          ACKNOWLEDGED: ${{ inputs.acknowledge_diverged_tag }}
         run: |
           args=(plan --channel "$CHANNEL" --sha "$SOURCE" --out plan.json)
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ -n "$ACKNOWLEDGED" ]; then args+=(--acknowledge-diverged-tag "$ACKNOWLEDGED"); fi
           if [ -n "$CANDIDATE" ]; then args+=(--candidate "$CANDIDATE"); fi
           if [ -n "$EXPECTED_SHA" ]; then args+=(--expected-sha "$EXPECTED_SHA"); fi
           if [ "$FORCE" = "true" ]; then args+=(--force); fi
@@ -169,6 +181,7 @@ jobs:
           VERSION: ${{ steps.plan.outputs.version }}
           TAG: ${{ steps.plan.outputs.tag }}
           SHA: ${{ steps.plan.outputs.sha }}
+          ACKNOWLEDGED: ${{ steps.plan.outputs.acknowledged }}
           RUN_SHA: ${{ github.workflow_sha }}
         run: |
           {
@@ -180,6 +193,7 @@ jobs:
             else
               echo "- channel ${CHANNEL}, version ${VERSION}, tag ${TAG}"
               echo "- source-sha (built): ${SHA}"
+              if [ -n "$ACKNOWLEDGED" ]; then echo "- **acknowledged diverged tags**: ${ACKNOWLEDGED}"; fi
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 

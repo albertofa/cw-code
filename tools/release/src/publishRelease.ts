@@ -5,10 +5,10 @@ import type { ReleasePlan } from "./planValidation.ts";
 import { sha512Base64 } from "./rehash.ts";
 import { type ReleaseAssetFile, isFeedManifest } from "./releaseAssets.ts";
 import type { GitHubReleaseClient, RemoteAsset, RemoteRelease } from "./releaseClient.ts";
-import { verifyPlan } from "./releasePlan.ts";
+import { RECOVERY_RUNBOOK, verifyPlan } from "./releasePlan.ts";
 import type { ReleaseSource } from "./releaseSource.ts";
 
-export const RECOVERY_RUNBOOK = "docs/operations/releases.md#recovery";
+export { RECOVERY_RUNBOOK };
 const CONFIRM_ATTEMPTS = 5;
 const CONFIRM_DELAY_MS = 2000;
 

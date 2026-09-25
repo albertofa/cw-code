@@ -34,20 +34,51 @@ function latestPublishedOverall(classified: ClassifiedRelease[]): ClassifiedRele
   return compareVersions(alpha.version, stable.version) > 0 ? alpha : stable;
 }
 
-async function monotonicSourceReasons(source: ReleaseSource, classified: ClassifiedRelease[], sourceSha: string): Promise<string[]> {
-  const reasons: string[] = [];
+export const RECOVERY_RUNBOOK = "docs/operations/releases.md#recovery";
+
+export interface DivergedTag {
+  channel: "alpha" | "stable";
+  tag: string;
+  tagSha: string | null;
+  sourceSha: string;
+}
+
+export class DivergedHistoryError extends Error {
+  readonly diverged: DivergedTag[];
+
+  constructor(diverged: DivergedTag[], problems: string[]) {
+    super(`${problems.join("; ")}. See ${RECOVERY_RUNBOOK}`);
+    this.diverged = diverged;
+  }
+}
+
+async function divergedTags(source: ReleaseSource, classified: ClassifiedRelease[], sourceSha: string): Promise<DivergedTag[]> {
+  const diverged: DivergedTag[] = [];
   for (const channel of ["alpha", "stable"] as const) {
     const latest = highestPublished(classified, channel);
     if (!latest) continue;
     const tag = latest.release.tagName;
     const tagSha = await source.tagSha(tag);
-    if (!tagSha) {
-      reasons.push(`Published ${channel} ${tag} has no git tag, so the source commit cannot be proven to move forward from it`);
-    } else if (!(await source.isAncestor(tagSha, sourceSha))) {
-      reasons.push(`Published ${channel} ${tag} (${tagSha}) is not an ancestor of ${sourceSha}; an alpha must never be built from older or unrelated history`);
-    }
+    if (!tagSha || !(await source.isAncestor(tagSha, sourceSha))) diverged.push({ channel, tag, tagSha, sourceSha });
   }
-  return reasons;
+  return diverged;
+}
+
+function describeDivergence({ channel, tag, tagSha, sourceSha }: DivergedTag): string {
+  return tagSha
+    ? `Published ${channel} ${tag} (${tagSha}) is not an ancestor of ${sourceSha}`
+    : `Published ${channel} ${tag} has no git tag, so ${sourceSha} cannot be proven to descend from it`;
+}
+
+export function acknowledgementProblems(diverged: DivergedTag[], acknowledged: readonly string[]): string[] {
+  const divergedNames = new Set(diverged.map((entry) => entry.tag));
+  const problems = diverged
+    .filter((entry) => !acknowledged.includes(entry.tag))
+    .map((entry) => `${describeDivergence(entry)}; an alpha is never built from older or unrelated history unless the operator acknowledges ${entry.tag} explicitly`);
+  for (const tag of acknowledged) {
+    if (!divergedNames.has(tag)) problems.push(`--acknowledge-diverged-tag names ${tag}, which has not diverged from the source commit`);
+  }
+  return problems;
 }
 
 export interface BuildAlphaPlanOptions {
@@ -56,6 +87,7 @@ export interface BuildAlphaPlanOptions {
   desktopVersion: ParsedVersion;
   sha?: string;
   force?: boolean;
+  acknowledgedDivergedTags?: readonly string[];
 }
 
 export async function buildAlphaPlan(options: BuildAlphaPlanOptions): Promise<PlanResult> {
@@ -83,10 +115,10 @@ export async function buildAlphaPlan(options: BuildAlphaPlanOptions): Promise<Pl
   if (throttle.skip) {
     return { status: "skip", reason: throttle.reason };
   }
-  const regression = await monotonicSourceReasons(source, classified, headSha);
-  if (regression.length > 0) {
-    return { status: "skip", reason: regression.join("; ") };
-  }
+  const diverged = await divergedTags(source, classified, headSha);
+  const problems = acknowledgementProblems(diverged, options.acknowledgedDivergedTags ?? []);
+  if (problems.length > 0) throw new DivergedHistoryError(diverged, problems);
+  const acknowledgedDivergedTags = diverged.map((entry) => entry.tag).sort();
 
   const previousTag = latestAlpha?.release.tagName ?? null;
   const notes = buildReleaseNotes(await source.logSubjects(previousTag, headSha));
@@ -100,6 +132,7 @@ export async function buildAlphaPlan(options: BuildAlphaPlanOptions): Promise<Pl
       version: formatVersion(nextAlpha.version),
       tag,
       sourceSha: headSha,
+      ...(acknowledgedDivergedTags.length > 0 ? { acknowledgedDivergedTags } : {}),
       previousTag,
       prerelease: true,
       makeLatest: false,
@@ -221,7 +254,10 @@ export async function verifyPlan(rawPlan: unknown, source: ReleaseSource): Promi
     if (!(await source.isAncestor(plan.sourceSha, "main"))) {
       reasons.push(`Source SHA ${plan.sourceSha} is not reachable from main on GitHub`);
     }
-    reasons.push(...(await monotonicSourceReasons(source, classified, plan.sourceSha)));
+    const recorded = plan.acknowledgedDivergedTags ?? [];
+    for (const entry of await divergedTags(source, classified, plan.sourceSha)) {
+      if (!recorded.includes(entry.tag)) reasons.push(`${describeDivergence(entry)}, and the plan did not acknowledge ${entry.tag}`);
+    }
   } else if (plan.candidate) {
     const candidateSha = await source.tagSha(plan.candidate.tag);
     if (candidateSha !== plan.sourceSha) {
