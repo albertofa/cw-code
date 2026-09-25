@@ -40,6 +40,7 @@ const TOOL_KINDS: Record<string, { verb?: string; Icon: LucideIcon }> = {
   grep: { verb: "Grep", Icon: Search },
   skill: { verb: "Skill", Icon: GraduationCap },
   task: { verb: "Task", Icon: Bot },
+  agent: { verb: "Agent", Icon: Bot },
   todowrite: { verb: "Todos", Icon: ListChecks },
   todo: { verb: "Todos", Icon: ListChecks },
   webfetch: { verb: "Fetch", Icon: Globe },
@@ -95,11 +96,121 @@ export function extractPatchFiles(patchText: string): string[] {
   return files;
 }
 
+export interface FileDiffLine {
+  type: "add" | "del";
+  text: string;
+}
+
+function splitDiffLines(value: string): string[] {
+  const lines = value.replace(/\r\n/g, "\n").split("\n");
+  if (lines.length > 0 && lines[lines.length - 1] === "") lines.pop();
+  return lines;
+}
+
+function unwrapArgs(input: unknown): Record<string, unknown> | null {
+  if (!input || typeof input !== "object" || Array.isArray(input)) return null;
+  let args = input as Record<string, unknown>;
+  const nested = args["input"];
+  if (nested !== null && typeof nested === "object" && !Array.isArray(nested)) {
+    args = { ...(nested as Record<string, unknown>), ...args };
+  }
+  return args;
+}
+
+export function extractFileDiff(toolName: string, input: unknown): FileDiffLine[] | null {
+  const lower = toolName.toLowerCase();
+  if (lower !== "write" && lower !== "edit" && lower !== "multiedit") return null;
+  const args = unwrapArgs(input);
+  if (!args) return null;
+  if (lower === "write") {
+    const content = str(args["content"] ?? args["text"] ?? args["new_string"] ?? args["newString"]);
+    if (!content) return null;
+    const lines = splitDiffLines(content);
+    if (lines.length === 0) return null;
+    return lines.map((text) => ({ type: "add" as const, text }));
+  }
+  const editsRaw = args["edits"];
+  if (Array.isArray(editsRaw) && editsRaw.length > 0) {
+    const out: FileDiffLine[] = [];
+    for (const entry of editsRaw) {
+      if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
+      const e = entry as Record<string, unknown>;
+      const oldText = str(e["old_string"] ?? e["oldString"] ?? e["oldText"]) ?? "";
+      const newText = str(e["new_string"] ?? e["newString"] ?? e["newText"]) ?? "";
+      for (const text of splitDiffLines(oldText)) out.push({ type: "del", text });
+      for (const text of splitDiffLines(newText)) out.push({ type: "add", text });
+    }
+    return out.length > 0 ? out : null;
+  }
+  const oldText = str(args["old_string"] ?? args["oldString"] ?? args["oldText"]) ?? "";
+  const newText = str(args["new_string"] ?? args["newString"] ?? args["newText"]) ?? "";
+  if (!oldText && !newText) return null;
+  return [
+    ...splitDiffLines(oldText).map((text) => ({ type: "del" as const, text })),
+    ...splitDiffLines(newText).map((text) => ({ type: "add" as const, text }))
+  ];
+}
+
+function unescapeDiffFragment(raw: string): string | undefined {
+  try {
+    const parsed: unknown = JSON.parse(`"${raw}"`);
+    if (typeof parsed === "string" && parsed) return parsed;
+  } catch {
+    /* fall through to truncated handling */
+  }
+  const trimmed = raw.replace(/\\$/, "");
+  if (trimmed !== raw) {
+    try {
+      const parsed: unknown = JSON.parse(`"${trimmed}"`);
+      if (typeof parsed === "string" && parsed) return parsed;
+    } catch {
+      /* fall through */
+    }
+  }
+  if (!raw.trim()) return undefined;
+  return raw.replace(/\\n/g, "\n").replace(/\\t/g, "\t").replace(/\\r/g, "\r").replace(/\\"/g, '"').replace(/\\\\/g, "\\");
+}
+
+function extractFragmentField(text: string, keys: string[]): string | undefined {
+  for (const key of keys) {
+    const match = new RegExp(`"${key}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)`).exec(text);
+    if (match) {
+      const value = unescapeDiffFragment(match[1]);
+      if (value) return value;
+    }
+  }
+  return undefined;
+}
+
+export function extractFileDiffFromText(toolName: string, text: string): FileDiffLine[] | null {
+  const lower = toolName.toLowerCase();
+  if (lower !== "write" && lower !== "edit" && lower !== "multiedit") return null;
+  if (!text) return null;
+  if (lower === "write") {
+    const content = extractFragmentField(text, ["content", "text", "new_string", "newString"]);
+    if (!content) return null;
+    const lines = splitDiffLines(content);
+    if (lines.length === 0) return null;
+    return lines.map((line) => ({ type: "add" as const, text: line }));
+  }
+  const oldText = extractFragmentField(text, ["old_string", "oldString", "oldText"]) ?? "";
+  const newText = extractFragmentField(text, ["new_string", "newString", "newText"]) ?? "";
+  if (!oldText && !newText) return null;
+  return [
+    ...splitDiffLines(oldText).map((line) => ({ type: "del" as const, text: line })),
+    ...splitDiffLines(newText).map((line) => ({ type: "add" as const, text: line }))
+  ];
+}
+
 export function describeToolCall(toolName: string, input: unknown): ToolSummary | null {
-  const kind = TOOL_KINDS[toolName.toLowerCase()];
+  const lower = toolName.toLowerCase();
+  const collab = lower.startsWith("collab:");
+  const kind = TOOL_KINDS[collab ? "agent" : lower];
   if (!kind) return null;
   const summary: ToolSummary = {
-    verb: kind.verb ?? (toolName.charAt(0).toUpperCase() + toolName.slice(1)),
+    verb: collab
+      ? toolName.slice("collab:".length).replace(/_/g, " ")
+      : kind.verb ?? (toolName.charAt(0).toUpperCase() + toolName.slice(1)),
     Icon: kind.Icon
   };
   if (!input || typeof input !== "object") return summary;
@@ -107,6 +218,14 @@ export function describeToolCall(toolName: string, input: unknown): ToolSummary 
   const nested = args["input"];
   if (nested !== null && typeof nested === "object" && !Array.isArray(nested)) {
     args = { ...(nested as Record<string, unknown>), ...args };
+  }
+  if (collab) {
+    const prompt = pick(args, "prompt", "description");
+    if (prompt) {
+      summary.subject = truncate(oneLine(prompt), 90);
+      summary.subjectKind = "text";
+    }
+    return summary;
   }
   const file = () => pick(args, "file_path", "filePath", "file", "path");
 
@@ -179,7 +298,8 @@ export function describeToolCall(toolName: string, input: unknown): ToolSummary 
       if (name && skillArgs) summary.meta = [truncate(oneLine(skillArgs), 80)];
       break;
     }
-    case "task": {
+    case "task":
+    case "agent": {
       const description = pick(args, "description", "prompt", "subagent_type", "subagent") ?? "";
       if (description) {
         summary.subject = truncate(oneLine(description), 90);
@@ -245,21 +365,22 @@ export function mergeToolPairs(messages: ChatMessage[]): ChatMessage[] {
   const out: ChatMessage[] = [];
   const indexById = new Map<string, number>();
   let pending = -1;
-  const attach = (idx: number, text: string, isError?: boolean, completedAt?: number): void => {
+  const attach = (idx: number, source: ChatMessage): void => {
     const call = out[idx];
     out[idx] = {
       ...call,
-      toolOutput: text,
+      toolOutput: source.text,
       toolDone: true,
-      isError: call.isError === true || isError === true,
-      ...(completedAt !== undefined ? { toolCompletedAt: completedAt } : {})
+      isError: call.isError === true || source.isError === true,
+      ...(source.toolUsage ? { toolUsage: source.toolUsage } : {}),
+      ...(source.timestamp !== undefined ? { toolCompletedAt: source.timestamp } : {})
     };
   };
   for (const m of messages) {
     if (m.role === "tool" && m.id.endsWith("-r")) {
       const idx = indexById.get(m.id.slice(0, -2));
       if (idx !== undefined && out[idx].role === "tool") {
-        attach(idx, m.text, m.isError, m.timestamp);
+        attach(idx, m);
         if (pending === idx) pending = -1;
         continue;
       }
@@ -272,7 +393,7 @@ export function mergeToolPairs(messages: ChatMessage[]): ChatMessage[] {
       out[pending].toolInput === undefined &&
       out[pending].toolOutput === undefined
     ) {
-      attach(pending, m.text, m.isError, m.timestamp);
+      attach(pending, m);
       pending = -1;
       continue;
     }
@@ -366,9 +487,148 @@ export function relativizeInText(base: string, text: string): string {
   return out.join("");
 }
 
-function isRunningTool(m: { toolInput?: unknown; toolOutput?: string; toolDone?: boolean }): boolean {
+export interface ToolGroupSummary {
+  text: string;
+  Icon: LucideIcon;
+  status: "complete" | "error" | "running" | "pending";
+  hasRunning: boolean;
+}
+
+type GroupableMessage = {
+  toolName?: string;
+  isError?: boolean;
+  toolInput?: unknown;
+  toolOutput?: string;
+  toolDone?: boolean;
+};
+
+export function isRunningTool(m: { toolInput?: unknown; toolOutput?: string; toolDone?: boolean }): boolean {
   const done = m.toolDone === true || m.toolOutput !== undefined;
   return m.toolInput !== undefined && !done;
+}
+
+export interface PendingTool {
+  id: string;
+  name: string;
+  startedAt?: number;
+}
+
+type PendingToolMessage = {
+  id: string;
+  turnId?: string;
+  toolName?: string;
+  toolInput?: unknown;
+  toolOutput?: string;
+  toolDone?: boolean;
+  toolStartedAt?: number;
+  timestamp?: number;
+};
+
+export function pendingToolsForTurn(messages: PendingToolMessage[], turnId: string): PendingTool[] {
+  const out: PendingTool[] = [];
+  for (const m of messages) {
+    if (m.turnId !== undefined && m.turnId !== turnId) continue;
+    if (!isRunningTool(m)) continue;
+    const startedAt =
+      typeof m.toolStartedAt === "number"
+        ? m.toolStartedAt
+        : typeof m.timestamp === "number"
+          ? m.timestamp
+          : undefined;
+    out.push({ id: m.id, name: m.toolName ?? "tool", ...(startedAt !== undefined ? { startedAt } : {}) });
+  }
+  return out;
+}
+
+const WAITING_TOOL_MAX = 3;
+
+export function describeWaitingTools(tools: PendingTool[], now: number, fallbackStart?: number): string | undefined {
+  if (tools.length === 0) return undefined;
+  const parts = tools.slice(0, WAITING_TOOL_MAX).map((tool) => {
+    const start = tool.startedAt ?? fallbackStart;
+    return start === undefined ? tool.name : `${tool.name} (${formatDuration(Math.max(0, now - start))})`;
+  });
+  const extra = tools.length > WAITING_TOOL_MAX ? ` +${tools.length - WAITING_TOOL_MAX} more` : "";
+  return `waiting on ${parts.join(", ")}${extra}`;
+}
+
+function groupItemStatus(m: GroupableMessage): "error" | "running" | "complete" | "pending" {
+  if (m.isError === true) return "error";
+  if (isRunningTool(m)) return "running";
+  if (m.toolDone === true || m.toolOutput !== undefined) return "complete";
+  return "pending";
+}
+
+export function summarizeToolGroup(messages: GroupableMessage[]): ToolGroupSummary | null {
+  if (messages.length === 0) return null;
+  let commands = 0;
+  let reads = 0;
+  let edits = 0;
+  let searches = 0;
+  let fetches = 0;
+  const otherCounts = new Map<string, number>();
+  const order: string[] = [];
+  const pushOrder = (key: string) => {
+    if (!order.includes(key)) order.push(key);
+  };
+  for (const m of messages) {
+    const name = (m.toolName ?? "tool").toLowerCase();
+    if (name === "bash" || name === "shell") {
+      commands++;
+      pushOrder("commands");
+    } else if (name === "read") {
+      reads++;
+      pushOrder("reads");
+    } else if (name === "write" || name === "edit" || name === "apply_patch" || name === "patch" || name === "delete" || name === "remove") {
+      edits++;
+      pushOrder("edits");
+    } else if (name === "grep" || name === "glob") {
+      searches++;
+      pushOrder("searches");
+    } else if (name === "webfetch" || name === "websearch") {
+      fetches++;
+      pushOrder("fetches");
+    } else if (name === "askuserquestion" || name === "request_user_input" || name === "cw_ask" || name === "question") {
+      otherCounts.set("questions", (otherCounts.get("questions") ?? 0) + 1);
+      pushOrder("questions");
+    } else {
+      otherCounts.set(name, (otherCounts.get(name) ?? 0) + 1);
+      pushOrder(name);
+    }
+  }
+  let hasError = false;
+  let hasRunning = false;
+  let allDone = true;
+  for (const m of messages) {
+    const s = groupItemStatus(m);
+    if (s === "error") hasError = true;
+    if (s === "running") hasRunning = true;
+    if (s !== "complete" && s !== "error") allDone = false;
+  }
+  const status = hasError ? "error" : hasRunning ? "running" : allDone ? "complete" : "pending";
+  const plural = (n: number, one: string, many: string) => (n === 1 ? one : many);
+  const parts: string[] = [];
+  for (const key of order) {
+    if (key === "edits") parts.push(`${hasRunning ? "Editing" : "Edited"} ${edits} ${plural(edits, "file", "files")}`);
+    else if (key === "reads") parts.push(`${hasRunning ? "Reading" : "Read"} ${reads} ${plural(reads, "file", "files")}`);
+    else if (key === "commands") parts.push(`${hasRunning ? "Running" : "Ran"} ${commands} ${plural(commands, "command", "commands")}`);
+    else if (key === "searches") parts.push(`${hasRunning ? "Searching" : "Searched"} ${searches} ${plural(searches, "path", "paths")}`);
+    else if (key === "fetches") parts.push(`${hasRunning ? "Fetching" : "Fetched"} ${fetches} ${plural(fetches, "URL", "URLs")}`);
+    else if (key === "questions") {
+      const n = otherCounts.get("questions") ?? 0;
+      parts.push(`${hasRunning ? "Asking" : "Asked"} ${n} ${plural(n, "question", "questions")}`);
+    } else {
+      const n = otherCounts.get(key) ?? 0;
+      const verb = TOOL_KINDS[key]?.verb ?? key.charAt(0).toUpperCase() + key.slice(1);
+      parts.push(`${hasRunning ? "Running" : "Ran"} ${n} ${plural(n, verb.toLowerCase(), `${verb.toLowerCase()}s`)}`);
+    }
+  }
+  const text = parts
+    .map((p, i) => (i === 0 ? p : p.charAt(0).toLowerCase() + p.slice(1)))
+    .join(", ");
+  const firstName = (messages[0].toolName ?? "tool").toLowerCase();
+  const Icon = TOOL_KINDS[firstName]?.Icon ?? Terminal;
+  return { text, Icon, status, hasRunning };
 }
 
 export function orderToolsForDisplay<T extends { role: string; toolInput?: unknown; toolOutput?: string; toolDone?: boolean }>(

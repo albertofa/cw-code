@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { join } from "node:path";
+import { isAbsolute, join } from "node:path";
 import { imageExtMime } from "../../fs/FileService.js";
 
 export function buildClaudeUserContent(cwd: string, prompt: string, attachments: string[] | undefined): string | unknown[] {
@@ -12,7 +12,7 @@ export function buildClaudeUserContent(cwd: string, prompt: string, attachments:
     const mediaType = imageExtMime(ext);
     if (!mediaType) continue;
     try {
-      const data = readFileSync(join(cwd, rel));
+      const data = readFileSync(isAbsolute(rel) ? rel : join(cwd, rel));
       blocks.push({
         type: "image",
         source: { type: "base64", media_type: mediaType, data: data.toString("base64") }

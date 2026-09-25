@@ -1,3 +1,5 @@
+import { shortenHome } from "./pathDisplay.js";
+
 const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "webp", "gif"]);
 
 const cache = new Map<string, Promise<string>>();
@@ -10,6 +12,10 @@ export interface ImageTarget {
 export function isImagePath(path: string): boolean {
   const ext = path.split(".").pop()?.toLowerCase() ?? "";
   return IMAGE_EXTS.has(ext);
+}
+
+export function displayImagePath(path: string, homeDir?: string): string {
+  return shortenHome(path, homeDir);
 }
 
 export function imageDataUrl(target: ImageTarget, path: string): Promise<string> {

@@ -1,5 +1,7 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { type ChildProcess } from "node:child_process";
 import { createInterface } from "node:readline";
+import { spawnCli } from "../../cli/spawnCli.js";
+import { hasExited, killProcessTree, waitForExit } from "../../processTree.js";
 
 export class CodexAppServerError extends Error {
   readonly code: number | null;
@@ -25,6 +27,8 @@ export interface CodexAppServerLike {
   onServerRequest(handler: (method: string, params: unknown, id: string | number) => void): void;
   /** Applies the spawn env for the next app-server launch; no effect on an already-running process. */
   setSpawnEnv?(env: Record<string, string> | undefined): void;
+  ownedProcessCount?(): number;
+  shutdown?(timeoutMs: number): Promise<{ timedOut: boolean }>;
   dispose(): void;
 }
 
@@ -89,14 +93,60 @@ export class CodexAppServer implements CodexAppServerLike {
     this.writeLine(this.proc, { id, result });
   }
 
+  ownedProcessCount(): number {
+    return (this.proc && !hasExited(this.proc) ? 1 : 0) + (this.starting ? 1 : 0);
+  }
+
+  async shutdown(timeoutMs: number): Promise<{ timedOut: boolean }> {
+    const startedAt = Date.now();
+    if (!(await this.waitForStartup(timeoutMs))) return { timedOut: true };
+    const remainingMs = Math.max(0, timeoutMs - (Date.now() - startedAt));
+    const proc = this.proc;
+    if (!proc || hasExited(proc)) {
+      this.dispose();
+      return { timedOut: false };
+    }
+    this.disposed = true;
+    this.rejectAllPending(new CodexAppServerError("codex app-server is shutting down"));
+    try {
+      proc.stdin?.end();
+    } catch {
+    }
+    const exited = await waitForExit(proc, remainingMs);
+    if (exited && this.proc === proc) this.proc = null;
+    return { timedOut: !exited };
+  }
+
+  private async waitForStartup(timeoutMs: number): Promise<boolean> {
+    const starting = this.starting;
+    if (!starting) return true;
+    let timer: NodeJS.Timeout | undefined;
+    const deadline = new Promise<false>((resolve) => {
+      timer = setTimeout(() => resolve(false), Math.max(0, timeoutMs));
+      timer.unref?.();
+    });
+    try {
+      return await Promise.race([starting.then(() => true, () => true), deadline]);
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
   dispose(): void {
     this.disposed = true;
     this.rejectAllPending(new CodexAppServerError("codex app-server disposed"));
     const proc = this.proc;
     this.proc = null;
     if (proc && proc.exitCode === null) {
-      proc.kill();
+      killProcessTree(proc);
     }
+    this.starting?.then(
+      (started) => {
+        killProcessTree(started);
+      },
+      () => {}
+    );
+    this.starting = null;
   }
 
   private rejectAllPending(err: Error): void {
@@ -124,7 +174,7 @@ export class CodexAppServer implements CodexAppServerLike {
 
   private async spawnAndInitialize(): Promise<ChildProcess> {
     const args = [...(this.opts.args ?? []), "app-server"];
-    const proc = spawn(this.opts.binary, args, {
+    const proc = spawnCli(this.opts.binary, args, {
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
       ...(this.opts.env ? { env: this.opts.env } : {})
@@ -178,6 +228,10 @@ export class CodexAppServer implements CodexAppServerLike {
       }
     });
     await initialized;
+    if (this.disposed) {
+      killProcessTree(proc);
+      throw new CodexAppServerError("codex app-server disposed");
+    }
     this.writeLine(proc, { method: "initialized" });
     this.proc = proc;
     return proc;

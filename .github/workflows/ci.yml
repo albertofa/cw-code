@@ -24,3 +24,56 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
+      - name: Production main bundle carries no update autotest path
+        run: node scripts/verify-installed-upgrade.mjs --assert-production-bundle
+
+  windows:
+    runs-on: windows-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.5.3
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+      - name: Package installer with the canonical dist script
+        run: pnpm --filter @cw-code/desktop dist
+      - name: Clean install + packaged startup probe (canonical build)
+        run: node scripts/verify-windows-package.mjs --install
+      - name: Compute a CI-only upgrade-test version above the package version, below the next release
+        id: ci_version
+        shell: bash
+        run: |
+          BASE=$(node -p "require('./apps/desktop/package.json').version")
+          echo "value=${BASE}.ci.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
+      - name: Package installer for upgrade tests (separate output dir, CI-only version)
+        run: pnpm --filter @cw-code/desktop exec electron-builder --win nsis --x64 --publish never -c.extraMetadata.version=${{ steps.ci_version.outputs.value }} -c.directories.output=dist-ci
+      - name: Download legacy installer for upgrade tests
+        run: gh release download v0.0.1-alpha.21 --repo albertofa/cw-code --pattern "cw-code.Setup.0.0.1-alpha.21.exe" --dir legacy-installer
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - name: Upgrade test (default per-user path)
+        run: node scripts/verify-windows-package.mjs --dist apps/desktop/dist-ci --upgrade-from legacy-installer/cw-code.Setup.0.0.1-alpha.21.exe
+      - name: Upgrade test (custom install directory)
+        run: node scripts/verify-windows-package.mjs --dist apps/desktop/dist-ci --upgrade-from legacy-installer/cw-code.Setup.0.0.1-alpha.21.exe --custom-dir "${{ runner.temp }}\cw-code-custom"
+      - name: Upgrade test (per-machine /allusers)
+        run: node scripts/verify-windows-package.mjs --dist apps/desktop/dist-ci --upgrade-from legacy-installer/cw-code.Setup.0.0.1-alpha.21.exe --per-machine
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-package
+          path: |
+            apps/desktop/dist/*.exe
+            apps/desktop/dist/*.blockmap
+            apps/desktop/dist/verify-windows-package.json
+            apps/desktop/dist-ci/*.exe
+            apps/desktop/dist-ci/*.blockmap
+            apps/desktop/dist-ci/verify-windows-package.json
+          retention-days: 7
