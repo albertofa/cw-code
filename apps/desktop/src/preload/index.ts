@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { AccountUsageSnapshot, AppSettings, CliBinary, CliDiscoveredCandidate, CliDiscoverResult, CommandInvocation, CommandOption, CreateSessionOptions, GitBranchInfo, GitDiffMode, GitDiffResult, GitStatus, HarnessId, PrDetail, PrInboxResult, Project, ProjectGitHubRepo, PrRef, PrWorkflow, RetryConnectionResult, SessionCleanupResult, SessionMeta, SessionPrLink, SessionStatus, SkillDetail, SkillMeta, SkillSaveInput, SkillsListResult, SourceControlHealth, StartupState, SubagentToolsResult, UsageLedgerQuery, UsageLedgerRow, WorktreePruneSummary } from "@cw-code/contracts";
+import type { AccountUsageSnapshot, AppSettings, CliBinary, CliDiscoveredCandidate, CliDiscoverResult, CommandInvocation, CommandOption, CreateSessionOptions, GitBranchInfo, GitDiffMode, GitDiffResult, GitStatus, HarnessId, PrDetail, PrInboxResult, Project, ProjectGitHubRepo, PrRef, PrWorkflow, RetryConnectionResult, SessionCleanupResult, SessionMeta, SessionPrLink, SessionStatus, SkillDetail, SkillMeta, SkillSaveInput, SkillsListResult, SourceControlHealth, StartupState, SubagentToolsResult, UpdateActionResult, UpdateChannel, UpdateState, UsageLedgerQuery, UsageLedgerRow, WorktreePruneSummary } from "@cw-code/contracts";
 
 export type PermissionMode = "auto" | "acceptEdits" | "bypassPermissions" | "manual";
 export type EffortLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
@@ -41,6 +41,13 @@ export interface CwApi {
     restore(file: string, backupPath: string): Promise<void>;
     startFresh(file: string): Promise<void>;
     retry(): Promise<void>;
+  };
+  updates: {
+    getState(): Promise<UpdateState>;
+    check(): Promise<UpdateActionResult>;
+    download(): Promise<UpdateActionResult>;
+    setChannel(channel: UpdateChannel): Promise<UpdateActionResult>;
+    onChanged(cb: (state: UpdateState) => void): () => void;
   };
   checkVersions(): Promise<Array<{
     binary: DriverName;
@@ -157,6 +164,17 @@ const api: CwApi = {
     restore: (file: string, backupPath: string) => ipcRenderer.invoke("recovery.restore", { file, backupPath }),
     startFresh: (file: string) => ipcRenderer.invoke("recovery.startFresh", { file }),
     retry: () => ipcRenderer.invoke("recovery.retry")
+  },
+  updates: {
+    getState: () => ipcRenderer.invoke("updates.state"),
+    check: () => ipcRenderer.invoke("updates.check"),
+    download: () => ipcRenderer.invoke("updates.download"),
+    setChannel: (channel: UpdateChannel) => ipcRenderer.invoke("updates.setChannel", { channel }),
+    onChanged: (cb) => {
+      const listener = (_e: unknown, state: UpdateState) => cb(state);
+      ipcRenderer.on("updates.changed", listener as never);
+      return () => ipcRenderer.removeListener("updates.changed", listener as never);
+    }
   },
   checkVersions: () => ipcRenderer.invoke("cli.checkVersions"),
   discoverBinaries: (binaries?: CliBinary[]) => ipcRenderer.invoke("cli.discover", { binaries }),

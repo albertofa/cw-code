@@ -21,7 +21,7 @@ import { appendCrashLog, initCrashLog } from "./debug/crashLog.js";
 import { runPackageProbe } from "./debug/packageProbe.js";
 import { claudeCommandsCachePath, ensureAppDirs, attachmentsDir, logsDir, migrateFromUserData, opencodeModelsCachePath, sessionDbPath, settingsFilePath, userdataDir } from "./paths/appPaths.js";
 import { reapOrphanedServers } from "./orphanServers.js";
-import type { ApprovalDecision, CliBinary, CommandInvocation, CreateSessionOptions, GitDiffMode, ProjectGitHubRepo, PrRef, SessionPrLink, MetadataIssue, SessionStatus, SettingsPatch, StartupState, UsageLedgerQuery } from "@cw-code/contracts";
+import type { ApprovalDecision, CliBinary, CommandInvocation, CreateSessionOptions, GitDiffMode, ProjectGitHubRepo, PrRef, SessionPrLink, MetadataIssue, SessionStatus, SettingsPatch, StartupState, UpdateActionResult, UpdateState, UsageLedgerQuery } from "@cw-code/contracts";
 import type { DriverKind, HarnessId, SkillSaveInput } from "@cw-code/contracts";
 import type { PtyKind } from "./pty/PtyPool.js";
 import { SessionManager } from "./sessions/SessionManager.js";
@@ -40,6 +40,8 @@ import { metadataSchemaFor, openMetadataStores } from "./storage/metadataStores.
 import { restoreBackup, startFresh } from "./storage/recovery.js";
 import type { SessionStore } from "./sessions/SessionStore.js";
 import type { SettingsStore } from "./settings/SettingsStore.js";
+import { ElectronUpdaterAdapter } from "./updates/ElectronUpdaterAdapter.js";
+import { UpdateService, type UpdateLogger } from "./updates/UpdateService.js";
 
 type DriverName = DriverKind;
 
@@ -63,11 +65,27 @@ interface Services {
   pullRequests: PullRequestService;
   ptys: PtyPool;
   accountUsage: AccountUsageService;
+  updates: UpdateService;
 }
 
 let mainWindow: BrowserWindow | null = null;
 let services: Services | null = null;
 let startupState: StartupState = { mode: "ready" };
+
+function createUpdateService(): UpdateService {
+  const logger: UpdateLogger = {
+    info: (message) => console.warn(`[updates] ${message}`),
+    warn: (message) => console.warn(`[updates] ${message}`)
+  };
+  return new UpdateService({
+    runningVersion: app.getVersion(),
+    environment: { isPackaged: app.isPackaged, resourcesPath: process.resourcesPath, execPath: process.execPath },
+    fileExists: existsSync,
+    createAdapter: () => new ElectronUpdaterAdapter({ homeDir: homedir(), sink: logger }),
+    logger,
+    homeDir: homedir()
+  });
+}
 
 function createServices(stores: { sessionStore: SessionStore; settingsStore: SettingsStore }): Services {
   let pullRequests: PullRequestService;
@@ -88,7 +106,8 @@ function createServices(stores: { sessionStore: SessionStore; settingsStore: Set
     git,
     pullRequests,
     ptys: new PtyPool(() => sessions.getSettings()),
-    accountUsage: new AccountUsageService(() => sessions.getDrivers())
+    accountUsage: new AccountUsageService(() => sessions.getDrivers()),
+    updates: createUpdateService()
   };
 }
 
@@ -270,7 +289,21 @@ function registerStartupIpc(): void {
   });
 }
 
-function registerIpc({ sessions, skills, files, git, pullRequests, ptys, accountUsage }: Services): void {
+function registerUpdateIpc(updates: UpdateService): void {
+  updates.subscribe((state) => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    mainWindow.webContents.send("updates.changed", state);
+  });
+  ipcMain.handle("updates.state", (): UpdateState => updates.getState());
+  ipcMain.handle("updates.check", (): Promise<UpdateActionResult> => updates.check());
+  ipcMain.handle("updates.download", (): Promise<UpdateActionResult> => updates.download());
+  ipcMain.handle("updates.setChannel", (_e, args: unknown): Promise<UpdateActionResult> =>
+    updates.setChannel(args && typeof args === "object" ? (args as { channel?: unknown }).channel : undefined)
+  );
+}
+
+function registerIpc({ sessions, skills, files, git, pullRequests, ptys, accountUsage, updates }: Services): void {
+  registerUpdateIpc(updates);
   sessions.setEmitter((sessionId, event) => {
     mainWindow?.webContents.send("turn.event", { sessionId, event });
   });
@@ -728,6 +761,7 @@ async function startApp(): Promise<void> {
         console.warn(`orphan server sweep failed: ${(err as Error).message}`);
       });
     registerIpc(services);
+    services.updates.start();
   } else {
     startupState = { mode: "recovery", issues: stores.issues, dataDir: userdataDir() };
     for (const issue of stores.issues) {
@@ -759,6 +793,7 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", () => {
+  services?.updates.dispose();
   services?.sessions.dispose();
   services?.ptys.dispose();
 });

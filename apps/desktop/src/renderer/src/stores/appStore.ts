@@ -21,7 +21,10 @@ import type {
   TodoItem,
   TokenCounts,
   TurnEvent,
-  TurnModelUsage
+  TurnModelUsage,
+  UpdateActionResult,
+  UpdateChannel,
+  UpdateState
 } from "../cw.js";
 import { appendAssistantText, appendReasoningText, closeReasoning, upsertToolCall } from "../components/chatMessages.js";
 import { getLastModel, setLastModel } from "../components/lastModel.js";
@@ -29,6 +32,7 @@ import { formatDuration, mergeToolPairs } from "../components/toolSummaries.js";
 import { expiredHoldingIds } from "../components/workingSet.js";
 import { defaultNewSessionProjectId, discoveredOwnerId, discoveryProjectId } from "../components/projectRecency.js";
 import { useNotifs } from "../components/Notifications.js";
+import { ipcErrorMessage } from "../components/ipcError.js";
 
 const GIT_REFRESH_BATCH = 6;
 const PENDING_PREFIX = "pending:";
@@ -196,6 +200,12 @@ interface AppState {
   respondQuestion(sessionId: string, requestId: string, answers: Record<string, string>): Promise<void>;
   applyEvent(sessionId: string, event: TurnEvent): void;
   applySessionTitle(sessionId: string, title: string): void;
+  updates: UpdateState | null;
+  subscribeUpdates(): () => void;
+  applyUpdateState(state: UpdateState): void;
+  checkForUpdates(): Promise<UpdateActionResult>;
+  downloadUpdate(): Promise<UpdateActionResult>;
+  setUpdateChannel(channel: UpdateChannel): Promise<UpdateActionResult>;
 }
 
 function isSubagentToolName(name?: string): boolean {
@@ -304,6 +314,40 @@ export const useAppStore = create<AppState>((set, get) => ({
   holdingHours: 6,
   defaultUseWorktree: true,
   reasoningExpandedByDriver: { claude: false, opencode: false, codex: false },
+  updates: null,
+
+  subscribeUpdates() {
+    const off = window.cw.updates.onChanged((state) => get().applyUpdateState(state));
+    window.cw.updates
+      .getState()
+      .then((state) => get().applyUpdateState(state))
+      .catch((err: unknown) => console.warn(`update state unavailable: ${ipcErrorMessage(err)}`));
+    return off;
+  },
+
+  applyUpdateState(state: UpdateState) {
+    const current = get().updates;
+    if (current && state.seq < current.seq) return;
+    set({ updates: state });
+  },
+
+  async checkForUpdates() {
+    const result = await window.cw.updates.check();
+    get().applyUpdateState(result.state);
+    return result;
+  },
+
+  async downloadUpdate() {
+    const result = await window.cw.updates.download();
+    get().applyUpdateState(result.state);
+    return result;
+  },
+
+  async setUpdateChannel(channel: UpdateChannel) {
+    const result = await window.cw.updates.setChannel(channel);
+    get().applyUpdateState(result.state);
+    return result;
+  },
 
   setPendingPrefs(prefs: ComposerPrefs) {
     set({ pendingPrefs: { ...get().pendingPrefs, ...prefs } });

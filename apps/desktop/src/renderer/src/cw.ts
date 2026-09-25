@@ -35,6 +35,12 @@ import type {
   StartupState,
   TokenCounts,
   TurnModelUsage,
+  UpdateActionCode,
+  UpdateActionResult,
+  UpdateChannel,
+  UpdatePhase,
+  UpdateProgress,
+  UpdateState,
   UsageBalance,
   UsageLedgerQuery,
   UsageLedgerRow,
@@ -68,6 +74,12 @@ export type {
   SessionPrLink,
   TokenCounts,
   TurnModelUsage,
+  UpdateActionCode,
+  UpdateActionResult,
+  UpdateChannel,
+  UpdatePhase,
+  UpdateProgress,
+  UpdateState,
   UsageBalance,
   UsageLedgerQuery,
   UsageLedgerRow,
@@ -449,6 +461,13 @@ export interface CwApi {
     restore(file: string, backupPath: string): Promise<void>;
     startFresh(file: string): Promise<void>;
     retry(): Promise<void>;
+  };
+  updates: {
+    getState(): Promise<UpdateState>;
+    check(): Promise<UpdateActionResult>;
+    download(): Promise<UpdateActionResult>;
+    setChannel(channel: UpdateChannel): Promise<UpdateActionResult>;
+    onChanged(cb: (state: UpdateState) => void): () => void;
   };
   checkVersions(): Promise<Array<{
     binary: DriverName;

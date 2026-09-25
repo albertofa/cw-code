@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from "vitest";
+import type { UpdateActionResult, UpdateState } from "@cw-code/contracts";
 import { DEFAULT_COMPOSER, useAppStore } from "./appStore.js";
 import { getLastModel, setLastModel } from "../components/lastModel.js";
 
@@ -338,5 +339,82 @@ describe("appStore preview per session", () => {
     const remaining = useAppStore.getState().previewBySession;
     expect(remaining.sess_a).toBeUndefined();
     expect(remaining.sess_b.path).toBe("src/b.ts");
+  });
+});
+
+describe("appStore updates slice", () => {
+  function updateState(seq: number, phase: UpdateState["phase"] = "idle"): UpdateState {
+    return {
+      seq,
+      phase,
+      runningVersion: "1.0.0",
+      channel: "stable",
+      availableVersion: null,
+      downloadedVersion: null,
+      releaseName: null,
+      releaseNotes: null,
+      releaseDate: null,
+      progress: null,
+      checkedAt: null,
+      error: null,
+      disabledReason: null,
+      autoDownload: false
+    };
+  }
+
+  function installUpdatesBridge(snapshot: Promise<UpdateState>, result?: UpdateActionResult) {
+    const calls: string[] = [];
+    let emit: (state: UpdateState) => void = () => {};
+    const updates = {
+      onChanged: (cb: (state: UpdateState) => void) => {
+        calls.push("onChanged");
+        emit = cb;
+        return () => calls.push("off");
+      },
+      getState: () => {
+        calls.push("getState");
+        return snapshot;
+      },
+      check: async () => result,
+      download: async () => result,
+      setChannel: async () => result
+    };
+    (window as unknown as { cw: { updates: typeof updates } }).cw = { updates };
+    return { calls, emit: (state: UpdateState) => emit(state) };
+  }
+
+  beforeEach(() => {
+    useAppStore.setState({ updates: null });
+  });
+
+  it("subscribes before fetching the snapshot and keeps the newest state", async () => {
+    let resolveSnapshot: (state: UpdateState) => void = () => {};
+    const bridge = installUpdatesBridge(new Promise((resolve) => (resolveSnapshot = resolve)));
+    const off = useAppStore.getState().subscribeUpdates();
+    expect(bridge.calls).toEqual(["onChanged", "getState"]);
+    bridge.emit(updateState(3, "checking"));
+    resolveSnapshot(updateState(2));
+    await Promise.resolve();
+    await Promise.resolve();
+    expect(useAppStore.getState().updates).toMatchObject({ seq: 3, phase: "checking" });
+    bridge.emit(updateState(1, "up-to-date"));
+    expect(useAppStore.getState().updates?.seq).toBe(3);
+    bridge.emit(updateState(4, "available"));
+    expect(useAppStore.getState().updates).toMatchObject({ seq: 4, phase: "available" });
+    off();
+    expect(bridge.calls).toContain("off");
+  });
+
+  it("applies the state carried by action results through the same ordering rule", async () => {
+    installUpdatesBridge(Promise.resolve(updateState(0)), {
+      ok: false,
+      code: "busy",
+      message: "An update is downloading",
+      state: updateState(7, "downloading")
+    });
+    useAppStore.getState().applyUpdateState(updateState(9, "ready"));
+    const result = await useAppStore.getState().checkForUpdates();
+    expect(result).toMatchObject({ ok: false, code: "busy" });
+    expect(useAppStore.getState().updates).toMatchObject({ seq: 9, phase: "ready" });
   });
 });
