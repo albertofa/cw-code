@@ -19,7 +19,7 @@ import { discoverBinaries, verifyBinaryPath } from "./cli/binaryDiscovery.js";
 import { getHarnessTracePath, initHarnessTrace } from "./debug/harnessTrace.js";
 import { appendCrashLog, initCrashLog } from "./debug/crashLog.js";
 import { runPackageProbe } from "./debug/packageProbe.js";
-import { claudeCommandsCachePath, ensureAppDirs, attachmentsDir, logsDir, migrateFromUserData, opencodeModelsCachePath, sessionDbPath, settingsFilePath, userdataDir } from "./paths/appPaths.js";
+import { claudeCommandsCachePath, cwCodeHome, ensureAppDirs, attachmentsDir, logsDir, migrateFromUserData, opencodeModelsCachePath, sessionDbPath, settingsFilePath, userdataDir } from "./paths/appPaths.js";
 import { reapOrphanedServers } from "./orphanServers.js";
 import type { AppSettings, ApprovalDecision, CliBinary, CommandInvocation, CreateSessionOptions, GitDiffMode, ProjectGitHubRepo, PrRef, SessionPrLink, MetadataIssue, SessionStatus, SettingsPatch, ShutdownCommitResult, ShutdownExpiredEvent, ShutdownPrepareRequest, ShutdownReason, ShutdownRequestedEvent, StartupState, UpdateActionResult, UpdateState, UsageLedgerQuery } from "@cw-code/contracts";
 import type { DriverKind, HarnessId, SkillSaveInput } from "@cw-code/contracts";
@@ -950,7 +950,7 @@ interface PendingUpdateAutotest {
 async function prepareUpdateAutotest(): Promise<PendingUpdateAutotest | null> {
   if (__CW_UPDATE_TEST_BUILD__) {
     const autotest = await import("./updates/updateAutotest.js");
-    const resolution = autotest.loadUpdateAutotest({ env: process.env, userDataDir: app.getPath("userData") });
+    const resolution = autotest.loadUpdateAutotest({ env: process.env, userDataDir: app.getPath("userData"), homeDir: homedir() });
     if (resolution.problem) console.warn(`[updates] update autotest not started: ${resolution.problem}`);
     return resolution.config ? { autotest, config: resolution.config } : null;
   }
@@ -966,6 +966,7 @@ function startUpdateAutotest(pending: PendingUpdateAutotest | null): void {
       launchedByInstaller: process.argv.includes("--updated"),
       startupMode: startupState.mode,
       userDataDir: app.getPath("userData"),
+      cwCodeHome: cwCodeHome(),
       updates: running?.updates ?? null,
       shutdown: running?.shutdown ?? null,
       install: (request) => (running ? installUpdate(running, request) : Promise.reject(new Error("cw-code services are not running"))),

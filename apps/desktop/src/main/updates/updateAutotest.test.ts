@@ -5,6 +5,7 @@ import {
   BUSY_TURN_PROMPT,
   UPDATE_AUTOTEST_HANDOFF_FILE,
   UPDATE_AUTOTEST_MARKER,
+  UPDATE_TEST_HOME_DIR_NAME,
   loadUpdateAutotest,
   resolveUpdateAutotest,
   runUpdateAutotest,
@@ -18,6 +19,7 @@ const OUT = join(ROOT, "out.jsonl");
 const HOME = join(ROOT, "home");
 const USER_DATA = join(ROOT, "user-data");
 const HANDOFF = join(USER_DATA, UPDATE_AUTOTEST_HANDOFF_FILE);
+const USER_HOME = join(ROOT, "profile");
 
 function state(phase: UpdatePhase, overrides: Partial<UpdateState> = {}): UpdateState {
   return {
@@ -95,6 +97,7 @@ function fakeHost(io: MemoryIo, options: FakeOptions = {}) {
   const listeners = new Set<(value: UpdateState) => void>();
   let current = options.initial ?? state("idle");
   let turnStarted = false;
+  let idle = true;
   const prepareResults = [...(options.prepare ?? [{ ok: true, token: "token-1" }])];
   const set = (next: UpdateState): void => {
     current = next;
@@ -108,6 +111,7 @@ function fakeHost(io: MemoryIo, options: FakeOptions = {}) {
     launchedByInstaller: false,
     startupMode: "ready",
     userDataDir: USER_DATA,
+    cwCodeHome: HOME,
     updates: {
       getState: () => current,
       subscribe: (listener) => {
@@ -139,7 +143,9 @@ function fakeHost(io: MemoryIo, options: FakeOptions = {}) {
       prepare: async (request) => {
         calls.push("prepare");
         prepareRequests.push(request);
-        return prepareResults.shift() ?? { ok: true, token: "token-x" };
+        const result = prepareResults.shift() ?? { ok: true, token: "token-x" };
+        idle = !result.ok && result.code !== "timeout";
+        return result;
       },
       force: async (token) => {
         calls.push(`force:${token}`);
@@ -147,10 +153,13 @@ function fakeHost(io: MemoryIo, options: FakeOptions = {}) {
       },
       cancel: (token) => {
         calls.push(`cancel:${token}`);
-      }
+        idle = true;
+      },
+      isIdle: () => idle
     },
     install: async (request) => {
       calls.push(`install:handoff=${io.exists(HANDOFF)}`);
+      idle = true;
       installRequests.push(request);
       return options.install ?? { ok: false, code: "failed", message: "cw-code did not exit within 30s. Normal use has been restored.", state: state("ready", { downloadedVersion: request.version }) };
     },
@@ -218,25 +227,37 @@ describe("loadUpdateAutotest", () => {
     const io = new MemoryIo();
     io.writeText(HANDOFF, JSON.stringify({ marker: UPDATE_AUTOTEST_MARKER, outPath: OUT, cwCodeHome: HOME, fromVersion: "0.0.1-alpha.9001" }));
     const env: Record<string, string | undefined> = {};
-    const first = loadUpdateAutotest({ env, userDataDir: USER_DATA, io });
+    const first = loadUpdateAutotest({ env, userDataDir: USER_DATA, homeDir: USER_HOME, io });
     expect(first.config?.mode).toBe("relaunched");
     expect(env.CW_CODE_HOME).toBe(HOME);
     expect(io.exists(HANDOFF)).toBe(false);
-    expect(loadUpdateAutotest({ env: {}, userDataDir: USER_DATA, io })).toEqual({ config: null, problem: null });
+    expect(loadUpdateAutotest({ env: {}, userDataDir: USER_DATA, homeDir: USER_HOME, io })).toEqual({ config: null, problem: null });
   });
 
   it("never overrides an app home that is already set", () => {
     const io = new MemoryIo();
     io.writeText(HANDOFF, JSON.stringify({ marker: UPDATE_AUTOTEST_MARKER, outPath: OUT, cwCodeHome: HOME, fromVersion: "1.0.0" }));
     const env: Record<string, string | undefined> = { CW_CODE_HOME: join(ROOT, "explicit") };
-    loadUpdateAutotest({ env, userDataDir: USER_DATA, io });
+    loadUpdateAutotest({ env, userDataDir: USER_DATA, homeDir: USER_HOME, io });
     expect(env.CW_CODE_HOME).toBe(join(ROOT, "explicit"));
+  });
+
+  it("defaults an update-test build to its own app home so it never opens ~/.cw-code", () => {
+    const io = new MemoryIo();
+    const env: Record<string, string | undefined> = {};
+    expect(loadUpdateAutotest({ env, userDataDir: USER_DATA, homeDir: USER_HOME, io })).toEqual({ config: null, problem: null });
+    expect(env.CW_CODE_HOME).toBe(join(USER_HOME, UPDATE_TEST_HOME_DIR_NAME));
+    expect(UPDATE_TEST_HOME_DIR_NAME).toBe(".cw-code-updatetest");
+
+    const withMode: Record<string, string | undefined> = { CW_UPDATE_AUTOTEST: "install", CW_UPDATE_AUTOTEST_OUT: OUT };
+    const resolved = loadUpdateAutotest({ env: withMode, userDataDir: USER_DATA, homeDir: USER_HOME, io });
+    expect(resolved.config?.cwCodeHome).toBe(join(USER_HOME, UPDATE_TEST_HOME_DIR_NAME));
   });
 
   it("removes an unreadable handoff and reports it", () => {
     const io = new MemoryIo();
     io.writeText(HANDOFF, "{not json");
-    expect(loadUpdateAutotest({ env: {}, userDataDir: USER_DATA, io }).problem).toMatch(/malformed/);
+    expect(loadUpdateAutotest({ env: {}, userDataDir: USER_DATA, homeDir: USER_HOME, io }).problem).toMatch(/malformed/);
     expect(io.exists(HANDOFF)).toBe(false);
   });
 });
@@ -251,9 +272,9 @@ describe("runUpdateAutotest", () => {
     expect(fake.installRequests).toEqual([{ version: "0.0.1-alpha.9002", channel: "alpha", token: "token-1" }]);
     expect(io.exists(HANDOFF)).toBe(false);
     const events = io.events();
-    expect(events[0]).toMatchObject({ event: "started", marker: UPDATE_AUTOTEST_MARKER, mode: "install", version: "0.0.1-alpha.9001", pid: 4242 });
+    expect(events[0]).toMatchObject({ event: "started", marker: UPDATE_AUTOTEST_MARKER, mode: "install", version: "0.0.1-alpha.9001", pid: 4242, cwCodeHome: HOME, userDataDir: USER_DATA });
     expect(events.filter((event) => event.event === "progress").map((event) => event.percent)).toEqual([25, 50]);
-    expect(events.at(-2)).toMatchObject({ event: "result", outcome: "install-failed" });
+    expect(events.at(-2)).toMatchObject({ event: "result", outcome: "install-failed", coordinatorIdle: true });
     expect(events.at(-1)).toMatchObject({ event: "quitting" });
   });
 
@@ -298,7 +319,8 @@ describe("runUpdateAutotest", () => {
     const fake = fakeHost(io);
     await runUpdateAutotest(config({ mode: "cancel" }), fake.host, io);
     expect(fake.calls).toEqual(["check", "download", "prepare", "cancel:token-1", "quit"]);
-    expect(io.events().at(-2)).toMatchObject({ outcome: "cancelled", state: { phase: "ready" } });
+    expect(io.events().find((event) => event.event === "cancelled")).toMatchObject({ coordinatorIdle: true });
+    expect(io.events().at(-2)).toMatchObject({ outcome: "cancelled", coordinatorIdle: true, state: { phase: "ready", downloadedVersion: "0.0.1-alpha.9002" } });
   });
 
   it("waits for the pause file before installing and times out otherwise", async () => {
