@@ -112,21 +112,15 @@ async function createWindow(): Promise<void> {
     if (/^https?:/i.test(url)) void shell.openExternal(url);
   });
 
-  const devUrl = process.env["ELECTRON_RENDERER_URL"];
-  let rendererLoaded = true;
-  try {
-    if (devUrl) {
-      await mainWindow.loadURL(devUrl);
-    } else {
-      await mainWindow.loadFile(rendererIndexPath());
-    }
-  } catch (err) {
-    rendererLoaded = false;
-    appendCrashLog(`renderer failed to load: ${(err as Error).message}`);
-  }
-
-  const probeOutPath = process.env["CW_PACKAGE_PROBE_OUT"];
+  const probeOutPath = app.isPackaged ? process.env["CW_PACKAGE_PROBE_OUT"] : undefined;
   if (probeOutPath) {
+    let rendererLoaded = true;
+    try {
+      await loadRenderer(mainWindow);
+    } catch (err) {
+      rendererLoaded = false;
+      appendCrashLog(`renderer failed to load: ${(err as Error).message}`);
+    }
     setTimeout(() => {
       void runPackageProbe({
         outPath: probeOutPath,
@@ -135,7 +129,15 @@ async function createWindow(): Promise<void> {
         rendererLoaded
       }).finally(() => app.exit(rendererLoaded ? 0 : 1));
     }, 3000);
+    return;
   }
+
+  await loadRenderer(mainWindow);
+}
+
+function loadRenderer(window: BrowserWindow): Promise<void> {
+  const devUrl = process.env["ELECTRON_RENDERER_URL"];
+  return devUrl ? window.loadURL(devUrl) : window.loadFile(rendererIndexPath());
 }
 
 function rendererIndexPath(): string {

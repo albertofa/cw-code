@@ -1,6 +1,7 @@
 import { writeFileSync } from "node:fs";
 import { checkCliVersions, type CliVersionCheck } from "../cliVersions.js";
 import { defaultCliBinaryPath } from "../settings/settingsUtils.js";
+import type { PtyModule } from "../pty/PtyPool.js";
 
 export interface PackageProbeNodePtyResult {
   loaded: boolean;
@@ -62,15 +63,6 @@ export function buildProbeResult(opts: {
 }
 
 const NODE_PTY_SPAWN_TIMEOUT_MS = 10_000;
-
-interface PtySpawnResult {
-  onExit(cb: (e: { exitCode: number }) => void): void;
-  kill(): void;
-}
-
-interface PtyModule {
-  spawn(file: string, args: string[], opts: { name: string; cols: number; rows: number; cwd: string }): PtySpawnResult;
-}
 
 async function probeNodePty(): Promise<NodePtyProbeOutcome> {
   let pty: PtyModule;
