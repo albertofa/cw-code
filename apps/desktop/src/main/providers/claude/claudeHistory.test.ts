@@ -28,6 +28,52 @@ describe("parseClaudeTranscriptLine", () => {
     ).toEqual([]);
   });
 
+  it("maps a compact boundary line to a system marker with its metadata", () => {
+    const out = parseClaudeTranscriptLine({
+      type: "system",
+      subtype: "compact_boundary",
+      uuid: "b1",
+      logicalParentUuid: "u1",
+      timestamp: "2026-09-25T10:00:00.000Z",
+      compactMetadata: {
+        trigger: "manual",
+        preTokens: 633409,
+        postTokens: 16048,
+        cumulativeDroppedTokens: 617361,
+        durationMs: 80261
+      }
+    });
+    expect(out).toEqual([
+      {
+        id: "b1",
+        role: "system",
+        text: "Context compacted",
+        turnId: "u1",
+        compaction: {
+          trigger: "manual",
+          preTokens: 633409,
+          postTokens: 16048,
+          droppedTokens: 617361,
+          durationMs: 80261
+        },
+        timestamp: Date.parse("2026-09-25T10:00:00.000Z")
+      }
+    ]);
+  });
+
+  it("skips the compact summary body and unknown system lines", () => {
+    expect(
+      parseClaudeTranscriptLine({
+        type: "user",
+        uuid: "s1",
+        isCompactSummary: true,
+        isVisibleInTranscriptOnly: true,
+        message: { role: "user", content: "This session is being continued from a previous conversation..." }
+      })
+    ).toEqual([]);
+    expect(parseClaudeTranscriptLine({ type: "system", subtype: "status", uuid: "x" })).toEqual([]);
+  });
+
   it("maps assistant text and tool_use blocks", () => {
     const out = parseClaudeTranscriptLine({
       type: "assistant",

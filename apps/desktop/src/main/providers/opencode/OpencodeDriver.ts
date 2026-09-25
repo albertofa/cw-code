@@ -28,6 +28,7 @@ import { writeAskBridgeTool } from "./askToolFile.js";
 import { diffLiveTools, childModelOf, collectPartTypes, collectTaskParts, type LiveMessage, type LiveSeen } from "./opencodeLivePoll.js";
 import {
   buildOpencodeMessageBody,
+  isOpencodeCompactionMessage,
   isReasoningPartDelta,
   latestAssistantOf,
   mimeForOpencodeAttachment,
@@ -89,10 +90,19 @@ export class OpencodeDriver implements CliDriver {
   private childModels = new Map<string, Map<string, string>>();
   private turnMeta = new Map<
     string,
-    { localSessionId: string; beforeIds: Set<string> | null; startedAt: number; pollWarned: boolean; startedPort: number; hasAssistantText: boolean }
+    {
+      localSessionId: string;
+      beforeIds: Set<string> | null;
+      startedAt: number;
+      pollWarned: boolean;
+      startedPort: number;
+      compactionEmitted?: boolean;
+      compactionTrigger?: "manual" | "auto";
+    }
   >();
   private toolSeen = new Map<string, Map<string, LiveSeen>>();
   private partTypes = new Map<string, Map<string, string>>();
+  private compactionMessageIds = new Map<string, Set<string>>();
   private pollTimers = new Map<string, NodeJS.Timeout>();
   private pool: OpencodeServerPool;
   private disposed = false;
@@ -267,6 +277,15 @@ export class OpencodeDriver implements CliDriver {
     return map;
   }
 
+  private compactionMessagesFor(turnId: string): Set<string> {
+    let set = this.compactionMessageIds.get(turnId);
+    if (!set) {
+      set = new Set();
+      this.compactionMessageIds.set(turnId, set);
+    }
+    return set;
+  }
+
   private trackTurn(params: {
     turnId: string;
     localSessionId: string;
@@ -284,8 +303,7 @@ export class OpencodeDriver implements CliDriver {
       beforeIds: params.beforeIds,
       startedAt: params.startedAt,
       pollWarned: false,
-      startedPort: params.port,
-      hasAssistantText: false
+      startedPort: params.port
     });
     this.watchInfo.set(params.turnId, {
       port: params.port,
@@ -750,6 +768,21 @@ export class OpencodeDriver implements CliDriver {
       this.emit({ type: "todo.updated", turnId, todos: parsed.todos });
       return;
     }
+    if (envelope.type === "message.updated") {
+      const known = this.sessionIds.get(turnId);
+      if (!known) return;
+      const props = eventProps(event);
+      if (props?.["sessionID"] !== known) return;
+      const info = props["info"];
+      if (info === null || typeof info !== "object" || Array.isArray(info)) return;
+      const record = info as Record<string, unknown>;
+      const id = record["id"];
+      if (typeof id !== "string" || !id) return;
+      if (record["summary"] === true || record["mode"] === "compaction") {
+        this.compactionMessagesFor(turnId).add(id);
+      }
+      return;
+    }
     if (envelope.type === "message.part.updated") {
       const known = this.sessionIds.get(turnId);
       if (!known) return;
@@ -767,11 +800,10 @@ export class OpencodeDriver implements CliDriver {
       if (!known) return;
       const delta = partDeltaOf(event, known);
       if (!delta) return;
+      const props = eventProps(event);
+      const messageID = typeof props?.["messageID"] === "string" ? props["messageID"] : "";
+      if (messageID && this.compactionMessagesFor(turnId).has(messageID)) return;
       const reasoning = isReasoningPartDelta(delta, this.partTypesFor(turnId).get(delta.partID));
-      if (!reasoning) {
-        const meta = this.turnMeta.get(turnId);
-        if (meta) meta.hasAssistantText = true;
-      }
       this.emit(
         reasoning
           ? { type: "reasoning.delta", turnId, text: delta.text }
@@ -1123,11 +1155,19 @@ export class OpencodeDriver implements CliDriver {
       });
     const live = (): boolean => !target.signal.aborted && this.sessionIds.has(turnId);
     try {
-      const notice = await this.builtinCommandNotice(name, call, target.model);
-      if (!live()) return;
-      const hasAssistantText = this.turnMeta.get(turnId)?.hasAssistantText ?? false;
-      const text = name === "compact" && hasAssistantText ? `\n\n${notice}` : notice;
-      this.emit({ type: "assistant.delta", turnId, text });
+      if (name === "compact") {
+        const pending = this.turnMeta.get(turnId);
+        if (pending) pending.compactionTrigger = "manual";
+        await this.compactSession(call, target.model);
+        if (!live()) return;
+        const meta = this.turnMeta.get(turnId);
+        if (meta) meta.compactionEmitted = true;
+        this.emit({ type: "context.compacted", turnId, compaction: { trigger: "manual" } });
+      } else {
+        const notice = await this.builtinCommandNotice(name, call);
+        if (!live()) return;
+        this.emit({ type: "assistant.delta", turnId, text: notice });
+      }
       traceHarnessCall({
         harness: "opencode",
         operation: "opencode.commandDone",
@@ -1156,17 +1196,19 @@ export class OpencodeDriver implements CliDriver {
     }
   }
 
-  private async builtinCommandNotice(
-    name: OpencodeBuiltinCommand,
+  private async compactSession(
     call: SessionCall,
     model: { providerID: string; modelID: string } | null
+  ): Promise<void> {
+    if (!model) throw new Error("Pick a model before compacting");
+    const res = await call("/summarize", { method: "POST", body: model, timeoutMs: OPENCODE_NO_TIMEOUT });
+    if (!res.ok) throw new Error(await opencodeFailureText("opencode compact failed", res));
+  }
+
+  private async builtinCommandNotice(
+    name: Exclude<OpencodeBuiltinCommand, "compact">,
+    call: SessionCall
   ): Promise<string> {
-    if (name === "compact") {
-      if (!model) throw new Error("Pick a model before compacting");
-      const res = await call("/summarize", { method: "POST", body: model, timeoutMs: OPENCODE_NO_TIMEOUT });
-      if (!res.ok) throw new Error(await opencodeFailureText("opencode compact failed", res));
-      return "Session compacted.";
-    }
     const sessionRes = await call("");
     const revertId = opencodeRevertMessageId(await opencodeJson<unknown>(sessionRes, "opencode session lookup failed"));
     if (name === "redo") {
@@ -1224,6 +1266,8 @@ export class OpencodeDriver implements CliDriver {
     beforeIds: Set<string> | null;
     seen: Map<string, LiveSeen>;
     childModels: Map<string, string>;
+    compactionEmitted: boolean;
+    compactionTrigger?: "manual" | "auto";
   } | null {
     for (const [requestId, ownerTurnId] of this.handledPermissions) {
       if (ownerTurnId === turnId) this.handledPermissions.delete(requestId);
@@ -1255,6 +1299,7 @@ export class OpencodeDriver implements CliDriver {
     const childModels = this.childModels.get(turnId) ?? new Map<string, string>();
     this.toolSeen.delete(turnId);
     this.partTypes.delete(turnId);
+    this.compactionMessageIds.delete(turnId);
     this.taskChildren.delete(turnId);
     this.childToolSeen.delete(turnId);
     this.childPollDone.delete(turnId);
@@ -1267,7 +1312,9 @@ export class OpencodeDriver implements CliDriver {
       cwd: info.cwd,
       beforeIds: meta.beforeIds,
       seen,
-      childModels
+      childModels,
+      compactionEmitted: meta.compactionEmitted === true,
+      ...(meta.compactionTrigger ? { compactionTrigger: meta.compactionTrigger } : {})
     };
   }
 
@@ -1321,6 +1368,13 @@ export class OpencodeDriver implements CliDriver {
       text = summary.text;
       usage = summary.usage;
       errorText = summary.errorText;
+      if (summary.compacted && !taken.compactionEmitted) {
+        this.emit({
+          type: "context.compacted",
+          turnId,
+          compaction: { trigger: taken.compactionTrigger ?? "auto" }
+        });
+      }
       if (summary.lastModel && summary.lastContextTokens !== undefined) {
         const cached = peekOpencodeModels(this.configuredBinary());
         const model = cached?.find((m) => m.id.toLowerCase() === summary.lastModel?.toLowerCase());
@@ -1744,6 +1798,15 @@ export class OpencodeDriver implements CliDriver {
             this.emit(event);
           }
         }
+        if (meta?.beforeIds && !meta.compactionEmitted && meta.compactionTrigger !== "manual") {
+          const fresh = turnMessagesOf(payload).find(
+            (m) => !meta.beforeIds?.has(m.id) && isOpencodeCompactionMessage(m)
+          );
+          if (fresh) {
+            meta.compactionEmitted = true;
+            this.emit({ type: "context.compacted", turnId, compaction: { trigger: "auto" } });
+          }
+        }
         await this.pollChildTools(turnId, info, sessionID, payload);
         if (meta?.beforeIds && runEnded(payload, meta.beforeIds)) {
           void this.finishTurn(turnId);
@@ -1885,6 +1948,7 @@ export class OpencodeDriver implements CliDriver {
     this.turnMeta.clear();
     this.toolSeen.clear();
     this.partTypes.clear();
+    this.compactionMessageIds.clear();
     this.watchInfo.clear();
     this.taskChildren.clear();
     this.childToolSeen.clear();

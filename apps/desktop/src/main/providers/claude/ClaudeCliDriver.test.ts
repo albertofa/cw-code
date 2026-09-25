@@ -879,3 +879,102 @@ describe("ClaudeCliDriver getAccountUsage", () => {
     driver.dispose();
   });
 });
+
+describe("ClaudeCliDriver compaction", () => {
+  function modelResultLine(overrides: Record<string, unknown> = {}): string {
+    return JSON.stringify({
+      type: "result",
+      subtype: "success",
+      session_id: "native-1",
+      result: "",
+      num_turns: 1,
+      modelUsage: {
+        "claude-sonnet-5": {
+          inputTokens: 100,
+          outputTokens: 20,
+          cacheReadInputTokens: 0,
+          cacheCreationInputTokens: 500,
+          costUSD: 0.02,
+          contextWindow: 200000,
+          thinkingTokens: 0
+        }
+      },
+      usage: {
+        iterations: [
+          { input_tokens: 100, output_tokens: 20, cache_read_input_tokens: 0, cache_creation_input_tokens: 500 }
+        ]
+      },
+      ...overrides
+    });
+  }
+
+  it("emits context.compacted and reports postTokens as the new context on a compact turn", async () => {
+    const { driver, events, children } = makeDriver();
+    driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "hello" });
+    await settle();
+    children[0].stdout.write(`${modelResultLine()}\n`);
+    await settle();
+
+    const second = driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "/compact" });
+    await settle();
+    children[0].stdout.write(
+      `${JSON.stringify({
+        type: "system",
+        subtype: "compact_boundary",
+        session_id: "native-1",
+        compact_metadata: {
+          trigger: "manual",
+          pre_tokens: 633409,
+          post_tokens: 16048,
+          cumulative_dropped_tokens: 617361
+        }
+      })}\n`
+    );
+    children[0].stdout.write(`${modelResultLine({ num_turns: 0, usage: { iterations: [] } })}\n`);
+    await settle();
+
+    expect(events).toContainEqual({
+      type: "context.compacted",
+      turnId: second.turnId,
+      compaction: {
+        trigger: "manual",
+        preTokens: 633409,
+        postTokens: 16048,
+        droppedTokens: 617361
+      },
+      context: { usedTokens: 16048, windowTokens: 200000 }
+    });
+    const done = turnDones(events).find((event) => event.turnId === second.turnId);
+    expect(done?.context).toEqual({ usedTokens: 16048, windowTokens: 200000 });
+    driver.dispose();
+  });
+
+  it("does not carry a compact context into the following turn", async () => {
+    const { driver, events, children } = makeDriver();
+    driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "hello" });
+    await settle();
+    children[0].stdout.write(`${modelResultLine()}\n`);
+    await settle();
+
+    driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "/compact" });
+    await settle();
+    children[0].stdout.write(
+      `${JSON.stringify({
+        type: "system",
+        subtype: "compact_boundary",
+        compact_metadata: { trigger: "manual", pre_tokens: 100, post_tokens: 10 }
+      })}\n`
+    );
+    children[0].stdout.write(`${modelResultLine({ num_turns: 0, usage: { iterations: [] } })}\n`);
+    await settle();
+
+    const third = driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "again" });
+    await settle();
+    children[0].stdout.write(`${modelResultLine({ result: "ok" })}\n`);
+    await settle();
+
+    const done = turnDones(events).find((event) => event.turnId === third.turnId);
+    expect(done?.context).toEqual({ usedTokens: 620, windowTokens: 200000 });
+    driver.dispose();
+  });
+});

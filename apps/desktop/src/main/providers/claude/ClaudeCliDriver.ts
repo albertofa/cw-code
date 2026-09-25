@@ -20,7 +20,7 @@ import type {
 } from "@cw-code/contracts";
 import { parseExtraArgs } from "../../settings/settingsUtils.js";
 import { killProcessTree } from "../../processTree.js";
-import { CLAUDE_SHELL_TASK_TYPE, attributeClaudeSubagentEvent, buildClaudeAllowRule, claudeAllowResponse, claudeApprovalRequest, claudeQuestionRequest, claudeDenyResponse, claudeControlResponse, parseClaudeControlRequest, parseClaudeSubagentHandback, parseClaudeSystemInit, parseClaudeTaskSystemLine, parseStreamLine, type ClaudeControlRequest, type ClaudeTaskSystemInfo, type TurnDoneInfo } from "./claudeStreamParser.js";
+import { CLAUDE_SHELL_TASK_TYPE, attributeClaudeSubagentEvent, buildClaudeAllowRule, claudeAllowResponse, claudeApprovalRequest, claudeQuestionRequest, claudeDenyResponse, claudeControlResponse, parseClaudeCompactBoundary, parseClaudeControlRequest, parseClaudeSubagentHandback, parseClaudeSystemInit, parseClaudeTaskSystemLine, parseStreamLine, type ClaudeControlRequest, type ClaudeTaskSystemInfo, type TurnDoneInfo } from "./claudeStreamParser.js";
 import { CLAUDE_COMMANDS_PROBE_ARGS, listClaudeCommands, probeClaudeCommands, recordClaudeTerminalCommands } from "./claudeCommands.js";
 import { CLAUDE_ACCOUNT_USAGE_PROBE_ARGS, probeClaudeAccountUsage } from "./claudeAccountUsage.js";
 import { describeClaudeExit } from "./claudeExit.js";
@@ -149,6 +149,8 @@ interface ClaudeProcessState {
   idleTimer?: NodeJS.Timeout;
   modelUsage: ClaudeModelUsageSnapshot;
   mainModel?: string;
+  compactedPostTokens?: number;
+  lastWindowTokens?: number;
 }
 
 export class ClaudeCliDriver implements CliDriver {
@@ -409,6 +411,20 @@ export class ClaudeCliDriver implements CliDriver {
   }
 
   private handleProcessLine(state: ClaudeProcessState, line: string): void {
+    const compactBoundary = parseClaudeCompactBoundary(line);
+    if (compactBoundary) {
+      state.compactedPostTokens = compactBoundary.postTokens;
+      const windowTokens = state.lastWindowTokens;
+      this.emit({
+        type: "context.compacted",
+        turnId: state.activeTurnId,
+        compaction: compactBoundary,
+        ...(compactBoundary.postTokens !== undefined && windowTokens !== undefined
+          ? { context: { usedTokens: compactBoundary.postTokens, windowTokens } }
+          : {})
+      });
+      return;
+    }
     const taskSystem = parseClaudeTaskSystemLine(line);
     if (taskSystem) {
       this.handleTaskSystem(state, taskSystem);
@@ -555,7 +571,15 @@ export class ClaudeCliDriver implements CliDriver {
     const interrupted = this.interruptedTurns.delete(turnId);
     const backgroundTasks = this.liveTaskCount(state);
     state.modelUsage = info.modelUsage;
+    if (info.windowTokens !== undefined) state.lastWindowTokens = info.windowTokens;
+    const compactedPostTokens = state.compactedPostTokens;
+    state.compactedPostTokens = undefined;
     if (!interrupted) {
+      const context =
+        info.context ??
+        (compactedPostTokens !== undefined && info.windowTokens !== undefined
+          ? { usedTokens: compactedPostTokens, windowTokens: info.windowTokens }
+          : undefined);
       this.emit({
         type: "turn.done",
         turnId,
@@ -563,7 +587,7 @@ export class ClaudeCliDriver implements CliDriver {
         resumeCursor: info.resumeCursor,
         resultText: info.resultText || this.latestTaskReport(state),
         usage: info.usage,
-        ...(info.context ? { context: info.context } : {}),
+        ...(context ? { context } : {}),
         numTurns: info.numTurns,
         isError: info.isError,
         backgroundTasks
@@ -692,6 +716,7 @@ export class ClaudeCliDriver implements CliDriver {
       existing.completedTurn = false;
       existing.heldByBackgroundWork = this.liveTaskCount(existing) > 0;
       existing.permissionMode = request.permissionMode ?? "auto";
+      existing.compactedPostTokens = undefined;
       this.clearIdleTimer(existing);
       this.turnToSession.set(turnId, request.sessionId);
       this.writeUserMessage(existing, request);
