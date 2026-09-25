@@ -1,7 +1,7 @@
 import type { ReleasePlan } from "./planValidation.ts";
 import { ALPHA_FEED_NAME, SIGNING_MANIFEST_NAME, STABLE_FEED_NAME, installerNameFor, publishableAssetNames } from "./releaseAssets.ts";
 import { blockMapNameOf, validateSigningManifest } from "./signingManifest.ts";
-import { parseUpdateInfo } from "./updateInfoYaml.ts";
+import { parseUpdateInfo, readReleaseText } from "./updateInfoYaml.ts";
 
 export interface AnonymousHttp {
   text(url: string, accept: string): Promise<{ status: number; body: string }>;
@@ -115,6 +115,8 @@ async function channelManifestCheck(input: PublishedCheckInput): Promise<{ resul
     const problems: string[] = [];
     if (info.version !== plan.version) problems.push(`advertises ${info.version}, expected ${plan.version}`);
     if (info.path !== installerNameFor(plan.version)) problems.push(`points at ${info.path}`);
+    const { releaseName } = readReleaseText(response.body);
+    if (releaseName !== plan.tag) problems.push(`releaseName is ${JSON.stringify(releaseName)}, so clients would show another release's title`);
     return { result: check("channel-manifest", url, problems, `advertises ${plan.version}`), sha512: info.sha512, size: info.files[0].size };
   } catch (error: unknown) {
     return { result: check("channel-manifest", url, [error instanceof Error ? error.message : String(error)], ""), sha512: null, size: null };

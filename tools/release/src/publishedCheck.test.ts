@@ -32,7 +32,7 @@ function published(plan: ReleasePlan, latestTag: string | null): Responses {
   const installer = randomBytes(2048);
   const blockMap = randomBytes(64);
   const name = installerNameFor(plan.version);
-  const feed = `version: ${plan.version}\nfiles:\n  - url: ${name}\n    sha512: ${digest(installer)}\n    size: ${installer.length}\npath: ${name}\nsha512: ${digest(installer)}\n`;
+  const feed = `version: ${plan.version}\nfiles:\n  - url: ${name}\n    sha512: ${digest(installer)}\n    size: ${installer.length}\npath: ${name}\nsha512: ${digest(installer)}\nreleaseName: ${plan.tag}\nreleaseNotes: notes\n`;
   const signed = { status: "Valid", signed: true, subject: "CN=SignPath Foundation", timestamped: true };
   const signing = {
     mode: "signpath",
@@ -128,6 +128,7 @@ describe("checkPublishedRelease", () => {
     other.set(`${download}/signing.json`, { status: 200, body: Buffer.from(JSON.stringify({ ...signing, mode: "unsigned", production: false, publisher: null })) });
     const second = failures(await checkPublishedRelease({ plan: ALPHA, owner: "albertofa", repo: "cw-code", http: httpFor(other) })).join("\n");
     expect(second).toMatch(/channel-manifest: advertises 1.2.0-alpha.2/);
+    expect(second).toMatch(/releaseName is "v1.2.0-alpha.2", so clients would show another release's title/);
     expect(second).toMatch(/signing: not a production signpath manifest/);
   });
 

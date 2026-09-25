@@ -66,9 +66,23 @@ through `workflow_run` would have lost the dispatch inputs. Planning rules are i
 - `workflow_run` of `CI` on `main`. The `plan` job only runs when that CI run
   succeeded, was a `push`, ran on `main` and came from this repository. It always
   plans an alpha for the CI run's `head_sha`, always validates and always signs in
-  `unsigned` mode, so an
-  automatic run never waits for a human signing approval and never uses signing
-  quota.
+  `unsigned` mode, so an automatic run never waits for a human signing approval and
+  never uses signing quota.
+
+  **Cost of automatic validation (owner decision).** The 6-hour and unchanged-HEAD
+  skips key on the latest *published* release. Automatic runs never publish, so they do
+  not coalesce: outside the 6 hours after a publication, every green CI push to `main`
+  runs the whole validation graph (a Windows build and test job, the unsigned
+  `sign-windows.yml` packaging jobs and `verify-candidate` with an install probe),
+  roughly an hour or more of Windows runner time per push. The trigger is left as is on
+  purpose; the choice belongs to the owner:
+
+  - keep per-push validation: every change on `main` proves the release path, at that
+    runner cost; or
+  - gate `workflow_run` behind a repository variable (for example
+    `CW_RELEASE_AUTO_VALIDATE == 'true'` added to the `plan` job condition), so
+    automatic validation only runs while the owner wants it, and rely on manual
+    `validate` dispatches otherwise.
 - `workflow_dispatch` on `main` with `channel` (alpha | stable), `candidate`,
   `expected_sha`, `force` and `mode` (validate | publish, default validate). Inputs
   reach scripts through `env:` only. An alpha dispatch with `candidate` or
@@ -154,10 +168,14 @@ bytes:
 - `alpha.yml`, a byte copy of `latest.yml`
 - `signing.json`
 
-electron-builder 26's GitHub publisher writes only `latest.yml`.
-`stage-release-set` writes `alpha.yml` as a byte copy when it is missing, so alpha
-clients never depend on electron-updater's 404 fallback. Stable releases carry it too:
-alpha clients also read stable releases from the Atom feed.
+electron-builder 26's GitHub publisher writes only `latest.yml`, without a release
+name or notes. `stage-release-set` adds `releaseName` (the tag) and `releaseNotes` (the
+plan's notes) to it, then writes `alpha.yml` as its byte copy (an `alpha.yml` from the
+build must equal `latest.yml`). Alpha clients therefore never depend on electron-updater's
+404 fallback, and no client shows another release's title or notes (see
+[updater.md](updater.md)). Stable releases carry `alpha.yml` too: alpha clients also read
+stable releases from the Atom feed. The installer, its digest and the blockmap are not
+touched, and `signing.json` does not hash the channel files.
 
 `validate-release-assets --dir <set> --plan <plan.json> --run-id <id> [--signing
 <signing.json>] [--unpacked-root <full set>] [--require-production]
@@ -166,7 +184,8 @@ alpha clients also read stable releases from the Atom feed.
 - a missing file, an extra file or any directory;
 - an installer name other than `cw-code-Setup-<plan.version>-x64.exe`;
 - `latest.yml` whose version, path, url, sha512 or size disagrees with the plan or the
-  installer bytes, or an `alpha.yml` that is not byte-identical;
+  installer bytes, a `releaseName`/`releaseNotes` that is missing or differs from the plan's
+  tag and notes, or an `alpha.yml` that is not byte-identical;
 - a blockmap that is not an electron-builder v2 gzip blockmap covering exactly the
   installer size, or whose digest differs from `signing.json`;
 - a `signing.json` that is invalid, belongs to another version, source SHA or run,
@@ -239,7 +258,7 @@ GitHub's CDN lags. It checks:
   release and channel-manifest checks cover it. The feed's window size and its
   caching are not documented by GitHub, so this check is the least certain one; a
   failure here with every other check green is most likely feed lag;
-- the channel manifest a client downloads, with the planned version:
+- the channel manifest a client downloads, with the planned version and `releaseName`:
   `https://github.com/albertofa/cw-code/releases/latest/download/latest.yml` for stable,
   `https://github.com/albertofa/cw-code/releases/download/<tag>/alpha.yml` for alpha;
 - the installer, downloaded in full, matches the manifest sha512 and size;
@@ -263,7 +282,7 @@ never accepts an alpha. A stable candidate takes the highest N of either channel
 - `found` and `signpath` mode: `verify-installed-upgrade.mjs --production-bytes`
   installs N, points its `app-update.yml` at the loopback feed serving the candidate
   set, updates through the real renderer bridge and checks version, relaunch,
-  signature and data (see [update-testing.md](update-testing.md#production-bytes-step-09)).
+  signature and data (see [update-testing.md](update-testing.md#production-bytes)).
 - `found` and `unsigned` mode: skipped with a warning, because N would reject an
   unsigned candidate by publisher.
 - `bootstrap` (no pipeline release exists yet): skipped with a notice. The first

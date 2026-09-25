@@ -7,6 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ReleasePlan } from "./planValidation.ts";
 import { blockMapShapeErrors, installerNameFor, publishableAssetNames, stageReleaseSet, validateReleaseAssets } from "./releaseAssets.ts";
 import type { SigningManifest } from "./signingManifest.ts";
+import { readReleaseText, withReleaseText } from "./updateInfoYaml.ts";
 
 const VERSION = "1.2.0-alpha.3";
 const INSTALLER = installerNameFor(VERSION);
@@ -31,8 +32,12 @@ function digest(bytes: Buffer): string {
   return createHash("sha512").update(bytes).digest("base64");
 }
 
-function feed(version: string, sha512: string, size: number, installer = INSTALLER): string {
+function bareFeed(version: string, sha512: string, size: number, installer = INSTALLER): string {
   return `version: ${version}\nfiles:\n  - url: ${installer}\n    sha512: ${sha512}\n    size: ${size}\npath: ${installer}\nsha512: ${sha512}\nreleaseDate: '2026-09-25T06:00:00.000Z'\n`;
+}
+
+function feed(version: string, sha512: string, size: number, installer = INSTALLER): string {
+  return withReleaseText(bareFeed(version, sha512, size, installer), { releaseName: PLAN.tag, releaseNotes: PLAN.notes });
 }
 
 function blockMapFor(size: number): Buffer {
@@ -129,6 +134,18 @@ describe("validateReleaseAssets", () => {
     expect(await errors()).toMatch(/alpha.yml must be a byte copy of latest.yml/);
   });
 
+  it("requires the feed to carry this release's name and notes so clients never show another release's text", async () => {
+    const write = (text: string) => Promise.all(["latest.yml", "alpha.yml"].map((name) => writeFile(join(dir, name), text)));
+    await write(bareFeed(VERSION, digest(installer), installer.length));
+    const missing = await errors();
+    expect(missing).toMatch(/releaseName null must be v1.2.0-alpha.3/);
+    expect(missing).toMatch(/releaseNotes differ from the plan notes/);
+    await write(withReleaseText(bareFeed(VERSION, digest(installer), installer.length), { releaseName: "v1.2.0-alpha.2", releaseNotes: "older notes" }));
+    const stale = await errors();
+    expect(stale).toMatch(/releaseName "v1.2.0-alpha.2" must be v1.2.0-alpha.3/);
+    expect(stale).toMatch(/releaseNotes differ/);
+  });
+
   it("rejects a feed whose version, installer name, digest or size disagrees with the plan and the bytes", async () => {
     const write = (text: string) => Promise.all(["latest.yml", "alpha.yml"].map((name) => writeFile(join(dir, name), text)));
     await write(feed("1.2.0-alpha.4", digest(installer), installer.length));
@@ -206,17 +223,22 @@ describe("stageReleaseSet", () => {
     await rm(root, { recursive: true, force: true });
   });
 
-  it("copies exactly the publishable files and generates alpha.yml as a byte copy of latest.yml", async () => {
+  it("copies exactly the publishable files, adds the plan's release name and notes to latest.yml and writes alpha.yml as its byte copy", async () => {
+    await writeFile(join(root, "from", "latest.yml"), bareFeed(VERSION, "x", 1));
     const staged = await stageReleaseSet(join(root, "from"), join(root, "to"), PLAN);
-    expect(staged).toContain("alpha.yml (generated from latest.yml)");
+    expect(staged).toContain("alpha.yml (latest.yml with releaseName and releaseNotes from the plan)");
     expect((await readdir(join(root, "to"))).sort()).toEqual([...publishableAssetNames(PLAN)].sort());
-    expect(await readFile(join(root, "to", "alpha.yml"), "utf8")).toBe("latest.yml");
+    const latest = await readFile(join(root, "to", "latest.yml"));
+    expect(latest.equals(await readFile(join(root, "to", "alpha.yml")))).toBe(true);
+    expect(readReleaseText(latest.toString("utf8"))).toEqual({ releaseName: PLAN.tag, releaseNotes: PLAN.notes });
+    expect(latest.toString("utf8").startsWith(bareFeed(VERSION, "x", 1))).toBe(true);
   });
 
-  it("keeps an existing alpha.yml and refuses a non-empty target or a missing input", async () => {
+  it("accepts an identical alpha.yml, refuses a different one, a non-empty target or a missing input", async () => {
     await writeFile(join(root, "from", "alpha.yml"), "own alpha");
+    await expect(stageReleaseSet(join(root, "from"), join(root, "to"), PLAN)).rejects.toThrow(/alpha.yml .* differs from latest.yml/);
+    await writeFile(join(root, "from", "alpha.yml"), "latest.yml");
     await stageReleaseSet(join(root, "from"), join(root, "to"), PLAN);
-    expect(await readFile(join(root, "to", "alpha.yml"), "utf8")).toBe("own alpha");
     await expect(stageReleaseSet(join(root, "from"), join(root, "to"), PLAN)).rejects.toThrow(/not empty/);
     await rm(join(root, "from", "signing.json"));
     await expect(stageReleaseSet(join(root, "from"), join(root, "fresh"), PLAN)).rejects.toThrow(/signing.json is missing/);

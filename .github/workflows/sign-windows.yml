@@ -561,6 +561,6 @@ jobs:
             echo "- source-sha: ${SOURCE_SHA}"
             echo "- artifact: ${RELEASE_ARTIFACT}"
             if [ "$MODE" = "unsigned" ]; then
-              echo "- **non-production**: unsigned artifacts; the step-09 validator refuses to publish them"
+              echo "- **non-production**: unsigned artifacts; validate-release-assets and publish in release.yml refuse them"
             fi
           } >> "$GITHUB_STEP_SUMMARY"

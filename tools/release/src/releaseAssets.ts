@@ -1,4 +1,4 @@
-import { copyFile, mkdir, readdir, readFile, stat } from "node:fs/promises";
+import { copyFile, mkdir, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import { gunzipSync } from "node:zlib";
 import { type ReleasePlan, validatePlanShape } from "./planValidation.ts";
@@ -12,7 +12,7 @@ import {
   provenanceMismatches,
   validateSigningManifest
 } from "./signingManifest.ts";
-import { parseUpdateInfo } from "./updateInfoYaml.ts";
+import { normalizeReleaseNotes, parseUpdateInfo, readReleaseText, withReleaseText } from "./updateInfoYaml.ts";
 
 export const SIGNING_MANIFEST_NAME = "signing.json";
 export const STABLE_FEED_NAME = "latest.yml";
@@ -105,6 +105,13 @@ function feedErrors(text: string, plan: ReleasePlan, installer: ReleaseAssetFile
   if (installer) {
     if (file.sha512 !== installer.sha512) errors.push(`${STABLE_FEED_NAME} sha512 does not match the installer bytes`);
     if (file.size !== installer.size) errors.push(`${STABLE_FEED_NAME} size ${file.size} does not match the installer (${installer.size} bytes)`);
+  }
+  const release = readReleaseText(text);
+  if (release.releaseName !== plan.tag) {
+    errors.push(`${STABLE_FEED_NAME} releaseName ${JSON.stringify(release.releaseName)} must be ${plan.tag}, or clients fall back to another release's title`);
+  }
+  if (release.releaseNotes !== normalizeReleaseNotes(plan.notes)) {
+    errors.push(`${STABLE_FEED_NAME} releaseNotes differ from the plan notes, or clients fall back to another release's notes`);
   }
   return errors;
 }
@@ -235,15 +242,25 @@ export async function stageReleaseSet(from: string, to: string, plan: unknown): 
   if (await exists(to)) {
     if ((await readdir(to)).length > 0) throw new Error(`${to} already exists and is not empty; stage into a fresh directory`);
   }
+  const { plan: validPlan } = shape;
+  const latestPath = join(from, STABLE_FEED_NAME);
+  if (!(await exists(latestPath))) throw new Error(`${STABLE_FEED_NAME} is missing from ${from}`);
+  const latest = await readFile(latestPath);
+  const alphaPath = join(from, ALPHA_FEED_NAME);
+  if ((await exists(alphaPath)) && !latest.equals(await readFile(alphaPath))) {
+    throw new Error(`${ALPHA_FEED_NAME} in ${from} differs from ${STABLE_FEED_NAME}; the channel files must describe the same installer`);
+  }
+  const feed = withReleaseText(latest.toString("utf8"), { releaseName: validPlan.tag, releaseNotes: validPlan.notes });
+
   await mkdir(to, { recursive: true });
   const staged: string[] = [];
-  for (const name of publishableAssetNames(shape.plan)) {
-    const source = join(from, name);
-    if (name === ALPHA_FEED_NAME && !(await exists(source))) {
-      await copyFile(join(from, STABLE_FEED_NAME), join(to, name));
-      staged.push(`${name} (generated from ${STABLE_FEED_NAME})`);
+  for (const name of publishableAssetNames(validPlan)) {
+    if (name === STABLE_FEED_NAME || name === ALPHA_FEED_NAME) {
+      await writeFile(join(to, name), feed, "utf8");
+      staged.push(`${name} (${STABLE_FEED_NAME} with releaseName and releaseNotes from the plan)`);
       continue;
     }
+    const source = join(from, name);
     if (!(await exists(source))) throw new Error(`${name} is missing from ${from}`);
     await copyFile(source, join(to, name));
     staged.push(name);

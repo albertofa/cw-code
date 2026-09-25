@@ -94,8 +94,11 @@ exactly the diverged tags (`plan --acknowledge-diverged-tag <tag>[,<tag>]`); the
 records them in `acknowledgedDivergedTags` and `verify-plan` accepts only those. See
 [releases.md](releases.md#recovery).
 
-This coalesces bursts of merges into at most one alpha release per 6 hours, without
-publishing a redundant alpha for an unchanged commit. Note: releases published before this
+Both skips key on the latest **published** release, so they limit publications to at most
+one alpha per 6 hours and never republish an unchanged commit. They do not coalesce
+automatic runs: `workflow_run` runs only validate and never publish, so outside the 6 hours
+after a publication every green CI run on `main` plans and runs the full validation
+pipeline (see the cost note in [releases.md](releases.md#triggers)). Note: releases published before this
 tooling existed have tags pointing at the old per-release-branch merge commit rather than a
 `main` SHA, so the "unchanged HEAD" comparison against those historical tags will never match
 `main`'s HEAD; the skip only becomes fully effective once every published tag's resolved
