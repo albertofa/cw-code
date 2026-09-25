@@ -255,7 +255,7 @@ export class ClaudeCliDriver implements CliDriver {
       if (
         this.liveTaskCount(state) > 0 ||
         !state.completedTurn ||
-        state.postCompletionOutputPending ||
+        (state.postCompletionOutputPending && Date.now() - state.lastActivityAt < CLAUDE_IDLE_EVICT_MS) ||
         this.hasPendingForSession(state.sessionId)
       ) {
         this.armIdleTimer(state);
