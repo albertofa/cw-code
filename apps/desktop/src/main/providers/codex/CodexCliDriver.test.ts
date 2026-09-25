@@ -25,6 +25,7 @@ const SETTINGS: AppSettings = {
   sourceControlRefreshIntervalSeconds: 30,
   defaultUseWorktree: true,
   holdingHours: 6,
+  holdingAutoExpireEnabled: false,
   autoTitleEnabled: true,
   autoTitleDriver: "claude",
   autoTitleModel: "claude-sonnet-5",

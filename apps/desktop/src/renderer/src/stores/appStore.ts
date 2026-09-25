@@ -151,6 +151,7 @@ interface AppState {
   refreshGitStatus(sessionId: string): Promise<void>;
   sourceControlRefreshIntervalSeconds: number;
   prRefreshIntervalSeconds: number;
+  holdingAutoExpireEnabled: boolean;
   holdingHours: number;
   defaultUseWorktree: boolean;
   reasoningExpandedByDriver: Record<DriverName, boolean>;
@@ -301,6 +302,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   gitStatusBySession: {},
   sourceControlRefreshIntervalSeconds: 30,
   prRefreshIntervalSeconds: 120,
+  holdingAutoExpireEnabled: false,
   holdingHours: 6,
   defaultUseWorktree: true,
   reasoningExpandedByDriver: { claude: false, opencode: false, codex: false },
@@ -376,6 +378,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       projects,
       sourceControlRefreshIntervalSeconds: settings.sourceControlRefreshIntervalSeconds,
       prRefreshIntervalSeconds: settings.prRefreshIntervalSeconds,
+      holdingAutoExpireEnabled: settings.holdingAutoExpireEnabled,
       holdingHours: settings.holdingHours,
       defaultUseWorktree: settings.defaultUseWorktree,
       reasoningExpandedByDriver: reasoningExpandedFrom(settings),
@@ -560,6 +563,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   async expireHoldingSessions() {
+    if (!get().holdingAutoExpireEnabled) return;
     const sessions = Object.values(get().sessionsByProject).flat();
     const ids = expiredHoldingIds(sessions, get().holdingHours, Date.now());
     if (ids.length === 0) return;
@@ -851,6 +855,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       settingsVersion: get().settingsVersion + 1,
       sourceControlRefreshIntervalSeconds: saved.sourceControlRefreshIntervalSeconds,
       prRefreshIntervalSeconds: saved.prRefreshIntervalSeconds,
+      holdingAutoExpireEnabled: saved.holdingAutoExpireEnabled,
       holdingHours: saved.holdingHours,
       defaultUseWorktree: saved.defaultUseWorktree,
       reasoningExpandedByDriver: reasoningExpandedFrom(saved)
