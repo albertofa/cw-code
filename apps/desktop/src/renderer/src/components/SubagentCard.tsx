@@ -1,5 +1,5 @@
 import { memo, useEffect } from "react";
-import { Check, ChevronRight, CircleDot, TriangleAlert } from "lucide-react";
+import { Bot, ChevronRight, CircleDot, TriangleAlert } from "lucide-react";
 import type { SubagentGroup } from "./subagents.js";
 import { formatSubagentCount, formatTokensShort, groupStatus, groupSubagentMetrics } from "./subagents.js";
 import { openAgentsPanel } from "./AgentsPanel.js";
@@ -11,7 +11,7 @@ export function subagentAnchorId(groupId: string): string {
 export const SubagentCard = memo(function SubagentCard({ group }: { group: SubagentGroup }) {
   const status = groupStatus(group.items);
   const metrics = groupSubagentMetrics(group.items);
-  const StatusIcon = status === "completed" ? Check : status === "error" ? TriangleAlert : CircleDot;
+  const StatusIcon = status === "completed" ? Bot : status === "error" ? TriangleAlert : CircleDot;
   const statusLabel = status === "completed" ? "Completed" : status === "error" ? "Error" : "Running";
 
   useEffect(() => {

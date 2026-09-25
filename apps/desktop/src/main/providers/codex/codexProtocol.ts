@@ -2,15 +2,22 @@ import type {
   ApprovalDecision,
   ApprovalKind,
   ApprovalRequest,
+  CommandOption,
+  ContextUsage,
   EffortLevel,
   HistoryMessage,
   ModelOption,
   PermissionMode,
+  PermissionOption,
   QuestionInfo,
   QuestionOption,
   QuestionRequest,
-  SessionMeta
+  SessionMeta,
+  SubagentToolActivity,
+  TodoItem,
+  TokenCounts
 } from "@cw-code/contracts";
+import { todosFromPlan } from "../todos.js";
 
 export interface CodexTokenUsageBreakdown {
   totalTokens: number;
@@ -29,7 +36,8 @@ export interface CodexTokenUsage {
 
 export type CodexUserInput =
   | { type: "text"; text: string }
-  | { type: "localImage"; path: string };
+  | { type: "localImage"; path: string }
+  | { type: "skill"; name: string; path: string };
 
 export interface CodexFileUpdateChange {
   path: string;
@@ -54,6 +62,109 @@ export interface CodexThreadItem {
   questions?: unknown;
   result?: unknown;
   content?: Array<{ type?: string; text?: string; path?: string }>;
+  summary?: Array<{ type?: string; text?: string }>;
+  review?: string;
+}
+
+export interface CodexCollabTool {
+  tool: string;
+  senderThreadId?: string;
+  receiverThreadIds: string[];
+  prompt?: string;
+  status?: string;
+  agentsStates?: unknown;
+}
+
+function collabString(value: unknown): string | undefined {
+  return typeof value === "string" && value ? value : undefined;
+}
+
+function collabStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.filter((entry): entry is string => typeof entry === "string" && entry.length > 0)
+    : [];
+}
+
+export function codexCollabTool(item: CodexThreadItem): CodexCollabTool | null {
+  if (item.type !== "collabToolCall" && item.type !== "collab_tool_call") return null;
+  const raw = item as unknown as Record<string, unknown>;
+  const tool = collabString(raw["tool"]);
+  if (!tool) return null;
+  const senderThreadId = collabString(raw["senderThreadId"]) ?? collabString(raw["sender_thread_id"]);
+  const prompt = collabString(raw["prompt"]);
+  const agentsStates = raw["agentsStates"] ?? raw["agents_states"];
+  return {
+    tool,
+    receiverThreadIds: collabStringArray(raw["receiverThreadIds"] ?? raw["receiver_thread_ids"]),
+    ...(senderThreadId ? { senderThreadId } : {}),
+    ...(prompt ? { prompt } : {}),
+    ...(item.status ? { status: item.status } : {}),
+    ...(agentsStates !== undefined ? { agentsStates } : {})
+  };
+}
+
+export function mapCodexSubagentTools(thread: CodexThread): SubagentToolActivity[] {
+  const items: SubagentToolActivity[] = [];
+  for (const turn of thread.turns ?? []) {
+    const startedAt = turn.startedAt != null ? turn.startedAt * 1000 : undefined;
+    const completedAt = turn.completedAt != null ? turn.completedAt * 1000 : undefined;
+    for (const item of turn.items ?? []) {
+      if (!item.id) continue;
+      const base = {
+        id: item.id,
+        ...(startedAt !== undefined ? { timestamp: startedAt } : {}),
+        ...(completedAt !== undefined ? { completedAt } : {})
+      };
+      const failed = item.status === "failed" || item.status === "declined";
+      if (item.type === "commandExecution") {
+        const output = (item.aggregatedOutput ?? "").trim();
+        items.push({
+          ...base,
+          name: "shell",
+          input: { command: item.command ?? "", cwd: item.cwd ?? "" },
+          ...(output ? { output: output.slice(0, 4000) } : {}),
+          ...(failed || (item.exitCode ?? 0) > 0 ? { isError: true } : {})
+        });
+      } else if (item.type === "fileChange") {
+        const changes = item.changes ?? [];
+        items.push({
+          ...base,
+          name: "edit",
+          input: { changes },
+          ...(changes.length > 0
+            ? { output: changes.map((change) => `${change.kind} ${change.path}`).join("\n").slice(0, 4000) }
+            : {}),
+          ...(failed ? { isError: true } : {})
+        });
+      } else if (item.type === "mcpToolCall") {
+        items.push({
+          ...base,
+          name: item.tool ?? "mcp",
+          input: item.arguments ?? null,
+          ...(item.result !== undefined && item.result !== null
+            ? { output: JSON.stringify(item.result).slice(0, 4000) }
+            : {}),
+          ...(failed ? { isError: true } : {})
+        });
+      } else if (item.type === "webSearch") {
+        items.push({ ...base, name: "websearch", input: { query: item.text ?? "" } });
+      }
+    }
+  }
+  return items;
+}
+
+export function codexReasoningText(item: CodexThreadItem): string {
+  const parts: string[] = [];
+  const push = (value: unknown): void => {
+    if (typeof value !== "string") return;
+    const text = value.trim();
+    if (text && !parts.includes(text)) parts.push(text);
+  };
+  for (const entry of item.summary ?? []) push(entry.text);
+  for (const entry of item.content ?? []) push(entry.text);
+  push(item.text);
+  return parts.join("\n\n");
 }
 
 export interface CodexTurnError {
@@ -129,13 +240,19 @@ export function mapPermissionMode(mode: PermissionMode | undefined): CodexPermis
   if (mode === "acceptEdits") {
     return { approvalPolicy: "on-request", sandbox: "workspace-write", planMode: false };
   }
-  if (mode === "plan") {
-    return { approvalPolicy: "on-request", sandbox: "read-only", planMode: true };
-  }
-  return { approvalPolicy: "untrusted", sandbox: "read-only", planMode: false };
+  return { approvalPolicy: "on-request", sandbox: "read-only", planMode: false };
+}
+
+export function listCodexPermissionModes(): PermissionOption[] {
+  return [
+    { id: "manual", label: "Read Only", description: "Reads files and answers questions; edits and commands need approval.", native: true },
+    { id: "auto", label: "Auto", description: "Writes inside the workspace; approval requests go through automatic review.", native: true },
+    { id: "bypassPermissions", label: "Full Access", description: "No sandbox and no approval prompts.", native: true }
+  ];
 }
 
 export function mapCodexEffort(effort: EffortLevel | string | undefined): string | null {
+  if (effort === "minimal") return "low";
   if (effort === "low" || effort === "medium" || effort === "high" || effort === "xhigh" || effort === "max") {
     return effort;
   }
@@ -161,6 +278,17 @@ export function mapCodexThread(thread: CodexThread, projectId: string): SessionM
   };
 }
 
+export interface CodexPlanUpdate {
+  threadId?: string;
+  turnId?: string;
+  explanation?: string | null;
+  plan?: Array<{ step?: unknown; status?: unknown }>;
+}
+
+export function mapCodexPlan(plan: unknown): TodoItem[] | null {
+  return todosFromPlan(plan);
+}
+
 export function buildCodexUserInput(prompt: string, cwd: string, attachments: string[] | undefined): CodexUserInput[] {
   const input: CodexUserInput[] = [];
   if (prompt.trim()) input.push({ type: "text", text: prompt });
@@ -170,6 +298,68 @@ export function buildCodexUserInput(prompt: string, cwd: string, attachments: st
     }
   }
   return input;
+}
+
+const RESERVED_COMMAND_NAMES = new Set(["compact", "review"]);
+
+export function mapCodexSkillCommands(res: unknown): { commands: CommandOption[]; paths: Map<string, string> } {
+  const commands: CommandOption[] = [];
+  const paths = new Map<string, string>();
+  const data = (res as Record<string, unknown> | null)?.["data"];
+  if (!Array.isArray(data)) return { commands, paths };
+  for (const entry of data) {
+    if (entry === null || typeof entry !== "object") continue;
+    const entryRaw = entry as Record<string, unknown>;
+    const errors = entryRaw["errors"];
+    if (Array.isArray(errors)) {
+      for (const error of errors) {
+        if (error === null || typeof error !== "object") continue;
+        const errorRaw = error as Record<string, unknown>;
+        const path = typeof errorRaw["path"] === "string" ? errorRaw["path"] : "";
+        const message = typeof errorRaw["message"] === "string" ? errorRaw["message"] : "";
+        console.warn(`codex skill error: ${path} ${message}`.trim());
+      }
+    }
+    const skills = entryRaw["skills"];
+    if (!Array.isArray(skills)) continue;
+    for (const skill of skills) {
+      if (skill === null || typeof skill !== "object") continue;
+      const raw = skill as Record<string, unknown>;
+      if (raw["enabled"] !== true) continue;
+      const name = raw["name"];
+      const path = raw["path"];
+      if (typeof name !== "string" || !name || typeof path !== "string" || !path) continue;
+      if (RESERVED_COMMAND_NAMES.has(name)) continue;
+      const iface = raw["interface"];
+      const ifaceShort =
+        iface !== null && typeof iface === "object" ? (iface as Record<string, unknown>)["shortDescription"] : undefined;
+      const shortDescription = raw["shortDescription"];
+      const description = raw["description"];
+      commands.push({
+        name,
+        description:
+          (typeof ifaceShort === "string" && ifaceShort) ||
+          (typeof shortDescription === "string" && shortDescription) ||
+          (typeof description === "string" ? description : ""),
+        dispatch: "native"
+      });
+      paths.set(name, path);
+    }
+  }
+  return { commands, paths };
+}
+
+export function codexReviewTarget(args: string): { type: "uncommittedChanges" } | { type: "custom"; instructions: string } {
+  const instructions = args.trim();
+  return instructions ? { type: "custom", instructions } : { type: "uncommittedChanges" };
+}
+
+export function buildCodexSkillInput(name: string, path: string, args: string): CodexUserInput[] {
+  const trimmed = args.trim();
+  return [
+    { type: "text", text: trimmed ? `$${name} ${trimmed}` : `$${name}` },
+    { type: "skill", name, path }
+  ];
 }
 
 const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "webp", "gif"]);
@@ -189,9 +379,16 @@ export function mapCodexHistory(thread: CodexThread, limit = 300): HistoryMessag
   const out: HistoryMessage[] = [];
   for (const turn of thread.turns ?? []) {
     const turnId = turn.id;
-    const timestamp = (turn.startedAt ?? null) != null ? (turn.startedAt as number) * 1000 : undefined;
+    const startedAt = turn.startedAt ?? null;
+    const completedAt = turn.completedAt ?? null;
+    const timestamp = startedAt != null ? startedAt * 1000 : undefined;
+    const first = out.length;
+    const hasAgentMessage = (turn.items ?? []).some((item) => item.type === "agentMessage");
     for (const item of turn.items ?? []) {
-      pushHistoryItem(out, item, turnId, timestamp);
+      pushHistoryItem(out, item, turnId, timestamp, hasAgentMessage);
+    }
+    if (out.length > first && completedAt != null && timestamp !== undefined) {
+      out[out.length - 1] = { ...out[out.length - 1], timestamp: completedAt * 1000 };
     }
   }
   return out.slice(-limit);
@@ -201,7 +398,8 @@ function pushHistoryItem(
   out: HistoryMessage[],
   item: CodexThreadItem,
   turnId: string,
-  timestamp: number | undefined
+  timestamp: number | undefined,
+  hasAgentMessage: boolean
 ): void {
   const id = item.id ?? `${turnId}-${out.length}`;
   switch (item.type) {
@@ -216,6 +414,15 @@ function pushHistoryItem(
     case "agentMessage":
     case "plan": {
       if (item.text) out.push({ id, role: "assistant", text: item.text, turnId, timestamp });
+      break;
+    }
+    case "exitedReviewMode": {
+      if (item.review && !hasAgentMessage) out.push({ id, role: "assistant", text: item.review, turnId, timestamp });
+      break;
+    }
+    case "reasoning": {
+      const text = codexReasoningText(item);
+      if (text) out.push({ id, role: "reasoning", text, turnId, timestamp });
       break;
     }
     case "commandExecution": {
@@ -399,12 +606,29 @@ export function approvalResultFor(
   return { decision };
 }
 
-export function accumulateCodexUsage(
-  acc: { inputTokens: number; outputTokens: number },
-  usage: CodexTokenUsage
-): void {
+export interface CodexTurnUsageAcc {
+  counts: TokenCounts;
+  lastTotal?: number;
+  context?: ContextUsage;
+}
+
+export function accumulateCodexTurnUsage(acc: CodexTurnUsageAcc, usage: CodexTokenUsage): boolean {
+  const totalTokens = usage.total?.totalTokens;
+  if (typeof totalTokens === "number" && totalTokens === acc.lastTotal) return false;
+  if (typeof totalTokens === "number") acc.lastTotal = totalTokens;
+
   const last = usage.last;
-  acc.inputTokens +=
-    (last.inputTokens ?? 0) + (last.cachedInputTokens ?? 0) + (last.cacheWriteInputTokens ?? 0);
-  acc.outputTokens += (last.outputTokens ?? 0) + (last.reasoningOutputTokens ?? 0);
+  const cached = last.cachedInputTokens ?? 0;
+  const cacheWrite = last.cacheWriteInputTokens ?? 0;
+  const input = last.inputTokens ?? 0;
+  acc.counts.inputTokens += Math.max(0, input - cached - cacheWrite);
+  acc.counts.cacheReadTokens += cached;
+  acc.counts.cacheWriteTokens += cacheWrite;
+  acc.counts.outputTokens += last.outputTokens ?? 0;
+  acc.counts.reasoningTokens += last.reasoningOutputTokens ?? 0;
+
+  if (usage.modelContextWindow != null) {
+    acc.context = { usedTokens: last.totalTokens ?? 0, windowTokens: usage.modelContextWindow };
+  }
+  return true;
 }

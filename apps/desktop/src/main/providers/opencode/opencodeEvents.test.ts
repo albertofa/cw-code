@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { toolResultFromState } from "./opencodeEvents.js";
+import {
+  opencodeSessionParentId,
+  parseOpencodeSessionError,
+  parseOpencodeSessionParent,
+  parseOpencodeStatusRetry,
+  parseOpencodeTodosUpdated,
+  toolResultFromState
+} from "./opencodeEvents.js";
 
 describe("toolResultFromState", () => {
   it("maps string state to a plain result", () => {
@@ -29,5 +36,188 @@ describe("toolResultFromState", () => {
     expect(toolResultFromState({ status: "running", output: "partial" })).toBeNull();
     expect(toolResultFromState(null)).toBeNull();
     expect(toolResultFromState(42)).toBeNull();
+  });
+});
+
+describe("parseOpencodeTodosUpdated", () => {
+  it("parses a valid todo.updated envelope into normalized items", () => {
+    expect(
+      parseOpencodeTodosUpdated({
+        type: "todo.updated",
+        properties: {
+          sessionID: "ses_1",
+          todos: [
+            { content: "Write tests", status: "in_progress", priority: "high" },
+            { content: "Ship it", status: "completed" }
+          ]
+        }
+      })
+    ).toEqual({
+      sessionID: "ses_1",
+      todos: [
+        { content: "Write tests", status: "in_progress", priority: "high" },
+        { content: "Ship it", status: "completed" }
+      ]
+    });
+  });
+
+  it("accepts an empty todos array as an explicit clear", () => {
+    expect(
+      parseOpencodeTodosUpdated({ type: "todo.updated", properties: { sessionID: "ses_1", todos: [] } })
+    ).toEqual({ sessionID: "ses_1", todos: [] });
+  });
+
+  it("returns null when properties or sessionID are missing", () => {
+    expect(parseOpencodeTodosUpdated({ type: "todo.updated" })).toBeNull();
+    expect(parseOpencodeTodosUpdated({ type: "todo.updated", properties: { todos: [] } })).toBeNull();
+    expect(parseOpencodeTodosUpdated({ type: "todo.updated", properties: { sessionID: 7, todos: [] } })).toBeNull();
+  });
+
+  it("returns null when todos is not an array", () => {
+    expect(
+      parseOpencodeTodosUpdated({ type: "todo.updated", properties: { sessionID: "ses_1", todos: "nope" } })
+    ).toBeNull();
+    expect(parseOpencodeTodosUpdated({ type: "todo.updated", properties: { sessionID: "ses_1" } })).toBeNull();
+  });
+
+  it("returns null for a different envelope type or a malformed event", () => {
+    expect(
+      parseOpencodeTodosUpdated({ type: "message.part.delta", properties: { sessionID: "ses_1", todos: [] } })
+    ).toBeNull();
+    expect(parseOpencodeTodosUpdated(null)).toBeNull();
+    expect(parseOpencodeTodosUpdated([])).toBeNull();
+  });
+});
+
+describe("parseOpencodeSessionParent", () => {
+  it("reads child lineage from session.created and session.updated", () => {
+    expect(
+      parseOpencodeSessionParent({
+        type: "session.created",
+        properties: { sessionID: "ses_child", info: { id: "ses_child", parentID: "ses_root" } }
+      })
+    ).toEqual({ sessionID: "ses_child", parentID: "ses_root" });
+    expect(
+      parseOpencodeSessionParent({
+        type: "session.updated",
+        properties: { info: { id: "ses_child", parentID: "ses_root" } }
+      })
+    ).toEqual({ sessionID: "ses_child", parentID: "ses_root" });
+  });
+
+  it("returns null for root sessions, other events and malformed payloads", () => {
+    expect(
+      parseOpencodeSessionParent({ type: "session.created", properties: { info: { id: "ses_root" } } })
+    ).toBeNull();
+    expect(
+      parseOpencodeSessionParent({ type: "message.updated", properties: { info: { id: "ses_1", parentID: "ses_0" } } })
+    ).toBeNull();
+    expect(parseOpencodeSessionParent(null)).toBeNull();
+    expect(parseOpencodeSessionParent({ type: "session.created" })).toBeNull();
+  });
+});
+
+describe("opencodeSessionParentId", () => {
+  it("reads parentID from direct, data and info payloads", () => {
+    expect(opencodeSessionParentId({ id: "ses_child", parentID: "ses_root" })).toBe("ses_root");
+    expect(opencodeSessionParentId({ data: { id: "ses_child", parentID: "ses_root" } })).toBe("ses_root");
+    expect(opencodeSessionParentId({ info: { id: "ses_child", parentID: "ses_root" } })).toBe("ses_root");
+  });
+
+  it("returns null for root sessions and malformed payloads", () => {
+    expect(opencodeSessionParentId({ id: "ses_root" })).toBeNull();
+    expect(opencodeSessionParentId(null)).toBeNull();
+    expect(opencodeSessionParentId({ data: [] })).toBeNull();
+  });
+});
+
+describe("parseOpencodeStatusRetry", () => {
+  it("parses a retry status with its upsell action", () => {
+    expect(
+      parseOpencodeStatusRetry({
+        type: "session.status",
+        properties: {
+          sessionID: "ses_1",
+          status: {
+            type: "retry",
+            attempt: 1,
+            message: "Free usage exceeded, subscribe to Go",
+            next: 1789603191837,
+            action: {
+              reason: "free_tier_limit",
+              provider: "opencode",
+              title: "Free limit reached",
+              message: "Subscribe to OpenCode Go for reliable access to the best open-source models for $10/month.",
+              label: "subscribe",
+              link: "https://opencode.ai/go"
+            }
+          }
+        }
+      })
+    ).toEqual({
+      sessionID: "ses_1",
+      attempt: 1,
+      message: "Free usage exceeded, subscribe to Go",
+      detail: "Subscribe to OpenCode Go for reliable access to the best open-source models for $10/month.",
+      retryAt: 1789603191837,
+      link: "https://opencode.ai/go"
+    });
+  });
+
+  it("parses a bare retry status without action metadata", () => {
+    expect(
+      parseOpencodeStatusRetry({
+        type: "session.status",
+        properties: { sessionID: "ses_1", status: { type: "retry", attempt: 2, message: "Provider is overloaded", next: 5 } }
+      })
+    ).toEqual({ sessionID: "ses_1", attempt: 2, message: "Provider is overloaded", retryAt: 5 });
+  });
+
+  it("returns null for idle/busy statuses, other events and malformed payloads", () => {
+    expect(
+      parseOpencodeStatusRetry({ type: "session.status", properties: { sessionID: "ses_1", status: { type: "idle" } } })
+    ).toBeNull();
+    expect(
+      parseOpencodeStatusRetry({ type: "session.status", properties: { sessionID: "ses_1", status: { type: "busy" } } })
+    ).toBeNull();
+    expect(
+      parseOpencodeStatusRetry({ type: "session.idle", properties: { sessionID: "ses_1" } })
+    ).toBeNull();
+    expect(
+      parseOpencodeStatusRetry({ type: "session.status", properties: { status: { type: "retry", message: "x" } } })
+    ).toBeNull();
+    expect(
+      parseOpencodeStatusRetry({ type: "session.status", properties: { sessionID: "ses_1", status: { type: "retry" } } })
+    ).toBeNull();
+    expect(parseOpencodeStatusRetry(null)).toBeNull();
+  });
+});
+
+describe("parseOpencodeSessionError", () => {
+  it("reads the message from the nested error data", () => {
+    expect(
+      parseOpencodeSessionError({
+        type: "session.error",
+        properties: { sessionID: "ses_1", error: { name: "UnknownError", data: { message: "Model not found: opencode/x." } } }
+      })
+    ).toEqual({ sessionID: "ses_1", name: "UnknownError", message: "Model not found: opencode/x." });
+  });
+
+  it("falls back to the error name when data has no message", () => {
+    expect(
+      parseOpencodeSessionError({
+        type: "session.error",
+        properties: { sessionID: "ses_1", error: { name: "AbortedError", data: {} } }
+      })
+    ).toEqual({ sessionID: "ses_1", name: "AbortedError", message: "AbortedError" });
+  });
+
+  it("returns null for other events and malformed payloads", () => {
+    expect(
+      parseOpencodeSessionError({ type: "session.status", properties: { sessionID: "ses_1", error: { name: "x" } } })
+    ).toBeNull();
+    expect(parseOpencodeSessionError({ type: "session.error", properties: { error: { name: "x" } } })).toBeNull();
+    expect(parseOpencodeSessionError({ type: "session.error", properties: { sessionID: "ses_1" } })).toBeNull();
+    expect(parseOpencodeSessionError(null)).toBeNull();
   });
 });
