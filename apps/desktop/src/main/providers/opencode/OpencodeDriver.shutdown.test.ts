@@ -50,7 +50,7 @@ afterEach(() => {
 describe("OpencodeDriver shutdown", () => {
   it("disposes its server pool right away when no turn is running", async () => {
     const { driver, pool } = makeDriver();
-    expect(driver.activity()).toEqual({ busySessionIds: [], ownedProcesses: 1, backgroundTurns: 0 });
+    expect(driver.activity()).toEqual({ busySessionIds: [], ownedProcesses: 1 });
     expect(await driver.shutdown({ timeoutMs: 100 })).toEqual({ timedOut: false });
     expect(pool.disposed).toBe(1);
   });
@@ -62,7 +62,7 @@ describe("OpencodeDriver shutdown", () => {
     driver.startTurn({ sessionId: "sess_1", cwd: "C:\\proj", prompt: "hello", resumeCursor: "native-1" });
     driver.startTurn({ sessionId: "title:sess_1", cwd: "C:\\titles", prompt: "title", resumeCursor: "native-2" });
     await new Promise((r) => setTimeout(r, 200));
-    expect(driver.activity()).toEqual({ busySessionIds: ["sess_1"], ownedProcesses: 1, backgroundTurns: 1 });
+    expect(driver.activity()).toEqual({ busySessionIds: ["sess_1", "title:sess_1"], ownedProcesses: 1 });
     expect(await driver.shutdown({ timeoutMs: 1000 })).toEqual({ timedOut: false });
     expect(calls.filter((url) => url.includes("/abort"))).toHaveLength(2);
     expect(pool.disposed).toBe(1);

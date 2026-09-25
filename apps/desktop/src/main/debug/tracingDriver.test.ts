@@ -265,11 +265,11 @@ describe("TracingCliDriver lifecycle passthrough", () => {
 
   it("delegates activity and traces the shutdown outcome", async () => {
     const inner = Object.assign(new FakeDriver(), {
-      activity: () => ({ busySessionIds: ["s1"], ownedProcesses: 2, backgroundTurns: 1 }),
+      activity: () => ({ busySessionIds: ["s1"], ownedProcesses: 2 }),
       shutdown: vi.fn(async () => ({ timedOut: true }))
     });
     const tracing = new TracingCliDriver(inner);
-    expect(tracing.activity?.()).toEqual({ busySessionIds: ["s1"], ownedProcesses: 2, backgroundTurns: 1 });
+    expect(tracing.activity?.()).toEqual({ busySessionIds: ["s1"], ownedProcesses: 2 });
     expect(await tracing.shutdown?.({ timeoutMs: 500 })).toEqual({ timedOut: true });
     expect(inner.shutdown).toHaveBeenCalledWith({ timeoutMs: 500 });
     expect(readRecords().at(-1)).toMatchObject({

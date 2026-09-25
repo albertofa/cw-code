@@ -1404,12 +1404,10 @@ export class OpencodeDriver implements CliDriver {
 
   activity(): DriverActivity {
     const busySessionIds = new Set<string>();
-    let backgroundTurns = 0;
     for (const meta of this.turnMeta.values()) {
-      if (meta.localSessionId.startsWith("title:")) backgroundTurns += 1;
-      else if (meta.localSessionId) busySessionIds.add(meta.localSessionId);
+      if (meta.localSessionId) busySessionIds.add(meta.localSessionId);
     }
-    return { busySessionIds: [...busySessionIds], ownedProcesses: this.pool.ownedProcessCount(), backgroundTurns };
+    return { busySessionIds: [...busySessionIds], ownedProcesses: this.pool.ownedProcessCount() };
   }
 
   async shutdown({ timeoutMs }: { timeoutMs: number }): Promise<{ timedOut: boolean }> {

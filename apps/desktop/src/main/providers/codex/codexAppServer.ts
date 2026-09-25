@@ -98,8 +98,9 @@ export class CodexAppServer implements CodexAppServerLike {
   }
 
   async shutdown(timeoutMs: number): Promise<{ timedOut: boolean }> {
+    if (this.starting) return { timedOut: true };
     const proc = this.proc;
-    if (this.starting || !proc || hasExited(proc)) {
+    if (!proc || hasExited(proc)) {
       this.dispose();
       return { timedOut: false };
     }

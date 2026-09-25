@@ -880,11 +880,11 @@ describe("ClaudeCliDriver getAccountUsage", () => {
 });
 
 describe("ClaudeCliDriver shutdown", () => {
-  it("reports busy sessions and background title turns it owns", () => {
+  it("reports every busy session and the processes it owns", () => {
     const { driver } = makeDriver();
     driver.startTurn({ sessionId: "sess_1", prompt: "work", cwd: "C:\proj" });
     driver.startTurn({ sessionId: "title:sess_1", prompt: "title", cwd: "C:\titles", maxTurns: 1 });
-    expect(driver.activity()).toEqual({ busySessionIds: ["sess_1"], ownedProcesses: 2, backgroundTurns: 1 });
+    expect(driver.activity()).toEqual({ busySessionIds: ["sess_1", "title:sess_1"], ownedProcesses: 2 });
     driver.dispose();
   });
 

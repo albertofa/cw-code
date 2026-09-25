@@ -1043,16 +1043,9 @@ export class CodexCliDriver implements CliDriver {
   }
 
   activity(): DriverActivity {
-    const busySessionIds = new Set<string>();
-    let backgroundTurns = 0;
-    for (const turn of this.turns.values()) {
-      if (turn.localSessionId.startsWith("title:")) backgroundTurns += 1;
-      else busySessionIds.add(turn.localSessionId);
-    }
     return {
-      busySessionIds: [...busySessionIds],
-      ownedProcesses: this.ownsClient ? (this.client.ownedProcessCount?.() ?? 0) : 0,
-      backgroundTurns
+      busySessionIds: [...new Set([...this.turns.values()].map((turn) => turn.localSessionId))],
+      ownedProcesses: this.ownsClient ? (this.client.ownedProcessCount?.() ?? 0) : 0
     };
   }
 

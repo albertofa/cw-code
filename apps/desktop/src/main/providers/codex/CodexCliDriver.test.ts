@@ -1100,13 +1100,13 @@ describe("CodexCliDriver", () => {
 });
 
 describe("CodexCliDriver shutdown", () => {
-  it("reports busy sessions and background title turns separately", async () => {
+  it("reports every session with a running turn", async () => {
     const client = new FakeClient();
     const { driver } = makeDriver(client);
     driver.startTurn({ sessionId: "local-1", prompt: "work", cwd: "C:\proj", permissionMode: "auto" });
     driver.startTurn({ sessionId: "title:local-1", prompt: "title", cwd: "C:\titles", permissionMode: "auto" });
     await settle();
-    expect(driver.activity()).toEqual({ busySessionIds: ["local-1"], ownedProcesses: 0, backgroundTurns: 1 });
+    expect(driver.activity()).toEqual({ busySessionIds: ["local-1", "title:local-1"], ownedProcesses: 0 });
     driver.dispose();
   });
 

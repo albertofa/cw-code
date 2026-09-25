@@ -132,6 +132,8 @@ export class SessionManager {
   private driverFactory: DriverFactory;
   private driverGeneration = 0;
   private shutdownReserved = false;
+  private driverFailure: string | null = null;
+  private interruptedForShutdown = new Set<string>();
   private activeTurns = new Map<string, { sessionId: string; startedAt: number }>();
   private settledTurns = new Map<string, string>();
   private titleTurns = new Map<string, TitleTurn>();
@@ -1317,6 +1319,9 @@ export class SessionManager {
     this.settleTurn(turnId, sessionId);
     this.turnPrRefs.delete(turnId);
     this.store.updateSession(sessionId, { status: "holding" });
+    if (!session) return;
+    if (this.shutdownReserved) this.interruptedForShutdown.add(sessionId);
+    this.emitSession(sessionId);
   }
 
   async retryConnection(sessionId: string): Promise<RetryConnectionResult> {
@@ -1482,10 +1487,16 @@ export class SessionManager {
 
   private assertNotReserved(): void {
     if (this.shutdownReserved) throw shutdownReservedError();
+    if (this.driverFailure) throw new Error(this.driverFailure);
+  }
+
+  driverRestartFailure(): string | null {
+    return this.driverFailure;
   }
 
   beginShutdownReservation(): void {
     this.shutdownReserved = true;
+    this.interruptedForShutdown.clear();
   }
 
   clearShutdownReservation(): void {
@@ -1510,7 +1521,7 @@ export class SessionManager {
       for (const sessionId of driver.activity?.().busySessionIds ?? []) {
         if (covered.has(sessionId) || !this.store.getSession(sessionId)) continue;
         covered.add(sessionId);
-        turns.push({ sessionId, turnId: "", title: this.sessionTitle(sessionId), startedAt: 0 });
+        turns.push({ sessionId, turnId: `busy:${sessionId}`, title: this.sessionTitle(sessionId), startedAt: 0 });
       }
     }
     return turns;
@@ -1523,9 +1534,7 @@ export class SessionManager {
   }
 
   backgroundTaskCount(): number {
-    let driverTurns = 0;
-    for (const { driver } of this.uniqueDrivers()) driverTurns += driver.activity?.().backgroundTurns ?? 0;
-    return Math.max(this.listBackgroundWork().length, driverTurns);
+    return this.listBackgroundWork().length;
   }
 
   cancelBackgroundWork(): void {
@@ -1592,8 +1601,19 @@ export class SessionManager {
 
   reinitializeDrivers(): void {
     this.forceStopDrivers();
-    this.drivers = this.buildDrivers();
+    try {
+      this.drivers = this.buildDrivers();
+    } catch (err) {
+      this.driverFailure = `cw-code could not restart its CLI drivers after the cancelled restart (${(err as Error).message}). Quit and reopen cw-code.`;
+      throw new Error(this.driverFailure);
+    }
+    this.driverFailure = null;
     this.disposed = false;
+    const interrupted = [...this.interruptedForShutdown];
+    this.interruptedForShutdown.clear();
+    for (const sessionId of interrupted) {
+      if (this.store.getSession(sessionId)) this.emitSession(sessionId);
+    }
   }
 
   dispose(): void {

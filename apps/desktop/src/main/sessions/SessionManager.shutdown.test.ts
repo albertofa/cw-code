@@ -42,12 +42,7 @@ class LifecycleDriver implements CliDriver {
   async renameSession(): Promise<void> {}
   async *events(): AsyncIterable<never> {}
   activity(): DriverActivity {
-    const sessions = [...this.running.values()];
-    return {
-      busySessionIds: sessions.filter((id) => !id.startsWith("title:")),
-      ownedProcesses: this.running.size,
-      backgroundTurns: sessions.filter((id) => id.startsWith("title:")).length
-    };
+    return { busySessionIds: [...new Set(this.running.values())], ownedProcesses: this.running.size };
   }
   shutdown({ timeoutMs }: { timeoutMs: number }): Promise<{ timedOut: boolean }> {
     this.shutdowns.push(timeoutMs);
@@ -87,10 +82,11 @@ interface Generation {
   codex: PlainDriver;
 }
 
-function setup() {
+function setup(opts: { failOnGeneration?: number } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "cw-shutdown-"));
   const generations: Generation[] = [];
   const factory: DriverFactory = (route) => {
+    if (generations.length + 1 === opts.failOnGeneration) throw new Error("claude binary vanished");
     const generation: Generation = {
       claude: new LifecycleDriver("claude", route),
       opencode: new LifecycleDriver("opencode", route),
@@ -176,7 +172,7 @@ describe("SessionManager shutdown inventory", () => {
     const { manager, project, generations } = setup();
     const session = await manager.createSession(project.id, "claude", { mode: "current" });
     generations[0].claude.startTurn({ sessionId: session.id, prompt: "x", cwd: "." });
-    expect(manager.listShutdownTurns()).toEqual([{ sessionId: session.id, turnId: "", title: "New session", startedAt: 0 }]);
+    expect(manager.listShutdownTurns()).toEqual([{ sessionId: session.id, turnId: `busy:${session.id}`, title: "New session", startedAt: 0 }]);
   });
 });
 
@@ -226,5 +222,34 @@ describe("SessionManager driver lifecycle", () => {
     expect(generations[1].claude.started).toHaveLength(1);
     manager.dispose();
     expect(generations[1].claude.disposed).toBe(1);
+  });
+});
+
+describe("SessionManager shutdown recovery", () => {
+  it("publishes interrupted sessions when stopped for shutdown and again after drivers are rebuilt", async () => {
+    const { manager, project } = setup();
+    const updates: Array<{ id: string; status: string }> = [];
+    manager.setSessionEmitter((session) => updates.push({ id: session.id, status: session.status }));
+    const session = await manager.createSession(project.id, "claude", { mode: "current" });
+    const turnId = await manager.startTurn(session.id, "long task");
+    manager.beginShutdownReservation();
+    manager.interrupt(turnId);
+    expect(updates).toEqual([{ id: session.id, status: "holding" }]);
+    manager.reinitializeDrivers();
+    manager.clearShutdownReservation();
+    expect(updates).toEqual([
+      { id: session.id, status: "holding" },
+      { id: session.id, status: "holding" }
+    ]);
+    manager.reinitializeDrivers();
+    expect(updates).toHaveLength(2);
+  });
+
+  it("marks drivers unavailable with a visible message when they cannot be rebuilt", async () => {
+    const { manager, project } = setup({ failOnGeneration: 2 });
+    const session = await manager.createSession(project.id, "claude", { mode: "current" });
+    expect(() => manager.reinitializeDrivers()).toThrow("could not restart its CLI drivers");
+    expect(manager.driverRestartFailure()).toContain("claude binary vanished");
+    await expect(manager.startTurn(session.id, "hello")).rejects.toThrow("Quit and reopen cw-code");
   });
 });
