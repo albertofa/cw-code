@@ -1,0 +1,44 @@
+[
+  {
+    "id": "a",
+    "name": "Angular CW",
+    "description": "The original direction. A square C beside an angular W.",
+    "strength": "Closest to the existing identity.",
+    "tradeoff": "The fine W loses definition at the smallest sizes."
+  },
+  {
+    "id": "b",
+    "name": "Lowercase cw",
+    "description": "A compact lowercase monogram drawn from Inter.",
+    "strength": "Direct, readable, and consistent with the app typography.",
+    "tradeoff": "A typographic mark has a more familiar silhouette."
+  },
+  {
+    "id": "c",
+    "name": "Console C",
+    "description": "A cut-corner C with a short command line inside it.",
+    "strength": "A bold silhouette with a clear coding reference.",
+    "tradeoff": "The C carries the name; the W is absent."
+  },
+  {
+    "id": "d",
+    "name": "Parallel",
+    "description": "Three paths converge into a shared workspace.",
+    "strength": "Represents the app’s parallel-session workflow.",
+    "tradeoff": "Abstract; needs the wordmark while the brand is new."
+  },
+  {
+    "id": "e",
+    "name": "Workspace",
+    "description": "A compact window with a project rail and two work panes.",
+    "strength": "Immediately describes a desktop workspace.",
+    "tradeoff": "More descriptive of the category than unique to cw-code."
+  },
+  {
+    "id": "f",
+    "name": "Folded W",
+    "description": "A heavy W built from a continuous angular ribbon.",
+    "strength": "Strong at small sizes and easy to recognize by shape.",
+    "tradeoff": "Emphasizes workspace rather than the full CW initials."
+  }
+]

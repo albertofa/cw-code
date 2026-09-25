@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { GitService, countUntrackedLines, isAppManagedPath, mapLimit, parseGitHubAccounts, parseGitHubRemote, parseNumstat, parsePrNumber, parsePullRequest, parseWorktreeList, selectGitHubAccount, worktreeNameFor } from "./GitService.js";
+import { GitService, countUntrackedLines, isAppManagedPath, mapLimit, parseGitHubAccounts, parseGitHubRemote, parseNumstat, parsePorcelainV2Status, parsePrNumber, parsePullRequest, parseWorktreeList, selectGitHubAccount, worktreeNameFor } from "./GitService.js";
 
 function initSandbox(): { sandbox: string; repository: string; service: GitService } {
   const sandbox = mkdtempSync(join(tmpdir(), "cw-git-"));
@@ -257,6 +257,24 @@ describe("GitService worktrees", () => {
     expect(branches.find((branch) => branch.name === "cw/1234abcd")?.worktreePath).toBe(created.path.replace(/\\/g, "/"));
   });
 
+  it("reports commits ahead of the base branch in status", async () => {
+    const { sandbox, repository, service } = initSandbox();
+    const created = await service.createWorktree(repository, "project", "sess_baseahead1", join(sandbox, "worktrees"), "main");
+
+    const fresh = await service.status(created.path);
+    expect(fresh).toMatchObject({ available: true, baseRef: "main", baseAhead: 0, baseBehind: 0 });
+
+    writeFileSync(join(created.path, "feature.txt"), "work\n", "utf8");
+    execFileSync("git", ["-C", created.path, "add", "feature.txt"]);
+    execFileSync("git", ["-C", created.path, "-c", "user.name=cw-code", "-c", "user.email=test@cw-code.local", "commit", "-m", "feature work"]);
+    const afterCommit = await new GitService().status(created.path);
+    expect(afterCommit).toMatchObject({ available: true, baseRef: "main", baseAhead: 1, baseBehind: 0 });
+
+    const branchDiff = await service.diff(created.path, "branch", "main");
+    expect(branchDiff.baseRef).toBe("main");
+    expect(branchDiff.patch).toContain("feature.txt");
+  });
+
   it("removes a clean worktree and its empty session directory", async () => {
     const { sandbox, repository, service } = initSandbox();
     const worktreesRoot = join(sandbox, "worktrees");
@@ -490,5 +508,40 @@ describe("GitService worktrees", () => {
 
     const noBase = await service.turnDiff(created.path, Date.now(), null);
     expect(noBase).toBe(fallback);
+  });
+});
+
+describe("parsePorcelainV2Status", () => {
+  it("reads branch, upstream, tracking and every entry kind", () => {
+    const stdout = [
+      "# branch.oid 0123456789abcdef0123456789abcdef01234567",
+      "# branch.head feature/x",
+      "# branch.upstream origin/feature/x",
+      "# branch.ab +2 -1",
+      "1 M. N... 100644 100644 100644 aaa bbb staged file.ts",
+      "1 .M N... 100644 100644 100644 aaa aaa unstaged.ts",
+      "2 R. N... 100644 100644 100644 aaa bbb R100 renamed new.ts",
+      "old.ts",
+      "u UU N... 100644 100644 100644 100644 aaa bbb ccc conflict.ts",
+      "? notes with space.md",
+      ""
+    ].join("\0");
+    expect(parsePorcelainV2Status(stdout)).toEqual({
+      branch: "feature/x",
+      upstream: "origin/feature/x",
+      tracking: { ahead: 2, behind: 1 },
+      files: [
+        { path: "staged file.ts", index: "M", untracked: false },
+        { path: "unstaged.ts", index: ".", untracked: false },
+        { path: "renamed new.ts", index: "R", untracked: false },
+        { path: "conflict.ts", index: "U", untracked: false },
+        { path: "notes with space.md", index: "?", untracked: true }
+      ]
+    });
+  });
+
+  it("reports detached HEAD and missing tracking", () => {
+    const stdout = ["# branch.oid 0123", "# branch.head (detached)", "# branch.upstream origin/gone", ""].join("\0");
+    expect(parsePorcelainV2Status(stdout)).toEqual({ branch: "HEAD", upstream: "origin/gone", tracking: null, files: [] });
   });
 });

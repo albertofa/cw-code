@@ -1,3 +1,5 @@
+import type { TurnModelUsage } from "@cw-code/contracts";
+
 export type OpencodeMessagePartInput = { type: "text"; text: string } | { type: "file"; mime: string; url: string };
 
 export interface OpencodeMessageBody {
@@ -54,6 +56,8 @@ export function buildOpencodeMessageBody(
 export interface OpencodeTurnMessage {
   id: string;
   role?: string;
+  providerID?: string;
+  modelID?: string;
   cost?: number;
   tokens?: {
     input?: number;
@@ -62,13 +66,15 @@ export interface OpencodeTurnMessage {
     cache?: { read?: number; write?: number };
   };
   text: string;
+  error?: string;
 }
 
 export interface OpencodeTurnSummary {
   text: string;
-  inputTokens: number;
-  outputTokens: number;
-  costUsd: number;
+  usage: TurnModelUsage[];
+  lastModel?: string;
+  lastContextTokens?: number;
+  errorText: string;
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -78,6 +84,16 @@ function asRecord(value: unknown): Record<string, unknown> | null {
 
 function asNumber(value: unknown): number {
   return typeof value === "number" && Number.isFinite(value) ? value : 0;
+}
+
+export function errorMessageOf(error: unknown): string {
+  if (typeof error === "string") return error.trim();
+  const record = asRecord(error);
+  if (!record) return "";
+  const data = asRecord(record["data"]);
+  const message = typeof data?.["message"] === "string" ? data["message"].trim() : "";
+  if (message) return message;
+  return typeof record["name"] === "string" ? record["name"] : "";
 }
 
 export function turnMessagesOf(payload: unknown): OpencodeTurnMessage[] {
@@ -91,8 +107,11 @@ export function turnMessagesOf(payload: unknown): OpencodeTurnMessage[] {
     const id = typeof info["id"] === "string" ? info["id"] : "";
     if (!id) continue;
     const role = typeof info["role"] === "string" ? info["role"] : "";
+    const providerID = typeof info["providerID"] === "string" ? info["providerID"] : "";
+    const modelID = typeof info["modelID"] === "string" ? info["modelID"] : "";
     const tokens = asRecord(info["tokens"]);
     const cache = asRecord(tokens?.["cache"]);
+    const error = errorMessageOf(info["error"]);
     const texts: string[] = [];
     const parts = Array.isArray(msg?.["parts"]) ? (msg?.["parts"] as unknown[]) : [];
     for (const partEntry of parts) {
@@ -104,6 +123,8 @@ export function turnMessagesOf(payload: unknown): OpencodeTurnMessage[] {
     out.push({
       id,
       ...(role ? { role } : {}),
+      ...(providerID ? { providerID } : {}),
+      ...(modelID ? { modelID } : {}),
       cost: asNumber(info["cost"]),
       tokens: tokens
         ? {
@@ -113,31 +134,109 @@ export function turnMessagesOf(payload: unknown): OpencodeTurnMessage[] {
             cache: cache ? { read: asNumber(cache["read"]), write: asNumber(cache["write"]) } : undefined
           }
         : undefined,
-      text: texts.join("\n")
+      text: texts.join("\n"),
+      ...(error ? { error } : {})
     });
   }
   return out;
 }
 
+export interface OpencodeAssistantState {
+  id: string;
+  terminal: boolean;
+}
+
+function isTerminalAssistant(info: Record<string, unknown>): boolean {
+  if (info["error"] !== null && info["error"] !== undefined) return true;
+  const finish = info["finish"];
+  if (typeof finish === "string") return finish !== "tool-calls";
+  const time = asRecord(info["time"]);
+  return typeof time?.["completed"] === "number";
+}
+
+export function latestAssistantOf(rawMessages: unknown, scopeIds?: Set<string>): OpencodeAssistantState | null {
+  const container = asRecord(rawMessages);
+  const raw = Array.isArray(rawMessages) ? rawMessages : container?.["data"];
+  if (!Array.isArray(raw)) return null;
+  let latest: OpencodeAssistantState | null = null;
+  for (const entry of raw) {
+    const msg = asRecord(entry);
+    const info = asRecord(msg?.["info"]) ?? {};
+    if (info["role"] !== "assistant") continue;
+    const id = typeof info["id"] === "string" ? info["id"] : "";
+    if (!id || scopeIds?.has(id)) continue;
+    latest = { id, terminal: isTerminalAssistant(info) };
+  }
+  return latest;
+}
+
+export function runEnded(rawMessages: unknown, scopeIds?: Set<string>): boolean {
+  return latestAssistantOf(rawMessages, scopeIds)?.terminal === true;
+}
+
 export function summarizeOpencodeTurn(messages: OpencodeTurnMessage[], beforeIds: Set<string> | null): OpencodeTurnSummary {
   const fresh = beforeIds === null ? [] : messages.filter((m) => !beforeIds.has(m.id));
   const scoped = beforeIds === null ? [] : fresh.filter((m) => m.role === "assistant");
-  const summary: OpencodeTurnSummary = { text: "", inputTokens: 0, outputTokens: 0, costUsd: 0 };
+  const byModel = new Map<string, TurnModelUsage>();
+  let text = "";
+  let errorText = "";
+  let lastModel: string | undefined;
+  let lastContextTokens: number | undefined;
   for (const m of scoped) {
-    if (m.text) summary.text += (summary.text ? "\n" : "") + m.text;
-    summary.inputTokens += (m.tokens?.input ?? 0) + (m.tokens?.cache?.read ?? 0) + (m.tokens?.cache?.write ?? 0);
-    summary.outputTokens += (m.tokens?.output ?? 0) + (m.tokens?.reasoning ?? 0);
-    summary.costUsd += m.cost ?? 0;
+    if (m.text) text += (text ? "\n" : "") + m.text;
+    if (m.error) errorText = m.error;
+    const input = m.tokens?.input ?? 0;
+    const cacheRead = m.tokens?.cache?.read ?? 0;
+    const cacheWrite = m.tokens?.cache?.write ?? 0;
+    const output = m.tokens?.output ?? 0;
+    const reasoning = m.tokens?.reasoning ?? 0;
+    const key = m.providerID && m.modelID ? `${m.providerID}/${m.modelID}` : "unknown";
+    const entry: TurnModelUsage =
+      byModel.get(key) ??
+      ({
+        model: key,
+        inputTokens: 0,
+        cacheReadTokens: 0,
+        cacheWriteTokens: 0,
+        outputTokens: 0,
+        reasoningTokens: 0,
+        costUsd: 0
+      } satisfies TurnModelUsage);
+    entry.inputTokens += input;
+    entry.cacheReadTokens += cacheRead;
+    entry.cacheWriteTokens += cacheWrite;
+    entry.outputTokens += output + reasoning;
+    entry.reasoningTokens += reasoning;
+    entry.costUsd = (entry.costUsd ?? 0) + (m.cost ?? 0);
+    byModel.set(key, entry);
+    const contextTokens = input + cacheRead + cacheWrite + output + reasoning;
+    if (m.providerID && m.modelID && contextTokens > 0) {
+      lastModel = key;
+      lastContextTokens = contextTokens;
+    }
   }
-  return summary;
+  return { text, usage: Array.from(byModel.values()), lastModel, lastContextTokens, errorText };
 }
 
-export function assistantDeltaOf(event: unknown, sessionID: string): string | null {
+export interface OpencodePartDelta {
+  partID: string;
+  field: string;
+  text: string;
+}
+
+export function partDeltaOf(event: unknown, sessionID: string): OpencodePartDelta | null {
   const envelope = asRecord(event);
   if (!envelope || envelope["type"] !== "message.part.delta") return null;
   const props = asRecord(envelope["properties"] ?? envelope["data"]);
   if (!props || props["sessionID"] !== sessionID) return null;
-  if (props["field"] !== "text") return null;
-  const delta = props["delta"];
-  return typeof delta === "string" && delta ? delta : null;
+  const field = props["field"];
+  if (typeof field !== "string" || !field) return null;
+  const text = props["delta"];
+  if (typeof text !== "string" || !text) return null;
+  const partID = props["partID"];
+  return { partID: typeof partID === "string" ? partID : "", field, text };
+}
+
+export function isReasoningPartDelta(delta: OpencodePartDelta, partType: string | undefined): boolean {
+  return delta.field === "reasoning" || partType === "reasoning";
 }

@@ -1,26 +1,29 @@
 import { useEffect, useState } from "react";
 import { GitBranch, GitFork, History } from "lucide-react";
 import { useAppStore } from "../stores/appStore.js";
-import type { CreateSessionOptions, CreateWorkspaceMode, DriverName, GitBranchInfo } from "../cw.js";
+import type { CreateSessionOptions, CreateWorkspaceMode, DriverName, GitBranchInfo, Session } from "../cw.js";
 import { worktreeCandidates } from "./worktreeCandidates.js";
+import { shortenHome } from "./pathDisplay.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { ComposerView, type ComposerBackend } from "./ComposerView.js";
 import { MenuSelect } from "./MenuSelect.js";
+import { NewSessionAddProject, NewSessionProjectPicker } from "./NewSessionProjectPicker.js";
 
-const HARNESS: Array<{ id: DriverName; label: string }> = [
-  { id: "claude", label: "Claude" },
-  { id: "opencode", label: "OpenCode" },
-  { id: "codex", label: "Codex" }
+const NO_PROJECT_HINT = "Choose a project to start a session";
+const NO_SESSIONS: Session[] = [];
+
+const HARNESS: Array<{ id: DriverName; label: string; blurb: string }> = [
+  { id: "claude", label: "Claude", blurb: "Anthropic CLI harness" },
+  { id: "opencode", label: "OpenCode", blurb: "Multi-provider, fast" },
+  { id: "codex", label: "Codex", blurb: "OpenAI CLI harness" }
 ];
 
 export function NewThread({
   projectId,
-  projectName,
   driver,
   onDriverChange
 }: {
-  projectId: string;
-  projectName: string;
+  projectId: string | null;
   driver: DriverName;
   onDriverChange: (d: DriverName) => void;
 }) {
@@ -28,17 +31,21 @@ export function NewThread({
   const prefs = useAppStore((s) => s.pendingPrefs);
   const modelsRefreshKey = useAppStore((s) => s.settingsVersion);
   const workspace = useAppStore((s) => s.pendingWorkspace);
+  const homeDir = useAppStore((s) => s.homeDir);
+  const project = useAppStore((s) => (projectId ? s.projects.find((p) => p.id === projectId) : undefined));
   const [branches, setBranches] = useState<GitBranchInfo[]>([]);
   const [branchError, setBranchError] = useState("");
 
-  const sessions = store.sessionsByProject[projectId] ?? [];
+  const projectKey = project?.id ?? null;
+  const sessions = projectKey ? (store.sessionsByProject[projectKey] ?? NO_SESSIONS) : NO_SESSIONS;
   const candidates = worktreeCandidates(sessions);
 
   useEffect(() => {
     let active = true;
     setBranches([]);
     setBranchError("");
-    window.cw.listProjectBranches(projectId).then((items) => {
+    if (!projectKey) return;
+    window.cw.listProjectBranches(projectKey).then((items) => {
       if (!active) return;
       setBranches(items);
       const current = items.find((item) => item.current) ?? items[0];
@@ -49,7 +56,7 @@ export function NewThread({
       if (active) setBranchError(error.message);
     });
     return () => { active = false; };
-  }, [projectId]);
+  }, [projectKey]);
 
   const candidatePaths = candidates.map((c) => c.worktreePath).join("\n");
   useEffect(() => {
@@ -102,90 +109,133 @@ export function NewThread({
   };
 
   const backend: ComposerBackend = {
-    imageTarget: { projectId },
+    imageTarget: projectKey ? { projectId: projectKey } : {},
     prefs,
     busy: false,
-    loadModels: () => window.cw.listModelsFor(projectId, driver),
-    loadFiles: () => window.cw.listProjectFiles(projectId),
+    loadModels: () => (projectKey ? window.cw.listModelsFor(projectKey, driver) : window.cw.listModelsForHarness(driver)),
+    loadPermissions: () =>
+      projectKey ? window.cw.listPermissionsFor(projectKey, driver) : window.cw.listPermissionsForHarness(driver),
+    loadFiles: () => (projectKey ? window.cw.listProjectFiles(projectKey) : Promise.resolve([])),
+    loadCommands: () => (projectKey ? window.cw.listCommandsFor(projectKey, driver) : Promise.resolve([])),
     savePrefs: (p) => store.setPendingPrefs(p),
-    send: (body, attachments) => store.sendPendingPrompt(body, attachments),
-    savePasteImage: (mime, data) => window.cw.savePasteImage(projectId, mime, data),
+    send: (body, attachments, command) => store.sendPendingPrompt(body, attachments, command),
+    savePasteImage: (mime, data) =>
+      projectKey ? window.cw.savePasteImage(projectKey, mime, data) : Promise.reject(new Error(NO_PROJECT_HINT)),
     interrupt: () => {}
   };
 
+  const handleDriverChange = (next: DriverName) => {
+    if (next === driver) return;
+    onDriverChange(next);
+  };
+
+  const modeSelect = (
+    <MenuSelect
+      label="Workspace"
+      title="Choose where this session works"
+      value={mode}
+      display={modeOptions.find((o) => o.id === mode)?.label ?? "Workspace"}
+      icon={modeOptions.find((o) => o.id === mode)?.icon}
+      options={modeOptions}
+      onPick={pickMode}
+    />
+  );
+
+  const baseBranchSelect = mode === "new" && branches.length > 0 ? (
+    <MenuSelect
+      label="Base branch"
+      title="Choose the branch this session starts from"
+      value={workspace.baseBranch ?? branches[0].name}
+      display={branches.find((item) => item.name === workspace.baseBranch)?.label ?? "Choose base branch"}
+      icon={<GitBranch size={13} aria-hidden="true" />}
+      options={branches.map((item) => ({
+        id: item.name,
+        label: item.label,
+        hint: item.remote ? `${item.name} (remote)` : item.name,
+        description: item.current ? "Current branch" : item.remote ? "Remote branch" : undefined,
+        icon: <GitBranch size={13} />
+      }))}
+      onPick={(baseBranch) => store.setPendingWorkspace({ baseBranch })}
+      searchable
+      searchPlaceholder="Filter branches…"
+    />
+  ) : null;
+
+  const reuseSelect = mode === "previous" && selectedCandidate ? (
+    <MenuSelect
+      label="Reuse worktree"
+      title="Pick which earlier session worktree to continue in"
+      value={selectedCandidate.sessionId}
+      display={selectedCandidate.title}
+      icon={<History size={13} aria-hidden="true" />}
+      options={candidates.map((c) => ({
+        id: c.sessionId,
+        label: c.title,
+        hint: shortenHome(c.worktreePath, homeDir ?? undefined),
+        description: c.branch ?? undefined
+      }))}
+      onPick={(sessionId) => {
+        const picked = candidates.find((c) => c.sessionId === sessionId);
+        if (picked) store.setPendingWorkspace({ reuseWorktreePath: picked.worktreePath });
+      }}
+    />
+  ) : null;
+
+  const currentBranch = branches.find((item) => item.current) ?? branches[0];
+
   return (
     <div className="newthread">
-      <h1 className="newthread-title">
-        What should we build in <span>{projectName}</span>?
-      </h1>
+      <h1 className="newthread-title">What should we build?</h1>
+      <div className="newthread-context">
+        <NewSessionProjectPicker project={project} />
+        <NewSessionAddProject />
+      </div>
       <div className="newthread-composer">
-        <ComposerView backend={backend} driver={driver} resetKey={`pending:${projectId}`} modelsRefreshKey={modelsRefreshKey} />
-      </div>
-      <div className="newthread-workspace">
-        {branchError ? (
-          <span className="workspace-hint" title={branchError}>Not a Git repository</span>
-        ) : (
-          <>
-            <MenuSelect
-              label="Workspace"
-              title="Choose where this session works"
-              value={mode}
-              display={modeOptions.find((o) => o.id === mode)?.label ?? "Workspace"}
-              options={modeOptions}
-              onPick={pickMode}
-            />
-            {mode === "new" && branches.length > 0 && (
+        <ComposerView
+          backend={backend}
+          driver={driver}
+          resetKey={`pending:${projectKey ?? ""}`}
+          blockedReason={project ? undefined : NO_PROJECT_HINT}
+          resetStaleModel
+          modelsRefreshKey={modelsRefreshKey}
+          recipePrefix={
+            <div className="recipe-control" title="Agentic harness">
               <MenuSelect
-                label="Base branch"
-                title="Choose the branch this session starts from"
-                value={workspace.baseBranch ?? branches[0].name}
-                display={branches.find((item) => item.name === workspace.baseBranch)?.label ?? "Choose base branch"}
-                options={branches.map((item) => ({
-                  id: item.name,
-                  label: item.label,
-                  hint: item.remote ? `${item.name} (remote)` : item.name,
-                  description: item.current ? "Current branch" : item.remote ? "Remote branch" : undefined,
-                  icon: <GitBranch size={13} />
+                label="Harness"
+                title="Choose the agentic harness"
+                direction="down"
+                value={driver}
+                display={HARNESS.find((h) => h.id === driver)?.label ?? driver}
+                icon={<DriverIcon driver={driver} size={16} />}
+                options={HARNESS.map((h) => ({
+                  id: h.id, label: h.label, hint: h.blurb, description: h.blurb, icon: <DriverIcon driver={h.id} size={13} />
                 }))}
-                onPick={(baseBranch) => store.setPendingWorkspace({ baseBranch })}
-                searchable
-                searchPlaceholder="Filter branches…"
+                onPick={(id) => handleDriverChange(id as DriverName)}
               />
-            )}
-            {mode === "previous" && selectedCandidate && (
-              <MenuSelect
-                label="Reuse worktree"
-                title="Pick which earlier session worktree to continue in"
-                value={selectedCandidate.sessionId}
-                display={selectedCandidate.title}
-                options={candidates.map((c) => ({
-                  id: c.sessionId,
-                  label: c.title,
-                  hint: c.worktreePath,
-                  description: c.branch ?? undefined
-                }))}
-                onPick={(sessionId) => {
-                  const picked = candidates.find((c) => c.sessionId === sessionId);
-                  if (picked) store.setPendingWorkspace({ reuseWorktreePath: picked.worktreePath });
-                }}
-              />
-            )}
-          </>
-        )}
-      </div>
-      <div className="harness-row" role="group" aria-label="Agentic harness">
-        {HARNESS.map((h) => (
-          <button
-            key={h.id}
-            className={`harness-btn ${h.id}${h.id === driver ? " active" : ""}`}
-            onClick={() => onDriverChange(h.id)}
-            aria-pressed={h.id === driver}
-            title={`Use ${h.label}`}
-          >
-            <DriverIcon driver={h.id} size={16} />
-            {h.label}
-          </button>
-        ))}
+            </div>
+          }
+          footer={
+            <div className="composer-footer">
+              {!project ? (
+                <span className="workspace-hint">{NO_PROJECT_HINT}</span>
+              ) : branchError ? (
+                <span className="workspace-hint" title={branchError}>Not a Git repository</span>
+              ) : (
+                <>
+                  <div className="ws-side">{modeSelect}</div>
+                  <div className="ws-side">
+                    {baseBranchSelect ?? reuseSelect ?? (currentBranch && (
+                      <span className="ws-current" title={`Working in the project on ${currentBranch.name}`}>
+                        <GitBranch size={13} aria-hidden="true" />
+                        {currentBranch.label}
+                      </span>
+                    ))}
+                  </div>
+                </>
+              )}
+            </div>
+          }
+        />
       </div>
     </div>
   );
