@@ -161,9 +161,9 @@ the heredoc delimiter format, so values are never corrupted or split by embedded
   (this is the normal-PR path referenced above).
 - `check-sync` — verifies the three `package.json` files agree on a single version.
 
-`pnpm release:plan` is a root convenience alias for `plan`. `gh api` calls require `GH_TOKEN`
-(or `GITHUB_TOKEN`) in the environment; its absence fails fast with a clear error rather than
-an opaque `gh` auth error, and releases are fetched with `per_page=100` plus a `--jq`
+`pnpm release:plan` is a root convenience alias for `plan`. `gh api` calls use whatever auth `gh` has
+(a read-only `GH_TOKEN` in CI, or `gh auth login` locally); any `gh api` failure is reported with
+its original message and a hint to check network access and auth, and releases are fetched with `per_page=100` plus a `--jq`
 projection limited to the fields the tool actually reads.
 
 ## Workflow

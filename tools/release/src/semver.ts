@@ -91,7 +91,5 @@ export function parseTag(tag: string): ParsedVersion | null {
 }
 
 export const FULL_SHA_PATTERN = /^[0-9a-f]{40}$/i;
+export const LOWERCASE_SHA_PATTERN = /^[0-9a-f]{40}$/;
 
-export function isFullSha(value: string): boolean {
-  return FULL_SHA_PATTERN.test(value);
-}
