@@ -12,6 +12,7 @@ import {
   removeLink,
   upsertLink
 } from "./prLinks.js";
+import { changedWorktreeBranch } from "../sessions/worktreeCleanup.js";
 
 function session(overrides: Partial<SessionMeta> = {}): SessionMeta {
   return {
@@ -174,6 +175,31 @@ describe("auto-link ownership", () => {
     expect(canOwnAutoLink(session({ worktreePath: undefined }))).toBe(false);
     expect(canOwnAutoLink(session({ status: "archived" }))).toBe(false);
     expect(canOwnAutoLink(session({ status: "resolved" }))).toBe(false);
+  });
+});
+
+describe("changedWorktreeBranch", () => {
+  it("reports the branch the CLI checked out inside the session worktree", () => {
+    const switched = status({ branch: "fix/cache", pullRequest: pullRequest({ headRefName: "fix/cache" }) });
+    const stale = session({ branch: "cw/fix-issue-15" });
+    const branch = changedWorktreeBranch(stale, switched);
+    expect(branch).toBe("fix/cache");
+    expect(linkFromStatus(stale, switched, 100)).toBeNull();
+    expect(linkFromStatus(session({ branch: branch ?? undefined }), switched, 100)).toMatchObject({ ref: { number: 42 } });
+  });
+
+  it("returns null when the stored branch already matches", () => {
+    expect(changedWorktreeBranch(session(), status())).toBeNull();
+  });
+
+  it("ignores detached heads, unavailable status and sessions without a worktree", () => {
+    expect(changedWorktreeBranch(session(), status({ branch: "HEAD" }))).toBeNull();
+    expect(changedWorktreeBranch(session(), status({ available: false, branch: "not a repository" }))).toBeNull();
+    expect(changedWorktreeBranch(session({ worktreePath: undefined }), status({ branch: "other" }))).toBeNull();
+  });
+
+  it("ignores status read from a different checkout", () => {
+    expect(changedWorktreeBranch(session(), status({ branch: "other", worktreePath: "C:/repo" }))).toBeNull();
   });
 });
 

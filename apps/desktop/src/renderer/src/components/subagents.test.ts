@@ -148,6 +148,46 @@ describe("describeSubagent", () => {
     expect(info.summary).toBe("Review the PR");
   });
 
+  it("completes a history-loaded foreground agent whose result carries an agentId", () => {
+    const info = describeSubagent(
+      msg({
+        toolName: "Agent",
+        text: 'Agent {"subagent_type":"ndk:deep-reviewer","description":"Review issue 15 cache fix","run_in_background":false,"prompt":"Review the uncommitted diff at C:/Users',
+        toolOutput:
+          "  This agent's report was delivered to you as a message from \"ad28a053bc237172e\" (its SubagentHandback call).\nagentId: ad28a053bc237172e (use SendMessage with to: 'ad28a053bc237172e' to continue this agent)\n<usage>subagent_tokens: 119569\ntool_uses: 19\nduration_ms: 543327</usage>",
+        toolDone: true
+      })
+    );
+    expect(info.status).toBe("completed");
+    expect(info.runInBackground).toBe(false);
+  });
+
+  it("completes a history-loaded foreground agent when the truncated text lost the background flag", () => {
+    const info = describeSubagent(
+      msg({
+        toolName: "Agent",
+        text: 'Agent {"description":"Review issue 15 cache fix","prompt":"Review the uncommitted diff at C:/Users',
+        toolOutput:
+          "Report delivered.\nagentId: ad28a053bc237172e\n<usage>subagent_tokens: 119569\ntool_uses: 19\nduration_ms: 543327</usage>",
+        toolDone: true
+      })
+    );
+    expect(info.status).toBe("completed");
+  });
+
+  it("keeps a history-loaded background launch running", () => {
+    const info = describeSubagent(
+      msg({
+        toolName: "Agent",
+        text: 'Agent {"description":"Review PR #15","run_in_background":true,"prompt":"Review the PR',
+        toolOutput: "agentId: a36e7282329ba6455",
+        toolDone: true
+      })
+    );
+    expect(info.status).toBe("running");
+    expect(info.runInBackground).toBe(true);
+  });
+
   it("completes a background agent once the notification result replaces the launch ack", () => {
     const info = describeSubagent(
       msg({

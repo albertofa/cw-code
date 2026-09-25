@@ -98,7 +98,7 @@ export function splitTurn(messages: ChatMessage[], nestedIds: Set<string>, runni
   const rest: ChatMessage[] = [];
   for (const m of messages) {
     if (m.role === "user") lead.push(m);
-    else if (m.role === "system") system.push(m);
+    else if (m.role === "system" && !m.compaction) system.push(m);
     else rest.push(m);
   }
   let pinned: ChatMessage | undefined;
