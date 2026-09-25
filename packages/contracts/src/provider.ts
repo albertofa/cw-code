@@ -34,6 +34,12 @@ export interface RetryConnectionResult {
   history: HistoryMessage[];
 }
 
+export interface DriverActivity {
+  busySessionIds: string[];
+  ownedProcesses: number;
+  backgroundTurns: number;
+}
+
 export interface CliDriver {
   readonly kind: SessionMeta["driver"];
   listSessions(projectRoot: string, projectId?: string): Promise<SessionMeta[]>;
@@ -54,6 +60,13 @@ export interface CliDriver {
   respondToApproval?(requestId: string, decision: ApprovalDecision): Promise<void>;
   respondToQuestion?(requestId: string, answers: Record<string, string>): Promise<void>;
   getAccountUsage?(): Promise<AccountUsageState>;
+  /** Snapshot of the sessions, processes and background turns this driver currently owns. */
+  activity?(): DriverActivity;
+  /**
+   * Asks every owned process to exit and waits up to `timeoutMs`. Processes still alive at the deadline are
+   * left for `dispose()` to force-stop, and the result reports `timedOut`. Never touches processes it did not spawn.
+   */
+  shutdown?(opts: { timeoutMs: number }): Promise<{ timedOut: boolean }>;
   dispose?(): void;
 }
 
