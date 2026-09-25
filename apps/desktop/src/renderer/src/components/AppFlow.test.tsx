@@ -48,6 +48,10 @@ function installBridge(): void {
     getHistory: async () => delayed([], 300),
     startTurn: async () => delayed("turn-1", 800),
     activeTurns: async () => [],
+    updates: {
+      onChanged: noop,
+      getState: async () => ({ seq: 0, phase: "disabled", disabledReason: "Updates are disabled in development builds" })
+    },
     interrupt: async () => {},
     getComposer: async () => delayed({}, 400),
     setComposer: async (_id: string, prefs: unknown) => delayed(prefs, 200),

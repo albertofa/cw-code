@@ -60,12 +60,14 @@ import { resolveAttachments } from "./attachments.js";
 import { AUTO_TITLE_TIMEOUT_MS, buildTitlePrompt, sanitizeGeneratedTitle } from "./autoTitle.js";
 import { branchNameForTitle, TEMP_BRANCH_PATTERN } from "./branchName.js";
 import { NEW_SESSION_TITLE, pickRestoreCandidate } from "./sessionRestore.js";
-import { opencodeServerDir, titleGenDir, userdataDir, usageDir, worktreesDir } from "../paths/appPaths.js";
+import { opencodeServerDir, sessionDbPath, settingsFilePath, titleGenDir, usageDir, worktreesDir } from "../paths/appPaths.js";
 import { UsageLedger } from "../usage/UsageLedger.js";
 
 export interface SessionManagerOptions {
   dbPath?: string;
   settingsPath?: string;
+  sessionStore?: SessionStore;
+  settingsStore?: SettingsStore;
   onEvent?: (sessionId: string, event: ThreadEvent) => void;
   onTitle?: (sessionId: string, title: string) => void;
   drivers?: Partial<Record<DriverKind, CliDriver>>;
@@ -124,10 +126,9 @@ export class SessionManager {
   private usageLedger: UsageLedger;
 
   constructor(opts: SessionManagerOptions = {}) {
-    const dbPath = opts.dbPath ?? join(userdataDir(), "cw-code.db");
-    this.store = new SessionStore(dbPath);
-    const settingsPath = opts.settingsPath ?? join(userdataDir(), "cw-settings.json");
-    this.settings = new SettingsStore(settingsPath);
+    const dbPath = opts.dbPath ?? sessionDbPath();
+    this.store = opts.sessionStore ?? new SessionStore(dbPath);
+    this.settings = opts.settingsStore ?? new SettingsStore(opts.settingsPath ?? settingsFilePath());
     this.onEvent = opts.onEvent ?? (() => {});
     this.onTitle = opts.onTitle ?? (() => {});
     this.git = opts.gitService ?? new GitService(() => this.settings.get());
