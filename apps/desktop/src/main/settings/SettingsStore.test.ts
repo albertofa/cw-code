@@ -1,9 +1,25 @@
-import { existsSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import type { DriverKind, EffortLevel, PrWorkflow } from "@cw-code/contracts";
-import { DEFAULT_SETTINGS, SettingsStore } from "./SettingsStore.js";
+import type { AppSettings, DriverKind, EffortLevel, PrWorkflow } from "@cw-code/contracts";
+import { MetadataError } from "../storage/versionedJson.js";
+import { DEFAULT_SETTINGS, SETTINGS_SCHEMA_VERSION, SettingsStore } from "./SettingsStore.js";
+
+const FIXTURE = readFileSync(fileURLToPath(new URL("../storage/__fixtures__/settings-v0.json", import.meta.url)));
+
+function expectRefusal(filePath: string, kind: MetadataError["kind"]): void {
+  let thrown: unknown;
+  try {
+    new SettingsStore(filePath);
+  } catch (error) {
+    thrown = error;
+  }
+  expect(thrown).toBeInstanceOf(MetadataError);
+  expect((thrown as MetadataError).kind).toBe(kind);
+  expect((thrown as MetadataError).store).toBe("settings");
+}
 
 function tempFilePath(): string {
   return join(mkdtempSync(join(tmpdir(), "cw-settings-test-")), "cw-settings.json");
@@ -14,6 +30,7 @@ describe("SettingsStore", () => {
     const filePath = tempFilePath();
     expect(new SettingsStore(filePath).get()).toEqual(DEFAULT_SETTINGS);
     expect(existsSync(filePath)).toBe(true);
+    expect(JSON.parse(readFileSync(filePath, "utf8"))).toEqual({ schemaVersion: SETTINGS_SCHEMA_VERSION, ...DEFAULT_SETTINGS });
   });
 
   it("set returns merged settings and a new instance reads them back", () => {
@@ -42,11 +59,71 @@ describe("SettingsStore", () => {
     expect(store.set({ claudeEnabledModels: [" opus ", "", "  "] }).claudeEnabledModels).toEqual(["opus"]);
   });
 
-  it("falls back to defaults on corrupt JSON without throwing", () => {
+  it("refuses corrupt JSON instead of resetting to defaults and leaves the file untouched", () => {
     const filePath = tempFilePath();
     writeFileSync(filePath, "not-json{{{", "utf8");
-    expect(new SettingsStore(filePath).get()).toEqual(DEFAULT_SETTINGS);
-    expect(JSON.parse(readFileSync(filePath, "utf8"))).toEqual(DEFAULT_SETTINGS);
+    expectRefusal(filePath, "corrupt");
+    expect(readFileSync(filePath, "utf8")).toBe("not-json{{{");
+  });
+
+  it("refuses a newer settings schema without writing", () => {
+    const filePath = tempFilePath();
+    const content = JSON.stringify({ schemaVersion: SETTINGS_SCHEMA_VERSION + 1, holdingHours: 3 });
+    writeFileSync(filePath, content, "utf8");
+    expectRefusal(filePath, "future-schema");
+    expect(readFileSync(filePath, "utf8")).toBe(content);
+  });
+
+  it("refuses a known setting whose type cannot be sanitized", () => {
+    const filePath = tempFilePath();
+    writeFileSync(filePath, JSON.stringify({ claudeExtraArgs: 5 }), "utf8");
+    expectRefusal(filePath, "invalid-shape");
+    expect(readFileSync(filePath, "utf8")).toBe('{"claudeExtraArgs":5}');
+  });
+
+  it("migrates the schema-0 fixture keeping every setting", () => {
+    const filePath = tempFilePath();
+    writeFileSync(filePath, FIXTURE);
+    const original = JSON.parse(FIXTURE.toString("utf8")) as Record<string, unknown>;
+
+    const settings = new SettingsStore(filePath).get();
+
+    for (const key of Object.keys(original).filter((k) => k !== "prWorkflows") as Array<keyof AppSettings>) {
+      expect(settings[key]).toEqual(original[key]);
+    }
+    const workflows = original.prWorkflows as PrWorkflow[];
+    expect(settings.prWorkflows[0]).toEqual(workflows[0]);
+    expect(settings.prWorkflows.find((w) => w.id === "review")).toMatchObject({ builtIn: true, enabled: false });
+    const persisted = JSON.parse(readFileSync(filePath, "utf8")) as Record<string, unknown>;
+    expect(persisted.schemaVersion).toBe(SETTINGS_SCHEMA_VERSION);
+    expect(readFileSync(`${filePath}.v0.bak`).equals(FIXTURE)).toBe(true);
+  });
+
+  it("does not rewrite migrated settings on a later startup", () => {
+    const filePath = tempFilePath();
+    writeFileSync(filePath, FIXTURE);
+    const first = new SettingsStore(filePath).get();
+    const bytes = readFileSync(filePath);
+    const past = new Date("2020-01-01T00:00:00Z");
+    utimesSync(filePath, past, past);
+    const mtime = statSync(filePath).mtimeMs;
+
+    expect(new SettingsStore(filePath).get()).toEqual(first);
+    expect(readFileSync(filePath).equals(bytes)).toBe(true);
+    expect(statSync(filePath).mtimeMs).toBe(mtime);
+  });
+
+  it("preserves unknown top-level keys across migration and saves", () => {
+    const filePath = tempFilePath();
+    writeFileSync(filePath, JSON.stringify({ holdingHours: 4, futureSetting: { nested: [1, 2] }, updateChannel: "alpha" }), "utf8");
+
+    const store = new SettingsStore(filePath);
+    store.set({ holdingHours: 8 });
+
+    const persisted = JSON.parse(readFileSync(filePath, "utf8")) as Record<string, unknown>;
+    expect(persisted).toMatchObject({ schemaVersion: SETTINGS_SCHEMA_VERSION, holdingHours: 8, futureSetting: { nested: [1, 2] }, updateChannel: "alpha" });
+    expect(store.get()).not.toHaveProperty("futureSetting");
+    expect(store.get()).not.toHaveProperty("schemaVersion");
   });
 
   it("migrates blank binary paths to OS defaults", () => {

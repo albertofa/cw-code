@@ -1,7 +1,15 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { AppSettings, PrSuggestCondition, PrWorkflow, PrWorkflowIcon, PrWorkspaceChoice, SettingsPatch } from "@cw-code/contracts";
 import { CLAUDE_CURATED_MODELS } from "../providers/claude/ClaudeCliDriver.js";
+import { writeFileAtomic } from "../storage/atomicFile.js";
+import {
+  isMetadataDocument,
+  loadVersionedJson,
+  type MetadataDocument,
+  type MetadataMigration,
+  type MetadataSchema
+} from "../storage/versionedJson.js";
 import { defaultPrWorkflows } from "./prWorkflowDefaults.js";
 import {
   configuredCliBinaryPath,
@@ -188,28 +196,56 @@ function defaults(): AppSettings {
   };
 }
 
-function load(filePath: string): { data: AppSettings; persist: boolean } {
-  const data = defaults();
-  if (!existsSync(filePath)) return { data, persist: true };
+export const SETTINGS_SCHEMA_VERSION = 1;
+
+const KNOWN_SETTING_KEYS = new Set<string>(Object.keys(DEFAULT_SETTINGS));
+
+function validateSettingsDocument(raw: unknown): string | null {
+  if (!isMetadataDocument(raw)) return "expected a JSON object";
   try {
-    const parsed = JSON.parse(readFileSync(filePath, "utf8")) as Partial<AppSettings>;
-    const loaded = { ...data, ...sanitize(parsed) };
-    return { data: loaded, persist: JSON.stringify(parsed) !== JSON.stringify(loaded) };
-  } catch {
-    return { data, persist: true };
+    sanitize(raw as SettingsPatch);
+    return null;
+  } catch (error) {
+    return `a setting has an unexpected type: ${(error as Error).message}`;
   }
+}
+
+export const SETTINGS_METADATA: MetadataSchema = {
+  kind: "settings",
+  currentVersion: SETTINGS_SCHEMA_VERSION,
+  validate: validateSettingsDocument
+};
+
+export const SETTINGS_MIGRATIONS: Record<number, MetadataMigration> = { 0: (raw) => raw };
+
+function unknownKeys(document: MetadataDocument): MetadataDocument {
+  const extras: MetadataDocument = {};
+  for (const [key, value] of Object.entries(document)) {
+    if (key !== "schemaVersion" && !KNOWN_SETTING_KEYS.has(key)) extras[key] = value;
+  }
+  return extras;
+}
+
+function serialize(data: AppSettings, extras: MetadataDocument): string {
+  return JSON.stringify({ schemaVersion: SETTINGS_SCHEMA_VERSION, ...data, ...extras });
 }
 
 export class SettingsStore {
   private filePath: string;
   private data: AppSettings;
+  private extras: MetadataDocument = {};
 
   constructor(filePath: string) {
     this.filePath = filePath;
     mkdirSync(dirname(this.filePath), { recursive: true });
-    const loaded = load(this.filePath);
-    this.data = loaded.data;
-    if (loaded.persist) this.persist();
+    const loaded = loadVersionedJson({ filePath: this.filePath, ...SETTINGS_METADATA, migrations: SETTINGS_MIGRATIONS });
+    this.data = defaults();
+    if (loaded.status === "ok") {
+      this.data = { ...this.data, ...sanitize(loaded.data as SettingsPatch) };
+      this.extras = unknownKeys(loaded.data);
+    }
+    const onDisk = loaded.status === "ok" ? JSON.stringify(loaded.data) : null;
+    if (serialize(this.data, this.extras) !== onDisk) this.persist();
   }
 
   get(): AppSettings {
@@ -223,8 +259,6 @@ export class SettingsStore {
   }
 
   private persist(): void {
-    const tmp = `${this.filePath}.${process.pid}.tmp`;
-    writeFileSync(tmp, JSON.stringify(this.data), "utf8");
-    renameSync(tmp, this.filePath);
+    writeFileAtomic(this.filePath, serialize(this.data, this.extras));
   }
 }
