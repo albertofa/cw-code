@@ -44,7 +44,7 @@ export function createGitHubReleaseSource(options: GitHubReleaseSourceOptions): 
         );
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        throw new Error(`GH_TOKEN (read-only) is required for gh api: ${message}`);
+        throw new Error(`gh api could not list releases (check network access and gh auth, e.g. a read-only GH_TOKEN in CI): ${message}`);
       }
       return stdout
         .split("\n")
@@ -80,8 +80,8 @@ export function createGitHubReleaseSource(options: GitHubReleaseSourceOptions): 
     async remoteMainSha(): Promise<string> {
       const stdout = await run("git", ["ls-remote", "origin", "refs/heads/main"], cwd);
       const sha = stdout.split(/\s+/)[0]?.trim();
-      if (!sha) {
-        throw new Error('git ls-remote origin refs/heads/main returned no SHA');
+      if (!sha || !/^[0-9a-f]{40}$/.test(sha)) {
+        throw new Error(`git ls-remote origin refs/heads/main returned an invalid SHA: "${sha ?? ""}"`);
       }
       return sha;
     },

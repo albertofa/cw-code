@@ -119,4 +119,13 @@ describe("validatePlanShape", () => {
     const result = validatePlanShape(validStablePlan({ candidate: { tag: "v0.0.1-alpha.21", sha: "short" } }));
     expect(result.ok).toBe(false);
   });
+
+  it("rejects an uppercase sourceSha", () => {
+    expect(validatePlanShape(validAlphaPlan({ sourceSha: SHA_A.toUpperCase() })).ok).toBe(false);
+  });
+
+  it("rejects a stable plan whose candidate SHA differs from sourceSha", () => {
+    const result = validatePlanShape(validStablePlan({ candidate: { tag: "v0.0.1-alpha.21", sha: SHA_A } }));
+    expect(result).toEqual({ ok: false, errors: [`candidate.sha ${SHA_A} must equal sourceSha ${SHA_B}`] });
+  });
 });
