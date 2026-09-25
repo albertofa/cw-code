@@ -24,7 +24,7 @@ export type {
   WorktreePruneSummary
 } from "./session.js";
 export type { ThreadEvent, SessionEvent, HistoryMessage, TodoItem, SubagentToolActivity, SubagentToolSummary, ToolUsage, ApprovalDecision, ApprovalKind, ApprovalRequest, QuestionInfo, QuestionOption, QuestionRequest } from "./events.js";
-export type { CliDriver, TurnHandle, RetryConnectionRequest, RetryConnectionResult, SubagentToolsResult } from "./provider.js";
+export type { CliDriver, DriverActivity, TurnHandle, RetryConnectionRequest, RetryConnectionResult, SubagentToolsResult } from "./provider.js";
 export type { AppSettings, CustomModel, SettingsPatch } from "./settings.js";
 export type {
   PrRef,
@@ -70,3 +70,14 @@ export type {
   UsageLedgerRow,
   UsageLedgerQuery
 } from "./usage.js";
+export type { MetadataStore, MetadataIssueKind, MetadataBackup, MetadataIssue, StartupState } from "./startup.js";
+export type {
+  ShutdownReason,
+  ShutdownActiveTurn,
+  ShutdownTerminal,
+  ShutdownAssessment,
+  ShutdownPrepareResult,
+  ShutdownCommitResult,
+  ShutdownPrepareRequest,
+  ShutdownRequestedEvent
+} from "./shutdown.js";

@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, shell, type WebContents } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, powerMonitor, shell, type WebContents } from "electron";
 import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -18,9 +18,9 @@ import { checkCliVersion, checkCliVersions, type CliVersionCheck } from "./cliVe
 import { discoverBinaries, verifyBinaryPath } from "./cli/binaryDiscovery.js";
 import { getHarnessTracePath, initHarnessTrace } from "./debug/harnessTrace.js";
 import { appendCrashLog, initCrashLog } from "./debug/crashLog.js";
-import { claudeCommandsCachePath, ensureAppDirs, attachmentsDir, logsDir, migrateFromUserData, opencodeModelsCachePath } from "./paths/appPaths.js";
+import { claudeCommandsCachePath, ensureAppDirs, attachmentsDir, logsDir, migrateFromUserData, opencodeModelsCachePath, sessionDbPath, settingsFilePath, userdataDir } from "./paths/appPaths.js";
 import { reapOrphanedServers } from "./orphanServers.js";
-import type { ApprovalDecision, CliBinary, CommandInvocation, CreateSessionOptions, GitDiffMode, ProjectGitHubRepo, PrRef, SessionPrLink, SessionStatus, SettingsPatch, UsageLedgerQuery } from "@cw-code/contracts";
+import type { ApprovalDecision, CliBinary, CommandInvocation, CreateSessionOptions, GitDiffMode, ProjectGitHubRepo, PrRef, SessionPrLink, MetadataIssue, SessionStatus, SettingsPatch, ShutdownCommitResult, ShutdownPrepareRequest, ShutdownReason, ShutdownRequestedEvent, StartupState, UsageLedgerQuery } from "@cw-code/contracts";
 import type { DriverKind, HarnessId, SkillSaveInput } from "@cw-code/contracts";
 import type { PtyKind } from "./pty/PtyPool.js";
 import { SessionManager } from "./sessions/SessionManager.js";
@@ -35,11 +35,48 @@ import { defaultPrWorkflows } from "./settings/prWorkflowDefaults.js";
 import { configuredCliBinaryPath } from "./settings/settingsUtils.js";
 import { initOpencodeModelsCache } from "./providers/opencode/opencodeModels.js";
 import { initClaudeCommandsCache } from "./providers/claude/claudeCommands.js";
+import { metadataSchemaFor, openMetadataStores } from "./storage/metadataStores.js";
+import { restoreBackup, startFresh } from "./storage/recovery.js";
+import { ShutdownCoordinator } from "./shutdown/ShutdownCoordinator.js";
+import type { SessionStore } from "./sessions/SessionStore.js";
+import type { SettingsStore } from "./settings/SettingsStore.js";
 
 type DriverName = DriverKind;
 
 const DRIVER_KINDS: DriverKind[] = ["claude", "opencode", "codex"];
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+const SHUTDOWN_REASONS: ShutdownReason[] = ["quit", "update"];
+const SHUTDOWN_TIMEOUT_MAX_MS = 120_000;
+const RENDERER_SHUTDOWN_ACK_MS = 5_000;
+
+function parseShutdownPrepare(args: unknown): ShutdownPrepareRequest {
+  const request = (args && typeof args === "object" ? args : {}) as Record<string, unknown>;
+  const reason = request.reason;
+  const timeoutMs = request.timeoutMs;
+  if (typeof reason !== "string" || !SHUTDOWN_REASONS.includes(reason as ShutdownReason)) {
+    throw new Error("shutdown.prepare requires reason 'quit' or 'update'");
+  }
+  if (typeof request.stopActiveTurns !== "boolean") throw new Error("shutdown.prepare requires a boolean stopActiveTurns");
+  if (typeof timeoutMs !== "number" || !Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > SHUTDOWN_TIMEOUT_MAX_MS) {
+    throw new Error(`shutdown.prepare requires timeoutMs between 1 and ${SHUTDOWN_TIMEOUT_MAX_MS}`);
+  }
+  const approved = request.approvedTurnIds;
+  if (approved !== undefined && (!Array.isArray(approved) || !approved.every((id) => typeof id === "string"))) {
+    throw new Error("shutdown.prepare approvedTurnIds must be an array of turn ids");
+  }
+  return {
+    reason: reason as ShutdownReason,
+    stopActiveTurns: request.stopActiveTurns,
+    timeoutMs,
+    ...(approved !== undefined ? { approvedTurnIds: approved as string[] } : {})
+  };
+}
+
+function parseShutdownToken(args: unknown, channel: string): string {
+  const token = args && typeof args === "object" ? (args as Record<string, unknown>).token : undefined;
+  if (typeof token !== "string" || token.length === 0) throw new Error(`${channel} requires { token }`);
+  return token;
+}
 
 function isValidUsageLedgerQuery(query: unknown): query is UsageLedgerQuery | undefined {
   if (query === undefined) return true;
@@ -50,20 +87,134 @@ function isValidUsageLedgerQuery(query: unknown): query is UsageLedgerQuery | un
   return true;
 }
 
+interface Services {
+  sessions: SessionManager;
+  skills: SkillsStore;
+  files: FileService;
+  git: GitService;
+  pullRequests: PullRequestService;
+  ptys: PtyPool;
+  accountUsage: AccountUsageService;
+  shutdown: ShutdownCoordinator;
+}
+
 let mainWindow: BrowserWindow | null = null;
-let pullRequests: PullRequestService;
-const sessions = new SessionManager({
-  prHead: (ref) => pullRequests.knownHead(ref),
-  prHeadRefresh: (ref) => pullRequests.refreshHead(ref),
-  prState: (ref) => pullRequests.knownState(ref),
-  prUpdatedAt: (ref) => pullRequests.knownUpdatedAt(ref)
-});
-const skills = new SkillsStore();
-const files = new FileService();
-const git = new GitService(() => sessions.getSettings());
-pullRequests = new PullRequestService(git, () => sessions.getSettings(), (rootPath) => sessions.addProject(rootPath));
-const ptys = new PtyPool(() => sessions.getSettings());
-const accountUsage = new AccountUsageService(() => sessions.getDrivers());
+let services: Services | null = null;
+let startupState: StartupState = { mode: "ready" };
+let quitApproved = false;
+let servicesDisposed = false;
+let shutdownAckTimer: NodeJS.Timeout | null = null;
+
+function createServices(stores: { sessionStore: SessionStore; settingsStore: SettingsStore }): Services {
+  let pullRequests: PullRequestService;
+  const sessions = new SessionManager({
+    sessionStore: stores.sessionStore,
+    settingsStore: stores.settingsStore,
+    prHead: (ref) => pullRequests.knownHead(ref),
+    prHeadRefresh: (ref) => pullRequests.refreshHead(ref),
+    prState: (ref) => pullRequests.knownState(ref),
+    prUpdatedAt: (ref) => pullRequests.knownUpdatedAt(ref)
+  });
+  const git = new GitService(() => sessions.getSettings());
+  pullRequests = new PullRequestService(git, () => sessions.getSettings(), (rootPath) => sessions.addProject(rootPath));
+  const ptys = new PtyPool(() => sessions.getSettings());
+  return {
+    sessions,
+    skills: new SkillsStore(),
+    files: new FileService(),
+    git,
+    pullRequests,
+    ptys,
+    accountUsage: new AccountUsageService(() => sessions.getDrivers()),
+    shutdown: new ShutdownCoordinator({ sessions, ptys, onRecovered: handleShutdownRecovered })
+  };
+}
+
+function handleShutdownRecovered(failure: string | null): void {
+  servicesDisposed = false;
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createWindow().catch((err: Error) => appendCrashLog(`could not reopen the window after shutdown recovery: ${err.message}`));
+  }
+  if (!failure) return;
+  appendCrashLog(`shutdown recovery could not restart CLI drivers: ${failure}`);
+  const options = { type: "error" as const, title: "cw-code", message: "cw-code could not restart its CLI drivers", detail: failure };
+  const window = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+  void (window ? dialog.showMessageBox(window, options) : dialog.showMessageBox(options));
+}
+
+function isQuitApproved(): boolean {
+  return quitApproved || services?.shutdown.isCommitted() === true;
+}
+
+function clearShutdownAck(): void {
+  if (!shutdownAckTimer) return;
+  clearTimeout(shutdownAckTimer);
+  shutdownAckTimer = null;
+}
+
+function disposeServices(): void {
+  if (!services || servicesDisposed) return;
+  servicesDisposed = true;
+  try {
+    services.sessions.flush();
+  } catch (err) {
+    console.warn(`flush before exit failed: ${(err as Error).message}`);
+  }
+  services.sessions.dispose();
+  services.ptys.dispose();
+}
+
+function quitWithoutDialog(): void {
+  clearShutdownAck();
+  quitApproved = true;
+  disposeServices();
+  app.quit();
+}
+
+function requestShutdown(): void {
+  const window = mainWindow;
+  if (!services || !window || window.isDestroyed() || window.webContents.isCrashed()) {
+    quitWithoutDialog();
+    return;
+  }
+  if (isQuitApproved()) return;
+  const event: ShutdownRequestedEvent = { reason: "quit" };
+  window.webContents.send("shutdown.requested", event);
+  clearShutdownAck();
+  shutdownAckTimer = setTimeout(() => {
+    shutdownAckTimer = null;
+    appendCrashLog(`renderer did not answer shutdown.requested within ${RENDERER_SHUTDOWN_ACK_MS}ms; quitting without the shutdown dialog`);
+    quitWithoutDialog();
+  }, RENDERER_SHUTDOWN_ACK_MS);
+}
+
+function endOfSession(): void {
+  clearShutdownAck();
+  quitApproved = true;
+  disposeServices();
+}
+
+async function commitShutdown(token: string, action: () => Promise<void> | void): Promise<ShutdownCommitResult> {
+  if (!services) return { ok: false, message: "cw-code services are not running" };
+  const result = await services.shutdown.commit(token, action);
+  if (!result.ok && !services.shutdown.isCommitted()) {
+    quitApproved = false;
+    servicesDisposed = false;
+  }
+  return result;
+}
+
+function recoverAbandonedShutdown(): void {
+  if (!services || services.shutdown.isIdle() || services.shutdown.isCommitted()) return;
+  services.shutdown.recover();
+}
+
+function focusMainWindow(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
+}
 
 async function createWindow(): Promise<void> {
   mainWindow = new BrowserWindow({
@@ -87,14 +238,24 @@ async function createWindow(): Promise<void> {
   mainWindow.on("maximize", () => mainWindow?.webContents.send("win.maximized", true));
   mainWindow.on("unmaximize", () => mainWindow?.webContents.send("win.maximized", false));
   mainWindow.on("unresponsive", () => appendCrashLog("window unresponsive"));
+  mainWindow.on("close", (event) => {
+    if (process.platform === "darwin" || !services || isQuitApproved()) return;
+    event.preventDefault();
+    requestShutdown();
+  });
+  mainWindow.on("session-end", endOfSession);
 
   const webContents = mainWindow.webContents;
   webContents.on("render-process-gone", (_e, details) => {
     appendCrashLog(
       `render-process-gone: reason=${details.reason} exitCode=${details.exitCode}`
     );
-    ptys.detachAll();
+    services?.ptys.detachAll();
+    recoverAbandonedShutdown();
     void webContents.reload();
+  });
+  webContents.on("did-start-navigation", (details) => {
+    if (details.isMainFrame && !details.isSameDocument) recoverAbandonedShutdown();
   });
   webContents.on("console-message", (event) => {
     if (event.level === "error") {
@@ -163,7 +324,87 @@ function isInsideAttachmentsDir(target: string): boolean {
   return true;
 }
 
-function registerIpc(): void {
+function relaunch(): void {
+  app.relaunch();
+  app.exit(0);
+}
+
+function registerWindowIpc(): void {
+  ipcMain.on("win.minimize", (e) => windowFromSender(e.sender)?.minimize());
+  ipcMain.on("win.toggle-maximize", (e) => {
+    const w = windowFromSender(e.sender);
+    if (!w) return;
+    if (w.isMaximized()) w.unmaximize();
+    else w.maximize();
+  });
+  ipcMain.on("win.close", (e) => windowFromSender(e.sender)?.close());
+  ipcMain.handle("win.is-maximized", (e) => windowFromSender(e.sender)?.isMaximized() ?? false);
+
+  ipcMain.on("win.zoom-in", (e) => bumpZoom(e.sender, 1));
+  ipcMain.on("win.zoom-out", (e) => bumpZoom(e.sender, -1));
+  ipcMain.on("win.zoom-reset", (e) => windowFromSender(e.sender)?.webContents.setZoomLevel(0));
+}
+
+function recoveryIssueFor(args: { file?: unknown } | undefined): MetadataIssue {
+  if (startupState.mode !== "recovery") throw new Error("cw-code is not in recovery mode");
+  if (!args || typeof args.file !== "string") throw new Error("a recovery action requires { file }");
+  const file = args.file;
+  const issue = startupState.issues.find((candidate) => candidate.file === file);
+  if (!issue) throw new Error(`${file} is not a file that needs recovery`);
+  return issue;
+}
+
+function registerStartupIpc(): void {
+  ipcMain.handle("startup.state", (): StartupState => startupState);
+  ipcMain.handle("recovery.openDataDir", async (): Promise<void> => {
+    const failure = await shell.openPath(userdataDir());
+    if (failure) throw new Error(`could not open ${userdataDir()}: ${failure}`);
+  });
+  ipcMain.handle("recovery.restore", (_e, args: { file: string; backupPath: string }): void => {
+    if (!args || typeof args.backupPath !== "string") throw new Error("recovery.restore requires { file, backupPath }");
+    const issue = recoveryIssueFor(args);
+    const result = restoreBackup(issue.file, args.backupPath, metadataSchemaFor(issue.store));
+    console.warn(
+      `restored ${result.file} from ${result.restoredFrom}${result.brokenPath ? `; previous file kept at ${result.brokenPath}` : ""}${result.archivedLastGood ? `; last good backup kept at ${result.archivedLastGood}` : ""}`
+    );
+    relaunch();
+  });
+  ipcMain.handle("recovery.startFresh", (_e, args: { file: string }): void => {
+    const issue = recoveryIssueFor(args);
+    if (issue.kind === "io") throw new Error(`${issue.file} may be intact behind a lock; retry instead of starting fresh`);
+    const result = startFresh(issue.file, metadataSchemaFor(issue.store));
+    console.warn(
+      `started ${result.file} fresh${result.brokenPath ? `; previous file kept at ${result.brokenPath}` : ""}${result.archivedLastGood ? `; last good backup kept at ${result.archivedLastGood}` : ""}`
+    );
+    relaunch();
+  });
+  ipcMain.handle("recovery.retry", (): void => {
+    if (startupState.mode !== "recovery") throw new Error("cw-code is not in recovery mode");
+    relaunch();
+  });
+}
+
+function registerShutdownIpc({ shutdown }: Services): void {
+  ipcMain.handle("shutdown.assess", () => {
+    clearShutdownAck();
+    return shutdown.assess();
+  });
+  ipcMain.handle("shutdown.prepare", (_e, args: unknown) => {
+    clearShutdownAck();
+    return shutdown.prepare(parseShutdownPrepare(args));
+  });
+  ipcMain.handle("shutdown.force", (_e, args: unknown) => shutdown.force(parseShutdownToken(args, "shutdown.force")));
+  ipcMain.handle("shutdown.cancel", (_e, args: unknown): void => {
+    shutdown.cancel(parseShutdownToken(args, "shutdown.cancel"));
+  });
+  ipcMain.handle("shutdown.quit", (_e, args: unknown) =>
+    commitShutdown(parseShutdownToken(args, "shutdown.quit"), () => {
+      app.quit();
+    })
+  );
+}
+
+function registerIpc({ sessions, skills, files, git, pullRequests, ptys, accountUsage }: Services): void {
   sessions.setEmitter((sessionId, event) => {
     mainWindow?.webContents.send("turn.event", { sessionId, event });
   });
@@ -536,20 +777,6 @@ function registerIpc(): void {
   ipcMain.on("pty.detach", (_e, args: { ptyId: string; token: string }) => ptys.detach(args.ptyId, args.token));
   ipcMain.on("pty.kill", (_e, args: { ptyId: string }) => ptys.kill(args.ptyId));
 
-  ipcMain.on("win.minimize", (e) => windowFromSender(e.sender)?.minimize());
-  ipcMain.on("win.toggle-maximize", (e) => {
-    const w = windowFromSender(e.sender);
-    if (!w) return;
-    if (w.isMaximized()) w.unmaximize();
-    else w.maximize();
-  });
-  ipcMain.on("win.close", (e) => windowFromSender(e.sender)?.close());
-  ipcMain.handle("win.is-maximized", (e) => windowFromSender(e.sender)?.isMaximized() ?? false);
-
-  ipcMain.on("win.zoom-in", (e) => bumpZoom(e.sender, 1));
-  ipcMain.on("win.zoom-out", (e) => bumpZoom(e.sender, -1));
-  ipcMain.on("win.zoom-reset", (e) => windowFromSender(e.sender)?.webContents.setZoomLevel(0));
-
   ipcMain.handle("term.font", () => readWindowsTerminalFontFace());
 
   ipcMain.handle("debug.openTrace", async (): Promise<{ ok: boolean; path?: string; error?: string }> => {
@@ -594,7 +821,18 @@ function registerIpc(): void {
   });
 }
 
-app.whenReady().then(async () => {
+function reportFatalStartupError(error: unknown): void {
+  const detail = error instanceof Error ? (error.stack ?? error.message) : String(error);
+  appendCrashLog(`fatal startup error: ${detail}`);
+  console.error(`fatal startup error: ${detail}`);
+  dialog.showErrorBox(
+    "cw-code could not start",
+    `${error instanceof Error ? error.message : String(error)}\n\nDetails were written to ${join(logsDir(), "crash.log")}. Nothing in your data folder was deleted.`
+  );
+  app.exit(1);
+}
+
+async function startApp(): Promise<void> {
   ensureAppDirs();
   migrateFromUserData(app.getPath("userData"));
   try {
@@ -604,28 +842,38 @@ app.whenReady().then(async () => {
     console.warn(`harness trace init failed: ${(err as Error).message}`);
   }
   initCrashLog(logsDir());
-  initOpencodeModelsCache(opencodeModelsCachePath());
-  initClaudeCommandsCache(claudeCommandsCachePath());
-  sessions.warmOpencodeModels();
   process.on("uncaughtException", (err) => {
     appendCrashLog(`uncaughtException: ${err.stack ?? err.message}`);
   });
   process.on("unhandledRejection", (reason) => {
     appendCrashLog(`unhandledRejection: ${String(reason)}`);
   });
-  reapOrphanedServers()
-    .then((reaped) => {
-      if (reaped.length > 0) console.warn(`reaped ${reaped.length} orphaned CLI server(s) from a previous run`);
-    })
-    .catch((err) => {
-      console.warn(`orphan server sweep failed: ${(err as Error).message}`);
-    });
-  const quitOnSignal = (): void => {
-    app.quit();
-  };
-  process.once("SIGINT", quitOnSignal);
-  process.once("SIGTERM", quitOnSignal);
-  registerIpc();
+  const stores = openMetadataStores({ dbPath: sessionDbPath(), settingsPath: settingsFilePath() });
+  if (stores.ok) {
+    initOpencodeModelsCache(opencodeModelsCachePath());
+    initClaudeCommandsCache(claudeCommandsCachePath());
+    services = createServices(stores);
+    services.sessions.warmOpencodeModels();
+    reapOrphanedServers()
+      .then((reaped) => {
+        if (reaped.length > 0) console.warn(`reaped ${reaped.length} orphaned CLI server(s) from a previous run`);
+      })
+      .catch((err) => {
+        console.warn(`orphan server sweep failed: ${(err as Error).message}`);
+      });
+    registerIpc(services);
+    registerShutdownIpc(services);
+  } else {
+    startupState = { mode: "recovery", issues: stores.issues, dataDir: userdataDir() };
+    for (const issue of stores.issues) {
+      appendCrashLog(`metadata recovery required: ${issue.store} ${issue.file} (${issue.kind}): ${issue.message}`);
+    }
+  }
+  registerWindowIpc();
+  registerStartupIpc();
+  process.once("SIGINT", quitWithoutDialog);
+  process.once("SIGTERM", quitWithoutDialog);
+  powerMonitor.on("shutdown", endOfSession);
   app.on("child-process-gone", (_e, details) => {
     appendCrashLog(
       `child-process-gone: type=${details.type} reason=${details.reason} exitCode=${details.exitCode}`
@@ -635,13 +883,31 @@ app.whenReady().then(async () => {
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) void createWindow();
   });
-});
+}
 
-app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") app.quit();
-});
+if (!app.isPackaged && !app.commandLine.hasSwitch("user-data-dir")) {
+  app.setPath("userData", join(app.getPath("appData"), "@cw-code", "desktop-dev"));
+}
 
-app.on("before-quit", () => {
-  sessions.dispose();
-  ptys.dispose();
-});
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on("second-instance", focusMainWindow);
+
+  app.whenReady().then(startApp).catch(reportFatalStartupError);
+
+  app.on("window-all-closed", () => {
+    if (process.platform !== "darwin") app.quit();
+  });
+
+  app.on("before-quit", (event) => {
+    if (!isQuitApproved() && services && mainWindow && !mainWindow.isDestroyed()) {
+      event.preventDefault();
+      requestShutdown();
+      return;
+    }
+    clearShutdownAck();
+    quitApproved = true;
+    disposeServices();
+  });
+}

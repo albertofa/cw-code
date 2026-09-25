@@ -17,12 +17,15 @@ import type {
   Session,
   SessionStatus,
   SettingsPatch,
+  ShutdownAssessment,
+  ShutdownReason,
   SubagentToolsResult,
   TodoItem,
   TokenCounts,
   TurnEvent,
   TurnModelUsage
 } from "../cw.js";
+import type { DirtyBuffer } from "./editorBuffers.js";
 import { appendAssistantText, appendReasoningText, closeReasoning, upsertToolCall } from "../components/chatMessages.js";
 import { getLastModel, setLastModel } from "../components/lastModel.js";
 import { formatDuration, mergeToolPairs } from "../components/toolSummaries.js";
@@ -122,7 +125,19 @@ function sumTurnUsage(usage: TurnModelUsage[]): TokenCounts & { costUsd: number 
   return { inputTokens, cacheReadTokens, cacheWriteTokens, outputTokens, reasoningTokens, costUsd };
 }
 
+export type ShutdownPhase = "review" | "waiting" | "saving" | "preparing" | "timeout";
+
+export interface ShutdownUiState {
+  reason: ShutdownReason;
+  assessment: ShutdownAssessment;
+  dirty: DirtyBuffer[];
+  phase: ShutdownPhase;
+  error: string | null;
+  pending: string[];
+}
+
 interface AppState {
+  shutdown: ShutdownUiState | null;
   projects: Project[];
   sessionsByProject: Record<string, Session[]>;
   discoveredByProject: Record<string, Session[]>;
@@ -192,6 +207,7 @@ interface AppState {
   sendPrompt(prompt: string, attachments?: string[], command?: CommandInvocation): Promise<void>;
   sendPromptTo(sessionId: string, prompt: string, attachments?: string[], opts?: { prRefs?: PrRef[]; command?: CommandInvocation }): Promise<void>;
   interrupt(): Promise<void>;
+  markTurnsInterrupted(sessionIds: string[]): void;
   retryConnection(sessionId: string): Promise<void>;
   respondApproval(requestId: string, decision: ApprovalDecision): Promise<void>;
   respondQuestion(sessionId: string, requestId: string, answers: Record<string, string>): Promise<void>;
@@ -275,6 +291,7 @@ function knownTurnId(value: string | undefined): string | undefined {
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
+  shutdown: null,
   projects: [],
   sessionsByProject: {},
   discoveredByProject: {},
@@ -1003,6 +1020,17 @@ export const useAppStore = create<AppState>((set, get) => ({
         ? { sessionsByProject: patchSession(get().sessionsByProject, sessionId, { status: "holding", updatedAt: Date.now() }) }
         : {})
     });
+  },
+
+  markTurnsInterrupted(sessionIds: string[]) {
+    let book: TurnBookkeeping = { busyTurns: get().busyTurns, turnStartedAt: get().turnStartedAt, turnDurations: get().turnDurations };
+    let sessionsByProject = get().sessionsByProject;
+    for (const sessionId of sessionIds) {
+      const turnId = book.busyTurns[sessionId];
+      if (turnId) book = closeTurn(book, sessionId, knownTurnId(turnId));
+      sessionsByProject = patchSession(sessionsByProject, sessionId, { status: "holding", updatedAt: Date.now() });
+    }
+    set({ ...book, sessionsByProject });
   },
 
   async retryConnection(sessionId: string) {

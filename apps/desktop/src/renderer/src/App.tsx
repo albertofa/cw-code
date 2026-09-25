@@ -12,6 +12,8 @@ import { PrInboxView } from "./components/PrInboxView.js";
 import { PrDetailView } from "./components/PrDetailView.js";
 import { UsageView } from "./components/UsageView.js";
 import { WorkflowRunModal } from "./components/WorkflowRunModal.js";
+import { ShutdownDialog } from "./components/ShutdownDialog.js";
+import { handleQuitRequest } from "./stores/shutdownFlow.js";
 import { PanelToggles } from "./components/PanelToggles.js";
 import { ToolContent } from "./components/ToolContent.js";
 import { TOOL_TABS, isHarnessTabId, isToolTabAvailable } from "./components/toolTabs.js";
@@ -189,6 +191,7 @@ export function App() {
     const off = window.cw.onTurnEvent(handleTurnEvent);
     const offTitle = window.cw.onSessionTitle(({ sessionId, title }) => useAppStore.getState().applySessionTitle(sessionId, title));
     const offSession = window.cw.onSessionUpdated((session) => useAppStore.getState().applySession(session));
+    const offShutdown = window.cw.shutdown.onRequested(() => void handleQuitRequest());
     const onKey = (e: KeyboardEvent) => {
       if (!(e.ctrlKey || e.metaKey) || e.altKey) return;
       const target = e.target as HTMLElement | null;
@@ -213,6 +216,7 @@ export function App() {
       off();
       offTitle();
       offSession();
+      offShutdown();
       flushPendingDeltas();
       window.removeEventListener("keydown", onKey);
     };
@@ -554,6 +558,7 @@ export function App() {
           )}
           {skillsOpen && <SkillsModal onClose={() => setSkillsOpen(false)} />}
           {runModal && <WorkflowRunModal request={runModal} />}
+          <ShutdownDialog />
         </>
       )}
     </div>

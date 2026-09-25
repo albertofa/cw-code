@@ -29,10 +29,19 @@ import type {
   PrTimelineItem,
   PrWorkflow,
   SessionPrLink,
+  ShutdownActiveTurn,
+  ShutdownAssessment,
+  ShutdownCommitResult,
+  ShutdownPrepareRequest,
+  ShutdownPrepareResult,
+  ShutdownReason,
+  ShutdownRequestedEvent,
+  ShutdownTerminal,
   SkillDetail,
   SkillMeta,
   SkillSaveInput,
   SkillsListResult,
+  StartupState,
   TokenCounts,
   TurnModelUsage,
   UsageBalance,
@@ -43,6 +52,13 @@ import type {
 } from "@cw-code/contracts";
 
 export type {
+  ShutdownActiveTurn,
+  ShutdownAssessment,
+  ShutdownCommitResult,
+  ShutdownPrepareRequest,
+  ShutdownPrepareResult,
+  ShutdownReason,
+  ShutdownTerminal,
   AccountUsageOk,
   AccountUsageSnapshot,
   AccountUsageState,
@@ -452,6 +468,21 @@ export interface DirEntry {
 }
 
 export interface CwApi {
+  getStartupState(): Promise<StartupState>;
+  recovery: {
+    openDataDir(): Promise<void>;
+    restore(file: string, backupPath: string): Promise<void>;
+    startFresh(file: string): Promise<void>;
+    retry(): Promise<void>;
+  };
+  shutdown: {
+    assess(): Promise<ShutdownAssessment>;
+    prepare(request: ShutdownPrepareRequest): Promise<ShutdownPrepareResult>;
+    force(token: string): Promise<ShutdownPrepareResult>;
+    cancel(token: string): Promise<void>;
+    quit(token: string): Promise<ShutdownCommitResult>;
+    onRequested(cb: (event: ShutdownRequestedEvent) => void): () => void;
+  };
   checkVersions(): Promise<Array<{
     binary: DriverName;
     binaryPath: string;
