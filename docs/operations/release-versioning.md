@@ -82,11 +82,17 @@ published stable (or none, for the first stable release).
 After a successful `CI` run on `main`, an alpha plan is generated automatically
 (`workflow_run`). It is skipped (not failed) when:
 
-- HEAD is unchanged from the SHA of the latest published alpha or stable release,
-- fewer than 6 hours have passed since the latest published alpha, or
-- the tag commit of the highest published alpha or stable is not an ancestor of the
-  source SHA (GitHub compare API). This is what stops a re-run of an old CI run, or a
-  `workflow_run` that arrives late, from releasing older history under a new number.
+- HEAD is unchanged from the SHA of the latest published alpha or stable release, or
+- fewer than 6 hours have passed since the latest published alpha.
+
+It **fails** (not skips) when the tag commit of the highest published alpha or stable is
+not an ancestor of the source SHA (GitHub compare API), or has no git tag. This stops a
+re-run of an old CI run, or a `workflow_run` that arrives late, from releasing older
+history under a new number, and it makes a release tag that ended off `main` visible.
+The only way past it is a manual alpha dispatch with `acknowledge_diverged_tag` naming
+exactly the diverged tags (`plan --acknowledge-diverged-tag <tag>[,<tag>]`); the plan
+records them in `acknowledgedDivergedTags` and `verify-plan` accepts only those. See
+[releases.md](releases.md#recovery).
 
 This coalesces bursts of merges into at most one alpha release per 6 hours, without
 publishing a redundant alpha for an unchanged commit. Note: releases published before this
@@ -121,7 +127,9 @@ internal consistency — before touching git or GitHub at all:
 - for a stable plan, `candidate` is present, its tag is a valid alpha tag on the same base as
   `version`, and its `sha` is a full 40-character hex SHA;
 - `prerelease`/`makeLatest` match the channel (`true`/`false` for alpha, `false`/`true` for
-  stable).
+  stable);
+- `acknowledgedDivergedTags`, when present, is a non-empty list of distinct release tags
+  and only appears on alpha plans.
 
 A structurally invalid plan is rejected immediately, with no network or git calls. The CLI
 never blindly casts the parsed JSON — `JSON.parse` result is passed through as `unknown` and
@@ -160,7 +168,7 @@ They print machine-readable JSON to stdout and, when `$GITHUB_OUTPUT` is set, al
 the heredoc delimiter format, so values are never corrupted or split by embedded newlines.
 
 - `plan --channel alpha|stable [--candidate <tag|sha>] [--expected-sha <sha>] [--sha <sha>]
-  [--force] [--now <iso>] --out <file>`
+  [--force] [--acknowledge-diverged-tag <tag>[,<tag>]] [--now <iso>] --out <file>`
   Writes the `ReleasePlan` (or `{ skip: true, reason }` for a throttled alpha) to `<file>`.
   `--sha`/`--expected-sha` must be a full 40-character hex SHA, validated before any git call.
   When `--sha` is given, the desktop version is read from that exact commit

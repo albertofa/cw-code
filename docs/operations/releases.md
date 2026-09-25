@@ -27,8 +27,8 @@ workflow_dispatch (main only) ─────────────┤
                                            v
 plan (ubuntu, contents: read, tooling at the workflow commit)
   resolve mode, plan version/tag for the source SHA, upload plan.json
-  │ skip (6-hour window, unchanged HEAD, source older than a published
-  │ release) ends the run here
+  │ skip (6-hour window, unchanged HEAD) ends the run here;
+  │ a published tag that is not an ancestor of the source fails it
   v
 verify-source (windows)
   checkout plan.sourceSha, frozen install, apply version, typecheck, test, build;
@@ -73,6 +73,8 @@ through `workflow_run` would have lost the dispatch inputs. Planning rules are i
   `expected_sha`, `force` and `mode` (validate | publish, default validate). Inputs
   reach scripts through `env:` only. An alpha dispatch with `candidate` or
   `expected_sha` fails in `plan`; those inputs only mean something for stable.
+  `acknowledge_diverged_tag` (alpha dispatch only) is the escape hatch described in
+  [Recovery](#recovery); `workflow_run` runs can never pass it.
 
 There is no pull request trigger.
 
@@ -88,7 +90,10 @@ cancelled:
 A validation run therefore never delays a publication. GitHub keeps at most one
 pending run (or pending job, for the job-level group) per group: a newer pending one
 replaces an older pending one, which then shows as cancelled. Nothing was published
-by a cancelled pending run; dispatch it again if it is still wanted.
+by a cancelled pending run; dispatch it again if it is still wanted. A `publish` job
+that is waiting for the `release-publish` environment approval already holds the
+job-level `release-publish` group, so a publication of the other channel waits until
+that approval is given or rejected.
 
 ## Where code runs from
 
@@ -102,6 +107,10 @@ its own typecheck, tests and build; the production-bundle gate on that build com
 a second checkout of the workflow commit under `tooling/`. `sign-windows.yml` follows
 the same rule with `job.workflow_sha`. A stable promotion of an older commit is
 therefore always judged by the current gates.
+
+A rerun (**Re-run failed jobs** or **Re-run all jobs**) keeps the original run's
+`workflow_sha`, so it runs the tooling of that commit. After a fix to the tooling or
+the workflow, start a new run instead of rerunning an old one.
 
 ## Validation-only and publish
 
@@ -186,8 +195,9 @@ version, channel matches the version shape).
    no higher or equal version published in the channel; for alpha, no newer stable
    published, `sourceSha` still reachable from `main`, and the tag commits of the
    highest published alpha and stable both ancestors of `sourceSha` (GitHub compare
-   API), so a rerun of an old CI run can never publish older history; for stable, the
-   candidate tag still resolves to `sourceSha`.
+   API) unless the plan recorded that tag in `acknowledgedDivergedTags`, so a rerun of
+   an old CI run can never publish older history; for stable, the candidate tag still
+   resolves to `sourceSha`.
 5. Creates the draft (`target_commitish = sourceSha`, notes plus the marker, alpha
    drafts are prereleases) or resumes the marked draft.
 6. Uploads the installer, the blockmap and `signing.json`, then the feed files, with
@@ -303,7 +313,10 @@ installer's Authenticode status and signer, and every asset digest.
 - No `${{ }}` expression is interpolated into a `run:` script.
 - Gate tooling runs from `github.workflow_sha` (see [Where code runs from](#where-code-runs-from)).
 - `plan`, `publish` and `verify-publication` install with `--ignore-scripts`: they only
-  run the release tooling, so no dependency lifecycle script runs next to a token.
+  run the release tooling, so no dependency lifecycle script runs in the jobs that hold
+  the plan's read token or the publish job's `contents: write` token. `verify-source`
+  and `verify-candidate` need a full install (Electron, the packaged-app probes), so
+  lifecycle scripts do run there, with nothing but a read-only `GITHUB_TOKEN` in reach.
 - No npm, web, Azure or backend deployment is part of this workflow.
 - Recommended for the owner: evaluate GitHub's immutable releases setting for the
   repository. Once a release is published its assets and tag can then no longer be
@@ -341,6 +354,11 @@ may have been public; problems are fixed by rolling forward to a higher version.
   not create tags. The owner checks the draft and deletes it, then starts a new run.
   The plan job's read-only token cannot see drafts, so it may plan that number again;
   once the draft is deleted that is fine.
+- **Publish failed at the publish call itself** (the job died or timed out around step
+  9): check the release page. The release may already be public while
+  `verify-publication` was skipped, because `published=true` was never written. Re-run
+  the failed `publish` job: it finds the published release, compares its assets and
+  ends as `already-published`, and `verify-publication` then runs.
 - **Publish failed after step 9** (wrong prerelease flag, tag at another commit): the
   release is public. `verify-publication` still runs and shows what clients see. Fix
   the prerelease/latest flags by hand if they are wrong. If the tag is wrong, do not
@@ -356,6 +374,19 @@ may have been public; problems are fixed by rolling forward to a higher version.
   in their updater cache and can still install it with Update and restart until a
   higher version supersedes it. electron-updater still verifies sha512 and the publisher
   before installing, so this is about bad content, not tampering.
+- **A published tag ended up off `main`** (`plan` fails with "Published alpha|stable
+  <tag> (<tag SHA>) is not an ancestor of <source SHA>"): the planner never builds an
+  alpha from history that does not contain the latest published release, and there is
+  no automatic way past it. Procedure:
+  1. Find out what shipped: open the release, compare `<tag SHA>` with `main`
+     (`git log --oneline main..<tag SHA>` shows the commits only the release has) and
+     decide whether those changes are in `main` in another form or must be ported.
+  2. If the next alpha from `main` is correct, dispatch `Release` with `channel:
+     alpha` and `acknowledge_diverged_tag: <tag>` (every diverged tag the error names,
+     comma-separated; a wrong, extra or missing tag fails the plan). The plan records
+     the tags in `acknowledgedDivergedTags`, the job summary shows them, and
+     `verify-plan` accepts only those. Numbering and ordering checks still apply.
+  3. Roll forward: the new alpha is the fix; never move or reuse the diverged tag.
 - **A leftover tag or deleted release**: the planner treats every existing
   `v<base>-alpha.*` git tag and every visible draft as a used alpha number and plans
   the next free one. A stable version whose tag exists is refused; bump the base with
@@ -385,7 +416,9 @@ Result on 2026-09-25 (unsigned local build of `0.0.1-alpha.22`, logs in
 | Step | Exit |
 | --- | --- |
 | `plan --sha <origin/main>` (0.0.1-alpha.22; alpha.21's tag commit is an ancestor) | 0 |
-| `plan --sha <v0.0.1-alpha.20 commit>` | 0, skip: alpha.21 is not an ancestor |
+| `plan --sha <v0.0.1-alpha.20 commit>` | 1, `::error::` alpha.21 (1d8f4b8) is not an ancestor of 48b1aba |
+| same with `--acknowledge-diverged-tag v0.0.1-alpha.19` (wrong tag) | 1 |
+| same with `--acknowledge-diverged-tag v0.0.1-alpha.21` | 0, plan records `acknowledgedDivergedTags` |
 | `rehash`, `verify-signatures -AllowUnsigned`, `signing-manifest` unsigned | 0 |
 | `check-signing-manifest` with the plan's version, SHA and run id | 0 |
 | same with another run id | 1 |

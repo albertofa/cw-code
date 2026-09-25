@@ -39,6 +39,17 @@ describe("release.yml policy", () => {
     expect(job("publish")).toMatch(/PUBLISHING_ENABLED: \$\{\{ vars\.CW_RELEASE_PUBLISHING_ENABLED \}\}[\s\S]*if \[ "\$PUBLISHING_ENABLED" != "true" \]; then[\s\S]*exit 1[\s\S]*release\.ts publish/);
   });
 
+  it("accepts a diverged-tag acknowledgement only from a manual alpha dispatch and records it", () => {
+    const plan = job("plan");
+    const on = topLevelBlock(lines, "on").join("\n");
+    expect(on.split("workflow_dispatch:")[1]).toContain("acknowledge_diverged_tag:");
+    expect(on.split("workflow_dispatch:")[0]).not.toContain("acknowledge_diverged_tag");
+    expect(plan).toContain('if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ -n "$ACKNOWLEDGED" ]; then args+=(--acknowledge-diverged-tag "$ACKNOWLEDGED"); fi');
+    expect(plan.match(/--acknowledge-diverged-tag/g)).toHaveLength(1);
+    expect(plan).toContain('if [ "$CHANNEL" = "stable" ] && [ -n "$ACKNOWLEDGED" ]; then');
+    expect(plan).toContain("ACKNOWLEDGED: ${{ steps.plan.outputs.acknowledged }}");
+  });
+
   it("rejects stable-only inputs on an alpha run", () => {
     expect(job("plan")).toContain('if [ "$CHANNEL" = "alpha" ] && { [ -n "$CANDIDATE" ] || [ -n "$EXPECTED_SHA" ]; }; then');
   });

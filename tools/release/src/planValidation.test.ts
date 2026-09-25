@@ -128,4 +128,13 @@ describe("validatePlanShape", () => {
     const result = validatePlanShape(validStablePlan({ candidate: { tag: "v0.0.1-alpha.21", sha: SHA_A } }));
     expect(result).toEqual({ ok: false, errors: [`candidate.sha ${SHA_A} must equal sourceSha ${SHA_B}`] });
   });
+
+  it("keeps a recorded acknowledgement of diverged tags on alpha plans only", () => {
+    const acknowledged = validAlphaPlan({ acknowledgedDivergedTags: ["v0.0.1-alpha.21"] });
+    expect(validatePlanShape(acknowledged)).toEqual({ ok: true, plan: acknowledged });
+    expect(validatePlanShape(validAlphaPlan({ acknowledgedDivergedTags: [] })).ok).toBe(false);
+    expect(validatePlanShape(validAlphaPlan({ acknowledgedDivergedTags: ["main"] })).ok).toBe(false);
+    expect(validatePlanShape(validAlphaPlan({ acknowledgedDivergedTags: ["v0.0.1", "v0.0.1"] })).ok).toBe(false);
+    expect(validatePlanShape(validStablePlan({ acknowledgedDivergedTags: ["v0.0.0"] })).ok).toBe(false);
+  });
 });
