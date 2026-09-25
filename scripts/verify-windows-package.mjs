@@ -100,6 +100,10 @@ function killProcessTree(pid) {
   spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"]);
 }
 
+function isElevated() {
+  return spawnSync("net", ["session"], { encoding: "utf8" }).status === 0;
+}
+
 async function runPackageProbe(exePath, opts = {}) {
   const workDir = mkdtempSync(join(tmpdir(), "cw-verify-probe-"));
   try {
@@ -260,6 +264,19 @@ function electronUserDataDir() {
   return join(process.env.APPDATA ?? join(homedir(), "AppData", "Roaming"), "@cw-code", "desktop");
 }
 
+const FIXTURE_MARKER = "cw-verify";
+
+function assertSafeToSeed(path) {
+  if (!existsSync(path)) return;
+  const content = readFileSync(path, "utf8");
+  if (!content.includes(FIXTURE_MARKER)) {
+    throw new Error(
+      `refusing to seed over existing file that is not a cw-verify fixture: ${path}. ` +
+        "This looks like real user data; aborting before writing anything."
+    );
+  }
+}
+
 function seedRealUserData() {
   const home = cwCodeHomeDir();
   const userdataDir = join(home, "userdata");
@@ -268,6 +285,10 @@ function seedRealUserData() {
   const dbPath = join(userdataDir, "cw-code.db.json");
   const settingsPath = join(userdataDir, "cw-settings.json");
 
+  for (const path of [dbPath, settingsPath, worktreeMarkerPath, electronMarkerPath]) {
+    assertSafeToSeed(path);
+  }
+
   mkdirSync(userdataDir, { recursive: true });
   mkdirSync(dirname(worktreeMarkerPath), { recursive: true });
   mkdirSync(dirname(electronMarkerPath), { recursive: true });
@@ -275,6 +296,7 @@ function seedRealUserData() {
   const dbContent = `${JSON.stringify(
     {
       schemaVersion: 1,
+      _fixture: FIXTURE_MARKER,
       projects: [{ id: "proj_verify_fake", rootPath: "C:\\verify\\fake-project" }],
       sessions: [
         {
@@ -289,8 +311,12 @@ function seedRealUserData() {
     null,
     2
   )}\n`;
-  const settingsContent = `${JSON.stringify({ schemaVersion: 1, claudeBinaryPath: "claude.exe" }, null, 2)}\n`;
-  const markerContent = `cw-verify marker ${Date.now()}\n`;
+  const settingsContent = `${JSON.stringify(
+    { schemaVersion: 1, claudeBinaryPath: "claude.exe", _fixture: FIXTURE_MARKER },
+    null,
+    2
+  )}\n`;
+  const markerContent = `${FIXTURE_MARKER} marker ${Date.now()}\n`;
 
   writeFileSync(dbPath, dbContent, "utf8");
   writeFileSync(settingsPath, settingsContent, "utf8");
@@ -298,6 +324,21 @@ function seedRealUserData() {
   writeFileSync(electronMarkerPath, markerContent, "utf8");
 
   return { dbPath, settingsPath, worktreeMarkerPath, electronMarkerPath, dbContent, settingsContent, markerContent };
+}
+
+function cleanupSeededFixtures(seed) {
+  for (const path of [seed.dbPath, seed.settingsPath, seed.electronMarkerPath]) {
+    try {
+      rmSync(path, { force: true });
+    } catch (err) {
+      console.warn(`warning: could not remove seeded fixture ${path}: ${err.message}`);
+    }
+  }
+  try {
+    rmSync(dirname(seed.worktreeMarkerPath), { recursive: true, force: true });
+  } catch (err) {
+    console.warn(`warning: could not remove seeded fixture worktree ${dirname(seed.worktreeMarkerPath)}: ${err.message}`);
+  }
 }
 
 function assertDataPreserved(seed, problems) {
@@ -346,6 +387,7 @@ async function installMode(distDir, disposableEnvironment) {
     if (existsSync(uninstallerPath)) {
       try {
         runUninstallSync(uninstallerPath, installDir);
+        waitForRegistryValueGone(registryPaths(false).install, "InstallLocation", UNINSTALL_POLL_TIMEOUT_MS);
       } catch (err) {
         problems.push(`install mode cleanup uninstall failed: ${err.message}`);
       }
@@ -364,6 +406,12 @@ async function upgradeFromMode(distDir, legacyInstallerPath, disposableEnvironme
 
   const perMachine = Boolean(opts.perMachine);
   const customDir = opts.customDir ?? null;
+  if (perMachine && !isElevated()) {
+    throw new Error(
+      "--per-machine requires an elevated (Administrator) process — 'net session' did not succeed. " +
+        "Re-run from an elevated shell (hosted GitHub Windows runners are elevated by default)."
+    );
+  }
   const registryKeys = registryPaths(perMachine);
   const legacyArgs = perMachine ? ["/S", "/allusers"] : customDir ? ["/S", `/D=${customDir}`] : ["/S"];
   const upgradeArgs = perMachine ? ["/S", "/allusers"] : ["/S"];
@@ -385,40 +433,61 @@ async function upgradeFromMode(distDir, legacyInstallerPath, disposableEnvironme
   }
 
   const seed = seedRealUserData();
+  let installLocationAfter = null;
+  let displayVersionAfter = null;
+  let publisherAfter = null;
 
-  runSilent(newInstallerPath, upgradeArgs);
+  try {
+    runSilent(newInstallerPath, upgradeArgs);
 
-  const installLocationAfter = readRegistryValue(registryKeys.install, "InstallLocation");
-  const displayVersionAfter = readRegistryValue(registryKeys.uninstall, "DisplayVersion");
-  const publisherAfter = readRegistryValue(registryKeys.uninstall, "Publisher");
-  const expectedAuthor = readDesktopAuthor();
+    installLocationAfter = readRegistryValue(registryKeys.install, "InstallLocation");
+    displayVersionAfter = readRegistryValue(registryKeys.uninstall, "DisplayVersion");
+    publisherAfter = readRegistryValue(registryKeys.uninstall, "Publisher");
+    const expectedAuthor = readDesktopAuthor();
 
-  if (!installLocationAfter) problems.push(`InstallLocation missing at ${registryKeys.install} after upgrade`);
-  if (installLocationAfter !== installLocationBefore) {
-    problems.push(`InstallLocation changed from '${installLocationBefore}' to '${installLocationAfter}'`);
-  }
-  if (displayVersionBefore === displayVersionAfter) {
-    problems.push(`DisplayVersion did not change across the upgrade (stayed '${displayVersionBefore}')`);
-  }
-  if (displayVersionAfter !== newVersion) {
-    problems.push(`DisplayVersion after upgrade is '${displayVersionAfter}', expected '${newVersion}'`);
-  }
-  if (expectedAuthor && publisherAfter !== expectedAuthor) {
-    problems.push(`Publisher after upgrade is '${publisherAfter}' (was '${publisherBefore}'), expected '${expectedAuthor}'`);
-  }
+    if (!installLocationAfter) problems.push(`InstallLocation missing at ${registryKeys.install} after upgrade`);
+    if (installLocationAfter !== installLocationBefore) {
+      problems.push(`InstallLocation changed from '${installLocationBefore}' to '${installLocationAfter}'`);
+    }
+    if (displayVersionBefore === displayVersionAfter) {
+      problems.push(`DisplayVersion did not change across the upgrade (stayed '${displayVersionBefore}')`);
+    }
+    if (displayVersionAfter !== newVersion) {
+      problems.push(`DisplayVersion after upgrade is '${displayVersionAfter}', expected '${newVersion}'`);
+    }
+    if (expectedAuthor && publisherAfter !== expectedAuthor) {
+      problems.push(`Publisher after upgrade is '${publisherAfter}' (was '${publisherBefore}'), expected '${expectedAuthor}'`);
+    }
 
-  assertDataPreserved(seed, problems);
+    assertDataPreserved(seed, problems);
 
-  if (installLocationAfter) {
-    const uninstallerPath = join(installLocationAfter, "Uninstall cw-code.exe");
-    if (existsSync(uninstallerPath)) {
+    if (installLocationAfter) {
       try {
-        runUninstallSync(uninstallerPath, installLocationAfter);
-        waitForRegistryValueGone(registryKeys.install, "InstallLocation", UNINSTALL_POLL_TIMEOUT_MS);
+        const { probe } = await runPackageProbe(join(installLocationAfter, "cw-code.exe"));
+        if (probe.appVersion !== newVersion) {
+          problems.push(`post-upgrade probe appVersion is '${probe.appVersion}', expected '${newVersion}'`);
+        }
+        if (!probe.nodePty.spawned) {
+          problems.push(`post-upgrade probe: node-pty did not spawn (${probe.nodePty.error ?? "unknown error"})`);
+        }
       } catch (err) {
-        problems.push(`cleanup uninstall failed: ${err.message}`);
+        problems.push(`post-upgrade probe failed: ${err.message}`);
       }
     }
+
+    if (installLocationAfter) {
+      const uninstallerPath = join(installLocationAfter, "Uninstall cw-code.exe");
+      if (existsSync(uninstallerPath)) {
+        try {
+          runUninstallSync(uninstallerPath, installLocationAfter);
+          waitForRegistryValueGone(registryKeys.install, "InstallLocation", UNINSTALL_POLL_TIMEOUT_MS);
+        } catch (err) {
+          problems.push(`cleanup uninstall failed: ${err.message}`);
+        }
+      }
+    }
+  } finally {
+    cleanupSeededFixtures(seed);
   }
 
   return {
