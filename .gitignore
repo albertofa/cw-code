@@ -3,6 +3,7 @@ dist/
 dist-ci/
 dist-updatetest/
 out/
+out-updatetest/
 coverage/
 .cache/
 .vite/
