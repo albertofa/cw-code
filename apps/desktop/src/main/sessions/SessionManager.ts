@@ -23,6 +23,7 @@ import type {
   SessionPrLink,
   SessionStatus,
   SettingsPatch,
+  ShutdownActiveTurn,
   SubagentToolsResult,
   ThreadEvent,
   TurnHandle,
@@ -60,12 +61,15 @@ import { resolveAttachments } from "./attachments.js";
 import { AUTO_TITLE_TIMEOUT_MS, buildTitlePrompt, sanitizeGeneratedTitle } from "./autoTitle.js";
 import { branchNameForTitle, TEMP_BRANCH_PATTERN } from "./branchName.js";
 import { NEW_SESSION_TITLE, pickRestoreCandidate } from "./sessionRestore.js";
-import { opencodeServerDir, titleGenDir, userdataDir, usageDir, worktreesDir } from "../paths/appPaths.js";
+import { opencodeServerDir, sessionDbPath, settingsFilePath, titleGenDir, usageDir, worktreesDir } from "../paths/appPaths.js";
 import { UsageLedger } from "../usage/UsageLedger.js";
+import { shutdownReservedError } from "../shutdown/shutdownReservation.js";
 
 export interface SessionManagerOptions {
   dbPath?: string;
   settingsPath?: string;
+  sessionStore?: SessionStore;
+  settingsStore?: SettingsStore;
   onEvent?: (sessionId: string, event: ThreadEvent) => void;
   onTitle?: (sessionId: string, title: string) => void;
   drivers?: Partial<Record<DriverKind, CliDriver>>;
@@ -76,7 +80,32 @@ export interface SessionManagerOptions {
   prState?: (ref: PrRef) => PrSummary["state"] | null;
   prUpdatedAt?: (ref: PrRef) => number | null;
   usageLedger?: UsageLedger;
+  driverFactory?: DriverFactory;
 }
+
+export type DriverFactory = (
+  route: (event: ThreadEvent) => void,
+  getSettings: () => AppSettings
+) => Record<DriverKind, CliDriver>;
+
+export function defaultDriverFactory(overrides: Partial<Record<DriverKind, CliDriver>> = {}): DriverFactory {
+  return (route, getSettings) => ({
+    claude: overrides.claude ?? new TracingCliDriver(new ClaudeCliDriver(route, getSettings)),
+    opencode:
+      overrides.opencode ??
+      new TracingCliDriver(new OpencodeDriver(route, getSettings, undefined, { sharedRoot: opencodeServerDir() })),
+    codex: overrides.codex ?? new TracingCliDriver(new CodexCliDriver(route, getSettings))
+  });
+}
+
+export interface BackgroundWork {
+  sessionId: string;
+  turnId: string;
+  kind: "title";
+}
+
+const DRIVER_KINDS: DriverKind[] = ["claude", "opencode", "codex"];
+const DRIVER_SHUTDOWN_GRACE_MS = 1000;
 
 interface TitleTurn {
   sessionId: string;
@@ -100,6 +129,11 @@ export class SessionManager {
   private store: SessionStore;
   private settings: SettingsStore;
   private drivers: Record<DriverKind, CliDriver>;
+  private driverFactory: DriverFactory;
+  private driverGeneration = 0;
+  private shutdownReserved = false;
+  private driverFailure: string | null = null;
+  private interruptedForShutdown = new Set<string>();
   private activeTurns = new Map<string, { sessionId: string; startedAt: number }>();
   private settledTurns = new Map<string, string>();
   private titleTurns = new Map<string, TitleTurn>();
@@ -124,10 +158,9 @@ export class SessionManager {
   private usageLedger: UsageLedger;
 
   constructor(opts: SessionManagerOptions = {}) {
-    const dbPath = opts.dbPath ?? join(userdataDir(), "cw-code.db");
-    this.store = new SessionStore(dbPath);
-    const settingsPath = opts.settingsPath ?? join(userdataDir(), "cw-settings.json");
-    this.settings = new SettingsStore(settingsPath);
+    const dbPath = opts.dbPath ?? sessionDbPath();
+    this.store = opts.sessionStore ?? new SessionStore(dbPath);
+    this.settings = opts.settingsStore ?? new SettingsStore(opts.settingsPath ?? settingsFilePath());
     this.onEvent = opts.onEvent ?? (() => {});
     this.onTitle = opts.onTitle ?? (() => {});
     this.git = opts.gitService ?? new GitService(() => this.settings.get());
@@ -137,18 +170,26 @@ export class SessionManager {
     this.prState = opts.prState ?? (() => null);
     this.prUpdatedAt = opts.prUpdatedAt ?? (() => null);
     this.usageLedger = opts.usageLedger ?? new UsageLedger(opts.dbPath ? join(dirname(dbPath), "usage") : usageDir());
-    const getSettings = (): AppSettings => this.settings.get();
-    this.drivers = {
-      claude: opts.drivers?.claude ?? new TracingCliDriver(new ClaudeCliDriver((e) => this.routeEvent(e), getSettings)),
-      opencode:
-        opts.drivers?.opencode ??
-        new TracingCliDriver(
-          new OpencodeDriver((e) => this.routeEvent(e), getSettings, undefined, {
-            sharedRoot: opencodeServerDir()
-          })
-        ),
-      codex: opts.drivers?.codex ?? new TracingCliDriver(new CodexCliDriver((e) => this.routeEvent(e), getSettings))
+    this.driverFactory = opts.driverFactory ?? defaultDriverFactory(opts.drivers);
+    this.drivers = this.buildDrivers();
+  }
+
+  private buildDrivers(): Record<DriverKind, CliDriver> {
+    this.driverGeneration += 1;
+    const generation = this.driverGeneration;
+    const route = (event: ThreadEvent): void => {
+      if (generation === this.driverGeneration) this.routeEvent(event);
     };
+    return this.driverFactory(route, () => this.settings.get());
+  }
+
+  private uniqueDrivers(): Array<{ kinds: DriverKind[]; driver: CliDriver }> {
+    const byInstance = new Map<CliDriver, DriverKind[]>();
+    for (const kind of DRIVER_KINDS) {
+      const driver = this.drivers[kind];
+      byInstance.set(driver, [...(byInstance.get(driver) ?? []), kind]);
+    }
+    return [...byInstance].map(([driver, kinds]) => ({ driver, kinds }));
   }
 
   private routeEvent(event: ThreadEvent): void {
@@ -424,6 +465,7 @@ export class SessionManager {
   }
 
   async createSession(projectId: string, driver: DriverKind, options: CreateSessionOptions = {}): Promise<SessionMeta> {
+    this.assertNotReserved();
     const project = this.store.getProject(projectId);
     if (!project) throw new Error(`unknown project ${projectId}`);
     const id = `sess_${randomUUID().slice(0, 8)}`;
@@ -1007,6 +1049,7 @@ export class SessionManager {
     prompt: string,
     opts?: { prefs?: ComposerPrefs; attachments?: string[]; command?: CommandInvocation; prRefs?: PrRef[] }
   ): Promise<string> {
+    this.assertNotReserved();
     const session = this.store.getSession(sessionId);
     if (!session) throw new Error(`unknown session ${sessionId}`);
     if (session.status === "resolved" || session.status === "archived") {
@@ -1023,6 +1066,7 @@ export class SessionManager {
     try {
       const cwd = await this.ensureWorktree(sessionId);
       await this.captureTurnBaseSha(sessionId, cwd, session.worktreePath);
+      this.assertNotReserved();
       const firstMessage = session.title === NEW_SESSION_TITLE && !opts?.command;
       const placeholder = prompt.slice(0, 60);
       if (firstMessage) {
@@ -1058,10 +1102,13 @@ export class SessionManager {
 
   private maybeAutoTitle(sessionId: string, prompt: string, placeholder: string): void {
     if (!this.settings.get().autoTitleEnabled || !prompt.trim()) return;
-    void this.launchTitleTurn(sessionId, prompt, placeholder);
+    this.launchTitleTurn(sessionId, prompt, placeholder).catch((err: Error) => {
+      console.warn(`title generation skipped for ${sessionId}: ${err.message}`);
+    });
   }
 
   async regenerateTitle(sessionId: string): Promise<string> {
+    this.assertNotReserved();
     const session = this.store.getSession(sessionId);
     if (!session) throw new Error(`unknown session ${sessionId}`);
     const source = await this.titleSource(session);
@@ -1083,6 +1130,7 @@ export class SessionManager {
   }
 
   private launchTitleTurn(sessionId: string, prompt: string, placeholder: string): Promise<string | null> {
+    if (this.shutdownReserved) return Promise.reject(shutdownReservedError());
     for (const pending of this.titleTurns.values()) {
       if (pending.sessionId === sessionId && !pending.settled) return pending.promise;
     }
@@ -1276,9 +1324,13 @@ export class SessionManager {
     this.settleTurn(turnId, sessionId);
     this.turnPrRefs.delete(turnId);
     this.store.updateSession(sessionId, { status: "holding" });
+    if (!session) return;
+    if (this.shutdownReserved) this.interruptedForShutdown.add(sessionId);
+    this.emitSession(sessionId);
   }
 
   async retryConnection(sessionId: string): Promise<RetryConnectionResult> {
+    this.assertNotReserved();
     const session = this.store.getSession(sessionId);
     if (!session) throw new Error(`unknown session ${sessionId}`);
     for (const entry of this.activeTurns.values()) {
@@ -1289,6 +1341,7 @@ export class SessionManager {
       return { status: "done", history: await this.getHistory(sessionId) };
     }
     const cwd = await this.ensureWorktree(sessionId);
+    this.assertNotReserved();
     const result = await driver.retryConnection({
       sessionId,
       cwd,
@@ -1346,6 +1399,7 @@ export class SessionManager {
     }
     const pending = this.worktreeRecovery.get(sessionId);
     if (pending) return pending;
+    this.assertNotReserved();
     const recovery = this.recoverWorktree(sessionId, session).finally(() => {
       this.worktreeRecovery.delete(sessionId);
     });
@@ -1436,12 +1490,62 @@ export class SessionManager {
     return project.rootPath;
   }
 
-  dispose(): void {
-    if (this.disposed) return;
-    this.disposed = true;
-    for (const pending of this.deltaBuffer.values()) clearTimeout(pending.timer);
-    this.deltaBuffer.clear();
+  private assertNotReserved(): void {
+    if (this.shutdownReserved) throw shutdownReservedError();
+    if (this.driverFailure) throw new Error(this.driverFailure);
+  }
+
+  driverRestartFailure(): string | null {
+    return this.driverFailure;
+  }
+
+  beginShutdownReservation(): void {
+    this.shutdownReserved = true;
+    this.interruptedForShutdown.clear();
+  }
+
+  clearShutdownReservation(): void {
+    this.shutdownReserved = false;
+  }
+
+  isShutdownReserved(): boolean {
+    return this.shutdownReserved;
+  }
+
+  sessionTitle(sessionId: string): string {
+    return this.store.getSession(sessionId)?.title ?? sessionId;
+  }
+
+  listShutdownTurns(): ShutdownActiveTurn[] {
+    const turns: ShutdownActiveTurn[] = this.listActiveTurns().map((turn) => ({
+      ...turn,
+      title: this.sessionTitle(turn.sessionId)
+    }));
+    const covered = new Set(turns.map((turn) => turn.sessionId));
+    for (const { driver } of this.uniqueDrivers()) {
+      for (const sessionId of driver.activity?.().busySessionIds ?? []) {
+        if (covered.has(sessionId) || !this.store.getSession(sessionId)) continue;
+        covered.add(sessionId);
+        turns.push({ sessionId, turnId: `busy:${sessionId}`, title: this.sessionTitle(sessionId), startedAt: 0 });
+      }
+    }
+    return turns;
+  }
+
+  listBackgroundWork(): BackgroundWork[] {
+    return [...this.titleTurns]
+      .filter(([, turn]) => !turn.settled)
+      .map(([turnId, turn]) => ({ sessionId: turn.sessionId, turnId, kind: "title" as const }));
+  }
+
+  backgroundTaskCount(): number {
+    return this.listBackgroundWork().length;
+  }
+
+  cancelBackgroundWork(): void {
     for (const [turnId, turn] of [...this.titleTurns]) {
+      turn.settled = true;
+      this.titleTurns.delete(turnId);
       clearTimeout(turn.timer);
       turn.resolve(null);
       try {
@@ -1449,7 +1553,80 @@ export class SessionManager {
       } catch {
       }
     }
-    this.titleTurns.clear();
+  }
+
+  flush(): void {
+    for (const turnId of [...this.deltaBuffer.keys()]) this.flushDelta(turnId);
+    try {
+      this.usageLedger.flush();
+    } catch (err) {
+      console.warn(`usage ledger flush failed: ${(err as Error).message}`);
+    }
+  }
+
+  async shutdownDrivers(timeoutMs: number): Promise<{ timedOut: DriverKind[] }> {
+    const results = await Promise.all(
+      this.uniqueDrivers().map(async ({ driver, kinds }) => ({ kinds, timedOut: await this.shutdownDriver(driver, timeoutMs) }))
+    );
+    return { timedOut: results.filter((result) => result.timedOut).flatMap((result) => result.kinds) };
+  }
+
+  private async shutdownDriver(driver: CliDriver, timeoutMs: number): Promise<boolean> {
+    if (typeof driver.shutdown !== "function") {
+      this.disposeDriver(driver);
+      return false;
+    }
+    let timer: NodeJS.Timeout | undefined;
+    const deadline = new Promise<{ timedOut: boolean }>((resolve) => {
+      timer = setTimeout(() => resolve({ timedOut: true }), Math.max(0, timeoutMs) + DRIVER_SHUTDOWN_GRACE_MS);
+      timer.unref?.();
+    });
+    try {
+      const result = await Promise.race([driver.shutdown({ timeoutMs }), deadline]);
+      return result.timedOut;
+    } catch (err) {
+      console.warn(`${driver.kind} shutdown failed: ${(err as Error).message}`);
+      return true;
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+
+  private disposeDriver(driver: CliDriver): void {
+    try {
+      driver.dispose?.();
+    } catch (err) {
+      console.warn(`${driver.kind} dispose failed: ${(err as Error).message}`);
+    }
+  }
+
+  forceStopDrivers(): void {
+    for (const { driver } of this.uniqueDrivers()) this.disposeDriver(driver);
+  }
+
+  reinitializeDrivers(): void {
+    this.forceStopDrivers();
+    try {
+      this.drivers = this.buildDrivers();
+    } catch (err) {
+      this.driverFailure = `cw-code could not restart its CLI drivers after the cancelled restart (${(err as Error).message}). Quit and reopen cw-code.`;
+      throw new Error(this.driverFailure);
+    }
+    this.driverFailure = null;
+    this.disposed = false;
+    const interrupted = [...this.interruptedForShutdown];
+    this.interruptedForShutdown.clear();
+    for (const sessionId of interrupted) {
+      if (this.store.getSession(sessionId)) this.emitSession(sessionId);
+    }
+  }
+
+  dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
+    for (const pending of this.deltaBuffer.values()) clearTimeout(pending.timer);
+    this.deltaBuffer.clear();
+    this.cancelBackgroundWork();
     this.firstPrompts.clear();
     this.turnBaseShas.clear();
     try {
@@ -1457,7 +1634,7 @@ export class SessionManager {
     } catch (err) {
       console.warn(`usage ledger flush failed: ${(err as Error).message}`);
     }
-    for (const driver of Object.values(this.drivers)) driver.dispose?.();
+    this.forceStopDrivers();
     this.store.close();
   }
 }

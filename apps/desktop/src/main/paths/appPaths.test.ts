@@ -145,6 +145,17 @@ describe("migrateFromUserData", () => {
     expect(result.copied).not.toContain("cw-settings.json");
   });
 
+  it("does not copy a legacy metadata file over a missing one that has cw-code backups", () => {
+    const oldDir = makeOldUserData();
+    const home = mkdtempSync(join(tmpdir(), "cw-new-home-"));
+    mkdirSync(join(home, "userdata"), { recursive: true });
+    writeFileSync(join(home, "userdata", "cw-code.db.json.last-good.bak"), '{"schemaVersion":1,"projects":[],"sessions":[]}');
+    const result = migrateFromUserData(oldDir, home);
+    expect(existsSync(join(home, "userdata", "cw-code.db.json"))).toBe(false);
+    expect(result.skipped).toContain("cw-code.db.json");
+    expect(result.copied).toContain("cw-settings.json");
+  });
+
   it("skips worktrees entirely", () => {
     const oldDir = makeOldUserData();
     mkdirSync(join(oldDir, "worktrees", "proj"), { recursive: true });

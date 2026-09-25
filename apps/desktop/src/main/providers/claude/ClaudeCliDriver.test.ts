@@ -19,6 +19,8 @@ const SETTINGS: AppSettings = {
   opencodeReasoningExpanded: false,
   codexReasoningExpanded: false,
   opencodeGoUsage: false,
+  updateChannel: null,
+  updateBackgroundDownload: true,
   gitBinaryPath: "git",
   githubCliBinaryPath: "gh",
   sourceControlRefreshIntervalSeconds: 30,
@@ -877,6 +879,74 @@ describe("ClaudeCliDriver getAccountUsage", () => {
       message: "failed to spawn claude: boom"
     });
     driver.dispose();
+  });
+});
+
+describe("ClaudeCliDriver shutdown", () => {
+  it("reports every busy session and the processes it owns", () => {
+    const { driver } = makeDriver();
+    driver.startTurn({ sessionId: "sess_1", prompt: "work", cwd: "C:\\proj" });
+    driver.startTurn({ sessionId: "title:sess_1", prompt: "title", cwd: "C:\\titles", maxTurns: 1 });
+    expect(driver.activity()).toEqual({ busySessionIds: ["sess_1", "title:sess_1"], ownedProcesses: 2 });
+    driver.dispose();
+  });
+
+  it("reports a session busy while output after a completed turn is still arriving", async () => {
+    const { driver, children } = makeDriver();
+    driver.startTurn({ sessionId: "sess_1", prompt: "work", cwd: "C:\\proj" });
+    await settle();
+    children[0].stdout.write(`${resultLine()}\n`);
+    await settle();
+    expect(driver.activity().busySessionIds).toEqual([]);
+    children[0].stdout.write(`${JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "late" }] } })}\n`);
+    await settle();
+    expect(driver.activity().busySessionIds).toEqual(["sess_1"]);
+    driver.dispose();
+  });
+
+  it("closes stdin of every owned process and waits for them to exit without killing", async () => {
+    const { driver, children, killed } = makeDriver();
+    driver.startTurn({ sessionId: "sess_1", prompt: "work", cwd: "C:\\proj" });
+    driver.startTurn({ sessionId: "sess_2", prompt: "more", cwd: "C:\\proj" });
+    const pending = driver.shutdown({ timeoutMs: 1000 });
+    for (const child of children) {
+      expect(child.stdin.writableEnded).toBe(true);
+      child.exitCode = 0;
+      child.emit("exit", 0);
+    }
+    expect(await pending).toEqual({ timedOut: false });
+    expect(killed).toEqual([]);
+    driver.dispose();
+    expect(killed).toEqual([]);
+  });
+
+  it("does not re-arm idle eviction while shutting down", async () => {
+    vi.useFakeTimers();
+    try {
+      const { driver, children, killed } = makeDriver();
+      driver.startTurn({ sessionId: "sess_1", prompt: "work", cwd: "C:\\proj" });
+      const pending = driver.shutdown({ timeoutMs: 60 * 60 * 1000 });
+      children[0].stdout.write(`${resultLine()}\n`);
+      await vi.advanceTimersByTimeAsync(CLAUDE_IDLE_EVICT_MS * 2);
+      expect(killed).toEqual([]);
+      expect(driver.activity().ownedProcesses).toBe(1);
+      children[0].exitCode = 0;
+      children[0].emit("exit", 0);
+      expect(await pending).toEqual({ timedOut: false });
+      expect(killed).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("reports a timeout and leaves the stragglers for dispose to force-stop", async () => {
+    const { driver, children, killed } = makeDriver();
+    driver.startTurn({ sessionId: "sess_1", prompt: "work", cwd: "C:\\proj" });
+    expect(await driver.shutdown({ timeoutMs: 10 })).toEqual({ timedOut: true });
+    expect(killed).toEqual([]);
+    driver.dispose();
+    expect(killed).toEqual([children[0]]);
+    expect(driver.activity().ownedProcesses).toBe(0);
   });
 });
 
