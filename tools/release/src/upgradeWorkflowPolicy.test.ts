@@ -1,11 +1,10 @@
-import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { runScriptLines, topLevelBlock } from "./workflowLines.ts";
+import { readWorkflowText, runScriptLines, topLevelBlock } from "./workflowLines.ts";
 
 const WORKFLOW_PATH = resolve(dirname(fileURLToPath(import.meta.url)), "../../../.github/workflows/upgrade-test.yml");
-const text = readFileSync(WORKFLOW_PATH, "utf8");
+const text = readWorkflowText(WORKFLOW_PATH);
 const lines = text.split(/\r?\n/);
 
 describe("upgrade-test.yml policy", () => {

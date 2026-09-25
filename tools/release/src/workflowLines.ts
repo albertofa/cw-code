@@ -1,3 +1,11 @@
+import { readFileSync } from "node:fs";
+
+export function readWorkflowText(path: string): string {
+  return readFileSync(path, "utf8").replace(/
+/g, "
+");
+}
+
 export function topLevelBlock(lines: string[], key: string): string[] {
   const start = lines.indexOf(`${key}:`);
   if (start === -1) throw new Error(`workflow has no top-level "${key}:"`);
