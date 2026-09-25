@@ -24,6 +24,7 @@ const SETTINGS: AppSettings = {
   sourceControlRefreshIntervalSeconds: 30,
   defaultUseWorktree: true,
   holdingHours: 6,
+  holdingAutoExpireEnabled: false,
   autoTitleEnabled: true,
   autoTitleDriver: "claude",
   autoTitleModel: "claude-sonnet-5",
@@ -882,16 +883,29 @@ describe("ClaudeCliDriver getAccountUsage", () => {
 describe("ClaudeCliDriver shutdown", () => {
   it("reports every busy session and the processes it owns", () => {
     const { driver } = makeDriver();
-    driver.startTurn({ sessionId: "sess_1", prompt: "work", cwd: "C:\proj" });
-    driver.startTurn({ sessionId: "title:sess_1", prompt: "title", cwd: "C:\titles", maxTurns: 1 });
+    driver.startTurn({ sessionId: "sess_1", prompt: "work", cwd: "C:\\proj" });
+    driver.startTurn({ sessionId: "title:sess_1", prompt: "title", cwd: "C:\\titles", maxTurns: 1 });
     expect(driver.activity()).toEqual({ busySessionIds: ["sess_1", "title:sess_1"], ownedProcesses: 2 });
+    driver.dispose();
+  });
+
+  it("reports a session busy while output after a completed turn is still arriving", async () => {
+    const { driver, children } = makeDriver();
+    driver.startTurn({ sessionId: "sess_1", prompt: "work", cwd: "C:\\proj" });
+    await settle();
+    children[0].stdout.write(`${resultLine()}\n`);
+    await settle();
+    expect(driver.activity().busySessionIds).toEqual([]);
+    children[0].stdout.write(`${JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "late" }] } })}\n`);
+    await settle();
+    expect(driver.activity().busySessionIds).toEqual(["sess_1"]);
     driver.dispose();
   });
 
   it("closes stdin of every owned process and waits for them to exit without killing", async () => {
     const { driver, children, killed } = makeDriver();
-    driver.startTurn({ sessionId: "sess_1", prompt: "work", cwd: "C:\proj" });
-    driver.startTurn({ sessionId: "sess_2", prompt: "more", cwd: "C:\proj" });
+    driver.startTurn({ sessionId: "sess_1", prompt: "work", cwd: "C:\\proj" });
+    driver.startTurn({ sessionId: "sess_2", prompt: "more", cwd: "C:\\proj" });
     const pending = driver.shutdown({ timeoutMs: 1000 });
     for (const child of children) {
       expect(child.stdin.writableEnded).toBe(true);
@@ -900,15 +914,135 @@ describe("ClaudeCliDriver shutdown", () => {
     }
     expect(await pending).toEqual({ timedOut: false });
     expect(killed).toEqual([]);
+    driver.dispose();
+    expect(killed).toEqual([]);
+  });
+
+  it("does not re-arm idle eviction while shutting down", async () => {
+    vi.useFakeTimers();
+    try {
+      const { driver, children, killed } = makeDriver();
+      driver.startTurn({ sessionId: "sess_1", prompt: "work", cwd: "C:\\proj" });
+      const pending = driver.shutdown({ timeoutMs: 60 * 60 * 1000 });
+      children[0].stdout.write(`${resultLine()}\n`);
+      await vi.advanceTimersByTimeAsync(CLAUDE_IDLE_EVICT_MS * 2);
+      expect(killed).toEqual([]);
+      expect(driver.activity().ownedProcesses).toBe(1);
+      children[0].exitCode = 0;
+      children[0].emit("exit", 0);
+      expect(await pending).toEqual({ timedOut: false });
+      expect(killed).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("reports a timeout and leaves the stragglers for dispose to force-stop", async () => {
     const { driver, children, killed } = makeDriver();
-    driver.startTurn({ sessionId: "sess_1", prompt: "work", cwd: "C:\proj" });
+    driver.startTurn({ sessionId: "sess_1", prompt: "work", cwd: "C:\\proj" });
     expect(await driver.shutdown({ timeoutMs: 10 })).toEqual({ timedOut: true });
     expect(killed).toEqual([]);
     driver.dispose();
     expect(killed).toEqual([children[0]]);
     expect(driver.activity().ownedProcesses).toBe(0);
+  });
+});
+
+describe("ClaudeCliDriver compaction", () => {
+  function modelResultLine(overrides: Record<string, unknown> = {}): string {
+    return JSON.stringify({
+      type: "result",
+      subtype: "success",
+      session_id: "native-1",
+      result: "",
+      num_turns: 1,
+      modelUsage: {
+        "claude-sonnet-5": {
+          inputTokens: 100,
+          outputTokens: 20,
+          cacheReadInputTokens: 0,
+          cacheCreationInputTokens: 500,
+          costUSD: 0.02,
+          contextWindow: 200000,
+          thinkingTokens: 0
+        }
+      },
+      usage: {
+        iterations: [
+          { input_tokens: 100, output_tokens: 20, cache_read_input_tokens: 0, cache_creation_input_tokens: 500 }
+        ]
+      },
+      ...overrides
+    });
+  }
+
+  it("emits context.compacted and reports postTokens as the new context on a compact turn", async () => {
+    const { driver, events, children } = makeDriver();
+    driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "hello" });
+    await settle();
+    children[0].stdout.write(`${modelResultLine()}\n`);
+    await settle();
+
+    const second = driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "/compact" });
+    await settle();
+    children[0].stdout.write(
+      `${JSON.stringify({
+        type: "system",
+        subtype: "compact_boundary",
+        session_id: "native-1",
+        compact_metadata: {
+          trigger: "manual",
+          pre_tokens: 633409,
+          post_tokens: 16048,
+          cumulative_dropped_tokens: 617361
+        }
+      })}\n`
+    );
+    children[0].stdout.write(`${modelResultLine({ num_turns: 0, usage: { iterations: [] } })}\n`);
+    await settle();
+
+    expect(events).toContainEqual({
+      type: "context.compacted",
+      turnId: second.turnId,
+      compaction: {
+        trigger: "manual",
+        preTokens: 633409,
+        postTokens: 16048,
+        droppedTokens: 617361
+      },
+      context: { usedTokens: 16048, windowTokens: 200000 }
+    });
+    const done = turnDones(events).find((event) => event.turnId === second.turnId);
+    expect(done?.context).toEqual({ usedTokens: 16048, windowTokens: 200000 });
+    driver.dispose();
+  });
+
+  it("does not carry a compact context into the following turn", async () => {
+    const { driver, events, children } = makeDriver();
+    driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "hello" });
+    await settle();
+    children[0].stdout.write(`${modelResultLine()}\n`);
+    await settle();
+
+    driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "/compact" });
+    await settle();
+    children[0].stdout.write(
+      `${JSON.stringify({
+        type: "system",
+        subtype: "compact_boundary",
+        compact_metadata: { trigger: "manual", pre_tokens: 100, post_tokens: 10 }
+      })}\n`
+    );
+    children[0].stdout.write(`${modelResultLine({ num_turns: 0, usage: { iterations: [] } })}\n`);
+    await settle();
+
+    const third = driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "again" });
+    await settle();
+    children[0].stdout.write(`${modelResultLine({ result: "ok" })}\n`);
+    await settle();
+
+    const done = turnDones(events).find((event) => event.turnId === third.turnId);
+    expect(done?.context).toEqual({ usedTokens: 620, windowTokens: 200000 });
+    driver.dispose();
   });
 });

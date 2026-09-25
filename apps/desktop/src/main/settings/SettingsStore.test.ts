@@ -220,9 +220,25 @@ describe("SettingsStore", () => {
 
   it("sanitizes holding hours", () => {
     const store = new SettingsStore(tempFilePath());
-    expect(store.set({ holdingHours: -3 }).holdingHours).toBe(0);
+    expect(store.set({ holdingHours: -3 }).holdingHours).toBe(1);
+    expect(store.set({ holdingHours: 0 }).holdingHours).toBe(6);
     expect(store.set({ holdingHours: 500 }).holdingHours).toBe(168);
     expect(store.set({ holdingHours: 9.6 }).holdingHours).toBe(10);
+  });
+
+  it("starts with holding auto-expiry disabled and keeps the delay when toggled", () => {
+    const filePath = tempFilePath();
+    const store = new SettingsStore(filePath);
+    expect(store.get().holdingAutoExpireEnabled).toBe(false);
+    expect(store.set({ holdingHours: 12, holdingAutoExpireEnabled: true })).toMatchObject({ holdingHours: 12, holdingAutoExpireEnabled: true });
+    expect(store.set({ holdingAutoExpireEnabled: false })).toMatchObject({ holdingHours: 12, holdingAutoExpireEnabled: false });
+    expect(new SettingsStore(filePath).get()).toMatchObject({ holdingHours: 12, holdingAutoExpireEnabled: false });
+  });
+
+  it("loads old holding settings with auto-expiry disabled", () => {
+    const filePath = tempFilePath();
+    writeFileSync(filePath, JSON.stringify({ holdingHours: 0 }), "utf8");
+    expect(new SettingsStore(filePath).get()).toMatchObject({ holdingHours: 6, holdingAutoExpireEnabled: false });
   });
 
   it("includes auto-title defaults", () => {

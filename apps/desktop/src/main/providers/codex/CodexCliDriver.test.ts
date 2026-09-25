@@ -25,6 +25,7 @@ const SETTINGS: AppSettings = {
   sourceControlRefreshIntervalSeconds: 30,
   defaultUseWorktree: true,
   holdingHours: 6,
+  holdingAutoExpireEnabled: false,
   autoTitleEnabled: true,
   autoTitleDriver: "claude",
   autoTitleModel: "claude-sonnet-5",
@@ -806,7 +807,12 @@ describe("CodexCliDriver", () => {
     });
     await settle();
 
-    expect(events).toContainEqual({ type: "assistant.delta", turnId: handle.turnId, text: "Context compacted." });
+    expect(events).toContainEqual({
+      type: "context.compacted",
+      turnId: handle.turnId,
+      compaction: { trigger: "manual" }
+    });
+    expect(events.some((e) => e.type === "assistant.delta")).toBe(false);
     expect(events.find((e) => e.type === "turn.done")).toMatchObject({
       turnId: handle.turnId,
       resumeCursor: "thr_resume"
@@ -814,37 +820,9 @@ describe("CodexCliDriver", () => {
     driver.dispose();
   });
 
-  it("prefixes the compaction note with a blank line when the turn already streamed assistant text", async () => {
+  it("emits context.compacted with an auto trigger on a normal turn", async () => {
     const { driver, events } = makeDriver(client);
-    driver.startTurn({
-      sessionId: "local-1",
-      prompt: "/compact",
-      cwd: "C:\\proj",
-      resumeCursor: "thr_9",
-      command: { name: "compact", args: "" }
-    });
-    await settle();
-    client.notify("turn/started", { threadId: "thr_resume", turn: { id: "turn_c2" } });
-    client.notify("item/agentMessage/delta", {
-      threadId: "thr_resume",
-      turnId: "turn_c2",
-      delta: "Summarizing the thread..."
-    });
-    client.notify("item/completed", {
-      threadId: "thr_resume",
-      turnId: "turn_c2",
-      item: { type: "contextCompaction", id: "cc2" }
-    });
-    await settle();
-
-    const deltas = events.filter((e) => e.type === "assistant.delta").map((e) => ("text" in e ? e.text : ""));
-    expect(deltas).toEqual(["Summarizing the thread...", "\n\nContext compacted."]);
-    driver.dispose();
-  });
-
-  it("ignores contextCompaction items on a normal turn (auto-compaction mid-turn)", async () => {
-    const { driver, events } = makeDriver(client);
-    driver.startTurn({ sessionId: "local-1", prompt: "keep going", cwd: "C:\\proj" });
+    const handle = driver.startTurn({ sessionId: "local-1", prompt: "keep going", cwd: "C:\\proj" });
     await settle();
     client.notify("item/completed", {
       threadId: "thr_1",
@@ -852,6 +830,11 @@ describe("CodexCliDriver", () => {
       item: { type: "contextCompaction", id: "cc1" }
     });
     await settle();
+    expect(events).toContainEqual({
+      type: "context.compacted",
+      turnId: handle.turnId,
+      compaction: { trigger: "auto" }
+    });
     expect(events.some((e) => e.type === "assistant.delta")).toBe(false);
     driver.dispose();
   });

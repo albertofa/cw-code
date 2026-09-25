@@ -322,6 +322,67 @@ describe("appStore applySession", () => {
   });
 });
 
+describe("appStore context.compacted", () => {
+  beforeEach(() => {
+    useAppStore.setState({ messagesBySession: {}, turnUsageBySession: {} });
+  });
+
+  it("adds a compaction marker and updates the context ring", () => {
+    const session = "sess_compact";
+    useAppStore.getState().applyEvent(session, {
+      type: "context.compacted",
+      turnId: "turn-1",
+      compaction: { trigger: "manual", preTokens: 633409, postTokens: 16048, droppedTokens: 617361 },
+      context: { usedTokens: 16048, windowTokens: 200000 }
+    });
+    expect(useAppStore.getState().messagesBySession[session]).toEqual([
+      {
+        id: "turn-1-compaction",
+        role: "system",
+        text: "Context compacted",
+        turnId: "turn-1",
+        compaction: { trigger: "manual", preTokens: 633409, postTokens: 16048, droppedTokens: 617361 }
+      }
+    ]);
+    expect(useAppStore.getState().turnUsageBySession[session]?.context).toEqual({
+      usedTokens: 16048,
+      windowTokens: 200000
+    });
+  });
+
+  it("dedupes repeated markers and preserves the previous last-turn totals", () => {
+    const session = "sess_compact_dedupe";
+    useAppStore.setState({
+      turnUsageBySession: {
+        [session]: {
+          lastTurn: {
+            inputTokens: 1,
+            cacheReadTokens: 2,
+            cacheWriteTokens: 3,
+            outputTokens: 4,
+            reasoningTokens: 5,
+            costUsd: 0.1
+          }
+        }
+      }
+    });
+    for (let i = 0; i < 2; i += 1) {
+      useAppStore.getState().applyEvent(session, {
+        type: "context.compacted",
+        turnId: "turn-1",
+        compaction: { trigger: "auto" },
+        context: { usedTokens: 100, windowTokens: 200000 }
+      });
+    }
+    expect(useAppStore.getState().messagesBySession[session]).toHaveLength(1);
+    expect(useAppStore.getState().turnUsageBySession[session]?.lastTurn.costUsd).toBe(0.1);
+    expect(useAppStore.getState().turnUsageBySession[session]?.context).toEqual({
+      usedTokens: 100,
+      windowTokens: 200000
+    });
+  });
+});
+
 describe("appStore preview per session", () => {
   beforeEach(() => {
     useAppStore.setState({ previewBySession: {} });
