@@ -32,6 +32,7 @@ import type {
   SkillMeta,
   SkillSaveInput,
   SkillsListResult,
+  StartupState,
   TokenCounts,
   TurnModelUsage,
   UsageBalance,
@@ -442,6 +443,12 @@ export interface DirEntry {
 }
 
 export interface CwApi {
+  getStartupState(): Promise<StartupState>;
+  recovery: {
+    openDataDir(): Promise<void>;
+    restore(file: string, backupPath: string): Promise<void>;
+    retry(): Promise<void>;
+  };
   checkVersions(): Promise<Array<{
     binary: DriverName;
     binaryPath: string;

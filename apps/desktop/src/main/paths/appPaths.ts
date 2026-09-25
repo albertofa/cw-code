@@ -15,6 +15,14 @@ export function userdataDir(home?: string, env?: NodeJS.ProcessEnv): string {
   return join(cwCodeHome(home, env), "userdata");
 }
 
+export function sessionDbPath(home?: string, env?: NodeJS.ProcessEnv): string {
+  return join(userdataDir(home, env), "cw-code.db");
+}
+
+export function settingsFilePath(home?: string, env?: NodeJS.ProcessEnv): string {
+  return join(userdataDir(home, env), "cw-settings.json");
+}
+
 export function attachmentsDir(home?: string, env?: NodeJS.ProcessEnv): string {
   return join(userdataDir(home, env), "attachments");
 }
