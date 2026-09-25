@@ -17,12 +17,15 @@ import type {
   Session,
   SessionStatus,
   SettingsPatch,
+  ShutdownAssessment,
+  ShutdownReason,
   SubagentToolsResult,
   TodoItem,
   TokenCounts,
   TurnEvent,
   TurnModelUsage
 } from "../cw.js";
+import type { DirtyBuffer } from "./editorBuffers.js";
 import { appendAssistantText, appendReasoningText, closeReasoning, upsertToolCall } from "../components/chatMessages.js";
 import { getLastModel, setLastModel } from "../components/lastModel.js";
 import { formatDuration, mergeToolPairs } from "../components/toolSummaries.js";
@@ -122,7 +125,19 @@ function sumTurnUsage(usage: TurnModelUsage[]): TokenCounts & { costUsd: number 
   return { inputTokens, cacheReadTokens, cacheWriteTokens, outputTokens, reasoningTokens, costUsd };
 }
 
+export type ShutdownPhase = "review" | "waiting" | "saving" | "preparing" | "timeout";
+
+export interface ShutdownUiState {
+  reason: ShutdownReason;
+  assessment: ShutdownAssessment;
+  dirty: DirtyBuffer[];
+  phase: ShutdownPhase;
+  error: string | null;
+  pending: string[];
+}
+
 interface AppState {
+  shutdown: ShutdownUiState | null;
   projects: Project[];
   sessionsByProject: Record<string, Session[]>;
   discoveredByProject: Record<string, Session[]>;
@@ -274,6 +289,7 @@ function knownTurnId(value: string | undefined): string | undefined {
 }
 
 export const useAppStore = create<AppState>((set, get) => ({
+  shutdown: null,
   projects: [],
   sessionsByProject: {},
   discoveredByProject: {},
