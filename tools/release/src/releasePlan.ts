@@ -1,6 +1,7 @@
+import { carriesPlanMarker } from "./planMarker.ts";
 import { type ReleasePlan, type ReleasePlanCandidate, validatePlanShape } from "./planValidation.ts";
 import { buildReleaseNotes } from "./releaseNotes.ts";
-import type { ReleaseSource } from "./releaseSource.ts";
+import type { ReleaseInfo, ReleaseSource } from "./releaseSource.ts";
 import {
   type ParsedVersion,
   type StableVersion,
@@ -144,7 +145,11 @@ export async function buildStablePromotionPlan(options: BuildStablePlanOptions):
   };
 }
 
-export type VerifyPlanResult = { ok: true } | { ok: false; reasons: string[] };
+export type VerifyPlanResult = { ok: true; resumeDraft: ReleaseInfo | null } | { ok: false; reasons: string[] };
+
+function isResumableDraft(release: ReleaseInfo, plan: ReleasePlan): boolean {
+  return release.draft && release.targetCommitish === plan.sourceSha && carriesPlanMarker(release.body, plan.sourceSha);
+}
 
 export async function verifyPlan(rawPlan: unknown, source: ReleaseSource): Promise<VerifyPlanResult> {
   const shape = validatePlanShape(rawPlan);
@@ -160,9 +165,17 @@ export async function verifyPlan(rawPlan: unknown, source: ReleaseSource): Promi
   if (existingTagSha) {
     reasons.push(`Tag "${plan.tag}" already exists in git (points at ${existingTagSha})`);
   }
-  const reservingRelease = releases.find((release) => release.tagName === plan.tag);
-  if (reservingRelease) {
-    reasons.push(`Tag "${plan.tag}" is already reserved by an existing${reservingRelease.draft ? " draft" : ""} release`);
+  const reserving = releases.filter((release) => release.tagName === plan.tag);
+  let resumeDraft: ReleaseInfo | null = null;
+  if (reserving.length === 1 && isResumableDraft(reserving[0], plan)) {
+    resumeDraft = reserving[0];
+  } else if (reserving.length > 1) {
+    reasons.push(`Tag "${plan.tag}" is reserved by ${reserving.length} releases; resolve the duplicates by hand`);
+  } else if (reserving.length === 1) {
+    const [release] = reserving;
+    reasons.push(
+      `Tag "${plan.tag}" is already reserved by an existing${release.draft ? " draft" : ""} release that this plan cannot resume (it must be a draft targeting ${plan.sourceSha} and carry the plan marker)`
+    );
   }
 
   const classified = classifyReleases(releases);
@@ -175,9 +188,14 @@ export async function verifyPlan(rawPlan: unknown, source: ReleaseSource): Promi
   }
 
   if (plan.channel === "alpha") {
-    const remoteMainSha = await source.remoteMainSha();
-    if (remoteMainSha !== plan.sourceSha) {
-      reasons.push(`Source SHA changed: plan expected ${plan.sourceSha}, origin/main is now ${remoteMainSha}`);
+    const highestStable = highestPublished(classified, "stable");
+    if (highestStable && compareVersions(highestStable.version, planVersion) > 0) {
+      reasons.push(
+        `Stable ${formatVersion(highestStable.version)} is newer than ${plan.version}; publishing the alpha after it would hide it from alpha clients`
+      );
+    }
+    if (!(await source.isAncestorOfMain(plan.sourceSha))) {
+      reasons.push(`Source SHA ${plan.sourceSha} is not reachable from main on GitHub`);
     }
   } else if (plan.candidate) {
     const candidateSha = await source.tagSha(plan.candidate.tag);
@@ -188,5 +206,5 @@ export async function verifyPlan(rawPlan: unknown, source: ReleaseSource): Promi
     }
   }
 
-  return reasons.length === 0 ? { ok: true } : { ok: false, reasons };
+  return reasons.length === 0 ? { ok: true, resumeDraft } : { ok: false, reasons };
 }

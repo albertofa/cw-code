@@ -20,14 +20,17 @@ describe("verifyReleaseSet", () => {
   let dir: string;
   let installer: Buffer;
   let app: Buffer;
+  let blockMap: Buffer;
   let manifest: SigningManifest;
 
   beforeEach(async () => {
     dir = await mkdtemp(join(tmpdir(), "cw-release-set-"));
     installer = randomBytes(1024);
     app = randomBytes(512);
+    blockMap = randomBytes(256);
     await mkdir(join(dir, "win-unpacked"));
     await writeFile(join(dir, INSTALLER), installer);
+    await writeFile(join(dir, `${INSTALLER}.blockmap`), blockMap);
     await writeFile(join(dir, "win-unpacked", "cw-code.exe"), app);
     await writeFile(join(dir, "latest.yml"), updateInfo("1.2.0", digest(installer), installer.length));
     const signed = { status: "Valid", signed: true, subject: "CN=SignPath Foundation", timestamped: true };
@@ -42,7 +45,8 @@ describe("verifyReleaseSet", () => {
       files: [
         { path: "win-unpacked/cw-code.exe", role: "first-party", sha512: digest(app), ...signed },
         { path: INSTALLER, role: "first-party", sha512: digest(installer), ...signed }
-      ]
+      ],
+      blockMap: { path: `${INSTALLER}.blockmap`, sha512: digest(blockMap), size: blockMap.length }
     };
   });
 
@@ -72,6 +76,18 @@ describe("verifyReleaseSet", () => {
   it("rejects an installer digest that differs from the update info", async () => {
     await writeFile(join(dir, "latest.yml"), updateInfo("1.2.0", digest(randomBytes(4)), installer.length));
     expect((await verifyReleaseSet(dir, manifest)).join("\n")).toMatch(/installer sha512 differs/);
+  });
+
+  it("rejects a blockmap rebuilt or replaced after signing.json was written", async () => {
+    await writeFile(join(dir, `${INSTALLER}.blockmap`), randomBytes(256));
+    expect((await verifyReleaseSet(dir, manifest)).join("\n")).toMatch(/blockmap no longer matches the sha512/);
+    await writeFile(join(dir, `${INSTALLER}.blockmap`), randomBytes(10));
+    expect((await verifyReleaseSet(dir, manifest)).join("\n")).toMatch(/blockmap size differs/);
+  });
+
+  it("rejects a missing blockmap", async () => {
+    await rm(join(dir, `${INSTALLER}.blockmap`));
+    expect((await verifyReleaseSet(dir, manifest)).join("\n")).toMatch(/blockmap listed in signing.json is missing/);
   });
 
   it("reports a missing update info file", async () => {

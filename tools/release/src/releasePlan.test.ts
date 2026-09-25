@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { createFixtureReleaseSource, type FixtureRelease } from "./fixtures/fixtureReleaseSource.ts";
+import { planMarker } from "./planMarker.ts";
 import type { ReleasePlan } from "./planValidation.ts";
 import { buildAlphaPlan, buildStablePromotionPlan, verifyPlan } from "./releasePlan.ts";
 import type { ReleaseSource } from "./releaseSource.ts";
@@ -43,6 +44,8 @@ function baseRelease(tag: string, releaseSha: string, overrides: Partial<Fixture
     prerelease: false,
     publishedAt: "2026-09-24T00:00:00Z",
     htmlUrl: `https://github.com/albertofa/cw-code/releases/tag/${tag}`,
+    name: tag,
+    body: "",
     sha: releaseSha,
     ...overrides
   };
@@ -328,7 +331,7 @@ describe("verifyPlan", () => {
       commitLog: [...BASE_COMMIT_LOG, { sha: SHA.c10, subject: "feat: add cool feature" }]
     });
     const result = await verifyPlan(buildPlan(), source);
-    expect(result).toEqual({ ok: true });
+    expect(result).toEqual({ ok: true, resumeDraft: null });
   });
 
   it("validates the plan's own shape before touching the release source at all", async () => {
@@ -342,7 +345,7 @@ describe("verifyPlan", () => {
       headSha: () => {
         throw new Error("should not be called");
       },
-      remoteMainSha: () => {
+      isAncestorOfMain: () => {
         throw new Error("should not be called");
       },
       logSubjects: () => {
@@ -394,34 +397,74 @@ describe("verifyPlan", () => {
     expect(result.ok).toBe(false);
   });
 
-  it("rejects when origin/main moved past the planned source SHA", async () => {
+  it("rejects an alpha when a newer stable was published since the plan was created", async () => {
+    const releases = [...BASE_RELEASES, baseRelease("v0.0.1", SHA.c9)];
+    const source = createFixtureReleaseSource({
+      releases,
+      head: SHA.c10,
+      commitLog: [...BASE_COMMIT_LOG, { sha: SHA.c10, subject: "feat: add cool feature" }]
+    });
+    const result = await verifyPlan(buildPlan(), source);
+    expect(result).toEqual({ ok: false, reasons: [expect.stringContaining("Stable 0.0.1 is newer than 0.0.1-alpha.22")] });
+  });
+
+  it("accepts an alpha whose source SHA is still reachable from main after main moved on", async () => {
     const source = createFixtureReleaseSource({
       releases: BASE_RELEASES,
-      head: SHA.c10,
-      remoteMainSha: SHA.c11,
+      head: SHA.c11,
       commitLog: [
         ...BASE_COMMIT_LOG,
         { sha: SHA.c10, subject: "feat: add cool feature" },
         { sha: SHA.c11, subject: "feat: another change" }
       ]
     });
-    const result = await verifyPlan(buildPlan(), source);
-    expect(result).toEqual({ ok: false, reasons: [expect.stringContaining("origin/main is now")] });
+    expect(await verifyPlan(buildPlan(), source)).toEqual({ ok: true, resumeDraft: null });
   });
 
-  it("does not use the local checkout HEAD for alpha staleness, only origin/main", async () => {
+  it("rejects an alpha whose source SHA is not reachable from main (force-push or a side branch)", async () => {
     const source = createFixtureReleaseSource({
       releases: BASE_RELEASES,
-      head: SHA.c11,
-      remoteMainSha: SHA.c10,
-      commitLog: [
-        ...BASE_COMMIT_LOG,
-        { sha: SHA.c10, subject: "feat: add cool feature" },
-        { sha: SHA.c11, subject: "feat: a local-only commit" }
-      ]
+      head: SHA.c10,
+      mainHistory: [...BASE_COMMIT_LOG.map((entry) => entry.sha), SHA.c11],
+      commitLog: [...BASE_COMMIT_LOG, { sha: SHA.c10, subject: "feat: add cool feature" }]
     });
     const result = await verifyPlan(buildPlan(), source);
-    expect(result).toEqual({ ok: true });
+    expect(result).toEqual({ ok: false, reasons: [expect.stringContaining("is not reachable from main")] });
+  });
+
+  it("resumes a draft that targets the planned SHA and carries the plan marker", async () => {
+    const draft = baseRelease("v0.0.1-alpha.22", "", {
+      draft: true,
+      publishedAt: "",
+      targetCommitish: SHA.c10,
+      body: `notes\n\n${planMarker(SHA.c10)}\n`
+    });
+    const source = createFixtureReleaseSource({
+      releases: [...BASE_RELEASES, draft],
+      head: SHA.c10,
+      commitLog: [...BASE_COMMIT_LOG, { sha: SHA.c10, subject: "feat: add cool feature" }]
+    });
+    const result = await verifyPlan(buildPlan(), source);
+    expect(result.ok).toBe(true);
+    if (result.ok) expect(result.resumeDraft?.tagName).toBe("v0.0.1-alpha.22");
+  });
+
+  it("never resumes a draft for another SHA, a draft without the marker, a published release or duplicate drafts", async () => {
+    const commitLog = [...BASE_COMMIT_LOG, { sha: SHA.c10, subject: "feat: add cool feature" }];
+    const marked = { draft: true, publishedAt: "", targetCommitish: SHA.c10, body: planMarker(SHA.c10) };
+    const cases: Array<{ releases: FixtureRelease[]; reason: RegExp }> = [
+      { releases: [baseRelease("v0.0.1-alpha.22", "", { ...marked, targetCommitish: SHA.c9 })], reason: /cannot resume/ },
+      { releases: [baseRelease("v0.0.1-alpha.22", "", { ...marked, body: planMarker(SHA.c9) })], reason: /cannot resume/ },
+      { releases: [baseRelease("v0.0.1-alpha.22", "", { ...marked, body: "no marker" })], reason: /cannot resume/ },
+      { releases: [baseRelease("v0.0.1-alpha.22", "", { ...marked, draft: false })], reason: /cannot resume/ },
+      { releases: [baseRelease("v0.0.1-alpha.22", "", marked), baseRelease("v0.0.1-alpha.22", "", marked)], reason: /reserved by 2 releases/ }
+    ];
+    for (const { releases, reason } of cases) {
+      const source = createFixtureReleaseSource({ releases: [...BASE_RELEASES, ...releases], head: SHA.c10, commitLog });
+      const result = await verifyPlan(buildPlan(), source);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.reasons.join("\n")).toMatch(reason);
+    }
   });
 
   it("rejects a stable plan whose candidate tag has moved to a different commit", async () => {

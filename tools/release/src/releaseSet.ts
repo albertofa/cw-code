@@ -1,6 +1,17 @@
+import { stat } from "node:fs/promises";
 import { join } from "node:path";
 import { exists, readReleaseUpdateInfo, sha512Base64 } from "./rehash.ts";
 import { type SigningManifest, isInstallerPath } from "./signingManifest.ts";
+
+async function blockMapErrors(dir: string, manifest: SigningManifest): Promise<string[]> {
+  const { blockMap } = manifest;
+  const path = join(dir, blockMap.path);
+  if (!(await exists(path))) return [`${blockMap.path} listed in signing.json is missing from ${dir}`];
+  const errors: string[] = [];
+  if ((await stat(path)).size !== blockMap.size) errors.push(`${blockMap.path} size differs from signing.json`);
+  if ((await sha512Base64(path)) !== blockMap.sha512) errors.push(`${blockMap.path} no longer matches the sha512 recorded in signing.json`);
+  return errors;
+}
 
 export async function verifyReleaseSet(dir: string, manifest: SigningManifest): Promise<string[]> {
   const errors: string[] = [];
@@ -29,5 +40,6 @@ export async function verifyReleaseSet(dir: string, manifest: SigningManifest): 
       errors.push(`${file.path} no longer matches the sha512 recorded in signing.json`);
     }
   }
+  errors.push(...(await blockMapErrors(dir, manifest)));
   return errors;
 }

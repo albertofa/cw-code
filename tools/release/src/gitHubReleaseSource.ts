@@ -17,6 +17,8 @@ interface RawRelease {
   prerelease: boolean;
   published_at: string | null;
   html_url: string;
+  name: string | null;
+  body: string | null;
 }
 
 async function run(cmd: string, args: string[], cwd: string): Promise<string> {
@@ -38,7 +40,7 @@ export function createGitHubReleaseSource(options: GitHubReleaseSourceOptions): 
             `repos/${owner}/${repo}/releases?per_page=100`,
             "--paginate",
             "--jq",
-            ".[] | {tag_name, target_commitish, draft, prerelease, published_at, html_url}"
+            ".[] | {tag_name, target_commitish, draft, prerelease, published_at, html_url, name, body}"
           ],
           cwd
         );
@@ -58,7 +60,9 @@ export function createGitHubReleaseSource(options: GitHubReleaseSourceOptions): 
             draft: raw.draft,
             prerelease: raw.prerelease,
             publishedAt: raw.published_at ?? "",
-            htmlUrl: raw.html_url
+            htmlUrl: raw.html_url,
+            name: raw.name ?? "",
+            body: raw.body ?? ""
           };
         });
     },
@@ -77,13 +81,18 @@ export function createGitHubReleaseSource(options: GitHubReleaseSourceOptions): 
       return stdout.trim();
     },
 
-    async remoteMainSha(): Promise<string> {
-      const stdout = await run("git", ["ls-remote", "origin", "refs/heads/main"], cwd);
-      const sha = stdout.split(/\s+/)[0]?.trim();
-      if (!sha || !/^[0-9a-f]{40}$/.test(sha)) {
-        throw new Error(`git ls-remote origin refs/heads/main returned an invalid SHA: "${sha ?? ""}"`);
+    async isAncestorOfMain(sha: string): Promise<boolean> {
+      let status: string;
+      try {
+        status = (await run("gh", ["api", `repos/${owner}/${repo}/compare/${sha}...main`, "--jq", ".status"], cwd)).trim();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        throw new Error(`gh api could not compare ${sha} with main on GitHub: ${message}`);
       }
-      return sha;
+      if (!["identical", "ahead", "behind", "diverged"].includes(status)) {
+        throw new Error(`GitHub compare ${sha}...main returned an unexpected status "${status}"`);
+      }
+      return status === "identical" || status === "ahead";
     },
 
     async logSubjects(fromRef: string | null, toRef: string): Promise<string[]> {

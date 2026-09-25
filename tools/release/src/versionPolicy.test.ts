@@ -31,6 +31,8 @@ function release(tag: string, overrides: Partial<ReleaseInfo> = {}): ReleaseInfo
     prerelease: false,
     publishedAt: "2026-09-24T00:00:00Z",
     htmlUrl: `https://github.com/albertofa/cw-code/releases/tag/${tag}`,
+    name: tag,
+    body: "",
     ...overrides
   };
 }

@@ -1,19 +1,31 @@
-import { randomBytes } from "node:crypto";
-import { appendFileSync, existsSync, readFileSync, writeFileSync } from "node:fs";
+import { createHash, randomBytes } from "node:crypto";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs } from "./args.ts";
 import { loadElectronBuilderBlockMap } from "../blockMapBuilder.ts";
+import { createGitHubReleaseClient } from "../gitHubReleaseClient.ts";
 import { createGitHubReleaseSource } from "../gitHubReleaseSource.ts";
 import { applyVersion, checkSync, DEFAULT_PACKAGE_RELATIVE_PATHS, readPackageVersions, setBase } from "../packageVersions.ts";
-import { validatePlanShape } from "../planValidation.ts";
-import { readReleaseUpdateInfo, rehashRelease } from "../rehash.ts";
+import { type ReleasePlan, validatePlanShape } from "../planValidation.ts";
+import { type AnonymousHttp, checkPublishedReleaseWithRetries } from "../publishedCheck.ts";
+import { RECOVERY_RUNBOOK, publishRelease } from "../publishRelease.ts";
+import { readReleaseUpdateInfo, rehashRelease, sha512Base64 } from "../rehash.ts";
+import { type ReleaseAssetsReport, SIGNING_MANIFEST_NAME, stageReleaseSet, validateReleaseAssets } from "../releaseAssets.ts";
 import { buildAlphaPlan, buildStablePromotionPlan, verifyPlan } from "../releasePlan.ts";
 import type { ReleaseSource } from "../releaseSource.ts";
-import { parseGitHubHomepage } from "../repoInfo.ts";
+import { type RepoInfo, parseGitHubHomepage } from "../repoInfo.ts";
 import { type ParsedVersion, FULL_SHA_PATTERN, baseOf, formatVersion, parseVersion, sameBase } from "../semver.ts";
 import { verifyReleaseSet } from "../releaseSet.ts";
-import { buildSigningManifest, parsePackageInfo, parseVerificationReport, validateSigningManifest } from "../signingManifest.ts";
+import {
+  blockMapNameOf,
+  buildSigningManifest,
+  parsePackageInfo,
+  parseVerificationReport,
+  provenanceMismatches,
+  validateSigningManifest
+} from "../signingManifest.ts";
+import { selectUpgradeBase } from "../upgradeBase.ts";
 import { readPublisherNames } from "../updateInfoYaml.ts";
 import { parseFaults } from "../feedFaults.ts";
 import { validateReleaseFeed } from "../feedManifest.ts";
@@ -48,12 +60,32 @@ function requireFullSha(value: string, flag: string): string {
   return value.toLowerCase();
 }
 
-function buildSource(repoRoot: string): ReleaseSource {
+function appendStepSummary(markdown: string): void {
+  const file = process.env.GITHUB_STEP_SUMMARY;
+  if (file) appendFileSync(file, `${markdown.trimEnd()}\n`);
+}
+
+function annotateError(title: string, message: string): void {
+  if (process.env.GITHUB_ACTIONS !== "true") return;
+  const escaped = message.replaceAll("%", "%25").replaceAll("\r", "%0D").replaceAll("\n", "%0A");
+  process.stdout.write(`::error title=${title}::${escaped}\n`);
+}
+
+function resolveRepo(repoRoot: string): RepoInfo {
   const rootPackage = JSON.parse(readFileSync(resolve(repoRoot, "package.json"), "utf8")) as { homepage?: string };
   if (!rootPackage.homepage) {
     fail(`Root package.json has no "homepage" field to resolve the GitHub repository from`);
   }
-  const { owner, repo } = parseGitHubHomepage(rootPackage.homepage);
+  const info = parseGitHubHomepage(rootPackage.homepage);
+  const running = process.env.GITHUB_REPOSITORY;
+  if (running && running.toLowerCase() !== `${info.owner}/${info.repo}`.toLowerCase()) {
+    fail(`This workflow runs in ${running}, but package.json homepage names ${info.owner}/${info.repo}; refusing to touch another repository`);
+  }
+  return info;
+}
+
+function buildSource(repoRoot: string): ReleaseSource {
+  const { owner, repo } = resolveRepo(repoRoot);
   return createGitHubReleaseSource({ owner, repo, cwd: repoRoot });
 }
 
@@ -132,7 +164,7 @@ async function cmdVerifyPlan(options: Map<string, string>, repoRoot: string): Pr
   const source = buildSource(repoRoot);
   const result = await verifyPlan(raw, source);
   printJson(result);
-  writeGithubOutput({ stale: result.ok ? "false" : "true" });
+  writeGithubOutput({ stale: result.ok ? "false" : "true", resume: result.ok && result.resumeDraft ? "true" : "false" });
   if (!result.ok) process.exitCode = 1;
 }
 
@@ -218,7 +250,11 @@ async function cmdSigningManifest(options: Map<string, string>): Promise<void> {
   if (!packageInfo.ok) fail(`Invalid package-info.json: ${packageInfo.errors.join("; ")}`);
 
   const updateInfo = await readReleaseUpdateInfo(releaseDir);
+  const blockMapName = blockMapNameOf(updateInfo.installerName);
+  const blockMapPath = resolve(releaseDir, blockMapName);
+  if (!existsSync(blockMapPath)) fail(`${blockMapName} is missing from ${releaseDir}; run rehash first`);
   const result = buildSigningManifest({
+    blockMap: { path: blockMapName, sha512: await sha512Base64(blockMapPath), size: statSync(blockMapPath).size },
     mode,
     production,
     publisher: options.get("publisher") ?? null,
@@ -248,6 +284,12 @@ async function cmdCheckSigningManifest(options: Map<string, string>): Promise<vo
   if (requireProduction && !manifest.production) {
     fail(`Signing manifest is not production (mode ${manifest.mode}); refusing to treat it as a publishable release`);
   }
+  const provenance = provenanceMismatches(manifest, {
+    version: options.get("expected-version"),
+    sourceSha: options.get("expected-source-sha"),
+    runId: options.get("expected-run-id")
+  });
+  if (provenance.length > 0) fail(`Signing manifest belongs to another release: ${provenance.join("; ")}`);
   if (releaseDir) {
     const errors = await verifyReleaseSet(resolve(releaseDir), manifest);
     if (errors.length > 0) fail(`Release set does not match signing.json: ${errors.join("; ")}`);
@@ -311,6 +353,165 @@ async function cmdValidateFeed(options: Map<string, string>): Promise<void> {
   if (report.errors.length > 0) process.exitCode = 1;
 }
 
+function readPlan(options: Map<string, string>): ReleasePlan {
+  const shape = validatePlanShape(readJsonFile(requireOption(options, "plan")));
+  if (!shape.ok) fail(`Invalid plan: ${shape.errors.join("; ")}`);
+  return shape.plan;
+}
+
+async function cmdStageReleaseSet(options: Map<string, string>): Promise<void> {
+  const staged = await stageReleaseSet(resolve(requireOption(options, "from")), resolve(requireOption(options, "to")), readPlan(options));
+  printJson({ staged });
+}
+
+function assetsSummary(report: ReleaseAssetsReport, title: string): string {
+  const rows = report.assets.map((asset) => `| ${asset.name} | ${asset.size} | \`${asset.sha512}\` |`);
+  const status = report.ok ? "passed" : `**failed** (${report.errors.length} problem(s))`;
+  return [
+    `### ${title}: ${status}`,
+    `- version / channel / tag: ${report.version} / ${report.channel} / ${report.tag}`,
+    `- source-sha: ${report.sourceSha}`,
+    `- signing: mode ${report.signingMode}, production ${report.production}, publisher ${report.publisher ?? "none"}`,
+    `- installer signature: ${report.installerSignature ? `${report.installerSignature.status} by ${report.installerSignature.subject ?? "nobody"}, timestamped ${report.installerSignature.timestamped}` : "unknown"}`,
+    "",
+    "| Asset | Bytes | sha512 |",
+    "| --- | --- | --- |",
+    ...rows,
+    ...report.errors.map((error) => `- ${error}`)
+  ].join("\n");
+}
+
+async function validateAssetsFromOptions(options: Map<string, string>, dir: string): Promise<ReleaseAssetsReport> {
+  const unpackedRoot = options.get("unpacked-root");
+  return validateReleaseAssets({
+    dir,
+    plan: readJsonFile(requireOption(options, "plan")),
+    signing: readJsonFile(options.get("signing") ?? resolve(dir, SIGNING_MANIFEST_NAME)),
+    runId: requireOption(options, "run-id"),
+    requireProduction: options.get("require-production") === "true",
+    expectedPublisher: options.get("expected-publisher"),
+    unpackedRoot: unpackedRoot ? resolve(unpackedRoot) : undefined
+  });
+}
+
+async function cmdValidateReleaseAssets(options: Map<string, string>): Promise<void> {
+  const report = await validateAssetsFromOptions(options, resolve(requireOption(options, "dir")));
+  printJson(report);
+  const reportPath = options.get("report");
+  if (reportPath) writeFileSync(resolve(reportPath), `${JSON.stringify(report, null, 2)}\n`);
+  appendStepSummary(assetsSummary(report, "Release set validation"));
+  if (!report.ok) {
+    for (const error of report.errors) annotateError("Release set invalid", error);
+    process.exitCode = 1;
+  }
+}
+
+async function cmdSelectUpgradeBase(options: Map<string, string>, repoRoot: string): Promise<void> {
+  const plan = readPlan(options);
+  const { owner, repo } = resolveRepo(repoRoot);
+  const base = selectUpgradeBase(plan, await createGitHubReleaseClient(owner, repo).listReleases());
+  printJson(base);
+  writeGithubOutput(
+    base.status === "found"
+      ? { status: base.status, tag: base.tag, version: base.version, installer: base.installer, reason: "" }
+      : { status: base.status, tag: "", version: "", installer: "", reason: base.reason }
+  );
+}
+
+async function cmdPublish(options: Map<string, string>, repoRoot: string): Promise<void> {
+  const dir = resolve(requireOption(options, "dir"));
+  const publishOptions = new Map(options);
+  publishOptions.set("require-production", "true");
+  const report = await validateAssetsFromOptions(publishOptions, dir);
+  if (!report.ok) fail(`Release set is not publishable: ${report.errors.join("; ")}`);
+  const plan = readPlan(options);
+  const { owner, repo } = resolveRepo(repoRoot);
+  const workDir = resolve(requireOption(options, "work-dir"));
+  mkdirSync(workDir, { recursive: true });
+  try {
+    const result = await publishRelease({
+      plan,
+      dir,
+      assets: report.assets,
+      client: createGitHubReleaseClient(owner, repo),
+      source: buildSource(repoRoot),
+      workDir,
+      log: (line) => process.stderr.write(`${line}\n`)
+    });
+    printJson(result);
+    writeGithubOutput({ status: result.status, url: result.htmlUrl });
+    appendStepSummary(
+      [
+        `### Published ${plan.tag} (${result.status})`,
+        `- release: ${result.htmlUrl}`,
+        `- source-sha: ${plan.sourceSha}`,
+        `- prerelease: ${plan.prerelease}, latest: ${plan.makeLatest}`,
+        `- resumed draft: ${result.resumed}; uploaded: ${result.uploaded.join(", ") || "none"}; reused: ${result.reused.join(", ") || "none"}; replaced: ${result.replaced.join(", ") || "none"}`
+      ].join("\n")
+    );
+  } catch (error: unknown) {
+    const message = error instanceof Error ? error.message : String(error);
+    annotateError("Publication failed", `${message} (recovery: ${RECOVERY_RUNBOOK})`);
+    fail(message);
+  }
+}
+
+async function readAll(response: Response): Promise<{ sha512: string; size: number }> {
+  const hash = createHash("sha512");
+  let size = 0;
+  if (response.body) {
+    for await (const chunk of response.body) {
+      hash.update(chunk);
+      size += chunk.byteLength;
+    }
+  }
+  return { sha512: hash.digest("base64"), size };
+}
+
+const anonymousHttp: AnonymousHttp = {
+  async text(url, accept) {
+    const response = await fetch(url, { headers: { Accept: accept, "User-Agent": "cw-code-release-check" }, redirect: "follow" });
+    return { status: response.status, body: await response.text() };
+  },
+  async digest(url) {
+    const response = await fetch(url, { headers: { "User-Agent": "cw-code-release-check" }, redirect: "follow" });
+    if (response.status !== 200) {
+      await response.body?.cancel();
+      return { status: response.status, sha512: "", size: 0 };
+    }
+    return { status: response.status, ...(await readAll(response)) };
+  }
+};
+
+async function cmdCheckPublished(options: Map<string, string>, repoRoot: string): Promise<void> {
+  const token = ["GH_TOKEN", "GITHUB_TOKEN"].find((name) => process.env[name]);
+  if (token) fail(`${token} is set; the post-publication check must run anonymously, exactly like an installed client`);
+  const plan = readPlan(options);
+  const { owner, repo } = resolveRepo(repoRoot);
+  const attempts = Number(options.get("attempts") ?? "6");
+  const delaySeconds = Number(options.get("delay-seconds") ?? "30");
+  if (!Number.isInteger(attempts) || attempts < 1 || !Number.isFinite(delaySeconds) || delaySeconds < 0) fail("--attempts must be a positive integer and --delay-seconds a non-negative number");
+  const report = await checkPublishedReleaseWithRetries(
+    { plan, owner, repo, http: anonymousHttp },
+    { attempts, delayMs: delaySeconds * 1000, sleep: (ms) => new Promise((done) => setTimeout(done, ms)) }
+  );
+  printJson(report);
+  const runbook = `https://github.com/${owner}/${repo}/blob/main/${RECOVERY_RUNBOOK}`;
+  appendStepSummary(
+    [
+      `### Client-facing check for ${plan.tag}: ${report.ok ? "passed" : "**failed**"} after ${report.attempts} attempt(s)`,
+      "| Check | Result | URL |",
+      "| --- | --- | --- |",
+      ...report.checks.map((entry) => `| ${entry.name} | ${entry.ok ? "ok" : "FAILED"}: ${entry.detail} | ${entry.url} |`),
+      report.ok ? "" : `Recovery: ${runbook}`
+    ].join("\n")
+  );
+  if (!report.ok) {
+    for (const entry of report.checks.filter((item) => !item.ok)) annotateError(`Published ${entry.name} check failed`, `${entry.detail} (${entry.url}); recovery: ${runbook}`);
+    process.exitCode = 1;
+  }
+}
+
 async function main(): Promise<void> {
   const { command, options } = parseArgs(process.argv.slice(2));
   switch (command) {
@@ -344,9 +545,24 @@ async function main(): Promise<void> {
     case "validate-feed":
       await cmdValidateFeed(options);
       return;
+    case "stage-release-set":
+      await cmdStageReleaseSet(options);
+      return;
+    case "validate-release-assets":
+      await cmdValidateReleaseAssets(options);
+      return;
+    case "select-upgrade-base":
+      await cmdSelectUpgradeBase(options, REPO_ROOT);
+      return;
+    case "publish":
+      await cmdPublish(options, REPO_ROOT);
+      return;
+    case "check-published":
+      await cmdCheckPublished(options, REPO_ROOT);
+      return;
     default:
       fail(
-        `Unknown command "${command}". Expected: plan | verify-plan | apply | set-base | check-sync | rehash | signing-manifest | check-signing-manifest | feed-serve | validate-feed`
+        `Unknown command "${command}". Expected: plan | verify-plan | apply | set-base | check-sync | rehash | signing-manifest | check-signing-manifest | feed-serve | validate-feed | stage-release-set | validate-release-assets | select-upgrade-base | publish | check-published`
       );
   }
 }

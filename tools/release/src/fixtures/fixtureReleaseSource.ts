@@ -7,7 +7,7 @@ export interface FixtureRelease extends ReleaseInfo {
 export interface FixtureReleaseSourceOptions {
   releases: FixtureRelease[];
   head: string;
-  remoteMainSha?: string;
+  mainHistory?: string[];
   commitLog: Array<{ sha: string; subject: string }>;
   filesAtSha?: Record<string, Record<string, string>>;
 }
@@ -39,8 +39,8 @@ export function createFixtureReleaseSource(options: FixtureReleaseSourceOptions)
       if (ref === "HEAD") return head;
       return tagShas.get(ref) ?? ref;
     },
-    async remoteMainSha(): Promise<string> {
-      return options.remoteMainSha ?? head;
+    async isAncestorOfMain(sha: string): Promise<boolean> {
+      return (options.mainHistory ?? commitLog.map((entry) => entry.sha)).includes(sha);
     },
     async logSubjects(fromRef: string | null, toRef: string): Promise<string[]> {
       const toSha = tagShas.get(toRef) ?? toRef;

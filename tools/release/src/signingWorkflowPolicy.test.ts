@@ -2,36 +2,14 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { runScriptLines } from "./workflowLines.ts";
+import { jobBlocks, runScriptLines, topLevelBlock } from "./workflowLines.ts";
 
 const WORKFLOW_PATH = resolve(dirname(fileURLToPath(import.meta.url)), "../../../.github/workflows/sign-windows.yml");
 const lines = readFileSync(WORKFLOW_PATH, "utf8").split(/\r?\n/);
 
-function topLevelBlock(key: string): string[] {
-  const start = lines.indexOf(`${key}:`);
-  if (start === -1) throw new Error(`sign-windows.yml has no top-level "${key}:"`);
-  const end = lines.findIndex((line, index) => index > start && /^\S/.test(line));
-  return lines.slice(start + 1, end === -1 ? undefined : end);
-}
-
-function jobs(): Map<string, string[]> {
-  const result = new Map<string, string[]>();
-  let current: string[] | null = null;
-  for (const line of topLevelBlock("jobs")) {
-    const header = /^ {2}([\w-]+):$/.exec(line);
-    if (header) {
-      current = [];
-      result.set(header[1], current);
-    } else if (current) {
-      current.push(line);
-    }
-  }
-  return result;
-}
-
 describe("sign-windows.yml policy", () => {
   it("is only reachable through workflow_call", () => {
-    const triggers = topLevelBlock("on").filter((line) => /^ {2}\S/.test(line)).map((line) => line.trim());
+    const triggers = topLevelBlock(lines, "on").filter((line) => /^ {2}\S/.test(line)).map((line) => line.trim());
     expect(triggers).toEqual(["workflow_call:"]);
   });
 
@@ -51,7 +29,7 @@ describe("sign-windows.yml policy", () => {
   });
 
   it("exposes secrets only to jobs bound to the protected release-signing environment", () => {
-    for (const [name, body] of jobs()) {
+    for (const [name, body] of jobBlocks(lines)) {
       const usesSecrets = body.some((line) => line.includes("secrets."));
       const protectedJob = body.some((line) => line.trim() === "environment: release-signing");
       if (usesSecrets) expect({ name, protectedJob }).toEqual({ name, protectedJob: true });
@@ -75,6 +53,15 @@ describe("sign-windows.yml policy", () => {
     const workflowShaRefs = lines.filter((line) => line.trim() === "ref: ${{ job.workflow_sha }}").length;
     expect(toolingCheckouts).toBeGreaterThan(0);
     expect(workflowShaRefs).toBe(toolingCheckouts);
+  });
+
+  it("keeps intermediate artifacts for 3 days, long enough for a delayed environment approval, and the final set for 14", () => {
+    const retention = lines.filter((line) => /retention-days:/.test(line)).map((line) => line.trim());
+    expect(retention).toEqual([...Array(5).fill("retention-days: 3"), "retention-days: 14"]);
+  });
+
+  it("binds check-signing-manifest to the requested version, source SHA and run", () => {
+    expect(lines.join("\n")).toMatch(/check-signing-manifest [^\n]*\n\s+--expected-version "\$VERSION" --expected-source-sha "\$SOURCE_SHA" --expected-run-id "\$RUN_ID"/);
   });
 
   it("uses no dependency cache and never overwrites artifacts", () => {
