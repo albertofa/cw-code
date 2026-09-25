@@ -90,6 +90,8 @@ async function cmdPlan(options: Map<string, string>, repoRoot: string): Promise<
   const source = buildSource(repoRoot);
   const desktopVersion = sha ? await readDesktopVersionAtSha(source, sha) : await readDesktopVersion(repoRoot);
 
+  if (channel === "stable" && options.has("force")) fail("--force only applies to --channel alpha");
+
   const result =
     channel === "alpha"
       ? await buildAlphaPlan({ source, now, desktopVersion, sha, force: options.get("force") === "true" })

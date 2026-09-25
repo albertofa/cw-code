@@ -1,4 +1,4 @@
-import { FULL_SHA_PATTERN, baseOf, formatVersion, parseTag, sameBase, tagOf, tryParseVersion } from "./semver.ts";
+import { LOWERCASE_SHA_PATTERN, baseOf, formatVersion, parseTag, sameBase, tagOf, tryParseVersion } from "./semver.ts";
 
 export interface ReleasePlanCandidate {
   tag: string;
@@ -20,7 +20,6 @@ export interface ReleasePlan {
 }
 
 export type PlanShapeResult = { ok: true; plan: ReleasePlan } | { ok: false; errors: string[] };
-
 
 function isString(value: unknown): value is string {
   return typeof value === "string";
@@ -86,7 +85,7 @@ export function validatePlanShape(raw: unknown): PlanShapeResult {
   const { plan } = structural;
   const errors: string[] = [];
 
-  if (!FULL_SHA_PATTERN.test(plan.sourceSha)) {
+  if (!LOWERCASE_SHA_PATTERN.test(plan.sourceSha)) {
     errors.push(`sourceSha must be a 40-character hex SHA, got "${plan.sourceSha}"`);
   }
 
@@ -123,8 +122,10 @@ export function validatePlanShape(raw: unknown): PlanShapeResult {
           `candidate base ${formatVersion(baseOf(candidateVersion))} does not match plan version base ${formatVersion(baseOf(version))}`
         );
       }
-      if (!FULL_SHA_PATTERN.test(plan.candidate.sha)) {
-        errors.push(`candidate.sha must be a 40-character hex SHA, got "${plan.candidate.sha}"`);
+      if (!LOWERCASE_SHA_PATTERN.test(plan.candidate.sha)) {
+        errors.push(`candidate.sha must be a 40-character lowercase hex SHA, got "${plan.candidate.sha}"`);
+      } else if (plan.candidate.sha !== plan.sourceSha) {
+        errors.push(`candidate.sha ${plan.candidate.sha} must equal sourceSha ${plan.sourceSha}`);
       }
     }
   }
