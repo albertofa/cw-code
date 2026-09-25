@@ -37,6 +37,15 @@ describe("releaseNotesMarkdown", () => {
     expect(text).toBe("<Component> \u{1F680} &bogus; &#0;\n\nspaced");
   });
 
+  it("handles blank-heavy notes at the 20k-character cap in one pass", () => {
+    const html = `<ul>${"<li>x</li>\n\n\n".repeat(2_000)}</ul>`;
+    const started = performance.now();
+    const text = releaseNotesMarkdown(html) ?? "";
+    expect(performance.now() - started).toBeLessThan(200);
+    expect(text.split("\n")).toHaveLength(2_000);
+    expect(text).not.toContain("\n\n");
+  });
+
   it("escapes brackets in link labels", () => {
     expect(releaseNotesMarkdown('<p><a href="https://example.com">[beta] notes</a></p>')).toBe("[\\[beta\\] notes](https://example.com)");
   });
