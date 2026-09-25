@@ -609,10 +609,25 @@ export class ClaudeCliDriver implements CliDriver {
     const turnId = state.activeTurnId;
     if (state.completedTurn) {
       if (state.postCompletionOutputPending) {
-        state.postCompletionOutputPending = false;
+        const backgroundTasks = this.liveTaskCount(state);
         state.resumeCursor = info.resumeCursor;
         state.modelUsage = info.modelUsage;
-        this.armIdleTimer(state);
+        if (backgroundTasks === 0) {
+          this.emit({
+            type: "turn.done",
+            turnId,
+            sessionId: state.sessionId,
+            resumeCursor: info.resumeCursor,
+            resultText: info.resultText || this.latestTaskReport(state),
+            usage: info.usage,
+            ...(info.context ? { context: info.context } : {}),
+            numTurns: info.numTurns,
+            isError: info.isError,
+            backgroundTasks
+          });
+          state.postCompletionOutputPending = false;
+          this.armIdleTimer(state);
+        }
       }
       this.interruptedTurns.delete(turnId);
       return;

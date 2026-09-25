@@ -157,7 +157,11 @@ export class SessionManager {
       return;
     }
     if (event.type === "assistant.delta") {
-      this.bufferDelta(event.turnId, this.activeTurns.get(event.turnId)?.sessionId ?? "", event.text);
+      this.bufferDelta(
+        event.turnId,
+        this.activeTurns.get(event.turnId)?.sessionId ?? this.settledTurns.get(event.turnId) ?? "",
+        event.text
+      );
       return;
     }
     if (event.type === "turn.done") {
@@ -166,10 +170,7 @@ export class SessionManager {
       return;
     }
     this.flushDelta(event.turnId);
-    const sessionId =
-      this.activeTurns.get(event.turnId)?.sessionId ??
-      (event.type === "tool.result" ? this.settledTurns.get(event.turnId) : undefined) ??
-      "";
+    const sessionId = this.activeTurns.get(event.turnId)?.sessionId ?? this.settledTurns.get(event.turnId) ?? "";
     this.handleDriverEvent(sessionId, event);
   }
 
