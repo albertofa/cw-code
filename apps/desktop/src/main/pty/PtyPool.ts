@@ -2,6 +2,7 @@ import type { AppSettings } from "@cw-code/contracts";
 import { toShellTarget } from "./resolve.js";
 import { parseExtraArgs } from "../settings/settingsUtils.js";
 import { traceHarnessCall, truncateError } from "../debug/harnessTrace.js";
+import { shutdownReservedError } from "../shutdown/shutdownReservation.js";
 
 export type PtyKind = "claude" | "opencode" | "codex" | "shell";
 
@@ -11,7 +12,7 @@ export interface PtyAttachResult {
   replay: string;
 }
 
-interface PtyInstance {
+export interface PtyInstance {
   onData(cb: (data: string) => void): void;
   onExit(cb: (e: { exitCode: number }) => void): void;
   write(data: string): void;
@@ -19,11 +20,19 @@ interface PtyInstance {
   kill(): void;
 }
 
-interface PtyModule {
+export interface PtyModule {
   spawn(file: string, args: string[], opts: { name: string; cols: number; rows: number; cwd: string; env?: Record<string, string> }): PtyInstance;
 }
 
+export interface PtyListEntry {
+  ptyId: string;
+  sessionId: string;
+  kind: PtyKind;
+}
+
 interface PtyEntry {
+  sessionId: string;
+  kind: PtyKind;
   proc: PtyInstance;
   replay: string;
   token: string;
@@ -72,12 +81,33 @@ export class PtyPool {
   private pendingKills = new Set<string>();
   private nextToken = 1;
   private disposed = false;
+  private shutdownReserved = false;
   private onExit: (ptyId: string, token: string, exitCode: number) => void = () => {};
 
-  constructor(private getSettings: () => AppSettings) {}
+  constructor(
+    private getSettings: () => AppSettings,
+    private loadModule: () => Promise<PtyModule> = loadPty
+  ) {}
 
   setExitEmitter(onExit: (ptyId: string, token: string, exitCode: number) => void): void {
     this.onExit = onExit;
+  }
+
+  list(): PtyListEntry[] {
+    return [...this.ptys].map(([ptyId, entry]) => ({ ptyId, sessionId: entry.sessionId, kind: entry.kind }));
+  }
+
+  beginShutdownReservation(): void {
+    this.shutdownReserved = true;
+  }
+
+  clearShutdownReservation(): void {
+    this.shutdownReserved = false;
+  }
+
+  private assertCanOpen(): void {
+    if (this.disposed) throw new Error("pty pool disposed");
+    if (this.shutdownReserved) throw shutdownReservedError();
   }
 
   async open(
@@ -92,9 +122,10 @@ export class PtyPool {
     const ptyId = `${sessionId}:${kind}`;
     const existing = this.ptys.get(ptyId);
     if (existing) return this.attach(existing, ptyId);
+    this.assertCanOpen();
     let task = this.openings.get(ptyId);
     if (!task) {
-      task = this.spawn(ptyId, cwd, kind, resumeCursor, env, onData);
+      task = this.spawn(ptyId, sessionId, cwd, kind, resumeCursor, env, onData);
       this.openings.set(ptyId, task);
       task.finally(() => {
         if (this.openings.get(ptyId) === task) this.openings.delete(ptyId);
@@ -122,6 +153,7 @@ export class PtyPool {
 
   private async spawn(
     ptyId: string,
+    sessionId: string,
     cwd: string,
     kind: PtyKind,
     resumeCursor: string,
@@ -132,7 +164,7 @@ export class PtyPool {
     const operation = "pty.open";
     let pty: PtyModule;
     try {
-      pty = await loadPty();
+      pty = await this.loadModule();
     } catch (err) {
       traceHarnessCall({
         harness: kind === "shell" ? "system" : kind,
@@ -145,6 +177,7 @@ export class PtyPool {
       });
       throw err;
     }
+    this.assertCanOpen();
     let file: string;
     let extra: string[] = [];
     if (kind === "claude") {
@@ -202,7 +235,7 @@ export class PtyPool {
       });
       throw new Error(`PTY spawn failed for '${file}': ${(err as Error).message}`);
     }
-    const entry: PtyEntry = { proc, replay: "", token: `pty-${this.nextToken++}`, attachedCount: 0 };
+    const entry: PtyEntry = { sessionId, kind, proc, replay: "", token: `pty-${this.nextToken++}`, attachedCount: 0 };
     this.ptys.set(ptyId, entry);
     if (this.disposed) {
       this.ptys.delete(ptyId);
@@ -263,5 +296,9 @@ export class PtyPool {
     this.disposed = true;
     for (const ptyId of [...this.ptys.keys()]) this.kill(ptyId);
     this.pendingKills.clear();
+  }
+
+  reopen(): void {
+    this.disposed = false;
   }
 }
