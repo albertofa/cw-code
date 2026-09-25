@@ -2,6 +2,7 @@ import { copyFileSync, cpSync, existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { expandHome, normalizeStoredDir } from "../skills/skillPaths.js";
+import { hasBackupFiles } from "../storage/backups.js";
 
 export function cwCodeHome(home?: string, env?: NodeJS.ProcessEnv): string {
   const explicit = home?.trim();
@@ -84,6 +85,7 @@ interface MigrationEntry {
   name: string;
   dest: string;
   tree: boolean;
+  metadata?: boolean;
 }
 
 export function migrateFromUserData(
@@ -94,8 +96,8 @@ export function migrateFromUserData(
   const userdata = userdataDir(home, env);
   const logs = logsDir(home, env);
   const entries: MigrationEntry[] = [
-    { name: "cw-code.db.json", dest: join(userdata, "cw-code.db.json"), tree: false },
-    { name: "cw-settings.json", dest: join(userdata, "cw-settings.json"), tree: false },
+    { name: "cw-code.db.json", dest: join(userdata, "cw-code.db.json"), tree: false, metadata: true },
+    { name: "cw-settings.json", dest: join(userdata, "cw-settings.json"), tree: false, metadata: true },
     { name: "skills.json", dest: join(userdata, "skills.json"), tree: false },
     { name: "skills", dest: join(userdata, "skills"), tree: true },
     { name: "cw-opencode", dest: join(userdata, "cw-opencode"), tree: true },
@@ -109,7 +111,7 @@ export function migrateFromUserData(
   if (!existsSync(userDataDir)) return { copied, skipped: entries.map((entry) => entry.name) };
   for (const entry of entries) {
     const src = join(userDataDir, entry.name);
-    if (!existsSync(src) || existsSync(entry.dest)) {
+    if (!existsSync(src) || existsSync(entry.dest) || (entry.metadata && hasBackupFiles(entry.dest))) {
       skipped.push(entry.name);
       continue;
     }

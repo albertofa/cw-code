@@ -5,13 +5,8 @@ import type { ComposerPrefs, DriverKind, Project, SessionMeta } from "@cw-code/c
 import { isValidPrLink, upsertLink } from "../github/prLinks.js";
 import { expandHome } from "../skills/skillPaths.js";
 import { writeFileAtomic } from "../storage/atomicFile.js";
-import {
-  isMetadataDocument,
-  loadVersionedJson,
-  type MetadataDocument,
-  type MetadataMigration,
-  type MetadataSchema
-} from "../storage/versionedJson.js";
+import { isMetadataDocument, type MetadataDocument, type MetadataMigration, type MetadataSchema } from "../storage/metadataDocument.js";
+import { loadVersionedJson } from "../storage/versionedJson.js";
 
 interface StoreShape {
   projects: Project[];
@@ -83,7 +78,8 @@ function migrateSessionsFromV0(raw: MetadataDocument): MetadataDocument {
 export const SESSION_METADATA: MetadataSchema = {
   kind: "sessions",
   currentVersion: SESSION_SCHEMA_VERSION,
-  validate: validateSessionDocument
+  validate: validateSessionDocument,
+  empty: () => ({ schemaVersion: SESSION_SCHEMA_VERSION, projects: [], sessions: [] })
 };
 
 export const SESSION_MIGRATIONS: Record<number, MetadataMigration> = { 0: migrateSessionsFromV0 };

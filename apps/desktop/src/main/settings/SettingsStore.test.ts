@@ -1,10 +1,10 @@
-import { existsSync, mkdtempSync, readFileSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdtempSync, readFileSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import type { AppSettings, DriverKind, EffortLevel, PrWorkflow } from "@cw-code/contracts";
-import { MetadataError } from "../storage/versionedJson.js";
+import { MetadataError } from "../storage/metadataDocument.js";
 import { DEFAULT_SETTINGS, SETTINGS_SCHEMA_VERSION, SettingsStore } from "./SettingsStore.js";
 
 const FIXTURE = readFileSync(fileURLToPath(new URL("../storage/__fixtures__/settings-v0.json", import.meta.url)));
@@ -74,11 +74,78 @@ describe("SettingsStore", () => {
     expect(readFileSync(filePath, "utf8")).toBe(content);
   });
 
-  it("refuses a known setting whose type cannot be sanitized", () => {
+  it("refuses a non-object settings file", () => {
     const filePath = tempFilePath();
-    writeFileSync(filePath, JSON.stringify({ claudeExtraArgs: 5 }), "utf8");
+    writeFileSync(filePath, "[1,2]", "utf8");
     expectRefusal(filePath, "invalid-shape");
-    expect(readFileSync(filePath, "utf8")).toBe('{"claudeExtraArgs":5}');
+    expect(readFileSync(filePath, "utf8")).toBe("[1,2]");
+  });
+
+  it("falls back to defaults for wrong-typed known settings and keeps the original file as a before-repair backup", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const filePath = tempFilePath();
+    const original = JSON.stringify({
+      schemaVersion: 1,
+      claudeExtraArgs: 5,
+      autoTitleModel: ["x"],
+      claudeEnabledModels: "sonnet",
+      opencodeBinaryPath: false,
+      claudeCustomModel: 7,
+      holdingHours: 9,
+      futureSetting: "kept"
+    });
+    writeFileSync(filePath, original, "utf8");
+
+    const settings = new SettingsStore(filePath).get();
+
+    expect(settings).toMatchObject({
+      claudeExtraArgs: DEFAULT_SETTINGS.claudeExtraArgs,
+      autoTitleModel: DEFAULT_SETTINGS.autoTitleModel,
+      claudeEnabledModels: DEFAULT_SETTINGS.claudeEnabledModels,
+      opencodeBinaryPath: DEFAULT_SETTINGS.opencodeBinaryPath,
+      claudeCustomModel: DEFAULT_SETTINGS.claudeCustomModel,
+      holdingHours: 9
+    });
+    expect(readFileSync(`${filePath}.before-repair.bak`, "utf8")).toBe(original);
+    expect(JSON.parse(readFileSync(filePath, "utf8"))).toMatchObject({ claudeExtraArgs: "", holdingHours: 9, futureSetting: "kept" });
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("claudeExtraArgs, autoTitleModel, claudeEnabledModels, opencodeBinaryPath, claudeCustomModel"));
+    warn.mockRestore();
+  });
+
+  it("refreshes the before-repair backup only when a new repair sees different bytes", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const filePath = tempFilePath();
+    writeFileSync(filePath, JSON.stringify({ schemaVersion: 1, claudeExtraArgs: 5 }), "utf8");
+    new SettingsStore(filePath);
+    const backup = `${filePath}.before-repair.bak`;
+    expect(readFileSync(backup, "utf8")).toBe('{"schemaVersion":1,"claudeExtraArgs":5}');
+
+    new SettingsStore(filePath);
+    expect(readFileSync(backup, "utf8")).toBe('{"schemaVersion":1,"claudeExtraArgs":5}');
+
+    writeFileSync(filePath, JSON.stringify({ schemaVersion: 1, codexExtraArgs: 6 }), "utf8");
+    new SettingsStore(filePath);
+    expect(readFileSync(backup, "utf8")).toBe('{"schemaVersion":1,"codexExtraArgs":6}');
+    warn.mockRestore();
+  });
+
+  it("does not write a before-repair backup when nothing was repaired", () => {
+    const filePath = tempFilePath();
+    writeFileSync(filePath, JSON.stringify({ schemaVersion: 1, holdingHours: 3 }), "utf8");
+    new SettingsStore(filePath);
+    expect(existsSync(`${filePath}.before-repair.bak`)).toBe(false);
+  });
+
+  it.runIf(process.platform === "win32")("keeps memory in step with disk when saving fails", () => {
+    const filePath = tempFilePath();
+    const store = new SettingsStore(filePath);
+    chmodSync(filePath, 0o444);
+    try {
+      expect(() => store.set({ holdingHours: 42 })).toThrow(/EPERM|EACCES/);
+      expect(store.get().holdingHours).toBe(DEFAULT_SETTINGS.holdingHours);
+    } finally {
+      chmodSync(filePath, 0o644);
+    }
   });
 
   it("migrates the schema-0 fixture keeping every setting", () => {

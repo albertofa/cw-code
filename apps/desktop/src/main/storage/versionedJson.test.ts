@@ -2,15 +2,9 @@ import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSyn
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
-import {
-  isMetadataDocument,
-  lastGoodBackupPath,
-  loadVersionedJson,
-  MetadataError,
-  migrationBackupPath,
-  type MetadataMigration,
-  type VersionedJsonOptions
-} from "./versionedJson.js";
+import { lastGoodBackupPath, migrationBackupPath } from "./backups.js";
+import { isMetadataDocument, MetadataError, type MetadataMigration } from "./metadataDocument.js";
+import { loadVersionedJson, type VersionedJsonOptions } from "./versionedJson.js";
 
 function tempFile(): string {
   return join(mkdtempSync(join(tmpdir(), "cw-versioned-")), "data.json");
@@ -22,7 +16,9 @@ function options(filePath: string, migrations: Record<number, MetadataMigration>
     kind: "sessions",
     currentVersion: 1,
     migrations,
-    validate: (raw) => (isMetadataDocument(raw) && Array.isArray(raw.items) ? null : "items must be an array")
+    validate: (raw) => (isMetadataDocument(raw) && Array.isArray(raw.items) ? null : "items must be an array"),
+    empty: () => ({ schemaVersion: 1, items: [] }),
+    now: () => Date.parse("2026-02-03T04:05:06.789Z")
   };
 }
 
@@ -84,19 +80,53 @@ describe("loadVersionedJson", () => {
     expect(statSync(migrationBackupPath(file, 0)).mtimeMs).toBe(backupMtime);
   });
 
-  it("reruns safely after an interrupted migration without overwriting the existing backup", () => {
+  it("reruns safely after an interrupted migration, reusing the backup of the same bytes", () => {
     const file = tempFile();
     writeFileSync(file, '{"items":[3]}', "utf8");
-    writeFileSync(migrationBackupPath(file, 0), '{"items":["older original"]}', "utf8");
+    writeFileSync(migrationBackupPath(file, 0), '{"items":[3]}', "utf8");
     const staleTemp = `${file}.4242.deadbeef.tmp`;
     writeFileSync(staleTemp, '{"items":[', "utf8");
 
     const result = loadVersionedJson(options(file));
 
     expect(result).toMatchObject({ status: "ok", fromVersion: 0, migrated: true });
-    expect(readFileSync(migrationBackupPath(file, 0), "utf8")).toBe('{"items":["older original"]}');
     expect(JSON.parse(readFileSync(file, "utf8"))).toEqual({ schemaVersion: 1, items: [3], migrated: true });
     expect(readFileSync(staleTemp, "utf8")).toBe('{"items":[');
+    expect(readdirSync(join(file, "..")).filter((name) => /\.v0\..+\.bak$/.test(name))).toEqual([]);
+  });
+
+  it("keeps an older schema-0 backup and adds a timestamped one when the source bytes differ", () => {
+    const file = tempFile();
+    writeFileSync(file, '{"items":[3]}', "utf8");
+    writeFileSync(migrationBackupPath(file, 0), '{"items":["older original"]}', "utf8");
+
+    loadVersionedJson(options(file));
+
+    expect(readFileSync(migrationBackupPath(file, 0), "utf8")).toBe('{"items":["older original"]}');
+    expect(readFileSync(`${file}.v0.2026-02-03T04-05-06-789Z.bak`, "utf8")).toBe('{"items":[3]}');
+
+    writeFileSync(file, '{"items":[3]}', "utf8");
+    loadVersionedJson(options(file));
+    expect(readdirSync(join(file, "..")).filter((name) => name.startsWith("data.json.v0.")).sort()).toEqual([
+      "data.json.v0.2026-02-03T04-05-06-789Z.bak",
+      "data.json.v0.bak"
+    ]);
+  });
+
+  it("refuses to start empty when the file is missing but a restorable backup exists", () => {
+    const file = tempFile();
+    writeFileSync(lastGoodBackupPath(file), '{"schemaVersion":1,"items":[1]}', "utf8");
+
+    const error = expectMetadataError(() => loadVersionedJson(options(file)), "missing");
+
+    expect(error.detail).toContain("1 restorable backup");
+    expect(existsSync(file)).toBe(false);
+  });
+
+  it("treats a missing file as a first run when its backups are not restorable", () => {
+    const file = tempFile();
+    writeFileSync(migrationBackupPath(file, 0), "corrupt{", "utf8");
+    expect(loadVersionedJson(options(file))).toEqual({ status: "missing" });
   });
 
   it("refuses a newer schema without writing anything", () => {

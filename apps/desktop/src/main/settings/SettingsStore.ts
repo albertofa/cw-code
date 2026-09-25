@@ -2,14 +2,17 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { AppSettings, PrSuggestCondition, PrWorkflow, PrWorkflowIcon, PrWorkspaceChoice, SettingsPatch } from "@cw-code/contracts";
 import { CLAUDE_CURATED_MODELS } from "../providers/claude/ClaudeCliDriver.js";
-import { writeFileAtomic } from "../storage/atomicFile.js";
+import { readBytesIfExists, writeFileAtomic } from "../storage/atomicFile.js";
+import { beforeRepairBackupPath, writeVerified } from "../storage/backups.js";
 import {
+  describeError,
   isMetadataDocument,
-  loadVersionedJson,
+  MetadataError,
   type MetadataDocument,
   type MetadataMigration,
   type MetadataSchema
-} from "../storage/versionedJson.js";
+} from "../storage/metadataDocument.js";
+import { loadVersionedJson } from "../storage/versionedJson.js";
 import { defaultPrWorkflows } from "./prWorkflowDefaults.js";
 import {
   configuredCliBinaryPath,
@@ -104,21 +107,28 @@ export const DEFAULT_SETTINGS: AppSettings = {
   opencodeGoUsage: false
 };
 
+function trimmedOr(value: unknown, fallback: string): string {
+  return typeof value === "string" ? value.trim() : fallback;
+}
+
+function binaryPathOr(value: unknown, fallback: string): string {
+  return (typeof value === "string" && normalizeBinaryPath(value)) || fallback;
+}
+
 function sanitize(patch: SettingsPatch): SettingsPatch {
   const out: SettingsPatch = {};
   if (patch.claudeBinaryPath !== undefined) {
-    out.claudeBinaryPath = configuredCliBinaryPath("claude", patch.claudeBinaryPath);
+    out.claudeBinaryPath =
+      typeof patch.claudeBinaryPath === "string"
+        ? configuredCliBinaryPath("claude", patch.claudeBinaryPath)
+        : DEFAULT_SETTINGS.claudeBinaryPath;
   }
-  if (patch.opencodeBinaryPath !== undefined) {
-    out.opencodeBinaryPath = normalizeBinaryPath(patch.opencodeBinaryPath) || DEFAULT_SETTINGS.opencodeBinaryPath;
-  }
-  if (patch.codexBinaryPath !== undefined) {
-    out.codexBinaryPath = normalizeBinaryPath(patch.codexBinaryPath) || DEFAULT_SETTINGS.codexBinaryPath;
-  }
-  if (patch.claudeExtraArgs !== undefined) out.claudeExtraArgs = patch.claudeExtraArgs.trim();
-  if (patch.opencodeExtraArgs !== undefined) out.opencodeExtraArgs = patch.opencodeExtraArgs.trim();
-  if (patch.codexExtraArgs !== undefined) out.codexExtraArgs = patch.codexExtraArgs.trim();
-  if (patch.claudeDefaultModel !== undefined) out.claudeDefaultModel = patch.claudeDefaultModel.trim();
+  if (patch.opencodeBinaryPath !== undefined) out.opencodeBinaryPath = binaryPathOr(patch.opencodeBinaryPath, DEFAULT_SETTINGS.opencodeBinaryPath);
+  if (patch.codexBinaryPath !== undefined) out.codexBinaryPath = binaryPathOr(patch.codexBinaryPath, DEFAULT_SETTINGS.codexBinaryPath);
+  if (patch.claudeExtraArgs !== undefined) out.claudeExtraArgs = trimmedOr(patch.claudeExtraArgs, DEFAULT_SETTINGS.claudeExtraArgs);
+  if (patch.opencodeExtraArgs !== undefined) out.opencodeExtraArgs = trimmedOr(patch.opencodeExtraArgs, DEFAULT_SETTINGS.opencodeExtraArgs);
+  if (patch.codexExtraArgs !== undefined) out.codexExtraArgs = trimmedOr(patch.codexExtraArgs, DEFAULT_SETTINGS.codexExtraArgs);
+  if (patch.claudeDefaultModel !== undefined) out.claudeDefaultModel = trimmedOr(patch.claudeDefaultModel, DEFAULT_SETTINGS.claudeDefaultModel);
   if (patch.claudeCustomModel !== undefined) {
     const raw: unknown = patch.claudeCustomModel;
     if (typeof raw === "string") {
@@ -129,20 +139,21 @@ function sanitize(patch: SettingsPatch): SettingsPatch {
         id: typeof o.id === "string" ? o.id.trim() : "",
         name: typeof o.name === "string" ? o.name.trim() : ""
       };
+    } else {
+      out.claudeCustomModel = { ...DEFAULT_SETTINGS.claudeCustomModel };
     }
   }
   if (patch.claudeEnabledModels !== undefined) {
-    out.claudeEnabledModels = patch.claudeEnabledModels.map((id) => id.trim()).filter(Boolean);
+    const raw: unknown = patch.claudeEnabledModels;
+    out.claudeEnabledModels = Array.isArray(raw)
+      ? raw.filter((id): id is string => typeof id === "string").map((id) => id.trim()).filter(Boolean)
+      : [...DEFAULT_SETTINGS.claudeEnabledModels];
   }
   if (patch.claudeReasoningExpanded !== undefined) out.claudeReasoningExpanded = patch.claudeReasoningExpanded === true;
   if (patch.opencodeReasoningExpanded !== undefined) out.opencodeReasoningExpanded = patch.opencodeReasoningExpanded === true;
   if (patch.codexReasoningExpanded !== undefined) out.codexReasoningExpanded = patch.codexReasoningExpanded === true;
-  if (patch.gitBinaryPath !== undefined) {
-    out.gitBinaryPath = normalizeBinaryPath(patch.gitBinaryPath) || DEFAULT_SETTINGS.gitBinaryPath;
-  }
-  if (patch.githubCliBinaryPath !== undefined) {
-    out.githubCliBinaryPath = normalizeBinaryPath(patch.githubCliBinaryPath) || DEFAULT_SETTINGS.githubCliBinaryPath;
-  }
+  if (patch.gitBinaryPath !== undefined) out.gitBinaryPath = binaryPathOr(patch.gitBinaryPath, DEFAULT_SETTINGS.gitBinaryPath);
+  if (patch.githubCliBinaryPath !== undefined) out.githubCliBinaryPath = binaryPathOr(patch.githubCliBinaryPath, DEFAULT_SETTINGS.githubCliBinaryPath);
   if (patch.sourceControlRefreshIntervalSeconds !== undefined) {
     const value = Math.round(Number(patch.sourceControlRefreshIntervalSeconds));
     out.sourceControlRefreshIntervalSeconds = Number.isFinite(value) ? Math.min(3600, Math.max(5, value)) : 30;
@@ -160,7 +171,7 @@ function sanitize(patch: SettingsPatch): SettingsPatch {
         ? patch.autoTitleDriver
         : DEFAULT_SETTINGS.autoTitleDriver;
   }
-  if (patch.autoTitleModel !== undefined) out.autoTitleModel = patch.autoTitleModel.trim();
+  if (patch.autoTitleModel !== undefined) out.autoTitleModel = trimmedOr(patch.autoTitleModel, DEFAULT_SETTINGS.autoTitleModel);
   if (patch.autoTitleEffort !== undefined) {
     out.autoTitleEffort =
       patch.autoTitleEffort === "minimal" || patch.autoTitleEffort === "low" || patch.autoTitleEffort === "medium" || patch.autoTitleEffort === "high" || patch.autoTitleEffort === "xhigh" || patch.autoTitleEffort === "max"
@@ -201,19 +212,14 @@ export const SETTINGS_SCHEMA_VERSION = 1;
 const KNOWN_SETTING_KEYS = new Set<string>(Object.keys(DEFAULT_SETTINGS));
 
 function validateSettingsDocument(raw: unknown): string | null {
-  if (!isMetadataDocument(raw)) return "expected a JSON object";
-  try {
-    sanitize(raw as SettingsPatch);
-    return null;
-  } catch (error) {
-    return `a setting has an unexpected type: ${(error as Error).message}`;
-  }
+  return isMetadataDocument(raw) ? null : "expected a JSON object";
 }
 
 export const SETTINGS_METADATA: MetadataSchema = {
   kind: "settings",
   currentVersion: SETTINGS_SCHEMA_VERSION,
-  validate: validateSettingsDocument
+  validate: validateSettingsDocument,
+  empty: () => ({ schemaVersion: SETTINGS_SCHEMA_VERSION })
 };
 
 export const SETTINGS_MIGRATIONS: Record<number, MetadataMigration> = { 0: (raw) => raw };
@@ -224,6 +230,12 @@ function unknownKeys(document: MetadataDocument): MetadataDocument {
     if (key !== "schemaVersion" && !KNOWN_SETTING_KEYS.has(key)) extras[key] = value;
   }
   return extras;
+}
+
+function repairedKeys(document: MetadataDocument, data: AppSettings): string[] {
+  return Object.keys(document).filter(
+    (key) => KNOWN_SETTING_KEYS.has(key) && JSON.stringify(document[key]) !== JSON.stringify(data[key as keyof AppSettings])
+  );
 }
 
 function serialize(data: AppSettings, extras: MetadataDocument): string {
@@ -240,12 +252,16 @@ export class SettingsStore {
     mkdirSync(dirname(this.filePath), { recursive: true });
     const loaded = loadVersionedJson({ filePath: this.filePath, ...SETTINGS_METADATA, migrations: SETTINGS_MIGRATIONS });
     this.data = defaults();
-    if (loaded.status === "ok") {
-      this.data = { ...this.data, ...sanitize(loaded.data as SettingsPatch) };
-      this.extras = unknownKeys(loaded.data);
+    if (loaded.status !== "ok") {
+      this.persist();
+      return;
     }
-    const onDisk = loaded.status === "ok" ? JSON.stringify(loaded.data) : null;
-    if (serialize(this.data, this.extras) !== onDisk) this.persist();
+    this.data = { ...this.data, ...sanitize(loaded.data as SettingsPatch) };
+    this.extras = unknownKeys(loaded.data);
+    if (serialize(this.data, this.extras) === JSON.stringify(loaded.data)) return;
+    const repaired = repairedKeys(loaded.data, this.data);
+    if (repaired.length > 0) this.backupBeforeRepair(repaired);
+    this.persist();
   }
 
   get(): AppSettings {
@@ -253,9 +269,27 @@ export class SettingsStore {
   }
 
   set(patch: SettingsPatch): AppSettings {
-    this.data = { ...this.data, ...sanitize(patch) };
-    this.persist();
+    const next = { ...this.data, ...sanitize(patch) };
+    writeFileAtomic(this.filePath, serialize(next, this.extras));
+    this.data = next;
     return this.get();
+  }
+
+  private backupBeforeRepair(keys: string[]): void {
+    const backupPath = beforeRepairBackupPath(this.filePath);
+    try {
+      const original = readBytesIfExists(this.filePath);
+      if (original && !readBytesIfExists(backupPath)?.equals(original)) writeVerified(backupPath, original);
+    } catch (error) {
+      throw new MetadataError({
+        kind: "io",
+        file: this.filePath,
+        store: "settings",
+        supportedVersion: SETTINGS_SCHEMA_VERSION,
+        detail: `could not back up settings before repairing ${keys.join(", ")}: ${describeError(error)}`
+      });
+    }
+    console.warn(`repaired settings ${keys.join(", ")} in ${this.filePath}; the previous file is kept at ${backupPath}`);
   }
 
   private persist(): void {

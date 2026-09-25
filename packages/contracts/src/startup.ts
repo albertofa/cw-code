@@ -1,6 +1,6 @@
 export type MetadataStore = "sessions" | "settings";
 
-export type MetadataIssueKind = "corrupt" | "invalid-shape" | "future-schema" | "io";
+export type MetadataIssueKind = "corrupt" | "invalid-shape" | "future-schema" | "missing" | "io";
 
 export interface MetadataBackup {
   path: string;

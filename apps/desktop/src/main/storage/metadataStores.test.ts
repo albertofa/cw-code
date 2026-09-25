@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
@@ -50,5 +50,39 @@ describe("openMetadataStores", () => {
     if (opened.ok) throw new Error("expected recovery issues");
     expect(opened.issues).toHaveLength(1);
     expect(opened.issues[0]).toMatchObject({ store: "sessions", kind: "invalid-shape", backups: [] });
+  });
+
+  it("turns an unexpected error while opening a store into a visible io issue", () => {
+    const { dir } = paths();
+    const blocker = join(dir, "not-a-directory");
+    writeFileSync(blocker, "", "utf8");
+
+    const opened = openMetadataStores({ dbPath: join(blocker, "cw-code.db"), settingsPath: join(dir, "cw-settings.json") });
+
+    if (opened.ok) throw new Error("expected recovery issues");
+    expect(opened.issues).toHaveLength(1);
+    expect(opened.issues[0]).toMatchObject({ store: "sessions", kind: "io", file: join(blocker, "cw-code.db.json") });
+    expect(opened.issues[0].message).toMatch(/could not open the file: E[A-Z]+/);
+  });
+
+  it.runIf(process.platform === "win32")("reports a locked file that cannot be rewritten during load instead of throwing", () => {
+    const { dbPath, settingsPath, sessionsFile } = paths();
+    const content = JSON.stringify({
+      schemaVersion: 1,
+      projects: [],
+      sessions: [{ id: "sess_a", projectId: "proj_a", status: "working", driver: "claude", title: "a", resumeCursor: "", createdAt: 1, updatedAt: 1 }]
+    });
+    writeFileSync(sessionsFile, content, "utf8");
+    chmodSync(sessionsFile, 0o444);
+    try {
+      const opened = openMetadataStores({ dbPath, settingsPath });
+
+      if (opened.ok) throw new Error("expected recovery issues");
+      expect(opened.issues[0]).toMatchObject({ store: "sessions", kind: "io", file: sessionsFile });
+      expect(opened.issues[0].message).toMatch(/EPERM|EACCES/);
+      expect(readFileSync(sessionsFile, "utf8")).toBe(content);
+    } finally {
+      chmodSync(sessionsFile, 0o644);
+    }
   });
 });

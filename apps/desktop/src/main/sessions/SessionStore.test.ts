@@ -1,10 +1,10 @@
 import { describe, expect, it, vi } from "vitest";
-import { mkdtempSync, readFileSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import type { Project, SessionMeta, SessionPrLink } from "@cw-code/contracts";
-import { MetadataError } from "../storage/versionedJson.js";
+import { MetadataError } from "../storage/metadataDocument.js";
 import { SESSION_SCHEMA_VERSION, SessionStore } from "./SessionStore.js";
 
 const FIXTURE = readFileSync(fileURLToPath(new URL("../storage/__fixtures__/sessions-v0.json", import.meta.url)));
@@ -266,5 +266,23 @@ describe("SessionStore", () => {
     expect((thrown as MetadataError).kind).toBe(kind);
     expect((thrown as MetadataError).store).toBe("sessions");
     expect(readFileSync(file, "utf8")).toBe(content);
+  });
+
+  it("refuses to start empty when the store file is gone but its last-good backup is restorable", () => {
+    const { file, dbPath } = writeRaw(FIXTURE);
+    new SessionStore(dbPath);
+    new SessionStore(dbPath);
+    rmSync(file);
+
+    let thrown: unknown;
+    try {
+      new SessionStore(dbPath);
+    } catch (error) {
+      thrown = error;
+    }
+
+    expect(thrown).toBeInstanceOf(MetadataError);
+    expect((thrown as MetadataError).kind).toBe("missing");
+    expect(existsSync(file)).toBe(false);
   });
 });
