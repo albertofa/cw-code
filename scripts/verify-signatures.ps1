@@ -4,6 +4,7 @@ param(
   [Parameter(Mandatory = $true)][string]$Root,
   [string]$ExpectedPublisher = "",
   [switch]$AllowUnsigned,
+  [switch]$AppOnly,
   [string]$OutFile = ""
 )
 
@@ -11,28 +12,60 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 
 $PeExtensions = @(".exe", ".dll", ".node")
+$FirstPartyAppFiles = @("win-unpacked/cw-code.exe")
+$AcceptedThirdPartyStatuses = @("NotSigned", "Valid")
 
-function ConvertFrom-DistinguishedName([string]$Dn) {
-  $result = @{}
-  $parts = [System.Collections.Generic.List[string]]::new()
-  $current = [System.Text.StringBuilder]::new()
+function ConvertFrom-DistinguishedName([string]$Sequence) {
+  $seq = $Sequence.Trim()
+  $result = [System.Collections.Generic.Dictionary[string, string]]::new([System.StringComparer]::Ordinal)
   $quoted = $false
-  foreach ($char in $Dn.ToCharArray()) {
-    if ($char -eq '"') { $quoted = -not $quoted }
-    if (($char -eq ',' -or $char -eq ';') -and -not $quoted) {
-      $parts.Add($current.ToString())
-      [void]$current.Clear()
-      continue
+  $key = $null
+  $token = ""
+  $nextNonSpace = 0
+  for ($i = 0; $i -le $seq.Length; $i++) {
+    if ($i -eq $seq.Length) {
+      if ($null -ne $key) { $result[$key] = $token }
+      break
     }
-    [void]$current.Append($char)
-  }
-  $parts.Add($current.ToString())
-  foreach ($part in $parts) {
-    $separator = $part.IndexOf("=")
-    if ($separator -le 0) { continue }
-    $key = $part.Substring(0, $separator).Trim().ToUpperInvariant()
-    $value = $part.Substring($separator + 1).Trim() -replace '^"(.*)"$', '$1'
-    if (-not $result.ContainsKey($key)) { $result[$key] = $value }
+    $ch = $seq[$i]
+    if ($quoted) {
+      if ($ch -eq '"') { $quoted = $false; continue }
+    } else {
+      if ($ch -eq '"') { $quoted = $true; continue }
+      if ($ch -eq '\') {
+        $i++
+        $slice = if ($i -lt $seq.Length) { $seq.Substring($i, [Math]::Min(2, $seq.Length - $i)) } else { "" }
+        $hexPrefix = [regex]::Match($slice, '^[0-9A-Fa-f]+').Value
+        if ($hexPrefix.Length -gt 0) {
+          $i++
+          $token += [char][Convert]::ToInt32($hexPrefix, 16)
+        } elseif ($i -lt $seq.Length) {
+          $token += $seq[$i]
+        }
+        continue
+      }
+      if ($null -eq $key -and $ch -eq '=') { $key = $token; $token = ""; continue }
+      if ($ch -eq ',' -or $ch -eq ';' -or $ch -eq '+') {
+        if ($null -ne $key) { $result[$key] = $token }
+        $key = $null
+        $token = ""
+        continue
+      }
+    }
+    if ($ch -eq ' ' -and -not $quoted) {
+      if ($token.Length -eq 0) { continue }
+      if ($i -gt $nextNonSpace) {
+        $j = $i
+        while ($j -lt $seq.Length -and $seq[$j] -eq ' ') { $j++ }
+        $nextNonSpace = $j
+      }
+      $next = if ($nextNonSpace -lt $seq.Length) { $seq[$nextNonSpace] } else { $null }
+      if ($null -eq $next -or $next -eq ',' -or $next -eq ';' -or ($null -eq $key -and $next -eq '=') -or ($null -ne $key -and $next -eq '+')) {
+        $i = $nextNonSpace - 1
+        continue
+      }
+    }
+    $token += $ch
   }
   return $result
 }
@@ -40,13 +73,14 @@ function ConvertFrom-DistinguishedName([string]$Dn) {
 function Test-PublisherMatch([string]$Subject, [string]$Expected) {
   if ([string]::IsNullOrEmpty($Subject) -or [string]::IsNullOrWhiteSpace($Expected)) { return $false }
   $actual = ConvertFrom-DistinguishedName $Subject
-  if (-not $Expected.Contains("=")) { return $actual["CN"] -ceq $Expected }
   $wanted = ConvertFrom-DistinguishedName $Expected
-  if ($wanted.Count -eq 0) { return $false }
-  foreach ($key in $wanted.Keys) {
-    if ($actual[$key] -cne $wanted[$key]) { return $false }
+  if ($wanted.Count -gt 0) {
+    foreach ($entry in $wanted.GetEnumerator()) {
+      if (-not $actual.ContainsKey($entry.Key) -or $actual[$entry.Key] -cne $entry.Value) { return $false }
+    }
+    return $true
   }
-  return $true
+  return $actual.ContainsKey("CN") -and $actual["CN"] -ceq $Expected
 }
 
 function Get-Sha512Base64([string]$Path) {
@@ -58,20 +92,24 @@ function Get-Sha512Base64([string]$Path) {
   }
 }
 
-function Test-File([System.IO.FileInfo]$File, [string]$RootPath) {
+function Test-File([System.IO.FileInfo]$File, [string]$RootPath, [string]$Role) {
+  $relative = [System.IO.Path]::GetRelativePath($RootPath, $File.FullName).Replace("\", "/")
   $signature = Get-AuthenticodeSignature -LiteralPath $File.FullName
   $status = $signature.Status.ToString()
   $subject = if ($null -ne $signature.SignerCertificate) { $signature.SignerCertificate.Subject } else { $null }
   $timestamped = $null -ne $signature.TimeStamperCertificate
   $publisherOk = Test-PublisherMatch $subject $ExpectedPublisher
   $errors = [System.Collections.Generic.List[string]]::new()
-  if ($status -ne "Valid") { $errors.Add("Authenticode status is ${status}: $($signature.StatusMessage)") }
-  if (-not $timestamped) { $errors.Add("no trusted timestamp") }
-  if (-not [string]::IsNullOrWhiteSpace($ExpectedPublisher) -and -not $publisherOk) {
-    $errors.Add("signer '$subject' does not match expected publisher '$ExpectedPublisher'")
+  if ($Role -eq "first-party" -and -not $AllowUnsigned) {
+    if ($status -ne "Valid") { $errors.Add("first-party Authenticode status is ${status}: $($signature.StatusMessage)") }
+    if (-not $timestamped) { $errors.Add("first-party file has no timestamp countersignature") }
+    if (-not $publisherOk) { $errors.Add("first-party signer '$subject' does not match expected publisher '$ExpectedPublisher'") }
+  } elseif ($AcceptedThirdPartyStatuses -notcontains $status) {
+    $errors.Add("Authenticode status is ${status} (only NotSigned or Valid accepted): $($signature.StatusMessage)")
   }
   return [ordered]@{
-    path             = [System.IO.Path]::GetRelativePath($RootPath, $File.FullName).Replace("\", "/")
+    path             = $relative
+    role             = $Role
     sha512           = Get-Sha512Base64 $File.FullName
     status           = $status
     signed           = $status -eq "Valid"
@@ -93,19 +131,31 @@ if ([string]::IsNullOrWhiteSpace($ExpectedPublisher) -and -not $AllowUnsigned) {
 if (Test-Path -LiteralPath $Root -PathType Container) {
   $rootPath = (Resolve-Path -LiteralPath $Root).Path
   $unpacked = Join-Path $rootPath "win-unpacked"
-  $installers = @(Get-ChildItem -LiteralPath $rootPath -File -Filter "*.exe")
-  if ($installers.Count -ne 1) {
-    $structuralErrors.Add("expected exactly one installer .exe directly under $rootPath, found $($installers.Count)")
+  $installers = @()
+  if (-not $AppOnly) {
+    $installers = @(Get-ChildItem -LiteralPath $rootPath -File -Filter "*.exe")
+    if ($installers.Count -ne 1) {
+      $structuralErrors.Add("expected exactly one installer .exe directly under $rootPath, found $($installers.Count)")
+    }
   }
   $peFiles = @()
   if (Test-Path -LiteralPath $unpacked -PathType Container) {
     $peFiles = @(Get-ChildItem -LiteralPath $unpacked -Recurse -File | Where-Object { $PeExtensions -contains $_.Extension.ToLowerInvariant() } | Sort-Object FullName)
-    if ($peFiles.Count -eq 0) { $structuralErrors.Add("no PE files (.exe, .dll, .node) found under $unpacked") }
+    foreach ($required in $FirstPartyAppFiles) {
+      if (-not (Test-Path -LiteralPath (Join-Path $rootPath $required) -PathType Leaf)) {
+        $structuralErrors.Add("first-party file $required not found under $rootPath")
+      }
+    }
   } else {
     $structuralErrors.Add("win-unpacked directory not found under $rootPath")
   }
-  foreach ($file in @($peFiles) + @($installers)) {
-    $files.Add((Test-File $file $rootPath))
+  foreach ($file in $peFiles) {
+    $relative = [System.IO.Path]::GetRelativePath($rootPath, $file.FullName).Replace("\", "/")
+    $role = if ($FirstPartyAppFiles -ccontains $relative) { "first-party" } else { "third-party" }
+    $files.Add((Test-File $file $rootPath $role))
+  }
+  foreach ($file in $installers) {
+    $files.Add((Test-File $file $rootPath "first-party"))
   }
 } else {
   $structuralErrors.Add("root directory not found: $Root")
@@ -118,6 +168,7 @@ $report = [ordered]@{
   root              = $rootPath
   expectedPublisher = if ([string]::IsNullOrWhiteSpace($ExpectedPublisher)) { $null } else { $ExpectedPublisher }
   allowUnsigned     = [bool]$AllowUnsigned
+  appOnly           = [bool]$AppOnly
   ok                = $ok
   checkedAt         = [DateTime]::UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ", [System.Globalization.CultureInfo]::InvariantCulture)
   summary           = [ordered]@{ total = $files.Count; failed = $failedFiles }
@@ -132,6 +183,5 @@ if (-not [string]::IsNullOrWhiteSpace($OutFile)) {
 }
 Write-Output $json
 
-if ($structuralErrors.Count -gt 0) { exit 1 }
-if (-not $ok -and -not $AllowUnsigned) { exit 1 }
+if (-not $ok) { exit 1 }
 exit 0

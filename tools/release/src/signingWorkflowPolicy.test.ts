@@ -57,19 +57,49 @@ describe("sign-windows.yml policy", () => {
     }
   });
 
-  it("never interpolates inputs directly into shell scripts", () => {
-    let inRun = false;
-    let runIndent = 0;
-    for (const line of lines) {
-      const indent = line.length - line.trimStart().length;
-      if (/^\s*(- )?run: \|/.test(line)) {
-        inRun = true;
-        runIndent = indent;
-        continue;
-      }
-      if (inRun && line.trim() !== "" && indent <= runIndent) inRun = false;
-      const inlineRun = /^\s*(- )?run: (?!\|)/.test(line);
-      if (inRun || inlineRun) expect(line).not.toMatch(/\$\{\{/);
-    }
+  it("finds script lines in every block scalar style", () => {
+    const sample = ["      - run: echo ${{ a }}", "        run: >-", "          echo ${{ b }}", "        run: |+", "          echo ${{ c }}", "        env:", "          X: ${{ d }}"];
+    expect(runScriptLines(sample).filter((line) => line.includes("${{"))).toHaveLength(3);
+  });
+
+  it("never interpolates expressions directly into shell scripts", () => {
+    expect(runScriptLines(lines).filter((line) => /\$\{\{/.test(line))).toEqual([]);
+  });
+
+  it("runs every gate script from the tooling checkout of the workflow's own commit", () => {
+    const gateLines = lines.filter((line) => /verify-signatures\.ps1|tree-digest\.ps1|release\.ts (rehash|signing-manifest|check-signing-manifest)|release\.ts "\$\{args/.test(line));
+    expect(gateLines.length).toBeGreaterThan(0);
+    for (const line of gateLines) expect(line).toContain("tooling/");
+    const toolingCheckouts = lines.filter((line) => line.trim() === "path: tooling").length;
+    const workflowShaRefs = lines.filter((line) => line.trim() === "ref: ${{ job.workflow_sha }}").length;
+    expect(toolingCheckouts).toBeGreaterThan(0);
+    expect(workflowShaRefs).toBe(toolingCheckouts);
+  });
+
+  it("uses no dependency cache and never overwrites artifacts", () => {
+    expect(lines.filter((line) => /^\s*(cache|overwrite):/.test(line))).toEqual([]);
   });
 });
+
+function runScriptLines(source: string[]): string[] {
+  const result: string[] = [];
+  let blockIndent: number | null = null;
+  for (const line of source) {
+    const indent = line.length - line.trimStart().length;
+    if (blockIndent !== null) {
+      if (line.trim() === "" || indent > blockIndent) {
+        result.push(line);
+        continue;
+      }
+      blockIndent = null;
+    }
+    const run = /^(\s*)(- )?run:\s*(.*)$/.exec(line);
+    if (!run) continue;
+    if (/^[|>][-+]?\s*$/.test(run[3])) {
+      blockIndent = run[1].length + (run[2] ? 2 : 0);
+    } else {
+      result.push(line);
+    }
+  }
+  return result;
+}
