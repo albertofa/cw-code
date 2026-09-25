@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { UpdateChannel, UpdateProgress, UpdateState } from "@cw-code/contracts";
-import type { UpdaterAdapter, UpdaterCheckOutcome, UpdaterDownloadHandle } from "./ElectronUpdaterAdapter.js";
+import type { UpdaterAdapter, UpdaterCheckOutcome, UpdaterDownloadedInfo, UpdaterDownloadHandle } from "./ElectronUpdaterAdapter.js";
 import {
   BACKOFF_BASE_MS,
   BACKOFF_MAX_MS,
@@ -49,7 +49,7 @@ class FakeAdapter implements UpdaterAdapter {
   downloads: Array<{ deferred: Deferred<void>; cancelled: boolean }> = [];
   private readonly progress = new Set<(progress: UpdateProgress) => void>();
   private readonly errors = new Set<(error: Error) => void>();
-  private readonly downloaded = new Set<(info: { version: string }) => void>();
+  private readonly downloaded = new Set<(info: UpdaterDownloadedInfo) => void>();
 
   configure(options: { channel: UpdateChannel }): void {
     if (this.configureError) throw this.configureError;
@@ -90,7 +90,7 @@ class FakeAdapter implements UpdaterAdapter {
     return () => this.errors.delete(listener);
   }
 
-  onDownloaded(listener: (info: { version: string }) => void): () => void {
+  onDownloaded(listener: (info: UpdaterDownloadedInfo) => void): () => void {
     this.downloaded.add(listener);
     return () => this.downloaded.delete(listener);
   }

@@ -12,6 +12,7 @@ import type {
 export const UPDATE_AUTOTEST_MARKER = "cw-update-autotest";
 export const UPDATE_AUTOTEST_HANDOFF_FILE = "cw-update-autotest-handoff.json";
 export const BUSY_TURN_PROMPT = "cw-update-autotest busy turn";
+export const UPDATE_TEST_HOME_DIR_NAME = ".cw-code-updatetest";
 
 const MODES = ["install", "check-only", "download-only", "cancel"] as const;
 const PROGRESS_MILESTONES = [25, 50, 75, 100];
@@ -59,6 +60,7 @@ export interface UpdateAutotestHost {
   launchedByInstaller: boolean;
   startupMode: "ready" | "recovery";
   userDataDir: string;
+  cwCodeHome: string;
   updates: {
     getState(): UpdateState;
     subscribe(listener: (state: UpdateState) => void): () => void;
@@ -70,6 +72,7 @@ export interface UpdateAutotestHost {
     prepare(request: ShutdownPrepareRequest): Promise<ShutdownPrepareResult>;
     force(token: string): Promise<ShutdownPrepareResult>;
     cancel(token: string): void;
+    isIdle(): boolean;
   } | null;
   install(request: { version: string; channel: UpdateChannel; token: string }): Promise<UpdateActionResult>;
   startTurn(sessionId: string, prompt: string): Promise<string>;
@@ -144,7 +147,12 @@ export function resolveUpdateAutotest(env: Record<string, string | undefined>, h
   };
 }
 
-export function loadUpdateAutotest(options: { env: Record<string, string | undefined>; userDataDir: string; io?: UpdateAutotestIo }): UpdateAutotestResolution {
+export function loadUpdateAutotest(options: {
+  env: Record<string, string | undefined>;
+  userDataDir: string;
+  homeDir: string;
+  io?: UpdateAutotestIo;
+}): UpdateAutotestResolution {
   const io = options.io ?? nodeAutotestIo;
   const handoffPath = join(options.userDataDir, UPDATE_AUTOTEST_HANDOFF_FILE);
   let handoff: unknown = null;
@@ -159,6 +167,8 @@ export function loadUpdateAutotest(options: { env: Record<string, string | undef
   const resolution = resolveUpdateAutotest(options.env, handoff);
   const home = resolution.config?.cwCodeHome;
   if (home && !optionalText(options.env.CW_CODE_HOME)) options.env.CW_CODE_HOME = home;
+  if (!optionalText(options.env.CW_CODE_HOME)) options.env.CW_CODE_HOME = join(options.homeDir, UPDATE_TEST_HOME_DIR_NAME);
+  if (resolution.config && resolution.config.cwCodeHome === null) resolution.config.cwCodeHome = options.env.CW_CODE_HOME ?? null;
   return resolution;
 }
 
@@ -270,25 +280,26 @@ async function runMode(mode: UpdateAutotestMode, config: UpdateAutotestConfig, h
     log.write("result", { outcome: "recovery-mode", startupMode: host.startupMode });
     return;
   }
+  const finish = (outcome: string, data: EventData = {}): void => log.write("result", { outcome, coordinatorIdle: shutdown.isIdle(), ...data });
   const initial = updates.getState();
   log.write("state", summarizeState(initial));
   if (initial.phase === "disabled") {
-    log.write("result", { outcome: "disabled", state: summarizeState(initial) });
+    finish("disabled", { state: summarizeState(initial) });
     return;
   }
 
   const check = await updates.check();
   log.write("check", summarizeAction(check));
   if (!check.ok) {
-    log.write("result", { outcome: "check-failed", state: summarizeState(updates.getState()) });
+    finish("check-failed", { state: summarizeState(updates.getState()) });
     return;
   }
   if (check.state.phase !== "available" && check.state.phase !== "ready") {
-    log.write("result", { outcome: "up-to-date", state: summarizeState(check.state) });
+    finish("up-to-date", { state: summarizeState(check.state) });
     return;
   }
   if (mode === "check-only") {
-    log.write("result", { outcome: "available", state: summarizeState(check.state) });
+    finish("available", { state: summarizeState(check.state) });
     return;
   }
 
@@ -296,11 +307,11 @@ async function runMode(mode: UpdateAutotestMode, config: UpdateAutotestConfig, h
   log.write("download", summarizeAction(download));
   const ready = updates.getState();
   if (!download.ok || ready.phase !== "ready" || ready.downloadedVersion === null) {
-    log.write("result", { outcome: "download-failed", state: summarizeState(ready) });
+    finish("download-failed", { state: summarizeState(ready) });
     return;
   }
   if (mode === "download-only") {
-    log.write("result", { outcome: "ready", state: summarizeState(ready) });
+    finish("ready", { state: summarizeState(ready) });
     return;
   }
 
@@ -309,7 +320,7 @@ async function runMode(mode: UpdateAutotestMode, config: UpdateAutotestConfig, h
     const resumed = await waitForFile(config.pauseFile, io);
     log.write(resumed ? "resumed" : "pause-timeout");
     if (!resumed) {
-      log.write("result", { outcome: "pause-timeout", state: summarizeState(updates.getState()) });
+      finish("pause-timeout", { state: summarizeState(updates.getState()) });
       return;
     }
   }
@@ -322,14 +333,14 @@ async function runMode(mode: UpdateAutotestMode, config: UpdateAutotestConfig, h
 
   const token = await prepareShutdown(host, shutdown, log);
   if (token === null) {
-    log.write("result", { outcome: "prepare-failed", state: summarizeState(updates.getState()) });
+    finish("prepare-failed", { state: summarizeState(updates.getState()) });
     return;
   }
 
   if (mode === "cancel") {
     shutdown.cancel(token);
-    log.write("cancelled", { assessment: summarizeAssessment(shutdown.assess()) });
-    log.write("result", { outcome: "cancelled", state: summarizeState(updates.getState()) });
+    log.write("cancelled", { coordinatorIdle: shutdown.isIdle(), assessment: summarizeAssessment(shutdown.assess()) });
+    finish("cancelled", { state: summarizeState(updates.getState()) });
     return;
   }
 
@@ -340,7 +351,7 @@ async function runMode(mode: UpdateAutotestMode, config: UpdateAutotestConfig, h
   const installed = await host.install({ version: ready.downloadedVersion, channel: ready.channel, token });
   io.remove(handoffPath);
   log.write("install", summarizeAction(installed));
-  log.write("result", { outcome: installed.ok ? "install-returned" : "install-failed", state: summarizeState(updates.getState()) });
+  finish(installed.ok ? "install-returned" : "install-failed", { state: summarizeState(updates.getState()) });
 }
 
 export async function runUpdateAutotest(config: UpdateAutotestConfig, host: UpdateAutotestHost, io: UpdateAutotestIo = nodeAutotestIo): Promise<void> {
@@ -351,7 +362,9 @@ export async function runUpdateAutotest(config: UpdateAutotestConfig, host: Upda
     version: host.version,
     pid: host.pid,
     launchedByInstaller: host.launchedByInstaller,
-    startupMode: host.startupMode
+    startupMode: host.startupMode,
+    cwCodeHome: host.cwCodeHome,
+    userDataDir: host.userDataDir
   });
   const unwatch = host.updates ? watchState(host.updates, log) : () => undefined;
   try {

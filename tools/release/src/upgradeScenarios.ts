@@ -14,6 +14,7 @@ export type ScenarioOutcome =
   | "cancelled"
   | "check-failed"
   | "download-failed"
+  | "install-failed"
   | "installer-did-not-start";
 export type TransferKind = "none" | "differential" | "full";
 
@@ -45,6 +46,9 @@ export interface ScenarioExpectation {
   errorContext: "check" | "download" | null;
   availableVersion: VersionKey | null;
   transfer: TransferKind | null;
+  finalPhase: string | null;
+  downloadedVersion: VersionKey | null;
+  coordinatorIdle: boolean;
 }
 
 export interface UpgradeScenario {
@@ -84,6 +88,8 @@ export interface ScenarioObservation {
   metadataProblems: string[];
   fakeCli: { turnStarts: number; stillRunning: number[] } | null;
   recoveryEvents: AutotestEvent[] | null;
+  expectedCwCodeHome: string;
+  expectedUserDataDir: string;
 }
 
 export interface MetadataProjection {
@@ -127,7 +133,7 @@ function feed(overrides: Partial<ScenarioFeed>): ScenarioFeed {
 }
 
 function expectation(overrides: Partial<ScenarioExpectation> & Pick<ScenarioExpectation, "outcome" | "finalVersion">): ScenarioExpectation {
-  return { errorContext: null, availableVersion: null, transfer: null, ...overrides };
+  return { errorContext: null, availableVersion: null, transfer: null, finalPhase: null, downloadedVersion: null, coordinatorIdle: false, ...overrides };
 }
 
 function scenario(
@@ -172,7 +178,7 @@ export const UPGRADE_SCENARIOS: readonly UpgradeScenario[] = [
     install: "n",
     mode: "cancel",
     feed: feed({ release: "n1", blockMaps: ["n"] }),
-    expect: expectation({ outcome: "cancelled", finalVersion: "n" })
+    expect: expectation({ outcome: "cancelled", finalVersion: "n", finalPhase: "ready", downloadedVersion: "n1", coordinatorIdle: true })
   }),
   scenario({
     id: "stable-to-stable",
@@ -258,17 +264,24 @@ export const UPGRADE_SCENARIOS: readonly UpgradeScenario[] = [
   scenario({
     id: "installer-removed",
     group: "faults",
-    title: "The downloaded installer disappears before Update and restart",
+    title: "The downloaded installer disappears before Update and restart and the pre-check sends N back to available",
     install: "n",
     mode: "install",
     sabotage: "remove-installer",
     feed: feed({ release: "n1", blockMaps: ["n"] }),
-    expect: expectation({ outcome: "installer-did-not-start", finalVersion: "n" })
+    expect: expectation({
+      outcome: "install-failed",
+      finalVersion: "n",
+      errorContext: "download",
+      finalPhase: "available",
+      availableVersion: "n1",
+      coordinatorIdle: true
+    })
   }),
   scenario({
     id: "installer-denied",
     group: "faults",
-    title: "Execution of the downloaded installer is denied",
+    title: "Execution of the downloaded installer is denied after the pre-check passed",
     install: "n",
     mode: "install",
     sabotage: "deny-installer",
@@ -415,6 +428,24 @@ function stateOf(event: AutotestEvent | null): Record<string, unknown> | null {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : null;
 }
 
+function samePath(a: unknown, b: string): boolean {
+  if (typeof a !== "string") return false;
+  const normalize = (value: string): string => value.replace(/\//g, "\\").replace(/\\+$/, "").toLowerCase();
+  return normalize(a) === normalize(b);
+}
+
+function identityProblems(label: string, started: AutotestEvent | undefined, observation: ScenarioObservation): string[] {
+  if (!started) return [];
+  const problems: string[] = [];
+  if (!samePath(started.cwCodeHome, observation.expectedCwCodeHome)) {
+    problems.push(`${label} used CW_CODE_HOME ${String(started.cwCodeHome ?? "unknown")}, expected ${observation.expectedCwCodeHome}`);
+  }
+  if (!samePath(started.userDataDir, observation.expectedUserDataDir)) {
+    problems.push(`${label} used userData ${String(started.userDataDir ?? "unknown")}, expected ${observation.expectedUserDataDir}`);
+  }
+  return problems;
+}
+
 function errorContextOf(event: AutotestEvent | null): string | null {
   const error = stateOf(event)?.error;
   if (!error || typeof error !== "object") return null;
@@ -428,6 +459,7 @@ export function evaluateScenario(entry: UpgradeScenario, versions: UpdateTestVer
   const started = observation.events.find((event) => event.event === "started");
   if (!started) problems.push("the installed app never wrote the autotest started event");
   else if (started.version !== versions[entry.install]) problems.push(`started as ${String(started.version)}, expected ${versions[entry.install]}`);
+  problems.push(...identityProblems("the installed app", started, observation));
 
   const outcome = observedOutcome(observation);
   if (outcome !== expected.outcome) problems.push(`outcome was ${outcome ?? "missing"}, expected ${expected.outcome}`);
@@ -445,6 +477,10 @@ export function evaluateScenario(entry: UpgradeScenario, versions: UpdateTestVer
     const relaunched = observation.relaunchEvents.find((event) => event.event === "relaunched");
     if (relaunched?.version !== finalVersion) problems.push(`relaunched as ${String(relaunched?.version ?? "nothing")}, expected ${finalVersion}`);
     if (relaunched && relaunched.startupMode !== "ready") problems.push(`relaunched app started in ${String(relaunched.startupMode)} mode`);
+    if (relaunched && relaunched.launchedByInstaller !== true) problems.push("the relaunched app was not started by the installer (no --updated)");
+    const relaunchStarted = observation.relaunchEvents.find((event) => event.event === "started");
+    if (relaunchStarted && started && relaunchStarted.pid === started.pid) problems.push(`the relaunched app reports the same pid ${String(started.pid)} as N`);
+    problems.push(...identityProblems("the relaunched app", relaunchStarted, observation));
     const postCheck = stateOf(lastResult(observation.relaunchEvents));
     if (postCheck && postCheck.phase !== "up-to-date") problems.push(`relaunched app reported ${String(postCheck.phase)} instead of up-to-date`);
   } else if (observation.relaunchEvents.length > 0) {
@@ -464,6 +500,14 @@ export function evaluateScenario(entry: UpgradeScenario, versions: UpdateTestVer
       problems.push(`available version was ${String(available ?? "none")}, expected ${versions[expected.availableVersion]}`);
     }
   }
+  const finalState = stateOf(result);
+  if (expected.finalPhase !== null && finalState?.phase !== expected.finalPhase) {
+    problems.push(`final phase was ${String(finalState?.phase ?? "none")}, expected ${expected.finalPhase}`);
+  }
+  if (expected.downloadedVersion !== null && finalState?.downloadedVersion !== versions[expected.downloadedVersion]) {
+    problems.push(`downloaded version was ${String(finalState?.downloadedVersion ?? "none")}, expected ${versions[expected.downloadedVersion]}`);
+  }
+  if (expected.coordinatorIdle && result?.coordinatorIdle !== true) problems.push("the shutdown coordinator still holds a reservation after the run");
   if (expected.transfer !== null) {
     const transfer = classifyTransfer(observation.transfers, observation.advertisedInstaller, observation.advertisedInstallerSize);
     if (transfer !== expected.transfer) problems.push(`installer transfer was ${transfer}, expected ${expected.transfer}`);
@@ -480,7 +524,7 @@ export function evaluateScenario(entry: UpgradeScenario, versions: UpdateTestVer
     }
   }
 
-  if (entry.sabotage !== null) {
+  if (expected.outcome === "installer-did-not-start") {
     const recovery = observation.recoveryEvents;
     if (recovery === null) problems.push("N was not relaunched to confirm it still works");
     else {

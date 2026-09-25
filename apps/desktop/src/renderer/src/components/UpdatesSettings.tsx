@@ -7,9 +7,8 @@ import { ipcErrorMessage } from "./ipcError.js";
 import { Md } from "./Markdown.js";
 import { useNotifs } from "./Notifications.js";
 import { releaseNotesMarkdown } from "./releaseNotes.js";
+import { channelOfVersion } from "./updateChannel.js";
 import { CHANNEL_LABELS, formatCheckedAt, installTarget, updateStatusText } from "./updateModel.js";
-
-const ALPHA_RE = /-alpha/;
 
 export function UpdatesSettings({
   draft,
@@ -27,10 +26,10 @@ export function UpdatesSettings({
   const notes = useMemo(() => releaseNotesMarkdown(state?.releaseNotes ?? null), [state?.releaseNotes]);
 
   const runningVersion = state?.runningVersion ?? fallbackVersion;
-  const channel: UpdateChannel = draft.updateChannel ?? state?.channel ?? (ALPHA_RE.test(runningVersion) ? "alpha" : "stable");
+  const channel: UpdateChannel = draft.updateChannel ?? state?.channel ?? channelOfVersion(runningVersion);
   const disabled = !state || state.phase === "disabled";
   const busy = state?.phase === "checking" || state?.phase === "downloading" || state?.phase === "installing" || restartPending;
-  const waitsForStable = channel === "stable" && ALPHA_RE.test(runningVersion);
+  const waitsForStable = channel === "stable" && channelOfVersion(runningVersion) === "alpha";
   const notesVersion = state?.availableVersion ?? state?.downloadedVersion ?? null;
   const readyToInstall = installTarget(state) !== null;
 
@@ -44,14 +43,17 @@ export function UpdatesSettings({
   };
 
   const changeChannel = async (next: UpdateChannel) => {
+    const previous = draft.updateChannel;
     setSavingPreference(true);
     onDraftChange({ updateChannel: next });
     try {
       const result = await useAppStore.getState().setUpdateChannel(next);
+      if (!result.ok) onDraftChange({ updateChannel: previous });
       if (!result.ok && result.code !== "disabled") {
         useNotifs.getState().push({ kind: "error", title: "Could not change the update channel", message: result.message });
       }
     } catch (err) {
+      onDraftChange({ updateChannel: previous });
       useNotifs.getState().push({ kind: "error", title: "Could not change the update channel", message: ipcErrorMessage(err) });
     } finally {
       setSavingPreference(false);

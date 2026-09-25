@@ -20,8 +20,13 @@ export interface UpdateInstallTarget {
 
 export const CHANNEL_LABELS: Record<UpdateChannel, string> = { stable: "Stable", alpha: "Alpha" };
 
+export function installBlockedByStartedInstaller(state: UpdateState | null): boolean {
+  return state?.error?.context === "install" && !state.error.retryable;
+}
+
 export function installTarget(state: UpdateState | null): UpdateInstallTarget | null {
   if (!state || state.phase !== "ready" || state.downloadedVersion === null) return null;
+  if (installBlockedByStartedInstaller(state)) return null;
   return { version: state.downloadedVersion, channel: state.channel };
 }
 
@@ -44,8 +49,9 @@ export function updateIndicatorView(state: UpdateState | null, restartPending: b
     case "available":
       return {
         ...base,
+        tone: state.error ? "error" : "info",
         title: state.availableVersion ? `cw-code ${state.availableVersion} is available` : "An update is available",
-        detail: state.autoDownload ? "Downloading in the background" : null,
+        detail: state.error?.message ?? (state.autoDownload ? "Downloading in the background" : null),
         action: "download",
         actionLabel: "Download"
       };
@@ -61,13 +67,14 @@ export function updateIndicatorView(state: UpdateState | null, restartPending: b
     }
     case "ready": {
       const failedInstall = state.error?.context === "install";
+      const canRetry = !installBlockedByStartedInstaller(state);
       return {
         ...base,
         tone: failedInstall ? "error" : "info",
         title: failedInstall ? "The update could not be installed" : state.downloadedVersion ? `cw-code ${state.downloadedVersion} is ready` : "The update is ready",
         detail: failedInstall ? (state.error?.message ?? null) : "Restart when you are ready. Nothing restarts without you.",
-        action: "restart",
-        actionLabel: failedInstall ? "Try again" : "Update and restart"
+        action: canRetry ? "restart" : null,
+        actionLabel: canRetry ? (failedInstall ? "Try again" : "Update and restart") : null
       };
     }
     case "error": {

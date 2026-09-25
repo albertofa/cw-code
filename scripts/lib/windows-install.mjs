@@ -43,6 +43,21 @@ export function killProcessTree(pid) {
   spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"]);
 }
 
+export function processImagePath(pid) {
+  const script = `(Get-CimInstance Win32_Process -Filter "ProcessId = ${Number(pid)}").ExecutablePath`;
+  const result = spawnSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", script], { encoding: "utf8" });
+  const path = result.stdout.trim();
+  return path === "" ? null : path;
+}
+
+export function killProcessTreeIfImage(pid, isExpectedImage) {
+  if (!Number.isInteger(pid) || !isProcessAlive(pid)) return { pid, killed: false, image: null };
+  const image = processImagePath(pid);
+  if (image === null || !isExpectedImage(image)) return { pid, killed: false, image };
+  killProcessTree(pid);
+  return { pid, killed: true, image };
+}
+
 export function isProcessAlive(pid) {
   try {
     process.kill(pid, 0);

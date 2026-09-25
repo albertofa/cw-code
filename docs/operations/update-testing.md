@@ -7,9 +7,10 @@ or an installer exit code is never accepted as success. A scenario passes only
 when the relaunched app reports the new version, the registry shows it, and the
 seeded projects, sessions, settings and worktree references are still there.
 
-Production publishing stays blocked until the signed verification of step 09
-passes (see [Production bytes](#production-bytes-step-09)). Nothing in this
-document publishes a release, reads a token or touches a real account.
+`release.yml` runs the signed N -> N+1 upgrade with the final candidate bytes
+before any publication (see [Production bytes](#production-bytes-step-09) and
+[releases.md](releases.md#upgrade-gate)). Nothing in this document publishes a
+release, reads a token or touches a real account.
 
 ## Safety rules
 
@@ -38,7 +39,7 @@ document publishes a release, reads a token or touches a real account.
 | Autotest mode | `apps/desktop/src/main/updates/updateAutotest.ts` | Drives the real `UpdateService` and coordinator without UI; compiled only into update-test builds |
 | Scenario matrix and evaluation | `tools/release/src/upgradeScenarios.ts` | Versions, scenarios, expected outcomes, metadata comparison, evidence redaction |
 | Harness | `scripts/verify-installed-upgrade.mjs` + `scripts/lib/` | Builds, installs, seeds, serves, launches, waits, asserts, uninstalls |
-| Installer wizard driver | `scripts/lib/drive-installer-wizard.ps1` | Clicks Next / Install / Finish in the NSIS window through UI Automation, like a user would |
+| Production bundle gate | `scripts/lib/production-bundle.mjs` (`--assert-production-bundle`) | Fails a production `out/main` or `app.asar` that carries the autotest path |
 | Fake CLI | `scripts/fixtures/fake-claude.mjs` | Stands in for `claude` so a busy turn can be stopped without an account |
 | CI | `.github/workflows/upgrade-test.yml` | Runs everything on `windows-latest` |
 
@@ -97,11 +98,16 @@ app-builder-lib blockmaps, including corrupt and truncated responses.
 | productName / executable | `cw-code` / `cw-code.exe` | `cw-code-updatetest` / `cw-code-updatetest.exe` |
 | Default install dir | `%LOCALAPPDATA%\Programs\cw-code` | `%LOCALAPPDATA%\Programs\cw-code-updatetest` |
 | package name / Electron userData | `@cw-code/desktop` / `%APPDATA%\@cw-code\desktop` | `@cw-code/desktop-updatetest` / `%APPDATA%\@cw-code\desktop-updatetest` |
+| App home when `CW_CODE_HOME` is unset | `~/.cw-code` | `~/.cw-code-updatetest` (set before any store opens) |
 | Updater cache | `%LOCALAPPDATA%\@cw-codedesktop-updater` | `%LOCALAPPDATA%\@cw-codedesktop-updatetest-updater` |
+| Main bundle | `out/` (`main: out/main/index.js`) | `out-updatetest/` (`main: out-updatetest/main/index.js`, `out/**` excluded) |
 | Feed | GitHub Releases | `generic`, `http://127.0.0.1:47613/` baked into `app-update.yml` |
 
 The file `extends` the production `electron-builder.yml` and only overrides
-those keys (`publish` is an object there so it replaces the production array
+those keys. `CW_UPDATE_TEST_BUILD=1` makes `electron.vite.config.ts` write the
+bundle to `out-updatetest/`, so an interrupted test build never leaves the test
+bundle in `out/`, which production packaging reads. The overrides replace the
+parent values (`publish` is an object there so it replaces the production array
 instead of being merged into it). Channel files come from the version with
 `generateUpdatesFilesForAllChannels`: an alpha build writes `alpha.yml` only; a
 stable build writes `latest.yml` plus the prerelease channel files.
@@ -124,11 +130,18 @@ other shape.
 `src/main/buildFlags.d.ts`). `main/index.ts` imports
 `updates/updateAutotest.js` inside `if (__CW_UPDATE_TEST_BUILD__)`, so a
 production build drops the module and every `CW_UPDATE_AUTOTEST*` string.
-`node scripts/verify-installed-upgrade.mjs --assert-production-bundle` fails if
-`apps/desktop/out/main` contains `cw-update-autotest` or `CW_UPDATE_AUTOTEST`
-(the `verify` job in `ci.yml` runs it after `pnpm build` on every push and pull
-request); the harness also checks that each update-test `app.asar` does contain the
-`updateAutotest` chunk. Production builds accept no runtime feed override:
+`node scripts/verify-installed-upgrade.mjs --assert-production-bundle [<out/main>] [--asar <app.asar>] [--desktop-dir <dir>]`
+fails when `CW_UPDATE_TEST_BUILD` is set, when `out/main/index.js` is missing,
+when `out/main` has an `updateAutotest-*` chunk or a script containing
+`cw-update-autotest` / `CW_UPDATE_AUTOTEST`, and, with `--asar`, when the
+archive's `package.json` `main` is not `out/main/index.js`, when it has any
+`out-updatetest/` entry or `updateAutotest-*` chunk, or when any bundled script
+under `out/` contains a marker. It runs on the shipping path: after `pnpm build`
+in the `verify` job of `ci.yml`, on `dist/win-unpacked` and `dist-ci/win-unpacked`
+in its `windows` job, and in `sign-windows.yml` `package-app` (from the tooling
+checkout, after a step that refuses `CW_UPDATE_TEST_BUILD`) before
+`win-unpacked` is uploaded for signing. The harness also checks that each
+update-test `app.asar` does contain the `updateAutotest` chunk. Production builds accept no runtime feed override:
 `electron-updater` reads `resources/app-update.yml`, `forceDevUpdateConfig` is
 off, and nothing reads a feed URL from the environment.
 
@@ -147,17 +160,27 @@ The run calls `UpdateService.check()`, `download()`, then
 `updates.install` IPC handler. `cancel` cancels the token instead. Every step,
 every phase change and the 25/50/75/100 % progress marks are logged:
 `started` (version, pid), `state`, `progress`, `check`, `download`, `paused`,
-`busy-turn`, `assessment`, `prepare`, `installing`, `install`, `result`
-(`outcome`), `quitting`. Then the app quits through the normal flush path.
+`busy-turn`, `assessment`, `prepare`, `cancelled`, `installing`, `install`,
+`result` (`outcome`, and `coordinatorIdle`: whether the shutdown coordinator
+released its reservation), `quitting`. `started` also records the effective
+`CW_CODE_HOME` and `app.getPath("userData")`, and the harness fails a run that
+used anything but the isolated folders. Then the app quits through the normal
+flush path.
+
+An update-test build that starts without `CW_CODE_HOME` (and without a handoff)
+sets it to `~/.cw-code-updatetest` before any store opens, so it can never read
+or write the real `~/.cw-code`.
 
 Before installing it writes `cw-update-autotest-handoff.json` in its userData
 folder with the log path, `CW_CODE_HOME` and the running version. The
 relaunched app may not inherit the environment (NSIS starts it through
-`ExecShellAsUser`), so on startup an update-test build consumes that file,
+`ExecShellAsUser` for `--force-run`), so on startup an update-test build consumes that file,
 restores `CW_CODE_HOME` before any store opens, logs `started` and
-`relaunched` (`fromVersion`, `version`, `sameVersion`, `startupMode`), runs one
-check (it should be `up-to-date`) and quits. That second `started` event is the
-relaunch proof.
+`relaunched` (`fromVersion`, `version`, `sameVersion`, `startupMode`,
+`launchedByInstaller`), runs one check (it should be `up-to-date`) and quits.
+That second `started` event is the relaunch proof; the harness also requires a
+pid different from N's and `launchedByInstaller` (`--updated` on the command
+line).
 
 ## Running
 
@@ -169,15 +192,16 @@ node scripts/verify-installed-upgrade.mjs --assert-production-bundle
 node scripts/verify-installed-upgrade.mjs --dry-run [--scenarios n-to-n1,faults] [--work-dir <dir>] [--evidence <file>]
 ```
 
-The dry run builds the needed update-test installers (`electron-vite build`
-with `CW_UPDATE_TEST_BUILD=1`, then `electron-builder --config
-electron-builder.updatetest.yml --publish never -c.extraMetadata.version=<v>`
-per version, then a production `electron-vite build` again so `out/` never keeps
-the test bundle), validates each release set and `app-update.yml`, checks the
+The dry run builds the production bundle into `out/` and the needed update-test
+installers (`electron-vite build` with `CW_UPDATE_TEST_BUILD=1` into
+`out-updatetest/`, then `electron-builder --config electron-builder.updatetest.yml
+--publish never -c.extraMetadata.version=<v>` per version), validates each release set and `app-update.yml`, checks the
 production bundle, stages every scenario's feed, serves it with its faults and
 probes manifests, a single range, a multi-range and a traversal attempt, and
 starts the unpacked build once to confirm the autotest reports `disabled` (a
-copy without an uninstaller must not update). `--skip-build` reuses
+copy without an uninstaller must not update) and ran with the isolated home and
+userData. The evidence file is rewritten after each staged plan and each
+scenario, so a killed run still leaves what it did (`complete: false`). `--skip-build` reuses
 `dist-updatetest/<version>/`.
 
 Only in a disposable Windows VM or runner:
@@ -193,12 +217,13 @@ a scenario folder, `claudeBinaryPath` is Node and `claudeExtraArgs` the fake CLI
 script, background download off, an unknown settings key added), writes
 markers under `worktrees/`, `userdata/attachments/` and the Electron userData
 folder, installs N silently (`/S`, `/S /D=<dir>` or `/S /allusers`), reads the
-feed port from the installed `app-update.yml`, stages the feed, starts the
-wizard driver on the updater's `pending` folder, and launches N with
+feed port from the installed `app-update.yml`, stages the feed, and launches N with
 `CW_UPDATE_AUTOTEST`, the isolated home and a `PATH` of Windows system folders
 only. It waits for the result, the installer, the relaunched run and its exit,
 then compares registry `DisplayVersion` and `InstallLocation`, the relaunch
-events, the transfer, the fake CLI log and the metadata, and uninstalls.
+events, the transfer, the fake CLI log and the metadata, and uninstalls. A
+process left behind is stopped by PID only after its image path is checked
+(`cw-code-updatetest.exe` for the app, the harness's own Node for fake CLIs).
 
 Running the feed by hand against a build:
 
@@ -211,8 +236,11 @@ node tools/release/src/cli/release.ts feed-serve --root apps/desktop/dist-update
 
 `.github/workflows/upgrade-test.yml` runs on `workflow_dispatch` (optional
 `scenarios` input), nightly at 03:17 UTC and on pull requests that touch
-`main/updates/**`, `main/shutdown/**`, `main/index.ts`, the builder configs,
-`electron.vite.config.ts`, the harness or the feed code. One `windows-latest`
+the lockfile, `apps/desktop/package.json`, `main/{updates,shutdown,storage,sessions,settings,paths}/**`
+(fixtures included), `main/index.ts`, the builder configs, `electron.vite.config.ts`,
+the `updates`/`shutdown`/`settings`/`startup` contracts, the harness, the feed
+code or the release-tools modules it uses (`rehash`, `updateInfoYaml`, `semver`,
+`upgradeScenarios`). One `windows-latest`
 job, 150-minute timeout, `contents: read`, no secrets, no dependency cache,
 actions pinned by SHA, `persist-credentials: false`. Steps: release-tools tests,
 production bundle assertion, dry run (builds and validates), installed
@@ -226,7 +254,7 @@ even when a step fails. `upgradeWorkflowPolicy.test.ts` enforces those rules.
 | `n-to-n1` | N | N+1 with N and N+1 blockmaps | relaunched as N+1, differential download, data preserved |
 | `skip-n-to-n2` | N | N+2 | relaunched as N+2 |
 | `busy-turn` | N | N+1 | a fake `claude` turn is active at prepare, the coordinator stops it, exactly one turn start in the fake log, no fake process left, relaunched as N+1 |
-| `cancel-restart` | N | N+1 | prepared restart cancelled, N still installed, phase `ready` |
+| `cancel-restart` | N | N+1 | prepared restart cancelled, N still installed, phase `ready` with `downloadedVersion` N+1, coordinator idle |
 | `stable-to-stable` | stable1 | stable2 | relaunched as stable2 on the stable channel |
 | `alpha-offered-stable` | N | stable2 | check offers stable2 |
 | `stable-not-offered-alpha` | stable1 | `latest.yml` and `alpha.yml` advertise `alphaAfterStable` | `up-to-date`, nothing downloaded |
@@ -236,8 +264,8 @@ even when a step fails. `upgradeWorkflowPolicy.test.ts` enforces those rules.
 | `stale-manifest` | N | `alpha.yml` answered with N's own manifest | `up-to-date`, N intact |
 | `truncated-download` | N | installer cut after 4 MiB | `download-failed`, retryable, N intact |
 | `corrupted-checksum` | N | 16 installer bytes flipped | `download-failed` (sha512), retryable, N intact |
-| `installer-removed` | N | N+1; the cached installer is deleted during the pause | installer never starts, N intact, a relaunched N offers the update again |
-| `installer-denied` | N | N+1; execute is denied on the cached installer (`icacls /deny *S-1-1-0:(X)`) | same as above |
+| `installer-removed` | N | N+1; the cached installer is deleted during the pause | the install pre-check refuses: `install-failed`, phase `available` for N+1, retryable download error, coordinator idle, N keeps running and stays installed |
+| `installer-denied` | N | N+1; execute is denied on the cached installer (`icacls /deny *S-1-1-0:(X)`) | the pre-check passes (file present, right size) and the spawn fails after N quit: installer never starts, N intact, a relaunched N offers the update again |
 | `differential-n1-n2` | N+1 | N+2 with both blockmaps | download-only, differential |
 | `differential-fallback` | N+1 | N+2 without the N+1 blockmap | download-only, full download |
 | `custom-dir` | N in `/D=<dir>` | N+1 | updated in place, same `InstallLocation` |
@@ -271,23 +299,22 @@ was 1,537,013 bytes (1.47 %).
 ## Known behavior the scenarios pin down
 
 Read from the app-builder-lib 26.15.3 NSIS templates and the electron-updater
-6.8.9 source; the CI evidence (`installer-wizard.jsonl`, scenario results) is
-what confirms or corrects it.
+6.8.9 source; the CI evidence is what confirms or corrects it.
 
-- `quitAndInstall(false, true)` runs the assisted NSIS installer with its UI.
-  With `--updated` the license and directory pages are skipped, but the
-  install-mode page ("only for me / all users") and the finish page are not;
-  the finish page's Run checkbox relaunches the app. The wizard driver clicks
-  through them and records every page in `installer-wizard.jsonl`, so the
-  evidence shows exactly what a user has to click.
-- When the cached installer is missing or cannot be executed,
-  `electron-updater` starts it asynchronously after `quitAndInstall` returns,
-  so the app has already quit when the spawn fails. The install never starts,
-  N and its data stay intact and the next start offers the update again, but
-  the user sees the app close without an update. The coordinator's in-app
-  recovery covers only failures that surface synchronously and the 30 s
-  did-not-exit case.
-
+- Update and restart calls `quitAndInstall(true, true)`: a silent install
+  with `--updated --force-run`. Silent mode keeps the existing scope and
+  directory (`initMultiUser` reads `InstallLocation`), elevates a per-machine
+  install through `UAC_RunElevated`, and the install section starts the app
+  for `--force-run`. No installer window needs a click.
+- Before committing, `UpdateService` checks that the installer reported by
+  `update-downloaded` still exists, is a regular file and has the feed size.
+  A missing file sends the state back to `available` with a retryable download
+  error and releases the coordinator; nothing is committed (`installer-removed`).
+- A file that is present but cannot be executed passes that check.
+  `electron-updater` spawns the installer asynchronously after `quitAndInstall`
+  returns, so the app has already quit when the spawn (and the `elevate.exe`
+  retry) fails. The install never starts, N and its data stay intact and the
+  next start offers the update again (`installer-denied`).
 ## Manual cases (disposable VM only)
 
 Use a snapshot, the update-test builds from a dry run, and a feed started with
@@ -345,7 +372,7 @@ production renderer bridge instead:
    runs `window.cw.updates.check`, `download`, `window.cw.shutdown.prepare` and
    `window.cw.updates.install` in the renderer over DevTools, the same calls the
    Update and restart button makes.
-5. Drives the installer wizard, waits for `DisplayVersion` N+1 and for a new
+5. Waits for the silent installer to finish (`DisplayVersion` N+1) and for a new
    `cw-code.exe` main process at the install path, closes it by PID, runs the
    packaged startup probe, checks the Authenticode status and subject of the
    installed executable against `publisherName`, compares the seeded data and
@@ -361,7 +388,7 @@ The evidence JSON (`schema: 1`) lists versions, builds (installer, size, sha512,
 channel files, blockmap, feed URL), the production bundle check, selected,
 skipped and manual scenarios, per-scenario results, measurements and
 `passed`. Logs per scenario: `autotest.jsonl`, `autotest-recovery.jsonl`,
-`installer-wizard.jsonl`, `fake-claude.jsonl`, `updater.log`, `crash.log`.
+`fake-claude.jsonl`, `updater.log`, `crash.log`.
 Everything is redacted before writing: the work folder, repository,
 `%LOCALAPPDATA%`, `%APPDATA%`, `%USERPROFILE%`, the temp folder and the Node
 path become placeholders, other `X:\Users\<name>` become `<user>`, GitHub token
@@ -376,5 +403,6 @@ or `secret` are dropped. The app's own `updater.log` is already redacted by
 - A failed run left an update-test install behind: the next run uninstalls it
   first (the uninstall key is under the update-test GUID; its location must
   contain `updatetest`, otherwise the harness refuses to touch it).
-- No relaunch in CI: look at `installer-wizard.jsonl` (pages seen, clicks) and
-  `updater.log` before changing expectations.
+- No relaunch in CI: look at `updater.log` (its `Executing:` line shows the
+  installer arguments) and the Windows Application event log before changing
+  expectations.

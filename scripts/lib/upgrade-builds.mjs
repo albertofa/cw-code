@@ -1,5 +1,5 @@
 import { spawnSync } from "node:child_process";
-import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, statSync } from "node:fs";
 import { createRequire } from "node:module";
 import { basename, dirname, join } from "node:path";
 import { validateReleaseFeed } from "../../tools/release/src/feedManifest.ts";
@@ -8,8 +8,7 @@ import { parseScalar } from "../../tools/release/src/updateInfoYaml.ts";
 import { UPDATE_TEST_EXECUTABLE } from "../../tools/release/src/upgradeScenarios.ts";
 import { resolveAsarLib } from "./windows-install.mjs";
 
-export const AUTOTEST_MARKERS = ["cw-update-autotest", "CW_UPDATE_AUTOTEST"];
-const AUTOTEST_CHUNK = /(^|[\\/])out[\\/]main[\\/]updateAutotest-[^\\/]+\.js$/;
+const AUTOTEST_CHUNK = /(^|[\\/])out-updatetest[\\/]main[\\/]updateAutotest-[^\\/]+\.js$/;
 const SIGNING_ENV = ["CSC_LINK", "WIN_CSC_LINK", "CSC_KEY_PASSWORD", "WIN_CSC_KEY_PASSWORD", "CSC_NAME"];
 
 function desktopBin(desktopDir, packageName, binName) {
@@ -53,26 +52,6 @@ export function packageUpdateTestBuild(desktopDir, version, outputDir, feedUrl) 
   runNodeScript(desktopBin(desktopDir, "electron-builder", "electron-builder"), args, desktopDir, buildEnv(false));
 }
 
-function listFiles(dir) {
-  if (!existsSync(dir)) return [];
-  const files = [];
-  for (const entry of readdirSync(dir, { withFileTypes: true })) {
-    const path = join(dir, entry.name);
-    if (entry.isDirectory()) files.push(...listFiles(path));
-    else if (entry.isFile()) files.push(path);
-  }
-  return files;
-}
-
-export function bundleMarkerHits(outMainDir) {
-  const hits = [];
-  for (const file of listFiles(outMainDir).filter((path) => path.endsWith(".js"))) {
-    const text = readFileSync(file, "utf8");
-    for (const marker of AUTOTEST_MARKERS) if (text.includes(marker)) hits.push({ file, marker });
-  }
-  return hits;
-}
-
 export function parseAppUpdateYaml(text) {
   const result = {};
   for (const line of text.split(/\r?\n/)) {
@@ -106,9 +85,10 @@ export async function describeUpdateTestBuild(desktopDir, dir, version) {
   const asarPath = join(dir, "win-unpacked", "resources", "app.asar");
   if (existsSync(asarPath)) {
     const asar = await resolveAsarLib(desktopDir);
-    if (asar) {
+    if (!asar) errors.push("@electron/asar is not resolvable, so app.asar cannot be checked for the autotest chunk");
+    else {
       autotestChunk = asar.listPackage(asarPath).find((entry) => AUTOTEST_CHUNK.test(entry)) ?? null;
-      if (!autotestChunk) errors.push("app.asar has no out/main/updateAutotest chunk; this is not an update-test build");
+      if (!autotestChunk) errors.push("app.asar has no out-updatetest/main/updateAutotest chunk; this is not an update-test build");
     }
   } else {
     errors.push("app.asar is missing from win-unpacked");

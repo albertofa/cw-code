@@ -19,7 +19,7 @@ import { discoverBinaries, verifyBinaryPath } from "./cli/binaryDiscovery.js";
 import { getHarnessTracePath, initHarnessTrace } from "./debug/harnessTrace.js";
 import { appendCrashLog, initCrashLog } from "./debug/crashLog.js";
 import { runPackageProbe } from "./debug/packageProbe.js";
-import { claudeCommandsCachePath, ensureAppDirs, attachmentsDir, logsDir, migrateFromUserData, opencodeModelsCachePath, sessionDbPath, settingsFilePath, userdataDir } from "./paths/appPaths.js";
+import { claudeCommandsCachePath, cwCodeHome, ensureAppDirs, attachmentsDir, logsDir, migrateFromUserData, opencodeModelsCachePath, sessionDbPath, settingsFilePath, userdataDir } from "./paths/appPaths.js";
 import { reapOrphanedServers } from "./orphanServers.js";
 import type { AppSettings, ApprovalDecision, CliBinary, CommandInvocation, CreateSessionOptions, GitDiffMode, ProjectGitHubRepo, PrRef, SessionPrLink, MetadataIssue, SessionStatus, SettingsPatch, ShutdownCommitResult, ShutdownExpiredEvent, ShutdownPrepareRequest, ShutdownReason, ShutdownRequestedEvent, StartupState, UpdateActionResult, UpdateState, UsageLedgerQuery } from "@cw-code/contracts";
 import type { DriverKind, HarnessId, SkillSaveInput } from "@cw-code/contracts";
@@ -44,7 +44,7 @@ import type { SettingsStore } from "./settings/SettingsStore.js";
 import { ElectronUpdaterAdapter } from "./updates/ElectronUpdaterAdapter.js";
 import { UpdateService } from "./updates/UpdateService.js";
 import { createUpdateLogFile } from "./updates/updateLog.js";
-import { touchesUpdatePreferences, updatePreferences } from "./updates/updatePreferences.js";
+import { firstRunChannelPatch, touchesUpdatePreferences, updatePreferences } from "./updates/updatePreferences.js";
 import { isUpdateChannel } from "./updates/updateState.js";
 
 type DriverName = DriverKind;
@@ -126,7 +126,8 @@ function createUpdateService(settings: AppSettings): UpdateService {
     files: { fileExists: existsSync, listDirectory: (path) => readdirSync(path) },
     createAdapter: () => new ElectronUpdaterAdapter({ homeDir: homedir(), sink: logger }),
     logger,
-    homeDir: homedir()
+    homeDir: homedir(),
+    canRunScheduledCheck: () => services?.shutdown.isIdle() !== false
   });
 }
 
@@ -143,6 +144,16 @@ function createServices(stores: { sessionStore: SessionStore; settingsStore: Set
   const git = new GitService(() => sessions.getSettings());
   pullRequests = new PullRequestService(git, () => sessions.getSettings(), (rootPath) => sessions.addProject(rootPath));
   const ptys = new PtyPool(() => sessions.getSettings());
+  const settings = stores.settingsStore.get();
+  const updates = createUpdateService(settings);
+  const firstRunChannel = firstRunChannelPatch(settings, app.getVersion(), updates.getState().phase !== "disabled");
+  if (firstRunChannel) {
+    try {
+      stores.settingsStore.set(firstRunChannel);
+    } catch (err) {
+      console.warn(`could not save the default update channel: ${(err as Error).message}`);
+    }
+  }
   return {
     sessions,
     skills: new SkillsStore(),
@@ -152,7 +163,7 @@ function createServices(stores: { sessionStore: SessionStore; settingsStore: Set
     ptys,
     accountUsage: new AccountUsageService(() => sessions.getDrivers()),
     shutdown: new ShutdownCoordinator({ sessions, ptys, onRecovered: handleShutdownRecovered, onExpired: handleShutdownExpired }),
-    updates: createUpdateService(stores.settingsStore.get())
+    updates
   };
 }
 
@@ -456,6 +467,7 @@ function installUpdate({ updates, shutdown }: Services, args: unknown): Promise<
   const token = parseShutdownToken(args, "updates.install");
   return updates.install(args, {
     commit: (action) => commitShutdown(token, action),
+    reason: () => shutdown.currentReason(),
     release: () => releaseShutdownToken(shutdown, token)
   });
 }
@@ -470,10 +482,11 @@ function registerUpdateIpc(services: Services): void {
   ipcMain.handle("updates.state", (): UpdateState => updates.getState());
   ipcMain.handle("updates.check", (): Promise<UpdateActionResult> => updates.check());
   ipcMain.handle("updates.download", (): Promise<UpdateActionResult> => updates.download());
-  ipcMain.handle("updates.setChannel", (_e, args: unknown): Promise<UpdateActionResult> => {
+  ipcMain.handle("updates.setChannel", async (_e, args: unknown): Promise<UpdateActionResult> => {
     const channel = args && typeof args === "object" ? (args as { channel?: unknown }).channel : undefined;
-    if (isUpdateChannel(channel)) sessions.setSettings({ updateChannel: channel });
-    return updates.setChannel(channel);
+    const result = await updates.setChannel(channel);
+    if (result.ok && isUpdateChannel(channel)) sessions.setSettings({ updateChannel: channel });
+    return result;
   });
 }
 
@@ -937,7 +950,7 @@ interface PendingUpdateAutotest {
 async function prepareUpdateAutotest(): Promise<PendingUpdateAutotest | null> {
   if (__CW_UPDATE_TEST_BUILD__) {
     const autotest = await import("./updates/updateAutotest.js");
-    const resolution = autotest.loadUpdateAutotest({ env: process.env, userDataDir: app.getPath("userData") });
+    const resolution = autotest.loadUpdateAutotest({ env: process.env, userDataDir: app.getPath("userData"), homeDir: homedir() });
     if (resolution.problem) console.warn(`[updates] update autotest not started: ${resolution.problem}`);
     return resolution.config ? { autotest, config: resolution.config } : null;
   }
@@ -953,6 +966,7 @@ function startUpdateAutotest(pending: PendingUpdateAutotest | null): void {
       launchedByInstaller: process.argv.includes("--updated"),
       startupMode: startupState.mode,
       userDataDir: app.getPath("userData"),
+      cwCodeHome: cwCodeHome(),
       updates: running?.updates ?? null,
       shutdown: running?.shutdown ?? null,
       install: (request) => (running ? installUpdate(running, request) : Promise.reject(new Error("cw-code services are not running"))),

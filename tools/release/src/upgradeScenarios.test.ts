@@ -34,8 +34,12 @@ function byId(id: string): UpgradeScenario {
   return found;
 }
 
+const HOME = "C:\\work\\n-to-n1\\cw-code-home";
+const USER_DATA = "C:\\Users\\runner\\AppData\\Roaming\\@cw-code\\desktop-updatetest";
+
 function event(name: string, data: Record<string, unknown> = {}): AutotestEvent {
-  return { at: "2026-09-25T00:00:00.000Z", event: name, ...data };
+  const identity = name === "started" ? { cwCodeHome: HOME, userDataDir: USER_DATA } : {};
+  return { at: "2026-09-25T00:00:00.000Z", event: name, ...identity, ...data };
 }
 
 function observation(overrides: Partial<ScenarioObservation> = {}): ScenarioObservation {
@@ -43,7 +47,7 @@ function observation(overrides: Partial<ScenarioObservation> = {}): ScenarioObse
     events: [event("started", { version: versions.n, pid: 1 }), event("installing")],
     relaunchEvents: [
       event("started", { version: versions.n1, pid: 2 }),
-      event("relaunched", { version: versions.n1, startupMode: "ready" }),
+      event("relaunched", { version: versions.n1, startupMode: "ready", launchedByInstaller: true }),
       event("result", { outcome: "relaunched", state: { phase: "up-to-date" } })
     ],
     displayVersionAfter: versions.n1,
@@ -55,6 +59,8 @@ function observation(overrides: Partial<ScenarioObservation> = {}): ScenarioObse
     metadataProblems: [],
     fakeCli: null,
     recoveryEvents: null,
+    expectedCwCodeHome: HOME,
+    expectedUserDataDir: USER_DATA,
     ...overrides
   };
 }
@@ -211,7 +217,7 @@ describe("evaluateScenario", () => {
       versions,
       observation({
         installLocationAfter: "C:\\Elsewhere",
-        relaunchEvents: [event("started", { version: versions.n1 }), event("relaunched", { version: versions.n1, startupMode: "recovery" })],
+        relaunchEvents: [event("started", { version: versions.n1, pid: 2 }), event("relaunched", { version: versions.n1, startupMode: "recovery", launchedByInstaller: true })],
         transfers: [{ path: installerFileName(versions.n1), requests: 1, rangeRequests: 0, bytes: 1000, statuses: [200] }],
         metadataProblems: ["session sess_fx000001 is missing after the update"]
       })
@@ -249,9 +255,62 @@ describe("evaluateScenario", () => {
 
   it("requires N to offer the update again after an installer that could not start", () => {
     const base = observation({ relaunchEvents: [], displayVersionAfter: versions.n });
-    expect(evaluateScenario(byId("installer-removed"), versions, base)).toEqual(["N was not relaunched to confirm it still works"]);
+    expect(evaluateScenario(byId("installer-denied"), versions, base)).toEqual(["N was not relaunched to confirm it still works"]);
     const recovered = { ...base, recoveryEvents: [event("started"), event("result", { outcome: "available" })] };
-    expect(evaluateScenario(byId("installer-removed"), versions, recovered)).toEqual([]);
+    expect(evaluateScenario(byId("installer-denied"), versions, recovered)).toEqual([]);
+  });
+
+  it("expects the in-app pre-check to send N back to available when the cached installer is gone", () => {
+    const refused = observation({
+      events: [
+        event("started", { version: versions.n, pid: 1 }),
+        event("installing"),
+        event("result", {
+          outcome: "install-failed",
+          coordinatorIdle: true,
+          state: { phase: "available", availableVersion: versions.n1, downloadedVersion: null, error: { context: "download", retryable: true } }
+        })
+      ],
+      relaunchEvents: [],
+      displayVersionAfter: versions.n
+    });
+    expect(evaluateScenario(byId("installer-removed"), versions, refused)).toEqual([]);
+    const held = { ...refused, events: refused.events.map((entry) => (entry.event === "result" ? { ...entry, coordinatorIdle: false } : entry)) };
+    expect(evaluateScenario(byId("installer-removed"), versions, held)).toEqual(["the shutdown coordinator still holds a reservation after the run"]);
+  });
+
+  it("requires a cancelled restart to keep the download ready and release the coordinator", () => {
+    const cancelled = observation({
+      events: [event("started", { version: versions.n, pid: 1 }), event("result", { outcome: "cancelled", coordinatorIdle: true, state: { phase: "ready", downloadedVersion: versions.n1 } })],
+      relaunchEvents: [],
+      displayVersionAfter: versions.n
+    });
+    expect(evaluateScenario(byId("cancel-restart"), versions, cancelled)).toEqual([]);
+    const lost = { ...cancelled, events: [cancelled.events[0], event("result", { outcome: "cancelled", coordinatorIdle: false, state: { phase: "available", downloadedVersion: null } })] };
+    expect(evaluateScenario(byId("cancel-restart"), versions, lost)).toEqual([
+      "final phase was available, expected ready",
+      `downloaded version was none, expected ${versions.n1}`,
+      "the shutdown coordinator still holds a reservation after the run"
+    ]);
+  });
+
+  it("proves the relaunch with a new pid, the installer flag and the isolated identity", () => {
+    const suspicious = observation({
+      relaunchEvents: [
+        event("started", { version: versions.n1, pid: 1, cwCodeHome: "C:\\Users\\runner\\.cw-code" }),
+        event("relaunched", { version: versions.n1, startupMode: "ready", launchedByInstaller: false }),
+        event("result", { outcome: "relaunched", state: { phase: "up-to-date" } })
+      ]
+    });
+    expect(evaluateScenario(byId("n-to-n1"), versions, suspicious)).toEqual([
+      "the relaunched app was not started by the installer (no --updated)",
+      "the relaunched app reports the same pid 1 as N",
+      `the relaunched app used CW_CODE_HOME C:\\Users\\runner\\.cw-code, expected ${HOME}`
+    ]);
+    const wrongUserData = observation({ events: [event("started", { version: versions.n, pid: 1, userDataDir: "C:\\Users\\runner\\AppData\\Roaming\\@cw-code\\desktop" }), event("installing")] });
+    expect(evaluateScenario(byId("n-to-n1"), versions, wrongUserData)).toEqual([
+      `the installed app used userData C:\\Users\\runner\\AppData\\Roaming\\@cw-code\\desktop, expected ${USER_DATA}`
+    ]);
   });
 
   it("checks the offered version for channel scenarios", () => {

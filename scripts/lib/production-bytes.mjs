@@ -8,11 +8,11 @@ import { startFeedServer, summarizeTransfers } from "../../tools/release/src/fee
 import { formatScalar, readPublisherNames } from "../../tools/release/src/updateInfoYaml.ts";
 import { compareMetadata, projectMetadata } from "../../tools/release/src/upgradeScenarios.ts";
 import { parseAppUpdateYaml } from "./upgrade-builds.mjs";
-import { cleanupSeededFixtures, seedRealUserData } from "./real-user-data.mjs";
+import { REAL_FIXTURE_SETTINGS_KEYS, cleanupSeededFixtures, seedRealUserData } from "./real-user-data.mjs";
 import {
   UNINSTALL_POLL_TIMEOUT_MS,
   isProcessAlive,
-  killProcessTree,
+  killProcessTreeIfImage,
   nsisGuid,
   readRegistryValue,
   registryPaths,
@@ -131,13 +131,6 @@ function authenticode(path) {
   }
 }
 
-function startWizardDriver(driverPath, installerDir, logPath) {
-  return spawn(
-    "powershell.exe",
-    ["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", driverPath, "-InstallerDir", installerDir, "-LogPath", logPath, "-TimeoutSeconds", "600"],
-    { stdio: "ignore", windowsHide: true }
-  );
-}
 
 async function waitFor(predicate, timeoutMs) {
   const deadline = Date.now() + timeoutMs;
@@ -162,18 +155,19 @@ export async function runProductionBytes(options) {
 
   const report = { mode: "production-bytes", candidate: { version: candidate.version, installer: candidate.installer, channelFiles: candidate.channelFiles }, steps: [], problems: [], notes: [] };
   const seed = seedRealUserData();
-  const before = projectMetadata(JSON.parse(seed.dbContent), JSON.parse(seed.settingsContent), ["claudeBinaryPath"]);
+  const before = projectMetadata(JSON.parse(seed.dbContent), JSON.parse(seed.settingsContent), REAL_FIXTURE_SETTINGS_KEYS);
   const knownPids = new Set();
   let feed = null;
-  let wizard = null;
   let location = null;
   let cacheDir = null;
+  let exe = null;
+  const isInstalledExe = (image) => exe !== null && image.toLowerCase() === exe.toLowerCase();
   try {
     runSilent(options.installer, ["/S"]);
     location = readRegistryValue(perUser.install, "InstallLocation");
     if (!location) throw new Error(`InstallLocation is missing at ${perUser.install} after installing ${options.installer}`);
     report.installedVersion = readRegistryValue(perUser.uninstall, "DisplayVersion");
-    const exe = join(location, PRODUCTION_EXECUTABLE);
+    exe = join(location, PRODUCTION_EXECUTABLE);
     const appUpdatePath = join(location, "resources", "app-update.yml");
     if (!existsSync(appUpdatePath)) throw new Error("the installed production build has no resources/app-update.yml");
     const feedUrl = `http://127.0.0.1:${options.feedPort}/`;
@@ -184,7 +178,6 @@ export async function runProductionBytes(options) {
     cacheDir = productionIdentity(rewrite.cacheDirName ?? "@cw-codedesktop-updater").cacheDir;
 
     feed = await startFeedServer({ root: options.candidateDir, port: options.feedPort });
-    wizard = startWizardDriver(options.wizardDriver, join(cacheDir, "pending"), join(options.workDir, "production-wizard.jsonl"));
     const env = { ...process.env, PATH: safePathWithoutClis() };
     for (const name of ["CW_CODE_HOME", "CW_PACKAGE_PROBE_OUT", "ELECTRON_RUN_AS_NODE", "NODE_OPTIONS", "GH_TOKEN", "GITHUB_TOKEN"]) delete env[name];
     const app = spawn(exe, [`--remote-debugging-port=${options.devToolsPort}`], { env, stdio: "ignore" });
@@ -211,7 +204,7 @@ export async function runProductionBytes(options) {
       if (!(await waitFor(() => !isProcessAlive(relaunchedPid), CLOSE_TIMEOUT_MS))) report.notes.push("the relaunched app did not close on WM_CLOSE and was stopped by PID");
     }
 
-    for (const pid of knownPids) if (isProcessAlive(pid)) killProcessTree(pid);
+    for (const pid of knownPids) killProcessTreeIfImage(pid, isInstalledExe);
     const { probe } = await runPackageProbe(exe);
     report.probe = { appVersion: probe.appVersion, rendererLoaded: probe.rendererLoaded, nodePtySpawned: probe.nodePty.spawned };
     if (probe.appVersion !== candidate.version) report.problems.push(`post-update probe reports ${probe.appVersion}, expected ${candidate.version}`);
@@ -229,16 +222,15 @@ export async function runProductionBytes(options) {
     report.transfers = summarizeTransfers(feed.requests());
     const sessions = JSON.parse(readFileSync(seed.dbPath, "utf8"));
     const settings = JSON.parse(readFileSync(seed.settingsPath, "utf8"));
-    report.problems.push(...compareMetadata(before, projectMetadata(sessions, settings, ["claudeBinaryPath"])));
+    report.problems.push(...compareMetadata(before, projectMetadata(sessions, settings, REAL_FIXTURE_SETTINGS_KEYS)));
     for (const [label, path] of [["worktree marker", seed.worktreeMarkerPath], ["Electron userData marker", seed.electronMarkerPath]]) {
       if (!existsSync(path) || readFileSync(path, "utf8") !== seed.markerContent) report.problems.push(`${label} did not survive the update`);
     }
   } catch (err) {
     report.problems.push(`production-bytes run aborted: ${err.message}`);
   } finally {
-    if (wizard?.pid && isProcessAlive(wizard.pid)) killProcessTree(wizard.pid);
     if (feed) await feed.close();
-    for (const pid of knownPids) if (isProcessAlive(pid)) killProcessTree(pid);
+    for (const pid of knownPids) killProcessTreeIfImage(pid, isInstalledExe);
     if (location) {
       const uninstaller = join(location, PRODUCTION_UNINSTALLER);
       if (existsSync(uninstaller)) {
