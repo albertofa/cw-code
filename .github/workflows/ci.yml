@@ -24,3 +24,37 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
+
+  windows:
+    runs-on: windows-latest
+    env:
+      CI: "true"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 11.5.3
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm typecheck
+      - run: pnpm test
+      - run: pnpm build
+      - run: pnpm --filter @cw-code/desktop dist
+      - name: Download legacy installer for upgrade test
+        run: gh release download v0.0.1-alpha.21 --repo albertofa/cw-code --pattern "cw-code.Setup.0.0.1-alpha.21.exe" --dir legacy-installer
+        env:
+          GH_TOKEN: ${{ github.token }}
+      - run: node scripts/verify-windows-package.mjs --install
+      - run: node scripts/verify-windows-package.mjs --upgrade-from legacy-installer/cw-code.Setup.0.0.1-alpha.21.exe
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: windows-package
+          path: |
+            apps/desktop/dist/*.exe
+            apps/desktop/dist/*.blockmap
+            apps/desktop/dist/verify-windows-package.json
+          retention-days: 7
