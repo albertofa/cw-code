@@ -8,8 +8,56 @@ import {
   claudeDenyResponse,
   claudeQuestionRequest,
   parseClaudeControlRequest,
-  parseStreamLine
+  parseClaudeSubagentHandback,
+  parseClaudeSystemInit,
+  parseClaudeTaskSystemLine,
+  parseTaskNotificationUsage,
+  parseStreamLine,
+  type TurnDoneInfo
 } from "./claudeStreamParser.js";
+
+describe("parseClaudeSubagentHandback", () => {
+  it("maps a nested Handback message to its parent Agent result", () => {
+    expect(
+      parseClaudeSubagentHandback({
+        type: "tool.call",
+        turnId: "t1",
+        toolCallId: "handback-1",
+        name: "SubagentHandback",
+        input: { message: "final report" },
+        parentToolCallId: "agent-1"
+      })
+    ).toEqual({
+      type: "tool.result",
+      turnId: "t1",
+      toolCallId: "agent-1",
+      output: "final report",
+      isError: false
+    });
+  });
+
+  it("ignores non-Handback and malformed events", () => {
+    expect(
+      parseClaudeSubagentHandback({
+        type: "tool.call",
+        turnId: "t1",
+        toolCallId: "read-1",
+        name: "Read",
+        input: { path: "a.ts" }
+      })
+    ).toBeNull();
+    expect(
+      parseClaudeSubagentHandback({
+        type: "tool.call",
+        turnId: "t1",
+        toolCallId: "handback-1",
+        name: "SubagentHandback",
+        input: { message: "" },
+        parentToolCallId: "agent-1"
+      })
+    ).toBeNull();
+  });
+});
 
 describe("parseStreamLine", () => {
   it("maps text deltas to assistant.delta", () => {
@@ -22,6 +70,28 @@ describe("parseStreamLine", () => {
     ]);
   });
 
+  it("maps thinking deltas and thinking blocks to reasoning.delta", () => {
+    const deltaLine = JSON.stringify({
+      type: "stream_event",
+      event: { delta: { type: "thinking_delta", thinking: "weighing " } }
+    });
+    expect(parseStreamLine(deltaLine, "t1", "s1", () => {})).toEqual([
+      { type: "reasoning.delta", turnId: "t1", text: "weighing " }
+    ]);
+    const blockLine = JSON.stringify({
+      type: "assistant",
+      message: { content: [{ type: "thinking", thinking: "more" }] }
+    });
+    expect(parseStreamLine(blockLine, "t1", "s1", () => {})).toEqual([
+      { type: "reasoning.delta", turnId: "t1", text: "more" }
+    ]);
+    const emptyLine = JSON.stringify({
+      type: "assistant",
+      message: { content: [{ type: "thinking", thinking: "" }] }
+    });
+    expect(parseStreamLine(emptyLine, "t1", "s1", () => {})).toEqual([]);
+  });
+
   it("maps assistant tool_use blocks to tool.call", () => {
     const line = JSON.stringify({
       type: "assistant",
@@ -32,6 +102,65 @@ describe("parseStreamLine", () => {
     ]);
   });
 
+  it("routes subagent tool calls to their parent call and drops subagent prose", () => {
+    const line = JSON.stringify({
+      type: "assistant",
+      parent_tool_use_id: "call_task",
+      message: {
+        content: [
+          { type: "text", text: "subagent narration" },
+          { type: "thinking", thinking: "subagent thought" },
+          { type: "tool_use", id: "tu_nested", name: "Bash", input: { command: "ls" } }
+        ]
+      }
+    });
+    expect(parseStreamLine(line, "t1", "s1", () => {})).toEqual([
+      {
+        type: "tool.call",
+        turnId: "t1",
+        toolCallId: "tu_nested",
+        name: "Bash",
+        input: { command: "ls" },
+        parentToolCallId: "call_task"
+      }
+    ]);
+  });
+
+  it("emits todo.updated alongside tool.call for TodoWrite", () => {
+    const input = {
+      todos: [
+        { content: "Write tests", status: "in_progress", activeForm: "Writing tests" },
+        { content: "Ship it", status: "completed", activeForm: "Shipping it" }
+      ]
+    };
+    const line = JSON.stringify({
+      type: "assistant",
+      message: { content: [{ type: "tool_use", id: "tu2", name: "TodoWrite", input }] }
+    });
+    expect(parseStreamLine(line, "t1", "s1", () => {})).toEqual([
+      { type: "tool.call", turnId: "t1", toolCallId: "tu2", name: "TodoWrite", input },
+      {
+        type: "todo.updated",
+        turnId: "t1",
+        todos: [
+          { content: "Write tests", status: "in_progress" },
+          { content: "Ship it", status: "completed" }
+        ]
+      }
+    ]);
+  });
+
+  it("leaves non-todo tool calls without a todo event", () => {
+    const input = { todos: [{ content: "Not a todo call" }] };
+    const line = JSON.stringify({
+      type: "assistant",
+      message: { content: [{ type: "tool_use", id: "tu3", name: "Task", input }] }
+    });
+    expect(parseStreamLine(line, "t1", "s1", () => {})).toEqual([
+      { type: "tool.call", turnId: "t1", toolCallId: "tu3", name: "Task", input }
+    ]);
+  });
+
   it("maps user tool results to tool.result", () => {
     const line = JSON.stringify({
       type: "user",
@@ -39,6 +168,34 @@ describe("parseStreamLine", () => {
     });
     expect(parseStreamLine(line, "t1", "s1", () => {})).toEqual([
       { type: "tool.result", turnId: "t1", toolCallId: "tu1", output: "file contents", isError: false }
+    ]);
+  });
+
+  it("normalizes text-block arrays in user tool results", () => {
+    const line = JSON.stringify({
+      type: "user",
+      message: {
+        content: [{ tool_use_id: "tu1", content: [{ type: "text", text: "Async agent launched successfully." }] }]
+      }
+    });
+    expect(parseStreamLine(line, "t1", "s1", () => {})).toEqual([
+      { type: "tool.result", turnId: "t1", toolCallId: "tu1", output: "Async agent launched successfully.", isError: false }
+    ]);
+  });
+
+  it("preserves JSON for non-text tool result content", () => {
+    const line = JSON.stringify({
+      type: "user",
+      message: { content: [{ tool_use_id: "tu1", content: [{ type: "image", source: { data: "abc" } }] }] }
+    });
+    expect(parseStreamLine(line, "t1", "s1", () => {})).toEqual([
+      {
+        type: "tool.result",
+        turnId: "t1",
+        toolCallId: "tu1",
+        output: JSON.stringify([{ type: "image", source: { data: "abc" } }]),
+        isError: false
+      }
     ]);
   });
 
@@ -61,18 +218,336 @@ describe("parseStreamLine", () => {
     expect(captured).toEqual({
       resumeCursor: "sess-1",
       resultText: "done",
-      inputTokens: 100,
-      outputTokens: 20,
-      costUsd: 0.02,
+      usage: [],
+      modelUsage: {},
       numTurns: 2,
       isError: false
     });
+  });
+
+  it("threads mainModel through to pick the context window", () => {
+    const line = JSON.stringify({
+      type: "result",
+      subtype: "success",
+      result: "done",
+      session_id: "sess-1",
+      num_turns: 1,
+      is_error: false,
+      modelUsage: {
+        "claude-sonnet-5": {
+          inputTokens: 100,
+          outputTokens: 500,
+          cacheReadInputTokens: 0,
+          cacheCreationInputTokens: 0,
+          costUSD: 0.5,
+          contextWindow: 200000
+        },
+        "claude-haiku-4-5-20251001": {
+          inputTokens: 5,
+          outputTokens: 10,
+          cacheReadInputTokens: 0,
+          cacheCreationInputTokens: 0,
+          costUSD: 0.01,
+          contextWindow: 50000
+        }
+      },
+      usage: {
+        iterations: [{ input_tokens: 5, output_tokens: 10, cache_read_input_tokens: 0, cache_creation_input_tokens: 0 }]
+      }
+    });
+    const captured: { info?: TurnDoneInfo } = {};
+    parseStreamLine(
+      line,
+      "t1",
+      "s1",
+      (info) => {
+        captured.info = info;
+      },
+      undefined,
+      undefined,
+      {},
+      "claude-haiku-4-5"
+    );
+    expect(captured.info?.context?.windowTokens).toBe(50000);
   });
 
   it("passes through non-JSON lines as text", () => {
     expect(parseStreamLine("plain text", "t1", "s1", () => {})).toEqual([
       { type: "assistant.delta", turnId: "t1", text: "plain text" }
     ]);
+  });
+
+  it("acks a task-notification result with zero turns instead of finishing the turn", () => {
+    const line = JSON.stringify({
+      type: "result",
+      origin: { kind: "task-notification" },
+      num_turns: 0,
+      is_error: false,
+      session_id: "sess-1"
+    });
+    let doneCalls = 0;
+    let ackCalls = 0;
+    const events = parseStreamLine(
+      line,
+      "t1",
+      "s1",
+      () => {
+        doneCalls += 1;
+      },
+      () => {
+        ackCalls += 1;
+      }
+    );
+    expect(events).toEqual([]);
+    expect(doneCalls).toBe(0);
+    expect(ackCalls).toBe(1);
+  });
+
+  it("accepts a task-notification result when no background work remains", () => {
+    const line = JSON.stringify({
+      type: "result",
+      origin: { kind: "task-notification" },
+      result: "final result",
+      num_turns: 3,
+      is_error: false,
+      session_id: "sess-1",
+      total_cost_usd: 0.03,
+      usage: { input_tokens: 120, output_tokens: 30 }
+    });
+    let captured: Parameters<Parameters<typeof parseStreamLine>[3]>[0] | null = null;
+    let ackCalls = 0;
+    const events = parseStreamLine(
+      line,
+      "t1",
+      "s1",
+      (info) => {
+        captured = info;
+      },
+      () => {
+        ackCalls += 1;
+      },
+      () => false
+    );
+    expect(events).toEqual([]);
+    expect(ackCalls).toBe(0);
+    expect(captured).toEqual({
+      resumeCursor: "sess-1",
+      resultText: "final result",
+      usage: [],
+      modelUsage: {},
+      numTurns: 3,
+      isError: false
+    });
+  });
+
+  it("rejects task-notification results while background work remains", () => {
+    const line = JSON.stringify({
+      type: "result",
+      origin: { kind: "task-notification" },
+      num_turns: 3,
+      is_error: false,
+      session_id: "sess-1"
+    });
+    let doneCalls = 0;
+    let ackCalls = 0;
+    parseStreamLine(
+      line,
+      "t1",
+      "s1",
+      () => {
+        doneCalls += 1;
+      },
+      () => {
+        ackCalls += 1;
+      },
+      () => true
+    );
+    expect(doneCalls).toBe(0);
+    expect(ackCalls).toBe(1);
+  });
+
+  it("finishes the turn for an ordinary result with no origin", () => {
+    const line = JSON.stringify({
+      type: "result",
+      subtype: "success",
+      result: "done",
+      session_id: "sess-1",
+      num_turns: 2,
+      is_error: false
+    });
+    let doneCalls = 0;
+    parseStreamLine(line, "t1", "s1", () => {
+      doneCalls += 1;
+    });
+    expect(doneCalls).toBe(1);
+  });
+});
+
+describe("parseClaudeTaskSystemLine", () => {
+  it("reports live task count for background_tasks_changed", () => {
+    const line = JSON.stringify({
+      type: "system",
+      subtype: "background_tasks_changed",
+      tasks: [
+        { type: "local_agent", id: "a202cd0fd545a319e" },
+        { task_id: "t-2" },
+        "t-3"
+      ]
+    });
+    expect(parseClaudeTaskSystemLine(line)).toEqual({
+      kind: "tasks",
+      liveTasks: 3,
+      liveTaskIds: ["a202cd0fd545a319e", "t-2", "t-3"]
+    });
+  });
+
+  it("leaves background shells out of the live task snapshot", () => {
+    const line = JSON.stringify({
+      type: "system",
+      subtype: "background_tasks_changed",
+      tasks: [
+        { task_id: "agent-1", task_type: "local_agent" },
+        { task_id: "bb3lof10o", task_type: "local_bash", description: "sleep 20 && echo bgdone" },
+        { type: "local_bash", task_id: "b-1" }
+      ]
+    });
+    expect(parseClaudeTaskSystemLine(line)).toEqual({ kind: "tasks", liveTasks: 1, liveTaskIds: ["agent-1"] });
+  });
+
+  it("parses task_started with prompt and background flag", () => {
+    const line = JSON.stringify({
+      type: "system",
+      subtype: "task_started",
+      task_id: "a202cd0fd545a319e",
+      tool_use_id: "toolu_1",
+      task_type: "local_agent",
+      description: "Review the diff",
+      subagent_type: "general-purpose",
+      is_backgrounded: true,
+      prompt: "Review PR #15"
+    });
+    expect(parseClaudeTaskSystemLine(line)).toEqual({
+      kind: "started",
+      taskId: "a202cd0fd545a319e",
+      toolUseId: "toolu_1",
+      taskType: "local_agent",
+      description: "Review the diff",
+      subagentType: "general-purpose",
+      background: true,
+      prompt: "Review PR #15"
+    });
+  });
+
+  it("parses task_progress usage and last tool", () => {
+    const line = JSON.stringify({
+      type: "system",
+      subtype: "task_progress",
+      task_id: "a202cd0fd545a319e",
+      tool_use_id: "toolu_1",
+      last_tool_name: "Grep",
+      usage: { total_tokens: 24206, tool_uses: 1, duration_ms: 1925 }
+    });
+    expect(parseClaudeTaskSystemLine(line)).toEqual({
+      kind: "progress",
+      taskId: "a202cd0fd545a319e",
+      toolUseId: "toolu_1",
+      lastToolName: "Grep",
+      usage: { tokens: 24206, toolUses: 1, durationMs: 1925 }
+    });
+  });
+
+  it("parses task_updated status and end time", () => {
+    const line = JSON.stringify({
+      type: "system",
+      subtype: "task_updated",
+      task_id: "a202cd0fd545a319e",
+      patch: { status: "completed", end_time: 1789499157135 }
+    });
+    expect(parseClaudeTaskSystemLine(line)).toEqual({
+      kind: "updated",
+      taskId: "a202cd0fd545a319e",
+      status: "completed",
+      endTime: 1789499157135
+    });
+  });
+
+  it("parses task_notification status, summary and usage", () => {
+    const line = JSON.stringify({
+      type: "system",
+      subtype: "task_notification",
+      task_id: "a202cd0fd545a319e",
+      tool_use_id: "toolu_1",
+      status: "completed",
+      summary: "PROBE-AGENT-DONE",
+      usage: { total_tokens: 25500, tool_uses: 1, duration_ms: 6964 }
+    });
+    expect(parseClaudeTaskSystemLine(line)).toEqual({
+      kind: "notification",
+      taskId: "a202cd0fd545a319e",
+      toolUseId: "toolu_1",
+      status: "completed",
+      summary: "PROBE-AGENT-DONE",
+      usage: { tokens: 25500, toolUses: 1, durationMs: 6964 }
+    });
+  });
+
+  it("returns null for other system subtypes", () => {
+    const line = JSON.stringify({ type: "system", subtype: "init", tasks: [] });
+    expect(parseClaudeTaskSystemLine(line)).toBeNull();
+  });
+
+  it("returns null when tasks is not an array", () => {
+    const line = JSON.stringify({ type: "system", subtype: "background_tasks_changed", tasks: {} });
+    expect(parseClaudeTaskSystemLine(line)).toBeNull();
+  });
+
+  it("returns null for non-JSON input", () => {
+    expect(parseClaudeTaskSystemLine("plain text")).toBeNull();
+  });
+});
+
+describe("parseClaudeSystemInit", () => {
+  it("captures the terminal-only slash command names", () => {
+    const line = JSON.stringify({
+      type: "system",
+      subtype: "init",
+      terminal_slash_commands: ["doctor", "color", "reload-plugins"]
+    });
+    expect(parseClaudeSystemInit(line)).toEqual({
+      terminalSlashCommands: ["doctor", "color", "reload-plugins"]
+    });
+  });
+
+  it("captures the model when present", () => {
+    const line = JSON.stringify({ type: "system", subtype: "init", model: "claude-haiku-4-5" });
+    expect(parseClaudeSystemInit(line)).toEqual({ terminalSlashCommands: [], model: "claude-haiku-4-5" });
+  });
+
+  it("tolerates a missing or garbage terminal_slash_commands field", () => {
+    expect(parseClaudeSystemInit(JSON.stringify({ type: "system", subtype: "init" }))).toEqual({
+      terminalSlashCommands: []
+    });
+    expect(
+      parseClaudeSystemInit(JSON.stringify({ type: "system", subtype: "init", terminal_slash_commands: "nope" }))
+    ).toEqual({ terminalSlashCommands: [] });
+  });
+
+  it("returns null for other system lines and non-JSON input", () => {
+    expect(parseClaudeSystemInit(JSON.stringify({ type: "system", subtype: "background_tasks_changed" }))).toBeNull();
+    expect(parseClaudeSystemInit(JSON.stringify({ type: "assistant" }))).toBeNull();
+    expect(parseClaudeSystemInit("plain text")).toBeNull();
+  });
+});
+
+describe("parseTaskNotificationUsage", () => {
+  it("extracts subagent tokens, tool uses and duration", () => {
+    const text =
+      "<usage><subagent_tokens>136099</subagent_tokens><tool_uses>12</tool_uses><duration_ms>287602</duration_ms></usage>";
+    expect(parseTaskNotificationUsage(text)).toEqual({ tokens: 136099, toolUses: 12, durationMs: 287602 });
+  });
+
+  it("returns undefined when no usage block is present", () => {
+    expect(parseTaskNotificationUsage("no usage here")).toBeUndefined();
   });
 });
 

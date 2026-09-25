@@ -1,19 +1,24 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   approvalResultFor,
+  buildCodexSkillInput,
   buildCodexUserInput,
   buildCommandApproval,
   buildFileChangeApproval,
   buildPermissionsApproval,
   buildUserInputQuestionRequest,
+  codexReviewTarget,
   codexUserInputResult,
-  accumulateCodexUsage,
+  accumulateCodexTurnUsage,
   mapCodexHistory,
   mapCodexModel,
+  mapCodexPlan,
+  mapCodexSkillCommands,
   mapCodexThread,
   mapPermissionMode,
   type CodexThread,
-  type CodexTokenUsage
+  type CodexTokenUsage,
+  type CodexTurnUsageAcc
 } from "./codexProtocol.js";
 
 describe("mapPermissionMode", () => {
@@ -41,21 +46,21 @@ describe("mapPermissionMode", () => {
     });
   });
 
-  it("maps plan to read-only plan mode", () => {
-    expect(mapPermissionMode("plan")).toMatchObject({
+  it("treats the retired plan mode as supervised read-only", () => {
+    expect(mapPermissionMode("plan" as never)).toMatchObject({
       approvalPolicy: "on-request",
-      sandbox: "read-only",
-      planMode: true
-    });
-  });
-
-  it("defaults to untrusted read-only", () => {
-    expect(mapPermissionMode(undefined)).toEqual({
-      approvalPolicy: "untrusted",
       sandbox: "read-only",
       planMode: false
     });
-    expect(mapPermissionMode("manual")).toMatchObject({ approvalPolicy: "untrusted", sandbox: "read-only" });
+  });
+
+  it("defaults to supervised read-only", () => {
+    expect(mapPermissionMode(undefined)).toEqual({
+      approvalPolicy: "on-request",
+      sandbox: "read-only",
+      planMode: false
+    });
+    expect(mapPermissionMode("manual")).toMatchObject({ approvalPolicy: "on-request", sandbox: "read-only" });
   });
 });
 
@@ -113,6 +118,40 @@ describe("buildCodexUserInput", () => {
   });
 });
 
+describe("mapCodexPlan", () => {
+  it("maps step and status, defaulting unknown statuses to pending", () => {
+    expect(
+      mapCodexPlan([
+        { step: "Inspect the repo", status: "completed" },
+        { step: "Write the fix", status: "in_progress" },
+        { step: "Add tests", status: "queued" },
+        { step: "Ship it" }
+      ])
+    ).toEqual([
+      { content: "Inspect the repo", status: "completed" },
+      { content: "Write the fix", status: "in_progress" },
+      { content: "Add tests", status: "pending" },
+      { content: "Ship it", status: "pending" }
+    ]);
+  });
+
+  it("accepts a { plan: [...] } wrapper", () => {
+    expect(mapCodexPlan({ plan: [{ step: "One", status: "pending" }] })).toEqual([
+      { content: "One", status: "pending" }
+    ]);
+  });
+
+  it("returns an empty list for an empty plan", () => {
+    expect(mapCodexPlan([])).toEqual([]);
+  });
+
+  it("returns null for garbage input", () => {
+    expect(mapCodexPlan("nope")).toBeNull();
+    expect(mapCodexPlan(null)).toBeNull();
+    expect(mapCodexPlan({ plan: "nope" })).toBeNull();
+  });
+});
+
 describe("mapCodexHistory", () => {
   it("maps user, assistant, command, file change, and MCP items", () => {
     const thread: CodexThread = {
@@ -153,6 +192,26 @@ describe("mapCodexHistory", () => {
     expect(messages[5]).toMatchObject({ text: "done" });
   });
 
+  it("stamps the last turn item with completedAt so history keeps the duration", () => {
+    const thread: CodexThread = {
+      id: "thr_1",
+      turns: [
+        {
+          id: "turn_1",
+          startedAt: 5,
+          completedAt: 65,
+          items: [
+            { type: "userMessage", id: "i1", content: [{ type: "text", text: "hi" }] },
+            { type: "agentMessage", id: "i2", text: "done" }
+          ]
+        }
+      ]
+    };
+    const messages = mapCodexHistory(thread);
+    expect(messages[0].timestamp).toBe(5000);
+    expect(messages[1].timestamp).toBe(65_000);
+  });
+
   it("flags failed commands and skips empty outputs", () => {
     const thread: CodexThread = {
       id: "thr_1",
@@ -169,6 +228,71 @@ describe("mapCodexHistory", () => {
     const messages = mapCodexHistory(thread);
     expect(messages).toHaveLength(3);
     expect(messages[1]).toMatchObject({ isError: true, text: "boom" });
+  });
+
+  it("maps reasoning items from summary and content without repeating text", () => {
+    const thread: CodexThread = {
+      id: "thr_1",
+      turns: [
+        {
+          id: "turn_1",
+          startedAt: 7,
+          items: [
+            {
+              type: "reasoning",
+              id: "i6",
+              summary: [{ type: "summary_text", text: "**Planning**" }],
+              content: [{ type: "reasoning_text", text: "**Planning**" }]
+            },
+            {
+              type: "reasoning",
+              id: "i7",
+              summary: [{ type: "summary_text", text: "checking" }],
+              content: [{ type: "reasoning_text", text: "reading files" }]
+            }
+          ]
+        }
+      ]
+    };
+    expect(mapCodexHistory(thread)).toEqual([
+      { id: "i6", role: "reasoning", text: "**Planning**", turnId: "turn_1", timestamp: 7000 },
+      { id: "i7", role: "reasoning", text: "checking\n\nreading files", turnId: "turn_1", timestamp: 7000 }
+    ]);
+  });
+
+  it("maps exitedReviewMode as assistant text when the turn has no agentMessage item", () => {
+    const thread: CodexThread = {
+      id: "thr_1",
+      turns: [
+        {
+          id: "turn_1",
+          startedAt: 5,
+          items: [{ type: "exitedReviewMode", id: "r1", review: "Looks fine overall." }]
+        }
+      ]
+    };
+    expect(mapCodexHistory(thread)).toEqual([
+      { id: "r1", role: "assistant", text: "Looks fine overall.", turnId: "turn_1", timestamp: 5000 }
+    ]);
+  });
+
+  it("drops exitedReviewMode text when the turn already has an agentMessage item", () => {
+    const thread: CodexThread = {
+      id: "thr_1",
+      turns: [
+        {
+          id: "turn_1",
+          startedAt: 5,
+          items: [
+            { type: "agentMessage", id: "i1", text: "Looks fine overall." },
+            { type: "exitedReviewMode", id: "r1", review: "Looks fine overall." }
+          ]
+        }
+      ]
+    };
+    expect(mapCodexHistory(thread)).toEqual([
+      { id: "i1", role: "assistant", text: "Looks fine overall.", turnId: "turn_1", timestamp: 5000 }
+    ]);
   });
 });
 
@@ -242,31 +366,72 @@ describe("approvalResultFor", () => {
   });
 });
 
-describe("accumulateCodexUsage", () => {
-  it("sums input and output across updates", () => {
-    const usage = (input: number, cached: number, output: number, reasoning: number): CodexTokenUsage => ({
+describe("accumulateCodexTurnUsage", () => {
+  function emptyAcc(): CodexTurnUsageAcc {
+    return { counts: { inputTokens: 0, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 0, reasoningTokens: 0 } };
+  }
+
+  it("does not double count cached input tokens", () => {
+    const acc = emptyAcc();
+    const usage: CodexTokenUsage = {
       total: {
-        totalTokens: 0,
-        inputTokens: input,
-        cachedInputTokens: cached,
+        totalTokens: 39934,
+        inputTokens: 39846,
+        cachedInputTokens: 39424,
         cacheWriteInputTokens: 0,
-        outputTokens: output,
-        reasoningOutputTokens: reasoning
+        outputTokens: 88,
+        reasoningOutputTokens: 0
       },
       last: {
-        totalTokens: 0,
-        inputTokens: input,
-        cachedInputTokens: cached,
+        totalTokens: 39934,
+        inputTokens: 39846,
+        cachedInputTokens: 39424,
         cacheWriteInputTokens: 0,
-        outputTokens: output,
-        reasoningOutputTokens: reasoning
+        outputTokens: 88,
+        reasoningOutputTokens: 0
       },
       modelContextWindow: null
+    };
+    accumulateCodexTurnUsage(acc, usage);
+    expect(acc.counts).toEqual({
+      inputTokens: 422,
+      cacheReadTokens: 39424,
+      cacheWriteTokens: 0,
+      outputTokens: 88,
+      reasoningTokens: 0
     });
-    const acc = { inputTokens: 0, outputTokens: 0 };
-    accumulateCodexUsage(acc, usage(100, 50, 10, 5));
-    accumulateCodexUsage(acc, usage(200, 0, 20, 0));
-    expect(acc).toEqual({ inputTokens: 350, outputTokens: 35 });
+  });
+
+  it("ignores a notification whose total is unchanged for the thread", () => {
+    const acc = emptyAcc();
+    const usage: CodexTokenUsage = {
+      total: { totalTokens: 1000, inputTokens: 900, cachedInputTokens: 0, cacheWriteInputTokens: 0, outputTokens: 100, reasoningOutputTokens: 0 },
+      last: { totalTokens: 1000, inputTokens: 900, cachedInputTokens: 0, cacheWriteInputTokens: 0, outputTokens: 100, reasoningOutputTokens: 0 },
+      modelContextWindow: null
+    };
+    accumulateCodexTurnUsage(acc, usage);
+    accumulateCodexTurnUsage(acc, usage);
+    expect(acc.counts).toEqual({ inputTokens: 900, cacheReadTokens: 0, cacheWriteTokens: 0, outputTokens: 100, reasoningTokens: 0 });
+  });
+
+  it("omits context when the model context window is null", () => {
+    const acc = emptyAcc();
+    accumulateCodexTurnUsage(acc, {
+      total: { totalTokens: 500, inputTokens: 400, cachedInputTokens: 0, cacheWriteInputTokens: 0, outputTokens: 100, reasoningOutputTokens: 0 },
+      last: { totalTokens: 500, inputTokens: 400, cachedInputTokens: 0, cacheWriteInputTokens: 0, outputTokens: 100, reasoningOutputTokens: 0 },
+      modelContextWindow: null
+    });
+    expect(acc.context).toBeUndefined();
+  });
+
+  it("sets context from the last breakdown's total and the model context window", () => {
+    const acc = emptyAcc();
+    accumulateCodexTurnUsage(acc, {
+      total: { totalTokens: 500, inputTokens: 400, cachedInputTokens: 0, cacheWriteInputTokens: 0, outputTokens: 100, reasoningOutputTokens: 0 },
+      last: { totalTokens: 500, inputTokens: 400, cachedInputTokens: 0, cacheWriteInputTokens: 0, outputTokens: 100, reasoningOutputTokens: 0 },
+      modelContextWindow: 128_000
+    });
+    expect(acc.context).toEqual({ usedTokens: 500, windowTokens: 128_000 });
   });
 });
 
@@ -298,5 +463,135 @@ describe("codex user input questions", () => {
     expect(codexUserInputResult({ "Preferred color?": "Red", "Which extras?": "Lint" })).toEqual({
       answers: ["Red", "Lint"]
     });
+  });
+});
+
+describe("mapCodexSkillCommands", () => {
+  it("maps enabled skills and skips disabled ones", () => {
+    const res = {
+      data: [
+        {
+          cwd: "C:\\proj",
+          skills: [
+            { name: "plan", description: "Plan the work", path: "/skills/plan", enabled: true },
+            { name: "disabled-skill", description: "Nope", path: "/skills/nope", enabled: false }
+          ],
+          errors: []
+        }
+      ]
+    };
+    const { commands, paths } = mapCodexSkillCommands(res);
+    expect(commands).toEqual([
+      { name: "plan", description: "Plan the work", dispatch: "native" }
+    ]);
+    expect(paths.get("plan")).toBe("/skills/plan");
+    expect(paths.has("disabled-skill")).toBe(false);
+  });
+
+  it("prefers interface.shortDescription, then shortDescription, then description", () => {
+    const res = {
+      data: [
+        {
+          cwd: "C:\\proj",
+          skills: [
+            {
+              name: "a",
+              description: "Long description",
+              shortDescription: "Short a",
+              interface: { shortDescription: "Interface a" },
+              path: "/skills/a",
+              enabled: true
+            },
+            {
+              name: "b",
+              description: "Long description",
+              shortDescription: "Short b",
+              path: "/skills/b",
+              enabled: true
+            },
+            { name: "c", description: "Long description", path: "/skills/c", enabled: true }
+          ],
+          errors: []
+        }
+      ]
+    };
+    const { commands } = mapCodexSkillCommands(res);
+    expect(commands.map((c) => c.description)).toEqual(["Interface a", "Short b", "Long description"]);
+  });
+
+  it("tolerates missing or garbage fields", () => {
+    expect(mapCodexSkillCommands(null)).toEqual({ commands: [], paths: new Map() });
+    expect(mapCodexSkillCommands({})).toEqual({ commands: [], paths: new Map() });
+    expect(mapCodexSkillCommands({ data: "nope" })).toEqual({ commands: [], paths: new Map() });
+    const res = { data: [{ skills: [null, "junk", { name: "", path: "/x", enabled: true }, { name: "x", enabled: true }] }] };
+    expect(mapCodexSkillCommands(res)).toEqual({ commands: [], paths: new Map() });
+  });
+
+  it("skips skills whose name collides with a built-in command", () => {
+    const res = {
+      data: [
+        {
+          cwd: "C:\\proj",
+          skills: [
+            { name: "compact", description: "Custom compact", path: "/skills/compact", enabled: true },
+            { name: "review", description: "Custom review", path: "/skills/review", enabled: true },
+            { name: "plan", description: "Plan the work", path: "/skills/plan", enabled: true }
+          ],
+          errors: []
+        }
+      ]
+    };
+    const { commands, paths } = mapCodexSkillCommands(res);
+    expect(commands.map((c) => c.name)).toEqual(["plan"]);
+    expect(paths.has("compact")).toBe(false);
+    expect(paths.has("review")).toBe(false);
+  });
+
+  it("warns for each reported skill error without dropping the working skills", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const res = {
+      data: [
+        {
+          cwd: "C:\\proj",
+          skills: [{ name: "plan", description: "Plan the work", path: "/skills/plan", enabled: true }],
+          errors: [{ path: "/skills/broken", message: "invalid frontmatter" }]
+        }
+      ]
+    };
+    const { commands } = mapCodexSkillCommands(res);
+    expect(commands.map((c) => c.name)).toEqual(["plan"]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("/skills/broken"));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("invalid frontmatter"));
+    warn.mockRestore();
+  });
+});
+
+describe("codexReviewTarget", () => {
+  it("targets uncommitted changes when args are empty", () => {
+    expect(codexReviewTarget("")).toEqual({ type: "uncommittedChanges" });
+    expect(codexReviewTarget("   ")).toEqual({ type: "uncommittedChanges" });
+  });
+
+  it("targets custom instructions when args are given", () => {
+    expect(codexReviewTarget("  check for race conditions  ")).toEqual({
+      type: "custom",
+      instructions: "check for race conditions"
+    });
+  });
+});
+
+describe("buildCodexSkillInput", () => {
+  it("builds a mention-prefixed text item plus a skill item, trimming args", () => {
+    expect(buildCodexSkillInput("plan", "/skills/plan", "  the migration  ")).toEqual([
+      { type: "text", text: "$plan the migration" },
+      { type: "skill", name: "plan", path: "/skills/plan" }
+    ]);
+  });
+
+  it("omits args from the text when none are given", () => {
+    expect(buildCodexSkillInput("plan", "/skills/plan", "")).toEqual([
+      { type: "text", text: "$plan" },
+      { type: "skill", name: "plan", path: "/skills/plan" }
+    ]);
   });
 });

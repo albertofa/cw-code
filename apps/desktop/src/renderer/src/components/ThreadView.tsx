@@ -1,23 +1,114 @@
-import { useCallback, useEffect, useMemo, useRef } from "react";
-import { Sparkles, TriangleAlert } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { Check, ChevronDown, Copy, Sparkles, TriangleAlert } from "lucide-react";
+import type { DockableTabId } from "@cw-code/contracts";
 import { useAppStore, type ChatMessage } from "../stores/appStore.js";
-import { Notifications } from "./Notifications.js";
-import { Md } from "./Markdown.js";
-import { DriverIcon } from "./DriverIcon.js";
-import { Composer } from "./Composer.js";
+import { Notifications, useNotifs } from "./Notifications.js";
+import { Md, StreamingMd, resolvePreviewPaths } from "./Markdown.js";
+import { BottomPanel } from "./BottomPanel.js";
+import { MainTabStrip } from "./MainTabStrip.js";
 import { GitPanelBar } from "./GitPanelBar.js";
+import { ToolContent } from "./ToolContent.js";
+import { useDockDrop } from "./useDockDrop.js";
+import { Composer } from "./Composer.js";
+import { isBottomOpen, resolveMainTab } from "../stores/panelLayout.js";
 import { ToolCard } from "./ToolCard.js";
+import { ToolGroupCard } from "./ToolGroupCard.js";
+import { ReasoningBlock } from "./ReasoningBlock.js";
 import { SubagentCard } from "./SubagentCard.js";
 import { NewThread } from "./NewThread.js";
 import { ApprovalDock } from "./ApprovalDock.js";
 import { QuestionDock } from "./QuestionDock.js";
-import { WorkingPill, useWorkingWord } from "./WorkingPill.js";
-import { formatDuration, orderToolsForDisplay } from "./toolSummaries.js";
-import { collectSubagents, describeSubagent, isSubagentMessage, type SubagentGroup } from "./subagents.js";
+import { TodoDock } from "./TodoDock.js";
+import { PrUpdateDock } from "./PrUpdateDock.js";
+import { PrSessionChip } from "./PrSessionPanel.js";
+import { useLinkedPrLoader } from "./useLinkedPr.js";
+import { sessionLinks } from "./sessionPrLinks.js";
+import { TurnBlock } from "./TurnBlock.js";
+import { groupTurns, splitTurn, type ThreadNode } from "./turnGroups.js";
+import { pendingToolsForTurn } from "./toolSummaries.js";
+import { durationFromMessages } from "./turnFormat.js";
+import { selectSessionPanel, usePanelStore } from "../stores/panelStore.js";
+import { PanelToggles } from "./PanelToggles.js";
+import { collectSubagents } from "./subagents.js";
 import { splitImageMentions } from "./imagePreview.js";
 import { ImageThumb } from "./ImageThumb.js";
 
 const EMPTY_MESSAGES: ChatMessage[] = [];
+
+function UserMessage({
+  message,
+  sessionId,
+  projectId
+}: {
+  message: ChatMessage;
+  sessionId: string;
+  projectId: string | undefined;
+}) {
+  const [copied, setCopied] = useState(false);
+
+  const copy = () => {
+    if (!navigator.clipboard) return;
+    void navigator.clipboard
+      .writeText(message.text)
+      .then(() => {
+        setCopied(true);
+        window.setTimeout(() => setCopied(false), 1500);
+      })
+      .catch(() => {
+        useNotifs.getState().push({
+          kind: "error",
+          title: "Could not copy message",
+          message: "Clipboard access failed."
+        });
+      });
+  };
+
+  const date = message.timestamp === undefined ? undefined : new Date(message.timestamp);
+  const validDate = date && Number.isFinite(date.getTime()) ? date : undefined;
+
+  return (
+    <div className="msg-user-wrap">
+      <div className="msg-user">
+        {splitImageMentions(message.text).map((seg, i) =>
+          seg.kind === "image" ? (
+            <ImageThumb
+              key={i}
+              target={{ sessionId, projectId }}
+              path={seg.path}
+              className="msg-image-thumb"
+            />
+          ) : (
+            <span key={i}>{seg.value}</span>
+          )
+        )}
+      </div>
+      <div className="msg-user-meta">
+        {validDate && (
+          <time dateTime={validDate.toISOString()} title={validDate.toLocaleString()}>
+            {validDate.toLocaleString(undefined, {
+              month: "numeric",
+              day: "numeric",
+              hour: "numeric",
+              minute: "2-digit"
+            })}
+          </time>
+        )}
+        <button
+          type="button"
+          className="msg-user-copy"
+          onClick={copy}
+          title={copied ? "Copied" : "Copy message"}
+          aria-label="Copy message"
+        >
+          <span className="msg-user-copy-status" aria-live="polite">
+            {copied ? "Copied" : ""}
+          </span>
+          {copied ? <Check aria-hidden="true" size={14} /> : <Copy aria-hidden="true" size={14} />}
+        </button>
+      </div>
+    </div>
+  );
+}
 
 export function ThreadView() {
   const activeProjectId = useAppStore((s) => s.activeProjectId);
@@ -40,37 +131,40 @@ export function ThreadView() {
   const historyLoading = useAppStore((s) => (activeSessionId ? !!s.loadingHistory[activeSessionId] : false));
   const historyError = useAppStore((s) => (activeSessionId ? s.historyErrorBySession[activeSessionId] : undefined));
   const ensureHistory = useAppStore((s) => s.ensureHistory);
-  const usage = useAppStore((s) => (activeSessionId ? s.usageBySession[activeSessionId] : undefined));
-  const lastTurn = useAppStore((s) => (activeSessionId ? s.lastTurnStats[activeSessionId] : undefined));
+  const retryConnection = useAppStore((s) => s.retryConnection);
+  const reasoningExpanded = useAppStore((s) => (session ? s.reasoningExpandedByDriver[session.driver] : false));
   const openPreview = useAppStore((s) => s.openPreview);
+  const {
+    activeMain: panelActiveMain,
+    dockByTab: panelDockByTab,
+    mainOrder: panelMainOrder,
+    rightVisible
+  } = usePanelStore((s) => selectSessionPanel(s, activeSessionId ?? undefined));
+  const activateOrOpen = usePanelStore((s) => s.activateOrOpen);
+  const setRightVisible = usePanelStore((s) => s.setRightVisible);
+  const dropMain = useDockDrop("main", activeSessionId ?? undefined);
+  const draggingTab = usePanelStore((s) => s.draggingTab);
   const setPendingDriver = useAppStore((s) => s.setPendingDriver);
-  const ordered = useMemo(() => orderToolsForDisplay(messages), [messages]);
+  const turnStartedAt = useAppStore((s) => (activeSessionId ? s.turnStartedAt[activeSessionId] : undefined));
+  const turnDurations = useAppStore((s) => (activeSessionId ? s.turnDurations[activeSessionId] : undefined));
   const subagents = useMemo(() => collectSubagents(messages), [messages]);
   const nestedIds = useMemo(() => new Set(subagents.map((s) => s.id)), [subagents]);
-  const nodes: Array<{ kind: "msg"; msg: ChatMessage } | { kind: "sub"; key: string; group: SubagentGroup }> = useMemo(() => {
-    const out: Array<{ kind: "msg"; msg: ChatMessage } | { kind: "sub"; key: string; group: SubagentGroup }> = [];
-    let pending: ChatMessage[] = [];
-    const flush = () => {
-      if (pending.length > 0) {
-        out.push({
-          kind: "sub",
-          key: pending[0].id,
-          group: { id: pending[0].id, turnId: pending[0].turnId, items: pending.map(describeSubagent) }
-        });
-        pending = [];
-      }
-    };
-    for (const m of ordered) {
-      if (isSubagentMessage(m)) pending.push(m);
-      else if (m.parentToolCallId && nestedIds.has(m.parentToolCallId)) continue;
-      else {
-        flush();
-        out.push({ kind: "msg", msg: m });
-      }
-    }
-    flush();
-    return out;
-  }, [ordered, nestedIds]);
+  const turns = useMemo(
+    () =>
+      groupTurns(messages).map((slice) => {
+        const running = busyTurn === slice.turnId;
+        const known = turnDurations?.[slice.turnId];
+        return {
+          turnId: slice.turnId,
+          pieces: splitTurn(slice.messages, nestedIds, running),
+          running,
+          startedAt: running ? turnStartedAt : undefined,
+          pending: running ? pendingToolsForTurn(slice.messages, slice.turnId) : undefined,
+          durationMs: known ?? durationFromMessages(slice.messages)
+        };
+      }),
+    [messages, nestedIds, busyTurn, turnStartedAt, turnDurations]
+  );
   const streamingId = useMemo(() => {
     if (!busyTurn) return null;
     for (let i = messages.length - 1; i >= 0; i--) {
@@ -80,23 +174,43 @@ export function ThreadView() {
     return null;
   }, [messages, busyTurn]);
   const showNew = pendingDriver !== null || !session;
-  const workingWord = useWorkingWord(!showNew && !!busyTurn);
+  const hasPr = !showNew && sessionLinks(session).length > 0;
+  useLinkedPrLoader(showNew ? undefined : session?.id);
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
   const lastSeenIdRef = useRef<string | null>(null);
+  const [atBottom, setAtBottom] = useState(true);
 
   const sessionId = session?.id;
-  const projectRoot = project?.rootPath ?? "";
+  const resolvedMainTab =
+    session === undefined
+      ? "chat"
+      : resolveMainTab(panelMainOrder, panelDockByTab, session.driver, panelActiveMain, hasPr);
+  const showMainTool: DockableTabId | null = resolvedMainTab === "chat" ? null : resolvedMainTab;
+  const basePath = session?.worktreePath ?? project?.rootPath ?? "";
   const onOpenPreview = useCallback(
     (path: string) => {
-      if (sessionId) openPreview(sessionId, path, projectRoot);
+      if (!sessionId) return;
+      openPreview(sessionId, path, basePath);
+      activateOrOpen(sessionId, "preview");
+      setRightVisible(sessionId, true);
     },
-    [openPreview, sessionId, projectRoot]
+    [openPreview, sessionId, basePath, activateOrOpen, setRightVisible]
+  );
+  const onOpenExternal = useCallback(
+    (path: string) => {
+      const { abs } = resolvePreviewPaths(basePath, path);
+      void window.cw.openPath(abs).catch((err: Error) => {
+        useNotifs.getState().push({ kind: "error", title: "Could not open file", message: err.message });
+      });
+    },
+    [basePath]
   );
 
   useEffect(() => {
     stickRef.current = true;
     lastSeenIdRef.current = null;
+    setAtBottom(true);
   }, [activeSessionId]);
 
   useEffect(() => {
@@ -110,15 +224,16 @@ export function ThreadView() {
       if (el && stickRef.current) el.scrollTop = el.scrollHeight;
     });
     return () => cancelAnimationFrame(raf);
-  }, [messages, busyTurn, lastTurn]);
+  }, [messages, busyTurn]);
 
   useEffect(() => {
     const el = scrollRef.current;
     const inner = el?.firstElementChild;
     if (!el || !(inner instanceof HTMLElement)) return;
-    const ro = new ResizeObserver(() => {
+    const stickToBottom = () => {
       if (stickRef.current) el.scrollTop = el.scrollHeight;
-    });
+    };
+    const ro = new ResizeObserver(stickToBottom);
     ro.observe(inner);
     return () => ro.disconnect();
   }, [activeSessionId, showNew]);
@@ -126,31 +241,54 @@ export function ThreadView() {
   const onScroll = () => {
     const el = scrollRef.current;
     if (!el) return;
-    stickRef.current = el.scrollHeight - el.scrollTop - el.clientHeight < 64;
+    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 64;
+    stickRef.current = nearBottom;
+    setAtBottom(nearBottom);
   };
+
+  const scrollToBottom = useCallback(() => {
+    const el = scrollRef.current;
+    if (!el) return;
+    stickRef.current = true;
+    setAtBottom(true);
+    el.scrollTop = el.scrollHeight;
+  }, []);
+
+  const head = (
+    <div className="head-seg main-seg" onDoubleClick={() => window.cw.toggleMaximizeWindow()}>
+      <div className="head-col col-left">
+        <div className="titlebar-crumb">
+          {project && session ? (
+            <span title={`${project.name} / ${session.title}`}>
+              {project.name} <span className="sep">/</span> <strong>{session.title}</strong>
+            </span>
+          ) : project && pendingDriver ? (
+            <span title={`${project.name} / New thread`}>
+              {project.name} <span className="sep">/</span> <strong>New thread</strong>
+            </span>
+          ) : (
+            <span className="titlebar-tagline">Desktop workspace for coding CLIs</span>
+          )}
+        </div>
+      </div>
+      <div className="head-col col-mid" />
+      <div className="head-col col-right">
+        {!showNew && sessionId && <GitPanelBar key={sessionId} sessionId={sessionId} />}
+        {!rightVisible && <PanelToggles sessionId={activeSessionId ?? undefined} />}
+      </div>
+    </div>
+  );
 
   if (showNew) {
     const heroDriver = pendingDriver ?? session?.driver ?? lastDriver;
     return (
       <div className="thread-col">
-        <div className="thread-head">
-          <span className="thread-avatar" aria-hidden="true">
-            {(project?.name ?? "cw").slice(0, 2).toUpperCase()}
-          </span>
-          <span className="crumb" title={`${project?.name ?? ""} / New thread`}>
-            <span>{project?.name ?? "…"}</span>
-            <span className="crumb-sep">/</span>
-            <strong>New thread</strong>
-          </span>
-          <span title={heroDriver}>
-            <DriverIcon driver={heroDriver} size={16} />
-          </span>
-        </div>
+        {head}
+        <MainTabStrip sessionId={undefined} driver={heroDriver} hasPr={false} />
         <Notifications />
         <NewThread
           key={activeProjectId}
-          projectId={activeProjectId ?? ""}
-          projectName={project?.name ?? "this project"}
+          projectId={activeProjectId}
           driver={heroDriver}
           onDriverChange={setPendingDriver}
         />
@@ -158,24 +296,95 @@ export function ThreadView() {
     );
   }
 
+  const renderNode = (n: ThreadNode) => {
+    if (n.kind === "sub") {
+      return <SubagentCard key={n.key} group={n.group} />;
+    }
+    if (n.kind === "tools") {
+      return (
+        <ToolGroupCard
+          key={n.key}
+          messages={n.items}
+          basePath={basePath}
+          sessionId={session.id}
+          onPreview={onOpenPreview}
+        />
+      );
+    }
+    const m = n.msg;
+    if (m.role === "user") {
+      return <UserMessage key={m.id} message={m} sessionId={session.id} projectId={project?.id} />;
+    }
+    if (m.role === "tool") {
+      return (
+        <ToolCard
+          key={m.id}
+          message={m}
+          basePath={basePath}
+          sessionId={session.id}
+          onPreview={onOpenPreview}
+        />
+      );
+    }
+    if (m.role === "system") {
+      return (
+        <div key={m.id} className={`msg-system${m.severity === "warning" ? " msg-warning" : ""}`}>
+          <TriangleAlert size={14} aria-hidden="true" />
+          <span>{m.text}</span>
+          {m.retryable && (
+            <button className="msg-retry" onClick={() => void retryConnection(session.id)}>
+              Retry connection
+            </button>
+          )}
+        </div>
+      );
+    }
+    if (m.role === "reasoning") {
+      return (
+        <ReasoningBlock
+          key={`${m.id}:${reasoningExpanded ? "open" : "closed"}`}
+          message={m}
+          live={busyTurn === m.turnId && m.reasoningMs === undefined}
+          defaultOpen={reasoningExpanded}
+        />
+      );
+    }
+    if (m.id === streamingId) {
+      return (
+        <div key={m.id} className="msg-assistant">
+          <StreamingMd text={m.text} onOpenFile={onOpenPreview} onOpenExternal={onOpenExternal} />
+        </div>
+      );
+    }
+    return (
+      <div key={m.id} className="msg-assistant">
+        <Md text={m.text} onOpenFile={onOpenPreview} onOpenExternal={onOpenExternal} />
+      </div>
+    );
+  };
+
   return (
     <div className="thread-col">
-      <div className="thread-head">
-        <span className="thread-avatar" aria-hidden="true">
-          {(project?.name ?? "cw").slice(0, 2).toUpperCase()}
-        </span>
-        <span className="crumb" title={`${project?.name ?? ""} / ${session.title}`}>
-          <span>{project?.name ?? "…"}</span>
-          <span className="crumb-sep">/</span>
-          <strong>{session.title}</strong>
-        </span>
-        <GitPanelBar key={session.id} sessionId={session.id} compact />
-        <span className="thread-status">
-          {busyTurn && <WorkingPill word={workingWord} />}
-        </span>
-      </div>
+      {head}
+      <MainTabStrip
+        sessionId={session.id}
+        driver={session.driver}
+        hasPr={hasPr}
+        trailing={hasPr ? <PrSessionChip key={session.id} sessionId={session.id} /> : undefined}
+      />
       <Notifications />
-      <div className="thread-body">
+      {showMainTool !== null ? (
+        <div
+          className={`main-tool-body${dropMain.over ? " drop-target-active" : ""}`}
+          {...dropMain.bind}
+        >
+          <ToolContent tab={showMainTool} sessionId={session.id} panel="main" />
+        </div>
+      ) : (
+      <div
+        className={`thread-body${dropMain.over ? " drop-target-active" : ""}`}
+        {...dropMain.bind}
+      >
         <div className="thread-scroll" ref={scrollRef} onScroll={onScroll}>
         <div className="thread-inner">
           {historyLoading && messages.length === 0 && (
@@ -203,81 +412,45 @@ export function ThreadView() {
               <div>Prompt below to begin.</div>
             </div>
           )}
-          {nodes.map((n) => {
-            if (n.kind === "sub") {
-              return <SubagentCard key={n.key} group={n.group} />;
-            }
-            const m = n.msg;
-            if (m.role === "user") {
-              return (
-                <div key={m.id} className="msg-user">
-                  {splitImageMentions(m.text).map((seg, i) =>
-                    seg.kind === "image" ? (
-                      <ImageThumb
-                        key={i}
-                        target={{ sessionId: session.id, projectId: project?.id }}
-                        path={seg.path}
-                        className="msg-image-thumb"
-                      />
-                    ) : (
-                      <span key={i}>{seg.value}</span>
-                    )
-                  )}
-                </div>
-              );
-            }
-            if (m.role === "tool") {
-              return (
-                <ToolCard
-                  key={m.id}
-                  message={m}
-                  basePath={project?.rootPath}
-                  sessionId={session.id}
-                  onPreview={onOpenPreview}
-                />
-              );
-            }
-            if (m.role === "system") {
-              return (
-                <div key={m.id} className="msg-system">
-                  <TriangleAlert size={14} aria-hidden="true" />
-                  <span>{m.text}</span>
-                </div>
-              );
-            }
-            if (m.id === streamingId) {
-              return (
-                <div key={m.id} className="msg-assistant">
-                  <div className="md md-streaming" style={{ whiteSpace: "pre-wrap" }}>
-                    {m.text}
-                  </div>
-                </div>
-              );
-            }
-            return (
-              <div key={m.id} className="msg-assistant">
-                <Md text={m.text} onOpenFile={onOpenPreview} />
-              </div>
-            );
-          })}
-          {busyTurn && <WorkingPill word={workingWord} />}
-          {!busyTurn && lastTurn && (
-            <div className="turn-sep">Worked for {formatDuration(lastTurn.ms)}</div>
+          {turns.map((turn, index) => (
+            <TurnBlock
+              key={`${turn.turnId}:${index}`}
+              running={turn.running}
+              startedAt={turn.startedAt}
+              durationMs={turn.durationMs}
+              hasActivity={turn.pieces.activity.length > 0}
+              autoExpandIfFits={index === turns.length - 1}
+              pending={turn.pending}
+              lead={turn.pieces.lead.map((m) => renderNode({ kind: "msg", msg: m }))}
+              activity={turn.pieces.activity.map(renderNode)}
+              system={turn.pieces.system.map((m) => renderNode({ kind: "msg", msg: m }))}
+              pinned={turn.pieces.pinned ? renderNode({ kind: "msg", msg: turn.pieces.pinned }) : undefined}
+            />
+          ))}
+          {!atBottom && (
+            <div className="jump-bottom-wrap">
+              <button className="jump-bottom" onClick={scrollToBottom} title="Scroll to bottom" aria-label="Scroll to bottom">
+                <ChevronDown size={14} aria-hidden="true" />
+                Scroll to bottom
+              </button>
+            </div>
           )}
           </div>
         </div>
-      {usage && (
-        <div className="usage">
-          in <b>{usage.inputTokens}</b> · out <b>{usage.outputTokens}</b> · <b>${usage.costUsd.toFixed(4)}</b> ·{" "}
-          {usage.numTurns} turns
-        </div>
+      </div>
       )}
+      {showMainTool === null && (
       <div className="composer-wrap">
+        <TodoDock sessionId={session.id} />
+        <PrUpdateDock key={`pr-dock:${session.id}`} sessionId={session.id} />
         <ApprovalDock sessionId={session.id} />
         <QuestionDock sessionId={session.id} />
-        <Composer key={session.id} sessionId={session.id} driver={session.driver} />
+        <Composer key={`composer:${session.id}`} sessionId={session.id} driver={session.driver} />
       </div>
-      </div>
+      )}
+      {(isBottomOpen(panelDockByTab) || draggingTab !== null) && (
+        <BottomPanel sessionId={session.id} driver={session.driver} hasPr={hasPr} />
+      )}
     </div>
   );
 }

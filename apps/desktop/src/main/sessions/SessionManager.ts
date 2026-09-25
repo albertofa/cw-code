@@ -1,48 +1,83 @@
-import { app } from "electron";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import type {
   AppSettings,
   ApprovalDecision,
   CliDriver,
+  CommandInvocation,
+  CommandOption,
   ComposerPrefs,
   CreateSessionOptions,
   DriverKind,
+  GitStatus,
   HistoryMessage,
   ModelOption,
+  PermissionOption,
+  PrRef,
+  PrSummary,
   Project,
+  RetryConnectionResult,
   SessionCleanupResult,
   SessionMeta,
+  SessionPrLink,
   SessionStatus,
   SettingsPatch,
+  SubagentToolsResult,
   ThreadEvent,
   TurnHandle,
+  UsageLedgerQuery,
+  UsageLedgerRow,
   WorktreePruneSummary
 } from "@cw-code/contracts";
 import { SessionStore } from "./SessionStore.js";
+import {
+  addUnlinkedKey,
+  applyTurnSeen,
+  authorLocalBranch,
+  findLink,
+  isFinishedPrState,
+  linkFromStatus,
+  markSeen,
+  prHeadPlan,
+  removeLink,
+  removeUnlinkedKey,
+  upsertLink,
+  type PrHeadPlan
+} from "../github/prLinks.js";
+import { prKey, prRefFromUrl } from "../github/prParsers.js";
 import { buildTurnEnv } from "./env.js";
 import { isWorktreeOrphaned, looksLikeWorktree, pinsWorktree, sameWorktreePath } from "./worktreeCleanup.js";
 import { SettingsStore } from "../settings/SettingsStore.js";
 import { resolveClaudeModels } from "../settings/settingsUtils.js";
+import { permissionOption, withSyntheticFullAccess } from "../providers/permissions.js";
 import { TracingCliDriver } from "../debug/tracingDriver.js";
 import { CLAUDE_CURATED_MODELS, ClaudeCliDriver } from "../providers/claude/ClaudeCliDriver.js";
 import { OpencodeDriver } from "../providers/opencode/OpencodeDriver.js";
 import { CodexCliDriver } from "../providers/codex/CodexCliDriver.js";
-import { GitService, safeSegment, type CreatedWorktree, type RemoveWorktreeResult } from "../fs/GitService.js";
+import { defaultBinary, execText, GitService, safeSegment, type CreatedWorktree, type RemoveWorktreeResult } from "../fs/GitService.js";
 import { resolveAttachments } from "./attachments.js";
 import { AUTO_TITLE_TIMEOUT_MS, buildTitlePrompt, sanitizeGeneratedTitle } from "./autoTitle.js";
 import { branchNameForTitle, TEMP_BRANCH_PATTERN } from "./branchName.js";
 import { NEW_SESSION_TITLE, pickRestoreCandidate } from "./sessionRestore.js";
+import { opencodeServerDir, sessionDbPath, settingsFilePath, titleGenDir, usageDir, worktreesDir } from "../paths/appPaths.js";
+import { UsageLedger } from "../usage/UsageLedger.js";
 
 export interface SessionManagerOptions {
   dbPath?: string;
   settingsPath?: string;
+  sessionStore?: SessionStore;
+  settingsStore?: SettingsStore;
   onEvent?: (sessionId: string, event: ThreadEvent) => void;
   onTitle?: (sessionId: string, title: string) => void;
   drivers?: Partial<Record<DriverKind, CliDriver>>;
   gitService?: GitService;
   worktreesRoot?: string;
+  prHead?: (ref: PrRef) => string | null;
+  prHeadRefresh?: (ref: PrRef) => Promise<string | null>;
+  prState?: (ref: PrRef) => PrSummary["state"] | null;
+  prUpdatedAt?: (ref: PrRef) => number | null;
+  usageLedger?: UsageLedger;
 }
 
 interface TitleTurn {
@@ -67,7 +102,8 @@ export class SessionManager {
   private store: SessionStore;
   private settings: SettingsStore;
   private drivers: Record<DriverKind, CliDriver>;
-  private activeTurns = new Map<string, string>();
+  private activeTurns = new Map<string, { sessionId: string; startedAt: number }>();
+  private settledTurns = new Map<string, string>();
   private titleTurns = new Map<string, TitleTurn>();
   private firstPrompts = new Map<string, string>();
   private pendingTurns = new Set<string>();
@@ -76,24 +112,42 @@ export class SessionManager {
   private branchRenamed = new Set<string>();
   private onEvent: (sessionId: string, event: ThreadEvent) => void;
   private onTitle: (sessionId: string, title: string) => void;
+  private onSession: (session: SessionMeta) => void = () => {};
   private git: GitService;
   private worktreesRoot: string;
   private deltaBuffer = new Map<string, { sessionId: string; text: string; timer: NodeJS.Timeout }>();
   private turnBaseShas = new Map<string, string>();
+  private disposed = false;
+  private prHead: (ref: PrRef) => string | null;
+  private prHeadRefresh?: (ref: PrRef) => Promise<string | null>;
+  private prState: (ref: PrRef) => PrSummary["state"] | null;
+  private prUpdatedAt: (ref: PrRef) => number | null;
+  private turnPrRefs = new Map<string, PrRef[]>();
+  private usageLedger: UsageLedger;
 
   constructor(opts: SessionManagerOptions = {}) {
-    const dbPath = opts.dbPath ?? join(app.getPath("userData"), "cw-code.db");
-    this.store = new SessionStore(dbPath);
-    const settingsPath = opts.settingsPath ?? join(app.getPath("userData"), "cw-settings.json");
-    this.settings = new SettingsStore(settingsPath);
+    const dbPath = opts.dbPath ?? sessionDbPath();
+    this.store = opts.sessionStore ?? new SessionStore(dbPath);
+    this.settings = opts.settingsStore ?? new SettingsStore(opts.settingsPath ?? settingsFilePath());
     this.onEvent = opts.onEvent ?? (() => {});
     this.onTitle = opts.onTitle ?? (() => {});
     this.git = opts.gitService ?? new GitService(() => this.settings.get());
-    this.worktreesRoot = opts.worktreesRoot ?? join(app.getPath("userData"), "worktrees");
+    this.worktreesRoot = opts.worktreesRoot ?? worktreesDir();
+    this.prHead = opts.prHead ?? (() => null);
+    this.prHeadRefresh = opts.prHeadRefresh;
+    this.prState = opts.prState ?? (() => null);
+    this.prUpdatedAt = opts.prUpdatedAt ?? (() => null);
+    this.usageLedger = opts.usageLedger ?? new UsageLedger(opts.dbPath ? join(dirname(dbPath), "usage") : usageDir());
     const getSettings = (): AppSettings => this.settings.get();
     this.drivers = {
       claude: opts.drivers?.claude ?? new TracingCliDriver(new ClaudeCliDriver((e) => this.routeEvent(e), getSettings)),
-      opencode: opts.drivers?.opencode ?? new TracingCliDriver(new OpencodeDriver((e) => this.routeEvent(e), getSettings)),
+      opencode:
+        opts.drivers?.opencode ??
+        new TracingCliDriver(
+          new OpencodeDriver((e) => this.routeEvent(e), getSettings, undefined, {
+            sharedRoot: opencodeServerDir()
+          })
+        ),
       codex: opts.drivers?.codex ?? new TracingCliDriver(new CodexCliDriver((e) => this.routeEvent(e), getSettings))
     };
   }
@@ -104,7 +158,7 @@ export class SessionManager {
       return;
     }
     if (event.type === "assistant.delta") {
-      this.bufferDelta(event.turnId, this.activeTurns.get(event.turnId) ?? "", event.text);
+      this.bufferDelta(event.turnId, this.activeTurns.get(event.turnId)?.sessionId ?? "", event.text);
       return;
     }
     if (event.type === "turn.done") {
@@ -113,8 +167,19 @@ export class SessionManager {
       return;
     }
     this.flushDelta(event.turnId);
-    const sessionId = this.activeTurns.get(event.turnId) ?? "";
+    const sessionId =
+      this.activeTurns.get(event.turnId)?.sessionId ??
+      (event.type === "tool.result" ? this.settledTurns.get(event.turnId) : undefined) ??
+      "";
     this.handleDriverEvent(sessionId, event);
+  }
+
+  private settleTurn(turnId: string, sessionId: string): void {
+    this.activeTurns.delete(turnId);
+    for (const [settledTurnId, owner] of this.settledTurns) {
+      if (owner === sessionId) this.settledTurns.delete(settledTurnId);
+    }
+    this.settledTurns.set(turnId, sessionId);
   }
 
   private handleTitleTurnEvent(event: ThreadEvent): void {
@@ -150,6 +215,7 @@ export class SessionManager {
     const turn = this.titleTurns.get(turnId);
     if (!turn || turn.settled) return;
     turn.settled = true;
+    this.titleTurns.delete(turnId);
     clearTimeout(turn.timer);
     const title = sanitizeGeneratedTitle(turn.text);
     if (!title) {
@@ -196,6 +262,17 @@ export class SessionManager {
     this.onTitle = onTitle;
   }
 
+  setSessionEmitter(onSession: (session: SessionMeta) => void): void {
+    this.onSession = onSession;
+  }
+
+  private emitSession(sessionId: string): SessionMeta {
+    const updated = this.store.getSession(sessionId);
+    if (!updated) throw new Error(`unknown session ${sessionId}`);
+    this.onSession(updated);
+    return updated;
+  }
+
   getSettings(): AppSettings {
     return this.settings.get();
   }
@@ -206,15 +283,34 @@ export class SessionManager {
 
   private handleDriverEvent(sessionId: string, event: ThreadEvent): void {
     if (event.type === "turn.done") {
-      this.activeTurns.delete(event.turnId);
-      this.store.updateSession(event.sessionId, { resumeCursor: event.resumeCursor, status: "done" });
-      if (!event.isError) void this.renameBranchForTitle(event.sessionId, event.turnId);
+      this.recordUsage(event);
+      const backgroundTasks = event.backgroundTasks ?? 0;
+      if (backgroundTasks > 0) {
+        this.store.updateSession(event.sessionId, {
+          resumeCursor: event.resumeCursor,
+          status: "working"
+        });
+      } else {
+        const wasActive = this.activeTurns.has(event.turnId);
+        this.settleTurn(event.turnId, event.sessionId);
+        const stillActive = [...this.activeTurns.values()].some((entry) => entry.sessionId === event.sessionId);
+        this.store.updateSession(event.sessionId, {
+          resumeCursor: event.resumeCursor,
+          ...(stillActive ? {} : { status: "done" as const })
+        });
+        if (wasActive && !event.isError) void this.renameBranchForTitle(event.sessionId, event.turnId);
+        const covered = this.turnPrRefs.get(event.turnId) ?? [];
+        this.turnPrRefs.delete(event.turnId);
+        this.syncPrSeenAfterTurn(event.sessionId, covered);
+      }
     }
     if (event.type === "turn.error") {
-      this.activeTurns.delete(event.turnId);
+      if (sessionId) this.settleTurn(event.turnId, sessionId);
+      else this.activeTurns.delete(event.turnId);
+      this.turnPrRefs.delete(event.turnId);
       if (sessionId) {
         this.store.updateSession(sessionId, {
-          status: "idle",
+          status: "holding",
           ...(event.resumeCursor ? { resumeCursor: event.resumeCursor } : {})
         });
       }
@@ -228,6 +324,32 @@ export class SessionManager {
       }
     }
     this.onEvent(sessionId, event);
+  }
+
+  private recordUsage(event: Extract<ThreadEvent, { type: "turn.done" }>): void {
+    if (event.usage.length === 0) return;
+    const session = this.store.getSession(event.sessionId);
+    if (!session) return;
+    try {
+      this.usageLedger.record({
+        turnId: event.turnId,
+        sessionId: event.sessionId,
+        projectId: session.projectId,
+        driver: session.driver,
+        at: new Date(),
+        usage: event.usage
+      });
+    } catch (err) {
+      console.warn(`usage ledger record failed for session ${event.sessionId}: ${(err as Error).message}`);
+    }
+  }
+
+  queryUsageLedger(query: UsageLedgerQuery): UsageLedgerRow[] {
+    return this.usageLedger.query(query);
+  }
+
+  getDrivers(): Record<DriverKind, CliDriver> {
+    return this.drivers;
   }
 
   listProjects(): Project[] {
@@ -317,18 +439,44 @@ export class SessionManager {
         });
       }
     }
-    const worktree = await this.git.createWorktree(
-      project.rootPath,
-      project.id,
-      id,
-      this.worktreesRoot,
-      options.baseBranch
-    );
+    const worktree = await this.createSessionWorktree(project, id, options);
     return this.store.createSession(projectId, driver, "New session", {
       id,
       worktreePath: worktree.path,
       branch: worktree.branch
     });
+  }
+
+  private async createSessionWorktree(project: Project, id: string, options: CreateSessionOptions): Promise<CreatedWorktree> {
+    const plan = options.prHead ? await this.planPrHead(project, options) : null;
+    if (plan?.kind === "attach") {
+      const target = join(this.worktreesRoot, safeSegment(project.id), safeSegment(id));
+      return this.git.attachWorktree(project.rootPath, target, plan.branch);
+    }
+    const base =
+      plan?.kind === "base"
+        ? plan.branch
+        : plan?.kind === "fetch"
+          ? await this.git.fetchPullRequestHead(project.rootPath, plan.number)
+          : options.baseBranch;
+    return this.git.createWorktree(project.rootPath, project.id, id, this.worktreesRoot, base);
+  }
+
+  private async planPrHead(project: Project, options: CreateSessionOptions): Promise<PrHeadPlan | null> {
+    const branches = await this.git.branches(project.rootPath);
+    const local = authorLocalBranch(options, branches);
+    const tip = local ? await this.localBranchTip(project.rootPath, local.name) : null;
+    return prHeadPlan(options, branches, local && tip ? { [local.name]: tip } : {});
+  }
+
+  private async localBranchTip(root: string, branch: string): Promise<string | null> {
+    const binary = this.settings.get().gitBinaryPath?.trim() || defaultBinary("git");
+    try {
+      return (await execText(binary, ["-C", root, "rev-parse", "--verify", "--quiet", `refs/heads/${branch}^{commit}`], root)).trim() || null;
+    } catch (err) {
+      console.warn(`could not resolve local branch '${branch}': ${(err as Error).message}`);
+      return null;
+    }
   }
 
   private async reusableWorktree(project: Project, requested: string): Promise<CreatedWorktree | null> {
@@ -368,6 +516,80 @@ export class SessionManager {
     return updated;
   }
 
+  syncPrLink(sessionId: string, status: GitStatus): SessionMeta | null {
+    const session = this.store.getSession(sessionId);
+    if (!session) return null;
+    const ref = status.pullRequest ? prRefFromUrl(status.pullRequest.url) : null;
+    const headSha = ref ? this.prHead(ref) : null;
+    const link = linkFromStatus(session, status, Date.now(), headSha);
+    if (!link) return null;
+    this.store.updateSession(sessionId, { prs: upsertLink(session.prs, link) });
+    return this.emitSession(sessionId);
+  }
+
+  linkPr(sessionId: string, link: SessionPrLink): SessionMeta {
+    const session = this.store.getSession(sessionId);
+    if (!session) throw new Error(`unknown session ${sessionId}`);
+    const prUnlinked = removeUnlinkedKey(session.prUnlinked, prKey(link.ref));
+    this.store.updateSession(sessionId, { prs: upsertLink(session.prs, link), prUnlinked });
+    return this.emitSession(sessionId);
+  }
+
+  unlinkPr(sessionId: string, ref: PrRef): SessionMeta {
+    const session = this.store.getSession(sessionId);
+    if (!session) throw new Error(`unknown session ${sessionId}`);
+    const prUnlinked = addUnlinkedKey(session.prUnlinked, prKey(ref));
+    this.store.updateSession(sessionId, { prs: removeLink(session.prs, ref), prUnlinked });
+    return this.emitSession(sessionId);
+  }
+
+  markPrSeen(sessionId: string, ref: PrRef, headSha: string | null, seenAt: number | null): SessionMeta {
+    const session = this.store.getSession(sessionId);
+    if (!session) throw new Error(`unknown session ${sessionId}`);
+    const link = findLink(session.prs, ref);
+    if (link) this.store.updateSession(sessionId, { prs: upsertLink(session.prs, markSeen(link, headSha, seenAt ?? Date.now())) });
+    return this.emitSession(sessionId);
+  }
+
+  private syncPrSeenAfterTurn(sessionId: string, coveredRefs: PrRef[]): void {
+    const session = this.store.getSession(sessionId);
+    const links = session?.prs ?? [];
+    if (links.length === 0) return;
+    const coveredKeys = new Set(coveredRefs.map((ref) => prKey(ref)));
+    const targets = links.map((link) => ({ ref: link.ref, covered: links.length === 1 || coveredKeys.has(prKey(link.ref)) }));
+    const worktreePath = session?.worktreePath;
+    const now = Date.now();
+    void (async () => {
+      const [heads, worktreeHead] = await Promise.all([
+        Promise.all(targets.map((target) => this.turnEndHead(target.ref))),
+        worktreePath && targets.some((target) => !target.covered)
+          ? this.git.headSha(worktreePath).catch(() => null)
+          : Promise.resolve(null)
+      ]);
+      const current = this.store.getSession(sessionId);
+      if (!current?.prs) return;
+      const results = targets.map((target, index) => ({ ...target, head: heads[index], seenAt: this.prUpdatedAt(target.ref) }));
+      const prs = applyTurnSeen(current.prs, results, worktreeHead, now);
+      if (prs === current.prs) return;
+      this.store.updateSession(sessionId, { prs });
+      this.emitSession(sessionId);
+    })();
+  }
+
+  private async turnEndHead(ref: PrRef): Promise<string | null> {
+    if (isFinishedPrState(this.prState(ref))) return this.prHead(ref);
+    return (await this.prHeadRefresh?.(ref).catch(() => null)) ?? this.prHead(ref);
+  }
+
+  expireHoldingSessions(sessionIds: string[]): SessionMeta[] {
+    const expired: SessionMeta[] = [];
+    for (const sessionId of sessionIds) {
+      const updated = this.store.expireHolding(sessionId);
+      if (updated) expired.push(updated);
+    }
+    return expired;
+  }
+
   async resolveSession(
     sessionId: string,
     status: SessionStatus,
@@ -376,8 +598,8 @@ export class SessionManager {
     const session = this.store.getSession(sessionId);
     if (!session) throw new Error(`unknown session ${sessionId}`);
     const project = this.getProject(session.projectId);
-    for (const owner of this.activeTurns.values()) {
-      if (owner === sessionId) throw new Error("session busy (turn active)");
+    for (const entry of this.activeTurns.values()) {
+      if (entry.sessionId === sessionId) throw new Error("session busy (turn active)");
     }
     if (this.pendingTurns.has(sessionId)) throw new Error("session busy (turn pending)");
     if (this.pendingResolves.has(sessionId)) throw new Error("session busy (resolve pending)");
@@ -403,7 +625,11 @@ export class SessionManager {
   ): Promise<SessionCleanupResult> {
     const sessionId = session.id;
     this.turnBaseShas.delete(sessionId);
+    this.firstPrompts.delete(sessionId);
+    this.branchRenamed.delete(sessionId);
+    this.cancelTitleTurns(sessionId);
     this.store.updateSession(sessionId, { status });
+    this.drivers[session.driver].stopSession?.(sessionId);
     const worktreePath = session.worktreePath;
     if (!worktreePath) {
       return { sessionId, status, worktreeOrphaned: false, worktreeRemoved: false, branchDeleted: false };
@@ -444,6 +670,7 @@ export class SessionManager {
       };
     }
     if (!removal.removed) {
+      if (!removal.dirtyBlocked) this.store.updateSession(sessionId, { worktreePath: undefined });
       return {
         sessionId,
         status,
@@ -471,12 +698,27 @@ export class SessionManager {
     };
   }
 
+  private cancelTitleTurns(sessionId: string): void {
+    for (const [turnId, turn] of [...this.titleTurns]) {
+      if (turn.sessionId !== sessionId) continue;
+      turn.settled = true;
+      this.titleTurns.delete(turnId);
+      clearTimeout(turn.timer);
+      turn.resolve(null);
+      try {
+        turn.driver.interrupt(turnId);
+      } catch {
+      }
+    }
+  }
+
   private async deleteOrphanBranch(
     repoRoot: string,
     branch: string,
     removedPath: string,
     force: boolean
   ): Promise<BranchOutcome> {
+    if (!branch.startsWith("cw/")) return { deleted: false };
     try {
       const branches = await this.git.branches(repoRoot);
       const info = branches.find((b) => b.name === branch && !b.remote);
@@ -493,8 +735,11 @@ export class SessionManager {
   }
 
   async pruneStaleWorktrees(): Promise<WorktreePruneSummary> {
-    const summary: WorktreePruneSummary = { scanned: 0, removed: 0, skipped: 0, failed: 0, errors: [], keptDirty: [] };
-    if (!existsSync(this.worktreesRoot)) return summary;
+    const summary: WorktreePruneSummary = { scanned: 0, removed: 0, skipped: 0, failed: 0, errors: [], keptDirty: [], clearedSessionIds: [] };
+    if (!existsSync(this.worktreesRoot)) {
+      this.clearMissingWorktrees(summary);
+      return summary;
+    }
     const sessions = this.store.listAllSessions();
     const touchedProjects = new Set<string>();
     for (const projectDir of readdirSync(this.worktreesRoot, { withFileTypes: true })) {
@@ -525,7 +770,17 @@ export class SessionManager {
         summary.errors.push(`${project.rootPath}: worktree prune failed: ${(err as Error).message}`);
       }
     }
+    this.clearMissingWorktrees(summary);
     return summary;
+  }
+
+  private clearMissingWorktrees(summary: WorktreePruneSummary): void {
+    for (const session of this.store.listAllSessions()) {
+      if (session.worktreePath && !pinsWorktree(session) && !existsSync(session.worktreePath)) {
+        this.store.updateSession(session.id, { worktreePath: undefined });
+        summary.clearedSessionIds.push(session.id);
+      }
+    }
   }
 
   private async removeStaleDir(repoRoot: string | null, dirPath: string, summary: WorktreePruneSummary): Promise<void> {
@@ -557,19 +812,26 @@ export class SessionManager {
     summary.removed += 1;
   }
 
+  resumeCursorFor(sessionId: string): string {
+    return this.store.getSession(sessionId)?.resumeCursor ?? "";
+  }
+
   getComposer(sessionId: string): ComposerPrefs {
     const session = this.store.getSession(sessionId);
     if (!session) throw new Error(`unknown session ${sessionId}`);
-    let model = session.model;
-    if (!model && session.driver === "claude") {
-      const fallback = this.settings.get().claudeDefaultModel?.trim() ?? "";
-      if (fallback) model = fallback;
-    }
+    const model = session.model;
+    const permissionMode = session.permissionMode ?? "auto";
     return {
       model,
       effort: session.effort ?? "medium",
       variant: session.variant,
-      permissionMode: session.permissionMode ?? "auto"
+      permissionMode:
+        permissionMode === "auto" ||
+        permissionMode === "acceptEdits" ||
+        permissionMode === "bypassPermissions" ||
+        permissionMode === "manual"
+          ? permissionMode
+          : "manual"
     };
   }
 
@@ -602,11 +864,19 @@ export class SessionManager {
     return this.verifyEmptyHistory(session, project);
   }
 
+  async getSubagentTools(sessionId: string, agentId: string): Promise<SubagentToolsResult> {
+    const session = this.store.getSession(sessionId);
+    if (!session) throw new Error(`unknown session ${sessionId}`);
+    const driver = this.drivers[session.driver];
+    if (!driver.getSubagentTools) return { items: [] };
+    return driver.getSubagentTools(await this.ensureWorktree(sessionId), session.resumeCursor, agentId);
+  }
+
   private async healMissingCursor(session: SessionMeta, project: Project): Promise<HistoryMessage[] | null> {
     if (session.title.trim().toLowerCase() === NEW_SESSION_TITLE.toLowerCase()) return null;
     if (this.pendingTurns.has(session.id)) return null;
-    for (const owner of this.activeTurns.values()) {
-      if (owner === session.id) return null;
+    for (const entry of this.activeTurns.values()) {
+      if (entry.sessionId === session.id) return null;
     }
     let cwd: string;
     try {
@@ -619,8 +889,8 @@ export class SessionManager {
   }
 
   private async verifyEmptyHistory(session: SessionMeta, project: Project): Promise<HistoryMessage[]> {
-    for (const owner of this.activeTurns.values()) {
-      if (owner === session.id) return [];
+    for (const entry of this.activeTurns.values()) {
+      if (entry.sessionId === session.id) return [];
     }
     let cwd: string;
     try {
@@ -695,20 +965,23 @@ export class SessionManager {
     }
   }
 
-  private sessionEnvVars(session: SessionMeta, project: Project, cwd: string): Record<string, string> {
+  private sessionEnvVars(
+    sessionId: string,
+    session: SessionMeta | undefined,
+    project: Project | undefined,
+    cwd: string
+  ): Record<string, string> {
     return {
       CW_WORKTREE_PATH: cwd,
-      CW_PROJECT_ROOT: project.rootPath,
-      CW_SESSION_ID: session.id
+      CW_PROJECT_ROOT: project?.rootPath ?? cwd,
+      CW_SESSION_ID: session?.id ?? sessionId
     };
   }
 
   turnEnv(sessionId: string, cwd: string): Record<string, string> {
     const session = this.store.getSession(sessionId);
-    if (!session) return buildTurnEnv(process.env, { CW_WORKTREE_PATH: cwd });
-    const project = this.store.getProject(session.projectId);
-    if (!project) return buildTurnEnv(process.env, { CW_WORKTREE_PATH: cwd, CW_SESSION_ID: session.id });
-    return buildTurnEnv(process.env, this.sessionEnvVars(session, project, cwd));
+    const project = session ? this.store.getProject(session.projectId) : undefined;
+    return buildTurnEnv(process.env, this.sessionEnvVars(sessionId, session, project, cwd));
   }
 
   turnBaseSha(sessionId: string): string | null {
@@ -725,7 +998,11 @@ export class SessionManager {
     }
   }
 
-  async startTurn(sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[] }): Promise<string> {
+  async startTurn(
+    sessionId: string,
+    prompt: string,
+    opts?: { prefs?: ComposerPrefs; attachments?: string[]; command?: CommandInvocation; prRefs?: PrRef[] }
+  ): Promise<string> {
     const session = this.store.getSession(sessionId);
     if (!session) throw new Error(`unknown session ${sessionId}`);
     if (session.status === "resolved" || session.status === "archived") {
@@ -733,8 +1010,8 @@ export class SessionManager {
     }
     const project = this.store.getProject(session.projectId);
     if (!project) throw new Error(`unknown project ${session.projectId}`);
-    for (const [turnId, owner] of this.activeTurns) {
-      if (owner === sessionId) throw new Error(`session busy (turn ${turnId})`);
+    for (const [turnId, entry] of this.activeTurns) {
+      if (entry.sessionId === sessionId) throw new Error(`session busy (turn ${turnId})`);
     }
     if (this.pendingTurns.has(sessionId)) throw new Error("session busy (turn pending)");
     if (this.pendingResolves.has(sessionId)) throw new Error("session busy (resolve pending)");
@@ -742,7 +1019,7 @@ export class SessionManager {
     try {
       const cwd = await this.ensureWorktree(sessionId);
       await this.captureTurnBaseSha(sessionId, cwd, session.worktreePath);
-      const firstMessage = session.title === NEW_SESSION_TITLE;
+      const firstMessage = session.title === NEW_SESSION_TITLE && !opts?.command;
       const placeholder = prompt.slice(0, 60);
       if (firstMessage) {
         this.firstPrompts.set(sessionId, prompt);
@@ -762,9 +1039,11 @@ export class SessionManager {
         variant: prefs.variant,
         permissionMode: prefs.permissionMode,
         attachments: resolveAttachments(project.rootPath, cwd, opts?.attachments ?? []),
-        env: buildTurnEnv(process.env, this.sessionEnvVars(session, project, cwd))
+        ...(opts?.command ? { command: opts.command } : {}),
+        env: buildTurnEnv(process.env, this.sessionEnvVars(session.id, session, project, cwd))
       });
-      this.activeTurns.set(handle.turnId, sessionId);
+      this.activeTurns.set(handle.turnId, { sessionId, startedAt: Date.now() });
+      if (opts?.prRefs && opts.prRefs.length > 0) this.turnPrRefs.set(handle.turnId, opts.prRefs);
       this.store.updateSession(sessionId, { status: "working" });
       if (firstMessage) this.maybeAutoTitle(sessionId, prompt, placeholder);
       return handle.turnId;
@@ -805,16 +1084,19 @@ export class SessionManager {
     }
     const settings = this.settings.get();
     const driver = this.drivers[settings.autoTitleDriver];
+    const titleSessionId = `title:${sessionId}`;
+    const titleRoot = this.titleGenRoot();
     let handle: TurnHandle;
     try {
       handle = driver.startTurn({
-        sessionId: `title:${sessionId}`,
+        sessionId: titleSessionId,
         prompt: buildTitlePrompt(prompt),
-        cwd: this.titleGenRoot(),
+        cwd: titleRoot,
         model: settings.autoTitleModel.trim() || undefined,
         effort: settings.autoTitleEffort,
         permissionMode: "auto",
-        maxTurns: 1
+        maxTurns: 1,
+        env: buildTurnEnv(process.env, this.sessionEnvVars(titleSessionId, undefined, undefined, titleRoot))
       });
     } catch (err) {
       console.warn(`title generation failed for ${sessionId}: ${(err as Error).message}`);
@@ -828,6 +1110,7 @@ export class SessionManager {
       const turn = this.titleTurns.get(handle.turnId);
       if (!turn || turn.settled) return;
       turn.settled = true;
+      this.titleTurns.delete(handle.turnId);
       turn.resolve(null);
       driver.interrupt(handle.turnId);
     }, AUTO_TITLE_TIMEOUT_MS);
@@ -846,9 +1129,34 @@ export class SessionManager {
   }
 
   private titleGenRoot(): string {
-    const dir = join(app.getPath("userData"), "title-gen");
+    const dir = titleGenDir();
     mkdirSync(dir, { recursive: true });
     return dir;
+  }
+
+  warmOpencodeModels(): void {
+    const pending = this.drivers.opencode.listModels?.(this.titleGenRoot());
+    void pending?.catch((err) => {
+      console.warn(`opencode model warmup failed: ${(err as Error).message}`);
+    });
+  }
+
+  async listCommands(sessionId: string): Promise<CommandOption[]> {
+    const session = this.store.getSession(sessionId);
+    if (!session) throw new Error(`unknown session ${sessionId}`);
+    const cwd =
+      session.worktreePath && existsSync(session.worktreePath)
+        ? session.worktreePath
+        : this.rootForProject(session.projectId);
+    return this.listCommandsFor(session.projectId, session.driver, cwd);
+  }
+
+  async listCommandsFor(projectId: string, driver: DriverKind, cwd?: string): Promise<CommandOption[]> {
+    const project = this.store.getProject(projectId);
+    if (!project) throw new Error(`unknown project ${projectId}`);
+    const driverInstance = this.drivers[driver];
+    if (typeof driverInstance.listCommands !== "function") return [];
+    return driverInstance.listCommands(cwd ?? project.rootPath);
   }
 
   async listModels(sessionId: string): Promise<ModelOption[]> {
@@ -897,13 +1205,99 @@ export class SessionManager {
     }
   }
 
+  private fallbackPermissionModes(): PermissionOption[] {
+    return withSyntheticFullAccess([
+      permissionOption("manual", true),
+      permissionOption("acceptEdits", true),
+      permissionOption("auto", true),
+      permissionOption("bypassPermissions", true)
+    ]);
+  }
+
+  async listPermissionModes(sessionId: string): Promise<PermissionOption[]> {
+    const session = this.store.getSession(sessionId);
+    if (!session) throw new Error(`unknown session ${sessionId}`);
+    try {
+      const cwd =
+        session.worktreePath && existsSync(session.worktreePath)
+          ? session.worktreePath
+          : this.rootForProject(session.projectId);
+      return await this.listPermissionModesFor(session.projectId, session.driver, cwd);
+    } catch (err) {
+      console.warn(`permission list failed for ${sessionId}: ${(err as Error).message}`);
+      return this.fallbackPermissionModes();
+    }
+  }
+
+  async listPermissionModesFor(projectId: string, driver: DriverKind, cwd?: string): Promise<PermissionOption[]> {
+    const project = this.store.getProject(projectId);
+    if (!project) throw new Error(`unknown project ${projectId}`);
+    const driverInstance = this.drivers[driver];
+    if (typeof driverInstance.listPermissionModes === "function") {
+      try {
+        return withSyntheticFullAccess(await driverInstance.listPermissionModes(cwd ?? project.rootPath));
+      } catch (err) {
+        console.warn(`permission list failed: ${(err as Error).message}`);
+      }
+    }
+    return this.fallbackPermissionModes();
+  }
+
+  async listPermissionModesForHarness(driver: DriverKind): Promise<PermissionOption[]> {
+    const driverInstance = this.drivers[driver];
+    if (typeof driverInstance.listPermissionModes === "function") {
+      try {
+        return withSyntheticFullAccess(await driverInstance.listPermissionModes(this.titleGenRoot()));
+      } catch (err) {
+        console.warn(`permission list failed for ${driver}: ${(err as Error).message}`);
+        throw err;
+      }
+    }
+    return this.fallbackPermissionModes();
+  }
+
+  listActiveTurns(): Array<{ sessionId: string; turnId: string; startedAt: number }> {
+    return [...this.activeTurns].map(([turnId, entry]) => ({
+      sessionId: entry.sessionId,
+      turnId,
+      startedAt: entry.startedAt
+    }));
+  }
+
   interrupt(turnId: string): void {
-    const sessionId = this.activeTurns.get(turnId);
+    const sessionId = this.activeTurns.get(turnId)?.sessionId;
     if (!sessionId) return;
     const session = this.store.getSession(sessionId);
     if (session) this.drivers[session.driver].interrupt(turnId);
-    this.activeTurns.delete(turnId);
-    this.store.updateSession(sessionId, { status: "idle" });
+    this.settleTurn(turnId, sessionId);
+    this.turnPrRefs.delete(turnId);
+    this.store.updateSession(sessionId, { status: "holding" });
+  }
+
+  async retryConnection(sessionId: string): Promise<RetryConnectionResult> {
+    const session = this.store.getSession(sessionId);
+    if (!session) throw new Error(`unknown session ${sessionId}`);
+    for (const entry of this.activeTurns.values()) {
+      if (entry.sessionId === sessionId) throw new Error("session busy (turn in progress)");
+    }
+    const driver = this.drivers[session.driver];
+    if (typeof driver.retryConnection !== "function") {
+      return { status: "done", history: await this.getHistory(sessionId) };
+    }
+    const cwd = await this.ensureWorktree(sessionId);
+    const result = await driver.retryConnection({
+      sessionId,
+      cwd,
+      resumeCursor: session.resumeCursor,
+      permissionMode: this.getComposer(sessionId).permissionMode
+    });
+    if (result.status === "running" && result.turnId) {
+      this.activeTurns.set(result.turnId, { sessionId, startedAt: Date.now() });
+      this.store.updateSession(sessionId, { status: "working" });
+    } else {
+      this.store.updateSession(sessionId, { status: "idle" });
+    }
+    return result;
   }
 
   async respondApproval(requestId: string, decision: ApprovalDecision): Promise<void> {
@@ -1039,15 +1433,26 @@ export class SessionManager {
   }
 
   dispose(): void {
+    if (this.disposed) return;
+    this.disposed = true;
     for (const pending of this.deltaBuffer.values()) clearTimeout(pending.timer);
     this.deltaBuffer.clear();
-    for (const turn of this.titleTurns.values()) {
+    for (const [turnId, turn] of [...this.titleTurns]) {
       clearTimeout(turn.timer);
       turn.resolve(null);
+      try {
+        turn.driver.interrupt(turnId);
+      } catch {
+      }
     }
     this.titleTurns.clear();
     this.firstPrompts.clear();
     this.turnBaseShas.clear();
+    try {
+      this.usageLedger.flush();
+    } catch (err) {
+      console.warn(`usage ledger flush failed: ${(err as Error).message}`);
+    }
     for (const driver of Object.values(this.drivers)) driver.dispose?.();
     this.store.close();
   }
