@@ -18,6 +18,7 @@ function renameWithRetry(from: string, to: string): void {
     } catch (error) {
       const code = (error as NodeJS.ErrnoException).code ?? "";
       if (attempt >= RENAME_ATTEMPTS || !RETRYABLE_RENAME_CODES.has(code)) throw error;
+      console.warn(`rename ${from} -> ${to} failed with ${code}; retry ${attempt} of ${RENAME_ATTEMPTS - 1}`);
       sleepSync(Math.min(RENAME_BACKOFF_MAX_MS, RENAME_BACKOFF_MS * attempt));
     }
   }

@@ -123,11 +123,25 @@ export function RecoveryScreen({ issues, dataDir }: { issues: MetadataIssue[]; d
                 ))}
               </ul>
             )}
-            <div className="recovery-actions">
-              <button type="button" className="btn btn-danger" disabled={busy} onClick={() => void startFresh(issue)}>
-                {START_FRESH_LABELS[issue.store]}
-              </button>
-            </div>
+            {issue.kind === "io" ? (
+              <>
+                <p className="recovery-explain">
+                  The file itself may be fine: another program (for example antivirus, a sync tool or a second cw-code
+                  window) may be holding it. Close that program and retry.
+                </p>
+                <div className="recovery-actions">
+                  <button type="button" className="btn btn-primary" disabled={busy} onClick={() => void run(() => window.cw.recovery.retry())}>
+                    Retry
+                  </button>
+                </div>
+              </>
+            ) : (
+              <div className="recovery-actions">
+                <button type="button" className="btn btn-danger" disabled={busy} onClick={() => void startFresh(issue)}>
+                  {START_FRESH_LABELS[issue.store]}
+                </button>
+              </div>
+            )}
           </section>
         ))}
         <div className="recovery-actions">

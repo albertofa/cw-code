@@ -13,6 +13,7 @@ export interface BackupInfo {
 
 const LAST_GOOD_LABEL = "last good";
 const MIGRATION_SUFFIX = /^(\d+)(?:\.\d{4}-\d{2}-\d{2}T\d{2}-\d{2}-\d{2}-\d{3}Z(?:-\d+)?)?\.bak$/;
+const ARCHIVED_LAST_GOOD_SUFFIX = /^last-good\.(\d{4}-\d{2}-\d{2})T(\d{2})-(\d{2})-\d{2}-\d{3}Z(?:-\d+)?\.bak$/;
 
 export function migrationBackupPath(filePath: string, version: number): string {
   return `${filePath}.v${version}.bak`;
@@ -20,6 +21,10 @@ export function migrationBackupPath(filePath: string, version: number): string {
 
 export function lastGoodBackupPath(filePath: string): string {
   return `${filePath}.last-good.bak`;
+}
+
+export function archivedLastGoodPath(filePath: string, now: number): string {
+  return uniquePath(`${filePath}.last-good.${timestampSuffix(now)}`, ".bak");
 }
 
 export function beforeRepairBackupPath(filePath: string): string {
@@ -39,6 +44,9 @@ export function uniquePath(base: string, extension = ""): string {
 export function backupLabel(file: string, name: string): string | null {
   const base = basename(file);
   if (name === `${base}.last-good.bak`) return LAST_GOOD_LABEL;
+  if (!name.startsWith(`${base}.`)) return null;
+  const archived = ARCHIVED_LAST_GOOD_SUFFIX.exec(name.slice(base.length + 1));
+  if (archived) return `${LAST_GOOD_LABEL} (${archived[1]} ${archived[2]}:${archived[3]} UTC)`;
   const prefix = `${base}.v`;
   if (!name.startsWith(prefix)) return null;
   const match = MIGRATION_SUFFIX.exec(name.slice(prefix.length));
@@ -72,6 +80,7 @@ export function hasBackupFiles(file: string): boolean {
 
 function labelOrder(label: string): number {
   if (label === LAST_GOOD_LABEL) return Number.MAX_SAFE_INTEGER;
+  if (label.startsWith(LAST_GOOD_LABEL)) return Number.MAX_SAFE_INTEGER - 1;
   return Number(label.replace(/^migration v/, ""));
 }
 

@@ -61,6 +61,9 @@ All backups sit next to the source file:
   downgrade round trip).
 - `<file>.last-good.bak`: a copy of the file after the last successful load,
   refreshed only when the bytes changed.
+- `<file>.last-good.<timestamp>.bak`: a verified copy of `.last-good.bak` made
+  before a restore or a fresh start, because the next successful load replaces
+  `.last-good.bak`. Listed on the recovery screen as "last good (<date>)".
 - `<file>.before-repair.bak`: the settings file as it was before the last
   load-time repair. Replaced only when a new repair sees different bytes. It is
   not offered on the recovery screen; open it by hand if needed.
@@ -70,8 +73,8 @@ All backups sit next to the source file:
   It is ignored and safe to delete while cw-code is closed.
 
 Writes go to a temp file in the same directory, which is fsynced and then
-renamed over the target (retried briefly when Windows reports the file as busy
-or locked). If cw-code stops mid-migration, the next start either finds the
+renamed over the target (retried up to five times, with a logged warning each
+time, when Windows reports the file as busy or locked). If cw-code stops mid-migration, the next start either finds the
 original schema-0 file (its backup already exists and is reused) or the
 finished schema-1 file.
 
@@ -105,7 +108,9 @@ Actions per file:
 - **Start with no projects / Start with default settings** (confirmation
   required): copies the current file, if any, to `<file>.broken-<timestamp>`
   (verified), then atomically writes an empty document and relaunches. This is
-  the way out for a corrupt file that has no backups yet.
+  the way out for a corrupt file that has no backups yet. Not offered for `io`
+  issues, where the file is probably intact behind a lock; those show Retry
+  with a note to close the program holding the file.
 
 Global actions:
 

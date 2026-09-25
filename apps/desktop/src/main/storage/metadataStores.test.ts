@@ -1,8 +1,10 @@
-import { chmodSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { openMetadataStores } from "./metadataStores.js";
+import { listBackups } from "./backups.js";
+import { metadataSchemaFor, openMetadataStores } from "./metadataStores.js";
+import { restoreBackup, startFresh } from "./recovery.js";
 
 function paths(): { dir: string; dbPath: string; settingsPath: string; sessionsFile: string } {
   const dir = mkdtempSync(join(tmpdir(), "cw-metadata-"));
@@ -84,5 +86,33 @@ describe("openMetadataStores", () => {
     } finally {
       chmodSync(sessionsFile, 0o644);
     }
+  });
+
+  it.each([
+    ["corrupt", (file: string) => writeFileSync(file, "broken{", "utf8")],
+    ["missing", (file: string) => rmSync(file)]
+  ])("keeps the previous last-good backup restorable after starting a %s file fresh", (kind, breakFile) => {
+    const { dbPath, settingsPath, sessionsFile } = paths();
+    const first = openMetadataStores({ dbPath, settingsPath });
+    if (!first.ok) throw new Error("expected the initial open to succeed");
+    first.sessionStore.addProject("/fixture/kept");
+    expect(openMetadataStores({ dbPath, settingsPath }).ok).toBe(true);
+    breakFile(sessionsFile);
+    const broken = openMetadataStores({ dbPath, settingsPath });
+    if (broken.ok) throw new Error("expected recovery issues");
+    expect(broken.issues[0]).toMatchObject({ store: "sessions", kind });
+
+    const fresh = startFresh(sessionsFile, metadataSchemaFor("sessions"));
+    const reopened = openMetadataStores({ dbPath, settingsPath });
+
+    if (!reopened.ok) throw new Error("expected the fresh store to open");
+    expect(reopened.sessionStore.listProjects()).toEqual([]);
+    const archived = listBackups(sessionsFile, metadataSchemaFor("sessions")).find((backup) => backup.path === fresh.archivedLastGood);
+    expect(archived).toMatchObject({ valid: true, label: expect.stringMatching(/^last good \(\d{4}-\d{2}-\d{2} \d{2}:\d{2} UTC\)$/) });
+
+    restoreBackup(sessionsFile, archived!.path, metadataSchemaFor("sessions"));
+    const restored = openMetadataStores({ dbPath, settingsPath });
+    if (!restored.ok) throw new Error("expected the restored store to open");
+    expect(restored.sessionStore.listProjects().map((project) => project.rootPath)).toEqual(["/fixture/kept"]);
   });
 });

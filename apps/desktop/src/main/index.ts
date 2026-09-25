@@ -230,15 +230,16 @@ function registerStartupIpc(): void {
     const issue = recoveryIssueFor(args);
     const result = restoreBackup(issue.file, args.backupPath, metadataSchemaFor(issue.store));
     console.warn(
-      `restored ${result.file} from ${result.restoredFrom}${result.brokenPath ? `; previous file kept at ${result.brokenPath}` : ""}`
+      `restored ${result.file} from ${result.restoredFrom}${result.brokenPath ? `; previous file kept at ${result.brokenPath}` : ""}${result.archivedLastGood ? `; last good backup kept at ${result.archivedLastGood}` : ""}`
     );
     relaunch();
   });
   ipcMain.handle("recovery.startFresh", (_e, args: { file: string }): void => {
     const issue = recoveryIssueFor(args);
+    if (issue.kind === "io") throw new Error(`${issue.file} may be intact behind a lock; retry instead of starting fresh`);
     const result = startFresh(issue.file, metadataSchemaFor(issue.store));
     console.warn(
-      `started ${result.file} fresh${result.brokenPath ? `; previous file kept at ${result.brokenPath}` : ""}`
+      `started ${result.file} fresh${result.brokenPath ? `; previous file kept at ${result.brokenPath}` : ""}${result.archivedLastGood ? `; last good backup kept at ${result.archivedLastGood}` : ""}`
     );
     relaunch();
   });
