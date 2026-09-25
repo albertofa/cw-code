@@ -1,0 +1,20 @@
+{
+  "name": "@cw-code/release-tools",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "builder-util-runtime": "9.7.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.6.3",
+    "vitest": "^3.2.4"
+  },
+  "description": "Release planning, versioning and Windows signing post-processing tools for cw-code.",
+  "license": "MIT"
+}

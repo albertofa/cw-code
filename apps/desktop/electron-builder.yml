@@ -35,6 +35,8 @@ extraResources:
 win:
   icon: resources/icon.ico
   executableName: cw-code
+  signExecutable: false
+  verifyUpdateCodeSignature: true
   target:
     - target: nsis
       arch:

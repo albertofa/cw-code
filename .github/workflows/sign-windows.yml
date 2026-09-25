@@ -1,0 +1,548 @@
+name: Sign Windows
+
+on:
+  workflow_call:
+    inputs:
+      signing-mode:
+        description: "signpath (SignPath Foundation, production-capable) or unsigned (explicit, never production)"
+        required: true
+        type: string
+      production:
+        description: "Production release: fail closed on any missing configuration, signature, publisher or timestamp"
+        required: false
+        type: boolean
+        default: false
+      version:
+        description: "Version applied to the workspace before packaging (X.Y.Z or X.Y.Z-alpha.N for production)"
+        required: true
+        type: string
+      source-sha:
+        description: "Full 40-hex commit SHA to build (must be on main in signpath mode)"
+        required: true
+        type: string
+    outputs:
+      release-artifact:
+        description: "Artifact holding the final release set (installer, blockmap, update info, signing.json, verified win-unpacked)"
+        value: ${{ jobs.finalize.outputs.release-artifact }}
+
+permissions:
+  contents: read
+
+defaults:
+  run:
+    shell: bash
+
+jobs:
+  guard:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      app-unsigned: ${{ steps.validate.outputs.app-unsigned }}
+      app-signed: ${{ steps.validate.outputs.app-signed }}
+      app-input: ${{ steps.validate.outputs.app-input }}
+      installer-unsigned: ${{ steps.validate.outputs.installer-unsigned }}
+      installer-metadata: ${{ steps.validate.outputs.installer-metadata }}
+      installer-signed: ${{ steps.validate.outputs.installer-signed }}
+      installer-input: ${{ steps.validate.outputs.installer-input }}
+      release: ${{ steps.validate.outputs.release }}
+      installer: ${{ steps.validate.outputs.installer }}
+    steps:
+      - name: Validate caller and inputs
+        id: validate
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          MODE: ${{ inputs.signing-mode }}
+          PRODUCTION: ${{ inputs.production }}
+          VERSION: ${{ inputs.version }}
+          SOURCE_SHA: ${{ inputs.source-sha }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+          TOOLING_SHA: ${{ job.workflow_sha }}
+        run: |
+          fail() { echo "::error::$1"; exit 1; }
+          [[ "$TOOLING_SHA" =~ ^[0-9a-f]{40}$ ]] || fail "job.workflow_sha is not a commit SHA ('$TOOLING_SHA'); cannot pin the gate tooling"
+          case "$EVENT_NAME" in
+            workflow_dispatch|workflow_run|push|schedule) ;;
+            *) fail "Windows signing only runs for workflow_dispatch, workflow_run, push or schedule callers, not $EVENT_NAME" ;;
+          esac
+          case "$MODE" in
+            signpath|unsigned) ;;
+            *) fail "signing-mode must be 'signpath' or 'unsigned', got '$MODE'" ;;
+          esac
+          if [ "$MODE" = "unsigned" ] && [ "$PRODUCTION" = "true" ]; then
+            fail "unsigned mode can never be production"
+          fi
+          [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || fail "source-sha must be a full lowercase 40-hex commit SHA"
+          if [ "$MODE" = "signpath" ] && [ "$REF" != "refs/heads/main" ]; then
+            fail "signpath mode only runs from refs/heads/main, got '$REF'"
+          fi
+          if [ "$PRODUCTION" = "true" ]; then
+            [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-alpha\.[0-9]+)?$ ]] || fail "production version must be X.Y.Z or X.Y.Z-alpha.N, got '$VERSION'"
+          else
+            [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)?$ ]] || fail "version must be X.Y.Z[-prerelease], got '$VERSION'"
+          fi
+          prefix="cw-code-${VERSION}-windows-${MODE}-attempt${RUN_ATTEMPT}"
+          if [ "$MODE" = "signpath" ]; then stage="signed"; else stage="unsigned"; fi
+          {
+            echo "app-unsigned=${prefix}-app-unsigned"
+            echo "app-signed=${prefix}-app-signed"
+            echo "app-input=${prefix}-app-${stage}"
+            echo "installer-unsigned=${prefix}-installer-unsigned"
+            echo "installer-metadata=${prefix}-installer-metadata"
+            echo "installer-signed=${prefix}-installer-signed"
+            echo "installer-input=${prefix}-installer-${stage}"
+            echo "release=${prefix}-release"
+            echo "installer=cw-code-Setup-${VERSION}-x64.exe"
+          } >> "$GITHUB_OUTPUT"
+      - name: Fetch main history
+        if: inputs.signing-mode == 'signpath'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: main
+          fetch-depth: 0
+          filter: blob:none
+          path: main-history
+          persist-credentials: false
+      - name: Require source-sha to be on main
+        if: inputs.signing-mode == 'signpath'
+        working-directory: main-history
+        env:
+          SOURCE_SHA: ${{ inputs.source-sha }}
+        run: |
+          if ! git merge-base --is-ancestor "$SOURCE_SHA" origin/main; then
+            echo "::error::source-sha $SOURCE_SHA is not an ancestor of origin/main"
+            exit 1
+          fi
+      - name: Record the signing request
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          REF: ${{ github.ref }}
+          MODE: ${{ inputs.signing-mode }}
+          PRODUCTION: ${{ inputs.production }}
+          VERSION: ${{ inputs.version }}
+          SOURCE_SHA: ${{ inputs.source-sha }}
+          RUN_SHA: ${{ github.sha }}
+          TOOLING_SHA: ${{ job.workflow_sha }}
+          RUN_ATTEMPT: ${{ github.run_attempt }}
+        run: |
+          {
+            echo "### Windows signing request"
+            echo "- signing mode: ${MODE}"
+            echo "- production: ${PRODUCTION}"
+            echo "- version: ${VERSION}"
+            echo "- source-sha (built): ${SOURCE_SHA}"
+            echo "- run GITHUB_SHA / ref (SignPath provenance): ${RUN_SHA} / ${REF}"
+            echo "- gate tooling (sign-windows.yml commit): ${TOOLING_SHA}"
+            echo "- caller event: ${EVENT_NAME}, attempt ${RUN_ATTEMPT}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  package-app:
+    needs: guard
+    runs-on: windows-latest
+    timeout-minutes: 45
+    outputs:
+      artifact-id: ${{ steps.upload.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.source-sha }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 11.5.3
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - run: pnpm install --frozen-lockfile
+      - name: Require the publisher name in signpath mode
+        env:
+          MODE: ${{ inputs.signing-mode }}
+          PUBLISHER: ${{ vars.CW_WINDOWS_PUBLISHER_NAME }}
+        run: |
+          if [ "$MODE" = "signpath" ] && [ -z "$PUBLISHER" ]; then
+            echo "::error::Repository variable CW_WINDOWS_PUBLISHER_NAME is empty; signpath mode cannot enable updater publisher verification"
+            exit 1
+          fi
+      - name: Apply the release version to the workspace
+        env:
+          VERSION: ${{ inputs.version }}
+        run: node tools/release/src/cli/release.ts apply --version "$VERSION"
+      - run: pnpm --filter @cw-code/desktop build
+      - name: Package win-unpacked (NSIS target writes app-update.yml; the installer built here is discarded)
+        env:
+          MODE: ${{ inputs.signing-mode }}
+          PUBLISHER: ${{ vars.CW_WINDOWS_PUBLISHER_NAME }}
+        run: |
+          args=(--win nsis --x64 --publish never)
+          if [ "$MODE" = "signpath" ]; then
+            args+=("-c.win.signtoolOptions.publisherName=${PUBLISHER}")
+          fi
+          pnpm --filter @cw-code/desktop exec electron-builder "${args[@]}"
+      - name: Check the packaged app layout
+        run: |
+          for file in cw-code.exe resources/app-update.yml resources/elevate.exe; do
+            [ -f "apps/desktop/dist/win-unpacked/$file" ] || { echo "::error::win-unpacked/$file is missing"; exit 1; }
+          done
+      - name: Record package provenance
+        env:
+          VERSION: ${{ inputs.version }}
+          SOURCE_SHA: ${{ inputs.source-sha }}
+          MODE: ${{ inputs.signing-mode }}
+          PRODUCTION: ${{ inputs.production }}
+          RUN_ID: ${{ github.run_id }}
+          TOOLING_SHA: ${{ job.workflow_sha }}
+        run: |
+          node -e 'require("fs").writeFileSync("apps/desktop/dist/package-info.json", JSON.stringify({ version: process.env.VERSION, sourceSha: process.env.SOURCE_SHA, signingMode: process.env.MODE, production: process.env.PRODUCTION === "true", runId: process.env.RUN_ID, toolingSha: process.env.TOOLING_SHA }, null, 2) + "\n")'
+      - name: Upload win-unpacked
+        id: upload
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ needs.guard.outputs.app-unsigned }}
+          path: |
+            apps/desktop/dist/win-unpacked/
+            apps/desktop/dist/package-info.json
+          if-no-files-found: error
+          retention-days: 1
+
+  sign-app:
+    needs: [guard, package-app]
+    if: inputs.signing-mode == 'signpath' && github.event_name != 'pull_request' && github.event_name != 'pull_request_target'
+    runs-on: windows-latest
+    environment: release-signing
+    timeout-minutes: 75
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Require SignPath configuration
+        env:
+          SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+          SIGNPATH_ORGANIZATION_ID: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          SIGNPATH_PROJECT_SLUG: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          SIGNPATH_SIGNING_POLICY_SLUG: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          SIGNPATH_APP_ARTIFACT_CONFIGURATION: ${{ vars.SIGNPATH_APP_ARTIFACT_CONFIGURATION }}
+        run: |
+          missing=()
+          for name in SIGNPATH_API_TOKEN SIGNPATH_ORGANIZATION_ID SIGNPATH_PROJECT_SLUG SIGNPATH_SIGNING_POLICY_SLUG SIGNPATH_APP_ARTIFACT_CONFIGURATION; do
+            [ -n "${!name}" ] || missing+=("$name")
+          done
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::Missing SignPath configuration in the release-signing environment: ${missing[*]}"
+            exit 1
+          fi
+      - name: Sign the first-party app executable
+        uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3.0
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          artifact-configuration-slug: ${{ vars.SIGNPATH_APP_ARTIFACT_CONFIGURATION }}
+          github-artifact-id: ${{ needs.package-app.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 3600
+          download-signed-artifact-timeout-in-seconds: 900
+          output-artifact-directory: signed-app
+      - name: Check the signed output layout
+        run: |
+          for file in win-unpacked/cw-code.exe win-unpacked/resources/app-update.yml win-unpacked/resources/elevate.exe package-info.json; do
+            [ -f "signed-app/$file" ] || { echo "::error::SignPath output is missing $file"; exit 1; }
+          done
+      - name: Upload signed win-unpacked
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ needs.guard.outputs.app-signed }}
+          path: |
+            signed-app/win-unpacked/
+            signed-app/package-info.json
+          if-no-files-found: error
+          retention-days: 1
+
+  package-installer:
+    needs: [guard, package-app, sign-app]
+    if: >-
+      !cancelled() && needs.guard.result == 'success' && needs.package-app.result == 'success' &&
+      ((inputs.signing-mode == 'signpath' && needs.sign-app.result == 'success') ||
+       (inputs.signing-mode == 'unsigned' && needs.sign-app.result == 'skipped'))
+    runs-on: windows-latest
+    timeout-minutes: 45
+    outputs:
+      artifact-id: ${{ steps.upload-installer.outputs.artifact-id }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ inputs.source-sha }}
+          persist-credentials: false
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 11.5.3
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - run: pnpm install --frozen-lockfile
+      - name: Check out the gate tooling from the signing workflow's commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ job.workflow_sha }}
+          path: tooling
+          persist-credentials: false
+      - name: Confirm the tooling commit
+        env:
+          TOOLING_SHA: ${{ job.workflow_sha }}
+        run: |
+          actual="$(git -C tooling rev-parse HEAD)"
+          if [[ ! "$TOOLING_SHA" =~ ^[0-9a-f]{40}$ ]] || [ "$actual" != "$TOOLING_SHA" ]; then
+            echo "::error::tooling checkout is at '$actual', expected the signing workflow commit '$TOOLING_SHA'"
+            exit 1
+          fi
+      - name: Apply the release version to the workspace
+        env:
+          VERSION: ${{ inputs.version }}
+        run: node tools/release/src/cli/release.ts apply --version "$VERSION"
+      - name: Download the app to package
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.guard.outputs.app-input }}
+          path: app-input
+      - name: Verify the signed first-party app executable before packaging
+        if: inputs.signing-mode == 'signpath'
+        shell: pwsh
+        env:
+          PUBLISHER: ${{ vars.CW_WINDOWS_PUBLISHER_NAME }}
+        run: |
+          if ([string]::IsNullOrWhiteSpace($env:PUBLISHER)) { throw "Repository variable CW_WINDOWS_PUBLISHER_NAME is empty" }
+          ./tooling/scripts/verify-signatures.ps1 -Root app-input -AppOnly -ExpectedPublisher $env:PUBLISHER -OutFile "$env:RUNNER_TEMP/verify-app.json"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Record the app tree digest
+        shell: pwsh
+        run: ./tooling/scripts/tree-digest.ps1 -Path app-input/win-unpacked | Set-Content "$env:RUNNER_TEMP/app-before.txt"
+      - name: Build the NSIS installer from the prepackaged app
+        run: |
+          pnpm --filter @cw-code/desktop exec electron-builder --prepackaged "$GITHUB_WORKSPACE/app-input/win-unpacked" \
+            --win nsis --x64 --publish never "-c.nsis.packElevateHelper=false" "-c.directories.output=dist-installer"
+      - name: Fail if packaging changed any app file
+        shell: pwsh
+        run: |
+          $after = ./tooling/scripts/tree-digest.ps1 -Path app-input/win-unpacked
+          $diff = Compare-Object (Get-Content "$env:RUNNER_TEMP/app-before.txt") $after
+          if ($diff) {
+            $diff | Format-Table -AutoSize | Out-String -Width 400 | Write-Host
+            throw "electron-builder modified the prepackaged app; the installer would not contain what was verified"
+          }
+      - name: Stage the installer and update metadata by name
+        env:
+          INSTALLER: ${{ needs.guard.outputs.installer }}
+        run: |
+          out=apps/desktop/dist-installer
+          [ -f "$out/$INSTALLER" ] || { echo "::error::expected installer $INSTALLER was not built"; exit 1; }
+          [ -f "$out/$INSTALLER.blockmap" ] || { echo "::error::expected blockmap $INSTALLER.blockmap was not built"; exit 1; }
+          mkdir -p installer-input installer-metadata
+          cp "$out/$INSTALLER" installer-input/
+          cp "$out/$INSTALLER.blockmap" installer-metadata/
+          found=0
+          for name in latest.yml alpha.yml; do
+            if [ -f "$out/$name" ]; then cp "$out/$name" installer-metadata/; found=1; fi
+          done
+          [ "$found" = 1 ] || { echo "::error::electron-builder wrote neither latest.yml nor alpha.yml; check the publish configuration"; exit 1; }
+      - name: Upload the installer
+        id: upload-installer
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ needs.guard.outputs.installer-unsigned }}
+          path: installer-input/
+          if-no-files-found: error
+          retention-days: 1
+      - name: Upload the update metadata
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ needs.guard.outputs.installer-metadata }}
+          path: installer-metadata/
+          if-no-files-found: error
+          retention-days: 1
+
+  sign-installer:
+    needs: [guard, package-installer]
+    if: >-
+      !cancelled() && inputs.signing-mode == 'signpath' && needs.package-installer.result == 'success' &&
+      github.event_name != 'pull_request' && github.event_name != 'pull_request_target'
+    runs-on: windows-latest
+    environment: release-signing
+    timeout-minutes: 75
+    permissions:
+      contents: read
+      actions: read
+    steps:
+      - name: Require SignPath configuration
+        env:
+          SIGNPATH_API_TOKEN: ${{ secrets.SIGNPATH_API_TOKEN }}
+          SIGNPATH_ORGANIZATION_ID: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          SIGNPATH_PROJECT_SLUG: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          SIGNPATH_SIGNING_POLICY_SLUG: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          SIGNPATH_INSTALLER_ARTIFACT_CONFIGURATION: ${{ vars.SIGNPATH_INSTALLER_ARTIFACT_CONFIGURATION }}
+        run: |
+          missing=()
+          for name in SIGNPATH_API_TOKEN SIGNPATH_ORGANIZATION_ID SIGNPATH_PROJECT_SLUG SIGNPATH_SIGNING_POLICY_SLUG SIGNPATH_INSTALLER_ARTIFACT_CONFIGURATION; do
+            [ -n "${!name}" ] || missing+=("$name")
+          done
+          if [ ${#missing[@]} -gt 0 ]; then
+            echo "::error::Missing SignPath configuration in the release-signing environment: ${missing[*]}"
+            exit 1
+          fi
+      - name: Sign the NSIS installer
+        uses: signpath/github-action-submit-signing-request@f6d04783b4569d051e0c80105fe66e82819d0092 # v3.0
+        with:
+          api-token: ${{ secrets.SIGNPATH_API_TOKEN }}
+          organization-id: ${{ vars.SIGNPATH_ORGANIZATION_ID }}
+          project-slug: ${{ vars.SIGNPATH_PROJECT_SLUG }}
+          signing-policy-slug: ${{ vars.SIGNPATH_SIGNING_POLICY_SLUG }}
+          artifact-configuration-slug: ${{ vars.SIGNPATH_INSTALLER_ARTIFACT_CONFIGURATION }}
+          github-artifact-id: ${{ needs.package-installer.outputs.artifact-id }}
+          wait-for-completion: true
+          wait-for-completion-timeout-in-seconds: 3600
+          download-signed-artifact-timeout-in-seconds: 900
+          output-artifact-directory: signed-installer
+      - name: Check the signed output layout
+        env:
+          INSTALLER: ${{ needs.guard.outputs.installer }}
+        run: |
+          shopt -s nullglob
+          installers=(signed-installer/*.exe)
+          [ ${#installers[@]} -eq 1 ] && [ -f "signed-installer/$INSTALLER" ] || { echo "::error::SignPath output must contain exactly $INSTALLER"; exit 1; }
+      - name: Upload the signed installer
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ needs.guard.outputs.installer-signed }}
+          path: signed-installer/
+          if-no-files-found: error
+          retention-days: 1
+
+  finalize:
+    needs: [guard, package-installer, sign-installer]
+    if: >-
+      !cancelled() && needs.guard.result == 'success' && needs.package-installer.result == 'success' &&
+      ((inputs.signing-mode == 'signpath' && needs.sign-installer.result == 'success') ||
+       (inputs.signing-mode == 'unsigned' && needs.sign-installer.result == 'skipped'))
+    runs-on: windows-latest
+    timeout-minutes: 30
+    outputs:
+      release-artifact: ${{ steps.done.outputs.release-artifact }}
+    steps:
+      - name: Check out the gate tooling from the signing workflow's commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ job.workflow_sha }}
+          path: tooling
+          persist-credentials: false
+      - name: Confirm the tooling commit
+        env:
+          TOOLING_SHA: ${{ job.workflow_sha }}
+        run: |
+          actual="$(git -C tooling rev-parse HEAD)"
+          if [[ ! "$TOOLING_SHA" =~ ^[0-9a-f]{40}$ ]] || [ "$actual" != "$TOOLING_SHA" ]; then
+            echo "::error::tooling checkout is at '$actual', expected the signing workflow commit '$TOOLING_SHA'"
+            exit 1
+          fi
+      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+        with:
+          version: 11.5.3
+      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: 24
+      - name: Install the gate tooling
+        working-directory: tooling
+        env:
+          ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
+        run: pnpm install --frozen-lockfile
+      - name: Download the update metadata
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.guard.outputs.installer-metadata }}
+          path: release
+      - name: Download the final installer
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.guard.outputs.installer-input }}
+          path: release
+      - name: Download the packaged app for verification
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          name: ${{ needs.guard.outputs.app-input }}
+          path: release
+      - name: Regenerate the blockmap and update info after the last byte-changing step
+        run: node tooling/tools/release/src/cli/release.ts rehash --dir release | tee release/rehash.json
+      - name: Verify Authenticode signatures (first-party publisher and timestamp, third-party status)
+        shell: pwsh
+        env:
+          MODE: ${{ inputs.signing-mode }}
+          PUBLISHER: ${{ vars.CW_WINDOWS_PUBLISHER_NAME }}
+        run: |
+          $arguments = @{ Root = "release"; OutFile = "release/verify-signatures.json" }
+          if ($env:MODE -eq "signpath") {
+            if ([string]::IsNullOrWhiteSpace($env:PUBLISHER)) { throw "Repository variable CW_WINDOWS_PUBLISHER_NAME is empty" }
+            $arguments.ExpectedPublisher = $env:PUBLISHER
+          } else {
+            $arguments.AllowUnsigned = $true
+          }
+          ./tooling/scripts/verify-signatures.ps1 @arguments
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+      - name: Write signing.json
+        env:
+          MODE: ${{ inputs.signing-mode }}
+          PRODUCTION: ${{ inputs.production }}
+          PUBLISHER: ${{ vars.CW_WINDOWS_PUBLISHER_NAME }}
+          VERSION: ${{ inputs.version }}
+          SOURCE_SHA: ${{ inputs.source-sha }}
+          RUN_ID: ${{ github.run_id }}
+        run: |
+          args=(signing-manifest --mode "$MODE" --production "$PRODUCTION" --version "$VERSION" --source-sha "$SOURCE_SHA" --run-id "$RUN_ID"
+            --package-info release/package-info.json --report release/verify-signatures.json --release-dir release
+            --app-update release/win-unpacked/resources/app-update.yml --out release/signing.json)
+          if [ "$MODE" = "signpath" ]; then
+            args+=(--publisher "$PUBLISHER")
+          fi
+          node tooling/tools/release/src/cli/release.ts "${args[@]}"
+      - name: Re-read signing.json against the release set
+        env:
+          PRODUCTION: ${{ inputs.production }}
+        run: |
+          args=(check-signing-manifest --manifest release/signing.json --release-dir release)
+          if [ "$PRODUCTION" = "true" ]; then
+            args+=(--require-production)
+          fi
+          node tooling/tools/release/src/cli/release.ts "${args[@]}"
+      - name: Upload the final release set
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
+        with:
+          name: ${{ needs.guard.outputs.release }}
+          path: |
+            release/${{ needs.guard.outputs.installer }}
+            release/${{ needs.guard.outputs.installer }}.blockmap
+            release/latest.yml
+            release/alpha.yml
+            release/signing.json
+            release/verify-signatures.json
+            release/rehash.json
+            release/package-info.json
+            release/win-unpacked/
+          if-no-files-found: error
+          retention-days: 14
+      - name: Publish outputs and summary
+        id: done
+        env:
+          RELEASE_ARTIFACT: ${{ needs.guard.outputs.release }}
+          MODE: ${{ inputs.signing-mode }}
+          PRODUCTION: ${{ inputs.production }}
+          VERSION: ${{ inputs.version }}
+          SOURCE_SHA: ${{ inputs.source-sha }}
+        run: |
+          echo "release-artifact=${RELEASE_ARTIFACT}" >> "$GITHUB_OUTPUT"
+          {
+            echo "### Windows release set ${VERSION}"
+            echo "- signing mode: ${MODE}"
+            echo "- production: ${PRODUCTION}"
+            echo "- source-sha: ${SOURCE_SHA}"
+            echo "- artifact: ${RELEASE_ARTIFACT}"
+            if [ "$MODE" = "unsigned" ]; then
+              echo "- **non-production**: unsigned artifacts; the step-09 validator refuses to publish them"
+            fi
+          } >> "$GITHUB_STEP_SUMMARY"
