@@ -452,14 +452,17 @@ function releaseShutdownToken(shutdown: ShutdownCoordinator, token: string): voi
   }
 }
 
-function registerUpdateIpc({ updates, sessions, shutdown }: Services): void {
-  ipcMain.handle("updates.install", (_e, args: unknown): Promise<UpdateActionResult> => {
-    const token = parseShutdownToken(args, "updates.install");
-    return updates.install(args, {
-      commit: (action) => commitShutdown(token, action),
-      release: () => releaseShutdownToken(shutdown, token)
-    });
+function installUpdate({ updates, shutdown }: Services, args: unknown): Promise<UpdateActionResult> {
+  const token = parseShutdownToken(args, "updates.install");
+  return updates.install(args, {
+    commit: (action) => commitShutdown(token, action),
+    release: () => releaseShutdownToken(shutdown, token)
   });
+}
+
+function registerUpdateIpc(services: Services): void {
+  const { updates, sessions } = services;
+  ipcMain.handle("updates.install", (_e, args: unknown): Promise<UpdateActionResult> => installUpdate(services, args));
   updates.subscribe((state) => {
     if (!mainWindow || mainWindow.isDestroyed()) return;
     mainWindow.webContents.send("updates.changed", state);
@@ -926,7 +929,41 @@ function reportFatalStartupError(error: unknown): void {
   app.exit(1);
 }
 
+interface PendingUpdateAutotest {
+  autotest: typeof import("./updates/updateAutotest.js");
+  config: import("./updates/updateAutotest.js").UpdateAutotestConfig;
+}
+
+async function prepareUpdateAutotest(): Promise<PendingUpdateAutotest | null> {
+  if (__CW_UPDATE_TEST_BUILD__) {
+    const autotest = await import("./updates/updateAutotest.js");
+    const resolution = autotest.loadUpdateAutotest({ env: process.env, userDataDir: app.getPath("userData") });
+    if (resolution.problem) console.warn(`[updates] update autotest not started: ${resolution.problem}`);
+    return resolution.config ? { autotest, config: resolution.config } : null;
+  }
+  return null;
+}
+
+function startUpdateAutotest(pending: PendingUpdateAutotest | null): void {
+  if (__CW_UPDATE_TEST_BUILD__ && pending) {
+    const running = services;
+    void pending.autotest.runUpdateAutotest(pending.config, {
+      version: app.getVersion(),
+      pid: process.pid,
+      launchedByInstaller: process.argv.includes("--updated"),
+      startupMode: startupState.mode,
+      userDataDir: app.getPath("userData"),
+      updates: running?.updates ?? null,
+      shutdown: running?.shutdown ?? null,
+      install: (request) => (running ? installUpdate(running, request) : Promise.reject(new Error("cw-code services are not running"))),
+      startTurn: (sessionId, prompt) => (running ? running.sessions.startTurn(sessionId, prompt) : Promise.reject(new Error("cw-code services are not running"))),
+      quit: quitWithoutDialog
+    });
+  }
+}
+
 async function startApp(): Promise<void> {
+  const updateAutotest = await prepareUpdateAutotest();
   ensureAppDirs();
   migrateFromUserData(app.getPath("userData"));
   try {
@@ -978,6 +1015,7 @@ async function startApp(): Promise<void> {
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) void createWindow();
   });
+  startUpdateAutotest(updateAutotest);
 }
 
 if (!app.isPackaged && !app.commandLine.hasSwitch("user-data-dir")) {

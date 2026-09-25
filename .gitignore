@@ -1,6 +1,7 @@
 node_modules/
 dist/
 dist-ci/
+dist-updatetest/
 out/
 coverage/
 .cache/
