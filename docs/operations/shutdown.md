@@ -17,7 +17,7 @@ Every child process cw-code creates, and how it is stopped.
 | `opencode serve` (shared root `userdata/cw-opencode-server`) | `OpencodeServerPool.servers` | Idle eviction after 5 min, max 4 | running turns aborted over HTTP (`POST /session/:id/abort`), wait for the aborts, then pool disposed | pool `stop()` kills the tree by PID |
 | OpenCode per-session work | runs inside the managed server | per turn | `abort` request, see above | server stop |
 | `opencode models` listing | `opencodeModels.ts` via `execCliFile` | Short-lived, 20 s timeout | not tracked | execFile timeout |
-| `codex app-server` (one per app) | `CodexAppServer.proc` | Started on first request | stdin closed, wait for exit; while still starting it reports a timeout and leaves the kill to `dispose` | tree kill by PID |
+| `codex app-server` (one per app) | `CodexAppServer.proc` | Started on first request | waits for a startup in progress to settle, then stdin closed and wait for exit, all within the one timeout; a startup that does not finish in time reports a timeout and leaves the kill to `dispose` | tree kill by PID |
 | PTY terminals (`shell`, `claude`, `opencode`, `codex`) | `PtyPool.ptys` | Until the tab kills it or it exits | none (a terminal is treated as possibly busy) | node-pty `kill()` on the owned handle |
 | `git` / `gh` calls | `GitService`, `PullRequestService` | Short-lived, every call has an execFile timeout (10 s default) | not tracked | execFile timeout |
 | `--version` checks | `cliVersions.ts`, `binaryDiscovery.ts` | Short-lived, 15 s timeout | not tracked | execFile timeout |
@@ -83,7 +83,10 @@ idle ──prepare──▶ preparing ──▶ prepared ──commit──▶ c
   failure message.
 - A prepared or timed-out token is a 120 s lease: if it is not committed,
   forced or cancelled in time (for example the renderer reloaded or hung), the
-  coordinator recovers on its own. Force renews the lease.
+  coordinator recovers on its own and calls `onExpired(reason)`; main then
+  sends `shutdown.expired { reason }` so a dialog still waiting on that token
+  (the timeout choice) closes with "waited too long for a decision" instead of
+  offering buttons that would fail. Force renews the lease.
 - `recover()` / `cancel()` rebuild the drivers through the `SessionManager`
   driver factory (old drivers are disposed first; events from the old
   generation are ignored), reopen the PTY pool and clear both reservations. It
@@ -123,7 +126,10 @@ resumes it through the CLI's own resume cursor.
 - `SIGINT` / `SIGTERM` quit without the dialog.
 - If the renderer process dies or the main frame reloads or navigates (Ctrl+R,
   the error boundary's Reload) while a flow is prepared or timed out, main
-  recovers the coordinator so the reloaded window is usable. If recovery happens
+  recovers the coordinator so the reloaded window is usable. Recovery runs on
+  `did-navigate` and `did-finish-load`, after the new document has committed,
+  so a navigation that is cancelled before it starts (for example an external
+  link blocked by `will-navigate`) never drops a live token. If recovery happens
   after the window was already closed (a quit that never exited), main opens a
   new window.
 - Recovery mode (broken metadata, see `metadata-migrations.md`) has no
@@ -131,14 +137,28 @@ resumes it through the CLI's own resume cursor.
 
 IPC: `shutdown.assess`, `shutdown.prepare`, `shutdown.force`, `shutdown.cancel`,
 `shutdown.quit` (all argument-validated in main) and the `shutdown.requested`
-event. The renderer API is `window.cw.shutdown.*`.
+and `shutdown.expired` events. The renderer API is `window.cw.shutdown.*`.
+`updates.install` commits a token through the same coordinator (see
+`updater.md`).
 
 ## Renderer flow
 
 `stores/shutdownFlow.ts` exports `runShutdownFlow(reason)`, which resolves to
 `{ token }` once the app is prepared or `null` when the user cancels. Quit
-calls `cw.shutdown.quit(token)` afterwards; the update install step reuses the
-same flow with reason `"update"`.
+calls `cw.shutdown.quit(token)` afterwards.
+
+Update and restart (`stores/updateFlow.ts`) runs the same flow with reason
+`"update"` before anything is installed, and only once the installer is
+already downloaded. The dialog then also explains that cw-code closes, runs the
+installer and reopens, that sessions keep their context and that live
+terminals stop. With the token it re-reads the update state; if the download
+changed it cancels the token, otherwise it calls
+`cw.updates.install({ version, channel, token })` right away, well within the
+lease.
+
+- `handleShutdownExpired()` (wired to `shutdown.expired`) closes the dialog
+  only when the flow holds a token; a dialog still in review has no lease and
+  stays open.
 
 - No dialog when there is nothing to decide (no active turns, no terminals, no
   dirty editor buffers): it prepares immediately.
@@ -165,8 +185,10 @@ its unsaved edits, stays registered.
 Automated (vitest): `ShutdownCoordinator.test.ts` (ordering, session isolation,
 cancellation, timeout, ownership, re-entry, installer-start failure and retry),
 `SessionManager.shutdown.test.ts`, `PtyPool.test.ts`, driver shutdown tests for
-Claude, Codex, OpenCode and the tracing wrapper, `editorBuffers.test.ts` and
-`shutdownFlow.test.ts`.
+Claude, Codex, OpenCode and the tracing wrapper, `codexAppServer.test.ts`
+(graceful stop while starting, startup timeout), `editorBuffers.test.ts`,
+`shutdownFlow.test.ts` (including lease expiry) and
+`UpdateService.install.test.ts` (update commits through the coordinator).
 
 Pending manual evidence (needs a real Windows desktop session, an isolated test
 project and a disposable `CW_CODE_HOME`; never the developer's live install):
@@ -190,3 +212,9 @@ project and a disposable `CW_CODE_HOME`; never the developer's live install):
 8. Run `pnpm dev` while the installed app is open: both windows stay up.
 9. Open file A, edit it, then click a file that fails to load: the editor is
    empty and read-only, Save is hidden, and the quit dialog still lists A.
+10. Reach the timeout dialog and wait 120 s without choosing: the dialog closes
+    with "waited too long for a decision" and new turns can start.
+11. Start a Codex session and close the window while the app-server is still
+    starting: the quit waits for startup and exits without a timeout dialog.
+12. Update and restart, with the update-specific checks, is in the manual
+    checklist of `updater.md`.

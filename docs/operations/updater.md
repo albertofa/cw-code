@@ -5,9 +5,10 @@ and downloads them with `electron-updater` 6.8.9. The main process runs the
 updater. The renderer can only read state and ask for actions through the
 preload bridge. It never passes a feed URL, a file path, or an executable.
 
-Nothing in the app runs an installer yet. `quitAndInstall` exists on the
-adapter interface and is never called. The safe-install flow (shutdown
-coordinator, user confirmation) arrives in step 05.
+The installer only runs after the user chooses **Update and restart**. That
+click goes through the shutdown coordinator (see `shutdown.md`) with reason
+`update`, and only then does main call `quitAndInstall`. An ordinary quit, a
+closed window or an OS session end never installs anything.
 
 ## Architecture
 
@@ -19,6 +20,7 @@ All updater code is in `apps/desktop/src/main/updates/`:
 | `UpdateService.ts` | Serialized operation queue, request dedupe, disabled detection, scheduling, typed action results, redacted logging. The clock, scheduler, random source, file checks and adapter are injected. |
 | `ElectronUpdaterAdapter.ts` | The only file that imports `electron-updater`. Implements the `UpdaterAdapter` interface the service depends on. |
 | `updateLog.ts` | Log and error redaction, error classification (retryable, missing release), the bounded `updater.log` file sink. |
+| `updatePreferences.ts` | Maps the saved `updateChannel` / `updateBackgroundDownload` settings to the service's channel and download policy. |
 
 The contract types live in `packages/contracts/src/updates.ts`.
 
@@ -35,17 +37,25 @@ lazily on the first check, so disabled builds never create an updater object.
 | `updates.state` | invoke | returns `UpdateState` |
 | `updates.check` | invoke | returns `UpdateActionResult` |
 | `updates.download` | invoke | returns `UpdateActionResult` |
-| `updates.setChannel` | invoke `{ channel }` | returns `UpdateActionResult`; anything other than `"stable"`/`"alpha"` returns code `invalid` |
+| `updates.setChannel` | invoke `{ channel }` | saves `updateChannel` and returns `UpdateActionResult`; anything other than `"stable"`/`"alpha"` returns code `invalid` and saves nothing |
+| `updates.install` | invoke `{ version, channel, token }` | returns `UpdateActionResult`; see [Install flow](#install-flow) |
 | `updates.changed` | main → renderer event | `UpdateState` |
 
-Renderer: `window.cw.updates.{getState, check, download, setChannel, onChanged}`
-and the `appStore` fields `updates`, `subscribeUpdates()`, `applyUpdateState()`,
-`checkForUpdates()`, `downloadUpdate()`, `setUpdateChannel()`.
+Renderer: `window.cw.updates.{getState, check, download, setChannel, install, onChanged}`
+and the `appStore` fields `updates`, `updateRestartPending`, `subscribeUpdates()`,
+`applyUpdateState()`, `checkForUpdates()`, `downloadUpdate()`, `setUpdateChannel()`,
+`setUpdateBackgroundDownload()`. `stores/updateFlow.ts` runs Update and restart.
 `subscribeUpdates()` subscribes to `updates.changed` first and then fetches the
 snapshot. Every state carries a `seq` that increases on each change. The store
 drops any state whose `seq` is lower than the one it holds, so a late snapshot
 cannot overwrite a newer event. Action results carry a state and go through the
 same rule.
+
+Download progress is throttled in the store (`stores/updateThrottle.ts`). A state
+that differs from the current one only in `progress` is applied when 500 ms have
+passed since the last applied state, when the percentage moved by 2 points or
+more, or when it reaches 100 %. Phase, version and error changes are never
+throttled.
 
 ## States
 
@@ -58,8 +68,8 @@ same rule.
 | `available` | An eligible newer version was found and is not downloaded. |
 | `downloading` | Download in progress; `progress` is set. |
 | `ready` | `downloadedVersion` is downloaded and verified by `electron-updater` (sha512, plus Authenticode publisher check when `publisherName` is configured). |
-| `installing` | Reserved for step 05. Never entered in this step. |
-| `error` | The last check or download failed; `error.context` is `check` or `download` and `error.retryable` says whether retrying can help. |
+| `installing` | The user chose Update and restart, the coordinator is committing and `quitAndInstall` was called. Checks and downloads queue behind it; channel changes return `busy`. |
+| `error` | The last check or download failed; `error.context` is `check` or `download` and `error.retryable` says whether retrying can help. A failed install goes back to `ready` with `error.context` `install` instead. |
 
 Rules the reducer enforces:
 
@@ -126,8 +136,8 @@ service, whether it came from IPC or from a timer.
 | `alpha` | true | `alpha` | Stable or `X.Y.Z-alpha.N` newer than the running version |
 
 - The default channel is derived from the running version
-  (`0.0.1-alpha.21` → `alpha`). Step 05 persists the user's choice; in this step
-  `setChannel` is in memory only.
+  (`0.0.1-alpha.21` → `alpha`) while the `updateChannel` setting is `null`.
+  Choosing a channel in Settings saves it; from then on the saved channel wins.
 - The adapter sets `allowDowngrade = false` after setting `channel`, because the
   `electron-updater` channel setter turns downgrades on. A unit test fails if
   that order is reversed.
@@ -183,9 +193,10 @@ error so offline users see the problem.
 - `dispose()` cancels the timer and any active download, detaches adapter
   listeners, disposes the adapter and stops publishing state.
 
-`autoDownload` is a policy flag on the service (`setAutoDownload`). It is false
-in this step. When true, a check that finds an available update queues a
-download. Step 05 feeds it from the persisted setting.
+`autoDownload` is a policy flag on the service (`setAutoDownload`), fed from the
+`updateBackgroundDownload` setting (default on). When true, a check that finds
+an available update queues a download, and turning it on while an update is
+`available` starts that download. It never installs anything.
 
 ## Disabled cases
 
@@ -253,8 +264,19 @@ normalized, NUL characters are removed, and the result is capped at 20,000
 characters. The service stores the text as data and never evaluates it. With the GitHub
 provider and no notes in `latest.yml`, the library takes the notes from the
 releases Atom feed, which is HTML. Notes may therefore contain HTML markup,
-and the UI has to show them as text, never as HTML. Step 05 renders them that
-way.
+and the UI has to show them as text, never as HTML.
+
+The renderer converts them with `releaseNotesMarkdown()`
+(`components/releaseNotes.ts`), a pure string function with no DOM parsing:
+when the notes contain HTML tags, `script`/`style` blocks and comments are
+dropped, headings, list items and paragraph breaks become Markdown structure,
+`<a>` elements become Markdown links only when the target is a well-formed
+`https:` URL (anything else keeps only its text), images become their alt
+text, all other tags are stripped and entities are decoded to literal text.
+The result goes to the shared `Md` component with `linkPolicy="https-only"`:
+raw HTML is shown as text (react-markdown never renders it), only `https:`
+links are clickable and open in the browser, and images are shown as labels,
+so rendering the notes never loads a remote resource.
 
 ## Build configuration and generated files
 
@@ -321,15 +343,139 @@ updaterCacheDirName: '@cw-codedesktop-updater'
   pipeline (steps 08/09) decides whether alpha releases should also upload a
   copy of `latest.yml` as `alpha.yml` to avoid the extra 404.
 
-## What step 05 adds
+## Settings
 
-- `AppSettings.updateChannel` (null = derive from the running version) and
-  `updateBackgroundDownload` (default true), sanitized in `SettingsStore`. The
-  channel feeds `setChannel`; the download setting feeds `setAutoDownload`.
-- `updates.install({ version, channel, token })`: validates the phase is
-  `ready` and the version and channel still match (otherwise `superseded`),
-  then runs the shutdown coordinator flow with reason `update` and calls
-  `adapter.quitAndInstall(false, true)` inside `commit`. On failure it
-  recovers and returns to `ready` with an error.
-- UI: Settings "Updates" section, sidebar footer indicator, release notes
-  rendered with raw HTML disabled and https-only links, throttled progress.
+| Setting | Default | Meaning |
+| --- | --- | --- |
+| `updateChannel` | `null` | `"stable"`, `"alpha"`, or `null` to derive the channel from the running version |
+| `updateBackgroundDownload` | `true` | Download an available update without asking; installing still needs a click |
+
+Both are sanitized per field in `SettingsStore` (an invalid channel falls back
+to `null`, a non-boolean flag to `true`) and the settings schema stays at
+version 1: they are optional keys with defaults, so files written before them
+load without a migration or a `.v1.bak`. Unknown keys are still preserved.
+Main reads them when it creates the service and reapplies them whenever
+`settings.set` receives either key.
+
+## User interface
+
+**Settings > Updates** shows the installed version and status, when the last
+check ran, Check for updates (disabled with a reason while disabled, checking,
+downloading or installing), Download when an update is available, Update and
+restart when one is ready, the last error, the download progress, the channel
+select (Stable / Alpha), the background download toggle and the release notes.
+Switching an alpha build to Stable explains that it keeps running until a
+stable release newer than it is published, because there is no downgrade.
+Channel and download changes apply immediately, like binary picks.
+
+**Sidebar footer indicator** (`components/UpdateIndicator.tsx`, view model in
+`components/updateModel.ts`). Quiet while disabled, idle, checking or up to date.
+
+| State | Shows | Action |
+| --- | --- | --- |
+| `available` | "cw-code X is available" | Download |
+| `downloading` | progress bar and percentage | disabled "Downloading…" with the reason as tooltip |
+| `ready` | "cw-code X is ready" | Update and restart |
+| `ready` with an install error | the error | Try again |
+| `error` | the check or download error | Retry when `retryable`; otherwise the message says retrying will not help |
+| restart pending / `installing` | "Restarting to update" | disabled |
+
+Later hides the indicator until the state changes (phase, versions or error).
+Everything is a native button, so it is reachable with Tab and activated with
+Enter or Space; progress uses `role="progressbar"`.
+
+## Install flow
+
+1. Update and restart is only offered in `ready`. The renderer takes the
+   downloaded version and channel as the install target and sets
+   `updateRestartPending`.
+2. It runs `runShutdownFlow("update")` first. The installer is already
+   downloaded at this point, so the prepare lease (120 s) is only held for the
+   few calls that follow. The dialog appears only when something needs a
+   decision: active turns in any session (Wait or Stop), open terminals (they
+   will be closed) and unsaved files (Save, Discard or Cancel). For the update
+   reason it also explains that cw-code closes, runs the installer and reopens,
+   that projects, sessions and settings are kept, that live terminals stop and
+   that nothing is resent. Cancel returns to normal use and nothing is
+   installed.
+3. With a token, the renderer re-reads `updates.state`. If the phase is no
+   longer `ready` or the downloaded version or channel changed, it cancels the
+   token (services come back) and shows "The update changed".
+4. Otherwise it calls `updates.install({ version, channel, token })`. Main
+   validates the arguments (`invalid`), queues the install behind any running
+   check, then requires a downloaded update (`not-ready`), the same version,
+   the same current or pending channel and no newer `available` version
+   (`superseded`). Any rejection before the commit releases the token itself,
+   so services are always restored.
+5. The phase becomes `installing` and main runs
+   `shutdown.commit(token, () => adapter.quitAndInstall(false, true))`.
+   `isSilent = false` shows the normal NSIS window with progress;
+   `isForceRunAfter = true` is passed as well, and because the install is not
+   silent `electron-updater` uses `autoRunAppAfterInstall` (default true), so
+   the installer relaunches cw-code. The library then calls `app.quit()`; the
+   quit is approved because the coordinator is committing, so there is no
+   second dialog.
+
+After the restart, projects, settings and resume cursors are on disk as
+before. Interrupted turns stay `holding`/interrupted and are never restarted.
+
+## Failure recovery
+
+- `quitAndInstall` failing synchronously (for example no cached installer:
+  `electron-updater` emits an error instead of throwing, and the adapter turns
+  that error into an exception) makes the commit fail at once. The coordinator
+  recovers the drivers and terminal pool, and the service returns to `ready`
+  with `error.context` `install`, retryable.
+- A process that is still alive 30 s after `quitAndInstall` (the installer did
+  not start or the quit was blocked) gets the same recovery with "cw-code did
+  not exit within 30s. Normal use has been restored."
+- A token that was not committed within the 120 s lease is recovered by the
+  coordinator; main sends `shutdown.expired` and a stale dialog closes with a
+  message. A later install call with that token fails and restores `ready`.
+- The renderer shows one sticky toast per failure. Its id is derived from the
+  message, so retrying into the same failure updates that toast instead of
+  stacking new ones. Update and restart stays available for a retry.
+- `autoInstallOnAppQuit` is always false (asserted in
+  `ElectronUpdaterAdapter.test.ts`), so closing the window, quitting, `SIGINT`
+  or an OS session end never runs the installer.
+
+## Verification
+
+Automated (vitest): `UpdateService.install.test.ts` (install contract with the
+real coordinator and fakes: validation, not-ready, superseded, commit through
+the coordinator, failure back to `ready` with an error, retry, disabled builds,
+no install from other operations), `ElectronUpdaterAdapter.test.ts` (install
+flags, synchronous failure, `autoInstallOnAppQuit` off), `updatePreferences.test.ts`,
+`SettingsStore.test.ts` (defaults, sanitize, no migration),
+`updateThrottle.test.ts`, `releaseNotes.test.ts` and `shutdownFlow.test.ts`
+(expired lease).
+
+Manual checklist, pending. Run it with the step 06 local feed and update-test
+build in a disposable Windows environment, never against the live install:
+
+- [ ] Keyboard only: Tab reaches the sidebar indicator and every Settings >
+  Updates control; Enter/Space activates them; Escape closes Settings and the
+  shutdown dialog.
+- [ ] Progress: background download shows the bar in the sidebar and Settings
+  without flicker; the percentage advances in steps.
+- [ ] Errors: offline check shows "Could not reach the update server" with
+  Retry; a failed download shows Retry; a non-retryable error shows no Retry.
+- [ ] Opt-out: with background downloads off, an available update shows
+  Download and nothing downloads until it is clicked; turning the toggle back
+  on starts the download.
+- [ ] Later hides the indicator; it comes back when the state changes.
+- [ ] Channel changes: stable to alpha finds the newer alpha; alpha to stable on
+  an alpha build explains the wait and offers nothing older; the choice survives
+  a restart.
+- [ ] Shutdown decisions for reason update: no blockers restarts directly;
+  active turn Wait, then Stop; terminal listed as closed; dirty file Save,
+  Discard, and a failing save cancels; Cancel returns to normal use; timeout
+  Force stop and Cancel; leaving the timeout dialog open for 120 s closes it
+  with a message.
+- [ ] A superseded update (new version published while the dialog is open)
+  cancels the restart and restores services.
+- [ ] Installer start failure (remove the cached installer before clicking)
+  returns to ready with one toast; a second failure does not add a second toast.
+- [ ] Successful update: NSIS progress window, app relaunches on the new
+  version, projects, settings and resume cursors are intact, interrupted turns
+  are not resent.
