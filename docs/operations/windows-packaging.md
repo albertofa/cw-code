@@ -133,10 +133,12 @@ Both always pass `--publish never`; no credentials are read or required. Root
 `pnpm dist` forwards to the desktop package's `dist` script.
 
 Local builds are **unsigned and non-production**. `win.signExecutable: false` stops
-electron-builder from signing anything, even with `CSC_LINK` set, and no
+electron-builder from signing any file. Without a certificate in the environment, no
 `publisherName` is written to `app-update.yml`, so updater signature verification is
-off in these builds. Signed releases only come from `.github/workflows/sign-windows.yml`;
-see [windows-signing.md](windows-signing.md).
+off in these builds. If `CSC_LINK`/`WIN_CSC_LINK` is set, electron-builder can still
+read that certificate to fill in `publisherName`, even though it signs nothing. Keep them
+unset locally. Signed releases only come from `.github/workflows/sign-windows.yml`; see
+[windows-signing.md](windows-signing.md).
 
 ## Verifying a build
 
