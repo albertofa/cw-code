@@ -78,11 +78,26 @@ function mainModelWindowTokens(modelUsage: Record<string, unknown>, mainModel: s
   return matchKey !== undefined ? contextWindowOf(modelUsage[matchKey]) : undefined;
 }
 
+function anyWindowTokens(modelUsage: Record<string, unknown>): number | undefined {
+  let best: number | undefined;
+  let bestOutput = -Infinity;
+  for (const entry of Object.values(modelUsage)) {
+    const window = contextWindowOf(entry);
+    if (window === undefined) continue;
+    const output = num((entry as ClaudeResultModelUsage).outputTokens);
+    if (output > bestOutput) {
+      bestOutput = output;
+      best = window;
+    }
+  }
+  return best;
+}
+
 export function claudeTurnUsage(
   prev: ClaudeModelUsageSnapshot,
   result: unknown,
   mainModel?: string
-): { usage: TurnModelUsage[]; context?: ContextUsage; next: ClaudeModelUsageSnapshot } {
+): { usage: TurnModelUsage[]; context?: ContextUsage; windowTokens?: number; next: ClaudeModelUsageSnapshot } {
   const shape = (result !== null && typeof result === "object" ? result : {}) as ClaudeResultShape;
   const rawModelUsage = shape.modelUsage;
   const hasModelUsage = rawModelUsage !== null && typeof rawModelUsage === "object" && !Array.isArray(rawModelUsage);
@@ -123,7 +138,8 @@ export function claudeTurnUsage(
     }
   }
 
-  const windowTokens = mainModelWindowTokens(modelUsage, mainModel) ?? largestOutputWindowTokens;
+  const windowTokens =
+    mainModelWindowTokens(modelUsage, mainModel) ?? largestOutputWindowTokens ?? anyWindowTokens(modelUsage);
 
   const iterations = shape.usage?.iterations;
   const lastIteration = Array.isArray(iterations) ? iterations[iterations.length - 1] : undefined;
@@ -137,5 +153,10 @@ export function claudeTurnUsage(
   const context: ContextUsage | undefined =
     usedTokens !== undefined && windowTokens !== undefined ? { usedTokens, windowTokens } : undefined;
 
-  return { usage, ...(context ? { context } : {}), next };
+  return {
+    usage,
+    ...(context ? { context } : {}),
+    ...(windowTokens !== undefined ? { windowTokens } : {}),
+    next
+  };
 }

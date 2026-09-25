@@ -151,6 +151,7 @@ interface AppState {
   refreshGitStatus(sessionId: string): Promise<void>;
   sourceControlRefreshIntervalSeconds: number;
   prRefreshIntervalSeconds: number;
+  holdingAutoExpireEnabled: boolean;
   holdingHours: number;
   defaultUseWorktree: boolean;
   reasoningExpandedByDriver: Record<DriverName, boolean>;
@@ -301,6 +302,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   gitStatusBySession: {},
   sourceControlRefreshIntervalSeconds: 30,
   prRefreshIntervalSeconds: 120,
+  holdingAutoExpireEnabled: false,
   holdingHours: 6,
   defaultUseWorktree: true,
   reasoningExpandedByDriver: { claude: false, opencode: false, codex: false },
@@ -327,9 +329,9 @@ export const useAppStore = create<AppState>((set, get) => ({
         const current = Object.values(get().sessionsByProject)
           .flat()
           .find((s) => s.id === sessionId);
-        if (current && current.status !== "resolved" && current.status !== "archived" && sessionId !== get().activeSessionId) {
-          void get().setSessionStatus(sessionId, "resolved").catch((err) =>
-            console.warn(`setSessionStatus failed for ${sessionId} -> resolved: ${(err as Error).message}`)
+        if (current && (current.status === "holding" || current.status === "done") && sessionId !== get().activeSessionId) {
+          void get().setSessionStatus(sessionId, "idle").catch((err) =>
+            console.warn(`setSessionStatus failed for ${sessionId} -> idle: ${(err as Error).message}`)
           );
         }
       }
@@ -376,6 +378,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       projects,
       sourceControlRefreshIntervalSeconds: settings.sourceControlRefreshIntervalSeconds,
       prRefreshIntervalSeconds: settings.prRefreshIntervalSeconds,
+      holdingAutoExpireEnabled: settings.holdingAutoExpireEnabled,
       holdingHours: settings.holdingHours,
       defaultUseWorktree: settings.defaultUseWorktree,
       reasoningExpandedByDriver: reasoningExpandedFrom(settings),
@@ -560,6 +563,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   async expireHoldingSessions() {
+    if (!get().holdingAutoExpireEnabled) return;
     const sessions = Object.values(get().sessionsByProject).flat();
     const ids = expiredHoldingIds(sessions, get().holdingHours, Date.now());
     if (ids.length === 0) return;
@@ -851,6 +855,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       settingsVersion: get().settingsVersion + 1,
       sourceControlRefreshIntervalSeconds: saved.sourceControlRefreshIntervalSeconds,
       prRefreshIntervalSeconds: saved.prRefreshIntervalSeconds,
+      holdingAutoExpireEnabled: saved.holdingAutoExpireEnabled,
       holdingHours: saved.holdingHours,
       defaultUseWorktree: saved.defaultUseWorktree,
       reasoningExpandedByDriver: reasoningExpandedFrom(saved)
@@ -1085,6 +1090,43 @@ export const useAppStore = create<AppState>((set, get) => ({
           ...get().messagesBySession,
           [sessionId]: appendAssistantText(messages, event.turnId, event.text)
         }
+      });
+    } else if (event.type === "context.compacted") {
+      const id = `${event.turnId}-compaction`;
+      const marker: ChatMessage = {
+        id,
+        role: "system",
+        text: "Context compacted",
+        turnId: event.turnId,
+        compaction: event.compaction
+      };
+      const idx = messages.findIndex((m) => m.id === id);
+      const nextMessages =
+        idx >= 0
+          ? [...messages.slice(0, idx), marker, ...messages.slice(idx + 1)]
+          : [...messages, marker];
+      const usage = get().turnUsageBySession[sessionId];
+      set({
+        messagesBySession: { ...get().messagesBySession, [sessionId]: nextMessages },
+        ...(event.context
+          ? {
+              turnUsageBySession: {
+                ...get().turnUsageBySession,
+                [sessionId]: {
+                  context: event.context,
+                  lastTurn:
+                    usage?.lastTurn ?? {
+                      inputTokens: 0,
+                      cacheReadTokens: 0,
+                      cacheWriteTokens: 0,
+                      outputTokens: 0,
+                      reasoningTokens: 0,
+                      costUsd: null
+                    }
+                }
+              }
+            }
+          : {})
       });
     } else if (event.type === "approval.request") {
       const pending = get().pendingApprovals[sessionId] ?? [];

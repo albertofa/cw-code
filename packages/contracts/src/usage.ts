@@ -20,6 +20,15 @@ export interface ContextUsage {
   windowTokens: number;
 }
 
+/** Native compaction signal from a harness. `trigger` is omitted when the source does not expose it. */
+export interface ContextCompactionInfo {
+  trigger?: "manual" | "auto";
+  preTokens?: number;
+  postTokens?: number;
+  droppedTokens?: number;
+  durationMs?: number;
+}
+
 export type UsageSeverity = "normal" | "warning" | "blocked";
 
 export interface UsageWindow {

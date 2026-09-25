@@ -56,6 +56,8 @@ export function buildOpencodeMessageBody(
 export interface OpencodeTurnMessage {
   id: string;
   role?: string;
+  mode?: string;
+  summary?: boolean;
   providerID?: string;
   modelID?: string;
   cost?: number;
@@ -75,6 +77,11 @@ export interface OpencodeTurnSummary {
   lastModel?: string;
   lastContextTokens?: number;
   errorText: string;
+  compacted?: boolean;
+}
+
+export function isOpencodeCompactionMessage(message: OpencodeTurnMessage): boolean {
+  return message.summary === true || message.mode === "compaction";
 }
 
 function asRecord(value: unknown): Record<string, unknown> | null {
@@ -123,6 +130,8 @@ export function turnMessagesOf(payload: unknown): OpencodeTurnMessage[] {
     out.push({
       id,
       ...(role ? { role } : {}),
+      ...(typeof info["mode"] === "string" && info["mode"] ? { mode: info["mode"] } : {}),
+      ...(info["summary"] === true ? { summary: true } : {}),
       ...(providerID ? { providerID } : {}),
       ...(modelID ? { modelID } : {}),
       cost: asNumber(info["cost"]),
@@ -182,9 +191,14 @@ export function summarizeOpencodeTurn(messages: OpencodeTurnMessage[], beforeIds
   let errorText = "";
   let lastModel: string | undefined;
   let lastContextTokens: number | undefined;
+  let compacted = false;
   for (const m of scoped) {
-    if (m.text) text += (text ? "\n" : "") + m.text;
     if (m.error) errorText = m.error;
+    if (isOpencodeCompactionMessage(m)) {
+      compacted = true;
+      continue;
+    }
+    if (m.text) text += (text ? "\n" : "") + m.text;
     const input = m.tokens?.input ?? 0;
     const cacheRead = m.tokens?.cache?.read ?? 0;
     const cacheWrite = m.tokens?.cache?.write ?? 0;
@@ -215,7 +229,14 @@ export function summarizeOpencodeTurn(messages: OpencodeTurnMessage[], beforeIds
       lastContextTokens = contextTokens;
     }
   }
-  return { text, usage: Array.from(byModel.values()), lastModel, lastContextTokens, errorText };
+  return {
+    text,
+    usage: Array.from(byModel.values()),
+    lastModel,
+    lastContextTokens,
+    errorText,
+    ...(compacted ? { compacted } : {})
+  };
 }
 
 export interface OpencodePartDelta {

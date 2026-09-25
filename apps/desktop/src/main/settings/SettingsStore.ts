@@ -83,6 +83,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   githubCliBinaryPath: defaultCliBinaryPath("gh"),
   sourceControlRefreshIntervalSeconds: 30,
   defaultUseWorktree: true,
+  holdingAutoExpireEnabled: false,
   holdingHours: 6,
   autoTitleEnabled: true,
   autoTitleDriver: "claude",
@@ -140,9 +141,10 @@ function sanitize(patch: SettingsPatch): SettingsPatch {
     out.sourceControlRefreshIntervalSeconds = Number.isFinite(value) ? Math.min(3600, Math.max(5, value)) : 30;
   }
   if (patch.defaultUseWorktree !== undefined) out.defaultUseWorktree = patch.defaultUseWorktree === true;
+  if (patch.holdingAutoExpireEnabled !== undefined) out.holdingAutoExpireEnabled = patch.holdingAutoExpireEnabled === true;
   if (patch.holdingHours !== undefined) {
     const value = Math.round(Number(patch.holdingHours));
-    out.holdingHours = Number.isFinite(value) ? Math.min(168, Math.max(0, value)) : 6;
+    out.holdingHours = Number.isFinite(value) ? (value === 0 ? 6 : Math.min(168, Math.max(1, value))) : 6;
   }
   if (patch.autoTitleEnabled !== undefined) out.autoTitleEnabled = patch.autoTitleEnabled === true;
   if (patch.opencodeGoUsage !== undefined) out.opencodeGoUsage = patch.opencodeGoUsage === true;
