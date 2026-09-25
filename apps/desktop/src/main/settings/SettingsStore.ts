@@ -104,7 +104,9 @@ export const DEFAULT_SETTINGS: AppSettings = {
   prAttributionEnabled: true,
   prAttributionText: "— drafted with {{harness}} in cw-code",
   prWorkflows: defaultPrWorkflows(),
-  opencodeGoUsage: false
+  opencodeGoUsage: false,
+  updateChannel: null,
+  updateBackgroundDownload: true
 };
 
 function trimmedOr(value: unknown, fallback: string): string {
@@ -191,6 +193,13 @@ function sanitize(patch: SettingsPatch): SettingsPatch {
       typeof patch.prAttributionText === "string" ? patch.prAttributionText.trim() : DEFAULT_SETTINGS.prAttributionText;
   }
   if (patch.prWorkflows !== undefined) out.prWorkflows = sanitizePrWorkflows(patch.prWorkflows);
+  if (patch.updateChannel !== undefined) {
+    out.updateChannel = patch.updateChannel === "stable" || patch.updateChannel === "alpha" ? patch.updateChannel : DEFAULT_SETTINGS.updateChannel;
+  }
+  if (patch.updateBackgroundDownload !== undefined) {
+    out.updateBackgroundDownload =
+      typeof patch.updateBackgroundDownload === "boolean" ? patch.updateBackgroundDownload : DEFAULT_SETTINGS.updateBackgroundDownload;
+  }
   return out;
 }
 

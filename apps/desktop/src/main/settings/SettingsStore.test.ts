@@ -182,13 +182,13 @@ describe("SettingsStore", () => {
 
   it("preserves unknown top-level keys across migration and saves", () => {
     const filePath = tempFilePath();
-    writeFileSync(filePath, JSON.stringify({ holdingHours: 4, futureSetting: { nested: [1, 2] }, updateChannel: "alpha" }), "utf8");
+    writeFileSync(filePath, JSON.stringify({ holdingHours: 4, futureSetting: { nested: [1, 2] }, futureFlag: "beta" }), "utf8");
 
     const store = new SettingsStore(filePath);
     store.set({ holdingHours: 8 });
 
     const persisted = JSON.parse(readFileSync(filePath, "utf8")) as Record<string, unknown>;
-    expect(persisted).toMatchObject({ schemaVersion: SETTINGS_SCHEMA_VERSION, holdingHours: 8, futureSetting: { nested: [1, 2] }, updateChannel: "alpha" });
+    expect(persisted).toMatchObject({ schemaVersion: SETTINGS_SCHEMA_VERSION, holdingHours: 8, futureSetting: { nested: [1, 2] }, futureFlag: "beta" });
     expect(store.get()).not.toHaveProperty("futureSetting");
     expect(store.get()).not.toHaveProperty("schemaVersion");
   });
@@ -334,6 +334,50 @@ describe("SettingsStore", () => {
     const store = new SettingsStore(tempFilePath());
     const updated = store.set({ prWorkflows: [{ id: "review", enabled: false, icon: "nope" } as unknown as PrWorkflow] });
     expect(updated.prWorkflows.find((w) => w.id === "review")).toMatchObject({ enabled: false, workspace: "checkout" });
+  });
+
+  it("defaults to a derived update channel with background downloads on", () => {
+    const settings = new SettingsStore(tempFilePath()).get();
+    expect(settings.updateChannel).toBeNull();
+    expect(settings.updateBackgroundDownload).toBe(true);
+  });
+
+  it("persists the update preferences and falls back per field on invalid values", () => {
+    const filePath = tempFilePath();
+    const store = new SettingsStore(filePath);
+    expect(store.set({ updateChannel: "stable", updateBackgroundDownload: false })).toMatchObject({
+      updateChannel: "stable",
+      updateBackgroundDownload: false
+    });
+    expect(new SettingsStore(filePath).get()).toMatchObject({ updateChannel: "stable", updateBackgroundDownload: false });
+    expect(
+      store.set({ updateChannel: "beta" as unknown as "alpha", updateBackgroundDownload: "no" as unknown as boolean, holdingHours: 2 })
+    ).toMatchObject({ updateChannel: null, updateBackgroundDownload: true, holdingHours: 2 });
+    expect(store.set({ updateChannel: "alpha" }).updateChannel).toBe("alpha");
+    expect(store.set({ updateChannel: null }).updateChannel).toBeNull();
+  });
+
+  it("loads a schema-1 file written before the update settings existed without a migration or backup", () => {
+    const filePath = tempFilePath();
+    writeFileSync(filePath, JSON.stringify({ schemaVersion: 1, holdingHours: 3, futureSetting: "kept" }), "utf8");
+
+    const settings = new SettingsStore(filePath).get();
+
+    expect(settings).toMatchObject({ holdingHours: 3, updateChannel: null, updateBackgroundDownload: true });
+    const persisted = JSON.parse(readFileSync(filePath, "utf8")) as Record<string, unknown>;
+    expect(persisted).toMatchObject({ schemaVersion: 1, holdingHours: 3, futureSetting: "kept", updateChannel: null, updateBackgroundDownload: true });
+    expect(existsSync(`${filePath}.v1.bak`)).toBe(false);
+    expect(existsSync(`${filePath}.before-repair.bak`)).toBe(false);
+  });
+
+  it("repairs wrong-typed update settings from disk without touching other settings", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const filePath = tempFilePath();
+    writeFileSync(filePath, JSON.stringify({ schemaVersion: 1, holdingHours: 5, updateChannel: 3, updateBackgroundDownload: "yes" }), "utf8");
+
+    expect(new SettingsStore(filePath).get()).toMatchObject({ holdingHours: 5, updateChannel: null, updateBackgroundDownload: true });
+    expect(existsSync(`${filePath}.before-repair.bak`)).toBe(true);
+    warn.mockRestore();
   });
 
   it("defaults reasoning to collapsed per harness and coerces with strict true", () => {

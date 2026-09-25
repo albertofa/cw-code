@@ -19,6 +19,8 @@ const SETTINGS: AppSettings = {
   opencodeReasoningExpanded: false,
   codexReasoningExpanded: false,
   opencodeGoUsage: false,
+  updateChannel: null,
+  updateBackgroundDownload: true,
   gitBinaryPath: "git",
   githubCliBinaryPath: "gh",
   sourceControlRefreshIntervalSeconds: 30,
