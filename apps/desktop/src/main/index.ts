@@ -60,7 +60,16 @@ function parseShutdownPrepare(args: unknown): ShutdownPrepareRequest {
   if (typeof timeoutMs !== "number" || !Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > SHUTDOWN_TIMEOUT_MAX_MS) {
     throw new Error(`shutdown.prepare requires timeoutMs between 1 and ${SHUTDOWN_TIMEOUT_MAX_MS}`);
   }
-  return { reason: reason as ShutdownReason, stopActiveTurns: request.stopActiveTurns, timeoutMs };
+  const approved = request.approvedTurnIds;
+  if (approved !== undefined && (!Array.isArray(approved) || !approved.every((id) => typeof id === "string"))) {
+    throw new Error("shutdown.prepare approvedTurnIds must be an array of turn ids");
+  }
+  return {
+    reason: reason as ShutdownReason,
+    stopActiveTurns: request.stopActiveTurns,
+    timeoutMs,
+    ...(approved !== undefined ? { approvedTurnIds: approved as string[] } : {})
+  };
 }
 
 function parseShutdownToken(args: unknown, channel: string): string {
@@ -117,8 +126,20 @@ function createServices(stores: { sessionStore: SessionStore; settingsStore: Set
     pullRequests,
     ptys,
     accountUsage: new AccountUsageService(() => sessions.getDrivers()),
-    shutdown: new ShutdownCoordinator({ sessions, ptys })
+    shutdown: new ShutdownCoordinator({ sessions, ptys, onRecovered: handleShutdownRecovered })
   };
+}
+
+function handleShutdownRecovered(failure: string | null): void {
+  servicesDisposed = false;
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createWindow().catch((err: Error) => appendCrashLog(`could not reopen the window after shutdown recovery: ${err.message}`));
+  }
+  if (!failure) return;
+  appendCrashLog(`shutdown recovery could not restart CLI drivers: ${failure}`);
+  const options = { type: "error" as const, title: "cw-code", message: "cw-code could not restart its CLI drivers", detail: failure };
+  const window = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+  void (window ? dialog.showMessageBox(window, options) : dialog.showMessageBox(options));
 }
 
 function isQuitApproved(): boolean {
@@ -176,11 +197,16 @@ function endOfSession(): void {
 async function commitShutdown(token: string, action: () => Promise<void> | void): Promise<ShutdownCommitResult> {
   if (!services) return { ok: false, message: "cw-code services are not running" };
   const result = await services.shutdown.commit(token, action);
-  if (!result.ok) {
+  if (!result.ok && !services.shutdown.isCommitted()) {
     quitApproved = false;
     servicesDisposed = false;
   }
   return result;
+}
+
+function recoverAbandonedShutdown(): void {
+  if (!services || services.shutdown.isIdle() || services.shutdown.isCommitted()) return;
+  services.shutdown.recover();
 }
 
 function focusMainWindow(): void {
@@ -213,7 +239,7 @@ async function createWindow(): Promise<void> {
   mainWindow.on("unmaximize", () => mainWindow?.webContents.send("win.maximized", false));
   mainWindow.on("unresponsive", () => appendCrashLog("window unresponsive"));
   mainWindow.on("close", (event) => {
-    if (!services || isQuitApproved()) return;
+    if (process.platform === "darwin" || !services || isQuitApproved()) return;
     event.preventDefault();
     requestShutdown();
   });
@@ -225,8 +251,11 @@ async function createWindow(): Promise<void> {
       `render-process-gone: reason=${details.reason} exitCode=${details.exitCode}`
     );
     services?.ptys.detachAll();
-    if (services && !services.shutdown.isCommitted()) services.shutdown.recover();
+    recoverAbandonedShutdown();
     void webContents.reload();
+  });
+  webContents.on("did-start-navigation", (details) => {
+    if (details.isMainFrame && !details.isSameDocument) recoverAbandonedShutdown();
   });
   webContents.on("console-message", (event) => {
     if (event.level === "error") {
@@ -854,6 +883,10 @@ async function startApp(): Promise<void> {
   app.on("activate", () => {
     if (BrowserWindow.getAllWindows().length === 0) void createWindow();
   });
+}
+
+if (!app.isPackaged && !app.commandLine.hasSwitch("user-data-dir")) {
+  app.setPath("userData", join(app.getPath("appData"), "@cw-code", "desktop-dev"));
 }
 
 if (!app.requestSingleInstanceLock()) {
