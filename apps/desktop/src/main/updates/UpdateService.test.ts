@@ -69,6 +69,7 @@ class FakeAdapter implements UpdaterAdapter {
     this.downloadCalls += 1;
     if (this.downloadError) throw this.downloadError;
     const entry = { deferred: deferred<void>(), cancelled: false };
+    entry.deferred.promise.catch(() => undefined);
     this.downloads.push(entry);
     return {
       done: entry.deferred.promise,
@@ -145,6 +146,8 @@ const INSTALLED: UpdateEnvironment = {
 };
 
 const HOME = "C:\\Users\\Jane";
+const LATEST_PREFIX =
+  "Unable to find latest version on GitHub (https://github.com/albertofa/cw-code/releases/latest), please ensure a production release exists: ";
 
 interface Harness {
   service: UpdateService;
@@ -323,22 +326,45 @@ describe("UpdateService checks", () => {
   it("treats a missing stable release as up to date on the stable channel", async () => {
     const h = harness();
     h.service.start();
-    for (const code of ["ERR_UPDATER_LATEST_VERSION_NOT_FOUND", "ERR_UPDATER_CHANNEL_FILE_NOT_FOUND"]) {
-      h.adapter.checkResults.push(Object.assign(new Error("Unable to find latest version on GitHub"), { code }));
+    const missing = [
+      Object.assign(new Error(`${LATEST_PREFIX}HttpError: 404 Not Found\nHeaders: {}`), { code: "ERR_UPDATER_LATEST_VERSION_NOT_FOUND" }),
+      Object.assign(new Error("Cannot find latest.yml in the latest release artifacts"), { code: "ERR_UPDATER_CHANNEL_FILE_NOT_FOUND" })
+    ];
+    for (const error of missing) {
+      h.adapter.checkResults.push(error);
       expect(await h.service.check()).toMatchObject({ ok: true, state: { phase: "up-to-date", error: null } });
       expect(h.scheduler.pending().map((task) => task.delay)).toEqual([CHECK_INTERVAL_MS]);
     }
-    expect(h.logs.filter((line) => line.includes("no stable release yet"))).toHaveLength(2);
+    expect(h.logs.filter((line) => line.startsWith("warn no stable release yet"))).toEqual([
+      "warn no stable release yet (ERR_UPDATER_LATEST_VERSION_NOT_FOUND)",
+      "warn no stable release yet (ERR_UPDATER_CHANNEL_FILE_NOT_FOUND)"
+    ]);
   });
 
-  it("keeps offline and alpha-channel missing releases as errors", async () => {
-    const stable = harness();
-    stable.adapter.checkResults.push(
-      Object.assign(new Error("Unable to find latest version on GitHub: net::ERR_INTERNET_DISCONNECTED"), {
-        code: "ERR_UPDATER_LATEST_VERSION_NOT_FOUND"
-      })
-    );
-    expect(await stable.service.check()).toMatchObject({ ok: false, code: "failed", state: { phase: "error" } });
+  it("keeps other /releases/latest failures as retryable errors with backoff", async () => {
+    const causes = [
+      "HttpError: 503 Service Unavailable",
+      "HttpError: 502 Bad Gateway",
+      "HttpError: 403 Forbidden\nx-ratelimit-remaining: 0",
+      "HttpError: 429 Too many requests",
+      "Error: Request timed out",
+      "SyntaxError: Unexpected token '<', \"<!DOCTYPE \"... is not valid JSON",
+      "Error: net::ERR_INTERNET_DISCONNECTED"
+    ];
+    for (const cause of causes) {
+      const h = harness();
+      h.service.start();
+      h.adapter.checkResults.push(Object.assign(new Error(`${LATEST_PREFIX}${cause}`), { code: "ERR_UPDATER_LATEST_VERSION_NOT_FOUND" }));
+      expect(await h.service.check()).toMatchObject({
+        ok: false,
+        code: "failed",
+        state: { phase: "error", error: { context: "check", retryable: true } }
+      });
+      expect(h.scheduler.pending().map((task) => task.delay)).toEqual([BACKOFF_BASE_MS]);
+    }
+  });
+
+  it("keeps a missing alpha channel file as an error", async () => {
     const alpha = harness({ runningVersion: "1.0.0-alpha.1" });
     alpha.adapter.checkResults.push(Object.assign(new Error("Cannot find alpha.yml"), { code: "ERR_UPDATER_CHANNEL_FILE_NOT_FOUND" }));
     expect(await alpha.service.check()).toMatchObject({ ok: false, code: "failed", state: { phase: "error" } });
@@ -368,6 +394,31 @@ describe("UpdateService checks", () => {
     expect(h.service.getState()).toMatchObject({ phase: "error", error: { context: "check" } });
     expect(h.scheduler.pending().map((task) => task.delay)).toEqual([BACKOFF_BASE_MS]);
     expect(h.logs.some((line) => line.includes("failed unexpectedly"))).toBe(true);
+    h.adapter.checkResults.push({ available: true } as unknown as UpdaterCheckOutcome);
+    h.scheduler.fire();
+    await settle();
+    expect(h.scheduler.pending().map((task) => task.delay)).toEqual([BACKOFF_BASE_MS * 2]);
+  });
+
+  it("releases the download lock when a download operation crashes", async () => {
+    const h = harness({
+      logger: {
+        info: (message) => {
+          if (message.startsWith("download started")) throw new Error("log sink broke");
+        },
+        warn: () => {}
+      }
+    });
+    h.adapter.checkResults.push(outcome("1.1.0"));
+    await h.service.check();
+    expect(await h.service.download()).toMatchObject({
+      ok: false,
+      code: "failed",
+      state: { phase: "error", error: { context: "download", message: "log sink broke" } }
+    });
+    expect(h.adapter.downloads[0].cancelled).toBe(true);
+    expect(await h.service.check()).toMatchObject({ ok: true });
+    expect(h.adapter.checkCalls).toBe(2);
   });
 
   it("treats an inactive updater as a non-retryable failure", async () => {

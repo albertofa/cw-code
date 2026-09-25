@@ -8,7 +8,7 @@ import type {
   UpdateState
 } from "@cw-code/contracts";
 import type { UpdaterAdapter, UpdaterCheckOutcome, UpdaterDownloadHandle } from "./ElectronUpdaterAdapter.js";
-import { describeUpdateError, formatLogValue, isMissingReleaseError, redactUpdateText, type UpdateLogSink } from "./updateLog.js";
+import { describeUpdateError, formatLogValue, isMissingReleaseError, redactUpdateText, updateErrorCode, type UpdateLogSink } from "./updateLog.js";
 import {
   boundedText,
   channelOfVersion,
@@ -271,20 +271,21 @@ export class UpdateService {
     } catch (error) {
       if (this.disposed) return this.fail("superseded", "The updater shut down during the check");
       if (this.state.channel === "stable" && isMissingReleaseError(error)) {
-        return this.checkSucceeded(null, "no stable release yet");
+        this.log("warn", `no stable release yet (${updateErrorCode(error)})`);
+        return this.checkSucceeded(null);
       }
       return this.checkFailed(describeUpdateError(error, this.options.homeDir));
     }
     if (this.disposed) return this.fail("superseded", "The updater shut down during the check");
     if (!outcome) return this.checkFailed({ message: "The updater is not active in this build", retryable: false });
     const candidate = this.candidateFrom(outcome);
-    return this.checkSucceeded(candidate, candidate ? `update ${candidate.version} is available` : "no eligible update found");
+    this.log("info", candidate ? `update ${candidate.version} is available` : "no eligible update found");
+    return this.checkSucceeded(candidate);
   }
 
-  private checkSucceeded(candidate: UpdateCandidate | null, summary: string): UpdateActionResult {
+  private checkSucceeded(candidate: UpdateCandidate | null): UpdateActionResult {
     this.consecutiveFailures = 0;
     this.dispatch({ type: "check-succeeded", at: this.now(), candidate });
-    this.log("info", summary);
     this.scheduleCheck(this.intervalDelay(), "scheduled");
     if (this.state.autoDownload && this.state.phase === "available") void this.download();
     return this.ok();
@@ -500,6 +501,8 @@ export class UpdateService {
     const failure = describeUpdateError(error, this.options.homeDir);
     this.log("warn", `update operation failed unexpectedly: ${failure.message}`);
     if (!this.disposed) {
+      this.consecutiveFailures += 1;
+      this.cancelActiveDownload("update operation failed unexpectedly");
       this.dispatch({ type: "check-failed", at: this.now(), failure });
       this.dispatch({ type: "download-failed", failure });
       if (!this.cancelScheduled) this.scheduleCheck(this.backoffDelay(), "scheduled");
