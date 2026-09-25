@@ -1,0 +1,17 @@
+{
+  "name": "@cw-code/release-tools",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.6.3",
+    "vitest": "^3.2.4"
+  },
+  "description": "Release planning and versioning tools for cw-code (candidate versions, release plans/notes, stable promotion).",
+  "license": "MIT"
+}
