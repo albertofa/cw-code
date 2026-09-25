@@ -15,6 +15,9 @@ import { type ParsedVersion, FULL_SHA_PATTERN, baseOf, formatVersion, parseVersi
 import { verifyReleaseSet } from "../releaseSet.ts";
 import { buildSigningManifest, parsePackageInfo, parseVerificationReport, validateSigningManifest } from "../signingManifest.ts";
 import { readPublisherNames } from "../updateInfoYaml.ts";
+import { parseFaults } from "../feedFaults.ts";
+import { validateReleaseFeed } from "../feedManifest.ts";
+import { startFeedServer } from "../feedServer.ts";
 
 const __filename = fileURLToPath(import.meta.url);
 const REPO_ROOT = resolve(dirname(__filename), "../../../../");
@@ -262,6 +265,52 @@ async function cmdCheckSigningManifest(options: Map<string, string>): Promise<vo
   });
 }
 
+function readFaultOption(options: Map<string, string>): unknown {
+  const inline = options.get("faults");
+  const file = options.get("faults-file");
+  if (inline && file) fail("pass either --faults or --faults-file, not both");
+  if (file) return readJsonFile(file);
+  return inline ? (JSON.parse(inline) as unknown) : [];
+}
+
+async function cmdFeedServe(options: Map<string, string>): Promise<void> {
+  const root = resolve(requireOption(options, "root"));
+  if (!existsSync(root)) fail(`--root ${root} does not exist`);
+  const portOption = options.get("port") ?? "0";
+  const port = Number(portOption);
+  if (!Number.isInteger(port) || port < 0 || port > 65535) fail(`--port must be an integer between 0 and 65535, got "${portOption}"`);
+  const faults = parseFaults(readFaultOption(options));
+  const logPath = options.get("log");
+  const server = await startFeedServer({
+    root,
+    port,
+    faults,
+    onRequest: (entry) => {
+      const line = `${JSON.stringify(entry)}\n`;
+      if (logPath) appendFileSync(resolve(logPath), line);
+      else process.stdout.write(line);
+    }
+  });
+  process.stdout.write(`${JSON.stringify({ listening: server.url, root, faults: faults.length })}\n`);
+  const stop = (): void => {
+    void server.close().then(() => process.exit(0));
+  };
+  process.once("SIGINT", stop);
+  process.once("SIGTERM", stop);
+}
+
+async function cmdValidateFeed(options: Map<string, string>): Promise<void> {
+  const dir = resolve(requireOption(options, "dir"));
+  const channels = options.get("channels");
+  const report = await validateReleaseFeed(dir, {
+    version: options.get("version"),
+    channelFiles: channels ? channels.split(",").map((name) => name.trim()).filter(Boolean) : undefined,
+    requireBlockMap: options.get("require-blockmap") === "true"
+  });
+  printJson(report);
+  if (report.errors.length > 0) process.exitCode = 1;
+}
+
 async function main(): Promise<void> {
   const { command, options } = parseArgs(process.argv.slice(2));
   switch (command) {
@@ -289,9 +338,15 @@ async function main(): Promise<void> {
     case "check-signing-manifest":
       await cmdCheckSigningManifest(options);
       return;
+    case "feed-serve":
+      await cmdFeedServe(options);
+      return;
+    case "validate-feed":
+      await cmdValidateFeed(options);
+      return;
     default:
       fail(
-        `Unknown command "${command}". Expected: plan | verify-plan | apply | set-base | check-sync | rehash | signing-manifest | check-signing-manifest`
+        `Unknown command "${command}". Expected: plan | verify-plan | apply | set-base | check-sync | rehash | signing-manifest | check-signing-manifest | feed-serve | validate-feed`
       );
   }
 }

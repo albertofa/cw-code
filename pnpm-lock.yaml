@@ -114,6 +114,9 @@ importers:
       '@types/node':
         specifier: ^22.10.2
         version: 22.20.1
+      electron-updater:
+        specifier: 6.8.9
+        version: 6.8.9
       typescript:
         specifier: ^5.6.3
         version: 5.9.3
