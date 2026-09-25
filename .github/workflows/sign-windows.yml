@@ -202,7 +202,7 @@ jobs:
             apps/desktop/dist/win-unpacked/
             apps/desktop/dist/package-info.json
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 3
 
   sign-app:
     needs: [guard, package-app]
@@ -256,7 +256,7 @@ jobs:
             signed-app/win-unpacked/
             signed-app/package-info.json
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 3
 
   package-installer:
     needs: [guard, package-app, sign-app]
@@ -351,14 +351,14 @@ jobs:
           name: ${{ needs.guard.outputs.installer-unsigned }}
           path: installer-input/
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 3
       - name: Upload the update metadata
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ needs.guard.outputs.installer-metadata }}
           path: installer-metadata/
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 3
 
   sign-installer:
     needs: [guard, package-installer]
@@ -414,7 +414,7 @@ jobs:
           name: ${{ needs.guard.outputs.installer-signed }}
           path: signed-installer/
           if-no-files-found: error
-          retention-days: 1
+          retention-days: 3
 
   finalize:
     needs: [guard, package-installer, sign-installer]
@@ -504,8 +504,12 @@ jobs:
       - name: Re-read signing.json against the release set
         env:
           PRODUCTION: ${{ inputs.production }}
+          VERSION: ${{ inputs.version }}
+          SOURCE_SHA: ${{ inputs.source-sha }}
+          RUN_ID: ${{ github.run_id }}
         run: |
-          args=(check-signing-manifest --manifest release/signing.json --release-dir release)
+          args=(check-signing-manifest --manifest release/signing.json --release-dir release
+            --expected-version "$VERSION" --expected-source-sha "$SOURCE_SHA" --expected-run-id "$RUN_ID")
           if [ "$PRODUCTION" = "true" ]; then
             args+=(--require-production)
           fi
