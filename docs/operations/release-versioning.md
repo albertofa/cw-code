@@ -16,8 +16,12 @@ single authoritative "intended next stable base". The three package.json files
 verifies this and `set-base`/`apply` keep them in sync.
 
 The next alpha for the current base is `base-alpha.(N + 1)`, where `N` is the highest
-published (non-draft) alpha number for that exact base, or `alpha.0` if no alpha has been
-published for it yet. Planning an alpha is rejected outright if:
+alpha number already used for that exact base, or `alpha.0` if none is used yet. "Used"
+means a published release, a draft release the token can see, or any `v<base>-alpha.*`
+git tag (for example one left behind by a deleted release), so a withdrawn number is
+never handed out again. The plan job's read-only token cannot list drafts; `publish`
+then rejects an unresumable draft for that tag (see [releases.md](releases.md#recovery)).
+Planning an alpha is rejected outright if:
 
 - the base is already published as a stable release, or
 - the base is *behind* the base of the highest published alpha (the desktop version must
@@ -50,7 +54,9 @@ tag (`vX.Y.Z-alpha.N`) or its resolved commit SHA. `plan --channel stable --cand
 3. Rejects if a stable release already supersedes the candidate's base (i.e. the "latest
    candidate" is never resolved implicitly — only an explicit candidate that is still ahead
    of the highest published stable is accepted).
-4. Builds a stable plan for the candidate's base, at the candidate's exact resolved SHA.
+4. Rejects the base if a `vX.Y.Z` git tag already exists (for example after a withdrawn
+   stable release): a version is never reused, so bump the base with `set-base`.
+5. Builds a stable plan for the candidate's base, at the candidate's exact resolved SHA.
 
 The GitHub API's own `prerelease` flag on existing releases is not used to classify a
 release's channel (the alphas published for this project are all marked non-prerelease in
@@ -76,8 +82,11 @@ published stable (or none, for the first stable release).
 After a successful `CI` run on `main`, an alpha plan is generated automatically
 (`workflow_run`). It is skipped (not failed) when:
 
-- HEAD is unchanged from the SHA of the latest published alpha or stable release, or
-- fewer than 6 hours have passed since the latest published alpha.
+- HEAD is unchanged from the SHA of the latest published alpha or stable release,
+- fewer than 6 hours have passed since the latest published alpha, or
+- the tag commit of the highest published alpha or stable is not an ancestor of the
+  source SHA (GitHub compare API). This is what stops a re-run of an old CI run, or a
+  `workflow_run` that arrives late, from releasing older history under a new number.
 
 This coalesces bursts of merges into at most one alpha release per 6 hours, without
 publishing a redundant alpha for an unchanged commit. Note: releases published before this
@@ -132,9 +141,11 @@ repository/GitHub state, that:
   would land after it in the Atom feed and stay hidden from alpha clients); and
 - the source SHA is still acceptable: for alpha, `sourceSha` must be reachable from `main`
   on GitHub (`gh api repos/<owner>/<repo>/compare/<sha>...main` is `identical` or `ahead`,
-  exposed as `ReleaseSource.isAncestorOfMain()`). `main` moving on after the plan is fine;
-  a force-push or a side-branch SHA is not. For stable, the candidate tag's resolved commit
-  must still equal the recorded `sourceSha`.
+  exposed as `ReleaseSource.isAncestor(sha, "main")`), and the tag commits of the highest
+  published alpha and stable must both be ancestors of `sourceSha`. `main` moving on after
+  the plan is fine; a force-push, a side-branch SHA or a commit older than a published
+  release is not. For stable, the candidate tag's resolved commit must still equal the
+  recorded `sourceSha`.
 
 A stale result rejects the plan instead of publishing it. `release.yml`'s publish step runs
 the same checks before creating the draft and again right before publishing
@@ -204,7 +215,8 @@ No workflow step ever interpolates `${{ github.event.inputs.* }}` or a previous 
 through `env:` and referenced as quoted shell variables, so a crafted input (e.g. a candidate
 string containing shell metacharacters) cannot break out of its argument position.
 
-The job checks out the exact commit that triggered it (or `main`'s current head for manual
-dispatch) with full history and tags, runs `plan`, uploads `plan.json` as a 30-day artifact,
-and writes a job summary. The workflow's `release-<channel>` concurrency group serializes
-runs per channel without cancelling an in-progress run.
+The job checks out the workflow's own commit (`github.workflow_sha`) with full history and
+tags, so the planner itself is the current tooling, and runs `plan --sha <source>` for the
+commit that triggered the run (`workflow_run.head_sha`, or `github.sha` for a manual
+dispatch). It uploads `plan.json` as a 30-day artifact and writes a job summary.
+Concurrency groups are described in [releases.md](releases.md#triggers).

@@ -24,13 +24,14 @@ by hand. Until commissioning (step 10) finishes, every run is validation-only.
 CI (push to main, success) ──workflow_run──┐
 workflow_dispatch (main only) ─────────────┤
                                            v
-plan (ubuntu, contents: read)
-  resolve mode, plan version/tag/source SHA, upload plan.json
-  │ skip (6-hour window, unchanged HEAD) ends the run here
+plan (ubuntu, contents: read, tooling at the workflow commit)
+  resolve mode, plan version/tag for the source SHA, upload plan.json
+  │ skip (6-hour window, unchanged HEAD, source older than a published
+  │ release) ends the run here
   v
 verify-source (windows)
-  checkout plan.sourceSha, frozen install, apply version, typecheck, test, build,
-  production-bundle check
+  checkout plan.sourceSha, frozen install, apply version, typecheck, test, build;
+  production-bundle check with the workflow commit's tooling
   v
 sign (sign-windows.yml, reusable)
   package app, SignPath app + installer (protected release-signing environment),
@@ -41,12 +42,15 @@ verify-candidate (windows)
   validate-release-assets, native-load probe (install, start, node-pty, uninstall),
   N -> N+1 production-bytes upgrade, upload release set (30 days)
   v
-publish (ubuntu, environment release-publish, contents: write)
+publish (ubuntu, environment release-publish, contents: write,
+         one publish job at a time across channels)
   only if mode == publish and CW_RELEASE_PUBLISHING_ENABLED == 'true'
+  (re-read after the environment approval)
   draft at sourceSha, upload (feeds last), re-download and compare, re-check
   ordering, publish
   v
 verify-publication (ubuntu, no token)
+  runs whenever the release became public, even if publish failed afterwards;
   anonymous checks of the URLs clients use
 ```
 
@@ -60,16 +64,43 @@ through `workflow_run` would have lost the dispatch inputs. Planning rules are i
 
 - `workflow_run` of `CI` on `main`. The `plan` job only runs when that CI run
   succeeded, was a `push`, ran on `main` and came from this repository. It always
-  plans an alpha, always validates and always signs in `unsigned` mode, so an
+  plans an alpha for the CI run's `head_sha`, always validates and always signs in
+  `unsigned` mode, so an
   automatic run never waits for a human signing approval and never uses signing
   quota.
 - `workflow_dispatch` on `main` with `channel` (alpha | stable), `candidate`,
   `expected_sha`, `force` and `mode` (validate | publish, default validate). Inputs
-  reach scripts through `env:` only.
+  reach scripts through `env:` only. An alpha dispatch with `candidate` or
+  `expected_sha` fails in `plan`; those inputs only mean something for stable.
 
-There is no pull request trigger. Concurrency group `release-<channel>` with
-`cancel-in-progress: false`: a running release is never cancelled. GitHub keeps at
-most one pending run per group, so a newer pending run replaces an older pending one.
+There is no pull request trigger.
+
+Concurrency, all with `cancel-in-progress: false` so a running release is never
+cancelled:
+
+| Group | Holds |
+| --- | --- |
+| `release-validate-<channel>` | every `workflow_run` run and every `validate` dispatch |
+| `release-publish-<channel>` | every `publish` dispatch |
+| `release-publish` (job level) | the `publish` job, so an alpha and a stable publication never run at the same time |
+
+A validation run therefore never delays a publication. GitHub keeps at most one
+pending run (or pending job, for the job-level group) per group: a newer pending one
+replaces an older pending one, which then shows as cancelled. Nothing was published
+by a cancelled pending run; dispatch it again if it is still wanted.
+
+## Where code runs from
+
+The gate tooling (planner, validators, bundle gate, publisher, post-publication
+checks) always runs from the workflow's own commit, `github.workflow_sha`, which for
+both triggers is the tip of `main` the workflow file was read from. The plan job checks
+out that commit with full history and plans for the source SHA with
+`plan --sha <workflow_run.head_sha | github.sha>`, reading the desktop version from the
+source commit with `git show`. Only `verify-source` checks out the source SHA, to run
+its own typecheck, tests and build; the production-bundle gate on that build comes from
+a second checkout of the workflow commit under `tooling/`. `sign-windows.yml` follows
+the same rule with `job.workflow_sha`. A stable promotion of an older commit is
+therefore always judged by the current gates.
 
 ## Validation-only and publish
 
@@ -152,8 +183,10 @@ version, channel matches the version shape).
 4. `verify-plan`: no git tag with that name; an existing draft is resumed only if it
    targets `sourceSha` and its body carries `<!-- cw-release-plan sha=<sourceSha> -->`;
    no higher or equal version published in the channel; for alpha, no newer stable
-   published and `sourceSha` still reachable from `main` (GitHub compare API); for
-   stable, the candidate tag still resolves to `sourceSha`.
+   published, `sourceSha` still reachable from `main`, and the tag commits of the
+   highest published alpha and stable both ancestors of `sourceSha` (GitHub compare
+   API), so a rerun of an old CI run can never publish older history; for stable, the
+   candidate tag still resolves to `sourceSha`.
 5. Creates the draft (`target_commitish = sourceSha`, notes plus the marker, alpha
    drafts are prereleases) or resumes the marked draft.
 6. Uploads the installer, the blockmap and `signing.json`, then the feed files, with
@@ -167,23 +200,34 @@ version, channel matches the version shape).
 8. Runs step 4 again, and checks the tag still does not exist.
 9. Publishes: alpha with `prerelease=true, make_latest=false`; stable with
    `prerelease=false, make_latest=true`. GitHub creates the tag at `sourceSha`.
-10. Confirms the release is public with the right prerelease flag and the tag points
-    at `sourceSha`.
+10. Sets the job output `published=true` the moment the release is public, then
+    confirms the prerelease flag and that the tag points at `sourceSha`, re-reading
+    up to 5 times 2 s apart because GitHub's API can lag right after a write.
 
 Everything up to step 9 happens on a draft, which anonymous clients cannot see, so a
-failed upload or check never leaves a public incomplete release.
+failed upload or check never leaves a public incomplete release. Before any of this,
+the publish step re-reads `CW_RELEASE_PUBLISHING_ENABLED` (after the environment
+approval, which can come days later) and stops unless it is still `true`.
 
 ## Post-publication check
 
-`verify-publication` runs without any token (`check-published` refuses to start if
-`GH_TOKEN` or `GITHUB_TOKEN` is set) and retries up to 6 times, 30 s apart, because
+`verify-publication` runs whenever `publish` reported `published=true`, including
+when `publish` failed afterwards (for example on the tag confirmation), and never when
+nothing became public. It runs without any token (`check-published` refuses to start
+if `GH_TOKEN` or `GITHUB_TOKEN` is set) and retries up to 6 times, 30 s apart, because
 GitHub's CDN lags. It checks:
 
 - `api.github.com/repos/albertofa/cw-code/releases/tags/<tag>`: published, prerelease
   flag, exactly the five assets;
 - `github.com/albertofa/cw-code/releases/latest` (what stable clients read): the new
   tag for stable, anything else for alpha;
-- `github.com/albertofa/cw-code/releases.atom` (what alpha clients read) lists the tag;
+- `github.com/albertofa/cw-code/releases.atom` (what alpha clients read): the tag
+  must be listed while the release is among the N most recent releases, where N is
+  the number of entries the feed returned (the anonymous releases API gives that
+  order). A release older than that window is out of the feed by design, and the
+  release and channel-manifest checks cover it. The feed's window size and its
+  caching are not documented by GitHub, so this check is the least certain one; a
+  failure here with every other check green is most likely feed lag;
 - the channel manifest a client downloads, with the planned version:
   `https://github.com/albertofa/cw-code/releases/latest/download/latest.yml` for stable,
   `https://github.com/albertofa/cw-code/releases/download/<tag>/alpha.yml` for alpha;
@@ -228,13 +272,19 @@ installer's Authenticode status and signer, and every asset digest.
 
 ## Reruns and resume
 
-- Artifact names carry the run attempt and are never overwritten. After a failure in
-  `plan`, `verify-source`, `sign` or `verify-candidate`, use **Re-run all jobs**.
-- **Re-run failed jobs** is safe for `publish` and `verify-publication`: they only
-  download artifacts. A rerun of `publish` resumes the same draft and keeps matching
-  assets.
-- **Re-run all jobs** after a draft was created re-signs, so the bytes change.
-  `publish` then resumes the draft and replaces its assets; nothing public changes.
+- Artifact names carry the run attempt and are never overwritten. Jobs that passed
+  keep their outputs across attempts, so a rerun reuses their artifacts by name.
+- Prefer **Re-run failed jobs** for failures in `verify-candidate`, `publish` and
+  `verify-publication`: they only download earlier artifacts, and the release set and
+  evidence they upload get a new `attempt<n>` suffix. A rerun of `publish` resumes the
+  same draft and keeps matching assets.
+- Use **Re-run all jobs** when `sign` (any `sign-windows.yml` job) failed, because a
+  partially failed signing job may already have uploaded an artifact under its
+  attempt name, and when you want fresh signatures. Re-running everything after a
+  draft exists re-signs, so the bytes change; `publish` then resumes the draft and
+  replaces its assets, and nothing public changes.
+- If `main` moved or a newer release appeared, start a new run instead: `publish`
+  rejects a stale plan anyway.
 - Once a release is published, a rerun of `publish` either confirms identical bytes
   (`already-published`) or fails. It never replaces published assets.
 
@@ -245,9 +295,14 @@ installer's Authenticode status and signer, and every asset digest.
 - `contents: write` exists only in `publish`; signing secrets exist only in the
   `release-signing` jobs of `sign-windows.yml`; `release.yml` references no secrets.
 - No `${{ }}` expression is interpolated into a `run:` script.
-- The gate tooling (validators, publisher) runs from the workflow's own commit; only
-  the app is built from `sourceSha`.
+- Gate tooling runs from `github.workflow_sha` (see [Where code runs from](#where-code-runs-from)).
+- `plan`, `publish` and `verify-publication` install with `--ignore-scripts`: they only
+  run the release tooling, so no dependency lifecycle script runs next to a token.
 - No npm, web, Azure or backend deployment is part of this workflow.
+- Recommended for the owner: evaluate GitHub's immutable releases setting for the
+  repository. Once a release is published its assets and tag can then no longer be
+  changed, which matches the roll-forward rules below (the pipeline never edits a
+  published release), and a draft stays editable, so resume keeps working.
 
 ## Distribution repository
 
@@ -262,32 +317,46 @@ and never embed any token in the app.
 
 ## Recovery
 
-Step 10 completes this runbook. Current guidance:
+Step 10 completes this runbook. The one rule behind every entry: a version number is
+used once. Nothing is ever re-drafted, re-tagged or re-uploaded under a number that
+may have been public; problems are fixed by rolling forward to a higher version.
 
 - **Signing, verification or upgrade gate failed**: nothing was published. Fix the
   cause and start a new run. Do not switch to `unsigned`.
 - **Publish failed before step 9**: the release is still a draft. Re-run the failed
-  `publish` job; it resumes the draft. If the draft is wrong (for example it holds an
-  asset the set does not own), delete that asset or the draft by hand after checking
-  it, then rerun.
-- **Publish failed after step 9** (tag at another commit, wrong prerelease flag):
-  the release is public. Edit the release flags by hand if they are wrong. If the tag
-  points at the wrong commit, turn the release back into a draft, fix the tag, and
-  republish. Record what happened.
+  `publish` job; it resumes the draft. If the draft holds an asset the set does not
+  own, check it, delete that asset by hand, then rerun.
+- **An abandoned draft for another SHA blocks the number**: `publish` refuses a draft
+  it cannot resume ("cannot resume"). The tag was never created, because drafts do
+  not create tags. The owner checks the draft and deletes it, then starts a new run.
+  The plan job's read-only token cannot see drafts, so it may plan that number again;
+  once the draft is deleted that is fine.
+- **Publish failed after step 9** (wrong prerelease flag, tag at another commit): the
+  release is public. `verify-publication` still runs and shows what clients see. Fix
+  the prerelease/latest flags by hand if they are wrong. If the tag is wrong, do not
+  move it: withdraw the release (below) and roll forward. Record what happened.
 - **verify-publication failed**: open the failing URL from the summary. CDN lag clears
-  within minutes; re-run the job. A wrong manifest or digest means the release must be
-  pulled back to draft while you investigate; clients that already downloaded it will
-  still verify sha512 and the publisher before installing.
-- **A published release must be withdrawn**: mark it draft (stable: first publish or
-  re-mark the previous stable as latest). Never delete or replace assets of a release
-  that clients may have downloaded.
+  within minutes; re-run the job. A wrong manifest or digest means a withdrawal and a
+  roll-forward release.
+- **Withdrawing a published release**: edit its notes to say it is withdrawn and
+  which version supersedes it, and publish a fixed N+1 through the normal pipeline as
+  soon as possible. For a stable release, make sure the previous good stable or the
+  fix is marked latest. Do not turn the release back into a draft, do not delete its
+  tag or assets and do not reuse its number: clients may already hold the installer
+  in their updater cache and will install it on the next restart unless a higher
+  version supersedes it. electron-updater still verifies sha512 and the publisher
+  before installing, so this is about bad content, not tampering.
+- **A leftover tag or deleted release**: the planner treats every existing
+  `v<base>-alpha.*` git tag and every visible draft as a used alpha number and plans
+  the next free one. A stable version whose tag exists is refused; bump the base with
+  `set-base` in a normal PR.
 
 ## Local dry run
 
 Safe on a developer machine (no install, no upload):
 
 ```sh
-node tools/release/src/cli/release.ts plan --channel alpha --force --out plan.json
+node tools/release/src/cli/release.ts plan --channel alpha --force --sha <origin/main SHA> --out plan.json
 # build win-unpacked and the installer with electron-builder --publish never into a
 # gitignored or temp folder, then in that folder's release dir:
 node tools/release/src/cli/release.ts rehash --dir release-full
@@ -305,6 +374,8 @@ Result on 2026-09-25 (unsigned local build of `0.0.1-alpha.22`, logs in
 
 | Step | Exit |
 | --- | --- |
+| `plan --sha <origin/main>` (0.0.1-alpha.22; alpha.21's tag commit is an ancestor) | 0 |
+| `plan --sha <v0.0.1-alpha.20 commit>` | 0, skip: alpha.21 is not an ancestor |
 | `rehash`, `verify-signatures -AllowUnsigned`, `signing-manifest` unsigned | 0 |
 | `check-signing-manifest` with the plan's version, SHA and run id | 0 |
 | same with another run id | 1 |
@@ -313,6 +384,7 @@ Result on 2026-09-25 (unsigned local build of `0.0.1-alpha.22`, logs in
 | same with `--require-production` | 1 (not a production signpath manifest) |
 | other run id; extra file; flipped blockmap byte; edited `alpha.yml` | 1 each |
 | `select-upgrade-base` against GitHub | 0, `bootstrap` |
+| `verify-plan` for the origin/main plan | 0 |
 | `verify-plan` for a SHA GitHub does not know | 1 |
 | `check-published` with `GH_TOKEN` set | 1 (refuses) |
 | `check-published` for the unpublished tag | 1 (404s) |
