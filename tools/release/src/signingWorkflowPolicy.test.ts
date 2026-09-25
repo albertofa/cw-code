@@ -68,13 +68,27 @@ describe("sign-windows.yml policy", () => {
   });
 
   it("runs every gate script from the tooling checkout of the workflow's own commit", () => {
-    const gateLines = lines.filter((line) => /verify-signatures\.ps1|tree-digest\.ps1|release\.ts (rehash|signing-manifest|check-signing-manifest)|release\.ts "\$\{args/.test(line));
+    const gateLines = lines.filter((line) => /verify-signatures\.ps1|tree-digest\.ps1|verify-installed-upgrade\.mjs|release\.ts (rehash|signing-manifest|check-signing-manifest)|release\.ts "\$\{args/.test(line));
     expect(gateLines.length).toBeGreaterThan(0);
     for (const line of gateLines) expect(line).toContain("tooling/");
     const toolingCheckouts = lines.filter((line) => line.trim() === "path: tooling").length;
     const workflowShaRefs = lines.filter((line) => line.trim() === "ref: ${{ job.workflow_sha }}").length;
     expect(toolingCheckouts).toBeGreaterThan(0);
     expect(workflowShaRefs).toBe(toolingCheckouts);
+  });
+
+  it("rejects update-test flags and the autotest path before the app leaves package-app", () => {
+    const body = jobs().get("package-app") ?? [];
+    const text = body.join("\n");
+    const guard = body.findIndex((line) => line.includes("CW_UPDATE_TEST_BUILD"));
+    const build = body.findIndex((line) => line.includes("pnpm --filter @cw-code/desktop build"));
+    const assertion = body.findIndex((line) => line.includes("--assert-production-bundle"));
+    const upload = body.findIndex((line) => line.includes("name: Upload win-unpacked"));
+    expect(guard).toBeGreaterThan(-1);
+    expect(guard).toBeLessThan(build);
+    expect(assertion).toBeGreaterThan(build);
+    expect(assertion).toBeLessThan(upload);
+    expect(text).toContain("--asar apps/desktop/dist/win-unpacked/resources/app.asar");
   });
 
   it("uses no dependency cache and never overwrites artifacts", () => {

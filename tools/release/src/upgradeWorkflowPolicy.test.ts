@@ -19,11 +19,35 @@ describe("upgrade-test.yml policy", () => {
   it("runs on dispatch, nightly and on pull requests that touch the update path", () => {
     const triggers = topLevelBlock("on").filter((line) => /^ {2}\S/.test(line)).map((line) => line.trim());
     expect(triggers).toEqual(["workflow_dispatch:", "schedule:", "pull_request:"]);
-    expect(text).toContain('"apps/desktop/src/main/updates/**"');
-    expect(text).toContain('"apps/desktop/src/main/shutdown/**"');
-    expect(text).toContain('"apps/desktop/electron-builder*.yml"');
-    expect(text).toContain('"scripts/verify-installed-upgrade.mjs"');
-    expect(text).toContain('"tools/release/src/feed*.ts"');
+    for (const path of [
+      "pnpm-lock.yaml",
+      "apps/desktop/package.json",
+      "apps/desktop/src/main/updates/**",
+      "apps/desktop/src/main/shutdown/**",
+      "apps/desktop/src/main/storage/**",
+      "apps/desktop/src/main/storage/__fixtures__/**",
+      "apps/desktop/src/main/sessions/**",
+      "apps/desktop/src/main/settings/**",
+      "apps/desktop/src/main/paths/**",
+      "apps/desktop/src/main/index.ts",
+      "apps/desktop/electron-builder*.yml",
+      "apps/desktop/electron.vite.config.ts",
+      "packages/contracts/src/updates.ts",
+      "packages/contracts/src/shutdown.ts",
+      "packages/contracts/src/settings.ts",
+      "packages/contracts/src/startup.ts",
+      "scripts/verify-installed-upgrade.mjs",
+      "scripts/lib/**",
+      "scripts/fixtures/**",
+      "tools/release/src/feed*.ts",
+      "tools/release/src/rehash.ts",
+      "tools/release/src/updateInfoYaml.ts",
+      "tools/release/src/semver.ts",
+      "tools/release/src/upgradeScenarios.ts",
+      ".github/workflows/upgrade-test.yml"
+    ]) {
+      expect(text).toContain(`- "${path}"`);
+    }
   });
 
   it("only reads the repository", () => {

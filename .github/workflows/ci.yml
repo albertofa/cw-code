@@ -45,6 +45,8 @@ jobs:
       - run: pnpm build
       - name: Package installer with the canonical dist script
         run: pnpm --filter @cw-code/desktop dist
+      - name: Reject any update autotest path in the packaged app
+        run: node scripts/verify-installed-upgrade.mjs --assert-production-bundle --asar apps/desktop/dist/win-unpacked/resources/app.asar
       - name: Clean install + packaged startup probe (canonical build)
         run: node scripts/verify-windows-package.mjs --install
       - name: Compute a CI-only upgrade-test version above the package version, below the next release
@@ -55,6 +57,8 @@ jobs:
           echo "value=${BASE}.ci.${{ github.run_number }}" >> "$GITHUB_OUTPUT"
       - name: Package installer for upgrade tests (separate output dir, CI-only version)
         run: pnpm --filter @cw-code/desktop exec electron-builder --win nsis --x64 --publish never -c.extraMetadata.version=${{ steps.ci_version.outputs.value }} -c.directories.output=dist-ci
+      - name: Reject any update autotest path in the upgrade-test package
+        run: node scripts/verify-installed-upgrade.mjs --assert-production-bundle --asar apps/desktop/dist-ci/win-unpacked/resources/app.asar
       - name: Download legacy installer for upgrade tests
         run: gh release download v0.0.1-alpha.21 --repo albertofa/cw-code --pattern "cw-code.Setup.0.0.1-alpha.21.exe" --dir legacy-installer
         env:

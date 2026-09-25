@@ -167,6 +167,12 @@ jobs:
         env:
           VERSION: ${{ inputs.version }}
         run: node tools/release/src/cli/release.ts apply --version "$VERSION"
+      - name: Refuse update-test build flags
+        run: |
+          if [ -n "${CW_UPDATE_TEST_BUILD:-}" ]; then
+            echo "::error::CW_UPDATE_TEST_BUILD is set; a production package must never contain the update autotest mode"
+            exit 1
+          fi
       - run: pnpm --filter @cw-code/desktop build
       - name: Package win-unpacked (NSIS target writes app-update.yml; the installer built here is discarded)
         env:
@@ -182,7 +188,14 @@ jobs:
         run: |
           for file in cw-code.exe resources/app-update.yml resources/elevate.exe; do
             [ -f "apps/desktop/dist/win-unpacked/$file" ] || { echo "::error::win-unpacked/$file is missing"; exit 1; }
-          done
+          done      - name: Check out the gate tooling from the signing workflow's commit
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ job.workflow_sha }}
+          path: tooling
+          persist-credentials: false
+      - name: Reject any update autotest path in the packaged app
+        run: node tooling/scripts/verify-installed-upgrade.mjs --assert-production-bundle apps/desktop/out/main --asar apps/desktop/dist/win-unpacked/resources/app.asar --desktop-dir apps/desktop
       - name: Record package provenance
         env:
           VERSION: ${{ inputs.version }}
