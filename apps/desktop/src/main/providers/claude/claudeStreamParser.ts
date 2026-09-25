@@ -483,6 +483,50 @@ export function parseClaudeSystemInit(line: string): ClaudeSystemInitInfo | null
   return { terminalSlashCommands, ...(model ? { model } : {}) };
 }
 
+export interface ClaudeCompactBoundary {
+  trigger?: "manual" | "auto";
+  preTokens?: number;
+  postTokens?: number;
+  droppedTokens?: number;
+  durationMs?: number;
+}
+
+interface CompactBoundaryMsg {
+  type?: unknown;
+  subtype?: unknown;
+  compact_metadata?: unknown;
+}
+
+function metadataNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
+export function parseClaudeCompactBoundary(line: string): ClaudeCompactBoundary | null {
+  if (!line.trim().startsWith("{") || !line.includes('"compact_boundary"')) return null;
+  let msg: CompactBoundaryMsg;
+  try {
+    msg = JSON.parse(line) as CompactBoundaryMsg;
+  } catch {
+    return null;
+  }
+  if (msg.type !== "system" || msg.subtype !== "compact_boundary") return null;
+  const meta = msg.compact_metadata;
+  if (meta === null || typeof meta !== "object" || Array.isArray(meta)) return null;
+  const record = meta as Record<string, unknown>;
+  const trigger = record["trigger"] === "manual" || record["trigger"] === "auto" ? record["trigger"] : undefined;
+  const preTokens = metadataNumber(record["pre_tokens"]);
+  const postTokens = metadataNumber(record["post_tokens"]);
+  const droppedTokens = metadataNumber(record["cumulative_dropped_tokens"]);
+  const durationMs = metadataNumber(record["duration_ms"]);
+  return {
+    ...(trigger ? { trigger } : {}),
+    ...(preTokens !== undefined ? { preTokens } : {}),
+    ...(postTokens !== undefined ? { postTokens } : {}),
+    ...(droppedTokens !== undefined ? { droppedTokens } : {}),
+    ...(durationMs !== undefined ? { durationMs } : {})
+  };
+}
+
 const TASK_NOTIFY_USAGE_RE = {
   tokens: /<subagent_tokens>(\d+)<\/subagent_tokens>/,
   toolUses: /<tool_uses>(\d+)<\/tool_uses>/,
@@ -505,6 +549,7 @@ export interface TurnDoneInfo {
   resultText: string;
   usage: TurnModelUsage[];
   context?: ContextUsage;
+  windowTokens?: number;
   modelUsage: ClaudeModelUsageSnapshot;
   numTurns: number;
   isError: boolean;
@@ -648,12 +693,13 @@ export function parseStreamLine(
       onNotificationAck?.();
       return [];
     }
-    const { usage, context, next } = claudeTurnUsage(prevModelUsage, msg, mainModel);
+    const { usage, context, windowTokens, next } = claudeTurnUsage(prevModelUsage, msg, mainModel);
     done({
       resumeCursor: msg.session_id ?? sessionId,
       resultText: msg.result ?? "",
       usage,
       ...(context ? { context } : {}),
+      ...(windowTokens !== undefined ? { windowTokens } : {}),
       modelUsage: next,
       numTurns: msg.num_turns ?? 0,
       isError: msg.is_error === true || msg.subtype === "error"

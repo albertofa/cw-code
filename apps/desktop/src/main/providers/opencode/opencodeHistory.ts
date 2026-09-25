@@ -23,7 +23,14 @@ interface ServerPart {
 }
 
 interface ServerMessage {
-  info?: { id?: string; role?: string; time?: { created?: number; completed?: number }; error?: unknown };
+  info?: {
+    id?: string;
+    role?: string;
+    mode?: string;
+    summary?: boolean;
+    time?: { created?: number; completed?: number };
+    error?: unknown;
+  };
   parts?: ServerPart[];
 }
 
@@ -51,6 +58,17 @@ export function mapOpencodeMessages(messages: ServerMessage[], limit = 300): His
     const turnId = msg.info?.id ?? `msg-${out.length}`;
     const created = msg.info?.time?.created;
     const completed = msg.info?.time?.completed;
+    if (msg.info?.summary === true || msg.info?.mode === "compaction") {
+      out.push({
+        id: `${turnId}-compact`,
+        role: "system",
+        text: "Context compacted",
+        turnId,
+        compaction: {},
+        ...stamp(completed ?? created)
+      });
+      continue;
+    }
     for (const part of msg.parts ?? []) {
       const partStamp =
         role === "user"

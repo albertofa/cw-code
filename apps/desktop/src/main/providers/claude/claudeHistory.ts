@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { HistoryMessage } from "@cw-code/contracts";
+import type { ContextCompactionInfo, HistoryMessage } from "@cw-code/contracts";
 import { todosFromToolCall } from "../todos.js";
 import { claudeCommandText } from "./claudeCommands.js";
 import { parseClaudeTaskNotification, parseTaskNotificationUsage } from "./claudeStreamParser.js";
@@ -14,8 +14,13 @@ type ContentBlock =
 
 interface TranscriptLine {
   type: string;
+  subtype?: string;
   isSidechain?: boolean;
   isMeta?: boolean;
+  isCompactSummary?: boolean;
+  isVisibleInTranscriptOnly?: boolean;
+  compactMetadata?: unknown;
+  logicalParentUuid?: string;
   uuid?: string;
   timestamp?: unknown;
   perTurnEffort?: unknown;
@@ -212,14 +217,48 @@ function blockText(content: unknown): string {
   return "";
 }
 
+function claudeCompactInfo(metadata: unknown): ContextCompactionInfo {
+  if (metadata === null || typeof metadata !== "object" || Array.isArray(metadata)) return {};
+  const record = metadata as Record<string, unknown>;
+  const number = (value: unknown): number | undefined =>
+    typeof value === "number" && Number.isFinite(value) ? value : undefined;
+  const trigger = record["trigger"] === "manual" || record["trigger"] === "auto" ? record["trigger"] : undefined;
+  const preTokens = number(record["preTokens"]);
+  const postTokens = number(record["postTokens"]);
+  const droppedTokens = number(record["cumulativeDroppedTokens"]);
+  const durationMs = number(record["durationMs"]);
+  return {
+    ...(trigger ? { trigger } : {}),
+    ...(preTokens !== undefined ? { preTokens } : {}),
+    ...(postTokens !== undefined ? { postTokens } : {}),
+    ...(droppedTokens !== undefined ? { droppedTokens } : {}),
+    ...(durationMs !== undefined ? { durationMs } : {})
+  };
+}
+
 export function parseClaudeTranscriptLine(line: TranscriptLine): HistoryMessage[] {
   if (line.isSidechain || line.isMeta) return [];
+  const timestamp = toEpochMs(line.timestamp);
+  const stamp = timestamp !== undefined ? { timestamp } : {};
+  if (line.type === "system") {
+    if (line.subtype !== "compact_boundary") return [];
+    const id = line.uuid ?? "system-compact";
+    return [
+      {
+        id,
+        role: "system",
+        text: "Context compacted",
+        turnId: line.logicalParentUuid ?? id,
+        compaction: claudeCompactInfo(line.compactMetadata),
+        ...stamp
+      }
+    ];
+  }
+  if (line.isCompactSummary || line.isVisibleInTranscriptOnly) return [];
   const content = line.message?.content;
   if (content === undefined) return [];
   const out: HistoryMessage[] = [];
   const baseId = line.uuid ?? `${line.type}-${out.length}`;
-  const timestamp = toEpochMs(line.timestamp);
-  const stamp = timestamp !== undefined ? { timestamp } : {};
 
   if (line.type === "user") {
     if (typeof content === "string") {

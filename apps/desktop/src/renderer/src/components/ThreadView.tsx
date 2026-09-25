@@ -15,6 +15,7 @@ import { ToolCard } from "./ToolCard.js";
 import { ToolGroupCard } from "./ToolGroupCard.js";
 import { ReasoningBlock } from "./ReasoningBlock.js";
 import { SubagentCard } from "./SubagentCard.js";
+import { CompactionNote } from "./CompactionNote.js";
 import { NewThread } from "./NewThread.js";
 import { ApprovalDock } from "./ApprovalDock.js";
 import { QuestionDock } from "./QuestionDock.js";
@@ -327,6 +328,9 @@ export function ThreadView() {
       );
     }
     if (m.role === "system") {
+      if (m.compaction) {
+        return <CompactionNote key={m.id} message={m} />;
+      }
       return (
         <div key={m.id} className={`msg-system${m.severity === "warning" ? " msg-warning" : ""}`}>
           <TriangleAlert size={14} aria-hidden="true" />

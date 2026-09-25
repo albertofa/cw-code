@@ -20,6 +20,7 @@ export interface UsageRecordInput {
   driver: DriverKind;
   at: Date;
   usage: TurnModelUsage[];
+  countTurn?: boolean;
 }
 
 const DEBOUNCE_MS = 2000;
@@ -73,7 +74,7 @@ export class UsageLedger {
       row.outputTokens += modelUsage.outputTokens;
       row.reasoningTokens += modelUsage.reasoningTokens;
       if (modelUsage.costUsd !== null) row.costUsd = (row.costUsd ?? 0) + modelUsage.costUsd;
-      if (modelUsage === turnEntry) {
+      if (modelUsage === turnEntry && input.countTurn !== false) {
         row.turns += 1;
         if (modelUsage.costUsd === null) row.unpricedTurns += 1;
       }
