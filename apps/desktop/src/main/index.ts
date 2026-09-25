@@ -18,6 +18,7 @@ import { checkCliVersion, checkCliVersions, type CliVersionCheck } from "./cliVe
 import { discoverBinaries, verifyBinaryPath } from "./cli/binaryDiscovery.js";
 import { getHarnessTracePath, initHarnessTrace } from "./debug/harnessTrace.js";
 import { appendCrashLog, initCrashLog } from "./debug/crashLog.js";
+import { runPackageProbe } from "./debug/packageProbe.js";
 import { claudeCommandsCachePath, ensureAppDirs, attachmentsDir, logsDir, migrateFromUserData, opencodeModelsCachePath } from "./paths/appPaths.js";
 import { reapOrphanedServers } from "./orphanServers.js";
 import type { ApprovalDecision, CliBinary, CommandInvocation, CreateSessionOptions, GitDiffMode, ProjectGitHubRepo, PrRef, SessionPrLink, SessionStatus, SettingsPatch, UsageLedgerQuery } from "@cw-code/contracts";
@@ -111,12 +112,32 @@ async function createWindow(): Promise<void> {
     if (/^https?:/i.test(url)) void shell.openExternal(url);
   });
 
-  const devUrl = process.env["ELECTRON_RENDERER_URL"];
-  if (devUrl) {
-    await mainWindow.loadURL(devUrl);
-  } else {
-    await mainWindow.loadFile(rendererIndexPath());
+  const probeOutPath = app.isPackaged ? process.env["CW_PACKAGE_PROBE_OUT"] : undefined;
+  if (probeOutPath) {
+    let rendererLoaded = true;
+    try {
+      await loadRenderer(mainWindow);
+    } catch (err) {
+      rendererLoaded = false;
+      appendCrashLog(`renderer failed to load: ${(err as Error).message}`);
+    }
+    setTimeout(() => {
+      void runPackageProbe({
+        outPath: probeOutPath,
+        appVersion: app.getVersion(),
+        electronVersion: process.versions.electron,
+        rendererLoaded
+      }).finally(() => app.exit(rendererLoaded ? 0 : 1));
+    }, 3000);
+    return;
   }
+
+  await loadRenderer(mainWindow);
+}
+
+function loadRenderer(window: BrowserWindow): Promise<void> {
+  const devUrl = process.env["ELECTRON_RENDERER_URL"];
+  return devUrl ? window.loadURL(devUrl) : window.loadFile(rendererIndexPath());
 }
 
 function rendererIndexPath(): string {
