@@ -24,6 +24,8 @@ jobs:
       - run: pnpm typecheck
       - run: pnpm test
       - run: pnpm build
+      - name: Production main bundle carries no update autotest path
+        run: node scripts/verify-installed-upgrade.mjs --assert-production-bundle
 
   windows:
     runs-on: windows-latest

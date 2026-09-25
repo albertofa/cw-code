@@ -2,6 +2,7 @@ import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
+import { runScriptLines } from "./workflowLines.ts";
 
 const WORKFLOW_PATH = resolve(dirname(fileURLToPath(import.meta.url)), "../../../.github/workflows/sign-windows.yml");
 const lines = readFileSync(WORKFLOW_PATH, "utf8").split(/\r?\n/);
@@ -80,26 +81,3 @@ describe("sign-windows.yml policy", () => {
     expect(lines.filter((line) => /^\s*(cache|overwrite):/.test(line))).toEqual([]);
   });
 });
-
-function runScriptLines(source: string[]): string[] {
-  const result: string[] = [];
-  let blockIndent: number | null = null;
-  for (const line of source) {
-    const indent = line.length - line.trimStart().length;
-    if (blockIndent !== null) {
-      if (line.trim() === "" || indent > blockIndent) {
-        result.push(line);
-        continue;
-      }
-      blockIndent = null;
-    }
-    const run = /^(\s*)(- )?run:\s*(.*)$/.exec(line);
-    if (!run) continue;
-    if (/^[|>][-+]?\s*$/.test(run[3])) {
-      blockIndent = run[1].length + (run[2] ? 2 : 0);
-    } else {
-      result.push(line);
-    }
-  }
-  return result;
-}
