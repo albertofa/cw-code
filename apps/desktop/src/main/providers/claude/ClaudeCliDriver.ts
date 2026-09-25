@@ -9,6 +9,7 @@ import type {
   ApprovalDecision,
   CliDriver,
   CommandOption,
+  DriverActivity,
   EffortLevel,
   HistoryMessage,
   PermissionMode,
@@ -19,7 +20,7 @@ import type {
   TurnRequest
 } from "@cw-code/contracts";
 import { parseExtraArgs } from "../../settings/settingsUtils.js";
-import { killProcessTree } from "../../processTree.js";
+import { hasExited, killProcessTree, waitForExit } from "../../processTree.js";
 import { CLAUDE_SHELL_TASK_TYPE, attributeClaudeSubagentEvent, buildClaudeAllowRule, claudeAllowResponse, claudeApprovalRequest, claudeQuestionRequest, claudeDenyResponse, claudeControlResponse, parseClaudeControlRequest, parseClaudeSubagentHandback, parseClaudeSystemInit, parseClaudeTaskSystemLine, parseStreamLine, type ClaudeControlRequest, type ClaudeTaskSystemInfo, type TurnDoneInfo } from "./claudeStreamParser.js";
 import { CLAUDE_COMMANDS_PROBE_ARGS, listClaudeCommands, probeClaudeCommands, recordClaudeTerminalCommands } from "./claudeCommands.js";
 import { CLAUDE_ACCOUNT_USAGE_PROBE_ARGS, probeClaudeAccountUsage } from "./claudeAccountUsage.js";
@@ -201,9 +202,14 @@ export class ClaudeCliDriver implements CliDriver {
     return !state.errored && state.child.exitCode === null && state.child.signalCode === null;
   }
 
+  private killChild(state: ClaudeProcessState): void {
+    if (hasExited(state.child)) return;
+    this.killFn(state.child);
+  }
+
   private terminate(state: ClaudeProcessState): void {
     this.clearIdleTimer(state);
-    this.killFn(state.child);
+    this.killChild(state);
     if (this.processes.get(state.sessionId) === state) this.processes.delete(state.sessionId);
   }
 
@@ -231,7 +237,7 @@ export class ClaudeCliDriver implements CliDriver {
         ok: true
       });
       this.processes.delete(state.sessionId);
-      this.killFn(state.child);
+      this.killChild(state);
     }, CLAUDE_IDLE_EVICT_MS);
     timer.unref?.();
     state.idleTimer = timer;
@@ -813,7 +819,7 @@ export class ClaudeCliDriver implements CliDriver {
       if (!state.child.stdin) throw new Error("stdin unavailable");
       state.child.stdin.write(`${line}\n`);
     } catch {
-      this.killFn(state.child);
+      this.killChild(state);
     }
     this.resolvePendingForTurn(turnId);
     state.completedTurn = true;
@@ -826,7 +832,7 @@ export class ClaudeCliDriver implements CliDriver {
     traceHarnessCall({ harness: "claude", operation: "claude.stopSession", sessionId, ok: true });
     this.clearIdleTimer(state);
     this.processes.delete(sessionId);
-    this.killFn(state.child);
+    this.killChild(state);
   }
 
   async getAccountUsage(): Promise<AccountUsageState> {
@@ -840,6 +846,29 @@ export class ClaudeCliDriver implements CliDriver {
         ? { status: "unavailable", reason: "not-installed", message: "Claude isn't installed. Set its path in Settings → Harnesses → Claude." }
         : { status: "error", message: `failed to spawn ${binary}: ${(err as Error).message}` };
     }
+  }
+
+  activity(): DriverActivity {
+    const busySessionIds = new Set<string>();
+    for (const state of this.processes.values()) {
+      if (state.completedTurn && this.liveTaskCount(state) === 0) continue;
+      busySessionIds.add(state.sessionId);
+    }
+    return { busySessionIds: [...busySessionIds], ownedProcesses: this.processes.size };
+  }
+
+  async shutdown({ timeoutMs }: { timeoutMs: number }): Promise<{ timedOut: boolean }> {
+    const states = [...this.processes.values()];
+    traceHarnessCall({ harness: "claude", operation: "claude.shutdown", ok: true, extra: { processes: states.length } });
+    for (const state of states) {
+      this.clearIdleTimer(state);
+      try {
+        state.child.stdin.end();
+      } catch {
+      }
+    }
+    const exited = await Promise.all(states.map((state) => waitForExit(state.child, timeoutMs)));
+    return { timedOut: exited.some((done) => !done) };
   }
 
   dispose(): void {

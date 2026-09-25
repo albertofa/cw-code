@@ -3,6 +3,7 @@ import type {
   ApprovalDecision,
   CliDriver,
   CommandOption,
+  DriverActivity,
   DriverKind,
   HistoryMessage,
   ModelOption,
@@ -302,6 +303,41 @@ export class TracingCliDriver implements CliDriver {
           durationMs: Date.now() - start,
           ok: false,
           error: truncateError(err instanceof Error ? err.message : String(err))
+        });
+        throw err;
+      }
+    };
+  }
+
+  get activity(): (() => DriverActivity) | undefined {
+    const inner = this.inner;
+    if (typeof inner.activity !== "function") return undefined;
+    return () => inner.activity!();
+  }
+
+  get shutdown(): ((opts: { timeoutMs: number }) => Promise<{ timedOut: boolean }>) | undefined {
+    const inner = this.inner;
+    if (typeof inner.shutdown !== "function") return undefined;
+    return async (opts) => {
+      const start = Date.now();
+      const operation = `${this.kind}.shutdown`;
+      try {
+        const result = await inner.shutdown!(opts);
+        traceHarnessCall({
+          harness: this.kind,
+          operation,
+          durationMs: Date.now() - start,
+          ok: !result.timedOut,
+          extra: { timeoutMs: opts.timeoutMs, timedOut: result.timedOut }
+        });
+        return result;
+      } catch (err) {
+        traceHarnessCall({
+          harness: this.kind,
+          operation,
+          durationMs: Date.now() - start,
+          ok: false,
+          error: truncateError((err as Error).message)
         });
         throw err;
       }

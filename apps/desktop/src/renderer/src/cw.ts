@@ -28,6 +28,14 @@ import type {
   PrTimelineItem,
   PrWorkflow,
   SessionPrLink,
+  ShutdownActiveTurn,
+  ShutdownAssessment,
+  ShutdownCommitResult,
+  ShutdownPrepareRequest,
+  ShutdownPrepareResult,
+  ShutdownReason,
+  ShutdownRequestedEvent,
+  ShutdownTerminal,
   SkillDetail,
   SkillMeta,
   SkillSaveInput,
@@ -49,6 +57,13 @@ import type {
 } from "@cw-code/contracts";
 
 export type {
+  ShutdownActiveTurn,
+  ShutdownAssessment,
+  ShutdownCommitResult,
+  ShutdownPrepareRequest,
+  ShutdownPrepareResult,
+  ShutdownReason,
+  ShutdownTerminal,
   AccountUsageOk,
   AccountUsageSnapshot,
   AccountUsageState,
@@ -468,6 +483,14 @@ export interface CwApi {
     download(): Promise<UpdateActionResult>;
     setChannel(channel: UpdateChannel): Promise<UpdateActionResult>;
     onChanged(cb: (state: UpdateState) => void): () => void;
+  };
+  shutdown: {
+    assess(): Promise<ShutdownAssessment>;
+    prepare(request: ShutdownPrepareRequest): Promise<ShutdownPrepareResult>;
+    force(token: string): Promise<ShutdownPrepareResult>;
+    cancel(token: string): Promise<void>;
+    quit(token: string): Promise<ShutdownCommitResult>;
+    onRequested(cb: (event: ShutdownRequestedEvent) => void): () => void;
   };
   checkVersions(): Promise<Array<{
     binary: DriverName;

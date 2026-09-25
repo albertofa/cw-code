@@ -9,6 +9,7 @@ import type {
   CliDriver,
   CommandInvocation,
   CommandOption,
+  DriverActivity,
   HistoryMessage,
   ModelOption,
   PermissionMode,
@@ -1039,6 +1040,23 @@ export class CodexCliDriver implements CliDriver {
       }
       return { status: "error", message };
     }
+  }
+
+  activity(): DriverActivity {
+    return {
+      busySessionIds: [...new Set([...this.turns.values()].map((turn) => turn.localSessionId))],
+      ownedProcesses: this.ownsClient ? (this.client.ownedProcessCount?.() ?? 0) : 0
+    };
+  }
+
+  async shutdown({ timeoutMs }: { timeoutMs: number }): Promise<{ timedOut: boolean }> {
+    traceHarnessCall({ harness: "codex", operation: "codex.shutdown", ok: true, extra: { turns: this.turns.size } });
+    if (!this.ownsClient) return { timedOut: false };
+    if (!this.client.shutdown) {
+      this.client.dispose();
+      return { timedOut: false };
+    }
+    return this.client.shutdown(timeoutMs);
   }
 
   dispose(): void {

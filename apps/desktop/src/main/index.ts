@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, shell, type WebContents } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, powerMonitor, shell, type WebContents } from "electron";
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -21,7 +21,7 @@ import { appendCrashLog, initCrashLog } from "./debug/crashLog.js";
 import { runPackageProbe } from "./debug/packageProbe.js";
 import { claudeCommandsCachePath, ensureAppDirs, attachmentsDir, logsDir, migrateFromUserData, opencodeModelsCachePath, sessionDbPath, settingsFilePath, userdataDir } from "./paths/appPaths.js";
 import { reapOrphanedServers } from "./orphanServers.js";
-import type { ApprovalDecision, CliBinary, CommandInvocation, CreateSessionOptions, GitDiffMode, ProjectGitHubRepo, PrRef, SessionPrLink, MetadataIssue, SessionStatus, SettingsPatch, StartupState, UpdateActionResult, UpdateState, UsageLedgerQuery } from "@cw-code/contracts";
+import type { ApprovalDecision, CliBinary, CommandInvocation, CreateSessionOptions, GitDiffMode, ProjectGitHubRepo, PrRef, SessionPrLink, MetadataIssue, SessionStatus, SettingsPatch, ShutdownCommitResult, ShutdownPrepareRequest, ShutdownReason, ShutdownRequestedEvent, StartupState, UpdateActionResult, UpdateState, UsageLedgerQuery } from "@cw-code/contracts";
 import type { DriverKind, HarnessId, SkillSaveInput } from "@cw-code/contracts";
 import type { PtyKind } from "./pty/PtyPool.js";
 import { SessionManager } from "./sessions/SessionManager.js";
@@ -38,6 +38,7 @@ import { initOpencodeModelsCache } from "./providers/opencode/opencodeModels.js"
 import { initClaudeCommandsCache } from "./providers/claude/claudeCommands.js";
 import { metadataSchemaFor, openMetadataStores } from "./storage/metadataStores.js";
 import { restoreBackup, startFresh } from "./storage/recovery.js";
+import { ShutdownCoordinator } from "./shutdown/ShutdownCoordinator.js";
 import type { SessionStore } from "./sessions/SessionStore.js";
 import type { SettingsStore } from "./settings/SettingsStore.js";
 import { ElectronUpdaterAdapter } from "./updates/ElectronUpdaterAdapter.js";
@@ -48,6 +49,38 @@ type DriverName = DriverKind;
 
 const DRIVER_KINDS: DriverKind[] = ["claude", "opencode", "codex"];
 const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
+const SHUTDOWN_REASONS: ShutdownReason[] = ["quit", "update"];
+const SHUTDOWN_TIMEOUT_MAX_MS = 120_000;
+const RENDERER_SHUTDOWN_ACK_MS = 5_000;
+
+function parseShutdownPrepare(args: unknown): ShutdownPrepareRequest {
+  const request = (args && typeof args === "object" ? args : {}) as Record<string, unknown>;
+  const reason = request.reason;
+  const timeoutMs = request.timeoutMs;
+  if (typeof reason !== "string" || !SHUTDOWN_REASONS.includes(reason as ShutdownReason)) {
+    throw new Error("shutdown.prepare requires reason 'quit' or 'update'");
+  }
+  if (typeof request.stopActiveTurns !== "boolean") throw new Error("shutdown.prepare requires a boolean stopActiveTurns");
+  if (typeof timeoutMs !== "number" || !Number.isFinite(timeoutMs) || timeoutMs <= 0 || timeoutMs > SHUTDOWN_TIMEOUT_MAX_MS) {
+    throw new Error(`shutdown.prepare requires timeoutMs between 1 and ${SHUTDOWN_TIMEOUT_MAX_MS}`);
+  }
+  const approved = request.approvedTurnIds;
+  if (approved !== undefined && (!Array.isArray(approved) || !approved.every((id) => typeof id === "string"))) {
+    throw new Error("shutdown.prepare approvedTurnIds must be an array of turn ids");
+  }
+  return {
+    reason: reason as ShutdownReason,
+    stopActiveTurns: request.stopActiveTurns,
+    timeoutMs,
+    ...(approved !== undefined ? { approvedTurnIds: approved as string[] } : {})
+  };
+}
+
+function parseShutdownToken(args: unknown, channel: string): string {
+  const token = args && typeof args === "object" ? (args as Record<string, unknown>).token : undefined;
+  if (typeof token !== "string" || token.length === 0) throw new Error(`${channel} requires { token }`);
+  return token;
+}
 
 function isValidUsageLedgerQuery(query: unknown): query is UsageLedgerQuery | undefined {
   if (query === undefined) return true;
@@ -67,11 +100,15 @@ interface Services {
   ptys: PtyPool;
   accountUsage: AccountUsageService;
   updates: UpdateService;
+  shutdown: ShutdownCoordinator;
 }
 
 let mainWindow: BrowserWindow | null = null;
 let services: Services | null = null;
 let startupState: StartupState = { mode: "ready" };
+let quitApproved = false;
+let servicesDisposed = false;
+let shutdownAckTimer: NodeJS.Timeout | null = null;
 
 function createUpdateService(): UpdateService {
   const logger = createUpdateLogFile({
@@ -100,16 +137,105 @@ function createServices(stores: { sessionStore: SessionStore; settingsStore: Set
   });
   const git = new GitService(() => sessions.getSettings());
   pullRequests = new PullRequestService(git, () => sessions.getSettings(), (rootPath) => sessions.addProject(rootPath));
+  const ptys = new PtyPool(() => sessions.getSettings());
   return {
     sessions,
     skills: new SkillsStore(),
     files: new FileService(),
     git,
     pullRequests,
-    ptys: new PtyPool(() => sessions.getSettings()),
+    ptys,
     accountUsage: new AccountUsageService(() => sessions.getDrivers()),
+    shutdown: new ShutdownCoordinator({ sessions, ptys, onRecovered: handleShutdownRecovered }),
     updates: createUpdateService()
   };
+}
+
+function handleShutdownRecovered(failure: string | null): void {
+  servicesDisposed = false;
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    createWindow().catch((err: Error) => appendCrashLog(`could not reopen the window after shutdown recovery: ${err.message}`));
+  }
+  if (!failure) return;
+  appendCrashLog(`shutdown recovery could not restart CLI drivers: ${failure}`);
+  const options = { type: "error" as const, title: "cw-code", message: "cw-code could not restart its CLI drivers", detail: failure };
+  const window = mainWindow && !mainWindow.isDestroyed() ? mainWindow : null;
+  void (window ? dialog.showMessageBox(window, options) : dialog.showMessageBox(options));
+}
+
+function isQuitApproved(): boolean {
+  return quitApproved || services?.shutdown.isCommitted() === true;
+}
+
+function clearShutdownAck(): void {
+  if (!shutdownAckTimer) return;
+  clearTimeout(shutdownAckTimer);
+  shutdownAckTimer = null;
+}
+
+function disposeServices(): void {
+  if (!services || servicesDisposed) return;
+  servicesDisposed = true;
+  try {
+    services.sessions.flush();
+  } catch (err) {
+    console.warn(`flush before exit failed: ${(err as Error).message}`);
+  }
+  services.updates.dispose();
+  services.sessions.dispose();
+  services.ptys.dispose();
+}
+
+function quitWithoutDialog(): void {
+  clearShutdownAck();
+  quitApproved = true;
+  disposeServices();
+  app.quit();
+}
+
+function requestShutdown(): void {
+  const window = mainWindow;
+  if (!services || !window || window.isDestroyed() || window.webContents.isCrashed()) {
+    quitWithoutDialog();
+    return;
+  }
+  if (isQuitApproved()) return;
+  const event: ShutdownRequestedEvent = { reason: "quit" };
+  window.webContents.send("shutdown.requested", event);
+  clearShutdownAck();
+  shutdownAckTimer = setTimeout(() => {
+    shutdownAckTimer = null;
+    appendCrashLog(`renderer did not answer shutdown.requested within ${RENDERER_SHUTDOWN_ACK_MS}ms; quitting without the shutdown dialog`);
+    quitWithoutDialog();
+  }, RENDERER_SHUTDOWN_ACK_MS);
+}
+
+function endOfSession(): void {
+  clearShutdownAck();
+  quitApproved = true;
+  disposeServices();
+}
+
+async function commitShutdown(token: string, action: () => Promise<void> | void): Promise<ShutdownCommitResult> {
+  if (!services) return { ok: false, message: "cw-code services are not running" };
+  const result = await services.shutdown.commit(token, action);
+  if (!result.ok && !services.shutdown.isCommitted()) {
+    quitApproved = false;
+    servicesDisposed = false;
+  }
+  return result;
+}
+
+function recoverAbandonedShutdown(): void {
+  if (!services || services.shutdown.isIdle() || services.shutdown.isCommitted()) return;
+  services.shutdown.recover();
+}
+
+function focusMainWindow(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  if (mainWindow.isMinimized()) mainWindow.restore();
+  mainWindow.show();
+  mainWindow.focus();
 }
 
 async function createWindow(): Promise<void> {
@@ -134,6 +260,12 @@ async function createWindow(): Promise<void> {
   mainWindow.on("maximize", () => mainWindow?.webContents.send("win.maximized", true));
   mainWindow.on("unmaximize", () => mainWindow?.webContents.send("win.maximized", false));
   mainWindow.on("unresponsive", () => appendCrashLog("window unresponsive"));
+  mainWindow.on("close", (event) => {
+    if (process.platform === "darwin" || !services || isQuitApproved()) return;
+    event.preventDefault();
+    requestShutdown();
+  });
+  mainWindow.on("session-end", endOfSession);
 
   const webContents = mainWindow.webContents;
   webContents.on("render-process-gone", (_e, details) => {
@@ -141,7 +273,11 @@ async function createWindow(): Promise<void> {
       `render-process-gone: reason=${details.reason} exitCode=${details.exitCode}`
     );
     services?.ptys.detachAll();
+    recoverAbandonedShutdown();
     void webContents.reload();
+  });
+  webContents.on("did-start-navigation", (details) => {
+    if (details.isMainFrame && !details.isSameDocument) recoverAbandonedShutdown();
   });
   webContents.on("console-message", (event) => {
     if (event.level === "error") {
@@ -300,6 +436,26 @@ function registerUpdateIpc(updates: UpdateService): void {
   ipcMain.handle("updates.download", (): Promise<UpdateActionResult> => updates.download());
   ipcMain.handle("updates.setChannel", (_e, args: unknown): Promise<UpdateActionResult> =>
     updates.setChannel(args && typeof args === "object" ? (args as { channel?: unknown }).channel : undefined)
+  );
+}
+
+function registerShutdownIpc({ shutdown }: Services): void {
+  ipcMain.handle("shutdown.assess", () => {
+    clearShutdownAck();
+    return shutdown.assess();
+  });
+  ipcMain.handle("shutdown.prepare", (_e, args: unknown) => {
+    clearShutdownAck();
+    return shutdown.prepare(parseShutdownPrepare(args));
+  });
+  ipcMain.handle("shutdown.force", (_e, args: unknown) => shutdown.force(parseShutdownToken(args, "shutdown.force")));
+  ipcMain.handle("shutdown.cancel", (_e, args: unknown): void => {
+    shutdown.cancel(parseShutdownToken(args, "shutdown.cancel"));
+  });
+  ipcMain.handle("shutdown.quit", (_e, args: unknown) =>
+    commitShutdown(parseShutdownToken(args, "shutdown.quit"), () => {
+      app.quit();
+    })
   );
 }
 
@@ -763,6 +919,7 @@ async function startApp(): Promise<void> {
       });
     registerIpc(services);
     services.updates.start();
+    registerShutdownIpc(services);
   } else {
     startupState = { mode: "recovery", issues: stores.issues, dataDir: userdataDir() };
     for (const issue of stores.issues) {
@@ -771,11 +928,9 @@ async function startApp(): Promise<void> {
   }
   registerWindowIpc();
   registerStartupIpc();
-  const quitOnSignal = (): void => {
-    app.quit();
-  };
-  process.once("SIGINT", quitOnSignal);
-  process.once("SIGTERM", quitOnSignal);
+  process.once("SIGINT", quitWithoutDialog);
+  process.once("SIGTERM", quitWithoutDialog);
+  powerMonitor.on("shutdown", endOfSession);
   app.on("child-process-gone", (_e, details) => {
     appendCrashLog(
       `child-process-gone: type=${details.type} reason=${details.reason} exitCode=${details.exitCode}`
@@ -787,14 +942,29 @@ async function startApp(): Promise<void> {
   });
 }
 
-app.whenReady().then(startApp).catch(reportFatalStartupError);
+if (!app.isPackaged && !app.commandLine.hasSwitch("user-data-dir")) {
+  app.setPath("userData", join(app.getPath("appData"), "@cw-code", "desktop-dev"));
+}
 
-app.on("window-all-closed", () => {
-  if (process.platform !== "darwin") app.quit();
-});
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+  app.on("second-instance", focusMainWindow);
 
-app.on("before-quit", () => {
-  services?.updates.dispose();
-  services?.sessions.dispose();
-  services?.ptys.dispose();
-});
+  app.whenReady().then(startApp).catch(reportFatalStartupError);
+
+  app.on("window-all-closed", () => {
+    if (process.platform !== "darwin") app.quit();
+  });
+
+  app.on("before-quit", (event) => {
+    if (!isQuitApproved() && services && mainWindow && !mainWindow.isDestroyed()) {
+      event.preventDefault();
+      requestShutdown();
+      return;
+    }
+    clearShutdownAck();
+    quitApproved = true;
+    disposeServices();
+  });
+}

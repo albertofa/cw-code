@@ -1,6 +1,6 @@
 ﻿import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
-import type { AccountUsageState, AppSettings, ApprovalDecision, CliDriver, CommandOption, ContextUsage, HistoryMessage, PermissionMode, PermissionOption, QuestionInfo, QuestionRequest, RetryConnectionRequest, RetryConnectionResult, SessionMeta, ThreadEvent, TurnHandle, TurnModelUsage, TurnRequest } from "@cw-code/contracts";
+import type { AccountUsageState, AppSettings, ApprovalDecision, CliDriver, CommandOption, ContextUsage, DriverActivity, HistoryMessage, PermissionMode, PermissionOption, QuestionInfo, QuestionRequest, RetryConnectionRequest, RetryConnectionResult, SessionMeta, ThreadEvent, TurnHandle, TurnModelUsage, TurnRequest } from "@cw-code/contracts";
 import { isAbsolute, join } from "node:path";
 import { opencodeConfigDir } from "../../paths/appPaths.js";
 import {
@@ -100,6 +100,7 @@ export class OpencodeDriver implements CliDriver {
   private bridgeStarting: Promise<void> | null = null;
   private bridgeEndpoint = "";
   private bridgeNeed = new Map<string, boolean>();
+  private pendingAborts = new Set<Promise<void>>();
 
   constructor(
     private emit: (event: ThreadEvent) => void,
@@ -1367,7 +1368,7 @@ export class OpencodeDriver implements CliDriver {
     const serverSessionId = this.sessionIds.get(turnId);
     const info = this.watchInfo.get(turnId);
     if (serverSessionId && info) {
-      void opencodeFetch(`http://127.0.0.1:${info.port}/session/${encodeURIComponent(serverSessionId)}/abort`, {
+      const abort = opencodeFetch(`http://127.0.0.1:${info.port}/session/${encodeURIComponent(serverSessionId)}/abort`, {
         method: "POST",
         headers: { Authorization: info.authHeader },
         timeoutMs: OPENCODE_LIST_TIMEOUT_MS,
@@ -1395,8 +1396,40 @@ export class OpencodeDriver implements CliDriver {
           });
         }
       );
+      this.pendingAborts.add(abort);
+      void abort.finally(() => this.pendingAborts.delete(abort));
     }
     this.discardTurn(turnId);
+  }
+
+  activity(): DriverActivity {
+    const busySessionIds = new Set<string>();
+    for (const meta of this.turnMeta.values()) {
+      if (meta.localSessionId) busySessionIds.add(meta.localSessionId);
+    }
+    return { busySessionIds: [...busySessionIds], ownedProcesses: this.pool.ownedProcessCount() };
+  }
+
+  async shutdown({ timeoutMs }: { timeoutMs: number }): Promise<{ timedOut: boolean }> {
+    const running = [...this.turnMeta.keys()];
+    traceHarnessCall({
+      harness: "opencode",
+      operation: "opencode.shutdown",
+      ok: true,
+      extra: { turns: running.length, servers: this.pool.ownedProcessCount() }
+    });
+    for (const turnId of running) this.interrupt(turnId);
+    const aborts = [...this.pendingAborts];
+    let timer: NodeJS.Timeout | undefined;
+    const deadline = new Promise<"timeout">((resolve) => {
+      timer = setTimeout(() => resolve("timeout"), Math.max(0, timeoutMs));
+      timer.unref?.();
+    });
+    const outcome = await Promise.race([Promise.allSettled(aborts).then(() => "settled" as const), deadline]);
+    clearTimeout(timer);
+    if (outcome === "timeout") return { timedOut: true };
+    this.dispose();
+    return { timedOut: false };
   }
 
   async respondToApproval(requestId: string, decision: ApprovalDecision): Promise<void> {
