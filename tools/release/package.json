@@ -7,11 +7,14 @@
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
+  "dependencies": {
+    "builder-util-runtime": "9.7.0"
+  },
   "devDependencies": {
     "@types/node": "^22.10.2",
     "typescript": "^5.6.3",
     "vitest": "^3.2.4"
   },
-  "description": "Release planning and versioning tools for cw-code (candidate versions, release plans/notes, stable promotion).",
+  "description": "Release planning, versioning and Windows signing post-processing tools for cw-code.",
   "license": "MIT"
 }

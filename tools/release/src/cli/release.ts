@@ -12,7 +12,8 @@ import { buildAlphaPlan, buildStablePromotionPlan, verifyPlan } from "../release
 import type { ReleaseSource } from "../releaseSource.ts";
 import { parseGitHubHomepage } from "../repoInfo.ts";
 import { type ParsedVersion, FULL_SHA_PATTERN, baseOf, formatVersion, parseVersion, sameBase } from "../semver.ts";
-import { buildSigningManifest, parseVerificationReport, validateSigningManifest } from "../signingManifest.ts";
+import { verifyReleaseSet } from "../releaseSet.ts";
+import { buildSigningManifest, parsePackageInfo, parseVerificationReport, validateSigningManifest } from "../signingManifest.ts";
 import { readPublisherNames } from "../updateInfoYaml.ts";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -208,13 +209,22 @@ async function cmdSigningManifest(options: Map<string, string>): Promise<void> {
   const appUpdatePublisherNames =
     appUpdatePath && existsSync(resolve(appUpdatePath)) ? readPublisherNames(readFileSync(resolve(appUpdatePath), "utf8")) : null;
 
+  const packageInfo = parsePackageInfo(readJsonFile(requireOption(options, "package-info")));
+  if (!packageInfo.ok) fail(`Invalid package-info.json: ${packageInfo.errors.join("; ")}`);
+
   const updateInfo = await readReleaseUpdateInfo(releaseDir);
   const result = buildSigningManifest({
     mode,
     production,
     publisher: options.get("publisher") ?? null,
+    expected: {
+      version: requireOption(options, "version"),
+      sourceSha: requireOption(options, "source-sha"),
+      runId: requireOption(options, "run-id")
+    },
+    packageInfo: packageInfo.value,
     report: report.value,
-    installer: { path: updateInfo.installerName, sha512: updateInfo.sha512 },
+    updateInfo,
     appUpdatePublisherNames
   });
   if (!result.ok) fail(`Signing manifest rejected: ${result.errors.join("; ")}`);
@@ -223,12 +233,31 @@ async function cmdSigningManifest(options: Map<string, string>): Promise<void> {
 }
 
 async function cmdCheckSigningManifest(options: Map<string, string>): Promise<void> {
+  const requireProduction = options.get("require-production") === "true";
+  const releaseDir = options.get("release-dir");
+  if (requireProduction && !releaseDir) fail("--require-production needs --release-dir to re-hash the release set");
+
   const result = validateSigningManifest(readJsonFile(requireOption(options, "manifest")));
   if (!result.ok) fail(`Invalid signing manifest: ${result.errors.join("; ")}`);
-  if (options.get("require-production") === "true" && !result.value.production) {
-    fail(`Signing manifest is not production (mode ${result.value.mode}); refusing to treat it as a publishable release`);
+  const manifest = result.value;
+  if (requireProduction && !manifest.production) {
+    fail(`Signing manifest is not production (mode ${manifest.mode}); refusing to treat it as a publishable release`);
   }
-  printJson({ ok: true, mode: result.value.mode, production: result.value.production, publisher: result.value.publisher, files: result.value.files.length });
+  if (releaseDir) {
+    const errors = await verifyReleaseSet(resolve(releaseDir), manifest);
+    if (errors.length > 0) fail(`Release set does not match signing.json: ${errors.join("; ")}`);
+  }
+  printJson({
+    ok: true,
+    mode: manifest.mode,
+    production: manifest.production,
+    publisher: manifest.publisher,
+    version: manifest.version,
+    sourceSha: manifest.sourceSha,
+    runId: manifest.runId,
+    files: manifest.files.length,
+    releaseSetVerified: releaseDir !== undefined
+  });
 }
 
 async function main(): Promise<void> {

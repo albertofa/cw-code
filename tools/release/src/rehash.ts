@@ -24,13 +24,14 @@ export interface RehashResult {
 }
 
 export interface ReleaseUpdateInfo {
+  version: string;
   installerName: string;
   sha512: string;
   size: number;
   files: string[];
 }
 
-async function exists(path: string): Promise<boolean> {
+export async function exists(path: string): Promise<boolean> {
   try {
     await stat(path);
     return true;
@@ -40,7 +41,7 @@ async function exists(path: string): Promise<boolean> {
   }
 }
 
-async function sha512Base64(path: string): Promise<string> {
+export async function sha512Base64(path: string): Promise<string> {
   const hash = createHash("sha512");
   for await (const chunk of createReadStream(path)) {
     hash.update(chunk as Buffer);
@@ -75,14 +76,14 @@ export async function readReleaseUpdateInfo(dir: string): Promise<ReleaseUpdateI
   const infos = await Promise.all(files.map(async (name) => ({ name, info: parseUpdateInfo(await readFile(join(dir, name), "utf8")) })));
   const [first] = infos;
   for (const { name, info } of infos) {
-    if (info.path !== first.info.path || info.sha512 !== first.info.sha512 || info.files[0].size !== first.info.files[0].size) {
-      throw new Error(`${name} disagrees with ${first.name} about the installer (path, sha512 or size)`);
+    if (info.version !== first.info.version || info.path !== first.info.path || info.sha512 !== first.info.sha512 || info.files[0].size !== first.info.files[0].size) {
+      throw new Error(`${name} disagrees with ${first.name} about the version or installer (path, sha512 or size)`);
     }
     if (info.sha512 !== info.files[0].sha512) {
       throw new Error(`${name} top-level sha512 differs from files[0].sha512`);
     }
   }
-  return { installerName: first.info.path, sha512: first.info.sha512, size: first.info.files[0].size, files };
+  return { version: first.info.version, installerName: first.info.path, sha512: first.info.sha512, size: first.info.files[0].size, files };
 }
 
 export async function rehashRelease(dir: string, buildBlockMap: BlockMapBuilder): Promise<RehashResult> {
