@@ -23,8 +23,8 @@ read-only, without mutating the developer's live install:
   `CompanyName` was "GitHub, Inc." on the legacy build because neither `author` nor
   `copyright` were set in `apps/desktop/package.json` / `electron-builder.yml`, so
   Electron's own default metadata leaked through. Both are now set (see below).
-- Electron `userData` resolves to `%APPDATA%\@cw-code\desktop`, derived from the
-  root `package.json` `name` field of `apps/desktop` (`@cw-code/desktop`), not from
+- Electron `userData` resolves to `%APPDATA%\@cw-code\desktop`, derived from
+  `apps/desktop/package.json`'s own `name` field (`@cw-code/desktop`), not from
   `productName`. Do not add a `productName`/`name` change that would move this path
   — it would orphan every existing user's session metadata.
 - App-owned data lives under `~/.cw-code` (`userdata/{cw-code.db.json,
@@ -54,7 +54,12 @@ Pinned in `apps/desktop/package.json`:
 | node-pty | 1.1.0 |
 
 `node-pty` ships N-API prebuilds for `win32-x64`, so `npmRebuild: false` never
-requires a C++ toolchain to produce a working package.
+requires a C++ toolchain to produce the Windows package. This is specific to the
+`win32-x64` prebuilt binary path documented below — the Linux CI job (`verify`)
+still compiles `node-pty` from source via `node-gyp` when it runs `pnpm install`,
+since no Linux prebuild is bundled; that job is unaffected by `npmRebuild` (which
+only governs `electron-builder`'s packaging step) and needs a working native
+toolchain on the runner, which `ubuntu-latest` already provides.
 
 ### electron-builder 25 → 26 notes
 
@@ -105,12 +110,15 @@ unpacked together.
   DLL or EXE living inside an asar archive.
 - Because electron-builder unpacks the *entire* containing package directory once
   any file under it is asar-unpacked, `files` carries explicit `!` excludes for
-  `node-pty`'s `deps/`, `src/`, `third_party/`, `scripts/`, `binding.gyp`, the
-  leftover `build/` directory (a stale, unused copy of the ConPTY DLL — the real
-  one node-pty loads is under `prebuilds/win32-x64/`), and the non-Windows
-  (`darwin-arm64`, `darwin-x64`, `win32-arm64`) prebuilds. Without these, the
-  unpacked package ships winpty/conpty source, build scripts, and other-platform
-  binaries that Windows never uses.
+  `node-pty`'s `deps/`, `src/`, `third_party/`, `scripts/`, `binding.gyp`, `typings/`,
+  the leftover `build/` directory (a stale, unused copy of the ConPTY DLL — the real
+  one node-pty loads is under `prebuilds/win32-x64/`), `lib/**/*.test.js` (node-pty's
+  own unit tests, never imported at runtime), `lib/**/*.js.map` (source maps, not
+  needed to run), and the non-Windows (`darwin-arm64`, `darwin-x64`, `win32-arm64`)
+  prebuilds. Without these, the unpacked package ships winpty/conpty source, build
+  scripts, test files, and other-platform binaries that Windows never uses. The
+  packaged startup probe (below) is what confirms none of these excludes broke
+  node-pty's actual `require("node-pty")` / spawn path.
 
 ## Packaging locally
 
@@ -131,8 +139,11 @@ node scripts/verify-windows-package.mjs [--dist <dir>]
 Defaults to `apps/desktop/dist`. It checks, and prints as JSON plus a human
 summary (also written to `<dist>/verify-windows-package.json`):
 
-- the installer `cw-code-Setup-<version>-x64.exe` and its `.blockmap` exist
-  (version read from `apps/desktop/package.json`);
+- the installer `cw-code-Setup-<version>-x64.exe` and its `.blockmap` exist. The
+  version is discovered from the installer filename actually present in `<dist>`
+  (falling back to `apps/desktop/package.json` if that is ambiguous), so this
+  works whether the build used the default version or a CI override such as
+  `-c.extraMetadata.version=...` (see the upgrade tests below);
 - `win-unpacked/cw-code.exe` exists;
 - `app.asar` exists and contains `out/main/index.js` (via `@electron/asar` if it
   can be resolved from the installed toolchain; otherwise this check is skipped
@@ -162,21 +173,66 @@ renderer loaded, `1` otherwise). The result shape is pure and covered by
 ### CI-only install/upgrade modes
 
 Two additional verifier modes install and uninstall the packaged app and refuse
-to run unless `CI=true` or `--disposable-environment` is passed — never on a
-developer machine:
+to run unless `CI=true` (GitHub Actions sets this by default) or
+`--disposable-environment` is passed explicitly — never on a developer machine.
+
+`InstallLocation` is registered by electron-builder's NSIS template at
+`registryAddInstallInfo` (`WriteRegStr SHELL_CONTEXT "${INSTALL_REGISTRY_KEY}"
+InstallLocation "$INSTDIR"`), i.e. `HKCU\Software\d6e18d04-...` for a per-user
+install or `HKLM\Software\d6e18d04-...` for a per-machine one — **not** the
+`...\Uninstall\d6e18d04-...` key, which only carries `DisplayName`,
+`DisplayVersion`, `Publisher` (present only once `author`/`copyright` metadata is
+set — empty on the legacy build), `UninstallString`, etc. The verifier reads
+`InstallLocation` from the correct key and fails with a diagnostic if it is
+missing.
+
+Uninstalling silently and synchronously requires the NSIS `_?=<installDir>`
+switch: without it, the uninstaller copies itself to `%TEMP%` and relaunches
+there, returning control to the caller before the actual removal finishes, which
+races the next install reusing the same identity. The verifier always runs
+`Uninstall cw-code.exe /S _?=<installDir>`, removes the uninstaller's own exe
+(which cannot delete itself while running) and the install directory, and polls
+`InstallLocation` at the relevant registry key until it clears (bounded timeout,
+diagnostic on timeout) before returning.
 
 - `--install`: silent per-user install (`/S /D=<dir>`) into a temp directory,
   measures install duration, runs the packaged startup probe against the
-  installed exe, then silently uninstalls.
-- `--upgrade-from <legacy-installer.exe>`: silently installs the legacy
-  installer first (default per-user location, so its registry keys land where a
-  real upgrade would see them), seeds a fake `CW_CODE_HOME` with a
-  project/session/worktree reference, installs the new installer over it, then
-  asserts the `d6e18d04-...` uninstall registry key's `DisplayVersion` changed to
-  the new version, `InstallLocation` is unchanged, and the seeded data survived.
+  installed exe — a renderer that failed to load or a node-pty that failed to
+  spawn is recorded as a failure, not just logged — then uninstalls as above.
+- `--upgrade-from <legacy-installer.exe>` [`--custom-dir <dir>`] [`--per-machine`]:
+  installs the legacy installer first (per-user default location, a caller-given
+  `--custom-dir`, or per-machine `/allusers` — never combined), reads
+  `InstallLocation`/`DisplayVersion`/`Publisher` from the applicable registry
+  keys, seeds cw-code's **real** default data locations with sanitized fixture
+  content (`%USERPROFILE%\.cw-code\userdata\cw-code.db.json` and
+  `cw-settings.json`, a `marker.txt` under a fake
+  `%USERPROFILE%\.cw-code\worktrees\<id>\`, and a `marker.txt` under
+  `%APPDATA%\@cw-code\desktop`), installs the new installer over it with the same
+  scope/location arguments (no `/D` — a real upgrade must auto-detect the
+  existing install), then asserts: `InstallLocation` unchanged (and equal to
+  `--custom-dir` when given), `DisplayVersion` changed and now matches the new
+  build, `Publisher` now matches `apps/desktop/package.json`'s `author` (it was
+  empty pre-upgrade), and all four seeded files still exist with byte-identical
+  content. This only runs safely because it's gated to a disposable environment —
+  it writes to the real per-user cw-code data paths on the runner.
 
-Both are exercised by the `windows` CI job (`.github/workflows/ci.yml`), which
-builds the installer, runs `--install`, downloads the legacy `v0.0.1-alpha.21`
-release asset with the read-only `github.token`, runs `--upgrade-from` against
-it, and uploads the installer, blockmap, and verifier JSON as a 7-day artifact.
-The job requests no permissions beyond `contents: read` and never publishes.
+Because the legacy release and the default `apps/desktop/package.json` version
+can be equal, the CI job packages the "new" installer for these tests with an
+explicit, unambiguously higher version
+(`pnpm --filter @cw-code/desktop exec electron-builder --win nsis --x64
+--publish never -c.extraMetadata.version=0.0.2-ci.<run_number>`, applied only
+in-memory during packaging — never committed to `package.json`), so the upgrade
+assertions are meaningful. This calls `electron-builder` directly rather than
+through the `dist` script: npm/pnpm only forward trailing `-- <args>` to a
+script that references `"$@"`, and adding that to a `&&`-joined script would
+break on Windows' `cmd.exe`, so passing extra electron-builder flags always goes
+through `pnpm exec` instead of the `dist`/`dist:dir` scripts.
+
+All of the above are exercised by the `windows` CI job
+(`.github/workflows/ci.yml`): it builds the installer with the CI version
+override, runs `--install`, downloads the legacy `v0.0.1-alpha.21` release asset
+with the read-only `github.token`, then runs `--upgrade-from` three times (default
+per-user path, `--custom-dir`, `--per-machine`) against it, and uploads the
+installer, blockmap, and verifier JSON as a 7-day artifact. The job requests no
+permissions beyond `contents: read`, never publishes, and has a 45-minute
+timeout to bound the several install/uninstall cycles.

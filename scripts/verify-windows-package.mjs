@@ -1,7 +1,7 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
-import { tmpdir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import { basename, dirname, join, resolve } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
@@ -10,12 +10,16 @@ const repoRoot = resolve(__dirname, "..");
 const desktopDir = join(repoRoot, "apps", "desktop");
 const UPDATER_GUID = "d6e18d04-bf35-5bfe-9145-b95301660833";
 const PROBE_TIMEOUT_MS = 30_000;
+const UNINSTALL_POLL_TIMEOUT_MS = 30_000;
+const UNINSTALL_POLL_INTERVAL_MS = 500;
 
 function parseArgs(argv) {
   const args = {
     dist: join(desktopDir, "dist"),
     install: false,
     upgradeFrom: null,
+    customDir: null,
+    perMachine: false,
     disposableEnvironment: false
   };
   for (let i = 0; i < argv.length; i++) {
@@ -23,15 +27,40 @@ function parseArgs(argv) {
     if (arg === "--dist") args.dist = resolve(argv[++i]);
     else if (arg === "--install") args.install = true;
     else if (arg === "--upgrade-from") args.upgradeFrom = resolve(argv[++i]);
+    else if (arg === "--custom-dir") args.customDir = resolve(argv[++i]);
+    else if (arg === "--per-machine") args.perMachine = true;
     else if (arg === "--disposable-environment") args.disposableEnvironment = true;
     else throw new Error(`unknown argument: ${arg}`);
   }
   return args;
 }
 
+function readDesktopPackageJson() {
+  return JSON.parse(readFileSync(join(desktopDir, "package.json"), "utf8"));
+}
+
 function readDesktopVersion() {
-  const pkg = JSON.parse(readFileSync(join(desktopDir, "package.json"), "utf8"));
-  return pkg.version;
+  return readDesktopPackageJson().version;
+}
+
+function readDesktopAuthor() {
+  const author = readDesktopPackageJson().author;
+  if (!author) return null;
+  return typeof author === "string" ? author : (author.name ?? null);
+}
+
+function findInstallerVersion(distDir) {
+  if (!existsSync(distDir)) return readDesktopVersion();
+  const pattern = /^cw-code-Setup-(.+)-x64\.exe$/;
+  const matches = readdirSync(distDir)
+    .map((name) => name.match(pattern))
+    .filter((match) => match !== null);
+  return matches.length === 1 ? matches[0][1] : readDesktopVersion();
+}
+
+function parseLegacyInstallerVersion(installerPath) {
+  const match = basename(installerPath).match(/^cw-code\.Setup\.(.+)\.exe$/);
+  return match ? match[1] : null;
 }
 
 function fileSize(path) {
@@ -41,15 +70,19 @@ function fileSize(path) {
 async function resolveAsarLib() {
   try {
     return await import("@electron/asar");
-  } catch {
-  }
-  try {
-    const desktopRequire = createRequire(join(desktopDir, "package.json"));
-    const builderPkgPath = desktopRequire.resolve("electron-builder/package.json");
-    const builderRequire = createRequire(builderPkgPath);
-    return builderRequire("@electron/asar");
-  } catch {
-    return null;
+  } catch (primaryErr) {
+    try {
+      const desktopRequire = createRequire(join(desktopDir, "package.json"));
+      const builderPkgPath = desktopRequire.resolve("electron-builder/package.json");
+      const builderRequire = createRequire(builderPkgPath);
+      return builderRequire("@electron/asar");
+    } catch (fallbackErr) {
+      console.warn(
+        `warning: @electron/asar not resolvable, skipping app.asar content listing ` +
+          `(direct import: ${primaryErr.message}; via electron-builder: ${fallbackErr.message})`
+      );
+      return null;
+    }
   }
 }
 
@@ -63,48 +96,55 @@ function safePathWithoutClis() {
   ].join(";");
 }
 
+function killProcessTree(pid) {
+  spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"]);
+}
+
 async function runPackageProbe(exePath, opts = {}) {
   const workDir = mkdtempSync(join(tmpdir(), "cw-verify-probe-"));
-  const cwCodeHome = join(workDir, "cw-code-home");
-  const userDataDir = join(workDir, "user-data");
-  const probeOutPath = join(workDir, "probe.json");
-  mkdirSync(cwCodeHome, { recursive: true });
-  mkdirSync(userDataDir, { recursive: true });
+  try {
+    const cwCodeHome = join(workDir, "cw-code-home");
+    const userDataDir = join(workDir, "user-data");
+    const probeOutPath = join(workDir, "probe.json");
+    mkdirSync(cwCodeHome, { recursive: true });
+    mkdirSync(userDataDir, { recursive: true });
 
-  const env = {
-    ...process.env,
-    ...opts.env,
-    CW_CODE_HOME: cwCodeHome,
-    CW_PACKAGE_PROBE_OUT: probeOutPath,
-    PATH: opts.stripCliPath === false ? process.env.PATH : safePathWithoutClis()
-  };
+    const env = {
+      ...process.env,
+      ...opts.env,
+      CW_CODE_HOME: cwCodeHome,
+      CW_PACKAGE_PROBE_OUT: probeOutPath,
+      PATH: opts.stripCliPath === false ? process.env.PATH : safePathWithoutClis()
+    };
 
-  const result = await new Promise((resolvePromise, rejectPromise) => {
-    const child = spawn(exePath, [`--user-data-dir=${userDataDir}`], { env });
-    const timer = setTimeout(() => {
-      child.kill();
-      rejectPromise(new Error(`packaged app did not exit within ${PROBE_TIMEOUT_MS}ms`));
-    }, PROBE_TIMEOUT_MS);
-    child.on("exit", (exitCode) => {
-      clearTimeout(timer);
-      resolvePromise({ exitCode });
+    const result = await new Promise((resolvePromise, rejectPromise) => {
+      const child = spawn(exePath, [`--user-data-dir=${userDataDir}`], { env });
+      const timer = setTimeout(() => {
+        if (child.pid) killProcessTree(child.pid);
+        rejectPromise(new Error(`packaged app did not exit within ${PROBE_TIMEOUT_MS}ms`));
+      }, PROBE_TIMEOUT_MS);
+      child.on("exit", (exitCode) => {
+        clearTimeout(timer);
+        resolvePromise({ exitCode });
+      });
+      child.on("error", (err) => {
+        clearTimeout(timer);
+        rejectPromise(err);
+      });
     });
-    child.on("error", (err) => {
-      clearTimeout(timer);
-      rejectPromise(err);
-    });
-  });
 
-  if (!existsSync(probeOutPath)) {
-    throw new Error(`packaged app exited (code ${result.exitCode}) without writing a probe result to ${probeOutPath}`);
+    if (!existsSync(probeOutPath)) {
+      throw new Error(`packaged app exited (code ${result.exitCode}) without writing a probe result to ${probeOutPath}`);
+    }
+    const probe = JSON.parse(readFileSync(probeOutPath, "utf8"));
+    return { exitCode: result.exitCode, probe };
+  } finally {
+    rmSync(workDir, { recursive: true, force: true });
   }
-  const probe = JSON.parse(readFileSync(probeOutPath, "utf8"));
-  rmSync(workDir, { recursive: true, force: true });
-  return { exitCode: result.exitCode, probe };
 }
 
 async function checkPackage(distDir) {
-  const version = readDesktopVersion();
+  const version = findInstallerVersion(distDir);
   const installerName = `cw-code-Setup-${version}-x64.exe`;
   const installerPath = join(distDir, installerName);
   const blockmapPath = `${installerPath}.blockmap`;
@@ -133,9 +173,7 @@ async function checkPackage(distDir) {
 
   if (report.asar.exists) {
     const asarLib = await resolveAsarLib();
-    if (!asarLib) {
-      console.warn("warning: @electron/asar not resolvable, skipping app.asar content listing");
-    } else {
+    if (asarLib) {
       const entries = asarLib.listPackage(asarPath);
       report.asar.containsMainEntry = entries.some((entry) => entry.replace(/\\/g, "/").endsWith("out/main/index.js"));
       if (!report.asar.containsMainEntry) problems.push("app.asar does not contain out/main/index.js");
@@ -172,17 +210,117 @@ function runSilent(command, args) {
   return result;
 }
 
-function readUninstallRegistryValue(name) {
-  const keyPath = `HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\${UPDATER_GUID}`;
+function registryPaths(perMachine) {
+  const hive = perMachine ? "HKLM" : "HKCU";
+  return {
+    install: `${hive}\\Software\\${UPDATER_GUID}`,
+    uninstall: `${hive}\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\${UPDATER_GUID}`
+  };
+}
+
+function readRegistryValue(keyPath, name) {
   const result = spawnSync("reg", ["query", keyPath, "/v", name], { encoding: "utf8" });
   if (result.status !== 0) return null;
   const match = result.stdout.match(new RegExp(`${name}\\s+REG_SZ\\s+(.+)`));
   return match ? match[1].trim() : null;
 }
 
+function sleepSync(ms) {
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+function waitForRegistryValueGone(keyPath, name, timeoutMs) {
+  const start = Date.now();
+  while (Date.now() - start < timeoutMs) {
+    if (readRegistryValue(keyPath, name) === null) return;
+    sleepSync(UNINSTALL_POLL_INTERVAL_MS);
+  }
+  throw new Error(`registry value '${name}' at ${keyPath} did not clear within ${timeoutMs}ms after uninstall`);
+}
+
+function runUninstallSync(uninstallerPath, installDir) {
+  runSilent(uninstallerPath, ["/S", `_?=${installDir}`]);
+  try {
+    rmSync(uninstallerPath, { force: true });
+  } catch (err) {
+    console.warn(`warning: could not remove leftover uninstaller ${uninstallerPath}: ${err.message}`);
+  }
+  try {
+    rmSync(installDir, { recursive: true, force: true });
+  } catch (err) {
+    console.warn(`warning: could not remove leftover install directory ${installDir}: ${err.message}`);
+  }
+}
+
+function cwCodeHomeDir() {
+  return join(process.env.USERPROFILE ?? homedir(), ".cw-code");
+}
+
+function electronUserDataDir() {
+  return join(process.env.APPDATA ?? join(homedir(), "AppData", "Roaming"), "@cw-code", "desktop");
+}
+
+function seedRealUserData() {
+  const home = cwCodeHomeDir();
+  const userdataDir = join(home, "userdata");
+  const worktreeMarkerPath = join(home, "worktrees", "cw-verify-fake-worktree", "marker.txt");
+  const electronMarkerPath = join(electronUserDataDir(), "marker.txt");
+  const dbPath = join(userdataDir, "cw-code.db.json");
+  const settingsPath = join(userdataDir, "cw-settings.json");
+
+  mkdirSync(userdataDir, { recursive: true });
+  mkdirSync(dirname(worktreeMarkerPath), { recursive: true });
+  mkdirSync(dirname(electronMarkerPath), { recursive: true });
+
+  const dbContent = `${JSON.stringify(
+    {
+      schemaVersion: 1,
+      projects: [{ id: "proj_verify_fake", rootPath: "C:\\verify\\fake-project" }],
+      sessions: [
+        {
+          id: "sess_verify_fake",
+          projectId: "proj_verify_fake",
+          driver: "claude",
+          worktreePath: "C:\\verify\\fake-worktree",
+          title: "verify fixture"
+        }
+      ]
+    },
+    null,
+    2
+  )}\n`;
+  const settingsContent = `${JSON.stringify({ schemaVersion: 1, claudeBinaryPath: "claude.exe" }, null, 2)}\n`;
+  const markerContent = `cw-verify marker ${Date.now()}\n`;
+
+  writeFileSync(dbPath, dbContent, "utf8");
+  writeFileSync(settingsPath, settingsContent, "utf8");
+  writeFileSync(worktreeMarkerPath, markerContent, "utf8");
+  writeFileSync(electronMarkerPath, markerContent, "utf8");
+
+  return { dbPath, settingsPath, worktreeMarkerPath, electronMarkerPath, dbContent, settingsContent, markerContent };
+}
+
+function assertDataPreserved(seed, problems) {
+  const checks = [
+    ["userdata db", seed.dbPath, seed.dbContent],
+    ["settings", seed.settingsPath, seed.settingsContent],
+    ["worktree marker", seed.worktreeMarkerPath, seed.markerContent],
+    ["Electron userData marker", seed.electronMarkerPath, seed.markerContent]
+  ];
+  for (const [label, path, expected] of checks) {
+    if (!existsSync(path)) {
+      problems.push(`${label} missing after upgrade: ${path}`);
+      continue;
+    }
+    if (readFileSync(path, "utf8") !== expected) {
+      problems.push(`${label} changed after upgrade: ${path}`);
+    }
+  }
+}
+
 async function installMode(distDir, disposableEnvironment) {
   requireDisposableEnvironment("--install", disposableEnvironment);
-  const version = readDesktopVersion();
+  const version = findInstallerVersion(distDir);
   const installerPath = join(distDir, `cw-code-Setup-${version}-x64.exe`);
   if (!existsSync(installerPath)) throw new Error(`installer not found: ${installerPath}`);
 
@@ -191,47 +329,109 @@ async function installMode(distDir, disposableEnvironment) {
   runSilent(installerPath, ["/S", `/D=${installDir}`]);
   const durationMs = Date.now() - start;
 
-  const exePath = join(installDir, "cw-code.exe");
-  const { exitCode, probe } = await runPackageProbe(exePath);
+  const problems = [];
+  let exitCode = null;
+  let probe = null;
+  try {
+    const exePath = join(installDir, "cw-code.exe");
+    const result = await runPackageProbe(exePath);
+    exitCode = result.exitCode;
+    probe = result.probe;
+    if (!probe.rendererLoaded) problems.push("install mode probe: renderer failed to load");
+    if (!probe.nodePty.spawned) problems.push(`install mode probe: node-pty did not spawn (${probe.nodePty.error ?? "unknown error"})`);
+  } catch (err) {
+    problems.push(`install mode probe failed: ${err.message}`);
+  } finally {
+    const uninstallerPath = join(installDir, "Uninstall cw-code.exe");
+    if (existsSync(uninstallerPath)) {
+      try {
+        runUninstallSync(uninstallerPath, installDir);
+      } catch (err) {
+        problems.push(`install mode cleanup uninstall failed: ${err.message}`);
+      }
+    }
+  }
 
-  const uninstallerPath = join(installDir, "Uninstall cw-code.exe");
-  if (existsSync(uninstallerPath)) runSilent(uninstallerPath, ["/S"]);
-
-  return { durationMs, exitCode, probe, installDir };
+  return { durationMs, exitCode, probe, installDir, problems };
 }
 
-async function upgradeFromMode(distDir, legacyInstallerPath, disposableEnvironment) {
+async function upgradeFromMode(distDir, legacyInstallerPath, disposableEnvironment, opts = {}) {
   requireDisposableEnvironment("--upgrade-from", disposableEnvironment);
   if (!existsSync(legacyInstallerPath)) throw new Error(`legacy installer not found: ${legacyInstallerPath}`);
-  const version = readDesktopVersion();
-  const newInstallerPath = join(distDir, `cw-code-Setup-${version}-x64.exe`);
+  const newVersion = findInstallerVersion(distDir);
+  const newInstallerPath = join(distDir, `cw-code-Setup-${newVersion}-x64.exe`);
   if (!existsSync(newInstallerPath)) throw new Error(`installer not found: ${newInstallerPath}`);
 
-  runSilent(legacyInstallerPath, ["/S"]);
-  const installLocationBefore = readUninstallRegistryValue("InstallLocation");
-
-  const seedHome = join(process.env.LOCALAPPDATA ?? tmpdir(), "..", "cw-code-upgrade-seed");
-  mkdirSync(join(seedHome, "userdata"), { recursive: true });
-  mkdirSync(join(seedHome, "worktrees"), { recursive: true });
-
-  runSilent(newInstallerPath, ["/S"]);
-
-  const displayVersionAfter = readUninstallRegistryValue("DisplayVersion");
-  const installLocationAfter = readUninstallRegistryValue("InstallLocation");
+  const perMachine = Boolean(opts.perMachine);
+  const customDir = opts.customDir ?? null;
+  const registryKeys = registryPaths(perMachine);
+  const legacyArgs = perMachine ? ["/S", "/allusers"] : customDir ? ["/S", `/D=${customDir}`] : ["/S"];
+  const upgradeArgs = perMachine ? ["/S", "/allusers"] : ["/S"];
 
   const problems = [];
-  if (displayVersionAfter !== version) problems.push(`DisplayVersion is '${displayVersionAfter}', expected '${version}'`);
+
+  runSilent(legacyInstallerPath, legacyArgs);
+  const installLocationBefore = readRegistryValue(registryKeys.install, "InstallLocation");
+  const displayVersionBefore = readRegistryValue(registryKeys.uninstall, "DisplayVersion");
+  const publisherBefore = readRegistryValue(registryKeys.uninstall, "Publisher");
+
+  if (!installLocationBefore) problems.push(`InstallLocation missing at ${registryKeys.install} after legacy install`);
+  if (customDir && installLocationBefore !== customDir) {
+    problems.push(`legacy install did not honor the custom directory: expected '${customDir}', got '${installLocationBefore}'`);
+  }
+  const legacyVersion = parseLegacyInstallerVersion(legacyInstallerPath);
+  if (legacyVersion && displayVersionBefore !== legacyVersion) {
+    problems.push(`DisplayVersion after legacy install is '${displayVersionBefore}', expected '${legacyVersion}'`);
+  }
+
+  const seed = seedRealUserData();
+
+  runSilent(newInstallerPath, upgradeArgs);
+
+  const installLocationAfter = readRegistryValue(registryKeys.install, "InstallLocation");
+  const displayVersionAfter = readRegistryValue(registryKeys.uninstall, "DisplayVersion");
+  const publisherAfter = readRegistryValue(registryKeys.uninstall, "Publisher");
+  const expectedAuthor = readDesktopAuthor();
+
+  if (!installLocationAfter) problems.push(`InstallLocation missing at ${registryKeys.install} after upgrade`);
   if (installLocationAfter !== installLocationBefore) {
     problems.push(`InstallLocation changed from '${installLocationBefore}' to '${installLocationAfter}'`);
   }
-  if (!existsSync(join(seedHome, "userdata")) || !existsSync(join(seedHome, "worktrees"))) {
-    problems.push("seeded userdata/worktrees were not preserved across the upgrade");
+  if (displayVersionBefore === displayVersionAfter) {
+    problems.push(`DisplayVersion did not change across the upgrade (stayed '${displayVersionBefore}')`);
+  }
+  if (displayVersionAfter !== newVersion) {
+    problems.push(`DisplayVersion after upgrade is '${displayVersionAfter}', expected '${newVersion}'`);
+  }
+  if (expectedAuthor && publisherAfter !== expectedAuthor) {
+    problems.push(`Publisher after upgrade is '${publisherAfter}' (was '${publisherBefore}'), expected '${expectedAuthor}'`);
   }
 
-  const uninstallerPath = installLocationAfter ? join(installLocationAfter, "Uninstall cw-code.exe") : null;
-  if (uninstallerPath && existsSync(uninstallerPath)) runSilent(uninstallerPath, ["/S"]);
+  assertDataPreserved(seed, problems);
 
-  return { installLocationBefore, installLocationAfter, displayVersionAfter, problems };
+  if (installLocationAfter) {
+    const uninstallerPath = join(installLocationAfter, "Uninstall cw-code.exe");
+    if (existsSync(uninstallerPath)) {
+      try {
+        runUninstallSync(uninstallerPath, installLocationAfter);
+        waitForRegistryValueGone(registryKeys.install, "InstallLocation", UNINSTALL_POLL_TIMEOUT_MS);
+      } catch (err) {
+        problems.push(`cleanup uninstall failed: ${err.message}`);
+      }
+    }
+  }
+
+  return {
+    perMachine,
+    customDir,
+    installLocationBefore,
+    installLocationAfter,
+    displayVersionBefore,
+    displayVersionAfter,
+    publisherBefore,
+    publisherAfter,
+    problems
+  };
 }
 
 async function main() {
@@ -244,9 +444,13 @@ async function main() {
 
   if (args.install) {
     summary.install = await installMode(args.dist, args.disposableEnvironment);
+    problems.push(...summary.install.problems);
   }
   if (args.upgradeFrom) {
-    summary.upgrade = await upgradeFromMode(args.dist, args.upgradeFrom, args.disposableEnvironment);
+    summary.upgrade = await upgradeFromMode(args.dist, args.upgradeFrom, args.disposableEnvironment, {
+      customDir: args.customDir,
+      perMachine: args.perMachine
+    });
     problems.push(...summary.upgrade.problems);
   }
 
