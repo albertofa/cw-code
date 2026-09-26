@@ -111,6 +111,13 @@ describe("buildAlphaPlan", () => {
     expect(result).toEqual({ status: "skip", reason: expect.stringContaining("matches the latest published release") });
   });
 
+  it("throttles against the most recently published release, not the highest-numbered one", async () => {
+    const releases = BASE_RELEASES.map((entry) => (entry.tagName === "v0.0.1-alpha.20" ? { ...entry, publishedAt: "2026-09-25T05:00:00Z" } : entry));
+    const source = createFixtureReleaseSource({ releases, head: SHA.c10, commitLog });
+    const result = await buildAlphaPlan({ source, now: new Date("2026-09-25T06:00:00Z"), desktopVersion: parseVersion("0.0.1-alpha.21") });
+    expect(result.status).toBe("skip");
+  });
+
   it("skips within the 6-hour coalescing window even with a new commit", async () => {
     const source = createFixtureReleaseSource({ releases: BASE_RELEASES, head: SHA.c10, commitLog });
     const now = new Date("2026-09-24T23:30:00Z");
@@ -331,6 +338,18 @@ describe("buildStablePromotionPlan", () => {
         candidateInput: SHA.c9
       })
     ).rejects.toThrow(/matches multiple published alpha tags/);
+  });
+
+  it("resolves a SHA shared with a draft alpha to the single published alpha", async () => {
+    const releases = [...BASE_RELEASES, baseRelease("v0.0.1-alpha.22", SHA.c9, { draft: true })];
+    const source = createFixtureReleaseSource({ releases, head: SHA.c9, commitLog: BASE_COMMIT_LOG });
+    const result = await buildStablePromotionPlan({
+      source,
+      now: new Date("2026-09-25T06:00:00Z"),
+      desktopVersion: parseVersion("0.0.1-alpha.21"),
+      candidateInput: SHA.c9
+    });
+    expect(result.status === "planned" && result.plan.candidate?.tag).toBe("v0.0.1-alpha.21");
   });
 
   it("rejects a candidate whose base does not match the intended stable base", async () => {
