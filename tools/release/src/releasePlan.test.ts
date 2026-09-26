@@ -394,8 +394,7 @@ describe("verifyPlan", () => {
     });
     const result = await verifyPlan(buildPlan(), source);
     expect(result.ok).toBe(false);
-    if (!result.ok) expect(result.reasons.join("
-")).toContain("Stable 0.0.1 is newer than 0.0.1-alpha.22");
+    if (!result.ok) expect(result.reasons.join("\n")).toContain("Stable 0.0.1 is newer than 0.0.1-alpha.22");
   });
 
   it("rejects when a higher alpha has been published since the plan was created", async () => {

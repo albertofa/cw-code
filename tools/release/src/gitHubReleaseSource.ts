@@ -89,8 +89,7 @@ export function createGitHubReleaseSource(options: GitHubReleaseSourceOptions): 
     async listTags(): Promise<string[]> {
       const stdout = await run("git", ["tag", "--list", "v*"], cwd);
       return stdout
-        .split("
-")
+        .split("\n")
         .map((line) => line.trim())
         .filter((line) => line.length > 0);
     },
