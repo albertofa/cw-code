@@ -38,18 +38,37 @@ export async function checkSync(paths: string[]): Promise<SyncResult> {
   return { inSync, entries, version: inSync ? (entries[0]?.version ?? null) : null };
 }
 
-async function writeVersion(path: string, version: string): Promise<void> {
-  const raw = await readFile(path, "utf8");
-  const parsed = JSON.parse(raw) as Record<string, unknown>;
-  parsed.version = version;
-  await writeFile(path, `${JSON.stringify(parsed, null, 2)}\n`, "utf8");
+async function writeVersionToAll(paths: string[], version: string): Promise<void> {
+  const staged: Array<{ path: string; original: string; updated: string }> = [];
+  for (const path of paths) {
+    const original = await readFile(path, "utf8");
+    const parsed = JSON.parse(original) as Record<string, unknown>;
+    parsed.version = version;
+    staged.push({ path, original, updated: `${JSON.stringify(parsed, null, 2)}\n` });
+  }
+  const written: typeof staged = [];
+  try {
+    for (const entry of staged) {
+      await writeFile(entry.path, entry.updated, "utf8");
+      written.push(entry);
+    }
+  } catch (error) {
+    const restoreFailures: string[] = [];
+    for (const entry of written) {
+      try {
+        await writeFile(entry.path, entry.original, "utf8");
+      } catch {
+        restoreFailures.push(entry.path);
+      }
+    }
+    const suffix = restoreFailures.length > 0 ? `; could not restore ${restoreFailures.join(", ")}` : "; earlier files were restored";
+    throw new Error(`${error instanceof Error ? error.message : String(error)}${suffix}`);
+  }
 }
 
 export async function applyVersion(paths: string[], version: string): Promise<void> {
   parseVersion(version);
-  for (const path of paths) {
-    await writeVersion(path, version);
-  }
+  await writeVersionToAll(paths, version);
 }
 
 export async function setBase(paths: string[], base: string): Promise<void> {
@@ -57,7 +76,5 @@ export async function setBase(paths: string[], base: string): Promise<void> {
   if (parsed.channel !== "stable") {
     throw new Error(`set-base requires a stable "X.Y.Z" version, got "${base}"`);
   }
-  for (const path of paths) {
-    await writeVersion(path, base);
-  }
+  await writeVersionToAll(paths, base);
 }

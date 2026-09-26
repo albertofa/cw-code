@@ -31,6 +31,11 @@ describe("parseVersion", () => {
     expect(() => parseVersion(input)).toThrow();
   });
 
+  it("rejects components outside the safe integer range", () => {
+    expect(() => parseVersion("0.0.1-alpha.9007199254740992")).toThrow(/safe integer/);
+    expect(() => parseVersion("9007199254740993.0.0")).toThrow(/safe integer/);
+  });
+
   it("tryParseVersion returns null instead of throwing", () => {
     expect(tryParseVersion("not-a-version")).toBeNull();
     expect(tryParseVersion("1.2.3")).not.toBeNull();

@@ -23,7 +23,11 @@ function toInteger(literal: string, field: string, input: string): number {
   if (!INTEGER_LITERAL.test(literal)) {
     throw new Error(`Invalid version "${input}": ${field} "${literal}" has a leading zero or is not a non-negative integer`);
   }
-  return Number.parseInt(literal, 10);
+  const value = Number.parseInt(literal, 10);
+  if (!Number.isSafeInteger(value)) {
+    throw new Error(`Invalid version "${input}": ${field} "${literal}" is outside the safe integer range`);
+  }
+  return value;
 }
 
 export function parseVersion(input: string): ParsedVersion {
