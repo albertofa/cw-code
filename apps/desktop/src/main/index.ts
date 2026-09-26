@@ -18,7 +18,7 @@ import { checkCliVersion, checkCliVersions, type CliVersionCheck } from "./cliVe
 import { discoverBinaries, verifyBinaryPath } from "./cli/binaryDiscovery.js";
 import { getHarnessTracePath, initHarnessTrace } from "./debug/harnessTrace.js";
 import { appendCrashLog, initCrashLog } from "./debug/crashLog.js";
-import { runPackageProbe } from "./debug/packageProbe.js";
+import { RendererProbeTracker, runPackageProbe } from "./debug/packageProbe.js";
 import { claudeCommandsCachePath, ensureAppDirs, attachmentsDir, logsDir, migrateFromUserData, opencodeModelsCachePath } from "./paths/appPaths.js";
 import { reapOrphanedServers } from "./orphanServers.js";
 import type { ApprovalDecision, CliBinary, CommandInvocation, CreateSessionOptions, GitDiffMode, ProjectGitHubRepo, PrRef, SessionPrLink, SessionStatus, SettingsPatch, UsageLedgerQuery } from "@cw-code/contracts";
@@ -114,25 +114,43 @@ async function createWindow(): Promise<void> {
 
   const probeOutPath = app.isPackaged ? process.env["CW_PACKAGE_PROBE_OUT"] : undefined;
   if (probeOutPath) {
-    let rendererLoaded = true;
-    try {
-      await loadRenderer(mainWindow);
-    } catch (err) {
-      rendererLoaded = false;
-      appendCrashLog(`renderer failed to load: ${(err as Error).message}`);
-    }
-    setTimeout(() => {
-      void runPackageProbe({
-        outPath: probeOutPath,
-        appVersion: app.getVersion(),
-        electronVersion: process.versions.electron,
-        rendererLoaded
-      }).finally(() => app.exit(rendererLoaded ? 0 : 1));
-    }, 3000);
+    await startPackageProbe(mainWindow, probeOutPath);
     return;
   }
 
   await loadRenderer(mainWindow);
+}
+
+async function startPackageProbe(window: BrowserWindow, outPath: string): Promise<void> {
+  const renderer = new RendererProbeTracker();
+  window.webContents.on("render-process-gone", (_e, details) => {
+    renderer.markFailed(`render-process-gone: reason=${details.reason} exitCode=${details.exitCode}`);
+  });
+  window.webContents.on("did-fail-load", (_e, errorCode, errorDescription, _url, isMainFrame) => {
+    if (isMainFrame) renderer.markFailed(`did-fail-load: ${errorCode} ${errorDescription}`);
+  });
+  try {
+    await loadRenderer(window);
+    renderer.markLoaded();
+  } catch (err) {
+    const message = `renderer failed to load: ${(err as Error).message}`;
+    renderer.markFailed(message);
+    appendCrashLog(message);
+  }
+  setTimeout(() => {
+    runPackageProbe({
+      outPath,
+      appVersion: app.getVersion(),
+      electronVersion: process.versions.electron,
+      renderer
+    }).then(
+      (result) => app.exit(result.rendererLoaded ? 0 : 1),
+      (err: unknown) => {
+        appendCrashLog(`package probe failed: ${err instanceof Error ? err.message : String(err)}`);
+        app.exit(1);
+      }
+    );
+  }, 3000);
 }
 
 function loadRenderer(window: BrowserWindow): Promise<void> {
