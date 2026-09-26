@@ -2,17 +2,10 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type { AppSettings, PrSuggestCondition, PrWorkflow, PrWorkflowIcon, PrWorkspaceChoice, SettingsPatch } from "@cw-code/contracts";
 import { CLAUDE_CURATED_MODELS } from "../providers/claude/ClaudeCliDriver.js";
-import { readBytesIfExists, writeFileAtomic } from "../storage/atomicFile.js";
-import { beforeRepairBackupPath, writeVerified } from "../storage/backups.js";
-import {
-  describeError,
-  isMetadataDocument,
-  MetadataError,
-  type MetadataDocument,
-  type MetadataMigration,
-  type MetadataSchema
-} from "../storage/metadataDocument.js";
-import { loadVersionedJson } from "../storage/versionedJson.js";
+import { writeFileAtomic } from "../storage/atomicFile.js";
+import { backupBeforeRepair } from "../storage/backups.js";
+import { isMetadataDocument, type MetadataDocument, type MetadataMigration, type MetadataSchema } from "../storage/metadataDocument.js";
+import { LastGoodRefresher, loadVersionedJson } from "../storage/versionedJson.js";
 import { defaultPrWorkflows } from "./prWorkflowDefaults.js";
 import {
   configuredCliBinaryPath,
@@ -236,11 +229,7 @@ export const SETTINGS_METADATA: MetadataSchema = {
 export const SETTINGS_MIGRATIONS: Record<number, MetadataMigration> = { 0: (raw) => raw };
 
 function unknownKeys(document: MetadataDocument): MetadataDocument {
-  const extras: MetadataDocument = {};
-  for (const [key, value] of Object.entries(document)) {
-    if (key !== "schemaVersion" && !KNOWN_SETTING_KEYS.has(key)) extras[key] = value;
-  }
-  return extras;
+  return Object.fromEntries(Object.entries(document).filter(([key]) => key !== "schemaVersion" && !KNOWN_SETTING_KEYS.has(key)));
 }
 
 function repairedKeys(document: MetadataDocument, data: AppSettings): string[] {
@@ -257,11 +246,13 @@ export class SettingsStore {
   private filePath: string;
   private data: AppSettings;
   private extras: MetadataDocument = {};
+  private lastGood: LastGoodRefresher;
 
   constructor(filePath: string) {
     this.filePath = filePath;
     mkdirSync(dirname(this.filePath), { recursive: true });
     const loaded = loadVersionedJson({ filePath: this.filePath, ...SETTINGS_METADATA, migrations: SETTINGS_MIGRATIONS });
+    this.lastGood = new LastGoodRefresher(this.filePath);
     this.data = defaults();
     if (loaded.status !== "ok") {
       this.persist();
@@ -271,7 +262,7 @@ export class SettingsStore {
     this.extras = unknownKeys(loaded.data);
     if (serialize(this.data, this.extras) === JSON.stringify(loaded.data)) return;
     const repaired = repairedKeys(loaded.data, this.data);
-    if (repaired.length > 0) this.backupBeforeRepair(repaired);
+    if (repaired.length > 0) backupBeforeRepair(this.filePath, SETTINGS_METADATA, repaired);
     this.persist();
   }
 
@@ -283,27 +274,16 @@ export class SettingsStore {
     const next = { ...this.data, ...sanitize(patch) };
     writeFileAtomic(this.filePath, serialize(next, this.extras));
     this.data = next;
+    this.lastGood.afterPersist();
     return this.get();
   }
 
-  private backupBeforeRepair(keys: string[]): void {
-    const backupPath = beforeRepairBackupPath(this.filePath);
-    try {
-      const original = readBytesIfExists(this.filePath);
-      if (original && !readBytesIfExists(backupPath)?.equals(original)) writeVerified(backupPath, original);
-    } catch (error) {
-      throw new MetadataError({
-        kind: "io",
-        file: this.filePath,
-        store: "settings",
-        supportedVersion: SETTINGS_SCHEMA_VERSION,
-        detail: `could not back up settings before repairing ${keys.join(", ")}: ${describeError(error)}`
-      });
-    }
-    console.warn(`repaired settings ${keys.join(", ")} in ${this.filePath}; the previous file is kept at ${backupPath}`);
+  flush(): void {
+    this.lastGood.flush();
   }
 
   private persist(): void {
     writeFileAtomic(this.filePath, serialize(this.data, this.extras));
+    this.lastGood.afterPersist();
   }
 }

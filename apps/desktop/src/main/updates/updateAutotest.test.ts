@@ -98,7 +98,7 @@ function fakeHost(io: MemoryIo, options: FakeOptions = {}) {
   let current = options.initial ?? state("idle");
   let turnStarted = false;
   let idle = true;
-  const prepareResults = [...(options.prepare ?? [{ ok: true, token: "token-1" }])];
+  const prepareResults = [...(options.prepare ?? [{ ok: true, token: "token-1", stoppedTurnIds: [] }])];
   const set = (next: UpdateState): void => {
     current = next;
     for (const listener of listeners) listener(next);
@@ -143,13 +143,13 @@ function fakeHost(io: MemoryIo, options: FakeOptions = {}) {
       prepare: async (request) => {
         calls.push("prepare");
         prepareRequests.push(request);
-        const result = prepareResults.shift() ?? { ok: true, token: "token-x" };
+        const result = prepareResults.shift() ?? { ok: true, token: "token-x", stoppedTurnIds: [] };
         idle = !result.ok && result.code !== "timeout";
         return result;
       },
       force: async (token) => {
         calls.push(`force:${token}`);
-        return { ok: true, token };
+        return { ok: true, token, stoppedTurnIds: [] };
       },
       cancel: (token) => {
         calls.push(`cancel:${token}`);
@@ -301,7 +301,7 @@ describe("runUpdateAutotest", () => {
 
   it("forces a timed-out graceful stop before installing", async () => {
     const io = new MemoryIo();
-    const fake = fakeHost(io, { prepare: [{ ok: false, code: "timeout", pending: ["drivers"], token: "token-t" }] });
+    const fake = fakeHost(io, { prepare: [{ ok: false, code: "timeout", pending: ["drivers"], token: "token-t", stoppedTurnIds: [] }] });
     await runUpdateAutotest(config(), fake.host, io);
     expect(fake.calls).toEqual(["check", "download", "prepare", "force:token-t", "install:handoff=true", "quit"]);
   });

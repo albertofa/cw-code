@@ -93,7 +93,7 @@ export interface ScenarioObservation {
 }
 
 export interface MetadataProjection {
-  projects: Array<{ id: string; rootPath: string }>;
+  projects: Array<{ id: string; rootPath: string; name: string | null }>;
   sessions: Array<{ id: string; projectId: string; driver: string; resumeCursor: string | null; worktreePath: string | null; branch: string | null }>;
   settings: Record<string, unknown>;
 }
@@ -553,7 +553,7 @@ export function projectMetadata(sessionsDocument: unknown, settingsDocument: unk
   const sessionsRoot = sessionsDocument && typeof sessionsDocument === "object" ? (sessionsDocument as Record<string, unknown>) : {};
   const settingsRoot = settingsDocument && typeof settingsDocument === "object" ? (settingsDocument as Record<string, unknown>) : {};
   const projects = records(sessionsRoot.projects)
-    .map((project) => ({ id: text(project.id) ?? "", rootPath: stripTrailingSeparators(text(project.rootPath) ?? "") }))
+    .map((project) => ({ id: text(project.id) ?? "", rootPath: stripTrailingSeparators(text(project.rootPath) ?? ""), name: text(project.name) }))
     .sort((a, b) => a.id.localeCompare(b.id));
   const sessions = records(sessionsRoot.sessions)
     .map((session) => ({
@@ -576,7 +576,10 @@ export function compareMetadata(before: MetadataProjection, after: MetadataProje
   for (const project of before.projects) {
     const match = afterProjects.get(project.id);
     if (!match) problems.push(`project ${project.id} is missing after the update`);
-    else if (match.rootPath !== project.rootPath) problems.push(`project ${project.id} root changed from ${project.rootPath} to ${match.rootPath}`);
+    else {
+      if (match.rootPath !== project.rootPath) problems.push(`project ${project.id} root changed from ${project.rootPath} to ${match.rootPath}`);
+      if (project.name !== null && match.name !== project.name) problems.push(`project ${project.id} name changed from ${project.name} to ${String(match.name)}`);
+    }
   }
   const afterSessions = new Map(after.sessions.map((session) => [session.id, session]));
   for (const session of before.sessions) {

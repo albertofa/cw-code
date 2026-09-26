@@ -1,8 +1,8 @@
 import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { homedir, tmpdir } from "node:os";
+import { join, resolve } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 
 const ELECTRON_BUILDER_NS_UUID = "50e065bc-3134-11e6-9bab-38c9862bdaf3";
@@ -72,7 +72,11 @@ export function isElevated() {
 }
 
 export function runSilent(command, args) {
-  const result = spawnSync(command, args, { encoding: "utf8" });
+  const isolatedTemp = mkdtempSync(join(process.env.RUNNER_TEMP ?? tmpdir(), "cw-installer-temp-"));
+  const result = spawnSync(command, args, {
+    encoding: "utf8",
+    env: { ...process.env, TEMP: isolatedTemp, TMP: isolatedTemp }
+  });
   if (result.status !== 0) {
     throw new Error(`${command} ${args.join(" ")} failed (exit ${result.status}): ${result.stderr || result.stdout}`);
   }
@@ -140,28 +144,96 @@ export function waitForRegistryValueGone(keyPath, name, timeoutMs) {
   throw new Error(`registry value '${name}' at ${keyPath} did not clear within ${timeoutMs}ms after uninstall`);
 }
 
-export function runUninstallSync(uninstallerPath, installDir) {
-  runSilent(uninstallerPath, ["/S", `_?=${installDir}`]);
-  try {
-    rmSync(uninstallerPath, { force: true });
-  } catch (err) {
-    console.warn(`warning: could not remove leftover uninstaller ${uninstallerPath}: ${err.message}`);
+export function defaultInstallDir(productName, perMachine) {
+  if (perMachine) return join(process.env["ProgramFiles"] ?? "C:\\Program Files", productName);
+  return join(process.env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local"), "Programs", productName);
+}
+
+function dirKey(dir) {
+  return resolve(dir).toLowerCase();
+}
+
+export function detectInstallDirs({ registryLocation, candidateDirs = [], ownedDirs = [], uninstallerName, executableName }) {
+  const detected = new Map();
+  const add = (dir) => {
+    if (dir && !detected.has(dirKey(dir))) detected.set(dirKey(dir), dir);
+  };
+  const hasInstallEvidence = (dir) => existsSync(join(dir, uninstallerName)) || existsSync(join(dir, executableName));
+  add(registryLocation);
+  for (const dir of candidateDirs) if (dir && hasInstallEvidence(dir)) add(dir);
+  for (const dir of ownedDirs) add(dir);
+  return [...detected.values()];
+}
+
+function acceptedDirs(dirs, guardPath, errors) {
+  if (!guardPath) return dirs;
+  return dirs.filter((dir) => {
+    try {
+      guardPath(dir);
+      return true;
+    } catch (err) {
+      errors.push(err.message);
+      return false;
+    }
+  });
+}
+
+export function cleanupInstallation({ registryKeys, uninstallerName, executableName, candidateDirs = [], ownedDirs = [], guardPath = null }) {
+  const errors = [];
+  const uninstalledDirs = [];
+  const registryLocation = readRegistryValue(registryKeys.install, "InstallLocation");
+  const detected = detectInstallDirs({ registryLocation, candidateDirs, ownedDirs, uninstallerName, executableName });
+  const dirs = acceptedDirs(detected, guardPath, errors);
+  for (const dir of dirs) {
+    const uninstallerPath = join(dir, uninstallerName);
+    if (!existsSync(uninstallerPath)) {
+      if (dir === registryLocation) errors.push(`registry InstallLocation points to ${dir} but ${uninstallerName} is missing there`);
+      continue;
+    }
+    try {
+      runSilent(uninstallerPath, ["/S", `_?=${dir}`]);
+      uninstalledDirs.push(dir);
+    } catch (err) {
+      errors.push(`uninstall of ${dir} failed: ${err.message}`);
+    }
   }
-  try {
-    rmSync(installDir, { recursive: true, force: true });
-  } catch (err) {
-    console.warn(`warning: could not remove leftover install directory ${installDir}: ${err.message}`);
+  for (const dir of dirs) {
+    try {
+      rmSync(dir, { recursive: true, force: true });
+      if (existsSync(dir)) errors.push(`install directory still present after removal: ${dir}`);
+    } catch (err) {
+      errors.push(`could not remove install directory ${dir}: ${err.message}`);
+    }
   }
+  const registryAccepted = registryLocation !== null && dirs.includes(registryLocation);
+  if (registryAccepted || uninstalledDirs.length > 0) {
+    try {
+      waitForRegistryValueGone(registryKeys.install, "InstallLocation", UNINSTALL_POLL_TIMEOUT_MS);
+    } catch (err) {
+      errors.push(err.message);
+    }
+  }
+  return { registryLocation, dirs, uninstalledDirs, errors };
+}
+
+export function withCleanupErrors(primaryError, cleanupErrors) {
+  if (cleanupErrors.length === 0) return primaryError;
+  const details = cleanupErrors.map((message) => `  - ${message}`).join("\n");
+  return new Error(`${primaryError.message}\ncleanup after this failure also failed:\n${details}`, { cause: primaryError });
 }
 
 export async function runPackageProbe(exePath, opts = {}) {
   const workDir = mkdtempSync(join(tmpdir(), "cw-verify-probe-"));
   try {
-    const cwCodeHome = opts.cwCodeHome ?? join(workDir, "cw-code-home");
-    const userDataDir = join(workDir, "user-data");
     const probeOutPath = join(workDir, "probe.json");
-    mkdirSync(cwCodeHome, { recursive: true });
-    mkdirSync(userDataDir, { recursive: true });
+    const cwCodeHome = opts.cwCodeHome ?? join(workDir, "cw-code-home");
+    if (!opts.cwCodeHome) mkdirSync(cwCodeHome, { recursive: true });
+    const appArgs = [];
+    if (!opts.defaultUserData) {
+      const userDataDir = join(workDir, "user-data");
+      mkdirSync(userDataDir, { recursive: true });
+      appArgs.push(`--user-data-dir=${userDataDir}`);
+    }
 
     const env = {
       ...process.env,
@@ -172,7 +244,7 @@ export async function runPackageProbe(exePath, opts = {}) {
     };
 
     const result = await new Promise((resolvePromise, rejectPromise) => {
-      const child = spawn(exePath, [`--user-data-dir=${userDataDir}`], { env });
+      const child = spawn(exePath, appArgs, { env });
       const timer = setTimeout(() => {
         if (child.pid) killProcessTree(child.pid);
         rejectPromise(new Error(`packaged app did not exit within ${PROBE_TIMEOUT_MS}ms`));
@@ -195,6 +267,11 @@ export async function runPackageProbe(exePath, opts = {}) {
   } finally {
     rmSync(workDir, { recursive: true, force: true });
   }
+}
+
+export function startupModeProblem(label, probe) {
+  if (probe.startupMode === undefined || probe.startupMode === "ready") return null;
+  return `${label}: app started in '${probe.startupMode}' mode instead of 'ready'`;
 }
 
 export async function resolveAsarLib(desktopDir) {

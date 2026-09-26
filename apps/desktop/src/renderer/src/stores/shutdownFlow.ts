@@ -13,9 +13,12 @@ interface ActiveFlow {
   promise: Promise<{ token: string } | null>;
   resolve: (result: { token: string } | null) => void;
   stopWaiting: (() => void) | null;
+  preparing: boolean;
 }
 
 let active: ActiveFlow | null = null;
+let refreshing: Promise<void> | null = null;
+let refreshQueued = false;
 
 export function hasShutdownBlockers(assessment: ShutdownAssessment, dirty: DirtyBuffer[]): boolean {
   return assessment.activeTurns.length > 0 || assessment.terminals.length > 0 || dirty.length > 0;
@@ -63,7 +66,7 @@ export function runShutdownFlow(reason: ShutdownReason): Promise<{ token: string
   const promise = new Promise<{ token: string } | null>((settle) => {
     resolve = settle;
   });
-  active = { reason, token: null, promise, resolve, stopWaiting: null };
+  active = { reason, token: null, promise, resolve, stopWaiting: null, preparing: false };
   void begin(active);
   return promise;
 }
@@ -86,6 +89,16 @@ async function begin(flow: ActiveFlow): Promise<void> {
 }
 
 async function prepare(flow: ActiveFlow, assessment: ShutdownAssessment, stopActiveTurns: boolean): Promise<void> {
+  if (flow.preparing) return;
+  flow.preparing = true;
+  try {
+    await prepareOnce(flow, assessment, stopActiveTurns);
+  } finally {
+    flow.preparing = false;
+  }
+}
+
+async function prepareOnce(flow: ActiveFlow, assessment: ShutdownAssessment, stopActiveTurns: boolean): Promise<void> {
   patchUi({ phase: "preparing", error: null });
   let result: ShutdownPrepareResult;
   try {
@@ -107,8 +120,10 @@ async function prepare(flow: ActiveFlow, assessment: ShutdownAssessment, stopAct
     });
     return;
   }
-  if (stopActiveTurns && (result.ok || result.code === "timeout")) {
-    useAppStore.getState().markTurnsInterrupted(assessment.activeTurns.map((turn) => turn.sessionId));
+  if ((result.ok || result.code === "timeout") && result.stoppedTurnIds.length > 0) {
+    const stopped = new Set(result.stoppedTurnIds);
+    const sessionIds = assessment.activeTurns.filter((turn) => stopped.has(turn.turnId)).map((turn) => turn.sessionId);
+    useAppStore.getState().markTurnsInterrupted(sessionIds);
   }
   if (active !== flow) {
     if (result.ok || result.code === "timeout") void window.cw.shutdown.cancel(result.token).catch(() => {});
@@ -144,7 +159,26 @@ async function prepare(flow: ActiveFlow, assessment: ShutdownAssessment, stopAct
   finish(null, { title: `${actionLabel(flow.reason)} cancelled`, message: "Another quit or restart is already in progress." });
 }
 
-export async function refreshShutdownAssessment(): Promise<void> {
+export function refreshShutdownAssessment(): Promise<void> {
+  if (refreshing) {
+    refreshQueued = true;
+    return refreshing;
+  }
+  const run = (async () => {
+    try {
+      do {
+        refreshQueued = false;
+        await refreshOnce();
+      } while (refreshQueued);
+    } finally {
+      refreshing = null;
+    }
+  })();
+  refreshing = run;
+  return run;
+}
+
+async function refreshOnce(): Promise<void> {
   const flow = active;
   let assessment: ShutdownAssessment;
   try {
@@ -157,6 +191,7 @@ export async function refreshShutdownAssessment(): Promise<void> {
   const dirty = useEditorBuffers.getState().dirty();
   patchUi({ assessment, dirty });
   if (current.phase === "waiting" && assessment.activeTurns.length === 0) {
+    if (active !== flow || flow.preparing || ui()?.phase !== "waiting") return;
     stopWaiting();
     if (dirty.length === 0) await prepare(flow, assessment, false);
     else patchUi({ phase: "review" });

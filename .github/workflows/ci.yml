@@ -77,6 +77,14 @@ jobs:
         run: pnpm --filter @cw-code/desktop exec electron-builder --win nsis --x64 --publish never "-c.extraMetadata.version=${CI_VERSION}" "-c.directories.output=dist-ci"
       - name: Reject any update autotest path in the upgrade-test package
         run: node scripts/verify-installed-upgrade.mjs --assert-production-bundle --asar apps/desktop/dist-ci/win-unpacked/resources/app.asar
+      - name: Use a fresh temp directory for installer runs
+        shell: bash
+        run: |
+          echo "entries left in $TEMP by earlier steps: $(ls -A "$TEMP" | wc -l)"
+          ls -A "$TEMP" | sed -e 's/[0-9A-Za-z]\{6,\}$/*/' | sort | uniq -c | sort -rn | head -20
+          mkdir -p "$RUNNER_TEMP/installer-temp"
+          echo "TEMP=$RUNNER_TEMP\installer-temp" >> "$GITHUB_ENV"
+          echo "TMP=$RUNNER_TEMP\installer-temp" >> "$GITHUB_ENV"
       - name: Download legacy installer for upgrade tests
         run: gh release download v0.0.1-alpha.21 --repo albertofa/cw-code --pattern "cw-code.Setup.0.0.1-alpha.21.exe" --dir legacy-installer
         env:

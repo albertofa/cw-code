@@ -24,16 +24,15 @@ import {
 } from "../../tools/release/src/upgradeScenarios.ts";
 import { parseAppUpdateYaml } from "./upgrade-builds.mjs";
 import {
-  UNINSTALL_POLL_TIMEOUT_MS,
+  cleanupInstallation,
+  defaultInstallDir,
   isProcessAlive,
   killProcessTreeIfImage,
   nsisGuid,
   readRegistryValue,
   registryPaths,
   runSilent,
-  runUninstallSync,
-  safePathWithoutClis,
-  waitForRegistryValueGone
+  safePathWithoutClis
 } from "./windows-install.mjs";
 
 const libDir = dirname(fileURLToPath(import.meta.url));
@@ -46,6 +45,7 @@ export const TEST_GUID = nsisGuid(UPDATE_TEST_APP_ID);
 export const BUSY_SESSION_ID = "sess_fx000001";
 const BUSY_PROJECT_ID = "proj_fx000001";
 const DEFAULT_CACHE_DIR_NAME = "@cw-codedesktop-updatetest-updater";
+const UPDATE_TEST_PRODUCT_NAME = UPDATE_TEST_EXECUTABLE.replace(/\.exe$/i, "");
 const SETTINGS_KEYS = [
   "claudeBinaryPath",
   "opencodeBinaryPath",
@@ -92,24 +92,28 @@ function removeTestDir(path) {
   rmSync(path, { recursive: true, force: true });
 }
 
-export function cleanupTestIdentity(identity) {
+export function cleanupTestIdentity(identity, candidateDirs = []) {
   const notes = [];
+  const errors = [];
   for (const perMachine of [false, true]) {
-    const keys = registryPaths(TEST_GUID, perMachine);
-    const location = readRegistryValue(keys.install, "InstallLocation");
-    if (!location) continue;
-    assertUpdateTestPath(location);
-    const uninstaller = join(location, UPDATE_TEST_UNINSTALLER);
-    if (existsSync(uninstaller)) {
-      runUninstallSync(uninstaller, location);
-      waitForRegistryValueGone(keys.install, "InstallLocation", UNINSTALL_POLL_TIMEOUT_MS);
-      notes.push(`uninstalled update-test build from ${perMachine ? "HKLM" : "HKCU"}`);
-    } else {
-      notes.push(`update-test registry entry at ${keys.install} points to a missing uninstaller`);
+    const cleanup = cleanupInstallation({
+      registryKeys: registryPaths(TEST_GUID, perMachine),
+      uninstallerName: UPDATE_TEST_UNINSTALLER,
+      executableName: UPDATE_TEST_EXECUTABLE,
+      candidateDirs: [...candidateDirs, defaultInstallDir(UPDATE_TEST_PRODUCT_NAME, perMachine)],
+      guardPath: assertUpdateTestPath
+    });
+    for (const dir of cleanup.uninstalledDirs) notes.push(`uninstalled update-test build from ${dir} (${perMachine ? "HKLM" : "HKCU"} pass)`);
+    errors.push(...cleanup.errors);
+  }
+  for (const dir of [identity.cacheDir, identity.userDataDir]) {
+    try {
+      removeTestDir(dir);
+    } catch (err) {
+      errors.push(err.message);
     }
   }
-  removeTestDir(identity.cacheDir);
-  removeTestDir(identity.userDataDir);
+  if (errors.length > 0) throw new Error(`update-test cleanup failed: ${errors.join("; ")}`);
   return notes;
 }
 
@@ -389,6 +393,7 @@ export async function runScenario(entry, context) {
   const knownPids = new Set();
   let feed = null;
   let staged = null;
+  let installLocationBefore = null;
   try {
     record.notes.push(...cleanupTestIdentity(identity));
     const seed = seedIsolatedData(paths, identity);
@@ -397,7 +402,7 @@ export async function runScenario(entry, context) {
     const installStartedAt = Date.now();
     runSilent(build.installerPath, installArguments(entry, paths));
     record.timings.initialInstallMs = Date.now() - installStartedAt;
-    const installLocationBefore = readRegistryValue(keys.install, "InstallLocation");
+    installLocationBefore = readRegistryValue(keys.install, "InstallLocation");
     record.displayVersionBefore = readRegistryValue(keys.uninstall, "DisplayVersion");
     if (!installLocationBefore) throw new Error(`InstallLocation is missing at ${keys.install} after installing ${build.version}`);
     if (entry.scope === "custom-dir" && resolve(installLocationBefore).toLowerCase() !== resolve(paths.customInstallDir).toLowerCase()) {
@@ -501,7 +506,11 @@ export async function runScenario(entry, context) {
   } catch (err) {
     record.problems.push(`scenario aborted: ${err.message}`);
   } finally {
-    if (feed) await feed.close();
+    try {
+      if (feed) await feed.close();
+    } catch (err) {
+      record.problems.push(`feed server did not close: ${err.message}`);
+    }
     const stopped = [];
     for (const pid of knownPids) stopped.push(killProcessTreeIfImage(pid, isUpdateTestImage));
     for (const fake of readJsonLines(paths.fakeLog)) {
@@ -509,7 +518,7 @@ export async function runScenario(entry, context) {
     }
     record.stoppedProcesses = stopped.filter((entry) => entry.killed);
     try {
-      record.notes.push(...cleanupTestIdentity(identity));
+      record.notes.push(...cleanupTestIdentity(identity, [paths.customInstallDir, installLocationBefore]));
     } catch (err) {
       record.problems.push(`cleanup failed: ${err.message}`);
     }
