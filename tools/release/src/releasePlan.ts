@@ -252,6 +252,13 @@ export async function verifyPlan(rawPlan: unknown, source: ReleaseSource): Promi
       if (!recorded.includes(entry.tag)) reasons.push(`${describeDivergence(entry)}, and the plan did not acknowledge ${entry.tag}`);
     }
   } else if (plan.candidate) {
+    const candidateTag = plan.candidate.tag;
+    const candidateRelease = releases.find((release) => release.tagName === candidateTag);
+    if (!candidateRelease) {
+      reasons.push(`Candidate release "${candidateTag}" no longer exists; only a published alpha release can be promoted`);
+    } else if (candidateRelease.draft) {
+      reasons.push(`Candidate release "${candidateTag}" is a draft; only a published alpha release can be promoted`);
+    }
     const candidateSha = await source.tagSha(plan.candidate.tag);
     if (candidateSha !== plan.sourceSha) {
       reasons.push(
