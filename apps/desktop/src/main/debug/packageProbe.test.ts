@@ -43,6 +43,7 @@ describe("buildProbeResult", () => {
   it("assembles the full probe contract from raw inputs", () => {
     const result = buildProbeResult({
       appVersion: "0.0.1-alpha.22",
+      startupMode: "ready",
       electronVersion: "36.9.5",
       platform: "win32",
       arch: "x64",
@@ -55,6 +56,7 @@ describe("buildProbeResult", () => {
     });
     expect(result).toEqual({
       appVersion: "0.0.1-alpha.22",
+      startupMode: "ready",
       electron: "36.9.5",
       platform: "win32",
       arch: "x64",
@@ -71,6 +73,7 @@ describe("buildProbeResult", () => {
   it("reflects a renderer that failed to load", () => {
     const result = buildProbeResult({
       appVersion: "0.0.1-alpha.22",
+      startupMode: "ready",
       electronVersion: "36.9.5",
       platform: "win32",
       arch: "x64",
@@ -87,6 +90,7 @@ describe("buildProbeResult", () => {
   it("reports a renderer that crashed after loading as not loaded", () => {
     const result = buildProbeResult({
       appVersion: "0.0.1-alpha.22",
+      startupMode: "ready",
       electronVersion: "36.9.5",
       platform: "win32",
       arch: "x64",
@@ -97,6 +101,22 @@ describe("buildProbeResult", () => {
     });
     expect(result.rendererLoaded).toBe(false);
     expect(result.rendererFailures).toEqual(["render-process-gone: reason=crashed exitCode=1"]);
+  });
+
+  it("reports an app that started in metadata recovery mode", () => {
+    const result = buildProbeResult({
+      appVersion: "0.0.1-alpha.22",
+      startupMode: "recovery",
+      electronVersion: "36.9.5",
+      platform: "win32",
+      arch: "x64",
+      nodePty: { status: "loaded-spawned", exitCode: 0 },
+      renderer: { loadCompleted: true, failures: [] },
+      cliChecks: [],
+      durationMs: 5
+    });
+    expect(result.startupMode).toBe("recovery");
+    expect(result.rendererLoaded).toBe(true);
   });
 });
 

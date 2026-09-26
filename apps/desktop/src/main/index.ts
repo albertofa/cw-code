@@ -161,7 +161,7 @@ function createServices(stores: { sessionStore: SessionStore; settingsStore: Set
     git,
     pullRequests,
     ptys,
-    accountUsage: new AccountUsageService(() => sessions.getDrivers()),
+    accountUsage: new AccountUsageService(() => sessions.driversForProbe()),
     shutdown: new ShutdownCoordinator({ sessions, ptys, onRecovered: handleShutdownRecovered, onExpired: handleShutdownExpired }),
     updates
   };
@@ -352,6 +352,7 @@ async function startPackageProbe(window: BrowserWindow, outPath: string): Promis
     runPackageProbe({
       outPath,
       appVersion: app.getVersion(),
+      startupMode: startupState.mode,
       electronVersion: process.versions.electron,
       renderer
     }).then(

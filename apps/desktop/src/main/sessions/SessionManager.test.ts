@@ -230,6 +230,18 @@ describe("SessionManager", () => {
     }
   });
 
+  it("flushes the pending settings last-good refresh on dispose", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cw-test-"));
+    const settingsPath = join(dir, "settings.json");
+    const manager = new SessionManager({ dbPath: join(dir, "test.db"), settingsPath });
+    manager.setSettings({ holdingHours: 9 });
+    expect(existsSync(`${settingsPath}.last-good.bak`)).toBe(false);
+
+    manager.dispose();
+
+    expect(readFileSync(`${settingsPath}.last-good.bak`, "utf8")).toBe(readFileSync(settingsPath, "utf8"));
+  });
+
   it("normalizes trailing separators on project roots", () => {
     const { manager } = makeManager();
     const project = manager.addProject("C:\\proj\\");

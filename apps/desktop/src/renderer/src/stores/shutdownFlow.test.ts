@@ -6,6 +6,7 @@ import { useEditorBuffers } from "./editorBuffers.js";
 import {
   handleShutdownExpired,
   hasShutdownBlockers,
+  refreshShutdownAssessment,
   runShutdownFlow,
   shutdownCancel,
   shutdownDiscardAll,
@@ -30,6 +31,7 @@ interface FakeShutdownApi {
   forceCalls: string[];
   saveCalls: Array<{ sessionId: string; path: string; content: string }>;
   failSave: boolean;
+  prepareGate: Promise<void> | null;
 }
 
 function installCw(): FakeShutdownApi {
@@ -40,13 +42,15 @@ function installCw(): FakeShutdownApi {
     cancelCalls: [],
     forceCalls: [],
     saveCalls: [],
-    failSave: false
+    failSave: false,
+    prepareGate: null
   };
   const cw = {
     shutdown: {
       assess: async () => api.assessments.shift() ?? EMPTY,
       prepare: async (request: ShutdownPrepareRequest) => {
         api.prepareCalls.push(request);
+        if (api.prepareGate) await api.prepareGate;
         return api.prepareResults.shift() ?? { ok: true, token: "token-1", stoppedTurnIds: request.approvedTurnIds ?? [] };
       },
       force: async (token: string) => {
@@ -231,6 +235,36 @@ describe("runShutdownFlow", () => {
     expect(api.cancelCalls).toEqual(["token-7"]);
     expect(await pending).toBeNull();
     expect(useAppStore.getState().shutdown).toBeNull();
+  });
+
+  it("prepares once when several refreshes see the turns finish at the same time", async () => {
+    vi.useFakeTimers();
+    try {
+      api.assessments = [BUSY, BUSY];
+      api.prepareResults = [
+        { ok: true, token: "token-1", stoppedTurnIds: [] },
+        { ok: false, code: "busy" }
+      ];
+      let release: () => void = () => {};
+      api.prepareGate = new Promise((resolve) => {
+        release = resolve;
+      });
+      const pending = runShutdownFlow("update");
+      await settle();
+      shutdownWait();
+      await settle();
+      expect(useAppStore.getState().shutdown?.phase).toBe("waiting");
+      const refreshes = [refreshShutdownAssessment(), refreshShutdownAssessment(), refreshShutdownAssessment()];
+      await settle();
+      expect(api.prepareCalls).toHaveLength(1);
+      void refreshShutdownAssessment();
+      release();
+      await Promise.all(refreshes);
+      expect(await pending).toEqual({ token: "token-1" });
+      expect(api.prepareCalls).toHaveLength(1);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("waits for running turns and continues on its own once they finish", async () => {

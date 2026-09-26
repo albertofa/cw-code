@@ -3,7 +3,21 @@ import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
-import type { CliDriver, DriverActivity, DriverKind, GitBranchInfo, HistoryMessage, ThreadEvent, TurnHandle, TurnRequest } from "@cw-code/contracts";
+import type {
+  AccountUsageState,
+  CliDriver,
+  CommandOption,
+  DriverActivity,
+  DriverKind,
+  GitBranchInfo,
+  HistoryMessage,
+  ModelOption,
+  PermissionOption,
+  ThreadEvent,
+  TurnHandle,
+  TurnRequest
+} from "@cw-code/contracts";
+import { AccountUsageService } from "../usage/AccountUsageService.js";
 import { SessionManager, type DriverFactory } from "./SessionManager.js";
 import { SHUTDOWN_RESERVED_MESSAGE } from "../shutdown/shutdownReservation.js";
 import { GitService, type CreatedWorktree } from "../fs/GitService.js";
@@ -58,6 +72,7 @@ class LifecycleDriver implements CliDriver {
   disposed = 0;
   shutdowns: number[] = [];
   shutdownResult: Promise<{ timedOut: boolean }> | null = null;
+  probes: string[] = [];
   private running = new Map<string, string>();
 
   constructor(
@@ -85,6 +100,22 @@ class LifecycleDriver implements CliDriver {
     return { status: "done", history: [] };
   }
   async renameSession(): Promise<void> {}
+  async listModels(): Promise<ModelOption[]> {
+    this.probes.push("models");
+    return [];
+  }
+  async listPermissionModes(): Promise<PermissionOption[]> {
+    this.probes.push("permissions");
+    return [];
+  }
+  async listCommands(): Promise<CommandOption[]> {
+    this.probes.push("commands");
+    return [];
+  }
+  async getAccountUsage(): Promise<AccountUsageState> {
+    this.probes.push("usage");
+    return { status: "error", message: "not signed in" };
+  }
   async *events(): AsyncIterable<never> {}
   activity(): DriverActivity {
     return { busySessionIds: [...new Set(this.running.values())], ownedProcesses: this.running.size };
@@ -207,6 +238,30 @@ describe("SessionManager shutdown reservation", () => {
     await expect(pending).rejects.toThrow(SHUTDOWN_RESERVED_MESSAGE);
     expect(git.worktreeCalls).toEqual([]);
     expect(generations[0].claude.started).toHaveLength(0);
+  });
+
+  it("refuses driver CLI probes during the reservation and allows them after clearing", async () => {
+    const { manager, project, generations } = setup();
+    const session = await manager.createSession(project.id, "opencode", { mode: "current" });
+    const usage = new AccountUsageService(() => manager.driversForProbe());
+    manager.beginShutdownReservation();
+    await expect(manager.listCommands(session.id)).rejects.toThrow(SHUTDOWN_RESERVED_MESSAGE);
+    await expect(manager.listCommandsFor(project.id, "opencode")).rejects.toThrow(SHUTDOWN_RESERVED_MESSAGE);
+    await expect(manager.listModels(session.id)).rejects.toThrow(SHUTDOWN_RESERVED_MESSAGE);
+    await expect(manager.listModelsFor(project.id, "opencode")).rejects.toThrow(SHUTDOWN_RESERVED_MESSAGE);
+    await expect(manager.listModelsForHarness("opencode")).rejects.toThrow(SHUTDOWN_RESERVED_MESSAGE);
+    await expect(manager.listPermissionModes(session.id)).rejects.toThrow(SHUTDOWN_RESERVED_MESSAGE);
+    await expect(manager.listPermissionModesFor(project.id, "opencode")).rejects.toThrow(SHUTDOWN_RESERVED_MESSAGE);
+    await expect(manager.listPermissionModesForHarness("opencode")).rejects.toThrow(SHUTDOWN_RESERVED_MESSAGE);
+    await expect(usage.get(["opencode"], true)).rejects.toThrow(SHUTDOWN_RESERVED_MESSAGE);
+    manager.warmOpencodeModels();
+    expect(generations[0].opencode.probes).toEqual([]);
+    manager.clearShutdownReservation();
+    await manager.listCommands(session.id);
+    await manager.listModels(session.id);
+    await manager.listPermissionModes(session.id);
+    await usage.get(["opencode"], true);
+    expect(generations[0].opencode.probes).toEqual(["commands", "models", "permissions", "usage"]);
   });
 });
 

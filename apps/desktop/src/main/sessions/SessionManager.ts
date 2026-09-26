@@ -394,7 +394,8 @@ export class SessionManager {
     return this.usageLedger.query(query);
   }
 
-  getDrivers(): Record<DriverKind, CliDriver> {
+  driversForProbe(): Record<DriverKind, CliDriver> {
+    this.assertNotReserved();
     return this.drivers;
   }
 
@@ -1194,6 +1195,10 @@ export class SessionManager {
   }
 
   warmOpencodeModels(): void {
+    if (this.shutdownReserved) {
+      console.warn("opencode model warmup skipped: cw-code is preparing to restart");
+      return;
+    }
     const pending = this.drivers.opencode.listModels?.(this.titleGenRoot());
     void pending?.catch((err) => {
       console.warn(`opencode model warmup failed: ${(err as Error).message}`);
@@ -1215,6 +1220,7 @@ export class SessionManager {
     if (!project) throw new Error(`unknown project ${projectId}`);
     const driverInstance = this.drivers[driver];
     if (typeof driverInstance.listCommands !== "function") return [];
+    this.assertNotReserved();
     return driverInstance.listCommands(cwd ?? project.rootPath);
   }
 
@@ -1222,6 +1228,7 @@ export class SessionManager {
     const session = this.store.getSession(sessionId);
     if (!session) throw new Error(`unknown session ${sessionId}`);
     if (session.driver === "claude") return this.listModelsFor(session.projectId, "claude");
+    this.assertNotReserved();
     try {
       const cwd =
         session.worktreePath && existsSync(session.worktreePath)
@@ -1242,6 +1249,7 @@ export class SessionManager {
     if (!project) throw new Error(`unknown project ${projectId}`);
     const driverInstance = this.drivers[driver];
     if (typeof driverInstance.listModels !== "function") return [];
+    this.assertNotReserved();
     try {
       return await driverInstance.listModels(cwd ?? project.rootPath);
     } catch (err) {
@@ -1256,6 +1264,7 @@ export class SessionManager {
     }
     const driverInstance = this.drivers[driver];
     if (typeof driverInstance.listModels !== "function") return [];
+    this.assertNotReserved();
     try {
       return await driverInstance.listModels(this.titleGenRoot());
     } catch (err) {
@@ -1276,6 +1285,7 @@ export class SessionManager {
   async listPermissionModes(sessionId: string): Promise<PermissionOption[]> {
     const session = this.store.getSession(sessionId);
     if (!session) throw new Error(`unknown session ${sessionId}`);
+    this.assertNotReserved();
     try {
       const cwd =
         session.worktreePath && existsSync(session.worktreePath)
@@ -1293,6 +1303,7 @@ export class SessionManager {
     if (!project) throw new Error(`unknown project ${projectId}`);
     const driverInstance = this.drivers[driver];
     if (typeof driverInstance.listPermissionModes === "function") {
+      this.assertNotReserved();
       try {
         return withSyntheticFullAccess(await driverInstance.listPermissionModes(cwd ?? project.rootPath));
       } catch (err) {
@@ -1305,6 +1316,7 @@ export class SessionManager {
   async listPermissionModesForHarness(driver: DriverKind): Promise<PermissionOption[]> {
     const driverInstance = this.drivers[driver];
     if (typeof driverInstance.listPermissionModes === "function") {
+      this.assertNotReserved();
       try {
         return withSyntheticFullAccess(await driverInstance.listPermissionModes(this.titleGenRoot()));
       } catch (err) {
@@ -1647,5 +1659,6 @@ export class SessionManager {
     }
     this.forceStopDrivers();
     this.store.close();
+    this.settings.flush();
   }
 }
