@@ -17,8 +17,8 @@ Every child process cw-code creates, and how it is stopped.
 | `opencode serve` (shared root `userdata/cw-opencode-server`) | `OpencodeServerPool.servers` | Idle eviction after 5 min, max 4 | running turns aborted over HTTP (`POST /session/:id/abort`), wait for the aborts, then pool disposed | pool `stop()` kills the tree by PID |
 | OpenCode per-session work | runs inside the managed server | per turn | `abort` request, see above | server stop |
 | `opencode models` listing | `opencodeModels.ts` via `execCliFile` | Short-lived, 20 s timeout | not tracked | execFile timeout |
-| `codex app-server` (one per app) | `CodexAppServer.proc` | Started on first request | stdin closed, wait for exit; while still starting it reports a timeout and leaves the kill to `dispose` | tree kill by PID |
-| PTY terminals (`shell`, `claude`, `opencode`, `codex`) | `PtyPool.ptys` | Until the tab kills it or it exits | none (a terminal is treated as possibly busy) | node-pty `kill()` on the owned handle |
+| `codex app-server` (one per app) | `CodexAppServer.child` (tracked from spawn until exit, including while it initializes) | Started on first request; a child that fails to initialize is killed by handle | stdin closed, wait for exit; reports a timeout while the child is still alive, even if it never finished initializing | tree kill by PID of the tracked child |
+| PTY terminals (`shell`, `claude`, `opencode`, `codex`) | `PtyPool.ptys` | Until the tab kills it or it exits | none (a terminal is treated as possibly busy); closed only after the drivers stopped, or on force | node-pty `kill()` on the owned handle; an open that was in flight across a dispose is refused and its PTY killed by handle |
 | `git` / `gh` calls | `GitService`, `PullRequestService` | Short-lived, every call has an execFile timeout (10 s default) | not tracked | execFile timeout |
 | `--version` checks | `cliVersions.ts`, `binaryDiscovery.ts` | Short-lived, 15 s timeout | not tracked | execFile timeout |
 | PowerShell / `ps` process listing | `orphanServers.ts` at startup | Short-lived, 20 s timeout | not tracked | execFile timeout |
@@ -66,17 +66,24 @@ idle ──prepare──▶ preparing ──▶ prepared ──commit──▶ c
   and `PtyPool` first, so `startTurn`, `createSession`, `retryConnection`,
   `regenerateTitle`, title turns, worktree recovery and new terminals fail with
   "cw-code is preparing to restart; try again after it finishes or is
-  cancelled". `startTurn` checks the reservation again after its awaits, so a
-  turn that was already starting cannot slip in. With active turns and
-  `stopActiveTurns: false`, or with a turn that is not in `approvedTurnIds` (work
-  that started after the user chose Stop), it releases the reservation and
-  returns `blocked`; new work is never stopped silently.
+  cancelled". `startTurn`, `createSession` and worktree recovery check the
+  reservation again after every await that precedes starting a process or
+  creating a worktree, so work that was already starting cannot slip in. A
+  terminal whose open was in flight when the pool was disposed is refused even
+  if the pool was reopened meanwhile (the pool generation changed). With active
+  turns and `stopActiveTurns: false`, or with a turn that is not in
+  `approvedTurnIds` (work that started after the user chose Stop), it releases
+  the reservation and returns `blocked`; new work is never stopped silently.
   Otherwise it interrupts the turns, cancels title work, flushes buffered deltas
   and the usage ledger (session metadata is written synchronously on every
-  change), closes terminals, and runs the drivers' graceful shutdown.
+  change) and runs the drivers' graceful shutdown. Terminals are closed only
+  after every driver stopped in time. The `ok` and `timeout` results carry
+  `stoppedTurnIds`: the turns this prepare interrupted, taken from its own
+  assessment, never from the renderer's.
 - A graceful stop that does not finish in time returns `timeout` with the
-  pending drivers and a token. The caller chooses `force(token)` (dispose the
-  remaining owned processes) or `cancel(token)`.
+  pending drivers and a token; terminals are still open. The caller chooses
+  `force(token)` (dispose the remaining owned processes, then close terminals)
+  or `cancel(token)` (drivers are rebuilt and the terminals were never closed).
 - `commit(token, action)` runs the quit or install action once; repeated calls
   with the same token share the same promise. If the action throws, or the
   process is still alive after 30 s, the coordinator recovers and returns a
@@ -148,17 +155,23 @@ same flow with reason `"update"`.
   file). A failed save cancels the flow with an error and stops nothing.
 - Stop sends the ids of the turns the user saw as `approvedTurnIds`; turns that
   started afterwards make prepare return `blocked` and the dialog shows them.
-  Stopped turns are marked interrupted in the renderer right away.
-- A timeout offers Force stop or Cancel. Cancel always returns to normal use.
+  The renderer marks interrupted only the turns listed in the result's
+  `stoppedTurnIds`; a turn the dialog showed that had already ended is left
+  alone.
+- A timeout offers Force stop or Cancel. Cancel always returns to normal use,
+  with terminals still running.
 - Composer drafts and workspace selection are not touched.
 
 Dirty tracking lives in `stores/editorBuffers.ts`: `FilePanel` registers the
 open file with its saved text, edits update the buffer, a successful save marks
 it saved, and switching files, switching sessions or unmounting unregisters it.
-Several panels showing the same file share one buffer. Save always writes the
-buffer to the buffer's own path; while another file is loading (or failed to
-load) the editor is empty and read-only and the previous file's buffer, with
-its unsaved edits, stays registered.
+Unregistering releases a clean buffer; a dirty buffer is kept, with its edits,
+until it is saved or discarded (the quit dialog lists it by its own path), and
+reopening that file shows the unsaved content. Several panels showing the same
+file share one buffer. Save always writes the buffer to the buffer's own path;
+while another file is loading (or failed to load) the editor is empty and
+read-only and the previous file's buffer, with its unsaved edits, stays
+registered.
 
 ## Verification
 
@@ -190,3 +203,7 @@ project and a disposable `CW_CODE_HOME`; never the developer's live install):
 8. Run `pnpm dev` while the installed app is open: both windows stay up.
 9. Open file A, edit it, then click a file that fails to load: the editor is
    empty and read-only, Save is hidden, and the quit dialog still lists A.
+10. Open file A, edit it, open file B, then reopen A: the unsaved edits are
+    shown, and the quit dialog lists A while B is open.
+11. Reach the timeout dialog with a shell terminal open and choose Cancel: the
+    terminal is still running and accepts input.
