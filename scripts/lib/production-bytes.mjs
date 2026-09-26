@@ -6,11 +6,11 @@ import { setTimeout as sleep } from "node:timers/promises";
 import { validateReleaseFeed } from "../../tools/release/src/feedManifest.ts";
 import { startFeedServer, summarizeTransfers } from "../../tools/release/src/feedServer.ts";
 import { formatScalar, readPublisherNames } from "../../tools/release/src/updateInfoYaml.ts";
-import { compareMetadata, projectMetadata } from "../../tools/release/src/upgradeScenarios.ts";
 import { parseAppUpdateYaml } from "./upgrade-builds.mjs";
-import { REAL_FIXTURE_SETTINGS_KEYS, cleanupSeededFixtures, seedRealUserData } from "./real-user-data.mjs";
+import { assertDataPreservedSemantically, cleanupSeededFixtures, createSeedPlan, cwCodeHomeDir, seedRealUserData } from "./real-user-data.mjs";
 import {
-  UNINSTALL_POLL_TIMEOUT_MS,
+  cleanupInstallation,
+  defaultInstallDir,
   isProcessAlive,
   killProcessTreeIfImage,
   nsisGuid,
@@ -19,12 +19,12 @@ import {
   requireDisposableEnvironment,
   runPackageProbe,
   runSilent,
-  runUninstallSync,
   safePathWithoutClis,
-  waitForRegistryValueGone
+  startupModeProblem
 } from "./windows-install.mjs";
 
 const PRODUCTION_APP_ID = "com.cwcode.app";
+const PRODUCTION_PRODUCT_NAME = "cw-code";
 const PRODUCTION_EXECUTABLE = "cw-code.exe";
 const PRODUCTION_UNINSTALLER = "Uninstall cw-code.exe";
 const DEVTOOLS_TIMEOUT_MS = 90_000;
@@ -154,8 +154,7 @@ export async function runProductionBytes(options) {
   if (candidate.errors.length > 0) throw new Error(`candidate release set is invalid: ${candidate.errors.join("; ")}`);
 
   const report = { mode: "production-bytes", candidate: { version: candidate.version, installer: candidate.installer, channelFiles: candidate.channelFiles }, steps: [], problems: [], notes: [] };
-  const seed = seedRealUserData();
-  const before = projectMetadata(JSON.parse(seed.dbContent), JSON.parse(seed.settingsContent), REAL_FIXTURE_SETTINGS_KEYS);
+  const seed = createSeedPlan();
   const knownPids = new Set();
   let feed = null;
   let location = null;
@@ -163,6 +162,7 @@ export async function runProductionBytes(options) {
   let exe = null;
   const isInstalledExe = (image) => exe !== null && image.toLowerCase() === exe.toLowerCase();
   try {
+    seedRealUserData(seed);
     runSilent(options.installer, ["/S"]);
     location = readRegistryValue(perUser.install, "InstallLocation");
     if (!location) throw new Error(`InstallLocation is missing at ${perUser.install} after installing ${options.installer}`);
@@ -205,10 +205,14 @@ export async function runProductionBytes(options) {
     }
 
     for (const pid of knownPids) killProcessTreeIfImage(pid, isInstalledExe);
-    const { probe } = await runPackageProbe(exe);
-    report.probe = { appVersion: probe.appVersion, rendererLoaded: probe.rendererLoaded, nodePtySpawned: probe.nodePty.spawned };
+    const { exitCode, probe } = await runPackageProbe(exe, { cwCodeHome: cwCodeHomeDir(), defaultUserData: true });
+    report.probe = { exitCode, appVersion: probe.appVersion, rendererLoaded: probe.rendererLoaded, rendererFailures: probe.rendererFailures ?? [], nodePtySpawned: probe.nodePty.spawned, startupMode: probe.startupMode ?? null };
+    if (exitCode !== 0) report.problems.push(`post-update probe exited with code ${exitCode}`);
     if (probe.appVersion !== candidate.version) report.problems.push(`post-update probe reports ${probe.appVersion}, expected ${candidate.version}`);
-    if (!probe.rendererLoaded || !probe.nodePty.spawned) report.problems.push("post-update probe failed (renderer or node-pty)");
+    if (!probe.rendererLoaded) report.problems.push(`post-update probe: renderer failed to load (${report.probe.rendererFailures.join("; ") || "no failure recorded"})`);
+    if (!probe.nodePty.spawned) report.problems.push(`post-update probe: node-pty did not spawn (${probe.nodePty.error ?? "unknown error"})`);
+    const startupProblem = startupModeProblem("post-update probe", probe);
+    if (startupProblem) report.problems.push(startupProblem);
 
     report.signature = authenticode(exe);
     if (rewrite.publisherNames.length > 0) {
@@ -220,29 +224,28 @@ export async function runProductionBytes(options) {
 
     await feed.idle();
     report.transfers = summarizeTransfers(feed.requests());
-    const sessions = JSON.parse(readFileSync(seed.dbPath, "utf8"));
-    const settings = JSON.parse(readFileSync(seed.settingsPath, "utf8"));
-    report.problems.push(...compareMetadata(before, projectMetadata(sessions, settings, REAL_FIXTURE_SETTINGS_KEYS)));
-    for (const [label, path] of [["worktree marker", seed.worktreeMarkerPath], ["Electron userData marker", seed.electronMarkerPath]]) {
-      if (!existsSync(path) || readFileSync(path, "utf8") !== seed.markerContent) report.problems.push(`${label} did not survive the update`);
-    }
+    assertDataPreservedSemantically(seed, "after the update", report.problems);
   } catch (err) {
     report.problems.push(`production-bytes run aborted: ${err.message}`);
   } finally {
-    if (feed) await feed.close();
-    for (const pid of knownPids) killProcessTreeIfImage(pid, isInstalledExe);
-    if (location) {
-      const uninstaller = join(location, PRODUCTION_UNINSTALLER);
-      if (existsSync(uninstaller)) {
-        try {
-          runUninstallSync(uninstaller, location);
-          waitForRegistryValueGone(perUser.install, "InstallLocation", UNINSTALL_POLL_TIMEOUT_MS);
-        } catch (err) {
-          report.problems.push(`cleanup uninstall failed: ${err.message}`);
-        }
-      }
+    try {
+      if (feed) await feed.close();
+    } catch (err) {
+      report.problems.push(`feed server did not close: ${err.message}`);
     }
-    if (cacheDir && /-updater$/.test(cacheDir)) rmSync(cacheDir, { recursive: true, force: true });
+    for (const pid of knownPids) killProcessTreeIfImage(pid, isInstalledExe);
+    const cleanup = cleanupInstallation({
+      registryKeys: perUser,
+      uninstallerName: PRODUCTION_UNINSTALLER,
+      executableName: PRODUCTION_EXECUTABLE,
+      candidateDirs: [location, defaultInstallDir(PRODUCTION_PRODUCT_NAME, false)]
+    });
+    report.problems.push(...cleanup.errors.map((message) => `cleanup: ${message}`));
+    try {
+      if (cacheDir && /-updater$/.test(cacheDir)) rmSync(cacheDir, { recursive: true, force: true });
+    } catch (err) {
+      report.problems.push(`cleanup: could not remove updater cache ${cacheDir}: ${err.message}`);
+    }
     cleanupSeededFixtures(seed);
   }
   return report;

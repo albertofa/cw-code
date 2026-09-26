@@ -20,9 +20,9 @@ export interface ShutdownAssessment {
 }
 
 export type ShutdownPrepareResult =
-  | { ok: true; token: string }
+  | { ok: true; token: string; stoppedTurnIds: string[] }
   | { ok: false; code: "blocked"; assessment: ShutdownAssessment }
-  | { ok: false; code: "timeout"; pending: string[]; token: string }
+  | { ok: false; code: "timeout"; pending: string[]; token: string; stoppedTurnIds: string[] }
   | { ok: false; code: "busy" };
 
 export type ShutdownCommitResult = { ok: true } | { ok: false; message: string };

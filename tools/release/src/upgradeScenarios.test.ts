@@ -334,8 +334,8 @@ describe("metadata projection", () => {
   it("keeps identity fields and normalizes trailing separators", () => {
     expect(projectMetadata(sessions, settings, ["claudeBinaryPath", "unknownKey"])).toEqual({
       projects: [
-        { id: "p1", rootPath: "C:\\work\\alpha" },
-        { id: "p2", rootPath: "/home/beta" }
+        { id: "p1", rootPath: "C:\\work\\alpha", name: null },
+        { id: "p2", rootPath: "/home/beta", name: null }
       ],
       sessions: [{ id: "s1", projectId: "p1", driver: "claude", resumeCursor: "cursor-1", worktreePath: "C:\\wt\\s1", branch: "cw/x" }],
       settings: { claudeBinaryPath: "claude-fixture", unknownKey: { nested: true } }
@@ -356,6 +356,17 @@ describe("metadata projection", () => {
       "setting unknownKey changed after the update"
     ]);
     expect(compareMetadata(before, before)).toEqual([]);
+  });
+
+  it("reports a renamed project and ignores a name the app backfilled", () => {
+    const named = { projects: [{ id: "p1", rootPath: "C:\\work\\alpha", name: "alpha" }, { id: "p2", rootPath: "/home/beta" }], sessions: [] };
+    const before = projectMetadata(named, settings, []);
+    const after = projectMetadata(
+      { projects: [{ id: "p1", rootPath: "C:\\work\\alpha", name: "renamed" }, { id: "p2", rootPath: "/home/beta", name: "beta" }], sessions: [] },
+      settings,
+      []
+    );
+    expect(compareMetadata(before, after)).toEqual(["project p1 name changed from alpha to renamed"]);
   });
 
   it("tolerates documents with unexpected shapes", () => {

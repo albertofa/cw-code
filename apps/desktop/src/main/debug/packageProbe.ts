@@ -1,4 +1,5 @@
 import { writeFileSync } from "node:fs";
+import type { StartupState } from "@cw-code/contracts";
 import { checkCliVersions, type CliVersionCheck } from "../cliVersions.js";
 import { defaultCliBinaryPath } from "../settings/settingsUtils.js";
 import type { PtyModule } from "../pty/PtyPool.js";
@@ -16,15 +17,41 @@ export type NodePtyProbeOutcome =
   | { status: "load-failed"; error: string }
   | { status: "spawn-failed"; error: string };
 
+export type PackageProbeStartupMode = StartupState["mode"];
+
 export interface PackageProbeResult {
   appVersion: string;
+  startupMode: PackageProbeStartupMode;
   electron: string;
   platform: string;
   arch: string;
   nodePty: PackageProbeNodePtyResult;
   rendererLoaded: boolean;
+  rendererFailures: string[];
   cliChecks: CliVersionCheck[];
   durationMs: number;
+}
+
+export interface RendererProbeState {
+  loadCompleted: boolean;
+  failures: string[];
+}
+
+export class RendererProbeTracker {
+  private loadCompleted = false;
+  private readonly failures: string[] = [];
+
+  markLoaded(): void {
+    this.loadCompleted = true;
+  }
+
+  markFailed(reason: string): void {
+    this.failures.push(reason);
+  }
+
+  snapshot(): RendererProbeState {
+    return { loadCompleted: this.loadCompleted, failures: [...this.failures] };
+  }
 }
 
 export function shapeNodePtyResult(outcome: NodePtyProbeOutcome): PackageProbeNodePtyResult {
@@ -42,21 +69,24 @@ export function shapeNodePtyResult(outcome: NodePtyProbeOutcome): PackageProbeNo
 
 export function buildProbeResult(opts: {
   appVersion: string;
+  startupMode: PackageProbeStartupMode;
   electronVersion: string;
   platform: string;
   arch: string;
   nodePty: NodePtyProbeOutcome;
-  rendererLoaded: boolean;
+  renderer: RendererProbeState;
   cliChecks: CliVersionCheck[];
   durationMs: number;
 }): PackageProbeResult {
   return {
     appVersion: opts.appVersion,
+    startupMode: opts.startupMode,
     electron: opts.electronVersion,
     platform: opts.platform,
     arch: opts.arch,
     nodePty: shapeNodePtyResult(opts.nodePty),
-    rendererLoaded: opts.rendererLoaded,
+    rendererLoaded: opts.renderer.loadCompleted && opts.renderer.failures.length === 0,
+    rendererFailures: [...opts.renderer.failures],
     cliChecks: opts.cliChecks,
     durationMs: opts.durationMs
   };
@@ -92,8 +122,9 @@ async function probeNodePty(): Promise<NodePtyProbeOutcome> {
 export async function runPackageProbe(opts: {
   outPath: string;
   appVersion: string;
+  startupMode: PackageProbeStartupMode;
   electronVersion: string;
-  rendererLoaded: boolean;
+  renderer: RendererProbeTracker;
 }): Promise<PackageProbeResult> {
   const start = Date.now();
   const nodePty = await probeNodePty();
@@ -104,11 +135,12 @@ export async function runPackageProbe(opts: {
   });
   const result = buildProbeResult({
     appVersion: opts.appVersion,
+    startupMode: opts.startupMode,
     electronVersion: opts.electronVersion,
     platform: process.platform,
     arch: process.arch,
     nodePty,
-    rendererLoaded: opts.rendererLoaded,
+    renderer: opts.renderer.snapshot(),
     cliChecks,
     durationMs: Date.now() - start
   });

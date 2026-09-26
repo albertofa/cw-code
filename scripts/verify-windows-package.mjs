@@ -2,25 +2,40 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFile
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { assertDataPreserved, cleanupSeededFixtures, seedRealUserData } from "./lib/real-user-data.mjs";
 import {
-  UNINSTALL_POLL_TIMEOUT_MS,
+  assertDataPreservedSemantically,
+  assertDataUnchanged,
+  cleanupSeededFixtures,
+  createSeedPlan,
+  cwCodeHomeDir,
+  seedRealUserData
+} from "./lib/real-user-data.mjs";
+import {
+  cleanupInstallation,
+  defaultInstallDir,
   isElevated,
   resolveAsarLib,
   readRegistryValue,
   registryPaths,
   requireDisposableEnvironment,
   runPackageProbe,
+  startupModeProblem,
   runSilent,
   runSilentWithRetry,
-  runUninstallSync,
-  waitForRegistryValueGone
+  withCleanupErrors
 } from "./lib/windows-install.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, "..");
 const desktopDir = join(repoRoot, "apps", "desktop");
 const UPDATER_GUID = "d6e18d04-bf35-5bfe-9145-b95301660833";
+const PRODUCT_NAME = "cw-code";
+const EXECUTABLE_NAME = `${PRODUCT_NAME}.exe`;
+const UNINSTALLER_NAME = `Uninstall ${PRODUCT_NAME}.exe`;
+
+function cleanupProductInstallation(registryKeys, dirs) {
+  return cleanupInstallation({ registryKeys, uninstallerName: UNINSTALLER_NAME, executableName: EXECUTABLE_NAME, ...dirs }).errors;
+}
 
 function parseArgs(argv) {
   const args = {
@@ -119,6 +134,8 @@ async function checkPackage(distDir) {
       report.probe = { exitCode, ...probe };
       if (!probe.rendererLoaded) problems.push("packaged startup probe: renderer failed to load");
       if (!probe.nodePty.spawned) problems.push(`packaged startup probe: node-pty did not spawn (${probe.nodePty.error ?? "unknown error"})`);
+      const startupProblem = startupModeProblem("packaged startup probe", probe);
+      if (startupProblem) problems.push(startupProblem);
     } catch (err) {
       problems.push(`packaged startup probe failed: ${err.message}`);
     }
@@ -134,34 +151,35 @@ async function installMode(distDir, disposableEnvironment) {
   if (!existsSync(installerPath)) throw new Error(`installer not found: ${installerPath}`);
 
   const installDir = mkdtempSync(join(tmpdir(), "cw-verify-install-"));
-  const start = Date.now();
-  runSilent(installerPath, ["/S", `/D=${installDir}`]);
-  const durationMs = Date.now() - start;
-
   const problems = [];
+  let durationMs = null;
   let exitCode = null;
   let probe = null;
+  let primaryError = null;
+  let cleanupErrors = [];
   try {
-    const exePath = join(installDir, "cw-code.exe");
-    const result = await runPackageProbe(exePath);
-    exitCode = result.exitCode;
-    probe = result.probe;
-    if (!probe.rendererLoaded) problems.push("install mode probe: renderer failed to load");
-    if (!probe.nodePty.spawned) problems.push(`install mode probe: node-pty did not spawn (${probe.nodePty.error ?? "unknown error"})`);
-  } catch (err) {
-    problems.push(`install mode probe failed: ${err.message}`);
-  } finally {
-    const uninstallerPath = join(installDir, "Uninstall cw-code.exe");
-    if (existsSync(uninstallerPath)) {
-      try {
-        runUninstallSync(uninstallerPath, installDir);
-        waitForRegistryValueGone(registryPaths(UPDATER_GUID, false).install, "InstallLocation", UNINSTALL_POLL_TIMEOUT_MS);
-      } catch (err) {
-        problems.push(`install mode cleanup uninstall failed: ${err.message}`);
-      }
+    const start = Date.now();
+    runSilent(installerPath, ["/S", `/D=${installDir}`]);
+    durationMs = Date.now() - start;
+    try {
+      const result = await runPackageProbe(join(installDir, EXECUTABLE_NAME));
+      exitCode = result.exitCode;
+      probe = result.probe;
+      if (!probe.rendererLoaded) problems.push("install mode probe: renderer failed to load");
+      if (!probe.nodePty.spawned) problems.push(`install mode probe: node-pty did not spawn (${probe.nodePty.error ?? "unknown error"})`);
+      const startupProblem = startupModeProblem("install mode probe", probe);
+      if (startupProblem) problems.push(startupProblem);
+    } catch (err) {
+      problems.push(`install mode probe failed: ${err.message}`);
     }
+  } catch (err) {
+    primaryError = err;
+  } finally {
+    cleanupErrors = cleanupProductInstallation(registryPaths(UPDATER_GUID, false), { ownedDirs: [installDir] });
   }
 
+  if (primaryError) throw withCleanupErrors(primaryError, cleanupErrors);
+  problems.push(...cleanupErrors.map((message) => `install mode cleanup: ${message}`));
   return { durationMs, exitCode, probe, installDir, problems };
 }
 
@@ -185,28 +203,34 @@ async function upgradeFromMode(distDir, legacyInstallerPath, disposableEnvironme
   const upgradeArgs = perMachine ? ["/S", "/allusers"] : ["/S"];
 
   const problems = [];
-
-  const legacyInstall = runSilentWithRetry(legacyInstallerPath, legacyArgs, registryKeys);
-  if (legacyInstall.retried) console.warn("legacy installer succeeded only on retry; see diagnostics above");
-  const installLocationBefore = readRegistryValue(registryKeys.install, "InstallLocation");
-  const displayVersionBefore = readRegistryValue(registryKeys.uninstall, "DisplayVersion");
-  const publisherBefore = readRegistryValue(registryKeys.uninstall, "Publisher");
-
-  if (!installLocationBefore) problems.push(`InstallLocation missing at ${registryKeys.install} after legacy install`);
-  if (customDir && installLocationBefore !== customDir) {
-    problems.push(`legacy install did not honor the custom directory: expected '${customDir}', got '${installLocationBefore}'`);
-  }
-  const legacyVersion = parseLegacyInstallerVersion(legacyInstallerPath);
-  if (legacyVersion && displayVersionBefore !== legacyVersion) {
-    problems.push(`DisplayVersion after legacy install is '${displayVersionBefore}', expected '${legacyVersion}'`);
-  }
-
-  const seed = seedRealUserData();
+  const seed = createSeedPlan();
+  let installLocationBefore = null;
+  let displayVersionBefore = null;
+  let publisherBefore = null;
   let installLocationAfter = null;
   let displayVersionAfter = null;
   let publisherAfter = null;
+  let postUpgradeProbe = null;
+  let primaryError = null;
+  let cleanupErrors = [];
 
   try {
+    const legacyInstall = runSilentWithRetry(legacyInstallerPath, legacyArgs, registryKeys);
+    if (legacyInstall.retried) console.warn("legacy installer succeeded only on retry; see diagnostics above");
+    installLocationBefore = readRegistryValue(registryKeys.install, "InstallLocation");
+    displayVersionBefore = readRegistryValue(registryKeys.uninstall, "DisplayVersion");
+    publisherBefore = readRegistryValue(registryKeys.uninstall, "Publisher");
+
+    if (!installLocationBefore) problems.push(`InstallLocation missing at ${registryKeys.install} after legacy install`);
+    if (customDir && installLocationBefore !== customDir) {
+      problems.push(`legacy install did not honor the custom directory: expected '${customDir}', got '${installLocationBefore}'`);
+    }
+    const legacyVersion = parseLegacyInstallerVersion(legacyInstallerPath);
+    if (legacyVersion && displayVersionBefore !== legacyVersion) {
+      problems.push(`DisplayVersion after legacy install is '${displayVersionBefore}', expected '${legacyVersion}'`);
+    }
+
+    seedRealUserData(seed);
     runSilent(newInstallerPath, upgradeArgs);
 
     installLocationAfter = readRegistryValue(registryKeys.install, "InstallLocation");
@@ -228,37 +252,44 @@ async function upgradeFromMode(distDir, legacyInstallerPath, disposableEnvironme
       problems.push(`Publisher after upgrade is '${publisherAfter}' (was '${publisherBefore}'), expected '${expectedAuthor}'`);
     }
 
-    assertDataPreserved(seed, problems);
+    assertDataUnchanged(seed, "after the upgrade installer", problems);
 
     if (installLocationAfter) {
       try {
-        const { probe } = await runPackageProbe(join(installLocationAfter, "cw-code.exe"));
+        const { exitCode, probe } = await runPackageProbe(join(installLocationAfter, EXECUTABLE_NAME), {
+          cwCodeHome: cwCodeHomeDir(),
+          defaultUserData: true
+        });
+        postUpgradeProbe = { exitCode, ...probe };
+        if (exitCode !== 0) problems.push(`post-upgrade probe exited with code ${exitCode}`);
+        if (!probe.rendererLoaded) {
+          const failures = Array.isArray(probe.rendererFailures) ? probe.rendererFailures.join("; ") : "";
+          problems.push(`post-upgrade probe: renderer failed to load (${failures || "no failure recorded"})`);
+        }
         if (probe.appVersion !== newVersion) {
           problems.push(`post-upgrade probe appVersion is '${probe.appVersion}', expected '${newVersion}'`);
         }
         if (!probe.nodePty.spawned) {
           problems.push(`post-upgrade probe: node-pty did not spawn (${probe.nodePty.error ?? "unknown error"})`);
         }
+        const startupProblem = startupModeProblem("post-upgrade probe", probe);
+        if (startupProblem) problems.push(startupProblem);
       } catch (err) {
         problems.push(`post-upgrade probe failed: ${err.message}`);
       }
+      assertDataPreservedSemantically(seed, "after the first post-upgrade start", problems);
     }
-
-    if (installLocationAfter) {
-      const uninstallerPath = join(installLocationAfter, "Uninstall cw-code.exe");
-      if (existsSync(uninstallerPath)) {
-        try {
-          runUninstallSync(uninstallerPath, installLocationAfter);
-          waitForRegistryValueGone(registryKeys.install, "InstallLocation", UNINSTALL_POLL_TIMEOUT_MS);
-        } catch (err) {
-          problems.push(`cleanup uninstall failed: ${err.message}`);
-        }
-      }
-    }
+  } catch (err) {
+    primaryError = err;
   } finally {
+    cleanupErrors = cleanupProductInstallation(registryKeys, {
+      candidateDirs: [installLocationBefore, installLocationAfter, customDir, defaultInstallDir(PRODUCT_NAME, perMachine)]
+    });
     cleanupSeededFixtures(seed);
   }
 
+  if (primaryError) throw withCleanupErrors(primaryError, cleanupErrors);
+  problems.push(...cleanupErrors.map((message) => `upgrade cleanup: ${message}`));
   return {
     perMachine,
     customDir,
@@ -268,6 +299,7 @@ async function upgradeFromMode(distDir, legacyInstallerPath, disposableEnvironme
     displayVersionAfter,
     publisherBefore,
     publisherAfter,
+    postUpgradeProbe,
     problems
   };
 }

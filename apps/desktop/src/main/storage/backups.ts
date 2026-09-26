@@ -1,7 +1,7 @@
 import { constants, copyFileSync, existsSync, lstatSync, readdirSync, readFileSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import { readBytesIfExists, writeFileAtomic } from "./atomicFile.js";
-import { describeError, parseMetadataDocument, type MetadataSchema } from "./metadataDocument.js";
+import { describeError, MetadataError, parseMetadataDocument, type MetadataSchema } from "./metadataDocument.js";
 
 export interface BackupInfo {
   path: string;
@@ -64,9 +64,9 @@ export function inspectBackup(path: string, schema: MetadataSchema): { bytes: Bu
   }
 }
 
-function backupNames(file: string): string[] {
+function siblingNames(file: string, keep: (name: string) => boolean): string[] {
   try {
-    return readdirSync(dirname(file)).filter((name) => backupLabel(file, name) !== null);
+    return readdirSync(dirname(file)).filter(keep);
   } catch (error) {
     const code = (error as NodeJS.ErrnoException).code;
     if (code === "ENOENT" || code === "ENOTDIR") return [];
@@ -74,8 +74,17 @@ function backupNames(file: string): string[] {
   }
 }
 
-export function hasBackupFiles(file: string): boolean {
-  return backupNames(resolve(file)).length > 0;
+function backupNames(file: string): string[] {
+  return siblingNames(file, (name) => backupLabel(file, name) !== null);
+}
+
+function isMetadataArtifact(file: string, name: string): boolean {
+  return backupLabel(file, name) !== null || name === basename(beforeRepairBackupPath(file)) || name.startsWith(`${basename(file)}.broken-`);
+}
+
+export function metadataArtifactNames(file: string): string[] {
+  const resolved = resolve(file);
+  return siblingNames(resolved, (name) => isMetadataArtifact(resolved, name)).sort();
 }
 
 function labelOrder(label: string): number {
@@ -111,6 +120,23 @@ function assertSameBytes(path: string, expected: Uint8Array): void {
 export function writeVerified(path: string, bytes: Uint8Array): void {
   writeFileAtomic(path, bytes);
   assertSameBytes(path, bytes);
+}
+
+export function backupBeforeRepair(filePath: string, schema: MetadataSchema, repaired: string[]): void {
+  const backupPath = beforeRepairBackupPath(filePath);
+  try {
+    const original = readBytesIfExists(filePath);
+    if (original && !readBytesIfExists(backupPath)?.equals(original)) writeVerified(backupPath, original);
+  } catch (error) {
+    throw new MetadataError({
+      kind: "io",
+      file: filePath,
+      store: schema.kind,
+      supportedVersion: schema.currentVersion,
+      detail: `could not back up the file before repairing ${repaired.join(", ")}: ${describeError(error)}`
+    });
+  }
+  console.warn(`repaired ${repaired.join(", ")} in ${filePath}; the previous file is kept at ${backupPath}`);
 }
 
 export function copyVerified(source: string, destination: string): void {
