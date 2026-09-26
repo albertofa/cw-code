@@ -214,6 +214,39 @@ function runSilent(command, args) {
   return result;
 }
 
+function installDiagnostics(registryKeys) {
+  const processes = spawnSync(
+    "powershell",
+    [
+      "-NoProfile",
+      "-Command",
+      "Get-CimInstance Win32_Process | Where-Object { $_.Name -like '*cw-code*' -or $_.ExecutablePath -like '*cw-code*' -or $_.Name -like 'Un_*' -or $_.Name -like 'Au_*' } | Select-Object ProcessId,ParentProcessId,Name,ExecutablePath,CommandLine | Format-List | Out-String -Width 400"
+    ],
+    { encoding: "utf8" }
+  );
+  const registry = [registryKeys.install, registryKeys.uninstall]
+    .map((key) => {
+      const result = spawnSync("reg", ["query", key, "/s"], { encoding: "utf8" });
+      return `${key}:\n${result.status === 0 ? result.stdout.trim() : "(absent)"}`;
+    })
+    .join("\n");
+  return `processes:\n${processes.stdout.trim() || "(none)"}\nregistry:\n${registry}`;
+}
+
+function runSilentWithRetry(command, args, registryKeys) {
+  try {
+    return { result: runSilent(command, args), retried: false };
+  } catch (firstError) {
+    console.warn(`${firstError.message}\n${installDiagnostics(registryKeys)}\nretrying once in 10s`);
+    spawnSync("powershell", ["-NoProfile", "-Command", "Start-Sleep -Seconds 10"]);
+    try {
+      return { result: runSilent(command, args), retried: true };
+    } catch (secondError) {
+      throw new Error(`${secondError.message}\n${installDiagnostics(registryKeys)}`);
+    }
+  }
+}
+
 function registryPaths(perMachine) {
   const hive = perMachine ? "HKLM" : "HKCU";
   return {
@@ -418,7 +451,8 @@ async function upgradeFromMode(distDir, legacyInstallerPath, disposableEnvironme
 
   const problems = [];
 
-  runSilent(legacyInstallerPath, legacyArgs);
+  const legacyInstall = runSilentWithRetry(legacyInstallerPath, legacyArgs, registryKeys);
+  if (legacyInstall.retried) console.warn("legacy installer succeeded only on retry; see diagnostics above");
   const installLocationBefore = readRegistryValue(registryKeys.install, "InstallLocation");
   const displayVersionBefore = readRegistryValue(registryKeys.uninstall, "DisplayVersion");
   const publisherBefore = readRegistryValue(registryKeys.uninstall, "Publisher");
