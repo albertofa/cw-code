@@ -192,7 +192,7 @@ describe("buildAlphaPlan", () => {
   });
 
   it("fails an alpha whose commit does not descend from the latest published stable", async () => {
-    const releases = [...BASE_RELEASES, baseRelease("v0.0.1", SHA.c10)];
+    const releases = [...BASE_RELEASES, baseRelease("v0.0.1", SHA.c10, { publishedAt: "2026-09-25T00:00:00Z" })];
     const source = createFixtureReleaseSource({
       releases,
       head: SHA.c9,
