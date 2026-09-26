@@ -1,10 +1,10 @@
-import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, statSync, utimesSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import { lastGoodBackupPath, migrationBackupPath } from "./backups.js";
 import { isMetadataDocument, MetadataError, type MetadataMigration } from "./metadataDocument.js";
-import { loadVersionedJson, type VersionedJsonOptions } from "./versionedJson.js";
+import { LAST_GOOD_REFRESH_INTERVAL_MS, LastGoodRefresher, loadVersionedJson, type VersionedJsonOptions } from "./versionedJson.js";
 
 function tempFile(): string {
   return join(mkdtempSync(join(tmpdir(), "cw-versioned-")), "data.json");
@@ -123,9 +123,27 @@ describe("loadVersionedJson", () => {
     expect(existsSync(file)).toBe(false);
   });
 
-  it("treats a missing file as a first run when its backups are not restorable", () => {
+  it.each([
+    ["an unrestorable migration backup", "data.json.v0.bak", "corrupt{"],
+    ["an unrestorable timestamped migration backup", "data.json.v0.2026-01-01T00-00-00-000Z.bak", "corrupt{"],
+    ["an unrestorable archived last-good backup", "data.json.last-good.2026-01-01T00-00-00-000Z.bak", '{"schemaVersion":9,"items":[]}'],
+    ["a before-repair copy", "data.json.before-repair.bak", '{"items":[]}'],
+    ["a broken copy", "data.json.broken-2026-01-01T00-00-00-000Z", "corrupt{"]
+  ])("refuses to start empty when the file is missing and only %s remains", (_label, name, content) => {
     const file = tempFile();
-    writeFileSync(migrationBackupPath(file, 0), "corrupt{", "utf8");
+    writeFileSync(join(file, "..", name), content, "utf8");
+
+    const error = expectMetadataError(() => loadVersionedJson(options(file)), "missing");
+
+    expect(error.detail).toContain("none of its backups can be restored");
+    expect(error.detail).toContain(name);
+    expect(readdirSync(join(file, ".."))).toEqual([name]);
+  });
+
+  it("treats a missing file as a first run when only temp files and other files' backups remain", () => {
+    const file = tempFile();
+    writeFileSync(`${file}.4242.deadbeef.tmp`, "{", "utf8");
+    writeFileSync(join(file, "..", "other.json.last-good.bak"), '{"schemaVersion":1,"items":[]}', "utf8");
     expect(loadVersionedJson(options(file))).toEqual({ status: "missing" });
   });
 
@@ -235,5 +253,63 @@ describe("loadVersionedJson", () => {
     const file = tempFile();
     writeFileSync(file, '﻿{"schemaVersion":1,"items":[]}', "utf8");
     expect(loadVersionedJson(options(file))).toMatchObject({ status: "ok", data: { items: [] } });
+  });
+});
+
+describe("LastGoodRefresher", () => {
+  function setup(): { file: string; clock: { now: number }; refresher: LastGoodRefresher } {
+    const file = tempFile();
+    writeFileSync(file, '{"schemaVersion":1,"items":[0]}', "utf8");
+    loadVersionedJson(options(file));
+    const clock = { now: 1_000_000 };
+    return { file, clock, refresher: new LastGoodRefresher(file, () => clock.now) };
+  }
+
+  function lastGood(file: string): string {
+    return readFileSync(lastGoodBackupPath(file), "utf8");
+  }
+
+  it("refreshes at most once per interval after the startup refresh and flushes the pending write", () => {
+    const { file, clock, refresher } = setup();
+
+    writeFileSync(file, '{"schemaVersion":1,"items":[1]}', "utf8");
+    clock.now += LAST_GOOD_REFRESH_INTERVAL_MS - 1;
+    refresher.afterPersist();
+    expect(lastGood(file)).toBe('{"schemaVersion":1,"items":[0]}');
+
+    clock.now += 1;
+    refresher.afterPersist();
+    expect(lastGood(file)).toBe('{"schemaVersion":1,"items":[1]}');
+
+    writeFileSync(file, '{"schemaVersion":1,"items":[2]}', "utf8");
+    clock.now += 10;
+    refresher.afterPersist();
+    expect(lastGood(file)).toBe('{"schemaVersion":1,"items":[1]}');
+
+    refresher.flush();
+    expect(lastGood(file)).toBe('{"schemaVersion":1,"items":[2]}');
+  });
+
+  it("does nothing on flush when no persist is pending", () => {
+    const { file, refresher } = setup();
+    const mtime = ageFile(lastGoodBackupPath(file));
+    writeFileSync(file, '{"schemaVersion":1,"items":[9]}', "utf8");
+
+    refresher.flush();
+
+    expect(statSync(lastGoodBackupPath(file)).mtimeMs).toBe(mtime);
+  });
+
+  it("warns instead of throwing when a runtime refresh fails", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const { file, clock, refresher } = setup();
+    rmSync(lastGoodBackupPath(file));
+    mkdirSync(lastGoodBackupPath(file));
+    clock.now += LAST_GOOD_REFRESH_INTERVAL_MS;
+
+    expect(() => refresher.afterPersist()).not.toThrow();
+
+    expect(warn).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
   });
 });

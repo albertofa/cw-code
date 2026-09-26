@@ -39,15 +39,22 @@ Old releases do not know about `schemaVersion`:
   differ from it, a timestamped `.v0.<timestamp>.bak` is added (see below).
   Settings that only the newer release knew about are lost in that round trip.
 
-### Settings repair
+### Load-time repair
 
-Known settings are sanitized on every load. A known key with the wrong type
-(for example a number where a string is expected) falls back to its default
-instead of blocking startup. If sanitizing changes any known key that is
-present in the file, cw-code first saves the file's current bytes to
-`<file>.before-repair.bak`, logs a warning naming the repaired keys, and then
-writes the repaired file. Only corrupt JSON, a non-object root, or a newer
-schema stop startup for settings.
+Some damage is repaired on load instead of blocking startup. Before writing a
+repaired file, cw-code saves the file's current bytes to
+`<file>.before-repair.bak` and logs a warning naming what it repaired.
+
+- Settings: known settings are sanitized on every load. A known key with the
+  wrong type (for example a number where a string is expected) falls back to
+  its default. A repair is recorded only when sanitizing changes a known key
+  that is present in the file. Only corrupt JSON, a non-object root, or a
+  newer schema stop startup for settings.
+- Sessions: a project whose `name` is missing or not a string gets a name
+  derived from its `rootPath` (the last path segment, as when a project is
+  added). A project without a string `id` or `rootPath`, or a session without
+  a string `id` or `projectId`, cannot be repaired and stops startup as
+  `invalid-shape`.
 
 ## Backup files
 
@@ -59,13 +66,17 @@ All backups sit next to the source file:
 - `<file>.v<N>.<timestamp>.bak`: written before migrating a schema-N file whose
   bytes differ from every existing schema-N backup (for example after a
   downgrade round trip).
-- `<file>.last-good.bak`: a copy of the file after the last successful load,
-  refreshed only when the bytes changed.
+- `<file>.last-good.bak`: a copy of the file as last known good, rewritten
+  only when the bytes changed. It is refreshed after every successful load and
+  after runtime writes, at most once per 60 seconds per file. A write that
+  falls inside that window is copied on the next write after it, when the
+  session store closes cleanly (on quit), or at the next start. A failed
+  refresh logs a warning and never fails the write.
 - `<file>.last-good.<timestamp>.bak`: a verified copy of `.last-good.bak` made
   before a restore or a fresh start, because the next successful load replaces
   `.last-good.bak`. Listed on the recovery screen as "last good (<date>)".
-- `<file>.before-repair.bak`: the settings file as it was before the last
-  load-time repair. Replaced only when a new repair sees different bytes. It is
+- `<file>.before-repair.bak`: the file as it was before the last load-time
+  repair (see above). Replaced only when a new repair sees different bytes. It is
   not offered on the recovery screen; open it by hand if needed.
 - `<file>.broken-<timestamp>`: a verified copy of the file that was in place
   when the user restored a backup or chose to start fresh. Never deleted.
@@ -74,14 +85,20 @@ All backups sit next to the source file:
 
 Writes go to a temp file in the same directory, which is fsynced and then
 renamed over the target (retried up to five times, with a logged warning each
-time, when Windows reports the file as busy or locked). If cw-code stops mid-migration, the next start either finds the
-original schema-0 file (its backup already exists and is reused) or the
-finished schema-1 file.
+time, when Windows reports the file as busy or locked). On Linux and macOS the
+parent directory is then opened read-only and fsynced so the rename itself is
+durable; `EISDIR`, `EINVAL`, `EPERM` and `ENOTSUP` from that step are ignored
+because some file systems do not support it. If cw-code stops mid-migration,
+the next start either finds the original schema-0 file (its backup already
+exists and is reused) or the finished schema-1 file.
 
 The one-time copy of legacy files from Electron's userData folder
 (`migrateFromUserData`) skips `cw-code.db.json` and `cw-settings.json` when any
-of the backups above exist for them, so a legacy snapshot never silently
-replaces a missing file that has backups.
+cw-code file for them exists: a `.v<N>`, `.v<N>.<timestamp>`, `.last-good` or
+`.last-good.<timestamp>` backup (restorable or not), a `.before-repair.bak`, or
+a `.broken-<timestamp>` copy. Leftover `.tmp` files do not count. A legacy
+snapshot never silently replaces a missing file that cw-code has written
+before.
 
 ## Recovery screen
 
@@ -93,11 +110,15 @@ services when either file:
 | corrupt | not valid JSON |
 | invalid-shape | valid JSON with an unexpected structure |
 | future-schema | `schemaVersion` newer than this release supports |
-| missing | the file is gone but a restorable backup of it exists |
+| missing | the file is gone but backups or other cw-code files for it exist next to it, even if none can be restored |
 | io | the file, its backup or its replacement could not be read or written (the OS error code is shown) |
 
 The file is never overwritten on startup in these cases. A missing file with
-no restorable backup is a first run and starts with empty data or defaults.
+no cw-code files for it at all (see the legacy copy rule above for the list)
+is a first run and starts with empty data or defaults. When none of the
+remaining files can be restored, the recovery screen names them in the issue
+message and marks each listed backup as not restorable with the reason; the
+way out is to fix a file by hand from the data folder or start fresh.
 
 Actions per file:
 
