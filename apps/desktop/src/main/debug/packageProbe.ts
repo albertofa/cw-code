@@ -23,8 +23,31 @@ export interface PackageProbeResult {
   arch: string;
   nodePty: PackageProbeNodePtyResult;
   rendererLoaded: boolean;
+  rendererFailures: string[];
   cliChecks: CliVersionCheck[];
   durationMs: number;
+}
+
+export interface RendererProbeState {
+  loadCompleted: boolean;
+  failures: string[];
+}
+
+export class RendererProbeTracker {
+  private loadCompleted = false;
+  private readonly failures: string[] = [];
+
+  markLoaded(): void {
+    this.loadCompleted = true;
+  }
+
+  markFailed(reason: string): void {
+    this.failures.push(reason);
+  }
+
+  snapshot(): RendererProbeState {
+    return { loadCompleted: this.loadCompleted, failures: [...this.failures] };
+  }
 }
 
 export function shapeNodePtyResult(outcome: NodePtyProbeOutcome): PackageProbeNodePtyResult {
@@ -46,7 +69,7 @@ export function buildProbeResult(opts: {
   platform: string;
   arch: string;
   nodePty: NodePtyProbeOutcome;
-  rendererLoaded: boolean;
+  renderer: RendererProbeState;
   cliChecks: CliVersionCheck[];
   durationMs: number;
 }): PackageProbeResult {
@@ -56,7 +79,8 @@ export function buildProbeResult(opts: {
     platform: opts.platform,
     arch: opts.arch,
     nodePty: shapeNodePtyResult(opts.nodePty),
-    rendererLoaded: opts.rendererLoaded,
+    rendererLoaded: opts.renderer.loadCompleted && opts.renderer.failures.length === 0,
+    rendererFailures: [...opts.renderer.failures],
     cliChecks: opts.cliChecks,
     durationMs: opts.durationMs
   };
@@ -93,7 +117,7 @@ export async function runPackageProbe(opts: {
   outPath: string;
   appVersion: string;
   electronVersion: string;
-  rendererLoaded: boolean;
+  renderer: RendererProbeTracker;
 }): Promise<PackageProbeResult> {
   const start = Date.now();
   const nodePty = await probeNodePty();
@@ -108,7 +132,7 @@ export async function runPackageProbe(opts: {
     platform: process.platform,
     arch: process.arch,
     nodePty,
-    rendererLoaded: opts.rendererLoaded,
+    renderer: opts.renderer.snapshot(),
     cliChecks,
     durationMs: Date.now() - start
   });

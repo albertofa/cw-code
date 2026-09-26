@@ -2,7 +2,14 @@ import { existsSync, mkdtempSync, readFileSync, readdirSync, statSync, writeFile
 import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { assertDataPreserved, cleanupSeededFixtures, seedRealUserData } from "./lib/real-user-data.mjs";
+import {
+  assertDataPreservedSemantically,
+  assertDataUnchanged,
+  cleanupSeededFixtures,
+  createSeedPlan,
+  cwCodeHomeDir,
+  seedRealUserData
+} from "./lib/real-user-data.mjs";
 import {
   UNINSTALL_POLL_TIMEOUT_MS,
   isElevated,
@@ -201,12 +208,14 @@ async function upgradeFromMode(distDir, legacyInstallerPath, disposableEnvironme
     problems.push(`DisplayVersion after legacy install is '${displayVersionBefore}', expected '${legacyVersion}'`);
   }
 
-  const seed = seedRealUserData();
+  const seed = createSeedPlan();
   let installLocationAfter = null;
   let displayVersionAfter = null;
   let publisherAfter = null;
+  let postUpgradeProbe = null;
 
   try {
+    seedRealUserData(seed);
     runSilent(newInstallerPath, upgradeArgs);
 
     installLocationAfter = readRegistryValue(registryKeys.install, "InstallLocation");
@@ -228,11 +237,20 @@ async function upgradeFromMode(distDir, legacyInstallerPath, disposableEnvironme
       problems.push(`Publisher after upgrade is '${publisherAfter}' (was '${publisherBefore}'), expected '${expectedAuthor}'`);
     }
 
-    assertDataPreserved(seed, problems);
+    assertDataUnchanged(seed, "after the upgrade installer", problems);
 
     if (installLocationAfter) {
       try {
-        const { probe } = await runPackageProbe(join(installLocationAfter, "cw-code.exe"));
+        const { exitCode, probe } = await runPackageProbe(join(installLocationAfter, "cw-code.exe"), {
+          cwCodeHome: cwCodeHomeDir(),
+          defaultUserData: true
+        });
+        postUpgradeProbe = { exitCode, ...probe };
+        if (exitCode !== 0) problems.push(`post-upgrade probe exited with code ${exitCode}`);
+        if (!probe.rendererLoaded) {
+          const failures = Array.isArray(probe.rendererFailures) ? probe.rendererFailures.join("; ") : "";
+          problems.push(`post-upgrade probe: renderer failed to load (${failures || "no failure recorded"})`);
+        }
         if (probe.appVersion !== newVersion) {
           problems.push(`post-upgrade probe appVersion is '${probe.appVersion}', expected '${newVersion}'`);
         }
@@ -242,6 +260,7 @@ async function upgradeFromMode(distDir, legacyInstallerPath, disposableEnvironme
       } catch (err) {
         problems.push(`post-upgrade probe failed: ${err.message}`);
       }
+      assertDataPreservedSemantically(seed, "after the first post-upgrade start", problems);
     }
 
     if (installLocationAfter) {
@@ -268,6 +287,7 @@ async function upgradeFromMode(distDir, legacyInstallerPath, disposableEnvironme
     displayVersionAfter,
     publisherBefore,
     publisherAfter,
+    postUpgradeProbe,
     problems
   };
 }

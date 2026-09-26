@@ -47,11 +47,11 @@ function installCw(): FakeShutdownApi {
       assess: async () => api.assessments.shift() ?? EMPTY,
       prepare: async (request: ShutdownPrepareRequest) => {
         api.prepareCalls.push(request);
-        return api.prepareResults.shift() ?? { ok: true, token: "token-1" };
+        return api.prepareResults.shift() ?? { ok: true, token: "token-1", stoppedTurnIds: request.approvedTurnIds ?? [] };
       },
       force: async (token: string) => {
         api.forceCalls.push(token);
-        return { ok: true, token };
+        return { ok: true, token, stoppedTurnIds: [] };
       },
       cancel: async (token: string) => {
         api.cancelCalls.push(token);
@@ -129,6 +129,31 @@ describe("runShutdownFlow", () => {
     expect(useAppStore.getState().busyTurns).toEqual({});
   });
 
+  it("marks only the turns the backend reports as stopped, not stale ones from the dialog", async () => {
+    const twoTurns: ShutdownAssessment = {
+      activeTurns: [
+        { sessionId: "sess_ended", turnId: "t-ended", title: "already finished", startedAt: 1 },
+        { sessionId: "sess_live", turnId: "t-live", title: "still running", startedAt: 2 }
+      ],
+      backgroundTasks: 0,
+      terminals: []
+    };
+    api.assessments = [twoTurns];
+    api.prepareResults = [{ ok: true, token: "token-1", stoppedTurnIds: ["t-live"] }];
+    const original = useAppStore.getState().markTurnsInterrupted;
+    const marked: string[][] = [];
+    useAppStore.setState({ markTurnsInterrupted: (sessionIds: string[]) => marked.push(sessionIds) });
+    try {
+      const pending = runShutdownFlow("update");
+      await settle();
+      await shutdownProceed();
+      expect(await pending).toEqual({ token: "token-1" });
+      expect(marked).toEqual([["sess_live"]]);
+    } finally {
+      useAppStore.setState({ markTurnsInterrupted: original });
+    }
+  });
+
   it("saves every dirty file before continuing", async () => {
     const a = dirtyFile("sess_a", "a.ts", "A");
     dirtyFile("sess_b", "b.ts", "B");
@@ -171,7 +196,7 @@ describe("runShutdownFlow", () => {
   });
 
   it("offers force stop after a timeout and returns the token once forced", async () => {
-    api.prepareResults = [{ ok: false, code: "timeout", pending: ["claude"], token: "token-9" }];
+    api.prepareResults = [{ ok: false, code: "timeout", pending: ["claude"], token: "token-9", stoppedTurnIds: [] }];
     const pending = runShutdownFlow("update");
     await settle();
     expect(useAppStore.getState().shutdown).toMatchObject({ phase: "timeout", pending: ["claude"] });
@@ -181,7 +206,7 @@ describe("runShutdownFlow", () => {
   });
 
   it("closes a stale timeout dialog when main reports the lease expired", async () => {
-    api.prepareResults = [{ ok: false, code: "timeout", pending: ["claude"], token: "token-3" }];
+    api.prepareResults = [{ ok: false, code: "timeout", pending: ["claude"], token: "token-3", stoppedTurnIds: [] }];
     const pending = runShutdownFlow("update");
     await settle();
     handleShutdownExpired();
@@ -199,7 +224,7 @@ describe("runShutdownFlow", () => {
   });
 
   it("cancelling after a timeout restores services and returns to normal use", async () => {
-    api.prepareResults = [{ ok: false, code: "timeout", pending: ["codex"], token: "token-7" }];
+    api.prepareResults = [{ ok: false, code: "timeout", pending: ["codex"], token: "token-7", stoppedTurnIds: [] }];
     const pending = runShutdownFlow("update");
     await settle();
     await shutdownCancel();

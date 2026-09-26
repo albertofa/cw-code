@@ -157,11 +157,15 @@ export function runUninstallSync(uninstallerPath, installDir) {
 export async function runPackageProbe(exePath, opts = {}) {
   const workDir = mkdtempSync(join(tmpdir(), "cw-verify-probe-"));
   try {
-    const cwCodeHome = opts.cwCodeHome ?? join(workDir, "cw-code-home");
-    const userDataDir = join(workDir, "user-data");
     const probeOutPath = join(workDir, "probe.json");
-    mkdirSync(cwCodeHome, { recursive: true });
-    mkdirSync(userDataDir, { recursive: true });
+    const cwCodeHome = opts.cwCodeHome ?? join(workDir, "cw-code-home");
+    if (!opts.cwCodeHome) mkdirSync(cwCodeHome, { recursive: true });
+    const appArgs = [];
+    if (!opts.defaultUserData) {
+      const userDataDir = join(workDir, "user-data");
+      mkdirSync(userDataDir, { recursive: true });
+      appArgs.push(`--user-data-dir=${userDataDir}`);
+    }
 
     const env = {
       ...process.env,
@@ -172,7 +176,7 @@ export async function runPackageProbe(exePath, opts = {}) {
     };
 
     const result = await new Promise((resolvePromise, rejectPromise) => {
-      const child = spawn(exePath, [`--user-data-dir=${userDataDir}`], { env });
+      const child = spawn(exePath, appArgs, { env });
       const timer = setTimeout(() => {
         if (child.pid) killProcessTree(child.pid);
         rejectPromise(new Error(`packaged app did not exit within ${PROBE_TIMEOUT_MS}ms`));

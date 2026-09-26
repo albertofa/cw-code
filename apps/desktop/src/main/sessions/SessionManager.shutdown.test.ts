@@ -3,9 +3,54 @@ import { mkdtempSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
-import type { CliDriver, DriverActivity, DriverKind, HistoryMessage, ThreadEvent, TurnHandle, TurnRequest } from "@cw-code/contracts";
+import type { CliDriver, DriverActivity, DriverKind, GitBranchInfo, HistoryMessage, ThreadEvent, TurnHandle, TurnRequest } from "@cw-code/contracts";
 import { SessionManager, type DriverFactory } from "./SessionManager.js";
 import { SHUTDOWN_RESERVED_MESSAGE } from "../shutdown/shutdownReservation.js";
+import { GitService, type CreatedWorktree } from "../fs/GitService.js";
+
+class GatedGit extends GitService {
+  worktreeCalls: string[] = [];
+  private gate: Promise<void> | null = null;
+  private open: () => void = () => {};
+
+  hold(): void {
+    this.gate = new Promise((resolve) => {
+      this.open = resolve;
+    });
+  }
+
+  release(): void {
+    this.gate = null;
+    this.open();
+  }
+
+  private async pass(): Promise<void> {
+    if (this.gate) await this.gate;
+  }
+
+  override async isRepository(): Promise<boolean> {
+    await this.pass();
+    return true;
+  }
+
+  override async pruneWorktrees(): Promise<void> {
+    await this.pass();
+  }
+
+  override async branches(): Promise<GitBranchInfo[]> {
+    return [];
+  }
+
+  override async createWorktree(projectRoot: string, _projectKey: string, sessionId: string, worktreesRoot: string): Promise<CreatedWorktree> {
+    this.worktreeCalls.push(`create:${sessionId}`);
+    return { path: join(worktreesRoot, sessionId), branch: `cw/${sessionId}`, repositoryRoot: projectRoot };
+  }
+
+  override async attachWorktree(repoRoot: string, path: string, branch: string): Promise<CreatedWorktree> {
+    this.worktreeCalls.push(`attach:${branch}`);
+    return { path, branch, repositoryRoot: repoRoot };
+  }
+}
 
 class LifecycleDriver implements CliDriver {
   started: TurnRequest[] = [];
@@ -82,7 +127,7 @@ interface Generation {
   codex: PlainDriver;
 }
 
-function setup(opts: { failOnGeneration?: number } = {}) {
+function setup(opts: { failOnGeneration?: number; gitService?: GitService } = {}) {
   const dir = mkdtempSync(join(tmpdir(), "cw-shutdown-"));
   const generations: Generation[] = [];
   const factory: DriverFactory = (route) => {
@@ -101,6 +146,7 @@ function setup(opts: { failOnGeneration?: number } = {}) {
     settingsPath: join(dir, "settings.json"),
     worktreesRoot: join(dir, "worktrees"),
     driverFactory: factory,
+    ...(opts.gitService ? { gitService: opts.gitService } : {}),
     onEvent: (sessionId, event) => events.push({ sessionId, event })
   });
   manager.setSettings({ autoTitleEnabled: false });
@@ -132,6 +178,35 @@ describe("SessionManager shutdown reservation", () => {
     expect(generations[0].claude.started).toHaveLength(0);
     manager.clearShutdownReservation();
     await expect(manager.startTurn(session.id, "after")).resolves.toEqual(expect.any(String));
+  });
+
+  it("does not create a worktree for a session whose creation was in flight when the reservation began", async () => {
+    const git = new GatedGit();
+    const { manager, project } = setup({ gitService: git });
+    git.hold();
+    const pending = manager.createSession(project.id, "claude", { mode: "new" });
+    manager.beginShutdownReservation();
+    git.release();
+    await expect(pending).rejects.toThrow(SHUTDOWN_RESERVED_MESSAGE);
+    expect(git.worktreeCalls).toEqual([]);
+    await expect(manager.listSessions(project.id)).resolves.toEqual([]);
+    manager.clearShutdownReservation();
+    const created = await manager.createSession(project.id, "claude", { mode: "new" });
+    expect(git.worktreeCalls).toEqual([`create:${created.id}`]);
+  });
+
+  it("does not recreate a missing worktree when the reservation begins during recovery", async () => {
+    const git = new GatedGit();
+    const { manager, project, generations } = setup({ gitService: git });
+    const session = await manager.createSession(project.id, "claude", { mode: "new" });
+    git.worktreeCalls = [];
+    git.hold();
+    const pending = manager.startTurn(session.id, "racing");
+    manager.beginShutdownReservation();
+    git.release();
+    await expect(pending).rejects.toThrow(SHUTDOWN_RESERVED_MESSAGE);
+    expect(git.worktreeCalls).toEqual([]);
+    expect(generations[0].claude.started).toHaveLength(0);
   });
 });
 
