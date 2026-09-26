@@ -348,6 +348,9 @@ describe("verifyPlan", () => {
       headSha: () => {
         throw new Error("should not be called");
       },
+      listTags: () => {
+        throw new Error("should not be called");
+      },
       remoteMainSha: () => {
         throw new Error("should not be called");
       },
