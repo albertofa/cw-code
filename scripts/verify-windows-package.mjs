@@ -197,6 +197,8 @@ async function checkPackage(distDir) {
       report.probe = { exitCode, ...probe };
       if (!probe.rendererLoaded) problems.push("packaged startup probe: renderer failed to load");
       if (!probe.nodePty.spawned) problems.push(`packaged startup probe: node-pty did not spawn (${probe.nodePty.error ?? "unknown error"})`);
+      const startupProblem = startupModeProblem("packaged startup probe", probe);
+      if (startupProblem) problems.push(startupProblem);
     } catch (err) {
       problems.push(`packaged startup probe failed: ${err.message}`);
     }
@@ -348,6 +350,10 @@ function withCleanupErrors(primaryError, cleanupErrors) {
   return new Error(`${primaryError.message}\ncleanup after this failure also failed:\n${details}`, { cause: primaryError });
 }
 
+function startupModeProblem(label, probe) {
+  if (probe.startupMode === undefined || probe.startupMode === "ready") return null;
+  return `${label}: app started in '${probe.startupMode}' mode instead of 'ready'`;
+}
 
 function cwCodeHomeDir() {
   return join(process.env.USERPROFILE ?? homedir(), ".cw-code");
@@ -606,6 +612,8 @@ async function installMode(distDir, disposableEnvironment) {
       probe = result.probe;
       if (!probe.rendererLoaded) problems.push("install mode probe: renderer failed to load");
       if (!probe.nodePty.spawned) problems.push(`install mode probe: node-pty did not spawn (${probe.nodePty.error ?? "unknown error"})`);
+      const startupProblem = startupModeProblem("install mode probe", probe);
+      if (startupProblem) problems.push(startupProblem);
     } catch (err) {
       problems.push(`install mode probe failed: ${err.message}`);
     }
@@ -709,6 +717,8 @@ async function upgradeFromMode(distDir, legacyInstallerPath, disposableEnvironme
         if (!probe.nodePty.spawned) {
           problems.push(`post-upgrade probe: node-pty did not spawn (${probe.nodePty.error ?? "unknown error"})`);
         }
+        const startupProblem = startupModeProblem("post-upgrade probe", probe);
+        if (startupProblem) problems.push(startupProblem);
       } catch (err) {
         problems.push(`post-upgrade probe failed: ${err.message}`);
       }
