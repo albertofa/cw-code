@@ -157,13 +157,13 @@ describe("ShutdownCoordinator.prepare", () => {
     expect(coordinator.isIdle()).toBe(true);
   });
 
-  it("stops turns in every session, flushes, then closes terminals and drivers in order", async () => {
+  it("stops turns in every session, flushes, stops drivers and only then closes terminals", async () => {
     const { coordinator, sessions, ptys, log } = setup();
     sessions.turns = [turn("sess_focused", "t1"), turn("sess_background", "t2")];
     sessions.background = 1;
     ptys.terminals = [{ ptyId: "sess_focused:claude", sessionId: "sess_focused", kind: "claude" }];
     const result = await coordinator.prepare({ reason: "update", stopActiveTurns: true, timeoutMs: 1500 });
-    expect(result).toEqual({ ok: true, token: "token-1" });
+    expect(result).toEqual({ ok: true, token: "token-1", stoppedTurnIds: ["t1", "t2"] });
     expect(log).toEqual([
       "sessions.reserve",
       "ptys.reserve",
@@ -171,8 +171,8 @@ describe("ShutdownCoordinator.prepare", () => {
       "sessions.interrupt:t2",
       "sessions.cancelBackground",
       "sessions.flush",
-      "ptys.dispose",
-      "sessions.shutdownDrivers:1500"
+      "sessions.shutdownDrivers:1500",
+      "ptys.dispose"
     ]);
     expect(sessions.reserved).toBe(true);
     expect(ptys.reserved).toBe(true);
@@ -180,7 +180,7 @@ describe("ShutdownCoordinator.prepare", () => {
 
   it("proceeds without a dialog decision when nothing is running", async () => {
     const { coordinator } = setup();
-    expect(await coordinator.prepare({ reason: "quit", stopActiveTurns: false, timeoutMs: 1000 })).toEqual({ ok: true, token: "token-1" });
+    expect(await coordinator.prepare({ reason: "quit", stopActiveTurns: false, timeoutMs: 1000 })).toEqual({ ok: true, token: "token-1", stoppedTurnIds: [] });
   });
 
   it("rejects a concurrent prepare as busy while the first is still stopping drivers", async () => {
@@ -193,7 +193,7 @@ describe("ShutdownCoordinator.prepare", () => {
     const second = await coordinator.prepare({ reason: "quit", stopActiveTurns: true, timeoutMs: 1000 });
     expect(second).toEqual({ ok: false, code: "busy" });
     finish({ timedOut: [] });
-    expect(await first).toEqual({ ok: true, token: "token-1" });
+    expect(await first).toEqual({ ok: true, token: "token-1", stoppedTurnIds: [] });
     expect(await coordinator.prepare({ reason: "quit", stopActiveTurns: true, timeoutMs: 1000 })).toEqual({ ok: false, code: "busy" });
     expect(sessions.calls.filter((call) => call.startsWith("shutdownDrivers"))).toHaveLength(1);
   });
@@ -202,7 +202,38 @@ describe("ShutdownCoordinator.prepare", () => {
     const { coordinator, sessions } = setup();
     sessions.timedOut = ["claude"];
     const result = await coordinator.prepare({ reason: "update", stopActiveTurns: true, timeoutMs: 1000 });
-    expect(result).toEqual({ ok: false, code: "timeout", pending: ["claude"], token: "token-1" });
+    expect(result).toEqual({ ok: false, code: "timeout", pending: ["claude"], token: "token-1", stoppedTurnIds: [] });
+  });
+
+  it("reports only the turns it stopped, not ones that ended before prepare", async () => {
+    const { coordinator, sessions } = setup();
+    sessions.turns = [turn("sess_a", "t-live")];
+    sessions.timedOut = ["claude"];
+    const result = await coordinator.prepare({
+      reason: "update",
+      stopActiveTurns: true,
+      approvedTurnIds: ["t-live", "t-ended"],
+      timeoutMs: 1000
+    });
+    expect(result).toMatchObject({ code: "timeout", stoppedTurnIds: ["t-live"] });
+    if (result.ok || result.code !== "timeout") throw new Error("expected timeout");
+    expect(await coordinator.force(result.token)).toEqual({ ok: true, token: result.token, stoppedTurnIds: ["t-live"] });
+  });
+
+  it("keeps terminals alive while drivers are still stopping and after a timeout", async () => {
+    const { coordinator, sessions, ptys } = setup();
+    let finish: (value: { timedOut: string[] }) => void = () => {};
+    sessions.shutdownResult = new Promise((resolve) => {
+      finish = resolve;
+    });
+    ptys.terminals = [{ ptyId: "sess_a:shell", sessionId: "sess_a", kind: "shell" }];
+    const pending = coordinator.prepare({ reason: "update", stopActiveTurns: true, timeoutMs: 1000 });
+    await settle();
+    expect(ptys.calls).not.toContain("dispose");
+    finish({ timedOut: ["codex"] });
+    expect(await pending).toMatchObject({ code: "timeout" });
+    expect(ptys.calls).not.toContain("dispose");
+    expect(ptys.terminals).toHaveLength(1);
   });
 
   it("bounds a driver shutdown that never settles", async () => {
@@ -212,7 +243,7 @@ describe("ShutdownCoordinator.prepare", () => {
     const pending = coordinator.prepare({ reason: "update", stopActiveTurns: true, timeoutMs: 1000 });
     await settle();
     clock.fire(3000);
-    expect(await pending).toEqual({ ok: false, code: "timeout", pending: ["drivers"], token: "token-1" });
+    expect(await pending).toEqual({ ok: false, code: "timeout", pending: ["drivers"], token: "token-1", stoppedTurnIds: [] });
   });
 
   it("recovers when a stop step throws", async () => {
@@ -228,8 +259,8 @@ describe("ShutdownCoordinator.prepare", () => {
 });
 
 describe("ShutdownCoordinator timeout decisions", () => {
-  it("force stops owned processes exactly once and then allows commit", async () => {
-    const { coordinator, sessions } = setup();
+  it("force stops owned processes and terminals exactly once and then allows commit", async () => {
+    const { coordinator, sessions, ptys, log } = setup();
     sessions.timedOut = ["codex"];
     const prepared = await coordinator.prepare({ reason: "update", stopActiveTurns: true, timeoutMs: 1000 });
     if (prepared.ok || prepared.code !== "timeout") throw new Error("expected timeout");
@@ -237,9 +268,11 @@ describe("ShutdownCoordinator timeout decisions", () => {
       ok: false,
       message: "some processes have not stopped yet; force stop or cancel first"
     });
-    expect(await coordinator.force(prepared.token)).toEqual({ ok: true, token: prepared.token });
-    expect(await coordinator.force(prepared.token)).toEqual({ ok: true, token: prepared.token });
+    expect(await coordinator.force(prepared.token)).toEqual({ ok: true, token: prepared.token, stoppedTurnIds: [] });
+    expect(await coordinator.force(prepared.token)).toEqual({ ok: true, token: prepared.token, stoppedTurnIds: [] });
     expect(sessions.calls.filter((call) => call === "forceStop")).toHaveLength(1);
+    expect(ptys.calls.filter((call) => call === "dispose")).toHaveLength(1);
+    expect(log.indexOf("ptys.dispose")).toBeGreaterThan(log.indexOf("sessions.forceStop"));
     let actions = 0;
     void coordinator.commit(prepared.token, () => {
       actions += 1;
@@ -249,14 +282,17 @@ describe("ShutdownCoordinator timeout decisions", () => {
     expect(coordinator.isCommitted()).toBe(true);
   });
 
-  it("cancel after a timeout restores services and releases the reservation", async () => {
+  it("cancel after a timeout restores services, keeps terminals and releases the reservation", async () => {
     const { coordinator, sessions, ptys } = setup();
     sessions.timedOut = ["opencode"];
+    ptys.terminals = [{ ptyId: "sess_a:shell", sessionId: "sess_a", kind: "shell" }];
     const prepared = await coordinator.prepare({ reason: "update", stopActiveTurns: true, timeoutMs: 1000 });
     if (prepared.ok || prepared.code !== "timeout") throw new Error("expected timeout");
     coordinator.cancel(prepared.token);
     expect(sessions.calls.slice(-2)).toEqual(["reinitialize", "release"]);
     expect(ptys.calls.slice(-2)).toEqual(["reopen", "release"]);
+    expect(ptys.calls).not.toContain("dispose");
+    expect(ptys.terminals).toHaveLength(1);
     expect(coordinator.isIdle()).toBe(true);
     await expect(coordinator.force(prepared.token)).rejects.toThrow("no longer valid");
   });
@@ -316,7 +352,7 @@ describe("ShutdownCoordinator.commit", () => {
     });
 
     const retry = await coordinator.prepare({ reason: "update", stopActiveTurns: true, timeoutMs: 1000 });
-    expect(retry).toEqual({ ok: true, token: "token-2" });
+    expect(retry).toEqual({ ok: true, token: "token-2", stoppedTurnIds: [] });
     let installs = 0;
     void coordinator.commit("token-2", async () => {
       installs += 1;

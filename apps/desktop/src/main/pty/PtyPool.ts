@@ -81,6 +81,7 @@ export class PtyPool {
   private pendingKills = new Set<string>();
   private nextToken = 1;
   private disposed = false;
+  private generation = 0;
   private shutdownReserved = false;
   private onExit: (ptyId: string, token: string, exitCode: number) => void = () => {};
 
@@ -105,9 +106,9 @@ export class PtyPool {
     this.shutdownReserved = false;
   }
 
-  private assertCanOpen(): void {
+  private assertCanOpen(generation = this.generation): void {
     if (this.shutdownReserved) throw shutdownReservedError();
-    if (this.disposed) throw new Error("pty pool disposed");
+    if (this.disposed || generation !== this.generation) throw new Error("pty pool disposed");
   }
 
   async open(
@@ -122,9 +123,10 @@ export class PtyPool {
     const existing = this.disposed ? undefined : this.ptys.get(ptyId);
     if (existing) return this.attach(existing, ptyId);
     this.assertCanOpen();
+    const generation = this.generation;
     let task = this.openings.get(ptyId);
     if (!task) {
-      task = this.spawn(ptyId, sessionId, cwd, kind, resumeCursor, env, onData);
+      task = this.spawn(generation, ptyId, sessionId, cwd, kind, resumeCursor, env, onData);
       this.openings.set(ptyId, task);
       task.finally(() => {
         if (this.openings.get(ptyId) === task) this.openings.delete(ptyId);
@@ -151,6 +153,7 @@ export class PtyPool {
   }
 
   private async spawn(
+    generation: number,
     ptyId: string,
     sessionId: string,
     cwd: string,
@@ -176,7 +179,7 @@ export class PtyPool {
       });
       throw err;
     }
-    this.assertCanOpen();
+    this.assertCanOpen(generation);
     let file: string;
     let extra: string[] = [];
     if (kind === "claude") {
@@ -234,16 +237,15 @@ export class PtyPool {
       });
       throw new Error(`PTY spawn failed for '${file}': ${(err as Error).message}`);
     }
-    const entry: PtyEntry = { sessionId, kind, proc, replay: "", token: `pty-${this.nextToken++}`, attachedCount: 0 };
-    this.ptys.set(ptyId, entry);
-    if (this.disposed) {
-      this.ptys.delete(ptyId);
+    if (this.disposed || generation !== this.generation) {
       try {
         proc.kill();
       } catch {
       }
       throw new Error("pty pool disposed");
     }
+    const entry: PtyEntry = { sessionId, kind, proc, replay: "", token: `pty-${this.nextToken++}`, attachedCount: 0 };
+    this.ptys.set(ptyId, entry);
     proc.onData((data) => {
       appendReplay(entry, data);
       if (entry.attachedCount > 0) onData(ptyId, data);
@@ -293,7 +295,9 @@ export class PtyPool {
   dispose(): void {
     if (this.disposed) return;
     this.disposed = true;
+    this.generation += 1;
     for (const ptyId of [...this.ptys.keys()]) this.kill(ptyId);
+    this.openings.clear();
     this.pendingKills.clear();
   }
 

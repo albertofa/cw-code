@@ -32,7 +32,9 @@ function explainIssue(issue: MetadataIssue): string {
     case "future-schema":
       return `A newer version of cw-code wrote this file (schema ${issue.foundVersion ?? "?"}; this version supports up to ${issue.supportedVersion}). Update cw-code or restore an older backup.`;
     case "missing":
-      return "The file is missing, but backups of it exist next to it. cw-code did not start empty so the backups are not ignored by mistake.";
+      return issue.backups.some((backup) => backup.valid)
+        ? "The file is missing, but backups of it exist next to it. cw-code did not start empty so the backups are not ignored by mistake."
+        : "The file is missing and no backup of it can be restored, but other cw-code files for it (backups, broken copies or a pre-repair copy) are next to it. cw-code did not start empty so they are not ignored by mistake. Open the data folder to inspect them, or start fresh.";
     case "io":
       return "cw-code could not read, back up or write this file.";
   }

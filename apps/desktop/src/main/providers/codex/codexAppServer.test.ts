@@ -36,6 +36,18 @@ process.stdin.on("data", (chunk) => {
 const tmpDir = mkdtempSync(join(tmpdir(), "cw-codex-client-"));
 const scriptPath = join(tmpDir, "fake-app-server.mjs");
 writeFileSync(scriptPath, FAKE_SERVER, "utf8");
+const silentScript = join(tmpDir, "silent.mjs");
+writeFileSync(silentScript, 'process.stdin.on("data", () => {}); setInterval(() => {}, 1000);\n', "utf8");
+const exitOnEndScript = join(tmpDir, "exit-on-end.mjs");
+writeFileSync(exitOnEndScript, 'process.stdin.on("data", () => {}); process.stdin.on("end", () => process.exit(0));\n', "utf8");
+
+async function waitFor(condition: () => boolean, timeoutMs = 5000): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (!condition()) {
+    if (Date.now() > deadline) throw new Error("condition not met in time");
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+}
 
 let client: CodexAppServer | null = null;
 
@@ -98,6 +110,36 @@ describe("CodexAppServer", () => {
     disposed.onServerRequest(() => {});
     disposed.dispose();
     await expect(disposed.request("greet")).rejects.toThrow("disposed");
+  });
+
+  it("kills a child that never finishes initializing instead of leaving it untracked", async () => {
+    const silent = new CodexAppServer({ binary: process.execPath, args: [silentScript], initializeTimeoutMs: 200 });
+    try {
+      await expect(silent.request("greet")).rejects.toThrow("initialize timed out");
+      await waitFor(() => silent.ownedProcessCount() === 0);
+    } finally {
+      silent.dispose();
+    }
+  });
+
+  it("reports a timeout while a starting child ignores stdin close and lets dispose kill it", async () => {
+    const silent = new CodexAppServer({ binary: process.execPath, args: [silentScript], initializeTimeoutMs: 10_000 });
+    const request = silent.request("greet").catch((err: Error) => err.message);
+    expect(silent.ownedProcessCount()).toBe(1);
+    expect(await silent.shutdown(200)).toEqual({ timedOut: true });
+    expect(await request).toContain("shutting down");
+    expect(silent.ownedProcessCount()).toBe(1);
+    silent.dispose();
+    await waitFor(() => silent.ownedProcessCount() === 0);
+  });
+
+  it("stops a starting child gracefully when it exits on stdin close", async () => {
+    const polite = new CodexAppServer({ binary: process.execPath, args: [exitOnEndScript], initializeTimeoutMs: 10_000 });
+    const request = polite.request("greet").catch((err: Error) => err.message);
+    expect(polite.ownedProcessCount()).toBe(1);
+    expect(await polite.shutdown(5000)).toEqual({ timedOut: false });
+    expect(await request).toContain("shutting down");
+    expect(polite.ownedProcessCount()).toBe(0);
   });
 
   it("passes spawn env to the app-server process", async () => {

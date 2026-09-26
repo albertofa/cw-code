@@ -37,6 +37,11 @@ function withBuffer(
   const current = buffers[key];
   if (!current) return buffers;
   const next = patch(current);
+  if (next.refs <= 0 && next.content === next.saved) {
+    const remaining = { ...buffers };
+    delete remaining[key];
+    return remaining;
+  }
   return next === current ? buffers : { ...buffers, [key]: next };
 }
 
@@ -63,15 +68,7 @@ export const useEditorBuffers = create<EditorBuffersState>((set, get) => ({
     set({ buffers: withBuffer(get().buffers, key, (buffer) => (buffer.content === buffer.saved ? buffer : { ...buffer, content: buffer.saved })) });
   },
   unregister(key) {
-    const existing = get().buffers[key];
-    if (!existing) return;
-    if (existing.refs > 1) {
-      set({ buffers: { ...get().buffers, [key]: { ...existing, refs: existing.refs - 1 } } });
-      return;
-    }
-    const next = { ...get().buffers };
-    delete next[key];
-    set({ buffers: next });
+    set({ buffers: withBuffer(get().buffers, key, (buffer) => (buffer.refs > 0 ? { ...buffer, refs: buffer.refs - 1 } : buffer)) });
   },
   dirty() {
     return Object.entries(get().buffers)
