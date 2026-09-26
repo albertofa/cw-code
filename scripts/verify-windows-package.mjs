@@ -12,6 +12,7 @@ import {
   requireDisposableEnvironment,
   runPackageProbe,
   runSilent,
+  runSilentWithRetry,
   runUninstallSync,
   waitForRegistryValueGone
 } from "./lib/windows-install.mjs";
@@ -185,7 +186,8 @@ async function upgradeFromMode(distDir, legacyInstallerPath, disposableEnvironme
 
   const problems = [];
 
-  runSilent(legacyInstallerPath, legacyArgs);
+  const legacyInstall = runSilentWithRetry(legacyInstallerPath, legacyArgs, registryKeys);
+  if (legacyInstall.retried) console.warn("legacy installer succeeded only on retry; see diagnostics above");
   const installLocationBefore = readRegistryValue(registryKeys.install, "InstallLocation");
   const displayVersionBefore = readRegistryValue(registryKeys.uninstall, "DisplayVersion");
   const publisherBefore = readRegistryValue(registryKeys.uninstall, "Publisher");
