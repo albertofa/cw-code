@@ -36,7 +36,7 @@ describe("editorBuffers", () => {
     expect(store().dirty()).toEqual([]);
   });
 
-  it("keeps a shared buffer and its edits until the last editor unregisters", () => {
+  it("keeps a shared buffer and its edits after every editor unregisters", () => {
     const key = store().register("sess_a", "x.ts", "v1");
     store().update(key, "edited");
     expect(store().register("sess_a", "x.ts", "v1-reloaded")).toBe(key);
@@ -44,8 +44,40 @@ describe("editorBuffers", () => {
     store().unregister(key);
     expect(store().dirty()).toHaveLength(1);
     store().unregister(key);
-    expect(store().buffers[key]).toBeUndefined();
+    expect(store().buffers[key]).toMatchObject({ content: "edited", refs: 0 });
+    expect(store().dirty()).toHaveLength(1);
+  });
+
+  it("keeps a dirty buffer after switching to another file and shows its edits on reopen", () => {
+    const a = store().register("sess_a", "a.ts", "a-saved");
+    store().update(a, "a-edited");
+    const b = store().register("sess_a", "b.ts", "b-saved");
+    store().unregister(a);
+    expect(store().dirty()).toEqual([{ key: a, sessionId: "sess_a", path: "a.ts", content: "a-edited" }]);
+    store().unregister(b);
+    expect(store().buffers[b]).toBeUndefined();
+    expect(store().register("sess_a", "a.ts", "a-from-disk")).toBe(a);
+    expect(store().buffers[a]).toMatchObject({ saved: "a-saved", content: "a-edited", refs: 1 });
+  });
+
+  it("releases a retained dirty buffer once it is saved or discarded", () => {
+    const saved = store().register("sess_a", "saved.ts", "v1");
+    store().update(saved, "v2");
+    store().unregister(saved);
+    store().markSaved(saved, "v2");
+    expect(store().buffers[saved]).toBeUndefined();
+    const discarded = store().register("sess_a", "discarded.ts", "v1");
+    store().update(discarded, "v2");
+    store().unregister(discarded);
+    store().discard(discarded);
+    expect(store().buffers[discarded]).toBeUndefined();
     expect(store().dirty()).toEqual([]);
+  });
+
+  it("releases a clean buffer when its last editor unregisters", () => {
+    const key = store().register("sess_a", "x.ts", "v1");
+    store().unregister(key);
+    expect(store().buffers[key]).toBeUndefined();
   });
 
   it("refreshes a clean buffer from disk when the file is opened again", () => {
