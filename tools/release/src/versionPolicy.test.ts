@@ -4,6 +4,7 @@ import { parseVersion } from "./semver.ts";
 import {
   classifyReleases,
   highestPublished,
+  mostRecentlyPublished,
   nextAlphaNumberForBase,
   planNextAlpha,
   resolveCandidate,
@@ -51,6 +52,16 @@ describe("classifyReleases / highestPublished", () => {
   it("ignores draft releases when finding the highest published version", () => {
     const classified = classifyReleases([...ALPHA_HISTORY, release("v0.0.1-alpha.99", { draft: true })]);
     expect(highestPublished(classified, "alpha")?.release.tagName).toBe("v0.0.1-alpha.21");
+  });
+
+  it("finds the most recently published release by publication time, skipping drafts", () => {
+    const classified = classifyReleases([
+      ...ALPHA_HISTORY,
+      release("v0.0.1-alpha.19", { publishedAt: "2026-09-25T01:00:00Z" }),
+      release("v0.0.1-alpha.30", { draft: true, publishedAt: "2026-09-26T00:00:00Z" })
+    ]);
+    expect(mostRecentlyPublished(classified)?.release.publishedAt).toBe("2026-09-25T01:00:00Z");
+    expect(mostRecentlyPublished(classified, "stable")).toBeNull();
   });
 });
 
