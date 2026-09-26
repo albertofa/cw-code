@@ -26,6 +26,38 @@ function tempFilePath(): string {
 }
 
 describe("SettingsStore", () => {
+  it.each([
+    ["a current-schema file", '{"schemaVersion":1,"__proto__":{"polluted":true},"holdingHours":3}'],
+    ["a schema-0 file", '{"__proto__":{"polluted":true},"holdingHours":3}']
+  ])("keeps an unknown __proto__ key in %s as an own property across writes", (_label, raw) => {
+    const filePath = tempFilePath();
+    writeFileSync(filePath, raw, "utf8");
+
+    const store = new SettingsStore(filePath);
+    store.set({ holdingHours: 4 });
+
+    const persisted = JSON.parse(readFileSync(filePath, "utf8")) as Record<string, unknown>;
+    expect(Object.hasOwn(persisted, "__proto__")).toBe(true);
+    expect(Object.getOwnPropertyDescriptor(persisted, "__proto__")?.value).toEqual({ polluted: true });
+    expect(persisted.holdingHours).toBe(4);
+    expect(Object.hasOwn(store.get(), "polluted")).toBe(false);
+    expect(({} as Record<string, unknown>).polluted).toBeUndefined();
+  });
+
+  it("completes the pending last-good refresh on flush, including the first-run file", () => {
+    const filePath = tempFilePath();
+    const lastGood = `${filePath}.last-good.bak`;
+    const store = new SettingsStore(filePath);
+    expect(existsSync(lastGood)).toBe(false);
+
+    store.set({ holdingHours: 12 });
+    expect(existsSync(lastGood)).toBe(false);
+
+    store.flush();
+    expect(readFileSync(lastGood, "utf8")).toBe(readFileSync(filePath, "utf8"));
+    expect(JSON.parse(readFileSync(lastGood, "utf8"))).toMatchObject({ holdingHours: 12 });
+  });
+
   it("starts with defaults when the file is missing", () => {
     const filePath = tempFilePath();
     expect(new SettingsStore(filePath).get()).toEqual(DEFAULT_SETTINGS);

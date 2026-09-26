@@ -1659,5 +1659,6 @@ export class SessionManager {
     }
     this.forceStopDrivers();
     this.store.close();
+    this.settings.flush();
   }
 }
