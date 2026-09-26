@@ -1,4 +1,5 @@
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { randomUUID } from "node:crypto";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir, tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
@@ -107,11 +108,15 @@ function isElevated() {
 async function runPackageProbe(exePath, opts = {}) {
   const workDir = mkdtempSync(join(tmpdir(), "cw-verify-probe-"));
   try {
-    const cwCodeHome = join(workDir, "cw-code-home");
-    const userDataDir = join(workDir, "user-data");
     const probeOutPath = join(workDir, "probe.json");
-    mkdirSync(cwCodeHome, { recursive: true });
-    mkdirSync(userDataDir, { recursive: true });
+    const cwCodeHome = opts.cwCodeHome ?? join(workDir, "cw-code-home");
+    if (!opts.cwCodeHome) mkdirSync(cwCodeHome, { recursive: true });
+    const appArgs = [];
+    if (!opts.defaultUserData) {
+      const userDataDir = join(workDir, "user-data");
+      mkdirSync(userDataDir, { recursive: true });
+      appArgs.push(`--user-data-dir=${userDataDir}`);
+    }
 
     const env = {
       ...process.env,
@@ -122,7 +127,7 @@ async function runPackageProbe(exePath, opts = {}) {
     };
 
     const result = await new Promise((resolvePromise, rejectPromise) => {
-      const child = spawn(exePath, [`--user-data-dir=${userDataDir}`], { env });
+      const child = spawn(exePath, appArgs, { env });
       const timer = setTimeout(() => {
         if (child.pid) killProcessTree(child.pid);
         rejectPromise(new Error(`packaged app did not exit within ${PROBE_TIMEOUT_MS}ms`));
@@ -297,12 +302,38 @@ function electronUserDataDir() {
   return join(process.env.APPDATA ?? join(homedir(), "AppData", "Roaming"), "@cw-code", "desktop");
 }
 
-const FIXTURE_MARKER = "cw-verify";
+const FIXTURE_SENTINEL_PATTERN = /^cw-verify-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
+const FIXTURE_UNKNOWN_KEY = "cwVerifyUnknownKey";
+const PROJECT_FIELDS = ["id", "rootPath", "name"];
+const SESSION_FIELDS = ["id", "projectId", "resumeCursor", "worktreePath", "branch", FIXTURE_UNKNOWN_KEY];
 
-function assertSafeToSeed(path) {
+function isFixtureSentinel(value) {
+  return typeof value === "string" && FIXTURE_SENTINEL_PATTERN.test(value);
+}
+
+function isJsonFixture(text) {
+  try {
+    const parsed = JSON.parse(text);
+    return parsed !== null && typeof parsed === "object" && isFixtureSentinel(parsed._fixture);
+  } catch {
+    return false;
+  }
+}
+
+function isMarkerFixture(text) {
+  return text.endsWith("\n") && isFixtureSentinel(text.slice(0, -1));
+}
+
+function assertSafeToSeed({ path, kind }) {
   if (!existsSync(path)) return;
-  const content = readFileSync(path, "utf8");
-  if (!content.includes(FIXTURE_MARKER)) {
+  let text;
+  try {
+    text = readFileSync(path, "utf8");
+  } catch (err) {
+    throw new Error(`refusing to seed: cannot read existing ${path} (${err.message}); aborting before writing anything.`);
+  }
+  const isFixture = kind === "json" ? isJsonFixture(text) : isMarkerFixture(text);
+  if (!isFixture) {
     throw new Error(
       `refusing to seed over existing file that is not a cw-verify fixture: ${path}. ` +
         "This looks like real user data; aborting before writing anything."
@@ -310,86 +341,191 @@ function assertSafeToSeed(path) {
   }
 }
 
-function seedRealUserData() {
+function ensureDirTracked(dir, createdDirs) {
+  const missing = [];
+  let current = dir;
+  while (!existsSync(current)) {
+    missing.unshift(current);
+    const parent = dirname(current);
+    if (parent === current) break;
+    current = parent;
+  }
+  for (const path of missing) {
+    mkdirSync(path);
+    createdDirs.push(path);
+  }
+}
+
+function createSeedPlan() {
+  const sentinel = `cw-verify-${randomUUID()}`;
   const home = cwCodeHomeDir();
   const userdataDir = join(home, "userdata");
-  const worktreeMarkerPath = join(home, "worktrees", "cw-verify-fake-worktree", "marker.txt");
-  const electronMarkerPath = join(electronUserDataDir(), "marker.txt");
-  const dbPath = join(userdataDir, "cw-code.db.json");
-  const settingsPath = join(userdataDir, "cw-settings.json");
-
-  for (const path of [dbPath, settingsPath, worktreeMarkerPath, electronMarkerPath]) {
-    assertSafeToSeed(path);
-  }
-
-  mkdirSync(userdataDir, { recursive: true });
-  mkdirSync(dirname(worktreeMarkerPath), { recursive: true });
-  mkdirSync(dirname(electronMarkerPath), { recursive: true });
-
-  const dbContent = `${JSON.stringify(
-    {
-      schemaVersion: 1,
-      _fixture: FIXTURE_MARKER,
-      projects: [{ id: "proj_verify_fake", rootPath: "C:\\verify\\fake-project" }],
-      sessions: [
-        {
-          id: "sess_verify_fake",
-          projectId: "proj_verify_fake",
-          driver: "claude",
-          worktreePath: "C:\\verify\\fake-worktree",
-          title: "verify fixture"
-        }
-      ]
+  const worktreeDir = join(home, "worktrees", "cw-verify-fixture-worktree");
+  const db = {
+    _fixture: sentinel,
+    [FIXTURE_UNKNOWN_KEY]: { preserved: sentinel },
+    projects: [{ id: "proj_verify_fixture", rootPath: "C:\\verify\\fixture-project", name: "fixture-project" }],
+    sessions: [
+      {
+        id: "sess_verify_fixture",
+        projectId: "proj_verify_fixture",
+        driver: "claude",
+        title: "verify fixture",
+        status: "idle",
+        resumeCursor: "cw-verify-resume-cursor",
+        createdAt: 1700000000000,
+        updatedAt: 1700000000000,
+        worktreePath: worktreeDir,
+        branch: "cw-verify/fixture-branch",
+        [FIXTURE_UNKNOWN_KEY]: sentinel
+      }
+    ]
+  };
+  const settings = {
+    _fixture: sentinel,
+    claudeExtraArgs: "--verbose",
+    sourceControlRefreshIntervalSeconds: 45,
+    autoTitleEnabled: false,
+    holdingHours: 12
+  };
+  return {
+    sentinel,
+    paths: {
+      db: join(userdataDir, "cw-code.db.json"),
+      settings: join(userdataDir, "cw-settings.json"),
+      worktreeMarker: join(worktreeDir, "marker.txt"),
+      electronMarker: join(electronUserDataDir(), "marker.txt")
     },
-    null,
-    2
-  )}\n`;
-  const settingsContent = `${JSON.stringify(
-    { schemaVersion: 1, claudeBinaryPath: "claude.exe", _fixture: FIXTURE_MARKER },
-    null,
-    2
-  )}\n`;
-  const markerContent = `${FIXTURE_MARKER} marker ${Date.now()}\n`;
+    db,
+    settings,
+    dbContent: `${JSON.stringify(db, null, 2)}\n`,
+    settingsContent: `${JSON.stringify(settings, null, 2)}\n`,
+    markerContent: `${sentinel}\n`,
+    writtenFiles: [],
+    createdDirs: []
+  };
+}
 
-  writeFileSync(dbPath, dbContent, "utf8");
-  writeFileSync(settingsPath, settingsContent, "utf8");
-  writeFileSync(worktreeMarkerPath, markerContent, "utf8");
-  writeFileSync(electronMarkerPath, markerContent, "utf8");
-
-  return { dbPath, settingsPath, worktreeMarkerPath, electronMarkerPath, dbContent, settingsContent, markerContent };
+function seedRealUserData(seed) {
+  const targets = [
+    { path: seed.paths.db, kind: "json", content: seed.dbContent },
+    { path: seed.paths.settings, kind: "json", content: seed.settingsContent },
+    { path: seed.paths.worktreeMarker, kind: "marker", content: seed.markerContent },
+    { path: seed.paths.electronMarker, kind: "marker", content: seed.markerContent }
+  ];
+  for (const target of targets) assertSafeToSeed(target);
+  for (const target of targets) {
+    ensureDirTracked(dirname(target.path), seed.createdDirs);
+    writeFileSync(target.path, target.content, "utf8");
+    seed.writtenFiles.push(target.path);
+  }
 }
 
 function cleanupSeededFixtures(seed) {
-  for (const path of [seed.dbPath, seed.settingsPath, seed.electronMarkerPath]) {
+  for (const path of seed.writtenFiles) {
     try {
       rmSync(path, { force: true });
     } catch (err) {
       console.warn(`warning: could not remove seeded fixture ${path}: ${err.message}`);
     }
   }
-  try {
-    rmSync(dirname(seed.worktreeMarkerPath), { recursive: true, force: true });
-  } catch (err) {
-    console.warn(`warning: could not remove seeded fixture worktree ${dirname(seed.worktreeMarkerPath)}: ${err.message}`);
+  for (const dir of [...seed.createdDirs].reverse()) {
+    if (!existsSync(dir)) continue;
+    try {
+      if (readdirSync(dir).length === 0) rmdirSync(dir);
+      else console.warn(`leaving directory created by the seed in place because it is no longer empty: ${dir}`);
+    } catch (err) {
+      console.warn(`warning: could not remove seeded fixture directory ${dir}: ${err.message}`);
+    }
   }
 }
 
-function assertDataPreserved(seed, problems) {
-  const checks = [
-    ["userdata db", seed.dbPath, seed.dbContent],
-    ["settings", seed.settingsPath, seed.settingsContent],
-    ["worktree marker", seed.worktreeMarkerPath, seed.markerContent],
-    ["Electron userData marker", seed.electronMarkerPath, seed.markerContent]
+function markerChecks(seed) {
+  return [
+    ["worktree marker", seed.paths.worktreeMarker, seed.markerContent],
+    ["Electron userData marker", seed.paths.electronMarker, seed.markerContent]
   ];
+}
+
+function assertBytesUnchanged(checks, stage, problems) {
   for (const [label, path, expected] of checks) {
     if (!existsSync(path)) {
-      problems.push(`${label} missing after upgrade: ${path}`);
+      problems.push(`${label} missing ${stage}: ${path}`);
       continue;
     }
     if (readFileSync(path, "utf8") !== expected) {
-      problems.push(`${label} changed after upgrade: ${path}`);
+      problems.push(`${label} changed ${stage}: ${path}`);
     }
   }
+}
+
+function assertDataUnchanged(seed, stage, problems) {
+  assertBytesUnchanged(
+    [
+      ["userdata db", seed.paths.db, seed.dbContent],
+      ["settings", seed.paths.settings, seed.settingsContent],
+      ...markerChecks(seed)
+    ],
+    stage,
+    problems
+  );
+}
+
+function readJsonForCheck(label, path, stage, problems) {
+  if (!existsSync(path)) {
+    problems.push(`${label} missing ${stage}: ${path}`);
+    return null;
+  }
+  try {
+    return JSON.parse(readFileSync(path, "utf8"));
+  } catch (err) {
+    problems.push(`${label} is not valid JSON ${stage}: ${path} (${err.message})`);
+    return null;
+  }
+}
+
+function sameValue(a, b) {
+  return JSON.stringify(a) === JSON.stringify(b);
+}
+
+function compareEntries(label, expectedEntries, actualEntries, fields, stage, problems) {
+  const actualList = Array.isArray(actualEntries) ? actualEntries : [];
+  for (const expected of expectedEntries) {
+    const actual = actualList.find((candidate) => candidate?.id === expected.id);
+    if (!actual) {
+      problems.push(`${label} '${expected.id}' missing ${stage}`);
+      continue;
+    }
+    for (const field of fields) {
+      if (!sameValue(actual[field], expected[field])) {
+        problems.push(
+          `${label} '${expected.id}' field '${field}' changed ${stage}: ` +
+            `expected ${JSON.stringify(expected[field])}, got ${JSON.stringify(actual[field])}`
+        );
+      }
+    }
+  }
+}
+
+function assertDataPreservedSemantically(seed, stage, problems) {
+  const db = readJsonForCheck("userdata db", seed.paths.db, stage, problems);
+  if (db) {
+    compareEntries("project", seed.db.projects, db.projects, PROJECT_FIELDS, stage, problems);
+    compareEntries("session", seed.db.sessions, db.sessions, SESSION_FIELDS, stage, problems);
+    if (!sameValue(db[FIXTURE_UNKNOWN_KEY], seed.db[FIXTURE_UNKNOWN_KEY])) {
+      problems.push(`userdata db unknown key '${FIXTURE_UNKNOWN_KEY}' not preserved ${stage}`);
+    }
+  }
+  const settings = readJsonForCheck("settings", seed.paths.settings, stage, problems);
+  if (settings) {
+    for (const [key, expected] of Object.entries(seed.settings)) {
+      if (key === "_fixture") continue;
+      if (!sameValue(settings[key], expected)) {
+        problems.push(`settings '${key}' changed ${stage}: expected ${JSON.stringify(expected)}, got ${JSON.stringify(settings[key])}`);
+      }
+    }
+  }
+  assertBytesUnchanged(markerChecks(seed), stage, problems);
 }
 
 async function installMode(distDir, disposableEnvironment) {
@@ -466,12 +602,14 @@ async function upgradeFromMode(distDir, legacyInstallerPath, disposableEnvironme
     problems.push(`DisplayVersion after legacy install is '${displayVersionBefore}', expected '${legacyVersion}'`);
   }
 
-  const seed = seedRealUserData();
+  const seed = createSeedPlan();
   let installLocationAfter = null;
   let displayVersionAfter = null;
   let publisherAfter = null;
+  let postUpgradeProbe = null;
 
   try {
+    seedRealUserData(seed);
     runSilent(newInstallerPath, upgradeArgs);
 
     installLocationAfter = readRegistryValue(registryKeys.install, "InstallLocation");
@@ -493,11 +631,20 @@ async function upgradeFromMode(distDir, legacyInstallerPath, disposableEnvironme
       problems.push(`Publisher after upgrade is '${publisherAfter}' (was '${publisherBefore}'), expected '${expectedAuthor}'`);
     }
 
-    assertDataPreserved(seed, problems);
+    assertDataUnchanged(seed, "after the upgrade installer", problems);
 
     if (installLocationAfter) {
       try {
-        const { probe } = await runPackageProbe(join(installLocationAfter, "cw-code.exe"));
+        const { exitCode, probe } = await runPackageProbe(join(installLocationAfter, "cw-code.exe"), {
+          cwCodeHome: cwCodeHomeDir(),
+          defaultUserData: true
+        });
+        postUpgradeProbe = { exitCode, ...probe };
+        if (exitCode !== 0) problems.push(`post-upgrade probe exited with code ${exitCode}`);
+        if (!probe.rendererLoaded) {
+          const failures = Array.isArray(probe.rendererFailures) ? probe.rendererFailures.join("; ") : "";
+          problems.push(`post-upgrade probe: renderer failed to load (${failures || "no failure recorded"})`);
+        }
         if (probe.appVersion !== newVersion) {
           problems.push(`post-upgrade probe appVersion is '${probe.appVersion}', expected '${newVersion}'`);
         }
@@ -507,6 +654,7 @@ async function upgradeFromMode(distDir, legacyInstallerPath, disposableEnvironme
       } catch (err) {
         problems.push(`post-upgrade probe failed: ${err.message}`);
       }
+      assertDataPreservedSemantically(seed, "after the first post-upgrade start", problems);
     }
 
     if (installLocationAfter) {
@@ -533,6 +681,7 @@ async function upgradeFromMode(distDir, legacyInstallerPath, disposableEnvironme
     displayVersionAfter,
     publisherBefore,
     publisherAfter,
+    postUpgradeProbe,
     problems
   };
 }
