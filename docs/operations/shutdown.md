@@ -17,7 +17,7 @@ Every child process cw-code creates, and how it is stopped.
 | `opencode serve` (shared root `userdata/cw-opencode-server`) | `OpencodeServerPool.servers` | Idle eviction after 5 min, max 4 | running turns aborted over HTTP (`POST /session/:id/abort`), wait for the aborts, then pool disposed | pool `stop()` kills the tree by PID |
 | OpenCode per-session work | runs inside the managed server | per turn | `abort` request, see above | server stop |
 | `opencode models` listing | `opencodeModels.ts` via `execCliFile` | Short-lived, 20 s timeout | not tracked | execFile timeout |
-| `codex app-server` (one per app) | `CodexAppServer.child` (tracked from spawn until exit, including while it initializes) | Started on first request; a child that fails to initialize is killed by handle | stdin closed, wait for exit; reports a timeout while the child is still alive, even if it never finished initializing | tree kill by PID of the tracked child |
+| `codex app-server` (one per app) | `CodexAppServer.child` (tracked from spawn until exit, including while it initializes) | Started on first request; a child that fails to initialize is killed by handle | stdin closed, wait for exit; requests made while it waits are rejected and never written to the child; reports a timeout while the child is still alive, even if it never finished initializing | tree kill by PID of the tracked child; exit and error events from a child that is no longer the latest one are ignored, so they never reject a retry's requests |
 | PTY terminals (`shell`, `claude`, `opencode`, `codex`) | `PtyPool.ptys` | Until the tab kills it or it exits | none (a terminal is treated as possibly busy); closed only after the drivers stopped, or on force | node-pty `kill()` on the owned handle; an open that was in flight across a dispose is refused and its PTY killed by handle |
 | `git` / `gh` calls | `GitService`, `PullRequestService` | Short-lived, every call has an execFile timeout (10 s default) | not tracked | execFile timeout |
 | `--version` checks | `cliVersions.ts`, `binaryDiscovery.ts` | Short-lived, 15 s timeout | not tracked | execFile timeout |
@@ -64,9 +64,11 @@ idle ──prepare──▶ preparing ──▶ prepared ──commit──▶ c
 - `prepare({ reason, stopActiveTurns, timeoutMs })` is single-flight: a second
   call while a flow is in progress returns `busy`. It reserves `SessionManager`
   and `PtyPool` first, so `startTurn`, `createSession`, `retryConnection`,
-  `regenerateTitle`, title turns, worktree recovery and new terminals fail with
-  "cw-code is preparing to restart; try again after it finishes or is
-  cancelled". `startTurn`, `createSession` and worktree recovery check the
+  `regenerateTitle`, title turns, worktree recovery, new terminals and the
+  driver CLI probes (`listCommands*`, `listModels*`, `listPermissionModes*`,
+  account usage through `driversForProbe()`) fail with "cw-code is preparing
+  to restart; try again after it finishes or is cancelled"; the OpenCode model
+  warmup is skipped with a warning. `startTurn`, `createSession` and worktree recovery check the
   reservation again after every await that precedes starting a process or
   creating a worktree, so work that was already starting cannot slip in. A
   terminal whose open was in flight when the pool was disposed is refused even
@@ -153,6 +155,10 @@ same flow with reason `"update"`.
   re-assesses when a turn ends and can be stopped, or Stop), terminals that
   will be closed, and files with unsaved edits (Save all, Discard all, or per
   file). A failed save cancels the flow with an error and stops nothing.
+- Re-assessment is single-flight: overlapping refreshes (turn events, the poll,
+  another close request) share one run and queue at most one more, and a flow
+  calls `shutdown.prepare` at most once at a time, so a duplicate refresh can
+  never get a `busy` result that cancels the flow.
 - Stop sends the ids of the turns the user saw as `approvedTurnIds`; turns that
   started afterwards make prepare return `blocked` and the dialog shows them.
   The renderer marks interrupted only the turns listed in the result's
