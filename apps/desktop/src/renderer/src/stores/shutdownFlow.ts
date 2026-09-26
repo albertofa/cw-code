@@ -107,8 +107,10 @@ async function prepare(flow: ActiveFlow, assessment: ShutdownAssessment, stopAct
     });
     return;
   }
-  if (stopActiveTurns && (result.ok || result.code === "timeout")) {
-    useAppStore.getState().markTurnsInterrupted(assessment.activeTurns.map((turn) => turn.sessionId));
+  if ((result.ok || result.code === "timeout") && result.stoppedTurnIds.length > 0) {
+    const stopped = new Set(result.stoppedTurnIds);
+    const sessionIds = assessment.activeTurns.filter((turn) => stopped.has(turn.turnId)).map((turn) => turn.sessionId);
+    useAppStore.getState().markTurnsInterrupted(sessionIds);
   }
   if (active !== flow) {
     if (result.ok || result.code === "timeout") void window.cw.shutdown.cancel(result.token).catch(() => {});

@@ -64,6 +64,7 @@ export class ShutdownCoordinator {
   private token: string | null = null;
   private reason: ShutdownReason | null = null;
   private servicesStopped = false;
+  private stoppedTurnIds: string[] = [];
   private generation = 0;
   private commitInFlight: Promise<ShutdownCommitResult> | null = null;
   private leaseId = 0;
@@ -137,13 +138,15 @@ export class ShutdownCoordinator {
       `shutdown (${request.reason}): stopping ${assessment.activeTurns.length} turn(s), ${assessment.backgroundTasks} background task(s), ${assessment.terminals.length} terminal(s)`
     );
     this.servicesStopped = true;
+    const stoppedTurnIds = assessment.activeTurns.map((turn) => turn.turnId);
+    this.stoppedTurnIds = stoppedTurnIds;
     let timedOut: string[];
     try {
-      for (const turn of assessment.activeTurns) this.sessions.interrupt(turn.turnId);
+      for (const turnId of stoppedTurnIds) this.sessions.interrupt(turnId);
       this.sessions.cancelBackgroundWork();
       this.sessions.flush();
-      this.ptys.dispose();
       timedOut = await this.boundedDriverShutdown(request.timeoutMs);
+      if (this.generation === generation && timedOut.length === 0) this.ptys.dispose();
     } catch (err) {
       this.log(`shutdown prepare failed: ${(err as Error).message}`);
       if (this.generation === generation) this.recover();
@@ -156,10 +159,10 @@ export class ShutdownCoordinator {
     if (timedOut.length > 0) {
       this.phase = "timeout";
       this.log(`shutdown (${request.reason}): graceful stop timed out for ${timedOut.join(", ")}`);
-      return { ok: false, code: "timeout", pending: timedOut, token };
+      return { ok: false, code: "timeout", pending: timedOut, token, stoppedTurnIds };
     }
     this.phase = "prepared";
-    return { ok: true, token };
+    return { ok: true, token, stoppedTurnIds };
   }
 
   private async boundedDriverShutdown(timeoutMs: number): Promise<string[]> {
@@ -173,10 +176,11 @@ export class ShutdownCoordinator {
     if (this.phase === "timeout") {
       this.log(`shutdown (${this.reason ?? "quit"}): force-stopping owned processes`);
       this.sessions.forceStopDrivers();
+      this.ptys.dispose();
       this.phase = "prepared";
       this.startLease();
     }
-    return { ok: true, token };
+    return { ok: true, token, stoppedTurnIds: this.stoppedTurnIds };
   }
 
   cancel(token: string): void {
@@ -247,6 +251,7 @@ export class ShutdownCoordinator {
     this.token = null;
     this.reason = null;
     this.servicesStopped = false;
+    this.stoppedTurnIds = [];
   }
 
   private releaseReservations(): void {
