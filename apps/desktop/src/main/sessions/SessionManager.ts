@@ -122,11 +122,13 @@ export class SessionManager {
   private prUpdatedAt: (ref: PrRef) => number | null;
   private turnPrRefs = new Map<string, PrRef[]>();
   private usageLedger: UsageLedger;
+  private titleGenPath: string;
 
   constructor(opts: SessionManagerOptions = {}) {
     const dbPath = opts.dbPath ?? join(userdataDir(), "cw-code.db");
     this.store = new SessionStore(dbPath);
-    const settingsPath = opts.settingsPath ?? join(userdataDir(), "cw-settings.json");
+    const dataDir = opts.dbPath ? dirname(dbPath) : userdataDir();
+    const settingsPath = opts.settingsPath ?? join(dataDir, "cw-settings.json");
     this.settings = new SettingsStore(settingsPath);
     this.onEvent = opts.onEvent ?? (() => {});
     this.onTitle = opts.onTitle ?? (() => {});
@@ -136,7 +138,8 @@ export class SessionManager {
     this.prHeadRefresh = opts.prHeadRefresh;
     this.prState = opts.prState ?? (() => null);
     this.prUpdatedAt = opts.prUpdatedAt ?? (() => null);
-    this.usageLedger = opts.usageLedger ?? new UsageLedger(opts.dbPath ? join(dirname(dbPath), "usage") : usageDir());
+    this.usageLedger = opts.usageLedger ?? new UsageLedger(opts.dbPath ? join(dataDir, "usage") : usageDir());
+    this.titleGenPath = opts.dbPath ? join(dataDir, "title-gen") : titleGenDir();
     const getSettings = (): AppSettings => this.settings.get();
     this.drivers = {
       claude: opts.drivers?.claude ?? new TracingCliDriver(new ClaudeCliDriver((e) => this.routeEvent(e), getSettings)),
@@ -1133,9 +1136,8 @@ export class SessionManager {
   }
 
   private titleGenRoot(): string {
-    const dir = titleGenDir();
-    mkdirSync(dir, { recursive: true });
-    return dir;
+    mkdirSync(this.titleGenPath, { recursive: true });
+    return this.titleGenPath;
   }
 
   warmOpencodeModels(): void {
