@@ -38,6 +38,22 @@ export function highestPublished(
   return best;
 }
 
+export function mostRecentlyPublished(classified: ClassifiedRelease[], channel?: "stable" | "alpha"): ClassifiedRelease | null {
+  let best: ClassifiedRelease | null = null;
+  let bestTime = Number.NEGATIVE_INFINITY;
+  for (const entry of classified) {
+    if (entry.release.draft) continue;
+    if (channel && entry.version.channel !== channel) continue;
+    const time = Date.parse(entry.release.publishedAt);
+    if (Number.isNaN(time)) continue;
+    if (!best || time > bestTime || (time === bestTime && compareVersions(entry.version, best.version) > 0)) {
+      best = entry;
+      bestTime = time;
+    }
+  }
+  return best;
+}
+
 export function nextAlphaNumberForBase(classified: ClassifiedRelease[], base: StableVersion, usedTags: readonly string[] = []): number {
   const used = [...classified.map((entry) => entry.version), ...usedTags.map(parseTag).filter((version): version is ParsedVersion => version !== null)];
   let max = -1;
@@ -129,7 +145,7 @@ export function resolveCandidate(input: {
   if (!matched && FULL_SHA_PATTERN.test(candidateInput)) {
     const shaInput = candidateInput.toLowerCase();
     const matches = classified.filter(
-      (entry) => entry.version.channel === "alpha" && tagShas.get(entry.release.tagName)?.toLowerCase() === shaInput
+      (entry) => !entry.release.draft && entry.version.channel === "alpha" && tagShas.get(entry.release.tagName)?.toLowerCase() === shaInput
     );
     if (matches.length > 1) {
       const tags = matches.map((entry) => entry.release.tagName).join(", ");
