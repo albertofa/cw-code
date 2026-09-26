@@ -5,8 +5,9 @@ import type { ComposerPrefs, DriverKind, Project, SessionMeta } from "@cw-code/c
 import { isValidPrLink, upsertLink } from "../github/prLinks.js";
 import { expandHome } from "../skills/skillPaths.js";
 import { writeFileAtomic } from "../storage/atomicFile.js";
+import { backupBeforeRepair } from "../storage/backups.js";
 import { isMetadataDocument, type MetadataDocument, type MetadataMigration, type MetadataSchema } from "../storage/metadataDocument.js";
-import { loadVersionedJson } from "../storage/versionedJson.js";
+import { LastGoodRefresher, loadVersionedJson } from "../storage/versionedJson.js";
 
 interface StoreShape {
   projects: Project[];
@@ -22,6 +23,10 @@ export function sessionStoreFile(dbPath: string): string {
 export function normalizeRoot(rootPath: string): string {
   const stripped = rootPath.replace(/[\\/]+$/, "");
   return stripped || rootPath;
+}
+
+function projectNameFromRoot(rootPath: string): string {
+  return rootPath.split(/[/\\]/).filter(Boolean).pop() ?? rootPath;
 }
 
 function validateSessionDocument(raw: unknown): string | null {
@@ -84,6 +89,16 @@ export const SESSION_METADATA: MetadataSchema = {
 
 export const SESSION_MIGRATIONS: Record<number, MetadataMigration> = { 0: migrateSessionsFromV0 };
 
+function repairProjectNames(projects: Project[]): string[] {
+  const repaired: string[] = [];
+  for (const [index, project] of projects.entries()) {
+    if (typeof project.name === "string") continue;
+    project.name = projectNameFromRoot(project.rootPath);
+    repaired.push(`projects[${index}].name`);
+  }
+  return repaired;
+}
+
 function resetRuntimeStatuses(sessions: SessionMeta[]): boolean {
   let changed = false;
   for (const session of sessions) {
@@ -102,11 +117,13 @@ export class SessionStore {
   private filePath: string;
   private data: StoreShape = { projects: [], sessions: [] };
   private extras: MetadataDocument = {};
+  private lastGood: LastGoodRefresher;
 
   constructor(dbPath: string) {
     this.filePath = sessionStoreFile(dbPath);
     mkdirSync(dirname(this.filePath), { recursive: true });
     const loaded = loadVersionedJson({ filePath: this.filePath, ...SESSION_METADATA, migrations: SESSION_MIGRATIONS });
+    this.lastGood = new LastGoodRefresher(this.filePath);
     if (loaded.status === "ok") {
       const extras = { ...loaded.data };
       this.data = { projects: extras.projects as Project[], sessions: extras.sessions as SessionMeta[] };
@@ -115,7 +132,9 @@ export class SessionStore {
       delete extras.sessions;
       this.extras = extras;
     }
-    if (resetRuntimeStatuses(this.data.sessions)) this.persist();
+    const repaired = repairProjectNames(this.data.projects);
+    if (repaired.length > 0) backupBeforeRepair(this.filePath, SESSION_METADATA, repaired);
+    if (resetRuntimeStatuses(this.data.sessions) || repaired.length > 0) this.persist();
   }
 
   private persist(): void {
@@ -123,6 +142,7 @@ export class SessionStore {
       this.filePath,
       JSON.stringify({ schemaVersion: SESSION_SCHEMA_VERSION, projects: this.data.projects, sessions: this.data.sessions, ...this.extras })
     );
+    this.lastGood.afterPersist();
   }
 
   addProject(rootPath: string): Project {
@@ -136,7 +156,7 @@ export class SessionStore {
     const project: Project = {
       id: `proj_${randomUUID().slice(0, 8)}`,
       rootPath: normalized,
-      name: normalized.split(/[/\\]/).filter(Boolean).pop() ?? normalized
+      name: projectNameFromRoot(normalized)
     };
     this.data.projects.push(project);
     this.persist();
@@ -253,5 +273,7 @@ export class SessionStore {
     });
   }
 
-  close(): void {}
+  close(): void {
+    this.lastGood.flush();
+  }
 }

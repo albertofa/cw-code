@@ -2,7 +2,7 @@ import { copyFileSync, cpSync, existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { expandHome, normalizeStoredDir } from "../skills/skillPaths.js";
-import { hasBackupFiles } from "../storage/backups.js";
+import { metadataArtifactNames } from "../storage/backups.js";
 
 export function cwCodeHome(home?: string, env?: NodeJS.ProcessEnv): string {
   const explicit = home?.trim();
@@ -111,7 +111,7 @@ export function migrateFromUserData(
   if (!existsSync(userDataDir)) return { copied, skipped: entries.map((entry) => entry.name) };
   for (const entry of entries) {
     const src = join(userDataDir, entry.name);
-    if (!existsSync(src) || existsSync(entry.dest) || (entry.metadata && hasBackupFiles(entry.dest))) {
+    if (!existsSync(src) || existsSync(entry.dest) || (entry.metadata && metadataArtifactNames(entry.dest).length > 0)) {
       skipped.push(entry.name);
       continue;
     }
