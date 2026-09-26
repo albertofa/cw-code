@@ -20,6 +20,7 @@ import {
   runSilent,
   runUninstallSync,
   safePathWithoutClis,
+  startupModeProblem,
   waitForRegistryValueGone
 } from "./windows-install.mjs";
 
@@ -205,11 +206,13 @@ export async function runProductionBytes(options) {
 
     for (const pid of knownPids) killProcessTreeIfImage(pid, isInstalledExe);
     const { exitCode, probe } = await runPackageProbe(exe, { cwCodeHome: cwCodeHomeDir(), defaultUserData: true });
-    report.probe = { exitCode, appVersion: probe.appVersion, rendererLoaded: probe.rendererLoaded, rendererFailures: probe.rendererFailures ?? [], nodePtySpawned: probe.nodePty.spawned };
+    report.probe = { exitCode, appVersion: probe.appVersion, rendererLoaded: probe.rendererLoaded, rendererFailures: probe.rendererFailures ?? [], nodePtySpawned: probe.nodePty.spawned, startupMode: probe.startupMode ?? null };
     if (exitCode !== 0) report.problems.push(`post-update probe exited with code ${exitCode}`);
     if (probe.appVersion !== candidate.version) report.problems.push(`post-update probe reports ${probe.appVersion}, expected ${candidate.version}`);
     if (!probe.rendererLoaded) report.problems.push(`post-update probe: renderer failed to load (${report.probe.rendererFailures.join("; ") || "no failure recorded"})`);
     if (!probe.nodePty.spawned) report.problems.push(`post-update probe: node-pty did not spawn (${probe.nodePty.error ?? "unknown error"})`);
+    const startupProblem = startupModeProblem("post-update probe", probe);
+    if (startupProblem) report.problems.push(startupProblem);
 
     report.signature = authenticode(exe);
     if (rewrite.publisherNames.length > 0) {

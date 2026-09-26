@@ -201,6 +201,11 @@ export async function runPackageProbe(exePath, opts = {}) {
   }
 }
 
+export function startupModeProblem(label, probe) {
+  if (probe.startupMode === undefined || probe.startupMode === "ready") return null;
+  return `${label}: app started in '${probe.startupMode}' mode instead of 'ready'`;
+}
+
 export async function resolveAsarLib(desktopDir) {
   try {
     return await import("@electron/asar");

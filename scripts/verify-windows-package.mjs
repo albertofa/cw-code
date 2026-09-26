@@ -18,6 +18,7 @@ import {
   registryPaths,
   requireDisposableEnvironment,
   runPackageProbe,
+  startupModeProblem,
   runSilent,
   runSilentWithRetry,
   runUninstallSync,
@@ -126,6 +127,8 @@ async function checkPackage(distDir) {
       report.probe = { exitCode, ...probe };
       if (!probe.rendererLoaded) problems.push("packaged startup probe: renderer failed to load");
       if (!probe.nodePty.spawned) problems.push(`packaged startup probe: node-pty did not spawn (${probe.nodePty.error ?? "unknown error"})`);
+      const startupProblem = startupModeProblem("packaged startup probe", probe);
+      if (startupProblem) problems.push(startupProblem);
     } catch (err) {
       problems.push(`packaged startup probe failed: ${err.message}`);
     }
@@ -155,6 +158,8 @@ async function installMode(distDir, disposableEnvironment) {
     probe = result.probe;
     if (!probe.rendererLoaded) problems.push("install mode probe: renderer failed to load");
     if (!probe.nodePty.spawned) problems.push(`install mode probe: node-pty did not spawn (${probe.nodePty.error ?? "unknown error"})`);
+    const startupProblem = startupModeProblem("install mode probe", probe);
+    if (startupProblem) problems.push(startupProblem);
   } catch (err) {
     problems.push(`install mode probe failed: ${err.message}`);
   } finally {
@@ -257,6 +262,8 @@ async function upgradeFromMode(distDir, legacyInstallerPath, disposableEnvironme
         if (!probe.nodePty.spawned) {
           problems.push(`post-upgrade probe: node-pty did not spawn (${probe.nodePty.error ?? "unknown error"})`);
         }
+        const startupProblem = startupModeProblem("post-upgrade probe", probe);
+        if (startupProblem) problems.push(startupProblem);
       } catch (err) {
         problems.push(`post-upgrade probe failed: ${err.message}`);
       }
