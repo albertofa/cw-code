@@ -40,6 +40,19 @@ const silentScript = join(tmpDir, "silent.mjs");
 writeFileSync(silentScript, 'process.stdin.on("data", () => {}); setInterval(() => {}, 1000);\n', "utf8");
 const exitOnEndScript = join(tmpDir, "exit-on-end.mjs");
 writeFileSync(exitOnEndScript, 'process.stdin.on("data", () => {}); process.stdin.on("end", () => process.exit(0));\n', "utf8");
+const slowExitScript = join(tmpDir, "slow-exit.mjs");
+writeFileSync(
+  slowExitScript,
+  `${FAKE_SERVER}\nconst keepAlive = setInterval(() => {}, 1000);\nprocess.stdin.on("end", () => setTimeout(() => { clearInterval(keepAlive); process.exit(0); }, 300));\n`,
+  "utf8"
+);
+const silentOnceMarker = join(tmpDir, "silent-once.marker");
+const silentOnceScript = join(tmpDir, "silent-once.mjs");
+writeFileSync(
+  silentOnceScript,
+  `import { existsSync, writeFileSync } from "node:fs";\nif (!existsSync(${JSON.stringify(silentOnceMarker)})) {\n  writeFileSync(${JSON.stringify(silentOnceMarker)}, "1");\n  process.stdin.on("data", () => {});\n  setInterval(() => {}, 1000);\n} else {\n${FAKE_SERVER}\n}\n`,
+  "utf8"
+);
 
 async function waitFor(condition: () => boolean, timeoutMs = 5000): Promise<void> {
   const deadline = Date.now() + timeoutMs;
@@ -140,6 +153,32 @@ describe("CodexAppServer", () => {
     expect(await polite.shutdown(5000)).toEqual({ timedOut: false });
     expect(await request).toContain("shutting down");
     expect(polite.ownedProcessCount()).toBe(0);
+  });
+
+  it("rejects a request that starts while shutdown waits instead of writing to the closed child", async () => {
+    const stopping = new CodexAppServer({ binary: process.execPath, args: [slowExitScript] });
+    try {
+      await expect(stopping.request<{ echo: string }>("greet")).resolves.toMatchObject({ echo: "greet" });
+      const shutdown = stopping.shutdown(5000);
+      await expect(stopping.request("late")).rejects.toThrow("disposed");
+      expect(await shutdown).toEqual({ timedOut: false });
+      expect(stopping.ownedProcessCount()).toBe(0);
+    } finally {
+      stopping.dispose();
+    }
+  });
+
+  it("ignores a late close from a timed-out child so the retry's requests survive", async () => {
+    const retrying = new CodexAppServer({ binary: process.execPath, args: [silentOnceScript], initializeTimeoutMs: 1500 });
+    try {
+      await expect(retrying.request("first")).rejects.toThrow("initialize timed out");
+      const retry = await retrying.request<{ echo: string }>("second");
+      expect(retry.echo).toBe("second");
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      await expect(retrying.request<{ echo: string }>("third")).resolves.toMatchObject({ echo: "third" });
+    } finally {
+      retrying.dispose();
+    }
   });
 
   it("passes spawn env to the app-server process", async () => {
