@@ -1,10 +1,10 @@
 // @vitest-environment jsdom
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import type { ShutdownAssessment, UpdateActionResult, UpdateInstallRequest, UpdateState } from "../cw.js";
+import type { ShutdownAssessment, ShutdownPrepareRequest, ShutdownPrepareResult, UpdateActionResult, UpdateInstallRequest, UpdateState } from "../cw.js";
 import { useNotifs } from "../components/Notifications.js";
 import { useAppStore } from "./appStore.js";
 import { useEditorBuffers } from "./editorBuffers.js";
-import { runShutdownFlow, shutdownCancel } from "./shutdownFlow.js";
+import { runShutdownFlow, shutdownCancel, shutdownProceed } from "./shutdownFlow.js";
 import { restartToUpdate } from "./updateFlow.js";
 
 const EMPTY: ShutdownAssessment = { activeTurns: [], backgroundTasks: 0, terminals: [] };
@@ -40,6 +40,8 @@ interface FakeBridge {
   installs: UpdateInstallRequest[];
   installResult: UpdateActionResult | Error;
   prepares: number;
+  prepareRequests: ShutdownPrepareRequest[];
+  stoppedTurnIds: string[] | null;
   cancels: string[];
 }
 
@@ -50,6 +52,8 @@ function installBridge(): FakeBridge {
     installs: [],
     installResult: new Error("not configured"),
     prepares: 0,
+    prepareRequests: [],
+    stoppedTurnIds: null,
     cancels: []
   };
   (window as unknown as { cw: unknown }).cw = {
@@ -63,9 +67,10 @@ function installBridge(): FakeBridge {
     },
     shutdown: {
       assess: async () => bridge.assessments.shift() ?? EMPTY,
-      prepare: async () => {
+      prepare: async (request: ShutdownPrepareRequest): Promise<ShutdownPrepareResult> => {
         bridge.prepares += 1;
-        return { ok: true, token: `token-${bridge.prepares}` };
+        bridge.prepareRequests.push(request);
+        return { ok: true, token: `token-${bridge.prepares}`, stoppedTurnIds: bridge.stoppedTurnIds ?? request.approvedTurnIds ?? [] };
       },
       cancel: async (token: string) => {
         bridge.cancels.push(token);
@@ -145,6 +150,35 @@ describe("restartToUpdate", () => {
     await restartToUpdate();
     expect(bridge.prepares).toBe(0);
     expect(bridge.installs).toEqual([]);
+  });
+
+  it("marks only the turns main reports as stopped before installing", async () => {
+    bridge.assessments = [
+      {
+        activeTurns: [
+          { sessionId: "sess_a", turnId: "t1", title: "work", startedAt: 1 },
+          { sessionId: "sess_b", turnId: "t2", title: "finished meanwhile", startedAt: 1 }
+        ],
+        backgroundTasks: 0,
+        terminals: []
+      }
+    ];
+    bridge.stoppedTurnIds = ["t1"];
+    bridge.installResult = { ok: true, state: ready(3, { phase: "installing" }) };
+    const original = useAppStore.getState().markTurnsInterrupted;
+    const marked: string[][] = [];
+    useAppStore.setState({ markTurnsInterrupted: (sessionIds: string[]) => marked.push(sessionIds) });
+    try {
+      const pending = restartToUpdate();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      await shutdownProceed();
+      await pending;
+      expect(bridge.prepareRequests[0]).toMatchObject({ reason: "update", stopActiveTurns: true, approvedTurnIds: ["t1", "t2"] });
+      expect(marked).toEqual([["sess_a"]]);
+      expect(bridge.installs).toEqual([{ version: "1.1.0", channel: "stable", token: "token-1" }]);
+    } finally {
+      useAppStore.setState({ markTurnsInterrupted: original });
+    }
   });
 
   it("refuses while another quit or restart flow is open", async () => {

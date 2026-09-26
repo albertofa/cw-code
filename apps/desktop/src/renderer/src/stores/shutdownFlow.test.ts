@@ -206,7 +206,7 @@ describe("runShutdownFlow", () => {
   });
 
   it("closes a stale timeout dialog when main reports the lease expired", async () => {
-    api.prepareResults = [{ ok: false, code: "timeout", pending: ["claude"], token: "token-3" }];
+    api.prepareResults = [{ ok: false, code: "timeout", pending: ["claude"], token: "token-3", stoppedTurnIds: [] }];
     const pending = runShutdownFlow("update");
     await settle();
     handleShutdownExpired();

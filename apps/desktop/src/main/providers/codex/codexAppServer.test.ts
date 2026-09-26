@@ -182,33 +182,39 @@ process.stdin.on("data", (chunk) => {
     }
   });
 
-  it("waits for a starting app-server to finish initializing before stopping it gracefully", async () => {
+  it("stops a starting app-server by closing stdin without waiting for initialization", async () => {
     const starting = new CodexAppServer({ binary: process.execPath, args: [scriptPath] });
     starting.onNotification(() => {});
     starting.onServerRequest(() => {});
-    const request = starting.request("greet", {}).catch((err: Error) => err);
+    const request = starting.request("greet", {}).catch((err: Error) => err.message);
     expect(starting.ownedProcessCount()).toBe(1);
     try {
       expect(await starting.shutdown(10_000)).toEqual({ timedOut: false });
       expect(starting.ownedProcessCount()).toBe(0);
-      await request;
+      expect(await request).toContain("shutting down");
     } finally {
       starting.dispose();
     }
   });
 
-  it("reports a timeout when the app-server does not finish starting in time", async () => {
-    const stuckScript = join(tmpDir, "stuck.mjs");
-    writeFileSync(stuckScript, 'process.stdin.on("data", () => {});\n', "utf8");
-    const stuck = new CodexAppServer({ binary: process.execPath, args: [stuckScript] });
-    stuck.onNotification(() => {});
-    stuck.onServerRequest(() => {});
-    const request = stuck.request("greet", {}).catch((err: Error) => err);
+  it("reports a timeout only while the starting child is still alive at the deadline", async () => {
+    const slowExitScript = join(tmpDir, "slow-exit.mjs");
+    writeFileSync(
+      slowExitScript,
+      'process.stdin.on("data", () => {}); process.stdin.on("end", () => setTimeout(() => process.exit(0), 600)); setInterval(() => {}, 1000);\n',
+      "utf8"
+    );
+    const slow = new CodexAppServer({ binary: process.execPath, args: [slowExitScript], initializeTimeoutMs: 10_000 });
+    slow.onNotification(() => {});
+    slow.onServerRequest(() => {});
+    const request = slow.request("greet", {}).catch((err: Error) => err.message);
     try {
-      expect(await stuck.shutdown(200)).toEqual({ timedOut: true });
+      expect(await slow.shutdown(100)).toEqual({ timedOut: true });
+      expect(slow.ownedProcessCount()).toBe(1);
+      expect(await slow.shutdown(5000)).toEqual({ timedOut: false });
+      expect(slow.ownedProcessCount()).toBe(0);
+      expect(await request).toContain("shutting down");
     } finally {
-      stuck.dispose();
+      slow.dispose();
     }
-    expect(await request).toBeInstanceOf(Error);
-  });
-});
+  });});
