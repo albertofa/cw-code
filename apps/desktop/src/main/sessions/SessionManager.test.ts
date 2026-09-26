@@ -213,6 +213,23 @@ function makeGitSandboxManager(prefix: string) {
 }
 
 describe("SessionManager", () => {
+  it("keeps settings and title generation next to an explicit dbPath instead of the real app home", () => {
+    const sandbox = mkdtempSync(join(tmpdir(), "cw-data-dir-"));
+    const appHome = join(sandbox, "app-home");
+    vi.stubEnv("CW_CODE_HOME", appHome);
+    try {
+      const manager = new SessionManager({ dbPath: join(sandbox, "data", "test.db") });
+      manager.setSettings({ autoTitleEnabled: false });
+      const titleRoot = (manager as unknown as { titleGenRoot(): string }).titleGenRoot();
+      manager.dispose();
+      expect(existsSync(join(sandbox, "data", "cw-settings.json"))).toBe(true);
+      expect(titleRoot).toBe(join(sandbox, "data", "title-gen"));
+      expect(existsSync(appHome)).toBe(false);
+    } finally {
+      vi.unstubAllEnvs();
+    }
+  });
+
   it("normalizes trailing separators on project roots", () => {
     const { manager } = makeManager();
     const project = manager.addProject("C:\\proj\\");
