@@ -199,7 +199,7 @@ Automated (vitest): `ShutdownCoordinator.test.ts` (ordering, session isolation,
 cancellation, timeout, ownership, re-entry, installer-start failure and retry),
 `SessionManager.shutdown.test.ts`, `PtyPool.test.ts`, driver shutdown tests for
 Claude, Codex, OpenCode and the tracing wrapper, `codexAppServer.test.ts`
-(graceful stop while starting, startup timeout), `editorBuffers.test.ts`,
+(stop while starting by closing stdin, timeout only while the child is alive), `editorBuffers.test.ts`,
 `shutdownFlow.test.ts` (including lease expiry) and
 `UpdateService.install.test.ts` (update commits through the coordinator).
 
@@ -228,7 +228,8 @@ project and a disposable `CW_CODE_HOME`; never the developer's live install):
 10. Reach the timeout dialog and wait 120 s without choosing: the dialog closes
     with "waited too long for a decision" and new turns can start.
 11. Start a Codex session and close the window while the app-server is still
-    starting: the quit waits for startup and exits without a timeout dialog.
+    starting: stdin is closed at once and the quit exits without a timeout dialog
+    (unless the app-server ignores stdin close for 10 s).
 12. Update and restart, with the update-specific checks, is in the manual
     checklist of `updater.md`.
 13. Open file A, edit it, open file B, then reopen A: the unsaved edits are
