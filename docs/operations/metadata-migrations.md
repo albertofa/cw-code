@@ -69,8 +69,9 @@ All backups sit next to the source file:
 - `<file>.last-good.bak`: a copy of the file as last known good, rewritten
   only when the bytes changed. It is refreshed after every successful load and
   after runtime writes, at most once per 60 seconds per file. A write that
-  falls inside that window is copied on the next write after it, when the
-  session store closes cleanly (on quit), or at the next start. A failed
+  falls inside that window is copied on the next write after it, when cw-code
+  quits cleanly (both stores flush their pending refresh), or at the next
+  start. A failed
   refresh logs a warning and never fails the write.
 - `<file>.last-good.<timestamp>.bak`: a verified copy of `.last-good.bak` made
   before a restore or a fresh start, because the next successful load replaces
@@ -88,7 +89,9 @@ renamed over the target (retried up to five times, with a logged warning each
 time, when Windows reports the file as busy or locked). On Linux and macOS the
 parent directory is then opened read-only and fsynced so the rename itself is
 durable; `EISDIR`, `EINVAL`, `EPERM` and `ENOTSUP` from that step are ignored
-because some file systems do not support it. If cw-code stops mid-migration,
+because some file systems do not support it. Any other failure there is logged
+as a warning with the directory and error code, and the write still counts as
+successful, because the new bytes are already in place. If cw-code stops mid-migration,
 the next start either finds the original schema-0 file (its backup already
 exists and is reused) or the finished schema-1 file.
 

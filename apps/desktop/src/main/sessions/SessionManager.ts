@@ -1462,5 +1462,6 @@ export class SessionManager {
     }
     for (const driver of Object.values(this.drivers)) driver.dispose?.();
     this.store.close();
+    this.settings.flush();
   }
 }

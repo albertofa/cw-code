@@ -220,11 +220,7 @@ export const SETTINGS_METADATA: MetadataSchema = {
 export const SETTINGS_MIGRATIONS: Record<number, MetadataMigration> = { 0: (raw) => raw };
 
 function unknownKeys(document: MetadataDocument): MetadataDocument {
-  const extras: MetadataDocument = {};
-  for (const [key, value] of Object.entries(document)) {
-    if (key !== "schemaVersion" && !KNOWN_SETTING_KEYS.has(key)) extras[key] = value;
-  }
-  return extras;
+  return Object.fromEntries(Object.entries(document).filter(([key]) => key !== "schemaVersion" && !KNOWN_SETTING_KEYS.has(key)));
 }
 
 function repairedKeys(document: MetadataDocument, data: AppSettings): string[] {
@@ -271,6 +267,10 @@ export class SettingsStore {
     this.data = next;
     this.lastGood.afterPersist();
     return this.get();
+  }
+
+  flush(): void {
+    this.lastGood.flush();
   }
 
   private persist(): void {
