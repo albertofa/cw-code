@@ -124,7 +124,8 @@ export function migrateFromUserData(
       if (entry.tree) cpSync(src, entry.dest, { recursive: true });
       else copyFileSync(src, entry.dest);
       copied.push(entry.name);
-    } catch {
+    } catch (err) {
+      console.warn(`legacy data migration skipped ${entry.name}: ${(err as Error).message}`);
       skipped.push(entry.name);
     }
   }
