@@ -8,7 +8,8 @@
     "build": "pnpm -r build",
     "test": "pnpm -r test",
     "typecheck": "pnpm -r typecheck",
-    "dist": "pnpm --filter @cw-code/desktop dist"
+    "dist": "pnpm --filter @cw-code/desktop dist",
+    "release:plan": "node tools/release/src/cli/release.ts plan"
   },
   "description": "A desktop workspace for Claude Code, OpenCode, and Codex.",
   "license": "MIT",
