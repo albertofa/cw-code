@@ -222,8 +222,17 @@ diagnostic on timeout) before returning.
   existing install), then asserts: `InstallLocation` unchanged (and equal to
   `--custom-dir` when given), `DisplayVersion` changed and now matches the new
   build, `Publisher` now matches `apps/desktop/package.json`'s `author` (it was
-  empty pre-upgrade), and all four seeded files still exist with byte-identical
-  content. This only runs safely because it's gated to a disposable environment —
+  empty pre-upgrade), and all four seeded files are byte-identical after the
+  installer. It then runs the startup probe against the installed exe with the
+  seeded `CW_CODE_HOME` and the default Electron userData (no `--user-data-dir`),
+  requires exit 0 and a loaded renderer, and compares the data semantically:
+  project ids/roots/names, session ids/projects/resume cursors/worktree
+  paths/branches, the seeded settings and unknown keys must survive, while an
+  added `schemaVersion` and new backup files are ignored; marker files stay
+  byte-compared. Seeding refuses any existing target that isn't an exact verifier
+  fixture (`_fixture` / marker line of the form `cw-verify-<uuid>`), and cleanup
+  removes only the files the run wrote and the directories it created, when
+  empty. This only runs safely because it's gated to a disposable environment —
   it writes to the real per-user cw-code data paths on the runner.
 
 Because the legacy release and the default `apps/desktop/package.json` version

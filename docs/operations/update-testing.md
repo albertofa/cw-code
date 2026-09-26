@@ -361,8 +361,9 @@ production renderer bridge instead:
 
 1. Refuses to run if any `com.cwcode.app` install exists, validates the
    candidate set (manifest, sha512, size, blockmap).
-2. Seeds cw-code's real default data folders with the guarded `cw-verify`
-   fixtures (it aborts if they already hold real data) and installs N per user.
+2. Seeds cw-code's real default data folders with the guarded `cw-verify-<uuid>`
+   fixtures (it aborts if a target exists and isn't an exact verifier fixture)
+   and installs N per user.
 3. Rewrites only the installed copy's `resources/app-update.yml` to
    `provider: generic` on the loopback feed, keeping `updaterCacheDirName` and
    every `publisherName`, so `electron-updater` still verifies the candidate's
@@ -373,9 +374,11 @@ production renderer bridge instead:
    Update and restart button makes.
 5. Waits for the silent installer to finish (`DisplayVersion` N+1) and for a new
    `cw-code.exe` main process at the install path, closes it by PID, runs the
-   packaged startup probe, checks the Authenticode status and subject of the
-   installed executable against `publisherName`, compares the seeded data and
-   uninstalls.
+   packaged startup probe against the seeded `CW_CODE_HOME` and default userData,
+   checks the Authenticode status and subject of the installed executable
+   against `publisherName`, compares the seeded data semantically (markers
+   byte-for-byte) and uninstalls. Cleanup removes only the fixture files and
+   empty directories the run created.
 
 Trade-off: the production binary is unchanged, but the test edits one file in
 the disposable install and opens a loopback DevTools port for the test's
