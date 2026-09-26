@@ -125,7 +125,7 @@ function createServices(stores: { sessionStore: SessionStore; settingsStore: Set
     git,
     pullRequests,
     ptys,
-    accountUsage: new AccountUsageService(() => sessions.getDrivers()),
+    accountUsage: new AccountUsageService(() => sessions.driversForProbe()),
     shutdown: new ShutdownCoordinator({ sessions, ptys, onRecovered: handleShutdownRecovered })
   };
 }
