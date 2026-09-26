@@ -216,7 +216,11 @@ function requireDisposableEnvironment(modeName, disposableEnvironment) {
 }
 
 function runSilent(command, args) {
-  const result = spawnSync(command, args, { encoding: "utf8" });
+  const isolatedTemp = mkdtempSync(join(process.env.RUNNER_TEMP ?? tmpdir(), "cw-installer-temp-"));
+  const result = spawnSync(command, args, {
+    encoding: "utf8",
+    env: { ...process.env, TEMP: isolatedTemp, TMP: isolatedTemp }
+  });
   if (result.status !== 0) {
     throw new Error(`${command} ${args.join(" ")} failed (exit ${result.status}): ${result.stderr || result.stdout}`);
   }
