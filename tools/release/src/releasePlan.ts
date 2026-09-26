@@ -15,6 +15,7 @@ import {
   type ClassifiedRelease,
   classifyReleases,
   highestPublished,
+  mostRecentlyPublished,
   planNextAlpha,
   resolveCandidate,
   shouldSkipAutomaticAlpha,
@@ -24,14 +25,6 @@ import {
 export type { ReleasePlan, ReleasePlanCandidate };
 
 export type PlanResult = { status: "planned"; plan: ReleasePlan } | { status: "skip"; reason: string };
-
-function latestPublishedOverall(classified: ClassifiedRelease[]): ClassifiedRelease | null {
-  const stable = highestPublished(classified, "stable");
-  const alpha = highestPublished(classified, "alpha");
-  if (!stable) return alpha;
-  if (!alpha) return stable;
-  return compareVersions(alpha.version, stable.version) > 0 ? alpha : stable;
-}
 
 export interface BuildAlphaPlanOptions {
   source: ReleaseSource;
@@ -52,7 +45,7 @@ export async function buildAlphaPlan(options: BuildAlphaPlanOptions): Promise<Pl
   }
 
   const headSha = options.sha ?? (await source.headSha());
-  const latestOverall = latestPublishedOverall(classified);
+  const latestOverall = mostRecentlyPublished(classified);
   const latestChangeSha = latestOverall ? await source.tagSha(latestOverall.release.tagName) : null;
   const latestAlpha = highestPublished(classified, "alpha");
 
@@ -60,7 +53,7 @@ export async function buildAlphaPlan(options: BuildAlphaPlanOptions): Promise<Pl
     now,
     headSha,
     latestChangeSha,
-    latestAlphaPublishedAt: latestAlpha?.release.publishedAt ?? null,
+    latestAlphaPublishedAt: mostRecentlyPublished(classified, "alpha")?.release.publishedAt ?? null,
     force: options.force ?? false
   });
   if (throttle.skip) {
