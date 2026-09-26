@@ -179,6 +179,13 @@ export async function verifyPlan(rawPlan: unknown, source: ReleaseSource): Promi
       reasons.push(`Source SHA changed: plan expected ${plan.sourceSha}, origin/main is now ${remoteMainSha}`);
     }
   } else if (plan.candidate) {
+    const candidateTag = plan.candidate.tag;
+    const candidateRelease = releases.find((release) => release.tagName === candidateTag);
+    if (!candidateRelease) {
+      reasons.push(`Candidate release "${candidateTag}" no longer exists; only a published alpha release can be promoted`);
+    } else if (candidateRelease.draft) {
+      reasons.push(`Candidate release "${candidateTag}" is a draft; only a published alpha release can be promoted`);
+    }
     const candidateSha = await source.tagSha(plan.candidate.tag);
     if (candidateSha !== plan.sourceSha) {
       reasons.push(
