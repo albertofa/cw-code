@@ -18,7 +18,7 @@ vi.mock("node:fs", async (importOriginal) => {
   const actual = await importOriginal<typeof import("node:fs")>();
   return {
     ...actual,
-    openSync: vi.fn((path: PathLike, flags?: OpenMode) => {
+    openSync: vi.fn((path: PathLike, flags: OpenMode) => {
       if (directorySync.dir !== null && path === directorySync.dir) {
         directorySync.opened += 1;
         expect(flags).toBe("r");
