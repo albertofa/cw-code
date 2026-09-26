@@ -1,6 +1,7 @@
 import { randomBytes } from "node:crypto";
 import { closeSync, fsyncSync, openSync, readFileSync, renameSync, rmSync, writeSync } from "node:fs";
 import { dirname } from "node:path";
+import { describeError } from "./metadataDocument.js";
 
 const IGNORED_DIRECTORY_SYNC_CODES = new Set(["EISDIR", "EINVAL", "EPERM", "ENOTSUP"]);
 const RETRYABLE_RENAME_CODES = new Set(["EPERM", "EBUSY", "EACCES"]);
@@ -37,15 +38,18 @@ function writeAndSync(path: string, bytes: Uint8Array): void {
   }
 }
 
-function syncDirectory(dir: string): void {
-  let fd: number | null = null;
+function syncParentDirectory(path: string): void {
+  const dir = dirname(path);
   try {
-    fd = openSync(dir, "r");
-    fsyncSync(fd);
+    const fd = openSync(dir, "r");
+    try {
+      fsyncSync(fd);
+    } finally {
+      closeSync(fd);
+    }
   } catch (error) {
-    if (!IGNORED_DIRECTORY_SYNC_CODES.has((error as NodeJS.ErrnoException).code ?? "")) throw error;
-  } finally {
-    if (fd !== null) closeSync(fd);
+    if (IGNORED_DIRECTORY_SYNC_CODES.has((error as NodeJS.ErrnoException).code ?? "")) return;
+    console.warn(`could not fsync directory ${dir} after replacing ${path}: ${describeError(error)}`);
   }
 }
 
@@ -66,7 +70,7 @@ export function writeFileAtomic(path: string, data: string | Uint8Array): void {
     removeTemp(tmp);
     throw error;
   }
-  if (process.platform !== "win32") syncDirectory(dirname(path));
+  if (process.platform !== "win32") syncParentDirectory(path);
 }
 
 export function readBytesIfExists(path: string): Buffer | null {

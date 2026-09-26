@@ -111,11 +111,15 @@ export function migrateFromUserData(
   if (!existsSync(userDataDir)) return { copied, skipped: entries.map((entry) => entry.name) };
   for (const entry of entries) {
     const src = join(userDataDir, entry.name);
-    if (!existsSync(src) || existsSync(entry.dest) || (entry.metadata && metadataArtifactNames(entry.dest).length > 0)) {
+    if (!existsSync(src) || existsSync(entry.dest)) {
       skipped.push(entry.name);
       continue;
     }
     try {
+      if (entry.metadata && metadataArtifactNames(entry.dest).length > 0) {
+        skipped.push(entry.name);
+        continue;
+      }
       mkdirSync(dirname(entry.dest), { recursive: true });
       if (entry.tree) cpSync(src, entry.dest, { recursive: true });
       else copyFileSync(src, entry.dest);

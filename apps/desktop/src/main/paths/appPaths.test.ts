@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, normalize } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   attachmentsDir,
   cwCodeHome,
@@ -15,6 +15,25 @@ import {
   userdataDir,
   worktreesDir
 } from "./appPaths.js";
+
+const readdirFailure = vi.hoisted(() => ({ dir: null as string | null }));
+
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...actual,
+    readdirSync: vi.fn((...args: Parameters<typeof actual.readdirSync>) => {
+      if (readdirFailure.dir !== null && args[0] === readdirFailure.dir) {
+        throw Object.assign(new Error(`EACCES: permission denied, scandir '${readdirFailure.dir}'`), { code: "EACCES" });
+      }
+      return actual.readdirSync(...args);
+    })
+  };
+});
+
+afterEach(() => {
+  readdirFailure.dir = null;
+});
 
 describe("cwCodeHome", () => {
   it("defaults to ~/.cw-code", () => {
@@ -181,6 +200,19 @@ describe("migrateFromUserData", () => {
     const result = migrateFromUserData(oldDir, home);
     expect(result.copied).toContain("cw-code.db.json");
     expect(result.skipped).toContain("cw-settings.json");
+  });
+
+  it("skips a metadata file instead of throwing when its folder cannot be listed", () => {
+    const oldDir = makeOldUserData();
+    const home = mkdtempSync(join(tmpdir(), "cw-new-home-"));
+    mkdirSync(join(home, "userdata"), { recursive: true });
+    readdirFailure.dir = join(home, "userdata");
+
+    const result = migrateFromUserData(oldDir, home);
+
+    expect(result.skipped).toEqual(expect.arrayContaining(["cw-code.db.json", "cw-settings.json"]));
+    expect(result.copied).toContain("skills.json");
+    expect(existsSync(join(home, "userdata", "cw-code.db.json"))).toBe(false);
   });
 
   it("skips worktrees entirely", () => {

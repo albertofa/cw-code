@@ -67,6 +67,7 @@ describe("writeFileAtomic", () => {
   });
 
   it.each(["EISDIR", "EINVAL", "EPERM", "ENOTSUP"])("ignores %s from the directory fsync and still closes it", (code) => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     setPlatform("darwin");
     const { file } = tempTarget();
     directorySync.fsyncError = code;
@@ -75,16 +76,24 @@ describe("writeFileAtomic", () => {
 
     expect(readFileSync(file, "utf8")).toBe("{}");
     expect(directorySync).toMatchObject({ opened: 1, synced: 1, closed: 1 });
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
   });
 
-  it("reports other directory fsync failures after closing the directory", () => {
+  it("warns about other directory fsync failures and still reports the committed write as successful", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     setPlatform("linux");
-    const { file } = tempTarget();
+    const { dir, file } = tempTarget();
     directorySync.fsyncError = "EIO";
 
-    expect(() => writeFileAtomic(file, "{}")).toThrow("EIO");
+    expect(() => writeFileAtomic(file, "{}")).not.toThrow();
 
+    expect(readFileSync(file, "utf8")).toBe("{}");
     expect(directorySync.closed).toBe(1);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining(dir));
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("EIO"));
+    warn.mockRestore();
   });
 
   it("does not open the parent directory on Windows", () => {
