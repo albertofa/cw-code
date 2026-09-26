@@ -54,6 +54,7 @@ const DEFAULT_INITIALIZE_TIMEOUT_MS = 30_000;
 export class CodexAppServer implements CodexAppServerLike {
   private proc: ChildProcess | null = null;
   private child: ChildProcess | null = null;
+  private latest: ChildProcess | null = null;
   private starting: Promise<ChildProcess> | null = null;
   private nextId = 1;
   private pending = new Map<string | number, PendingRequest>();
@@ -107,6 +108,7 @@ export class CodexAppServer implements CodexAppServerLike {
       return { timedOut: false };
     }
     this.disposed = true;
+    this.proc = null;
     this.rejectAllPending(new CodexAppServerError("codex app-server is shutting down"));
     try {
       child.stdin?.end();
@@ -141,12 +143,13 @@ export class CodexAppServer implements CodexAppServerLike {
 
   private async withProcess<T>(fn: (proc: ChildProcess) => Promise<T>): Promise<T> {
     const proc = await this.ensureStarted();
+    if (this.disposed) throw new CodexAppServerError("codex app-server disposed");
     return fn(proc);
   }
 
   private async ensureStarted(): Promise<ChildProcess> {
-    if (this.proc && this.proc.exitCode === null) return this.proc;
     if (this.disposed) throw new CodexAppServerError("codex app-server disposed");
+    if (this.proc && this.proc.exitCode === null) return this.proc;
     if (this.starting) return this.starting;
     this.starting = this.spawnAndInitialize().finally(() => {
       this.starting = null;
@@ -162,23 +165,26 @@ export class CodexAppServer implements CodexAppServerLike {
       ...(this.opts.env ? { env: this.opts.env } : {})
     });
     this.child = proc;
+    this.latest = proc;
     this.stderrTail = [];
 
     proc.on("error", (err) => {
-      this.rejectAllPending(new CodexAppServerError(`failed to spawn ${this.opts.binary}: ${err.message}`));
+      if (this.latest === proc) this.rejectAllPending(new CodexAppServerError(`failed to spawn ${this.opts.binary}: ${err.message}`));
       if (this.proc === proc) this.proc = null;
       if (proc.pid === undefined || hasExited(proc)) this.forget(proc);
     });
     proc.on("exit", () => this.forget(proc));
     proc.on("close", (code) => {
+      this.forget(proc);
+      if (this.latest !== proc) return;
       this.rejectAllPending(
         new CodexAppServerError(
           `codex app-server exited (code ${code})${this.stderrTail.length ? `: ${this.stderrTail.join(" ")}` : ""}`
         )
       );
-      this.forget(proc);
     });
     proc.stderr?.on("data", (chunk: Buffer) => {
+      if (this.latest !== proc) return;
       for (const line of chunk.toString().split(/\r?\n/)) {
         if (!line.trim()) continue;
         this.stderrTail.push(line);
