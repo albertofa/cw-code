@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -61,5 +61,23 @@ describe("packageVersions", () => {
 
   it("rejects set-base with a prerelease version", async () => {
     await expect(setBase(paths, "0.0.2-alpha.0")).rejects.toThrow();
+  });
+
+  it("restores already-written files when a later write fails", async () => {
+    const locked = paths[paths.length - 1];
+    await chmod(locked, 0o444);
+    try {
+      await expect(applyVersion(paths, "0.0.1-alpha.22")).rejects.toThrow(/earlier files were restored/);
+    } finally {
+      await chmod(locked, 0o644);
+    }
+    const result = await checkSync(paths);
+    expect(result).toMatchObject({ inSync: true, version: "0.0.1-alpha.21" });
+  });
+
+  it("changes nothing when a file cannot be read before writing", async () => {
+    await writeFile(paths[1], "not json", "utf8");
+    await expect(setBase(paths, "0.0.2")).rejects.toThrow();
+    expect(await readFile(paths[0], "utf8")).toContain("0.0.1-alpha.21");
   });
 });
