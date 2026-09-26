@@ -121,6 +121,38 @@ describe("PtyPool shutdown support", () => {
     expect(spawned).toHaveLength(0);
   });
 
+  it("refuses to spawn a terminal whose open was in flight across a dispose and reopen", async () => {
+    const { pool, spawned, holdLoads, release } = makePool();
+    holdLoads();
+    const pending = pool.open("sess_a", ".", "shell", "", undefined, noData);
+    pool.dispose();
+    pool.reopen();
+    release();
+    await expect(pending).rejects.toThrow("pty pool disposed");
+    expect(spawned).toHaveLength(0);
+    expect(pool.list()).toEqual([]);
+    await pool.open("sess_a", ".", "shell", "", undefined, noData);
+    expect(spawned).toHaveLength(1);
+  });
+
+  it("kills a terminal by its handle when the pool is disposed while it spawns", async () => {
+    const spawned: FakePty[] = [];
+    let pool: PtyPool | null = null;
+    const module: PtyModule = {
+      spawn: () => {
+        const pty = new FakePty();
+        spawned.push(pty);
+        pool?.dispose();
+        pool?.reopen();
+        return pty;
+      }
+    };
+    pool = new PtyPool(() => SETTINGS, async () => module);
+    await expect(pool.open("sess_a", ".", "shell", "", undefined, noData)).rejects.toThrow("pty pool disposed");
+    expect(spawned.map((pty) => pty.kills)).toEqual([1]);
+    expect(pool.list()).toEqual([]);
+  });
+
   it("kills each owned terminal once on dispose and accepts terminals again after reopen", async () => {
     const { pool, spawned } = makePool();
     await pool.open("sess_a", ".", "shell", "", undefined, noData);
