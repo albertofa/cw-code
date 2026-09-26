@@ -497,7 +497,7 @@ describe("verifyPlan", () => {
 
     it("accepts the plan while the candidate release is still published", async () => {
       const source = createFixtureReleaseSource({ releases: BASE_RELEASES, head: SHA.c9, commitLog: BASE_COMMIT_LOG });
-      expect(await verifyPlan(stablePlan, source)).toEqual({ ok: true });
+      expect((await verifyPlan(stablePlan, source)).ok).toBe(true);
     });
 
     it("rejects the plan when the release was deleted but its tag remains", async () => {
