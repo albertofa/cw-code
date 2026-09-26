@@ -12,6 +12,7 @@ export interface ReleaseSource {
   tagSha(tag: string): Promise<string | null>;
   headSha(ref?: string): Promise<string>;
   remoteMainSha(): Promise<string>;
+  listTags(): Promise<string[]>;
   logSubjects(fromRef: string | null, toRef: string): Promise<string[]>;
   showFile(sha: string, path: string): Promise<string>;
 }
