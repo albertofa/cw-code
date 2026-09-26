@@ -352,6 +352,7 @@ async function startPackageProbe(window: BrowserWindow, outPath: string): Promis
     runPackageProbe({
       outPath,
       appVersion: app.getVersion(),
+      startupMode: startupState.mode,
       electronVersion: process.versions.electron,
       renderer
     }).then(
