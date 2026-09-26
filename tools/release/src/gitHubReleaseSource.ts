@@ -86,6 +86,14 @@ export function createGitHubReleaseSource(options: GitHubReleaseSourceOptions): 
       return sha;
     },
 
+    async listTags(): Promise<string[]> {
+      const stdout = await run("git", ["tag", "--list", "v*"], cwd);
+      return stdout
+        .split("\n")
+        .map((line) => line.trim())
+        .filter((line) => line.length > 0);
+    },
+
     async logSubjects(fromRef: string | null, toRef: string): Promise<string[]> {
       const range = fromRef ? `${fromRef}..${toRef}` : toRef;
       const stdout = await run("git", ["log", "--first-parent", "--pretty=%s", range], cwd);

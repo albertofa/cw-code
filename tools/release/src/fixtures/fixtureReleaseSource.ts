@@ -8,6 +8,7 @@ export interface FixtureReleaseSourceOptions {
   releases: FixtureRelease[];
   head: string;
   remoteMainSha?: string;
+  extraTags?: Record<string, string>;
   commitLog: Array<{ sha: string; subject: string }>;
   filesAtSha?: Record<string, Record<string, string>>;
 }
@@ -26,7 +27,7 @@ function commitsBetween(commitLog: Array<{ sha: string; subject: string }>, from
 
 export function createFixtureReleaseSource(options: FixtureReleaseSourceOptions): ReleaseSource {
   const { releases, head, commitLog, filesAtSha = {} } = options;
-  const tagShas = new Map(releases.map((release) => [release.tagName, release.sha]));
+  const tagShas = new Map([...releases.map((release): [string, string] => [release.tagName, release.sha]), ...Object.entries(options.extraTags ?? {})]);
 
   return {
     async listReleases(): Promise<ReleaseInfo[]> {
@@ -41,6 +42,9 @@ export function createFixtureReleaseSource(options: FixtureReleaseSourceOptions)
     },
     async remoteMainSha(): Promise<string> {
       return options.remoteMainSha ?? head;
+    },
+    async listTags(): Promise<string[]> {
+      return [...tagShas].filter(([, sha]) => sha !== "").map(([tag]) => tag);
     },
     async logSubjects(fromRef: string | null, toRef: string): Promise<string[]> {
       const toSha = tagShas.get(toRef) ?? toRef;

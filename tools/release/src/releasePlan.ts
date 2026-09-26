@@ -46,7 +46,7 @@ export async function buildAlphaPlan(options: BuildAlphaPlanOptions): Promise<Pl
   const releases = await source.listReleases();
   const classified = classifyReleases(releases);
 
-  const nextAlpha = planNextAlpha(desktopVersion, classified);
+  const nextAlpha = planNextAlpha(desktopVersion, classified, await source.listTags());
   if (!nextAlpha.ok) {
     throw new Error(nextAlpha.reason);
   }
@@ -175,6 +175,12 @@ export async function verifyPlan(rawPlan: unknown, source: ReleaseSource): Promi
   }
 
   if (plan.channel === "alpha") {
+    const highestStable = highestPublished(classified, "stable");
+    if (highestStable && compareVersions(highestStable.version, planVersion) > 0) {
+      reasons.push(
+        `Stable ${formatVersion(highestStable.version)} is newer than ${plan.version}; publishing the alpha after it would hide it from alpha clients`
+      );
+    }
     const remoteMainSha = await source.remoteMainSha();
     if (remoteMainSha !== plan.sourceSha) {
       reasons.push(`Source SHA changed: plan expected ${plan.sourceSha}, origin/main is now ${remoteMainSha}`);
