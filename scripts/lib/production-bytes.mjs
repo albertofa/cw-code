@@ -9,7 +9,8 @@ import { formatScalar, readPublisherNames } from "../../tools/release/src/update
 import { parseAppUpdateYaml } from "./upgrade-builds.mjs";
 import { assertDataPreservedSemantically, cleanupSeededFixtures, createSeedPlan, cwCodeHomeDir, seedRealUserData } from "./real-user-data.mjs";
 import {
-  UNINSTALL_POLL_TIMEOUT_MS,
+  cleanupInstallation,
+  defaultInstallDir,
   isProcessAlive,
   killProcessTreeIfImage,
   nsisGuid,
@@ -18,13 +19,12 @@ import {
   requireDisposableEnvironment,
   runPackageProbe,
   runSilent,
-  runUninstallSync,
   safePathWithoutClis,
-  startupModeProblem,
-  waitForRegistryValueGone
+  startupModeProblem
 } from "./windows-install.mjs";
 
 const PRODUCTION_APP_ID = "com.cwcode.app";
+const PRODUCTION_PRODUCT_NAME = "cw-code";
 const PRODUCTION_EXECUTABLE = "cw-code.exe";
 const PRODUCTION_UNINSTALLER = "Uninstall cw-code.exe";
 const DEVTOOLS_TIMEOUT_MS = 90_000;
@@ -228,20 +228,24 @@ export async function runProductionBytes(options) {
   } catch (err) {
     report.problems.push(`production-bytes run aborted: ${err.message}`);
   } finally {
-    if (feed) await feed.close();
-    for (const pid of knownPids) killProcessTreeIfImage(pid, isInstalledExe);
-    if (location) {
-      const uninstaller = join(location, PRODUCTION_UNINSTALLER);
-      if (existsSync(uninstaller)) {
-        try {
-          runUninstallSync(uninstaller, location);
-          waitForRegistryValueGone(perUser.install, "InstallLocation", UNINSTALL_POLL_TIMEOUT_MS);
-        } catch (err) {
-          report.problems.push(`cleanup uninstall failed: ${err.message}`);
-        }
-      }
+    try {
+      if (feed) await feed.close();
+    } catch (err) {
+      report.problems.push(`feed server did not close: ${err.message}`);
     }
-    if (cacheDir && /-updater$/.test(cacheDir)) rmSync(cacheDir, { recursive: true, force: true });
+    for (const pid of knownPids) killProcessTreeIfImage(pid, isInstalledExe);
+    const cleanup = cleanupInstallation({
+      registryKeys: perUser,
+      uninstallerName: PRODUCTION_UNINSTALLER,
+      executableName: PRODUCTION_EXECUTABLE,
+      candidateDirs: [location, defaultInstallDir(PRODUCTION_PRODUCT_NAME, false)]
+    });
+    report.problems.push(...cleanup.errors.map((message) => `cleanup: ${message}`));
+    try {
+      if (cacheDir && /-updater$/.test(cacheDir)) rmSync(cacheDir, { recursive: true, force: true });
+    } catch (err) {
+      report.problems.push(`cleanup: could not remove updater cache ${cacheDir}: ${err.message}`);
+    }
     cleanupSeededFixtures(seed);
   }
   return report;
