@@ -156,6 +156,33 @@ describe("migrateFromUserData", () => {
     expect(result.copied).toContain("cw-settings.json");
   });
 
+  it.each([
+    "cw-code.db.json.v0.bak",
+    "cw-code.db.json.v0.2026-01-01T00-00-00-000Z.bak",
+    "cw-code.db.json.last-good.2026-01-01T00-00-00-000Z.bak",
+    "cw-code.db.json.before-repair.bak",
+    "cw-code.db.json.broken-2026-01-01T00-00-00-000Z"
+  ])("does not copy a legacy metadata file when %s exists, even if it is not restorable", (artifact) => {
+    const oldDir = makeOldUserData();
+    const home = mkdtempSync(join(tmpdir(), "cw-new-home-"));
+    mkdirSync(join(home, "userdata"), { recursive: true });
+    writeFileSync(join(home, "userdata", artifact), "corrupt{");
+    const result = migrateFromUserData(oldDir, home);
+    expect(existsSync(join(home, "userdata", "cw-code.db.json"))).toBe(false);
+    expect(result.skipped).toContain("cw-code.db.json");
+  });
+
+  it("still copies a legacy metadata file when only temp files and other files' backups exist", () => {
+    const oldDir = makeOldUserData();
+    const home = mkdtempSync(join(tmpdir(), "cw-new-home-"));
+    mkdirSync(join(home, "userdata"), { recursive: true });
+    writeFileSync(join(home, "userdata", "cw-code.db.json.4242.deadbeef.tmp"), "{");
+    writeFileSync(join(home, "userdata", "cw-settings.json.last-good.bak"), "{}");
+    const result = migrateFromUserData(oldDir, home);
+    expect(result.copied).toContain("cw-code.db.json");
+    expect(result.skipped).toContain("cw-settings.json");
+  });
+
   it("skips worktrees entirely", () => {
     const oldDir = makeOldUserData();
     mkdirSync(join(oldDir, "worktrees", "proj"), { recursive: true });

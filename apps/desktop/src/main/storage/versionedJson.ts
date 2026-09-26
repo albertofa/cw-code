@@ -5,6 +5,7 @@ import {
   backupLabel,
   lastGoodBackupPath,
   listBackups,
+  metadataArtifactNames,
   migrationBackupPath,
   timestampSuffix,
   uniquePath,
@@ -94,10 +95,10 @@ function ensureMigrationBackup(opts: VersionedJsonOptions, version: number, orig
   }
 }
 
-function refreshLastGood(opts: VersionedJsonOptions): void {
-  const backupPath = lastGoodBackupPath(opts.filePath);
+function refreshLastGood(filePath: string): void {
+  const backupPath = lastGoodBackupPath(filePath);
   try {
-    const current = readBytesIfExists(opts.filePath);
+    const current = readBytesIfExists(filePath);
     if (!current) return;
     const existing = readBytesIfExists(backupPath);
     if (existing?.equals(current)) return;
@@ -107,21 +108,64 @@ function refreshLastGood(opts: VersionedJsonOptions): void {
   }
 }
 
+function plural(count: number, noun: string): string {
+  return `${count} ${noun}${count === 1 ? "" : "s"}`;
+}
+
 function missingResult(opts: VersionedJsonOptions): LoadResult {
   let restorable: number;
+  let artifacts: string[];
   try {
     restorable = listBackups(opts.filePath, opts).filter((backup) => backup.valid).length;
+    artifacts = metadataArtifactNames(opts.filePath);
   } catch (error) {
     throw metadataError(opts, "io", `the file is missing and its backups could not be checked: ${describeError(error)}`);
   }
+  const name = basename(opts.filePath);
   if (restorable > 0) {
+    throw metadataError(opts, "missing", `${name} is missing but ${plural(restorable, "restorable backup")} of it exist${restorable === 1 ? "s" : ""}`);
+  }
+  if (artifacts.length > 0) {
     throw metadataError(
       opts,
       "missing",
-      `${basename(opts.filePath)} is missing but ${restorable} restorable backup${restorable === 1 ? "" : "s"} of it exist${restorable === 1 ? "s" : ""}`
+      `${name} is missing and none of its backups can be restored, but ${plural(artifacts.length, "cw-code file")} for it remain: ${artifacts.join(", ")}`
     );
   }
   return { status: "missing" };
+}
+
+export const LAST_GOOD_REFRESH_INTERVAL_MS = 60_000;
+
+export class LastGoodRefresher {
+  private lastRefreshAt: number;
+  private pending = false;
+
+  constructor(
+    private readonly filePath: string,
+    private readonly now: () => number = Date.now
+  ) {
+    this.lastRefreshAt = now();
+  }
+
+  afterPersist(): void {
+    const now = this.now();
+    if (now - this.lastRefreshAt < LAST_GOOD_REFRESH_INTERVAL_MS) {
+      this.pending = true;
+      return;
+    }
+    this.refresh(now);
+  }
+
+  flush(): void {
+    if (this.pending) this.refresh(this.now());
+  }
+
+  private refresh(now: number): void {
+    this.pending = false;
+    this.lastRefreshAt = now;
+    refreshLastGood(this.filePath);
+  }
 }
 
 export function loadVersionedJson(opts: VersionedJsonOptions): LoadResult {
@@ -146,6 +190,6 @@ export function loadVersionedJson(opts: VersionedJsonOptions): LoadResult {
       throw metadataError(opts, "io", `could not write the migrated file: ${describeError(error)}`, version);
     }
   }
-  refreshLastGood(opts);
+  refreshLastGood(opts.filePath);
   return { status: "ok", data, fromVersion: version, migrated };
 }

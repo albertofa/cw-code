@@ -285,4 +285,50 @@ describe("SessionStore", () => {
     expect((thrown as MetadataError).kind).toBe("missing");
     expect(existsSync(file)).toBe(false);
   });
+
+  it("repairs a missing or non-string project name from its root and keeps the original as a before-repair backup", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const original = JSON.stringify({
+      schemaVersion: SESSION_SCHEMA_VERSION,
+      projects: [
+        { id: "proj_a", rootPath: "C:\\work\\alpha" },
+        { id: "proj_b", rootPath: "/srv/beta", name: 42 },
+        { id: "proj_c", rootPath: "/srv/gamma", name: "Gamma" }
+      ],
+      sessions: []
+    });
+    const { file, dbPath } = writeRaw(original);
+
+    const store = new SessionStore(dbPath);
+
+    expect(store.listProjects().map((project) => [project.id, project.name])).toEqual([
+      ["proj_a", "alpha"],
+      ["proj_b", "beta"],
+      ["proj_c", "Gamma"]
+    ]);
+    expect(readFileSync(`${file}.before-repair.bak`, "utf8")).toBe(original);
+    expect(readJson(file).projects.map((project) => project.name)).toEqual(["alpha", "beta", "Gamma"]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("projects[0].name, projects[1].name"));
+    warn.mockRestore();
+  });
+
+  it("does not write a before-repair backup when every project has a name", () => {
+    const { file, dbPath } = writeRaw(JSON.stringify({ schemaVersion: SESSION_SCHEMA_VERSION, projects: [{ id: "proj_a", rootPath: "/a", name: "a" }], sessions: [] }));
+    new SessionStore(dbPath);
+    expect(existsSync(`${file}.before-repair.bak`)).toBe(false);
+  });
+
+  it("refreshes the last-good backup with writes made since the throttled refresh when the store closes", () => {
+    const { file, dbPath } = writeRaw(JSON.stringify({ schemaVersion: SESSION_SCHEMA_VERSION, projects: [], sessions: [] }));
+    const store = new SessionStore(dbPath);
+    const lastGood = `${file}.last-good.bak`;
+    const atLoad = readFileSync(lastGood, "utf8");
+
+    store.addProject("/fixture/added");
+    expect(readFileSync(lastGood, "utf8")).toBe(atLoad);
+
+    store.close();
+    expect(readFileSync(lastGood, "utf8")).toBe(readFileSync(file, "utf8"));
+    expect(readJson(lastGood).projects).toHaveLength(1);
+  });
 });
