@@ -98,6 +98,12 @@ describe("buildAlphaPlan", () => {
     });
   });
 
+  it("skips alpha numbers already taken by a git tag that has no release", async () => {
+    const source = createFixtureReleaseSource({ releases: BASE_RELEASES, head: SHA.c10, commitLog, extraTags: { "v0.0.1-alpha.22": SHA.c9 } });
+    const result = await buildAlphaPlan({ source, now: new Date("2026-09-25T06:00:00Z"), desktopVersion: parseVersion("0.0.1-alpha.21") });
+    expect(result.status === "planned" && result.plan.version).toBe("0.0.1-alpha.23");
+  });
+
   it("skips when HEAD has not moved since the latest published release", async () => {
     const source = createFixtureReleaseSource({ releases: BASE_RELEASES, head: SHA.c9, commitLog: BASE_COMMIT_LOG });
     const now = new Date("2026-09-25T06:00:00Z");
@@ -483,6 +489,18 @@ describe("verifyPlan", () => {
     });
     const result = await verifyPlan(buildPlan(), source);
     expect(result).toEqual({ ok: false, reasons: [expect.stringContaining("draft release")] });
+  });
+
+  it("rejects an alpha plan once the stable release of its base has been published", async () => {
+    const releases = [...BASE_RELEASES, baseRelease("v0.0.1", SHA.c10)];
+    const source = createFixtureReleaseSource({
+      releases,
+      head: SHA.c10,
+      commitLog: [...BASE_COMMIT_LOG, { sha: SHA.c10, subject: "feat: add cool feature" }]
+    });
+    const result = await verifyPlan(buildPlan(), source);
+    expect(result.ok).toBe(false);
+    if (!result.ok) expect(result.reasons.join("\n")).toContain("Stable 0.0.1 is newer than 0.0.1-alpha.22");
   });
 
   it("rejects when a higher alpha has been published since the plan was created", async () => {

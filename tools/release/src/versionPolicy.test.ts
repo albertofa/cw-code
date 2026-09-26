@@ -63,6 +63,18 @@ describe("planNextAlpha", () => {
     expect(result).toEqual({ ok: true, version: { channel: "alpha", major: 0, minor: 0, patch: 1, alphaNumber: 22 } });
   });
 
+  it("counts draft releases as used alpha numbers", () => {
+    const classified = classifyReleases([...ALPHA_HISTORY, release("v0.0.1-alpha.22", { draft: true })]);
+    const result = planNextAlpha(parseVersion("0.0.1-alpha.21"), classified);
+    expect(result).toEqual({ ok: true, version: { channel: "alpha", major: 0, minor: 0, patch: 1, alphaNumber: 23 } });
+  });
+
+  it("counts git tags without a release as used alpha numbers", () => {
+    const classified = classifyReleases(ALPHA_HISTORY);
+    const result = planNextAlpha(parseVersion("0.0.1-alpha.21"), classified, ["v0.0.1-alpha.24", "v0.0.2-alpha.9", "nightly"]);
+    expect(result).toEqual({ ok: true, version: { channel: "alpha", major: 0, minor: 0, patch: 1, alphaNumber: 25 } });
+  });
+
   it("starts a new base at alpha.0 when no alpha has been published for it", () => {
     const classified = classifyReleases(ALPHA_HISTORY);
     const result = planNextAlpha(parseVersion("0.0.2"), classified);
