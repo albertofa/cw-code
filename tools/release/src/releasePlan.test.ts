@@ -482,4 +482,38 @@ describe("verifyPlan", () => {
     const result = await verifyPlan(stablePlan, source);
     expect(result.ok).toBe(false);
   });
+
+  describe("when the candidate release is no longer published", () => {
+    const stablePlan = buildPlan({
+      channel: "stable",
+      version: "0.0.1",
+      tag: "v0.0.1",
+      sourceSha: SHA.c9,
+      previousTag: null,
+      prerelease: false,
+      makeLatest: true,
+      candidate: { tag: "v0.0.1-alpha.21", sha: SHA.c9 }
+    });
+
+    it("accepts the plan while the candidate release is still published", async () => {
+      const source = createFixtureReleaseSource({ releases: BASE_RELEASES, head: SHA.c9, commitLog: BASE_COMMIT_LOG });
+      expect(await verifyPlan(stablePlan, source)).toEqual({ ok: true });
+    });
+
+    it("rejects the plan when the release was deleted but its tag remains", async () => {
+      const releases = BASE_RELEASES.filter((entry) => entry.tagName !== "v0.0.1-alpha.21");
+      const source = createFixtureReleaseSource({ releases, head: SHA.c9, commitLog: BASE_COMMIT_LOG, extraTags: { "v0.0.1-alpha.21": SHA.c9 } });
+      const result = await verifyPlan(stablePlan, source);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.reasons.join(" ")).toContain("no longer exists");
+    });
+
+    it("rejects the plan when the release was turned back into a draft", async () => {
+      const releases = BASE_RELEASES.map((entry) => (entry.tagName === "v0.0.1-alpha.21" ? { ...entry, draft: true } : entry));
+      const source = createFixtureReleaseSource({ releases, head: SHA.c9, commitLog: BASE_COMMIT_LOG });
+      const result = await verifyPlan(stablePlan, source);
+      expect(result.ok).toBe(false);
+      if (!result.ok) expect(result.reasons.join(" ")).toContain("is a draft");
+    });
+  });
 });
