@@ -53,7 +53,7 @@ jobs:
       - name: Package installer with the canonical dist script
         run: pnpm --filter @cw-code/desktop dist
       - name: Clean install + packaged startup probe (canonical build)
-        run: node scripts/verify-windows-package.mjs --install
+        run: node scripts/verify-windows-package.mjs --install --disposable-environment
       - name: Compute a CI-only upgrade-test version above the package version, below the next release
         id: ci_version
         shell: bash
@@ -84,11 +84,11 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
       - name: Upgrade test (default per-user path)
-        run: node scripts/verify-windows-package.mjs --dist apps/desktop/dist-ci --upgrade-from legacy-installer/cw-code.Setup.0.0.1-alpha.21.exe
+        run: node scripts/verify-windows-package.mjs --dist apps/desktop/dist-ci --upgrade-from legacy-installer/cw-code.Setup.0.0.1-alpha.21.exe --disposable-environment
       - name: Upgrade test (custom install directory)
-        run: node scripts/verify-windows-package.mjs --dist apps/desktop/dist-ci --upgrade-from legacy-installer/cw-code.Setup.0.0.1-alpha.21.exe --custom-dir "${{ runner.temp }}\cw-code-custom"
+        run: node scripts/verify-windows-package.mjs --dist apps/desktop/dist-ci --upgrade-from legacy-installer/cw-code.Setup.0.0.1-alpha.21.exe --disposable-environment --custom-dir "${{ runner.temp }}\cw-code-custom"
       - name: Upgrade test (per-machine /allusers)
-        run: node scripts/verify-windows-package.mjs --dist apps/desktop/dist-ci --upgrade-from legacy-installer/cw-code.Setup.0.0.1-alpha.21.exe --per-machine
+        run: node scripts/verify-windows-package.mjs --dist apps/desktop/dist-ci --upgrade-from legacy-installer/cw-code.Setup.0.0.1-alpha.21.exe --disposable-environment --per-machine
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
