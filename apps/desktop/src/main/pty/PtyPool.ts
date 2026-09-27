@@ -11,7 +11,7 @@ export interface PtyAttachResult {
   replay: string;
 }
 
-interface PtyInstance {
+export interface PtyInstance {
   onData(cb: (data: string) => void): void;
   onExit(cb: (e: { exitCode: number }) => void): void;
   write(data: string): void;
@@ -19,7 +19,7 @@ interface PtyInstance {
   kill(): void;
 }
 
-interface PtyModule {
+export interface PtyModule {
   spawn(file: string, args: string[], opts: { name: string; cols: number; rows: number; cwd: string; env?: Record<string, string> }): PtyInstance;
 }
 

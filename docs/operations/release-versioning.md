@@ -160,6 +160,8 @@ the heredoc delimiter format, so values are never corrupted or split by embedded
 - `set-base --version X.Y.Z` — writes a new stable base into the three `package.json` files
   (this is the normal-PR path referenced above).
 - `check-sync` — verifies the three `package.json` files agree on a single version.
+- `rehash`, `signing-manifest`, `check-signing-manifest` — Windows signing post-processing
+  and the `signing.json` gate; documented in [windows-signing.md](windows-signing.md).
 
 `pnpm release:plan` is a root convenience alias for `plan`. `gh api` calls use whatever auth `gh` has
 (a read-only `GH_TOKEN` in CI, or `gh auth login` locally); any `gh api` failure is reported with
