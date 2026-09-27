@@ -13,6 +13,7 @@ import {
   defaultInstallDir,
   isProcessAlive,
   killProcessTreeIfImage,
+  nodePtyProblem,
   nsisGuid,
   readRegistryValue,
   registryPaths,
@@ -210,7 +211,8 @@ export async function runProductionBytes(options) {
     if (exitCode !== 0) report.problems.push(`post-update probe exited with code ${exitCode}`);
     if (probe.appVersion !== candidate.version) report.problems.push(`post-update probe reports ${probe.appVersion}, expected ${candidate.version}`);
     if (!probe.rendererLoaded) report.problems.push(`post-update probe: renderer failed to load (${report.probe.rendererFailures.join("; ") || "no failure recorded"})`);
-    if (!probe.nodePty.spawned) report.problems.push(`post-update probe: node-pty did not spawn (${probe.nodePty.error ?? "unknown error"})`);
+    const ptyProblem = nodePtyProblem("post-update probe", probe.nodePty);
+    if (ptyProblem) report.problems.push(ptyProblem);
     const startupProblem = startupModeProblem("post-update probe", probe);
     if (startupProblem) report.problems.push(startupProblem);
 

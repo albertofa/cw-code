@@ -13,9 +13,10 @@ document publishes a release, reads a token or touches a real account.
 
 ## Safety rules
 
-- Installed scenarios run only on a disposable Windows machine: a GitHub-hosted
-  runner (`CI=true`) or a VM you pass `--disposable-environment` in. Every install
-  and uninstall path refuses to run otherwise.
+- Installed scenarios run only on a disposable Windows machine (a GitHub-hosted
+  runner or a throwaway VM) and only with an explicit `--disposable-environment`.
+  `CI=true` alone is not enough. Every install and uninstall path refuses to run
+  otherwise.
 - Never run the installed scenarios on a machine where you use cw-code. The
   update-test build has its own identity (below), but the harness still installs,
   uninstalls and deletes the update-test cache and userData folders.

@@ -79,7 +79,7 @@ jobs:
           node scripts/verify-installed-upgrade.mjs "${args[@]}"
       - name: Installed upgrade scenarios (disposable runner only)
         run: |
-          args=(--skip-build --work-dir "$RUNNER_TEMP/upgrade-run" --evidence "$RUNNER_TEMP/upgrade-evidence/installed.json")
+          args=(--skip-build --disposable-environment --work-dir "$RUNNER_TEMP/upgrade-run" --evidence "$RUNNER_TEMP/upgrade-evidence/installed.json")
           if [ -n "$SCENARIOS" ]; then args+=(--scenarios "$SCENARIOS"); fi
           node scripts/verify-installed-upgrade.mjs "${args[@]}"
       - name: Upload redacted evidence and logs

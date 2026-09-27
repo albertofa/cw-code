@@ -23,11 +23,16 @@ export function nsisGuid(appId) {
 }
 
 export function requireDisposableEnvironment(modeName, disposableEnvironment) {
-  if (process.env.CI === "true" || disposableEnvironment) return;
+  if (disposableEnvironment) return;
   throw new Error(
-    `${modeName} installs and uninstalls the packaged app; refusing to run outside CI. ` +
-      "Set CI=true or pass --disposable-environment only in a disposable Windows environment."
+    `${modeName} installs and uninstalls the packaged app; refusing to run without --disposable-environment. ` +
+      "Pass it only in a disposable Windows environment such as a CI runner."
   );
+}
+
+export function nodePtyProblem(label, nodePty) {
+  if (nodePty.spawned && nodePty.exitCode === 0 && !nodePty.error) return null;
+  return `${label}: node-pty probe failed (spawned=${nodePty.spawned}, exitCode=${nodePty.exitCode}, error=${nodePty.error ?? "none"})`;
 }
 
 export function safePathWithoutClis() {
@@ -72,12 +77,19 @@ export function isElevated() {
   return spawnSync("net", ["session"], { encoding: "utf8" }).status === 0;
 }
 
+const INSTALLER_TIMEOUT_MS = 5 * 60_000;
+
 export function runSilent(command, args) {
   const isolatedTemp = mkdtempSync(join(process.env.RUNNER_TEMP ?? tmpdir(), "cw-installer-temp-"));
   const result = spawnSync(command, args, {
     encoding: "utf8",
-    env: { ...process.env, TEMP: isolatedTemp, TMP: isolatedTemp }
+    env: { ...process.env, TEMP: isolatedTemp, TMP: isolatedTemp },
+    timeout: INSTALLER_TIMEOUT_MS
   });
+  if (result.error?.code === "ETIMEDOUT") {
+    if (result.pid) killProcessTree(result.pid);
+    throw new Error(`${command} ${args.join(" ")} did not finish within ${INSTALLER_TIMEOUT_MS / 1000}s`);
+  }
   if (result.status !== 0) {
     throw new Error(`${command} ${args.join(" ")} failed (exit ${result.status}): ${result.stderr || result.stdout}`);
   }
