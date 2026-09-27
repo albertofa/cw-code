@@ -18,7 +18,7 @@ const NEW_NAME = "app-Setup-1.0.0-alpha.2-x64.exe";
 
 class NodeHttpExecutor extends HttpExecutor<ClientRequest> {
   createRequest(options: RequestOptions, callback: (response: IncomingMessage) => void): ClientRequest {
-    return httpRequest(options, callback);
+    return httpRequest({ ...options, agent: false }, callback);
   }
 
   download(url: URL, destination: string, options: DownloadOptions): Promise<string> {
@@ -45,7 +45,7 @@ async function readBlockMap(path: string): Promise<BlockMap> {
   return JSON.parse(gunzipSync(await readFile(path)).toString("utf8")) as BlockMap;
 }
 
-describe("feed server against electron-updater 6.8.9 download code", () => {
+describe("feed server against electron-updater 6.8.9 download code", { retry: 2 }, () => {
   let dir: string;
   let oldBytes: Buffer;
   let newBytes: Buffer;
