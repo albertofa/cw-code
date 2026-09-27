@@ -937,12 +937,25 @@ body {
 }
 
 .working-card-title {
+  flex: 1;
+  min-width: 0;
   font-size: 13.5px;
   font-weight: 650;
   color: var(--text);
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.working-card-title-line {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  min-width: 0;
+}
+
+.working-card-title-line .session-rename {
+  margin-bottom: 0;
 }
 
 .working-card-foot {

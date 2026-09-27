@@ -854,23 +854,29 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
           <span className="working-card-project">{projectName}</span>
           <span className={`working-card-badge status-${s.status}`}>{badge}</span>
         </div>
-        {renamingId === s.id ? (
-          <input
-            autoFocus
-            className="session-rename"
-            value={renameDraft}
-            onChange={(e) => setRenameDraft(e.target.value)}
-            onClick={(e) => e.stopPropagation()}
-            onKeyDown={(e) => {
-              e.stopPropagation();
-              if (e.key === "Enter") commitRename(s.id);
-              if (e.key === "Escape") setRenamingId(null);
-            }}
-            onBlur={() => commitRename(s.id)}
-          />
-        ) : (
-          <div className="working-card-title">{s.title}</div>
-        )}
+        <div className="working-card-title-line">
+          {renamingId === s.id ? (
+            <input
+              autoFocus
+              className="session-rename"
+              value={renameDraft}
+              onChange={(e) => setRenameDraft(e.target.value)}
+              onClick={(e) => e.stopPropagation()}
+              onKeyDown={(e) => {
+                e.stopPropagation();
+                if (e.key === "Enter") commitRename(s.id);
+                if (e.key === "Escape") setRenamingId(null);
+              }}
+              onBlur={() => commitRename(s.id)}
+            />
+          ) : (
+            <div className="working-card-title">{s.title}</div>
+          )}
+          <span className="working-card-side">
+            {unseen && <span className="pr-unseen-dot" title="PR updated since last visit" />}
+            {chip && <PrChipBadge chip={chip} extra={links.length - 1} title={chipTitle ?? undefined} />}
+          </span>
+        </div>
         <div className="working-card-foot">
           {branch ? (
             <span className="working-card-branch">
@@ -879,8 +885,6 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
             </span>
           ) : null}
           <span className="working-card-side">
-            {unseen && <span className="pr-unseen-dot" title="PR updated since last visit" />}
-            {chip && <PrChipBadge chip={chip} extra={links.length - 1} title={chipTitle ?? undefined} />}
             <DriverIcon driver={s.driver} size={14} />
           </span>
         </div>
