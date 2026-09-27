@@ -247,7 +247,7 @@ function installDiagnostics(registryKeys) {
   return `processes:\n${processes.stdout.trim() || "(none)"}\nregistry:\n${registry}`;
 }
 
-const INSTALLER_RETRY_DELAYS_SECONDS = [15, 30, 60];
+const INSTALLER_RETRY_DELAYS_SECONDS = [15, 30, 60, 120];
 
 function installTargetState(targetDir) {
   const lines = [];
