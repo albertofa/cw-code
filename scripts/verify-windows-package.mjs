@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir, tmpdir } from "node:os";
-import { basename, dirname, join, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, parse, resolve, sep } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
@@ -302,14 +302,36 @@ function hasInstallEvidence(dir) {
   return existsSync(join(dir, UNINSTALLER_NAME)) || existsSync(join(dir, `${PRODUCT_NAME}.exe`));
 }
 
+function protectedDirs() {
+  return [
+    homedir(),
+    process.env.APPDATA,
+    process.env.LOCALAPPDATA,
+    process.env.ProgramFiles,
+    process.env["ProgramFiles(x86)"],
+    process.env.ProgramData,
+    process.env.SystemRoot,
+    process.env.RUNNER_TEMP,
+    tmpdir()
+  ].filter((dir) => typeof dir === "string" && dir !== "");
+}
+
+function isSafeRemovalTarget(dir) {
+  if (typeof dir !== "string" || dir.trim() === "" || !isAbsolute(dir)) return false;
+  const absolute = resolve(dir);
+  if (parse(absolute).root === absolute) return false;
+  return !protectedDirs().some((guarded) => dirKey(guarded) === dirKey(absolute) || isInsideDir(guarded, absolute));
+}
+
 function detectInstallDirs(registryLocation, candidateDirs, ownedDirs) {
   const detected = new Map();
   const add = (dir) => {
     if (dir && !detected.has(dirKey(dir))) detected.set(dirKey(dir), dir);
   };
-  add(registryLocation);
-  for (const dir of candidateDirs) if (dir && hasInstallEvidence(dir)) add(dir);
-  for (const dir of ownedDirs) add(dir);
+  for (const dir of [registryLocation, ...candidateDirs]) {
+    if (dir && hasInstallEvidence(dir) && isSafeRemovalTarget(dir)) add(dir);
+  }
+  for (const dir of ownedDirs) if (isSafeRemovalTarget(dir)) add(dir);
   return [...detected.values()];
 }
 
