@@ -124,6 +124,7 @@ describe("loadVersionedJson", () => {
   });
 
   it.each([
+    ["a corrupt last-good backup", "data.json.last-good.bak", "corrupt{"],
     ["an unrestorable migration backup", "data.json.v0.bak", "corrupt{"],
     ["an unrestorable timestamped migration backup", "data.json.v0.2026-01-01T00-00-00-000Z.bak", "corrupt{"],
     ["an unrestorable archived last-good backup", "data.json.last-good.2026-01-01T00-00-00-000Z.bak", '{"schemaVersion":9,"items":[]}'],
@@ -138,6 +139,16 @@ describe("loadVersionedJson", () => {
     expect(error.detail).toContain("none of its backups can be restored");
     expect(error.detail).toContain(name);
     expect(readdirSync(join(file, ".."))).toEqual([name]);
+  });
+
+  it("refuses to start empty when the file is missing and its last-good backup is a directory", () => {
+    const file = tempFile();
+    mkdirSync(lastGoodBackupPath(file));
+
+    const error = expectMetadataError(() => loadVersionedJson(options(file)), "missing");
+
+    expect(error.detail).toContain("none of its backups can be restored");
+    expect(error.detail).toContain("data.json.last-good.bak");
   });
 
   it("treats a missing file as a first run when only temp files and other files' backups remain", () => {
