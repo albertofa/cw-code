@@ -25,6 +25,10 @@ export async function verifyReleaseSet(dir: string, manifest: SigningManifest): 
       errors.push(`signing.json installer ${JSON.stringify(installer?.path)} differs from the update info installer ${updateInfo.installerName}`);
     } else if (installer.sha512 !== updateInfo.sha512) {
       errors.push(`signing.json installer sha512 differs from the update info sha512`);
+    } else {
+      const installerPath = join(dir, ...installer.path.split("/"));
+      const size = (await exists(installerPath)) ? (await stat(installerPath)).size : null;
+      if (size !== null && size !== updateInfo.size) errors.push(`update info size ${updateInfo.size} differs from the installer size ${size}`);
     }
   } catch (error: unknown) {
     errors.push(error instanceof Error ? error.message : String(error));

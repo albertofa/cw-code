@@ -90,6 +90,11 @@ describe("verifyReleaseSet", () => {
     expect((await verifyReleaseSet(dir, manifest)).join("\n")).toMatch(/blockmap listed in signing.json is missing/);
   });
 
+  it("rejects an update info size that differs from the installer", async () => {
+    await writeFile(join(dir, "latest.yml"), updateInfo("1.2.0", digest(installer), installer.length + 1));
+    expect((await verifyReleaseSet(dir, manifest)).join("\n")).toMatch(/update info size 1025 differs from the installer size 1024/);
+  });
+
   it("reports a missing update info file", async () => {
     await rm(join(dir, "latest.yml"));
     expect((await verifyReleaseSet(dir, manifest)).join("\n")).toMatch(/No update info file/);
