@@ -38,7 +38,7 @@ const JSON_ACCEPT = "application/json";
 const API_ACCEPT = "application/vnd.github+json";
 const TEXT_ACCEPT = "*/*";
 
-function parseJsonObject(body: string): Record<string, unknown> | null {
+export function parseJsonObject(body: string): Record<string, unknown> | null {
   try {
     const value: unknown = JSON.parse(body);
     return typeof value === "object" && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
@@ -47,7 +47,7 @@ function parseJsonObject(body: string): Record<string, unknown> | null {
   }
 }
 
-function check(name: string, url: string, problems: string[], okDetail: string): PublishedCheck {
+export function check(name: string, url: string, problems: string[], okDetail: string): PublishedCheck {
   return { name, url, ok: problems.length === 0, detail: problems.length === 0 ? okDetail : problems.join("; ") };
 }
 

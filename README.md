@@ -17,8 +17,31 @@ handles inference, model access, and session continuation.
 [Report an issue](https://github.com/albertofa/cw-code/issues) ·
 [Contributing](CONTRIBUTING.md)
 
-There is no published installer release yet. Build from source using the
-instructions below.
+Alpha installers are on the [releases page](https://github.com/albertofa/cw-code/releases).
+You can also build from source using the instructions below.
+
+## Updating cw-code
+
+In-app updates start with the first updater-enabled release, which is not
+published yet. This section describes how it will work once it is.
+
+- **Coming from v0.0.1-alpha.21 or older.** Those builds cannot update
+  themselves. Download `cw-code-Setup-<version>-x64.exe` of the first
+  updater-enabled release from the
+  [releases page](https://github.com/albertofa/cw-code/releases) and run it
+  once. It upgrades the existing install in place: same folder, same scope
+  (only you or all users), and your projects, sessions, settings and worktrees
+  in `~/.cw-code` stay as they are.
+- **After that.** cw-code checks for updates in the background. Settings >
+  Updates shows the installed version and lets you pick the Stable or Alpha
+  channel and turn background downloads off. Alpha builds stay on the Alpha
+  channel until you change it.
+- **Installing.** Nothing installs until you click **Update and restart**.
+  If turns are running, terminals are open or files are unsaved, cw-code lists
+  them first and waits for your decision; Cancel keeps everything as it is. It then closes,
+  installs silently and reopens on the new version. Interrupted turns are not
+  resent. An install for all users asks for administrator approval.
+- There is no automatic downgrade. Fixes always ship as a newer version.
 
 ## Features
 
@@ -38,7 +61,7 @@ configuration.
 - Node.js 24.x and pnpm 11.5.3 for development.
 - At least one supported CLI installed and authenticated:
   - Claude Code `2.1.260` or newer (`claude`)
-  - OpenCode `1.18.23` or newer (`opencode`)
+  - OpenCode `1.18.31` or newer (`opencode`)
   - Codex `0.153.4` or newer (`codex`)
 
 The providers are optional. The app reports missing or outdated CLIs in its

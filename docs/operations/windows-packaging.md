@@ -71,7 +71,7 @@ config-schema changes relevant to this app:
   `win.signingHashAlgorithms`, `win.rfc3161TimeStampServer`/`timeStampServer`,
   `win.additionalCertificateFile` were all removed in favor of `win.signExecutable`
   and the broader `signtoolOptions`/Azure signing configuration. None of these were
-  set in our config, so this was a no-op for step 01. Production signing does not
+  set in our config, so this was a no-op for the electron-builder 26 upgrade. Production signing does not
   use them either: electron-builder never signs (`win.signExecutable: false`), and
   only `signtoolOptions.publisherName` is injected in CI. See
   [windows-signing.md](windows-signing.md).
