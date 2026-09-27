@@ -197,7 +197,8 @@ async function checkPackage(distDir) {
       const { exitCode, probe } = await runPackageProbe(unpackedExePath);
       report.probe = { exitCode, ...probe };
       if (!probe.rendererLoaded) problems.push("packaged startup probe: renderer failed to load");
-      if (!probe.nodePty.spawned) problems.push(`packaged startup probe: node-pty did not spawn (${probe.nodePty.error ?? "unknown error"})`);
+      const ptyProblem = nodePtyProblem("packaged startup probe", probe.nodePty);
+      if (ptyProblem) problems.push(ptyProblem);
       const startupProblem = startupModeProblem("packaged startup probe", probe);
       if (startupProblem) problems.push(startupProblem);
     } catch (err) {
@@ -209,19 +210,31 @@ async function checkPackage(distDir) {
 }
 
 function requireDisposableEnvironment(modeName, disposableEnvironment) {
-  if (process.env.CI === "true" || disposableEnvironment) return;
+  if (disposableEnvironment) return;
   throw new Error(
-    `${modeName} installs and uninstalls the packaged app; refusing to run outside CI. ` +
-      "Set CI=true or pass --disposable-environment only in a disposable Windows environment."
+    `${modeName} installs and uninstalls the packaged app; refusing to run without --disposable-environment. ` +
+      "Pass it only in a disposable Windows environment such as a CI runner."
   );
 }
+
+function nodePtyProblem(label, nodePty) {
+  if (nodePty.spawned && nodePty.exitCode === 0 && !nodePty.error) return null;
+  return `${label}: node-pty probe failed (spawned=${nodePty.spawned}, exitCode=${nodePty.exitCode}, error=${nodePty.error ?? "none"})`;
+}
+
+const INSTALLER_TIMEOUT_MS = 5 * 60_000;
 
 function runSilent(command, args) {
   const isolatedTemp = mkdtempSync(join(process.env.RUNNER_TEMP ?? tmpdir(), "cw-installer-temp-"));
   const result = spawnSync(command, args, {
     encoding: "utf8",
-    env: { ...process.env, TEMP: isolatedTemp, TMP: isolatedTemp }
+    env: { ...process.env, TEMP: isolatedTemp, TMP: isolatedTemp },
+    timeout: INSTALLER_TIMEOUT_MS
   });
+  if (result.error?.code === "ETIMEDOUT") {
+    if (result.pid) killProcessTree(result.pid);
+    throw new Error(`${command} ${args.join(" ")} did not finish within ${INSTALLER_TIMEOUT_MS / 1000}s`);
+  }
   if (result.status !== 0) {
     throw new Error(`${command} ${args.join(" ")} failed (exit ${result.status}): ${result.stderr || result.stdout}`);
   }
@@ -795,7 +808,8 @@ async function installMode(distDir, disposableEnvironment) {
       exitCode = result.exitCode;
       probe = result.probe;
       if (!probe.rendererLoaded) problems.push("install mode probe: renderer failed to load");
-      if (!probe.nodePty.spawned) problems.push(`install mode probe: node-pty did not spawn (${probe.nodePty.error ?? "unknown error"})`);
+      const ptyProblem = nodePtyProblem("install mode probe", probe.nodePty);
+      if (ptyProblem) problems.push(ptyProblem);
       const startupProblem = startupModeProblem("install mode probe", probe);
       if (startupProblem) problems.push(startupProblem);
     } catch (err) {
@@ -901,9 +915,8 @@ async function upgradeFromMode(distDir, legacyInstallerPath, disposableEnvironme
         if (probe.appVersion !== newVersion) {
           problems.push(`post-upgrade probe appVersion is '${probe.appVersion}', expected '${newVersion}'`);
         }
-        if (!probe.nodePty.spawned) {
-          problems.push(`post-upgrade probe: node-pty did not spawn (${probe.nodePty.error ?? "unknown error"})`);
-        }
+        const ptyProblem = nodePtyProblem("post-upgrade probe", probe.nodePty);
+        if (ptyProblem) problems.push(ptyProblem);
         const startupProblem = startupModeProblem("post-upgrade probe", probe);
         if (startupProblem) problems.push(startupProblem);
       } catch (err) {
