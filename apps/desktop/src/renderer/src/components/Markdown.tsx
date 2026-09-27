@@ -18,6 +18,7 @@ import { GitHubMark } from "./GitHubMark.js";
 import { FileIcon } from "./fileIcons.js";
 import { shortenHome } from "./pathDisplay.js";
 import { useAppStore } from "../stores/appStore.js";
+import { isHttpsLink } from "./releaseNotes.js";
 
 const PREVIEW_EXTS = new Set(["md", "markdown", "html", "htm"]);
 const HTML_EXTS = new Set(["html", "htm"]);
@@ -285,26 +286,49 @@ function MdImageLink({ src, alt }: { src?: string; alt?: string }) {
   );
 }
 
+function HttpsOnlyLink({ href, children }: { href?: string; children?: ReactNode }) {
+  if (!href || !isHttpsLink(href)) return <span>{children}</span>;
+  return <MdLink href={href}>{children}</MdLink>;
+}
+
+function HttpsOnlyImage({ src, alt }: { src?: string; alt?: string }) {
+  const label = alt?.trim() || src || "image";
+  const insideLink = useContext(InLinkContext);
+  return <span className="md-image-link">{src && !insideLink ? <HttpsOnlyLink href={src}>{label}</HttpsOnlyLink> : label}</span>;
+}
+
+const HTTPS_ONLY_COMPONENTS: Components = {
+  pre: Pre,
+  table: MdTable,
+  a: ({ href, children }) => <HttpsOnlyLink href={href}>{children}</HttpsOnlyLink>,
+  img: ({ src, alt }) => <HttpsOnlyImage src={typeof src === "string" ? src : undefined} alt={alt} />
+};
+
 export const Md = memo(function Md({
   text,
   onOpenFile,
   onOpenExternal,
-  allowImages = true
+  allowImages = true,
+  linkPolicy = "default"
 }: {
   text: string;
   onOpenFile?: (path: string) => void;
   onOpenExternal?: (path: string) => void;
   allowImages?: boolean;
+  linkPolicy?: "default" | "https-only";
 }) {
   const components = useMemo<Components>(
-    () => ({
-      pre: Pre,
-      code: (props) => <MdCode {...props} onOpenFile={onOpenFile} onOpenExternal={onOpenExternal} />,
-      table: MdTable,
-      a: (props) => <MdLink {...props} onOpenFile={onOpenFile} onOpenExternal={onOpenExternal} />,
-      ...(allowImages ? {} : { img: ({ src, alt }) => <MdImageLink src={typeof src === "string" ? src : undefined} alt={alt} /> })
-    }),
-    [onOpenFile, onOpenExternal, allowImages]
+    () =>
+      linkPolicy === "https-only"
+        ? HTTPS_ONLY_COMPONENTS
+        : {
+            pre: Pre,
+            code: (props) => <MdCode {...props} onOpenFile={onOpenFile} onOpenExternal={onOpenExternal} />,
+            table: MdTable,
+            a: (props) => <MdLink {...props} onOpenFile={onOpenFile} onOpenExternal={onOpenExternal} />,
+            ...(allowImages ? {} : { img: ({ src, alt }) => <MdImageLink src={typeof src === "string" ? src : undefined} alt={alt} /> })
+          },
+    [onOpenFile, onOpenExternal, allowImages, linkPolicy]
   );
   return (
     <div className="md">

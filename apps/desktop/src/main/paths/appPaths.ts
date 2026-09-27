@@ -2,6 +2,7 @@ import { copyFileSync, cpSync, existsSync, mkdirSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { expandHome, normalizeStoredDir } from "../skills/skillPaths.js";
+import { metadataArtifactNames } from "../storage/backups.js";
 
 export function cwCodeHome(home?: string, env?: NodeJS.ProcessEnv): string {
   const explicit = home?.trim();
@@ -13,6 +14,14 @@ export function cwCodeHome(home?: string, env?: NodeJS.ProcessEnv): string {
 
 export function userdataDir(home?: string, env?: NodeJS.ProcessEnv): string {
   return join(cwCodeHome(home, env), "userdata");
+}
+
+export function sessionDbPath(home?: string, env?: NodeJS.ProcessEnv): string {
+  return join(userdataDir(home, env), "cw-code.db");
+}
+
+export function settingsFilePath(home?: string, env?: NodeJS.ProcessEnv): string {
+  return join(userdataDir(home, env), "cw-settings.json");
 }
 
 export function attachmentsDir(home?: string, env?: NodeJS.ProcessEnv): string {
@@ -76,6 +85,7 @@ interface MigrationEntry {
   name: string;
   dest: string;
   tree: boolean;
+  metadata?: boolean;
 }
 
 export function migrateFromUserData(
@@ -86,8 +96,8 @@ export function migrateFromUserData(
   const userdata = userdataDir(home, env);
   const logs = logsDir(home, env);
   const entries: MigrationEntry[] = [
-    { name: "cw-code.db.json", dest: join(userdata, "cw-code.db.json"), tree: false },
-    { name: "cw-settings.json", dest: join(userdata, "cw-settings.json"), tree: false },
+    { name: "cw-code.db.json", dest: join(userdata, "cw-code.db.json"), tree: false, metadata: true },
+    { name: "cw-settings.json", dest: join(userdata, "cw-settings.json"), tree: false, metadata: true },
     { name: "skills.json", dest: join(userdata, "skills.json"), tree: false },
     { name: "skills", dest: join(userdata, "skills"), tree: true },
     { name: "cw-opencode", dest: join(userdata, "cw-opencode"), tree: true },
@@ -106,11 +116,16 @@ export function migrateFromUserData(
       continue;
     }
     try {
+      if (entry.metadata && metadataArtifactNames(entry.dest).length > 0) {
+        skipped.push(entry.name);
+        continue;
+      }
       mkdirSync(dirname(entry.dest), { recursive: true });
       if (entry.tree) cpSync(src, entry.dest, { recursive: true });
       else copyFileSync(src, entry.dest);
       copied.push(entry.name);
-    } catch {
+    } catch (err) {
+      console.warn(`legacy data migration skipped ${entry.name}: ${(err as Error).message}`);
       skipped.push(entry.name);
     }
   }

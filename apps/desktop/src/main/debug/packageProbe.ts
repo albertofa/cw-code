@@ -1,4 +1,5 @@
 import { writeFileSync } from "node:fs";
+import type { StartupState } from "@cw-code/contracts";
 import { checkCliVersions, type CliVersionCheck } from "../cliVersions.js";
 import { defaultCliBinaryPath } from "../settings/settingsUtils.js";
 import type { PtyModule } from "../pty/PtyPool.js";
@@ -16,8 +17,11 @@ export type NodePtyProbeOutcome =
   | { status: "load-failed"; error: string }
   | { status: "spawn-failed"; error: string };
 
+export type PackageProbeStartupMode = StartupState["mode"];
+
 export interface PackageProbeResult {
   appVersion: string;
+  startupMode: PackageProbeStartupMode;
   electron: string;
   platform: string;
   arch: string;
@@ -65,6 +69,7 @@ export function shapeNodePtyResult(outcome: NodePtyProbeOutcome): PackageProbeNo
 
 export function buildProbeResult(opts: {
   appVersion: string;
+  startupMode: PackageProbeStartupMode;
   electronVersion: string;
   platform: string;
   arch: string;
@@ -75,6 +80,7 @@ export function buildProbeResult(opts: {
 }): PackageProbeResult {
   return {
     appVersion: opts.appVersion,
+    startupMode: opts.startupMode,
     electron: opts.electronVersion,
     platform: opts.platform,
     arch: opts.arch,
@@ -116,6 +122,7 @@ async function probeNodePty(): Promise<NodePtyProbeOutcome> {
 export async function runPackageProbe(opts: {
   outPath: string;
   appVersion: string;
+  startupMode: PackageProbeStartupMode;
   electronVersion: string;
   renderer: RendererProbeTracker;
 }): Promise<PackageProbeResult> {
@@ -128,6 +135,7 @@ export async function runPackageProbe(opts: {
   });
   const result = buildProbeResult({
     appVersion: opts.appVersion,
+    startupMode: opts.startupMode,
     electronVersion: opts.electronVersion,
     platform: process.platform,
     arch: process.arch,

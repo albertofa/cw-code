@@ -1,7 +1,7 @@
 import { type ChildProcess } from "node:child_process";
 import { createInterface } from "node:readline";
 import { spawnCli } from "../../cli/spawnCli.js";
-import { killProcessTree } from "../../processTree.js";
+import { hasExited, killProcessTree, waitForExit } from "../../processTree.js";
 
 export class CodexAppServerError extends Error {
   readonly code: number | null;
@@ -18,6 +18,7 @@ export interface CodexAppServerOptions {
   args?: string[];
   clientInfo?: { name: string; title: string; version: string };
   env?: Record<string, string>;
+  initializeTimeoutMs?: number;
 }
 
 export interface CodexAppServerLike {
@@ -27,6 +28,8 @@ export interface CodexAppServerLike {
   onServerRequest(handler: (method: string, params: unknown, id: string | number) => void): void;
   /** Applies the spawn env for the next app-server launch; no effect on an already-running process. */
   setSpawnEnv?(env: Record<string, string> | undefined): void;
+  ownedProcessCount?(): number;
+  shutdown?(timeoutMs: number): Promise<{ timedOut: boolean }>;
   dispose(): void;
 }
 
@@ -46,9 +49,12 @@ interface Envelope {
 
 const DEFAULT_CLIENT_INFO = { name: "cw_code", title: "cw-code", version: "0.1.0" };
 const STDERR_TAIL_LINES = 20;
+const DEFAULT_INITIALIZE_TIMEOUT_MS = 30_000;
 
 export class CodexAppServer implements CodexAppServerLike {
   private proc: ChildProcess | null = null;
+  private child: ChildProcess | null = null;
+  private latest: ChildProcess | null = null;
   private starting: Promise<ChildProcess> | null = null;
   private nextId = 1;
   private pending = new Map<string | number, PendingRequest>();
@@ -91,21 +97,40 @@ export class CodexAppServer implements CodexAppServerLike {
     this.writeLine(this.proc, { id, result });
   }
 
+  ownedProcessCount(): number {
+    return this.child && !hasExited(this.child) ? 1 : 0;
+  }
+
+  async shutdown(timeoutMs: number): Promise<{ timedOut: boolean }> {
+    const child = this.child;
+    if (!child || hasExited(child)) {
+      this.dispose();
+      return { timedOut: false };
+    }
+    this.disposed = true;
+    this.proc = null;
+    this.rejectAllPending(new CodexAppServerError("codex app-server is shutting down"));
+    try {
+      child.stdin?.end();
+    } catch {
+    }
+    const exited = await waitForExit(child, timeoutMs);
+    if (exited) this.forget(child);
+    return { timedOut: !exited };
+  }
+
   dispose(): void {
     this.disposed = true;
     this.rejectAllPending(new CodexAppServerError("codex app-server disposed"));
-    const proc = this.proc;
+    const child = this.child;
     this.proc = null;
-    if (proc && proc.exitCode === null) {
-      killProcessTree(proc);
-    }
-    this.starting?.then(
-      (started) => {
-        killProcessTree(started);
-      },
-      () => {}
-    );
     this.starting = null;
+    if (child && !hasExited(child)) killProcessTree(child);
+  }
+
+  private forget(child: ChildProcess): void {
+    if (this.child === child) this.child = null;
+    if (this.proc === child) this.proc = null;
   }
 
   private rejectAllPending(err: Error): void {
@@ -118,12 +143,13 @@ export class CodexAppServer implements CodexAppServerLike {
 
   private async withProcess<T>(fn: (proc: ChildProcess) => Promise<T>): Promise<T> {
     const proc = await this.ensureStarted();
+    if (this.disposed) throw new CodexAppServerError("codex app-server disposed");
     return fn(proc);
   }
 
   private async ensureStarted(): Promise<ChildProcess> {
-    if (this.proc && this.proc.exitCode === null) return this.proc;
     if (this.disposed) throw new CodexAppServerError("codex app-server disposed");
+    if (this.proc && this.proc.exitCode === null) return this.proc;
     if (this.starting) return this.starting;
     this.starting = this.spawnAndInitialize().finally(() => {
       this.starting = null;
@@ -138,21 +164,27 @@ export class CodexAppServer implements CodexAppServerLike {
       windowsHide: true,
       ...(this.opts.env ? { env: this.opts.env } : {})
     });
+    this.child = proc;
+    this.latest = proc;
     this.stderrTail = [];
 
     proc.on("error", (err) => {
-      this.rejectAllPending(new CodexAppServerError(`failed to spawn ${this.opts.binary}: ${err.message}`));
-      this.proc = null;
+      if (this.latest === proc) this.rejectAllPending(new CodexAppServerError(`failed to spawn ${this.opts.binary}: ${err.message}`));
+      if (this.proc === proc) this.proc = null;
+      if (proc.pid === undefined || hasExited(proc)) this.forget(proc);
     });
+    proc.on("exit", () => this.forget(proc));
     proc.on("close", (code) => {
+      this.forget(proc);
+      if (this.latest !== proc) return;
       this.rejectAllPending(
         new CodexAppServerError(
           `codex app-server exited (code ${code})${this.stderrTail.length ? `: ${this.stderrTail.join(" ")}` : ""}`
         )
       );
-      if (this.proc === proc) this.proc = null;
     });
     proc.stderr?.on("data", (chunk: Buffer) => {
+      if (this.latest !== proc) return;
       for (const line of chunk.toString().split(/\r?\n/)) {
         if (!line.trim()) continue;
         this.stderrTail.push(line);
@@ -168,7 +200,7 @@ export class CodexAppServer implements CodexAppServerLike {
       const timer = setTimeout(() => {
         this.pending.delete(id);
         reject(new CodexAppServerError("codex app-server initialize timed out"));
-      }, 30_000);
+      }, this.opts.initializeTimeoutMs ?? DEFAULT_INITIALIZE_TIMEOUT_MS);
       this.pending.set(id, {
         resolve: () => {
           clearTimeout(timer);
@@ -178,19 +210,21 @@ export class CodexAppServer implements CodexAppServerLike {
         timer
       });
     });
-    this.writeLine(proc, {
-      method: "initialize",
-      id,
-      params: {
-        clientInfo: this.opts.clientInfo ?? DEFAULT_CLIENT_INFO,
-        capabilities: { experimentalApi: true, requestAttestation: false }
-      }
-    });
-    await initialized;
-    if (this.disposed) {
-      killProcessTree(proc);
-      throw new CodexAppServerError("codex app-server disposed");
+    try {
+      this.writeLine(proc, {
+        method: "initialize",
+        id,
+        params: {
+          clientInfo: this.opts.clientInfo ?? DEFAULT_CLIENT_INFO,
+          capabilities: { experimentalApi: true, requestAttestation: false }
+        }
+      });
+      await initialized;
+    } catch (err) {
+      if (!this.disposed && this.child === proc && !hasExited(proc)) killProcessTree(proc);
+      throw err;
     }
+    if (this.disposed) throw new CodexAppServerError("codex app-server disposed");
     this.writeLine(proc, { method: "initialized" });
     this.proc = proc;
     return proc;

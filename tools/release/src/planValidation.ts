@@ -12,6 +12,7 @@ export interface ReleasePlan {
   tag: string;
   sourceSha: string;
   candidate?: ReleasePlanCandidate;
+  acknowledgedDivergedTags?: string[];
   previousTag: string | null;
   prerelease: boolean;
   makeLatest: boolean;
@@ -59,6 +60,16 @@ function validateStructure(raw: unknown): { ok: true; plan: ReleasePlan } | { ok
     }
   }
 
+  let acknowledgedDivergedTags: string[] | undefined;
+  if (value.acknowledgedDivergedTags !== undefined) {
+    const tags = value.acknowledgedDivergedTags;
+    if (!Array.isArray(tags) || tags.length === 0 || !tags.every(isString)) {
+      errors.push("acknowledgedDivergedTags must be a non-empty array of tag strings");
+    } else {
+      acknowledgedDivergedTags = [...tags];
+    }
+  }
+
   if (errors.length > 0) return { ok: false, errors };
 
   return {
@@ -70,6 +81,7 @@ function validateStructure(raw: unknown): { ok: true; plan: ReleasePlan } | { ok
       tag: value.tag as string,
       sourceSha: value.sourceSha as string,
       candidate,
+      ...(acknowledgedDivergedTags ? { acknowledgedDivergedTags } : {}),
       previousTag: value.previousTag as string | null,
       prerelease: value.prerelease as boolean,
       makeLatest: value.makeLatest as boolean,
@@ -106,7 +118,13 @@ export function validatePlanShape(raw: unknown): PlanShapeResult {
     if (plan.prerelease !== true) errors.push("prerelease must be true for an alpha plan");
     if (plan.makeLatest !== false) errors.push("makeLatest must be false for an alpha plan");
     if (plan.candidate) errors.push("an alpha plan must not carry a candidate");
+    const acknowledged = plan.acknowledgedDivergedTags ?? [];
+    for (const tag of acknowledged) {
+      if (!parseTag(tag)) errors.push(`acknowledgedDivergedTags entry "${tag}" is not a release tag`);
+    }
+    if (new Set(acknowledged).size !== acknowledged.length) errors.push("acknowledgedDivergedTags must not repeat a tag");
   } else {
+    if (plan.acknowledgedDivergedTags) errors.push("a stable plan must not acknowledge diverged tags");
     if (plan.prerelease !== false) errors.push("prerelease must be false for a stable plan");
     if (plan.makeLatest !== true) errors.push("makeLatest must be true for a stable plan");
     if (!plan.candidate) {

@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, normalize } from "node:path";
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   attachmentsDir,
   cwCodeHome,
@@ -15,6 +15,25 @@ import {
   userdataDir,
   worktreesDir
 } from "./appPaths.js";
+
+const readdirFailure = vi.hoisted(() => ({ dir: null as string | null }));
+
+vi.mock("node:fs", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("node:fs")>();
+  return {
+    ...actual,
+    readdirSync: vi.fn((...args: Parameters<typeof actual.readdirSync>) => {
+      if (readdirFailure.dir !== null && args[0] === readdirFailure.dir) {
+        throw Object.assign(new Error(`EACCES: permission denied, scandir '${readdirFailure.dir}'`), { code: "EACCES" });
+      }
+      return actual.readdirSync(...args);
+    })
+  };
+});
+
+afterEach(() => {
+  readdirFailure.dir = null;
+});
 
 describe("cwCodeHome", () => {
   it("defaults to ~/.cw-code", () => {
@@ -143,6 +162,57 @@ describe("migrateFromUserData", () => {
     expect(readFileSync(join(home, "userdata", "cw-settings.json"), "utf8")).toBe("existing");
     expect(result.skipped).toContain("cw-settings.json");
     expect(result.copied).not.toContain("cw-settings.json");
+  });
+
+  it("does not copy a legacy metadata file over a missing one that has cw-code backups", () => {
+    const oldDir = makeOldUserData();
+    const home = mkdtempSync(join(tmpdir(), "cw-new-home-"));
+    mkdirSync(join(home, "userdata"), { recursive: true });
+    writeFileSync(join(home, "userdata", "cw-code.db.json.last-good.bak"), '{"schemaVersion":1,"projects":[],"sessions":[]}');
+    const result = migrateFromUserData(oldDir, home);
+    expect(existsSync(join(home, "userdata", "cw-code.db.json"))).toBe(false);
+    expect(result.skipped).toContain("cw-code.db.json");
+    expect(result.copied).toContain("cw-settings.json");
+  });
+
+  it.each([
+    "cw-code.db.json.v0.bak",
+    "cw-code.db.json.v0.2026-01-01T00-00-00-000Z.bak",
+    "cw-code.db.json.last-good.2026-01-01T00-00-00-000Z.bak",
+    "cw-code.db.json.before-repair.bak",
+    "cw-code.db.json.broken-2026-01-01T00-00-00-000Z"
+  ])("does not copy a legacy metadata file when %s exists, even if it is not restorable", (artifact) => {
+    const oldDir = makeOldUserData();
+    const home = mkdtempSync(join(tmpdir(), "cw-new-home-"));
+    mkdirSync(join(home, "userdata"), { recursive: true });
+    writeFileSync(join(home, "userdata", artifact), "corrupt{");
+    const result = migrateFromUserData(oldDir, home);
+    expect(existsSync(join(home, "userdata", "cw-code.db.json"))).toBe(false);
+    expect(result.skipped).toContain("cw-code.db.json");
+  });
+
+  it("still copies a legacy metadata file when only temp files and other files' backups exist", () => {
+    const oldDir = makeOldUserData();
+    const home = mkdtempSync(join(tmpdir(), "cw-new-home-"));
+    mkdirSync(join(home, "userdata"), { recursive: true });
+    writeFileSync(join(home, "userdata", "cw-code.db.json.4242.deadbeef.tmp"), "{");
+    writeFileSync(join(home, "userdata", "cw-settings.json.last-good.bak"), "{}");
+    const result = migrateFromUserData(oldDir, home);
+    expect(result.copied).toContain("cw-code.db.json");
+    expect(result.skipped).toContain("cw-settings.json");
+  });
+
+  it("skips a metadata file instead of throwing when its folder cannot be listed", () => {
+    const oldDir = makeOldUserData();
+    const home = mkdtempSync(join(tmpdir(), "cw-new-home-"));
+    mkdirSync(join(home, "userdata"), { recursive: true });
+    readdirFailure.dir = join(home, "userdata");
+
+    const result = migrateFromUserData(oldDir, home);
+
+    expect(result.skipped).toEqual(expect.arrayContaining(["cw-code.db.json", "cw-settings.json"]));
+    expect(result.copied).toContain("skills.json");
+    expect(existsSync(join(home, "userdata", "cw-code.db.json"))).toBe(false);
   });
 
   it("skips worktrees entirely", () => {

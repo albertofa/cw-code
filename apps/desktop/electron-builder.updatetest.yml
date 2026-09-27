@@ -1,0 +1,17 @@
+extends: ./electron-builder.yml
+appId: com.cwcode.app.updatetest
+productName: cw-code-updatetest
+extraMetadata:
+  name: "@cw-code/desktop-updatetest"
+  main: out-updatetest/main/index.js
+files:
+  - "out-updatetest/**"
+  - "!out/**"
+directories:
+  output: dist-updatetest
+win:
+  executableName: cw-code-updatetest
+publish:
+  provider: generic
+  url: http://127.0.0.1:47613/
+generateUpdatesFilesForAllChannels: true

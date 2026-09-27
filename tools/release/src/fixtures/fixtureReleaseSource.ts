@@ -7,8 +7,9 @@ export interface FixtureRelease extends ReleaseInfo {
 export interface FixtureReleaseSourceOptions {
   releases: FixtureRelease[];
   head: string;
-  remoteMainSha?: string;
+  mainHistory?: string[];
   extraTags?: Record<string, string>;
+  detachedShas?: string[];
   commitLog: Array<{ sha: string; subject: string }>;
   filesAtSha?: Record<string, Record<string, string>>;
 }
@@ -28,6 +29,7 @@ function commitsBetween(commitLog: Array<{ sha: string; subject: string }>, from
 export function createFixtureReleaseSource(options: FixtureReleaseSourceOptions): ReleaseSource {
   const { releases, head, commitLog, filesAtSha = {} } = options;
   const tagShas = new Map([...releases.map((release): [string, string] => [release.tagName, release.sha]), ...Object.entries(options.extraTags ?? {})]);
+  const shas = commitLog.map((entry) => entry.sha);
 
   return {
     async listReleases(): Promise<ReleaseInfo[]> {
@@ -40,8 +42,11 @@ export function createFixtureReleaseSource(options: FixtureReleaseSourceOptions)
       if (ref === "HEAD") return head;
       return tagShas.get(ref) ?? ref;
     },
-    async remoteMainSha(): Promise<string> {
-      return options.remoteMainSha ?? head;
+    async isAncestor(ancestor: string, descendant: string): Promise<boolean> {
+      if (descendant === "main") return (options.mainHistory ?? shas).includes(ancestor);
+      const from = shas.indexOf(ancestor);
+      const to = shas.indexOf(descendant);
+      return from !== -1 && to !== -1 && from <= to;
     },
     async listTags(): Promise<string[]> {
       return [...tagShas].filter(([, sha]) => sha !== "").map(([tag]) => tag);
@@ -49,7 +54,8 @@ export function createFixtureReleaseSource(options: FixtureReleaseSourceOptions)
     async logSubjects(fromRef: string | null, toRef: string): Promise<string[]> {
       const toSha = tagShas.get(toRef) ?? toRef;
       const fromSha = fromRef ? (tagShas.get(fromRef) ?? fromRef) : null;
-      return commitsBetween(commitLog, fromSha, toSha).reverse();
+      const reachableFrom = fromSha && options.detachedShas?.includes(fromSha) ? null : fromSha;
+      return commitsBetween(commitLog, reachableFrom, toSha).reverse();
     },
     async showFile(sha: string, path: string): Promise<string> {
       const contents = filesAtSha[sha]?.[path];

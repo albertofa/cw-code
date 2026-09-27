@@ -22,12 +22,19 @@ export interface ReleaseProvenance {
   runId: string;
 }
 
+export interface BlockMapRecord {
+  path: string;
+  sha512: string;
+  size: number;
+}
+
 export interface SigningManifest extends ReleaseProvenance {
   mode: SigningMode;
   production: boolean;
   publisher: string | null;
   verifiedAt: string;
   files: SigningFileRecord[];
+  blockMap: BlockMapRecord;
 }
 
 export interface VerificationFileReport extends SigningFileRecord {
@@ -59,6 +66,7 @@ export interface BuildSigningManifestInput {
   report: VerificationReport;
   updateInfo: { installerName: string; sha512: string; version: string };
   appUpdatePublisherNames: string[] | null;
+  blockMap: BlockMapRecord;
 }
 
 const SHA512_BASE64 = /^[A-Za-z0-9+/]{86}==$/;
@@ -161,6 +169,26 @@ function firstPartySetErrors(files: SigningFileRecord[]): string[] {
   return errors;
 }
 
+function validateBlockMapRecord(raw: unknown, errors: string[]): BlockMapRecord | null {
+  if (!isRecord(raw)) {
+    errors.push("blockMap must be an object with path, sha512 and size");
+    return null;
+  }
+  const { path, sha512, size } = raw;
+  const before = errors.length;
+  if (typeof path !== "string" || !isSafeRelativePath(path) || path.includes("/") || !path.endsWith(".blockmap")) {
+    errors.push(`blockMap.path must be a top-level .blockmap file name, got ${JSON.stringify(path)}`);
+  }
+  if (typeof sha512 !== "string" || !SHA512_BASE64.test(sha512)) errors.push("blockMap.sha512 must be a base64 SHA-512 digest");
+  if (typeof size !== "number" || !Number.isSafeInteger(size) || size <= 0) errors.push("blockMap.size must be a positive integer");
+  if (errors.length !== before) return null;
+  return { path: path as string, sha512: sha512 as string, size: size as number };
+}
+
+export function blockMapNameOf(installerPath: string): string {
+  return `${installerPath}.blockmap`;
+}
+
 export function validateSigningManifest(raw: unknown): Validation<SigningManifest> {
   if (!isRecord(raw)) return { ok: false, errors: ["Signing manifest is not an object"] };
   const errors: string[] = [];
@@ -180,7 +208,8 @@ export function validateSigningManifest(raw: unknown): Validation<SigningManifes
     if (paths.has(record.path)) errors.push(`${record.path} is listed more than once`);
     paths.add(record.path);
   }
-  if (errors.length > 0) return { ok: false, errors };
+  const blockMap = validateBlockMapRecord(raw.blockMap, errors);
+  if (errors.length > 0 || blockMap === null) return { ok: false, errors };
 
   const manifest: SigningManifest = {
     mode: mode as SigningMode,
@@ -190,13 +219,18 @@ export function validateSigningManifest(raw: unknown): Validation<SigningManifes
     sourceSha: raw.sourceSha as string,
     runId: raw.runId as string,
     verifiedAt: verifiedAt as string,
-    files: records.filter((record): record is SigningFileRecord => record !== null)
+    files: records.filter((record): record is SigningFileRecord => record !== null),
+    blockMap
   };
   if (manifest.mode === "unsigned" && manifest.production) errors.push("unsigned mode can never be production");
   if (manifest.mode === "signpath" && (manifest.publisher === null || manifest.publisher.trim() === "")) {
     errors.push("signpath mode requires a publisher");
   }
   errors.push(...firstPartySetErrors(manifest.files));
+  const installer = manifest.files.find((file) => isInstallerPath(file.path));
+  if (installer && manifest.blockMap.path !== blockMapNameOf(installer.path)) {
+    errors.push(`blockMap.path ${manifest.blockMap.path} must be ${blockMapNameOf(installer.path)}`);
+  }
   const firstPartyPublisher = manifest.mode === "signpath" ? manifest.publisher : null;
   for (const file of manifest.files) errors.push(...fileRuleErrors(file, firstPartyPublisher));
   return errors.length > 0 ? { ok: false, errors } : { ok: true, value: manifest };
@@ -308,6 +342,18 @@ export function buildSigningManifest(input: BuildSigningManifestInput): Validati
     sourceSha: expected.sourceSha,
     runId: expected.runId,
     verifiedAt: report.checkedAt,
-    files: report.files.map(({ path, role, sha512, status, signed, subject, timestamped }) => ({ path, role, sha512, status, signed, subject, timestamped }))
+    files: report.files.map(({ path, role, sha512, status, signed, subject, timestamped }) => ({ path, role, sha512, status, signed, subject, timestamped })),
+    blockMap: input.blockMap
   });
+}
+
+export function provenanceMismatches(manifest: ReleaseProvenance, expected: Partial<ReleaseProvenance>): string[] {
+  const errors: string[] = [];
+  for (const key of ["version", "sourceSha", "runId"] as const) {
+    const wanted = expected[key];
+    if (wanted !== undefined && manifest[key] !== wanted) {
+      errors.push(`signing.json ${key} ${JSON.stringify(manifest[key])} differs from the expected ${JSON.stringify(wanted)}`);
+    }
+  }
+  return errors;
 }

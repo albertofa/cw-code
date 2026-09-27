@@ -164,6 +164,82 @@ export function rewriteUpdateInfo(text: string, digest: InstallerDigest): Update
   };
 }
 
+export interface ReleaseText {
+  releaseName: string;
+  releaseNotes: string;
+}
+
+const RELEASE_TEXT_KEYS = new Set(["releaseName", "releaseNotes"]);
+const NOTES_BLOCK_HEADER = "|2-";
+const NOTES_INDENT = "  ";
+
+export function normalizeReleaseNotes(notes: string): string {
+  return notes
+    .replace(/\r\n?/g, "\n")
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .join("\n")
+    .trimEnd();
+}
+
+function withoutReleaseText(lines: string[]): string[] {
+  const kept: string[] = [];
+  let skipping = false;
+  for (const line of lines) {
+    const top = TOP_LEVEL_KEY.exec(line);
+    if (top) {
+      skipping = RELEASE_TEXT_KEYS.has(top[1]);
+      if (skipping) continue;
+    } else if (skipping && (line.trim() === "" || /^\s/.test(line))) {
+      continue;
+    } else {
+      skipping = false;
+    }
+    kept.push(line);
+  }
+  while (kept.length > 0 && kept.at(-1)?.trim() === "") kept.pop();
+  return kept;
+}
+
+export function withReleaseText(text: string, release: ReleaseText): string {
+  const eol = text.includes("\r\n") ? "\r\n" : "\n";
+  const lines = withoutReleaseText(text.split(/\r?\n/));
+  const notes = normalizeReleaseNotes(release.releaseNotes);
+  lines.push(`releaseName: ${formatScalar(release.releaseName)}`);
+  if (notes === "") {
+    lines.push("releaseNotes: ''");
+  } else {
+    lines.push(`releaseNotes: ${NOTES_BLOCK_HEADER}`, ...notes.split("\n").map((line) => (line === "" ? "" : `${NOTES_INDENT}${line}`)));
+  }
+  return `${lines.join(eol)}${eol}`;
+}
+
+export function readReleaseText(text: string): { releaseName: string | null; releaseNotes: string | null } {
+  const lines = text.split(/\r?\n/);
+  let releaseName: string | null = null;
+  let releaseNotes: string | null = null;
+  lines.forEach((line, index) => {
+    const top = TOP_LEVEL_KEY.exec(line);
+    if (!top) return;
+    const value = (top[2] ?? "").trim();
+    if (top[1] === "releaseName") releaseName = parseScalar(value);
+    if (top[1] !== "releaseNotes") return;
+    if (value !== NOTES_BLOCK_HEADER) {
+      releaseNotes = parseScalar(value);
+      return;
+    }
+    const block: string[] = [];
+    for (const next of lines.slice(index + 1)) {
+      if (next.trim() === "") block.push("");
+      else if (next.startsWith(NOTES_INDENT)) block.push(next.slice(NOTES_INDENT.length));
+      else break;
+    }
+    releaseNotes = block.join("\n").replace(/\n+$/, "");
+  });
+  return { releaseName, releaseNotes };
+}
+
 export function readPublisherNames(appUpdateText: string): string[] {
   const lines = appUpdateText.split(/\r?\n/);
   const start = lines.findIndex((line) => TOP_LEVEL_KEY.exec(line)?.[1] === "publisherName");

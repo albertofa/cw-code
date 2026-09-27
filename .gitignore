@@ -1,12 +1,23 @@
 node_modules/
 dist/
 dist-ci/
+dist-updatetest/
 out/
+out-updatetest/
 coverage/
 .cache/
 .vite/
 .turbo/
 *.tsbuildinfo
+
+# Release workflow working folders (anchored at the repository root)
+/release/
+/release-full/
+/release-set/
+/plan/
+/tooling/
+/upgrade-base/
+/apps/desktop/dist-installer/
 
 # Local configuration and credentials
 .env

@@ -3,7 +3,7 @@
 `tools/release` (`@cw-code/release-tools`) computes candidate versions, builds release
 plans and notes, and validates stable promotion. It never creates tags, GitHub releases,
 npm publications or commits by itself — it only produces a `ReleasePlan` JSON artifact
-that a later, separately-gated publish step (step 09) consumes.
+that a later, separately-gated publish job in `release.yml` consumes.
 
 ## Channels and versions
 
@@ -16,8 +16,12 @@ single authoritative "intended next stable base". The three package.json files
 verifies this and `set-base`/`apply` keep them in sync.
 
 The next alpha for the current base is `base-alpha.(N + 1)`, where `N` is the highest
-published (non-draft) alpha number for that exact base, or `alpha.0` if no alpha has been
-published for it yet. Planning an alpha is rejected outright if:
+alpha number already used for that exact base, or `alpha.0` if none is used yet. "Used"
+means a published release, a draft release the token can see, or any `v<base>-alpha.*`
+git tag (for example one left behind by a deleted release), so a withdrawn number is
+never handed out again. The plan job's read-only token cannot list drafts; `publish`
+then rejects an unresumable draft for that tag (see [releases.md](releases.md#recovery)).
+Planning an alpha is rejected outright if:
 
 - the base is already published as a stable release, or
 - the base is *behind* the base of the highest published alpha (the desktop version must
@@ -27,7 +31,7 @@ Either case is a hard error, not a skip — bump the base first with a normal PR
 
 The version applied to the three `package.json` files happens only inside the CI workspace
 at build time, via `apply`, and is never committed. Because there is no version-bump commit,
-there is no recursive CI trigger. The publish job (step 09) creates the git tag `v<version>`
+there is no recursive CI trigger. The publish job of `release.yml` creates the git tag `v<version>`
 at the exact source SHA recorded in the plan — the tag is never created here.
 
 ## Stable promotion
@@ -50,7 +54,9 @@ tag (`vX.Y.Z-alpha.N`) or its resolved commit SHA. `plan --channel stable --cand
 3. Rejects if a stable release already supersedes the candidate's base (i.e. the "latest
    candidate" is never resolved implicitly — only an explicit candidate that is still ahead
    of the highest published stable is accepted).
-4. Builds a stable plan for the candidate's base, at the candidate's exact resolved SHA.
+4. Rejects the base if a `vX.Y.Z` git tag already exists (for example after a withdrawn
+   stable release): a version is never reused, so bump the base with `set-base`.
+5. Builds a stable plan for the candidate's base, at the candidate's exact resolved SHA.
 
 The GitHub API's own `prerelease` flag on existing releases is not used to classify a
 release's channel (the alphas published for this project are all marked non-prerelease in
@@ -79,8 +85,20 @@ After a successful `CI` run on `main`, an alpha plan is generated automatically
 - HEAD is unchanged from the SHA of the latest published alpha or stable release, or
 - fewer than 6 hours have passed since the latest published alpha.
 
-This coalesces bursts of merges into at most one alpha release per 6 hours, without
-publishing a redundant alpha for an unchanged commit. Note: releases published before this
+It **fails** (not skips) when the tag commit of the highest published alpha or stable is
+not an ancestor of the source SHA (GitHub compare API), or has no git tag. This stops a
+re-run of an old CI run, or a `workflow_run` that arrives late, from releasing older
+history under a new number, and it makes a release tag that ended off `main` visible.
+The only way past it is a manual alpha dispatch with `acknowledge_diverged_tag` naming
+exactly the diverged tags (`plan --acknowledge-diverged-tag <tag>[,<tag>]`); the plan
+records them in `acknowledgedDivergedTags` and `verify-plan` accepts only those. See
+[releases.md](releases.md#recovery).
+
+Both skips key on the latest **published** release, so they limit publications to at most
+one alpha per 6 hours and never republish an unchanged commit. They do not coalesce
+automatic runs: `workflow_run` runs only validate and never publish, so outside the 6 hours
+after a publication every green CI run on `main` plans and runs the full validation
+pipeline (see the cost note in [releases.md](releases.md#triggers)). Note: releases published before this
 tooling existed have tags pointing at the old per-release-branch merge commit rather than a
 `main` SHA, so the "unchanged HEAD" comparison against those historical tags will never match
 `main`'s HEAD; the skip only becomes fully effective once every published tag's resolved
@@ -112,7 +130,9 @@ internal consistency — before touching git or GitHub at all:
 - for a stable plan, `candidate` is present, its tag is a valid alpha tag on the same base as
   `version`, and its `sha` is a full 40-character hex SHA;
 - `prerelease`/`makeLatest` match the channel (`true`/`false` for alpha, `false`/`true` for
-  stable).
+  stable);
+- `acknowledgedDivergedTags`, when present, is a non-empty list of distinct release tags
+  and only appears on alpha plans.
 
 A structurally invalid plan is rejected immediately, with no network or git calls. The CLI
 never blindly casts the parsed JSON — `JSON.parse` result is passed through as `unknown` and
@@ -121,19 +141,26 @@ only becomes a typed `ReleasePlan` after passing this validator.
 Once the shape is confirmed, `verify-plan --plan <file>` re-checks, against the live
 repository/GitHub state, that:
 
-- the planned tag is not already reserved — by an existing git tag *or* by any existing
-  GitHub release with that tag name, **including drafts** (a draft release still reserves the
-  tag for publication purposes);
+- the planned tag is not already a git tag;
+- the planned tag is not reserved by a GitHub release, drafts included, with one
+  exception: a single **draft** whose `target_commitish` equals `sourceSha` and whose body
+  carries `<!-- cw-release-plan sha=<sourceSha> -->` is returned as `resumeDraft` so a rerun
+  continues it. Any other release with that tag (published, unmarked, another SHA, or more
+  than one) rejects the plan;
 - no higher-or-equal version has been published in the same channel since the plan was
-  created; and
-- the source SHA is still current: for alpha, compared against `origin/main`'s real remote
-  HEAD (`git ls-remote origin refs/heads/main`, exposed as `ReleaseSource.remoteMainSha()`) —
-  **not** the local checkout's `HEAD`, which could differ if the runner's checkout is stale or
-  was created from a different ref; for stable, the candidate tag's resolved commit must still
-  equal the recorded `sourceSha`.
+  created, and, for alpha, no stable newer than the alpha has been published (the alpha
+  would land after it in the Atom feed and stay hidden from alpha clients); and
+- the source SHA is still acceptable: for alpha, `sourceSha` must be reachable from `main`
+  on GitHub (`gh api repos/<owner>/<repo>/compare/<sha>...main` is `identical` or `ahead`,
+  exposed as `ReleaseSource.isAncestor(sha, "main")`), and the tag commits of the highest
+  published alpha and stable must both be ancestors of `sourceSha`. `main` moving on after
+  the plan is fine; a force-push, a side-branch SHA or a commit older than a published
+  release is not. For stable, the candidate tag's resolved commit must still equal the
+  recorded `sourceSha`.
 
-A stale result rejects the plan instead of publishing it. Step 09 must run `verify-plan`
-immediately before creating any tag/release.
+A stale result rejects the plan instead of publishing it. `release.yml`'s publish step runs
+the same checks before creating the draft and again right before publishing
+([releases.md](releases.md#publication)).
 
 ## CLI
 
@@ -144,7 +171,7 @@ They print machine-readable JSON to stdout and, when `$GITHUB_OUTPUT` is set, al
 the heredoc delimiter format, so values are never corrupted or split by embedded newlines.
 
 - `plan --channel alpha|stable [--candidate <tag|sha>] [--expected-sha <sha>] [--sha <sha>]
-  [--force] [--now <iso>] --out <file>`
+  [--force] [--acknowledge-diverged-tag <tag>[,<tag>]] [--now <iso>] --out <file>`
   Writes the `ReleasePlan` (or `{ skip: true, reason }` for a throttled alpha) to `<file>`.
   `--sha`/`--expected-sha` must be a full 40-character hex SHA, validated before any git call.
   When `--sha` is given, the desktop version is read from that exact commit
@@ -152,7 +179,8 @@ the heredoc delimiter format, so values are never corrupted or split by embedded
   historical or out-of-band commit cannot pick up an unrelated local edit. `--force` only
   applies to `--channel alpha` (see "Automatic alpha policy" above).
 - `verify-plan --plan <file>` — re-validates a previously written plan against the current
-  repository state; exits non-zero when invalid or stale.
+  repository state; exits non-zero when invalid or stale, and sets the `resume` output when
+  a marked draft can be resumed.
 - `apply --plan <file>` (preferred) applies a plan's version after re-validating its shape;
   `apply --version <version>` remains for local/manual use but is rejected unless `<version>`
   is on the current desktop base (use `set-base` to change the base, or pass `--plan`).
@@ -162,6 +190,9 @@ the heredoc delimiter format, so values are never corrupted or split by embedded
 - `check-sync` — verifies the three `package.json` files agree on a single version.
 - `rehash`, `signing-manifest`, `check-signing-manifest` — Windows signing post-processing
   and the `signing.json` gate; documented in [windows-signing.md](windows-signing.md).
+- `stage-release-set`, `validate-release-assets`, `select-upgrade-base`, `publish`,
+  `check-published` — the release set, publication and post-publication checks;
+  documented in [releases.md](releases.md).
 
 `pnpm release:plan` is a root convenience alias for `plan`. `gh api` calls use whatever auth `gh` has
 (a read-only `GH_TOKEN` in CI, or `gh auth login` locally); any `gh api` failure is reported with
@@ -170,11 +201,13 @@ projection limited to the fields the tool actually reads.
 
 ## Workflow
 
-`.github/workflows/release-plan.yml` runs on `workflow_run` (workflow `CI`, on completion) for
-automatic alpha planning, and on `workflow_dispatch` (`channel`, `candidate`, `expected_sha`,
-`force` inputs) for manual alpha or stable planning. It has `permissions: contents: read`
-only — it cannot create tags, releases or commits — and checks out with
-`persist-credentials: false` so the ephemeral token is never written to disk.
+Planning is the first job (`plan`) of `.github/workflows/release.yml`
+([releases.md](releases.md)); there is no separate planning workflow. It runs on
+`workflow_run` (workflow `CI`, on completion) for automatic alpha planning, and on
+`workflow_dispatch` (`channel`, `candidate`, `expected_sha`, `force`, `mode` inputs) for
+manual alpha or stable runs. The job has `permissions: contents: read` only — it cannot
+create tags, releases or commits — and checks out with `persist-credentials: false` so the
+ephemeral token is never written to disk.
 
 The job only runs when:
 
@@ -193,7 +226,8 @@ No workflow step ever interpolates `${{ github.event.inputs.* }}` or a previous 
 through `env:` and referenced as quoted shell variables, so a crafted input (e.g. a candidate
 string containing shell metacharacters) cannot break out of its argument position.
 
-The job checks out the exact commit that triggered it (or `main`'s current head for manual
-dispatch) with full history and tags, runs `plan`, uploads `plan.json` as a 14-day artifact,
-and writes a job summary. The `release-plan-<channel>` concurrency group serializes plans per
-channel without cancelling an in-progress run.
+The job checks out the workflow's own commit (`github.workflow_sha`) with full history and
+tags, so the planner itself is the current tooling, and runs `plan --sha <source>` for the
+commit that triggered the run (`workflow_run.head_sha`, or `github.sha` for a manual
+dispatch). It uploads `plan.json` as a 30-day artifact and writes a job summary.
+Concurrency groups are described in [releases.md](releases.md#triggers).

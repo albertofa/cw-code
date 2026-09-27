@@ -3,7 +3,7 @@ export interface ParsedArgs {
   options: Map<string, string>;
 }
 
-const BOOLEAN_FLAGS = new Set(["force", "require-production"]);
+const BOOLEAN_FLAGS = new Set(["force", "require-production", "require-blockmap"]);
 
 export function parseArgs(argv: string[]): ParsedArgs {
   const [command, ...rest] = argv;

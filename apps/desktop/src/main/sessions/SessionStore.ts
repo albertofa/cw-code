@@ -1,13 +1,23 @@
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { ComposerPrefs, DriverKind, Project, SessionMeta } from "@cw-code/contracts";
 import { isValidPrLink, upsertLink } from "../github/prLinks.js";
 import { expandHome } from "../skills/skillPaths.js";
+import { writeFileAtomic } from "../storage/atomicFile.js";
+import { backupBeforeRepair } from "../storage/backups.js";
+import { isMetadataDocument, type MetadataDocument, type MetadataMigration, type MetadataSchema } from "../storage/metadataDocument.js";
+import { LastGoodRefresher, loadVersionedJson } from "../storage/versionedJson.js";
 
 interface StoreShape {
   projects: Project[];
   sessions: SessionMeta[];
+}
+
+export const SESSION_SCHEMA_VERSION = 1;
+
+export function sessionStoreFile(dbPath: string): string {
+  return dbPath.endsWith(".db") ? `${dbPath}.json` : join(dbPath, "cw-code.json");
 }
 
 export function normalizeRoot(rootPath: string): string {
@@ -15,75 +25,124 @@ export function normalizeRoot(rootPath: string): string {
   return stripped || rootPath;
 }
 
+function projectNameFromRoot(rootPath: string): string {
+  return rootPath.split(/[/\\]/).filter(Boolean).pop() ?? rootPath;
+}
+
+function validateSessionDocument(raw: unknown): string | null {
+  if (!isMetadataDocument(raw)) return "expected a JSON object";
+  if (!Array.isArray(raw.projects)) return "projects must be an array";
+  if (!Array.isArray(raw.sessions)) return "sessions must be an array";
+  for (const [index, project] of raw.projects.entries()) {
+    if (!isMetadataDocument(project) || typeof project.id !== "string" || typeof project.rootPath !== "string") {
+      return `projects[${index}] must be an object with string id and rootPath`;
+    }
+  }
+  for (const [index, session] of raw.sessions.entries()) {
+    if (!isMetadataDocument(session) || typeof session.id !== "string" || typeof session.projectId !== "string") {
+      return `sessions[${index}] must be an object with string id and projectId`;
+    }
+    if (session.worktreePath !== undefined && session.worktreePath !== null && typeof session.worktreePath !== "string") {
+      return `sessions[${index}].worktreePath must be a string`;
+    }
+  }
+  return null;
+}
+
 type LegacySessionMeta = SessionMeta & { pr?: unknown };
 
-function migrateLegacyPrLink(session: LegacySessionMeta): boolean {
-  if (!("pr" in session)) return false;
+function migrateLegacyPrLink(session: LegacySessionMeta): void {
+  if (!("pr" in session)) return;
   const legacy = session.pr;
   delete session.pr;
   if (isValidPrLink(legacy)) session.prs = upsertLink(session.prs, legacy);
   else if (legacy !== undefined && legacy !== null) console.warn(`dropping malformed legacy pull request link on session ${session.id}`);
-  return true;
+}
+
+function normalizeGitHubAccount(project: Project): void {
+  if (!project.githubAccount) return;
+  const host = typeof project.githubAccount.host === "string" ? project.githubAccount.host.trim().toLowerCase() : "";
+  const login = typeof project.githubAccount.login === "string" ? project.githubAccount.login.trim() : "";
+  if (!host || !login) delete project.githubAccount;
+  else if (host !== project.githubAccount.host || login !== project.githubAccount.login) project.githubAccount = { host, login };
+}
+
+function migrateSessionsFromV0(raw: MetadataDocument): MetadataDocument {
+  const document = raw as unknown as StoreShape;
+  for (const project of document.projects) {
+    project.rootPath = normalizeRoot(project.rootPath);
+    normalizeGitHubAccount(project);
+  }
+  for (const session of document.sessions) {
+    migrateLegacyPrLink(session);
+    if (session.worktreePath) session.worktreePath = normalizeRoot(session.worktreePath);
+  }
+  return raw;
+}
+
+export const SESSION_METADATA: MetadataSchema = {
+  kind: "sessions",
+  currentVersion: SESSION_SCHEMA_VERSION,
+  validate: validateSessionDocument,
+  empty: () => ({ schemaVersion: SESSION_SCHEMA_VERSION, projects: [], sessions: [] })
+};
+
+export const SESSION_MIGRATIONS: Record<number, MetadataMigration> = { 0: migrateSessionsFromV0 };
+
+function repairProjectNames(projects: Project[]): string[] {
+  const repaired: string[] = [];
+  for (const [index, project] of projects.entries()) {
+    if (typeof project.name === "string") continue;
+    project.name = projectNameFromRoot(project.rootPath);
+    repaired.push(`projects[${index}].name`);
+  }
+  return repaired;
+}
+
+function resetRuntimeStatuses(sessions: SessionMeta[]): boolean {
+  let changed = false;
+  for (const session of sessions) {
+    if (!session.status) {
+      session.status = "idle";
+      changed = true;
+    } else if (session.status === "working" || session.status === "input-required") {
+      session.status = "holding";
+      changed = true;
+    }
+  }
+  return changed;
 }
 
 export class SessionStore {
   private filePath: string;
-  private data: StoreShape;
+  private data: StoreShape = { projects: [], sessions: [] };
+  private extras: MetadataDocument = {};
+  private lastGood: LastGoodRefresher;
 
   constructor(dbPath: string) {
-    this.filePath = dbPath.endsWith(".db") ? `${dbPath}.json` : join(dbPath, "cw-code.json");
+    this.filePath = sessionStoreFile(dbPath);
     mkdirSync(dirname(this.filePath), { recursive: true });
-    this.data = { projects: [], sessions: [] };
-    if (existsSync(this.filePath)) {
-      try {
-        const parsed = JSON.parse(readFileSync(this.filePath, "utf8")) as StoreShape;
-        if (Array.isArray(parsed.projects) && Array.isArray(parsed.sessions)) this.data = parsed;
-      } catch {
-        this.data = { projects: [], sessions: [] };
-      }
+    const loaded = loadVersionedJson({ filePath: this.filePath, ...SESSION_METADATA, migrations: SESSION_MIGRATIONS });
+    this.lastGood = new LastGoodRefresher(this.filePath);
+    if (loaded.status === "ok") {
+      const extras = { ...loaded.data };
+      this.data = { projects: extras.projects as Project[], sessions: extras.sessions as SessionMeta[] };
+      delete extras.schemaVersion;
+      delete extras.projects;
+      delete extras.sessions;
+      this.extras = extras;
     }
-    let migrated = false;
-    for (const project of this.data.projects) {
-      const normalized = normalizeRoot(project.rootPath);
-      if (normalized !== project.rootPath) {
-        project.rootPath = normalized;
-        migrated = true;
-      }
-      if (project.githubAccount) {
-        const host = typeof project.githubAccount.host === "string" ? project.githubAccount.host.trim().toLowerCase() : "";
-        const login = typeof project.githubAccount.login === "string" ? project.githubAccount.login.trim() : "";
-        if (!host || !login) {
-          delete project.githubAccount;
-          migrated = true;
-        } else if (host !== project.githubAccount.host || login !== project.githubAccount.login) {
-          project.githubAccount = { host, login };
-          migrated = true;
-        }
-      }
-    }
-    for (const session of this.data.sessions) {
-      if (migrateLegacyPrLink(session)) migrated = true;
-      if (!session.status) {
-        session.status = "idle";
-        migrated = true;
-      } else if (session.status === "working" || session.status === "input-required") {
-        session.status = "holding";
-        migrated = true;
-      }
-      if (!session.worktreePath) continue;
-      const normalized = normalizeRoot(session.worktreePath);
-      if (normalized !== session.worktreePath) {
-        session.worktreePath = normalized;
-        migrated = true;
-      }
-    }
-    if (migrated) this.persist();
+    const repaired = repairProjectNames(this.data.projects);
+    if (repaired.length > 0) backupBeforeRepair(this.filePath, SESSION_METADATA, repaired);
+    if (resetRuntimeStatuses(this.data.sessions) || repaired.length > 0) this.persist();
   }
 
   private persist(): void {
-    const tmp = `${this.filePath}.${process.pid}.tmp`;
-    writeFileSync(tmp, JSON.stringify(this.data), "utf8");
-    renameSync(tmp, this.filePath);
+    writeFileAtomic(
+      this.filePath,
+      JSON.stringify({ schemaVersion: SESSION_SCHEMA_VERSION, projects: this.data.projects, sessions: this.data.sessions, ...this.extras })
+    );
+    this.lastGood.afterPersist();
   }
 
   addProject(rootPath: string): Project {
@@ -97,7 +156,7 @@ export class SessionStore {
     const project: Project = {
       id: `proj_${randomUUID().slice(0, 8)}`,
       rootPath: normalized,
-      name: normalized.split(/[/\\]/).filter(Boolean).pop() ?? normalized
+      name: projectNameFromRoot(normalized)
     };
     this.data.projects.push(project);
     this.persist();
@@ -214,5 +273,7 @@ export class SessionStore {
     });
   }
 
-  close(): void {}
+  close(): void {
+    this.lastGood.flush();
+  }
 }

@@ -8,6 +8,7 @@ import {
   buildSigningManifest,
   parsePackageInfo,
   parseVerificationReport,
+  provenanceMismatches,
   publisherMatches,
   roleOf,
   validateSigningManifest
@@ -21,6 +22,7 @@ const APP_EXE = "win-unpacked/cw-code.exe";
 const FFMPEG = "win-unpacked/ffmpeg.dll";
 const CONPTY = "win-unpacked/resources/app.asar.unpacked/node_modules/node-pty/prebuilds/win32-x64/conpty/conpty.dll";
 const PROVENANCE = { version: "1.2.0", sourceSha: "a".repeat(40), runId: "123456" };
+const BLOCK_MAP = { path: `${INSTALLER}.blockmap`, sha512: createHash("sha512").update("blockmap").digest("base64"), size: 110373 };
 
 function sha(label: string): string {
   return createHash("sha512").update(label).digest("base64");
@@ -65,6 +67,7 @@ function signedInput(overrides: Partial<BuildSigningManifestInput> = {}): BuildS
     report: report(),
     updateInfo: { installerName: INSTALLER, sha512: sha(INSTALLER), version: "1.2.0" },
     appUpdatePublisherNames: [PUBLISHER],
+    blockMap: BLOCK_MAP,
     ...overrides
   };
 }
@@ -216,6 +219,18 @@ describe("validateSigningManifest", () => {
     expect(errorsOf(validateSigningManifest({ ...value, files }))).toMatch(/exactly one top-level installer, found 2/);
   });
 
+  it("binds the blockmap digest to the installer", () => {
+    const value = manifest();
+    expect(value.blockMap).toEqual(BLOCK_MAP);
+    expect(errorsOf(validateSigningManifest({ ...value, blockMap: undefined }))).toMatch(/blockMap must be an object/);
+    expect(errorsOf(validateSigningManifest({ ...value, blockMap: { ...BLOCK_MAP, path: "other-Setup.exe.blockmap" } }))).toMatch(
+      /blockMap.path other-Setup.exe.blockmap must be cw-code-Setup-1.2.0-x64.exe.blockmap/
+    );
+    expect(errorsOf(validateSigningManifest({ ...value, blockMap: { ...BLOCK_MAP, path: "win-unpacked/x.blockmap" } }))).toMatch(/top-level .blockmap/);
+    expect(errorsOf(validateSigningManifest({ ...value, blockMap: { ...BLOCK_MAP, size: 0 } }))).toMatch(/positive integer/);
+    expect(errorsOf(validateSigningManifest({ ...value, blockMap: { ...BLOCK_MAP, sha512: "abc" } }))).toMatch(/blockMap.sha512/);
+  });
+
   it("rejects malformed shapes, provenance, unsafe paths, bad digests and duplicates", () => {
     const value = manifest();
     expect(errorsOf(validateSigningManifest(null))).toMatch(/not an object/);
@@ -227,6 +242,17 @@ describe("validateSigningManifest", () => {
     expect(errorsOf(validateSigningManifest({ ...value, files: [{ ...value.files[1], path: "../x.dll" }] }))).toMatch(/relative/);
     expect(errorsOf(validateSigningManifest({ ...value, files: [{ ...value.files[1], sha512: "abc" }] }))).toMatch(/SHA-512/);
     expect(errorsOf(validateSigningManifest({ ...value, files: [...value.files, value.files[1]] }))).toMatch(/more than once/);
+  });
+});
+
+describe("provenanceMismatches", () => {
+  it("accepts matching or omitted expectations and names every mismatch", () => {
+    expect(provenanceMismatches(PROVENANCE, {})).toEqual([]);
+    expect(provenanceMismatches(PROVENANCE, PROVENANCE)).toEqual([]);
+    const errors = provenanceMismatches(PROVENANCE, { version: "1.2.1", sourceSha: "b".repeat(40), runId: "9" }).join("\n");
+    expect(errors).toMatch(/version "1.2.0" differs from the expected "1.2.1"/);
+    expect(errors).toMatch(/sourceSha/);
+    expect(errors).toMatch(/runId "123456" differs from the expected "9"/);
   });
 });
 
