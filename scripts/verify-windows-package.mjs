@@ -331,12 +331,16 @@ function cleanupInstallation({ registryKeys, candidateDirs = [], ownedDirs = [] 
     }
   }
   for (const dir of dirs) {
+    let failure = null;
     try {
-      rmSync(dir, { recursive: true, force: true });
-      if (existsSync(dir)) errors.push(`install directory still present after removal: ${dir}`);
+      rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 });
+      if (existsSync(dir)) failure = `install directory still present after removal: ${dir}`;
     } catch (err) {
-      errors.push(`could not remove install directory ${dir}: ${err.message}`);
+      failure = `could not remove install directory ${dir}: ${err.message}`;
     }
+    if (!failure) continue;
+    if (existsSync(join(dir, `${PRODUCT_NAME}.exe`)) || existsSync(join(dir, UNINSTALLER_NAME))) errors.push(failure);
+    else console.warn(`${failure} (no app files left in it, continuing)`);
   }
   if (registryLocation !== null || uninstallerRan) {
     try {
