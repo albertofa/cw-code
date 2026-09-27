@@ -550,7 +550,7 @@ function electronUserDataDir() {
 const FIXTURE_SENTINEL_PATTERN = /^cw-verify-[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 const FIXTURE_UNKNOWN_KEY = "cwVerifyUnknownKey";
 const PROJECT_FIELDS = ["id", "rootPath", "name"];
-const SESSION_FIELDS = ["id", "projectId", "driver", "title", "status", "resumeCursor", "worktreePath", "branch", "createdAt", "updatedAt", FIXTURE_UNKNOWN_KEY];
+const SESSION_FIELDS = ["id", "projectId", "driver", "title", "status", "resumeCursor", "worktreePath", "branch", "createdAt", FIXTURE_UNKNOWN_KEY];
 
 function isFixtureSentinel(value) {
   return typeof value === "string" && FIXTURE_SENTINEL_PATTERN.test(value);
