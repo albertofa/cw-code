@@ -329,6 +329,15 @@ function settleInstallRegistry({ registryKeys, registryGuid, uninstallerName, gu
   return { warning: `${missingUninstaller}; deleted the stale registry keys ${keys.join(", ")}` };
 }
 
+function removeInstallDir(dir) {
+  try {
+    rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 1000 });
+    return existsSync(dir) ? `install directory still present after removal: ${dir}` : null;
+  } catch (err) {
+    return `could not remove install directory ${dir}: ${err.message}`;
+  }
+}
+
 export function cleanupInstallation({
   registryKeys,
   registryGuid = null,
@@ -336,6 +345,7 @@ export function cleanupInstallation({
   executableName,
   candidateDirs = [],
   ownedDirs = [],
+  removableDirs = [],
   guardPath = null
 }) {
   const errors = [];
@@ -355,17 +365,21 @@ export function cleanupInstallation({
       errors.push(`uninstall of ${dir} failed: ${err.message}`);
     }
   }
+  const removable = new Set([...ownedDirs, ...removableDirs].filter((dir) => isSafeRemovalTarget(dir)).map(dirKey));
+  const hasEvidence = (dir) => existsSync(join(dir, executableName)) || existsSync(join(dir, uninstallerName));
   warnings.push(...stopInstallProcesses(dirs, "before removing it"));
   for (const dir of dirs) {
-    let failure = null;
-    try {
-      rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 });
-      if (existsSync(dir)) failure = `install directory still present after removal: ${dir}`;
-    } catch (err) {
-      failure = `could not remove install directory ${dir}: ${err.message}`;
+    if (!removable.has(dirKey(dir))) {
+      if (hasEvidence(dir)) warnings.push(`left ${dir} in place: it is not a verifier-owned or expected install directory`);
+      continue;
+    }
+    let failure = removeInstallDir(dir);
+    if (failure && hasEvidence(dir)) {
+      warnings.push(...stopInstallProcesses([dir], "before retrying its removal"));
+      failure = removeInstallDir(dir);
     }
     if (!failure) continue;
-    const outcome = removalFailureOutcome(failure, existsSync(join(dir, executableName)) || existsSync(join(dir, uninstallerName)));
+    const outcome = removalFailureOutcome(failure, hasEvidence(dir));
     if (outcome.error) errors.push(outcome.error);
     else warnings.push(outcome.warning);
   }

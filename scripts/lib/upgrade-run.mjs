@@ -92,7 +92,7 @@ function removeTestDir(path) {
   rmSync(path, { recursive: true, force: true });
 }
 
-export function cleanupTestIdentity(identity, candidateDirs = []) {
+export function cleanupTestIdentity(identity, candidateDirs = [], removableDirs = []) {
   const notes = [];
   const errors = [];
   for (const perMachine of [false, true]) {
@@ -102,6 +102,7 @@ export function cleanupTestIdentity(identity, candidateDirs = []) {
       uninstallerName: UPDATE_TEST_UNINSTALLER,
       executableName: UPDATE_TEST_EXECUTABLE,
       candidateDirs: [...candidateDirs, defaultInstallDir(UPDATE_TEST_PRODUCT_NAME, perMachine)],
+      removableDirs: [...removableDirs, defaultInstallDir(UPDATE_TEST_PRODUCT_NAME, perMachine)],
       guardPath: assertUpdateTestPath
     });
     const pass = perMachine ? "HKLM" : "HKCU";
@@ -521,7 +522,7 @@ export async function runScenario(entry, context) {
     }
     record.stoppedProcesses = stopped.filter((entry) => entry.killed);
     try {
-      record.notes.push(...cleanupTestIdentity(identity, [paths.customInstallDir, installLocationBefore]));
+      record.notes.push(...cleanupTestIdentity(identity, [paths.customInstallDir, installLocationBefore], [paths.customInstallDir]));
     } catch (err) {
       record.problems.push(`cleanup failed: ${err.message}`);
     }
