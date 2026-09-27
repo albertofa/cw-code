@@ -365,6 +365,16 @@ export class ClaudeCliDriver implements CliDriver {
     event: Extract<ThreadEvent, { type: "tool.call" }>
   ): void {
     const name = event.name.toLowerCase();
+    if (name === "bash") {
+      const input = event.input;
+      const background =
+        input !== null &&
+        typeof input === "object" &&
+        !Array.isArray(input) &&
+        (input as Record<string, unknown>)["run_in_background"] === true;
+      this.trackBackgroundCall(state, event.toolCallId, background);
+      return;
+    }
     if (name !== "agent" && name !== "task") return;
     if (
       event.input !== null &&
@@ -536,34 +546,32 @@ export class ClaudeCliDriver implements CliDriver {
       return;
     }
     if (info.kind === "started") {
+      const shellTask = info.taskType === CLAUDE_SHELL_TASK_TYPE;
+      const agentTask = info.background !== false && !shellTask && (
+        info.taskType === "local_agent" ||
+        info.taskType === "agent" ||
+        info.subagentType !== undefined ||
+        info.prompt !== undefined ||
+        (info.toolUseId !== undefined && state.backgroundAgentCallIds.has(info.toolUseId))
+      );
       if (info.taskId && info.toolUseId) {
         state.taskToolCalls.set(info.taskId, info.toolUseId);
-        const agentTask = info.background !== false && (
-          info.taskType === "local_agent" ||
-          info.taskType === "agent" ||
-          info.subagentType !== undefined ||
-          info.prompt !== undefined ||
-          state.backgroundAgentCallIds.has(info.toolUseId)
-        );
         if (agentTask) state.agentByCall.set(info.toolUseId, info.taskId);
       }
       if (info.toolUseId) {
-        if (info.background === false || info.taskType === CLAUDE_SHELL_TASK_TYPE) {
+        const background = info.background !== false && (
+          info.taskType !== CLAUDE_SHELL_TASK_TYPE ||
+          info.background === true ||
+          state.backgroundCallIds.has(info.toolUseId)
+        );
+        if (!background) {
           state.backgroundCallIds.delete(info.toolUseId);
           state.backgroundAgentCallIds.delete(info.toolUseId);
           state.backgroundCallStartedAt.delete(info.toolUseId);
           return;
         }
         this.trackBackgroundCall(state, info.toolUseId);
-        if (
-          info.taskType === "local_agent" ||
-          info.taskType === "agent" ||
-          info.subagentType !== undefined ||
-          info.prompt !== undefined ||
-          state.backgroundAgentCallIds.has(info.toolUseId)
-        ) {
-          state.backgroundAgentCallIds.add(info.toolUseId);
-        }
+        if (agentTask) state.backgroundAgentCallIds.add(info.toolUseId);
       }
       return;
     }

@@ -402,7 +402,7 @@ describe("parseClaudeTaskSystemLine", () => {
     });
   });
 
-  it("leaves background shells out of the live task snapshot", () => {
+  it("includes background shells in the live task snapshot", () => {
     const line = JSON.stringify({
       type: "system",
       subtype: "background_tasks_changed",
@@ -412,7 +412,11 @@ describe("parseClaudeTaskSystemLine", () => {
         { type: "local_bash", task_id: "b-1" }
       ]
     });
-    expect(parseClaudeTaskSystemLine(line)).toEqual({ kind: "tasks", liveTasks: 1, liveTaskIds: ["agent-1"] });
+    expect(parseClaudeTaskSystemLine(line)).toEqual({
+      kind: "tasks",
+      liveTasks: 3,
+      liveTaskIds: ["agent-1", "bb3lof10o", "b-1"]
+    });
   });
 
   it("parses task_started with prompt and background flag", () => {
