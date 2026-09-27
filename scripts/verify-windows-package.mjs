@@ -12,6 +12,7 @@ import {
 } from "./lib/real-user-data.mjs";
 import {
   cleanupInstallation,
+  isSafeRemovalTarget,
   defaultInstallDir,
   isElevated,
   resolveAsarLib,
@@ -206,6 +207,9 @@ async function upgradeFromMode(distDir, legacyInstallerPath, disposableEnvironme
         "Re-run from an elevated shell (hosted GitHub Windows runners are elevated by default)."
     );
   }
+  if (customDir && (existsSync(customDir) || !isSafeRemovalTarget(customDir))) {
+    throw new Error(`--custom-dir must be a new directory outside profile and system folders (it is removed afterwards): ${customDir}`);
+  }
   const registryKeys = registryPaths(UPDATER_GUID, perMachine);
   const legacyArgs = perMachine ? ["/S", "/allusers"] : customDir ? ["/S", `/D=${customDir}`] : ["/S"];
   const upgradeArgs = perMachine ? ["/S", "/allusers"] : ["/S"];
@@ -291,7 +295,8 @@ async function upgradeFromMode(distDir, legacyInstallerPath, disposableEnvironme
     primaryError = err;
   } finally {
     cleanupErrors = cleanupProductInstallation(registryKeys, {
-      candidateDirs: [installLocationBefore, installLocationAfter, customDir, defaultInstallDir(PRODUCT_NAME, perMachine)]
+      candidateDirs: [installLocationBefore, installLocationAfter, customDir, defaultInstallDir(PRODUCT_NAME, perMachine)],
+      removableDirs: [customDir, defaultInstallDir(PRODUCT_NAME, perMachine)].filter(Boolean)
     });
     cleanupSeededFixtures(seed);
   }
