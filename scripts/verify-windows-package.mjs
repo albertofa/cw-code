@@ -244,7 +244,30 @@ function installDiagnostics(registryKeys) {
       return `${key}:\n${result.status === 0 ? result.stdout.trim() : "(absent)"}`;
     })
     .join("\n");
-  return `processes:\n${processes.stdout.trim() || "(none)"}\nregistry:\n${registry}`;
+  const crashes = spawnSync(
+    "powershell",
+    [
+      "-NoProfile",
+      "-Command",
+      "Get-WinEvent -FilterHashtable @{ LogName = 'Application'; ProviderName = 'Application Error'; StartTime = (Get-Date).AddMinutes(-10) } -MaxEvents 3 -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Message | Out-String -Width 400"
+    ],
+    { encoding: "utf8" }
+  );
+  const longPathProcesses = spawnSync(
+    "powershell",
+    [
+      "-NoProfile",
+      "-Command",
+      "Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath.Length -gt 200 -or $_.CommandLine.Length -gt 2000 } | Select-Object ProcessId,Name,ExecutablePath | Format-List | Out-String -Width 400"
+    ],
+    { encoding: "utf8" }
+  );
+  return [
+    `processes:\n${processes.stdout.trim() || "(none)"}`,
+    `registry:\n${registry}`,
+    `recent application crashes:\n${crashes.stdout.trim() || "(none)"}`,
+    `processes with long paths or command lines:\n${longPathProcesses.stdout.trim() || "(none)"}`
+  ].join("\n");
 }
 
 function runSilentWithRetry(command, args, registryKeys) {
