@@ -346,7 +346,7 @@ jobs:
         env:
           INSTALLER: ${{ steps.base.outputs.installer }}
         run: |
-          node scripts/verify-installed-upgrade.mjs --production-bytes --installer "upgrade-base/$INSTALLER" --candidate-dir release-set \
+          node scripts/verify-installed-upgrade.mjs --production-bytes --disposable-environment --installer "upgrade-base/$INSTALLER" --candidate-dir release-set \
             --work-dir "$RUNNER_TEMP/production-bytes" --evidence "$RUNNER_TEMP/release-evidence/production-bytes.json"
       - name: Require the upgrade gate before publication
         env:
