@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir, tmpdir } from "node:os";
 import { isAbsolute, join, parse, resolve, sep } from "node:path";
@@ -105,14 +105,38 @@ export function installDiagnostics(registryKeys) {
 
 const INSTALLER_RETRY_DELAYS_SECONDS = [15, 30, 60];
 
-export function runSilentWithRetry(command, args, registryKeys) {
+function installTargetState({ dir, productName, uninstallerName }) {
+  const lines = [];
+  if (existsSync(dir)) {
+    const entries = readdirSync(dir, { recursive: true }).length;
+    const present = (name) => (existsSync(join(dir, name)) ? "present" : "missing");
+    lines.push(`${dir}: ${entries} entries, ${productName}.exe ${present(`${productName}.exe`)}, ${uninstallerName} ${present(uninstallerName)}`);
+  } else {
+    lines.push(`${dir}: (absent)`);
+  }
+  const shortcutDirs = [
+    join(process.env.APPDATA ?? join(homedir(), "AppData", "Roaming"), "Microsoft", "Windows", "Start Menu", "Programs"),
+    join(process.env.ProgramData ?? "C:\\ProgramData", "Microsoft", "Windows", "Start Menu", "Programs"),
+    join(homedir(), "Desktop"),
+    join(process.env.PUBLIC ?? "C:\\Users\\Public", "Desktop")
+  ];
+  for (const shortcutDir of shortcutDirs) {
+    const link = join(shortcutDir, `${productName}.lnk`);
+    lines.push(`${link}: ${existsSync(link) ? "present" : "absent"}`);
+  }
+  return lines.join("\n");
+}
+
+export function runSilentWithRetry(command, args, registryKeys, target) {
   for (let attempt = 0; ; attempt++) {
+    const before = installTargetState(target);
     try {
       return { result: runSilent(command, args), retried: attempt > 0 };
     } catch (err) {
+      const diagnostics = `${installDiagnostics(registryKeys)}\ntarget before the run:\n${before}\ntarget after the run:\n${installTargetState(target)}`;
       const delay = INSTALLER_RETRY_DELAYS_SECONDS[attempt];
-      if (delay === undefined) throw new Error(`${err.message}\n${installDiagnostics(registryKeys)}`);
-      console.warn(`${err.message}\n${installDiagnostics(registryKeys)}\nretrying in ${delay}s (attempt ${attempt + 2} of ${INSTALLER_RETRY_DELAYS_SECONDS.length + 1})`);
+      if (delay === undefined) throw new Error(`${err.message}\n${diagnostics}`);
+      console.warn(`${err.message}\n${diagnostics}\nretrying in ${delay}s (attempt ${attempt + 2} of ${INSTALLER_RETRY_DELAYS_SECONDS.length + 1})`);
       spawnSync("powershell", ["-NoProfile", "-Command", `Start-Sleep -Seconds ${delay}`]);
     }
   }
