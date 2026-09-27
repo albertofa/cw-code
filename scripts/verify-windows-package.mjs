@@ -34,7 +34,15 @@ const EXECUTABLE_NAME = `${PRODUCT_NAME}.exe`;
 const UNINSTALLER_NAME = `Uninstall ${PRODUCT_NAME}.exe`;
 
 function cleanupProductInstallation(registryKeys, dirs) {
-  return cleanupInstallation({ registryKeys, uninstallerName: UNINSTALLER_NAME, executableName: EXECUTABLE_NAME, ...dirs }).errors;
+  const cleanup = cleanupInstallation({
+    registryKeys,
+    registryGuid: UPDATER_GUID,
+    uninstallerName: UNINSTALLER_NAME,
+    executableName: EXECUTABLE_NAME,
+    ...dirs
+  });
+  for (const warning of cleanup.warnings) console.warn(warning);
+  return cleanup.errors;
 }
 
 function parseArgs(argv) {

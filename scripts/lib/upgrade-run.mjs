@@ -98,12 +98,15 @@ export function cleanupTestIdentity(identity, candidateDirs = []) {
   for (const perMachine of [false, true]) {
     const cleanup = cleanupInstallation({
       registryKeys: registryPaths(TEST_GUID, perMachine),
+      registryGuid: TEST_GUID,
       uninstallerName: UPDATE_TEST_UNINSTALLER,
       executableName: UPDATE_TEST_EXECUTABLE,
       candidateDirs: [...candidateDirs, defaultInstallDir(UPDATE_TEST_PRODUCT_NAME, perMachine)],
       guardPath: assertUpdateTestPath
     });
-    for (const dir of cleanup.uninstalledDirs) notes.push(`uninstalled update-test build from ${dir} (${perMachine ? "HKLM" : "HKCU"} pass)`);
+    const pass = perMachine ? "HKLM" : "HKCU";
+    for (const dir of cleanup.uninstalledDirs) notes.push(`uninstalled update-test build from ${dir} (${pass} pass)`);
+    for (const warning of cleanup.warnings) notes.push(`cleanup warning: ${warning} (${pass} pass)`);
     errors.push(...cleanup.errors);
   }
   for (const dir of [identity.cacheDir, identity.userDataDir]) {
