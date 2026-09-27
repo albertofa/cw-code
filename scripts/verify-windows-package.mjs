@@ -249,14 +249,38 @@ function installDiagnostics(registryKeys) {
 
 const INSTALLER_RETRY_DELAYS_SECONDS = [15, 30, 60];
 
-function runSilentWithRetry(command, args, registryKeys) {
+function installTargetState(targetDir) {
+  const lines = [];
+  if (existsSync(targetDir)) {
+    const entries = readdirSync(targetDir, { recursive: true }).length;
+    const present = (name) => (existsSync(join(targetDir, name)) ? "present" : "missing");
+    lines.push(`${targetDir}: ${entries} entries, ${PRODUCT_NAME}.exe ${present(`${PRODUCT_NAME}.exe`)}, ${UNINSTALLER_NAME} ${present(UNINSTALLER_NAME)}`);
+  } else {
+    lines.push(`${targetDir}: (absent)`);
+  }
+  const shortcutDirs = [
+    join(process.env.APPDATA ?? join(homedir(), "AppData", "Roaming"), "Microsoft", "Windows", "Start Menu", "Programs"),
+    join(process.env.ProgramData ?? "C:\\ProgramData", "Microsoft", "Windows", "Start Menu", "Programs"),
+    join(homedir(), "Desktop"),
+    join(process.env.PUBLIC ?? "C:\\Users\\Public", "Desktop")
+  ];
+  for (const dir of shortcutDirs) {
+    const link = join(dir, `${PRODUCT_NAME}.lnk`);
+    lines.push(`${link}: ${existsSync(link) ? "present" : "absent"}`);
+  }
+  return lines.join("\n");
+}
+
+function runSilentWithRetry(command, args, registryKeys, targetDir) {
   for (let attempt = 0; ; attempt++) {
+    const before = installTargetState(targetDir);
     try {
       return { result: runSilent(command, args), retried: attempt > 0 };
     } catch (err) {
+      const diagnostics = `${installDiagnostics(registryKeys)}\ntarget before the run:\n${before}\ntarget after the run:\n${installTargetState(targetDir)}`;
       const delay = INSTALLER_RETRY_DELAYS_SECONDS[attempt];
-      if (delay === undefined) throw new Error(`${err.message}\n${installDiagnostics(registryKeys)}`);
-      console.warn(`${err.message}\n${installDiagnostics(registryKeys)}\nretrying in ${delay}s (attempt ${attempt + 2} of ${INSTALLER_RETRY_DELAYS_SECONDS.length + 1})`);
+      if (delay === undefined) throw new Error(`${err.message}\n${diagnostics}`);
+      console.warn(`${err.message}\n${diagnostics}\nretrying in ${delay}s (attempt ${attempt + 2} of ${INSTALLER_RETRY_DELAYS_SECONDS.length + 1})`);
       spawnSync("powershell", ["-NoProfile", "-Command", `Start-Sleep -Seconds ${delay}`]);
     }
   }
@@ -823,7 +847,7 @@ async function upgradeFromMode(distDir, legacyInstallerPath, disposableEnvironme
   let cleanupErrors = [];
 
   try {
-    const legacyInstall = runSilentWithRetry(legacyInstallerPath, legacyArgs, registryKeys);
+    const legacyInstall = runSilentWithRetry(legacyInstallerPath, legacyArgs, registryKeys, customDir ?? defaultInstallDir(perMachine));
     if (legacyInstall.retried) console.warn("legacy installer succeeded only on retry; see diagnostics above");
     installLocationBefore = readRegistryValue(registryKeys.install, "InstallLocation");
     displayVersionBefore = readRegistryValue(registryKeys.uninstall, "DisplayVersion");
