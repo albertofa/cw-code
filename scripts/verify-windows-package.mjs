@@ -2,7 +2,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, rmdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir, tmpdir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, join, resolve, sep } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 
@@ -13,6 +13,7 @@ const UPDATER_GUID = "d6e18d04-bf35-5bfe-9145-b95301660833";
 const PROBE_TIMEOUT_MS = 30_000;
 const UNINSTALL_POLL_TIMEOUT_MS = 30_000;
 const UNINSTALL_POLL_INTERVAL_MS = 500;
+const PROCESS_EXIT_GRACE_MS = 15_000;
 const PRODUCT_NAME = "cw-code";
 const UNINSTALLER_NAME = `Uninstall ${PRODUCT_NAME}.exe`;
 
@@ -312,17 +313,133 @@ function detectInstallDirs(registryLocation, candidateDirs, ownedDirs) {
   return [...detected.values()];
 }
 
+function isInsideDir(path, dir) {
+  const root = dirKey(dir);
+  return dirKey(path).startsWith(root.endsWith(sep) ? root : `${root}${sep}`);
+}
+
+function processesInsideDirs(processes, dirs, excludedPid = process.pid) {
+  return processes.filter(
+    (entry) =>
+      Number.isInteger(entry?.ProcessId) &&
+      entry.ProcessId !== excludedPid &&
+      typeof entry.ExecutablePath === "string" &&
+      entry.ExecutablePath !== "" &&
+      dirs.some((dir) => isInsideDir(entry.ExecutablePath, dir))
+  );
+}
+
+function survivingProcesses(requested, current) {
+  return requested.filter((entry) =>
+    current.some((candidate) => candidate.ProcessId === entry.ProcessId && dirKey(candidate.ExecutablePath) === dirKey(entry.ExecutablePath))
+  );
+}
+
+function parseProcessList(text) {
+  const trimmed = text.trim();
+  if (trimmed === "") return [];
+  const parsed = JSON.parse(trimmed);
+  return Array.isArray(parsed) ? parsed : [parsed];
+}
+
+function listWindowsProcesses() {
+  const result = spawnSync(
+    "powershell",
+    [
+      "-NoProfile",
+      "-NonInteractive",
+      "-Command",
+      "ConvertTo-Json -Compress -InputObject @(Get-CimInstance Win32_Process | Select-Object ProcessId,ExecutablePath)"
+    ],
+    { encoding: "utf8", maxBuffer: 64 * 1024 * 1024 }
+  );
+  if (result.status !== 0) throw new Error(`could not list processes (exit ${result.status}): ${result.stderr || result.stdout}`);
+  return parseProcessList(result.stdout);
+}
+
+function stopProcessesInsideDirs(dirs) {
+  const existingDirs = dirs.filter((dir) => existsSync(dir));
+  if (existingDirs.length === 0) return [];
+  const running = processesInsideDirs(listWindowsProcesses(), existingDirs);
+  if (running.length === 0) return [];
+  for (const entry of running) spawnSync("taskkill", ["/PID", String(entry.ProcessId), "/T"], { encoding: "utf8" });
+  const deadline = Date.now() + PROCESS_EXIT_GRACE_MS;
+  let remaining = survivingProcesses(running, processesInsideDirs(listWindowsProcesses(), existingDirs));
+  while (remaining.length > 0 && Date.now() < deadline) {
+    sleepSync(UNINSTALL_POLL_INTERVAL_MS);
+    remaining = survivingProcesses(remaining, processesInsideDirs(listWindowsProcesses(), existingDirs));
+  }
+  for (const entry of remaining) spawnSync("taskkill", ["/PID", String(entry.ProcessId), "/T", "/F"], { encoding: "utf8" });
+  const forced = new Set(remaining.map((entry) => entry.ProcessId));
+  return running.map((entry) => ({ pid: entry.ProcessId, path: entry.ExecutablePath, forced: forced.has(entry.ProcessId) }));
+}
+
+function describeStoppedProcesses(stopped) {
+  return stopped.map((entry) => `${entry.pid} ${entry.path} (${entry.forced ? "force-killed" : "exited on request"})`).join(", ");
+}
+
+function stopInstallProcesses(dirs, stage) {
+  try {
+    const stopped = stopProcessesInsideDirs(dirs);
+    if (stopped.length > 0) console.warn(`stopped processes running from the install directory ${stage}: ${describeStoppedProcesses(stopped)}`);
+  } catch (err) {
+    console.warn(`could not stop processes running from the install directory ${stage}: ${err.message}`);
+  }
+}
+
+function removalFailureOutcome(failure, appFilesLeft) {
+  return appFilesLeft ? { error: failure } : { warning: `${failure} (no app files left in it, continuing)` };
+}
+
+function staleRegistryKeys({ registryKeys, guid, installLocation, uninstallerPresent }) {
+  if (installLocation === null || uninstallerPresent || !guid) return [];
+  const keys = [registryKeys.install, registryKeys.uninstall];
+  const suffix = `\\${guid}`.toLowerCase();
+  return keys.every((key) => key.toLowerCase().endsWith(suffix)) ? keys : [];
+}
+
+function deleteRegistryKeys(keys) {
+  const failures = [];
+  for (const key of keys) {
+    const result = spawnSync("reg", ["delete", key, "/f"], { encoding: "utf8" });
+    const stillPresent = spawnSync("reg", ["query", key], { encoding: "utf8" }).status === 0;
+    if (result.status !== 0 && stillPresent) failures.push(`${key}: ${(result.stderr || result.stdout).trim()}`);
+  }
+  return failures;
+}
+
+function settleInstallRegistry(registryKeys, waitForUninstaller) {
+  let waitError = null;
+  if (waitForUninstaller) {
+    try {
+      waitForRegistryValueGone(registryKeys.install, "InstallLocation", UNINSTALL_POLL_TIMEOUT_MS);
+      return {};
+    } catch (err) {
+      waitError = err.message;
+    }
+  }
+  const location = readRegistryValue(registryKeys.install, "InstallLocation");
+  if (location === null) return {};
+  const uninstallerPresent = existsSync(join(location, UNINSTALLER_NAME));
+  const missingUninstaller = `registry InstallLocation points to ${location} but ${UNINSTALLER_NAME} is missing there`;
+  const keys = staleRegistryKeys({ registryKeys, guid: UPDATER_GUID, installLocation: location, uninstallerPresent });
+  if (keys.length === 0) return { error: uninstallerPresent ? (waitError ?? `registry InstallLocation still points to ${location}`) : missingUninstaller };
+  const failures = deleteRegistryKeys(keys);
+  if (failures.length > 0) return { error: `${missingUninstaller}; could not delete its registry keys: ${failures.join("; ")}` };
+  const remaining = readRegistryValue(registryKeys.install, "InstallLocation");
+  if (remaining !== null) return { error: `${missingUninstaller}; InstallLocation still reads ${remaining} after deleting ${keys.join(", ")}` };
+  return { warning: `${missingUninstaller}; deleted the stale registry keys ${keys.join(", ")}` };
+}
+
 function cleanupInstallation({ registryKeys, candidateDirs = [], ownedDirs = [] }) {
   const errors = [];
   const registryLocation = readRegistryValue(registryKeys.install, "InstallLocation");
   const dirs = detectInstallDirs(registryLocation, candidateDirs, ownedDirs);
   let uninstallerRan = false;
+  stopInstallProcesses(dirs, "before uninstalling");
   for (const dir of dirs) {
     const uninstallerPath = join(dir, UNINSTALLER_NAME);
-    if (!existsSync(uninstallerPath)) {
-      if (dir === registryLocation) errors.push(`registry InstallLocation points to ${dir} but ${UNINSTALLER_NAME} is missing there`);
-      continue;
-    }
+    if (!existsSync(uninstallerPath)) continue;
     uninstallerRan = true;
     try {
       runSilent(uninstallerPath, ["/S", `_?=${dir}`]);
@@ -330,6 +447,7 @@ function cleanupInstallation({ registryKeys, candidateDirs = [], ownedDirs = [] 
       errors.push(`uninstall of ${dir} failed: ${err.message}`);
     }
   }
+  stopInstallProcesses(dirs, "before removing it");
   for (const dir of dirs) {
     let failure = null;
     try {
@@ -339,15 +457,14 @@ function cleanupInstallation({ registryKeys, candidateDirs = [], ownedDirs = [] 
       failure = `could not remove install directory ${dir}: ${err.message}`;
     }
     if (!failure) continue;
-    if (existsSync(join(dir, `${PRODUCT_NAME}.exe`)) || existsSync(join(dir, UNINSTALLER_NAME))) errors.push(failure);
-    else console.warn(`${failure} (no app files left in it, continuing)`);
+    const outcome = removalFailureOutcome(failure, hasInstallEvidence(dir));
+    if (outcome.error) errors.push(outcome.error);
+    else console.warn(outcome.warning);
   }
   if (registryLocation !== null || uninstallerRan) {
-    try {
-      waitForRegistryValueGone(registryKeys.install, "InstallLocation", UNINSTALL_POLL_TIMEOUT_MS);
-    } catch (err) {
-      errors.push(err.message);
-    }
+    const outcome = settleInstallRegistry(registryKeys, uninstallerRan);
+    if (outcome.error) errors.push(outcome.error);
+    if (outcome.warning) console.warn(outcome.warning);
   }
   return errors;
 }
