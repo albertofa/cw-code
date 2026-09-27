@@ -453,7 +453,16 @@ function settleInstallRegistry(registryKeys, waitForUninstaller) {
   return { warning: `${missingUninstaller}; deleted the stale registry keys ${keys.join(", ")}` };
 }
 
-function cleanupInstallation({ registryKeys, candidateDirs = [], ownedDirs = [] }) {
+function removeInstallDir(dir) {
+  try {
+    rmSync(dir, { recursive: true, force: true, maxRetries: 20, retryDelay: 1000 });
+    return existsSync(dir) ? `install directory still present after removal: ${dir}` : null;
+  } catch (err) {
+    return `could not remove install directory ${dir}: ${err.message}`;
+  }
+}
+
+function cleanupInstallation({ registryKeys, candidateDirs = [], ownedDirs = [], removableDirs = [] }) {
   const errors = [];
   const registryLocation = readRegistryValue(registryKeys.install, "InstallLocation");
   const dirs = detectInstallDirs(registryLocation, candidateDirs, ownedDirs);
@@ -469,14 +478,17 @@ function cleanupInstallation({ registryKeys, candidateDirs = [], ownedDirs = [] 
       errors.push(`uninstall of ${dir} failed: ${err.message}`);
     }
   }
+  const removable = new Set([...ownedDirs, ...removableDirs].filter((dir) => isSafeRemovalTarget(dir)).map(dirKey));
   stopInstallProcesses(dirs, "before removing it");
   for (const dir of dirs) {
-    let failure = null;
-    try {
-      rmSync(dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 500 });
-      if (existsSync(dir)) failure = `install directory still present after removal: ${dir}`;
-    } catch (err) {
-      failure = `could not remove install directory ${dir}: ${err.message}`;
+    if (!removable.has(dirKey(dir))) {
+      if (hasInstallEvidence(dir)) console.warn(`left ${dir} in place: it is not a verifier-owned or expected install directory`);
+      continue;
+    }
+    let failure = removeInstallDir(dir);
+    if (failure && hasInstallEvidence(dir)) {
+      stopInstallProcesses([dir], "before retrying its removal");
+      failure = removeInstallDir(dir);
     }
     if (!failure) continue;
     const outcome = removalFailureOutcome(failure, hasInstallEvidence(dir));
@@ -784,6 +796,9 @@ async function upgradeFromMode(distDir, legacyInstallerPath, disposableEnvironme
 
   const perMachine = Boolean(opts.perMachine);
   const customDir = opts.customDir ?? null;
+  if (customDir && (existsSync(customDir) || !isSafeRemovalTarget(customDir))) {
+    throw new Error(`--custom-dir must be a new directory outside profile and system folders (it is removed afterwards): ${customDir}`);
+  }
   if (perMachine && !isElevated()) {
     throw new Error(
       "--per-machine requires an elevated (Administrator) process — 'net session' did not succeed. " +
@@ -876,7 +891,8 @@ async function upgradeFromMode(distDir, legacyInstallerPath, disposableEnvironme
   } finally {
     cleanupErrors = cleanupInstallation({
       registryKeys,
-      candidateDirs: [installLocationBefore, installLocationAfter, customDir, defaultInstallDir(perMachine)]
+      candidateDirs: [installLocationBefore, installLocationAfter, customDir, defaultInstallDir(perMachine)],
+      removableDirs: [customDir, defaultInstallDir(perMachine)].filter(Boolean)
     });
     cleanupSeededFixtures(seed);
   }
