@@ -15,6 +15,7 @@ import {
   isSafeRemovalTarget,
   defaultInstallDir,
   isElevated,
+  nodePtyProblem,
   resolveAsarLib,
   readRegistryValue,
   registryPaths,
@@ -142,7 +143,8 @@ async function checkPackage(distDir) {
       const { exitCode, probe } = await runPackageProbe(unpackedExePath);
       report.probe = { exitCode, ...probe };
       if (!probe.rendererLoaded) problems.push("packaged startup probe: renderer failed to load");
-      if (!probe.nodePty.spawned) problems.push(`packaged startup probe: node-pty did not spawn (${probe.nodePty.error ?? "unknown error"})`);
+      const ptyProblem = nodePtyProblem("packaged startup probe", probe.nodePty);
+      if (ptyProblem) problems.push(ptyProblem);
       const startupProblem = startupModeProblem("packaged startup probe", probe);
       if (startupProblem) problems.push(startupProblem);
     } catch (err) {
@@ -175,7 +177,8 @@ async function installMode(distDir, disposableEnvironment) {
       exitCode = result.exitCode;
       probe = result.probe;
       if (!probe.rendererLoaded) problems.push("install mode probe: renderer failed to load");
-      if (!probe.nodePty.spawned) problems.push(`install mode probe: node-pty did not spawn (${probe.nodePty.error ?? "unknown error"})`);
+      const ptyProblem = nodePtyProblem("install mode probe", probe.nodePty);
+      if (ptyProblem) problems.push(ptyProblem);
       const startupProblem = startupModeProblem("install mode probe", probe);
       if (startupProblem) problems.push(startupProblem);
     } catch (err) {
@@ -285,9 +288,8 @@ async function upgradeFromMode(distDir, legacyInstallerPath, disposableEnvironme
         if (probe.appVersion !== newVersion) {
           problems.push(`post-upgrade probe appVersion is '${probe.appVersion}', expected '${newVersion}'`);
         }
-        if (!probe.nodePty.spawned) {
-          problems.push(`post-upgrade probe: node-pty did not spawn (${probe.nodePty.error ?? "unknown error"})`);
-        }
+        const ptyProblem = nodePtyProblem("post-upgrade probe", probe.nodePty);
+        if (ptyProblem) problems.push(ptyProblem);
         const startupProblem = startupModeProblem("post-upgrade probe", probe);
         if (startupProblem) problems.push(startupProblem);
       } catch (err) {
