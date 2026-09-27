@@ -691,7 +691,7 @@ describe("ClaudeCliDriver persistent process", () => {
     driver.dispose();
   });
 
-  it("finishes the turn at its result while a background shell keeps running", async () => {
+  it("keeps the turn active until a background shell notification completes", async () => {
     const { driver, events, children, killed } = makeDriver();
     const handle = driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
     await settle();
@@ -711,7 +711,7 @@ describe("ClaudeCliDriver persistent process", () => {
     await settle();
 
     expect(turnDones(events)).toEqual([
-      expect.objectContaining({ turnId: handle.turnId, resultText: "STARTED", backgroundTasks: 0 })
+      expect.objectContaining({ turnId: handle.turnId, resultText: "STARTED", backgroundTasks: 1 })
     ]);
 
     children[0].stdout.write(`${JSON.stringify({ type: "system", subtype: "background_tasks_changed", tasks: [] })}\n`);
@@ -726,7 +726,10 @@ describe("ClaudeCliDriver persistent process", () => {
     );
     await settle();
 
-    expect(turnDones(events)).toHaveLength(1);
+    expect(turnDones(events)).toEqual([
+      expect.objectContaining({ turnId: handle.turnId, resultText: "STARTED", backgroundTasks: 1 }),
+      expect.objectContaining({ turnId: handle.turnId, resultText: "Background task completed.", backgroundTasks: 0 })
+    ]);
     expect(toolResults(events).filter((event) => event.toolCallId === "call-bash").map((event) => event.output)).toEqual([
       "Command running in background with ID: bash-1.",
       "Background command \"sleep 20\" completed (exit code 0)"
@@ -735,38 +738,45 @@ describe("ClaudeCliDriver persistent process", () => {
     driver.dispose();
   });
 
-  it("keeps a newer prompt open when an earlier shell's notification turn finishes first", async () => {
-    const { driver, events, children } = makeDriver();
-    driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "start shell" });
-    await settle();
-    children[0].stdout.write(
-      `${JSON.stringify({ type: "system", subtype: "background_tasks_changed", tasks: [{ task_id: "bash-1", task_type: "local_bash" }] })}\n`
-    );
-    children[0].stdout.write(
-      `${JSON.stringify({ type: "system", subtype: "task_started", task_id: "bash-1", tool_use_id: "call-bash", task_type: "local_bash", is_backgrounded: true })}\n`
-    );
-    children[0].stdout.write(`${resultLine({ result: "STARTED" })}\n`);
-    await settle();
+  it("does not evict a shell watcher during a long CI wait", async () => {
+    vi.useFakeTimers();
+    try {
+      const { driver, events, children, killed } = makeDriver();
+      const handle = driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "start CI" });
+      await settle();
+      children[0].stdout.write(
+        `${JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", id: "call-bash", name: "Bash", input: { command: "wait for CI", run_in_background: true } }] } })}\n`
+      );
+      children[0].stdout.write(
+        `${JSON.stringify({ type: "system", subtype: "task_started", task_id: "bash-1", tool_use_id: "call-bash", task_type: "local_bash" })}\n`
+      );
+      children[0].stdout.write(`${resultLine({ result: "Waiting for CI" })}\n`);
+      await settle();
 
-    const second = driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "second prompt" });
-    await settle();
-    children[0].stdout.write(`${JSON.stringify({ type: "system", subtype: "background_tasks_changed", tasks: [] })}\n`);
-    children[0].stdout.write(
-      `${JSON.stringify({ type: "system", subtype: "task_notification", task_id: "bash-1", tool_use_id: "call-bash", status: "completed", summary: "Background command completed (exit code 0)" })}\n`
-    );
-    children[0].stdout.write(
-      `${resultLine({ origin: { kind: "task-notification" }, result: "Background task completed." })}\n`
-    );
-    await settle();
-    expect(turnDones(events).map((event) => event.resultText)).toEqual(["STARTED"]);
+      await vi.advanceTimersByTimeAsync(CLAUDE_IDLE_EVICT_MS * 2);
+      expect(killed).toHaveLength(0);
 
-    children[0].stdout.write(`${resultLine({ result: "SECOND" })}\n`);
-    await settle();
-    expect(turnDones(events).map((event) => [event.turnId, event.resultText])).toEqual([
-      [expect.any(String), "STARTED"],
-      [second.turnId, "SECOND"]
-    ]);
-    driver.dispose();
+      children[0].stdout.write(
+        `${JSON.stringify({ type: "system", subtype: "background_tasks_changed", tasks: [] })}\n`
+      );
+      children[0].stdout.write(
+        `${JSON.stringify({ type: "system", subtype: "task_notification", task_id: "bash-1", tool_use_id: "call-bash", status: "completed", summary: "CI passed" })}\n`
+      );
+      children[0].stdout.write(
+        `${resultLine({ origin: { kind: "task-notification" }, result: "CI passed" })}\n`
+      );
+      await settle();
+
+      expect(turnDones(events).map((event) => [event.turnId, event.resultText, event.backgroundTasks])).toEqual([
+        [handle.turnId, "Waiting for CI", 1],
+        [handle.turnId, "CI passed", 0]
+      ]);
+      await vi.advanceTimersByTimeAsync(CLAUDE_IDLE_EVICT_MS);
+      expect(killed).toHaveLength(1);
+      driver.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("labels failed non-Agent background tasks without Agent metadata", async () => {
