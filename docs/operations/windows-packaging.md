@@ -173,8 +173,9 @@ renderer loaded, `1` otherwise). The result shape is pure and covered by
 ### CI-only install/upgrade modes
 
 Two additional verifier modes install and uninstall the packaged app and refuse
-to run unless `CI=true` (GitHub Actions sets this by default) or
-`--disposable-environment` is passed explicitly — never on a developer machine.
+to run unless `--disposable-environment` is passed explicitly. `CI=true` alone is
+not enough; the CI workflow passes the flag, and it is never passed on a
+developer machine.
 
 `InstallLocation` is registered by electron-builder's NSIS template at
 `registryAddInstallInfo` (`WriteRegStr SHELL_CONTEXT "${INSTALL_REGISTRY_KEY}"
