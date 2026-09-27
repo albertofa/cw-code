@@ -227,7 +227,11 @@ async function upgradeFromMode(distDir, legacyInstallerPath, disposableEnvironme
   let cleanupErrors = [];
 
   try {
-    const legacyInstall = runSilentWithRetry(legacyInstallerPath, legacyArgs, registryKeys);
+    const legacyInstall = runSilentWithRetry(legacyInstallerPath, legacyArgs, registryKeys, {
+      dir: customDir ?? defaultInstallDir(PRODUCT_NAME, perMachine),
+      productName: PRODUCT_NAME,
+      uninstallerName: UNINSTALLER_NAME
+    });
     if (legacyInstall.retried) console.warn("legacy installer succeeded only on retry; see diagnostics above");
     installLocationBefore = readRegistryValue(registryKeys.install, "InstallLocation");
     displayVersionBefore = readRegistryValue(registryKeys.uninstall, "DisplayVersion");
