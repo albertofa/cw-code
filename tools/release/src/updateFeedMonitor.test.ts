@@ -263,7 +263,7 @@ describe("monitorUpdateFeed", () => {
     signing.files[1].sha512 = digest(Buffer.from("other"));
     repo.urls.set(url, { status: 200, body: Buffer.from(JSON.stringify(signing)) });
     expect(failures(await run(repo))).toEqual([
-      `alpha signing: not a production signpath manifest (mode signpath, production false); sourceSha ${SHA_C}, the release marker says ${SHA_A}; records another installer sha512 than alpha.yml`
+      `alpha signing: not a production manifest (mode signpath); sourceSha ${SHA_C}, the release marker says ${SHA_A}; records another installer sha512 than alpha.yml`
     ]);
   });
 

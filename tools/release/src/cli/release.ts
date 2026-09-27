@@ -25,6 +25,7 @@ import {
   parsePackageInfo,
   parseVerificationReport,
   provenanceMismatches,
+  type SigningMode,
   validateSigningManifest
 } from "../signingManifest.ts";
 import { selectUpgradeBase } from "../upgradeBase.ts";
@@ -405,6 +406,12 @@ function assetsSummary(report: ReleaseAssetsReport, title: string): string {
   ].join("\n");
 }
 
+function signingModeOption(options: Map<string, string>): SigningMode | undefined {
+  const mode = options.get("signing-mode");
+  if (mode === undefined || mode === "signpath" || mode === "unsigned") return mode;
+  fail(`--signing-mode must be "signpath" or "unsigned", got "${mode}"`);
+}
+
 async function validateAssetsFromOptions(options: Map<string, string>, dir: string): Promise<ReleaseAssetsReport> {
   const unpackedRoot = options.get("unpacked-root");
   return validateReleaseAssets({
@@ -413,6 +420,7 @@ async function validateAssetsFromOptions(options: Map<string, string>, dir: stri
     signing: readJsonFile(options.get("signing") ?? resolve(dir, SIGNING_MANIFEST_NAME)),
     runId: requireOption(options, "run-id"),
     requireProduction: options.get("require-production") === "true",
+    expectedSigningMode: signingModeOption(options),
     expectedPublisher: options.get("expected-publisher"),
     unpackedRoot: unpackedRoot ? resolve(unpackedRoot) : undefined
   });
@@ -444,6 +452,9 @@ async function cmdSelectUpgradeBase(options: Map<string, string>, repoRoot: stri
 
 async function cmdPublish(options: Map<string, string>, repoRoot: string): Promise<void> {
   const dir = resolve(requireOption(options, "dir"));
+  const signingMode = signingModeOption(options);
+  if (signingMode === undefined) fail("publish needs --signing-mode signpath or unsigned");
+  if (signingMode === "signpath" && !options.get("expected-publisher")) fail("publish --signing-mode signpath needs --expected-publisher");
   const publishOptions = new Map(options);
   publishOptions.set("require-production", "true");
   const report = await validateAssetsFromOptions(publishOptions, dir);

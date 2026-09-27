@@ -11,8 +11,9 @@ rotation, outages, and what is still blocked on the owner.
 The pipeline code is in place, but nothing has been signed yet: every item under
 "Blocked on the owner" is still open. `.github/workflows/release.yml` is the only caller
 (see [releases.md](releases.md)). Until the owner finishes enrollment, only
-`signing-mode: unsigned` can run, and it only produces non-production artifacts that
-`validate-release-assets --require-production` and `publish` refuse.
+`signing-mode: unsigned` can run. Unsigned releases are publishable through an explicit
+`signing: unsigned` dispatch of `release.yml`; see
+[releases.md](releases.md#validation-only-and-publish).
 
 ## Signing scope: first-party only
 
@@ -259,9 +260,10 @@ level. It ends up in `app-update.yml` and is the expected publisher for verifica
 
 The `sign` job of `.github/workflows/release.yml` calls this workflow with
 `contents: read` and `actions: read`, passing the plan's version and source SHA. The
-plan job picks the mode: `signpath` + production for `mode: publish`, `signpath`
-non-production for a manual validation when `CW_WINDOWS_PUBLISHER_NAME` is set, and
-`unsigned` otherwise (see [releases.md](releases.md#validation-only-and-publish)).
+plan job takes the mode from the dispatch's `signing` input (`unsigned` for
+`workflow_run`), and production is true only for `mode: publish` (see
+[releases.md](releases.md#validation-only-and-publish)). Production builds only run
+from `refs/heads/main`.
 
 ## Credentials
 
@@ -297,6 +299,7 @@ non-production for a manual validation when `CW_WINDOWS_PUBLISHER_NAME` is set, 
 | Blockmap changed after `signing.json` was written | `check-signing-manifest --release-dir`, `validate-release-assets` |
 | `signing.json` from another version, source SHA or run | `check-signing-manifest --expected-*` (finalize and `release.yml`), `validate-release-assets` |
 | Non-production manifest handed to publishing | `validate-release-assets --require-production` and `publish` in `release.yml` |
+| Manifest whose signing mode differs from the planned one | `validate-release-assets --signing-mode` and `publish --signing-mode` in `release.yml` |
 
 ## Tooling
 

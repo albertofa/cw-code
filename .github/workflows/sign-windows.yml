@@ -4,7 +4,7 @@ on:
   workflow_call:
     inputs:
       signing-mode:
-        description: "signpath (SignPath Foundation, production-capable) or unsigned (explicit, never production)"
+        description: "signpath (SignPath Foundation) or unsigned (no Authenticode signature; publishable only through an explicit signing=unsigned release)"
         required: true
         type: string
       production:
@@ -69,12 +69,12 @@ jobs:
             signpath|unsigned) ;;
             *) fail "signing-mode must be 'signpath' or 'unsigned', got '$MODE'" ;;
           esac
-          if [ "$MODE" = "unsigned" ] && [ "$PRODUCTION" = "true" ]; then
-            fail "unsigned mode can never be production"
-          fi
           [[ "$SOURCE_SHA" =~ ^[0-9a-f]{40}$ ]] || fail "source-sha must be a full lowercase 40-hex commit SHA"
           if [ "$MODE" = "signpath" ] && [ "$REF" != "refs/heads/main" ]; then
             fail "signpath mode only runs from refs/heads/main, got '$REF'"
+          fi
+          if [ "$PRODUCTION" = "true" ] && [ "$REF" != "refs/heads/main" ]; then
+            fail "production builds only run from refs/heads/main, got '$REF'"
           fi
           [[ "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-alpha\.[0-9]+)?$ ]] || fail "version must be X.Y.Z or X.Y.Z-alpha.N, got '$VERSION'"
           prefix="cw-code-${VERSION}-windows-${MODE}-attempt${RUN_ATTEMPT}"
@@ -557,6 +557,6 @@ jobs:
             echo "- source-sha: ${SOURCE_SHA}"
             echo "- artifact: ${RELEASE_ARTIFACT}"
             if [ "$MODE" = "unsigned" ]; then
-              echo "- **non-production**: unsigned artifacts; validate-release-assets and publish in release.yml refuse them"
+              echo "- **unsigned** artifacts: no Authenticode signature, Windows SmartScreen warns on install"
             fi
           } >> "$GITHUB_STEP_SUMMARY"

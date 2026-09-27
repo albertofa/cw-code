@@ -87,6 +87,10 @@ function isSafeRelativePath(value: string): boolean {
   return value.split("/").every((segment) => segment !== "" && segment !== "." && segment !== "..");
 }
 
+export function signingSummary(manifest: Pick<SigningManifest, "mode" | "publisher">): string {
+  return manifest.mode === "signpath" ? `signed by ${manifest.publisher ?? "?"}` : "unsigned";
+}
+
 export function isInstallerPath(path: string): boolean {
   return !path.includes("/") && path.toLowerCase().endsWith(".exe");
 }
@@ -222,7 +226,6 @@ export function validateSigningManifest(raw: unknown): Validation<SigningManifes
     files: records.filter((record): record is SigningFileRecord => record !== null),
     blockMap
   };
-  if (manifest.mode === "unsigned" && manifest.production) errors.push("unsigned mode can never be production");
   if (manifest.mode === "signpath" && (manifest.publisher === null || manifest.publisher.trim() === "")) {
     errors.push("signpath mode requires a publisher");
   }
@@ -312,7 +315,6 @@ export function buildSigningManifest(input: BuildSigningManifestInput): Validati
   const publisher = input.publisher === null || input.publisher.trim() === "" ? null : input.publisher;
   const errors = provenanceErrors(input);
 
-  if (mode === "unsigned" && production) errors.push("unsigned mode can never be production");
   if (mode === "unsigned" && !report.allowUnsigned) errors.push("unsigned mode expects a report produced with -AllowUnsigned");
   if (!report.ok) errors.push("signature verification failed; see the verification report");
   if (mode === "signpath") {
