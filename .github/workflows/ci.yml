@@ -79,19 +79,6 @@ jobs:
           mkdir -p "$RUNNER_TEMP/installer-temp"
           echo "TEMP=$RUNNER_TEMP\installer-temp" >> "$GITHUB_ENV"
           echo "TMP=$RUNNER_TEMP\installer-temp" >> "$GITHUB_ENV"
-      - name: Write local crash dumps for installer runs
-        shell: pwsh
-        run: |
-          $dumps = Join-Path $env:RUNNER_TEMP "crash-dumps"
-          New-Item -ItemType Directory -Force $dumps | Out-Null
-          $wer = "HKLM:\SOFTWARE\Microsoft\Windows\Windows Error Reporting"
-          New-Item -Force "$wer\LocalDumps" | Out-Null
-          Set-ItemProperty $wer -Name Disabled -Value 0 -Type DWord
-          Set-ItemProperty "$wer\LocalDumps" -Name DumpFolder -Value $dumps -Type ExpandString
-          Set-ItemProperty "$wer\LocalDumps" -Name DumpType -Value 1 -Type DWord
-          Set-ItemProperty "$wer\LocalDumps" -Name DumpCount -Value 20 -Type DWord
-          Set-Service WerSvc -StartupType Manual
-          Start-Service WerSvc
       - name: Download legacy installer for upgrade tests
         run: gh release download v0.0.1-alpha.21 --repo albertofa/cw-code --pattern "cw-code.Setup.0.0.1-alpha.21.exe" --dir legacy-installer
         env:
@@ -113,11 +100,4 @@ jobs:
             apps/desktop/dist-ci/*.exe
             apps/desktop/dist-ci/*.blockmap
             apps/desktop/dist-ci/verify-windows-package.json
-          retention-days: 7
-      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
-        if: failure()
-        with:
-          name: installer-crash-dumps
-          path: ${{ runner.temp }}/crash-dumps
-          if-no-files-found: warn
           retention-days: 7
