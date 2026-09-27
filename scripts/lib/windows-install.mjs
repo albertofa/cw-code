@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { createRequire } from "node:module";
 import { homedir, tmpdir } from "node:os";
-import { join, resolve, sep } from "node:path";
+import { isAbsolute, join, parse, resolve, sep } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 
 const ELECTRON_BUILDER_NS_UUID = "50e065bc-3134-11e6-9bab-38c9862bdaf3";
@@ -160,10 +160,32 @@ export function detectInstallDirs({ registryLocation, candidateDirs = [], ownedD
     if (dir && !detected.has(dirKey(dir))) detected.set(dirKey(dir), dir);
   };
   const hasInstallEvidence = (dir) => existsSync(join(dir, uninstallerName)) || existsSync(join(dir, executableName));
-  add(registryLocation);
-  for (const dir of candidateDirs) if (dir && hasInstallEvidence(dir)) add(dir);
-  for (const dir of ownedDirs) add(dir);
+  for (const dir of [registryLocation, ...candidateDirs]) {
+    if (dir && hasInstallEvidence(dir) && isSafeRemovalTarget(dir)) add(dir);
+  }
+  for (const dir of ownedDirs) if (isSafeRemovalTarget(dir)) add(dir);
   return [...detected.values()];
+}
+
+function protectedDirs() {
+  return [
+    homedir(),
+    process.env.APPDATA,
+    process.env.LOCALAPPDATA,
+    process.env.ProgramFiles,
+    process.env["ProgramFiles(x86)"],
+    process.env.ProgramData,
+    process.env.SystemRoot,
+    process.env.RUNNER_TEMP,
+    tmpdir()
+  ].filter((dir) => typeof dir === "string" && dir !== "");
+}
+
+export function isSafeRemovalTarget(dir) {
+  if (typeof dir !== "string" || dir.trim() === "" || !isAbsolute(dir)) return false;
+  const absolute = resolve(dir);
+  if (parse(absolute).root === absolute) return false;
+  return !protectedDirs().some((guarded) => dirKey(guarded) === dirKey(absolute) || isInsideDir(guarded, absolute));
 }
 
 function acceptedDirs(dirs, guardPath, errors) {
