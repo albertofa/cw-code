@@ -244,42 +244,20 @@ function installDiagnostics(registryKeys) {
       return `${key}:\n${result.status === 0 ? result.stdout.trim() : "(absent)"}`;
     })
     .join("\n");
-  const crashes = spawnSync(
-    "powershell",
-    [
-      "-NoProfile",
-      "-Command",
-      "Get-WinEvent -FilterHashtable @{ LogName = 'Application'; ProviderName = 'Application Error'; StartTime = (Get-Date).AddMinutes(-10) } -MaxEvents 3 -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Message | Out-String -Width 400"
-    ],
-    { encoding: "utf8" }
-  );
-  const longPathProcesses = spawnSync(
-    "powershell",
-    [
-      "-NoProfile",
-      "-Command",
-      "Get-CimInstance Win32_Process | Where-Object { $_.ExecutablePath.Length -gt 200 -or $_.CommandLine.Length -gt 2000 } | Select-Object ProcessId,Name,ExecutablePath | Format-List | Out-String -Width 400"
-    ],
-    { encoding: "utf8" }
-  );
-  return [
-    `processes:\n${processes.stdout.trim() || "(none)"}`,
-    `registry:\n${registry}`,
-    `recent application crashes:\n${crashes.stdout.trim() || "(none)"}`,
-    `processes with long paths or command lines:\n${longPathProcesses.stdout.trim() || "(none)"}`
-  ].join("\n");
+  return `processes:\n${processes.stdout.trim() || "(none)"}\nregistry:\n${registry}`;
 }
 
+const INSTALLER_RETRY_DELAYS_SECONDS = [15, 30, 60];
+
 function runSilentWithRetry(command, args, registryKeys) {
-  try {
-    return { result: runSilent(command, args), retried: false };
-  } catch (firstError) {
-    console.warn(`${firstError.message}\n${installDiagnostics(registryKeys)}\nretrying once in 10s`);
-    spawnSync("powershell", ["-NoProfile", "-Command", "Start-Sleep -Seconds 10"]);
+  for (let attempt = 0; ; attempt++) {
     try {
-      return { result: runSilent(command, args), retried: true };
-    } catch (secondError) {
-      throw new Error(`${secondError.message}\n${installDiagnostics(registryKeys)}`);
+      return { result: runSilent(command, args), retried: attempt > 0 };
+    } catch (err) {
+      const delay = INSTALLER_RETRY_DELAYS_SECONDS[attempt];
+      if (delay === undefined) throw new Error(`${err.message}\n${installDiagnostics(registryKeys)}`);
+      console.warn(`${err.message}\n${installDiagnostics(registryKeys)}\nretrying in ${delay}s (attempt ${attempt + 2} of ${INSTALLER_RETRY_DELAYS_SECONDS.length + 1})`);
+      spawnSync("powershell", ["-NoProfile", "-Command", `Start-Sleep -Seconds ${delay}`]);
     }
   }
 }
