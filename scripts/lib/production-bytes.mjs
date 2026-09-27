@@ -236,11 +236,13 @@ export async function runProductionBytes(options) {
     for (const pid of knownPids) killProcessTreeIfImage(pid, isInstalledExe);
     const cleanup = cleanupInstallation({
       registryKeys: perUser,
+      registryGuid: guid,
       uninstallerName: PRODUCTION_UNINSTALLER,
       executableName: PRODUCTION_EXECUTABLE,
       candidateDirs: [location, defaultInstallDir(PRODUCTION_PRODUCT_NAME, false)]
     });
     report.problems.push(...cleanup.errors.map((message) => `cleanup: ${message}`));
+    report.notes.push(...cleanup.warnings.map((message) => `cleanup: ${message}`));
     try {
       if (cacheDir && /-updater$/.test(cacheDir)) rmSync(cacheDir, { recursive: true, force: true });
     } catch (err) {
