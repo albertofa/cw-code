@@ -131,17 +131,25 @@ the workflow, start a new run instead of rerunning an old one.
 | Run | Signing mode | Production | Publishes |
 | --- | --- | --- | --- |
 | `workflow_run` | `unsigned` | no | never |
-| dispatch `validate`, `CW_WINDOWS_PUBLISHER_NAME` empty | `unsigned` | no | never |
-| dispatch `validate`, `CW_WINDOWS_PUBLISHER_NAME` set | `signpath` | no | never |
-| dispatch `publish` | `signpath` | yes | only with `CW_RELEASE_PUBLISHING_ENABLED=true` |
+| dispatch `validate` | `signing` input (default `unsigned`) | no | never |
+| dispatch `publish` | `signing` input (default `unsigned`) | yes | only with `CW_RELEASE_PUBLISHING_ENABLED=true` |
 
-`CW_WINDOWS_PUBLISHER_NAME` is the signal for "SignPath is configured" because the
-SignPath variables live in the `release-signing` environment, which the caller cannot
-read. A `publish` dispatch without `CW_RELEASE_PUBLISHING_ENABLED=true` or without
-`CW_WINDOWS_PUBLISHER_NAME` fails in the `plan` job, before anything is built. There
-is no path where a failed signed run falls back to an unsigned one: the signing mode
-is fixed in `plan`, and `publish` refuses any `signing.json` that is not
-`mode: signpath, production: true`.
+The `signing` dispatch input is an explicit choice. `unsigned` builds and publishes
+without an Authenticode signature: Windows SmartScreen warns on install, and
+`app-update.yml` carries no `publisherName`, so the updater installs the next update
+without a publisher check. `signpath` needs `CW_WINDOWS_PUBLISHER_NAME` (the signal for
+"SignPath is configured", because the SignPath variables live in the `release-signing`
+environment, which the caller cannot read) and fails in the `plan` job without it. A
+`publish` dispatch without `CW_RELEASE_PUBLISHING_ENABLED=true` also fails in `plan`,
+before anything is built.
+
+There is no fallback between modes: the signing mode is fixed in `plan`, and
+`validate-release-assets` and `publish` both refuse a `signing.json` whose `mode`
+differs from the planned one, or that is not `production: true`.
+
+Once a signed release is out, clients enforce its publisher on every later update, so
+an unsigned release can no longer reach them. The N -> N+1 production-bytes gate in
+`verify-candidate` runs in both modes and fails such a candidate before publication.
 
 ## Configuration (owner)
 

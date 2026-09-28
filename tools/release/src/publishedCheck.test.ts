@@ -129,7 +129,12 @@ describe("checkPublishedRelease", () => {
     const second = failures(await checkPublishedRelease({ plan: ALPHA, owner: "albertofa", repo: "cw-code", http: httpFor(other) })).join("\n");
     expect(second).toMatch(/channel-manifest: advertises 1.2.0-alpha.2/);
     expect(second).toMatch(/releaseName is "v1.2.0-alpha.2", so clients would show another release's title/);
-    expect(second).toMatch(/signing: not a production signpath manifest/);
+    expect(second).toMatch(/signing: not a production manifest \(mode unsigned\)/);
+
+    const unsignedProduction = published(ALPHA, null);
+    unsignedProduction.set(`${download}/signing.json`, { status: 200, body: Buffer.from(JSON.stringify({ ...signing, mode: "unsigned", production: true, publisher: null })) });
+    const third = failures(await checkPublishedRelease({ plan: ALPHA, owner: "albertofa", repo: "cw-code", http: httpFor(unsignedProduction) })).join("\n");
+    expect(third).not.toMatch(/signing:/);
   });
 
   it("retries until the CDN catches up and reports the attempt count", async () => {

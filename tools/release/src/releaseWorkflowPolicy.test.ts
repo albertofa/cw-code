@@ -36,7 +36,15 @@ describe("release.yml policy", () => {
     expect(job("plan")).toMatch(/PUBLISHING_ENABLED: \$\{\{ vars\.CW_RELEASE_PUBLISHING_ENABLED \}\}/);
     expect(job("plan")).toContain('[ "$PUBLISHING_ENABLED" = "true" ] || fail');
     expect(job("publish")).toMatch(/if: needs\.plan\.outputs\.mode == 'publish' && vars\.CW_RELEASE_PUBLISHING_ENABLED == 'true'/);
-    expect(job("publish")).toMatch(/PUBLISHING_ENABLED: \$\{\{ vars\.CW_RELEASE_PUBLISHING_ENABLED \}\}[\s\S]*if \[ "\$PUBLISHING_ENABLED" != "true" \]; then[\s\S]*exit 1[\s\S]*release\.ts publish/);
+    expect(job("publish")).toMatch(/PUBLISHING_ENABLED: \$\{\{ vars\.CW_RELEASE_PUBLISHING_ENABLED \}\}[\s\S]*if \[ "\$PUBLISHING_ENABLED" != "true" \]; then[\s\S]*exit 1[\s\S]*args=\(publish /);
+  });
+
+  it("makes signing an explicit choice that the publish step re-checks against signing.json", () => {
+    expect(topLevelBlock(lines, "on").join("\n")).toMatch(/signing:[\s\S]*default: unsigned[\s\S]*- unsigned[\s\S]*- signpath/);
+    expect(job("plan")).toContain('if [ "$signing" = "signpath" ] && [ -z "$PUBLISHER" ]; then');
+    expect(job("verify-candidate")).toContain('--signing-mode "$SIGNING"');
+    expect(job("publish")).toContain('--signing-mode "$SIGNING"');
+    expect(job("publish")).toContain('if [ "$SIGNING" = "signpath" ]; then args+=(--expected-publisher "$PUBLISHER"); fi');
   });
 
   it("accepts a diverged-tag acknowledgement only from a manual alpha dispatch and records it", () => {
@@ -132,7 +140,7 @@ describe("release.yml policy", () => {
     expect(text).not.toMatch(/--publish (always|onTag|onTagOrDraft)/);
     expect(text).not.toMatch(/gh release (create|upload|edit|delete)/);
     expect(text).not.toMatch(/--clobber/);
-    expect(job("publish")).toContain("release.ts publish");
-    expect(text.match(/release\.ts publish/g)).toHaveLength(1);
+    expect(job("publish")).toContain("args=(publish ");
+    expect(text.match(/args=\(publish /g)).toHaveLength(1);
   });
 });

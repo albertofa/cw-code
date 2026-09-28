@@ -117,26 +117,27 @@ describe("buildSigningManifest", () => {
     ]);
   });
 
-  it("rejects unsigned mode marked as production", () => {
-    const result = buildSigningManifest(
-      signedInput({ mode: "unsigned", production: true, packageInfo: { ...PROVENANCE, signingMode: "unsigned", production: true }, report: report({ allowUnsigned: true }) })
-    );
-    expect(errorsOf(result)).toMatch(/unsigned mode can never be production/);
-  });
-
-  it("accepts an explicit non-production unsigned manifest with unsigned first-party files", () => {
+  it.each([false, true])("accepts an explicit unsigned manifest with unsigned first-party files (production %s)", (production) => {
     const unsigned: Partial<VerificationFileReport> = { status: "NotSigned", signed: false, subject: null, timestamped: false, publisherMatches: false };
     const result = buildSigningManifest(
       signedInput({
         mode: "unsigned",
-        production: false,
+        production,
         publisher: null,
         appUpdatePublisherNames: null,
-        packageInfo: { ...PROVENANCE, signingMode: "unsigned", production: false },
+        packageInfo: { ...PROVENANCE, signingMode: "unsigned", production },
         report: report({ allowUnsigned: true, expectedPublisher: null, files: [file(APP_EXE, unsigned), file(FFMPEG), file(INSTALLER, unsigned)] })
       })
     );
     expect(result.ok).toBe(true);
+    if (result.ok) expect(result.value).toMatchObject({ mode: "unsigned", production, publisher: null });
+  });
+
+  it("still requires an -AllowUnsigned report for an unsigned production manifest", () => {
+    const result = buildSigningManifest(
+      signedInput({ mode: "unsigned", production: true, publisher: null, packageInfo: { ...PROVENANCE, signingMode: "unsigned", production: true } })
+    );
+    expect(errorsOf(result)).toMatch(/unsigned mode expects a report produced with -AllowUnsigned/);
   });
 
   it("rejects a first-party file without a timestamp even if the report claims success", () => {
@@ -191,8 +192,8 @@ describe("validateSigningManifest", () => {
     expect(validateSigningManifest(JSON.parse(JSON.stringify(manifest()))).ok).toBe(true);
   });
 
-  it("rejects production unsigned manifests", () => {
-    expect(errorsOf(validateSigningManifest({ ...manifest(), mode: "unsigned" }))).toMatch(/never be production/);
+  it("accepts a production unsigned manifest without a publisher", () => {
+    expect(validateSigningManifest({ ...manifest(), mode: "unsigned", publisher: null }).ok).toBe(true);
   });
 
   it("rejects a relabelled role", () => {

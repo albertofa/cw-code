@@ -40,6 +40,14 @@ on:
         options:
           - validate
           - publish
+      signing:
+        description: "unsigned ships without code signing (Windows SmartScreen warns on install); signpath needs CW_WINDOWS_PUBLISHER_NAME and the SignPath secrets"
+        required: true
+        type: choice
+        default: unsigned
+        options:
+          - unsigned
+          - signpath
 
 permissions:
   contents: read
@@ -81,6 +89,7 @@ jobs:
         env:
           EVENT_NAME: ${{ github.event_name }}
           MODE_INPUT: ${{ inputs.mode }}
+          SIGNING_INPUT: ${{ inputs.signing }}
           CHANNEL: ${{ inputs.channel || 'alpha' }}
           CANDIDATE: ${{ inputs.candidate }}
           EXPECTED_SHA: ${{ inputs.expected_sha }}
@@ -106,17 +115,19 @@ jobs:
           if [ "$CHANNEL" = "stable" ] && [ -n "$ACKNOWLEDGED" ]; then
             fail "acknowledge_diverged_tag only applies to channel=alpha"
           fi
+          signing=unsigned
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then signing="$SIGNING_INPUT"; fi
+          case "$signing" in
+            unsigned|signpath) ;;
+            *) fail "signing must be unsigned or signpath, got '$signing'" ;;
+          esac
+          if [ "$signing" = "signpath" ] && [ -z "$PUBLISHER" ]; then
+            fail "signing=signpath needs the repository variable CW_WINDOWS_PUBLISHER_NAME"
+          fi
+          production=false
           if [ "$mode" = "publish" ]; then
             [ "$PUBLISHING_ENABLED" = "true" ] || fail "mode=publish needs the repository variable CW_RELEASE_PUBLISHING_ENABLED=true (docs/operations/releases.md); nothing was built"
-            [ -n "$PUBLISHER" ] || fail "mode=publish needs the repository variable CW_WINDOWS_PUBLISHER_NAME"
-            signing=signpath
             production=true
-          elif [ "$EVENT_NAME" = "workflow_dispatch" ] && [ -n "$PUBLISHER" ]; then
-            signing=signpath
-            production=false
-          else
-            signing=unsigned
-            production=false
           fi
           {
             echo "mode=$mode"
@@ -319,19 +330,19 @@ jobs:
           PUBLISHER: ${{ vars.CW_WINDOWS_PUBLISHER_NAME }}
         run: |
           args=(validate-release-assets --dir release-set --plan plan/plan.json --run-id "$RUN_ID" --unpacked-root release-full
-            --report "$RUNNER_TEMP/validate-release-assets.json")
+            --signing-mode "$SIGNING" --report "$RUNNER_TEMP/validate-release-assets.json")
           if [ "$PRODUCTION" = "true" ]; then args+=(--require-production); fi
           if [ "$SIGNING" = "signpath" ]; then args+=(--expected-publisher "$PUBLISHER"); fi
           node tools/release/src/cli/release.ts "${args[@]}"
       - name: Native-load probe on the final bytes (unpacked app, then install, start, node-pty, uninstall)
-        run: node scripts/verify-windows-package.mjs --dist release-full --install
+        run: node scripts/verify-windows-package.mjs --dist release-full --install --disposable-environment
       - name: Select the published release to upgrade from
         id: base
         env:
           GH_TOKEN: ${{ github.token }}
         run: node tools/release/src/cli/release.ts select-upgrade-base --plan plan/plan.json
       - name: Download N
-        if: steps.base.outputs.status == 'found' && needs.plan.outputs.signing-mode == 'signpath'
+        if: steps.base.outputs.status == 'found'
         env:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
@@ -342,7 +353,7 @@ jobs:
           gh release download "$TAG" --repo "$REPO" --pattern "$INSTALLER" --pattern latest.yml --pattern alpha.yml --dir upgrade-base
           node tools/release/src/cli/release.ts validate-feed --dir upgrade-base --version "$BASE_VERSION"
       - name: N -> N+1 upgrade with the production bytes through the loopback feed
-        if: steps.base.outputs.status == 'found' && needs.plan.outputs.signing-mode == 'signpath'
+        if: steps.base.outputs.status == 'found'
         env:
           INSTALLER: ${{ steps.base.outputs.installer }}
         run: |
@@ -354,16 +365,10 @@ jobs:
           REASON: ${{ steps.base.outputs.reason }}
           BASE_TAG: ${{ steps.base.outputs.tag }}
           MODE: ${{ needs.plan.outputs.mode }}
-          SIGNING: ${{ needs.plan.outputs.signing-mode }}
         run: |
           case "$STATUS" in
             found)
-              if [ "$SIGNING" = "signpath" ]; then
-                echo "- N -> N+1 production-bytes upgrade from ${BASE_TAG}: passed" >> "$GITHUB_STEP_SUMMARY"
-              else
-                echo "::warning::N -> N+1 skipped: an unsigned candidate cannot pass the publisher check of ${BASE_TAG}"
-                echo "- N -> N+1 skipped (unsigned candidate, N is ${BASE_TAG})" >> "$GITHUB_STEP_SUMMARY"
-              fi
+              echo "- N -> N+1 production-bytes upgrade from ${BASE_TAG}: passed" >> "$GITHUB_STEP_SUMMARY"
               ;;
             bootstrap)
               echo "::notice::N -> N+1 skipped: ${REASON}"
@@ -452,6 +457,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           RUN_ID: ${{ github.run_id }}
+          SIGNING: ${{ needs.plan.outputs.signing-mode }}
           PUBLISHER: ${{ vars.CW_WINDOWS_PUBLISHER_NAME }}
           PUBLISHING_ENABLED: ${{ vars.CW_RELEASE_PUBLISHING_ENABLED }}
         run: |
@@ -459,8 +465,9 @@ jobs:
             echo "::error::CW_RELEASE_PUBLISHING_ENABLED is no longer 'true' after the environment approval; nothing was published"
             exit 1
           fi
-          node tools/release/src/cli/release.ts publish --plan plan/plan.json --dir release-set --run-id "$RUN_ID" \
-            --expected-publisher "$PUBLISHER" --work-dir "$RUNNER_TEMP/publish"
+          args=(publish --plan plan/plan.json --dir release-set --run-id "$RUN_ID" --signing-mode "$SIGNING" --work-dir "$RUNNER_TEMP/publish")
+          if [ "$SIGNING" = "signpath" ]; then args+=(--expected-publisher "$PUBLISHER"); fi
+          node tools/release/src/cli/release.ts "${args[@]}"
 
   verify-publication:
     needs: [plan, publish]

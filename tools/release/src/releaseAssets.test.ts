@@ -180,8 +180,17 @@ describe("validateReleaseAssets", () => {
   it("refuses non-production manifests when production is required, and a different publisher", async () => {
     const unsigned = { ...manifest, mode: "unsigned", production: false, publisher: null };
     expect((await validate({ signing: unsigned, requireProduction: false, expectedPublisher: undefined })).ok).toBe(true);
-    expect(await errors({ signing: unsigned, expectedPublisher: undefined })).toMatch(/not a production signpath manifest/);
+    expect(await errors({ signing: unsigned, expectedPublisher: undefined })).toMatch(/signing.json is not a production manifest \(mode unsigned\)/);
     expect(await errors({ expectedPublisher: "Someone Else" })).toMatch(/publisher "SignPath Foundation" differs from the expected "Someone Else"/);
+  });
+
+  it("accepts a production unsigned manifest only when unsigned was the planned signing mode", async () => {
+    const unsigned = { ...manifest, mode: "unsigned", production: true, publisher: null };
+    expect((await validate({ signing: unsigned, expectedSigningMode: "unsigned", expectedPublisher: undefined })).ok).toBe(true);
+    expect(await errors({ signing: unsigned, expectedSigningMode: "signpath", expectedPublisher: undefined })).toMatch(
+      /signing.json mode unsigned differs from the planned signing mode signpath/
+    );
+    expect(await errors({ expectedSigningMode: "unsigned" })).toMatch(/signing.json mode signpath differs from the planned signing mode unsigned/);
   });
 
   it("rejects an invalid plan or signing manifest before trusting anything", async () => {

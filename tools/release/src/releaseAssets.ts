@@ -7,6 +7,7 @@ import { verifyReleaseSet } from "./releaseSet.ts";
 import {
   type SigningFileRecord,
   type SigningManifest,
+  type SigningMode,
   blockMapNameOf,
   isInstallerPath,
   provenanceMismatches,
@@ -45,6 +46,7 @@ export interface ValidateReleaseAssetsOptions {
   signing: unknown;
   runId: string;
   requireProduction: boolean;
+  expectedSigningMode?: SigningMode;
   expectedPublisher?: string;
   unpackedRoot?: string;
 }
@@ -137,8 +139,11 @@ export function blockMapShapeErrors(bytes: Buffer, installerSize: number | null)
 
 function signingErrors(manifest: SigningManifest, plan: ReleasePlan, options: ValidateReleaseAssetsOptions, assets: Map<string, ReleaseAssetFile>): string[] {
   const errors = provenanceMismatches(manifest, { version: plan.version, sourceSha: plan.sourceSha, runId: options.runId });
-  if (options.requireProduction && (!manifest.production || manifest.mode !== "signpath")) {
-    errors.push(`signing.json is not a production signpath manifest (mode ${manifest.mode}, production ${manifest.production}); it can never be published`);
+  if (options.requireProduction && !manifest.production) {
+    errors.push(`signing.json is not a production manifest (mode ${manifest.mode}); it can never be published`);
+  }
+  if (options.expectedSigningMode !== undefined && manifest.mode !== options.expectedSigningMode) {
+    errors.push(`signing.json mode ${manifest.mode} differs from the planned signing mode ${options.expectedSigningMode}`);
   }
   if (options.expectedPublisher !== undefined && manifest.publisher !== options.expectedPublisher) {
     errors.push(`signing.json publisher ${JSON.stringify(manifest.publisher)} differs from the expected ${JSON.stringify(options.expectedPublisher)}`);

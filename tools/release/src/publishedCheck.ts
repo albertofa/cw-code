@@ -1,6 +1,6 @@
 import type { ReleasePlan } from "./planValidation.ts";
 import { ALPHA_FEED_NAME, SIGNING_MANIFEST_NAME, STABLE_FEED_NAME, installerNameFor, publishableAssetNames } from "./releaseAssets.ts";
-import { blockMapNameOf, validateSigningManifest } from "./signingManifest.ts";
+import { blockMapNameOf, signingSummary, validateSigningManifest } from "./signingManifest.ts";
 import { parseUpdateInfo, readReleaseText } from "./updateInfoYaml.ts";
 
 export interface AnonymousHttp {
@@ -148,10 +148,10 @@ async function signingCheck({ plan, owner, repo, http }: PublishedCheckInput): P
   const manifest = validateSigningManifest(raw);
   if (!manifest.ok) return { result: check("signing", url, manifest.errors, ""), blockMap: null };
   const problems: string[] = [];
-  if (!manifest.value.production || manifest.value.mode !== "signpath") problems.push(`not a production signpath manifest (mode ${manifest.value.mode})`);
+  if (!manifest.value.production) problems.push(`not a production manifest (mode ${manifest.value.mode})`);
   if (manifest.value.version !== plan.version) problems.push(`version ${manifest.value.version}, expected ${plan.version}`);
   if (manifest.value.sourceSha !== plan.sourceSha) problems.push(`sourceSha ${manifest.value.sourceSha}, expected ${plan.sourceSha}`);
-  return { result: check("signing", url, problems, `signed by ${manifest.value.publisher ?? "?"}, production`), blockMap: manifest.value.blockMap };
+  return { result: check("signing", url, problems, `${signingSummary(manifest.value)}, production`), blockMap: manifest.value.blockMap };
 }
 
 export async function checkPublishedRelease(input: PublishedCheckInput): Promise<PublishedCheck[]> {

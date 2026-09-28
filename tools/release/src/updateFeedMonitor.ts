@@ -3,7 +3,7 @@ import { markedSourceSha } from "./planMarker.ts";
 import { type PublishedCheck, check, parseJsonObject } from "./publishedCheck.ts";
 import { ALPHA_FEED_NAME, SIGNING_MANIFEST_NAME, STABLE_FEED_NAME, installerNameFor, publishableAssetNames } from "./releaseAssets.ts";
 import { type ParsedVersion, compareVersions, formatVersion, parseTag } from "./semver.ts";
-import { blockMapNameOf, validateSigningManifest } from "./signingManifest.ts";
+import { blockMapNameOf, signingSummary, validateSigningManifest } from "./signingManifest.ts";
 import { type UpdateInfo, parseUpdateInfo } from "./updateInfoYaml.ts";
 
 export const FEED_MONITOR_RUNBOOK = "docs/operations/rollout.md#feed-monitor-failures";
@@ -188,13 +188,13 @@ async function releaseChecks(input: FeedMonitorInput, release: PipelineRelease, 
       const signing = manifestResult.value;
       blockMap = signing.blockMap;
       const problems: string[] = [];
-      if (signing.mode !== "signpath" || !signing.production) problems.push(`not a production signpath manifest (mode ${signing.mode}, production ${signing.production})`);
+      if (!signing.production) problems.push(`not a production manifest (mode ${signing.mode})`);
       if (signing.version !== version) problems.push(`version ${signing.version}, expected ${version}`);
       if (signing.sourceSha !== release.sourceSha) problems.push(`sourceSha ${signing.sourceSha}, the release marker says ${release.sourceSha}`);
       const installerRecord = signing.files.find((file) => file.path === installer);
       if (!installerRecord) problems.push(`does not list ${installer}`);
       else if (installerRecord.sha512 !== manifest.info.sha512) problems.push(`records another installer sha512 than ${feedName}`);
-      checks.push(check("signing", signingUrl, problems, `production, signed by ${signing.publisher ?? "?"}, installer sha512 matches ${feedName}`));
+      checks.push(check("signing", signingUrl, problems, `production, ${signingSummary(signing)}, installer sha512 matches ${feedName}`));
     }
   }
 
