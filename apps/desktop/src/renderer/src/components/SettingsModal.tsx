@@ -77,13 +77,12 @@ const WORKSPACE_OPTIONS: Array<{ id: PrWorkspaceChoice; label: string; hint: str
 // Must match CLAUDE_CURATED_MODELS in apps/desktop/src/main/providers/claude/ClaudeCliDriver.ts.
 // Main drops unknown ids on save, so keep this list in sync with the driver.
 const CURATED_MODELS = [
-  { id: "sonnet", label: "Sonnet" },
-  { id: "fable", label: "Fable 5.1" },
-  { id: "haiku", label: "Haiku" },
   { id: "claude-opus-5", label: "Opus 5" },
   { id: "claude-opus-5-5", label: "Opus 5.5" },
   { id: "claude-sonnet-5", label: "Sonnet 5" },
+  { id: "claude-sonnet-5-5", label: "Sonnet 5.5" },
   { id: "claude-fable-5", label: "Fable 5" },
+  { id: "fable", label: "Fable 5.1" },
   { id: "claude-haiku-4-5-20251001", label: "Haiku 4.5" }
 ];
 
