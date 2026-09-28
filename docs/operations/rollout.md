@@ -21,8 +21,13 @@ itself. The pipeline details live in [releases.md](releases.md), signing in
   `d6e18d04-bf35-5bfe-9145-b95301660833`, a custom install folder, per-machine
   scope, and `~/.cw-code` untouched (see
   [windows-packaging.md](windows-packaging.md#installer-identity)).
-- SignPath Foundation enrollment is not done, so every run so far is unsigned
-  validation. `CW_RELEASE_PUBLISHING_ENABLED` is not set.
+- SignPath Foundation enrollment is not done. On 2026-09-28 the owner turned on
+  unsigned automatic alpha publishing ahead of this checklist:
+  `CW_RELEASE_PUBLISHING_ENABLED=true`, and `release-publish` has no required
+  reviewer, so every green CI push to `main` outside the 6-hour window publishes
+  an alpha. Step C was skipped; the owner tests the first published installer in
+  a VM instead. Steps B and D's signing approvals do not apply until SignPath
+  exists.
 
 ## Commissioning checklist
 
@@ -329,24 +334,26 @@ monitor summary: `<fill>`
   job that was already waiting for approval re-reads the variable and stops.
 - Reject any pending `release-publish` deployment (the run page > Review
   deployments > Reject).
+  With the variable `false`, automatic runs after CI go back to validation only.
 - To stop validation runs too: `gh workflow disable release.yml` (resume with
   `gh workflow enable release.yml`).
 - Pausing does not change anything clients see. Published releases stay
   published and clients keep checking every 6 hours.
 
-Steady state is the owner's call. Two reasonable options: keep the variable
-`true` and rely on the manual dispatch plus the `release-publish` approval as
-the gate, or keep it `false` and switch it on for each release. Either way the
-variable is the kill switch.
+Steady state is the owner's call. While the variable is `true`, every green CI
+push to `main` publishes an alpha (at most one per 6 hours); a required reviewer
+on `release-publish` turns each of those into a one-click approval. Keeping it
+`false` and switching it on for each release also works. Either way the variable
+is the kill switch.
 
 Record: final state of the variable and the date: `<fill>`
 
 ## Choosing candidates
 
 - **Alpha.** An alpha is always `main`'s head at the time of the dispatch (or
-  of the CI run, for automatic validation). Publish only when CI passed on
-  that commit, nothing known to be broken is open, and a validation run for
-  it passed. Automatic runs never publish.
+  of the CI run, for automatic runs). While publishing is on, every green CI
+  push to `main` outside the 6-hour window ships, so merging to `main` is the
+  release decision: do not merge anything known to be broken.
 - **Stable.** Only an alpha that was published, installed in-app by at least
   one person (the E evidence, or the same checks on a later alpha), and left
   alone for a soak period the owner sets: `<owner to set, for example 3 days>`.
@@ -553,12 +560,12 @@ tab.
 - **CI minutes.** Every job has a timeout: CI `windows` 45 min,
   `upgrade-test.yml` 150 min (nightly at 03:17 UTC and on PRs touching the
   update path), release jobs 15 to 120 min, feed monitor 20 min (usually a
-  few minutes, 4 runs a day). Automatic alpha validation is not throttled in
-  practice: the 6-hour window counts from the last *published* alpha, and
-  automatic runs never publish, so every successful CI push to `main` starts
-  a full validation run (two Windows jobs plus the unsigned signing jobs) once
-  that window has passed (see [releases.md](releases.md#triggers)). Whether to
-  gate or batch those runs is the owner's decision. To cut minutes: disable
+  few minutes, 4 runs a day). With publishing on, automatic runs publish, so
+  the 6-hour window caps them at one full release run (two Windows jobs plus
+  the unsigned signing jobs) per 6 hours; pushes inside the window end at
+  `plan`. With publishing off, automatic runs never publish, so every
+  successful CI push to `main` starts a full validation run (see
+  [releases.md](releases.md#triggers)). To cut minutes: disable
   the nightly schedule of `upgrade-test.yml`, or `gh workflow disable` a
   workflow temporarily.
 - **Costs.** To be confirmed by the owner for the account's actual plan:

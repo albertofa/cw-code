@@ -39,6 +39,15 @@ describe("release.yml policy", () => {
     expect(job("publish")).toMatch(/PUBLISHING_ENABLED: \$\{\{ vars\.CW_RELEASE_PUBLISHING_ENABLED \}\}[\s\S]*if \[ "\$PUBLISHING_ENABLED" != "true" \]; then[\s\S]*exit 1[\s\S]*args=\(publish /);
   });
 
+  it("publishes an alpha for every green CI push to main only while publishing is enabled", () => {
+    expect(job("plan")).toContain(`if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            mode="$MODE_INPUT"
+          elif [ "$PUBLISHING_ENABLED" = "true" ]; then
+            mode=publish
+          fi`);
+    expect(job("plan")).toContain('if [ "$EVENT_NAME" = "workflow_dispatch" ]; then signing="$SIGNING_INPUT"; fi');
+  });
+
   it("makes signing an explicit choice that the publish step re-checks against signing.json", () => {
     expect(topLevelBlock(lines, "on").join("\n")).toMatch(/signing:[\s\S]*default: unsigned[\s\S]*- unsigned[\s\S]*- signpath/);
     expect(job("plan")).toContain('if [ "$signing" = "signpath" ] && [ -z "$PUBLISHER" ]; then');
@@ -64,7 +73,7 @@ describe("release.yml policy", () => {
 
   it("keeps validation and publication in separate per-channel groups and serializes every publish job", () => {
     expect(topLevelBlock(lines, "concurrency").map((line) => line.trim()).filter(Boolean)).toEqual([
-      "group: release-${{ inputs.mode == 'publish' && 'publish' || 'validate' }}-${{ inputs.channel || 'alpha' }}",
+      "group: release-${{ (inputs.mode == 'publish' || (github.event_name == 'workflow_run' && vars.CW_RELEASE_PUBLISHING_ENABLED == 'true')) && 'publish' || 'validate' }}-${{ inputs.channel || 'alpha' }}",
       "cancel-in-progress: false"
     ]);
     expect(job("publish")).toMatch(/concurrency:\n\s+group: release-publish\n\s+cancel-in-progress: false/);
