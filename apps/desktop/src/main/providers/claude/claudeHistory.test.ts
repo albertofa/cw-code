@@ -175,8 +175,54 @@ describe("parseClaudeTranscriptLine", () => {
       }
     });
     expect(out).toEqual([
-      { id: "tu1-r", role: "tool", text: "file contents", turnId: "u2", toolName: "result", isError: false }
+      {
+        id: "tu1-r",
+        role: "tool",
+        text: "file contents",
+        turnId: "u2",
+        toolName: "result",
+        isError: false,
+        toolOutputEmpty: false
+      }
     ]);
+  });
+
+  it("marks a shell result that produced nothing as empty", () => {
+    const out = parseClaudeTranscriptLine({
+      type: "user",
+      uuid: "u2",
+      message: {
+        role: "user",
+        content: [{ type: "tool_result", tool_use_id: "tu1", content: "(Bash completed with no output)" }]
+      }
+    });
+    expect(out[0].toolOutputEmpty).toBe(true);
+  });
+
+  it("computes emptiness from the full result, not the truncated display slice", () => {
+    const padded = `${" ".repeat(4100)}real output`;
+    const out = parseClaudeTranscriptLine({
+      type: "user",
+      uuid: "u2",
+      message: {
+        role: "user",
+        content: [{ type: "tool_result", tool_use_id: "tu1", content: padded }]
+      }
+    });
+    expect(out[0].text).toHaveLength(4000);
+    expect(out[0].toolOutputEmpty).toBe(false);
+  });
+
+  it("never marks a failed result as empty", () => {
+    const out = parseClaudeTranscriptLine({
+      type: "user",
+      uuid: "u2",
+      message: {
+        role: "user",
+        content: [{ type: "tool_result", tool_use_id: "tu1", content: "", is_error: true }]
+      }
+    });
+    expect(out[0].toolOutputEmpty).toBe(false);
   });
 
   it("falls back to synthetic ids when tool_use_id is missing", () => {
@@ -189,7 +235,15 @@ describe("parseClaudeTranscriptLine", () => {
       }
     });
     expect(out).toEqual([
-      { id: "u2-t0", role: "tool", text: "file contents", turnId: "u2", toolName: "result", isError: false }
+      {
+        id: "u2-t0",
+        role: "tool",
+        text: "file contents",
+        turnId: "u2",
+        toolName: "result",
+        isError: false,
+        toolOutputEmpty: false
+      }
     ]);
   });
 
@@ -241,6 +295,7 @@ describe("parseClaudeTranscriptLine", () => {
         text: "<task-notification>\n<task-id>abc</task-id>\n<tool-use-id>tu1</tool-use-id>\n</task-notification>",
         turnId: "u9",
         toolName: "task-notification",
+        toolOutputEmpty: true,
         timestamp: Date.parse("2026-09-10T15:19:01.272Z")
       }
     ]);
@@ -335,9 +390,30 @@ describe("foldTaskNotifications", () => {
         text: "Real report here",
         turnId: "turn-1",
         timestamp: 9000,
-        isError: false
+        isError: false,
+        toolOutputEmpty: false
       })
     ]);
+  });
+
+  it("clears the empty flag when a result is folded into an existing result message", () => {
+    const out = foldTaskNotifications([
+      toolMessage({ id: "tu1-r", toolName: "result", text: "ack", toolOutputEmpty: true }),
+      notif("Real report here")
+    ]);
+    expect(out).toHaveLength(1);
+    expect(out[0].text).toBe("Real report here");
+    expect(out[0].toolOutputEmpty).toBe(false);
+  });
+
+  it("clears the empty flag when the notification itself becomes the result", () => {
+    const out = foldTaskNotifications([
+      toolMessage({ id: "tu1", toolName: "Task", text: "Task call" }),
+      toolMessage({ ...notif("Real report here"), toolOutputEmpty: true })
+    ]);
+    const folded = out.find((m) => m.id === "tu1-r");
+    expect(folded?.text).toBe("Real report here");
+    expect(folded?.toolOutputEmpty).toBe(false);
   });
 
   it("last notification wins and non-completed status flags errors", () => {

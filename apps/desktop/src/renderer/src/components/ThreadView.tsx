@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Check, ChevronDown, Copy, Sparkles, TriangleAlert } from "lucide-react";
 import type { DockableTabId } from "@cw-code/contracts";
 import { useAppStore, type ChatMessage } from "../stores/appStore.js";
@@ -367,6 +367,22 @@ export function ThreadView() {
     );
   };
 
+  const renderPinnedAnswer = (pinned: ChatMessage[]): ReactNode[] => {
+    let primary = 0;
+    for (let i = 1; i < pinned.length; i++) {
+      if (pinned[i].text.length > pinned[primary].text.length) primary = i;
+    }
+    return pinned.map((m, i) =>
+      i === primary ? (
+        renderNode({ kind: "msg", msg: m })
+      ) : (
+        <div className="turn-pinned-cont" key={m.id}>
+          {renderNode({ kind: "msg", msg: m })}
+        </div>
+      )
+    );
+  };
+
   return (
     <div className="thread-col">
       {head}
@@ -428,7 +444,7 @@ export function ThreadView() {
               lead={turn.pieces.lead.map((m) => renderNode({ kind: "msg", msg: m }))}
               activity={turn.pieces.activity.map(renderNode)}
               system={turn.pieces.system.map((m) => renderNode({ kind: "msg", msg: m }))}
-              pinned={turn.pieces.pinned ? renderNode({ kind: "msg", msg: turn.pieces.pinned }) : undefined}
+              pinned={renderPinnedAnswer(turn.pieces.pinned ?? [])}
             />
           ))}
           {!atBottom && (

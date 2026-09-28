@@ -359,6 +359,13 @@ function claudeToolResultText(content: unknown): string {
   return JSON.stringify(content ?? "");
 }
 
+const CLAUDE_EMPTY_SHELL_OUTPUT = /^\(Bash completed with no output\)$/;
+
+function claudeOutputIsEmpty(output: string): boolean {
+  const trimmed = output.trim();
+  return trimmed === "" || CLAUDE_EMPTY_SHELL_OUTPUT.test(trimmed);
+}
+
 export function parseClaudeTaskSystemLine(line: string): ClaudeTaskSystemInfo | null {
   if (!line.trim().startsWith("{") || !line.includes('"type":"system"')) return null;
   let msg: SystemTaskMsg;
@@ -669,12 +676,14 @@ export function parseStreamLine(
     for (const block of blocks as Array<{ tool_use_id?: string; content?: unknown; is_error?: boolean }>) {
       if (block.tool_use_id) {
         const content = claudeToolResultText(block.content);
+        const isError = block.is_error === true;
         out.push({
           type: "tool.result",
           turnId,
           toolCallId: block.tool_use_id,
           output: content.slice(0, 8000),
-          isError: block.is_error === true
+          isError,
+          ...(!isError && claudeOutputIsEmpty(content) ? { outputEmpty: true } : {})
         });
       }
     }

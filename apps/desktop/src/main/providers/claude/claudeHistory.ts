@@ -236,6 +236,18 @@ function claudeCompactInfo(metadata: unknown): ContextCompactionInfo {
   };
 }
 
+const CLAUDE_EMPTY_SHELL_OUTPUT = /^\(Bash completed with no output\)$/;
+
+/**
+ * The CLI reports a shell command that produced nothing as a prose status line
+ * rather than an empty string, so "did this tool return anything" cannot be
+ * answered by looking at the text alone.
+ */
+export function claudeToolOutputIsEmpty(output: string): boolean {
+  const trimmed = output.trim();
+  return trimmed === "" || CLAUDE_EMPTY_SHELL_OUTPUT.test(trimmed);
+}
+
 export function parseClaudeTranscriptLine(line: TranscriptLine): HistoryMessage[] {
   if (line.isSidechain || line.isMeta) return [];
   const timestamp = toEpochMs(line.timestamp);
@@ -267,7 +279,15 @@ export function parseClaudeTranscriptLine(line: TranscriptLine): HistoryMessage[
       if (commandText !== null) {
         out.push({ id: baseId, role: "user", text: commandText, turnId: baseId, ...stamp });
       } else if (content.trimStart().startsWith("<task-notification>")) {
-        out.push({ id: `${baseId}-n`, role: "tool", text: content, turnId: baseId, toolName: "task-notification", ...stamp });
+        out.push({
+          id: `${baseId}-n`,
+          role: "tool",
+          text: content,
+          turnId: baseId,
+          toolName: "task-notification",
+          toolOutputEmpty: true,
+          ...stamp
+        });
       } else {
         out.push({ id: baseId, role: "user", text: content, turnId: baseId, ...stamp });
       }
@@ -280,14 +300,15 @@ export function parseClaudeTranscriptLine(line: TranscriptLine): HistoryMessage[
         if (text.trim()) out.push({ id: `${baseId}-u${i}`, role: "user", text, turnId: baseId, ...stamp });
       } else if (block.type === "tool_result") {
         const result = block as { tool_use_id?: string; content?: unknown; is_error?: boolean };
-        const text = blockText(result.content).slice(0, 4000);
+        const raw = blockText(result.content);
         out.push({
           id: result.tool_use_id ? `${result.tool_use_id}-r` : `${baseId}-t${i}`,
           role: "tool",
-          text,
+          text: raw.slice(0, 4000),
           turnId: baseId,
           toolName: "result",
           isError: result.is_error === true,
+          toolOutputEmpty: result.is_error !== true && claudeToolOutputIsEmpty(raw),
           ...stamp
         });
       }
@@ -463,6 +484,7 @@ export function foldTaskNotifications(messages: HistoryMessage[]): HistoryMessag
     const usage = parseTaskNotificationUsage(m.text);
     if (target && result !== undefined) {
       target.text = result.slice(0, 8000);
+      target.toolOutputEmpty = false;
       if (m.timestamp !== undefined) target.timestamp = m.timestamp;
       if (isError !== undefined) target.isError = isError;
       if (usage) target.toolUsage = usage;
@@ -475,6 +497,7 @@ export function foldTaskNotifications(messages: HistoryMessage[]): HistoryMessag
       m.text = result.slice(0, 8000);
       m.turnId = call.turnId;
       m.toolName = "result";
+      m.toolOutputEmpty = false;
       if (isError !== undefined) m.isError = isError;
       if (usage) m.toolUsage = usage;
       byId.set(m.id, m);

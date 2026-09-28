@@ -372,6 +372,7 @@ export function mergeToolPairs(messages: ChatMessage[]): ChatMessage[] {
       toolOutput: source.text,
       toolDone: true,
       isError: call.isError === true || source.isError === true,
+      ...(source.toolOutputEmpty !== undefined ? { toolOutputEmpty: source.toolOutputEmpty } : {}),
       ...(source.toolUsage ? { toolUsage: source.toolUsage } : {}),
       ...(source.timestamp !== undefined ? { toolCompletedAt: source.timestamp } : {})
     };
