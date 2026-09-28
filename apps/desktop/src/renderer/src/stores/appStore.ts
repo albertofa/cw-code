@@ -402,7 +402,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           .flat()
           .find((s) => s.id === sessionId);
         if (current && (current.status === "holding" || current.status === "done") && sessionId !== get().activeSessionId) {
-          if (mergedPrBelongsToSession(status.pullRequest, current, status.isWorktree)) {
+          if (mergedPrBelongsToSession(status.pullRequest, current)) {
             void get().setSessionStatus(sessionId, "idle", "merged-pr").catch((err) =>
               console.warn(`setSessionStatus failed for ${sessionId} -> idle: ${(err as Error).message}`)
             );

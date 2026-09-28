@@ -44,11 +44,10 @@ export function prRefFromUrl(url: string): PrRef | null {
 
 export function mergedPrBelongsToSession(
   pullRequest: GitPullRequest | null,
-  session: LinkedSession | undefined,
-  isWorktree: boolean
+  session: (LinkedSession & { worktreePath?: string }) | undefined
 ): boolean {
   if (!pullRequest) return false;
-  if (isWorktree) return true;
+  if (session?.worktreePath) return true;
   const ref = prRefFromUrl(pullRequest.url);
   return ref !== null && linkFor(session, ref) !== undefined;
 }
