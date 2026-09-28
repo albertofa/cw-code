@@ -169,7 +169,8 @@ export class ClaudeCliDriver implements CliDriver {
     private emit: (event: ThreadEvent) => void,
     private getSettings: () => AppSettings,
     private spawnFn: typeof spawn = spawn,
-    private killFn: (proc: ChildProcess | undefined) => void = killProcessTree
+    private killFn: (proc: ChildProcess | undefined) => void = killProcessTree,
+    private isInWorkingSet: (sessionId: string) => boolean = () => false
   ) {}
 
   private configuredBinary(): string {
@@ -263,7 +264,8 @@ export class ClaudeCliDriver implements CliDriver {
         this.liveTaskCount(state) > 0 ||
         !state.completedTurn ||
         (state.postCompletionOutputPending && Date.now() - state.lastActivityAt < CLAUDE_IDLE_EVICT_MS) ||
-        this.hasPendingForSession(state.sessionId)
+        this.hasPendingForSession(state.sessionId) ||
+        this.isInWorkingSet(state.sessionId)
       ) {
         this.armIdleTimer(state);
         return;
