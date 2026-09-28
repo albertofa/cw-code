@@ -2319,6 +2319,16 @@ body.session-dragging * {
   min-width: 0;
 }
 
+.turn-pinned-cont {
+  min-width: 0;
+  padding-left: 11px;
+  border-left: 2px solid var(--border-soft);
+}
+
+.turn-pinned-cont .msg-assistant {
+  color: var(--muted);
+}
+
 .turn-head {
   display: flex;
   align-items: center;

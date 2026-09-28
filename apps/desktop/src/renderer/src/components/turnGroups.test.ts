@@ -164,7 +164,7 @@ describe("splitTurn", () => {
     );
     expect(pieces.system).toEqual([]);
     expect(pieces.activity.map((n) => (n.kind === "msg" ? n.msg.id : n.kind))).toEqual(["a1", "cmp"]);
-    expect(pieces.pinned?.id).toBe("a2");
+    expect(pieces.pinned?.map((m) => m.id)).toEqual(["a2"]);
   });
 
   it("pins the final assistant message, not interim ones or trailing reasoning", () => {
@@ -172,13 +172,13 @@ describe("splitTurn", () => {
       [
         msg({ id: "u", role: "user", turnId: "t1" }),
         msg({ id: "a1", role: "assistant", turnId: "t1", text: "interim" }),
-        msg({ id: "tool", role: "tool", turnId: "t1", toolName: "read" }),
+        msg({ id: "tool", role: "tool", turnId: "t1", toolName: "read", toolDone: true, toolOutput: "out" }),
         msg({ id: "a2", role: "assistant", turnId: "t1", text: "final" }),
         msg({ id: "th", role: "reasoning", turnId: "t1", text: "thinking" })
       ],
       nestedIds
     );
-    expect(pieces.pinned?.id).toBe("a2");
+    expect(pieces.pinned?.map((m) => m.id)).toEqual(["a2"]);
     expect(pieces.activity.map((n) => (n.kind === "msg" ? n.msg.id : n.kind))).toEqual(["a1", "tool", "th"]);
     expect(pieces.system).toEqual([]);
   });
@@ -209,7 +209,7 @@ describe("splitTurn", () => {
     expect(live.activity.map((n) => (n.kind === "msg" ? n.msg.id : n.kind))).toEqual(["th1", "a1", "tool"]);
 
     const settled = splitTurn(messages, nestedIds, false);
-    expect(settled.pinned?.id).toBe("a1");
+    expect(settled.pinned?.map((m) => m.id)).toEqual(["a1"]);
     expect(settled.activity.map((n) => (n.kind === "msg" ? n.msg.id : n.kind))).toEqual(["th1", "tool"]);
   });
 
@@ -223,7 +223,7 @@ describe("splitTurn", () => {
       nestedIds,
       true
     );
-    expect(pieces.pinned?.id).toBe("a1");
+    expect(pieces.pinned?.map((m) => m.id)).toEqual(["a1"]);
     expect(pieces.activity.map((n) => (n.kind === "msg" ? n.msg.id : n.kind))).toEqual(["tool"]);
   });
 
@@ -232,11 +232,11 @@ describe("splitTurn", () => {
       [
         msg({ id: "u", role: "user", turnId: "t1" }),
         msg({ id: "a1", role: "assistant", turnId: "t1", text: "final" }),
-        msg({ id: "tool", role: "tool", turnId: "t1", toolName: "bash" })
+        msg({ id: "tool", role: "tool", turnId: "t1", toolName: "bash", toolDone: true, toolOutput: "done" })
       ],
       nestedIds
     );
-    expect(pieces.pinned?.id).toBe("a1");
+    expect(pieces.pinned?.map((m) => m.id)).toEqual(["a1"]);
     expect(pieces.activity.map((n) => (n.kind === "msg" ? n.msg.id : n.kind))).toEqual(["tool"]);
   });
 
@@ -250,7 +250,59 @@ describe("splitTurn", () => {
       ],
       new Set(["s1"])
     );
-    expect(pieces.pinned?.id).toBe("a1");
+    expect(pieces.pinned?.map((m) => m.id)).toEqual(["a1"]);
     expect(pieces.activity.map((n) => (n.kind === "msg" ? n.msg.id : n.kind))).toEqual(["sub"]);
+  });
+
+  it("keeps an answer whole across a bookkeeping tool call that returned nothing", () => {
+    const pieces = splitTurn(
+      [
+        msg({ id: "u", role: "user", turnId: "t1" }),
+        msg({ id: "a1", role: "assistant", turnId: "t1", text: "the real answer" }),
+        msg({ id: "book", role: "tool", turnId: "t1", toolName: "bash", toolDone: true, toolOutput: "" }),
+        msg({ id: "a2", role: "assistant", turnId: "t1", text: "Noted in memory." })
+      ],
+      nestedIds
+    );
+    expect(pieces.pinned?.map((m) => m.id)).toEqual(["a1", "a2"]);
+    expect(pieces.activity.map((n) => (n.kind === "msg" ? n.msg.id : n.kind))).toEqual(["book"]);
+  });
+
+  it("stops the answer at a tool call that returned something", () => {
+    const pieces = splitTurn(
+      [
+        msg({ id: "u", role: "user", turnId: "t1" }),
+        msg({ id: "a1", role: "assistant", turnId: "t1", text: "interim" }),
+        msg({ id: "work", role: "tool", turnId: "t1", toolName: "bash", toolDone: true, toolOutput: "found it" }),
+        msg({ id: "a2", role: "assistant", turnId: "t1", text: "final" })
+      ],
+      nestedIds
+    );
+    expect(pieces.pinned?.map((m) => m.id)).toEqual(["a2"]);
+    expect(pieces.activity.map((n) => (n.kind === "msg" ? n.msg.id : n.kind))).toEqual(["a1", "work"]);
+  });
+
+  it("stops the answer at a tool call that never completed", () => {
+    const pieces = splitTurn(
+      [
+        msg({ id: "u", role: "user", turnId: "t1" }),
+        msg({ id: "a1", role: "assistant", turnId: "t1", text: "interim" }),
+        msg({ id: "pending", role: "tool", turnId: "t1", toolName: "bash" }),
+        msg({ id: "a2", role: "assistant", turnId: "t1", text: "final" })
+      ],
+      nestedIds
+    );
+    expect(pieces.pinned?.map((m) => m.id)).toEqual(["a2"]);
+    expect(pieces.activity.map((n) => (n.kind === "msg" ? n.msg.id : n.kind))).toEqual(["a1", "pending"]);
+  });
+
+  it("does not reach back across a bookkeeping tool while the turn is still running", () => {
+    const messages = [
+      msg({ id: "u", role: "user", turnId: "t1" }),
+      msg({ id: "a1", role: "assistant", turnId: "t1", text: "answer" }),
+      msg({ id: "book", role: "tool", turnId: "t1", toolName: "bash", toolDone: true, toolOutput: "" })
+    ];
+    expect(splitTurn(messages, nestedIds, true).pinned).toBeUndefined();
+    expect(splitTurn(messages, nestedIds, false).pinned?.map((m) => m.id)).toEqual(["a1"]);
   });
 });

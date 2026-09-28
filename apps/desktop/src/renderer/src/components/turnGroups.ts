@@ -16,7 +16,7 @@ export interface TurnPieces {
   lead: ChatMessage[];
   activity: ThreadNode[];
   system: ChatMessage[];
-  pinned?: ChatMessage;
+  pinned?: ChatMessage[];
 }
 
 export function groupTurns(messages: ChatMessage[]): TurnSlice[] {
@@ -92,6 +92,24 @@ export function buildThreadNodes(messages: ChatMessage[], nestedIds: Set<string>
   return out;
 }
 
+/**
+ * Reasoning and a tool call that completed without producing anything are
+ * transparent to the answer: the model's reply flows straight through them. A
+ * tool call that returned something, or a compaction boundary, ends it.
+ */
+function endsAnswer(m: ChatMessage): boolean {
+  if (m.compaction) return true;
+  if (m.role !== "tool") return false;
+  if (m.toolOutputEmpty === true) return false;
+  return !(m.toolDone === true && (m.toolOutput ?? "").trim() === "");
+}
+
+/**
+ * The pinned answer is the trailing run of top-level assistant messages. A model
+ * that answers, then runs a tool that returns nothing, then speaks again has not
+ * started a new answer, so both halves stay visible. Interim text that the model
+ * wrote *before* real work resumed stays folded.
+ */
 export function splitTurn(messages: ChatMessage[], nestedIds: Set<string>, running = false): TurnPieces {
   const lead: ChatMessage[] = [];
   const system: ChatMessage[] = [];
@@ -101,18 +119,41 @@ export function splitTurn(messages: ChatMessage[], nestedIds: Set<string>, runni
     else if (m.role === "system" && !m.compaction) system.push(m);
     else rest.push(m);
   }
-  let pinned: ChatMessage | undefined;
-  for (let i = rest.length - 1; i >= 0; i--) {
+  const pinned: ChatMessage[] = [];
+  const taken = new Set<number>();
+  const isNested = (i: number): boolean => {
     const m = rest[i];
-    if (m.parentToolCallId && nestedIds.has(m.parentToolCallId)) continue;
-    if (m.role !== "assistant") {
-      if (running) break;
-      continue;
+    return Boolean(m.parentToolCallId && nestedIds.has(m.parentToolCallId));
+  };
+
+  let anchor = -1;
+  for (let i = rest.length - 1; i >= 0; i--) {
+    if (isNested(i)) continue;
+    if (rest[i].role === "assistant") {
+      anchor = i;
+      break;
     }
-    pinned = m;
-    rest.splice(i, 1);
-    break;
+    if (running) break;
   }
-  const activity = buildThreadNodes(rest, nestedIds);
-  return pinned ? { lead, activity, system, pinned } : { lead, activity, system };
+
+  if (anchor >= 0) {
+    pinned.push(rest[anchor]);
+    taken.add(anchor);
+    for (let i = anchor - 1; i >= 0; i--) {
+      if (isNested(i)) continue;
+      const m = rest[i];
+      if (m.role === "assistant") {
+        pinned.unshift(m);
+        taken.add(i);
+        continue;
+      }
+      if (endsAnswer(m)) break;
+    }
+  }
+
+  const activity = buildThreadNodes(
+    rest.filter((_, i) => !taken.has(i)),
+    nestedIds
+  );
+  return pinned.length > 0 ? { lead, activity, system, pinned } : { lead, activity, system };
 }

@@ -195,6 +195,7 @@ export interface HistoryMessage {
   todos?: TodoItem[];
   reasoningMs?: number;
   compaction?: ContextCompactionInfo;
+  toolOutputEmpty?: boolean;
 }
 
 export interface SubagentToolActivity {
@@ -291,6 +292,7 @@ export type TurnEvent =
       usage?: ToolUsage;
       agentId?: string;
       model?: string;
+      outputEmpty?: boolean;
     }
   | { type: "approval.request"; turnId: string; request: ApprovalRequest }
   | { type: "approval.resolved"; turnId: string; requestId: string }

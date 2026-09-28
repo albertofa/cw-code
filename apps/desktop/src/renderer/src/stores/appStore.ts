@@ -1296,6 +1296,7 @@ export const useAppStore = create<AppState>((set, get) => ({
           toolDone: true,
           toolCompletedAt: Date.now(),
           isError: call.isError === true || event.isError,
+          ...(event.outputEmpty !== undefined ? { toolOutputEmpty: event.outputEmpty } : {}),
           ...(event.usage ? { toolUsage: event.usage } : {}),
           ...(event.agentId ? { subagentAgentId: event.agentId } : {}),
           ...(event.model ? { subagentModel: event.model } : {})
@@ -1315,6 +1316,7 @@ export const useAppStore = create<AppState>((set, get) => ({
                 text: event.output.slice(0, 1000),
                 turnId: event.turnId,
                 isError: event.isError,
+                ...(event.outputEmpty !== undefined ? { toolOutputEmpty: event.outputEmpty } : {}),
                 ...(event.usage ? { toolUsage: event.usage } : {}),
                 ...(event.agentId ? { subagentAgentId: event.agentId } : {}),
                 ...(event.model ? { subagentModel: event.model } : {}),
