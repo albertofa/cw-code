@@ -602,7 +602,7 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
 
   const setStatus = (sessionId: string, status: SessionStatus) => {
     setMenu(null);
-    void store.setSessionStatus(sessionId, status).catch((err: Error) => {
+    void store.setSessionStatus(sessionId, status, "user-set-status").catch((err: Error) => {
       useNotifs.getState().push({ kind: "error", title: "Could not update session", message: err.message });
     });
   };

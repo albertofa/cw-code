@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { CommandInvocation } from "@cw-code/contracts";
+import type { CommandInvocation, SessionStatusReason } from "@cw-code/contracts";
 import type {
   ActiveTurn,
   AppSettings,
@@ -33,6 +33,7 @@ import { appendAssistantText, appendReasoningText, closeReasoning, upsertToolCal
 import { getLastModel, setLastModel } from "../components/lastModel.js";
 import { formatDuration, mergeToolPairs } from "../components/toolSummaries.js";
 import { expiredHoldingIds } from "../components/workingSet.js";
+import { mergedPrBelongsToSession } from "../components/sessionPrLinks.js";
 import { defaultNewSessionProjectId, discoveredOwnerId, discoveryProjectId } from "../components/projectRecency.js";
 import { useNotifs } from "../components/Notifications.js";
 import { ipcErrorMessage } from "../components/ipcError.js";
@@ -203,7 +204,7 @@ interface AppState {
   importDiscovered(session: Session): Promise<void>;
   renameSession(sessionId: string, title: string): Promise<void>;
   regenerateSessionTitle(sessionId: string): Promise<void>;
-  setSessionStatus(sessionId: string, status: SessionStatus): Promise<void>;
+  setSessionStatus(sessionId: string, status: SessionStatus, reason?: SessionStatusReason): Promise<void>;
   expireHoldingSessions(): Promise<void>;
   appendSystemNotice(sessionId: string, text: string, isError?: boolean): void;
   clearSessionWorktrees(sessionIds: string[]): void;
@@ -401,9 +402,11 @@ export const useAppStore = create<AppState>((set, get) => ({
           .flat()
           .find((s) => s.id === sessionId);
         if (current && (current.status === "holding" || current.status === "done") && sessionId !== get().activeSessionId) {
-          void get().setSessionStatus(sessionId, "idle").catch((err) =>
-            console.warn(`setSessionStatus failed for ${sessionId} -> idle: ${(err as Error).message}`)
-          );
+          if (mergedPrBelongsToSession(status.pullRequest, current, status.isWorktree)) {
+            void get().setSessionStatus(sessionId, "idle", "merged-pr").catch((err) =>
+              console.warn(`setSessionStatus failed for ${sessionId} -> idle: ${(err as Error).message}`)
+            );
+          }
         }
       }
     } catch {
@@ -496,11 +499,11 @@ export const useAppStore = create<AppState>((set, get) => ({
         pendingDriver: null
       });
       if (picked.status === "resolved") {
-        void get().setSessionStatus(picked.id, "idle").catch((err) =>
+        void get().setSessionStatus(picked.id, "idle", "reopen-on-restore").catch((err) =>
           console.warn(`setSessionStatus failed for ${picked.id} -> idle: ${(err as Error).message}`)
         );
       } else if (picked.status === "done") {
-        void get().setSessionStatus(picked.id, "holding").catch((err) =>
+        void get().setSessionStatus(picked.id, "holding", "reopen-on-restore").catch((err) =>
           console.warn(`setSessionStatus failed for ${picked.id} -> holding: ${(err as Error).message}`)
         );
       }
@@ -599,7 +602,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     get().applySessionTitle(sessionId, title);
   },
 
-  async setSessionStatus(sessionId: string, status: SessionStatus) {
+  async setSessionStatus(sessionId: string, status: SessionStatus, reason?: SessionStatusReason) {
     if (status === "resolved" || status === "archived") {
       const result = await window.cw.resolveSession(sessionId, status, true, false);
       const worktreeKept = Boolean(result.dirtyBlocked || result.error);
@@ -624,7 +627,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       }
       return;
     }
-    const updated = await window.cw.setSessionStatus(sessionId, status);
+    const updated = await window.cw.setSessionStatus(sessionId, status, reason);
     set({
       sessionsByProject: patchSession(get().sessionsByProject, sessionId, {
         status: updated.status,
@@ -709,11 +712,11 @@ export const useAppStore = create<AppState>((set, get) => ({
       .flat()
       .find((s) => s.id === sessionId);
     if (current?.status === "done") {
-      void get().setSessionStatus(sessionId, "holding").catch((err) =>
+      void get().setSessionStatus(sessionId, "holding", "reopen-on-select").catch((err) =>
         console.warn(`setSessionStatus failed for ${sessionId} -> holding: ${(err as Error).message}`)
       );
     } else if (current?.status === "resolved") {
-      void get().setSessionStatus(sessionId, "idle").catch((err) =>
+      void get().setSessionStatus(sessionId, "idle", "reopen-on-select").catch((err) =>
         console.warn(`setSessionStatus failed for ${sessionId} -> idle: ${(err as Error).message}`)
       );
     }

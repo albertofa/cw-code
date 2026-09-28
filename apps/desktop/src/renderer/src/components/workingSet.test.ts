@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { compareWorkingSet, expiredHoldingIds, isWorkingSetStatus } from "./workingSet.js";
+import { compareWorkingSet, expiredHoldingIds, isWorkingSetStatus, WORKING_SET_STATUSES } from "./workingSet.js";
 import type { Session, SessionStatus } from "../cw.js";
 
 function session(overrides: Partial<Session>): Session {
@@ -27,6 +27,13 @@ describe("isWorkingSetStatus", () => {
     for (const status of ["idle", "resolved", "archived"] as SessionStatus[]) {
       expect(isWorkingSetStatus(status)).toBe(false);
     }
+  });
+
+  it("keeps the sidebar ranking in sync with the shared working set", () => {
+    const ranked = (["input-required", "working", "done", "holding"] as SessionStatus[]).filter(
+      (status) => compareWorkingSet({ ...session({ status }) }, { ...session({ status: "idle" }) }) < 0
+    );
+    expect([...ranked].sort()).toEqual([...WORKING_SET_STATUSES].sort());
   });
 });
 

@@ -115,9 +115,13 @@ export interface Project {
   githubAccount?: { host: string; login: string };
 }
 
+import type { SessionStatusReason } from "@cw-code/contracts";
+
 export type DriverName = "claude" | "opencode" | "codex";
 
 export type SessionStatus = "idle" | "working" | "input-required" | "done" | "holding" | "resolved" | "archived";
+
+export type { SessionStatusReason };
 
 export interface Session {
   id: string;
@@ -534,7 +538,7 @@ export interface CwApi {
   createSession(projectId: string, driver: DriverName, options?: CreateSessionOptions): Promise<Session>;
   renameSession(sessionId: string, title: string): Promise<void>;
   regenerateSessionTitle(sessionId: string): Promise<string>;
-  setSessionStatus(sessionId: string, status: SessionStatus): Promise<Session>;
+  setSessionStatus(sessionId: string, status: SessionStatus, reason?: SessionStatusReason): Promise<Session>;
   expireHolding(sessionIds: string[]): Promise<Session[]>;
   resolveSession(sessionId: string, status: SessionStatus, removeWorktree?: boolean, forceBranch?: boolean): Promise<SessionCleanupResult>;
   pruneStaleWorktrees(): Promise<WorktreePruneSummary>;

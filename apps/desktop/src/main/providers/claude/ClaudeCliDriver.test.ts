@@ -193,7 +193,7 @@ class FakeChild extends EventEmitter {
 
 type ClaudeSpawnFn = ConstructorParameters<typeof ClaudeCliDriver>[2];
 
-function makeDriver() {
+function makeDriver(isInWorkingSet: (sessionId: string) => boolean = () => false) {
   const events: ThreadEvent[] = [];
   const children: FakeChild[] = [];
   const spawnCalls: Array<{ command: string; args: string[] }> = [];
@@ -208,7 +208,8 @@ function makeDriver() {
     (event) => events.push(event),
     () => SETTINGS,
     spawnFn,
-    (proc) => killed.push(proc)
+    (proc) => killed.push(proc),
+    isInWorkingSet
   );
   return { driver, events, children, spawnCalls, killed };
 }
@@ -854,6 +855,44 @@ describe("ClaudeCliDriver persistent process", () => {
       children[0].stdout.write(`${resultLine()}\n`);
       await settle();
       expect(killed).toHaveLength(0);
+      await vi.advanceTimersByTimeAsync(CLAUDE_IDLE_EVICT_MS);
+      expect(killed).toHaveLength(1);
+      driver.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps a working-set session's process warm across repeated idle timeouts", async () => {
+    vi.useFakeTimers();
+    try {
+      const { driver, children, killed } = makeDriver(() => true);
+      driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
+      await settle();
+      children[0].stdout.write(`${resultLine()}\n`);
+      await settle();
+      for (let hour = 0; hour < 12; hour += 1) {
+        await vi.advanceTimersByTimeAsync(CLAUDE_IDLE_EVICT_MS);
+        expect(killed).toHaveLength(0);
+      }
+      driver.dispose();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("evicts a session that left the working set on the next idle timeout", async () => {
+    vi.useFakeTimers();
+    try {
+      let inWorkingSet = true;
+      const { driver, children, killed } = makeDriver(() => inWorkingSet);
+      driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
+      await settle();
+      children[0].stdout.write(`${resultLine()}\n`);
+      await settle();
+      await vi.advanceTimersByTimeAsync(CLAUDE_IDLE_EVICT_MS);
+      expect(killed).toHaveLength(0);
+      inWorkingSet = false;
       await vi.advanceTimersByTimeAsync(CLAUDE_IDLE_EVICT_MS);
       expect(killed).toHaveLength(1);
       driver.dispose();

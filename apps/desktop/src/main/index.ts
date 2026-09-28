@@ -17,6 +17,7 @@ function resolvePreload(): string {
 import { checkCliVersion, checkCliVersions, type CliVersionCheck } from "./cliVersions.js";
 import { discoverBinaries, verifyBinaryPath } from "./cli/binaryDiscovery.js";
 import { getHarnessTracePath, initHarnessTrace } from "./debug/harnessTrace.js";
+import { initSessionStatusTrace, type SessionStatusReason } from "./debug/sessionStatusTrace.js";
 import { appendCrashLog, initCrashLog } from "./debug/crashLog.js";
 import { RendererProbeTracker, runPackageProbe } from "./debug/packageProbe.js";
 import { claudeCommandsCachePath, cwCodeHome, ensureAppDirs, attachmentsDir, logsDir, migrateFromUserData, opencodeModelsCachePath, sessionDbPath, settingsFilePath, userdataDir } from "./paths/appPaths.js";
@@ -638,11 +639,14 @@ function registerIpc(services: Services): void {
   ipcMain.handle("sessions.regenerateTitle", (_e, args: { sessionId: string }) =>
     sessions.regenerateTitle(args.sessionId)
   );
-  ipcMain.handle("sessions.setStatus", (_e, args: { sessionId: string; status: SessionStatus }) => {
-    const updated = sessions.setSessionStatus(args.sessionId, args.status);
-    if (updated.status === "resolved" || updated.status === "archived") ptys.killSession(args.sessionId);
-    return updated;
-  });
+  ipcMain.handle(
+    "sessions.setStatus",
+    (_e, args: { sessionId: string; status: SessionStatus; reason?: SessionStatusReason }) => {
+      const updated = sessions.setSessionStatus(args.sessionId, args.status, args.reason);
+      if (updated.status === "resolved" || updated.status === "archived") ptys.killSession(args.sessionId);
+      return updated;
+    }
+  );
   ipcMain.handle("sessions.expireHolding", (_e, sessionIds: string[]) =>
     sessions.expireHoldingSessions(sessionIds)
   );
@@ -1004,6 +1008,12 @@ async function startApp(): Promise<void> {
     console.warn(`harness trace: ${tracePath}`);
   } catch (err) {
     console.warn(`harness trace init failed: ${(err as Error).message}`);
+  }
+  try {
+    const statusTracePath = initSessionStatusTrace({ logDir: logsDir() });
+    console.warn(`session status trace: ${statusTracePath}`);
+  } catch (err) {
+    console.warn(`session status trace init failed: ${(err as Error).message}`);
   }
   initCrashLog(logsDir());
   process.on("uncaughtException", (err) => {

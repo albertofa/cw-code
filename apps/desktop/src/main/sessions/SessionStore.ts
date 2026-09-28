@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { ComposerPrefs, DriverKind, Project, SessionMeta } from "@cw-code/contracts";
+import type { ComposerPrefs, DriverKind, Project, SessionMeta, SessionStatus } from "@cw-code/contracts";
+import { traceSessionStatus, type SessionStatusReason } from "../debug/sessionStatusTrace.js";
 import { isValidPrLink, upsertLink } from "../github/prLinks.js";
 import { expandHome } from "../skills/skillPaths.js";
 import { writeFileAtomic } from "../storage/atomicFile.js";
@@ -102,16 +103,42 @@ function repairProjectNames(projects: Project[]): string[] {
 function resetRuntimeStatuses(sessions: SessionMeta[]): boolean {
   let changed = false;
   for (const session of sessions) {
+    const previous = session.status;
     if (!session.status) {
       session.status = "idle";
-      changed = true;
     } else if (session.status === "working" || session.status === "input-required") {
       session.status = "holding";
-      changed = true;
+    } else {
+      continue;
     }
+    changed = true;
+    traceSessionStatus({
+      sessionId: session.id,
+      driver: session.driver,
+      from: previous ?? null,
+      to: session.status,
+      reason: previous ? "app-restart-holding" : "app-restart-idle"
+    });
   }
   return changed;
 }
+
+type SessionPatch = Partial<
+  Pick<
+    SessionMeta,
+    | "title"
+    | "status"
+    | "resumeCursor"
+    | "model"
+    | "effort"
+    | "variant"
+    | "permissionMode"
+    | "worktreePath"
+    | "branch"
+    | "prs"
+    | "prUnlinked"
+  >
+>;
 
 export class SessionStore {
   private filePath: string;
@@ -203,6 +230,13 @@ export class SessionStore {
       ...(workspace.branch ? { branch: workspace.branch } : {})
     };
     this.data.sessions.push(session);
+    traceSessionStatus({
+      sessionId: session.id,
+      driver: session.driver,
+      from: null,
+      to: "idle",
+      reason: "session-created"
+    });
     this.persist();
     return session;
   }
@@ -227,14 +261,12 @@ export class SessionStore {
     );
   }
 
-  updateSession(
-    id: string,
-    patch: Partial<
-      Pick<SessionMeta, "title" | "status" | "resumeCursor" | "model" | "effort" | "variant" | "permissionMode" | "worktreePath" | "branch" | "prs" | "prUnlinked">
-    >
-  ): void {
+  updateSession(id: string, patch: SessionPatch & { status: SessionStatus }, reason: SessionStatusReason): void;
+  updateSession(id: string, patch: SessionPatch, reason?: undefined): void;
+  updateSession(id: string, patch: SessionPatch, reason?: SessionStatusReason): void {
     const current = this.getSession(id);
     if (!current) return;
+    const previousStatus = current.status;
     if (patch.title !== undefined) current.title = patch.title;
     if (patch.status !== undefined) current.status = patch.status;
     if (patch.resumeCursor !== undefined) current.resumeCursor = patch.resumeCursor;
@@ -253,6 +285,15 @@ export class SessionStore {
     if (patch.prUnlinked !== undefined) current.prUnlinked = patch.prUnlinked;
     else if ("prUnlinked" in patch) delete current.prUnlinked;
     current.updatedAt = Date.now();
+    if (patch.status !== undefined && patch.status !== previousStatus) {
+      traceSessionStatus({
+        sessionId: id,
+        driver: current.driver,
+        from: previousStatus ?? null,
+        to: patch.status,
+        reason: reason ?? "unknown"
+      });
+    }
     this.persist();
   }
 
@@ -260,6 +301,13 @@ export class SessionStore {
     const session = this.getSession(id);
     if (!session || session.status !== "holding") return null;
     session.status = "idle";
+    traceSessionStatus({
+      sessionId: id,
+      driver: session.driver,
+      from: "holding",
+      to: "idle",
+      reason: "holding-expired"
+    });
     this.persist();
     return { ...session };
   }

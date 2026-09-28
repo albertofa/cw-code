@@ -5,6 +5,29 @@ export type DriverKind = "claude" | "opencode" | "codex";
 
 export type SessionStatus = "idle" | "working" | "input-required" | "done" | "holding" | "resolved" | "archived";
 
+export type SessionStatusReason =
+  | "session-created"
+  | "session-discovered"
+  | "turn-start"
+  | "turn-done"
+  | "turn-done-background"
+  | "turn-error"
+  | "turn-interrupted"
+  | "approval-pending"
+  | "approval-resolved"
+  | "retry-connected"
+  | "retry-idle"
+  | "resolve"
+  | "archive"
+  | "user-set-status"
+  | "reopen-on-select"
+  | "reopen-on-restore"
+  | "merged-pr"
+  | "app-restart-holding"
+  | "app-restart-idle"
+  | "holding-expired"
+  | "unknown";
+
 export interface Project {
   id: string;
   rootPath: string;

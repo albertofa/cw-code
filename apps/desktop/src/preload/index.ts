@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { AccountUsageSnapshot, AppSettings, CliBinary, CliDiscoveredCandidate, CliDiscoverResult, CommandInvocation, CommandOption, CreateSessionOptions, GitBranchInfo, GitDiffMode, GitDiffResult, GitStatus, HarnessId, PrDetail, PrInboxResult, Project, ProjectGitHubRepo, PrRef, PrWorkflow, RetryConnectionResult, SessionCleanupResult, SessionMeta, SessionPrLink, SessionStatus, ShutdownAssessment, ShutdownCommitResult, ShutdownExpiredEvent, ShutdownPrepareRequest, ShutdownPrepareResult, ShutdownRequestedEvent, SkillDetail, SkillMeta, SkillSaveInput, SkillsListResult, SourceControlHealth, StartupState, SubagentToolsResult, UpdateActionResult, UpdateChannel, UpdateInstallRequest, UpdateState, UsageLedgerQuery, UsageLedgerRow, WorktreePruneSummary } from "@cw-code/contracts";
+import type { AccountUsageSnapshot, AppSettings, CliBinary, CliDiscoveredCandidate, CliDiscoverResult, CommandInvocation, CommandOption, CreateSessionOptions, GitBranchInfo, GitDiffMode, GitDiffResult, GitStatus, HarnessId, PrDetail, PrInboxResult, Project, ProjectGitHubRepo, PrRef, PrWorkflow, RetryConnectionResult, SessionCleanupResult, SessionMeta, SessionPrLink, SessionStatus, SessionStatusReason, ShutdownAssessment, ShutdownCommitResult, ShutdownExpiredEvent, ShutdownPrepareRequest, ShutdownPrepareResult, ShutdownRequestedEvent, SkillDetail, SkillMeta, SkillSaveInput, SkillsListResult, SourceControlHealth, StartupState, SubagentToolsResult, UpdateActionResult, UpdateChannel, UpdateInstallRequest, UpdateState, UsageLedgerQuery, UsageLedgerRow, WorktreePruneSummary } from "@cw-code/contracts";
 
 export type PermissionMode = "auto" | "acceptEdits" | "bypassPermissions" | "manual";
 export type EffortLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
@@ -81,7 +81,7 @@ export interface CwApi {
   createSession(projectId: string, driver: DriverName, options?: CreateSessionOptions): Promise<unknown>;
   renameSession(sessionId: string, title: string): Promise<void>;
   regenerateSessionTitle(sessionId: string): Promise<string>;
-  setSessionStatus(sessionId: string, status: SessionStatus): Promise<unknown>;
+  setSessionStatus(sessionId: string, status: SessionStatus, reason?: SessionStatusReason): Promise<unknown>;
   expireHolding(sessionIds: string[]): Promise<SessionMeta[]>;
   resolveSession(sessionId: string, status: SessionStatus, removeWorktree?: boolean, forceBranch?: boolean): Promise<SessionCleanupResult>;
   pruneStaleWorktrees(): Promise<WorktreePruneSummary>;
@@ -223,8 +223,8 @@ const api: CwApi = {
     ipcRenderer.invoke("sessions.rename", { sessionId, title }),
   regenerateSessionTitle: (sessionId: string) =>
     ipcRenderer.invoke("sessions.regenerateTitle", { sessionId }),
-  setSessionStatus: (sessionId: string, status: SessionStatus) =>
-    ipcRenderer.invoke("sessions.setStatus", { sessionId, status }),
+  setSessionStatus: (sessionId: string, status: SessionStatus, reason?: SessionStatusReason) =>
+    ipcRenderer.invoke("sessions.setStatus", { sessionId, status, reason }),
   expireHolding: (sessionIds: string[]) =>
     ipcRenderer.invoke("sessions.expireHolding", sessionIds),
   resolveSession: (sessionId: string, status: SessionStatus, removeWorktree?: boolean, forceBranch?: boolean) =>

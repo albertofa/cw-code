@@ -6,6 +6,7 @@ import {
   displayChip,
   linkFor,
   linksTitle,
+  mergedPrBelongsToSession,
   mostUrgentLink,
   pickMainSession,
   prRefFromUrl,
@@ -168,6 +169,31 @@ describe("link titles and unseen state", () => {
     expect(anyLinkUnseen([link(1)], summaries)).toBe(false);
     expect(anyLinkUnseen([link(1), link(2)], summaries)).toBe(true);
     expect(anyLinkUnseen([link(3)], summaries)).toBe(false);
+  });
+});
+
+describe("mergedPrBelongsToSession", () => {
+  const merged = gitPr({ number: 9, state: "MERGED", url: "https://github.com/acme/widgets/pull/9" });
+
+  it("accepts a worktree session, whose branch is its own", () => {
+    expect(mergedPrBelongsToSession(merged, { prs: [link(1)] }, true)).toBe(true);
+  });
+
+  it("rejects a project-root session when the merged PR is only the checked-out branch", () => {
+    expect(mergedPrBelongsToSession(merged, { prs: [link(1)] }, false)).toBe(false);
+    expect(mergedPrBelongsToSession(merged, undefined, false)).toBe(false);
+  });
+
+  it("accepts a project-root session when the merged PR is linked to it", () => {
+    expect(mergedPrBelongsToSession(merged, { prs: [link(1), link(9)] }, false)).toBe(true);
+  });
+
+  it("does not match a same-numbered PR from another repository", () => {
+    expect(mergedPrBelongsToSession(merged, { prs: [link(9, { ref: ref(9, "gadgets") })] }, false)).toBe(false);
+  });
+
+  it("rejects a missing pull request", () => {
+    expect(mergedPrBelongsToSession(null, { prs: [link(9)] }, true)).toBe(false);
   });
 });
 

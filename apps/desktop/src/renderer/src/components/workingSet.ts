@@ -1,3 +1,4 @@
+import { isWorkingSetStatus, WORKING_SET_STATUSES } from "../../../shared/workingSet.js";
 import type { Session, SessionStatus } from "../cw.js";
 
 const WORKING_SET_RANK: Partial<Record<SessionStatus, number>> = {
@@ -7,9 +8,7 @@ const WORKING_SET_RANK: Partial<Record<SessionStatus, number>> = {
   holding: 3
 };
 
-export function isWorkingSetStatus(status: SessionStatus): boolean {
-  return WORKING_SET_RANK[status] !== undefined;
-}
+export { isWorkingSetStatus, WORKING_SET_STATUSES };
 
 export function compareWorkingSet(a: Session, b: Session): number {
   const rankA = WORKING_SET_RANK[a.status] ?? Number.POSITIVE_INFINITY;

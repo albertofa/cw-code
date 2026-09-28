@@ -31,6 +31,8 @@ import type {
   UsageLedgerRow,
   WorktreePruneSummary
 } from "@cw-code/contracts";
+import { type SessionStatusReason } from "../debug/sessionStatusTrace.js";
+import { isWorkingSetStatus } from "../../shared/workingSet.js";
 import { SessionStore } from "./SessionStore.js";
 import {
   addUnlinkedKey,
@@ -85,12 +87,13 @@ export interface SessionManagerOptions {
 
 export type DriverFactory = (
   route: (event: ThreadEvent) => void,
-  getSettings: () => AppSettings
+  getSettings: () => AppSettings,
+  isInWorkingSet: (sessionId: string) => boolean
 ) => Record<DriverKind, CliDriver>;
 
 export function defaultDriverFactory(overrides: Partial<Record<DriverKind, CliDriver>> = {}): DriverFactory {
-  return (route, getSettings) => ({
-    claude: overrides.claude ?? new TracingCliDriver(new ClaudeCliDriver(route, getSettings)),
+  return (route, getSettings, isInWorkingSet) => ({
+    claude: overrides.claude ?? new TracingCliDriver(new ClaudeCliDriver(route, getSettings, undefined, undefined, isInWorkingSet)),
     opencode:
       overrides.opencode ??
       new TracingCliDriver(new OpencodeDriver(route, getSettings, undefined, { sharedRoot: opencodeServerDir() })),
@@ -183,7 +186,14 @@ export class SessionManager {
     const route = (event: ThreadEvent): void => {
       if (generation === this.driverGeneration) this.routeEvent(event);
     };
-    return this.driverFactory(route, () => this.settings.get());
+    return this.driverFactory(
+      route,
+      () => this.settings.get(),
+      (sessionId) => {
+        const status = this.store.getSession(sessionId)?.status;
+        return status !== undefined && isWorkingSetStatus(status);
+      }
+    );
   }
 
   private uniqueDrivers(): Array<{ kinds: DriverKind[]; driver: CliDriver }> {
@@ -331,18 +341,23 @@ export class SessionManager {
       this.recordUsage(event, countUsageTurn);
       const backgroundTasks = event.backgroundTasks ?? 0;
       if (backgroundTasks > 0) {
-        this.store.updateSession(event.sessionId, {
-          resumeCursor: event.resumeCursor,
-          status: "working"
-        });
+        this.store.updateSession(
+          event.sessionId,
+          {
+            resumeCursor: event.resumeCursor,
+            status: "working"
+          },
+          "turn-done-background"
+        );
       } else {
         const wasActive = this.activeTurns.has(event.turnId);
         this.settleTurn(event.turnId, event.sessionId);
         const stillActive = [...this.activeTurns.values()].some((entry) => entry.sessionId === event.sessionId);
-        this.store.updateSession(event.sessionId, {
-          resumeCursor: event.resumeCursor,
-          ...(stillActive ? {} : { status: "done" as const })
-        });
+        if (stillActive) {
+          this.store.updateSession(event.sessionId, { resumeCursor: event.resumeCursor });
+        } else {
+          this.store.updateSession(event.sessionId, { resumeCursor: event.resumeCursor, status: "done" }, "turn-done");
+        }
         if (wasActive && !event.isError) void this.renameBranchForTitle(event.sessionId, event.turnId);
         const covered = this.turnPrRefs.get(event.turnId) ?? [];
         this.turnPrRefs.delete(event.turnId);
@@ -354,18 +369,22 @@ export class SessionManager {
       else this.activeTurns.delete(event.turnId);
       this.turnPrRefs.delete(event.turnId);
       if (sessionId) {
-        this.store.updateSession(sessionId, {
-          status: "holding",
-          ...(event.resumeCursor ? { resumeCursor: event.resumeCursor } : {})
-        });
+        this.store.updateSession(
+          sessionId,
+          {
+            status: "holding",
+            ...(event.resumeCursor ? { resumeCursor: event.resumeCursor } : {})
+          },
+          "turn-error"
+        );
       }
     }
     if (event.type === "approval.request" || event.type === "question.request") {
-      if (sessionId) this.store.updateSession(sessionId, { status: "input-required" });
+      if (sessionId) this.store.updateSession(sessionId, { status: "input-required" }, "approval-pending");
     }
     if (event.type === "approval.resolved" || event.type === "question.resolved") {
       if (sessionId && this.activeTurns.has(event.turnId)) {
-        this.store.updateSession(sessionId, { status: "working" });
+        this.store.updateSession(sessionId, { status: "working" }, "approval-resolved");
       }
     }
     this.onEvent(sessionId, event);
@@ -560,10 +579,10 @@ export class SessionManager {
     }
   }
 
-  setSessionStatus(sessionId: string, status: SessionStatus): SessionMeta {
+  setSessionStatus(sessionId: string, status: SessionStatus, reason: SessionStatusReason = "user-set-status"): SessionMeta {
     const session = this.store.getSession(sessionId);
     if (!session) throw new Error(`unknown session ${sessionId}`);
-    this.store.updateSession(sessionId, { status });
+    this.store.updateSession(sessionId, { status }, reason);
     const updated = this.store.getSession(sessionId);
     if (!updated) throw new Error(`unknown session ${sessionId}`);
     return updated;
@@ -683,7 +702,7 @@ export class SessionManager {
     this.firstPrompts.delete(sessionId);
     this.branchRenamed.delete(sessionId);
     this.cancelTitleTurns(sessionId);
-    this.store.updateSession(sessionId, { status });
+    this.store.updateSession(sessionId, { status }, status === "archived" ? "archive" : "resolve");
     this.drivers[session.driver].stopSession?.(sessionId);
     const worktreePath = session.worktreePath;
     if (!worktreePath) {
@@ -1101,7 +1120,7 @@ export class SessionManager {
       });
       this.activeTurns.set(handle.turnId, { sessionId, startedAt: Date.now() });
       if (opts?.prRefs && opts.prRefs.length > 0) this.turnPrRefs.set(handle.turnId, opts.prRefs);
-      this.store.updateSession(sessionId, { status: "working" });
+      this.store.updateSession(sessionId, { status: "working" }, "turn-start");
       if (firstMessage) this.maybeAutoTitle(sessionId, prompt, placeholder);
       return handle.turnId;
     } finally {
@@ -1342,7 +1361,7 @@ export class SessionManager {
     if (session) this.drivers[session.driver].interrupt(turnId);
     this.settleTurn(turnId, sessionId);
     this.turnPrRefs.delete(turnId);
-    this.store.updateSession(sessionId, { status: "holding" });
+    this.store.updateSession(sessionId, { status: "holding" }, "turn-interrupted");
     if (!session) return;
     if (this.shutdownReserved) this.interruptedForShutdown.add(sessionId);
     this.emitSession(sessionId);
@@ -1369,9 +1388,9 @@ export class SessionManager {
     });
     if (result.status === "running" && result.turnId) {
       this.activeTurns.set(result.turnId, { sessionId, startedAt: Date.now() });
-      this.store.updateSession(sessionId, { status: "working" });
+      this.store.updateSession(sessionId, { status: "working" }, "retry-connected");
     } else {
-      this.store.updateSession(sessionId, { status: "idle" });
+      this.store.updateSession(sessionId, { status: "idle" }, "retry-idle");
     }
     return result;
   }
