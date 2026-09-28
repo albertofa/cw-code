@@ -449,7 +449,9 @@ never the token) in the PR.
 
 ## Outages and recovery
 
-There is no unsigned production path. `signing-mode: unsigned` never publishes.
+Unsigned production releases exist only through the explicit `signing: unsigned` choice
+(and automatic runs, which are always unsigned). None of the failures below is a reason to
+switch a signed release to `unsigned`.
 
 - **SignPath unavailable or approval delayed**: the SignPath step fails or times out
   (3600 s wait, 900 s download). Re-run all jobs once the service is back.

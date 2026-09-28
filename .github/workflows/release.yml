@@ -33,7 +33,7 @@ on:
         type: string
         default: ""
       mode:
-        description: "validate builds, signs and verifies without publishing; publish also needs CW_RELEASE_PUBLISHING_ENABLED=true"
+        description: "validate builds, signs and verifies without publishing; publish also needs CW_RELEASE_PUBLISHING_ENABLED=true (which also makes every green CI push to main publish an alpha)"
         required: true
         type: choice
         default: validate
@@ -53,7 +53,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: release-${{ inputs.mode == 'publish' && 'publish' || 'validate' }}-${{ inputs.channel || 'alpha' }}
+  group: release-${{ (inputs.mode == 'publish' || (github.event_name == 'workflow_run' && vars.CW_RELEASE_PUBLISHING_ENABLED == 'true')) && 'publish' || 'validate' }}-${{ inputs.channel || 'alpha' }}
   cancel-in-progress: false
 
 defaults:
@@ -100,7 +100,11 @@ jobs:
         run: |
           fail() { echo "::error::$1"; exit 1; }
           mode=validate
-          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then mode="$MODE_INPUT"; fi
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            mode="$MODE_INPUT"
+          elif [ "$PUBLISHING_ENABLED" = "true" ]; then
+            mode=publish
+          fi
           case "$mode" in
             validate|publish) ;;
             *) fail "mode must be validate or publish, got '$mode'" ;;
