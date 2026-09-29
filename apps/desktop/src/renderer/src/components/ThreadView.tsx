@@ -264,8 +264,8 @@ export function ThreadView() {
               {project.name} <span className="sep">/</span> <strong>{session.title}</strong>
             </span>
           ) : project && pendingDriver ? (
-            <span title={`${project.name} / New thread`}>
-              {project.name} <span className="sep">/</span> <strong>New thread</strong>
+            <span title={`${project.name} / New session`}>
+              {project.name} <span className="sep">/</span> <strong>New session</strong>
             </span>
           ) : (
             <span className="titlebar-tagline">Desktop workspace for coding CLIs</span>

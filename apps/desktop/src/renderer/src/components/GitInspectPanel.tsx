@@ -111,7 +111,7 @@ export function GitInspectPanel({ sessionId }: { sessionId: string }) {
   return (
     <div className="inspect">
       <div className="inspect-toolbar">
-        <span className="inspect-title"><FileDiff size={14} /> Inspect</span>
+        <span className="inspect-title"><FileDiff size={14} /> Git diff</span>
         <div className="inspect-modes" role="tablist" aria-label="Diff comparison">
           {(Object.keys(MODE_LABEL) as GitDiffMode[]).map((item) => (
             <button
