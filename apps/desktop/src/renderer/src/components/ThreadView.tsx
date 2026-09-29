@@ -25,6 +25,8 @@ import { PrSessionChip } from "./PrSessionPanel.js";
 import { useLinkedPrLoader } from "./useLinkedPr.js";
 import { sessionLinks } from "./sessionPrLinks.js";
 import { TurnBlock } from "./TurnBlock.js";
+import { TurnChangesCard } from "./TurnChangesCard.js";
+import { snapshotTurnMatches } from "./turnChanges.js";
 import { groupTurns, splitTurn, type ThreadNode } from "./turnGroups.js";
 import { pendingToolsForTurn } from "./toolSummaries.js";
 import { durationFromMessages } from "./turnFormat.js";
@@ -153,10 +155,12 @@ export function ThreadView() {
       groupTurns(messages).map((slice) => {
         const running = busyTurn === slice.turnId;
         const known = turnDurations?.[slice.turnId];
+        const first = slice.messages[0];
         return {
           turnId: slice.turnId,
           pieces: splitTurn(slice.messages, nestedIds, running),
           running,
+          promptedAt: first?.role === "user" ? first.timestamp : undefined,
           startedAt: running ? turnStartedAt : undefined,
           pending: running ? pendingToolsForTurn(slice.messages, slice.turnId) : undefined,
           durationMs: known ?? durationFromMessages(slice.messages)
@@ -181,6 +185,8 @@ export function ThreadView() {
   const [atBottom, setAtBottom] = useState(true);
 
   const sessionId = session?.id;
+  const turnSnapshot = session?.lastTurnSnapshot;
+  const changesTurnIndex = snapshotTurnMatches(turns[turns.length - 1], turnSnapshot) ? turns.length - 1 : -1;
   const resolvedMainTab =
     session === undefined
       ? "chat"
@@ -464,6 +470,11 @@ export function ThreadView() {
               activity={turn.pieces.activity.map(renderNode)}
               system={turn.pieces.system.map((m) => renderNode({ kind: "msg", msg: m }))}
               pinned={renderPinnedAnswer(turn.pieces.pinned ?? [])}
+              footer={
+                index === changesTurnIndex && turnSnapshot ? (
+                  <TurnChangesCard key={turnSnapshot.turnId} sessionId={session.id} snapshot={turnSnapshot} />
+                ) : undefined
+              }
             />
           ))}
           {!atBottom && (

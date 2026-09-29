@@ -1,11 +1,14 @@
-import { useEffect, useMemo, useState } from "react";
-import { FileDiff, GitCompareArrows, Layers3, RefreshCw } from "lucide-react";
+import { useEffect, useMemo, useRef, useState } from "react";
+import { ChevronRight, ExternalLink, FileDiff, GitCompareArrows, History, Layers3, RefreshCw, TriangleAlert } from "lucide-react";
 import type { GitBranchInfo, GitDiffMode, GitDiffResult } from "../cw.js";
 import { FileIcon } from "./fileIcons.js";
 import { MenuSelect } from "./MenuSelect.js";
-import { parseUnifiedDiff } from "./diffParser.js";
+import { parseUnifiedDiff, type DiffFile } from "./diffParser.js";
 import { useAppStore } from "../stores/appStore.js";
+import { usePanelStore } from "../stores/panelStore.js";
 import { shortenHome } from "./pathDisplay.js";
+import { findSession } from "./useLinkedPr.js";
+import { snapshotKey, splitRepoPath } from "./turnChanges.js";
 
 const MODE_LABEL: Record<GitDiffMode, string> = {
   working: "Changes",
@@ -14,6 +17,8 @@ const MODE_LABEL: Record<GitDiffMode, string> = {
   turn: "Last turn"
 };
 
+const MODES: GitDiffMode[] = ["working", "staged", "branch", "turn"];
+
 const STATUS_BADGE: Record<string, string> = {
   added: "A",
   deleted: "D",
@@ -21,10 +26,7 @@ const STATUS_BADGE: Record<string, string> = {
   modified: "M"
 };
 
-function baseName(path: string): string {
-  const index = path.lastIndexOf("/");
-  return index >= 0 ? path.slice(index + 1) : path;
-}
+const EXPAND_ALL_LIMIT = 8;
 
 export interface DiffStatusSummary {
   baseAhead?: number | null;
@@ -37,6 +39,66 @@ export function resolveInitialDiffMode(status: DiffStatusSummary | null | undefi
   return "working";
 }
 
+function DiffFileSection({
+  file,
+  open,
+  onToggle,
+  onReveal
+}: {
+  file: DiffFile;
+  open: boolean;
+  onToggle: () => void;
+  onReveal: () => void;
+}) {
+  const { dir, name } = splitRepoPath(file.path);
+  const deleted = file.status === "deleted";
+  return (
+    <section className="inspect-dfile">
+      <div className="inspect-dfh">
+        <button type="button" className="inspect-dfh-toggle" onClick={onToggle} aria-expanded={open} title={file.path}>
+          <span className={`collapse-caret${open ? " open" : ""}`} aria-hidden="true"><ChevronRight size={12} /></span>
+          <FileIcon name={name} size={13} />
+          <span className="inspect-dfh-path">
+            {dir && <span className="inspect-dfh-dir">{dir}</span>}
+            <span className="inspect-dfh-name">{name}</span>
+          </span>
+        </button>
+        <span className="inspect-dfh-end">
+          <span className={`diff-badge ${file.status}`}>{STATUS_BADGE[file.status]}</span>
+          {file.binary ? (
+            <span className="inspect-binary">binary</span>
+          ) : (
+            <span className="inspect-dfh-stats"><span className="add">+{file.added}</span><span className="del">−{file.removed}</span></span>
+          )}
+          <button
+            type="button"
+            className="inspect-dfh-open"
+            onClick={onReveal}
+            disabled={deleted}
+            title={deleted ? "File was deleted" : "Open in Files"}
+            aria-label={`Open ${file.path} in Files`}
+          >
+            <ExternalLink size={13} aria-hidden="true" />
+          </button>
+        </span>
+      </div>
+      {open && (
+        <div className="diff-body inspect-lines">
+          {file.lines.length === 0 && <div className="inspect-dfile-note">{file.binary ? "Binary file not shown" : "No textual changes"}</div>}
+          {file.lines.map((line, index) => (
+            <div key={index} className={`diff-line ${line.type}`}>
+              <span className="diff-number">{line.oldNumber ?? ""}</span>
+              <span className="diff-number">{line.newNumber ?? ""}</span>
+              <span className="diff-gutter">{line.type === "add" ? "+" : line.type === "del" ? "−" : line.type === "hunk" ? "⋯" : ""}</span>
+              <span className="diff-text">{line.text || " "}</span>
+            </div>
+          ))}
+        </div>
+      )}
+    </section>
+  );
+}
+
 export function GitInspectPanel({ sessionId }: { sessionId: string }) {
   const [mode, setMode] = useState<GitDiffMode>("working");
   const [userPicked, setUserPicked] = useState(false);
@@ -46,10 +108,22 @@ export function GitInspectPanel({ sessionId }: { sessionId: string }) {
   const homeDir = useAppStore((s) => s.homeDir);
   const status = useAppStore((s) => s.gitStatusBySession[sessionId] ?? null);
   const refreshGitStatus = useAppStore((s) => s.refreshGitStatus);
+  const snapshot = useAppStore((s) => findSession(s.sessionsByProject, sessionId)?.lastTurnSnapshot);
+  const diffModeRequest = usePanelStore((s) => s.diffModeRequest);
+  const clearDiffModeRequest = usePanelStore((s) => s.clearDiffModeRequest);
   const [result, setResult] = useState<GitDiffResult | null>(null);
-  const [selectedPath, setSelectedPath] = useState<string | null>(null);
+  const [openByPath, setOpenByPath] = useState<Record<string, boolean>>({});
   const [error, setError] = useState("");
   const [refreshKey, setRefreshKey] = useState(0);
+  const handledRequestRef = useRef(0);
+  const hasTurnSnapshot = Boolean(snapshot?.sha);
+  const turnKey = mode === "turn" ? snapshotKey(snapshot) : "";
+
+  const pickMode = (next: GitDiffMode) => {
+    setUserPicked(true);
+    setAutoApplied(true);
+    setMode(next);
+  };
 
   useEffect(() => {
     let active = true;
@@ -78,12 +152,24 @@ export function GitInspectPanel({ sessionId }: { sessionId: string }) {
   }, [sessionId, refreshGitStatus]);
 
   useEffect(() => {
+    if (!diffModeRequest || diffModeRequest.sessionId !== sessionId) return;
+    if (diffModeRequest.nonce === handledRequestRef.current) return;
+    handledRequestRef.current = diffModeRequest.nonce;
+    pickMode(diffModeRequest.mode);
+    clearDiffModeRequest(diffModeRequest.nonce);
+  }, [diffModeRequest, sessionId, clearDiffModeRequest]);
+
+  useEffect(() => {
     if (userPicked || autoApplied || !status) return;
     const next = resolveInitialDiffMode(status);
     if (next !== "working") setMode(next);
     if (status.baseRef) setBaseRef((prev) => prev ?? status.baseRef ?? prev);
     setAutoApplied(true);
   }, [status, userPicked, autoApplied]);
+
+  useEffect(() => {
+    setOpenByPath({});
+  }, [sessionId, mode]);
 
   useEffect(() => {
     let active = true;
@@ -97,45 +183,55 @@ export function GitInspectPanel({ sessionId }: { sessionId: string }) {
       if (active) setError(reason.message);
     });
     return () => { active = false; };
-  }, [sessionId, mode, baseRef, refreshKey]);
+  }, [sessionId, mode, baseRef, refreshKey, turnKey]);
 
   const files = useMemo(() => parseUnifiedDiff(result?.patch ?? ""), [result]);
-  const selected = files.find((file) => file.path === selectedPath) ?? files[0] ?? null;
   const totalAdded = files.reduce((sum, file) => sum + file.added, 0);
   const totalRemoved = files.reduce((sum, file) => sum + file.removed, 0);
-
-  useEffect(() => {
-    if (files.length === 0) setSelectedPath(null);
-    else if (!selectedPath || !files.some((file) => file.path === selectedPath)) setSelectedPath(files[0].path);
-  }, [result?.patch]);
+  const defaultOpen = files.length <= EXPAND_ALL_LIMIT;
+  const snapshotWarning = snapshot?.error
+    ? `Last-turn snapshot failed: ${snapshot.error}`
+    : mode === "turn" && snapshot?.endError
+      ? `End-of-turn snapshot failed, showing changes up to now: ${snapshot.endError}`
+      : "";
 
   return (
     <div className="inspect">
       <div className="inspect-toolbar">
         <span className="inspect-title"><FileDiff size={14} /> Git diff</span>
         <div className="inspect-modes" role="tablist" aria-label="Diff comparison">
-          {(Object.keys(MODE_LABEL) as GitDiffMode[]).filter((item) => item !== "turn").map((item) => (
-            <button
-              key={item}
-              className={`inspect-mode${mode === item ? " active" : ""}`}
-              onClick={() => {
-                setUserPicked(true);
-                setAutoApplied(true);
-                setMode(item);
-              }}
-              role="tab"
-              aria-selected={mode === item}
-            >
-              {item === "staged" && <Layers3 size={12} />}
-              {item === "branch" && <GitCompareArrows size={12} />}
-              {MODE_LABEL[item]}
-            </button>
-          ))}
+          {MODES.map((item) => {
+            const unavailable = item === "turn" && !hasTurnSnapshot && mode !== "turn";
+            return (
+              <button
+                key={item}
+                className={`inspect-mode${mode === item ? " active" : ""}`}
+                onClick={() => {
+                  if (!unavailable) pickMode(item);
+                }}
+                role="tab"
+                aria-selected={mode === item}
+                aria-disabled={unavailable || undefined}
+                title={unavailable ? "No snapshot for the last turn" : undefined}
+              >
+                {item === "staged" && <Layers3 size={12} />}
+                {item === "branch" && <GitCompareArrows size={12} />}
+                {item === "turn" && <History size={12} />}
+                {MODE_LABEL[item]}
+              </button>
+            );
+          })}
         </div>
         <button className="icon-btn" title="Refresh comparison" onClick={() => setRefreshKey((value) => value + 1)}>
           <RefreshCw size={13} />
         </button>
       </div>
+      {snapshotWarning && (
+        <div className="inspect-warning" title={snapshotWarning}>
+          <TriangleAlert size={13} aria-hidden="true" />
+          <span>{snapshotWarning}</span>
+        </div>
+      )}
       {mode === "branch" && branches.length > 0 && (
         <div className="inspect-compare">
           <span>Compare</span>
@@ -177,48 +273,19 @@ export function GitInspectPanel({ sessionId }: { sessionId: string }) {
             <span className="del">−{totalRemoved}</span>
             {mode === "branch" && result.baseRef && <span className="inspect-range">{result.baseRef}…{result.headRef}</span>}
           </div>
-          <div className="inspect-body">
-            <div className="inspect-files" role="listbox" aria-label="Changed files">
-              {files.map((file) => (
-                <button
+          <div className="inspect-stack">
+            {files.map((file) => {
+              const open = openByPath[file.path] ?? defaultOpen;
+              return (
+                <DiffFileSection
                   key={file.path}
-                  className={`inspect-file${selected?.path === file.path ? " active" : ""}`}
-                  onClick={() => setSelectedPath(file.path)}
-                  title={file.path}
-                  role="option"
-                  aria-selected={selected?.path === file.path}
-                >
-                  <FileIcon name={baseName(file.path)} size={14} />
-                  <span className="inspect-file-copy">
-                    <span className="inspect-file-name">{baseName(file.path)}</span>
-                    <span className="inspect-file-path">{file.path}</span>
-                  </span>
-                  <span className={`diff-badge ${file.status}`}>{STATUS_BADGE[file.status]}</span>
-                  <span className="inspect-file-stats"><span className="add">+{file.added}</span> <span className="del">−{file.removed}</span></span>
-                </button>
-              ))}
-            </div>
-            <div className="inspect-diff">
-              {selected && (
-                <>
-                  <div className="inspect-file-head">
-                    <FileIcon name={baseName(selected.path)} size={14} />
-                    <span>{selected.path}</span>
-                    {selected.binary && <span className="inspect-binary">binary</span>}
-                  </div>
-                  <div className="diff-body inspect-lines">
-                    {selected.lines.map((line, index) => (
-                      <div key={index} className={`diff-line ${line.type}`}>
-                        <span className="diff-number">{line.oldNumber ?? ""}</span>
-                        <span className="diff-number">{line.newNumber ?? ""}</span>
-                        <span className="diff-gutter">{line.type === "add" ? "+" : line.type === "del" ? "−" : line.type === "hunk" ? "⋯" : ""}</span>
-                        <span className="diff-text">{line.text || " "}</span>
-                      </div>
-                    ))}
-                  </div>
-                </>
-              )}
-            </div>
+                  file={file}
+                  open={open}
+                  onToggle={() => setOpenByPath((prev) => ({ ...prev, [file.path]: !open }))}
+                  onReveal={() => usePanelStore.getState().revealFile(sessionId, file.path)}
+                />
+              );
+            })}
           </div>
         </>
       )}

@@ -25,7 +25,8 @@ export function TurnBlock({
   lead,
   activity,
   system,
-  pinned
+  pinned,
+  footer
 }: {
   running: boolean;
   startedAt?: number;
@@ -37,6 +38,7 @@ export function TurnBlock({
   activity: ReactNode[];
   system: ReactNode[];
   pinned: ReactNode[];
+  footer?: ReactNode;
 }) {
   const [manualOpen, setManualOpen] = useState<boolean | null>(null);
   const [measuring, setMeasuring] = useState(
@@ -109,6 +111,7 @@ export function TurnBlock({
       )}
       {system.length > 0 && <div className="turn-errors">{system}</div>}
       {pinned.length > 0 && <div className="turn-pinned">{pinned}</div>}
+      {footer}
     </div>
   );
 }

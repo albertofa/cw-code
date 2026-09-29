@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { DockableTabId, DockLocation, MainTabId, PanelId } from "@cw-code/contracts";
+import type { DockableTabId, DockLocation, GitDiffMode, MainTabId, PanelId } from "@cw-code/contracts";
 import {
   PANEL_LAYOUT_KEY,
   PANEL_STATE_KEY,
@@ -18,6 +18,7 @@ import {
 const DEFAULT_SESSION_PANEL = defaultSessionPanel();
 
 let revealNonce = 0;
+let diffModeNonce = 0;
 
 function loadState(): LoadedPanelState {
   try {
@@ -79,6 +80,8 @@ export interface PanelActions {
   revealTab(sessionId: string, tab: DockableTabId): void;
   revealFile(sessionId: string, path: string, line?: number): void;
   clearRevealRequest(nonce: number): void;
+  requestDiffMode(sessionId: string, mode: GitDiffMode): void;
+  clearDiffModeRequest(nonce: number): void;
   setAutoLocation(tab: DockableTabId, panel: PanelId): void;
   setBottomHeight(sessionId: string | undefined, height: number): void;
   setBottomCollapsed(sessionId: string | undefined, collapsed: boolean): void;
@@ -96,16 +99,24 @@ export interface RevealRequest {
   nonce: number;
 }
 
+export interface DiffModeRequest {
+  sessionId: string;
+  mode: GitDiffMode;
+  nonce: number;
+}
+
 export type PanelStore = PersistedPanelState & PanelActions & {
   legacySession: SessionPanelState | null;
   draggingTab: DockableTabId | null;
   revealRequest: RevealRequest | null;
+  diffModeRequest: DiffModeRequest | null;
 };
 
 export const usePanelStore = create<PanelStore>((set, get) => ({
   ...loadState(),
   draggingTab: null,
   revealRequest: null,
+  diffModeRequest: null,
 
   setDraggingTab: (tab) => {
     set({ draggingTab: tab });
@@ -178,6 +189,16 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
 
   clearRevealRequest: (nonce) => {
     if (get().revealRequest?.nonce === nonce) set({ revealRequest: null });
+  },
+
+  requestDiffMode: (sessionId, mode) => {
+    diffModeNonce += 1;
+    set({ diffModeRequest: { sessionId, mode, nonce: diffModeNonce } });
+    get().revealTab(sessionId, "diff");
+  },
+
+  clearDiffModeRequest: (nonce) => {
+    if (get().diffModeRequest?.nonce === nonce) set({ diffModeRequest: null });
   },
 
   setAutoLocation: (tab, panel) => {
