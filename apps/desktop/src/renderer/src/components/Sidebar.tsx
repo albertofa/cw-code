@@ -1120,7 +1120,7 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
                           </span>
                           <button
                             className="btn"
-                            style={{ fontSize: 11, padding: "3px 8px" }}
+                            style={{ fontSize: "var(--t-2xs)", padding: "3px 8px" }}
                             onClick={(e) => {
                               e.stopPropagation();
                               copyPath(p);
@@ -1196,7 +1196,7 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
               <div key={s.id} className="discovered-row" title={s.title}>
                 <DriverIcon driver={s.driver} size={14} />
                 <span className="session-title">{s.title}</span>
-                <button className="btn" style={{ fontSize: 11, padding: "3px 8px" }} onClick={() => importDiscovered(s)} title="Import into cw-code">
+                <button className="btn" style={{ fontSize: "var(--t-2xs)", padding: "3px 8px" }} onClick={() => importDiscovered(s)} title="Import into cw-code">
                   Import
                 </button>
               </div>

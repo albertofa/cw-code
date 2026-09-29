@@ -37,7 +37,7 @@ function FileTree({
         Couldn’t list {dir || "files"}: {error}{" "}
         <button
           className="btn"
-          style={{ fontSize: 11, padding: "2px 8px" }}
+          style={{ fontSize: "var(--t-2xs)", padding: "2px 8px" }}
           onClick={() => onRetryDir(dir)}
         >
           Retry
@@ -311,7 +311,7 @@ export function FilePanel({ sessionId }: { sessionId: string }) {
         <div className="editor-bar">
           <span className="path">{openFile ?? "no file open"}</span>
           {editable && (
-            <button className="btn" style={{ fontSize: 11, padding: "3px 8px" }} onClick={save}>
+            <button className="btn" style={{ fontSize: "var(--t-2xs)", padding: "3px 8px" }} onClick={save}>
               Save
             </button>
           )}
