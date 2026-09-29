@@ -10,12 +10,23 @@ export function badgeLabel(count: number): string {
   return count > BADGE_MAX_DIGIT ? `${BADGE_MAX_DIGIT}+` : String(count);
 }
 
+let badgeWarningLogged = false;
+
+function warnBadgeUnavailable(): void {
+  if (badgeWarningLogged) return;
+  badgeWarningLogged = true;
+  console.warn("cw-code: could not draw the taskbar badge");
+}
+
 function drawBadge(count: number): string | null {
   const canvas = document.createElement("canvas");
   canvas.width = BADGE_SIZE;
   canvas.height = BADGE_SIZE;
   const ctx = canvas.getContext("2d");
-  if (!ctx) return null;
+  if (!ctx) {
+    warnBadgeUnavailable();
+    return null;
+  }
   const half = BADGE_SIZE / 2;
   ctx.fillStyle = BADGE_FILL;
   ctx.beginPath();

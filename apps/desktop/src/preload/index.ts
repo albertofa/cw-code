@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { AccountUsageSnapshot, AppSettings, CliBinary, CliDiscoveredCandidate, CliDiscoverResult, CommandInvocation, CommandOption, CreateSessionOptions, GitBranchInfo, GitDiffMode, GitDiffResult, GitStatus, HarnessId, PrDetail, PrInboxResult, Project, ProjectGitHubRepo, PrRef, PrWorkflow, RetryConnectionResult, SessionCleanupResult, SessionMeta, SessionPrLink, SessionStatus, SessionStatusReason, ShutdownAssessment, ShutdownCommitResult, ShutdownExpiredEvent, ShutdownPrepareRequest, ShutdownPrepareResult, ShutdownRequestedEvent, SkillDetail, SkillMeta, SkillSaveInput, SkillsListResult, SourceControlHealth, StartupState, SubagentToolsResult, TurnChanges, UpdateActionResult, UpdateChannel, UpdateInstallRequest, UpdateState, UsageLedgerQuery, UsageLedgerRow, WorktreePruneSummary } from "@cw-code/contracts";
+import type { AccountUsageSnapshot, AppSettings, AttentionState, CliBinary, CliDiscoveredCandidate, CliDiscoverResult, CommandInvocation, CommandOption, CreateSessionOptions, GitBranchInfo, GitDiffMode, GitDiffResult, GitStatus, HarnessId, PrDetail, PrInboxResult, Project, ProjectGitHubRepo, PrRef, PrWorkflow, RetryConnectionResult, SessionCleanupResult, SessionMeta, SessionPrLink, SessionStatus, SessionStatusReason, ShutdownAssessment, ShutdownCommitResult, ShutdownExpiredEvent, ShutdownPrepareRequest, ShutdownPrepareResult, ShutdownRequestedEvent, SkillDetail, SkillMeta, SkillSaveInput, SkillsListResult, SourceControlHealth, StartupState, SubagentToolsResult, TurnChanges, UpdateActionResult, UpdateChannel, UpdateInstallRequest, UpdateState, UsageLedgerQuery, UsageLedgerRow, WorktreePruneSummary } from "@cw-code/contracts";
 
 export type PermissionMode = "auto" | "acceptEdits" | "bypassPermissions" | "manual";
 export type EffortLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
@@ -159,7 +159,7 @@ export interface CwApi {
   zoomIn(): void;
   zoomOut(): void;
   zoomReset(): void;
-  setAttention(state: { count: number; badgeDataUrl: string | null }): void;
+  setAttention(state: AttentionState): void;
   pickProjectDir(): Promise<string | null>;
   openPath(path: string): Promise<void>;
   openExternal(url: string): Promise<void>;
@@ -346,7 +346,7 @@ const api: CwApi = {
   zoomIn: () => ipcRenderer.send("win.zoom-in"),
   zoomOut: () => ipcRenderer.send("win.zoom-out"),
   zoomReset: () => ipcRenderer.send("win.zoom-reset"),
-  setAttention: (state: { count: number; badgeDataUrl: string | null }) => ipcRenderer.send("app.attention", state),
+  setAttention: (state: AttentionState) => ipcRenderer.send("app.attention", state),
   pickProjectDir: () => ipcRenderer.invoke("projects.pick"),
   openPath: (path: string) => ipcRenderer.invoke("shell.openPath", { path }),
   openExternal: (url: string) => ipcRenderer.invoke("shell.openExternal", { url }),

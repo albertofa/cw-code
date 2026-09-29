@@ -108,7 +108,7 @@ interface Services {
 }
 
 let mainWindow: BrowserWindow | null = null;
-let attentionCount = 0;
+let attentionCount: number | null = null;
 let services: Services | null = null;
 let startupState: StartupState = { mode: "ready" };
 let quitApproved = false;
@@ -311,6 +311,9 @@ async function createWindow(): Promise<void> {
     recoverAbandonedShutdown();
     void webContents.reload();
   });
+  webContents.on("did-start-loading", () => {
+    if (mainWindow) resetAttention(mainWindow);
+  });
   webContents.on("did-navigate", () => recoverAbandonedShutdown());
   webContents.on("did-finish-load", () => recoverAbandonedShutdown());
   webContents.on("console-message", (event) => {
@@ -424,16 +427,30 @@ function relaunch(): void {
   app.exit(0);
 }
 
+function setAttentionIndicators(win: BrowserWindow, count: number, badgeDataUrl: string | null): void {
+  if (process.platform === "win32") {
+    const overlay = badgeDataUrl ? nativeImage.createFromDataURL(badgeDataUrl) : null;
+    win.setOverlayIcon(overlay && !overlay.isEmpty() ? overlay : null, attentionDescription(count));
+  } else {
+    app.setBadgeCount(count);
+  }
+}
+
+function resetAttention(win: BrowserWindow): void {
+  attentionCount = null;
+  setAttentionIndicators(win, 0, null);
+  win.flashFrame(false);
+}
+
 function applyAttention(sender: WebContents, payload: unknown): void {
   const state = parseAttentionState(payload);
   const win = windowFromSender(sender);
   if (!state || !win) return;
-  const previousCount = attentionCount;
+  const flash = shouldFlash(attentionCount, state.count, win.isFocused());
   attentionCount = state.count;
-  const overlay = state.badgeDataUrl ? nativeImage.createFromDataURL(state.badgeDataUrl) : null;
-  win.setOverlayIcon(overlay && !overlay.isEmpty() ? overlay : null, attentionDescription(state.count));
-  app.setBadgeCount(state.count);
-  if (shouldFlash(previousCount, state.count, win.isFocused())) win.flashFrame(true);
+  setAttentionIndicators(win, state.count, state.badgeDataUrl);
+  if (state.count === 0) win.flashFrame(false);
+  else if (flash) win.flashFrame(true);
 }
 
 function registerWindowIpc(): void {

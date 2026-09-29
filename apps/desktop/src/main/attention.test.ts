@@ -1,10 +1,15 @@
 import { describe, expect, it } from "vitest";
-import { attentionDescription, parseAttentionState, shouldFlash } from "./attention.js";
+import { MAX_ATTENTION_COUNT, attentionDescription, parseAttentionState, shouldFlash } from "./attention.js";
 
 describe("shouldFlash", () => {
   it("flashes when the count increases while unfocused", () => {
     expect(shouldFlash(0, 1, false)).toBe(true);
     expect(shouldFlash(2, 5, false)).toBe(true);
+  });
+
+  it("never flashes on the first report after a load", () => {
+    expect(shouldFlash(null, 3, false)).toBe(false);
+    expect(shouldFlash(null, 0, false)).toBe(false);
   });
 
   it("does not flash when focused", () => {
@@ -39,6 +44,15 @@ describe("parseAttentionState", () => {
   it("accepts a count with a png badge or null", () => {
     expect(parseAttentionState({ count: 3, badgeDataUrl: png })).toEqual({ count: 3, badgeDataUrl: png });
     expect(parseAttentionState({ count: 0, badgeDataUrl: null })).toEqual({ count: 0, badgeDataUrl: null });
+  });
+
+  it("forces a null badge when the count is zero", () => {
+    expect(parseAttentionState({ count: 0, badgeDataUrl: png })).toEqual({ count: 0, badgeDataUrl: null });
+  });
+
+  it("caps the count", () => {
+    expect(parseAttentionState({ count: MAX_ATTENTION_COUNT, badgeDataUrl: null })).toEqual({ count: MAX_ATTENTION_COUNT, badgeDataUrl: null });
+    expect(parseAttentionState({ count: MAX_ATTENTION_COUNT + 1, badgeDataUrl: null })).toBeNull();
   });
 
   it("rejects invalid counts", () => {
