@@ -27,7 +27,6 @@ export function NewThread({
   driver: DriverName;
   onDriverChange: (d: DriverName) => void;
 }) {
-  const store = useAppStore();
   const prefs = useAppStore((s) => s.pendingPrefs);
   const modelsRefreshKey = useAppStore((s) => s.settingsVersion);
   const workspace = useAppStore((s) => s.pendingWorkspace);
@@ -37,7 +36,8 @@ export function NewThread({
   const [branchError, setBranchError] = useState("");
 
   const projectKey = project?.id ?? null;
-  const sessions = projectKey ? (store.sessionsByProject[projectKey] ?? NO_SESSIONS) : NO_SESSIONS;
+  const sessions = useAppStore((s) => (projectKey ? (s.sessionsByProject[projectKey] ?? NO_SESSIONS) : NO_SESSIONS));
+  const store = useAppStore.getState();
   const candidates = worktreeCandidates(sessions);
 
   useEffect(() => {

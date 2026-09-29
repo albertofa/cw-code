@@ -300,7 +300,7 @@
   snapshotWorkingTree(root: string): Promise<string>;
   diffSnapshot(root: string, baseSha: string, headSha?: string): Promise<string>;           // headSha omitted = fresh snapshot
   snapshotChanges(root: string, baseSha: string, headSha?: string): Promise<{ files: TurnFileChange[]; gitlinks: string[] }>;
-  snapshotConflicts(root: string, endSha: string, paths: string[]): Promise<string[]>;
+  snapshotConflicts(root: string, startSha: string, endSha: string, paths: string[]): Promise<string[]>;
   restoreSnapshot(root: string, snapshotSha: string, changes: TurnFileChange[]): Promise<TurnFileChange[]>;
   sweepStaleSnapshotIndexes(dir?: string): Promise<number>;                                 // module export
   // preload / cw.ts
@@ -314,7 +314,7 @@
   - `diffSnapshot` start..end excludes pre-existing and post-turn work, has no binary patch and no rename detection, and lists the same paths as `snapshotChanges`.
   - `snapshotChanges` classifies modified, added and deleted with numstat; gitlinks are reported separately; a nested repo without commits gives a clear snapshot error.
   - `restoreSnapshot` restores byte for byte with `core.autocrlf=false` and modulo line endings with `core.autocrlf=true`; handles file→directory and directory→file; keeps gitignored content and refuses to overwrite it; handles spaces, unicode, leading `-` (and tabs off Windows); retries a held `index.lock`; refuses symlinked parent directories and paths outside the root.
-  - `snapshotConflicts` reports edits after the end snapshot, including parent/child paths. The startup sweep removes only stale snapshot index files.
+  - `snapshotConflicts` reports paths whose current state differs from both the start and end snapshots, including parent/child paths, so a retry after a partial undo is not blocked. The startup sweep removes only stale snapshot index files.
 
   `SessionManager.test.ts`: start and end snapshots are stored per turn (turn.done, turn.error, interrupt; not on background turn.done), start/end failures are stored, changes are start..end, undo is refused while running, for a stale turn id, for a stale `expectedEndSha`, on conflicts, when already undone, during resolve/recovery, and by the shared root guard; a pending undo blocks `startTurn`, `resolveSession` and branch switches on the same root.
 - **Done when:** the tests pass, `rg -n "turnBaseSha|turnDiff|captureTurnBaseSha" apps packages` returns nothing, and `pnpm typecheck && pnpm test` pass.
