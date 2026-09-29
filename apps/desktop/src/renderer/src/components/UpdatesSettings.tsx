@@ -156,8 +156,13 @@ export function UpdatesSettings({
             ))}
           </select>
         </SettingsRow>
-        <SettingsRow label="Download updates in the background" hint="Installing always waits for you to choose Update and restart. Off asks before downloading.">
+        <SettingsRow
+          label="Download updates in the background"
+          htmlFor="sp-update-background"
+          hint="Installing always waits for you to choose Update and restart. Off asks before downloading."
+        >
           <SettingsSwitch
+            id="sp-update-background"
             checked={draft.updateBackgroundDownload}
             disabled={savingPreference}
             onChange={(next) => void changeBackground(next)}

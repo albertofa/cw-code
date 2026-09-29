@@ -45,7 +45,8 @@ export function ToolRail({
   rightActive,
   rightSplit,
   isToolAvailable,
-  onToolContextMenu
+  onToolContextMenu,
+  hidden = false
 }: {
   sessionId: string | undefined;
   driver: DriverName | undefined;
@@ -56,6 +57,7 @@ export function ToolRail({
   rightSplit: DockableTabId | null;
   isToolAvailable: (tab: DockableTabId) => boolean;
   onToolContextMenu: (tab: DockableTabId) => (e: ReactMouseEvent<HTMLElement>) => void;
+  hidden?: boolean;
 }) {
   const { dockByTab, rightVisible } = usePanelStore((s) => selectSessionPanel(s, sessionId));
   const autoLocation = usePanelStore((s) => s.autoLocation);
@@ -63,7 +65,7 @@ export function ToolRail({
   const groups = railGroups(driver, hasPr, hasPreview);
 
   return (
-    <nav className="rail" aria-label="Tools">
+    <nav className="rail" aria-label="Tools" hidden={hidden} style={hidden ? { display: "none" } : undefined}>
       <div className="rail-drag" onDoubleClick={() => window.cw.toggleMaximizeWindow()} />
       {groups.map((group, index) => (
         <Fragment key={group.join("+")}>

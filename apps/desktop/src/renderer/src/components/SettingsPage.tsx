@@ -16,7 +16,18 @@ import { useNotifs } from "./Notifications.js";
 import { shortenHome } from "./pathDisplay.js";
 import { PrWorkflowSettings } from "./PrWorkflowSettings.js";
 import { concreteFilterId } from "./projectRecency.js";
-import { changedSections, HARNESS_IDS, HARNESS_NAMES, navIdOf, navLabel, sameValue, SETTINGS_NAV, type SettingsSection } from "./settingsSections.js";
+import {
+  copySetting,
+  HARNESS_IDS,
+  HARNESS_NAMES,
+  navIdOf,
+  navLabel,
+  sameValue,
+  sectionSummary,
+  SETTING_KEYS,
+  unsavedSectionLabels,
+  type SettingsSection
+} from "./settingsSections.js";
 import { TOOL_TABS } from "./toolTabs.js";
 import { UpdatesSettings } from "./UpdatesSettings.js";
 import { errorMessage } from "./errorMessage.js";
@@ -32,6 +43,8 @@ const PANEL_OPTIONS: Array<{ id: PanelId; label: string }> = [
 ];
 
 const OPEN_LAYER_SELECTOR = '[role="dialog"], [role="alertdialog"], [aria-modal="true"], .menu-panel, .fpick.open, .ctx-menu, .picker-panel';
+
+const TEXT_INPUT_TYPES = new Set(["text", "search", "email", "number", "url", "tel", "password"]);
 
 function GeneralSettings() {
   const draft = useSettingsDraftStore((s) => s.draft);
@@ -79,10 +92,12 @@ function GeneralSettings() {
               </span>
               <small>Titles a new session from its first message with the harness, model and effort below.</small>
             </label>
-            <span className="settings-switch">
-              <input id="sp-auto-title" type="checkbox" checked={draft.autoTitleEnabled} onChange={(e) => set({ autoTitleEnabled: e.target.checked })} />
-              <span className="track" aria-hidden="true" />
-            </span>
+            <SettingsSwitch
+              id="sp-auto-title"
+              checked={draft.autoTitleEnabled}
+              onChange={(next) => set({ autoTitleEnabled: next })}
+              label="Generate titles automatically"
+            />
           </div>
           <div className="sp-card-grid">
             <div className="sp-field">
@@ -190,8 +205,9 @@ function GeneralSettings() {
       </SettingsGroup>
 
       <SettingsGroup title="Sessions">
-        <SettingsRow label="Return holding sessions automatically" hint="Moves a session from Holding back to Idle after the delay.">
+        <SettingsRow label="Return holding sessions automatically" hint="Moves a session from Holding back to Idle after the delay." htmlFor="sp-holding-auto">
           <SettingsSwitch
+            id="sp-holding-auto"
             checked={draft.holdingAutoExpireEnabled}
             onChange={(next) => set({ holdingAutoExpireEnabled: next })}
             label="Return holding sessions automatically"
@@ -429,8 +445,8 @@ function SourceControlSettings({ onPickBinary }: { onPickBinary: BinaryPickHandl
             <span>seconds</span>
           </span>
         </SettingsRow>
-        <SettingsRow label="New-session worktrees" hint="Create an isolated branch and worktree for every new Git session by default.">
-          <SettingsSwitch checked={draft.defaultUseWorktree} onChange={(next) => set({ defaultUseWorktree: next })} label="Create a worktree for new Git sessions by default" />
+        <SettingsRow label="New-session worktrees" hint="Create an isolated branch and worktree for every new Git session by default." htmlFor="sp-sc-worktree">
+          <SettingsSwitch id="sp-sc-worktree" checked={draft.defaultUseWorktree} onChange={(next) => set({ defaultUseWorktree: next })} label="Create a worktree for new Git sessions by default" />
         </SettingsRow>
       </SettingsGroup>
 
@@ -621,9 +637,14 @@ function SourceControlSettings({ onPickBinary }: { onPickBinary: BinaryPickHandl
   );
 }
 
-function sectionSummary(ids: string[]): string {
-  if (ids.length <= 2) return ids.join(" and ");
-  return `${ids.slice(0, -1).join(", ")} and ${ids[ids.length - 1]}`;
+function visibleLayerOpen(): boolean {
+  return Array.from(document.querySelectorAll(OPEN_LAYER_SELECTOR)).some((el) => el.getClientRects().length > 0);
+}
+
+function filledTextField(target: EventTarget | null): HTMLInputElement | HTMLTextAreaElement | null {
+  if (target instanceof HTMLTextAreaElement) return target.value !== "" ? target : null;
+  if (target instanceof HTMLInputElement && TEXT_INPUT_TYPES.has(target.type)) return target.value !== "" ? target : null;
+  return null;
 }
 
 export function SettingsPage({
@@ -661,9 +682,14 @@ export function SettingsPage({
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {
-      if (e.key !== "Escape" || e.defaultPrevented) return;
-      if (document.querySelector(OPEN_LAYER_SELECTOR)) return;
+      if (e.key !== "Escape" || e.defaultPrevented || e.isComposing) return;
+      if (visibleLayerOpen()) return;
       e.preventDefault();
+      const field = filledTextField(e.target);
+      if (field) {
+        field.blur();
+        return;
+      }
       onBackRef.current();
     };
     window.addEventListener("keydown", onKey, true);
@@ -671,13 +697,16 @@ export function SettingsPage({
   }, []);
 
   const pickBinary: BinaryPickHandler = async (patch) => {
-    await useAppStore.getState().saveSettings(patch);
-    applied(patch);
+    const stored = await useAppStore.getState().saveSettings(patch);
+    const normalized: Partial<AppSettings> = {};
+    for (const key of SETTING_KEYS) {
+      if (key in patch) copySetting(normalized, stored, key);
+    }
+    applied(normalized);
     void recheckHarnesses();
   };
 
-  const changed = saved && draft ? changedSections(saved, draft) : [];
-  const changedLabels = SETTINGS_NAV.filter((item) => changed.includes(item.id) || (repoDirty && item.id === "sourceControl")).map((item) => item.label);
+  const changedLabels = unsavedSectionLabels(saved, draft, repoDirty);
 
   const renderSection = (current: AppSettings): ReactNode => {
     switch (section) {

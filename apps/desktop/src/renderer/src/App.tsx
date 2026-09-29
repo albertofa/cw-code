@@ -9,7 +9,7 @@ import { SkillsModal } from "./components/SkillsModal.js";
 import { SettingsPage } from "./components/SettingsPage.js";
 import { SettingsNav } from "./components/SettingsNav.js";
 import { useConfirm } from "./components/ConfirmDialog.js";
-import { changedSections, navIdOf, navLabel } from "./components/settingsSections.js";
+import { navIdOf, sameValue, sectionSummary, unsavedSectionLabels } from "./components/settingsSections.js";
 import { ThreadView } from "./components/ThreadView.js";
 import { PrInboxView } from "./components/PrInboxView.js";
 import { PrDetailView } from "./components/PrDetailView.js";
@@ -148,10 +148,11 @@ export function App() {
     async (go: () => void) => {
       const drafts = useSettingsDraftStore.getState();
       if (usePrStore.getState().mainView.kind === "settings" && drafts.dirty) {
-        const changed = drafts.saved && drafts.draft ? changedSections(drafts.saved, drafts.draft).map(navLabel) : [];
+        const changed = unsavedSectionLabels(drafts.saved, drafts.draft, !sameValue(drafts.repoDraft, drafts.repoSaved));
+        const lost = changed.length > 0 ? `Your changes in ${sectionSummary(changed)} will be lost.` : "Your unsaved changes will be lost.";
         const ok = await confirm({
           title: "Discard unsaved settings?",
-          message: changed.length > 0 ? `Your changes in ${changed.join(", ")} will be lost.` : "Your unsaved changes will be lost.",
+          message: drafts.saving ? `A save is in progress and will still finish. ${lost}` : lost,
           danger: true,
           confirmLabel: "Discard"
         });
@@ -430,10 +431,9 @@ export function App() {
       {!preloadError && (
         <>
           <div className="app-body">
-          {mainView.kind === "settings" ? (
+          <Sidebar onOpenSkills={() => setSkillsOpen(true)} skillsOpen={skillsOpen} hidden={settingsActive} />
+          {mainView.kind === "settings" && (
             <SettingsNav active={navIdOf(mainView.section, mainView.harness)} onBack={() => void leaveSettings(() => usePrStore.getState().openSessionView())} />
-          ) : (
-            <Sidebar onOpenSkills={() => setSkillsOpen(true)} skillsOpen={skillsOpen} />
           )}
           {mainView.kind === "settings" ? (
             <SettingsPage
@@ -451,10 +451,11 @@ export function App() {
           ) : (
             <ThreadView />
           )}
-          {!settingsActive && rightPresence.mounted && (
+          {rightPresence.mounted && (
             <aside
               className={`right${rightPresence.entered ? "" : " collapsed"}${dropRight.over || draggingTab !== null ? " drop-target-active" : ""}`}
-              style={{ width: rightPresence.entered ? rightWidth : 0 }}
+              hidden={settingsActive}
+              style={settingsActive ? { display: "none" } : { width: rightPresence.entered ? rightWidth : 0 }}
               {...dropRight.bind}
             >
               <div className="right-inner" style={{ width: rightWidth }}>
@@ -486,19 +487,18 @@ export function App() {
               </div>
             </aside>
           )}
-          {!settingsActive && (
-            <ToolRail
-              sessionId={activeSessionId ?? undefined}
-              driver={driver}
-              hasPr={hasPr}
-              hasPreview={hasPreview}
-              subagents={subagentStats}
-              rightActive={topTool}
-              rightSplit={splitTool}
-              isToolAvailable={isToolAvailable}
-              onToolContextMenu={tabMenu.onTabContextMenu}
-            />
-          )}
+          <ToolRail
+            hidden={settingsActive}
+            sessionId={activeSessionId ?? undefined}
+            driver={driver}
+            hasPr={hasPr}
+            hasPreview={hasPreview}
+            subagents={subagentStats}
+            rightActive={topTool}
+            rightSplit={splitTool}
+            isToolAvailable={isToolAvailable}
+            onToolContextMenu={tabMenu.onTabContextMenu}
+          />
           {tabMenu.menuNode}
           </div>
           <WindowControls />

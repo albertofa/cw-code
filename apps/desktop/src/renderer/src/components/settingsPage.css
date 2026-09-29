@@ -990,6 +990,18 @@
   overflow-wrap: anywhere;
 }
 
+.sp-aside-faint {
+  margin: -6px 0 10px;
+  font-size: var(--t-xs);
+  line-height: 1.45;
+  color: var(--faint);
+  overflow-wrap: anywhere;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+
 .sp-kv {
   display: grid;
   grid-template-columns: 84px minmax(0, 1fr);

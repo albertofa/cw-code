@@ -256,7 +256,9 @@ function DebugMenu() {
 }
 
 
-export function Sidebar({ onOpenSkills, skillsOpen = false }: { onOpenSkills: () => void; skillsOpen?: boolean }) {
+export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { onOpenSkills: () => void; skillsOpen?: boolean; hidden?: boolean }) {
+  const hiddenRef = useRef(hidden);
+  hiddenRef.current = hidden;
   const projects = useAppStore((s) => s.projects);
   const sessionsByProject = useAppStore((s) => s.sessionsByProject);
   const activeSessionId = useAppStore((s) => s.activeSessionId);
@@ -369,8 +371,11 @@ export function Sidebar({ onOpenSkills, skillsOpen = false }: { onOpenSkills: ()
   }, [dragged, menu]);
 
   useEffect(() => {
-    const focusSearch = () => searchRef.current?.focus();
+    const focusSearch = () => {
+      if (!hiddenRef.current) searchRef.current?.focus();
+    };
     const onKey = (e: KeyboardEvent) => {
+      if (hiddenRef.current) return;
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "k") {
         e.preventDefault();
         focusSearch();
@@ -882,6 +887,8 @@ export function Sidebar({ onOpenSkills, skillsOpen = false }: { onOpenSkills: ()
   return (
     <div
       className="side"
+      hidden={hidden}
+      style={hidden ? { display: "none" } : undefined}
       onClick={() => setMenu(null)}
     >
       <div className="head-seg side-seg" onDoubleClick={() => window.cw.toggleMaximizeWindow()}>

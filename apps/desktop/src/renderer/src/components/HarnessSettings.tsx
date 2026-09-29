@@ -6,20 +6,10 @@ import { useUsageStore } from "../stores/usageStore.js";
 import { BinaryPicker } from "./BinaryPicker.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { errorMessage } from "./errorMessage.js";
-import { defaultModelPatch, filterModels } from "./modelMenus.js";
+import { CLAUDE_CURATED_MODELS, defaultModelPatch, filterModels } from "./modelMenus.js";
 import { HARNESS_NAMES } from "./settingsSections.js";
 import { SettingsGroup, SettingsRow, SettingsSwitch, type BinaryPickHandler } from "./SettingsLayout.js";
 import { unavailableTitle } from "./UsagePlanCard.js";
-
-const CLAUDE_CURATED_MODELS = [
-  { id: "claude-opus-5", label: "Opus 5" },
-  { id: "claude-opus-5-5", label: "Opus 5.5" },
-  { id: "claude-sonnet-5", label: "Sonnet 5" },
-  { id: "claude-sonnet-5-5", label: "Sonnet 5.5" },
-  { id: "claude-fable-5", label: "Fable 5" },
-  { id: "fable", label: "Fable 5.1" },
-  { id: "claude-haiku-4-5-20251001", label: "Haiku 4.5" }
-];
 
 const ARGS_PLACEHOLDER: Record<DriverName, string> = {
   claude: "--dangerously-skip-permissions",
@@ -136,6 +126,11 @@ function ClaudeModels({ draft, set }: { draft: AppSettings; set: (patch: Partial
     set({ claudeDefaultModel: id, claudeEnabledModels: enabled });
   };
 
+  const editCustomId = (id: string) => {
+    const wasDefault = customId !== "" && draft.claudeDefaultModel === customId;
+    set({ claudeCustomModel: { ...draft.claudeCustomModel, id }, ...(wasDefault ? { claudeDefaultModel: id.trim() } : {}) });
+  };
+
   const removeCustom = () => {
     set({ claudeCustomModel: { id: "", name: "" }, ...(draft.claudeDefaultModel === customId ? { claudeDefaultModel: "" } : {}) });
   };
@@ -179,7 +174,7 @@ function ClaudeModels({ draft, set }: { draft: AppSettings; set: (patch: Partial
           value={draft.claudeCustomModel.id}
           placeholder="provider/model"
           aria-label="Custom model ID"
-          onChange={(e) => set({ claudeCustomModel: { ...draft.claudeCustomModel, id: e.target.value } })}
+          onChange={(e) => editCustomId(e.target.value)}
         />
         <input
           className="field"
@@ -310,6 +305,11 @@ function StatusCard({ driver, check, onOpenUsage }: { driver: DriverName; check:
       </div>
       {checksError && <p className="sp-aside-error">{checksError}</p>}
       {check && !check.available && check.error && <p className="sp-aside-error">{check.error}</p>}
+      {check && check.available && check.actual === null && check.error && (
+        <p className="sp-aside-faint" title={check.error}>
+          {check.error}
+        </p>
+      )}
       <dl className="sp-kv">
         <dt>Version</dt>
         <dd className={check && check.actual !== null && !check.ok ? "warn" : undefined}>{check?.actual ?? "—"}</dd>
@@ -388,8 +388,13 @@ export function HarnessSettings({ driver, onPickBinary, onOpenUsage }: { driver:
               onChange={(e) => set(argsPatch(driver, e.target.value))}
             />
           </SettingsRow>
-          <SettingsRow label="Chain of thought expanded" hint={`Show ${name} reasoning open instead of behind a “Thought for Xs” summary.`}>
+          <SettingsRow
+            label="Chain of thought expanded"
+            htmlFor={`sp-reasoning-${driver}`}
+            hint={`Show ${name} reasoning open instead of behind a “Thought for Xs” summary.`}
+          >
             <SettingsSwitch
+              id={`sp-reasoning-${driver}`}
               checked={reasoningOf(draft, driver)}
               onChange={(next) => set(reasoningPatch(driver, next))}
               label={`Expand ${name} reasoning by default`}
@@ -398,9 +403,10 @@ export function HarnessSettings({ driver, onPickBinary, onOpenUsage }: { driver:
           {driver === "opencode" && (
             <SettingsRow
               label="Show OpenCode Go plan limits"
+              htmlFor="sp-opencode-go"
               hint="Reads your OpenCode Go key from opencode's auth file. The key stays on this device and is only sent to opencode.ai."
             >
-              <SettingsSwitch checked={draft.opencodeGoUsage} onChange={(next) => set({ opencodeGoUsage: next })} label="Show OpenCode Go plan limits" />
+              <SettingsSwitch id="sp-opencode-go" checked={draft.opencodeGoUsage} onChange={(next) => set({ opencodeGoUsage: next })} label="Show OpenCode Go plan limits" />
             </SettingsRow>
           )}
         </SettingsGroup>

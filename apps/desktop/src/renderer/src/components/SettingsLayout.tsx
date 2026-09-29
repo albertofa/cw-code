@@ -36,10 +36,31 @@ export function SettingsRow({ label, hint, children, htmlFor }: { label: ReactNo
   );
 }
 
-export function SettingsSwitch({ checked, onChange, label, disabled }: { checked: boolean; onChange: (next: boolean) => void; label: string; disabled?: boolean }) {
+export function SettingsSwitch({
+  checked,
+  onChange,
+  label,
+  disabled,
+  id
+}: {
+  checked: boolean;
+  onChange: (next: boolean) => void;
+  label: string;
+  disabled?: boolean;
+  id?: string;
+}) {
   return (
     <span className="settings-switch">
-      <input type="checkbox" checked={checked} disabled={disabled} onChange={(e) => onChange(e.target.checked)} aria-label={label} />
+      <input
+        id={id}
+        type="checkbox"
+        role="switch"
+        aria-checked={checked}
+        checked={checked}
+        disabled={disabled}
+        onChange={(e) => onChange(e.target.checked)}
+        aria-label={label}
+      />
       <span className="track" aria-hidden="true" />
     </span>
   );

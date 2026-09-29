@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type DragEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState, type DragEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from "react";
 import { Copy, Folder, FolderGit2, GitFork, GitPullRequest, GripVertical, History, Pencil, Plus, RefreshCw, RotateCcw, Trash2, type LucideIcon } from "lucide-react";
 import type { PrSuggestCondition, PrWorkflow, PrWorkflowIcon, PrWorkspaceChoice } from "@cw-code/contracts";
 import type { AppSettings, PrDetail, PrSummary } from "../cw.js";
@@ -39,6 +39,44 @@ const ICON_IDS = Object.keys(WORKFLOW_ICONS) as PrWorkflowIcon[];
 const NO_PRS: PrSummary[] = [];
 
 type PromptField = "startPrompt" | "updatePrompt";
+
+interface FailedLogsEntry {
+  text: string;
+  error: string | null;
+}
+
+interface FailedLogsCache {
+  entries: Record<string, FailedLogsEntry>;
+  request: (id: string, detail: PrDetail) => void;
+}
+
+function useFailedLogsCache(): FailedLogsCache {
+  const [entries, setEntries] = useState<Record<string, FailedLogsEntry>>({});
+  const requested = useRef(new Set<string>());
+  const mounted = useRef(true);
+
+  useEffect(() => {
+    mounted.current = true;
+    return () => {
+      mounted.current = false;
+    };
+  }, []);
+
+  const request = useCallback((id: string, detail: PrDetail) => {
+    if (requested.current.has(id)) return;
+    requested.current.add(id);
+    loadFailedLogs(detail)
+      .then(
+        (text): FailedLogsEntry => ({ text, error: null }),
+        (err: unknown): FailedLogsEntry => ({ text: "", error: errorMessage(err) || "Could not load failed check logs" })
+      )
+      .then((entry) => {
+        if (mounted.current) setEntries((prev) => ({ ...prev, [id]: entry }));
+      });
+  }, []);
+
+  return { entries, request };
+}
 
 function rootDuration(name: string, fallback: number): number {
   const raw = window.getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -181,10 +219,24 @@ function WorkflowList({
 
 function IconPicker({ value, onPick }: { value: PrWorkflowIcon; onPick: (icon: PrWorkflowIcon) => void }) {
   const [open, setOpen] = useState(false);
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const Icon = WORKFLOW_ICONS[value];
+
+  useEffect(() => {
+    if (!open) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key !== "Escape" || e.isComposing) return;
+      e.preventDefault();
+      setOpen(false);
+      triggerRef.current?.focus();
+    };
+    document.addEventListener("keydown", onKey);
+    return () => document.removeEventListener("keydown", onKey);
+  }, [open]);
+
   return (
     <span className="sp-icon-pick">
-      <button type="button" className="sp-wf-ic lg" aria-haspopup="listbox" aria-expanded={open} aria-label={`Workflow icon: ${value}`} title="Change the icon" onClick={() => setOpen((o) => !o)}>
+      <button ref={triggerRef} type="button" className="sp-wf-ic lg" aria-haspopup="listbox" aria-expanded={open} aria-label={`Workflow icon: ${value}`} title="Change the icon" onClick={() => setOpen((o) => !o)}>
         <Icon size={18} aria-hidden="true" />
       </button>
       {open && (
@@ -194,9 +246,6 @@ function IconPicker({ value, onPick }: { value: PrWorkflowIcon; onPick: (icon: P
             className="menu-panel menu-panel-down sp-icon-pop"
             role="listbox"
             aria-label="Workflow icon"
-            onKeyDown={(e) => {
-              if (e.key === "Escape") setOpen(false);
-            }}
           >
             {ICON_IDS.map((id) => {
               const Option = WORKFLOW_ICONS[id];
@@ -226,7 +275,21 @@ function IconPicker({ value, onPick }: { value: PrWorkflowIcon; onPick: (icon: P
   );
 }
 
-function PromptPreview({ template, prs, prKeyValue, onPickPr, settings }: { template: string; prs: PrSummary[]; prKeyValue: string | null; onPickPr: (key: string) => void; settings: AppSettings }) {
+function PromptPreview({
+  template,
+  prs,
+  prKeyValue,
+  onPickPr,
+  settings,
+  failedLogs
+}: {
+  template: string;
+  prs: PrSummary[];
+  prKeyValue: string | null;
+  onPickPr: (key: string) => void;
+  settings: AppSettings;
+  failedLogs: FailedLogsCache;
+}) {
   const inboxError = usePrStore((s) => s.inboxError);
   const inboxLoading = usePrStore((s) => s.inboxLoading);
   const refreshInbox = usePrStore((s) => s.refreshInbox);
@@ -238,27 +301,17 @@ function PromptPreview({ template, prs, prKeyValue, onPickPr, settings }: { temp
   const detailError = usePrStore((s) => (key ? s.detailErrorByKey[key] : undefined));
   const detailLoading = usePrStore((s) => (key ? s.detailLoadingByKey[key] === true : false));
   const needsLogs = needsFailedLogs(template);
-  const [logs, setLogs] = useState<{ id: string; text: string; error: string | null } | null>(null);
   const logsId = detail ? `${prKey(detail.ref)}@${detail.headRefOid}` : null;
+  const logs = logsId ? failedLogs.entries[logsId] : undefined;
+  const requestLogs = failedLogs.request;
 
   useEffect(() => {
     if (selected && !detail && !detailLoading && !detailError) void loadDetail(selected.ref);
   }, [key]);
 
   useEffect(() => {
-    if (!needsLogs || !detail || !logsId || logs?.id === logsId) return;
-    let active = true;
-    loadFailedLogs(detail)
-      .then((text) => {
-        if (active) setLogs({ id: logsId, text, error: null });
-      })
-      .catch((err: unknown) => {
-        if (active) setLogs({ id: logsId, text: "", error: errorMessage(err) });
-      });
-    return () => {
-      active = false;
-    };
-  }, [needsLogs, logsId]);
+    if (needsLogs && detail && logsId && !logs) requestLogs(logsId, detail);
+  }, [needsLogs, logsId, logs, requestLogs]);
 
   if (prs.length === 0) {
     return (
@@ -274,7 +327,7 @@ function PromptPreview({ template, prs, prKeyValue, onPickPr, settings }: { temp
   }
 
   const harness = harnessLabel(lastDriver);
-  const logsReady = !needsLogs || logs?.id === logsId;
+  const logsReady = !needsLogs || logs !== undefined;
   const text = detail && logsReady ? resolveTemplate(template, templateVars(detail, { attribution: attributionText(settings, harness), harness, failedLogs: needsLogs ? logs?.text : undefined })) : null;
 
   return (
@@ -306,7 +359,7 @@ function PromptPreview({ template, prs, prKeyValue, onPickPr, settings }: { temp
           </button>
         </div>
       )}
-      {logs?.id === logsId && logs?.error && (
+      {needsLogs && logs?.error && (
         <div className="settings-error sp-preview-error" role="alert">
           Could not load failed check logs: {logs.error}
         </div>
@@ -402,7 +455,10 @@ function WorkflowEditor({ workflow, settings, onChange, onDuplicate, onDelete, o
 }) {
   const prs = usePrStore((s) => s.inbox?.items ?? NO_PRS);
   const [previewPr, setPreviewPr] = useState<string | null>(null);
-  const preview = (template: string) => <PromptPreview template={template} prs={prs} prKeyValue={previewPr} onPickPr={setPreviewPr} settings={settings} />;
+  const failedLogs = useFailedLogsCache();
+  const preview = (template: string) => (
+    <PromptPreview template={template} prs={prs} prKeyValue={previewPr} onPickPr={setPreviewPr} settings={settings} failedLogs={failedLogs} />
+  );
 
   const toggleCondition = (condition: PrSuggestCondition) => {
     const has = workflow.suggestWhen.includes(condition);
@@ -505,6 +561,7 @@ function WorkflowEditor({ workflow, settings, onChange, onDuplicate, onDelete, o
 
 export function PrWorkflowSettings() {
   const draft = useSettingsDraftStore((s) => s.draft);
+  const lastDriver = useAppStore((s) => s.lastDriver);
   const set = useSettingsDraftStore((s) => s.set);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [resetBusyId, setResetBusyId] = useState<string | null>(null);
@@ -620,7 +677,7 @@ export function PrWorkflowSettings() {
             onChange={(e) => set({ prAttributionText: e.target.value })}
           />
           <small>
-            <span className="sp-mono">{"{{harness}}"}</span> is the CLI name. Preview: <span className="sp-strong">{attributionText(draft, "Claude") || "nothing (attribution is off)"}</span>
+            <span className="sp-mono">{"{{harness}}"}</span> is the CLI name. Preview: <span className="sp-strong">{attributionText(draft, harnessLabel(lastDriver)) || "nothing (attribution is off)"}</span>
           </small>
         </div>
       </div>

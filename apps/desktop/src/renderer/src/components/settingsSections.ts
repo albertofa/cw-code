@@ -106,10 +106,34 @@ export function sameValue(a: unknown, b: unknown): boolean {
   return left.length === right.size && left.every(([key, value]) => right.has(key) && sameValue(value, right.get(key)));
 }
 
+export const SETTING_KEYS = Object.keys(SETTING_OWNER) as Array<keyof AppSettings>;
+
+export function copySetting<K extends keyof AppSettings>(target: Partial<AppSettings>, source: AppSettings, key: K): void {
+  target[key] = source[key];
+}
+
+export function settingsPatch(saved: AppSettings, draft: AppSettings): Partial<AppSettings> {
+  const patch: Partial<AppSettings> = {};
+  for (const key of SETTING_KEYS) {
+    if (!sameValue(saved[key], draft[key])) copySetting(patch, draft, key);
+  }
+  return patch;
+}
+
 export function changedSections(saved: AppSettings, draft: AppSettings): SettingsNavId[] {
   const owners = new Set<SettingsNavId>();
-  for (const key of Object.keys(SETTING_OWNER) as Array<keyof AppSettings>) {
+  for (const key of SETTING_KEYS) {
     if (!sameValue(saved[key], draft[key])) owners.add(SETTING_OWNER[key]);
   }
   return SETTINGS_NAV.map((item) => item.id).filter((id) => owners.has(id));
+}
+
+export function unsavedSectionLabels(saved: AppSettings | null, draft: AppSettings | null, repoDirty: boolean): string[] {
+  const changed = saved && draft ? changedSections(saved, draft) : [];
+  return SETTINGS_NAV.filter((item) => changed.includes(item.id) || (repoDirty && item.id === "sourceControl")).map((item) => item.label);
+}
+
+export function sectionSummary(labels: string[]): string {
+  if (labels.length <= 2) return labels.join(" and ");
+  return `${labels.slice(0, -1).join(", ")} and ${labels[labels.length - 1]}`;
 }

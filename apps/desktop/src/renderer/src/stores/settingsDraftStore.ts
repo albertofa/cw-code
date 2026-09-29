@@ -2,7 +2,7 @@ import { create } from "zustand";
 import type { AppSettings, CwApi } from "../cw.js";
 import { errorMessage } from "../components/errorMessage.js";
 import { useNotifs } from "../components/Notifications.js";
-import { sameValue } from "../components/settingsSections.js";
+import { copySetting, SETTING_KEYS, sameValue, settingsPatch } from "../components/settingsSections.js";
 import { useAppStore } from "./appStore.js";
 
 export type HarnessCheck = Awaited<ReturnType<CwApi["checkVersions"]>>[number];
@@ -59,8 +59,24 @@ async function saveRepo(next: RepoDraft, previous: RepoDraft | null): Promise<vo
   }
 }
 
+function rebaseOnStored(
+  stored: AppSettings,
+  patch: Partial<AppSettings>,
+  start: { saved: AppSettings; draft: AppSettings },
+  current: { saved: AppSettings; draft: AppSettings }
+): { saved: AppSettings; draft: AppSettings } {
+  const saved = { ...stored };
+  const draft = { ...stored };
+  for (const key of SETTING_KEYS) {
+    if (!(key in patch) && !sameValue(current.saved[key], start.saved[key])) copySetting(saved, current.saved, key);
+    copySetting(draft, sameValue(current.draft[key], start.draft[key]) ? saved : current.draft, key);
+  }
+  return { saved, draft };
+}
+
 let loadSeq = 0;
 let checkSeq = 0;
+let discardedDuringSave = false;
 
 export const useSettingsDraftStore = create<SettingsDraftState>((set, get) => ({
   saved: null,
@@ -118,29 +134,48 @@ export const useSettingsDraftStore = create<SettingsDraftState>((set, get) => ({
   },
 
   discard() {
+    if (get().saving) discardedDuringSave = true;
     set({ draft: get().saved, repoDraft: get().repoSaved, dirty: false, saveError: null });
   },
 
   async save() {
-    const { draft, repoDraft, repoSaved, saving } = get();
-    if (!draft || saving) return;
+    const { saved, draft, repoDraft, repoSaved, saving } = get();
+    if (!saved || !draft || saving) return;
+    const patch = settingsPatch(saved, draft);
+    const settingsChanged = Object.keys(patch).length > 0;
+    discardedDuringSave = false;
     set({ saving: true, saveError: null });
     try {
-      const stored = await useAppStore.getState().saveSettings(draft);
-      const current = get();
-      const nextDraft = sameValue(current.draft, draft) ? stored : current.draft;
-      set({ saved: stored, draft: nextDraft, dirty: isDirty({ ...current, saved: stored, draft: nextDraft }) });
-      if (repoDraft && !sameValue(repoDraft, repoSaved)) {
-        await saveRepo(repoDraft, repoSaved);
-        const after = get();
-        set({ repoSaved: repoDraft, dirty: isDirty({ ...after, repoSaved: repoDraft }) });
+      if (settingsChanged) {
+        const stored = await useAppStore.getState().saveSettings(patch);
+        const current = get();
+        if (current.saved && current.draft) {
+          const next = rebaseOnStored(stored, patch, { saved, draft }, { saved: current.saved, draft: current.draft });
+          const nextDraft = discardedDuringSave ? next.saved : next.draft;
+          set({ saved: next.saved, draft: nextDraft, dirty: isDirty({ ...current, saved: next.saved, draft: nextDraft }) });
+        }
       }
-      set({ saving: false });
     } catch (err) {
       const message = errorMessage(err);
       set({ saving: false, saveError: message });
       useNotifs.getState().push({ kind: "error", title: "Could not save settings", message });
+      return;
     }
+    if (repoDraft && !discardedDuringSave && !sameValue(repoDraft, repoSaved)) {
+      try {
+        await saveRepo(repoDraft, repoSaved);
+        const after = get();
+        const nextRepoDraft = discardedDuringSave ? repoDraft : after.repoDraft;
+        set({ repoSaved: repoDraft, repoDraft: nextRepoDraft, dirty: isDirty({ ...after, repoSaved: repoDraft, repoDraft: nextRepoDraft }) });
+      } catch (err) {
+        const reason = errorMessage(err);
+        const message = settingsChanged ? `Settings saved, but updating the repository failed: ${reason}` : reason;
+        set({ saving: false, saveError: message });
+        useNotifs.getState().push({ kind: "error", title: "Could not update the repository", message });
+        return;
+      }
+    }
+    set({ saving: false });
   },
 
   async recheckHarnesses() {
