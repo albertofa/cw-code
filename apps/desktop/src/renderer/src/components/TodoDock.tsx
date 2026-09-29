@@ -18,29 +18,31 @@ export function TodoDock({ sessionId }: { sessionId: string }) {
   const total = todos.length;
   const done = todos.filter((t) => t.status === "completed").length;
   const active = todos.filter((t) => t.status === "pending" || t.status === "in_progress").length;
+  const current = todos.find((t) => t.status === "in_progress") ?? todos.find((t) => t.status === "pending");
   const open = override ?? active > 0;
 
   return (
     <section className={`todo-dock${open ? "" : " collapsed"}`} aria-label="Todos">
       <button type="button" className="todo-head" onClick={() => setOverride(!open)} aria-expanded={open}>
         <ListChecks size={15} className="todo-head-icon" aria-hidden="true" />
-        <span className="todo-title">Todos</span>
-        {active > 0 && (
-          <span className="todo-live">
-            <span className="pulse" aria-hidden="true" />
-            {active} active
-          </span>
+        <b className="todo-progress">
+          {done} of {total}
+        </b>
+        {current && (
+          <>
+            <span aria-hidden="true">·</span>
+            <span className="todo-current" title={current.content}>
+              {current.content}
+            </span>
+          </>
         )}
-        <span className="todo-count">
-          · {done}/{total} done
+        <span className="todo-meter" aria-hidden="true">
+          <i style={{ width: `${(done / total) * 100}%` }} />
         </span>
         <span className="todo-chev" aria-hidden="true">
           {open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
         </span>
       </button>
-      <div className="todo-bar">
-        <i style={{ width: `${(done / total) * 100}%` }} />
-      </div>
       <div className="todo-list">
         {todos.map((t, i) => (
           <div key={`${i}-${t.content}`} className={`todo-item ${t.status}`}>
