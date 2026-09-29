@@ -78,6 +78,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   opencodeExtraArgs: "",
   codexExtraArgs: "",
   claudeDefaultModel: "",
+  codexDefaultModel: "",
+  opencodeDefaultModel: "",
   claudeEnabledModels: CLAUDE_CURATED_MODELS.map((m) => m.id),
   claudeCustomModel: { id: "", name: "" },
   claudeReasoningExpanded: false,
@@ -152,6 +154,8 @@ function sanitize(patch: SettingsPatch): SettingsPatch {
   if (patch.opencodeExtraArgs !== undefined) out.opencodeExtraArgs = trimmedOr(patch.opencodeExtraArgs, DEFAULT_SETTINGS.opencodeExtraArgs);
   if (patch.codexExtraArgs !== undefined) out.codexExtraArgs = trimmedOr(patch.codexExtraArgs, DEFAULT_SETTINGS.codexExtraArgs);
   if (patch.claudeDefaultModel !== undefined) out.claudeDefaultModel = trimmedOr(patch.claudeDefaultModel, DEFAULT_SETTINGS.claudeDefaultModel);
+  if (patch.codexDefaultModel !== undefined) out.codexDefaultModel = trimmedOr(patch.codexDefaultModel, DEFAULT_SETTINGS.codexDefaultModel);
+  if (patch.opencodeDefaultModel !== undefined) out.opencodeDefaultModel = trimmedOr(patch.opencodeDefaultModel, DEFAULT_SETTINGS.opencodeDefaultModel);
   if (patch.claudeCustomModel !== undefined) {
     const raw: unknown = patch.claudeCustomModel;
     if (typeof raw === "string") {

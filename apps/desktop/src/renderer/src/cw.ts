@@ -362,12 +362,21 @@ export interface ComposerPrefs {
   permissionMode?: PermissionMode;
 }
 
+export interface ModelMeta {
+  costInputPerM?: number;
+  costOutputPerM?: number;
+  capabilities?: string[];
+  input?: string[];
+  output?: string[];
+}
+
 export interface ModelOption {
   id: string;
   label: string;
   source: "live" | "curated" | "custom";
   variants?: string[];
   contextWindow?: number;
+  meta?: ModelMeta;
 }
 
 export interface PermissionOption {
@@ -487,6 +496,8 @@ export interface AppSettings {
   opencodeExtraArgs: string;
   codexExtraArgs: string;
   claudeDefaultModel: string;
+  codexDefaultModel: string;
+  opencodeDefaultModel: string;
   claudeEnabledModels: string[];
   claudeCustomModel: CustomModel;
   claudeReasoningExpanded: boolean;

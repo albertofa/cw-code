@@ -508,6 +508,22 @@ describe("SettingsStore", () => {
     expect(store.set({ panelAnimationMs: 900 }).panelAnimationMs).toBe(400);
   });
 
+  it("defaults every harness default model to empty", () => {
+    expect(new SettingsStore(tempFilePath()).get()).toMatchObject({
+      claudeDefaultModel: "",
+      codexDefaultModel: "",
+      opencodeDefaultModel: ""
+    });
+  });
+
+  it("trims harness default models and resets non-strings to empty", () => {
+    const store = new SettingsStore(tempFilePath());
+    expect(store.set({ codexDefaultModel: "  gpt-5.5-codex  " }).codexDefaultModel).toBe("gpt-5.5-codex");
+    expect(store.set({ opencodeDefaultModel: " anthropic/claude-opus-5 " }).opencodeDefaultModel).toBe("anthropic/claude-opus-5");
+    expect(store.set({ codexDefaultModel: 7 as unknown as string }).codexDefaultModel).toBe("");
+    expect(store.set({ opencodeDefaultModel: null as unknown as string }).opencodeDefaultModel).toBe("");
+  });
+
   it("resets a non-finite panel animation to off", () => {
     const store = new SettingsStore(tempFilePath());
     store.set({ panelAnimationMs: 200 });

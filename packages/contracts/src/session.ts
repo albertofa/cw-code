@@ -120,12 +120,21 @@ export interface ComposerPrefs {
   permissionMode?: PermissionMode;
 }
 
+export interface ModelMeta {
+  costInputPerM?: number;
+  costOutputPerM?: number;
+  capabilities?: string[];
+  input?: string[];
+  output?: string[];
+}
+
 export interface ModelOption {
   id: string;
   label: string;
   source: "live" | "curated" | "custom";
   variants?: string[];
   contextWindow?: number;
+  meta?: ModelMeta;
 }
 
 export interface GitPullRequestChecks {

@@ -14,6 +14,8 @@ const SETTINGS: AppSettings = {
   opencodeExtraArgs: "",
   codexExtraArgs: "",
   claudeDefaultModel: "",
+  codexDefaultModel: "",
+  opencodeDefaultModel: "",
   claudeEnabledModels: [],
   claudeCustomModel: { id: "", name: "" },
   claudeReasoningExpanded: false,

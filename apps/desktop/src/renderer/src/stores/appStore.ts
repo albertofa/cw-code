@@ -100,6 +100,14 @@ function reasoningExpandedFrom(settings: AppSettings): Record<DriverName, boolea
   };
 }
 
+function defaultModelsFrom(settings: AppSettings): Record<DriverName, string> {
+  return {
+    claude: settings.claudeDefaultModel,
+    opencode: settings.opencodeDefaultModel,
+    codex: settings.codexDefaultModel
+  };
+}
+
 function readComposerMirror(sessionId: string): ComposerPrefs | null {
   try {
     const raw = window.localStorage.getItem(`cw:composer:${sessionId}`);
@@ -178,6 +186,7 @@ interface AppState {
   defaultUseWorktree: boolean;
   appearance: AppearancePrefs;
   reasoningExpandedByDriver: Record<DriverName, boolean>;
+  defaultModelByDriver: Record<DriverName, string>;
   previewBySession: Record<string, { sessionId: string; path: string; basePath: string }>;
   openPreview(sessionId: string, path: string, basePath: string): void;
   closePreview(sessionId: string): void;
@@ -337,6 +346,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   defaultUseWorktree: true,
   appearance: DEFAULT_APPEARANCE,
   reasoningExpandedByDriver: { claude: false, opencode: false, codex: false },
+  defaultModelByDriver: { claude: "", opencode: "", codex: "" },
   updates: null,
   updateRestartPending: false,
 
@@ -455,6 +465,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       defaultUseWorktree: settings.defaultUseWorktree,
       appearance: appearanceOf(settings),
       reasoningExpandedByDriver: reasoningExpandedFrom(settings),
+      defaultModelByDriver: defaultModelsFrom(settings),
       pendingWorkspace: { ...get().pendingWorkspace, ...defaultWorkspace(settings.defaultUseWorktree) }
     });
     void get().hydrateActiveTurns();
@@ -893,7 +904,8 @@ export const useAppStore = create<AppState>((set, get) => ({
       holdingHours: saved.holdingHours,
       defaultUseWorktree: saved.defaultUseWorktree,
       appearance: appearanceOf(saved),
-      reasoningExpandedByDriver: reasoningExpandedFrom(saved)
+      reasoningExpandedByDriver: reasoningExpandedFrom(saved),
+      defaultModelByDriver: defaultModelsFrom(saved)
     });
     return saved;
   },

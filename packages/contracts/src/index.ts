@@ -10,6 +10,7 @@ export type {
   EffortLevel,
   ComposerPrefs,
   ModelOption,
+  ModelMeta,
   GitStatus,
   GitPullRequest,
   GitPullRequestChecks,

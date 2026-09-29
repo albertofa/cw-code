@@ -14,10 +14,20 @@ import {
   Zap
 } from "lucide-react";
 import type { CommandInvocation, CommandOption } from "@cw-code/contracts";
-import type { ComposerPrefs, DriverName, EffortLevel, ModelOption, PermissionMode, PermissionOption } from "../cw.js";
-import { firstDisplayedModelId, getLastModel, setLastModel } from "./lastModel.js";
-import { DriverIcon } from "./DriverIcon.js";
-import { MenuSelect, type MenuOption } from "./MenuSelect.js";
+import type { ComposerPrefs, DriverName, ModelOption, PermissionMode, PermissionOption } from "../cw.js";
+import { getRecentModels, setLastModel } from "./lastModel.js";
+import { EffortMenu } from "./EffortMenu.js";
+import { MenuSelect } from "./MenuSelect.js";
+import { ModelPicker } from "./ModelPicker.js";
+import {
+  defaultModelPatch,
+  effortOptionsFor,
+  fallbackEffort,
+  hasContextSuffix,
+  pickInitialModel,
+  stripContextSuffix,
+  withContextSuffix
+} from "./modelMenus.js";
 import { ImageThumb } from "./ImageThumb.js";
 import { displayImagePath, type ImageTarget } from "./imagePreview.js";
 import { useAppStore } from "../stores/appStore.js";
@@ -55,35 +65,6 @@ const SLASH_NAME = /^\/(\S*)$/;
 const SLASH_ARG = /^\/(model|effort)\s+(\S*)$/;
 const SLASH_PENDING_ARGS = /^\/(\S+) +$/;
 
-const EFFORTS: Array<{ id: EffortLevel; label: string }> = [
-  { id: "minimal", label: "Minimal" },
-  { id: "low", label: "Low" },
-  { id: "medium", label: "Medium" },
-  { id: "high", label: "High" },
-  { id: "xhigh", label: "XHigh" },
-  { id: "max", label: "Max" }
-];
-
-const EFFORT_RANK: EffortLevel[] = ["minimal", "low", "medium", "high", "xhigh", "max"];
-
-function effortOptionsFor(driver: DriverName, models: ModelOption[], modelId?: string): Array<{ id: EffortLevel; label: string }> {
-  if (driver !== "opencode") return EFFORTS;
-  if (!modelId) return EFFORTS;
-  const model = models.find((m) => m.id === modelId) ?? models.find((m) => m.id.toLowerCase() === modelId.toLowerCase());
-  if (!model || model.variants === undefined) return EFFORTS;
-  if (model.variants.length === 0) return EFFORTS.filter((e) => e.id === "high");
-  const available = new Set(model.variants.map((v) => v.toLowerCase()));
-  return EFFORTS.filter((e) => available.has(e.id) || (e.id === "medium" && available.has("balanced")));
-}
-
-function fallbackEffort(current: EffortLevel, available: Array<{ id: EffortLevel; label: string }>): EffortLevel {
-  if (available.some((o) => o.id === current)) return current;
-  const want = EFFORT_RANK.indexOf(current);
-  const below = available.filter((o) => EFFORT_RANK.indexOf(o.id) <= want).sort((a, b) => EFFORT_RANK.indexOf(b.id) - EFFORT_RANK.indexOf(a.id));
-  if (below.length > 0) return below[0].id;
-  return available[0].id;
-}
-
 const FALLBACK_PERMISSIONS: PermissionOption[] = [
   { id: "manual", label: "Supervised", description: "Ask before commands and file changes.", native: true },
   { id: "acceptEdits", label: "Auto-accept edits", description: "Auto-approve edits, ask before other actions.", native: true },
@@ -98,32 +79,7 @@ function permissionIconFor(id: PermissionMode): ReactNode {
   return <Zap size={15} />;
 }
 
-function EffortIcon({ size = 15 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 20 20" fill="none" aria-hidden="true">
-      <path d="M3 9h14M7 5.5v6M13 9v5.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-    </svg>
-  );
-}
-
 const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "webp", "gif"]);
-
-function groupModelsByProvider(models: ModelOption[]): MenuOption[] {
-  const groups = new Map<string, ModelOption[]>();
-  for (const m of models) {
-    const slash = m.id.indexOf("/");
-    const provider = slash >= 0 ? m.id.slice(0, slash) : "other";
-    const list = groups.get(provider) ?? [];
-    list.push(m);
-    groups.set(provider, list);
-  }
-  const out: MenuOption[] = [];
-  for (const [provider, list] of [...groups.entries()].sort(([a], [b]) => a.localeCompare(b))) {
-    out.push({ id: `__sep:${provider}`, label: provider, separator: true });
-    for (const m of list) out.push({ id: m.id, label: m.label, hint: m.id });
-  }
-  return out;
-}
 
 function isImage(path: string): boolean {
   const ext = path.split(".").pop()?.toLowerCase() ?? "";
@@ -171,8 +127,13 @@ export function ComposerView({
   const [showCustom, setShowCustom] = useState(false);
   const [sending, setSending] = useState(false);
   const homeDir = useAppStore((s) => s.homeDir);
+  const defaultModelId = useAppStore((s) => s.defaultModelByDriver[driver]);
+  const saveSettings = useAppStore((s) => s.saveSettings);
   const home = homeDir ?? undefined;
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
+  const customInputRef = useRef<HTMLInputElement | null>(null);
+  const baseModelId = driver === "claude" ? stripContextSuffix(prefs.model ?? "") : (prefs.model ?? "");
+  const oneMContext = driver === "claude" && hasContextSuffix(prefs.model ?? "");
   const slashListId = useId();
   const { confirm, dialog: confirmDialog } = useConfirm();
   const [inputFocused, setInputFocused] = useState(false);
@@ -302,21 +263,21 @@ export function ComposerView({
       .then((list) => {
         if (cancelled) return;
         setModels(list);
+        const initialModel = () =>
+          pickInitialModel(list, useAppStore.getState().defaultModelByDriver[driver], getRecentModels(driver));
         if (!prefs.model) {
-          const last = getLastModel(driver);
-          const next = (last && list.some((m) => m.id === last) ? last : undefined) ?? firstDisplayedModelId(driver, list);
+          const next = initialModel();
           if (next) backendRef.current.savePrefs({ model: next });
           setShowCustom(false);
-        } else if (list.some((m) => m.id === prefs.model)) {
-          setLastModel(driver, prefs.model);
+        } else if (list.some((m) => m.id === baseModelId)) {
+          setLastModel(driver, baseModelId);
           setShowCustom(false);
         } else if (resetStaleModel && list.length > 0) {
-          const last = getLastModel(driver);
-          const next = (last && list.some((m) => m.id === last) ? last : undefined) ?? firstDisplayedModelId(driver, list);
+          const next = initialModel();
           if (next) backendRef.current.savePrefs({ model: next });
           setShowCustom(false);
         } else {
-          setCustomModel(prefs.model);
+          setCustomModel(baseModelId);
           setShowCustom(true);
         }
       })
@@ -392,16 +353,15 @@ export function ComposerView({
     setPickerOpen(true);
   };
 
-  const modelValue = showCustom ? "__custom" : (prefs.model ?? "");
+  const recentModels = useMemo(() => getRecentModels(driver), [driver, models, prefs.model]);
   const modelDisplay = showCustom
     ? customModel.trim() || "Custom"
-    : (models.find((m) => m.id === prefs.model)?.label ?? "Select model");
+    : (models.find((m) => m.id === baseModelId)?.label ?? "Select model");
   const effortOptions = useMemo(
-    () => effortOptionsFor(driver, models, showCustom ? undefined : prefs.model),
-    [driver, models, showCustom, prefs.model]
+    () => effortOptionsFor(driver, models, showCustom ? undefined : baseModelId),
+    [driver, models, showCustom, baseModelId]
   );
   const effectiveEffort = prefs.effort ?? "medium";
-  const effortDisplay = EFFORTS.find((o) => o.id === effectiveEffort)?.label ?? "Medium";
 
   useEffect(() => {
     if (driver !== "opencode" || showCustom) return;
@@ -409,10 +369,10 @@ export function ComposerView({
     backendRef.current.savePrefs({ effort: fallbackEffort(effectiveEffort, effortOptions) });
   }, [driver, showCustom, models, prefs.model, effectiveEffort, effortOptions]);
   useEffect(() => {
-    if (!prefs.model || showCustom) return;
-    if (!models.some((m) => m.id === prefs.model)) return;
-    setLastModel(driver, prefs.model);
-  }, [driver, prefs.model, models, showCustom]);
+    if (!baseModelId || showCustom) return;
+    if (!models.some((m) => m.id === baseModelId)) return;
+    setLastModel(driver, baseModelId);
+  }, [driver, baseModelId, models, showCustom]);
   const permissions = permissionOptions ?? FALLBACK_PERMISSIONS;
   const effectivePermission = prefs.permissionMode ?? "auto";
   const permissionDisplay = permissions.find((o) => o.id === effectivePermission)?.label ?? "Auto";
@@ -482,6 +442,32 @@ export function ComposerView({
     }
     backendRef.current.savePrefs({ effort: match.id });
     setDraft("");
+  };
+
+  const pickModel = (id: string) => {
+    setShowCustom(false);
+    setLastModel(driver, id);
+    backend.savePrefs({ model: id });
+  };
+
+  const openCustomModel = () => {
+    setShowCustom(true);
+    requestAnimationFrame(() => customInputRef.current?.focus());
+  };
+
+  const useCustomModel = (value: string) => {
+    setCustomModel(value);
+    setShowCustom(true);
+    backend.savePrefs({ model: value });
+  };
+
+  const changeDefaultModel = (id: string) => {
+    saveSettings(defaultModelPatch(driver, id)).catch((err: unknown) => notifyError("Could not save default model", err));
+  };
+
+  const changeContextWindow = (oneM: boolean) => {
+    if (!prefs.model) return;
+    backend.savePrefs({ model: withContextSuffix(prefs.model, oneM) });
   };
 
   const completeCommand = (command: CommandOption) => {
@@ -815,42 +801,33 @@ export function ComposerView({
       <div className="composer-recipe-row">
         {recipePrefix}
         <div className="recipe-control recipe-model" title={driver}>
-          <MenuSelect
-            label="Model"
-            icon={<DriverIcon driver={driver} size={15} />}
-            title={modelsError ? `Model list failed: ${modelsError}` : "Model"}
-            value={modelValue}
+          <ModelPicker
+            driver={driver}
+            models={models}
+            currentId={showCustom ? "" : baseModelId}
             display={modelDisplay}
             isSet={showCustom || !!prefs.model}
-            searchable
-            searchPlaceholder="Filter models…"
-            options={[
-              ...(driver === "opencode"
-                ? groupModelsByProvider(models)
-                : models.map((m) => ({ id: m.id, label: m.label, hint: m.id }))),
-              { id: "__custom", label: "Custom…" }
-            ]}
-            onPick={(v) => {
-              if (v === "__custom") {
-                setShowCustom(true);
-                return;
-              }
-              setShowCustom(false);
-              if (v) setLastModel(driver, v);
-              backend.savePrefs({ model: v || undefined });
-            }}
+            title={modelsError ? `Model list failed: ${modelsError}` : "Model"}
+            error={modelsError}
+            defaultId={defaultModelId}
+            recents={recentModels}
+            onPick={pickModel}
+            onCustom={openCustomModel}
+            onUseCustom={useCustomModel}
+            onDefaultChange={changeDefaultModel}
           />
         </div>
         {showCustom && (
           <input
+            ref={customInputRef}
             className="field composer-custom"
-            placeholder="provider/model or alias"
+            placeholder={driver === "opencode" ? "provider/model or alias" : "model ID or alias"}
             aria-label="Custom model"
             value={customModel}
             onChange={(e) => setCustomModel(e.target.value)}
             onBlur={() => {
               const v = customModel.trim();
-              if (v) backend.savePrefs({ model: v });
+              if (v) backend.savePrefs({ model: oneMContext ? withContextSuffix(v, true) : v });
             }}
             onKeyDown={(e) => {
               if (e.key === "Enter") (e.target as HTMLInputElement).blur();
@@ -859,15 +836,14 @@ export function ComposerView({
           />
         )}
         <div className="recipe-control">
-          <MenuSelect
-            label="Effort"
-            icon={<EffortIcon />}
-            title="Effort"
-            value={prefs.effort ?? "medium"}
-            display={effortDisplay}
-            isSet={(prefs.effort ?? "medium") !== "medium"}
-            options={effortOptions.map((o) => ({ id: o.id, label: o.label }))}
-            onPick={(v) => backend.savePrefs({ effort: v as EffortLevel })}
+          <EffortMenu
+            driver={driver}
+            modelLabel={modelDisplay}
+            options={effortOptions}
+            effort={effectiveEffort}
+            oneM={driver === "claude" ? oneMContext : null}
+            onEffort={(effort) => backend.savePrefs({ effort })}
+            onContext={changeContextWindow}
           />
         </div>
         <div className="recipe-control">

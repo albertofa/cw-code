@@ -1,18 +1,46 @@
 import type { DriverName, ModelOption } from "../cw.js";
 
-export function getLastModel(driver: DriverName): string | null {
+const RECENT_MODELS_MAX = 3;
+
+function recentKey(driver: DriverName): string {
+  return `cw:recentModels:${driver}`;
+}
+
+function readStoredRecents(driver: DriverName): string[] {
+  const raw = window.localStorage.getItem(recentKey(driver));
+  if (raw === null) {
+    const legacy = window.localStorage.getItem(`cw:lastModel:${driver}`);
+    return legacy ? [legacy] : [];
+  }
+  const parsed: unknown = JSON.parse(raw);
+  if (!Array.isArray(parsed)) return [];
+  const ids = parsed.filter((id): id is string => typeof id === "string" && id.length > 0);
+  return [...new Set(ids)].slice(0, RECENT_MODELS_MAX);
+}
+
+export function getRecentModels(driver: DriverName): string[] {
   try {
-    return window.localStorage.getItem(`cw:lastModel:${driver}`);
+    return readStoredRecents(driver);
   } catch {
-    return null;
+    return [];
   }
 }
 
-export function setLastModel(driver: DriverName, id: string): void {
+export function pushRecentModel(driver: DriverName, id: string): void {
+  if (!id) return;
   try {
-    window.localStorage.setItem(`cw:lastModel:${driver}`, id);
+    const next = [id, ...getRecentModels(driver).filter((existing) => existing !== id)].slice(0, RECENT_MODELS_MAX);
+    window.localStorage.setItem(recentKey(driver), JSON.stringify(next));
   } catch {
   }
+}
+
+export function getLastModel(driver: DriverName): string | null {
+  return getRecentModels(driver)[0] ?? null;
+}
+
+export function setLastModel(driver: DriverName, id: string): void {
+  pushRecentModel(driver, id);
 }
 
 export function firstDisplayedModelId(driver: DriverName, models: ModelOption[]): string | undefined {

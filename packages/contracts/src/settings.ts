@@ -15,6 +15,8 @@ export interface AppSettings {
   opencodeExtraArgs: string;
   codexExtraArgs: string;
   claudeDefaultModel: string;
+  codexDefaultModel: string;
+  opencodeDefaultModel: string;
   claudeEnabledModels: string[];
   claudeCustomModel: CustomModel;
   claudeReasoningExpanded: boolean;
