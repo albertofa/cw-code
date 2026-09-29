@@ -91,6 +91,17 @@ describe("sanitizeLayout", () => {
     expect(sanitizeLayout({ dockByTab: { overview: "elsewhere" } }).dockByTab.overview).toBe("closed");
   });
 
+  it("sanitizes a persisted layout without an overview key to closed with the auto default", () => {
+    const clean = sanitizeLayout({
+      dockByTab: { files: "right", shell: "bottom" },
+      autoLocation: { files: "main" },
+      mainOrder: ["chat"]
+    });
+    expect(clean.dockByTab.overview).toBe("closed");
+    expect(clean.autoLocation.overview).toBe(DEFAULT_AUTO.overview);
+    expect(clean.autoLocation.files).toBe("main");
+  });
+
   it("keeps a persisted PR tab placement and defaults it to closed", () => {
     expect(defaultLayout().dockByTab.pr).toBe("closed");
     expect(defaultLayout().autoLocation.pr).toBe("right");

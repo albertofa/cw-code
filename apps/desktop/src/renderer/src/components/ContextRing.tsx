@@ -12,7 +12,7 @@ import { formatRelativeAge } from "./prInboxModel.js";
 import { formatTokensShort } from "./subagents.js";
 import { formatDuration } from "./toolSummaries.js";
 import { harnessLabel } from "./toolTabs.js";
-import { totals } from "./usageModel.js";
+import { contextMeter, totals, turnTokens } from "./usageModel.js";
 
 const RING_CIRCUMFERENCE = 2 * Math.PI * 7.5;
 
@@ -69,14 +69,11 @@ export function ContextRing({ sessionId, driver }: { sessionId: string; driver: 
 
   const sessTotals = useMemo(() => totals(sessionRows ?? []), [sessionRows]);
 
-  const percent = context ? Math.min(1, context.usedTokens / Math.max(1, context.windowTokens)) : null;
-  const severityClass = percent === null ? "" : percent >= 0.95 ? " danger" : percent >= 0.8 ? " warn" : "";
+  const meter = context ? contextMeter(context) : null;
+  const percent = meter?.percent ?? null;
+  const severityClass = meter?.severity ? ` ${meter.severity}` : "";
   const title = percent === null ? "No context data yet" : `Context window · ${Math.round(percent * 100)}% used`;
   const dashArray = percent === null ? `0 ${RING_CIRCUMFERENCE.toFixed(1)}` : `${Math.max(0, percent * RING_CIRCUMFERENCE).toFixed(1)} ${RING_CIRCUMFERENCE.toFixed(1)}`;
-
-  const lastTurnTokens = lastTurn
-    ? lastTurn.inputTokens + lastTurn.cacheReadTokens + lastTurn.cacheWriteTokens + lastTurn.outputTokens
-    : 0;
 
   return (
     <div className="context-ring-wrap" ref={rootRef}>
@@ -144,10 +141,13 @@ export function ContextRing({ sessionId, driver }: { sessionId: string; driver: 
                 <span>Last turn</span>
                 <b>
                   {lastTurn
-                    ? `${formatTokensShort(lastTurnTokens)} tok${lastTurn.durationMs !== undefined ? ` · ${formatDuration(lastTurn.durationMs)}` : ""}`
+                    ? `${formatTokensShort(turnTokens(lastTurn))} tok${lastTurn.durationMs !== undefined ? ` · ${formatDuration(lastTurn.durationMs)}` : ""}`
                     : "—"}
                 </b>
               </div>
+            )}
+            {sessionError && sessionRows && (
+              <div className="context-dock-sub context-dock-error">Couldn&apos;t refresh session usage: {sessionError}</div>
             )}
           </section>
           <section className="context-dock-sec">

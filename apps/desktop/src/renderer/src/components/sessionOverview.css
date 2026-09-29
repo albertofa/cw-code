@@ -73,6 +73,10 @@
   color: var(--faint);
 }
 
+.ov-error {
+  color: var(--danger);
+}
+
 .session-overview .mono {
   font-family: var(--mono);
 }
@@ -133,26 +137,15 @@
   font-weight: 600;
 }
 
-.ov-track {
-  height: 5px;
-  margin: 2px 0 6px;
-  border-radius: 3px;
-  background: var(--border);
-  overflow: hidden;
+.ov-ctx {
+  margin-bottom: 6px;
 }
 
-.ov-track i {
-  display: block;
-  height: 100%;
-  border-radius: 3px;
-  background: var(--violet-ink);
-}
-
-.ov-track.warn i {
+.ov-ctx.warn .usage-track i {
   background: var(--warning);
 }
 
-.ov-track.danger i {
+.ov-ctx.danger .usage-track i {
   background: var(--danger);
 }
 

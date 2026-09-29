@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
+import { useShallow } from "zustand/react/shallow";
 import { Bot, ChartColumn, ChevronDown, Gauge, GitBranch, ListChecks, RefreshCw, Sparkles } from "lucide-react";
-import type { DriverName, GitPullRequest, TodoItem } from "../cw.js";
+import type { AccountUsageOk, DriverName, GitPullRequest, TodoItem } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import { usePrStore } from "../stores/prStore.js";
 import { useSkillsStore } from "../stores/skillsStore.js";
@@ -13,12 +14,12 @@ import { unavailableTitle } from "./UsagePlanCard.js";
 import { prChip } from "./prChip.js";
 import { formatRelativeAge } from "./prInboxModel.js";
 import { displayChip } from "./sessionPrLinks.js";
-import { collectSubagents, formatTokensShort } from "./subagents.js";
+import { collectSubagents, formatTokensShort, isSubagentMessage } from "./subagents.js";
 import { formatDuration } from "./toolSummaries.js";
 import { harnessLabel } from "./toolTabs.js";
 import { findSession, useLinkedPrs } from "./useLinkedPr.js";
 import { formatCostUsd, useNow } from "./usageFormat.js";
-import { totals } from "./usageModel.js";
+import { contextMeter, totals, turnTokens } from "./usageModel.js";
 import "./sessionOverview.css";
 
 const EMPTY_TODOS: TodoItem[] = [];
@@ -69,14 +70,16 @@ function Note({ children, tone }: { children: ReactNode; tone?: "error" }) {
 
 function ContextSection({ sessionId }: { sessionId: string }) {
   const context = useAppStore((s) => s.turnUsageBySession[sessionId]?.context);
-  const percent = context ? Math.min(1, context.usedTokens / Math.max(1, context.windowTokens)) : null;
-  const severity = percent === null ? "" : percent >= 0.95 ? " danger" : percent >= 0.8 ? " warn" : "";
+  const meter = context ? contextMeter(context) : null;
+  const percentLabel = meter ? Math.round(meter.percent * 100) : null;
   return (
-    <Section icon={<Gauge size={14} aria-hidden="true" />} title="Context" summary={percent === null ? undefined : <span className="mono">{Math.round(percent * 100)}%</span>}>
-      {context && percent !== null ? (
+    <Section icon={<Gauge size={14} aria-hidden="true" />} title="Context" summary={percentLabel === null ? undefined : <span className="mono">{percentLabel}%</span>}>
+      {context && meter ? (
         <>
-          <div className={`ov-track${severity}`}>
-            <i style={{ width: `${Math.round(percent * 100)}%` }} />
+          <div className={`ov-ctx${meter.severity ? ` ${meter.severity}` : ""}`}>
+            <div className="usage-track thin">
+              <i style={{ width: `${percentLabel}%` }} />
+            </div>
           </div>
           <Row label="Window">
             <span className="mono">
@@ -101,7 +104,7 @@ function ChangesSummary({ dirtyCount, addedLines, deletedLines }: { dirtyCount: 
   );
 }
 
-function PullRequestRow({ sessionId, gitPr }: { sessionId: string; gitPr: GitPullRequest | null }) {
+function PullRequestRow({ sessionId, gitPr, githubError }: { sessionId: string; gitPr: GitPullRequest | null; githubError: string | null }) {
   const { items, summaryByKey } = useLinkedPrs(sessionId);
   const openPr = usePrStore((s) => s.openPr);
   if (items.length > 0) {
@@ -129,6 +132,10 @@ function PullRequestRow({ sessionId, gitPr }: { sessionId: string; gitPr: GitPul
           <PrChipBadge chip={chip} />
           <span className="ov-pr-reason">{chip.reason}</span>
         </>
+      ) : githubError ? (
+        <span className="ov-error" title={githubError}>
+          GitHub unavailable
+        </span>
       ) : (
         <span className="ov-faint">None</span>
       )}
@@ -152,7 +159,7 @@ function WorkspaceSection({ sessionId }: { sessionId: string }) {
           <Row label="Changes">
             <ChangesSummary dirtyCount={status.dirtyCount} addedLines={status.addedLines} deletedLines={status.deletedLines} />
           </Row>
-          <PullRequestRow sessionId={sessionId} gitPr={status.pullRequest} />
+          <PullRequestRow sessionId={sessionId} gitPr={status.pullRequest} githubError={status.githubError} />
         </>
       ) : status ? (
         <Note>Not a git repository.</Note>
@@ -178,10 +185,6 @@ function SessionUsageSection({ sessionId }: { sessionId: string }) {
       void ensureSessionRows(sessionId);
     });
   }, [sessionId, ensureSessionRows]);
-
-  const lastTurnTokens = lastTurn
-    ? lastTurn.inputTokens + lastTurn.cacheReadTokens + lastTurn.cacheWriteTokens + lastTurn.outputTokens
-    : 0;
 
   const refresh = (
     <button
@@ -219,7 +222,7 @@ function SessionUsageSection({ sessionId }: { sessionId: string }) {
           <Row label="Last turn">
             <span className="mono">
               {lastTurn
-                ? `${formatTokensShort(lastTurnTokens)} tok${lastTurn.durationMs !== undefined ? ` · ${formatDuration(lastTurn.durationMs)}` : ""}`
+                ? `${formatTokensShort(turnTokens(lastTurn))} tok${lastTurn.durationMs !== undefined ? ` · ${formatDuration(lastTurn.durationMs)}` : ""}`
                 : "—"}
             </span>
           </Row>
@@ -228,7 +231,26 @@ function SessionUsageSection({ sessionId }: { sessionId: string }) {
           </Row>
         </>
       )}
+      {rows && error && <Note tone="error">Couldn&apos;t refresh session usage: {error}</Note>}
     </Section>
+  );
+}
+
+function PlanLimits({ driver, state, stale }: { driver: DriverName; state: AccountUsageOk; stale: boolean }) {
+  if (state.windows.length === 0 && state.balances.length === 0) {
+    return <Note>No plan limits reported for {harnessLabel(driver)}.</Note>;
+  }
+  return (
+    <div className={stale ? "usage-stale" : undefined}>
+      <div className="usage-meters">
+        {state.windows.map((w) => (
+          <UsageMeter key={w.id} window={w} />
+        ))}
+      </div>
+      {state.balances.map((b) => (
+        <UsageBalanceRow key={b.id} balance={b} />
+      ))}
+    </div>
   );
 }
 
@@ -245,39 +267,33 @@ function PlanSection({ driver }: { driver: DriverName }) {
   }, [driver, refreshAccount]);
 
   const state = snapshot?.state;
-  const plan = state?.status === "ok" ? state.plan : undefined;
-  const title = plan ? `Plan · ${plan}` : "Plan";
+  const shownState = state?.status === "ok" ? state : state?.status === "error" ? snapshot?.lastGood?.state : undefined;
+  const fetchedAt = state?.status === "error" ? snapshot?.lastGood?.fetchedAt : snapshot?.fetchedAt;
+  const title = shownState?.plan ? `Plan · ${shownState.plan}` : "Plan";
 
   return (
     <Section
       icon={<DriverIcon driver={driver} size={14} />}
       title={title}
-      summary={snapshot ? <span className="ov-faint">Updated {formatRelativeAge(snapshot.fetchedAt, now)} ago</span> : undefined}
+      summary={fetchedAt !== undefined ? <span className="ov-faint">Updated {formatRelativeAge(fetchedAt, now)} ago</span> : undefined}
     >
       <div className={`ov-plan ${driver}`}>
-        {state?.status === "ok" ? (
-          state.windows.length === 0 && state.balances.length === 0 ? (
-            <Note>No plan limits reported for {harnessLabel(driver)}.</Note>
-          ) : (
-            <>
-              <div className="usage-meters">
-                {state.windows.map((w) => (
-                  <UsageMeter key={w.id} window={w} />
-                ))}
-              </div>
-              {state.balances.map((b) => (
-                <UsageBalanceRow key={b.id} balance={b} />
-              ))}
-            </>
-          )
-        ) : state?.status === "unavailable" ? (
+        {shownState && <PlanLimits driver={driver} state={shownState} stale={state?.status === "error"} />}
+        {state?.status === "unavailable" ? (
           <Note>
             <b>{unavailableTitle(state.reason)}</b> {state.message}
           </Note>
         ) : state?.status === "error" ? (
           <Note tone="error">
-            <b>Couldn&apos;t load plan limits</b> {state.message}
+            <b>
+              {snapshot?.lastGood
+                ? `Couldn't refresh · showing data from ${formatRelativeAge(snapshot.lastGood.fetchedAt, now)} ago`
+                : "Couldn't load plan limits"}
+            </b>{" "}
+            {state.message}
           </Note>
+        ) : snapshot ? (
+          error && <Note tone="error">Couldn&apos;t refresh plan limits: {error}</Note>
         ) : error ? (
           <Note tone="error">Couldn&apos;t load plan limits: {error}</Note>
         ) : loading ? (
@@ -325,8 +341,8 @@ function subagentStatusLabel(status: "running" | "completed" | "error", duration
 }
 
 function SubagentsSection({ sessionId }: { sessionId: string }) {
-  const messages = useAppStore((s) => s.messagesBySession[sessionId]);
-  const agents = useMemo(() => collectSubagents(messages ?? []), [messages]);
+  const subagentMessages = useAppStore(useShallow((s) => (s.messagesBySession[sessionId] ?? []).filter(isSubagentMessage)));
+  const agents = useMemo(() => collectSubagents(subagentMessages), [subagentMessages]);
   return (
     <Section icon={<Bot size={14} aria-hidden="true" />} title="Subagents" summary={agents.length > 0 ? agents.length : undefined}>
       {agents.length === 0 ? (
@@ -346,6 +362,7 @@ function SubagentsSection({ sessionId }: { sessionId: string }) {
 function SkillsSection({ driver }: { driver: DriverName }) {
   const items = useSkillsStore((s) => s.items);
   const status = useSkillsStore((s) => s.status);
+  const error = useSkillsStore((s) => s.error);
   const load = useSkillsStore((s) => s.load);
 
   useEffect(() => {
@@ -353,15 +370,16 @@ function SkillsSection({ driver }: { driver: DriverName }) {
   }, [status, load]);
 
   const enabled = items.filter((item) => item.enabled[driver]).length;
-  const ready = status === "ready" || items.length > 0;
+  const hasData = status === "ready" || items.length > 0;
+  const failed = status === "error";
   return (
     <Section
       icon={<Sparkles size={14} aria-hidden="true" />}
       title="Skills"
-      summary={ready ? `${enabled} enabled` : undefined}
+      summary={hasData ? `${enabled} enabled` : undefined}
       defaultOpen={false}
     >
-      {ready ? (
+      {hasData ? (
         items.length === 0 ? (
           <Note>No skills found.</Note>
         ) : (
@@ -369,10 +387,16 @@ function SkillsSection({ driver }: { driver: DriverName }) {
             {enabled} of {items.length} skills enabled for {harnessLabel(driver)}.
           </Note>
         )
-      ) : status === "error" ? (
-        <Note tone="error">Couldn&apos;t load skills.</Note>
       ) : (
-        <Note>Loading skills…</Note>
+        !failed && <Note>Loading skills…</Note>
+      )}
+      {failed && (
+        <>
+          <Note tone="error">Couldn&apos;t load skills{error ? `: ${error}` : "."}</Note>
+          <button type="button" className="usage-btn" onClick={() => void load()}>
+            Retry
+          </button>
+        </>
       )}
     </Section>
   );
