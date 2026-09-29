@@ -133,6 +133,7 @@ type SessionPatch = Partial<
     | "effort"
     | "variant"
     | "permissionMode"
+    | "effectivePermissionMode"
     | "worktreePath"
     | "branch"
     | "prs"
@@ -274,6 +275,7 @@ export class SessionStore {
     if (patch.effort !== undefined) current.effort = patch.effort;
     if (patch.variant !== undefined) current.variant = patch.variant;
     if (patch.permissionMode !== undefined) current.permissionMode = patch.permissionMode;
+    if (patch.effectivePermissionMode !== undefined) current.effectivePermissionMode = patch.effectivePermissionMode;
     if (patch.worktreePath !== undefined) current.worktreePath = normalizeRoot(patch.worktreePath);
     else if ("worktreePath" in patch) delete current.worktreePath;
     if (patch.branch !== undefined) current.branch = patch.branch;

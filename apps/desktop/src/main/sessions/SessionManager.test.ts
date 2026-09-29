@@ -1156,6 +1156,21 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
+  it("persists the harness-reported permission mode on the session", async () => {
+    const { manager } = makeManager();
+    const project = manager.addProject("C:\\proj-permission-mode");
+    const a = await manager.createSession(project.id, "claude");
+    const turnId = await manager.startTurn(a.id, "hello");
+    (manager as unknown as { routeEvent(e: ThreadEvent): void }).routeEvent({
+      type: "permission.mode.reported",
+      turnId,
+      mode: "acceptEdits"
+    });
+    const sessions = await manager.listSessions(project.id);
+    expect(sessions.find((s) => s.id === a.id)?.effectivePermissionMode).toBe("acceptEdits");
+    manager.dispose();
+  });
+
   it("reports the active turn with its start time while it runs", async () => {
     const { manager } = makeManager();
     const project = manager.addProject("C:\\proj-active-list");
