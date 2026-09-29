@@ -2,6 +2,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { DEFAULT_APPEARANCE } from "../appearanceFonts.js";
 import type { Session, TurnEvent } from "../cw.js";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -55,7 +56,7 @@ function installBridge(): void {
     interrupt: async () => {},
     getComposer: async () => delayed({}, 400),
     setComposer: async (_id: string, prefs: unknown) => delayed(prefs, 200),
-    getSettings: async () => ({ sourceControlRefreshIntervalSeconds: 30, prRefreshIntervalSeconds: 120, defaultUseWorktree: true }),
+    getSettings: async () => ({ ...DEFAULT_APPEARANCE, sourceControlRefreshIntervalSeconds: 30, prRefreshIntervalSeconds: 120, defaultUseWorktree: true }),
     getDefaultPrWorkflows: async () => [],
     getPrInbox: async () => ({ account: null, items: [], fetchedAt: 0, error: null }),
     getProjectGitHubRepos: async () => [],

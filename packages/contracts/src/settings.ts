@@ -40,6 +40,15 @@ export interface AppSettings {
   opencodeGoUsage: boolean;
   updateChannel: UpdateChannel | null;
   updateBackgroundDownload: boolean;
+  fontFamilySans: string;
+  fontFamilyMono: string;
+  fontFamilyPrompt: string;
+  fontFamilyTerminal: string;
+  fontSizeInterface: number;
+  fontSizeCode: number;
+  fontSizePrompt: number;
+  fontSizeTerminal: number;
+  typographyAdvanced: boolean;
 }
 
 export type SettingsPatch = Partial<AppSettings>;

@@ -30,6 +30,7 @@ import type {
 } from "../cw.js";
 import type { DirtyBuffer } from "./editorBuffers.js";
 import { appendAssistantText, appendReasoningText, closeReasoning, upsertToolCall } from "../components/chatMessages.js";
+import { DEFAULT_APPEARANCE, appearanceOf, type AppearancePrefs } from "../appearanceFonts.js";
 import { getLastModel, setLastModel } from "../components/lastModel.js";
 import { formatDuration, mergeToolPairs } from "../components/toolSummaries.js";
 import { expiredHoldingIds } from "../components/workingSet.js";
@@ -176,6 +177,7 @@ interface AppState {
   holdingAutoExpireEnabled: boolean;
   holdingHours: number;
   defaultUseWorktree: boolean;
+  appearance: AppearancePrefs;
   reasoningExpandedByDriver: Record<DriverName, boolean>;
   previewBySession: Record<string, { sessionId: string; path: string; basePath: string }>;
   openPreview(sessionId: string, path: string, basePath: string): void;
@@ -337,6 +339,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   holdingAutoExpireEnabled: false,
   holdingHours: 6,
   defaultUseWorktree: true,
+  appearance: DEFAULT_APPEARANCE,
   reasoningExpandedByDriver: { claude: false, opencode: false, codex: false },
   updates: null,
   updateRestartPending: false,
@@ -455,6 +458,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       holdingAutoExpireEnabled: settings.holdingAutoExpireEnabled,
       holdingHours: settings.holdingHours,
       defaultUseWorktree: settings.defaultUseWorktree,
+      appearance: appearanceOf(settings),
       reasoningExpandedByDriver: reasoningExpandedFrom(settings),
       pendingWorkspace: { ...get().pendingWorkspace, ...defaultWorkspace(settings.defaultUseWorktree) }
     });
@@ -932,6 +936,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       holdingAutoExpireEnabled: saved.holdingAutoExpireEnabled,
       holdingHours: saved.holdingHours,
       defaultUseWorktree: saved.defaultUseWorktree,
+      appearance: appearanceOf(saved),
       reasoningExpandedByDriver: reasoningExpandedFrom(saved)
     });
     return saved;

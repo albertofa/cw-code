@@ -100,8 +100,28 @@ export const DEFAULT_SETTINGS: AppSettings = {
   prWorkflows: defaultPrWorkflows(),
   opencodeGoUsage: false,
   updateChannel: null,
-  updateBackgroundDownload: true
+  updateBackgroundDownload: true,
+  fontFamilySans: "",
+  fontFamilyMono: "",
+  fontFamilyPrompt: "",
+  fontFamilyTerminal: "",
+  fontSizeInterface: 16,
+  fontSizeCode: 14,
+  fontSizePrompt: 14,
+  fontSizeTerminal: 14,
+  typographyAdvanced: false
 };
+
+const FONT_FAMILY_MAX_LENGTH = 200;
+
+function fontFamilyOr(value: unknown, fallback: string): string {
+  return typeof value === "string" ? value.trim().slice(0, FONT_FAMILY_MAX_LENGTH).trim() : fallback;
+}
+
+function clampedIntegerOr(value: unknown, fallback: number, min: number, max: number): number {
+  const rounded = Math.round(Number(value));
+  return Number.isFinite(rounded) ? Math.min(max, Math.max(min, rounded)) : fallback;
+}
 
 function trimmedOr(value: unknown, fallback: string): string {
   return typeof value === "string" ? value.trim() : fallback;
@@ -195,6 +215,15 @@ function sanitize(patch: SettingsPatch): SettingsPatch {
     out.updateBackgroundDownload =
       typeof patch.updateBackgroundDownload === "boolean" ? patch.updateBackgroundDownload : DEFAULT_SETTINGS.updateBackgroundDownload;
   }
+  if (patch.fontFamilySans !== undefined) out.fontFamilySans = fontFamilyOr(patch.fontFamilySans, DEFAULT_SETTINGS.fontFamilySans);
+  if (patch.fontFamilyMono !== undefined) out.fontFamilyMono = fontFamilyOr(patch.fontFamilyMono, DEFAULT_SETTINGS.fontFamilyMono);
+  if (patch.fontFamilyPrompt !== undefined) out.fontFamilyPrompt = fontFamilyOr(patch.fontFamilyPrompt, DEFAULT_SETTINGS.fontFamilyPrompt);
+  if (patch.fontFamilyTerminal !== undefined) out.fontFamilyTerminal = fontFamilyOr(patch.fontFamilyTerminal, DEFAULT_SETTINGS.fontFamilyTerminal);
+  if (patch.fontSizeInterface !== undefined) out.fontSizeInterface = clampedIntegerOr(patch.fontSizeInterface, DEFAULT_SETTINGS.fontSizeInterface, 12, 20);
+  if (patch.fontSizeCode !== undefined) out.fontSizeCode = clampedIntegerOr(patch.fontSizeCode, DEFAULT_SETTINGS.fontSizeCode, 10, 18);
+  if (patch.fontSizePrompt !== undefined) out.fontSizePrompt = clampedIntegerOr(patch.fontSizePrompt, DEFAULT_SETTINGS.fontSizePrompt, 12, 20);
+  if (patch.fontSizeTerminal !== undefined) out.fontSizeTerminal = clampedIntegerOr(patch.fontSizeTerminal, DEFAULT_SETTINGS.fontSizeTerminal, 8, 20);
+  if (patch.typographyAdvanced !== undefined) out.typographyAdvanced = patch.typographyAdvanced === true;
   return out;
 }
 

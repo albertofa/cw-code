@@ -1,6 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { Eye } from "lucide-react";
 import type { DriverName } from "./cw.js";
+import { applyAppearance } from "./appearanceFonts.js";
 import { collectSubagents } from "./components/subagents.js";
 import { isWorkingSetStatus } from "./components/workingSet.js";
 import { Sidebar } from "./components/Sidebar.js";
@@ -117,6 +118,7 @@ export function App() {
   const holdingAutoExpireEnabled = useAppStore((s) => s.holdingAutoExpireEnabled);
   const settingsVersion = useAppStore((s) => s.settingsVersion);
   const loadProjects = useAppStore((s) => s.loadProjects);
+  const appearance = useAppStore((s) => s.appearance);
   const sessionPanel = usePanelStore((s) => selectSessionPanel(s, activeSessionId ?? undefined));
   const { dockByTab, activeRight, rightVisible } = sessionPanel;
   const autoLocation = usePanelStore((s) => s.autoLocation);
@@ -135,6 +137,8 @@ export function App() {
   };
 
   const preview = activeSessionId ? (previewBySession[activeSessionId] ?? null) : null;
+
+  useEffect(() => applyAppearance(document.documentElement, appearance), [appearance]);
 
   useEffect(() => {
     if (activeSessionId) initializeSession(activeSessionId);

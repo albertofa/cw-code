@@ -35,7 +35,16 @@ const SETTINGS: AppSettings = {
   prCloneRoot: "~/.cw-code/repos",
   prAttributionEnabled: true,
   prAttributionText: "",
-  prWorkflows: []
+  prWorkflows: [],
+  fontFamilySans: "",
+  fontFamilyMono: "",
+  fontFamilyPrompt: "",
+  fontFamilyTerminal: "",
+  fontSizeInterface: 16,
+  fontSizeCode: 14,
+  fontSizePrompt: 14,
+  fontSizeTerminal: 14,
+  typographyAdvanced: false
 };
 
 describe("mapClaudePermission", () => {

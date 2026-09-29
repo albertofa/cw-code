@@ -440,4 +440,58 @@ describe("SettingsStore", () => {
       })
     ).toMatchObject({ claudeReasoningExpanded: true, opencodeReasoningExpanded: false, codexReasoningExpanded: true });
   });
+
+  it("defaults typography to the built-in stacks and sizes", () => {
+    expect(new SettingsStore(tempFilePath()).get()).toMatchObject({
+      fontFamilySans: "",
+      fontFamilyMono: "",
+      fontFamilyPrompt: "",
+      fontFamilyTerminal: "",
+      fontSizeInterface: 16,
+      fontSizeCode: 14,
+      fontSizePrompt: 14,
+      fontSizeTerminal: 14,
+      typographyAdvanced: false
+    });
+  });
+
+  it("trims font families and caps them at 200 characters", () => {
+    const store = new SettingsStore(tempFilePath());
+    expect(store.set({ fontFamilySans: '  "Segoe UI Variable Text"  ' }).fontFamilySans).toBe('"Segoe UI Variable Text"');
+    expect(store.set({ fontFamilyMono: "a".repeat(300) }).fontFamilyMono).toHaveLength(200);
+    expect(store.set({ fontFamilyPrompt: 42 as unknown as string }).fontFamilyPrompt).toBe("");
+  });
+
+  it("rounds and clamps typography sizes", () => {
+    const store = new SettingsStore(tempFilePath());
+    expect(store.set({ fontSizeInterface: 4, fontSizeCode: 99, fontSizePrompt: 12.4, fontSizeTerminal: 2 })).toMatchObject({
+      fontSizeInterface: 12,
+      fontSizeCode: 18,
+      fontSizePrompt: 12,
+      fontSizeTerminal: 8
+    });
+    expect(store.set({ fontSizeInterface: 25, fontSizeCode: 9.6, fontSizePrompt: 19.5, fontSizeTerminal: 21 })).toMatchObject({
+      fontSizeInterface: 20,
+      fontSizeCode: 10,
+      fontSizePrompt: 20,
+      fontSizeTerminal: 20
+    });
+  });
+
+  it("resets non-finite typography sizes to the defaults", () => {
+    const store = new SettingsStore(tempFilePath());
+    expect(
+      store.set({
+        fontSizeInterface: Number.NaN,
+        fontSizeCode: "wide" as unknown as number,
+        fontSizePrompt: Number.POSITIVE_INFINITY
+      })
+    ).toMatchObject({ fontSizeInterface: 16, fontSizeCode: 14, fontSizePrompt: 14 });
+  });
+
+  it("coerces the advanced typography switch with strict true", () => {
+    const store = new SettingsStore(tempFilePath());
+    expect(store.set({ typographyAdvanced: true }).typographyAdvanced).toBe(true);
+    expect(store.set({ typographyAdvanced: "yes" as unknown as boolean }).typographyAdvanced).toBe(false);
+  });
 });
