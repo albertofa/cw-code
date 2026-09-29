@@ -79,8 +79,7 @@ function installBridge(): void {
     onSessionTitle: noop,
     shutdown: { onRequested: noop, onExpired: noop },
     onWindowMaximized: noop,
-    isWindowMaximized: async () => false,
-    getTerminalFont: async () => null
+    isWindowMaximized: async () => false
   };
   (window as unknown as { cw: Record<string, unknown> }).cw = new Proxy(explicit, {
     get(target, prop) {

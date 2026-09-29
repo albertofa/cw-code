@@ -2,11 +2,9 @@ import { useEffect, useRef, useState } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import "@xterm/xterm/css/xterm.css";
-
-const TERMINAL_FONT_STACK =
-  `"CaskaydiaCove Nerd Font","Cascadia Code","JetBrainsMono Nerd Font","FiraCode Nerd Font","Hack Nerd Font",Consolas,"Courier New",monospace`;
-
+import { resolveTerminalFont } from "../appearanceFonts.js";
 import type { DriverName } from "../cw.js";
+import { useAppStore } from "../stores/appStore.js";
 
 export function PtyTab({ sessionId, kind }: { sessionId: string; kind: DriverName | "shell" }) {
   const divRef = useRef<HTMLDivElement>(null);
@@ -16,6 +14,11 @@ export function PtyTab({ sessionId, kind }: { sessionId: string; kind: DriverNam
   const termRef = useRef<Terminal | null>(null);
   const ptyIdRef = useRef<string | null>(null);
   const ptyTokenRef = useRef<string | null>(null);
+  const appearance = useAppStore((s) => s.appearance);
+  const terminalFont = resolveTerminalFont(appearance);
+  const terminalFontRef = useRef(terminalFont);
+  terminalFontRef.current = terminalFont;
+  const refitRef = useRef<() => void>(() => {});
 
   useEffect(() => {
     let disposed = false;
@@ -36,7 +39,6 @@ export function PtyTab({ sessionId, kind }: { sessionId: string; kind: DriverNam
       try {
         window.cw.resizePty(ptyIdRef.current, term.cols, term.rows);
       } catch {
-        /* Terminal closed mid-resize; safe to ignore. */
       }
     };
 
@@ -66,11 +68,13 @@ export function PtyTab({ sessionId, kind }: { sessionId: string; kind: DriverNam
       });
     };
 
-    const start = (fontFamily: string) => {
+    refitRef.current = scheduleFit;
+
+    const start = () => {
       if (disposed || !divRef.current) return;
       term = new Terminal({
-        fontSize: 13,
-        fontFamily,
+        fontSize: terminalFontRef.current.size,
+        fontFamily: terminalFontRef.current.family,
         scrollback: 5000,
         cursorBlink: true,
         theme: {
@@ -104,7 +108,6 @@ export function PtyTab({ sessionId, kind }: { sessionId: string; kind: DriverNam
       try {
         fitAddon.fit();
       } catch {
-        /* Container not laid out yet; ResizeObserver will correct. */
       }
 
       offPty = window.cw.onPtyData((msg) => {
@@ -154,18 +157,11 @@ export function PtyTab({ sessionId, kind }: { sessionId: string; kind: DriverNam
       observer.observe(divRef.current);
     };
 
-    const safeStart = (fontFamily: string) => {
-      try {
-        start(fontFamily);
-      } catch (err) {
-        if (!disposed) setError(err instanceof Error ? err.message : "Terminal failed to start.");
-      }
-    };
-
-    window.cw
-      .getTerminalFont()
-      .then((face) => safeStart(face ? `"${face}",${TERMINAL_FONT_STACK}` : TERMINAL_FONT_STACK))
-      .catch(() => safeStart(TERMINAL_FONT_STACK));
+    try {
+      start();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "Terminal failed to start.");
+    }
 
     return () => {
       disposed = true;
@@ -182,6 +178,14 @@ export function PtyTab({ sessionId, kind }: { sessionId: string; kind: DriverNam
       termRef.current = null;
     };
   }, [sessionId, kind, restartNonce]);
+
+  useEffect(() => {
+    const term = termRef.current;
+    if (!term) return;
+    term.options.fontFamily = terminalFont.family;
+    term.options.fontSize = terminalFont.size;
+    refitRef.current();
+  }, [terminalFont.family, terminalFont.size]);
 
   return (
     <div className="pty-wrap">

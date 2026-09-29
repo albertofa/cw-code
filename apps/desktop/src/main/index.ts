@@ -32,7 +32,6 @@ import { FileService, IMAGE_MAX_BYTES, imageExtMime } from "./fs/FileService.js"
 import { GitService } from "./fs/GitService.js";
 import { assertPrRef, PullRequestService } from "./github/PullRequestService.js";
 import { PtyPool } from "./pty/PtyPool.js";
-import { readWindowsTerminalFontFace } from "./pty/terminalFont.js";
 import { defaultPrWorkflows } from "./settings/prWorkflowDefaults.js";
 import { configuredCliBinaryPath } from "./settings/settingsUtils.js";
 import { initOpencodeModelsCache } from "./providers/opencode/opencodeModels.js";
@@ -910,7 +909,6 @@ function registerIpc(services: Services): void {
   ipcMain.on("pty.detach", (_e, args: { ptyId: string; token: string }) => ptys.detach(args.ptyId, args.token));
   ipcMain.on("pty.kill", (_e, args: { ptyId: string }) => ptys.kill(args.ptyId));
 
-  ipcMain.handle("term.font", () => readWindowsTerminalFontFace());
 
   ipcMain.handle("debug.openTrace", async (): Promise<{ ok: boolean; path?: string; error?: string }> => {
     const tracePath = getHarnessTracePath();

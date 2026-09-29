@@ -626,7 +626,6 @@ export interface CwApi {
   zoomIn(): void;
   zoomOut(): void;
   zoomReset(): void;
-  getTerminalFont(): Promise<string | null>;
   pickProjectDir(): Promise<string | null>;
   openPath(path: string): Promise<void>;
   openExternal(url: string): Promise<void>;
