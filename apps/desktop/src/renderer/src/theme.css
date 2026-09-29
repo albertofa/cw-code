@@ -17,6 +17,7 @@
   --raised: #262a36;
   --border: #303440;
   --border-soft: #252a36;
+  --border-strong: #40465a;
   --text: #e9eaf0;
   --dim: #bdc0cc;
   --muted: #8a8fa0;
@@ -954,15 +955,9 @@ body {
   background: linear-gradient(var(--violet-soft), var(--violet-soft)), var(--bg-deep);
 }
 
-.working-card.active::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 8px;
-  bottom: 8px;
-  width: 2px;
-  border-radius: 2px;
-  background: var(--violet);
+.working-card.active {
+  outline: 1px solid var(--violet-line);
+  outline-offset: -1px;
 }
 
 .working-card-head {
@@ -2539,7 +2534,7 @@ body.session-dragging * {
   gap: 6px;
   border-radius: 999px;
   background: var(--raised);
-  border: 1px solid #4a4d55;
+  border: 1px solid var(--border-strong);
   padding: 7px 14px;
   color: var(--text);
   font-family: var(--sans);
@@ -3520,7 +3515,7 @@ body.session-dragging * {
 .main-seg .gitbar .gitbar-location .menu-btn:hover,
 .main-seg .gitbar .gitbar-location .menu-btn[aria-expanded="true"] {
   background: #313338;
-  border-color: #4a4d55;
+  border-color: var(--border-strong);
 }
 
 .main-seg .gitbar .gitbar-location .menu-btn .menu-value {
@@ -3555,7 +3550,7 @@ body.session-dragging * {
 .main-seg .gitbar .gitbar-checkout:hover {
   color: var(--text);
   background: #313338;
-  border-color: #4a4d55;
+  border-color: var(--border-strong);
 }
 
 .git-status-pill {
@@ -3578,7 +3573,7 @@ body.session-dragging * {
 
 .git-status-pill:hover {
   background: #313338;
-  border-color: #4a4d55;
+  border-color: var(--border-strong);
 }
 
 .git-status-pill .pill-icon {
@@ -3722,8 +3717,8 @@ body.session-dragging * {
   width: 20px;
   height: 20px;
   border-radius: 999px;
-  background: #2b3c63;
-  color: #9db8ff;
+  background: var(--raised);
+  color: var(--dim);
   display: inline-flex;
   align-items: center;
   justify-content: center;
@@ -4522,7 +4517,7 @@ body.session-dragging * {
 .confirm-card {
   width: min(420px, calc(100vw - 64px));
   box-sizing: border-box;
-  background: #22242a;
+  background: var(--overlay);
   border: 1px solid var(--border);
   border-radius: 12px;
   box-shadow: 0 28px 90px rgba(0, 0, 0, 0.62);
@@ -4991,7 +4986,7 @@ body.session-dragging * {
 }
 
 .agents-row:hover {
-  background: #24262b;
+  background: var(--hover);
 }
 
 .agents-row.is-open {
@@ -5408,7 +5403,7 @@ body.session-dragging * {
   max-height: none;
   display: flex;
   flex-direction: column;
-  background: #22242a;
+  background: var(--overlay);
   border: 1px solid var(--border);
   border-radius: 12px;
   box-shadow: 0 28px 90px rgba(0, 0, 0, 0.62);
@@ -5471,7 +5466,7 @@ body.session-dragging * {
   color: var(--text);
 }
 
-.settings-nav-item.active svg {
+.settings-nav-item.active svg:not(.driver-icon) {
   color: var(--violet-ink);
 }
 
@@ -5716,7 +5711,7 @@ body.session-dragging * {
 .settings-card-field .menu-btn:hover,
 .settings-card-field .menu-btn[aria-expanded="true"] {
   background: #313338;
-  border-color: #4a4d55;
+  border-color: var(--border-strong);
 }
 
 .settings-card-field .menu-btn .menu-value {
@@ -7013,9 +7008,6 @@ button.gitbar-checkout:hover {
   box-shadow: inset 2px 0 0 var(--violet);
 }
 
-.inspect-file.active svg {
-  color: var(--violet-ink);
-}
 
 .inspect-file-copy {
   flex: 1;
@@ -7616,7 +7608,7 @@ button.gitbar-checkout:hover {
   width: 100%;
   min-height: 340px;
   box-sizing: border-box;
-  background: #101214;
+  background: var(--editor);
   border: 1px solid var(--border-soft);
   border-radius: 8px;
   color: var(--text);
@@ -9574,9 +9566,6 @@ button.gitbar-checkout:hover {
   color: var(--text);
 }
 
-.pr-files-file.active svg {
-  color: var(--violet-ink);
-}
 
 .pr-files-file-copy {
   flex: 1;
