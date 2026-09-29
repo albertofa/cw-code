@@ -256,7 +256,7 @@ function DebugMenu() {
 }
 
 
-export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { onOpenSettings: () => void; onOpenSkills: () => void; skillsOpen?: boolean }) {
+export function Sidebar({ onOpenSkills, skillsOpen = false }: { onOpenSkills: () => void; skillsOpen?: boolean }) {
   const projects = useAppStore((s) => s.projects);
   const sessionsByProject = useAppStore((s) => s.sessionsByProject);
   const activeSessionId = useAppStore((s) => s.activeSessionId);
@@ -275,6 +275,7 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
   const openInbox = usePrStore((s) => s.openInbox);
   const openSessionView = usePrStore((s) => s.openSessionView);
   const openUsage = usePrStore((s) => s.openUsage);
+  const openSettings = usePrStore((s) => s.openSettings);
   const [query, setQuery] = useState("");
   const [quickFilter, setQuickFilter] = useState<QuickFilter>("all");
   const [menu, setMenu] = useState<{ sessionId: string; x: number; y: number } | null>(null);
@@ -1089,7 +1090,7 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
       )}
       <UpdateIndicator />
       <div className="side-footer">
-        <button className="side-footer-btn" title="Settings" aria-label="Settings" onClick={onOpenSettings}>
+        <button className="side-footer-btn" title="Settings" aria-label="Settings" onClick={() => openSettings()}>
           <Settings size={15} />
         </button>
         <button

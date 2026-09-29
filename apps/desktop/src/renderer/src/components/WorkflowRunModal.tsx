@@ -24,7 +24,6 @@ import type {
   CreateSessionOptions,
   DriverName,
   ModelOption,
-  PrCheck,
   PrDetail,
   PrLinkOrigin,
   PrRef,
@@ -39,7 +38,7 @@ import { prKey } from "./prInbox.js";
 import { linkFor } from "./sessionPrLinks.js";
 import { prChip } from "./prChip.js";
 import { updatesSince } from "./prUpdates.js";
-import { attributionText, resolveTemplate, templateVars } from "./prWorkflows.js";
+import { attributionText, loadFailedLogs, resolveTemplate, templateVars } from "./prWorkflows.js";
 import { harnessLabel } from "./toolTabs.js";
 import { firstDisplayedModelId, getLastModel } from "./lastModel.js";
 import { shortenHome } from "./pathDisplay.js";
@@ -51,10 +50,6 @@ import { usePrSettings } from "./useLinkedPr.js";
 
 const READ_ONLY_NOTICE =
   "cw-code only reads from GitHub. Anything the session commits, pushes, or posts goes through the CLI's own permissions.";
-
-const FAILED_LOG_TAIL_CHARS = 12_000;
-
-const FAILED_LOGS_TOTAL_CHARS = 30_000;
 
 const HARNESSES: DriverName[] = ["claude", "opencode", "codex"];
 
@@ -83,28 +78,6 @@ const STAGE_LABEL: Record<Stage, string> = {
   send: "Sending prompt",
   seen: "Marking the pull request as seen"
 };
-
-function failingRuns(checks: PrCheck[]): Array<{ runId: number; names: string[] }> {
-  const byRun = new Map<number, string[]>();
-  for (const check of checks) {
-    if (check.status !== "failure" || check.runId === null) continue;
-    byRun.set(check.runId, [...(byRun.get(check.runId) ?? []), check.name]);
-  }
-  return [...byRun.entries()].map(([runId, names]) => ({ runId, names }));
-}
-
-function tail(text: string): string {
-  return text.length > FAILED_LOG_TAIL_CHARS ? `[…truncated]\n${text.slice(-FAILED_LOG_TAIL_CHARS)}` : text;
-}
-
-async function loadFailedLogs(ref: PrRef, checks: PrCheck[]): Promise<string> {
-  const runs = failingRuns(checks);
-  const logs = await Promise.all(
-    runs.map(async (run) => `### ${run.names.join(", ")} (run ${run.runId})\n${tail((await window.cw.getPrCheckLog(ref, run.runId)).trim())}`)
-  );
-  const joined = logs.join("\n\n");
-  return joined.length > FAILED_LOGS_TOTAL_CHARS ? `${joined.slice(0, FAILED_LOGS_TOTAL_CHARS)}\n[…more logs truncated]` : joined;
-}
 
 function pushNote(ref: PrRef, headRefName: string, sessionBranch: string): string {
   return `You are on branch ${sessionBranch}, not the PR head. To update PR #${ref.number}, push with: git push origin HEAD:${headRefName}`;
@@ -291,7 +264,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
     if (!needsLogs || !detail || failedLogs?.sha === detail.headRefOid) return;
     let active = true;
     setLogsError(null);
-    loadFailedLogs(ref, detail.checkRuns)
+    loadFailedLogs(detail)
       .then((text) => {
         if (active) setFailedLogs({ sha: detail.headRefOid, text });
       })

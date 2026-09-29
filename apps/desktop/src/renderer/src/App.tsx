@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import type { DriverName } from "./cw.js";
 import { applyAppearance } from "./appearanceFonts.js";
 import { collectSubagents } from "./components/subagents.js";
@@ -6,7 +6,10 @@ import { isWorkingSetStatus } from "./components/workingSet.js";
 import { Sidebar } from "./components/Sidebar.js";
 import { WindowControls } from "./components/WindowControls.js";
 import { SkillsModal } from "./components/SkillsModal.js";
-import { SettingsModal } from "./components/SettingsModal.js";
+import { SettingsPage } from "./components/SettingsPage.js";
+import { SettingsNav } from "./components/SettingsNav.js";
+import { useConfirm } from "./components/ConfirmDialog.js";
+import { changedSections, navIdOf, navLabel } from "./components/settingsSections.js";
 import { ThreadView } from "./components/ThreadView.js";
 import { PrInboxView } from "./components/PrInboxView.js";
 import { PrDetailView } from "./components/PrDetailView.js";
@@ -26,6 +29,7 @@ import { useAppStore } from "./stores/appStore.js";
 import { tabsInPanel, DOCKABLE_TABS } from "./stores/panelLayout.js";
 import { selectSessionPanel, usePanelStore } from "./stores/panelStore.js";
 import { usePrStore } from "./stores/prStore.js";
+import { useSettingsDraftStore } from "./stores/settingsDraftStore.js";
 import { prKey } from "./components/prInbox.js";
 import type { DockableTabId } from "@cw-code/contracts";
 import type { TurnEvent } from "./cw.js";
@@ -133,15 +137,33 @@ export function App() {
   const rightPresence = usePresence(rightVisible, panelAnimationMs);
   const [rightWidth, setRightWidth] = useState(loadRightWidth);
   const [preloadError, setPreloadError] = useState<string | null>(null);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsHarness, setSettingsHarness] = useState<DriverName>("claude");
   const [skillsOpen, setSkillsOpen] = useState(false);
   const dragRef = useRef<{ startX: number; startWidth: number } | null>(null);
+  const { confirm, dialog: confirmDialog } = useConfirm();
+  const settingsActive = mainView.kind === "settings";
 
-  const openSettings = (harness: DriverName = "claude") => {
-    setSettingsHarness(harness);
-    setSettingsOpen(true);
-  };
+  const openSettings = (harness?: DriverName) => usePrStore.getState().openSettings(undefined, harness);
+
+  const leaveSettings = useCallback(
+    async (go: () => void) => {
+      const drafts = useSettingsDraftStore.getState();
+      if (usePrStore.getState().mainView.kind === "settings" && drafts.dirty) {
+        const changed = drafts.saved && drafts.draft ? changedSections(drafts.saved, drafts.draft).map(navLabel) : [];
+        const ok = await confirm({
+          title: "Discard unsaved settings?",
+          message: changed.length > 0 ? `Your changes in ${changed.join(", ")} will be lost.` : "Your unsaved changes will be lost.",
+          danger: true,
+          confirmLabel: "Discard"
+        });
+        if (!ok) return;
+        useSettingsDraftStore.getState().discard();
+      }
+      go();
+    },
+    [confirm]
+  );
+  const leaveSettingsRef = useRef(leaveSettings);
+  leaveSettingsRef.current = leaveSettings;
 
   const applyRightWidth = (n: number) => {
     const clamped = Math.min(RIGHT_WIDTH_MAX, Math.max(RIGHT_WIDTH_MIN, Math.round(n)));
@@ -202,8 +224,10 @@ export function App() {
         window.cw.zoomReset();
       } else if (e.key.toLowerCase() === "t" && !e.shiftKey && !document.querySelector(MODAL_SELECTOR)) {
         e.preventDefault();
-        usePrStore.getState().openSessionView();
-        useAppStore.getState().startNewSession();
+        void leaveSettingsRef.current(() => {
+          usePrStore.getState().openSessionView();
+          useAppStore.getState().startNewSession();
+        });
       }
     };
     window.addEventListener("keydown", onKey);
@@ -401,22 +425,33 @@ export function App() {
   const allTabsClosed = DOCKABLE_TABS.every((id) => dockByTab[id] === "closed" || (id === "pr" && !hasPr));
 
   return (
-    <div className={`app-shell${rightVisible ? "" : " right-hidden"}`} data-driver={driver ?? "none"}>
+    <div className={`app-shell${rightVisible && !settingsActive ? "" : " right-hidden"}`} data-driver={driver ?? "none"}>
       {preloadError && <div className="preload-error">{preloadError}</div>}
       {!preloadError && (
         <>
           <div className="app-body">
-          <Sidebar onOpenSettings={() => openSettings()} onOpenSkills={() => setSkillsOpen(true)} skillsOpen={skillsOpen} />
-          {mainView.kind === "inbox" ? (
+          {mainView.kind === "settings" ? (
+            <SettingsNav active={navIdOf(mainView.section, mainView.harness)} onBack={() => void leaveSettings(() => usePrStore.getState().openSessionView())} />
+          ) : (
+            <Sidebar onOpenSkills={() => setSkillsOpen(true)} skillsOpen={skillsOpen} />
+          )}
+          {mainView.kind === "settings" ? (
+            <SettingsPage
+              section={mainView.section}
+              harness={mainView.harness}
+              onBack={() => void leaveSettings(() => usePrStore.getState().openSessionView())}
+              onOpenUsage={() => void leaveSettings(() => usePrStore.getState().openUsage())}
+            />
+          ) : mainView.kind === "inbox" ? (
             <PrInboxView />
           ) : mainView.kind === "pr" ? (
             <PrDetailView key={prKey(mainView.ref)} prRef={mainView.ref} />
           ) : mainView.kind === "usage" ? (
-            <UsageView onOpenSettings={openSettings} />
+            <UsageView />
           ) : (
             <ThreadView />
           )}
-          {rightPresence.mounted && (
+          {!settingsActive && rightPresence.mounted && (
             <aside
               className={`right${rightPresence.entered ? "" : " collapsed"}${dropRight.over || draggingTab !== null ? " drop-target-active" : ""}`}
               style={{ width: rightPresence.entered ? rightWidth : 0 }}
@@ -451,26 +486,26 @@ export function App() {
               </div>
             </aside>
           )}
-          <ToolRail
-            sessionId={activeSessionId ?? undefined}
-            driver={driver}
-            hasPr={hasPr}
-            hasPreview={hasPreview}
-            subagents={subagentStats}
-            rightActive={topTool}
-            rightSplit={splitTool}
-            isToolAvailable={isToolAvailable}
-            onToolContextMenu={tabMenu.onTabContextMenu}
-          />
+          {!settingsActive && (
+            <ToolRail
+              sessionId={activeSessionId ?? undefined}
+              driver={driver}
+              hasPr={hasPr}
+              hasPreview={hasPreview}
+              subagents={subagentStats}
+              rightActive={topTool}
+              rightSplit={splitTool}
+              isToolAvailable={isToolAvailable}
+              onToolContextMenu={tabMenu.onTabContextMenu}
+            />
+          )}
           {tabMenu.menuNode}
           </div>
           <WindowControls />
-          {settingsOpen && (
-            <SettingsModal initialHarness={settingsHarness} onClose={() => setSettingsOpen(false)} />
-          )}
           {skillsOpen && <SkillsModal onClose={() => setSkillsOpen(false)} />}
           {runModal && <WorkflowRunModal request={runModal} />}
           <ShutdownDialog />
+          {confirmDialog}
         </>
       )}
     </div>

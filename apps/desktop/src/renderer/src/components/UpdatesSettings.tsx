@@ -9,15 +9,16 @@ import { useNotifs } from "./Notifications.js";
 import { releaseNotesMarkdown } from "./releaseNotes.js";
 import { channelOfVersion } from "./updateChannel.js";
 import { CHANNEL_LABELS, formatCheckedAt, installTarget, updateStatusText } from "./updateModel.js";
+import { SettingsGroup, SettingsRow, SettingsSwitch } from "./SettingsLayout.js";
 
 export function UpdatesSettings({
   draft,
   fallbackVersion,
-  onDraftChange
+  onApplied
 }: {
   draft: AppSettings;
   fallbackVersion: string;
-  onDraftChange: (patch: Partial<AppSettings>) => void;
+  onApplied: (patch: Partial<AppSettings>) => void;
 }) {
   const state = useAppStore((s) => s.updates);
   const restartPending = useAppStore((s) => s.updateRestartPending);
@@ -45,15 +46,15 @@ export function UpdatesSettings({
   const changeChannel = async (next: UpdateChannel) => {
     const previous = draft.updateChannel;
     setSavingPreference(true);
-    onDraftChange({ updateChannel: next });
+    onApplied({ updateChannel: next });
     try {
       const result = await useAppStore.getState().setUpdateChannel(next);
-      if (!result.ok) onDraftChange({ updateChannel: previous });
+      if (!result.ok) onApplied({ updateChannel: previous });
       if (!result.ok && result.code !== "disabled") {
         useNotifs.getState().push({ kind: "error", title: "Could not change the update channel", message: result.message });
       }
     } catch (err) {
-      onDraftChange({ updateChannel: previous });
+      onApplied({ updateChannel: previous });
       useNotifs.getState().push({ kind: "error", title: "Could not change the update channel", message: ipcErrorMessage(err) });
     } finally {
       setSavingPreference(false);
@@ -62,11 +63,11 @@ export function UpdatesSettings({
 
   const changeBackground = async (enabled: boolean) => {
     setSavingPreference(true);
-    onDraftChange({ updateBackgroundDownload: enabled });
+    onApplied({ updateBackgroundDownload: enabled });
     try {
       await useAppStore.getState().setUpdateBackgroundDownload(enabled);
     } catch (err) {
-      onDraftChange({ updateBackgroundDownload: !enabled });
+      onApplied({ updateBackgroundDownload: !enabled });
       useNotifs.getState().push({ kind: "error", title: "Could not save the download setting", message: ipcErrorMessage(err) });
     } finally {
       setSavingPreference(false);
@@ -74,110 +75,104 @@ export function UpdatesSettings({
   };
 
   return (
-    <section className="settings-section" aria-label="Updates">
-      <h3>Updates</h3>
-      <div className="settings-row">
-        <span className="settings-label">Installed version</span>
-        <span className="settings-hint">{updateStatusText(state)}</span>
-        <span className="settings-number-field">
-          <span className="settings-id">{runningVersion}</span>
-        </span>
-      </div>
-
-      <div className="settings-row">
-        <span className="settings-label">Last checked</span>
-        <span className="settings-hint">
-          {disabled ? (state?.disabledReason ?? "Updates are not available in this copy") : formatCheckedAt(state?.checkedAt ?? null, Date.now())}
-        </span>
-        <span className="settings-number-field">
-          <button
-            type="button"
-            className="btn settings-recheck"
-            onClick={() => void check()}
-            disabled={disabled || busy || checking}
-            title={disabled ? (state?.disabledReason ?? undefined) : busy ? "Wait for the current update step to finish" : undefined}
-          >
-            <RefreshCw size={12} aria-hidden="true" />
-            {state?.phase === "checking" || checking ? "Checking…" : "Check for updates"}
-          </button>
-          {state?.phase === "available" && (
+    <>
+      <SettingsGroup title="Version">
+        <SettingsRow label="Installed version" hint={updateStatusText(state)}>
+          <span className="sp-mono">{runningVersion}</span>
+        </SettingsRow>
+        <SettingsRow
+          label="Last checked"
+          hint={disabled ? (state?.disabledReason ?? "Updates are not available in this copy") : formatCheckedAt(state?.checkedAt ?? null, Date.now())}
+        >
+          <span className="sp-actions">
             <button
               type="button"
-              className="btn settings-recheck"
-              onClick={() => void runUpdateAction(() => useAppStore.getState().downloadUpdate(), "Could not download the update")}
+              className="btn sp-btn-sm"
+              onClick={() => void check()}
+              disabled={disabled || busy || checking}
+              title={disabled ? (state?.disabledReason ?? undefined) : busy ? "Wait for the current update step to finish" : undefined}
             >
-              Download
+              <RefreshCw size={12} aria-hidden="true" />
+              {state?.phase === "checking" || checking ? "Checking…" : "Check for updates"}
             </button>
-          )}
-          {readyToInstall && (
-            <button type="button" className="btn btn-primary settings-recheck" onClick={() => void restartToUpdate()} disabled={restartPending}>
-              Update and restart
-            </button>
-          )}
-        </span>
-      </div>
+            {state?.phase === "available" && (
+              <button
+                type="button"
+                className="btn sp-btn-sm"
+                onClick={() => void runUpdateAction(() => useAppStore.getState().downloadUpdate(), "Could not download the update")}
+              >
+                Download
+              </button>
+            )}
+            {readyToInstall && (
+              <button type="button" className="btn btn-primary sp-btn-sm" onClick={() => void restartToUpdate()} disabled={restartPending}>
+                Update and restart
+              </button>
+            )}
+          </span>
+        </SettingsRow>
+        {state?.phase === "downloading" && (
+          <div
+            className="usage-track"
+            role="progressbar"
+            aria-label="Update download progress"
+            aria-valuemin={0}
+            aria-valuemax={100}
+            aria-valuenow={Math.round(state.progress?.percent ?? 0)}
+          >
+            <i style={{ width: `${Math.round(state.progress?.percent ?? 0)}%` }} />
+          </div>
+        )}
+        {state?.error && (
+          <div className="settings-error" role="alert">
+            {state.error.message}
+          </div>
+        )}
+      </SettingsGroup>
 
-      {state?.phase === "downloading" && (
-        <div
-          className="usage-track"
-          role="progressbar"
-          aria-label="Update download progress"
-          aria-valuemin={0}
-          aria-valuemax={100}
-          aria-valuenow={Math.round(state.progress?.percent ?? 0)}
+      <SettingsGroup title="Preferences">
+        <SettingsRow
+          label="Update channel"
+          htmlFor="sp-update-channel"
+          hint={
+            waitsForStable
+              ? `Stable never downgrades: this ${runningVersion} build keeps running until a stable release newer than it is published.`
+              : channel === "alpha"
+                ? "Alpha gets early builds, and stable releases as soon as they ship."
+                : "Stable gets tested releases only."
+          }
         >
-          <i style={{ width: `${Math.round(state.progress?.percent ?? 0)}%` }} />
-        </div>
-      )}
-      {state?.error && <div className="settings-error" role="alert">{state.error.message}</div>}
-
-      <label className="settings-row">
-        <span className="settings-label">Update channel</span>
-        <span className="settings-hint">
-          {waitsForStable
-            ? `Stable never downgrades: this ${runningVersion} build keeps running until a stable release newer than it is published.`
-            : channel === "alpha"
-              ? "Alpha gets early builds, and stable releases as soon as they ship."
-              : "Stable gets tested releases only."}
-        </span>
-        <select
-          className="field"
-          value={channel}
-          disabled={disabled || savingPreference || state?.phase === "installing" || restartPending}
-          onChange={(e) => void changeChannel(e.target.value === "alpha" ? "alpha" : "stable")}
-          aria-label="Update channel"
-        >
-          {(Object.keys(CHANNEL_LABELS) as UpdateChannel[]).map((option) => (
-            <option key={option} value={option}>
-              {CHANNEL_LABELS[option]}
-            </option>
-          ))}
-        </select>
-      </label>
-
-      <label className="settings-row">
-        <span className="settings-label">Download updates in the background</span>
-        <span className="settings-hint">Installing always waits for you to choose Update and restart. Off asks before downloading.</span>
-        <span className="settings-switch">
-          <input
-            type="checkbox"
+          <select
+            id="sp-update-channel"
+            className="field sp-select"
+            value={channel}
+            disabled={disabled || savingPreference || state?.phase === "installing" || restartPending}
+            onChange={(e) => void changeChannel(e.target.value === "alpha" ? "alpha" : "stable")}
+          >
+            {(Object.keys(CHANNEL_LABELS) as UpdateChannel[]).map((option) => (
+              <option key={option} value={option}>
+                {CHANNEL_LABELS[option]}
+              </option>
+            ))}
+          </select>
+        </SettingsRow>
+        <SettingsRow label="Download updates in the background" hint="Installing always waits for you to choose Update and restart. Off asks before downloading.">
+          <SettingsSwitch
             checked={draft.updateBackgroundDownload}
             disabled={savingPreference}
-            onChange={(e) => void changeBackground(e.target.checked)}
-            aria-label="Download updates in the background"
+            onChange={(next) => void changeBackground(next)}
+            label="Download updates in the background"
           />
-          <span className="track" aria-hidden="true" />
-        </span>
-      </label>
+        </SettingsRow>
+      </SettingsGroup>
 
       {notes && (
-        <>
-          <h3>{notesVersion ? `What's new in ${notesVersion}` : "Release notes"}</h3>
-          <div className="settings-card" style={{ maxHeight: 280, overflowY: "auto", padding: "10px 14px" }}>
+        <SettingsGroup title={notesVersion ? `What's new in ${notesVersion}` : "Release notes"}>
+          <div className="sp-notes">
             <Md text={notes} linkPolicy="https-only" />
           </div>
-        </>
+        </SettingsGroup>
       )}
-    </section>
+    </>
   );
 }
