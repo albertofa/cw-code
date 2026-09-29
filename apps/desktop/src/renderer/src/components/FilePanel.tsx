@@ -2,7 +2,6 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import type { DirEntry } from "../cw.js";
 import { FileIcon } from "./fileIcons.js";
-import { parseUnifiedDiff } from "./diffParser.js";
 import { useEditorBuffers } from "../stores/editorBuffers.js";
 import { usePanelStore } from "../stores/panelStore.js";
 
@@ -370,82 +369,6 @@ export function FilePanel({ sessionId }: { sessionId: string }) {
           className="editor"
         />
       </div>
-    </div>
-  );
-}
-
-const STATUS_BADGE: Record<string, string> = {
-  added: "A",
-  deleted: "D",
-  renamed: "R",
-  modified: "M"
-};
-
-export function DiffPanel({ sessionId }: { sessionId: string }) {
-  const [diff, setDiff] = useState<string | null>(null);
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
-
-  useEffect(() => {
-    setDiff(null);
-    setCollapsed(new Set());
-    window.cw
-      .turnDiff(sessionId, Date.now() - 24 * 3600 * 1000)
-      .then((d) => setDiff(d))
-      .catch((err: Error) => setDiff(`diff unavailable: ${err.message}`));
-  }, [sessionId]);
-
-  if (diff == null) return <div className="diff-empty">loading…</div>;
-  if (!diff || !diff.includes("diff --git")) {
-    return <pre className="diff">{diff || "(clean — no changes)"}</pre>;
-  }
-
-  const files = parseUnifiedDiff(diff);
-  const totalAdded = files.reduce((n, f) => n + f.added, 0);
-  const totalRemoved = files.reduce((n, f) => n + f.removed, 0);
-
-  const toggle = (path: string) => {
-    setCollapsed((prev) => {
-      const next = new Set(prev);
-      if (next.has(path)) next.delete(path);
-      else next.add(path);
-      return next;
-    });
-  };
-
-  return (
-    <div className="diff-list">
-      <div className="diff-summary">
-        {files.length} file{files.length === 1 ? "" : "s"} · <span className="add">+{totalAdded}</span>{" "}
-        <span className="del">−{totalRemoved}</span>
-      </div>
-      {files.map((f) => {
-        const shut = collapsed.has(f.path);
-        return (
-          <div key={f.path} className="diff-file">
-            <div className="diff-head" onClick={() => toggle(f.path)} title={f.path}>
-              <span className="tree-chevron">{shut ? <ChevronRight size={12} /> : <ChevronDown size={12} />}</span>
-              <FileIcon name={baseName(f.path)} size={14} />
-              <span className="diff-path">{f.path}</span>
-              <span className={`diff-badge ${f.status}`}>{STATUS_BADGE[f.status]}</span>
-              <span className="diff-stats">
-                <span className="add">+{f.added}</span> <span className="del">−{f.removed}</span>
-              </span>
-            </div>
-            {!shut && (
-              <div className="diff-body">
-                {f.lines.map((l, i) => (
-                  <div key={i} className={`diff-line ${l.type}`}>
-                    <span className="diff-gutter">
-                      {l.type === "add" ? "+" : l.type === "del" ? "−" : l.type === "hunk" ? "⋯" : ""}
-                    </span>
-                    <span className="diff-text">{l.text}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        );
-      })}
     </div>
   );
 }

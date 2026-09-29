@@ -1,8 +1,11 @@
 import { execFile } from "node:child_process";
+import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, rmdirSync } from "node:fs";
-import { open, lstat } from "node:fs/promises";
+import { copyFile, open, lstat, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 import { simpleGit } from "simple-git";
+import { assertInside } from "./FileService.js";
 import { ciFromRollup } from "../github/prParsers.js";
 import { sameWorktreePath } from "../sessions/worktreeCleanup.js";
 import type {
@@ -16,7 +19,8 @@ import type {
   GitStatus,
   Project,
   SourceControlBinaryHealth,
-  SourceControlHealth
+  SourceControlHealth,
+  TurnFileChange
 } from "@cw-code/contracts";
 
 export interface CreatedWorktree {
@@ -224,8 +228,6 @@ export function parseNumstat(stdout: string): { addedLines: number; deletedLines
   for (const line of stdout.replace(/\r/g, "").split("\n")) {
     const [added, deleted] = line.split("\t", 2);
     if (added === "-" && deleted === "-") {
-      // Git has no meaningful line count for binary content, but the changed file
-      // should still be represented in the additions total.
       addedLines += 1;
       continue;
     }
@@ -235,6 +237,36 @@ export function parseNumstat(stdout: string): { addedLines: number; deletedLines
     if (Number.isFinite(deletedValue)) deletedLines += deletedValue;
   }
   return { addedLines, deletedLines };
+}
+
+const NAME_STATUS_CHANGE: Record<string, TurnFileChange["change"]> = { A: "added", D: "deleted", M: "modified", T: "modified" };
+
+function comparePaths(a: { path: string }, b: { path: string }): number {
+  return a.path < b.path ? -1 : a.path > b.path ? 1 : 0;
+}
+
+export function parseTurnChanges(numstat: string, nameStatus: string): TurnFileChange[] {
+  const stats = new Map<string, Pick<TurnFileChange, "added" | "deleted" | "binary">>();
+  for (const record of numstat.split("\0")) {
+    const [added, deleted, ...rest] = record.replace(/^\n+/, "").split("\t");
+    const path = rest.join("\t");
+    if (!path) continue;
+    const binary = added === "-" && deleted === "-";
+    stats.set(path, {
+      added: binary ? 0 : Number.parseInt(added, 10) || 0,
+      deleted: binary ? 0 : Number.parseInt(deleted, 10) || 0,
+      binary
+    });
+  }
+  const tokens = nameStatus.split("\0");
+  const files: TurnFileChange[] = [];
+  for (let i = 0; i + 1 < tokens.length; i += 2) {
+    const change = NAME_STATUS_CHANGE[tokens[i].replace(/^\n+/, "").charAt(0)];
+    const path = tokens[i + 1];
+    if (!change || !path) continue;
+    files.push({ path, change, ...(stats.get(path) ?? { added: 0, deleted: 0, binary: false }) });
+  }
+  return files.sort(comparePaths);
 }
 
 export interface PorcelainStatusFile {
@@ -448,6 +480,18 @@ interface RepoLayout {
   isWorktree: boolean;
 }
 const DIFF_PATCH_MAX_BYTES = 400_000;
+const SNAPSHOT_TIMEOUT_MS = 15_000;
+const SNAPSHOT_MESSAGE = "cw-code turn snapshot";
+const SNAPSHOT_IDENTITY: NodeJS.ProcessEnv = {
+  GIT_AUTHOR_NAME: "cw-code",
+  GIT_AUTHOR_EMAIL: "cw-code@localhost",
+  GIT_COMMITTER_NAME: "cw-code",
+  GIT_COMMITTER_EMAIL: "cw-code@localhost"
+};
+
+function assertObjectId(sha: string): void {
+  if (!/^[0-9a-f]{40}(?:[0-9a-f]{24})?$/i.test(sha)) throw new Error(`invalid snapshot id '${sha}'`);
+}
 const UNTRACKED_DIFF_MAX_FILES = 50;
 const UNTRACKED_DIFF_MAX_BYTES_PER_FILE = 60_000;
 
@@ -495,7 +539,6 @@ export class GitService {
     try {
       return parseNumstat(await execDiff(binary, ["diff", "--numstat", "HEAD", "--"], root));
     } catch {
-      // An unborn repository has no HEAD. Count its staged and unstaged changes separately.
       const [staged, unstaged] = await Promise.all([
         execDiff(binary, ["diff", "--cached", "--numstat", "--"], root).catch(() => ""),
         execDiff(binary, ["diff", "--numstat", "--"], root).catch(() => "")
@@ -917,10 +960,14 @@ export class GitService {
   private async computeDiff(root: string, mode: GitDiffMode, requestedBase?: string): Promise<GitDiffResult> {
     const git = this.git(root);
     const binary = this.settings().gitBinaryPath;
-    const headRef = (await git.revparse(["--abbrev-ref", "HEAD"])).trim() || "HEAD";
+    const headRef = (await git.revparse(["--abbrev-ref", "HEAD"]).catch(() => "")).trim() || "HEAD";
     let patch = "";
     let baseRef: string | null = null;
-    if (mode === "staged") {
+    if (mode === "turn") {
+      if (!requestedBase) throw new Error("No snapshot for the last turn");
+      baseRef = requestedBase;
+      patch = await this.diffSnapshot(root, requestedBase);
+    } else if (mode === "staged") {
       patch = await execDiff(binary, ["diff", "--cached", "--no-ext-diff", "--binary", "--find-renames", "--"], root);
     } else if (mode === "branch") {
       const branches = await this.branches(root);
@@ -972,20 +1019,71 @@ export class GitService {
     return fallback.name;
   }
 
-  async turnDiff(root: string, _since: number, baseSha?: string | null): Promise<string> {
+  async snapshotWorkingTree(root: string): Promise<string> {
+    const binary = this.settings().gitBinaryPath;
+    const deadline = Date.now() + SNAPSHOT_TIMEOUT_MS;
+    const remaining = () => Math.max(1, deadline - Date.now());
+    const indexPath = resolve(root, (await execText(binary, ["rev-parse", "--git-path", "index"], root, remaining())).trim());
+    const tempIndex = join(tmpdir(), `cw-snapshot-${randomUUID()}.index`);
+    const env = withNonInteractiveEnv({ ...process.env, ...SNAPSHOT_IDENTITY, GIT_INDEX_FILE: tempIndex });
     try {
-      let base: string | undefined;
-      if (baseSha) {
-        try {
-          if (await this.isCommitAncestor(root, baseSha)) base = baseSha;
-        } catch (err) {
-          console.warn(`git: unable to validate turn base sha in ${root}: ${(err as Error).message}`);
-        }
-      }
-      return (await this.diff(root, "working", base)).patch;
-    } catch (err) {
-      return `diff unavailable: ${(err as Error).message}`;
+      if (existsSync(indexPath)) await copyFile(indexPath, tempIndex);
+      await execText(binary, ["add", "-A", "--", ".", ":(exclude).cw"], root, remaining(), env);
+      const tree = (await execText(binary, ["write-tree"], root, remaining(), env)).trim();
+      const parent = await this.headCommit(root);
+      const args = ["commit-tree", "--no-gpg-sign", tree, ...(parent ? ["-p", parent] : []), "-m", SNAPSHOT_MESSAGE];
+      return (await execText(binary, args, root, remaining(), env)).trim();
+    } finally {
+      await Promise.all([rm(tempIndex, { force: true }), rm(`${tempIndex}.lock`, { force: true })]);
     }
+  }
+
+  private async headCommit(root: string): Promise<string | null> {
+    try {
+      return (await execText(this.settings().gitBinaryPath, ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"], root)).trim() || null;
+    } catch {
+      return null;
+    }
+  }
+
+  async diffSnapshot(root: string, snapshotSha: string): Promise<string> {
+    assertObjectId(snapshotSha);
+    const current = await this.snapshotWorkingTree(root);
+    return execDiff(this.settings().gitBinaryPath, ["diff", "--no-ext-diff", "--binary", "--find-renames", "--relative", snapshotSha, current, "--"], root);
+  }
+
+  async snapshotChanges(root: string, snapshotSha: string): Promise<TurnFileChange[]> {
+    assertObjectId(snapshotSha);
+    const binary = this.settings().gitBinaryPath;
+    const current = await this.snapshotWorkingTree(root);
+    const range = ["--no-renames", "-z", "--relative", snapshotSha, current, "--"];
+    const [numstat, nameStatus] = await Promise.all([
+      execDiff(binary, ["diff", "--numstat", ...range], root),
+      execDiff(binary, ["diff", "--name-status", ...range], root)
+    ]);
+    return parseTurnChanges(numstat, nameStatus);
+  }
+
+  async restoreSnapshot(root: string, snapshotSha: string, changes: TurnFileChange[]): Promise<TurnFileChange[]> {
+    assertObjectId(snapshotSha);
+    const binary = this.settings().gitBinaryPath;
+    const planned = [...changes].sort(comparePaths).map((change) => ({ change, target: assertInside(root, change.path) }));
+    const restored: TurnFileChange[] = [];
+    try {
+      for (const { change, target } of planned) {
+        if (change.change === "added") await rm(target, { force: true });
+        else await execText(binary, ["--literal-pathspecs", "restore", `--source=${snapshotSha}`, "--worktree", "--", change.path], root, SNAPSHOT_TIMEOUT_MS);
+        restored.push(change);
+      }
+    } catch (error) {
+      const done = restored.map((change) => change.path).join(", ") || "none";
+      const failed = planned[restored.length]?.change.path ?? "unknown path";
+      throw new Error(`Undo stopped at ${failed} (${restored.length} of ${planned.length} restored: ${done}): ${(error as Error).message}`);
+    } finally {
+      this.invalidateStatus(root);
+      this.invalidateBranches(root);
+    }
+    return restored;
   }
 
   async githubRemote(root: string): Promise<ParsedGitHubRemote | null> {

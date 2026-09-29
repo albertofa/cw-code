@@ -663,25 +663,80 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
-  it("records the worktree HEAD as the turn base sha and replaces it on the next turn", async () => {
-    const { manager, fake, project } = makeGitSandboxManager("cw-turn-base-");
+  it("stores a working-tree snapshot for each turn", async () => {
+    const { manager, fake, project } = makeGitSandboxManager("cw-turn-snapshot-");
     const session = await manager.createSession(project.id, "claude", { baseBranch: "main" });
     const worktreePath = session.worktreePath;
     if (!worktreePath) throw new Error("expected a worktree-backed session");
-    const headOf = () => execFileSync("git", ["-C", worktreePath, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+    const stored = () => (manager as unknown as { store: SessionStore }).store.getSession(session.id)?.lastTurnSnapshot;
 
-    await manager.startTurn(session.id, "first");
-    const firstBase = manager.turnBaseSha(session.id);
-    expect(firstBase).toBe(headOf());
+    const firstTurn = await manager.startTurn(session.id, "first");
+    const first = stored();
+    expect(first).toMatchObject({ turnId: firstTurn, sha: expect.stringMatching(/^[0-9a-f]{40}$/) });
+    expect(first?.error).toBeUndefined();
 
     fake.completeAll();
     writeFileSync(join(worktreePath, "README.md"), "changed\n", "utf8");
-    execFileSync("git", ["-C", worktreePath, "add", "-A"]);
-    execFileSync("git", ["-C", worktreePath, "-c", "user.name=cw-code", "-c", "user.email=test@cw-code.local", "commit", "-m", "mid-turn"]);
+    const secondTurn = await manager.startTurn(session.id, "second");
+    const second = stored();
+    expect(second?.turnId).toBe(secondTurn);
+    expect(second?.sha).not.toBe(first?.sha);
+    expect(execFileSync("git", ["-C", worktreePath, "show", `${second?.sha}:README.md`], { encoding: "utf8" })).toBe("changed\n");
+    manager.dispose();
+  });
 
-    await manager.startTurn(session.id, "second");
-    expect(manager.turnBaseSha(session.id)).toBe(headOf());
-    expect(manager.turnBaseSha(session.id)).not.toBe(firstBase);
+  it("stores a snapshot failure as an error and still runs the turn", async () => {
+    const { manager, fake, project } = makeGitSandboxManager("cw-turn-snapshot-fail-");
+    (manager as unknown as { git: { snapshotWorkingTree(root: string): Promise<string> } }).git.snapshotWorkingTree = async () => {
+      throw new Error("snapshot boom");
+    };
+    const session = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    const turnId = await manager.startTurn(session.id, "go");
+    const snapshot = (manager as unknown as { store: SessionStore }).store.getSession(session.id)?.lastTurnSnapshot;
+    expect(snapshot).toMatchObject({ turnId, error: "snapshot boom" });
+    expect(snapshot?.sha).toBeUndefined();
+    expect(fake.lastRequest?.prompt).toBe("go");
+    fake.completeAll();
+    expect(await manager.turnChanges(session.id)).toBeNull();
+    await expect(manager.undoTurn(session.id, turnId)).rejects.toThrow("No snapshot for the last turn");
+    manager.dispose();
+  });
+
+  it("skips snapshots for projects outside a git repository", async () => {
+    const { manager } = makeManager();
+    const project = manager.addProject("C:\\proj-snapshot-nogit");
+    const session = await manager.createSession(project.id, "claude");
+    await manager.startTurn(session.id, "go");
+    expect((manager as unknown as { store: SessionStore }).store.getSession(session.id)?.lastTurnSnapshot).toBeUndefined();
+    manager.dispose();
+  });
+
+  it("refuses undo while a turn is active or for a stale turn id, then undoes the latest turn", async () => {
+    const { manager, fake, project } = makeGitSandboxManager("cw-turn-undo-");
+    const session = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    const worktreePath = session.worktreePath;
+    if (!worktreePath) throw new Error("expected a worktree-backed session");
+    const original = readFileSync(join(worktreePath, "README.md"), "utf8");
+
+    const turnId = await manager.startTurn(session.id, "edit");
+    writeFileSync(join(worktreePath, "README.md"), "turn edit\n", "utf8");
+    writeFileSync(join(worktreePath, "created.txt"), "created\n", "utf8");
+    await expect(manager.undoTurn(session.id, turnId)).rejects.toThrow("Cannot undo while a turn is running");
+
+    fake.completeAll();
+    await expect(manager.undoTurn(session.id, "stale-turn")).rejects.toThrow("Only the latest turn can be undone");
+    expect(await manager.turnChanges(session.id)).toEqual({
+      turnId,
+      files: [
+        { path: "README.md", change: "modified", added: 1, deleted: 1, binary: false },
+        { path: "created.txt", change: "added", added: 1, deleted: 0, binary: false }
+      ]
+    });
+
+    const undone = await manager.undoTurn(session.id, turnId);
+    expect(undone.files.map((file) => file.path)).toEqual(["README.md", "created.txt"]);
+    expect(readFileSync(join(worktreePath, "README.md"), "utf8")).toBe(original);
+    expect(existsSync(join(worktreePath, "created.txt"))).toBe(false);
     manager.dispose();
   });
 
@@ -1216,7 +1271,7 @@ describe("SessionManager", () => {
     manager.linkPr(session.id, { ref: gadgets, origin: "linked", lastSeenSha: "old-7", lastSeenAt: 0 });
     manager.linkPr(session.id, { ref: merged, origin: "linked", lastSeenSha: "old-9", lastSeenAt: 0 });
     const emitted: SessionMeta[] = [];
-    manager.setSessionEmitter((meta) => emitted.push(meta));
+    manager.setSessionEmitter((meta) => emitted.push(structuredClone(meta)));
 
     const turnId = await manager.startTurn(session.id, "hello", { prRefs: [widgets, merged] });
     fake.complete(turnId);

@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { AccountUsageSnapshot, AppSettings, CliBinary, CliDiscoveredCandidate, CliDiscoverResult, CommandInvocation, CommandOption, CreateSessionOptions, GitBranchInfo, GitDiffMode, GitDiffResult, GitStatus, HarnessId, PrDetail, PrInboxResult, Project, ProjectGitHubRepo, PrRef, PrWorkflow, RetryConnectionResult, SessionCleanupResult, SessionMeta, SessionPrLink, SessionStatus, SessionStatusReason, ShutdownAssessment, ShutdownCommitResult, ShutdownExpiredEvent, ShutdownPrepareRequest, ShutdownPrepareResult, ShutdownRequestedEvent, SkillDetail, SkillMeta, SkillSaveInput, SkillsListResult, SourceControlHealth, StartupState, SubagentToolsResult, UpdateActionResult, UpdateChannel, UpdateInstallRequest, UpdateState, UsageLedgerQuery, UsageLedgerRow, WorktreePruneSummary } from "@cw-code/contracts";
+import type { AccountUsageSnapshot, AppSettings, CliBinary, CliDiscoveredCandidate, CliDiscoverResult, CommandInvocation, CommandOption, CreateSessionOptions, GitBranchInfo, GitDiffMode, GitDiffResult, GitStatus, HarnessId, PrDetail, PrInboxResult, Project, ProjectGitHubRepo, PrRef, PrWorkflow, RetryConnectionResult, SessionCleanupResult, SessionMeta, SessionPrLink, SessionStatus, SessionStatusReason, ShutdownAssessment, ShutdownCommitResult, ShutdownExpiredEvent, ShutdownPrepareRequest, ShutdownPrepareResult, ShutdownRequestedEvent, SkillDetail, SkillMeta, SkillSaveInput, SkillsListResult, SourceControlHealth, StartupState, SubagentToolsResult, TurnChanges, UpdateActionResult, UpdateChannel, UpdateInstallRequest, UpdateState, UsageLedgerQuery, UsageLedgerRow, WorktreePruneSummary } from "@cw-code/contracts";
 
 export type PermissionMode = "auto" | "acceptEdits" | "bypassPermissions" | "manual";
 export type EffortLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
@@ -117,6 +117,8 @@ export interface CwApi {
   listProjectBranches(projectId: string): Promise<GitBranchInfo[]>;
   switchGitBranch(sessionId: string, branch: string): Promise<GitStatus>;
   getGitDiff(sessionId: string, mode: GitDiffMode, baseRef?: string): Promise<GitDiffResult>;
+  getTurnChanges(sessionId: string): Promise<TurnChanges | null>;
+  undoTurn(sessionId: string, turnId: string): Promise<TurnChanges>;
   getSourceControlHealth(projectId?: string): Promise<SourceControlHealth>;
   setProjectGitHubAccount(projectId: string, account: { host: string; login: string } | null): Promise<Project>;
   setRepositoryGitIdentity(projectId: string, name: string, email: string): Promise<void>;
@@ -142,7 +144,6 @@ export interface CwApi {
   listDir(sessionId: string, dir?: string): Promise<DirEntry[]>;
   savePasteImage(projectId: string, mime: string, data: Uint8Array): Promise<string>;
   readImage(args: { sessionId?: string; projectId?: string; path: string }): Promise<{ mime: string; base64: string }>;
-  turnDiff(sessionId: string, since: number): Promise<string>;
   openPty(sessionId: string, kind: PtyKindName): Promise<{ ptyId: string; token: string; replay: string }>;
   writePty(ptyId: string, data: string): void;
   resizePty(ptyId: string, cols: number, rows: number): void;
@@ -270,6 +271,8 @@ const api: CwApi = {
   switchGitBranch: (sessionId: string, branch: string) => ipcRenderer.invoke("git.switchBranch", { sessionId, branch }),
   getGitDiff: (sessionId: string, mode: GitDiffMode, baseRef?: string) =>
     ipcRenderer.invoke("git.diff", { sessionId, mode, baseRef }),
+  getTurnChanges: (sessionId: string) => ipcRenderer.invoke("git.turnChanges", { sessionId }),
+  undoTurn: (sessionId: string, turnId: string) => ipcRenderer.invoke("git.undoTurn", { sessionId, turnId }),
   getSourceControlHealth: (projectId?: string) => ipcRenderer.invoke("git.health", { projectId }),
   setProjectGitHubAccount: (projectId: string, account: { host: string; login: string } | null) =>
     ipcRenderer.invoke("git.setProjectAccount", { projectId, account }),
@@ -313,7 +316,6 @@ const api: CwApi = {
     ipcRenderer.invoke("fs.savePasteImage", { projectId, mime, data }),
   readImage: (args: { sessionId?: string; projectId?: string; path: string }) =>
     ipcRenderer.invoke("fs.readImage", args),
-  turnDiff: (sessionId: string, since: number) => ipcRenderer.invoke("git.turnDiff", { sessionId, since }),
   openPty: (sessionId: string, kind: PtyKindName) =>
     ipcRenderer.invoke("pty.open", { sessionId, kind }),
   writePty: (ptyId: string, data: string) => ipcRenderer.send("pty.write", { ptyId, data }),

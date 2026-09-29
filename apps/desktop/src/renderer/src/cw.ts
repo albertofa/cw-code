@@ -136,6 +136,14 @@ export interface Session {
   branch?: string;
   prs?: SessionPrLink[];
   prUnlinked?: string[];
+  lastTurnSnapshot?: TurnSnapshot;
+}
+
+export interface TurnSnapshot {
+  turnId: string;
+  sha?: string;
+  capturedAt: number;
+  error?: string;
 }
 
 export type CreateWorkspaceMode = "current" | "new" | "previous";
@@ -435,13 +443,26 @@ export interface GitBranchInfo {
   worktreePath: string | null;
 }
 
-export type GitDiffMode = "working" | "staged" | "branch";
+export type GitDiffMode = "working" | "staged" | "branch" | "turn";
 
 export interface GitDiffResult {
   mode: GitDiffMode;
   patch: string;
   baseRef: string | null;
   headRef: string;
+}
+
+export interface TurnFileChange {
+  path: string;
+  change: "modified" | "added" | "deleted";
+  added: number;
+  deleted: number;
+  binary: boolean;
+}
+
+export interface TurnChanges {
+  turnId: string;
+  files: TurnFileChange[];
 }
 
 export interface CustomModel {
@@ -583,6 +604,8 @@ export interface CwApi {
   listProjectBranches(projectId: string): Promise<GitBranchInfo[]>;
   switchGitBranch(sessionId: string, branch: string): Promise<GitStatus>;
   getGitDiff(sessionId: string, mode: GitDiffMode, baseRef?: string): Promise<GitDiffResult>;
+  getTurnChanges(sessionId: string): Promise<TurnChanges | null>;
+  undoTurn(sessionId: string, turnId: string): Promise<TurnChanges>;
   getSourceControlHealth(projectId?: string): Promise<SourceControlHealth>;
   setProjectGitHubAccount(projectId: string, account: { host: string; login: string } | null): Promise<Project>;
   setRepositoryGitIdentity(projectId: string, name: string, email: string): Promise<void>;
@@ -608,7 +631,6 @@ export interface CwApi {
   listDir(sessionId: string, dir?: string): Promise<DirEntry[]>;
   savePasteImage(projectId: string, mime: string, data: Uint8Array): Promise<string>;
   readImage(args: { sessionId?: string; projectId?: string; path: string }): Promise<{ mime: string; base64: string }>;
-  turnDiff(sessionId: string, since: number): Promise<string>;
   openPty(sessionId: string, kind: DriverName | "shell"): Promise<{ ptyId: string; token: string; replay: string }>;
   writePty(ptyId: string, data: string): void;
   resizePty(ptyId: string, cols: number, rows: number): void;

@@ -26,7 +26,9 @@ import type {
   ShutdownActiveTurn,
   SubagentToolsResult,
   ThreadEvent,
+  TurnChanges,
   TurnHandle,
+  TurnSnapshot,
   UsageLedgerQuery,
   UsageLedgerRow,
   WorktreePruneSummary
@@ -151,7 +153,7 @@ export class SessionManager {
   private git: GitService;
   private worktreesRoot: string;
   private deltaBuffer = new Map<string, { sessionId: string; text: string; timer: NodeJS.Timeout }>();
-  private turnBaseShas = new Map<string, string>();
+  private pendingUndos = new Set<string>();
   private disposed = false;
   private prHead: (ref: PrRef) => string | null;
   private prHeadRefresh?: (ref: PrRef) => Promise<string | null>;
@@ -659,7 +661,6 @@ export class SessionManager {
     opts: { removeWorktree?: boolean; forceBranch?: boolean }
   ): Promise<SessionCleanupResult> {
     const sessionId = session.id;
-    this.turnBaseShas.delete(sessionId);
     this.firstPrompts.delete(sessionId);
     this.branchRenamed.delete(sessionId);
     this.cancelTitleTurns(sessionId);
@@ -1019,18 +1020,57 @@ export class SessionManager {
     return buildTurnEnv(process.env, this.sessionEnvVars(sessionId, session, project, cwd));
   }
 
-  turnBaseSha(sessionId: string): string | null {
-    return this.turnBaseShas.get(sessionId) ?? null;
+  private async captureTurnSnapshot(sessionId: string, cwd: string): Promise<Omit<TurnSnapshot, "turnId"> | null> {
+    if (!(await this.git.isRepository(cwd))) return null;
+    const capturedAt = Date.now();
+    try {
+      return { sha: await this.git.snapshotWorkingTree(cwd), capturedAt };
+    } catch (err) {
+      const error = (err as Error).message || "snapshot failed";
+      console.warn(`turn snapshot failed for ${sessionId}: ${error}`);
+      return { capturedAt, error };
+    }
   }
 
-  private async captureTurnBaseSha(sessionId: string, cwd: string, worktreePath: string | null | undefined): Promise<void> {
-    if (!worktreePath) return;
+  lastTurnSnapshotSha(sessionId: string): string | undefined {
+    const session = this.store.getSession(sessionId);
+    if (!session) throw new Error(`unknown session ${sessionId}`);
+    return session.lastTurnSnapshot?.sha;
+  }
+
+  async turnChanges(sessionId: string): Promise<TurnChanges | null> {
+    const session = this.store.getSession(sessionId);
+    if (!session) throw new Error(`unknown session ${sessionId}`);
+    const snapshot = session.lastTurnSnapshot;
+    if (!snapshot?.sha) return null;
+    const root = await this.ensureWorktree(sessionId);
+    return { turnId: snapshot.turnId, files: await this.git.snapshotChanges(root, snapshot.sha) };
+  }
+
+  async undoTurn(sessionId: string, turnId: string): Promise<TurnChanges> {
+    const session = this.store.getSession(sessionId);
+    if (!session) throw new Error(`unknown session ${sessionId}`);
+    if (this.hasTurnInFlight(sessionId)) throw new Error("Cannot undo while a turn is running");
+    if (this.pendingUndos.has(sessionId)) throw new Error("Undo already in progress");
+    const snapshot = session.lastTurnSnapshot;
+    if (!snapshot?.sha) throw new Error("No snapshot for the last turn");
+    if (snapshot.turnId !== turnId) throw new Error("Only the latest turn can be undone");
+    this.pendingUndos.add(sessionId);
     try {
-      this.turnBaseShas.set(sessionId, await this.git.headSha(cwd));
-    } catch (err) {
-      this.turnBaseShas.delete(sessionId);
-      console.warn(`turn base capture failed for ${sessionId}: ${(err as Error).message}`);
+      const root = await this.ensureWorktree(sessionId);
+      const changes = await this.git.snapshotChanges(root, snapshot.sha);
+      return { turnId, files: await this.git.restoreSnapshot(root, snapshot.sha, changes) };
+    } finally {
+      this.pendingUndos.delete(sessionId);
     }
+  }
+
+  private hasTurnInFlight(sessionId: string): boolean {
+    if (this.pendingTurns.has(sessionId)) return true;
+    for (const entry of this.activeTurns.values()) {
+      if (entry.sessionId === sessionId) return true;
+    }
+    return false;
   }
 
   async startTurn(
@@ -1051,10 +1091,11 @@ export class SessionManager {
     }
     if (this.pendingTurns.has(sessionId)) throw new Error("session busy (turn pending)");
     if (this.pendingResolves.has(sessionId)) throw new Error("session busy (resolve pending)");
+    if (this.pendingUndos.has(sessionId)) throw new Error("session busy (undo pending)");
     this.pendingTurns.add(sessionId);
     try {
       const cwd = await this.ensureWorktree(sessionId);
-      await this.captureTurnBaseSha(sessionId, cwd, session.worktreePath);
+      const snapshot = await this.captureTurnSnapshot(sessionId, cwd);
       this.assertNotReserved();
       const firstMessage = session.title === NEW_SESSION_TITLE && !opts?.command;
       const placeholder = prompt.slice(0, 60);
@@ -1081,7 +1122,10 @@ export class SessionManager {
       });
       this.activeTurns.set(handle.turnId, { sessionId, startedAt: Date.now() });
       if (opts?.prRefs && opts.prRefs.length > 0) this.turnPrRefs.set(handle.turnId, opts.prRefs);
-      this.store.updateSession(sessionId, { status: "working" }, "turn-start");
+      const lastTurnSnapshot = snapshot ? { turnId: handle.turnId, ...snapshot } : undefined;
+      const snapshotChanged = lastTurnSnapshot !== undefined || session.lastTurnSnapshot !== undefined;
+      this.store.updateSession(sessionId, { status: "working", lastTurnSnapshot }, "turn-start");
+      if (snapshotChanged) this.emitSession(sessionId);
       if (firstMessage) this.maybeAutoTitle(sessionId, prompt, placeholder);
       return handle.turnId;
     } finally {
@@ -1631,7 +1675,6 @@ export class SessionManager {
     this.deltaBuffer.clear();
     this.cancelBackgroundWork();
     this.firstPrompts.clear();
-    this.turnBaseShas.clear();
     try {
       this.usageLedger.flush();
     } catch (err) {

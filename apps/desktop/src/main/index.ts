@@ -134,15 +134,16 @@ function createUpdateService(settings: AppSettings): UpdateService {
 
 function createServices(stores: { sessionStore: SessionStore; settingsStore: SettingsStore }): Services {
   let pullRequests: PullRequestService;
-  const sessions = new SessionManager({
+  const git: GitService = new GitService(() => sessions.getSettings());
+  const sessions: SessionManager = new SessionManager({
     sessionStore: stores.sessionStore,
     settingsStore: stores.settingsStore,
+    gitService: git,
     prHead: (ref) => pullRequests.knownHead(ref),
     prHeadRefresh: (ref) => pullRequests.refreshHead(ref),
     prState: (ref) => pullRequests.knownState(ref),
     prUpdatedAt: (ref) => pullRequests.knownUpdatedAt(ref)
   });
-  const git = new GitService(() => sessions.getSettings());
   pullRequests = new PullRequestService(git, () => sessions.getSettings(), (rootPath) => sessions.addProject(rootPath));
   const ptys = new PtyPool(() => sessions.getSettings());
   const settings = stores.settingsStore.get();
@@ -768,9 +769,16 @@ function registerIpc(services: Services): void {
     sessions.updateSessionBranch(args.sessionId, status.branch);
     return status;
   });
-  ipcMain.handle("git.diff", (_e, args: { sessionId: string; mode: GitDiffMode; baseRef?: string }) =>
-    sessions.ensureWorktree(args.sessionId).then((root) => git.diff(root, args.mode, args.baseRef))
-  );
+  ipcMain.handle("git.diff", async (_e, args: { sessionId: string; mode: GitDiffMode; baseRef?: string }) => {
+    const root = await sessions.ensureWorktree(args.sessionId);
+    const base = args.mode === "turn" ? sessions.lastTurnSnapshotSha(args.sessionId) : args.baseRef;
+    return git.diff(root, args.mode, base);
+  });
+  ipcMain.handle("git.turnChanges", (_e, args: { sessionId: string }) => sessions.turnChanges(args.sessionId));
+  ipcMain.handle("git.undoTurn", (_e, args: { sessionId: string; turnId: string }) => {
+    if (typeof args.turnId !== "string" || !args.turnId) throw new Error("invalid turnId");
+    return sessions.undoTurn(args.sessionId, args.turnId);
+  });
   ipcMain.handle("git.health", (_e, args: { projectId?: string }) => {
     if (!args.projectId) return git.health();
     const project = sessions.getProject(args.projectId);
@@ -878,11 +886,6 @@ function registerIpc(services: Services): void {
       throw lastError ?? new Error("no root available to read image");
     }
   );
-  ipcMain.handle("git.turnDiff", async (_e, args: { sessionId: string; since: number }) => {
-    const root = await sessions.ensureWorktree(args.sessionId);
-    return git.turnDiff(root, args.since, sessions.turnBaseSha(args.sessionId));
-  });
-
   ipcMain.handle("pty.open", (_e, args: { sessionId: string; kind: PtyKind }) =>
     sessions.ensureWorktree(args.sessionId).then((root) =>
       ptys.open(

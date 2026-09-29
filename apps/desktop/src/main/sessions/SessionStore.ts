@@ -137,6 +137,7 @@ type SessionPatch = Partial<
     | "branch"
     | "prs"
     | "prUnlinked"
+    | "lastTurnSnapshot"
   >
 >;
 
@@ -278,6 +279,8 @@ export class SessionStore {
     } else if ("prs" in patch) delete current.prs;
     if (patch.prUnlinked !== undefined) current.prUnlinked = patch.prUnlinked;
     else if ("prUnlinked" in patch) delete current.prUnlinked;
+    if (patch.lastTurnSnapshot !== undefined) current.lastTurnSnapshot = patch.lastTurnSnapshot;
+    else if ("lastTurnSnapshot" in patch) delete current.lastTurnSnapshot;
     current.updatedAt = Date.now();
     if (patch.status !== undefined && patch.status !== previousStatus) {
       traceSessionStatus({

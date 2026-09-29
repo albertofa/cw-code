@@ -55,6 +55,14 @@ export interface SessionMeta {
   prs?: SessionPrLink[];
   /** prKeys of PRs the user explicitly unlinked from this session, so auto-link does not re-attach them. */
   prUnlinked?: string[];
+  lastTurnSnapshot?: TurnSnapshot;
+}
+
+export interface TurnSnapshot {
+  turnId: string;
+  sha?: string;
+  capturedAt: number;
+  error?: string;
 }
 
 export type CreateWorkspaceMode = "current" | "new" | "previous";
@@ -236,11 +244,24 @@ export interface WorktreePruneSummary {
   clearedSessionIds: string[];
 }
 
-export type GitDiffMode = "working" | "staged" | "branch";
+export type GitDiffMode = "working" | "staged" | "branch" | "turn";
 
 export interface GitDiffResult {
   mode: GitDiffMode;
   patch: string;
   baseRef: string | null;
   headRef: string;
+}
+
+export interface TurnFileChange {
+  path: string;
+  change: "modified" | "added" | "deleted";
+  added: number;
+  deleted: number;
+  binary: boolean;
+}
+
+export interface TurnChanges {
+  turnId: string;
+  files: TurnFileChange[];
 }

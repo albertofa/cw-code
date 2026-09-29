@@ -10,7 +10,8 @@ import { shortenHome } from "./pathDisplay.js";
 const MODE_LABEL: Record<GitDiffMode, string> = {
   working: "Changes",
   staged: "Staged",
-  branch: "Branch"
+  branch: "Branch",
+  turn: "Last turn"
 };
 
 const STATUS_BADGE: Record<string, string> = {
@@ -113,7 +114,7 @@ export function GitInspectPanel({ sessionId }: { sessionId: string }) {
       <div className="inspect-toolbar">
         <span className="inspect-title"><FileDiff size={14} /> Git diff</span>
         <div className="inspect-modes" role="tablist" aria-label="Diff comparison">
-          {(Object.keys(MODE_LABEL) as GitDiffMode[]).map((item) => (
+          {(Object.keys(MODE_LABEL) as GitDiffMode[]).filter((item) => item !== "turn").map((item) => (
             <button
               key={item}
               className={`inspect-mode${mode === item ? " active" : ""}`}
