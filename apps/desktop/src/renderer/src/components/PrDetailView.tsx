@@ -1,8 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Activity,
   AlertTriangle,
-  Bot,
   Check,
   ChevronRight,
   CircleCheck,
@@ -14,17 +12,17 @@ import {
   Lock,
   MessageSquare,
   RefreshCw,
-  Sparkles,
   Wrench,
   X
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import type { PrWorkflowIcon } from "@cw-code/contracts";
 import type { PrCheck, PrDetail, PrRef, PrReviewThread, PrTimelineItem, PrWorkflow, Session } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import { selectSessionPanel, usePanelStore } from "../stores/panelStore.js";
 import { usePrStore, type PrDetailTab } from "../stores/prStore.js";
 import { PanelToggles } from "./PanelToggles.js";
+import { PrAvatar } from "./PrAvatar.js";
+import { workflowIcon } from "./workflowIcons.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { Md } from "./Markdown.js";
 import { useNotifs } from "./Notifications.js";
@@ -36,21 +34,7 @@ import { suggestedWorkflow } from "./prWorkflows.js";
 import { linkedSessionsBarState, mergeBoxState, threadQuoteText, threadSendTarget, type LinkedBarState } from "./prDetailModel.js";
 import { linkFor, pickMainSession, sessionsLinkedTo } from "./sessionPrLinks.js";
 
-const WORKFLOW_ICONS: Record<PrWorkflowIcon, LucideIcon> = {
-  eye: Eye,
-  activity: Activity,
-  message: MessageSquare,
-  wrench: Wrench,
-  merge: GitMerge,
-  bot: Bot,
-  sparkle: Sparkles
-};
-
 const MAX_LOG_LINES = 2000;
-
-function workflowIcon(icon: PrWorkflowIcon): LucideIcon {
-  return WORKFLOW_ICONS[icon] ?? Sparkles;
-}
 
 function openExternalLink(url: string): void {
   void window.cw.openExternal(url).catch(() => {
@@ -333,6 +317,7 @@ export function PrDetailView({ prRef }: { prRef: PrRef }) {
               <span className={`pr-detail-pill ${detail.state === "MERGED" ? "merged" : detail.state === "CLOSED" ? "closed" : detail.isDraft ? "draft" : "open"}`}>
                 {detail.state === "MERGED" ? "Merged" : detail.state === "CLOSED" ? "Closed" : detail.isDraft ? "Draft" : "Open"}
               </span>
+              <PrAvatar login={detail.author.login} name={detail.author.name} avatarUrl={detail.author.avatarUrl} size={20} />
               <span>
                 <strong>{detail.viewerIsAuthor ? "You" : detail.author.login}</strong> {detail.viewerIsAuthor ? "want" : "wants"} to merge into{" "}
                 <code>{detail.baseRefName}</code> from <code>{detail.headRefName}</code>
@@ -500,6 +485,7 @@ function ConversationTab({
       {detail.body && (
         <div className="pr-detail-comment">
           <div className="pr-detail-comment-head">
+            <PrAvatar login={detail.author.login} name={detail.author.name} avatarUrl={detail.author.avatarUrl} size={20} />
             <strong>{detail.viewerIsAuthor ? "you" : detail.author.login}</strong> opened this
           </div>
           <Md text={detail.body} allowImages={false} />
@@ -551,6 +537,11 @@ function ConversationTab({
       </div>
     </div>
   );
+}
+
+function ActorAvatar({ actor, detail }: { actor: string; detail: PrDetail }) {
+  const isAuthor = actor === detail.author.login;
+  return <PrAvatar login={actor} name={isAuthor ? detail.author.name : undefined} avatarUrl={isAuthor ? detail.author.avatarUrl : undefined} size={20} />;
 }
 
 function MergeRowView({ row, icon: Icon }: { row: { ok: boolean; label: string; detail: string }; icon: LucideIcon }) {
@@ -614,6 +605,7 @@ function TimelineEvent({
     return (
       <div className="pr-detail-comment">
         <div className="pr-detail-comment-head">
+          <ActorAvatar actor={item.actor} detail={detail} />
           <strong>{item.actor}</strong> {reviewVerb(item.state)} · {ageLabel(item.at)} ago
           <span className={`pr-detail-pill sm ${tone}`}>{item.state.replace("_", " ").toLowerCase()}</span>
         </div>
@@ -627,7 +619,10 @@ function TimelineEvent({
   if (item.kind === "comment") {
     return (
       <div className="pr-detail-comment">
-        <div className="pr-detail-comment-head"><strong>{item.actor}</strong> commented · {ageLabel(item.at)} ago</div>
+        <div className="pr-detail-comment-head">
+          <ActorAvatar actor={item.actor} detail={detail} />
+          <strong>{item.actor}</strong> commented · {ageLabel(item.at)} ago
+        </div>
         <Md text={item.body} allowImages={false} />
       </div>
     );

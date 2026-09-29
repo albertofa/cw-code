@@ -115,3 +115,15 @@ export function formatRelativeAge(fromMs: number, nowMs: number): string {
   if (days < 7) return `${days}d`;
   return `${Math.round(days / 7)}w`;
 }
+
+export interface SessionChipState {
+  kind: "running" | "review" | "age";
+  text: string;
+}
+
+export function sessionChipState(session: Session, pr: PrSummary, nowMs: number): SessionChipState {
+  if (session.status === "working") return { kind: "running", text: "Running" };
+  const link = linkFor(session, pr.ref);
+  if (link && hasUnseen(pr, link)) return { kind: "review", text: "Needs review" };
+  return { kind: "age", text: formatRelativeAge(session.updatedAt, nowMs) };
+}

@@ -10,6 +10,10 @@ const PR_SUMMARY_FIELDS = `
   author {
     login
     __typename
+    avatarUrl(size: 48)
+    ... on User {
+      name
+    }
   }
   headRefName
   headRefOid

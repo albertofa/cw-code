@@ -1,6 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  Activity,
   AlertTriangle,
   ArrowDown,
   ArrowUp,
@@ -10,21 +9,19 @@ import {
   Eye,
   Gauge,
   GitBranch,
-  GitMerge,
   GitPullRequest,
-  MessageSquare,
   Plus,
   RefreshCw,
   RotateCcw,
   Sparkles,
   Star,
   Trash2,
-  Wrench,
   X,
   XCircle
 } from "lucide-react";
 import type { AppSettings, DriverName, EffortLevel, ModelOption, SourceControlHealth, WorktreePruneSummary } from "../cw.js";
 import { BinaryPicker } from "./BinaryPicker.js";
+import { WORKFLOW_ICONS } from "./workflowIcons.js";
 import { TOOL_TABS } from "./toolTabs.js";
 import type { PanelId, PrSuggestCondition, PrWorkflow, PrWorkflowIcon, PrWorkspaceChoice } from "@cw-code/contracts";
 import { useAppStore } from "../stores/appStore.js";
@@ -39,16 +36,6 @@ import appIcon from "../assets/console-c.svg";
 import { version as appVersion, description as appDescription } from "../../../../package.json";
 import { attributionText, TEMPLATE_VARS } from "./prWorkflows.js";
 import { createWorkflow, deleteWorkflow, duplicateWorkflow, insertAtCursor, moveWorkflow, resetWorkflowTo } from "./prWorkflowEditor.js";
-
-const WORKFLOW_ICONS: Record<PrWorkflowIcon, typeof Eye> = {
-  eye: Eye,
-  activity: Activity,
-  message: MessageSquare,
-  wrench: Wrench,
-  merge: GitMerge,
-  bot: Bot,
-  sparkle: Sparkles
-};
 
 const CONDITION_LABELS: Record<PrSuggestCondition, string> = {
   "review-requested": "Review requested from me",

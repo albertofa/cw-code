@@ -1,6 +1,7 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   AlertTriangle,
+  Bell,
   Check,
   CircleCheck,
   CircleX,
@@ -24,8 +25,9 @@ import { useAppStore } from "../stores/appStore.js";
 import { selectSessionPanel, usePanelStore } from "../stores/panelStore.js";
 import { usePrStore } from "../stores/prStore.js";
 import { PanelToggles } from "./PanelToggles.js";
-import { projectAvatarStyle, projectInitials } from "./avatar.js";
 import { DriverIcon } from "./DriverIcon.js";
+import { PrAvatar } from "./PrAvatar.js";
+import "./prInbox.css";
 import { prKey } from "./prInbox.js";
 import { hasUnseen } from "./prUpdates.js";
 import {
@@ -38,14 +40,17 @@ import {
   formatRelativeAge,
   groupRowsByBucket,
   matchesFilter,
-  rowDeltaText,
+  sessionChipState,
   type PrInboxFilterId,
   type PrInboxRow
 } from "./prInboxModel.js";
 import { primaryAction, suggestedWorkflow } from "./prWorkflows.js";
+import { workflowIcon } from "./workflowIcons.js";
 import { linkFor } from "./sessionPrLinks.js";
 import { errorMessage } from "./errorMessage.js";
 import { usePrSettings } from "./useLinkedPr.js";
+
+const MAX_SESSION_CHIPS = 2;
 
 function useNow(intervalMs = 5000): number {
   const [now, setNow] = useState(() => Date.now());
@@ -121,24 +126,17 @@ function fallbackWorkflow(pr: PrSummary, workflows: PrWorkflow[]): PrWorkflow | 
   return suggestedWorkflow(pr, workflows) ?? workflows.find((w) => w.enabled) ?? null;
 }
 
-function StateIcon({ pr }: { pr: PrSummary }) {
-  if (pr.state === "MERGED") {
-    return (
-      <span className="pr-inbox-state tone-merged" title="Merged">
-        <GitMerge size={14} aria-hidden="true" />
-      </span>
-    );
-  }
-  if (pr.isDraft) {
-    return (
-      <span className="pr-inbox-state tone-neutral" title="Draft">
-        <GitPullRequestDraft size={14} aria-hidden="true" />
-      </span>
-    );
-  }
+function StateIcon({ pr, unseen }: { pr: PrSummary; unseen: boolean }) {
+  const { Icon, tone, title } =
+    pr.state === "MERGED"
+      ? { Icon: GitMerge, tone: "merged", title: "Merged" }
+      : pr.isDraft
+        ? { Icon: GitPullRequestDraft, tone: "neutral", title: "Draft" }
+        : { Icon: GitPullRequest, tone: "ok", title: "Open" };
   return (
-    <span className="pr-inbox-state tone-ok" title="Open">
-      <GitPullRequest size={14} aria-hidden="true" />
+    <span className={`pr-inbox-state tone-${tone}`} title={title}>
+      <Icon size={14} aria-hidden="true" />
+      {unseen && <span className="pr-unseen-dot pr-inbox-state-dot" title="Updated since you last looked" />}
     </span>
   );
 }
@@ -545,17 +543,20 @@ function PrRow({
   const review = reviewTone(pr);
   const action = primaryAction(pr, row.linkedSessions, workflows);
   const fallback = action.kind === "none" && pr.state !== "MERGED" ? fallbackWorkflow(pr, workflows) : null;
-  const initials = projectInitials(pr.author.login);
-  const avatarCss = projectAvatarStyle(pr.author.login);
-  const delta = rowDeltaText(row, now);
   const showCaret = pr.state !== "MERGED";
+  const authorLogin = pr.author.login || "ghost";
+  const visibleSessions = row.linkedSessions.slice(0, MAX_SESSION_CHIPS);
+  const hiddenSessions = row.linkedSessions.length - visibleSessions.length;
 
-  const primaryLabel = (() => {
-    if (action.kind === "open") return "Open session";
-    if (action.kind === "continue") return "Re-review";
-    if (action.kind === "run") return workflows.find((w) => w.id === action.workflowId)?.label ?? action.workflowId;
-    if (fallback) return fallback.label;
-    return "GitHub";
+  const primary = (() => {
+    if (action.kind === "open") return { label: "Open session", Icon: MessageSquare };
+    if (action.kind === "continue") return { label: "Re-review", Icon: RefreshCw };
+    if (action.kind === "run") {
+      const workflow = workflows.find((w) => w.id === action.workflowId);
+      return { label: workflow?.label ?? action.workflowId, Icon: workflow ? workflowIcon(workflow.icon) : ExternalLink };
+    }
+    if (fallback) return { label: fallback.label, Icon: workflowIcon(fallback.icon) };
+    return { label: "GitHub", Icon: ExternalLink };
   })();
 
   const primaryHandler = () => {
@@ -568,8 +569,7 @@ function PrRow({
 
   return (
     <div className={`pr-inbox-row${row.hasUnseenSession ? "" : " seen"}`} onClick={onOpen}>
-      <span className="pr-inbox-row-dot-cell">{row.hasUnseenSession && <span className="pr-unseen-dot" title="Updated since you last looked" />}</span>
-      <StateIcon pr={pr} />
+      <StateIcon pr={pr} unseen={row.hasUnseenSession} />
       <div className="pr-inbox-title-col">
         <div className="pr-inbox-title-line">
           <button
@@ -589,69 +589,72 @@ function PrRow({
           ))}
         </div>
         <div className="pr-inbox-meta-line">
-          <span className="pr-inbox-repo">
-            {pr.ref.owner}/{pr.ref.repo}
+          <span className="pr-inbox-repo pr-inbox-mono">
+            {pr.ref.owner}/{pr.ref.repo}#{pr.ref.number}
           </span>
           <span className="pr-inbox-meta-sep">·</span>
-          <span>#{pr.ref.number}</span>
+          <span>{formatRelativeAge(pr.updatedAt, now)} ago</span>
           <span className="pr-inbox-meta-sep">·</span>
-          <span className="avatar sm pr-inbox-avatar" style={avatarCss} aria-hidden="true">
-            {initials}
+          <span className="pr-inbox-mono">
+            <span className="pr-inbox-add">+{pr.additions}</span> <span className="pr-inbox-del">−{pr.deletions}</span>
           </span>
-          <span>{pr.author.login}</span>
-          {delta && (
-            <>
-              <span className="pr-inbox-meta-sep">·</span>
-              <span className="pr-inbox-delta">{delta}</span>
-            </>
-          )}
           {!row.cloned && <span className="pr-inbox-not-cloned">not cloned</span>}
         </div>
+        {visibleSessions.length > 0 && (
+          <div className="pr-inbox-sessions-line">
+            {visibleSessions.map((session) => {
+              const state = sessionChipState(session, pr, now);
+              return (
+                <button
+                  key={session.id}
+                  type="button"
+                  className="pr-inbox-session-chip"
+                  title={session.title}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onGoToSession(session.id);
+                  }}
+                >
+                  <DriverIcon driver={session.driver} size={12} />
+                  <span className="pr-inbox-session-chip-title">{session.title}</span>
+                  <span className={`pr-inbox-session-chip-state ${state.kind}`}>
+                    {state.kind === "running" && <Loader size={12} aria-hidden="true" className="pr-inbox-spin" />}
+                    {state.kind === "review" && <Bell size={12} aria-hidden="true" />}
+                    {state.text}
+                  </span>
+                </button>
+              );
+            })}
+            {hiddenSessions > 0 && (
+              <button
+                type="button"
+                className="pr-inbox-session-chip pr-inbox-session-more"
+                aria-expanded={sessionsOpen}
+                title={`${row.linkedSessions.length} linked sessions`}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onOpenSessions(e.currentTarget);
+                }}
+              >
+                +{hiddenSessions}
+              </button>
+            )}
+          </div>
+        )}
+      </div>
+      <div className="pr-inbox-author pr-inbox-col-author">
+        <PrAvatar login={authorLogin} name={pr.author.name} avatarUrl={pr.author.avatarUrl} />
+        <span className="pr-inbox-author-text">
+          <span className="pr-inbox-author-name">{pr.author.name || authorLogin}</span>
+          <span className="pr-inbox-author-login">@{authorLogin}</span>
+        </span>
       </div>
       <Signal {...checks} className="pr-inbox-col-checks" />
       <Signal {...review} className="pr-inbox-col-review" />
-      <span
-        className="pr-inbox-signal tone-neutral pr-inbox-col-comments"
-        title={`${pr.commentsCount} comments${pr.unresolvedThreads ? `, ${pr.unresolvedThreads} unresolved` : ""}`}
-      >
-        <MessageSquare size={13} aria-hidden="true" />
-        <span>
-          {pr.commentsCount}
-          {pr.unresolvedThreads > 0 && <span className="pr-inbox-unresolved"> · {pr.unresolvedThreads}</span>}
-        </span>
-      </span>
-      <div className="pr-inbox-size pr-inbox-col-size">
-        <span className="pr-inbox-size-line">
-          <span className="pr-inbox-add">+{pr.additions}</span> <span className="pr-inbox-del">−{pr.deletions}</span>
-        </span>
-        <span className="pr-inbox-age">{formatRelativeAge(pr.updatedAt, now)} ago</span>
-      </div>
-      <button
-        type="button"
-        className="pr-inbox-sessions"
-        aria-expanded={sessionsOpen}
-        title={row.linkedSessions.length > 0 ? `${row.linkedSessions.length} linked session(s)` : "No linked sessions"}
-        onClick={(e) => {
-          e.stopPropagation();
-          if (row.linkedSessions.length === 0) return;
-          onOpenSessions(e.currentTarget);
-        }}
-      >
-        {row.linkedSessions.length === 0 ? (
-          <span className="pr-inbox-sessions-empty">—</span>
-        ) : (
-          <>
-            {row.linkedSessions.slice(0, 3).map((session) => (
-              <DriverIcon key={session.id} driver={session.driver} size={13} />
-            ))}
-            {row.linkedSessions.length > 1 && <span className="pr-inbox-session-count">{row.linkedSessions.length}</span>}
-            {row.hasUnseenSession && <span className="pr-unseen-dot" aria-hidden="true" />}
-          </>
-        )}
-      </button>
       <div className="pr-inbox-action" onClick={(e) => e.stopPropagation()}>
-        <button type="button" className="btn pr-inbox-action-btn" onClick={primaryHandler}>
-          {primaryLabel}
+        <button type="button" className="btn pr-inbox-action-btn" title={primary.label} onClick={primaryHandler}>
+          <primary.Icon size={13} aria-hidden="true" />
+          <span className="pr-inbox-action-label">{primary.label}</span>
         </button>
         {showCaret && (
           <button

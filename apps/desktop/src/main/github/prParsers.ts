@@ -1,5 +1,6 @@
 import type {
   GitPullRequestChecks,
+  PrAuthor,
   PrBucket,
   PrCheck,
   PrCiState,
@@ -107,13 +108,22 @@ function prStateFrom(value: unknown): PrSummary["state"] {
   return state === "CLOSED" || state === "MERGED" ? state : "OPEN";
 }
 
+function parseAuthor(author: Record<string, unknown>): PrAuthor {
+  const name = asString(author.name).trim();
+  const avatarUrl = asString(author.avatarUrl);
+  return {
+    login: asString(author.login),
+    isBot: asString(author.__typename) === "Bot",
+    ...(name ? { name } : {}),
+    ...(avatarUrl.startsWith("https://") ? { avatarUrl } : {})
+  };
+}
+
 function parseSummaryNode(node: Record<string, unknown>, viewer: string | null): PrSummary | null {
   const url = asString(node.url);
   const ref = prRefFromUrl(url);
   const number = asNumber(node.number);
   if (!ref || number <= 0) return null;
-  const author = asRecord(node.author);
-  const login = asString(author.login);
   const reviewerLogins = asNodes(node.reviewRequests)
     .map((request) => asString(asRecord(request.requestedReviewer).login))
     .filter(Boolean);
@@ -125,7 +135,7 @@ function parseSummaryNode(node: Record<string, unknown>, viewer: string | null):
     title: asString(node.title, `Pull request #${number}`),
     state: prStateFrom(node.state),
     isDraft: asBool(node.isDraft),
-    author: { login, isBot: asString(author.__typename) === "Bot" },
+    author: parseAuthor(asRecord(node.author)),
     viewerIsAuthor: asBool(node.viewerDidAuthor),
     reviewRequestedFromViewer: viewer !== null && reviewerLogins.includes(viewer),
     headRefName: asString(node.headRefName),

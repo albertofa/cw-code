@@ -33,6 +33,7 @@ export type {
   PrReviewState,
   PrMergeable,
   PrBucket,
+  PrAuthor,
   PrSummary,
   PrInboxResult,
   ProjectGitHubRepo,

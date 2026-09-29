@@ -7,7 +7,8 @@ import {
   formatRelativeAge,
   groupRowsByBucket,
   matchesFilter,
-  rowDeltaText
+  rowDeltaText,
+  sessionChipState
 } from "./prInboxModel.js";
 
 function ref(overrides: Partial<PrRef> = {}): PrRef {
@@ -258,5 +259,24 @@ describe("formatRelativeAge", () => {
   it("formats days then weeks", () => {
     expect(formatRelativeAge(0, 24 * 60 * 60_000)).toBe("1d");
     expect(formatRelativeAge(0, 9 * 24 * 60 * 60_000)).toBe("1w");
+  });
+});
+
+describe("sessionChipState", () => {
+  const link = { ref: ref(), origin: "opened" as const, lastSeenSha: "sha-1", lastSeenAt: 200 };
+
+  it("reports a working session as running even when the PR has updates", () => {
+    const pr = summary({ headRefOid: "sha-2" });
+    expect(sessionChipState(session({ status: "working", prs: [link] }), pr, 1_000)).toEqual({ kind: "running", text: "Running" });
+  });
+
+  it("flags a session whose linked PR has unseen updates as needing review", () => {
+    const pr = summary({ headRefOid: "sha-2" });
+    expect(sessionChipState(session({ prs: [link] }), pr, 1_000)).toEqual({ kind: "review", text: "Needs review" });
+  });
+
+  it("falls back to the session age when nothing is pending", () => {
+    const pr = summary({ headRefOid: "sha-1", updatedAt: 100 });
+    expect(sessionChipState(session({ updatedAt: 0, prs: [link] }), pr, 120_000)).toEqual({ kind: "age", text: "2m" });
   });
 });
