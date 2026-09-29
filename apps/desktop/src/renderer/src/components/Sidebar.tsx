@@ -1,29 +1,37 @@
-import { useEffect, useLayoutEffect, useRef, useState, type CSSProperties } from "react";
-import { Bell, ChartColumn, Check, ChevronDown, ChevronRight, ChevronUp, CircleHelp, Clock, GitBranch, GitPullRequest, Hash, ListFilter, LoaderCircle, Plus, Search, Settings, X } from "lucide-react";
-import type { DriverName, PrSummary, Project, Session, SessionStatus } from "../cw.js";
+import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { Bell, ChartColumn, Check, ChevronDown, ChevronRight, ChevronUp, CircleHelp, Clock, GitBranch, GitPullRequest, Hash, LoaderCircle, Plus, Search, Settings, ShieldAlert, X, type LucideIcon } from "lucide-react";
+import type { DriverName, PrSummary, Session, SessionStatus } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import { usePrStore } from "../stores/prStore.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { UpdateIndicator } from "./UpdateIndicator.js";
 import { useNotifs } from "./Notifications.js";
 import { getLastModel } from "./lastModel.js";
-import { hashHue, projectAvatarStyle as avatarStyle, projectInitials as initials } from "./avatar.js";
+import { projectAvatarStyle as avatarStyle, projectInitials as initials } from "./avatar.js";
 import { mergeAwayIds } from "./sidebarOrder.js";
 import { compareWorkingSet, isWorkingSetStatus } from "./workingSet.js";
 import { shortenHome } from "./pathDisplay.js";
 import { PrChipBadge } from "./PrChipBadge.js";
 import { needsAttentionCount } from "./prInbox.js";
 import { anyLinkUnseen, displayChip, linksTitle, mostUrgentLink, prSummaryLookup, sessionLinks } from "./sessionPrLinks.js";
-import { matchesQuickFilter, quickFilterCounts, toggleQuickFilter, type QuickFilter } from "./sidebarQuickFilters.js";
+import { matchesQuickFilter, matchesSessionQuery, quickFilterCounts, toggleQuickFilter, type QuickFilter } from "./sidebarQuickFilters.js";
+import { compareNeedsYou, firstUnseenPr, sessionAttention, type Attention, type AttentionKind } from "./needsYou.js";
 import appIcon from "../assets/console-c.svg";
 
-const GROUP_VISIBLE = 6;
+const IDLE_LIMIT = 4;
+const FLIP_MS = 150;
+const FLIP_EASING_FALLBACK = "cubic-bezier(0.22, 1, 0.36, 1)";
+const ORDER_KEY = "cw:order:all";
 
-function groupTintStyle(name: string): CSSProperties {
-  const h = hashHue(name);
-  return {
-    background: `linear-gradient(90deg, hsla(${h}, 35%, 32%, 0.3), hsla(${h}, 35%, 32%, 0) 75%)`
-  };
+const ATTENTION_ACTION: Record<AttentionKind, { verb: string; Icon: LucideIcon }> = {
+  approval: { verb: "Approve", Icon: ShieldAlert },
+  question: { verb: "Answer", Icon: CircleHelp },
+  update: { verb: "Review", Icon: Bell }
+};
+
+function flipEasing(): string {
+  const token = window.getComputedStyle(document.documentElement).getPropertyValue("--ease-out").trim();
+  return token || FLIP_EASING_FALLBACK;
 }
 
 function stateLabel(status: SessionStatus): string {
@@ -64,9 +72,8 @@ function sessionHasUnseen(session: Session, summaryByKey: Map<string, PrSummary>
   return anyLinkUnseen(sessionLinks(session), summaryByKey);
 }
 
-const QUICK_FILTER_UI: Array<{ id: Exclude<QuickFilter, "all">; label: string; Icon: typeof Bell }> = [
+const QUICK_FILTER_UI: Array<{ id: Exclude<QuickFilter, "all">; label: string; Icon: LucideIcon }> = [
   { id: "running", label: "Running", Icon: LoaderCircle },
-  { id: "input", label: "Needs input", Icon: CircleHelp },
   { id: "pr", label: "Linked to a PR", Icon: GitPullRequest },
   { id: "updated", label: "PR updated", Icon: Bell }
 ];
@@ -80,10 +87,6 @@ interface SidebarOrder {
   main: string[];
   resolved: string[];
   pinned: string[];
-}
-
-function orderKeyFor(filter: string): string {
-  return `cw:order:${filter}`;
 }
 
 interface SlotRow {
@@ -235,8 +238,9 @@ function DebugMenu() {
   );
 }
 
+
 export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { onOpenSettings: () => void; onOpenSkills: () => void; skillsOpen?: boolean }) {
-  const { projects, sessionsByProject, activeProjectId, activeSessionId, gitStatusBySession, projectFilter, homeDir, pendingDriver } = useAppStore();
+  const { projects, sessionsByProject, activeSessionId, gitStatusBySession, homeDir, pendingDriver, pendingApprovals, pendingQuestions } = useAppStore();
   const shortPath = (value: string): string => shortenHome(value, homeDir ?? undefined);
   const store = useAppStore();
   const inbox = usePrStore((s) => s.inbox);
@@ -247,49 +251,16 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
   const openUsage = usePrStore((s) => s.openUsage);
   const [query, setQuery] = useState("");
   const [quickFilter, setQuickFilter] = useState<QuickFilter>("all");
-  const [pickerOpen, setPickerOpen] = useState(false);
-  const [projectQuery, setProjectQuery] = useState("");
-  const [managedId, setManagedId] = useState<string | null>(null);
-  const [copiedId, setCopiedId] = useState<string | null>(null);
   const [menu, setMenu] = useState<{ sessionId: string; x: number; y: number } | null>(null);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameDraft, setRenameDraft] = useState("");
   const [dragged, setDragged] = useState<{ id: string; section: SidebarSection; title: string } | null>(null);
   const [preview, setPreview] = useState<{ targetId: string | null; section: SidebarSection; before: boolean } | null>(null);
   const [landedId, setLandedId] = useState<string | null>(null);
-  const [collapsedGroups, setCollapsedGroups] = useState<Set<string>>(new Set());
-  const [expandedGroups, setExpandedGroups] = useState<Set<string>>(new Set());
-  const [resolvedOpen, setResolvedOpen] = useState<Set<string>>(new Set());
-  const [workingSetOpen, setWorkingSetOpen] = useState(true);
+  const [idleShowAll, setIdleShowAll] = useState(false);
+  const [resolvedOpen, setResolvedOpen] = useState(false);
   const [hover, setHover] = useState<{ id: string; x: number; y: number } | null>(null);
   const hoverTimer = useRef<number | null>(null);
-
-  const toggleGroup = (projectId: string) => {
-    setCollapsedGroups((prev) => {
-      const next = new Set(prev);
-      if (next.has(projectId)) next.delete(projectId);
-      else next.add(projectId);
-      return next;
-    });
-  };
-
-  const toggleExpandGroup = (projectId: string) => {
-    setExpandedGroups((prev) => {
-      const next = new Set(prev);
-      if (next.has(projectId)) next.delete(projectId);
-      else next.add(projectId);
-      return next;
-    });
-  };
-
-  const toggleResolved = (projectId: string) => {
-    setResolvedOpen((prev) => {
-      const next = new Set(prev);
-      if (next.has(projectId)) next.delete(projectId);
-      else next.add(projectId);
-      return next;
-    });
-  };
 
   const hoverModel = useAppStore((s) => (hover ? s.composerBySession[hover.id]?.model : undefined));
   const dragRef = useRef<{ id: string; section: SidebarSection; title: string; startX: number; startY: number; active: boolean } | null>(null);
@@ -300,8 +271,7 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
   const detachRef = useRef<(() => void) | null>(null);
   const listRef = useRef<HTMLDivElement>(null);
   const searchRef = useRef<HTMLInputElement>(null);
-  const filterBtnRef = useRef<HTMLButtonElement>(null);
-  const toggleRefs = useRef(new Map<string, HTMLButtonElement>());
+  const resolvedToggleRef = useRef<HTMLButtonElement>(null);
   const slotSnap = useRef<SlotSnapshot | null>(null);
   const rowRefs = useRef(new Map<string, HTMLDivElement>());
   const prevRects = useRef(new Map<string, { top: number; height: number }>());
@@ -316,16 +286,18 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
       next.set(id, { top, height });
     });
     if (!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+      let easing: string | null = null;
       prevRects.current.forEach((prev, id) => {
         const el = rowRefs.current.get(id);
         const cur = next.get(id);
         if (!el || !cur || prev.height === 0 || cur.height === 0) return;
         const dy = prev.top - cur.top;
         if (dy === 0) return;
+        easing ??= flipEasing();
         el.getAnimations().forEach((a) => a.cancel());
         el.animate([{ transform: `translateY(${dy}px)` }, { transform: "translateY(0px)" }], {
-          duration: 260,
-          easing: "cubic-bezier(0.22, 1, 0.36, 1)"
+          duration: FLIP_MS,
+          easing
         });
       });
     }
@@ -384,25 +356,39 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
     };
   }, []);
 
-  const filterProject = projectFilter === "all" ? undefined : projects.find((p) => p.id === projectFilter);
   const projectNameById: Record<string, string> = Object.fromEntries(projects.map((p) => [p.id, p.name]));
-  const source: Session[] =
-    projectFilter === "all" ? Object.values(sessionsByProject).flat() : (sessionsByProject[projectFilter] ?? []);
+  const source: Session[] = Object.values(sessionsByProject).flat();
   const inboxItems = inbox?.items ?? [];
   const summaryByKey = prSummaryLookup(inboxItems, detailByKey);
+  const branchOf = (s: Session): string | undefined => gitStatusBySession[s.id]?.branch ?? s.branch;
   const quickFacts = (s: Session) => ({ status: s.status, linkCount: sessionLinks(s).length, unseen: sessionHasUnseen(s, summaryByKey) });
   const quickCounts = quickFilterCounts(source.map(quickFacts));
   const matchesQuery = (s: Session) =>
-    (!query || s.title.toLowerCase().includes(query.toLowerCase())) && matchesQuickFilter(quickFilter, quickFacts(s));
+    matchesSessionQuery(query, { title: s.title, project: projectNameById[s.projectId] ?? "", branch: branchOf(s) }) &&
+    matchesQuickFilter(quickFilter, quickFacts(s));
+  const attentionOf = (s: Session): Attention | null =>
+    sessionAttention({
+      session: s,
+      approvals: pendingApprovals[s.id],
+      questions: pendingQuestions[s.id],
+      unseenPr: firstUnseenPr(s, summaryByKey, detailByKey)
+    });
+  const needsYouAll = source
+    .flatMap((session) => {
+      const attention = attentionOf(session);
+      return attention ? [{ session, attention, updatedAt: session.updatedAt }] : [];
+    })
+    .sort(compareNeedsYou);
+  const needsYouShown = needsYouAll.filter((entry) => matchesQuery(entry.session));
+  const attentionIds = new Set(needsYouAll.map((entry) => entry.session.id));
   const byRecency = (a: Session, b: Session) => b.updatedAt - a.updatedAt;
-  const workingSetAll = source.filter((s) => isWorkingSetStatus(s.status)).sort(compareWorkingSet);
+  const workingSetAll = source.filter((s) => isWorkingSetStatus(s.status) && !attentionIds.has(s.id)).sort(compareWorkingSet);
   const workingSetShown = workingSetAll.filter(matchesQuery);
-  const workingSetIds = new Set(workingSetAll.map((s) => s.id));
-  const orderKey = orderKeyFor(projectFilter);
-  const storedOrder = readStoredOrder(orderKey);
-  const storedMain = (storedOrder?.main ?? []).filter((id) => !workingSetIds.has(id));
-  const storedResolved = (storedOrder?.resolved ?? []).filter((id) => !workingSetIds.has(id));
-  const storedPinned = (storedOrder?.pinned ?? []).filter((id) => !workingSetIds.has(id));
+  const awayIds = new Set([...attentionIds, ...workingSetAll.map((s) => s.id)]);
+  const storedOrder = readStoredOrder(ORDER_KEY);
+  const storedMain = (storedOrder?.main ?? []).filter((id) => !awayIds.has(id));
+  const storedResolved = (storedOrder?.resolved ?? []).filter((id) => !awayIds.has(id));
+  const storedPinned = (storedOrder?.pinned ?? []).filter((id) => !awayIds.has(id));
   const pinnedSet = new Set(storedPinned);
   const storedMainSet = new Set(storedMain);
   const storedResolvedSet = new Set(storedResolved);
@@ -416,30 +402,27 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
     if (s.status === "resolved") return "resolved";
     return "main";
   };
-  const mainAll = source.filter((s) => !workingSetIds.has(s.id) && effectiveSection(s) === "main");
-  const resolvedAll = source.filter((s) => !workingSetIds.has(s.id) && effectiveSection(s) === "resolved");
+  const mainAll = source.filter((s) => !awayIds.has(s.id) && effectiveSection(s) === "main");
+  const resolvedAll = source.filter((s) => !awayIds.has(s.id) && effectiveSection(s) === "resolved");
   const orderedMainAll = [...mainAll].sort(byRecency);
   const orderedResolvedAll = storedOrder ? orderByStored(resolvedAll, storedResolved) : [...resolvedAll].sort(byRecency);
-  const shown = orderedMainAll.filter(matchesQuery);
-  const resolved = orderedResolvedAll.filter(matchesQuery);
   const previewMainAll = previewPlacement(orderedMainAll, orderedResolvedAll, dragged, preview, "main");
   const previewResolvedAll = previewPlacement(orderedMainAll, orderedResolvedAll, dragged, preview, "resolved");
   const previewing = dragged !== null && preview !== null;
-  const shownPreview = (previewing ? previewMainAll : orderedMainAll).filter(matchesQuery);
-  const resolvedPreview = (previewing ? previewResolvedAll : orderedResolvedAll).filter(matchesQuery);
-  const resolvedByProject = new Map<string, Session[]>();
-  for (const s of resolvedPreview) {
-    const existing = resolvedByProject.get(s.projectId);
-    if (existing) existing.push(s);
-    else resolvedByProject.set(s.projectId, [s]);
-  }
+  const idleFiltered = (previewing ? previewMainAll : orderedMainAll).filter(matchesQuery);
+  const resolvedShown = (previewing ? previewResolvedAll : orderedResolvedAll).filter(matchesQuery);
+  const idleUnlimited = query !== "" || idleShowAll;
+  const idleHead = idleUnlimited ? idleFiltered : idleFiltered.slice(0, IDLE_LIMIT);
+  const draggedIdle = dragged ? idleFiltered.find((s) => s.id === dragged.id) : undefined;
+  const idleShown = draggedIdle && !idleHead.includes(draggedIdle) ? [...idleHead, draggedIdle] : idleHead;
+  const idleToggleVisible = query === "" && idleFiltered.length > IDLE_LIMIT;
+  const resolvedExpanded = query !== "" || resolvedOpen;
+  const workingSetVisible = workingSetAll.length > 0 || quickFilter !== "all";
   const attentionCount = needsAttentionCount(inboxItems);
-  const anyUnseen = Object.values(sessionsByProject).some((list) => list.some((s) => sessionHasUnseen(s, summaryByKey)));
+  const anyUnseen = source.some((s) => sessionHasUnseen(s, summaryByKey));
   const inboxActive = mainView.kind === "inbox" || mainView.kind === "pr";
   const usageActive = mainView.kind === "usage";
   const newSessionActive = !inboxActive && !usageActive && (pendingDriver !== null || !activeSessionId);
-  const liveCount = (list: Session[] | undefined): number => (list ?? []).filter((s) => s.status !== "archived").length;
-  const totalCount = Object.values(sessionsByProject).reduce((sum, list) => sum + liveCount(list), 0);
   const inboxNotes = [
     attentionCount > 0 ? `${attentionCount} need${attentionCount === 1 ? "s" : ""} you` : null,
     anyUnseen ? "updates available" : null
@@ -453,7 +436,7 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
   const hoverSession = hover ? (source.find((s) => s.id === hover.id) ?? null) : null;
   const hoverStatus = hoverSession?.status ?? "idle";
   const hoverProject = hoverSession ? (projectNameById[hoverSession.projectId] ?? "") : "";
-  const hoverBranch = hoverSession ? (gitStatusBySession[hoverSession.id]?.branch ?? hoverSession.branch) : undefined;
+  const hoverBranch = hoverSession ? branchOf(hoverSession) : undefined;
 
   const captureSlots = (): void => {
     const rows: SlotRow[] = [];
@@ -509,64 +492,12 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
     }, 30);
   };
 
-  const endPointerDrag = (): void => {
-    detachRef.current?.();
-    detachRef.current = null;
-    stopAutoScroll();
-    dragRef.current = null;
-    slotSnap.current = null;
-    setDragged(null);
-    setPreview(null);
-  };
-
-  const maybeOpenResolvedGroup = (clientX: number, clientY: number): void => {
-    toggleRefs.current.forEach((el, pid) => {
-      if (!el.isConnected) return;
-      const r = el.getBoundingClientRect();
-      if (clientX < r.left - 4 || clientX > r.right + 4 || clientY < r.top - 4 || clientY > r.bottom + 4) return;
-      setResolvedOpen((prev) => (prev.has(pid) ? prev : new Set(prev).add(pid)));
-    });
-  };
-  const visibleProjects = projectQuery
-    ? projects.filter(
-        (p) =>
-          p.name.toLowerCase().includes(projectQuery.toLowerCase()) ||
-          p.rootPath.toLowerCase().includes(projectQuery.toLowerCase())
-      )
-    : projects;
-
-  const closePicker = () => {
-    setPickerOpen(false);
-    setProjectQuery("");
-    setManagedId(null);
-  };
-
-  const pick = (id: string | "all") => {
-    closePicker();
-    store.setProjectFilter(id);
-  };
-
-  const pickAndAdd = () => {
-    void window.cw
-      .pickProjectDir()
-      .then((dir) => {
-        if (!dir) return;
-        return store.addProject(dir).then(() => closePicker());
-      })
-      .catch((err: Error) => {
-        useNotifs.getState().push({ kind: "error", title: "Could not add project", message: err.message });
-      });
-  };
-
-  const copyPath = (p: Project) => {
-    if (!navigator.clipboard) return;
-    void navigator.clipboard
-      .writeText(p.rootPath)
-      .then(() => {
-        setCopiedId(p.id);
-        window.setTimeout(() => setCopiedId((id) => (id === p.id ? null : id)), 1500);
-      })
-      .catch(() => {});
+  const maybeOpenResolved = (clientX: number, clientY: number): void => {
+    const el = resolvedToggleRef.current;
+    if (!el?.isConnected) return;
+    const r = el.getBoundingClientRect();
+    if (clientX < r.left - 4 || clientX > r.right + 4 || clientY < r.top - 4 || clientY > r.bottom + 4) return;
+    setResolvedOpen(true);
   };
 
   const copySessionId = (sessionId: string) => {
@@ -638,11 +569,11 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
     const nextMainIds = nextMain.map((s) => s.id);
     const nextResolvedIds = nextResolved.map((s) => s.id);
     const cross = fromSection !== toSection;
-    const prevPinned = readStoredOrder(orderKey)?.pinned ?? storedOrder?.pinned ?? [];
+    const prevPinned = readStoredOrder(ORDER_KEY)?.pinned ?? storedOrder?.pinned ?? [];
     const pinned = cross ? Array.from(new Set([...prevPinned, fromId])) : [];
-    writeStoredOrder(orderKey, {
-      main: mergeAwayIds(storedOrder?.main ?? nextMainIds, nextMainIds, workingSetIds),
-      resolved: mergeAwayIds(storedOrder?.resolved ?? nextResolvedIds, nextResolvedIds, workingSetIds),
+    writeStoredOrder(ORDER_KEY, {
+      main: mergeAwayIds(storedOrder?.main ?? nextMainIds, nextMainIds, awayIds),
+      resolved: mergeAwayIds(storedOrder?.resolved ?? nextResolvedIds, nextResolvedIds, awayIds),
       pinned,
     });
     if (cross) setStatus(fromId, toSection === "main" ? "idle" : "resolved");
@@ -656,23 +587,142 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
     const urgent = mostUrgentLink(links, summaryByKey, gitPr);
     const chip = urgent ? displayChip(urgent, summaryByKey, gitPr) : null;
     const chipTitle = chip ? (links.length > 1 ? linksTitle(links, summaryByKey, gitPr) : chip.title) : null;
-    return { links, chip, chipTitle, unseen: sessionHasUnseen(s, summaryByKey) };
+    return { links, chip, chipTitle };
   };
 
-  const renderRow = (s: Session, section: SidebarSection, hideState = false) => {
+  const renderPrChip = (s: Session) => {
+    const { links, chip, chipTitle } = prBadge(s);
+    return chip ? <PrChipBadge chip={chip} extra={links.length - 1} title={chipTitle ?? undefined} /> : null;
+  };
+
+  const rowProps = (s: Session) => ({
+    ref: (el: HTMLDivElement | null) => {
+      if (el) rowRefs.current.set(s.id, el);
+      else rowRefs.current.delete(s.id);
+    },
+    onMouseEnter: () => scheduleHover(s.id),
+    onMouseLeave: clearHover,
+    onClick: () => {
+      if (suppressClickRef.current) {
+        suppressClickRef.current = false;
+        return;
+      }
+      selectSession(s.id);
+    },
+    onContextMenu: (e: ReactMouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      setRenamingId(null);
+      setMenu({ sessionId: s.id, x: e.clientX, y: e.clientY });
+    }
+  });
+
+  const renderRename = (s: Session) => (
+    <input
+      autoFocus
+      className="session-rename"
+      value={renameDraft}
+      onChange={(e) => setRenameDraft(e.target.value)}
+      onClick={(e) => e.stopPropagation()}
+      onKeyDown={(e) => {
+        e.stopPropagation();
+        if (e.key === "Enter") commitRename(s.id);
+        if (e.key === "Escape") setRenamingId(null);
+      }}
+      onBlur={() => commitRename(s.id)}
+    />
+  );
+
+  const renderTitle = (s: Session) => (renamingId === s.id ? renderRename(s) : <div className="ws-title">{s.title}</div>);
+
+  const renderAttentionRow = (s: Session, attention: Attention) => {
+    const projectName = projectNameById[s.projectId] ?? "";
+    const { verb, Icon } = ATTENTION_ACTION[attention.kind];
+    return (
+      <div
+        key={s.id}
+        {...rowProps(s)}
+        className={`ws-row attn attn-${attention.kind}${s.id === activeSessionId ? " on" : ""}`}
+        aria-label={`${s.title}${projectName ? ` · ${projectName}` : ""}. ${verb}: ${attention.line}`}
+      >
+        <div className="ws-body">
+          {renderTitle(s)}
+          <div className="att-line">{attention.line}</div>
+        </div>
+        <div className="ws-side">
+          <span className="att-chip">
+            <Icon size={12} aria-hidden="true" />
+            {verb}
+          </span>
+          <span className="ws-side-row">
+            <span className="avatar sm" style={avatarStyle(projectName)} title={projectName}>{initials(projectName)}</span>
+            <DriverIcon driver={s.driver} size={14} />
+          </span>
+        </div>
+      </div>
+    );
+  };
+
+  const renderWorkingState = (s: Session) => {
+    if (s.status === "working") {
+      return (
+        <span className="ws-state status-working">
+          <LoaderCircle size={12} className="ws-spin" aria-hidden="true" />
+          Running
+        </span>
+      );
+    }
+    if (s.status === "holding") return <span className="ws-state status-holding">Holding · {ageLabel(s.updatedAt)}</span>;
+    return <span className={`ws-state status-${s.status}`}>{stateLabel(s.status)}</span>;
+  };
+
+  const renderWorkingRow = (s: Session) => {
+    const projectName = projectNameById[s.projectId] ?? "";
+    const branch = branchOf(s);
+    return (
+      <div
+        key={s.id}
+        {...rowProps(s)}
+        className={`ws-row${s.id === activeSessionId ? " on" : ""}`}
+        aria-label={`${s.title}${projectName ? ` · ${projectName}` : ""}`}
+      >
+        <div className="ws-body">
+          {renderTitle(s)}
+          <div className="ws-meta">
+            <span className="avatar sm" style={avatarStyle(projectName)}>{initials(projectName)}</span>
+            <span className="ws-meta-text">{projectName}</span>
+            {branch ? (
+              <>
+                <span className="ws-sep" aria-hidden="true">·</span>
+                <GitBranch size={12} aria-hidden="true" />
+                <span className="ws-branch">{branch}</span>
+              </>
+            ) : null}
+          </div>
+        </div>
+        <div className="ws-side">
+          {renderWorkingState(s)}
+          <span className="ws-side-row">
+            {renderPrChip(s)}
+            <DriverIcon driver={s.driver} size={14} />
+          </span>
+        </div>
+      </div>
+    );
+  };
+
+  const renderFlatRow = (s: Session, section: SidebarSection) => {
     const git = gitStatusBySession[s.id];
-    const { links, chip, chipTitle, unseen } = prBadge(s);
-    const status = s.status ?? "idle";
+    const { chipTitle } = prBadge(s);
     const projectName = projectNameById[s.projectId] ?? "";
     const gitSummary = [
       git?.branch ?? s.branch ? `Branch: ${git?.branch ?? s.branch}` : null,
       git?.worktreePath ?? s.worktreePath ? `Worktree: ${git?.worktreeName ?? shortPath(git?.worktreePath ?? s.worktreePath ?? "")}` : null,
       chipTitle,
-      unseen ? "PR updated since last visit" : null,
       git && !git.clean ? `${git.dirtyCount} changed ${git.dirtyCount === 1 ? "file" : "files"}` : null
     ].filter((value): value is string => Boolean(value));
     const rowTitle = [s.title, projectName ? `Project: ${projectName}` : null, ...gitSummary].filter(Boolean).join("\n");
-    const beginRowDrag = (e: React.MouseEvent) => {
+    const beginRowDrag = (e: ReactMouseEvent) => {
       if (e.button !== 0) return;
       if ((e.target as HTMLElement).closest("input,button")) return;
       if (renamingId === s.id || query) return;
@@ -691,7 +741,7 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
         ev.preventDefault();
         pointerY.current = ev.clientY;
         moveGhost(ev.clientX, ev.clientY);
-        maybeOpenResolvedGroup(ev.clientX, ev.clientY);
+        maybeOpenResolved(ev.clientX, ev.clientY);
         const freshIds = Object.values(useAppStore.getState().sessionsByProject)
           .flat()
           .map((x) => x.id)
@@ -724,10 +774,9 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
         const active = { id: d.id, section: d.section };
         const el = document.elementFromPoint(ev.clientX, ev.clientY);
         if (!el || !(listRef.current?.contains(el) ?? false)) return;
-        const toggle = el.closest(".session-resolved-toggle") as HTMLElement | null;
+        const toggle = el.closest(".session-resolved-toggle");
         if (el.closest(".resolved-empty-drop") || toggle) {
-          const pid = toggle?.dataset.projectId;
-          if (pid) setResolvedOpen((prev) => (prev.has(pid) ? prev : new Set(prev).add(pid)));
+          if (toggle) setResolvedOpen(true);
           handleDrop(active, "resolved", null, false);
           return;
         }
@@ -755,212 +804,34 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
       window.addEventListener("pointercancel", onCancel);
       window.addEventListener("keydown", onKey);
     };
-    return <div
-      key={s.id}
-      ref={(el) => {
-        if (el) rowRefs.current.set(s.id, el);
-        else rowRefs.current.delete(s.id);
-      }}
-      onMouseDown={beginRowDrag}
-      onMouseEnter={() => scheduleHover(s.id)}
-      onMouseLeave={clearHover}
-      onClick={() => {
-        if (suppressClickRef.current) {
-          suppressClickRef.current = false;
-          return;
-        }
-        selectSession(s.id);
-      }}
-      onContextMenu={(e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        setRenamingId(null);
-        setMenu({ sessionId: s.id, x: e.clientX, y: e.clientY });
-      }}
-      className={`session-row${s.id === activeSessionId ? " active" : ""}${dragged?.id === s.id ? " dragging" : ""}${landedId === s.id ? " landed" : ""}${status === "idle" ? " idle" : ""}`}
-       aria-label={rowTitle}
-    >
-      {renamingId === s.id ? (
-        <input
-          autoFocus
-          className="session-rename"
-          value={renameDraft}
-          onChange={(e) => setRenameDraft(e.target.value)}
-          onClick={(e) => e.stopPropagation()}
-          onKeyDown={(e) => {
-            e.stopPropagation();
-            if (e.key === "Enter") commitRename(s.id);
-            if (e.key === "Escape") setRenamingId(null);
-          }}
-          onBlur={() => commitRename(s.id)}
-        />
-      ) : (
-        <span className="session-title">{s.title}</span>
-      )}
-      <span className="session-side">
-        {unseen && <span className="pr-unseen-dot" title="PR updated since last visit" />}
-        {chip && <PrChipBadge chip={chip} extra={links.length - 1} title={chipTitle ?? undefined} />}
-        {(status === "working" || status === "input-required") && <span className={`session-dot status-${status}`} />}
-        {status === "idle" || hideState ? (
-          <span className="session-age">{ageLabel(s.updatedAt)}</span>
-        ) : (
-          <span className={`session-state status-${status}`}>{stateLabel(status)}</span>
-        )}
-        <DriverIcon driver={s.driver} size={16} />
-      </span>
-    </div>
-  };
-
-  const renderWorkingCard = (s: Session) => {
-    const projectName = projectNameById[s.projectId] ?? "";
-    const branch = gitStatusBySession[s.id]?.branch ?? s.branch;
-    const badge = s.status === "holding" ? ageLabel(s.updatedAt) : stateLabel(s.status);
-    const { links, chip, chipTitle, unseen } = prBadge(s);
     return (
       <div
         key={s.id}
-        ref={(el) => {
-          if (el) rowRefs.current.set(s.id, el);
-          else rowRefs.current.delete(s.id);
-        }}
-        className={`working-card status-${s.status}${s.id === activeSessionId ? " active" : ""}`}
-        onMouseEnter={() => scheduleHover(s.id)}
-        onMouseLeave={clearHover}
-        onClick={() => {
-          if (suppressClickRef.current) {
-            suppressClickRef.current = false;
-            return;
-          }
-          selectSession(s.id);
-        }}
-        onContextMenu={(e) => {
-          e.preventDefault();
-          e.stopPropagation();
-          setRenamingId(null);
-          setMenu({ sessionId: s.id, x: e.clientX, y: e.clientY });
-        }}
-        aria-label={`${s.title}${projectName ? ` · ${projectName}` : ""}`}
+        {...rowProps(s)}
+        onMouseDown={beginRowDrag}
+        className={`flat-row${section === "resolved" ? " resolved" : " idle"}${s.id === activeSessionId ? " on" : ""}${dragged?.id === s.id ? " dragging" : ""}${landedId === s.id ? " landed" : ""}`}
+        aria-label={rowTitle}
       >
-        <div className="working-card-head">
-          <span className="avatar sm" style={avatarStyle(projectName)}>{initials(projectName)}</span>
-          <span className="working-card-project">{projectName}</span>
-          <span className={`working-card-badge status-${s.status}`}>{badge}</span>
-        </div>
-        <div className="working-card-title-line">
-          {renamingId === s.id ? (
-            <input
-              autoFocus
-              className="session-rename"
-              value={renameDraft}
-              onChange={(e) => setRenameDraft(e.target.value)}
-              onClick={(e) => e.stopPropagation()}
-              onKeyDown={(e) => {
-                e.stopPropagation();
-                if (e.key === "Enter") commitRename(s.id);
-                if (e.key === "Escape") setRenamingId(null);
-              }}
-              onBlur={() => commitRename(s.id)}
-            />
-          ) : (
-            <div className="working-card-title">{s.title}</div>
-          )}
-          <span className="working-card-side">
-            {unseen && <span className="pr-unseen-dot" title="PR updated since last visit" />}
-            {chip && <PrChipBadge chip={chip} extra={links.length - 1} title={chipTitle ?? undefined} />}
+        {renamingId === s.id ? (
+          renderRename(s)
+        ) : (
+          <span className="flat-title">
+            {s.title}
+            <span className="flat-project">{projectName}</span>
           </span>
-        </div>
-        <div className="working-card-foot">
-          {branch ? (
-            <span className="working-card-branch">
-              <GitBranch size={11} aria-hidden="true" />
-              {branch}
-            </span>
-          ) : null}
-          <span className="working-card-side">
-            <DriverIcon driver={s.driver} size={14} />
+        )}
+        {renderPrChip(s)}
+        {section === "resolved" ? (
+          <span className="flat-age done">
+            <Check size={12} aria-hidden="true" />
+            {ageLabel(s.updatedAt)}
           </span>
-        </div>
+        ) : (
+          <span className="flat-age">{ageLabel(s.updatedAt)}</span>
+        )}
+        <DriverIcon driver={s.driver} size={14} />
       </div>
     );
-  };
-
-  const renderResolvedToggle = (projectId: string, items: Session[]) => {
-    if (items.length === 0) return null;
-    const open = resolvedOpen.has(projectId);
-    return (
-      <>
-        <button
-          type="button"
-          className="session-resolved-toggle"
-          ref={(el) => {
-            if (el) toggleRefs.current.set(projectId, el);
-            else toggleRefs.current.delete(projectId);
-          }}
-          data-project-id={projectId}
-          onClick={() => toggleResolved(projectId)}
-          aria-expanded={open}
-          aria-label={`${open ? "Collapse" : "Expand"} resolved sessions`}
-        >
-          <span className="group-chevron" aria-hidden="true">
-            {open ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-          </span>
-          Resolved · {items.length}
-        </button>
-        {open && items.map((s) => renderRow(s, "resolved", true))}
-      </>
-    );
-  };
-
-  const renderRows = (items: Session[], section: SidebarSection) => {
-    if (projectFilter !== "all") return items.map((s) => renderRow(s, section));
-    const grouped = new Map<string, Session[]>();
-    for (const session of items) {
-      const existing = grouped.get(session.projectId);
-      if (existing) existing.push(session);
-      else grouped.set(session.projectId, [session]);
-    }
-    for (const pid of resolvedByProject.keys()) {
-      if (!grouped.has(pid)) grouped.set(pid, []);
-    }
-    return Array.from(grouped, ([projectId, sessions]) => {
-      const project = projects.find((item) => item.id === projectId);
-      const name = projectNameById[projectId] ?? "Unknown project";
-      const isCollapsed = collapsedGroups.has(projectId);
-      const isExpanded = expandedGroups.has(projectId);
-      const visible = isExpanded ? sessions : sessions.slice(0, GROUP_VISIBLE);
-      const resolved = resolvedByProject.get(projectId) ?? [];
-      return (
-        <div className="session-project-group" key={`${section}:${projectId}`}>
-          <button
-            type="button"
-            className="session-project-heading"
-            style={groupTintStyle(name)}
-            title={project?.rootPath ?? name}
-            onClick={() => toggleGroup(projectId)}
-            aria-expanded={!isCollapsed}
-            aria-label={`${isCollapsed ? "Expand" : "Collapse"} ${name}`}
-          >
-            <span className="group-chevron" aria-hidden="true">
-              {isCollapsed ? <ChevronRight size={13} /> : <ChevronDown size={13} />}
-            </span>
-            <span className="avatar sm" style={avatarStyle(name)}>{initials(name)}</span>
-            <span className="session-project-heading-name">{name}</span>
-            <span className="session-project-heading-count">{sessions.length}</span>
-          </button>
-          {!isCollapsed && (
-            <>
-              {visible.map((session) => renderRow(session, section))}
-              {sessions.length > GROUP_VISIBLE && (
-                <button type="button" className="session-show-all" onClick={() => toggleExpandGroup(projectId)}>
-                  {isExpanded ? "Show less" : `Show all ${sessions.length}`}
-                </button>
-              )}
-              {renderResolvedToggle(projectId, resolved)}
-            </>
-          )}
-        </div>
-      );
-    });
   };
 
   return (
@@ -989,6 +860,23 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
           <span>New session</span>
           <span className="side-kbd">Ctrl T</span>
         </button>
+        <label className="side-search">
+          <Search size={14} aria-hidden="true" />
+          <input
+            ref={searchRef}
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+            placeholder="Search all sessions"
+            aria-label="Search all sessions"
+          />
+          {query ? (
+            <button type="button" className="icon-btn" aria-label="Clear search" onClick={() => setQuery("")}>
+              <X aria-hidden="true" size={14} />
+            </button>
+          ) : (
+            <span className="side-kbd">Ctrl K</span>
+          )}
+        </label>
         <div className="side-nav">
           <button
             type="button"
@@ -1009,173 +897,91 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
               )}
             </span>
           </button>
-          <label className="side-nav-row side-nav-search">
-            <Search size={15} aria-hidden="true" />
-            <input
-              ref={searchRef}
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-              placeholder="Search"
-              aria-label="Search sessions"
-            />
-            <span className="side-nav-end">
-              {query ? (
-                <button type="button" className="icon-btn" aria-label="Clear search" onClick={() => setQuery("")}>
-                  <X aria-hidden="true" size={14} />
-                </button>
-              ) : (
-                <span className="side-kbd">Ctrl K</span>
-              )}
-            </span>
-          </label>
-        </div>
-      </div>
-      <div className="side-list-head">
-        <div className="picker side-filter">
-          <button
-            ref={filterBtnRef}
-            type="button"
-            className={`side-filter-btn${filterProject ? " filtered" : ""}${pickerOpen ? " open" : ""}`}
-            onClick={() => setPickerOpen((o) => !o)}
-            aria-haspopup="listbox"
-            aria-expanded={pickerOpen}
-            title="Filter sessions by project"
-          >
-            <ListFilter size={12} aria-hidden="true" />
-            <span className="side-filter-name">{filterProject?.name ?? "All projects"}</span>
-            {pickerOpen ? <ChevronUp aria-hidden="true" size={12} /> : <ChevronDown aria-hidden="true" size={12} />}
-          </button>
-          {pickerOpen && (
-            <>
-              <div className="picker-backdrop" onClick={closePicker} />
-              <div
-                className="picker-panel"
-                onKeyDown={(e) => {
-                  if (e.key === "Escape") {
-                    e.stopPropagation();
-                    closePicker();
-                    filterBtnRef.current?.focus();
-                    return;
-                  }
-                  if (e.key === "Enter" && visibleProjects.length > 0 && document.activeElement?.tagName === "INPUT") {
-                    pick(visibleProjects[0].id);
-                  }
-                }}
-              >
-                <div className="search-row">
-                  <Search className="search-icon" aria-hidden="true" size={15} />
-                  <input
-                    autoFocus
-                    value={projectQuery}
-                    onChange={(e) => setProjectQuery(e.target.value)}
-                    placeholder="Filter by project…"
-                  />
-                </div>
-                <div className="picker-list">
-                  <div
-                    className={`picker-row${projectFilter === "all" ? " active" : ""}`}
-                    onClick={() => pick("all")}
-                    aria-current={projectFilter === "all" ? "true" : undefined}
-                  >
-                    <span className="name">All projects</span>
-                    <span className="picker-count">{totalCount}</span>
-                  </div>
-                  {visibleProjects.map((p) => (
-                    <div key={p.id}>
-                      <div
-                        className={`picker-row${p.id === projectFilter ? " active" : ""}`}
-                        onClick={() => pick(p.id)}
-                        aria-current={p.id === projectFilter ? "true" : undefined}
-                        title={p.rootPath}
-                      >
-                        <span className="avatar" style={avatarStyle(p.name)}>
-                          {initials(p.name)}
-                        </span>
-                        <span className="name">{p.name}</span>
-                        <span className="picker-count">{liveCount(sessionsByProject[p.id])}</span>
-                        <button
-                          className={`gear${managedId === p.id ? " open" : ""}`}
-                          title="Project details"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setManagedId((id) => (id === p.id ? null : p.id));
-                          }}
-                        >
-                          <Settings aria-hidden="true" size={14} />
-                        </button>
-                      </div>
-                      {managedId === p.id && (
-                        <div className="manage">
-                          <span className="path" title={p.rootPath}>
-                            {shortPath(p.rootPath)}
-                          </span>
-                          <button
-                            className="btn"
-                            style={{ fontSize: "var(--t-2xs)", padding: "3px 8px" }}
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              copyPath(p);
-                            }}
-                          >
-                            {copiedId === p.id ? <Check aria-hidden="true" size={14} /> : "Copy"}
-                          </button>
-                        </div>
-                      )}
-                    </div>
-                  ))}
-                  {visibleProjects.length === 0 && <div className="side-empty">No matches.</div>}
-                </div>
-                <button className="add-project" onClick={pickAndAdd}>
-                  Add project…
-                </button>
-              </div>
-            </>
-          )}
-        </div>
-        <div className="side-quick" role="group" aria-label="Quick filters">
-          {QUICK_FILTER_UI.map(({ id, label, Icon }) => (
-            <button
-              key={id}
-              type="button"
-              className={`side-quick-btn${quickFilter === id ? " on" : ""}${quickCounts[id] === 0 ? " is-zero" : ""}`}
-              onClick={() => setQuickFilter((current) => toggleQuickFilter(current, id))}
-              aria-pressed={quickFilter === id}
-              title={`${label} (${quickCounts[id]})`}
-              aria-label={`${label}, ${quickCounts[id]}`}
-            >
-              <Icon size={12} aria-hidden="true" />
-              <span>{quickCounts[id]}</span>
-            </button>
-          ))}
         </div>
       </div>
       <div className="session-list" ref={listRef} onScroll={clearHover}>
         <div className="session-main-list">
-          {workingSetShown.length > 0 && (
-            <div className="working-set">
-              <button
-                type="button"
-                className="working-set-heading"
-                onClick={() => setWorkingSetOpen((o) => !o)}
-                aria-expanded={workingSetOpen}
-                aria-label={`${workingSetOpen ? "Collapse" : "Expand"} working set`}
-              >
-                <span className="group-chevron" aria-hidden="true">
-                  {workingSetOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
-                </span>
-                <span>Working set</span>
-                <span className="working-set-count">{workingSetShown.length}</span>
-              </button>
-              {workingSetOpen && workingSetShown.map((s) => renderWorkingCard(s))}
+          {needsYouShown.length > 0 && (
+            <div className="side-section">
+              <div className="side-sec needs">
+                Needs you
+                <span className="side-needs-n">{needsYouShown.length}</span>
+              </div>
+              {needsYouShown.map((entry) => renderAttentionRow(entry.session, entry.attention))}
             </div>
           )}
-          {renderRows(shownPreview, "main")}
-          {projectFilter !== "all" && renderResolvedToggle(projectFilter, resolvedPreview)}
-          {shownPreview.length === 0 && resolvedPreview.length === 0 && workingSetShown.length === 0 && (
+          {workingSetVisible && (
+            <div className="side-section">
+              <div className="side-sec">
+                Working set
+                <span className="side-sec-n">{workingSetShown.length}</span>
+                <span className="side-sec-end" role="group" aria-label="Quick filters">
+                  <button
+                    type="button"
+                    className={`side-qf${quickFilter === "all" ? " on" : ""}`}
+                    aria-pressed={quickFilter === "all"}
+                    onClick={() => setQuickFilter("all")}
+                  >
+                    All
+                  </button>
+                  {QUICK_FILTER_UI.map(({ id, label, Icon }) => (
+                    <button
+                      key={id}
+                      type="button"
+                      className={`side-qf${quickFilter === id ? " on" : ""}${quickCounts[id] === 0 ? " is-zero" : ""}`}
+                      onClick={() => setQuickFilter((current) => toggleQuickFilter(current, id))}
+                      aria-pressed={quickFilter === id}
+                      title={`${label} (${quickCounts[id]})`}
+                      aria-label={`${label}, ${quickCounts[id]}`}
+                    >
+                      <Icon size={12} aria-hidden="true" />
+                      <span>{quickCounts[id]}</span>
+                    </button>
+                  ))}
+                </span>
+              </div>
+              {workingSetShown.map((s) => renderWorkingRow(s))}
+              {workingSetShown.length === 0 && <div className="side-empty">No matches.</div>}
+            </div>
+          )}
+          {idleShown.length > 0 && (
+            <div className="side-section">
+              <div className="side-sec">
+                Idle
+                <span className="side-sec-n">{idleFiltered.length}</span>
+                {idleToggleVisible && (
+                  <span className="side-sec-end">
+                    <button type="button" className="side-qf" onClick={() => setIdleShowAll((v) => !v)} aria-pressed={idleShowAll}>
+                      {idleShowAll ? "Show less" : "Show all"}
+                    </button>
+                  </span>
+                )}
+              </div>
+              {idleShown.map((s) => renderFlatRow(s, "main"))}
+            </div>
+          )}
+          {needsYouShown.length === 0 && workingSetShown.length === 0 && idleShown.length === 0 && resolvedShown.length === 0 && (
             <div className="side-empty">{query || quickFilter !== "all" ? "No matches." : "No sessions yet."}</div>
           )}
         </div>
-        {resolvedPreview.length === 0 && dragged && (
+        {resolvedShown.length > 0 && (
+          <div className="side-section">
+            <button
+              type="button"
+              className="side-sec session-resolved-toggle"
+              ref={resolvedToggleRef}
+              onClick={() => setResolvedOpen((open) => !open)}
+              aria-expanded={resolvedExpanded}
+              aria-label={`${resolvedExpanded ? "Collapse" : "Expand"} resolved sessions`}
+            >
+              <ChevronRight size={12} className={`side-sec-chev${resolvedExpanded ? " open" : ""}`} aria-hidden="true" />
+              Resolved
+              <span className="side-sec-n">{resolvedShown.length}</span>
+            </button>
+            {resolvedExpanded && resolvedShown.map((s) => renderFlatRow(s, "resolved"))}
+          </div>
+        )}
+        {resolvedShown.length === 0 && dragged && (
           <div
             className="resolved-empty-drop"
           >Drop here to resolve</div>
@@ -1202,7 +1008,7 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
             <button
               className="ctx-item"
               onClick={() => {
-                const target = [...workingSetShown, ...shown, ...resolved].find((s) => s.id === menu.sessionId);
+                const target = source.find((s) => s.id === menu.sessionId);
                 setRenameDraft(target?.title ?? "");
                 setRenamingId(menu.sessionId);
                 setMenu(null);
