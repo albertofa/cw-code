@@ -127,6 +127,18 @@ export function tabsInPanel(dockByTab: TabDockState, panel: PanelId): DockableTa
   return DOCKABLE_TABS.filter((tab) => dockByTab[tab] === panel);
 }
 
+export function resolveRightTop(
+  dockByTab: TabDockState,
+  activeRight: DockableTabId,
+  isAvailable: (tab: DockableTabId) => boolean,
+  preferred?: DockableTabId
+): DockableTabId | null {
+  const available = tabsInPanel(dockByTab, "right").filter(isAvailable);
+  if (available.includes(activeRight)) return activeRight;
+  if (preferred !== undefined && available.includes(preferred)) return preferred;
+  return available[0] ?? null;
+}
+
 export function isBottomOpen(dockByTab: TabDockState): boolean {
   return tabsInPanel(dockByTab, "bottom").length > 0;
 }

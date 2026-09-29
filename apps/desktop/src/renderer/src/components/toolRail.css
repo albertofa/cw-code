@@ -97,7 +97,7 @@
 
 .rail-badge.run {
   background: var(--success);
-  color: #07130b;
+  color: var(--on-success);
 }
 
 .rail-dot {
@@ -155,6 +155,7 @@
 .phead.sub {
   height: 36px;
   padding-right: 8px;
+  -webkit-app-region: no-drag;
   box-shadow: inset 0 1px 0 var(--line), inset 0 -1px 0 var(--line);
 }
 
@@ -212,6 +213,12 @@
   box-shadow: inset 0 1px 0 var(--line), inset 0 -1px 0 var(--line);
 }
 
-.right-split-divider:hover {
+.right-split-divider:hover,
+.right-split-divider:focus-visible {
   background: var(--hover);
+}
+
+.right-split-divider:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: -2px;
 }

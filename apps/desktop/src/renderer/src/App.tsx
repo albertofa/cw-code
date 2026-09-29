@@ -16,7 +16,7 @@ import { ShutdownDialog } from "./components/ShutdownDialog.js";
 import { handleQuitRequest, handleShutdownExpired } from "./stores/shutdownFlow.js";
 import { RightPanelBody } from "./components/RightPanelBody.js";
 import { ToolRail } from "./components/ToolRail.js";
-import { TOOL_TABS, isToolTabAvailable } from "./components/toolTabs.js";
+import { useToolAvailability } from "./components/useToolAvailability.js";
 import { useTabMenu } from "./components/TabMenu.js";
 import { useDockDrop } from "./components/useDockDrop.js";
 import { usePanelAnimationMs, usePresence } from "./components/usePresence.js";
@@ -27,7 +27,6 @@ import { tabsInPanel, DOCKABLE_TABS } from "./stores/panelLayout.js";
 import { selectSessionPanel, usePanelStore } from "./stores/panelStore.js";
 import { usePrStore } from "./stores/prStore.js";
 import { prKey } from "./components/prInbox.js";
-import { sessionLinks } from "./components/sessionPrLinks.js";
 import type { DockableTabId } from "@cw-code/contracts";
 import type { TurnEvent } from "./cw.js";
 
@@ -106,8 +105,6 @@ export function App() {
   useAttentionBadge();
   const activeSessionId = useAppStore((s) => s.activeSessionId);
   const sessionsByProject = useAppStore((s) => s.sessionsByProject);
-  const pendingDriver = useAppStore((s) => s.pendingDriver);
-  const previewBySession = useAppStore((s) => s.previewBySession);
   const sourceControlRefreshIntervalSeconds = useAppStore((s) => s.sourceControlRefreshIntervalSeconds);
   const prRefreshIntervalSeconds = useAppStore((s) => s.prRefreshIntervalSeconds);
   const mainView = usePrStore((s) => s.mainView);
@@ -118,15 +115,13 @@ export function App() {
   const loadProjects = useAppStore((s) => s.loadProjects);
   const appearance = useAppStore((s) => s.appearance);
   const sessionPanel = usePanelStore((s) => selectSessionPanel(s, activeSessionId ?? undefined));
-  const { dockByTab, activeRight, rightVisible, rightSplit, rightSplitRatio } = sessionPanel;
+  const { dockByTab, rightVisible, rightSplit, rightSplitRatio } = sessionPanel;
   const initializeSession = usePanelStore((s) => s.initializeSession);
   const activateOrOpen = usePanelStore((s) => s.activateOrOpen);
   const dropRight = useDockDrop("right", activeSessionId ?? undefined);
   const tabMenu = useTabMenu(activeSessionId ?? undefined);
   const draggingTab = usePanelStore((s) => s.draggingTab);
   const setRightVisible = usePanelStore((s) => s.setRightVisible);
-
-  const preview = activeSessionId ? (previewBySession[activeSessionId] ?? null) : null;
 
   useEffect(() => applyAppearance(document.documentElement, appearance), [appearance]);
 
@@ -399,19 +394,8 @@ export function App() {
     };
   }, [messagesBySession, activeSessionId]);
 
-  const allSessions = Object.values(sessionsByProject).flat();
-  const activeSession = allSessions.find((s) => s.id === activeSessionId);
-  const driver = pendingDriver ?? activeSession?.driver;
-  const hasPr = pendingDriver === null && sessionLinks(activeSession).length > 0;
-
-  const isToolAvailable = (tab: DockableTabId): boolean => {
-    if (tab === "preview") return preview !== null;
-    const def = TOOL_TABS.find((item) => item.id === tab);
-    return def !== undefined && isToolTabAvailable(def, driver, hasPr);
-  };
-
+  const { driver, hasPr, hasPreview, isToolAvailable, rightTop: topTool } = useToolAvailability(activeSessionId ?? undefined);
   const availableRightIds = tabsInPanel(dockByTab, "right").filter(isToolAvailable);
-  const topTool: DockableTabId | null = availableRightIds.includes(activeRight) ? activeRight : (availableRightIds[0] ?? null);
   const splitTool: DockableTabId | null =
     rightSplit !== null && rightSplit !== topTool && availableRightIds.includes(rightSplit) ? rightSplit : null;
   const allTabsClosed = DOCKABLE_TABS.every((id) => dockByTab[id] === "closed" || (id === "pr" && !hasPr));
@@ -453,8 +437,6 @@ export function App() {
                     ratio={rightSplitRatio}
                     onToolMenu={tabMenu.onTabMenuButton}
                   />
-                ) : !activeSessionId && preview ? (
-                  <RightPanelBody sessionId={preview.sessionId} top="preview" split={null} ratio={rightSplitRatio} onToolMenu={tabMenu.onTabMenuButton} />
                 ) : (
                   <div className="right-body">
                     <div className="right-empty">
@@ -473,7 +455,7 @@ export function App() {
             sessionId={activeSessionId ?? undefined}
             driver={driver}
             hasPr={hasPr}
-            hasPreview={preview !== null}
+            hasPreview={hasPreview}
             subagents={subagentStats}
             rightActive={topTool}
             rightSplit={splitTool}

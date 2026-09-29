@@ -238,8 +238,13 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
     if (!sessionId) return;
     const store = get();
     const current = panelFor(store, sessionId);
-    if (current.rightSplit !== null && isAvailable(current.rightSplit)) {
+    const splitShowing = current.rightSplit !== null && isAvailable(current.rightSplit);
+    if (splitShowing && current.rightVisible) {
       store.setRightSplit(sessionId, null);
+      return;
+    }
+    if (splitShowing) {
+      store.setRightSplit(sessionId, current.rightSplit);
       return;
     }
     const other = tabsInPanel(current.dockByTab, "right").find((tab) => tab !== current.activeRight && isAvailable(tab));

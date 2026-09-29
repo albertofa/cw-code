@@ -2,6 +2,7 @@ import { useEffect, useState, type MouseEvent as ReactMouseEvent, type ReactNode
 import type { DockableTabId, PanelId } from "@cw-code/contracts";
 import { AppWindow, PanelBottom, PanelRight, Pin, RotateCcw, Rows2, X, type LucideIcon } from "lucide-react";
 import { selectSessionPanel, usePanelStore } from "../stores/panelStore.js";
+import { useToolAvailability } from "./useToolAvailability.js";
 
 const MENU_WIDTH = 240;
 const MENU_HEIGHT = 260;
@@ -26,7 +27,8 @@ export function TabMenu({
   onClose: () => void;
 }) {
   const moveTab = usePanelStore((s) => s.moveTab);
-  const { dockByTab, activeRight, rightSplit } = usePanelStore((s) => selectSessionPanel(s, sessionId));
+  const { dockByTab, rightSplit } = usePanelStore((s) => selectSessionPanel(s, sessionId));
+  const { rightTop } = useToolAvailability(sessionId);
   const setRightSplit = usePanelStore((s) => s.setRightSplit);
   const setAutoLocation = usePanelStore((s) => s.setAutoLocation);
   const resetLayout = usePanelStore((s) => s.resetLayout);
@@ -84,7 +86,7 @@ export function TabMenu({
           <span>Close split</span>
         </button>
       ) : (
-        !(dockByTab[tab] === "right" && activeRight === tab) && (
+        !(dockByTab[tab] === "right" && rightTop === tab) && (
           <button
             className="ctx-item"
             role="menuitem"

@@ -35,6 +35,7 @@
   --violet-line: rgba(161, 140, 255, 0.45);
   --success: #59a659;
   --warning: #e8b44f;
+  --on-success: #07130b;
   --on-warning: #201b10;
   --danger: #e06c60;
   --accent: #548af7;
@@ -5828,13 +5829,8 @@ select.field option {
 
 @media (max-width: 900px) {
   .side,
-  .right,
-  .rail {
+  .right {
     display: none;
-  }
-
-  .app-shell.right-hidden .head-col.col-right {
-    padding-right: 140px;
   }
 
   .app-body {
@@ -5850,7 +5846,7 @@ select.field option {
   }
 
   .head-col.col-right {
-    padding-right: 140px;
+    padding-right: 96px;
   }
 
   .notifs {
@@ -7930,6 +7926,7 @@ button.gitbar-checkout:hover {
 
 .bottom-panel.collapsed {
   height: 40px;
+  overflow: hidden;
 }
 
 .bottom-resizer {

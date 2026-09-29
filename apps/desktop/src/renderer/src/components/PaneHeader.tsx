@@ -36,7 +36,7 @@ export function PaneHeader({
           className="ph-btn"
           onClick={onDock}
           onDoubleClick={(e) => e.stopPropagation()}
-          title="Open in main or bottom panel"
+          title="Move, split or close"
           aria-label={`Move ${def.title} to another panel`}
           aria-haspopup="menu"
         >

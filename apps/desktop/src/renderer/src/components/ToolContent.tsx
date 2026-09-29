@@ -34,6 +34,7 @@ export function ToolContent({ tab, sessionId, panel }: { tab: DockableTabId; ses
           const fallback = tabsInPanel(dockByTab, panel).find((id) => id !== "preview");
           closePreview(sessionId);
           moveTab(sessionId, "preview", "closed");
+          if (panel === "right") return;
           if (fallback) setActive(sessionId, panel, fallback);
           else if (panel === "main") setActive(sessionId, "main", "chat");
         }}

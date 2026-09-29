@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from "vitest";
+import type { DockableTabId } from "@cw-code/contracts";
 import {
   DEFAULT_AUTO,
   PANEL_LAYOUT_KEY,
@@ -12,6 +13,7 @@ import {
   parseLayout,
   parsePanelState,
   resolveMainTab,
+  resolveRightTop,
   sanitizeLayout,
   sanitizeSessionPanel,
   serializeLayout,
@@ -475,6 +477,32 @@ describe("usePanelStore right split", () => {
     expect(panel.dockByTab.shell).toBe("right");
   });
 
+  it("toggleRightSplit reveals a stored split while the right panel is hidden", () => {
+    const store = usePanelStore.getState();
+    store.moveTab("sess_a", "diff", "right");
+    store.setRightSplit("sess_a", "shell");
+    store.setRightVisible("sess_a", false);
+    usePanelStore.getState().toggleRightSplit("sess_a");
+    expect(selectSessionPanel(usePanelStore.getState(), "sess_a")).toMatchObject({
+      rightVisible: true,
+      activeRight: "diff",
+      rightSplit: "shell"
+    });
+  });
+
+  it("toggleRightSplit shows the panel with a fresh split when hidden and no split is stored", () => {
+    const store = usePanelStore.getState();
+    store.moveTab("sess_a", "diff", "right");
+    store.moveTab("sess_a", "files", "right");
+    store.setRightVisible("sess_a", false);
+    usePanelStore.getState().toggleRightSplit("sess_a");
+    expect(selectSessionPanel(usePanelStore.getState(), "sess_a")).toMatchObject({
+      rightVisible: true,
+      activeRight: "files",
+      rightSplit: "diff"
+    });
+  });
+
   it("setRightSplitRatio clamps and persists", () => {
     const store = usePanelStore.getState();
     store.setRightSplitRatio("sess_a", 0.9);
@@ -526,5 +554,20 @@ describe("usePanelStore draggingTab", () => {
     expect(window.localStorage.getItem(PANEL_STATE_KEY)).toBeNull();
     usePanelStore.getState().setDraggingTab(null);
     expect(usePanelStore.getState().draggingTab).toBeNull();
+  });
+});
+
+describe("resolveRightTop", () => {
+  const dock = { ...defaultSessionPanel().dockByTab, files: "right" as const, diff: "right" as const, codex: "right" as const };
+
+  it("keeps the stored active tool when it is available", () => {
+    expect(resolveRightTop(dock, "diff", () => true, "codex")).toBe("diff");
+  });
+
+  it("prefers the driver tool, then the first available right tool", () => {
+    const notDiff = (tab: DockableTabId) => tab !== "diff";
+    expect(resolveRightTop(dock, "diff", notDiff, "codex")).toBe("codex");
+    expect(resolveRightTop(dock, "diff", notDiff, "claude")).toBe("files");
+    expect(resolveRightTop(dock, "diff", () => false, "codex")).toBeNull();
   });
 });
