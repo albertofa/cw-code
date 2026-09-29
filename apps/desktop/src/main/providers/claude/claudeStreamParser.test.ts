@@ -528,6 +528,14 @@ describe("parseClaudeSystemInit", () => {
     expect(parseClaudeSystemInit(line)).toEqual({ terminalSlashCommands: [], model: "claude-haiku-4-5" });
   });
 
+  it("captures the reported permission mode only when non-empty", () => {
+    const line = JSON.stringify({ type: "system", subtype: "init", permissionMode: "manual" });
+    expect(parseClaudeSystemInit(line)).toEqual({ terminalSlashCommands: [], permissionMode: "manual" });
+    expect(parseClaudeSystemInit(JSON.stringify({ type: "system", subtype: "init", permissionMode: "" }))).toEqual({
+      terminalSlashCommands: []
+    });
+  });
+
   it("tolerates a missing or garbage terminal_slash_commands field", () => {
     expect(parseClaudeSystemInit(JSON.stringify({ type: "system", subtype: "init" }))).toEqual({
       terminalSlashCommands: []

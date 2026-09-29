@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import type { CliDriver, HistoryMessage, ModelOption, SessionMeta, ThreadEvent, TurnHandle } from "@cw-code/contracts";
 import { SessionManager, type SessionManagerOptions } from "./SessionManager.js";
+import { SYNTHETIC_FULL_ACCESS_DESCRIPTION } from "../providers/permissions.js";
 import type { SessionStore } from "./SessionStore.js";
 
 class FakeDriver implements CliDriver {
@@ -568,7 +569,7 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
-  it("reports each real harness driver permission list with opencode lacking native bypass", async () => {
+  it("reports each real harness driver permission list with synthetic bypass for claude and opencode", async () => {
     const dir = mkdtempSync(join(tmpdir(), "cw-test-perms-"));
     const manager = new SessionManager({
       dbPath: join(dir, "test.db"),
@@ -581,7 +582,8 @@ describe("SessionManager", () => {
       expect(claudeModes.map((m) => m.id)).toEqual(["manual", "acceptEdits", "auto", "bypassPermissions"]);
       expect(claudeModes.find((m) => m.id === "bypassPermissions")).toMatchObject({
         label: "Bypass permissions",
-        native: true
+        native: false,
+        description: SYNTHETIC_FULL_ACCESS_DESCRIPTION
       });
       const codexModes = await manager.listPermissionModesFor(project.id, "codex");
       expect(codexModes.map((m) => m.id)).toEqual(["manual", "auto", "bypassPermissions"]);
