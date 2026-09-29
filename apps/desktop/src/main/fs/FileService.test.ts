@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, normalize } from "node:path";
-import { FileService, imageExtMime, pasteImageExt, pasteImageName } from "./FileService.js";
+import { FileService, assertInside, imageExtMime, pasteImageExt, pasteImageName } from "./FileService.js";
 import { attachmentsDir } from "../paths/appPaths.js";
 
 describe("FileService sandbox", () => {
@@ -12,6 +12,43 @@ describe("FileService sandbox", () => {
   it("rejects paths escaping the project root", () => {
     expect(() => svc.readFile(root, "../outside.txt")).toThrow(/escapes project root/);
     expect(() => svc.saveFile(root, "..\\outside.txt", "x")).toThrow(/escapes project root/);
+  });
+
+  it.runIf(process.platform === "win32")("rejects paths on another drive", () => {
+    const other = root.toUpperCase().startsWith("Z:") ? "Y:" : "Z:";
+    expect(() => assertInside(root, `${other}/x/a.md`)).toThrow(/escapes project root/);
+    expect(() => assertInside(root, `${other}\\x\\a.md`)).toThrow(/escapes project root/);
+    expect(() => assertInside(root, `${other}a.md`)).toThrow(/escapes project root/);
+    expect(() => svc.readFile(root, `${other}/x/a.md`)).toThrow(/escapes project root/);
+  });
+
+  it("rejects UNC paths in both slash styles", () => {
+    expect(() => assertInside(root, "//evil/share/a.txt")).toThrow(/escapes project root/);
+    expect(() => assertInside(root, "\\\\evil\\share\\a.txt")).toThrow(/escapes project root/);
+    expect(() => assertInside(root, "\\/evil/share/a.txt")).toThrow(/escapes project root/);
+    expect(() => svc.saveFile(root, "\\\\evil\\share\\a.txt", "x")).toThrow(/escapes project root/);
+  });
+
+  it("rejects device paths", () => {
+    expect(() => assertInside(root, "\\\\?\\C:\\wt\\a.md")).toThrow(/escapes project root/);
+    expect(() => assertInside(root, "\\\\.\\C:\\wt\\a.md")).toThrow(/escapes project root/);
+    expect(() => assertInside(root, "//?/C:/wt/a.md")).toThrow(/escapes project root/);
+    expect(() => assertInside(root, "//./pipe/x")).toThrow(/escapes project root/);
+  });
+
+  it("rejects parent-directory escapes", () => {
+    expect(() => assertInside(root, "..")).toThrow(/escapes project root/);
+    expect(() => assertInside(root, "a/../../b.md")).toThrow(/escapes project root/);
+    expect(() => assertInside(root, "a\\..\\..\\b.md")).toThrow(/escapes project root/);
+    expect(() => assertInside(root, "/outside/a.md")).toThrow(/escapes project root/);
+  });
+
+  it("accepts nested paths inside the root", () => {
+    expect(assertInside(root, "src/a/b.md")).toBe(join(root, "src", "a", "b.md"));
+    expect(assertInside(root, "src\\a\\b.md")).toBe(join(root, "src", "a", "b.md"));
+    expect(assertInside(root, "src/../b.md")).toBe(join(root, "b.md"));
+    expect(assertInside(root, "..name.md")).toBe(join(root, "..name.md"));
+    expect(assertInside(root, join(root, "src", "a.md"))).toBe(join(root, "src", "a.md"));
   });
 
   it("lists files without touching parent dirs", () => {

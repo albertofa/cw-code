@@ -3,13 +3,16 @@ import { readdir, stat } from "node:fs/promises";
 import { isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
 import { attachmentsDir } from "../paths/appPaths.js";
 
+const UNC_OR_DEVICE_PREFIX = /^[\\/]{2}/;
+
 function assertInside(root: string, target: string): string {
-  const abs = resolve(root, target.replace(/\\/g, "/"));
-  const rel = relative(resolve(root), abs);
-  if (rel === ".." || rel.startsWith(`..${sep}`) || abs !== resolve(abs)) {
+  if (UNC_OR_DEVICE_PREFIX.test(target)) throw new Error(`path escapes project root: ${target}`);
+  const base = resolve(root);
+  const abs = resolve(base, target.replace(/\\/g, "/"));
+  const rel = relative(base, abs);
+  if (isAbsolute(rel) || rel === ".." || rel.startsWith(`..${sep}`)) {
     throw new Error(`path escapes project root: ${target}`);
   }
-  void abs;
   return abs;
 }
 
