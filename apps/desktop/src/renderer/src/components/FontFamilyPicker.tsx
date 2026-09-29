@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState, useSyncExternalStore } from "react";
+import { useEffect, useId, useMemo, useRef, useState, useSyncExternalStore, type KeyboardEvent } from "react";
 import { Check, CheckCircle2, ChevronDown, Search } from "lucide-react";
 import { cssFontFamilies, isFontFamilyAvailable, isMonospaceFamily } from "../appearanceFonts.js";
 import "./appearance.css";
@@ -32,7 +32,7 @@ function requestFontAccess(): Promise<void> {
     .call(window)
     .then((fonts) => {
       const families = [...new Set(fonts.map((font) => font.family))].sort((a, b) => a.localeCompare(b));
-      setFontAccess({ status: "granted", families });
+      setFontAccess(families.length === 0 ? { status: "denied" } : { status: "granted", families });
     })
     .catch(() => setFontAccess({ status: "denied" }))
     .finally(() => {
@@ -117,7 +117,10 @@ function FontListPicker({
 }) {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const [highlight, setHighlight] = useState(0);
   const rootRef = useRef<HTMLSpanElement | null>(null);
+  const listRef = useRef<HTMLSpanElement | null>(null);
+  const optionIdPrefix = useId();
 
   useEffect(() => {
     if (!open) return;
@@ -138,6 +141,15 @@ function FontListPicker({
     return term === "" ? candidates : candidates.filter((family) => family.toLowerCase().includes(term));
   }, [candidates, query]);
 
+  const showDefault = query.trim() === "" || defaultLabel.toLowerCase().includes(query.trim().toLowerCase());
+  const entries = useMemo(() => (showDefault ? ["", ...visible] : visible), [showDefault, visible]);
+  const active = Math.min(highlight, entries.length - 1);
+
+  useEffect(() => {
+    if (!open) return;
+    listRef.current?.querySelector<HTMLElement>(".fp-it.hi")?.scrollIntoView({ block: "nearest" });
+  }, [open, active]);
+
   const openPicker = () => {
     if (open) {
       setOpen(false);
@@ -146,6 +158,7 @@ function FontListPicker({
     void requestFontAccess().then(() => {
       if (fontAccess.status === "granted") {
         setQuery("");
+        setHighlight(Math.max(0, ["", ...candidates].indexOf(value)));
         setOpen(true);
       }
     });
@@ -156,7 +169,33 @@ function FontListPicker({
     setOpen(false);
   };
 
-  const showDefault = query.trim() === "" || defaultLabel.toLowerCase().includes(query.trim().toLowerCase());
+  const onPopoverKeyDown = (event: KeyboardEvent<HTMLSpanElement>) => {
+    if (event.key === "Escape") {
+      event.stopPropagation();
+      setOpen(false);
+      return;
+    }
+    if (entries.length === 0) return;
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      const delta = event.key === "ArrowDown" ? 1 : -1;
+      setHighlight((active + delta + entries.length) % entries.length);
+    } else if (event.key === "Enter") {
+      event.preventDefault();
+      choose(entries[active]);
+    }
+  };
+
+  const optionProps = (index: number, family: string) => ({
+    id: `${optionIdPrefix}-${index}`,
+    role: "option" as const,
+    tabIndex: -1,
+    "aria-selected": family === value,
+    className: `fp-it${family === value ? " on" : ""}${index === active ? " hi" : ""}`,
+    onClick: () => choose(family),
+    onMouseEnter: () => setHighlight(index)
+  });
+  const familyOffset = showDefault ? 1 : 0;
 
   return (
     <span ref={rootRef} className={`fpick${open ? " open" : ""}`}>
@@ -168,14 +207,7 @@ function FontListPicker({
         <ChevronDown size={12} aria-hidden="true" />
       </button>
       {open && (
-        <span
-          className="fp-pop"
-          onKeyDown={(event) => {
-            if (event.key !== "Escape") return;
-            event.stopPropagation();
-            setOpen(false);
-          }}
-        >
+        <span className="fp-pop" onKeyDown={onPopoverKeyDown}>
           <span className="fp-search">
             <Search size={13} aria-hidden="true" />
             <input
@@ -183,19 +215,23 @@ function FontListPicker({
               value={query}
               placeholder={requireMonospace ? "Search monospace fonts" : "Search fonts"}
               aria-label="Search fonts"
-              onChange={(event) => setQuery(event.target.value)}
+              aria-activedescendant={entries.length > 0 ? `${optionIdPrefix}-${active}` : undefined}
+              onChange={(event) => {
+                setQuery(event.target.value);
+                setHighlight(0);
+              }}
             />
           </span>
-          <span className="fp-list" role="listbox">
+          <span ref={listRef} className="fp-list" role="listbox">
             {showDefault && (
-              <span className={`fp-it${value === "" ? " on" : ""}`} role="option" aria-selected={value === ""} onClick={() => choose("")}>
+              <span {...optionProps(0, "")}>
                 <span style={{ fontFamily: defaultFace }}>{defaultLabel}</span>
                 <span className="fp-def">default</span>
                 {value === "" && <Check size={13} aria-hidden="true" />}
               </span>
             )}
-            {visible.map((family) => (
-              <span key={family} className={`fp-it${family === value ? " on" : ""}`} role="option" aria-selected={family === value} onClick={() => choose(family)}>
+            {visible.map((family, index) => (
+              <span key={family} {...optionProps(index + familyOffset, family)}>
                 <span style={faceStyle(family)}>{family}</span>
                 {family === value && <Check size={13} aria-hidden="true" />}
               </span>
@@ -249,7 +285,7 @@ function TypedFontInput({
       {state === "valid" && (
         <span className="fp-note fp-note-ok">
           <CheckCircle2 size={13} aria-hidden="true" />
-          Installed · applied
+          Installed
         </span>
       )}
     </span>

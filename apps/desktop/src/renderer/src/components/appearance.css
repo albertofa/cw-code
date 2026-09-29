@@ -346,7 +346,8 @@
   text-overflow: ellipsis;
 }
 
-.fp-it:hover {
+.fp-it:hover,
+.fp-it.hi {
   background: var(--hover, #1d2029);
   color: var(--text);
 }
