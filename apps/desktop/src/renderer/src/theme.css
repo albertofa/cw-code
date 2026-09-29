@@ -1029,7 +1029,7 @@ body {
   gap: 5px;
   min-width: 0;
   color: var(--muted);
-  font-size: var(--t-2xs);
+  font-size: var(--t-xs);
 }
 
 .working-card-branch {
@@ -1524,14 +1524,9 @@ body.session-dragging * {
   display: inline-flex;
   align-items: center;
   gap: 3px;
-  height: 17px;
-  padding: 0 6px 0 5px;
-  border: 1px solid color-mix(in srgb, var(--pr-tone) 40%, transparent);
-  border-radius: 999px;
-  background: color-mix(in srgb, var(--pr-tone) 14%, transparent);
   color: var(--pr-tone);
-  font-size: var(--t-3xs);
-  font-weight: 600;
+  font-size: var(--t-xs);
+  font-weight: 500;
   font-variant-numeric: tabular-nums;
   white-space: nowrap;
 }
@@ -3240,9 +3235,9 @@ body.session-dragging * {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  font-family: var(--sans);
-  font-size: var(--t-base);
-  line-height: 1.5;
+  font-family: var(--prompt-font);
+  font-size: var(--fs-prompt);
+  line-height: 1.625;
   white-space: pre-wrap;
   overflow-wrap: break-word;
   overflow: hidden;
