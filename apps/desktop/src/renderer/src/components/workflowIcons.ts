@@ -11,6 +11,6 @@ export const WORKFLOW_ICONS: Record<PrWorkflowIcon, LucideIcon> = {
   sparkle: Sparkles
 };
 
-export function workflowIcon(icon: PrWorkflowIcon): LucideIcon {
-  return WORKFLOW_ICONS[icon] ?? Sparkles;
+export function workflowIcon(icon: PrWorkflowIcon | undefined): LucideIcon {
+  return (icon && WORKFLOW_ICONS[icon]) || Sparkles;
 }

@@ -167,13 +167,23 @@
   display: flex;
   justify-self: stretch;
   width: 176px;
-  overflow: hidden;
-  border-radius: var(--r-sm);
 }
 
 .pr-inbox-view .pr-inbox-action .btn {
   height: 26px;
   border-radius: 0;
+}
+
+.pr-inbox-view .pr-inbox-action .btn:first-child {
+  border-radius: var(--r-sm) 0 0 var(--r-sm);
+}
+
+.pr-inbox-view .pr-inbox-action .btn:last-child {
+  border-radius: 0 var(--r-sm) var(--r-sm) 0;
+}
+
+.pr-inbox-view .pr-inbox-action .btn:only-child {
+  border-radius: var(--r-sm);
 }
 
 .pr-inbox-view .pr-inbox-action-btn {
@@ -206,6 +216,10 @@
 @container pr-inbox (max-width: 760px) {
   .pr-inbox-view .pr-inbox-row {
     grid-template-columns: 16px minmax(0, 1fr) 164px 96px 176px;
+  }
+
+  .pr-inbox-view .pr-inbox-col-review {
+    display: none;
   }
 }
 

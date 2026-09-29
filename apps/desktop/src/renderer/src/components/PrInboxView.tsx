@@ -553,7 +553,7 @@ function PrRow({
     if (action.kind === "continue") return { label: "Re-review", Icon: RefreshCw };
     if (action.kind === "run") {
       const workflow = workflows.find((w) => w.id === action.workflowId);
-      return { label: workflow?.label ?? action.workflowId, Icon: workflow ? workflowIcon(workflow.icon) : ExternalLink };
+      return { label: workflow?.label ?? action.workflowId, Icon: workflowIcon(workflow?.icon) };
     }
     if (fallback) return { label: fallback.label, Icon: workflowIcon(fallback.icon) };
     return { label: "GitHub", Icon: ExternalLink };
@@ -631,6 +631,7 @@ function PrRow({
                 className="pr-inbox-session-chip pr-inbox-session-more"
                 aria-expanded={sessionsOpen}
                 title={`${row.linkedSessions.length} linked sessions`}
+                aria-label={`Show all ${row.linkedSessions.length} linked sessions`}
                 onClick={(e) => {
                   e.stopPropagation();
                   onOpenSessions(e.currentTarget);
@@ -646,7 +647,7 @@ function PrRow({
         <PrAvatar login={authorLogin} name={pr.author.name} avatarUrl={pr.author.avatarUrl} />
         <span className="pr-inbox-author-text">
           <span className="pr-inbox-author-name">{pr.author.name || authorLogin}</span>
-          <span className="pr-inbox-author-login">@{authorLogin}</span>
+          {pr.author.name && <span className="pr-inbox-author-login">@{authorLogin}</span>}
         </span>
       </div>
       <Signal {...checks} className="pr-inbox-col-checks" />

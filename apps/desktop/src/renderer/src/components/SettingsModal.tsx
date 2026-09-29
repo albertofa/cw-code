@@ -6,7 +6,6 @@ import {
   Bot,
   CheckCircle2,
   Copy,
-  Eye,
   Gauge,
   GitBranch,
   GitPullRequest,
