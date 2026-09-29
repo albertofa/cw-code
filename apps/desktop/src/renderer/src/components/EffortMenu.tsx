@@ -9,6 +9,7 @@ interface EffortItem {
   label: string;
   isDefault: boolean;
   chosen: boolean;
+  disabledReason?: string;
   pick: () => void;
 }
 
@@ -32,6 +33,7 @@ export function EffortMenu({
   options,
   effort,
   oneM,
+  oneMDisabledReason,
   onEffort,
   onContext
 }: {
@@ -40,6 +42,7 @@ export function EffortMenu({
   options: EffortOption[];
   effort: EffortLevel;
   oneM: boolean | null;
+  oneMDisabledReason?: string;
   onEffort: (effort: EffortLevel) => void;
   onContext: (oneM: boolean) => void;
 }) {
@@ -71,6 +74,7 @@ export function EffortMenu({
         label: contextWindowLabel(value),
         isDefault: !value,
         chosen: value === oneM,
+        disabledReason: value ? oneMDisabledReason : undefined,
         pick: () => onContext(value)
       }))
     });
@@ -94,7 +98,7 @@ export function EffortMenu({
   };
 
   const choose = (item: EffortItem | undefined) => {
-    if (!item) return;
+    if (!item || item.disabledReason) return;
     close();
     if (!item.chosen) item.pick();
   };
@@ -160,7 +164,9 @@ export function EffortMenu({
                     id={optionId(item.key)}
                     role="option"
                     aria-selected={item.chosen}
-                    className={`em-it${item.chosen ? " on" : ""}${items[active]?.key === item.key ? " hi" : ""}`}
+                    aria-disabled={item.disabledReason ? true : undefined}
+                    title={item.disabledReason}
+                    className={`em-it${item.chosen ? " on" : ""}${items[active]?.key === item.key ? " hi" : ""}${item.disabledReason ? " dis" : ""}`}
                     onMouseMove={() => {
                       if (activeKey !== item.key) setActiveKey(item.key);
                     }}

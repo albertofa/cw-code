@@ -135,6 +135,13 @@ describe("fallbackEffort", () => {
   it("takes the first level when none is lower", () => {
     expect(fallbackEffort("minimal", available)).toBe("low");
   });
+
+  it("keeps the current level when nothing is available", () => {
+    const none = effortOptionsFor("opencode", [opt("p/m", { variants: ["fast"] })], "p/m");
+    expect(none).toEqual([]);
+    expect(fallbackEffort("high", none)).toBe("high");
+    expect(fallbackEffort("medium", [])).toBe("medium");
+  });
 });
 
 describe("groupModels", () => {

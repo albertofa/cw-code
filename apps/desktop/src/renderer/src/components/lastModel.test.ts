@@ -90,6 +90,31 @@ describe("lastModel", () => {
     expect(getRecentModels("claude")).toEqual([]);
   });
 
+  it("strips the context suffix for claude and dedupes on the base id", () => {
+    pushRecentModel("claude", "opus[1m]");
+    expect(getRecentModels("claude")).toEqual(["opus"]);
+    pushRecentModel("claude", "sonnet");
+    pushRecentModel("claude", "opus");
+    expect(getRecentModels("claude")).toEqual(["opus", "sonnet"]);
+    pushRecentModel("claude", "sonnet[1M]");
+    expect(getRecentModels("claude")).toEqual(["sonnet", "opus"]);
+  });
+
+  it("does not carry 1M across a last-model round trip", () => {
+    setLastModel("claude", "opus[1m]");
+    expect(getLastModel("claude")).toBe("opus");
+  });
+
+  it("normalizes suffixed ids already stored for claude", () => {
+    window.localStorage.setItem("cw:recentModels:claude", JSON.stringify(["opus[1m]", "sonnet", "opus"]));
+    expect(getRecentModels("claude")).toEqual(["opus", "sonnet"]);
+  });
+
+  it("keeps ids untouched for other drivers", () => {
+    pushRecentModel("opencode", "provider/model[1m]");
+    expect(getRecentModels("opencode")).toEqual(["provider/model[1m]"]);
+  });
+
   it("seeds recents with the legacy last model", () => {
     window.localStorage.setItem("cw:lastModel:claude", "legacy");
     expect(getRecentModels("claude")).toEqual(["legacy"]);

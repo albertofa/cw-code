@@ -32,6 +32,7 @@ import type { DirtyBuffer } from "./editorBuffers.js";
 import { appendAssistantText, appendReasoningText, closeReasoning, upsertToolCall } from "../components/chatMessages.js";
 import { DEFAULT_APPEARANCE, appearanceOf, type AppearancePrefs } from "../appearanceFonts.js";
 import { getLastModel, setLastModel } from "../components/lastModel.js";
+import { defaultModelPatch } from "../components/modelMenus.js";
 import { formatDuration, mergeToolPairs } from "../components/toolSummaries.js";
 import { expiredHoldingIds } from "../components/workingSet.js";
 import { mergedPrBelongsToSession } from "../components/sessionPrLinks.js";
@@ -209,6 +210,7 @@ interface AppState {
   setComposerPrefs(sessionId: string, prefs: ComposerPrefs): Promise<void>;
   settingsVersion: number;
   saveSettings(patch: SettingsPatch): Promise<AppSettings>;
+  saveDefaultModel(driver: DriverName, id: string): Promise<void>;
   setProjectGitHubAccount(projectId: string, account: { host: string; login: string } | null): Promise<void>;
   renameSession(sessionId: string, title: string): Promise<void>;
   regenerateSessionTitle(sessionId: string): Promise<void>;
@@ -908,6 +910,11 @@ export const useAppStore = create<AppState>((set, get) => ({
       defaultModelByDriver: defaultModelsFrom(saved)
     });
     return saved;
+  },
+
+  async saveDefaultModel(driver: DriverName, id: string) {
+    const saved = await window.cw.setSettings(defaultModelPatch(driver, id));
+    set({ defaultModelByDriver: defaultModelsFrom(saved) });
   },
 
   async setProjectGitHubAccount(projectId: string, account: { host: string; login: string } | null) {

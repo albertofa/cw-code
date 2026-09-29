@@ -128,12 +128,15 @@ describe("parseOpencodeVerboseModels meta", () => {
     "anthropic/claude-opus-5-5",
     JSON.stringify(
       {
-        limit: { context: 1000000, output: 64000 },
+        capabilities: {
+          reasoning: true,
+          toolcall: true,
+          attachment: true,
+          input: { text: true, image: true, pdf: true, audio: false, video: false },
+          output: { text: true, image: false }
+        },
         cost: { input: 5, output: 25 },
-        reasoning: true,
-        tool_call: true,
-        attachment: true,
-        modalities: { input: ["text", "image", "pdf"], output: ["text"] },
+        limit: { context: 1000000, output: 64000 },
         variants: { high: {}, max: {} }
       },
       null,
@@ -156,27 +159,37 @@ describe("parseOpencodeVerboseModels meta", () => {
 
   it("keeps only the capabilities that are enabled", () => {
     const [model] = parseOpencodeVerboseModels(
-      ["openai/gpt-5.2", '{ "reasoning": false, "tool_call": true, "attachment": false }'].join("\n")
+      [
+        "openai/gpt-5.2",
+        JSON.stringify({ capabilities: { reasoning: false, toolcall: true, attachment: false } })
+      ].join("\n")
     );
     expect(model.meta).toEqual({ capabilities: ["Tool calling"] });
   });
 
-  it("reads the nested capabilities shape opencode reports", () => {
+  it("tolerates the flat shape with top-level flags and modalities", () => {
     const [model] = parseOpencodeVerboseModels(
       [
-        "openai/gpt-5.2",
+        "anthropic/claude-opus-5-5",
         JSON.stringify({
-          capabilities: {
-            reasoning: true,
-            toolcall: true,
-            attachment: false,
-            input: { text: true, image: true, audio: false },
-            output: { text: true }
-          }
+          limit: { context: 1000000, output: 64000 },
+          cost: { input: 5, output: 25 },
+          reasoning: true,
+          tool_call: true,
+          attachment: true,
+          modalities: { input: ["text", "image", "pdf"], output: ["text"] },
+          variants: { high: {}, max: {} }
         })
       ].join("\n")
     );
-    expect(model.meta).toEqual({ capabilities: ["Reasoning", "Tool calling"], input: ["text", "image"], output: ["text"] });
+    expect(model.meta).toEqual({
+      costInputPerM: 5,
+      costOutputPerM: 25,
+      capabilities: ["Reasoning", "Tool calling", "Attachments"],
+      input: ["text", "image", "pdf"],
+      output: ["text"]
+    });
+    expect(model.contextWindow).toBe(1000000);
   });
 
   it("leaves missing or invalid fields undefined", () => {

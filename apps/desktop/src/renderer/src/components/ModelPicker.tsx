@@ -1,4 +1,4 @@
-import { useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { Check, ChevronDown, ChevronUp, History, Plus, Search, Star } from "lucide-react";
 import type { DriverName, ModelOption } from "../cw.js";
 import { DriverIcon } from "./DriverIcon.js";
@@ -8,6 +8,7 @@ import { harnessLabel } from "./toolTabs.js";
 import "./modelPicker.css";
 
 const CARD_GAP = 8;
+const DEFAULT_SHORTCUT = "Ctrl+D";
 
 type Entry =
   | { key: string; kind: "custom" }
@@ -65,6 +66,7 @@ export function ModelPicker({
   const triggerRef = useRef<HTMLButtonElement | null>(null);
   const popRef = useRef<HTMLDivElement | null>(null);
   const cardRef = useRef<HTMLDivElement | null>(null);
+  const listRef = useRef<HTMLDivElement | null>(null);
 
   const text = query.trim();
   const sections = useMemo(() => pickerSections(driver, models, recents, query), [driver, models, recents, query]);
@@ -77,15 +79,15 @@ export function ModelPicker({
     return [{ key: "custom", kind: "custom" }, ...rows];
   }, [noMatch, sections, text]);
 
+  const indexByKey = useMemo(() => new Map(entries.map((entry, index) => [entry.key, index])), [entries]);
   const currentIndex = entries.findIndex((e) => e.kind === "model" && e.model.id === currentId);
   const firstRowIndex = entries.findIndex((e) => e.kind !== "custom");
   const defaultIndex = currentIndex >= 0 ? currentIndex : Math.max(0, firstRowIndex);
-  const keyedIndex = entries.findIndex((e) => e.key === activeKey);
+  const keyedIndex = activeKey === null ? -1 : (indexByKey.get(activeKey) ?? -1);
   const active = keyedIndex >= 0 ? keyedIndex : defaultIndex;
   const activeEntry: Entry | undefined = entries[active];
   const detailModel = open && activeEntry?.kind === "model" && hasModelDetail(activeEntry.model) ? activeEntry.model : null;
   const optionId = (index: number) => `${listId}-opt-${index}`;
-  const indexOfKey = (key: string) => entries.findIndex((e) => e.key === key);
 
   const placeCard = () => {
     const pop = popRef.current;
@@ -110,6 +112,17 @@ export function ModelPicker({
     if (!open) return;
     document.getElementById(optionId(active))?.scrollIntoView({ block: "nearest" });
     placeCard();
+  }, [open, active, entries, detailModel]);
+
+  useEffect(() => {
+    if (!open || !detailModel) return;
+    const list = listRef.current;
+    window.addEventListener("resize", placeCard);
+    list?.addEventListener("scroll", placeCard);
+    return () => {
+      window.removeEventListener("resize", placeCard);
+      list?.removeEventListener("scroll", placeCard);
+    };
   }, [open, active, entries, detailModel]);
 
   const close = (restoreFocus = true) => {
@@ -141,8 +154,15 @@ export function ModelPicker({
     if (entry.model.id !== currentId) onPick(entry.model.id);
   };
 
+  const toggleDefault = (model: ModelOption) => {
+    onDefaultChange(model.id === defaultId ? "" : model.id);
+  };
+
   const onSearchKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
-    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+    if (e.ctrlKey && e.key.toLowerCase() === "d") {
+      e.preventDefault();
+      if (activeEntry?.kind === "model") toggleDefault(activeEntry.model);
+    } else if (e.key === "ArrowDown" || e.key === "ArrowUp") {
       e.preventDefault();
       const step = e.key === "ArrowDown" ? 1 : -1;
       setActiveKey(entries[(active + step + entries.length) % entries.length].key);
@@ -187,7 +207,7 @@ export function ModelPicker({
         className={`menu-btn${isSet ? " is-set" : ""}`}
         aria-label="Model"
         title={title}
-        aria-haspopup="listbox"
+        aria-haspopup="dialog"
         aria-expanded={open}
         onClick={toggle}
       >
@@ -200,7 +220,7 @@ export function ModelPicker({
       {open && (
         <>
           <div className="menu-backdrop" onClick={() => close()} />
-          <div ref={popRef} className="mp-pop" onKeyDown={onPopKeyDown}>
+          <div ref={popRef} className="mp-pop" role="dialog" aria-label="Choose model" onKeyDown={onPopKeyDown}>
             <div className="mp">
               <div className="mp-search">
                 <Search size={14} aria-hidden="true" />
@@ -236,7 +256,7 @@ export function ModelPicker({
                       Custom model…
                       <span className="mp-hint">{customHint}</span>
                     </div>
-                    <div className="mp-list">
+                    <div ref={listRef} className="mp-list">
                       {sections.map((section) => (
                         <div key={section.id} className="mp-grp" role="group" aria-label={section.label}>
                           <div className="mp-gh" aria-hidden="true">
@@ -246,9 +266,10 @@ export function ModelPicker({
                           </div>
                           {section.models.map((model) => {
                             const key = entryKey(section, model);
-                            const index = indexOfKey(key);
+                            const index = indexByKey.get(key) ?? 0;
                             const selected = model.id === currentId;
                             const isDefault = model.id === defaultId;
+                            const shortcut = index === active ? ` (${DEFAULT_SHORTCUT})` : "";
                             return (
                               <div
                                 key={key}
@@ -266,12 +287,12 @@ export function ModelPicker({
                                     tabIndex={-1}
                                     className={`mp-star${isDefault ? " on" : ""}`}
                                     aria-pressed={isDefault}
-                                    aria-label={`${isDefault ? "Clear" : "Set"} ${model.label} as the ${harness} default model`}
-                                    title={isDefault ? `Default for ${harness}. Click to clear` : `Set as the ${harness} default`}
+                                    aria-label={`${isDefault ? "Clear" : "Set"} ${model.label} as the ${harness} default model${shortcut}`}
+                                    title={`${isDefault ? `Default for ${harness}. Click to clear` : `Set as the ${harness} default`}${shortcut}`}
                                     onMouseDown={(e) => e.preventDefault()}
                                     onClick={(e) => {
                                       e.stopPropagation();
-                                      onDefaultChange(isDefault ? "" : model.id);
+                                      toggleDefault(model);
                                     }}
                                   >
                                     <Star size={14} fill={isDefault ? "currentColor" : "none"} aria-hidden="true" />
@@ -299,6 +320,11 @@ export function ModelPicker({
                   <span className="mp-kbd">Enter</span>
                   {noMatch ? "use as custom" : "select"}
                 </span>
+                {!noMatch && (
+                  <span>
+                    <span className="mp-kbd">{DEFAULT_SHORTCUT}</span>default
+                  </span>
+                )}
                 <span className="mp-foot-end">
                   <span className="mp-kbd">Esc</span>
                 </span>

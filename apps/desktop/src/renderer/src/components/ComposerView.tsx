@@ -15,12 +15,11 @@ import {
 } from "lucide-react";
 import type { CommandInvocation, CommandOption } from "@cw-code/contracts";
 import type { ComposerPrefs, DriverName, ModelOption, PermissionMode, PermissionOption } from "../cw.js";
-import { getRecentModels, setLastModel } from "./lastModel.js";
+import { getRecentModels, pushRecentModel } from "./lastModel.js";
 import { EffortMenu } from "./EffortMenu.js";
 import { MenuSelect } from "./MenuSelect.js";
 import { ModelPicker } from "./ModelPicker.js";
 import {
-  defaultModelPatch,
   effortOptionsFor,
   fallbackEffort,
   hasContextSuffix,
@@ -128,7 +127,7 @@ export function ComposerView({
   const [sending, setSending] = useState(false);
   const homeDir = useAppStore((s) => s.homeDir);
   const defaultModelId = useAppStore((s) => s.defaultModelByDriver[driver]);
-  const saveSettings = useAppStore((s) => s.saveSettings);
+  const saveDefaultModel = useAppStore((s) => s.saveDefaultModel);
   const home = homeDir ?? undefined;
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const customInputRef = useRef<HTMLInputElement | null>(null);
@@ -270,7 +269,6 @@ export function ComposerView({
           if (next) backendRef.current.savePrefs({ model: next });
           setShowCustom(false);
         } else if (list.some((m) => m.id === baseModelId)) {
-          setLastModel(driver, baseModelId);
           setShowCustom(false);
         } else if (resetStaleModel && list.length > 0) {
           const next = initialModel();
@@ -366,13 +364,9 @@ export function ComposerView({
   useEffect(() => {
     if (driver !== "opencode" || showCustom) return;
     if (effortOptions.some((o) => o.id === effectiveEffort)) return;
-    backendRef.current.savePrefs({ effort: fallbackEffort(effectiveEffort, effortOptions) });
+    const next = fallbackEffort(effectiveEffort, effortOptions);
+    if (next !== effectiveEffort) backendRef.current.savePrefs({ effort: next });
   }, [driver, showCustom, models, prefs.model, effectiveEffort, effortOptions]);
-  useEffect(() => {
-    if (!baseModelId || showCustom) return;
-    if (!models.some((m) => m.id === baseModelId)) return;
-    setLastModel(driver, baseModelId);
-  }, [driver, baseModelId, models, showCustom]);
   const permissions = permissionOptions ?? FALLBACK_PERMISSIONS;
   const effectivePermission = prefs.permissionMode ?? "auto";
   const permissionDisplay = permissions.find((o) => o.id === effectivePermission)?.label ?? "Auto";
@@ -412,24 +406,34 @@ export function ComposerView({
   const tagAttachments = (body: string) =>
     attachments.length > 0 ? `${body}${body ? "\n" : ""}${attachments.map((a) => `@${a}`).join("\n")}` : body;
 
+  const commitModel = (id: string) => {
+    pushRecentModel(driver, id);
+    backendRef.current.savePrefs({ model: id });
+  };
+
+  const commitCustomModel = (value: string) => {
+    commitModel(oneMContext ? withContextSuffix(value, true) : value);
+  };
+
   const applyModel = (value: string) => {
-    const wanted = value.toLowerCase();
+    const oneM = driver === "claude" && hasContextSuffix(value);
+    const base = driver === "claude" ? stripContextSuffix(value) : value;
+    const wanted = base.toLowerCase();
     const match =
-      models.find((m) => m.id === value) ??
+      models.find((m) => m.id === base) ??
       models.find((m) => m.id.toLowerCase() === wanted || m.label.toLowerCase() === wanted);
     if (!match && models.length > 0) {
-      warn(`Unknown model: ${value}`, "Pick one from the list, or use Custom… in the model menu.");
+      warn(`Unknown model: ${base}`, "Pick one from the list, or use Custom… in the model menu.");
       return;
     }
-    const id = match?.id ?? value;
+    const id = match?.id ?? base;
     if (match) {
       setShowCustom(false);
-      setLastModel(driver, id);
     } else {
       setCustomModel(id);
       setShowCustom(true);
     }
-    backendRef.current.savePrefs({ model: id });
+    commitModel(oneM ? withContextSuffix(id, true) : id);
     setDraft("");
   };
 
@@ -446,8 +450,7 @@ export function ComposerView({
 
   const pickModel = (id: string) => {
     setShowCustom(false);
-    setLastModel(driver, id);
-    backend.savePrefs({ model: id });
+    commitModel(id);
   };
 
   const openCustomModel = () => {
@@ -458,16 +461,16 @@ export function ComposerView({
   const useCustomModel = (value: string) => {
     setCustomModel(value);
     setShowCustom(true);
-    backend.savePrefs({ model: value });
+    commitCustomModel(value);
   };
 
   const changeDefaultModel = (id: string) => {
-    saveSettings(defaultModelPatch(driver, id)).catch((err: unknown) => notifyError("Could not save default model", err));
+    saveDefaultModel(driver, id).catch((err: unknown) => notifyError("Could not save default model", err));
   };
 
   const changeContextWindow = (oneM: boolean) => {
     if (!prefs.model) return;
-    backend.savePrefs({ model: withContextSuffix(prefs.model, oneM) });
+    commitModel(withContextSuffix(prefs.model, oneM));
   };
 
   const completeCommand = (command: CommandOption) => {
@@ -595,9 +598,11 @@ export function ComposerView({
   const modelArgMode = slashArg?.[1] === "model";
   let argOverflow = false;
   if (slashOpen && slashArg && argCommand) {
+    const modelQuery = driver === "claude" ? stripContextSuffix(slashArg[2]) : slashArg[2];
+    const modelSuffix = driver === "claude" && hasContextSuffix(slashArg[2]) ? "[1m]" : "";
     const options = modelArgMode
-      ? rankByQuery(models, slashArg[2], (m) => [m.id, m.label]).map((m) => ({
-          id: m.id,
+      ? rankByQuery(models, modelQuery, (m) => [m.id, m.label]).map((m) => ({
+          id: `${m.id}${modelSuffix}`,
           label: m.label,
           hint: m.label === m.id ? undefined : m.id
         }))
@@ -827,7 +832,7 @@ export function ComposerView({
             onChange={(e) => setCustomModel(e.target.value)}
             onBlur={() => {
               const v = customModel.trim();
-              if (v) backend.savePrefs({ model: oneMContext ? withContextSuffix(v, true) : v });
+              if (v) commitCustomModel(v);
             }}
             onKeyDown={(e) => {
               if (e.key === "Enter") (e.target as HTMLInputElement).blur();
@@ -842,6 +847,7 @@ export function ComposerView({
             options={effortOptions}
             effort={effectiveEffort}
             oneM={driver === "claude" ? oneMContext : null}
+            oneMDisabledReason={prefs.model ? undefined : "Pick a model first"}
             onEffort={(effort) => backend.savePrefs({ effort })}
             onContext={changeContextWindow}
           />

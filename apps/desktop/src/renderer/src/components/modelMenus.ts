@@ -54,7 +54,7 @@ export function effortOptionsFor(driver: DriverName, models: ModelOption[], mode
 }
 
 export function fallbackEffort(current: EffortLevel, available: EffortOption[]): EffortLevel {
-  if (available.some((o) => o.id === current)) return current;
+  if (available.length === 0 || available.some((o) => o.id === current)) return current;
   const want = EFFORT_RANK.indexOf(current);
   const below = available.filter((o) => EFFORT_RANK.indexOf(o.id) <= want).sort((a, b) => EFFORT_RANK.indexOf(b.id) - EFFORT_RANK.indexOf(a.id));
   if (below.length > 0) return below[0].id;
