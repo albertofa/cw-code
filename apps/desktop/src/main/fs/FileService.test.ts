@@ -61,8 +61,29 @@ describe("FileService sandbox", () => {
     writeFileSync(file, "# hi", "utf8");
     expect(svc.readOutsideFile(file)).toBe("# hi");
     expect(() => svc.readOutsideFile(join(dir, "missing.md"))).toThrow(/not found/);
-    expect(() => svc.readOutsideFile(dir)).toThrow(/not a file/);
+    mkdirSync(join(dir, "folder.md"));
+    expect(() => svc.readOutsideFile(join(dir, "folder.md"))).toThrow(/not a file/);
     expect(() => svc.readOutsideFile("relative.md")).toThrow(/absolute path required/);
+  });
+
+  it("restricts outside reads to preview extensions case-insensitively", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cw-outside-ext-"));
+    for (const name of ["a.MD", "b.Markdown", "c.HTML", "d.htm"]) {
+      writeFileSync(join(dir, name), name, "utf8");
+      expect(svc.readOutsideFile(join(dir, name))).toBe(name);
+    }
+    for (const name of ["secret.txt", "config.json", "id_rsa", ".env", "run.ps1"]) {
+      writeFileSync(join(dir, name), "x", "utf8");
+      expect(() => svc.readOutsideFile(join(dir, name))).toThrow(/not a previewable file/);
+    }
+    expect(() => svc.readOutsideFile(dir)).toThrow(/not a previewable file/);
+  });
+
+  it("rejects UNC and device paths for outside reads", () => {
+    expect(() => svc.readOutsideFile("\\\\server\\share\\a.md")).toThrow(/network and device paths/);
+    expect(() => svc.readOutsideFile("//server/share/a.md")).toThrow(/network and device paths/);
+    expect(() => svc.readOutsideFile("\\\\?\\C:\\a.md")).toThrow(/network and device paths/);
+    expect(() => svc.readOutsideFile("\\\\.\\C:\\a.md")).toThrow(/network and device paths/);
   });
 });
 

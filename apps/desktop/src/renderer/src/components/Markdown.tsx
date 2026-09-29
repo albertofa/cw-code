@@ -54,7 +54,7 @@ export function isHtmlPath(path: string): boolean {
 
 export function isLocalPreviewLink(href: string): boolean {
   const clean = href.split("#")[0].split("?")[0];
-  if (!clean || clean.startsWith("//")) return false;
+  if (!clean || /^[\\/]{2}/.test(clean)) return false;
   if (/^[a-zA-Z]:[\\/]/.test(clean)) return isPreviewablePath(clean);
   if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(clean)) return false;
   return isPreviewablePath(clean);

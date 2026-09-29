@@ -30,6 +30,7 @@ import { AccountUsageService } from "./usage/AccountUsageService.js";
 import { SkillsStore } from "./skills/SkillsStore.js";
 import { FileService, IMAGE_MAX_BYTES, imageExtMime } from "./fs/FileService.js";
 import { GitService } from "./fs/GitService.js";
+import { assertOpenablePath } from "./fs/openPathPolicy.js";
 import { assertPrRef, PullRequestService } from "./github/PullRequestService.js";
 import { PtyPool } from "./pty/PtyPool.js";
 import { defaultPrWorkflows } from "./settings/prWorkflowDefaults.js";
@@ -932,7 +933,7 @@ function registerIpc(services: Services): void {
   });
 
   ipcMain.handle("shell.openPath", (_e, args: { path: string }): Promise<void> =>
-    shell.openExternal(pathToFileURL(args.path).href).then(() => undefined)
+    shell.openExternal(pathToFileURL(assertOpenablePath(args.path)).href).then(() => undefined)
   );
 
   ipcMain.handle("shell.openExternal", (_e, args: { url: string }): Promise<void> => {
