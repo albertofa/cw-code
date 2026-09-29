@@ -5,6 +5,7 @@ import {
   PANEL_LAYOUT_KEY,
   PANEL_STATE_KEY,
   clampBottomHeight,
+  clampSplitRatio,
   defaultLayout,
   defaultSessionPanel,
   isBottomOpen,
@@ -12,6 +13,7 @@ import {
   parsePanelState,
   resolveMainTab,
   sanitizeLayout,
+  sanitizeSessionPanel,
   serializeLayout,
   serializePanelState,
   tabsInPanel
@@ -105,6 +107,60 @@ describe("sanitizeLayout", () => {
     expect(clean.activeMain).toBe("chat");
     expect(clean.activeRight).toBe("shell");
     expect(clean.activeBottom).toBe("shell");
+  });
+});
+
+describe("right split sanitizing", () => {
+  const docked = { files: "right", agents: "right", shell: "right" } as const;
+
+  it("defaults to no split at an even ratio", () => {
+    expect(defaultLayout()).toMatchObject({ rightSplit: null, rightSplitRatio: 0.5 });
+    expect(defaultSessionPanel()).toMatchObject({ rightSplit: null, rightSplitRatio: 0.5 });
+    expect(sanitizeLayout({})).toMatchObject({ rightSplit: null, rightSplitRatio: 0.5 });
+  });
+
+  it("keeps a split tool docked right that differs from the active one", () => {
+    const clean = sanitizeLayout({ dockByTab: docked, activeRight: "files", rightSplit: "shell" });
+    expect(clean.rightSplit).toBe("shell");
+  });
+
+  it("drops an unknown split tab", () => {
+    expect(sanitizeLayout({ dockByTab: docked, activeRight: "files", rightSplit: "nope" }).rightSplit).toBeNull();
+    expect(sanitizeLayout({ dockByTab: docked, activeRight: "files", rightSplit: 7 }).rightSplit).toBeNull();
+  });
+
+  it("drops a split tool that is not docked right", () => {
+    const clean = sanitizeLayout({
+      dockByTab: { ...docked, shell: "bottom" },
+      activeRight: "files",
+      rightSplit: "shell"
+    });
+    expect(clean.rightSplit).toBeNull();
+    expect(sanitizeLayout({ dockByTab: docked, activeRight: "files", rightSplit: "diff" }).rightSplit).toBeNull();
+  });
+
+  it("drops a split tool equal to the active right tool", () => {
+    expect(sanitizeLayout({ dockByTab: docked, activeRight: "shell", rightSplit: "shell" }).rightSplit).toBeNull();
+  });
+
+  it("clamps the split ratio to 0.25-0.75 and falls back for garbage", () => {
+    expect(clampSplitRatio(0.6)).toBe(0.6);
+    expect(clampSplitRatio(0.1)).toBe(0.25);
+    expect(clampSplitRatio(0.95)).toBe(0.75);
+    expect(clampSplitRatio(Number.NaN)).toBe(0.5);
+    expect(clampSplitRatio("wide")).toBe(0.5);
+    expect(sanitizeSessionPanel({ rightSplitRatio: 3 }).rightSplitRatio).toBe(0.75);
+  });
+
+  it("round-trips a split through a session state", () => {
+    const panel = sanitizeSessionPanel({
+      dockByTab: docked,
+      activeRight: "files",
+      rightSplit: "agents",
+      rightSplitRatio: 0.4
+    });
+    const parsed = parsePanelState(serializePanelState({ autoLocation: { ...DEFAULT_AUTO }, sessions: { sess_a: panel } }), null);
+    expect(parsed.sessions.sess_a).toMatchObject({ rightSplit: "agents", rightSplitRatio: 0.4, activeRight: "files" });
   });
 });
 
@@ -313,6 +369,117 @@ describe("usePanelStore routing", () => {
     expect(selectSessionPanel(state, "sess_a").dockByTab.shell).toBe("bottom");
     expect(selectSessionPanel(state, "sess_b").dockByTab.shell).toBe("closed");
     expect(state.legacySession).toBeNull();
+  });
+});
+
+describe("usePanelStore right split", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    usePanelStore.setState({
+      autoLocation: { ...DEFAULT_AUTO },
+      sessions: {},
+      legacySession: null,
+      draggingTab: null
+    });
+  });
+
+  it("setRightSplit docks the tool right, keeps the active one and reveals the panel", () => {
+    const store = usePanelStore.getState();
+    store.moveTab("sess_a", "diff", "right");
+    store.setRightVisible("sess_a", false);
+    store.setRightSplit("sess_a", "shell");
+    const panel = selectSessionPanel(usePanelStore.getState(), "sess_a");
+    expect(panel).toMatchObject({ activeRight: "diff", rightSplit: "shell", rightVisible: true });
+    expect(panel.dockByTab.shell).toBe("right");
+  });
+
+  it("setRightSplit(null) clears the split", () => {
+    const store = usePanelStore.getState();
+    store.moveTab("sess_a", "diff", "right");
+    store.setRightSplit("sess_a", "shell");
+    store.setRightSplit("sess_a", null);
+    expect(selectSessionPanel(usePanelStore.getState(), "sess_a").rightSplit).toBeNull();
+  });
+
+  it("ignores splitting the tool that is already the active right tool", () => {
+    const store = usePanelStore.getState();
+    store.moveTab("sess_a", "diff", "right");
+    store.setRightSplit("sess_a", "diff");
+    expect(selectSessionPanel(usePanelStore.getState(), "sess_a").rightSplit).toBeNull();
+  });
+
+  it("swaps the split with the active tool when the split tool is opened", () => {
+    const store = usePanelStore.getState();
+    store.moveTab("sess_a", "diff", "right");
+    store.setRightSplit("sess_a", "shell");
+    store.setActive("sess_a", "right", "shell");
+    expect(selectSessionPanel(usePanelStore.getState(), "sess_a")).toMatchObject({
+      activeRight: "shell",
+      rightSplit: "diff"
+    });
+  });
+
+  it("promotes the split tool when the active right tool is closed", () => {
+    const store = usePanelStore.getState();
+    store.moveTab("sess_a", "diff", "right");
+    store.setRightSplit("sess_a", "shell");
+    store.moveTab("sess_a", "diff", "closed");
+    expect(selectSessionPanel(usePanelStore.getState(), "sess_a")).toMatchObject({
+      activeRight: "shell",
+      rightSplit: null
+    });
+  });
+
+  it("clears the split when its tool leaves the right panel", () => {
+    const store = usePanelStore.getState();
+    store.moveTab("sess_a", "diff", "right");
+    store.setRightSplit("sess_a", "shell");
+    store.moveTab("sess_a", "shell", "bottom");
+    expect(selectSessionPanel(usePanelStore.getState(), "sess_a").rightSplit).toBeNull();
+  });
+
+  it("toggleRightSplit picks the first other right tool, then turns the split off", () => {
+    const store = usePanelStore.getState();
+    store.moveTab("sess_a", "agents", "right");
+    store.moveTab("sess_a", "files", "right");
+    store.moveTab("sess_a", "diff", "right");
+    store.toggleRightSplit("sess_a");
+    expect(selectSessionPanel(usePanelStore.getState(), "sess_a")).toMatchObject({
+      activeRight: "diff",
+      rightSplit: "files"
+    });
+    usePanelStore.getState().toggleRightSplit("sess_a");
+    expect(selectSessionPanel(usePanelStore.getState(), "sess_a").rightSplit).toBeNull();
+  });
+
+  it("toggleRightSplit skips unavailable tools and opens the shell when none is left", () => {
+    const store = usePanelStore.getState();
+    store.moveTab("sess_a", "files", "right");
+    store.moveTab("sess_a", "codex", "right");
+    store.moveTab("sess_a", "diff", "right");
+    store.toggleRightSplit("sess_a", (tab) => tab !== "files");
+    expect(selectSessionPanel(usePanelStore.getState(), "sess_a").rightSplit).toBe("codex");
+
+    store.moveTab("sess_b", "diff", "right");
+    store.toggleRightSplit("sess_b");
+    const panel = selectSessionPanel(usePanelStore.getState(), "sess_b");
+    expect(panel).toMatchObject({ activeRight: "diff", rightSplit: "shell" });
+    expect(panel.dockByTab.shell).toBe("right");
+  });
+
+  it("setRightSplitRatio clamps and persists", () => {
+    const store = usePanelStore.getState();
+    store.setRightSplitRatio("sess_a", 0.9);
+    expect(selectSessionPanel(usePanelStore.getState(), "sess_a").rightSplitRatio).toBe(0.75);
+    expect(window.localStorage.getItem(PANEL_STATE_KEY)).toContain('"rightSplitRatio":0.75');
+  });
+
+  it("resetLayout drops the split", () => {
+    const store = usePanelStore.getState();
+    store.moveTab("sess_a", "diff", "right");
+    store.setRightSplit("sess_a", "shell");
+    store.resetLayout("sess_a");
+    expect(selectSessionPanel(usePanelStore.getState(), "sess_a")).toMatchObject({ rightSplit: null, rightSplitRatio: 0.5 });
   });
 });
 

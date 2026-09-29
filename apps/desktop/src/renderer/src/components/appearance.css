@@ -113,6 +113,10 @@
   font-variant-numeric: tabular-nums;
 }
 
+.step .v.wide {
+  min-width: 36px;
+}
+
 .step .u {
   margin-right: 4px;
   font-size: var(--t-xs, 0.75rem);

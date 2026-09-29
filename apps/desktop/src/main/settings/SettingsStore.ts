@@ -109,7 +109,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   fontSizeCode: 14,
   fontSizePrompt: 14,
   fontSizeTerminal: 14,
-  typographyAdvanced: false
+  typographyAdvanced: false,
+  panelAnimationMs: 0
 };
 
 const FONT_FAMILY_MAX_LENGTH = 200;
@@ -121,6 +122,12 @@ function fontFamilyOr(value: unknown, fallback: string): string {
 function clampedIntegerOr(value: unknown, fallback: number, min: number, max: number): number {
   const rounded = Math.round(Number(value));
   return Number.isFinite(rounded) ? Math.min(max, Math.max(min, rounded)) : fallback;
+}
+
+function steppedIntegerOr(value: unknown, fallback: number, min: number, max: number, step: number): number {
+  const n = Number(value);
+  if (!Number.isFinite(n)) return fallback;
+  return Math.min(max, Math.max(min, Math.round(n / step) * step));
 }
 
 function trimmedOr(value: unknown, fallback: string): string {
@@ -224,6 +231,7 @@ function sanitize(patch: SettingsPatch): SettingsPatch {
   if (patch.fontSizePrompt !== undefined) out.fontSizePrompt = clampedIntegerOr(patch.fontSizePrompt, DEFAULT_SETTINGS.fontSizePrompt, 12, 20);
   if (patch.fontSizeTerminal !== undefined) out.fontSizeTerminal = clampedIntegerOr(patch.fontSizeTerminal, DEFAULT_SETTINGS.fontSizeTerminal, 8, 20);
   if (patch.typographyAdvanced !== undefined) out.typographyAdvanced = patch.typographyAdvanced === true;
+  if (patch.panelAnimationMs !== undefined) out.panelAnimationMs = steppedIntegerOr(patch.panelAnimationMs, DEFAULT_SETTINGS.panelAnimationMs, 0, 400, 25);
   return out;
 }
 

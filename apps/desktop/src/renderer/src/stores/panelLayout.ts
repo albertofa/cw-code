@@ -31,6 +31,8 @@ export interface SessionPanelState {
   activeBottom: DockableTabId;
   mainOrder: MainTabId[];
   bottomHeight: number;
+  rightSplit: DockableTabId | null;
+  rightSplitRatio: number;
   rightVisible: boolean;
   bottomCollapsed: boolean;
 }
@@ -48,6 +50,10 @@ export interface LoadedPanelState extends PersistedPanelState {
 export const BOTTOM_HEIGHT_DEFAULT = 260;
 export const BOTTOM_HEIGHT_MIN = 140;
 export const BOTTOM_HEIGHT_MAX = 520;
+
+export const SPLIT_RATIO_DEFAULT = 0.5;
+export const SPLIT_RATIO_MIN = 0.25;
+export const SPLIT_RATIO_MAX = 0.75;
 
 export const DEFAULT_DOCK: TabDockState = {
   files: "closed",
@@ -81,7 +87,9 @@ export function defaultLayout(): PanelLayoutSnapshot {
     activeRight: "agents",
     activeBottom: "shell",
     mainOrder: ["chat"],
-    bottomHeight: BOTTOM_HEIGHT_DEFAULT
+    bottomHeight: BOTTOM_HEIGHT_DEFAULT,
+    rightSplit: null,
+    rightSplitRatio: SPLIT_RATIO_DEFAULT
   };
 }
 
@@ -93,6 +101,8 @@ export function defaultSessionPanel(): SessionPanelState {
     activeBottom: "shell",
     mainOrder: ["chat"],
     bottomHeight: BOTTOM_HEIGHT_DEFAULT,
+    rightSplit: null,
+    rightSplitRatio: SPLIT_RATIO_DEFAULT,
     rightVisible: true,
     bottomCollapsed: false
   };
@@ -122,6 +132,12 @@ export function clampBottomHeight(value: unknown): number {
   const n = typeof value === "number" ? value : Number.NaN;
   if (!Number.isFinite(n)) return BOTTOM_HEIGHT_DEFAULT;
   return Math.min(BOTTOM_HEIGHT_MAX, Math.max(BOTTOM_HEIGHT_MIN, Math.round(n)));
+}
+
+export function clampSplitRatio(value: unknown): number {
+  const n = typeof value === "number" ? value : Number.NaN;
+  if (!Number.isFinite(n)) return SPLIT_RATIO_DEFAULT;
+  return Math.min(SPLIT_RATIO_MAX, Math.max(SPLIT_RATIO_MIN, n));
 }
 
 function sanitizeDock<T extends TabDockState>(raw: unknown, fallback: T, allowClosed: boolean): T {
@@ -180,6 +196,9 @@ export function sanitizeLayout(raw: unknown): PanelLayoutSnapshot {
     isDockableTabId(rawActiveBottom) && dockByTab[rawActiveBottom] === "bottom"
       ? rawActiveBottom
       : (bottomTabs[0] ?? defaults.activeBottom);
+  const rawSplit = source.rightSplit;
+  const rightSplit: DockableTabId | null =
+    isDockableTabId(rawSplit) && dockByTab[rawSplit] === "right" && rawSplit !== activeRight ? rawSplit : null;
   return {
     dockByTab,
     autoLocation,
@@ -187,7 +206,9 @@ export function sanitizeLayout(raw: unknown): PanelLayoutSnapshot {
     activeRight,
     activeBottom,
     mainOrder,
-    bottomHeight: clampBottomHeight(source.bottomHeight)
+    bottomHeight: clampBottomHeight(source.bottomHeight),
+    rightSplit,
+    rightSplitRatio: clampSplitRatio(source.rightSplitRatio)
   };
 }
 
@@ -199,7 +220,9 @@ export function serializeLayout(snapshot: PanelLayoutSnapshot): string {
     activeRight: snapshot.activeRight,
     activeBottom: snapshot.activeBottom,
     mainOrder: snapshot.mainOrder,
-    bottomHeight: snapshot.bottomHeight
+    bottomHeight: snapshot.bottomHeight,
+    rightSplit: snapshot.rightSplit,
+    rightSplitRatio: snapshot.rightSplitRatio
   });
 }
 
@@ -220,6 +243,8 @@ function sessionFromLayout(snapshot: PanelLayoutSnapshot): SessionPanelState {
     activeBottom: snapshot.activeBottom,
     mainOrder: snapshot.mainOrder,
     bottomHeight: snapshot.bottomHeight,
+    rightSplit: snapshot.rightSplit,
+    rightSplitRatio: snapshot.rightSplitRatio,
     rightVisible: true,
     bottomCollapsed: false
   };

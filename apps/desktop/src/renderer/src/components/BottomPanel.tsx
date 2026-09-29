@@ -6,6 +6,7 @@ import { TOOL_TABS, isToolTabAvailable } from "./toolTabs.js";
 import { ToolContent } from "./ToolContent.js";
 import { useTabMenu } from "./TabMenu.js";
 import { endTabDrag, startTabDrag, useDockDrop } from "./useDockDrop.js";
+import { usePanelAnimationMs, usePresence } from "./usePresence.js";
 import { BOTTOM_HEIGHT_DEFAULT, tabsInPanel } from "../stores/panelLayout.js";
 import { selectSessionPanel, usePanelStore } from "../stores/panelStore.js";
 
@@ -19,6 +20,7 @@ export function BottomPanel({ sessionId, driver, hasPr }: { sessionId: string; d
   const draggingTab = usePanelStore((s) => s.draggingTab);
   const setBottomCollapsed = usePanelStore((s) => s.setBottomCollapsed);
   const dragRef = useRef<{ startY: number; startHeight: number } | null>(null);
+  const body = usePresence(!bottomCollapsed, usePanelAnimationMs());
 
   const tabs = tabsInPanel(dockByTab, "bottom").filter((id) => {
     const def = TOOL_TABS.find((item) => item.id === id);
@@ -41,7 +43,9 @@ export function BottomPanel({ sessionId, driver, hasPr }: { sessionId: string; d
       window.removeEventListener("mouseup", onUp);
       document.body.style.userSelect = "";
       document.body.style.cursor = "";
+      document.body.classList.remove("resizing");
     };
+    document.body.classList.add("resizing");
     document.body.style.userSelect = "none";
     document.body.style.cursor = "row-resize";
     window.addEventListener("mousemove", onMove);
@@ -50,7 +54,7 @@ export function BottomPanel({ sessionId, driver, hasPr }: { sessionId: string; d
 
   return (
     <section
-      className={`bottom-panel${dropBottom.over || draggingTab !== null ? " drop-target-active" : ""}`}
+      className={`bottom-panel${bottomCollapsed && tabs.length > 0 ? " collapsed" : ""}${dropBottom.over || draggingTab !== null ? " drop-target-active" : ""}`}
       style={tabs.length === 0 || bottomCollapsed ? undefined : { height: bottomHeight }}
       aria-label="Bottom panel"
       {...dropBottom.bind}
@@ -119,7 +123,7 @@ export function BottomPanel({ sessionId, driver, hasPr }: { sessionId: string; d
           {bottomCollapsed ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
         </button>
       </div>
-      {!bottomCollapsed && (
+      {body.mounted && (
       <div
         className="bottom-body"
         {...dropBottom.bind}

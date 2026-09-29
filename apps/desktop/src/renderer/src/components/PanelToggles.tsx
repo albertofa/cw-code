@@ -1,28 +1,42 @@
-import { PanelBottomClose, PanelBottomOpen, PanelRightClose, PanelRightOpen } from "lucide-react";
+import { PanelBottom, PanelRight, Rows2 } from "lucide-react";
+import type { DockableTabId } from "@cw-code/contracts";
 import { isBottomOpen, tabsInPanel } from "../stores/panelLayout.js";
 import { selectSessionPanel, usePanelStore } from "../stores/panelStore.js";
 
-export function PanelToggles({ sessionId }: { sessionId: string | undefined }) {
+export function PanelToggles({
+  sessionId,
+  splitActive,
+  isToolAvailable
+}: {
+  sessionId: string | undefined;
+  splitActive: boolean;
+  isToolAvailable: (tab: DockableTabId) => boolean;
+}) {
   const { rightVisible, dockByTab, bottomCollapsed } = usePanelStore((s) => selectSessionPanel(s, sessionId));
   const setRightVisible = usePanelStore((s) => s.setRightVisible);
   const setBottomCollapsed = usePanelStore((s) => s.setBottomCollapsed);
   const activateOrOpenTab = usePanelStore((s) => s.activateOrOpen);
+  const toggleRightSplit = usePanelStore((s) => s.toggleRightSplit);
 
   const bottomOpen = isBottomOpen(dockByTab) && !bottomCollapsed;
+  const splitLabel = splitActive ? "Close the split" : "Split the tool panel";
+  const bottomLabel = bottomOpen ? "Hide bottom panel" : "Show bottom panel";
+  const rightLabel = rightVisible ? "Hide tool panel" : "Show tool panel";
 
   return (
-    <div className="panel-toggles">
+    <div className="rail-end">
       <button
-        className="panel-toggle"
-        onClick={() => setRightVisible(sessionId, !rightVisible)}
-        title={rightVisible ? "Hide right panel" : "Show right panel"}
-        aria-label={rightVisible ? "Hide right panel" : "Show right panel"}
-        aria-expanded={rightVisible}
+        className={`rail-b${splitActive ? " on-soft" : ""}`}
+        onClick={() => toggleRightSplit(sessionId, isToolAvailable)}
+        disabled={!sessionId}
+        title={splitLabel}
+        aria-label={splitLabel}
+        aria-pressed={splitActive}
       >
-        {rightVisible ? <PanelRightClose size={15} aria-hidden="true" /> : <PanelRightOpen size={15} aria-hidden="true" />}
+        <Rows2 size={16} aria-hidden="true" />
       </button>
       <button
-        className="panel-toggle"
+        className={`rail-b${bottomOpen ? " on-soft" : ""}`}
         onClick={() => {
           if (tabsInPanel(dockByTab, "bottom").length === 0) {
             activateOrOpenTab(sessionId, "shell");
@@ -31,11 +45,22 @@ export function PanelToggles({ sessionId }: { sessionId: string | undefined }) {
             setBottomCollapsed(sessionId, !bottomCollapsed);
           }
         }}
-        title={bottomOpen ? "Hide bottom panel" : "Show bottom panel"}
-        aria-label={bottomOpen ? "Hide bottom panel" : "Show bottom panel"}
+        disabled={!sessionId}
+        title={bottomLabel}
+        aria-label={bottomLabel}
         aria-expanded={bottomOpen}
       >
-        {bottomOpen ? <PanelBottomClose size={15} aria-hidden="true" /> : <PanelBottomOpen size={15} aria-hidden="true" />}
+        <PanelBottom size={16} aria-hidden="true" />
+      </button>
+      <button
+        className={`rail-b${rightVisible ? " on-soft" : ""}`}
+        onClick={() => setRightVisible(sessionId, !rightVisible)}
+        disabled={!sessionId}
+        title={rightLabel}
+        aria-label={rightLabel}
+        aria-expanded={rightVisible}
+      >
+        <PanelRight size={16} aria-hidden="true" />
       </button>
     </div>
   );

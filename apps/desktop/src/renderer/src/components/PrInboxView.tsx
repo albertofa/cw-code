@@ -22,9 +22,7 @@ import {
 } from "lucide-react";
 import type { PrBucket, PrRef, PrSummary, PrWorkflow, Session } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
-import { selectSessionPanel, usePanelStore } from "../stores/panelStore.js";
 import { usePrStore } from "../stores/prStore.js";
-import { PanelToggles } from "./PanelToggles.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { PrAvatar } from "./PrAvatar.js";
 import "./prInbox.css";
@@ -317,8 +315,6 @@ export function PrInboxView() {
   const projectRepos = usePrStore((s) => s.projectRepos);
   const sessionsByProject = useAppStore((s) => s.sessionsByProject);
   const selectSession = useAppStore((s) => s.selectSession);
-  const activeSessionId = useAppStore((s) => s.activeSessionId) ?? undefined;
-  const rightVisible = usePanelStore((s) => selectSessionPanel(s, activeSessionId).rightVisible);
 
   const [filter, setFilter] = useState<PrInboxFilterId>("all");
   const [collapsed, setCollapsed] = useState<Set<PrBucket>>(() => new Set(DEFAULT_COLLAPSED_BUCKETS));
@@ -380,7 +376,6 @@ export function PrInboxView() {
         <div className="head-col col-mid" />
         <div className="head-col col-right">
           <RefreshButton fetchedAt={inbox?.fetchedAt ?? null} loading={loading} onRefresh={() => void refreshInbox(true)} />
-          {!rightVisible && <PanelToggles sessionId={activeSessionId} />}
         </div>
       </div>
       <div className="pr-view-body pr-inbox-body">

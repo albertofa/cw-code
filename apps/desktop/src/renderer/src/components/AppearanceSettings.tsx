@@ -6,6 +6,7 @@ import {
   DEFAULT_MONO_STACK,
   DEFAULT_SANS_STACK,
   FONT_SIZE_LIMITS,
+  PANEL_ANIMATION_LIMITS,
   appearanceOf,
   fontStack,
   resolveTerminalFont
@@ -77,6 +78,44 @@ function FontRow({
   );
 }
 
+function PanelAnimationRow({ draft, onDraftChange }: { draft: AppSettings; onDraftChange: (patch: Partial<AppSettings>) => void }) {
+  const { min, max, step } = PANEL_ANIMATION_LIMITS;
+  const value = draft.panelAnimationMs;
+  const change = (delta: number) => onDraftChange({ panelAnimationMs: Math.min(max, Math.max(min, value + delta)) });
+
+  return (
+    <div className="frow">
+      <div className="fr-h">
+        <div className="lab">
+          Panel animation
+          <small>How long the right and bottom panels take to open and close. Systems set to reduced motion always skip it.</small>
+        </div>
+        <div className="fr-c">
+          <span className="step">
+            <button type="button" title="Shorter" aria-label="Panel animation shorter" disabled={value <= min} onClick={() => change(-step)}>
+              <Minus size={12} aria-hidden="true" />
+            </button>
+            <span className="v wide" aria-label="Panel animation duration">{value === 0 ? "Off" : value}</span>
+            {value > 0 && <span className="u">ms</span>}
+            <button type="button" title="Longer" aria-label="Panel animation longer" disabled={value >= max} onClick={() => change(step)}>
+              <Plus size={12} aria-hidden="true" />
+            </button>
+          </span>
+          <button
+            type="button"
+            className="fr-reset"
+            title="Reset panel animation"
+            aria-label="Reset panel animation"
+            onClick={() => onDraftChange({ panelAnimationMs: DEFAULT_APPEARANCE.panelAnimationMs })}
+          >
+            <History size={14} aria-hidden="true" />
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 export function AppearanceSettings({
   draft,
   onDraftChange
@@ -136,6 +175,7 @@ export function AppearanceSettings({
   );
 
   return (
+    <>
     <section className="settings-section appearance-section" aria-label="Typography">
       <div className="tsec-h">
         <h3>Typography</h3>
@@ -196,5 +236,12 @@ export function AppearanceSettings({
         </>
       )}
     </section>
+    <section className="settings-section appearance-section" aria-label="Motion">
+      <div className="tsec-h">
+        <h3>Motion</h3>
+      </div>
+      <PanelAnimationRow draft={draft} onDraftChange={onDraftChange} />
+    </section>
+    </>
   );
 }

@@ -512,6 +512,7 @@ export interface AppSettings {
   fontSizePrompt: number;
   fontSizeTerminal: number;
   typographyAdvanced: boolean;
+  panelAnimationMs: number;
 }
 
 export type SettingsPatch = Partial<AppSettings>;

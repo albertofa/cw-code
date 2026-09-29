@@ -1,10 +1,10 @@
 import { useEffect, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import type { DockableTabId, PanelId } from "@cw-code/contracts";
-import { AppWindow, PanelBottom, PanelRight, Pin, RotateCcw, X, type LucideIcon } from "lucide-react";
+import { AppWindow, PanelBottom, PanelRight, Pin, RotateCcw, Rows2, X, type LucideIcon } from "lucide-react";
 import { selectSessionPanel, usePanelStore } from "../stores/panelStore.js";
 
 const MENU_WIDTH = 240;
-const MENU_HEIGHT = 220;
+const MENU_HEIGHT = 260;
 
 const PANELS: Array<{ id: PanelId; label: string; Icon: LucideIcon }> = [
   { id: "main", label: "Main", Icon: AppWindow },
@@ -26,7 +26,8 @@ export function TabMenu({
   onClose: () => void;
 }) {
   const moveTab = usePanelStore((s) => s.moveTab);
-  const dockByTab = usePanelStore((s) => selectSessionPanel(s, sessionId).dockByTab);
+  const { dockByTab, activeRight, rightSplit } = usePanelStore((s) => selectSessionPanel(s, sessionId));
+  const setRightSplit = usePanelStore((s) => s.setRightSplit);
   const setAutoLocation = usePanelStore((s) => s.setAutoLocation);
   const resetLayout = usePanelStore((s) => s.resetLayout);
 
@@ -69,6 +70,35 @@ export function TabMenu({
           <span>{`Open in ${label}${dockByTab[tab] === panel ? " (current)" : ""}`}</span>
         </button>
       ))}
+      {rightSplit === tab ? (
+        <button
+          className="ctx-item"
+          role="menuitem"
+          title="Show a single tool in the right panel"
+          onClick={() => {
+            setRightSplit(sessionId, null);
+            onClose();
+          }}
+        >
+          <Rows2 size={14} aria-hidden="true" />
+          <span>Close split</span>
+        </button>
+      ) : (
+        !(dockByTab[tab] === "right" && activeRight === tab) && (
+          <button
+            className="ctx-item"
+            role="menuitem"
+            title="Show this tool below the active one in the right panel"
+            onClick={() => {
+              setRightSplit(sessionId, tab);
+              onClose();
+            }}
+          >
+            <Rows2 size={14} aria-hidden="true" />
+            <span>Open in split</span>
+          </button>
+        )
+      )}
       <button
         className="ctx-item"
         role="menuitem"
@@ -112,6 +142,7 @@ export function TabMenu({
 export function useTabMenu(sessionId: string | undefined): {
   menuNode: ReactNode;
   onTabContextMenu: (tab: DockableTabId) => (e: ReactMouseEvent<HTMLElement>) => void;
+  onTabMenuButton: (tab: DockableTabId) => (e: ReactMouseEvent<HTMLElement>) => void;
 } {
   const [menu, setMenu] = useState<{ x: number; y: number; tab: DockableTabId; sessionId: string | undefined } | null>(null);
   useEffect(() => setMenu(null), [sessionId]);
@@ -122,6 +153,10 @@ export function useTabMenu(sessionId: string | undefined): {
     onTabContextMenu: (tab: DockableTabId) => (e: ReactMouseEvent<HTMLElement>) => {
       e.preventDefault();
       setMenu({ x: e.clientX, y: e.clientY, tab, sessionId });
+    },
+    onTabMenuButton: (tab: DockableTabId) => (e: ReactMouseEvent<HTMLElement>) => {
+      const rect = e.currentTarget.getBoundingClientRect();
+      setMenu({ x: rect.right - MENU_WIDTH, y: rect.bottom + 4, tab, sessionId });
     }
   };
 }

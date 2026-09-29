@@ -44,7 +44,8 @@ const SETTINGS: AppSettings = {
   fontSizeCode: 14,
   fontSizePrompt: 14,
   fontSizeTerminal: 14,
-  typographyAdvanced: false
+  typographyAdvanced: false,
+  panelAnimationMs: 0
 };
 
 describe("mapClaudePermission", () => {

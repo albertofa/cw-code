@@ -233,7 +233,7 @@ body {
 }
 
 .app-shell.right-hidden .head-col.col-right {
-  padding-right: 140px;
+  padding-right: 96px;
 }
 
 .app-shell.right-hidden .notifs {
@@ -3767,6 +3767,32 @@ body.session-dragging * {
   border-left: 1px solid var(--line);
   min-height: 0;
   position: relative;
+  transition: width var(--panel-anim-ms, 0ms) var(--ease-out);
+}
+
+.right.collapsed {
+  border-left-color: transparent;
+}
+
+.right-inner {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  height: 100%;
+  position: relative;
+}
+
+body.resizing .right,
+body.resizing .bottom-panel {
+  transition: none;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .right,
+  .bottom-panel {
+    transition: none !important;
+  }
 }
 
 .right-resizer {
@@ -3793,141 +3819,6 @@ body.session-dragging * {
 
 .right-resizer:hover::after {
   background: var(--driver);
-}
-
-.tabbar {
-  display: flex;
-  gap: 4px;
-  height: 40px;
-  min-height: 40px;
-  box-sizing: border-box;
-  align-items: stretch;
-  padding: 0 140px 0 10px;
-  border-bottom: 1px solid var(--border);
-  background: var(--panel);
-  -webkit-app-region: drag;
-}
-
-.tabbar button {
-  -webkit-app-region: no-drag;
-}
-
-.tool-rail {
-  gap: 2px;
-  align-items: center;
-  background: var(--tool);
-}
-
-.tool-rail-openers {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  flex: none;
-}
-
-.tool-rail .panel-toggles {
-  margin-left: auto;
-}
-
-.tool-open {
-  position: relative;
-  width: 30px;
-  height: 30px;
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: transparent;
-  border: none;
-  border-radius: 8px;
-  padding: 0;
-  cursor: pointer;
-  opacity: 0.8;
-}
-
-.tool-open:hover {
-  background: var(--raised);
-  opacity: 1;
-}
-
-.tool-open[data-tool="files"] {
-  color: #e8b44f;
-}
-
-.tool-open[data-tool="agents"] {
-  color: #a371f7;
-}
-
-.tool-open[data-tool="diff"] {
-  color: #59a659;
-}
-
-.tool-open[data-tool="claude"] {
-  color: var(--claude);
-}
-
-.tool-open[data-tool="opencode"] {
-  color: var(--opencode);
-}
-
-.tool-open[data-tool="codex"] {
-  color: var(--codex);
-}
-
-.tool-open[data-tool="shell"] {
-  color: #9aa4b2;
-}
-
-.tool-open[data-tool="preview"] {
-  color: #e08ab8;
-}
-
-.right-tabbar {
-  display: flex;
-  gap: 4px;
-  height: 40px;
-  min-height: 40px;
-  box-sizing: border-box;
-  align-items: stretch;
-  padding: 0 10px;
-  background: var(--tool);
-  border-bottom: 1px solid var(--border);
-}
-
-.right-tabbar button {
-  -webkit-app-region: no-drag;
-}
-
-.panel-toggles {
-  display: flex;
-  align-items: center;
-  gap: 2px;
-  flex: none;
-}
-
-.panel-toggle {
-  width: 30px;
-  height: 30px;
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  background: transparent;
-  border: none;
-  border-radius: 8px;
-  padding: 0;
-  color: var(--muted);
-  cursor: pointer;
-}
-
-.panel-toggle:hover {
-  background: var(--raised);
-  color: var(--text);
-}
-
-.panel-toggle[aria-expanded="true"] {
-  background: var(--raised);
-  color: var(--text);
 }
 
 .tab {
@@ -3965,53 +3856,35 @@ body.session-dragging * {
   font-weight: 600;
 }
 
-.tab-badge {
-  position: absolute;
-  top: 4px;
-  right: 1px;
-  min-width: 16px;
-  height: 16px;
-  box-sizing: border-box;
-  padding: 0 4px;
-  border-radius: 999px;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  font-size: var(--t-3xs);
-  font-weight: 700;
-  line-height: 1;
-  font-variant-numeric: tabular-nums;
-  background: var(--raised);
-  border: 1px solid var(--border);
-  color: var(--dim);
-  flex: none;
-  pointer-events: none;
-}
-
-.tab.active .tab-badge {
-  background: color-mix(in srgb, var(--violet) 22%, var(--raised));
-  border-color: color-mix(in srgb, var(--violet) 55%, var(--border));
-  color: var(--text);
-}
-
-.tab-badge.running {
-  background: var(--success);
-  border-color: var(--success);
-  color: #07130b;
-}
-
-.tab.active .tab-badge.running {
-  background: var(--success);
-  border-color: var(--success);
-  color: #07130b;
-}
-
 .right-body {
   flex: 1;
   min-height: 0;
   display: flex;
   flex-direction: column;
   background: var(--tool);
+}
+
+.right-pane {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.right-pane-body {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.right-pane-body > .file-layout,
+.right-pane-body > .agents-panel,
+.right-pane-body > .inspect,
+.right-pane-body > .preview-panel,
+.right-pane-body > .pty-wrap {
+  flex: 1;
+  min-height: 0;
 }
 
 .file-layout {
@@ -5955,8 +5828,13 @@ select.field option {
 
 @media (max-width: 900px) {
   .side,
-  .right {
+  .right,
+  .rail {
     display: none;
+  }
+
+  .app-shell.right-hidden .head-col.col-right {
+    padding-right: 140px;
   }
 
   .app-body {
@@ -7245,67 +7123,6 @@ button.gitbar-checkout:hover {
   color: var(--faint);
 }
 
-/* Right workspace split mode: keeps the regular tabbed panel as the default. */
-.tab-split {
-  margin-left: 4px;
-  padding-inline: 9px;
-}
-
-.tab-split.active {
-  color: var(--driver);
-  border-bottom-color: var(--driver);
-}
-
-.right-body-split {
-  display: grid;
-  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
-  gap: 6px;
-  padding: 6px;
-  background: var(--gutter);
-}
-
-.right-split-pane {
-  display: flex;
-  flex-direction: column;
-  min-height: 0;
-  background: var(--panel);
-  border-radius: 8px;
-  overflow: hidden;
-}
-
-.right-split-label {
-  flex: none;
-  min-height: 27px;
-  box-sizing: border-box;
-  display: flex;
-  align-items: center;
-  padding: 0 11px;
-  border-bottom: 1px solid var(--border-soft);
-  color: var(--faint);
-  font-family: var(--mono);
-  font-size: var(--t-3xs);
-  font-weight: 700;
-  letter-spacing: 0.08em;
-  line-height: 1;
-  text-transform: uppercase;
-}
-
-.right-split-content {
-  display: flex;
-  flex: 1;
-  min-height: 0;
-  flex-direction: column;
-}
-
-.right-split-content > .file-layout,
-.right-split-content > .agents-panel,
-.right-split-content > .inspect,
-.right-split-content > .preview-panel,
-.right-split-content > .pty-wrap {
-  flex: 1;
-  min-height: 0;
-}
-
 /* Skills modal: sidebar entry uses .side-footer-btn; the dialog reuses
    .settings-backdrop/.settings-modal language with a split list + editor. */
 .side-footer-btn.active {
@@ -8108,6 +7925,11 @@ button.gitbar-checkout:hover {
   min-height: 0;
   background: var(--panel);
   border-top: 1px solid var(--border);
+  transition: height var(--panel-anim-ms, 0ms) var(--ease-out);
+}
+
+.bottom-panel.collapsed {
+  height: 40px;
 }
 
 .bottom-resizer {

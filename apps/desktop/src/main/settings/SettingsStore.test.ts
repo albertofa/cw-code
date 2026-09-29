@@ -494,4 +494,24 @@ describe("SettingsStore", () => {
     expect(store.set({ typographyAdvanced: true }).typographyAdvanced).toBe(true);
     expect(store.set({ typographyAdvanced: "yes" as unknown as boolean }).typographyAdvanced).toBe(false);
   });
+
+  it("defaults panel animation to off", () => {
+    expect(new SettingsStore(tempFilePath()).get().panelAnimationMs).toBe(0);
+  });
+
+  it("clamps panel animation to 0-400 in steps of 25", () => {
+    const store = new SettingsStore(tempFilePath());
+    expect(store.set({ panelAnimationMs: 175 }).panelAnimationMs).toBe(175);
+    expect(store.set({ panelAnimationMs: 160 }).panelAnimationMs).toBe(150);
+    expect(store.set({ panelAnimationMs: 163 }).panelAnimationMs).toBe(175);
+    expect(store.set({ panelAnimationMs: -50 }).panelAnimationMs).toBe(0);
+    expect(store.set({ panelAnimationMs: 900 }).panelAnimationMs).toBe(400);
+  });
+
+  it("resets a non-finite panel animation to off", () => {
+    const store = new SettingsStore(tempFilePath());
+    store.set({ panelAnimationMs: 200 });
+    expect(store.set({ panelAnimationMs: Number.NaN }).panelAnimationMs).toBe(0);
+    expect(store.set({ panelAnimationMs: "slow" as unknown as number }).panelAnimationMs).toBe(0);
+  });
 });
