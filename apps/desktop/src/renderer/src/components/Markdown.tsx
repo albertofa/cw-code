@@ -364,6 +364,15 @@ interface AlertContent {
   body: ReactNode[];
 }
 
+function stripLeadingBreak(nodes: ReactNode[]): ReactNode[] {
+  const [head, ...rest] = nodes;
+  if (!isValidElement(head) || head.type !== "br") return nodes;
+  const [next, ...others] = rest;
+  if (typeof next !== "string") return rest;
+  const trimmed = next.trimStart();
+  return trimmed ? [trimmed, ...others] : others;
+}
+
 function extractAlert(children: ReactNode): AlertContent | null {
   const nodes = Children.toArray(children);
   const firstIndex = nodes.findIndex((node) => isValidElement(node));
@@ -377,7 +386,8 @@ function extractAlert(children: ReactNode): AlertContent | null {
   if (!marker) return null;
   const tail = newline < 0 ? "" : head.slice(newline + 1);
   const firstText = [marker.rest, tail].filter(Boolean).join("\n");
-  const firstParagraph = [...(firstText ? [firstText] : []), ...inline.slice(1)];
+  const after = inline.slice(1);
+  const firstParagraph = firstText ? [firstText, ...after] : stripLeadingBreak(after);
   const rest = nodes.slice(firstIndex + 1);
   return {
     kind: marker.kind,

@@ -64,6 +64,32 @@ describe("parseFilePath", () => {
     expect(parseFilePath("*.ts")).toBeNull();
   });
 
+  it("accepts known source extensions without a separator", () => {
+    expect(parseFilePath("Program.cs")).toEqual({ path: "Program.cs" });
+    expect(parseFilePath("Program.CS")).toEqual({ path: "Program.CS" });
+    expect(parseFilePath("pnpm-lock.yaml:4")).toEqual({ path: "pnpm-lock.yaml", line: 4 });
+  });
+
+  it("accepts unknown extensions only when a separator is present", () => {
+    expect(parseFilePath("assets/logo.svgz")).toEqual({ path: "assets/logo.svgz" });
+    expect(parseFilePath("logo.svgz")).toBeNull();
+  });
+
+  it("rejects dotted identifiers", () => {
+    expect(parseFilePath("console.log")).toBeNull();
+    expect(parseFilePath("obj.method")).toBeNull();
+    expect(parseFilePath("e.g")).toBeNull();
+    expect(parseFilePath("process.env.NODE_ENV")).toBeNull();
+    expect(parseFilePath("useState.length:3")).toBeNull();
+  });
+
+  it("rejects UNC and device paths", () => {
+    expect(parseFilePath("\\\\evil\\share\\a.txt")).toBeNull();
+    expect(parseFilePath("//evil/share/a.txt")).toBeNull();
+    expect(parseFilePath("\\\\.\\pipe\\x.cs")).toBeNull();
+    expect(parseFilePath("//./C:/a.ts")).toBeNull();
+  });
+
   it("rejects empty text", () => {
     expect(parseFilePath("")).toBeNull();
   });

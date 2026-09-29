@@ -3,7 +3,7 @@ import { Check, ChevronDown, Copy, Sparkles, TriangleAlert } from "lucide-react"
 import type { DockableTabId } from "@cw-code/contracts";
 import { useAppStore, type ChatMessage } from "../stores/appStore.js";
 import { Notifications, useNotifs } from "./Notifications.js";
-import { Md, StreamingMd, resolvePreviewPaths } from "./Markdown.js";
+import { Md, StreamingMd, isPathInsideBase, resolvePreviewPaths } from "./Markdown.js";
 import { BottomPanel } from "./BottomPanel.js";
 import { MainTabStrip } from "./MainTabStrip.js";
 import { GitPanelBar } from "./GitPanelBar.js";
@@ -201,7 +201,12 @@ export function ThreadView() {
   const onOpenSource = useCallback(
     (path: string, line?: number) => {
       if (!sessionId) return;
-      usePanelStore.getState().revealFile(sessionId, resolvePreviewPaths(basePath, path).rel, line);
+      const { rel, abs } = resolvePreviewPaths(basePath, path);
+      if (!isPathInsideBase(basePath, abs)) {
+        useNotifs.getState().push({ kind: "warning", title: "File is outside this session's workspace", message: path });
+        return;
+      }
+      usePanelStore.getState().revealFile(sessionId, rel, line);
     },
     [sessionId, basePath]
   );

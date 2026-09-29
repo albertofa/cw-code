@@ -16,6 +16,8 @@ import {
 
 const DEFAULT_SESSION_PANEL = defaultSessionPanel();
 
+let revealNonce = 0;
+
 function loadState(): LoadedPanelState {
   try {
     return parsePanelState(
@@ -47,6 +49,7 @@ export interface PanelActions {
   activateOrOpen(sessionId: string | undefined, tab: DockableTabId): void;
   revealTab(sessionId: string, tab: DockableTabId): void;
   revealFile(sessionId: string, path: string, line?: number): void;
+  clearRevealRequest(nonce: number): void;
   setAutoLocation(tab: DockableTabId, panel: PanelId): void;
   setBottomHeight(sessionId: string | undefined, height: number): void;
   setBottomCollapsed(sessionId: string | undefined, collapsed: boolean): void;
@@ -164,9 +167,13 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
   },
 
   revealFile: (sessionId, path, line) => {
-    const nonce = (get().revealRequest?.nonce ?? 0) + 1;
-    set({ revealRequest: { sessionId, path, line, nonce } });
-    get().activateOrOpen(sessionId, "files");
+    revealNonce += 1;
+    set({ revealRequest: { sessionId, path, line, nonce: revealNonce } });
+    get().revealTab(sessionId, "files");
+  },
+
+  clearRevealRequest: (nonce) => {
+    if (get().revealRequest?.nonce === nonce) set({ revealRequest: null });
   },
 
   setAutoLocation: (tab, panel) => {

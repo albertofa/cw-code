@@ -110,6 +110,16 @@ function baseName(path: string): string {
   return i >= 0 ? path.slice(i + 1) : path;
 }
 
+function lineStartOffset(text: string, line: number): number {
+  let offset = 0;
+  for (let current = 1; current < line; current++) {
+    const next = text.indexOf("\n", offset);
+    if (next < 0) break;
+    offset = next + 1;
+  }
+  return offset;
+}
+
 export function FilePanel({ sessionId }: { sessionId: string }) {
   const [childrenByDir, setChildrenByDir] = useState<Record<string, DirEntry[]>>({});
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -129,7 +139,10 @@ export function FilePanel({ sessionId }: { sessionId: string }) {
   const registeredKeyRef = useRef<string | null>(null);
   const requestedFileRef = useRef<string | null>(null);
   const handledRevealRef = useRef(0);
+  const [pendingLine, setPendingLine] = useState<{ path: string; line: number } | null>(null);
+  const editorRef = useRef<HTMLTextAreaElement>(null);
   const revealRequest = usePanelStore((s) => s.revealRequest);
+  const clearRevealRequest = usePanelStore((s) => s.clearRevealRequest);
 
   const releaseBuffer = useCallback(() => {
     if (registeredKeyRef.current) useEditorBuffers.getState().unregister(registeredKeyRef.current);
@@ -182,6 +195,7 @@ export function FilePanel({ sessionId }: { sessionId: string }) {
     setOpenFile(null);
     setOpenKey(null);
     requestedFileRef.current = null;
+    setPendingLine(null);
     setAllFiles(null);
     setSearching(false);
     loadDir(sessionId, seq, "");
@@ -226,10 +240,11 @@ export function FilePanel({ sessionId }: { sessionId: string }) {
     loadDir(sessionId, seqRef.current, path);
   };
 
-  const open = (path: string) => {
+  const open = (path: string, line?: number) => {
     const sid = sessionId;
     const seq = seqRef.current;
     requestedFileRef.current = path;
+    setPendingLine(null);
     setOpenFile(path);
     window.cw
       .readFile(sid, path)
@@ -239,6 +254,7 @@ export function FilePanel({ sessionId }: { sessionId: string }) {
         releaseBuffer();
         registeredKeyRef.current = key;
         setOpenKey(key);
+        if (line !== undefined) setPendingLine({ path, line });
       })
       .catch((err: Error) => {
         if (seqRef.current !== seq || requestedFileRef.current !== path) return;
@@ -250,8 +266,18 @@ export function FilePanel({ sessionId }: { sessionId: string }) {
     if (!revealRequest || revealRequest.sessionId !== sessionId) return;
     if (revealRequest.nonce === handledRevealRef.current) return;
     handledRevealRef.current = revealRequest.nonce;
-    open(revealRequest.path);
-  }, [revealRequest, sessionId]);
+    open(revealRequest.path, revealRequest.line);
+    clearRevealRequest(revealRequest.nonce);
+  }, [revealRequest, sessionId, clearRevealRequest]);
+
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (!pendingLine || !editor || !editable || openFile !== pendingLine.path) return;
+    setPendingLine(null);
+    const offset = lineStartOffset(content, pendingLine.line);
+    editor.focus();
+    editor.setSelectionRange(offset, offset);
+  }, [pendingLine, content, editable, openFile]);
 
   const save = () => {
     const buffer = editable && openKey ? useEditorBuffers.getState().buffers[openKey] : undefined;
@@ -328,6 +354,7 @@ export function FilePanel({ sessionId }: { sessionId: string }) {
           {status && <span className="status">{status}</span>}
         </div>
         <textarea
+          ref={editorRef}
           value={content}
           onChange={(e) => {
             if (editable && openKey) useEditorBuffers.getState().update(openKey, e.target.value);
