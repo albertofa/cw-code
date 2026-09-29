@@ -5513,7 +5513,7 @@ body.session-dragging * {
 .settings-recheck { display: inline-flex; align-items: center; gap: 5px; padding: 4px 8px; font-size: var(--t-2xs); }
 .settings-number-field { grid-column: 2; grid-row: 1 / span 2; display: flex; align-items: center; gap: 8px; color: var(--faint); }
 .settings-number-field .field { width: 110px; }
-.settings-toggle { grid-column: 2; grid-row: 1 / span 2; justify-self: end; }
+.settings-row > .settings-switch { grid-column: 2; grid-row: 1 / span 2; justify-self: end; }
 .settings-health { margin-top: 12px; }
 .source-health-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
 .source-health-item,
@@ -5615,10 +5615,98 @@ body.session-dragging * {
   flex: none;
 }
 
+.ctl-check,
+.ctl-radio,
+input[type="radio"],
+input[type="checkbox"]:not(.settings-switch input) {
+  appearance: none;
+  flex: none;
+  display: inline-grid;
+  place-items: center;
+  width: 16px;
+  height: 16px;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  background: #1d2029;
+  box-shadow: inset 0 0 0 1.5px #5d6378;
+  cursor: pointer;
+  transition: background 120ms ease, box-shadow 120ms ease;
+}
+
+.ctl-check,
+input[type="checkbox"]:not(.settings-switch input) {
+  border-radius: 4px;
+}
+
+.ctl-radio,
+input[type="radio"] {
+  border-radius: 50%;
+}
+
+.ctl-check:hover:not(.on),
+.ctl-radio:hover:not(.on),
+input[type="radio"]:hover:not(:checked),
+input[type="checkbox"]:not(.settings-switch input):hover:not(:checked, :indeterminate) {
+  box-shadow: inset 0 0 0 1.5px var(--muted);
+}
+
+.ctl-check.on,
+.ctl-check.mixed,
+input[type="checkbox"]:not(.settings-switch input):checked,
+input[type="checkbox"]:not(.settings-switch input):indeterminate {
+  background: var(--ctl-check-on, var(--violet));
+  box-shadow: none;
+}
+
+.ctl-check.on::after,
+input[type="checkbox"]:not(.settings-switch input):checked::after {
+  content: "";
+  width: 12px;
+  height: 12px;
+  background: #fff;
+  mask: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 12 12'%3E%3Cpath d='M2 6.5l2.6 2.6L10 3.3' fill='none' stroke='black' stroke-width='1.8' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E") center / contain no-repeat;
+}
+
+.ctl-check.mixed::after,
+input[type="checkbox"]:not(.settings-switch input):indeterminate::after {
+  content: "";
+  width: 8px;
+  height: 2px;
+  border-radius: 1px;
+  background: #fff;
+}
+
+.ctl-radio.on,
+input[type="radio"]:checked {
+  box-shadow: inset 0 0 0 1.5px var(--ctl-radio-on, var(--violet-ink));
+}
+
+.ctl-radio.on::after,
+input[type="radio"]:checked::after {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ctl-radio-on, var(--violet-ink));
+}
+
+input[type="radio"]:disabled,
+input[type="checkbox"]:not(.settings-switch input):disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+input[type="radio"]:focus-visible,
+input[type="checkbox"]:not(.settings-switch input):focus-visible {
+  outline: 2px solid var(--violet-ink);
+  outline-offset: 2px;
+}
+
 .settings-switch {
   position: relative;
   flex: none;
-  width: 36px;
+  width: 34px;
   height: 20px;
   display: inline-block;
 }
@@ -5634,33 +5722,41 @@ body.session-dragging * {
 .settings-switch .track {
   position: absolute;
   inset: 0;
-  border-radius: 999px;
-  background: var(--raised);
-  border: 1px solid var(--border);
-  transition: background 120ms ease, border-color 120ms ease;
+  border-radius: 10px;
+  background: #2a2e3b;
+  box-shadow: inset 0 0 0 1.5px #4a4f62;
+  transition: background 150ms ease, box-shadow 150ms ease;
   pointer-events: none;
 }
 
 .settings-switch .track::after {
   content: "";
   position: absolute;
-  top: 2px;
-  left: 2px;
+  top: 3px;
+  left: 3px;
   width: 14px;
   height: 14px;
   border-radius: 50%;
-  background: var(--faint);
-  transition: transform 120ms ease, background 120ms ease;
+  background: #9da1a8;
+  transition: transform 150ms ease, background 150ms ease;
 }
 
 .settings-switch input:checked + .track {
   background: var(--violet);
-  border-color: var(--violet);
+  box-shadow: none;
 }
 
 .settings-switch input:checked + .track::after {
-  transform: translateX(16px);
-  background: var(--text);
+  transform: translateX(14px);
+  background: #fff;
+}
+
+.settings-switch input:disabled {
+  cursor: not-allowed;
+}
+
+.settings-switch input:disabled + .track {
+  opacity: 0.4;
 }
 
 .settings-switch input:focus-visible + .track {
@@ -5976,11 +6072,16 @@ select.field option {
   }
   .settings-row .settings-hint,
   .settings-row .field,
-  .settings-number-field,
-  .settings-toggle {
+  .settings-number-field {
     grid-column: 1;
     grid-row: auto;
     justify-self: stretch;
+  }
+
+  .settings-row > .settings-switch {
+    grid-column: 1;
+    grid-row: auto;
+    justify-self: start;
   }
 
   .source-health-grid {
@@ -6162,6 +6263,8 @@ select.field option {
 }
 
 .question-panel {
+  --ctl-check-on: var(--accent);
+  --ctl-radio-on: var(--accent);
   display: flex;
   flex-direction: column;
   border: 1px solid var(--accent);
@@ -6244,17 +6347,8 @@ select.field option {
   background: color-mix(in srgb, var(--accent) 14%, transparent);
 }
 
-.question-tab.answered .question-tab-box {
-  color: var(--success);
-}
-
-.question-tab.active.answered .question-tab-box {
-  color: var(--success);
-}
-
 .question-tab-box {
-  font-size: var(--t-2xs);
-  line-height: 1;
+  flex: none;
 }
 
 .question-tab-label {
@@ -6429,17 +6523,8 @@ select.field option {
 }
 
 .question-cell {
-  flex: none;
-  min-width: 24px;
-  color: var(--dim);
-  font-family: var(--mono);
-  font-size: var(--t-xs);
-  white-space: pre;
-}
-
-.question-row.picked .question-cell {
-  color: var(--success);
-  font-weight: 700;
+  align-self: flex-start;
+  margin-top: 2px;
 }
 
 .question-index {
@@ -7799,17 +7884,6 @@ button.gitbar-checkout:hover {
 
 .binary-picker-row input {
   margin-top: 2px;
-  flex: none;
-  accent-color: var(--accent);
-}
-
-.binary-picker-radio {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  margin: 0;
-  opacity: 0;
-  pointer-events: none;
 }
 
 .binary-picker-remove {

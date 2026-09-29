@@ -193,7 +193,7 @@ function QuestionPanel({
               className={`question-row${picked ? " picked" : ""}`}
               onClick={() => select(q, o, q.multiSelect)}
             >
-              <span className="question-cell">[ {picked ? <Check aria-hidden="true" size={13} /> : null} ]</span>
+              <span className={`question-cell ${q.multiSelect ? "ctl-check" : "ctl-radio"}${picked ? " on" : ""}`} aria-hidden="true" />
               <span className="question-index">{i + 1}.</span>
               <span className="question-row-body">
                 <span className="question-row-label">{o.label}</span>
@@ -205,7 +205,7 @@ function QuestionPanel({
         {q.allowCustom &&
           (state?.customOpen ? (
             <div className={`question-row question-custom-row${state.custom.trim() ? " picked" : ""}`}>
-              <span className="question-cell">[ {state.custom.trim() ? <Check aria-hidden="true" size={13} /> : null} ]</span>
+              <span className={`question-cell ${q.multiSelect ? "ctl-check" : "ctl-radio"}${state.custom.trim() ? " on" : ""}`} aria-hidden="true" />
               <span className="question-index">{q.options.length + 1}.</span>
               <span className="question-row-body">
                 <input
@@ -219,7 +219,7 @@ function QuestionPanel({
             </div>
           ) : (
             <button className="question-row" onClick={() => openCustom(q)} type="button">
-              <span className="question-cell">[ ]</span>
+              <span className={`question-cell ${q.multiSelect ? "ctl-check" : "ctl-radio"}`} aria-hidden="true" />
               <span className="question-index">{q.options.length + 1}.</span>
               <span className="question-row-body">
                 <span className="question-row-inner">Type your own answer</span>
@@ -269,7 +269,7 @@ function QuestionPanel({
                   onClick={() => go(idx)}
                   title={q.header?.trim() || q.question}
                 >
-                  <span className="question-tab-box">{answered ? "✓" : "○"}</span>
+                  <span className={`question-tab-box ${q.multiSelect ? "ctl-check" : "ctl-radio"}${answered ? " on" : ""}`} aria-hidden="true" />
                   <span className="question-tab-label">{tabLabel(q, idx)}</span>
                 </button>
               );

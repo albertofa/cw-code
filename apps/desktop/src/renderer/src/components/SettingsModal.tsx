@@ -540,13 +540,15 @@ export function SettingsModal({
       <label className="settings-row">
         <span className="settings-label">Chain of thought expanded</span>
         <span className="settings-hint">Show Claude reasoning expanded by default instead of collapsed behind a “Thought for Xs” summary.</span>
-        <input
-          className="settings-toggle"
-          type="checkbox"
-          checked={draft.claudeReasoningExpanded}
-          onChange={(e) => set({ claudeReasoningExpanded: e.target.checked })}
-          aria-label="Expand Claude reasoning by default"
-        />
+        <span className="settings-switch">
+          <input
+            type="checkbox"
+            checked={draft.claudeReasoningExpanded}
+            onChange={(e) => set({ claudeReasoningExpanded: e.target.checked })}
+            aria-label="Expand Claude reasoning by default"
+          />
+          <span className="track" aria-hidden="true" />
+        </span>
       </label>
       {modelsSection}
     </>
@@ -578,26 +580,30 @@ export function SettingsModal({
       <label className="settings-row">
         <span className="settings-label">Chain of thought expanded</span>
         <span className="settings-hint">Show OpenCode reasoning expanded by default instead of collapsed behind a “Thought for Xs” summary.</span>
-        <input
-          className="settings-toggle"
-          type="checkbox"
-          checked={draft.opencodeReasoningExpanded}
-          onChange={(e) => set({ opencodeReasoningExpanded: e.target.checked })}
-          aria-label="Expand OpenCode reasoning by default"
-        />
+        <span className="settings-switch">
+          <input
+            type="checkbox"
+            checked={draft.opencodeReasoningExpanded}
+            onChange={(e) => set({ opencodeReasoningExpanded: e.target.checked })}
+            aria-label="Expand OpenCode reasoning by default"
+          />
+          <span className="track" aria-hidden="true" />
+        </span>
       </label>
       <label className="settings-row">
         <span className="settings-label">Show OpenCode Go plan limits</span>
         <span className="settings-hint">
           Reads your OpenCode Go key from opencode&apos;s auth file. The key stays on this device and is only sent to opencode.ai.
         </span>
-        <input
-          className="settings-toggle"
-          type="checkbox"
-          checked={draft.opencodeGoUsage}
-          onChange={(e) => set({ opencodeGoUsage: e.target.checked })}
-          aria-label="Show OpenCode Go plan limits"
-        />
+        <span className="settings-switch">
+          <input
+            type="checkbox"
+            checked={draft.opencodeGoUsage}
+            onChange={(e) => set({ opencodeGoUsage: e.target.checked })}
+            aria-label="Show OpenCode Go plan limits"
+          />
+          <span className="track" aria-hidden="true" />
+        </span>
       </label>
     </>
   );
@@ -628,13 +634,15 @@ export function SettingsModal({
       <label className="settings-row">
         <span className="settings-label">Chain of thought expanded</span>
         <span className="settings-hint">Show Codex reasoning expanded by default instead of collapsed behind a “Thought for Xs” summary.</span>
-        <input
-          className="settings-toggle"
-          type="checkbox"
-          checked={draft.codexReasoningExpanded}
-          onChange={(e) => set({ codexReasoningExpanded: e.target.checked })}
-          aria-label="Expand Codex reasoning by default"
-        />
+        <span className="settings-switch">
+          <input
+            type="checkbox"
+            checked={draft.codexReasoningExpanded}
+            onChange={(e) => set({ codexReasoningExpanded: e.target.checked })}
+            aria-label="Expand Codex reasoning by default"
+          />
+          <span className="track" aria-hidden="true" />
+        </span>
       </label>
     </>
   );
@@ -818,7 +826,10 @@ export function SettingsModal({
         <label className="settings-row">
           <span className="settings-label">New-session worktrees</span>
           <span className="settings-hint">Create an isolated branch and worktree for every new Git session by default.</span>
-          <input className="settings-toggle" type="checkbox" checked={draft.defaultUseWorktree} onChange={(e) => set({ defaultUseWorktree: e.target.checked })} />
+          <span className="settings-switch">
+            <input type="checkbox" checked={draft.defaultUseWorktree} onChange={(e) => set({ defaultUseWorktree: e.target.checked })} aria-label="Create a worktree for new Git sessions by default" />
+            <span className="track" aria-hidden="true" />
+          </span>
         </label>
       </section>
 

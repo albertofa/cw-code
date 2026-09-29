@@ -158,13 +158,16 @@ export function UpdatesSettings({
       <label className="settings-row">
         <span className="settings-label">Download updates in the background</span>
         <span className="settings-hint">Installing always waits for you to choose Update and restart. Off asks before downloading.</span>
-        <input
-          className="settings-toggle"
-          type="checkbox"
-          checked={draft.updateBackgroundDownload}
-          disabled={savingPreference}
-          onChange={(e) => void changeBackground(e.target.checked)}
-        />
+        <span className="settings-switch">
+          <input
+            type="checkbox"
+            checked={draft.updateBackgroundDownload}
+            disabled={savingPreference}
+            onChange={(e) => void changeBackground(e.target.checked)}
+            aria-label="Download updates in the background"
+          />
+          <span className="track" aria-hidden="true" />
+        </span>
       </label>
 
       {notes && (
