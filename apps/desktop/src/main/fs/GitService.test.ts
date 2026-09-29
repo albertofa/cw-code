@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { GitService, countUntrackedLines, isAppManagedPath, mapLimit, parseGitHubAccounts, parseGitHubRemote, parseNumstat, parsePorcelainV2Status, parsePrNumber, parsePullRequest, parseWorktreeList, selectGitHubAccount, worktreeNameFor } from "./GitService.js";
+import { GitService, countUntrackedLines, isAppManagedPath, mapLimit, parseGitHubAccounts, parseGitHubRemote, parseNumstat, parsePorcelainV2Status, parsePrNumber, parsePullRequest, parseWorktreeList, selectGitHubAccount, sweepStaleSnapshotIndexes, worktreeNameFor } from "./GitService.js";
 
 function initSandbox(): { sandbox: string; repository: string; service: GitService } {
   const sandbox = mkdtempSync(join(tmpdir(), "cw-git-"));
@@ -490,17 +490,43 @@ function commitAll(repository: string, message: string): void {
   git(repository, "-c", "user.name=cw-code", "-c", "user.email=test@cw-code.local", "commit", "-m", message);
 }
 
-function repoState(repository: string): { index: string; cached: string; stash: string; refs: string } {
+function repoState(repository: string): Record<string, string> {
   return {
     index: git(repository, "ls-files", "-s"),
     cached: git(repository, "diff", "--cached", "--name-status"),
     stash: git(repository, "stash", "list"),
-    refs: git(repository, "for-each-ref")
+    refs: git(repository, "for-each-ref"),
+    head: git(repository, "rev-parse", "HEAD"),
+    symbolicRef: git(repository, "symbolic-ref", "HEAD"),
+    reflog: git(repository, "reflog", "--all")
   };
 }
 
+function change(path: string, kind: "modified" | "added" | "deleted"): { path: string; change: "modified" | "added" | "deleted"; added: number; deleted: number; binary: boolean } {
+  return { path, change: kind, added: 0, deleted: 0, binary: false };
+}
+
+function installMarkerHooks(repository: string): string {
+  const marker = join(repository, ".git", "hook-fired");
+  const hooks = join(repository, ".git", "hooks");
+  mkdirSync(hooks, { recursive: true });
+  for (const name of ["post-index-change", "post-checkout", "pre-commit", "post-commit"]) {
+    const hook = join(hooks, name);
+    writeFileSync(hook, `#!/bin/sh\necho ${name} >> .git/hook-fired\n`, "utf8");
+    chmodSync(hook, 0o755);
+  }
+  return marker;
+}
+
+async function undoTurn(service: GitService, repository: string, startSha: string, endSha: string): Promise<void> {
+  const { files, gitlinks } = await service.snapshotChanges(repository, startSha, endSha);
+  expect(gitlinks).toEqual([]);
+  expect(await service.snapshotConflicts(repository, endSha, files.map((file) => file.path))).toEqual([]);
+  await service.restoreSnapshot(repository, startSha, files);
+}
+
 describe("turn snapshots", () => {
-  it("captures dirty tracked and untracked files without touching the index, stash or refs", async () => {
+  it("captures dirty tracked and untracked files without touching the index, stash, refs, HEAD or reflog", async () => {
     const { repository, service } = initSandbox();
     writeFileSync(join(repository, "README.md"), "dirty\n", "utf8");
     writeFileSync(join(repository, "staged.txt"), "staged\n", "utf8");
@@ -523,20 +549,79 @@ describe("turn snapshots", () => {
     expect(git(repository, "status", "--porcelain")).toBe(status);
   });
 
-  it("diffs only the changes made after the snapshot", async () => {
+  it("takes concurrent snapshots of a checkout and its linked worktree without object write races", async () => {
+    const { sandbox, repository, service } = initSandbox();
+    const linked = join(sandbox, "linked");
+    git(repository, "worktree", "add", "-b", "linked", linked);
+    for (const root of [repository, linked]) {
+      for (let i = 0; i < 20; i += 1) writeFileSync(join(root, `shared-${i}.txt`), `same content ${i}\n`, "utf8");
+    }
+    const before = repoState(repository);
+
+    const roots = Array.from({ length: 12 }, (_, i) => (i % 2 === 0 ? repository : linked));
+    const shas = await Promise.all(roots.map((root) => service.snapshotWorkingTree(root)));
+
+    const trees = new Set(shas.map((sha) => git(repository, "rev-parse", `${sha}^{tree}`).trim()));
+    expect(trees.size).toBe(1);
+    expect(git(repository, "show", `${shas[1]}:shared-3.txt`)).toBe("same content 3\n");
+    expect(repoState(repository)).toEqual(before);
+  });
+
+  it("runs snapshot, restore and diff git calls without firing repository hooks", async () => {
+    const { repository, service } = initSandbox();
+    const marker = installMarkerHooks(repository);
+    writeFileSync(join(repository, "README.md"), "hooked\n", "utf8");
+    git(repository, "add", "README.md");
+    expect(existsSync(marker)).toBe(true);
+    rmSync(marker);
+
+    const startSha = await service.snapshotWorkingTree(repository);
+    writeFileSync(join(repository, "README.md"), "turn\n", "utf8");
+    writeFileSync(join(repository, "added.txt"), "added\n", "utf8");
+    const endSha = await service.snapshotWorkingTree(repository);
+    await service.diffSnapshot(repository, startSha, endSha);
+    await undoTurn(service, repository, startSha, endSha);
+
+    expect(readFileSync(join(repository, "README.md"), "utf8").replace(/\r\n/g, "\n")).toBe("hooked\n");
+    expect(existsSync(join(repository, "added.txt"))).toBe(false);
+    expect(existsSync(marker)).toBe(false);
+  });
+
+  it("diffs start to end without binary patches or rename detection, matching the change list", async () => {
     const { repository, service } = initSandbox();
     writeFileSync(join(repository, "README.md"), "pre-existing\n", "utf8");
-    const sha = await service.snapshotWorkingTree(repository);
+    writeFileSync(join(repository, "old-name.txt"), "same content for rename detection\nline two\nline three\n", "utf8");
+    commitAll(repository, "rename source");
+    const startSha = await service.snapshotWorkingTree(repository);
     writeFileSync(join(repository, "turn.txt"), "made by turn\n", "utf8");
+    writeFileSync(join(repository, "blob.bin"), Buffer.from([0, 1, 2, 0, 3, 4]));
+    renameSync(join(repository, "old-name.txt"), join(repository, "new-name.txt"));
+    const endSha = await service.snapshotWorkingTree(repository);
+    writeFileSync(join(repository, "after.txt"), "after the turn\n", "utf8");
 
-    const patch = await service.diffSnapshot(repository, sha);
-    expect(patch).toContain("turn.txt");
+    const patch = await service.diffSnapshot(repository, startSha, endSha);
     expect(patch).toContain("+made by turn");
     expect(patch).not.toContain("README.md");
-    expect(patch).not.toContain("pre-existing");
+    expect(patch).not.toContain("after.txt");
+    expect(patch).not.toContain("GIT binary patch");
+    expect(patch).toContain("Binary files");
+    expect(patch).not.toContain("rename from");
+    expect(patch).toContain("deleted file mode");
 
-    const result = await service.diff(repository, "turn", sha);
-    expect(result).toMatchObject({ mode: "turn", baseRef: sha, headRef: "main" });
+    const { files } = await service.snapshotChanges(repository, startSha, endSha);
+    expect(files.map((file) => `${file.change}:${file.path}`)).toEqual([
+      "added:blob.bin",
+      "added:new-name.txt",
+      "deleted:old-name.txt",
+      "added:turn.txt"
+    ]);
+    for (const file of files) expect(patch).toContain(file.path);
+
+    const live = await service.diffSnapshot(repository, startSha);
+    expect(live).toContain("after.txt");
+
+    const result = await service.diff(repository, "turn", startSha, endSha);
+    expect(result).toMatchObject({ mode: "turn", baseRef: startSha, headRef: "main" });
     expect(result.patch).toBe(patch);
     await expect(service.diff(repository, "turn")).rejects.toThrow("No snapshot for the last turn");
   });
@@ -553,15 +638,18 @@ describe("turn snapshots", () => {
     writeFileSync(join(repository, "c.txt"), "1\n2\n3\n", "utf8");
     writeFileSync(join(repository, "bin.dat"), Buffer.from([0, 1, 2, 0, 3]));
 
-    expect(await service.snapshotChanges(repository, sha)).toEqual([
-      { path: "a.txt", change: "modified", added: 2, deleted: 1, binary: false },
-      { path: "b.txt", change: "deleted", added: 0, deleted: 1, binary: false },
-      { path: "bin.dat", change: "added", added: 0, deleted: 0, binary: true },
-      { path: "c.txt", change: "added", added: 3, deleted: 0, binary: false }
-    ]);
+    expect(await service.snapshotChanges(repository, sha)).toEqual({
+      files: [
+        { path: "a.txt", change: "modified", added: 2, deleted: 1, binary: false },
+        { path: "b.txt", change: "deleted", added: 0, deleted: 1, binary: false },
+        { path: "bin.dat", change: "added", added: 0, deleted: 0, binary: true },
+        { path: "c.txt", change: "added", added: 3, deleted: 0, binary: false }
+      ],
+      gitlinks: []
+    });
   });
 
-  it("restores the snapshot, keeps pre-snapshot work and leaves the index untouched", async () => {
+  it("restores the snapshot byte for byte, keeps pre-snapshot work and leaves the index untouched", async () => {
     const { repository, service } = initSandbox();
     git(repository, "config", "core.autocrlf", "false");
     writeFileSync(join(repository, "tracked.txt"), "tracked\n", "utf8");
@@ -576,25 +664,178 @@ describe("turn snapshots", () => {
     writeFileSync(join(repository, "README.md"), "turn\n", "utf8");
     rmSync(join(repository, "keep.txt"));
     rmSync(join(repository, "tracked.txt"));
-    mkdirSync(join(repository, "src"), { recursive: true });
-    writeFileSync(join(repository, "src", "new.txt"), "new\n", "utf8");
+    mkdirSync(join(repository, "src", "deep"), { recursive: true });
+    writeFileSync(join(repository, "src", "deep", "new.txt"), "new\n", "utf8");
 
-    const changes = await service.snapshotChanges(repository, sha);
-    const restored = await service.restoreSnapshot(repository, sha, changes);
+    const { files } = await service.snapshotChanges(repository, sha);
+    const restored = await service.restoreSnapshot(repository, sha, files);
 
-    expect(restored.map((change) => `${change.change}:${change.path}`)).toEqual([
+    expect(restored.map((file) => `${file.change}:${file.path}`)).toEqual([
       "modified:README.md",
       "deleted:keep.txt",
-      "added:src/new.txt",
+      "added:src/deep/new.txt",
       "deleted:tracked.txt"
     ]);
     expect(readFileSync(join(repository, "README.md"), "utf8")).toBe("pre\n");
     expect(readFileSync(join(repository, "keep.txt"), "utf8")).toBe("keep\n");
     expect(readFileSync(join(repository, "tracked.txt"), "utf8")).toBe("tracked\n");
     expect(readFileSync(join(repository, "staged.txt"), "utf8")).toBe("staged\n");
-    expect(existsSync(join(repository, "src", "new.txt"))).toBe(false);
+    expect(existsSync(join(repository, "src"))).toBe(false);
     expect(repoState(repository)).toEqual(before);
-    expect(await service.snapshotChanges(repository, sha)).toEqual([]);
+    expect((await service.snapshotChanges(repository, sha)).files).toEqual([]);
+  });
+
+  it("restores content equal modulo line endings when core.autocrlf is true", async () => {
+    const { repository, service } = initSandbox();
+    git(repository, "config", "core.autocrlf", "true");
+    writeFileSync(join(repository, "lf.txt"), "one\ntwo\n", "utf8");
+    writeFileSync(join(repository, "crlf.txt"), "one\r\ntwo\r\n", "utf8");
+    const sha = await service.snapshotWorkingTree(repository);
+
+    writeFileSync(join(repository, "lf.txt"), "changed\n", "utf8");
+    writeFileSync(join(repository, "crlf.txt"), "changed\r\n", "utf8");
+    const { files } = await service.snapshotChanges(repository, sha);
+    await service.restoreSnapshot(repository, sha, files);
+
+    expect(readFileSync(join(repository, "lf.txt"), "utf8").replace(/\r\n/g, "\n")).toBe("one\ntwo\n");
+    expect(readFileSync(join(repository, "crlf.txt"), "utf8").replace(/\r\n/g, "\n")).toBe("one\ntwo\n");
+    expect(readFileSync(join(repository, "crlf.txt"), "utf8")).toBe("one\r\ntwo\r\n");
+    expect((await service.snapshotChanges(repository, sha)).files).toEqual([]);
+  });
+
+  it("undoes a file replaced by a directory and a directory replaced by a file", async () => {
+    const { repository, service } = initSandbox();
+    git(repository, "config", "core.autocrlf", "false");
+    writeFileSync(join(repository, "f"), "file\n", "utf8");
+    mkdirSync(join(repository, "d"));
+    writeFileSync(join(repository, "d", "a.txt"), "inside\n", "utf8");
+    commitAll(repository, "shapes");
+    const startSha = await service.snapshotWorkingTree(repository);
+
+    rmSync(join(repository, "f"));
+    mkdirSync(join(repository, "f", "nested"), { recursive: true });
+    writeFileSync(join(repository, "f", "nested", "x.txt"), "x\n", "utf8");
+    rmSync(join(repository, "d"), { recursive: true });
+    writeFileSync(join(repository, "d"), "now a file\n", "utf8");
+    const endSha = await service.snapshotWorkingTree(repository);
+
+    await undoTurn(service, repository, startSha, endSha);
+
+    expect(readFileSync(join(repository, "f"), "utf8")).toBe("file\n");
+    expect(readFileSync(join(repository, "d", "a.txt"), "utf8")).toBe("inside\n");
+    expect((await service.snapshotChanges(repository, startSha)).files).toEqual([]);
+  });
+
+  it("keeps gitignored content when pruning directories and refuses to overwrite it", async () => {
+    const { repository, service } = initSandbox();
+    git(repository, "config", "core.autocrlf", "false");
+    writeFileSync(join(repository, ".gitignore"), "*.log\n", "utf8");
+    writeFileSync(join(repository, "f"), "file\n", "utf8");
+    commitAll(repository, "ignore");
+    writeFileSync(join(repository, "keep.log"), "ignored\n", "utf8");
+    const startSha = await service.snapshotWorkingTree(repository);
+
+    mkdirSync(join(repository, "gen"));
+    writeFileSync(join(repository, "gen", "out.txt"), "generated\n", "utf8");
+    writeFileSync(join(repository, "gen", "debug.log"), "ignored\n", "utf8");
+    const endSha = await service.snapshotWorkingTree(repository);
+    await undoTurn(service, repository, startSha, endSha);
+    expect(existsSync(join(repository, "gen", "out.txt"))).toBe(false);
+    expect(readFileSync(join(repository, "gen", "debug.log"), "utf8")).toBe("ignored\n");
+    expect(readFileSync(join(repository, "keep.log"), "utf8")).toBe("ignored\n");
+
+    const secondStart = await service.snapshotWorkingTree(repository);
+    rmSync(join(repository, "f"));
+    mkdirSync(join(repository, "f"));
+    writeFileSync(join(repository, "f", "x.txt"), "x\n", "utf8");
+    writeFileSync(join(repository, "f", "y.log"), "ignored\n", "utf8");
+    const secondEnd = await service.snapshotWorkingTree(repository);
+    const { files } = await service.snapshotChanges(repository, secondStart, secondEnd);
+    await expect(service.restoreSnapshot(repository, secondStart, files)).rejects.toThrow("'f/y.log' would be overwritten");
+    expect(readFileSync(join(repository, "f", "x.txt"), "utf8")).toBe("x\n");
+    expect(readFileSync(join(repository, "f", "y.log"), "utf8")).toBe("ignored\n");
+  });
+
+  it("restores paths with spaces, unicode, a leading dash and tabs in one batch", async () => {
+    const { repository, service } = initSandbox();
+    git(repository, "config", "core.autocrlf", "false");
+    const names = ["with space.txt", "ünïcødé 文字.txt", "-leading-dash.txt", ...(process.platform === "win32" ? [] : ["tab\there.txt", "star*.txt", ":(glob)magic.txt"])];
+    for (const name of names) writeFileSync(join(repository, name), `${name}\n`, "utf8");
+    commitAll(repository, "odd names");
+    const startSha = await service.snapshotWorkingTree(repository);
+
+    const [modified, deleted, ...rest] = names;
+    writeFileSync(join(repository, modified), "changed\n", "utf8");
+    rmSync(join(repository, deleted));
+    for (const name of rest) writeFileSync(join(repository, name), "changed\n", "utf8");
+    writeFileSync(join(repository, "-new dash ü.txt"), "added\n", "utf8");
+    const endSha = await service.snapshotWorkingTree(repository);
+
+    await undoTurn(service, repository, startSha, endSha);
+
+    for (const name of names) expect(readFileSync(join(repository, name), "utf8")).toBe(`${name}\n`);
+    expect(existsSync(join(repository, "-new dash ü.txt"))).toBe(false);
+  });
+
+  it("retries a restore briefly while index.lock is held and reports a lock that stays", async () => {
+    const { repository, service } = initSandbox();
+    git(repository, "config", "core.autocrlf", "false");
+    writeFileSync(join(repository, "README.md"), "pre\n", "utf8");
+    const sha = await service.snapshotWorkingTree(repository);
+    const lock = join(repository, ".git", "index.lock");
+
+    writeFileSync(join(repository, "README.md"), "turn\n", "utf8");
+    writeFileSync(lock, "", "utf8");
+    const release = setTimeout(() => rmSync(lock, { force: true }), 250);
+    await service.restoreSnapshot(repository, sha, [change("README.md", "modified")]);
+    clearTimeout(release);
+    expect(readFileSync(join(repository, "README.md"), "utf8")).toBe("pre\n");
+
+    writeFileSync(join(repository, "README.md"), "turn again\n", "utf8");
+    writeFileSync(lock, "", "utf8");
+    try {
+      await expect(service.restoreSnapshot(repository, sha, [change("README.md", "modified")])).rejects.toThrow(/index is locked/);
+      expect(readFileSync(join(repository, "README.md"), "utf8")).toBe("turn again\n");
+    } finally {
+      rmSync(lock, { force: true });
+    }
+  });
+
+  it("reports paths changed since the end snapshot as conflicts, including parent and child paths", async () => {
+    const { repository, service } = initSandbox();
+    writeFileSync(join(repository, "foo"), "file\n", "utf8");
+    commitAll(repository, "foo");
+    const startSha = await service.snapshotWorkingTree(repository);
+    writeFileSync(join(repository, "README.md"), "turn\n", "utf8");
+    writeFileSync(join(repository, "turn.txt"), "turn\n", "utf8");
+    rmSync(join(repository, "foo"));
+    const endSha = await service.snapshotWorkingTree(repository);
+    const { files } = await service.snapshotChanges(repository, startSha, endSha);
+    const paths = files.map((file) => file.path);
+
+    expect(await service.snapshotConflicts(repository, endSha, paths)).toEqual([]);
+    writeFileSync(join(repository, "README.md"), "user edit\n", "utf8");
+    mkdirSync(join(repository, "foo"));
+    writeFileSync(join(repository, "foo", "bar.txt"), "user\n", "utf8");
+    writeFileSync(join(repository, "unrelated.txt"), "user\n", "utf8");
+    expect(await service.snapshotConflicts(repository, endSha, paths)).toEqual(["README.md", "foo"]);
+  });
+
+  it("refuses to remove or restore through a symlinked directory", async () => {
+    const { sandbox, repository, service } = initSandbox();
+    const outside = join(sandbox, "outside");
+    mkdirSync(outside);
+    writeFileSync(join(outside, "victim.txt"), "keep me\n", "utf8");
+    const sha = await service.snapshotWorkingTree(repository);
+    try {
+      symlinkSync(outside, join(repository, "link"), process.platform === "win32" ? "junction" : "dir");
+    } catch {
+      return;
+    }
+
+    await expect(service.restoreSnapshot(repository, sha, [change("link/victim.txt", "added")])).rejects.toThrow(/symlinked directory 'link'/);
+    await expect(service.restoreSnapshot(repository, sha, [change("link/victim.txt", "modified")])).rejects.toThrow(/symlinked directory 'link'/);
+    expect(readFileSync(join(outside, "victim.txt"), "utf8")).toBe("keep me\n");
   });
 
   it("rejects restoring a path outside the root before touching anything", async () => {
@@ -605,11 +846,28 @@ describe("turn snapshots", () => {
     const sha = await service.snapshotWorkingTree(repository);
 
     await expect(service.restoreSnapshot(repository, sha, [
-      { path: "inside.txt", change: "added", added: 1, deleted: 0, binary: false },
-      { path: "../outside.txt", change: "added", added: 1, deleted: 0, binary: false }
+      change("inside.txt", "added"),
+      change("../outside.txt", "added")
     ])).rejects.toThrow(/escapes project root/);
     expect(existsSync(outside)).toBe(true);
     expect(existsSync(join(repository, "inside.txt"))).toBe(true);
+  });
+
+  it("excludes gitlinks from changes and explains a nested repository without commits", async () => {
+    const { repository, service } = initSandbox();
+    const startSha = await service.snapshotWorkingTree(repository);
+    const nested = join(repository, "nested");
+    execFileSync("git", ["init", "-b", "main", nested]);
+
+    await expect(service.snapshotWorkingTree(repository)).rejects.toThrow(/'nested\/?' is a nested git repository without commits/);
+
+    writeFileSync(join(nested, "inner.txt"), "inner\n", "utf8");
+    commitAll(nested, "inner");
+    writeFileSync(join(repository, "outer.txt"), "outer\n", "utf8");
+    const endSha = await service.snapshotWorkingTree(repository);
+    const comparison = await service.snapshotChanges(repository, startSha, endSha);
+    expect(comparison.gitlinks).toEqual(["nested"]);
+    expect(comparison.files.map((file) => file.path)).toEqual(["outer.txt"]);
   });
 
   it("works on an unborn HEAD", async () => {
@@ -624,12 +882,28 @@ describe("turn snapshots", () => {
     expect(git(repository, "show", `${sha}:first.txt`)).toBe("first\n");
 
     writeFileSync(join(repository, "second.txt"), "second\n", "utf8");
-    const changes = await service.snapshotChanges(repository, sha);
-    expect(changes).toEqual([{ path: "second.txt", change: "added", added: 1, deleted: 0, binary: false }]);
-    await service.restoreSnapshot(repository, sha, changes);
+    const { files } = await service.snapshotChanges(repository, sha);
+    expect(files).toEqual([{ path: "second.txt", change: "added", added: 1, deleted: 0, binary: false }]);
+    await service.restoreSnapshot(repository, sha, files);
     expect(existsSync(join(repository, "second.txt"))).toBe(false);
-    expect(readFileSync(join(repository, "first.txt"), "utf8")).toBe("first\n");
+    expect(readFileSync(join(repository, "first.txt"), "utf8").replace(/\r\n/g, "\n")).toBe("first\n");
     expect(git(repository, "ls-files", "-s")).toBe("");
+  });
+});
+
+describe("sweepStaleSnapshotIndexes", () => {
+  it("removes only snapshot index files older than the cutoff", async () => {
+    const dir = mkdtempSync(join(tmpdir(), "cw-sweep-"));
+    const id = "0123abcd-0123-4abc-8def-0123456789ab";
+    const stale = [`cw-snapshot-${id}.index`, `cw-snapshot-${id}.index.lock`];
+    const fresh = "cw-snapshot-11111111-2222-4333-8444-555555555555.index";
+    const unrelated = "cw-snapshot-notes.txt";
+    for (const name of [...stale, fresh, unrelated]) writeFileSync(join(dir, name), "", "utf8");
+    const old = new Date(Date.now() - 2 * 60 * 60_000);
+    for (const name of [...stale, unrelated]) utimesSync(join(dir, name), old, old);
+
+    expect(await sweepStaleSnapshotIndexes(dir)).toBe(2);
+    expect(readdirSync(dir).sort()).toEqual([fresh, unrelated].sort());
   });
 });
 

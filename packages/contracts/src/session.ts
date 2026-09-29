@@ -63,6 +63,10 @@ export interface TurnSnapshot {
   sha?: string;
   capturedAt: number;
   error?: string;
+  endSha?: string;
+  endedAt?: number;
+  endError?: string;
+  undoneAt?: number;
 }
 
 export type CreateWorkspaceMode = "current" | "new" | "previous";
@@ -264,4 +268,8 @@ export interface TurnFileChange {
 export interface TurnChanges {
   turnId: string;
   files: TurnFileChange[];
+  endSha: string | null;
+  undoable: boolean;
+  reason?: string;
+  conflicts: string[];
 }

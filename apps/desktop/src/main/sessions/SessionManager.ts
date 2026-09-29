@@ -130,6 +130,14 @@ interface BranchOutcome {
 
 const DELTA_FLUSH_MS = 24;
 
+function gitlinkReason(paths: string[]): string {
+  return `Submodule or nested repository changes cannot be undone: ${paths.join(", ")}`;
+}
+
+function conflictReason(paths: string[]): string {
+  return `Changed since the turn ended: ${paths.join(", ")}`;
+}
+
 export class SessionManager {
   private store: SessionStore;
   private settings: SettingsStore;
@@ -154,6 +162,8 @@ export class SessionManager {
   private worktreesRoot: string;
   private deltaBuffer = new Map<string, { sessionId: string; text: string; timer: NodeJS.Timeout }>();
   private pendingUndos = new Set<string>();
+  private pendingBranchSwitches = new Set<string>();
+  private endSnapshots = new Map<string, Promise<void>>();
   private disposed = false;
   private prHead: (ref: PrRef) => string | null;
   private prHeadRefresh?: (ref: PrRef) => Promise<string | null>;
@@ -360,6 +370,7 @@ export class SessionManager {
         } else {
           this.store.updateSession(event.sessionId, { resumeCursor: event.resumeCursor, status: "done" }, "turn-done");
         }
+        this.captureEndSnapshot(event.sessionId, event.turnId);
         if (wasActive && !event.isError) void this.renameBranchForTitle(event.sessionId, event.turnId);
         const covered = this.turnPrRefs.get(event.turnId) ?? [];
         this.turnPrRefs.delete(event.turnId);
@@ -371,6 +382,7 @@ export class SessionManager {
       else this.activeTurns.delete(event.turnId);
       this.turnPrRefs.delete(event.turnId);
       if (sessionId) {
+        this.captureEndSnapshot(sessionId, event.turnId);
         this.store.updateSession(
           sessionId,
           {
@@ -640,8 +652,11 @@ export class SessionManager {
     }
     if (this.pendingTurns.has(sessionId)) throw new Error("session busy (turn pending)");
     if (this.pendingResolves.has(sessionId)) throw new Error("session busy (resolve pending)");
+    if (this.undoPendingOnRoot(session)) throw new Error("session busy (undo pending)");
     this.pendingResolves.add(sessionId);
     try {
+      const endingTurn = session.lastTurnSnapshot?.turnId;
+      if (endingTurn) await this.endSnapshots.get(endingTurn);
       const recovery = this.worktreeRecovery.get(sessionId);
       if (recovery) {
         await recovery.catch(() => undefined);
@@ -1032,36 +1047,152 @@ export class SessionManager {
     }
   }
 
-  lastTurnSnapshotSha(sessionId: string): string | undefined {
+  private captureEndSnapshot(sessionId: string, turnId: string): void {
+    const snapshot = this.store.getSession(sessionId)?.lastTurnSnapshot;
+    if (snapshot?.turnId !== turnId || snapshot.endedAt !== undefined || this.endSnapshots.has(turnId)) return;
+    if (!snapshot.sha) {
+      this.store.updateSession(sessionId, { lastTurnSnapshot: { ...snapshot, endedAt: Date.now() } });
+      return;
+    }
+    const task = this.writeEndSnapshot(sessionId, turnId)
+      .catch((err: Error) => console.warn(`turn end snapshot could not be stored for ${sessionId}: ${err.message}`))
+      .finally(() => {
+        if (this.endSnapshots.get(turnId) === task) this.endSnapshots.delete(turnId);
+      });
+    this.endSnapshots.set(turnId, task);
+  }
+
+  private async writeEndSnapshot(sessionId: string, turnId: string): Promise<void> {
+    const endedAt = Date.now();
+    let result: Pick<TurnSnapshot, "endSha" | "endError">;
+    try {
+      result = { endSha: await this.git.snapshotWorkingTree(this.rootFor(sessionId)) };
+    } catch (err) {
+      const endError = (err as Error).message || "snapshot failed";
+      console.warn(`turn end snapshot failed for ${sessionId}: ${endError}`);
+      result = { endError };
+    }
+    if (this.disposed) return;
+    const current = this.store.getSession(sessionId)?.lastTurnSnapshot;
+    if (current?.turnId !== turnId) return;
+    this.store.updateSession(sessionId, { lastTurnSnapshot: { ...current, ...result, endedAt } });
+    this.emitSession(sessionId);
+  }
+
+  private async settledSnapshot(sessionId: string): Promise<{ session: SessionMeta; snapshot: TurnSnapshot | undefined }> {
+    const turnId = this.requireSession(sessionId).lastTurnSnapshot?.turnId;
+    if (turnId) await this.endSnapshots.get(turnId);
+    const session = this.requireSession(sessionId);
+    return { session, snapshot: session.lastTurnSnapshot };
+  }
+
+  private requireSession(sessionId: string): SessionMeta {
     const session = this.store.getSession(sessionId);
     if (!session) throw new Error(`unknown session ${sessionId}`);
-    return session.lastTurnSnapshot?.sha;
+    return session;
+  }
+
+  private sessionRoot(session: SessionMeta): string | null {
+    return session.worktreePath ?? this.store.getProject(session.projectId)?.rootPath ?? null;
+  }
+
+  private sameRootSessions(session: SessionMeta): SessionMeta[] {
+    const root = this.sessionRoot(session);
+    if (!root) return [session];
+    return this.store.listAllSessions().filter((other) => {
+      if (other.id === session.id) return true;
+      const otherRoot = this.sessionRoot(other);
+      return otherRoot !== null && sameWorktreePath(otherRoot, root);
+    });
+  }
+
+  private undoPendingOnRoot(session: SessionMeta): boolean {
+    return this.sameRootSessions(session).some((other) => this.pendingUndos.has(other.id));
+  }
+
+  private undoBlocker(session: SessionMeta, snapshot: TurnSnapshot): string | null {
+    if (this.hasTurnInFlight(session.id)) return "Cannot undo while a turn is running";
+    if (this.pendingUndos.has(session.id)) return "Undo already in progress";
+    if (!snapshot.endSha) {
+      if (snapshot.endError) return `The end-of-turn snapshot failed: ${snapshot.endError}`;
+      return this.endSnapshots.has(snapshot.turnId) ? "The end-of-turn snapshot is still being captured" : "The turn has no end-of-turn snapshot";
+    }
+    if (snapshot.undoneAt !== undefined) return "This turn was already undone";
+    for (const other of this.sameRootSessions(session)) {
+      if (this.pendingResolves.has(other.id)) return "session busy (resolve pending)";
+      if (this.worktreeRecovery.has(other.id)) return "session busy (recovery in progress)";
+      if (this.pendingBranchSwitches.has(other.id)) return "session busy (branch switch pending)";
+      if (other.id === session.id) continue;
+      if (this.hasTurnInFlight(other.id)) return `Another session is running a turn in this folder ("${other.title}")`;
+      if (this.pendingUndos.has(other.id)) return `Another session is undoing a turn in this folder ("${other.title}")`;
+      const otherTurn = other.lastTurnSnapshot;
+      if (otherTurn && Math.max(otherTurn.capturedAt, otherTurn.endedAt ?? 0) > snapshot.capturedAt) {
+        return `A later turn in another session changed this folder ("${other.title}")`;
+      }
+    }
+    return null;
+  }
+
+  async turnDiffRange(sessionId: string): Promise<{ base?: string; head?: string }> {
+    const { snapshot } = await this.settledSnapshot(sessionId);
+    if (!snapshot?.sha) return {};
+    return { base: snapshot.sha, ...(snapshot.endSha ? { head: snapshot.endSha } : {}) };
   }
 
   async turnChanges(sessionId: string): Promise<TurnChanges | null> {
-    const session = this.store.getSession(sessionId);
-    if (!session) throw new Error(`unknown session ${sessionId}`);
-    const snapshot = session.lastTurnSnapshot;
+    const { session, snapshot } = await this.settledSnapshot(sessionId);
     if (!snapshot?.sha) return null;
     const root = await this.ensureWorktree(sessionId);
-    return { turnId: snapshot.turnId, files: await this.git.snapshotChanges(root, snapshot.sha) };
+    const endSha = snapshot.endSha ?? null;
+    const { files, gitlinks } = await this.git.snapshotChanges(root, snapshot.sha, endSha ?? undefined);
+    const conflicts = endSha && snapshot.undoneAt === undefined
+      ? await this.git.snapshotConflicts(root, endSha, files.map((file) => file.path))
+      : [];
+    const reason = this.undoBlocker(session, snapshot)
+      ?? (gitlinks.length > 0 ? gitlinkReason(gitlinks) : null)
+      ?? (conflicts.length > 0 ? conflictReason(conflicts) : null)
+      ?? (files.length === 0 ? "The turn changed no files" : null);
+    return { turnId: snapshot.turnId, files, endSha, undoable: reason === null, ...(reason ? { reason } : {}), conflicts };
   }
 
-  async undoTurn(sessionId: string, turnId: string): Promise<TurnChanges> {
-    const session = this.store.getSession(sessionId);
-    if (!session) throw new Error(`unknown session ${sessionId}`);
-    if (this.hasTurnInFlight(sessionId)) throw new Error("Cannot undo while a turn is running");
-    if (this.pendingUndos.has(sessionId)) throw new Error("Undo already in progress");
+  async undoTurn(sessionId: string, turnId: string, expectedEndSha: string): Promise<TurnChanges> {
+    const session = this.requireSession(sessionId);
     const snapshot = session.lastTurnSnapshot;
+    if (this.hasTurnInFlight(sessionId)) throw new Error("Cannot undo while a turn is running");
     if (!snapshot?.sha) throw new Error("No snapshot for the last turn");
     if (snapshot.turnId !== turnId) throw new Error("Only the latest turn can be undone");
+    const blocker = this.undoBlocker(session, snapshot);
+    if (blocker) throw new Error(blocker);
+    const startSha = snapshot.sha;
+    const endSha = snapshot.endSha;
+    if (!endSha || endSha !== expectedEndSha) throw new Error("The turn's end snapshot changed since it was reviewed; refresh and try again");
     this.pendingUndos.add(sessionId);
     try {
-      const root = await this.ensureWorktree(sessionId);
-      const changes = await this.git.snapshotChanges(root, snapshot.sha);
-      return { turnId, files: await this.git.restoreSnapshot(root, snapshot.sha, changes) };
+      const root = this.rootFor(sessionId);
+      const { files, gitlinks } = await this.git.snapshotChanges(root, startSha, endSha);
+      if (gitlinks.length > 0) throw new Error(gitlinkReason(gitlinks));
+      const conflicts = await this.git.snapshotConflicts(root, endSha, files.map((file) => file.path));
+      if (conflicts.length > 0) throw new Error(conflictReason(conflicts));
+      const restored = await this.git.restoreSnapshot(root, startSha, files);
+      const current = this.store.getSession(sessionId)?.lastTurnSnapshot;
+      if (current?.turnId === turnId) {
+        this.store.updateSession(sessionId, { lastTurnSnapshot: { ...current, undoneAt: Date.now() } });
+        this.emitSession(sessionId);
+      }
+      return { turnId, files: restored, endSha, undoable: false, reason: "This turn was already undone", conflicts: [] };
     } finally {
       this.pendingUndos.delete(sessionId);
+    }
+  }
+
+  async withBranchSwitch<T>(sessionId: string, run: () => Promise<T>): Promise<T> {
+    if (this.undoPendingOnRoot(this.requireSession(sessionId))) throw new Error("session busy (undo pending)");
+    if (this.pendingBranchSwitches.has(sessionId)) throw new Error("session busy (branch switch pending)");
+    this.pendingBranchSwitches.add(sessionId);
+    try {
+      return await run();
+    } finally {
+      this.pendingBranchSwitches.delete(sessionId);
     }
   }
 
@@ -1091,7 +1222,7 @@ export class SessionManager {
     }
     if (this.pendingTurns.has(sessionId)) throw new Error("session busy (turn pending)");
     if (this.pendingResolves.has(sessionId)) throw new Error("session busy (resolve pending)");
-    if (this.pendingUndos.has(sessionId)) throw new Error("session busy (undo pending)");
+    if (this.undoPendingOnRoot(session)) throw new Error("session busy (undo pending)");
     this.pendingTurns.add(sessionId);
     try {
       const cwd = await this.ensureWorktree(sessionId);
@@ -1366,6 +1497,7 @@ export class SessionManager {
     if (session) this.drivers[session.driver].interrupt(turnId);
     this.settleTurn(turnId, sessionId);
     this.turnPrRefs.delete(turnId);
+    this.captureEndSnapshot(sessionId, turnId);
     this.store.updateSession(sessionId, { status: "holding" }, "turn-interrupted");
     if (!session) return;
     if (this.shutdownReserved) this.interruptedForShutdown.add(sessionId);

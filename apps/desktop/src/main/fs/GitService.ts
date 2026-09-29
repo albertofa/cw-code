@@ -1,9 +1,10 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
-import { existsSync, mkdirSync, readdirSync, rmdirSync } from "node:fs";
-import { copyFile, open, lstat, rm } from "node:fs/promises";
+import { existsSync, mkdirSync, readdirSync, rmdirSync, type Stats } from "node:fs";
+import { copyFile, open, lstat, readdir, rm, rmdir, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { basename, dirname, join, resolve } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { simpleGit } from "simple-git";
 import { assertInside } from "./FileService.js";
 import { ciFromRollup } from "../github/prParsers.js";
@@ -245,7 +246,14 @@ function comparePaths(a: { path: string }, b: { path: string }): number {
   return a.path < b.path ? -1 : a.path > b.path ? 1 : 0;
 }
 
-export function parseTurnChanges(numstat: string, nameStatus: string): TurnFileChange[] {
+const GITLINK_MODE = "160000";
+
+export interface SnapshotComparison {
+  files: TurnFileChange[];
+  gitlinks: string[];
+}
+
+export function parseTurnChanges(numstat: string, raw: string): SnapshotComparison {
   const stats = new Map<string, Pick<TurnFileChange, "added" | "deleted" | "binary">>();
   for (const record of numstat.split("\0")) {
     const [added, deleted, ...rest] = record.replace(/^\n+/, "").split("\t");
@@ -258,15 +266,138 @@ export function parseTurnChanges(numstat: string, nameStatus: string): TurnFileC
       binary
     });
   }
-  const tokens = nameStatus.split("\0");
+  const tokens = raw.split("\0");
   const files: TurnFileChange[] = [];
+  const gitlinks: string[] = [];
   for (let i = 0; i + 1 < tokens.length; i += 2) {
-    const change = NAME_STATUS_CHANGE[tokens[i].replace(/^\n+/, "").charAt(0)];
+    const [oldMode, newMode, , , status = ""] = tokens[i].replace(/^\n+/, "").replace(/^:/, "").split(" ");
     const path = tokens[i + 1];
+    const change = NAME_STATUS_CHANGE[status.charAt(0)];
     if (!change || !path) continue;
+    if (oldMode === GITLINK_MODE || newMode === GITLINK_MODE) {
+      gitlinks.push(path);
+      continue;
+    }
     files.push({ path, change, ...(stats.get(path) ?? { added: 0, deleted: 0, binary: false }) });
   }
-  return files.sort(comparePaths);
+  return { files: files.sort(comparePaths), gitlinks: gitlinks.sort() };
+}
+
+function pathKey(path: string): string {
+  return process.platform === "win32" || process.platform === "darwin" ? path.toLowerCase() : path;
+}
+
+function pathsOverlap(a: string, b: string): boolean {
+  const left = pathKey(a);
+  const right = pathKey(b);
+  return left === right || left.startsWith(`${right}/`) || right.startsWith(`${left}/`);
+}
+
+function pathDepth(path: string): number {
+  return path.split("/").length;
+}
+
+function isMissing(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException).code;
+  return code === "ENOENT" || code === "ENOTDIR";
+}
+
+async function lstatOrNull(path: string): Promise<Stats | null> {
+  try {
+    return await lstat(path);
+  } catch (error) {
+    if (isMissing(error)) return null;
+    throw error;
+  }
+}
+
+function isIndexLockError(error: unknown): boolean {
+  return /index\.lock/i.test((error as Error).message);
+}
+
+function isObjectWriteRace(error: unknown): boolean {
+  return /unable to write (?:file|loose object|sha1 file)[^\n]*objects|insufficient permission for adding an object/i.test((error as Error).message);
+}
+
+function describeSnapshotError(error: unknown): Error {
+  const message = (error as Error).message || "snapshot failed";
+  const nested = /'([^']+)' does not have a commit checked out/.exec(message);
+  if (nested) return new Error(`Snapshot failed: '${nested[1]}' is a nested git repository without commits; commit in it or add it to .gitignore (${message})`);
+  return new Error(message);
+}
+
+function isStrictlyInside(base: string, path: string): boolean {
+  const rel = relative(base, path);
+  return rel !== "" && rel !== ".." && !rel.startsWith(`..${sep}`) && !isAbsolute(rel);
+}
+
+function relativePosix(base: string, path: string): string {
+  return relative(base, path).split(sep).join("/");
+}
+
+async function assertNoSymlinkedParents(base: string, target: string): Promise<void> {
+  for (let dir = dirname(target); isStrictlyInside(base, dir); dir = dirname(dir)) {
+    if ((await lstatOrNull(dir))?.isSymbolicLink()) throw new Error(`Cannot undo through the symlinked directory '${relativePosix(base, dir)}'`);
+  }
+}
+
+async function firstUnremovableEntry(base: string, dir: string, removable: Set<string>): Promise<string | null> {
+  for (const entry of await readdir(dir, { withFileTypes: true })) {
+    const path = join(dir, entry.name);
+    if (entry.isDirectory()) {
+      const nested = await firstUnremovableEntry(base, path, removable);
+      if (nested) return nested;
+    } else if (!removable.has(pathKey(relativePosix(base, path)))) {
+      return relativePosix(base, path);
+    }
+  }
+  return null;
+}
+
+async function assertRestorable(base: string, change: TurnFileChange, target: string, removable: Set<string>): Promise<void> {
+  for (let dir = dirname(target); isStrictlyInside(base, dir); dir = dirname(dir)) {
+    const info = await lstatOrNull(dir);
+    if (info && !info.isDirectory() && !removable.has(pathKey(relativePosix(base, dir)))) {
+      throw new Error(`Cannot undo '${change.path}': '${relativePosix(base, dir)}' is not a directory`);
+    }
+  }
+  const info = await lstatOrNull(target);
+  if (!info) return;
+  if (info.isDirectory()) {
+    const blocker = await firstUnremovableEntry(base, target, removable);
+    if (blocker) throw new Error(`Cannot undo '${change.path}': '${blocker}' would be overwritten`);
+    return;
+  }
+  if (change.change === "deleted" && !removable.has(pathKey(change.path))) {
+    throw new Error(`Cannot undo '${change.path}': an ignored or untracked file now exists there`);
+  }
+}
+
+async function pruneEmptyDirectories(base: string, start: string): Promise<void> {
+  for (let dir = start; isStrictlyInside(base, dir); dir = dirname(dir)) {
+    try {
+      await rmdir(dir);
+    } catch (error) {
+      if (!isMissing(error)) return;
+    }
+  }
+}
+
+export async function sweepStaleSnapshotIndexes(dir = tmpdir(), now = Date.now(), maxAgeMs = SNAPSHOT_INDEX_MAX_AGE_MS): Promise<number> {
+  let removed = 0;
+  for (const name of await readdir(dir)) {
+    if (!SNAPSHOT_INDEX_PATTERN.test(name)) continue;
+    const path = join(dir, name);
+    try {
+      const info = await lstat(path);
+      if (!info.isFile() || now - info.mtimeMs < maxAgeMs) continue;
+      await rm(path, { force: true });
+      removed += 1;
+    } catch (error) {
+      if (!isMissing(error)) console.warn(`git: could not remove stale snapshot index ${path}: ${(error as Error).message}`);
+    }
+  }
+  return removed;
 }
 
 export interface PorcelainStatusFile {
@@ -393,12 +524,16 @@ export function parsePullRequest(stdout: string): GitPullRequest | null {
   };
 }
 
-export function execText(command: string, args: string[], cwd: string, timeout = 10_000, env?: NodeJS.ProcessEnv): Promise<string> {
+export function execText(command: string, args: string[], cwd: string, timeout = 10_000, env?: NodeJS.ProcessEnv, stdin?: string): Promise<string> {
   return new Promise((resolvePromise, reject) => {
-    execFile(command, args, { cwd, timeout, windowsHide: true, maxBuffer: 16 * 1024 * 1024, env: env ?? withNonInteractiveEnv() }, (error, stdout, stderr) => {
+    const child = execFile(command, args, { cwd, timeout, windowsHide: true, maxBuffer: 16 * 1024 * 1024, env: env ?? withNonInteractiveEnv() }, (error, stdout, stderr) => {
       if (error) return reject(new Error(String(stderr || error.message).trim()));
       resolvePromise(String(stdout));
     });
+    if (stdin !== undefined) {
+      child.stdin?.on("error", () => undefined);
+      child.stdin?.end(stdin);
+    }
   });
 }
 
@@ -481,7 +616,22 @@ interface RepoLayout {
 }
 const DIFF_PATCH_MAX_BYTES = 400_000;
 const SNAPSHOT_TIMEOUT_MS = 15_000;
+const SNAPSHOT_SLOW_MS = 2_000;
 const SNAPSHOT_MESSAGE = "cw-code turn snapshot";
+const SNAPSHOT_INDEX_PATTERN = /^cw-snapshot-[0-9a-f-]{36}\.index(?:\.lock)?$/i;
+const SNAPSHOT_INDEX_MAX_AGE_MS = 60 * 60_000;
+const RESTORE_LOCK_ATTEMPTS = 3;
+const RESTORE_LOCK_RETRY_MS = 200;
+const SNAPSHOT_OBJECT_WRITE_ATTEMPTS = 3;
+const SNAPSHOT_OBJECT_WRITE_RETRY_MS = 100;
+const HOOKLESS_ARGS = ["-c", `core.hooksPath=${join(tmpdir(), `cw-no-hooks-${randomUUID()}`)}`];
+const SNAPSHOT_ADD_ARGS = [
+  ...HOOKLESS_ARGS,
+  "-c", "core.safecrlf=false",
+  "-c", "core.splitIndex=false",
+  "-c", "core.fsmonitor=false",
+  "add", "-A", "--", ".", ":(exclude).cw"
+];
 const SNAPSHOT_IDENTITY: NodeJS.ProcessEnv = {
   GIT_AUTHOR_NAME: "cw-code",
   GIT_AUTHOR_EMAIL: "cw-code@localhost",
@@ -516,6 +666,7 @@ export class GitService {
   private diffInFlight = new Map<string, Promise<GitDiffResult>>();
   private layoutCache = new Map<string, CacheEntry<RepoLayout>>();
   private remoteCache = new Map<string, CacheEntry<ParsedGitHubRemote | null>>();
+  private snapshotQueues = new Map<string, Promise<void>>();
 
   constructor(private getSettings: () => SourceControlSettings = () => ({
     gitBinaryPath: defaultBinary("git"),
@@ -640,9 +791,7 @@ export class GitService {
   private async discardBranch(git: ReturnType<GitService["git"]>, branch: string): Promise<void> {
     try {
       await git.raw(["branch", "-D", branch]);
-    } catch {
-      // The branch may not exist when git failed before creating it.
-    }
+    } catch {}
   }
 
   private async addWorktree(git: ReturnType<GitService["git"]>, branch: string, target: string, base: string): Promise<string> {
@@ -789,15 +938,11 @@ export class GitService {
         const sessionPath = join(projectPath, sessionDir.name);
         try {
           if (readdirSync(sessionPath).length === 0) rmdirSync(sessionPath);
-        } catch {
-          // Leave in-use directories in place.
-        }
+        } catch {}
       }
       try {
         if (readdirSync(projectPath).length === 0) rmdirSync(projectPath);
-      } catch {
-        // Leave in-use directories in place.
-      }
+      } catch {}
     }
   }
 
@@ -941,11 +1086,11 @@ export class GitService {
     return this.status(root, project);
   }
 
-  async diff(root: string, mode: GitDiffMode, requestedBase?: string): Promise<GitDiffResult> {
-    const key = `${cacheKey(root)}|${mode}|${requestedBase ?? ""}`;
+  async diff(root: string, mode: GitDiffMode, requestedBase?: string, requestedHead?: string): Promise<GitDiffResult> {
+    const key = `${cacheKey(root)}|${mode}|${requestedBase ?? ""}|${requestedHead ?? ""}`;
     const inFlight = this.diffInFlight.get(key);
     if (inFlight) return inFlight;
-    const promise = this.computeDiff(root, mode, requestedBase).finally(() => {
+    const promise = this.computeDiff(root, mode, requestedBase, requestedHead).finally(() => {
       if (this.diffInFlight.get(key) === promise) this.diffInFlight.delete(key);
     });
     this.diffInFlight.set(key, promise);
@@ -957,7 +1102,7 @@ export class GitService {
     return `${patch.slice(0, DIFF_PATCH_MAX_BYTES)}\n…(truncated ${patch.length - DIFF_PATCH_MAX_BYTES} chars)`;
   }
 
-  private async computeDiff(root: string, mode: GitDiffMode, requestedBase?: string): Promise<GitDiffResult> {
+  private async computeDiff(root: string, mode: GitDiffMode, requestedBase?: string, requestedHead?: string): Promise<GitDiffResult> {
     const git = this.git(root);
     const binary = this.settings().gitBinaryPath;
     const headRef = (await git.revparse(["--abbrev-ref", "HEAD"]).catch(() => "")).trim() || "HEAD";
@@ -966,7 +1111,7 @@ export class GitService {
     if (mode === "turn") {
       if (!requestedBase) throw new Error("No snapshot for the last turn");
       baseRef = requestedBase;
-      patch = await this.diffSnapshot(root, requestedBase);
+      patch = await this.diffSnapshot(root, requestedBase, requestedHead);
     } else if (mode === "staged") {
       patch = await execDiff(binary, ["diff", "--cached", "--no-ext-diff", "--binary", "--find-renames", "--"], root);
     } else if (mode === "branch") {
@@ -1008,9 +1153,7 @@ export class GitService {
     try {
       const upstream = (await this.git(root).revparse(["--abbrev-ref", "--symbolic-full-name", "@{upstream}"])).trim();
       if (upstream) return upstream;
-    } catch {
-      // No upstream yet; prefer the repository's primary branch below.
-    }
+    } catch {}
     for (const candidate of ["main", "master", "origin/main", "origin/master"]) {
       if (candidate !== headRef && branches.some((item) => item.name === candidate)) return candidate;
     }
@@ -1021,69 +1164,153 @@ export class GitService {
 
   async snapshotWorkingTree(root: string): Promise<string> {
     const binary = this.settings().gitBinaryPath;
-    const deadline = Date.now() + SNAPSHOT_TIMEOUT_MS;
+    const startedAt = Date.now();
+    const deadline = startedAt + SNAPSHOT_TIMEOUT_MS;
     const remaining = () => Math.max(1, deadline - Date.now());
-    const indexPath = resolve(root, (await execText(binary, ["rev-parse", "--git-path", "index"], root, remaining())).trim());
     const tempIndex = join(tmpdir(), `cw-snapshot-${randomUUID()}.index`);
     const env = withNonInteractiveEnv({ ...process.env, ...SNAPSHOT_IDENTITY, GIT_INDEX_FILE: tempIndex });
     try {
-      if (existsSync(indexPath)) await copyFile(indexPath, tempIndex);
-      await execText(binary, ["add", "-A", "--", ".", ":(exclude).cw"], root, remaining(), env);
-      const tree = (await execText(binary, ["write-tree"], root, remaining(), env)).trim();
-      const parent = await this.headCommit(root);
-      const args = ["commit-tree", "--no-gpg-sign", tree, ...(parent ? ["-p", parent] : []), "-m", SNAPSHOT_MESSAGE];
-      return (await execText(binary, args, root, remaining(), env)).trim();
+      const [indexPath, commonDir] = (await execText(binary, ["rev-parse", "--git-path", "index", "--git-common-dir"], root, remaining()))
+        .replace(/\r/g, "")
+        .split("\n")
+        .map((line) => resolve(root, line.trim()));
+      return await this.withObjectStoreLock(commonDir, async () => {
+        if (existsSync(indexPath)) await copyFile(indexPath, tempIndex);
+        await this.addToSnapshotIndex(binary, root, remaining, env);
+        const tree = (await execText(binary, [...HOOKLESS_ARGS, "write-tree"], root, remaining(), env)).trim();
+        const parent = await this.headCommit(root, remaining());
+        const args = [...HOOKLESS_ARGS, "commit-tree", "--no-gpg-sign", tree, ...(parent ? ["-p", parent] : []), "-m", SNAPSHOT_MESSAGE];
+        return (await execText(binary, args, root, remaining(), env)).trim();
+      });
+    } catch (error) {
+      throw describeSnapshotError(error);
     } finally {
       await Promise.all([rm(tempIndex, { force: true }), rm(`${tempIndex}.lock`, { force: true })]);
+      const elapsed = Date.now() - startedAt;
+      if (elapsed > SNAPSHOT_SLOW_MS) console.warn(`git: turn snapshot of ${root} took ${elapsed}ms`);
     }
   }
 
-  private async headCommit(root: string): Promise<string | null> {
+  private async withObjectStoreLock<T>(commonDir: string, run: () => Promise<T>): Promise<T> {
+    const key = cacheKey(commonDir);
+    const previous = this.snapshotQueues.get(key) ?? Promise.resolve();
+    let release: () => void = () => {};
+    const current = new Promise<void>((resolveCurrent) => {
+      release = resolveCurrent;
+    });
+    const tail = previous.then(() => current);
+    this.snapshotQueues.set(key, tail);
+    await previous;
     try {
-      return (await execText(this.settings().gitBinaryPath, ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"], root)).trim() || null;
+      return await run();
+    } finally {
+      release();
+      if (this.snapshotQueues.get(key) === tail) this.snapshotQueues.delete(key);
+    }
+  }
+
+  private async addToSnapshotIndex(binary: string, root: string, remaining: () => number, env: NodeJS.ProcessEnv): Promise<void> {
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        await execText(binary, SNAPSHOT_ADD_ARGS, root, remaining(), env);
+        return;
+      } catch (error) {
+        if (!isObjectWriteRace(error) || attempt >= SNAPSHOT_OBJECT_WRITE_ATTEMPTS) throw error;
+        await delay(SNAPSHOT_OBJECT_WRITE_RETRY_MS);
+      }
+    }
+  }
+
+  private async headCommit(root: string, timeout: number): Promise<string | null> {
+    try {
+      return (await execText(this.settings().gitBinaryPath, ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"], root, timeout)).trim() || null;
     } catch {
       return null;
     }
   }
 
-  async diffSnapshot(root: string, snapshotSha: string): Promise<string> {
-    assertObjectId(snapshotSha);
-    const current = await this.snapshotWorkingTree(root);
-    return execDiff(this.settings().gitBinaryPath, ["diff", "--no-ext-diff", "--binary", "--find-renames", "--relative", snapshotSha, current, "--"], root);
+  private async snapshotHead(root: string, headSha?: string): Promise<string> {
+    if (headSha === undefined) return this.snapshotWorkingTree(root);
+    assertObjectId(headSha);
+    return headSha;
   }
 
-  async snapshotChanges(root: string, snapshotSha: string): Promise<TurnFileChange[]> {
-    assertObjectId(snapshotSha);
+  async diffSnapshot(root: string, baseSha: string, headSha?: string): Promise<string> {
+    assertObjectId(baseSha);
+    const head = await this.snapshotHead(root, headSha);
+    return execDiff(this.settings().gitBinaryPath, ["diff", "--no-ext-diff", "--no-renames", "--relative", baseSha, head, "--"], root);
+  }
+
+  async snapshotChanges(root: string, baseSha: string, headSha?: string): Promise<SnapshotComparison> {
+    assertObjectId(baseSha);
     const binary = this.settings().gitBinaryPath;
-    const current = await this.snapshotWorkingTree(root);
-    const range = ["--no-renames", "-z", "--relative", snapshotSha, current, "--"];
-    const [numstat, nameStatus] = await Promise.all([
+    const head = await this.snapshotHead(root, headSha);
+    const range = ["--no-renames", "-z", "--relative", baseSha, head, "--"];
+    const [numstat, raw] = await Promise.all([
       execDiff(binary, ["diff", "--numstat", ...range], root),
-      execDiff(binary, ["diff", "--name-status", ...range], root)
+      execDiff(binary, ["diff", "--raw", "--no-abbrev", ...range], root)
     ]);
-    return parseTurnChanges(numstat, nameStatus);
+    return parseTurnChanges(numstat, raw);
+  }
+
+  async snapshotConflicts(root: string, endSha: string, paths: string[]): Promise<string[]> {
+    assertObjectId(endSha);
+    if (paths.length === 0) return [];
+    const current = await this.snapshotWorkingTree(root);
+    const names = await execDiff(this.settings().gitBinaryPath, ["diff", "--name-only", "-z", "--no-renames", "--relative", endSha, current, "--"], root);
+    const changed = names.split("\0").map((name) => name.replace(/^\n+/, "")).filter(Boolean);
+    return paths.filter((path) => changed.some((name) => pathsOverlap(path, name))).sort();
   }
 
   async restoreSnapshot(root: string, snapshotSha: string, changes: TurnFileChange[]): Promise<TurnFileChange[]> {
     assertObjectId(snapshotSha);
-    const binary = this.settings().gitBinaryPath;
+    const base = resolve(root);
     const planned = [...changes].sort(comparePaths).map((change) => ({ change, target: assertInside(root, change.path) }));
-    const restored: TurnFileChange[] = [];
+    const removals = planned
+      .filter(({ change }) => change.change === "added")
+      .sort((a, b) => pathDepth(b.change.path) - pathDepth(a.change.path) || comparePaths(b.change, a.change));
+    const restores = planned.filter(({ change }) => change.change !== "added");
+    const removable = new Set(removals.map(({ change }) => pathKey(change.path)));
+    for (const { target } of planned) await assertNoSymlinkedParents(base, target);
+    for (const { change, target } of removals) {
+      if ((await lstatOrNull(target))?.isDirectory()) throw new Error(`Cannot undo: '${change.path}' is now a directory`);
+    }
+    for (const { change, target } of restores) await assertRestorable(base, change, target, removable);
+    let removed = 0;
     try {
-      for (const { change, target } of planned) {
-        if (change.change === "added") await rm(target, { force: true });
-        else await execText(binary, ["--literal-pathspecs", "restore", `--source=${snapshotSha}`, "--worktree", "--", change.path], root, SNAPSHOT_TIMEOUT_MS);
-        restored.push(change);
+      for (const { target } of removals) {
+        await unlink(target).catch((error: unknown) => {
+          if (!isMissing(error)) throw error;
+        });
+        removed += 1;
+        await pruneEmptyDirectories(base, dirname(target));
       }
+      if (restores.length > 0) await this.restorePaths(root, snapshotSha, restores.map(({ change }) => change.path));
     } catch (error) {
-      const done = restored.map((change) => change.path).join(", ") || "none";
-      const failed = planned[restored.length]?.change.path ?? "unknown path";
-      throw new Error(`Undo stopped at ${failed} (${restored.length} of ${planned.length} restored: ${done}): ${(error as Error).message}`);
+      throw new Error(`Undo stopped after removing ${removed} of ${removals.length} added files, before restoring ${restores.length} files: ${(error as Error).message}`);
     } finally {
       this.invalidateStatus(root);
       this.invalidateBranches(root);
     }
-    return restored;
+    return planned.map(({ change }) => change);
+  }
+
+  private async restorePaths(root: string, snapshotSha: string, paths: string[]): Promise<void> {
+    const binary = this.settings().gitBinaryPath;
+    const args = [...HOOKLESS_ARGS, "--literal-pathspecs", "restore", `--source=${snapshotSha}`, "--worktree", "--pathspec-from-file=-", "--pathspec-file-nul"];
+    const input = `${paths.join("\0")}\0`;
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        await execText(binary, args, root, SNAPSHOT_TIMEOUT_MS, undefined, input);
+        return;
+      } catch (error) {
+        if (!isIndexLockError(error)) throw error;
+        if (attempt >= RESTORE_LOCK_ATTEMPTS) {
+          throw new Error(`the git index is locked by another git process (index.lock); close it and try again: ${(error as Error).message}`);
+        }
+        await delay(RESTORE_LOCK_RETRY_MS);
+      }
+    }
   }
 
   async githubRemote(root: string): Promise<ParsedGitHubRemote | null> {
@@ -1217,7 +1444,7 @@ export class GitService {
       const trimmed = value.trim();
       if (trimmed) await git.raw(["config", "--local", key, trimmed]);
       else {
-        try { await git.raw(["config", "--local", "--unset-all", key]); } catch { /* Already unset. */ }
+        try { await git.raw(["config", "--local", "--unset-all", key]); } catch {}
       }
     };
     await Promise.all([setOrUnset("user.name", name), setOrUnset("user.email", email)]);
@@ -1259,9 +1486,7 @@ export class GitService {
         .replace(/\r/g, "").split("\n").map((line) => line.trim());
       const candidate = BASE_CANDIDATES.find((name) => name !== headRef && found.includes(name));
       if (candidate) return candidate;
-    } catch {
-      // Fall through to the full branch list.
-    }
+    } catch {}
     const branches = await this.branches(root);
     return branches.find((item) => !item.current)?.name ?? null;
   }
@@ -1285,9 +1510,7 @@ export class GitService {
             baseBehind: Number.isFinite(behind) ? behind : 0
           };
         }
-      } catch {
-        // Unborn HEAD or missing ref; report the base with zero counts.
-      }
+      } catch {}
       return { baseRef: base, baseAhead: 0, baseBehind: 0 };
     } catch {
       return { baseRef: null, baseAhead: 0, baseBehind: 0 };

@@ -30,7 +30,7 @@ import { SessionManager } from "./sessions/SessionManager.js";
 import { AccountUsageService } from "./usage/AccountUsageService.js";
 import { SkillsStore } from "./skills/SkillsStore.js";
 import { FileService, IMAGE_MAX_BYTES, imageExtMime } from "./fs/FileService.js";
-import { GitService } from "./fs/GitService.js";
+import { GitService, sweepStaleSnapshotIndexes } from "./fs/GitService.js";
 import { assertOpenablePath } from "./fs/openPathPolicy.js";
 import { assertPrRef, PullRequestService } from "./github/PullRequestService.js";
 import { PtyPool } from "./pty/PtyPool.js";
@@ -796,21 +796,25 @@ function registerIpc(services: Services): void {
   ipcMain.handle("git.projectBranches", (_e, args: { projectId: string }) =>
     git.branches(sessions.rootForProject(args.projectId))
   );
-  ipcMain.handle("git.switchBranch", async (_e, args: { sessionId: string; branch: string }) => {
-    const root = await sessions.ensureWorktree(args.sessionId);
-    const status = await git.switchBranch(root, args.branch, sessions.projectForSession(args.sessionId));
-    sessions.updateSessionBranch(args.sessionId, status.branch);
-    return status;
-  });
+  ipcMain.handle("git.switchBranch", (_e, args: { sessionId: string; branch: string }) =>
+    sessions.withBranchSwitch(args.sessionId, async () => {
+      const root = await sessions.ensureWorktree(args.sessionId);
+      const status = await git.switchBranch(root, args.branch, sessions.projectForSession(args.sessionId));
+      sessions.updateSessionBranch(args.sessionId, status.branch);
+      return status;
+    })
+  );
   ipcMain.handle("git.diff", async (_e, args: { sessionId: string; mode: GitDiffMode; baseRef?: string }) => {
     const root = await sessions.ensureWorktree(args.sessionId);
-    const base = args.mode === "turn" ? sessions.lastTurnSnapshotSha(args.sessionId) : args.baseRef;
-    return git.diff(root, args.mode, base);
+    if (args.mode !== "turn") return git.diff(root, args.mode, args.baseRef);
+    const range = await sessions.turnDiffRange(args.sessionId);
+    return git.diff(root, "turn", range.base, range.head);
   });
   ipcMain.handle("git.turnChanges", (_e, args: { sessionId: string }) => sessions.turnChanges(args.sessionId));
-  ipcMain.handle("git.undoTurn", (_e, args: { sessionId: string; turnId: string }) => {
+  ipcMain.handle("git.undoTurn", (_e, args: { sessionId: string; turnId: string; expectedEndSha: string }) => {
     if (typeof args.turnId !== "string" || !args.turnId) throw new Error("invalid turnId");
-    return sessions.undoTurn(args.sessionId, args.turnId);
+    if (typeof args.expectedEndSha !== "string" || !args.expectedEndSha) throw new Error("invalid expectedEndSha");
+    return sessions.undoTurn(args.sessionId, args.turnId, args.expectedEndSha);
   });
   ipcMain.handle("git.health", (_e, args: { projectId?: string }) => {
     if (!args.projectId) return git.health();
@@ -1062,6 +1066,13 @@ async function startApp(): Promise<void> {
       })
       .catch((err) => {
         console.warn(`orphan server sweep failed: ${(err as Error).message}`);
+      });
+    sweepStaleSnapshotIndexes()
+      .then((removed) => {
+        if (removed > 0) console.warn(`removed ${removed} stale turn snapshot index file(s)`);
+      })
+      .catch((err) => {
+        console.warn(`turn snapshot index sweep failed: ${(err as Error).message}`);
       });
     registerIpc(services);
     services.updates.start();

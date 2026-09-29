@@ -263,44 +263,60 @@
     4. Run `git commit-tree <tree> -p HEAD -m "cw-code turn snapshot"`, without `-p` when HEAD is unborn.
     5. Always delete the temp file.
 
-    The commit is unreferenced, and the user's index, stash, refs and working tree are never touched. The timeout is 15s.
+    The commit is unreferenced, and the user's index, stash, refs, HEAD, reflog and working tree are never touched. The overall deadline is 15s (including the HEAD lookup); a snapshot slower than 2s logs a warning.
+    - `add`, `write-tree`, `commit-tree` and the undo restore run with `-c core.hooksPath=<missing dir>` so repository hooks never fire; the `add` also sets `core.safecrlf=false`, `core.splitIndex=false` and `core.fsmonitor=false`.
+    - A nested repository without commits makes `add` fail; the error names it ("'x/' is a nested git repository without commits").
+    - Startup removes `cw-snapshot-*.index` / `.index.lock` files older than 1 hour from the OS temp dir.
   - **Persist it:** store `lastTurnSnapshot = { turnId, sha, capturedAt }` on the session once the driver returns the turn id. On failure store `{ turnId, capturedAt, error }` and continue the turn.
+  - **End-of-turn snapshot:** when the turn ends (`turn.done` without background tasks, `turn.error`, or interrupt) capture a second snapshot into `endSha` + `endedAt`, or `endError` + `endedAt` on failure. Only the first terminal event of a turn captures it.
   - **Remove the old turn base:** `turnBaseShas`, `captureTurnBaseSha`, `turnBaseSha`, `GitService.turnDiff`, IPC `git.turnDiff`, and preload / `cw.ts` `turnDiff`.
-  - **Last-turn diff:** `GitDiffMode` gains `"turn"`. `git.diff` in turn mode takes a fresh snapshot of the current tree and returns `git diff --no-ext-diff --binary --find-renames <snapshot> <now>`, with the same truncation as other modes. If there is no snapshot it rejects with "No snapshot for the last turn".
+  - **Last-turn diff:** `GitDiffMode` gains `"turn"`. `git.diff` in turn mode returns `git diff --no-ext-diff --no-renames <start> <end>` once the turn has ended and `<start> <fresh snapshot>` while it is running, with the same truncation as other modes (no `--binary`). If there is no snapshot it rejects with "No snapshot for the last turn".
   - **Changes and Undo:**
-    - `turnChanges` returns per-file change and stats from `git diff --numstat` and `--name-status --no-renames` between the snapshot and now.
-    - `undoTurn(sessionId, turnId)` is refused when a turn is active, when `turnId !== lastTurnSnapshot.turnId`, or when the snapshot is missing.
-      - Modified and deleted files: `git restore --source=<snapshot> --worktree -- <path>`. This never touches the index.
-      - Added files: delete them.
-      - Every path goes through `assertInside(root, path)`.
-      - Afterwards call `invalidateStatus` and `invalidateBranches`, then return the restored list.
+    - `turnChanges` returns per-file change and stats from `git diff --numstat` and `--raw --no-renames` between start and end (start and now while running). Gitlinks (mode 160000) are excluded from `files` and make the turn not undoable. `conflicts` lists turn paths whose current content differs from `endSha` (parent/child paths count). `undoable` is false with a `reason` when any undo check fails.
+    - `undoTurn(sessionId, turnId, expectedEndSha)` is refused when a turn is active or pending in the session, when `turnId !== lastTurnSnapshot.turnId`, when the start or end snapshot is missing, when `expectedEndSha !== endSha`, when `undoneAt` is set, during a resolve, worktree recovery or branch switch, when gitlinks changed, and when there are conflicts ("Changed since the turn ended: …", nothing is undone).
+      - Shared root guard: sessions whose root (`worktreePath ?? project.rootPath`) is the same are checked. Undo is refused when another of them has a turn in flight, a pending undo, or a `lastTurnSnapshot` that started or ended after this turn started. While an undo is pending, `startTurn`, `resolveSession` and `git.switchBranch` in any session with that root throw "session busy (undo pending)".
+      - Added files are deleted first, deepest first, pruning directories that become empty (never the root or outside it). Then modified and deleted files are restored in one `git restore --source=<start> --worktree --pathspec-from-file=- --pathspec-file-nul`, retried 3 × 200ms while `index.lock` is held. This never touches the index.
+      - Before anything is removed: every path goes through `assertInside(root, path)`, no parent directory inside the root may be a symlink, and no ignored or untracked content may sit where a restore would write.
+      - Afterwards call `invalidateStatus` and `invalidateBranches`, set `undoneAt`, and return the restored list.
 - **Interfaces:**
   ```ts
   // contracts session.ts (+ cw.ts)
   export type GitDiffMode = "working" | "staged" | "branch" | "turn";
-  export interface TurnSnapshot { turnId: string; sha?: string; capturedAt: number; error?: string }
+  export interface TurnSnapshot {
+    turnId: string; sha?: string; capturedAt: number; error?: string;
+    endSha?: string; endedAt?: number; endError?: string; undoneAt?: number;
+  }
   // SessionMeta.lastTurnSnapshot?: TurnSnapshot
   export interface TurnFileChange { path: string; change: "modified" | "added" | "deleted"; added: number; deleted: number; binary: boolean }
-  export interface TurnChanges { turnId: string; files: TurnFileChange[] }
+  export interface TurnChanges {
+    turnId: string;
+    files: TurnFileChange[];
+    endSha: string | null;  // null while the turn runs or when the end snapshot failed
+    undoable: boolean;
+    reason?: string;        // why it is not undoable
+    conflicts: string[];    // turn paths changed since the turn ended
+  }
   // GitService
   snapshotWorkingTree(root: string): Promise<string>;
-  diffSnapshot(root: string, snapshotSha: string): Promise<string>;
-  snapshotChanges(root: string, snapshotSha: string): Promise<TurnFileChange[]>;
+  diffSnapshot(root: string, baseSha: string, headSha?: string): Promise<string>;           // headSha omitted = fresh snapshot
+  snapshotChanges(root: string, baseSha: string, headSha?: string): Promise<{ files: TurnFileChange[]; gitlinks: string[] }>;
+  snapshotConflicts(root: string, endSha: string, paths: string[]): Promise<string[]>;
   restoreSnapshot(root: string, snapshotSha: string, changes: TurnFileChange[]): Promise<TurnFileChange[]>;
+  sweepStaleSnapshotIndexes(dir?: string): Promise<number>;                                 // module export
   // preload / cw.ts
-  getTurnChanges(sessionId: string): Promise<TurnChanges | null>;   // IPC "git.turnChanges"; null when no snapshot
-  undoTurn(sessionId: string, turnId: string): Promise<TurnChanges>; // IPC "git.undoTurn"
-  // getGitDiff(sessionId, "turn") works through the existing "git.diff"
+  getTurnChanges(sessionId: string): Promise<TurnChanges | null>;                            // IPC "git.turnChanges"; null when no start snapshot
+  undoTurn(sessionId: string, turnId: string, expectedEndSha: string): Promise<TurnChanges>; // IPC "git.undoTurn"
+  // getGitDiff(sessionId, "turn") works through the existing "git.diff" (start..end once ended)
   ```
 - **Tests** (`GitService.test.ts`, real temp repos like the existing tests):
-  - A snapshot includes a dirty tracked file and an untracked file, and leaves the real index and `git stash list` unchanged.
-  - `diffSnapshot` shows only changes made after the snapshot, not pre-existing dirty work.
-  - `snapshotChanges` classifies modified, added and deleted with numstat.
-  - `restoreSnapshot` restores modified, deletes added and restores deleted. It keeps pre-snapshot dirty content and leaves the index untouched.
-  - A path outside the root is rejected.
-  - An unborn HEAD works.
+  - A snapshot includes a dirty tracked file and an untracked file, and leaves the real index, stash, refs, HEAD, symbolic ref and reflog unchanged. Concurrent snapshots of one repo agree.
+  - Hooks (`post-index-change`, `post-checkout`, commit hooks) do not fire during snapshot, diff or restore.
+  - `diffSnapshot` start..end excludes pre-existing and post-turn work, has no binary patch and no rename detection, and lists the same paths as `snapshotChanges`.
+  - `snapshotChanges` classifies modified, added and deleted with numstat; gitlinks are reported separately; a nested repo without commits gives a clear snapshot error.
+  - `restoreSnapshot` restores byte for byte with `core.autocrlf=false` and modulo line endings with `core.autocrlf=true`; handles file→directory and directory→file; keeps gitignored content and refuses to overwrite it; handles spaces, unicode, leading `-` (and tabs off Windows); retries a held `index.lock`; refuses symlinked parent directories and paths outside the root.
+  - `snapshotConflicts` reports edits after the end snapshot, including parent/child paths. The startup sweep removes only stale snapshot index files.
 
-  `SessionManager.test.ts`: the snapshot is stored per turn, a failure is stored as `error`, and undo is refused while a turn is active or for a stale turn id.
+  `SessionManager.test.ts`: start and end snapshots are stored per turn (turn.done, turn.error, interrupt; not on background turn.done), start/end failures are stored, changes are start..end, undo is refused while running, for a stale turn id, for a stale `expectedEndSha`, on conflicts, when already undone, during resolve/recovery, and by the shared root guard; a pending undo blocks `startTurn`, `resolveSession` and branch switches on the same root.
 - **Done when:** the tests pass, `rg -n "turnBaseSha|turnDiff|captureTurnBaseSha" apps packages` returns nothing, and `pnpm typecheck && pnpm test` pass.
 
 ## Task 9: Git diff scopes, stacked files and the changes card  [depends on Tasks 5, 8]
@@ -320,7 +336,9 @@
     - One mono row per file, clickable to open it in Files.
     - Review opens the Git diff tool in "turn" mode.
     - Undo opens `useConfirm({ danger: true, title: "Undo this turn's changes?", confirmLabel: "Undo changes" })`. The message lists every file with its change kind and says that pre-turn work is kept.
-    - On confirm it calls `undoTurn`. The card then shows "Changes undone" and a success or error notification is shown.
+    - Undo is disabled with `reason` as its tooltip when `undoable` is false; `conflicts` are listed in the card when present.
+    - On confirm it calls `undoTurn(sessionId, turnId, changes.endSha)` with the `endSha` from the `TurnChanges` the user reviewed. The card then shows "Changes undone" and a success or error notification is shown. A refusal (for example "Changed since the turn ended: …") is shown as the error and the card refetches `getTurnChanges`.
+    - Refetch `getTurnChanges` when the session's `lastTurnSnapshot` changes (the end snapshot and `undoneAt` arrive through the session emitter after `turn.done`).
     - No card when there are no changes.
 - **Interfaces:**
   ```ts

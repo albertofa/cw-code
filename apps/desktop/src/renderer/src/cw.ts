@@ -145,6 +145,10 @@ export interface TurnSnapshot {
   sha?: string;
   capturedAt: number;
   error?: string;
+  endSha?: string;
+  endedAt?: number;
+  endError?: string;
+  undoneAt?: number;
 }
 
 export type CreateWorkspaceMode = "current" | "new" | "previous";
@@ -464,6 +468,10 @@ export interface TurnFileChange {
 export interface TurnChanges {
   turnId: string;
   files: TurnFileChange[];
+  endSha: string | null;
+  undoable: boolean;
+  reason?: string;
+  conflicts: string[];
 }
 
 export interface CustomModel {
@@ -607,7 +615,7 @@ export interface CwApi {
   switchGitBranch(sessionId: string, branch: string): Promise<GitStatus>;
   getGitDiff(sessionId: string, mode: GitDiffMode, baseRef?: string): Promise<GitDiffResult>;
   getTurnChanges(sessionId: string): Promise<TurnChanges | null>;
-  undoTurn(sessionId: string, turnId: string): Promise<TurnChanges>;
+  undoTurn(sessionId: string, turnId: string, expectedEndSha: string): Promise<TurnChanges>;
   getSourceControlHealth(projectId?: string): Promise<SourceControlHealth>;
   setProjectGitHubAccount(projectId: string, account: { host: string; login: string } | null): Promise<Project>;
   setRepositoryGitIdentity(projectId: string, name: string, email: string): Promise<void>;

@@ -118,7 +118,7 @@ export interface CwApi {
   switchGitBranch(sessionId: string, branch: string): Promise<GitStatus>;
   getGitDiff(sessionId: string, mode: GitDiffMode, baseRef?: string): Promise<GitDiffResult>;
   getTurnChanges(sessionId: string): Promise<TurnChanges | null>;
-  undoTurn(sessionId: string, turnId: string): Promise<TurnChanges>;
+  undoTurn(sessionId: string, turnId: string, expectedEndSha: string): Promise<TurnChanges>;
   getSourceControlHealth(projectId?: string): Promise<SourceControlHealth>;
   setProjectGitHubAccount(projectId: string, account: { host: string; login: string } | null): Promise<Project>;
   setRepositoryGitIdentity(projectId: string, name: string, email: string): Promise<void>;
@@ -273,7 +273,8 @@ const api: CwApi = {
   getGitDiff: (sessionId: string, mode: GitDiffMode, baseRef?: string) =>
     ipcRenderer.invoke("git.diff", { sessionId, mode, baseRef }),
   getTurnChanges: (sessionId: string) => ipcRenderer.invoke("git.turnChanges", { sessionId }),
-  undoTurn: (sessionId: string, turnId: string) => ipcRenderer.invoke("git.undoTurn", { sessionId, turnId }),
+  undoTurn: (sessionId: string, turnId: string, expectedEndSha: string) =>
+    ipcRenderer.invoke("git.undoTurn", { sessionId, turnId, expectedEndSha }),
   getSourceControlHealth: (projectId?: string) => ipcRenderer.invoke("git.health", { projectId }),
   setProjectGitHubAccount: (projectId: string, account: { host: string; login: string } | null) =>
     ipcRenderer.invoke("git.setProjectAccount", { projectId, account }),
