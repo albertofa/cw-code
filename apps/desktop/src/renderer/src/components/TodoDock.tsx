@@ -18,7 +18,8 @@ export function TodoDock({ sessionId }: { sessionId: string }) {
   const total = todos.length;
   const done = todos.filter((t) => t.status === "completed").length;
   const active = todos.filter((t) => t.status === "pending" || t.status === "in_progress").length;
-  const current = todos.find((t) => t.status === "in_progress") ?? todos.find((t) => t.status === "pending");
+  const running = todos.find((t) => t.status === "in_progress");
+  const current = running ?? todos.find((t) => t.status === "pending");
   const open = override ?? active > 0;
 
   return (
@@ -31,6 +32,7 @@ export function TodoDock({ sessionId }: { sessionId: string }) {
         {current && (
           <>
             <span aria-hidden="true">·</span>
+            {running ? <span className="pulse" aria-hidden="true" /> : <span className="todo-next">Next:</span>}
             <span className="todo-current" title={current.content}>
               {current.content}
             </span>

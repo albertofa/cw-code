@@ -41,6 +41,8 @@
   --danger: #e06c60;
   --accent: #548af7;
   --accent-soft: color-mix(in srgb, var(--accent) 15%, transparent);
+  --dock-ink: color-mix(in srgb, var(--accent) 65%, var(--text));
+  --surface-inset: rgba(0, 0, 0, 0.3);
   --update: #56c2d6;
   --md-code: #d2c4ff;
   --md-code-bg: rgba(121, 92, 236, 0.13);
@@ -2676,18 +2678,6 @@ body.session-dragging * {
 
 .composer-wrap {
   padding: 12px var(--main-gutter) 18px;
-}
-
-.composer-git-stack {
-  display: contents;
-}
-
-.composer-git-stack .composer {
-  max-width: none;
-}
-
-.composer-git-stack .gitbar {
-  width: auto;
 }
 
 .composer {
@@ -5573,11 +5563,6 @@ select.field option {
     var(--bg-deep);
 }
 
-.question-dock,
-.pr-dock {
-  --dock-ink: color-mix(in srgb, var(--accent) 65%, var(--text));
-}
-
 .approval-panel {
   display: flex;
   flex-direction: column;
@@ -5704,10 +5689,10 @@ select.field option {
   margin: 0;
   padding: 9px 11px;
   border-radius: var(--r-md);
-  background: rgba(0, 0, 0, 0.3);
+  background: var(--surface-inset);
   color: var(--text);
   font-family: var(--mono);
-  font-size: var(--fs-code);
+  font-size: var(--t-xs);
   line-height: 1.5;
   max-height: 180px;
   overflow: auto;
@@ -5966,19 +5951,14 @@ select.field option {
   background: var(--hover);
 }
 
-.question-panel .ctl-check,
-.question-panel .ctl-radio {
-  transition: none;
-}
-
 .question-row:hover .ctl-check:not(.on),
 .question-row:hover .ctl-radio:not(.on) {
   box-shadow: inset 0 0 0 1.5px var(--muted);
 }
 
 .question-row:focus-visible {
-  outline: 1px solid var(--violet-line);
-  outline-offset: 1px;
+  outline: 2px solid var(--violet-ink);
+  outline-offset: -2px;
 }
 
 .question-row.picked {
@@ -6050,17 +6030,14 @@ select.field option {
 }
 
 .question-custom-input:focus {
-  outline: none;
+  outline: 2px solid var(--violet-ink);
+  outline-offset: -2px;
   border-color: var(--violet-line);
 }
 
 .question-hint {
   color: var(--dim);
   font-size: var(--t-3xs);
-}
-
-.todo-dock {
-  border-color: var(--border-soft);
 }
 
 .todo-head {
@@ -6082,6 +6059,23 @@ select.field option {
 
 .todo-head:hover {
   background: rgba(255, 255, 255, 0.02);
+}
+
+.todo-head:focus-visible {
+  outline: 2px solid var(--violet-ink);
+  outline-offset: -2px;
+}
+
+.todo-head .pulse {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  background: var(--opencode);
+}
+
+.todo-next {
+  flex: none;
+  color: var(--faint);
 }
 
 .todo-head-icon {
