@@ -23,7 +23,7 @@ export interface LinkedPrs {
   summaryByKey: PrSummaryLookup;
 }
 
-function findSession(sessionsByProject: Record<string, Session[]>, sessionId: string): Session | undefined {
+export function findSession(sessionsByProject: Record<string, Session[]>, sessionId: string): Session | undefined {
   for (const list of Object.values(sessionsByProject)) {
     const found = list.find((item) => item.id === sessionId);
     if (found) return found;

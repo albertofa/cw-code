@@ -81,6 +81,14 @@ describe("sanitizeLayout", () => {
     expect(clean.bottomHeight).toBe(200);
   });
 
+  it("defaults the overview tab to closed, auto-located right and first in dock order", () => {
+    expect(defaultLayout().dockByTab.overview).toBe("closed");
+    expect(defaultLayout().autoLocation.overview).toBe("right");
+    const clean = sanitizeLayout({ dockByTab: { overview: "right", files: "right" } });
+    expect(tabsInPanel(clean.dockByTab, "right")).toEqual(["overview", "files"]);
+    expect(sanitizeLayout({ dockByTab: { overview: "elsewhere" } }).dockByTab.overview).toBe("closed");
+  });
+
   it("keeps a persisted PR tab placement and defaults it to closed", () => {
     expect(defaultLayout().dockByTab.pr).toBe("closed");
     expect(defaultLayout().autoLocation.pr).toBe("right");

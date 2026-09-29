@@ -3,11 +3,11 @@ import { checkCountsTone, checksTone, gitDiffSummary, railGroups } from "./railT
 
 describe("railGroups", () => {
   it("groups review tools, terminals and preview", () => {
-    expect(railGroups("claude", false, false)).toEqual([["diff", "files", "agents"], ["shell", "claude"]]);
+    expect(railGroups("claude", false, false)).toEqual([["overview", "diff", "files", "agents"], ["shell", "claude"]]);
   });
 
   it("adds the PR tool only when linked and preview only when present", () => {
-    expect(railGroups("codex", true, true)).toEqual([["diff", "pr", "files", "agents"], ["shell", "codex"], ["preview"]]);
+    expect(railGroups("codex", true, true)).toEqual([["overview", "diff", "pr", "files", "agents"], ["shell", "codex"], ["preview"]]);
   });
 
   it("omits the harness CLI without a driver", () => {

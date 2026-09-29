@@ -5,6 +5,7 @@ import { GitInspectPanel } from "./GitInspectPanel.js";
 import { PreviewPanel } from "./PreviewPanel.js";
 import { PrSessionPanel } from "./PrSessionPanel.js";
 import { PtyTab } from "./PtyTab.js";
+import { SessionOverview } from "./SessionOverview.js";
 import { useAppStore } from "../stores/appStore.js";
 import { tabsInPanel } from "../stores/panelLayout.js";
 import { selectSessionPanel, usePanelStore } from "../stores/panelStore.js";
@@ -16,6 +17,7 @@ export function ToolContent({ tab, sessionId, panel }: { tab: DockableTabId; ses
   const setActive = usePanelStore((s) => s.setActive);
   const moveTab = usePanelStore((s) => s.moveTab);
 
+  if (tab === "overview") return <SessionOverview key={sessionId} sessionId={sessionId} />;
   if (tab === "files") return <FilePanel sessionId={sessionId} />;
   if (tab === "agents") return <AgentsPanel sessionId={sessionId} />;
   if (tab === "diff") return <GitInspectPanel sessionId={sessionId} />;

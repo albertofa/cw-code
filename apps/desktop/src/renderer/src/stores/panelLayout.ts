@@ -8,6 +8,7 @@ import type {
 } from "@cw-code/contracts";
 
 export const DOCKABLE_TABS: readonly DockableTabId[] = [
+  "overview",
   "files",
   "agents",
   "diff",
@@ -56,6 +57,7 @@ export const SPLIT_RATIO_MIN = 0.25;
 export const SPLIT_RATIO_MAX = 0.75;
 
 export const DEFAULT_DOCK: TabDockState = {
+  overview: "closed",
   files: "closed",
   agents: "closed",
   diff: "closed",
@@ -68,6 +70,7 @@ export const DEFAULT_DOCK: TabDockState = {
 };
 
 export const DEFAULT_AUTO: TabAutoLocation = {
+  overview: "right",
   files: "main",
   agents: "right",
   diff: "right",
