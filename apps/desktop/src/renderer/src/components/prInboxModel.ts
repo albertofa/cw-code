@@ -1,7 +1,7 @@
 import type { PrBucket, PrRef, PrSummary, Session } from "../cw.js";
 import { prBucket } from "./prInbox.js";
 import { hasUnseen } from "./prUpdates.js";
-import { linkFor, pickMainSession, sessionsLinkedTo } from "./sessionPrLinks.js";
+import { linkFor, sessionsLinkedTo } from "./sessionPrLinks.js";
 
 export type PrInboxFilterId = "all" | "review" | "action" | "updated" | "with-session" | "not-cloned";
 
@@ -94,14 +94,6 @@ export function groupRowsByBucket(rows: PrInboxRow[]): PrInboxGroup[] {
   return BUCKET_ORDER.map((bucket) => ({ bucket, rows: rows.filter((row) => row.bucket === bucket) })).filter(
     (group) => group.rows.length > 0
   );
-}
-
-export function rowDeltaText(row: PrInboxRow, nowMs: number): string | null {
-  if (!row.hasUnseenSession) return null;
-  const link = linkFor(pickMainSession(row.linkedSessions, row.pr.ref) ?? undefined, row.pr.ref);
-  if (!link) return null;
-  if (link.lastSeenSha !== "" && row.pr.headRefOid !== link.lastSeenSha) return "new commits";
-  return `updated ${formatRelativeAge(row.pr.updatedAt, nowMs)}`;
 }
 
 export function formatRelativeAge(fromMs: number, nowMs: number): string {

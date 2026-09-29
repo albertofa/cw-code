@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { checkCountsTone, checksTone, gitDiffSummary, railGroups } from "./railTools.js";
+import { checkCountsTone, checksTone, gitDiffSummary, paneDiffSummary, railGroups } from "./railTools.js";
 
 describe("railGroups", () => {
   it("groups review tools, terminals and preview", () => {
@@ -47,5 +47,22 @@ describe("gitDiffSummary", () => {
   it("is empty for a clean tree or missing status", () => {
     expect(gitDiffSummary({ dirtyCount: 0, addedLines: 0, deletedLines: 0 })).toBeUndefined();
     expect(gitDiffSummary(undefined)).toBeUndefined();
+  });
+});
+
+describe("paneDiffSummary", () => {
+  const status = { dirtyCount: 6, addedLines: 312, deletedLines: 48 };
+
+  it("uses the working tree when the diff panel is not in last-turn mode", () => {
+    expect(paneDiffSummary(status, undefined)).toBe("6 files · +312 −48");
+  });
+
+  it("uses the turn totals in last-turn mode", () => {
+    expect(paneDiffSummary(status, { files: 1, added: 4, deleted: 2 })).toBe("1 file · +4 −2");
+  });
+
+  it("stays empty while the turn diff loads or when the turn changed nothing", () => {
+    expect(paneDiffSummary(status, null)).toBeUndefined();
+    expect(paneDiffSummary(status, { files: 0, added: 0, deleted: 0 })).toBeUndefined();
   });
 });

@@ -8,8 +8,7 @@ import { useSkillsStore } from "../stores/skillsStore.js";
 import { useUsageStore } from "../stores/usageStore.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { PrChipBadge } from "./PrChipBadge.js";
-import { UsageBalanceRow } from "./UsageBalanceRow.js";
-import { UsageMeter } from "./UsageMeter.js";
+import { PlanMeters } from "./PlanMeters.js";
 import { unavailableTitle } from "./UsagePlanCard.js";
 import { prChip } from "./prChip.js";
 import { formatRelativeAge } from "./prInboxModel.js";
@@ -201,7 +200,7 @@ function SessionUsageSection({ sessionId }: { sessionId: string }) {
 
   return (
     <Section icon={<ChartColumn size={14} aria-hidden="true" />} title="This session" summary={refresh}>
-      {!rows && loading ? (
+      {!rows && (loading || !error) ? (
         <Note>Loading…</Note>
       ) : !rows && error ? (
         <Note tone="error">Couldn&apos;t load session usage: {error}</Note>
@@ -242,14 +241,7 @@ function PlanLimits({ driver, state, stale }: { driver: DriverName; state: Accou
   }
   return (
     <div className={stale ? "usage-stale" : undefined}>
-      <div className="usage-meters">
-        {state.windows.map((w) => (
-          <UsageMeter key={w.id} window={w} />
-        ))}
-      </div>
-      {state.balances.map((b) => (
-        <UsageBalanceRow key={b.id} balance={b} />
-      ))}
+      <PlanMeters state={state} />
     </div>
   );
 }

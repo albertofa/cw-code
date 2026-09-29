@@ -4,8 +4,7 @@ import { useAppStore } from "../stores/appStore.js";
 import { useUsageStore } from "../stores/usageStore.js";
 import { usePrStore } from "../stores/prStore.js";
 import { DriverIcon } from "./DriverIcon.js";
-import { UsageMeter } from "./UsageMeter.js";
-import { UsageBalanceRow } from "./UsageBalanceRow.js";
+import { PlanMeters } from "./PlanMeters.js";
 import { unavailableTitle } from "./UsagePlanCard.js";
 import { useNow, formatCostUsd } from "./usageFormat.js";
 import { formatRelativeAge } from "./prInboxModel.js";
@@ -66,6 +65,10 @@ export function ContextRing({ sessionId, driver }: { sessionId: string; driver: 
       window.removeEventListener("keydown", onKey);
     };
   }, [open]);
+
+  const planState = snapshot?.state;
+  const shownPlan =
+    planState?.status === "ok" ? planState : planState?.status === "error" ? snapshot?.lastGood?.state : undefined;
 
   const sessTotals = useMemo(() => totals(sessionRows ?? []), [sessionRows]);
 
@@ -154,21 +157,10 @@ export function ContextRing({ sessionId, driver }: { sessionId: string; driver: 
             <div className="context-dock-plan">
               <DriverIcon driver={driver} size={14} />
               <b>{harnessLabel(driver)}</b>
-              {snapshot?.state.status === "ok" && snapshot.state.plan && (
-                <span className="usage-plan-chip">{snapshot.state.plan}</span>
-              )}
+              {shownPlan?.plan && <span className="usage-plan-chip">{shownPlan.plan}</span>}
             </div>
             {snapshot?.state.status === "ok" ? (
-              <>
-                <div className="usage-meters">
-                  {snapshot.state.windows.map((w) => (
-                    <UsageMeter key={w.id} window={w} />
-                  ))}
-                </div>
-                {snapshot.state.balances.map((b) => (
-                  <UsageBalanceRow key={b.id} balance={b} />
-                ))}
-              </>
+              <PlanMeters state={snapshot.state} />
             ) : !snapshot && accountLoading ? (
               <div className="context-dock-sub">Loading plan limits…</div>
             ) : !snapshot && accountError ? (
@@ -178,9 +170,21 @@ export function ContextRing({ sessionId, driver }: { sessionId: string; driver: 
                 <b>{unavailableTitle(snapshot.state.reason)}</b> {snapshot.state.message}
               </div>
             ) : snapshot?.state.status === "error" ? (
-              <div className="context-dock-sub context-dock-error">
-                <b>Couldn&apos;t load plan limits</b> {snapshot.state.message}
-              </div>
+              <>
+                {snapshot.lastGood && (
+                  <div className="usage-stale context-dock-stale">
+                    <PlanMeters state={snapshot.lastGood.state} />
+                  </div>
+                )}
+                <div className="context-dock-sub context-dock-error">
+                  <b>
+                    {snapshot.lastGood
+                      ? `Couldn't refresh · showing data from ${formatRelativeAge(snapshot.lastGood.fetchedAt, now)} ago`
+                      : "Couldn't load plan limits"}
+                  </b>{" "}
+                  {snapshot.state.message}
+                </div>
+              </>
             ) : (
               <div className="context-dock-sub">Loading plan limits…</div>
             )}

@@ -31,6 +31,7 @@ import {
 import { TOOL_TABS } from "./toolTabs.js";
 import { UpdatesSettings } from "./UpdatesSettings.js";
 import { errorMessage } from "./errorMessage.js";
+import { visibleLayerOpen } from "./openLayer.js";
 import appIcon from "../assets/console-c.svg";
 import { version as appVersion, description as appDescription } from "../../../../package.json";
 import { SettingsGroup, SettingsPageHead, SettingsRow, SettingsSwitch, type BinaryPickHandler } from "./SettingsLayout.js";
@@ -41,8 +42,6 @@ const PANEL_OPTIONS: Array<{ id: PanelId; label: string }> = [
   { id: "right", label: "Right panel" },
   { id: "bottom", label: "Bottom panel" }
 ];
-
-const OPEN_LAYER_SELECTOR = '[role="dialog"], [role="alertdialog"], [aria-modal="true"], .menu-panel, .fpick.open, .ctx-menu, .picker-panel';
 
 const TEXT_INPUT_TYPES = new Set(["text", "search", "email", "number", "url", "tel", "password"]);
 
@@ -635,10 +634,6 @@ function SourceControlSettings({ onPickBinary }: { onPickBinary: BinaryPickHandl
       {dialog}
     </>
   );
-}
-
-function visibleLayerOpen(): boolean {
-  return Array.from(document.querySelectorAll(OPEN_LAYER_SELECTOR)).some((el) => el.getClientRects().length > 0);
 }
 
 function filledTextField(target: EventTarget | null): HTMLInputElement | HTMLTextAreaElement | null {

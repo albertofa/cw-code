@@ -7,7 +7,6 @@ import {
   formatRelativeAge,
   groupRowsByBucket,
   matchesFilter,
-  rowDeltaText,
   sessionChipState
 } from "./prInboxModel.js";
 
@@ -101,7 +100,6 @@ describe("buildInboxRows", () => {
     expect(firstRow.hasUnseenSession).toBe(false);
     expect(secondRow.linkedSessions.map((s) => s.id)).toEqual(["multi"]);
     expect(secondRow.hasUnseenSession).toBe(true);
-    expect(rowDeltaText(secondRow, 1_000)).toBe("new commits");
   });
 
   it("ignores sessions linked to a different PR", () => {
@@ -170,73 +168,6 @@ describe("groupRowsByBucket", () => {
 
   it("returns nothing for an empty row list", () => {
     expect(groupRowsByBucket([])).toEqual([]);
-  });
-});
-
-describe("rowDeltaText", () => {
-  it("returns null when the row has no unseen session", () => {
-    const pr = summary({ headRefOid: "sha-1", updatedAt: 100 });
-    const linked = session({ prs: [{ ref: ref(), origin: "opened", lastSeenSha: "sha-1", lastSeenAt: 200 }] });
-    const [row] = buildInboxRows([pr], [linked], () => true);
-
-    expect(rowDeltaText(row, 500)).toBeNull();
-  });
-
-  it("returns null when no linked session carries a pr link", () => {
-    const pr = summary({ headRefOid: "sha-2" });
-    const row = { pr, bucket: "waiting" as const, linkedSessions: [session({ prs: undefined })], hasUnseenSession: true, cloned: true };
-
-    expect(rowDeltaText(row, 500)).toBeNull();
-  });
-
-  it("reports new commits when the main session's last-seen sha is behind the PR head", () => {
-    const pr = summary({ headRefOid: "sha-2" });
-    const linked = session({
-      id: "s1",
-      prs: [{ ref: ref(), origin: "opened", lastSeenSha: "sha-1", lastSeenAt: 0 }]
-    });
-    const [row] = buildInboxRows([pr], [linked], () => true);
-
-    expect(rowDeltaText(row, 1_000)).toBe("new commits");
-  });
-
-  it("reports the relative update age when the sha matches but the PR updated later", () => {
-    const pr = summary({ headRefOid: "sha-1", updatedAt: 60_000 });
-    const linked = session({
-      id: "s1",
-      prs: [{ ref: ref(), origin: "opened", lastSeenSha: "sha-1", lastSeenAt: 0 }]
-    });
-    const [row] = buildInboxRows([pr], [linked], () => true);
-
-    expect(rowDeltaText(row, 120_000)).toBe("updated 1m");
-  });
-
-  it("reports the relative update age instead of new commits when the last-seen sha is unknown", () => {
-    const pr = summary({ headRefOid: "sha-2", updatedAt: 60_000 });
-    const linked = session({
-      id: "s1",
-      prs: [{ ref: ref(), origin: "opened", lastSeenSha: "", lastSeenAt: 0 }]
-    });
-    const [row] = buildInboxRows([pr], [linked], () => true);
-
-    expect(rowDeltaText(row, 120_000)).toBe("updated 1m");
-  });
-
-  it("prefers the session that opened the PR over a more recently active one", () => {
-    const pr = summary({ headRefOid: "sha-2" });
-    const opener = session({
-      id: "s1",
-      updatedAt: 10,
-      prs: [{ ref: ref(), origin: "opened", lastSeenSha: "sha-1", lastSeenAt: 0 }]
-    });
-    const active = session({
-      id: "s2",
-      updatedAt: 9_999,
-      prs: [{ ref: ref(), origin: "linked", lastSeenSha: "sha-2", lastSeenAt: 0 }]
-    });
-    const [row] = buildInboxRows([pr], [opener, active], () => true);
-
-    expect(rowDeltaText(row, 1_000)).toBe("new commits");
   });
 });
 

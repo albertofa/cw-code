@@ -25,6 +25,7 @@ import { useDockDrop } from "./components/useDockDrop.js";
 import { usePanelAnimationMs, usePresence } from "./components/usePresence.js";
 import { useNotifs } from "./components/Notifications.js";
 import { useAttentionBadge } from "./components/useAttentionBadge.js";
+import { visibleLayerOpen } from "./components/openLayer.js";
 import { useAppStore } from "./stores/appStore.js";
 import { tabsInPanel, DOCKABLE_TABS } from "./stores/panelLayout.js";
 import { selectSessionPanel, usePanelStore } from "./stores/panelStore.js";
@@ -102,8 +103,6 @@ function handleTurnEvent(msg: { sessionId: string; event: TurnEvent }): void {
   flushPendingDeltasForSession(msg.sessionId);
   useAppStore.getState().applyEvent(msg.sessionId, msg.event);
 }
-
-const MODAL_SELECTOR = '[role="dialog"], [role="alertdialog"], [aria-modal="true"]';
 
 export function App() {
   useAttentionBadge();
@@ -223,7 +222,7 @@ export function App() {
       } else if (e.key === "0") {
         e.preventDefault();
         window.cw.zoomReset();
-      } else if (e.key.toLowerCase() === "t" && !e.shiftKey && !document.querySelector(MODAL_SELECTOR)) {
+      } else if (e.key.toLowerCase() === "t" && !e.shiftKey && !visibleLayerOpen()) {
         e.preventDefault();
         void leaveSettingsRef.current(() => {
           usePrStore.getState().openSessionView();

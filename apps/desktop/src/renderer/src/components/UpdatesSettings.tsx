@@ -44,17 +44,15 @@ export function UpdatesSettings({
   };
 
   const changeChannel = async (next: UpdateChannel) => {
-    const previous = draft.updateChannel;
     setSavingPreference(true);
-    onApplied({ updateChannel: next });
     try {
       const result = await useAppStore.getState().setUpdateChannel(next);
-      if (!result.ok) onApplied({ updateChannel: previous });
-      if (!result.ok && result.code !== "disabled") {
+      if (result.ok) {
+        onApplied({ updateChannel: result.state.channel });
+      } else if (result.code !== "disabled") {
         useNotifs.getState().push({ kind: "error", title: "Could not change the update channel", message: result.message });
       }
     } catch (err) {
-      onApplied({ updateChannel: previous });
       useNotifs.getState().push({ kind: "error", title: "Could not change the update channel", message: ipcErrorMessage(err) });
     } finally {
       setSavingPreference(false);
@@ -63,11 +61,10 @@ export function UpdatesSettings({
 
   const changeBackground = async (enabled: boolean) => {
     setSavingPreference(true);
-    onApplied({ updateBackgroundDownload: enabled });
     try {
-      await useAppStore.getState().setUpdateBackgroundDownload(enabled);
+      const stored = await useAppStore.getState().setUpdateBackgroundDownload(enabled);
+      onApplied({ updateBackgroundDownload: stored.updateBackgroundDownload });
     } catch (err) {
-      onApplied({ updateBackgroundDownload: !enabled });
       useNotifs.getState().push({ kind: "error", title: "Could not save the download setting", message: ipcErrorMessage(err) });
     } finally {
       setSavingPreference(false);

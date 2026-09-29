@@ -1,5 +1,6 @@
 import type { DockableTabId, PrCiState } from "@cw-code/contracts";
 import type { DriverName } from "../cw.js";
+import type { TurnDiffSummary } from "../stores/panelStore.js";
 
 export type RailDotTone = "success" | "danger" | "warning";
 
@@ -26,8 +27,20 @@ export function checkCountsTone(checks: { total: number; failed: number; pending
   return "success";
 }
 
+export function formatDiffSummary(summary: TurnDiffSummary): string | undefined {
+  if (summary.files === 0) return undefined;
+  return `${summary.files} ${summary.files === 1 ? "file" : "files"} · +${summary.added} −${summary.deleted}`;
+}
+
 export function gitDiffSummary(status: { dirtyCount: number; addedLines: number; deletedLines: number } | undefined): string | undefined {
-  if (!status || status.dirtyCount === 0) return undefined;
-  const files = `${status.dirtyCount} ${status.dirtyCount === 1 ? "file" : "files"}`;
-  return `${files} · +${status.addedLines} \u2212${status.deletedLines}`;
+  if (!status) return undefined;
+  return formatDiffSummary({ files: status.dirtyCount, added: status.addedLines, deleted: status.deletedLines });
+}
+
+export function paneDiffSummary(
+  status: { dirtyCount: number; addedLines: number; deletedLines: number } | undefined,
+  turn: TurnDiffSummary | null | undefined
+): string | undefined {
+  if (turn === undefined) return gitDiffSummary(status);
+  return turn ? formatDiffSummary(turn) : undefined;
 }

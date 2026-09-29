@@ -221,7 +221,20 @@ export function GitInspectPanel({ sessionId }: { sessionId: string }) {
   const files = useMemo(() => parseUnifiedDiff(result?.patch ?? ""), [result]);
   const totalAdded = files.reduce((sum, file) => sum + file.added, 0);
   const totalRemoved = files.reduce((sum, file) => sum + file.removed, 0);
+  const turnResultReady = mode === "turn" && result !== null;
   const defaultOpen = files.length <= EXPAND_ALL_LIMIT;
+
+  useEffect(() => {
+    const { setTurnDiffSummary } = usePanelStore.getState();
+    if (mode !== "turn") {
+      setTurnDiffSummary(sessionId, undefined);
+      return;
+    }
+    setTurnDiffSummary(sessionId, turnResultReady ? { files: files.length, added: totalAdded, deleted: totalRemoved } : null);
+  }, [sessionId, mode, turnResultReady, files.length, totalAdded, totalRemoved]);
+
+  useEffect(() => () => usePanelStore.getState().setTurnDiffSummary(sessionId, undefined), [sessionId]);
+
   const toggleFile = useCallback((path: string) => {
     setOpenByPath((prev) => ({ ...prev, [path]: !(prev[path] ?? defaultOpen) }));
   }, [defaultOpen]);

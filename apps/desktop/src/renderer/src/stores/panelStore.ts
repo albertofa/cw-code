@@ -83,6 +83,7 @@ export interface PanelActions {
   requestDiffMode(sessionId: string, mode: GitDiffMode): void;
   clearDiffModeRequest(nonce: number): void;
   clearStaleDiffModeRequest(sessionId: string | null | undefined): void;
+  setTurnDiffSummary(sessionId: string, summary: TurnDiffSummary | null | undefined): void;
   setAutoLocation(tab: DockableTabId, panel: PanelId): void;
   setBottomHeight(sessionId: string | undefined, height: number): void;
   setBottomCollapsed(sessionId: string | undefined, collapsed: boolean): void;
@@ -106,11 +107,18 @@ export interface DiffModeRequest {
   nonce: number;
 }
 
+export interface TurnDiffSummary {
+  files: number;
+  added: number;
+  deleted: number;
+}
+
 export type PanelStore = PersistedPanelState & PanelActions & {
   legacySession: SessionPanelState | null;
   draggingTab: DockableTabId | null;
   revealRequest: RevealRequest | null;
   diffModeRequest: DiffModeRequest | null;
+  turnDiffSummaryBySession: Record<string, TurnDiffSummary | null>;
 };
 
 export const usePanelStore = create<PanelStore>((set, get) => ({
@@ -118,6 +126,7 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
   draggingTab: null,
   revealRequest: null,
   diffModeRequest: null,
+  turnDiffSummaryBySession: {},
 
   setDraggingTab: (tab) => {
     set({ draggingTab: tab });
@@ -205,6 +214,23 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
   clearStaleDiffModeRequest: (sessionId) => {
     const request = get().diffModeRequest;
     if (request && request.sessionId !== sessionId) set({ diffModeRequest: null });
+  },
+
+  setTurnDiffSummary: (sessionId, summary) => {
+    const current = get().turnDiffSummaryBySession;
+    if (summary === undefined) {
+      if (!(sessionId in current)) return;
+      set({ turnDiffSummaryBySession: Object.fromEntries(Object.entries(current).filter(([id]) => id !== sessionId)) });
+      return;
+    }
+    const previous = current[sessionId];
+    const unchanged =
+      sessionId in current &&
+      (previous === null
+        ? summary === null
+        : summary !== null && previous.files === summary.files && previous.added === summary.added && previous.deleted === summary.deleted);
+    if (unchanged) return;
+    set({ turnDiffSummaryBySession: { ...current, [sessionId]: summary } });
   },
 
   setAutoLocation: (tab, panel) => {

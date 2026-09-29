@@ -2,9 +2,10 @@ import type { MouseEvent as ReactMouseEvent } from "react";
 import { PanelsTopLeft, X } from "lucide-react";
 import type { DockableTabId } from "@cw-code/contracts";
 import { useAppStore } from "../stores/appStore.js";
+import { usePanelStore } from "../stores/panelStore.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { TOOL_TABS, isHarnessTabId } from "./toolTabs.js";
-import { gitDiffSummary } from "./railTools.js";
+import { paneDiffSummary } from "./railTools.js";
 import "./toolRail.css";
 
 export function PaneHeader({
@@ -21,9 +22,10 @@ export function PaneHeader({
   onClose?: () => void;
 }) {
   const gitStatus = useAppStore((s) => (sessionId ? s.gitStatusBySession[sessionId] : undefined));
+  const turnDiffSummary = usePanelStore((s) => (sessionId ? s.turnDiffSummaryBySession[sessionId] : undefined));
   const def = TOOL_TABS.find((item) => item.id === tab);
   if (!def) return null;
-  const summary = tab === "diff" ? gitDiffSummary(gitStatus) : undefined;
+  const summary = tab === "diff" ? paneDiffSummary(gitStatus, turnDiffSummary) : undefined;
 
   return (
     <div className={`phead${split ? " sub" : ""}`} onDoubleClick={split ? undefined : () => window.cw.toggleMaximizeWindow()}>
