@@ -1,5 +1,5 @@
 import { memo, useState } from "react";
-import { ChevronDown, ChevronRight, Circle, CircleDot, TriangleAlert, type LucideIcon } from "lucide-react";
+import { ChevronRight, Circle, CircleDot, TriangleAlert, type LucideIcon } from "lucide-react";
 import type { ChatMessage } from "../stores/appStore.js";
 import { summarizeToolGroup } from "./toolSummaries.js";
 import { ToolCard } from "./ToolCard.js";
@@ -52,7 +52,7 @@ export const ToolGroupCard = memo(function ToolGroupCard({
       >
         <GroupState status={summary.status} Icon={TypeIcon} />
         <span className="tool-action tool-group-text">{summary.text}</span>
-        <span className="tool-caret" aria-hidden="true">{open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</span>
+        <span className={`tool-caret collapse-caret${open ? " open" : ""}`} aria-hidden="true"><ChevronRight size={14} /></span>
       </div>
       {open && (
         <div className="tool-group-items">

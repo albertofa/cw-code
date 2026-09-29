@@ -1,5 +1,5 @@
 import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
-import { ChevronDown, ChevronRight } from "lucide-react";
+import { ChevronRight } from "lucide-react";
 import { describeWaitingTools, formatDuration, type PendingTool } from "./toolSummaries.js";
 import { formatElapsed } from "./turnFormat.js";
 
@@ -97,10 +97,7 @@ export function TurnBlock({
               <span className="turn-head-hint">{open ? "Hide" : "Show work"}</span>
             )}
             {hasActivity && (
-              <>
-                <span className="turn-caret-right" aria-hidden="true"><ChevronRight size={16} /></span>
-                <span className="turn-caret-down" aria-hidden="true"><ChevronDown size={16} /></span>
-              </>
+              <span className={`turn-caret collapse-caret${open ? " open" : ""}`} aria-hidden="true"><ChevronRight size={16} /></span>
             )}
           </span>
         </button>

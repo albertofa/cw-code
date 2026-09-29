@@ -184,13 +184,15 @@ function QuestionPanel({
   const renderOptions = (q: QuestionInfo) => {
     const state = states[q.question];
     return (
-      <div className="question-list">
+      <div className="question-list" role={q.multiSelect ? "group" : "radiogroup"} aria-label={q.question}>
         {q.options.map((o, i) => {
           const picked = state?.chosen[o.label] === true;
           return (
             <button
               key={o.label}
               className={`question-row${picked ? " picked" : ""}`}
+              role={q.multiSelect ? "checkbox" : "radio"}
+              aria-checked={picked}
               onClick={() => select(q, o, q.multiSelect)}
             >
               <span className={`question-cell ${q.multiSelect ? "ctl-check" : "ctl-radio"}${picked ? " on" : ""}`} aria-hidden="true" />
@@ -218,7 +220,13 @@ function QuestionPanel({
               </span>
             </div>
           ) : (
-            <button className="question-row" onClick={() => openCustom(q)} type="button">
+            <button
+              className="question-row"
+              role={q.multiSelect ? "checkbox" : "radio"}
+              aria-checked={false}
+              onClick={() => openCustom(q)}
+              type="button"
+            >
               <span className={`question-cell ${q.multiSelect ? "ctl-check" : "ctl-radio"}`} aria-hidden="true" />
               <span className="question-index">{q.options.length + 1}.</span>
               <span className="question-row-body">

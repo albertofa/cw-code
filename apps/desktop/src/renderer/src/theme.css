@@ -1150,7 +1150,7 @@ button.session-project-heading:hover {
 
 .session-row.dragging {
   opacity: 0.35;
-  transition: opacity 120ms ease;
+  transition: opacity var(--dur-fast) var(--ease-out);
 }
 
 body.session-dragging,
@@ -1769,19 +1769,30 @@ body.session-dragging * {
   height: 7px;
   border-radius: 50%;
   background: var(--driver);
-  animation: pulse 1.2s ease-in-out infinite;
+  animation: cw-status-pulse 2s infinite;
 }
 
-@keyframes pulse {
-  0%,
-  100% {
+@keyframes cw-status-pulse {
+  0% {
     opacity: 1;
-    box-shadow: 0 0 0 0 var(--driver-soft);
+  }
+
+  40% {
+    opacity: 1;
+    animation-timing-function: steps(6);
   }
 
   50% {
-    opacity: 0.55;
-    box-shadow: 0 0 0 5px transparent;
+    opacity: 0.5;
+  }
+
+  90% {
+    opacity: 0.5;
+    animation-timing-function: steps(6);
+  }
+
+  100% {
+    opacity: 1;
   }
 }
 
@@ -1860,7 +1871,7 @@ body.session-dragging * {
   color: var(--faint);
   font-size: var(--t-xs);
   opacity: 0;
-  transition: opacity 120ms ease;
+  transition: opacity var(--dur-fast) var(--ease-out);
 }
 
 .msg-user-wrap:hover .msg-user-meta,
@@ -1935,7 +1946,7 @@ body.session-dragging * {
 
 .reasoning-live .reasoning-icon {
   color: var(--driver);
-  animation: pulse 1.6s ease-in-out infinite;
+  animation: cw-status-pulse 2s infinite;
 }
 
 .reasoning-label {
@@ -2448,7 +2459,7 @@ body.session-dragging * {
   position: absolute;
   inset: 0;
   background: linear-gradient(100deg, transparent 20%, rgba(253, 252, 252, 0.11) 50%, transparent 80%);
-  animation: tool-sweep 2.8s ease-in-out infinite;
+  animation: tool-sweep 2.8s steps(30) infinite;
   pointer-events: none;
 }
 
@@ -2494,7 +2505,7 @@ body.session-dragging * {
   position: absolute;
   inset: 0;
   background: linear-gradient(100deg, transparent 20%, rgba(253, 252, 252, 0.11) 50%, transparent 80%);
-  animation: tool-sweep 2.8s ease-in-out infinite;
+  animation: tool-sweep 2.8s steps(30) infinite;
   pointer-events: none;
 }
 
@@ -2584,30 +2595,13 @@ body.session-dragging * {
   color: var(--muted);
 }
 
-.turn-caret-right,
-.turn-caret-down {
+.turn-caret {
+  display: inline-flex;
   color: color-mix(in srgb, var(--turn-label) 72%, transparent);
 }
 
-.turn-head:hover .turn-caret-right,
-.turn-head:hover .turn-caret-down {
+.turn-head:hover .turn-caret {
   color: var(--text);
-}
-
-.turn-caret-right {
-  display: inline-flex;
-}
-
-.turn-caret-down {
-  display: none;
-}
-
-.turn-block.open .turn-caret-right {
-  display: none;
-}
-
-.turn-block.open .turn-caret-down {
-  display: inline-flex;
 }
 
 .turn-head-live .turn-head-label {
@@ -2616,7 +2610,7 @@ body.session-dragging * {
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
-  animation: turn-text-sweep 2.2s linear infinite;
+  animation: turn-text-sweep 2.2s steps(30) infinite;
 }
 
 @keyframes turn-text-sweep {
@@ -2721,7 +2715,7 @@ body.session-dragging * {
 
 .tool-state.running {
   color: var(--driver);
-  animation: pulse 1.2s ease-in-out infinite;
+  animation: cw-status-pulse 2s infinite;
 }
 
 .tool-state.error {
@@ -4847,7 +4841,7 @@ body.session-dragging * {
   position: absolute;
   inset: 0;
   background: linear-gradient(100deg, transparent 20%, rgba(253, 252, 252, 0.11) 50%, transparent 80%);
-  animation: tool-sweep 2.8s ease-in-out infinite;
+  animation: tool-sweep 2.8s steps(30) infinite;
   pointer-events: none;
 }
 
@@ -4889,7 +4883,7 @@ body.session-dragging * {
 
 .suba-dot.running {
   background: var(--driver);
-  animation: pulse 1.2s ease-in-out infinite;
+  animation: cw-status-pulse 2s infinite;
 }
 
 .suba-dot.error {
@@ -4910,7 +4904,7 @@ body.session-dragging * {
 
 .suba-state.running {
   color: var(--driver);
-  animation: pulse 1.2s ease-in-out infinite;
+  animation: cw-status-pulse 2s infinite;
 }
 
 .suba-state.error {
@@ -5016,7 +5010,7 @@ body.session-dragging * {
 
 .suba-check.running {
   color: var(--driver);
-  animation: pulse 1.2s ease-in-out infinite;
+  animation: cw-status-pulse 2s infinite;
 }
 
 .suba-check.error {
@@ -5428,7 +5422,7 @@ body.session-dragging * {
 
 .agents-tool-icon.running {
   color: var(--driver);
-  animation: pulse 1.4s ease-in-out infinite;
+  animation: cw-status-pulse 2s infinite;
 }
 
 .agents-tool-icon.error {
@@ -5786,8 +5780,8 @@ input[type="radio"] {
 
 .ctl-check:hover:not(.on),
 .ctl-radio:hover:not(.on),
-input[type="radio"]:hover:not(:checked),
-input[type="checkbox"]:not(.settings-switch input):hover:not(:checked, :indeterminate) {
+input[type="radio"]:hover:not(:checked, :disabled),
+input[type="checkbox"]:not(.settings-switch input):hover:not(:checked, :indeterminate, :disabled) {
   box-shadow: inset 0 0 0 1.5px var(--muted);
 }
 
@@ -5841,6 +5835,21 @@ input[type="radio"]:focus-visible,
 input[type="checkbox"]:not(.settings-switch input):focus-visible {
   outline: 2px solid var(--violet-ink);
   outline-offset: 2px;
+}
+
+.md ul:has(> li > input[type="checkbox"]) {
+  padding-left: 1.5rem;
+}
+
+.md li:has(> input[type="checkbox"]) {
+  list-style: none;
+}
+
+.md li > input[type="checkbox"]:disabled {
+  margin: 0 0.5rem 0 -1.5rem;
+  vertical-align: -0.2em;
+  opacity: 1;
+  cursor: default;
 }
 
 .settings-switch {
@@ -6231,6 +6240,76 @@ select.field option {
   .settings-foot {
     padding: 10px 14px;
   }
+}
+
+@keyframes cw-pop-in {
+  from {
+    opacity: 0;
+    transform: translateY(var(--pop-shift, 4px)) scale(0.98);
+  }
+}
+
+@keyframes cw-modal-in {
+  from {
+    opacity: 0;
+    transform: scale(0.98);
+  }
+}
+
+@keyframes cw-fade-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@keyframes cw-reveal {
+  from {
+    opacity: 0;
+    transform: translateY(-2px);
+  }
+}
+
+.menu-panel,
+.picker-panel,
+.ctx-menu,
+.session-hovercard,
+.context-dock,
+.attach-picker,
+.slash-menu,
+.gh-menu,
+.notif {
+  animation: cw-pop-in var(--dur-fast) var(--ease-out);
+}
+
+.menu-panel-down {
+  --pop-shift: -4px;
+}
+
+.settings-modal,
+.skills-modal,
+.wf-run-modal,
+.confirm-card {
+  animation: cw-modal-in var(--dur-base) var(--ease-out);
+}
+
+.settings-backdrop,
+.confirm-backdrop {
+  animation: cw-fade-in var(--dur-base) var(--ease-out);
+}
+
+.turn-fold,
+.reasoning-text,
+.tool-detail,
+.tool-group-items {
+  animation: cw-reveal var(--dur-fast) var(--ease-out);
+}
+
+.collapse-caret {
+  transition: transform var(--dur-base) var(--ease-out);
+}
+
+.collapse-caret.open {
+  transform: rotate(90deg);
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -6650,6 +6729,11 @@ select.field option {
 
 .question-row:hover {
   background: color-mix(in srgb, var(--accent) 8%, transparent);
+}
+
+.question-row:hover .ctl-check:not(.on),
+.question-row:hover .ctl-radio:not(.on) {
+  box-shadow: inset 0 0 0 1.5px var(--muted);
 }
 
 .question-row:focus-visible {
@@ -8026,6 +8110,10 @@ button.gitbar-checkout:hover {
   margin-top: 2px;
 }
 
+.binary-picker-row input[type="radio"]:focus-visible {
+  outline: none;
+}
+
 .binary-picker-remove {
   display: inline-flex;
   align-items: center;
@@ -8231,10 +8319,11 @@ button.gitbar-checkout:hover {
 }
 
 .tab-x {
-  display: none;
+  position: absolute;
+  left: 10px;
+  display: inline-flex;
   width: 15px;
   height: 15px;
-  flex: none;
   align-items: center;
   justify-content: center;
   color: var(--faint);
@@ -8242,14 +8331,20 @@ button.gitbar-checkout:hover {
   line-height: 1;
   border-radius: 4px;
   cursor: pointer;
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+
+.tab-icon {
+  transition: opacity var(--dur-fast) var(--ease-out);
 }
 
 .tab:hover .tab-x {
-  display: inline-flex;
+  opacity: 1;
 }
 
 .tab:hover .tab-icon {
-  display: none;
+  opacity: 0;
 }
 
 .tab-x:hover {

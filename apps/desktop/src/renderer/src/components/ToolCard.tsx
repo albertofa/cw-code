@@ -1,5 +1,5 @@
 import { memo, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
-import { Check, ChevronDown, ChevronRight, Circle, CircleDot, Monitor, TriangleAlert, Wrench, type LucideIcon } from "lucide-react";
+import { Check, ChevronRight, Circle, CircleDot, Monitor, TriangleAlert, Wrench, type LucideIcon } from "lucide-react";
 import type { ChatMessage } from "../stores/appStore.js";
 import { useAppStore } from "../stores/appStore.js";
 import {
@@ -206,7 +206,7 @@ export const ToolCard = memo(function ToolCard({
       <div className="tool-head">
         <ToolState state={state} Icon={summary?.Icon ?? Wrench} />
         {head}
-        <span className="tool-caret" aria-hidden="true">{open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</span>
+        <span className={`tool-caret collapse-caret${open ? " open" : ""}`} aria-hidden="true"><ChevronRight size={14} /></span>
       </div>
       {open && (
         <div className="tool-detail" onClick={(e) => e.stopPropagation()}>
