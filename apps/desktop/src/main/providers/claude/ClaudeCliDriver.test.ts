@@ -965,6 +965,18 @@ describe("ClaudeCliDriver shutdown", () => {
     driver.dispose();
   });
 
+  it("reports a session busy after an interrupt until the CLI acknowledges it", async () => {
+    const { driver, children } = makeDriver();
+    const { turnId } = driver.startTurn({ sessionId: "sess_1", prompt: "work", cwd: "C:\\proj" });
+    await settle();
+    driver.interrupt(turnId);
+    expect(driver.activity().busySessionIds).toEqual(["sess_1"]);
+    children[0].stdout.write(`${resultLine()}\n`);
+    await settle();
+    expect(driver.activity().busySessionIds).toEqual([]);
+    driver.dispose();
+  });
+
   it("closes stdin of every owned process and waits for them to exit without killing", async () => {
     const { driver, children, killed } = makeDriver();
     driver.startTurn({ sessionId: "sess_1", prompt: "work", cwd: "C:\\proj" });

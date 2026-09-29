@@ -6,7 +6,6 @@ import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { simpleGit } from "simple-git";
-import { assertInside } from "./FileService.js";
 import { ciFromRollup } from "../github/prParsers.js";
 import { sameWorktreePath } from "../sessions/worktreeCleanup.js";
 import type {
@@ -373,8 +372,42 @@ async function assertRestorable(base: string, change: TurnFileChange, target: st
   }
 }
 
-async function pruneEmptyDirectories(base: string, start: string): Promise<void> {
+export function gitPathTarget(base: string, path: string): string {
+  const target = join(base, ...path.split("/"));
+  if (!path || !isStrictlyInside(base, target)) throw new Error(`path escapes project root: ${path}`);
+  return target;
+}
+
+export interface SnapshotTree {
+  files: Map<string, string[]>;
+  directories: Set<string>;
+}
+
+export function parseSnapshotTree(stdout: string): SnapshotTree {
+  const tree: SnapshotTree = { files: new Map(), directories: new Set() };
+  for (const record of stdout.split("\0")) {
+    const tab = record.indexOf("\t");
+    if (tab < 0) continue;
+    const type = record.slice(0, tab).split(" ")[1];
+    const path = record.slice(tab + 1);
+    const key = pathKey(path);
+    if (type === "tree") tree.directories.add(key);
+    else tree.files.set(key, [...(tree.files.get(key) ?? []), path]);
+  }
+  return tree;
+}
+
+function caseAlias(tree: SnapshotTree, path: string): string | undefined {
+  return tree.files.get(pathKey(path))?.find((existing) => existing !== path);
+}
+
+function overlapsAny(path: string, names: string[]): boolean {
+  return names.some((name) => pathsOverlap(path, name));
+}
+
+async function pruneEmptyDirectories(base: string, start: string, keep: Set<string>): Promise<void> {
   for (let dir = start; isStrictlyInside(base, dir); dir = dirname(dir)) {
+    if (keep.has(pathKey(relativePosix(base, dir)))) return;
     try {
       await rmdir(dir);
     } catch (error) {
@@ -624,12 +657,11 @@ const RESTORE_LOCK_ATTEMPTS = 3;
 const RESTORE_LOCK_RETRY_MS = 200;
 const SNAPSHOT_OBJECT_WRITE_ATTEMPTS = 3;
 const SNAPSHOT_OBJECT_WRITE_RETRY_MS = 100;
-const HOOKLESS_ARGS = ["-c", `core.hooksPath=${join(tmpdir(), `cw-no-hooks-${randomUUID()}`)}`];
+const HOOKLESS_ARGS = ["-c", `core.hooksPath=${join(tmpdir(), `cw-no-hooks-${randomUUID()}`)}`, "-c", "core.fsmonitor=false"];
 const SNAPSHOT_ADD_ARGS = [
   ...HOOKLESS_ARGS,
   "-c", "core.safecrlf=false",
   "-c", "core.splitIndex=false",
-  "-c", "core.fsmonitor=false",
   "add", "-A", "--", ".", ":(exclude).cw"
 ];
 const SNAPSHOT_IDENTITY: NodeJS.ProcessEnv = {
@@ -1170,7 +1202,7 @@ export class GitService {
     const tempIndex = join(tmpdir(), `cw-snapshot-${randomUUID()}.index`);
     const env = withNonInteractiveEnv({ ...process.env, ...SNAPSHOT_IDENTITY, GIT_INDEX_FILE: tempIndex });
     try {
-      const [indexPath, commonDir] = (await execText(binary, ["rev-parse", "--git-path", "index", "--git-common-dir"], root, remaining()))
+      const [indexPath, commonDir] = (await execText(binary, [...HOOKLESS_ARGS, "rev-parse", "--git-path", "index", "--git-common-dir"], root, remaining()))
         .replace(/\r/g, "")
         .split("\n")
         .map((line) => resolve(root, line.trim()));
@@ -1223,7 +1255,7 @@ export class GitService {
 
   private async headCommit(root: string, timeout: number): Promise<string | null> {
     try {
-      return (await execText(this.settings().gitBinaryPath, ["rev-parse", "--verify", "--quiet", "HEAD^{commit}"], root, timeout)).trim() || null;
+      return (await execText(this.settings().gitBinaryPath, [...HOOKLESS_ARGS, "rev-parse", "--verify", "--quiet", "HEAD^{commit}"], root, timeout)).trim() || null;
     } catch {
       return null;
     }
@@ -1238,7 +1270,7 @@ export class GitService {
   async diffSnapshot(root: string, baseSha: string, headSha?: string): Promise<string> {
     assertObjectId(baseSha);
     const head = await this.snapshotHead(root, headSha);
-    return execDiff(this.settings().gitBinaryPath, ["diff", "--no-ext-diff", "--no-renames", "--relative", baseSha, head, "--"], root);
+    return execDiff(this.settings().gitBinaryPath, [...HOOKLESS_ARGS, "diff", "--no-ext-diff", "--no-renames", "--relative", baseSha, head, "--"], root);
   }
 
   async snapshotChanges(root: string, baseSha: string, headSha?: string): Promise<SnapshotComparison> {
@@ -1247,31 +1279,53 @@ export class GitService {
     const head = await this.snapshotHead(root, headSha);
     const range = ["--no-renames", "-z", "--relative", baseSha, head, "--"];
     const [numstat, raw] = await Promise.all([
-      execDiff(binary, ["diff", "--numstat", ...range], root),
-      execDiff(binary, ["diff", "--raw", "--no-abbrev", ...range], root)
+      execDiff(binary, [...HOOKLESS_ARGS, "diff", "--numstat", ...range], root),
+      execDiff(binary, [...HOOKLESS_ARGS, "diff", "--raw", "--no-abbrev", ...range], root)
     ]);
     return parseTurnChanges(numstat, raw);
   }
 
-  async snapshotConflicts(root: string, endSha: string, paths: string[]): Promise<string[]> {
+  async snapshotConflicts(root: string, startSha: string, endSha: string, paths: string[]): Promise<string[]> {
+    assertObjectId(startSha);
     assertObjectId(endSha);
     if (paths.length === 0) return [];
     const current = await this.snapshotWorkingTree(root);
-    const names = await execDiff(this.settings().gitBinaryPath, ["diff", "--name-only", "-z", "--no-renames", "--relative", endSha, current, "--"], root);
-    const changed = names.split("\0").map((name) => name.replace(/^\n+/, "")).filter(Boolean);
-    return paths.filter((path) => changed.some((name) => pathsOverlap(path, name))).sort();
+    const [sinceEnd, sinceStart] = await Promise.all([
+      this.changedPaths(root, endSha, current),
+      this.changedPaths(root, startSha, current)
+    ]);
+    return paths.filter((path) => overlapsAny(path, sinceEnd) && overlapsAny(path, sinceStart)).sort();
+  }
+
+  private async changedPaths(root: string, fromSha: string, toSha: string): Promise<string[]> {
+    const args = [...HOOKLESS_ARGS, "diff", "--name-only", "-z", "--no-renames", "--relative", fromSha, toSha, "--"];
+    const names = await execDiff(this.settings().gitBinaryPath, args, root);
+    return names.split("\0").map((name) => name.replace(/^\n+/, "")).filter(Boolean);
+  }
+
+  private async snapshotTree(root: string, sha: string): Promise<SnapshotTree> {
+    const args = [...HOOKLESS_ARGS, "ls-tree", "-r", "-t", "-z", sha];
+    return parseSnapshotTree(await execText(this.settings().gitBinaryPath, args, root, SNAPSHOT_TIMEOUT_MS));
   }
 
   async restoreSnapshot(root: string, snapshotSha: string, changes: TurnFileChange[]): Promise<TurnFileChange[]> {
     assertObjectId(snapshotSha);
     const base = resolve(root);
-    const planned = [...changes].sort(comparePaths).map((change) => ({ change, target: assertInside(root, change.path) }));
-    const removals = planned
+    const planned = [...changes].sort(comparePaths).map((change) => ({ change, target: gitPathTarget(base, change.path) }));
+    const [startTree, current] = await Promise.all([this.snapshotTree(root, snapshotSha), this.snapshotWorkingTree(root)]);
+    const differing = await this.changedPaths(root, snapshotSha, current);
+    const pending = planned.filter(({ change }) => overlapsAny(change.path, differing));
+    const removals = pending
       .filter(({ change }) => change.change === "added")
       .sort((a, b) => pathDepth(b.change.path) - pathDepth(a.change.path) || comparePaths(b.change, a.change));
-    const restores = planned.filter(({ change }) => change.change !== "added");
+    const restores = pending.filter(({ change }) => change.change !== "added");
+    for (const { change } of removals) {
+      const alias = caseAlias(startTree, change.path);
+      if (!alias || restores.some((entry) => entry.change.path === alias)) continue;
+      restores.push({ change: { path: alias, change: "modified", added: 0, deleted: 0, binary: false }, target: gitPathTarget(base, alias) });
+    }
     const removable = new Set(removals.map(({ change }) => pathKey(change.path)));
-    for (const { target } of planned) await assertNoSymlinkedParents(base, target);
+    for (const { target } of [...removals, ...restores]) await assertNoSymlinkedParents(base, target);
     for (const { change, target } of removals) {
       if ((await lstatOrNull(target))?.isDirectory()) throw new Error(`Cannot undo: '${change.path}' is now a directory`);
     }
@@ -1283,11 +1337,11 @@ export class GitService {
           if (!isMissing(error)) throw error;
         });
         removed += 1;
-        await pruneEmptyDirectories(base, dirname(target));
+        await pruneEmptyDirectories(base, dirname(target), startTree.directories);
       }
       if (restores.length > 0) await this.restorePaths(root, snapshotSha, restores.map(({ change }) => change.path));
     } catch (error) {
-      throw new Error(`Undo stopped after removing ${removed} of ${removals.length} added files, before restoring ${restores.length} files: ${(error as Error).message}`);
+      throw new Error(`Undo stopped after removing ${removed} of ${removals.length} added files, before restoring ${restores.length} files: ${(error as Error).message}. Retrying Undo is safe; it continues from where it stopped`);
     } finally {
       this.invalidateStatus(root);
       this.invalidateBranches(root);

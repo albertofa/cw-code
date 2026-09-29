@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MAX_ATTENTION_COUNT, attentionDescription, parseAttentionState, shouldFlash } from "./attention.js";
+import { MAX_ATTENTION_COUNT, attentionDescription, parseAttentionState, resetsAttention, shouldFlash } from "./attention.js";
 
 describe("shouldFlash", () => {
   it("flashes when the count increases while unfocused", () => {
@@ -73,5 +73,14 @@ describe("parseAttentionState", () => {
   it("rejects non-objects", () => {
     expect(parseAttentionState(null)).toBeNull();
     expect(parseAttentionState("x")).toBeNull();
+  });
+});
+
+describe("resetsAttention", () => {
+  it("resets only on a cross-document main-frame navigation", () => {
+    expect(resetsAttention({ isMainFrame: true, isSameDocument: false })).toBe(true);
+    expect(resetsAttention({ isMainFrame: false, isSameDocument: false })).toBe(false);
+    expect(resetsAttention({ isMainFrame: true, isSameDocument: true })).toBe(false);
+    expect(resetsAttention({ isMainFrame: false, isSameDocument: true })).toBe(false);
   });
 });

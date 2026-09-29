@@ -489,6 +489,17 @@ describe("SettingsStore", () => {
     ).toMatchObject({ fontSizeInterface: 16, fontSizeCode: 14, fontSizePrompt: 14 });
   });
 
+  it("resets null typography sizes to the defaults instead of the minimum", () => {
+    const store = new SettingsStore(tempFilePath());
+    store.set({ fontSizeInterface: 18, fontSizeTerminal: 18 });
+    expect(
+      store.set({
+        fontSizeInterface: null as unknown as number,
+        fontSizeTerminal: null as unknown as number
+      })
+    ).toMatchObject({ fontSizeInterface: 16, fontSizeTerminal: 14 });
+  });
+
   it("coerces the advanced typography switch with strict true", () => {
     const store = new SettingsStore(tempFilePath());
     expect(store.set({ typographyAdvanced: true }).typographyAdvanced).toBe(true);

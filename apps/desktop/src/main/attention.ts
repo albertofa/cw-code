@@ -9,6 +9,10 @@ export function shouldFlash(prevCount: number | null, nextCount: number, focused
   return prevCount !== null && nextCount > prevCount && !focused;
 }
 
+export function resetsAttention(navigation: { isMainFrame: boolean; isSameDocument: boolean }): boolean {
+  return navigation.isMainFrame && !navigation.isSameDocument;
+}
+
 export function attentionDescription(count: number): string {
   if (count <= 0) return "";
   return count === 1 ? "1 session needs you" : `${count} sessions need you`;

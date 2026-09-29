@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, normalize } from "node:path";
 import { FileService, assertInside, imageExtMime, pasteImageExt, pasteImageName } from "./FileService.js";
@@ -77,6 +77,23 @@ describe("FileService sandbox", () => {
       expect(() => svc.readOutsideFile(join(dir, name))).toThrow(/not a previewable file/);
     }
     expect(() => svc.readOutsideFile(dir)).toThrow(/not a previewable file/);
+  });
+
+  it("checks the extension of the file a symlinked preview path points at", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cw-outside-link-"));
+    mkdirSync(join(dir, "target"));
+    symlinkSync(join(dir, "target"), join(dir, "linked.md"), "junction");
+    expect(() => svc.readOutsideFile(join(dir, "linked.md"))).toThrow(/not a previewable file/);
+    writeFileSync(join(dir, "secret.txt"), "secret", "utf8");
+    writeFileSync(join(dir, "real.md"), "# real", "utf8");
+    try {
+      symlinkSync(join(dir, "secret.txt"), join(dir, "bait.md"), "file");
+      symlinkSync(join(dir, "real.md"), join(dir, "alias.md"), "file");
+    } catch {
+      return;
+    }
+    expect(() => svc.readOutsideFile(join(dir, "bait.md"))).toThrow(/not a previewable file/);
+    expect(svc.readOutsideFile(join(dir, "alias.md"))).toBe("# real");
   });
 
   it("rejects UNC and device paths for outside reads", () => {

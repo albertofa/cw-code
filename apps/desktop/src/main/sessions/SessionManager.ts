@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import type {
   AppSettings,
   ApprovalDecision,
@@ -52,7 +53,7 @@ import {
 } from "../github/prLinks.js";
 import { prKey, prRefFromUrl } from "../github/prParsers.js";
 import { buildTurnEnv } from "./env.js";
-import { changedWorktreeBranch, isWorktreeOrphaned, looksLikeWorktree, pinsWorktree, sameWorktreePath } from "./worktreeCleanup.js";
+import { changedWorktreeBranch, isWorktreeOrphaned, looksLikeWorktree, pinsWorktree, rootsOverlap, sameWorktreePath } from "./worktreeCleanup.js";
 import { SettingsStore } from "../settings/SettingsStore.js";
 import { resolveClaudeModels } from "../settings/settingsUtils.js";
 import { permissionOption, withSyntheticFullAccess } from "../providers/permissions.js";
@@ -136,6 +137,24 @@ function gitlinkReason(paths: string[]): string {
 
 function conflictReason(paths: string[]): string {
   return `Changed since the turn ended: ${paths.join(", ")}`;
+}
+
+function turnReachesPast(turn: TurnSnapshot, since: number): boolean {
+  const endedAt = turn.endedAt ?? Number.NaN;
+  if (!Number.isFinite(turn.capturedAt) || !Number.isFinite(endedAt) || !Number.isFinite(since)) return true;
+  return Math.max(turn.capturedAt, endedAt) > since;
+}
+
+const INTERRUPT_SETTLE_TIMEOUT_MS = 3_000;
+const INTERRUPT_SETTLE_POLL_MS = 100;
+
+function driverBusy(driver: CliDriver, sessionId: string): boolean {
+  try {
+    return driver.activity?.().busySessionIds.includes(sessionId) ?? false;
+  } catch (err) {
+    console.warn(`driver activity check failed for ${sessionId}: ${(err as Error).message}`);
+    return false;
+  }
 }
 
 export class SessionManager {
@@ -1047,14 +1066,15 @@ export class SessionManager {
     }
   }
 
-  private captureEndSnapshot(sessionId: string, turnId: string): void {
+  private captureEndSnapshot(sessionId: string, turnId: string, settled?: () => Promise<void>): void {
     const snapshot = this.store.getSession(sessionId)?.lastTurnSnapshot;
     if (snapshot?.turnId !== turnId || snapshot.endedAt !== undefined || this.endSnapshots.has(turnId)) return;
     if (!snapshot.sha) {
       this.store.updateSession(sessionId, { lastTurnSnapshot: { ...snapshot, endedAt: Date.now() } });
       return;
     }
-    const task = this.writeEndSnapshot(sessionId, turnId)
+    const task = (settled ? settled() : Promise.resolve())
+      .then(() => this.writeEndSnapshot(sessionId, turnId))
       .catch((err: Error) => console.warn(`turn end snapshot could not be stored for ${sessionId}: ${err.message}`))
       .finally(() => {
         if (this.endSnapshots.get(turnId) === task) this.endSnapshots.delete(turnId);
@@ -1077,6 +1097,13 @@ export class SessionManager {
     if (current?.turnId !== turnId) return;
     this.store.updateSession(sessionId, { lastTurnSnapshot: { ...current, ...result, endedAt } });
     this.emitSession(sessionId);
+  }
+
+  private async driverSettled(driver: CliDriver, sessionId: string): Promise<void> {
+    const deadline = Date.now() + INTERRUPT_SETTLE_TIMEOUT_MS;
+    while (!this.disposed && Date.now() < deadline && driverBusy(driver, sessionId)) {
+      await delay(Math.min(INTERRUPT_SETTLE_POLL_MS, Math.max(1, deadline - Date.now())));
+    }
   }
 
   private async settledSnapshot(sessionId: string): Promise<{ session: SessionMeta; snapshot: TurnSnapshot | undefined }> {
@@ -1102,7 +1129,7 @@ export class SessionManager {
     return this.store.listAllSessions().filter((other) => {
       if (other.id === session.id) return true;
       const otherRoot = this.sessionRoot(other);
-      return otherRoot !== null && sameWorktreePath(otherRoot, root);
+      return otherRoot !== null && rootsOverlap(otherRoot, root);
     });
   }
 
@@ -1126,7 +1153,7 @@ export class SessionManager {
       if (this.hasTurnInFlight(other.id)) return `Another session is running a turn in this folder ("${other.title}")`;
       if (this.pendingUndos.has(other.id)) return `Another session is undoing a turn in this folder ("${other.title}")`;
       const otherTurn = other.lastTurnSnapshot;
-      if (otherTurn && Math.max(otherTurn.capturedAt, otherTurn.endedAt ?? 0) > snapshot.capturedAt) {
+      if (otherTurn && turnReachesPast(otherTurn, snapshot.capturedAt)) {
         return `A later turn in another session changed this folder ("${other.title}")`;
       }
     }
@@ -1142,11 +1169,11 @@ export class SessionManager {
   async turnChanges(sessionId: string): Promise<TurnChanges | null> {
     const { session, snapshot } = await this.settledSnapshot(sessionId);
     if (!snapshot?.sha) return null;
-    const root = await this.ensureWorktree(sessionId);
+    const root = this.rootFor(sessionId);
     const endSha = snapshot.endSha ?? null;
     const { files, gitlinks } = await this.git.snapshotChanges(root, snapshot.sha, endSha ?? undefined);
     const conflicts = endSha && snapshot.undoneAt === undefined
-      ? await this.git.snapshotConflicts(root, endSha, files.map((file) => file.path))
+      ? await this.git.snapshotConflicts(root, snapshot.sha, endSha, files.map((file) => file.path))
       : [];
     const reason = this.undoBlocker(session, snapshot)
       ?? (gitlinks.length > 0 ? gitlinkReason(gitlinks) : null)
@@ -1171,7 +1198,7 @@ export class SessionManager {
       const root = this.rootFor(sessionId);
       const { files, gitlinks } = await this.git.snapshotChanges(root, startSha, endSha);
       if (gitlinks.length > 0) throw new Error(gitlinkReason(gitlinks));
-      const conflicts = await this.git.snapshotConflicts(root, endSha, files.map((file) => file.path));
+      const conflicts = await this.git.snapshotConflicts(root, startSha, endSha, files.map((file) => file.path));
       if (conflicts.length > 0) throw new Error(conflictReason(conflicts));
       const restored = await this.git.restoreSnapshot(root, startSha, files);
       const current = this.store.getSession(sessionId)?.lastTurnSnapshot;
@@ -1494,10 +1521,11 @@ export class SessionManager {
     const sessionId = this.activeTurns.get(turnId)?.sessionId;
     if (!sessionId) return;
     const session = this.store.getSession(sessionId);
-    if (session) this.drivers[session.driver].interrupt(turnId);
+    const driver = session ? this.drivers[session.driver] : undefined;
+    driver?.interrupt(turnId);
     this.settleTurn(turnId, sessionId);
     this.turnPrRefs.delete(turnId);
-    this.captureEndSnapshot(sessionId, turnId);
+    this.captureEndSnapshot(sessionId, turnId, driver ? () => this.driverSettled(driver, sessionId) : undefined);
     this.store.updateSession(sessionId, { status: "holding" }, "turn-interrupted");
     if (!session) return;
     if (this.shutdownReserved) this.interruptedForShutdown.add(sessionId);

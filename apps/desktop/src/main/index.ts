@@ -14,7 +14,7 @@ function resolvePreload(): string {
   if (!found) console.warn(`preload not found (tried ${candidates.join(", ")})`);
   return found ?? candidates[0];
 }
-import { attentionDescription, parseAttentionState, shouldFlash } from "./attention.js";
+import { attentionDescription, parseAttentionState, resetsAttention, shouldFlash } from "./attention.js";
 import { checkCliVersion, checkCliVersions, type CliVersionCheck } from "./cliVersions.js";
 import { discoverBinaries, verifyBinaryPath } from "./cli/binaryDiscovery.js";
 import { getHarnessTracePath, initHarnessTrace } from "./debug/harnessTrace.js";
@@ -309,10 +309,11 @@ async function createWindow(): Promise<void> {
     );
     services?.ptys.detachAll();
     recoverAbandonedShutdown();
+    if (mainWindow) resetAttention(mainWindow);
     void webContents.reload();
   });
-  webContents.on("did-start-loading", () => {
-    if (mainWindow) resetAttention(mainWindow);
+  webContents.on("did-start-navigation", (navigation) => {
+    if (mainWindow && resetsAttention(navigation)) resetAttention(mainWindow);
   });
   webContents.on("did-navigate", () => recoverAbandonedShutdown());
   webContents.on("did-finish-load", () => recoverAbandonedShutdown());

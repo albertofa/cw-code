@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import type { CliDriver, HistoryMessage, ModelOption, SessionMeta, ThreadEvent, TurnHandle, TurnSnapshot } from "@cw-code/contracts";
@@ -859,6 +859,157 @@ describe("SessionManager", () => {
     expect(existsSync(join(repository, "second.txt"))).toBe(false);
     expect(existsSync(join(repository, "first.txt"))).toBe(true);
     expect(await manager.withBranchSwitch(first.id, async () => "switched")).toBe("switched");
+    manager.dispose();
+  });
+
+  it("lets a failed undo be retried and marks the turn undone only once it succeeds", async () => {
+    const { manager, fake, project } = makeGitSandboxManager("cw-turn-undo-retry-");
+    const session = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    const worktreePath = session.worktreePath;
+    if (!worktreePath) throw new Error("expected a worktree-backed session");
+    execFileSync("git", ["-C", worktreePath, "config", "core.autocrlf", "false"]);
+    const original = readFileSync(join(worktreePath, "README.md"), "utf8");
+    const statusBefore = execFileSync("git", ["-C", worktreePath, "status", "--porcelain"], { encoding: "utf8" });
+
+    const turnId = await manager.startTurn(session.id, "edit");
+    writeFileSync(join(worktreePath, "README.md"), "turn edit\n", "utf8");
+    writeFileSync(join(worktreePath, "created.txt"), "created\n", "utf8");
+    fake.completeAll();
+    const endSha = (await manager.turnChanges(session.id))?.endSha;
+    if (!endSha) throw new Error("expected an end snapshot");
+
+    const lockPath = execFileSync("git", ["-C", worktreePath, "rev-parse", "--git-path", "index.lock"], { encoding: "utf8" }).trim();
+    const lock = resolve(worktreePath, lockPath);
+    writeFileSync(lock, "", "utf8");
+    try {
+      await expect(manager.undoTurn(session.id, turnId, endSha)).rejects.toThrow(/Retrying Undo is safe/);
+    } finally {
+      rmSync(lock, { force: true });
+    }
+    expect(existsSync(join(worktreePath, "created.txt"))).toBe(false);
+    expect(readFileSync(join(worktreePath, "README.md"), "utf8")).toBe("turn edit\n");
+    expect(storedSnapshot(manager, session.id)?.undoneAt).toBeUndefined();
+    expect(await manager.turnChanges(session.id)).toMatchObject({ undoable: true, conflicts: [] });
+
+    await manager.undoTurn(session.id, turnId, endSha);
+    expect(readFileSync(join(worktreePath, "README.md"), "utf8")).toBe(original);
+    expect(existsSync(join(worktreePath, "created.txt"))).toBe(false);
+    expect(execFileSync("git", ["-C", worktreePath, "status", "--porcelain"], { encoding: "utf8" })).toBe(statusBefore);
+    expect(storedSnapshot(manager, session.id)?.undoneAt).toEqual(expect.any(Number));
+    manager.dispose();
+  });
+
+  it("treats nested project roots as shared by the undo guard, but not sibling folders with a common prefix", async () => {
+    const { manager, fake, project, repository } = makeGitSandboxManager("cw-turn-nested-root-");
+    const nestedRoot = join(repository, "sub");
+    mkdirSync(nestedRoot);
+    writeFileSync(join(nestedRoot, "keep.txt"), "keep\n", "utf8");
+    const siblingRoot = `${repository}2`;
+    execFileSync("git", ["init", "-b", "main", siblingRoot]);
+    const parent = await manager.createSession(project.id, "claude", { mode: "current" });
+    const child = await manager.createSession(manager.addProject(nestedRoot).id, "claude", { mode: "current" });
+    const sibling = await manager.createSession(manager.addProject(siblingRoot).id, "claude", { mode: "current" });
+    const runTurn = async (sessionId: string, file: string) => {
+      const turnId = await manager.startTurn(sessionId, "go");
+      writeFileSync(file, "turn\n", "utf8");
+      fake.complete(turnId);
+      await endSnapshotsSettled(manager);
+    };
+    const laterTurn = { undoable: false, reason: expect.stringContaining("A later turn in another session") };
+
+    await runTurn(parent.id, join(repository, "parent.txt"));
+    await runTurn(sibling.id, join(siblingRoot, "sibling.txt"));
+    expect(await manager.turnChanges(parent.id)).toMatchObject({ undoable: true });
+
+    await runTurn(child.id, join(nestedRoot, "child.txt"));
+    expect(await manager.turnChanges(parent.id)).toMatchObject(laterTurn);
+    expect(await manager.turnChanges(child.id)).toMatchObject({ undoable: true });
+
+    await runTurn(parent.id, join(repository, "parent-2.txt"));
+    expect(await manager.turnChanges(child.id)).toMatchObject(laterTurn);
+    expect(await manager.turnChanges(sibling.id)).toMatchObject({ undoable: true });
+    manager.dispose();
+  });
+
+  it("blocks undo when another session on the root has a turn without a usable time range", async () => {
+    const { manager, fake, project, repository } = makeGitSandboxManager("cw-turn-missing-end-");
+    const first = await manager.createSession(project.id, "claude", { mode: "current" });
+    const second = await manager.createSession(project.id, "claude", { mode: "current" });
+    const store = (manager as unknown as { store: SessionStore }).store;
+    const turnId = await manager.startTurn(first.id, "go");
+    writeFileSync(join(repository, "first.txt"), "first\n", "utf8");
+    fake.complete(turnId);
+    const endSha = (await manager.turnChanges(first.id))?.endSha;
+    const capturedAt = storedSnapshot(manager, first.id)?.capturedAt;
+    if (!endSha || capturedAt === undefined) throw new Error("expected start and end snapshots");
+    const otherTurn = (snapshot: Partial<TurnSnapshot>) =>
+      store.updateSession(second.id, { lastTurnSnapshot: { turnId: "other", sha: "a".repeat(40), capturedAt: capturedAt - 60_000, ...snapshot } });
+
+    otherTurn({ endedAt: capturedAt - 30_000 });
+    expect(await manager.turnChanges(first.id)).toMatchObject({ undoable: true });
+
+    otherTurn({});
+    await expect(manager.undoTurn(first.id, turnId, endSha)).rejects.toThrow("A later turn in another session");
+
+    otherTurn({ endedAt: Number.NaN });
+    await expect(manager.undoTurn(first.id, turnId, endSha)).rejects.toThrow("A later turn in another session");
+
+    otherTurn({ capturedAt: Number.NaN, endedAt: capturedAt - 30_000 });
+    await expect(manager.undoTurn(first.id, turnId, endSha)).rejects.toThrow("A later turn in another session");
+    expect(existsSync(join(repository, "first.txt"))).toBe(true);
+    manager.dispose();
+  });
+
+  it("waits for the driver to settle an interrupted turn before capturing its end snapshot", async () => {
+    const { manager, fake, project } = makeGitSandboxManager("cw-turn-interrupt-settle-");
+    const session = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    const worktreePath = session.worktreePath;
+    if (!worktreePath) throw new Error("expected a worktree-backed session");
+    let busy = true;
+    (fake as CliDriver).activity = () => ({ busySessionIds: busy ? [session.id] : [], ownedProcesses: 1 });
+
+    const turnId = await manager.startTurn(session.id, "stop");
+    manager.interrupt(turnId);
+    await new Promise((r) => setTimeout(r, 300));
+    expect(storedSnapshot(manager, session.id)?.endSha).toBeUndefined();
+    writeFileSync(join(worktreePath, "late.txt"), "written while stopping\n", "utf8");
+    busy = false;
+    await endSnapshotsSettled(manager);
+
+    const endSha = storedSnapshot(manager, session.id)?.endSha;
+    expect(endSha).toMatch(/^[0-9a-f]{40}$/);
+    expect(execFileSync("git", ["-C", worktreePath, "show", `${endSha}:late.txt`], { encoding: "utf8" }).replace(/\r\n/g, "\n")).toBe("written while stopping\n");
+    manager.dispose();
+  });
+
+  it("captures the end snapshot of an interrupted turn once the settle wait runs out", async () => {
+    const { manager, fake, project } = makeGitSandboxManager("cw-turn-interrupt-timeout-");
+    const session = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    (fake as CliDriver).activity = () => ({ busySessionIds: [session.id], ownedProcesses: 1 });
+
+    const turnId = await manager.startTurn(session.id, "stop");
+    const interruptedAt = Date.now();
+    manager.interrupt(turnId);
+    await endSnapshotsSettled(manager);
+
+    expect(Date.now() - interruptedAt).toBeGreaterThanOrEqual(2_900);
+    expect(storedSnapshot(manager, session.id)).toMatchObject({ turnId, endSha: expect.stringMatching(/^[0-9a-f]{40}$/) });
+    manager.dispose();
+  }, 20_000);
+
+  it("reports a missing worktree from turnChanges without recreating it", async () => {
+    const { manager, fake, project } = makeGitSandboxManager("cw-turn-changes-missing-");
+    const session = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    const worktreePath = session.worktreePath;
+    if (!worktreePath) throw new Error("expected a worktree-backed session");
+    const turnId = await manager.startTurn(session.id, "go");
+    fake.complete(turnId);
+    await endSnapshotsSettled(manager);
+
+    rmSync(worktreePath, { recursive: true, force: true });
+    await expect(manager.turnChanges(session.id)).rejects.toThrow(/session worktree is missing/);
+    expect(existsSync(worktreePath)).toBe(false);
+    expect((manager as unknown as { worktreeRecovery: Map<string, Promise<string>> }).worktreeRecovery.size).toBe(0);
     manager.dispose();
   });
 

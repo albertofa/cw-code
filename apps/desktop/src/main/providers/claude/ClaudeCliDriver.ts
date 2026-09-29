@@ -965,7 +965,8 @@ export class ClaudeCliDriver implements CliDriver {
   activity(): DriverActivity {
     const busySessionIds = new Set<string>();
     for (const state of this.processes.values()) {
-      if (state.completedTurn && !state.postCompletionOutputPending && this.liveTaskCount(state) === 0) continue;
+      const settled = state.completedTurn && !state.postCompletionOutputPending && !this.interruptedTurns.has(state.activeTurnId);
+      if (settled && this.liveTaskCount(state) === 0) continue;
       busySessionIds.add(state.sessionId);
     }
     return { busySessionIds: [...busySessionIds], ownedProcesses: this.processes.size };

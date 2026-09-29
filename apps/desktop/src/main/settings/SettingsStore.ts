@@ -122,6 +122,7 @@ function fontFamilyOr(value: unknown, fallback: string): string {
 }
 
 function clampedIntegerOr(value: unknown, fallback: number, min: number, max: number): number {
+  if (value === null || value === undefined) return fallback;
   const rounded = Math.round(Number(value));
   return Number.isFinite(rounded) ? Math.min(max, Math.max(min, rounded)) : fallback;
 }
