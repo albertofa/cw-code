@@ -30,7 +30,8 @@ export function jumpToSubagentGroup(groupId: string, agentId?: string): void {
   window.setTimeout(() => {
     const el = document.getElementById(subagentAnchorId(groupId));
     if (!el) return;
-    el.scrollIntoView({ behavior: "smooth", block: "center" });
+    const reduced = window.matchMedia?.("(prefers-reduced-motion: reduce)").matches ?? false;
+    el.scrollIntoView({ behavior: reduced ? "auto" : "smooth", block: "center" });
   }, 60);
 }
 

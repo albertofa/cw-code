@@ -13,9 +13,8 @@
   flex-direction: column;
   overflow: hidden;
   background: var(--overlay);
-  border: 1px solid var(--border);
-  border-radius: var(--r-lg);
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
+  border-radius: 14px;
+  box-shadow: var(--shadow-float), inset 0 0 0 1px rgba(255, 255, 255, 0.07);
 }
 
 .mp-search {
@@ -68,7 +67,11 @@
   cursor: pointer;
 }
 
-.mp-act:hover,
+.mp-act:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
 .mp-act.hi {
   background: var(--raised);
   color: var(--text);
@@ -170,6 +173,7 @@
 }
 
 .mp-star {
+  position: relative;
   display: grid;
   place-items: center;
   width: 20px;
@@ -180,6 +184,12 @@
   background: none;
   color: var(--faint);
   cursor: pointer;
+}
+
+.mp-star::before {
+  content: "";
+  position: absolute;
+  inset: -2px;
 }
 
 .mp-row.hi .mp-star {
@@ -262,7 +272,7 @@
   background: var(--overlay);
   border: 1px solid var(--border);
   border-radius: var(--r-lg);
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
+  box-shadow: var(--shadow-float);
 }
 
 .mp-card-right {
@@ -307,8 +317,12 @@
   background: var(--overlay);
   border: 1px solid var(--border);
   border-radius: var(--r-lg);
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.55);
+  box-shadow: var(--shadow-float);
   outline: none;
+}
+
+.em:focus-visible .em-it.hi {
+  box-shadow: inset 0 0 0 2px var(--violet-ink);
 }
 
 .em-h {
