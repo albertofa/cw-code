@@ -255,12 +255,6 @@ export class SessionStore {
     return this.data.sessions.find((s) => s.id === id);
   }
 
-  findByCursor(projectId: string, driver: DriverKind, resumeCursor: string): SessionMeta | undefined {
-    return this.data.sessions.find(
-      (s) => s.projectId === projectId && s.driver === driver && s.resumeCursor === resumeCursor
-    );
-  }
-
   updateSession(id: string, patch: SessionPatch & { status: SessionStatus }, reason: SessionStatusReason): void;
   updateSession(id: string, patch: SessionPatch, reason?: undefined): void;
   updateSession(id: string, patch: SessionPatch, reason?: SessionStatusReason): void {

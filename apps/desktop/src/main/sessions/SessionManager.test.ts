@@ -421,41 +421,6 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
-  it("lists CLI-native sessions as discovered without storing them", async () => {
-    const { manager } = makeManager();
-    const project = manager.addProject("C:\\proj4");
-    (manager as unknown as { drivers: Record<string, CliDriver> }).drivers.claude = {
-      kind: "claude",
-      listSessions: async () => [
-        {
-          id: "claude:abc",
-          projectId: project.id,
-          driver: "claude",
-          title: "external work",
-          status: "idle",
-          resumeCursor: "abc",
-          createdAt: 1,
-          updatedAt: 2
-        }
-      ],
-      getHistory: async () => [],
-      startTurn: () => {
-        throw new Error("not used");
-      },
-      interrupt: () => {},
-      renameSession: async () => {},
-      async *events() {}
-    };
-    const discovered = await manager.listDiscovered(project.id);
-    expect(discovered.map((d) => d.id)).toEqual(["ext:claude:abc"]);
-    expect((await manager.listSessions(project.id)).length).toBe(0);
-    const imported = await manager.importSession(project.id, "claude", "abc", "external work");
-    expect(imported.resumeCursor).toBe("abc");
-    expect((await manager.listDiscovered(project.id)).length).toBe(0);
-    expect((await manager.listSessions(project.id)).length).toBe(1);
-    manager.dispose();
-  });
-
   it("persists the resume cursor from turn.done", async () => {
     const { manager, fake } = makeManager();
     const project = manager.addProject("C:\\proj3");

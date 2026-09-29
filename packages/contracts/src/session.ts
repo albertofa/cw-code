@@ -7,7 +7,6 @@ export type SessionStatus = "idle" | "working" | "input-required" | "done" | "ho
 
 export type SessionStatusReason =
   | "session-created"
-  | "session-discovered"
   | "turn-start"
   | "turn-done"
   | "turn-done-background"

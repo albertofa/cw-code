@@ -624,12 +624,6 @@ function registerIpc(services: Services): void {
   ipcMain.handle("projects.add", (_e, rootPath: string) => sessions.addProject(rootPath));
   ipcMain.handle("os.homeDir", () => homedir());
   ipcMain.handle("sessions.list", (_e, projectId: string) => sessions.listSessions(projectId));
-  ipcMain.handle("sessions.discovered", (_e, projectId: string) => sessions.listDiscovered(projectId));
-  ipcMain.handle(
-    "sessions.import",
-    (_e, args: { projectId: string; driver: DriverName; resumeCursor: string; title: string }) =>
-      sessions.importSession(args.projectId, args.driver, args.resumeCursor, args.title)
-  );
   ipcMain.handle("sessions.create", (_e, args: { projectId: string; driver: DriverName; options?: CreateSessionOptions }) =>
     sessions.createSession(args.projectId, args.driver, args.options)
   );

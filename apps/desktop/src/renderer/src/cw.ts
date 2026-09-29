@@ -542,8 +542,6 @@ export interface CwApi {
   addProject(rootPath: string): Promise<Project>;
   getHomeDir(): Promise<string>;
   listSessions(projectId: string): Promise<Session[]>;
-  listDiscovered(projectId: string): Promise<Session[]>;
-  importSession(projectId: string, driver: DriverName, resumeCursor: string, title: string): Promise<Session>;
   createSession(projectId: string, driver: DriverName, options?: CreateSessionOptions): Promise<Session>;
   renameSession(sessionId: string, title: string): Promise<void>;
   regenerateSessionTitle(sessionId: string): Promise<string>;

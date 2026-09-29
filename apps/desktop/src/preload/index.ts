@@ -76,8 +76,6 @@ export interface CwApi {
   addProject(rootPath: string): Promise<Project>;
   getHomeDir(): Promise<string>;
   listSessions(projectId: string): Promise<unknown[]>;
-  listDiscovered(projectId: string): Promise<unknown[]>;
-  importSession(projectId: string, driver: DriverName, resumeCursor: string, title: string): Promise<unknown>;
   createSession(projectId: string, driver: DriverName, options?: CreateSessionOptions): Promise<unknown>;
   renameSession(sessionId: string, title: string): Promise<void>;
   regenerateSessionTitle(sessionId: string): Promise<string>;
@@ -213,9 +211,6 @@ const api: CwApi = {
   addProject: (rootPath: string) => ipcRenderer.invoke("projects.add", rootPath),
   getHomeDir: () => ipcRenderer.invoke("os.homeDir"),
   listSessions: (projectId: string) => ipcRenderer.invoke("sessions.list", projectId),
-  listDiscovered: (projectId: string) => ipcRenderer.invoke("sessions.discovered", projectId),
-  importSession: (projectId: string, driver: DriverName, resumeCursor: string, title: string) =>
-    ipcRenderer.invoke("sessions.import", { projectId, driver, resumeCursor, title }),
   createSession: (projectId: string, driver: DriverName, options?: CreateSessionOptions) =>
     ipcRenderer.invoke("sessions.create", { projectId, driver, options }),
   renameSession: (sessionId: string, title: string) =>

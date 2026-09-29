@@ -11,7 +11,6 @@ import { hashHue, projectAvatarStyle as avatarStyle, projectInitials as initials
 import { mergeAwayIds } from "./sidebarOrder.js";
 import { compareWorkingSet, isWorkingSetStatus } from "./workingSet.js";
 import { shortenHome } from "./pathDisplay.js";
-import { discoveryProjectId } from "./projectRecency.js";
 import { PrChipBadge } from "./PrChipBadge.js";
 import { needsAttentionCount } from "./prInbox.js";
 import { anyLinkUnseen, displayChip, linksTitle, mostUrgentLink, prSummaryLookup, sessionLinks } from "./sessionPrLinks.js";
@@ -237,7 +236,7 @@ function DebugMenu() {
 }
 
 export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { onOpenSettings: () => void; onOpenSkills: () => void; skillsOpen?: boolean }) {
-  const { projects, sessionsByProject, discoveredByProject, activeProjectId, activeSessionId, gitStatusBySession, projectFilter, homeDir, pendingDriver } = useAppStore();
+  const { projects, sessionsByProject, activeProjectId, activeSessionId, gitStatusBySession, projectFilter, homeDir, pendingDriver } = useAppStore();
   const shortPath = (value: string): string => shortenHome(value, homeDir ?? undefined);
   const store = useAppStore();
   const inbox = usePrStore((s) => s.inbox);
@@ -389,8 +388,6 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
   const projectNameById: Record<string, string> = Object.fromEntries(projects.map((p) => [p.id, p.name]));
   const source: Session[] =
     projectFilter === "all" ? Object.values(sessionsByProject).flat() : (sessionsByProject[projectFilter] ?? []);
-  const discoveredProjectId = discoveryProjectId(projectFilter, activeProjectId);
-  const discovered = discoveredProjectId ? (discoveredByProject[discoveredProjectId] ?? []) : [];
   const inboxItems = inbox?.items ?? [];
   const summaryByKey = prSummaryLookup(inboxItems, detailByKey);
   const quickFacts = (s: Session) => ({ status: s.status, linkCount: sessionLinks(s).length, unseen: sessionHasUnseen(s, summaryByKey) });
@@ -559,12 +556,6 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
       .catch((err: Error) => {
         useNotifs.getState().push({ kind: "error", title: "Could not add project", message: err.message });
       });
-  };
-
-  const importDiscovered = (session: Session) => {
-    void store.importDiscovered(session).catch((err: Error) => {
-      useNotifs.getState().push({ kind: "error", title: "Could not import session", message: err.message });
-    });
   };
 
   const copyPath = (p: Project) => {
@@ -1188,20 +1179,6 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
           <div
             className="resolved-empty-drop"
           >Drop here to resolve</div>
-        )}
-        {discovered.length > 0 && (
-          <details className="discovered">
-            <summary>from cli · {discovered.length}</summary>
-            {discovered.map((s) => (
-              <div key={s.id} className="discovered-row" title={s.title}>
-                <DriverIcon driver={s.driver} size={14} />
-                <span className="session-title">{s.title}</span>
-                <button className="btn" style={{ fontSize: "var(--t-2xs)", padding: "3px 8px" }} onClick={() => importDiscovered(s)} title="Import into cw-code">
-                  Import
-                </button>
-              </div>
-            ))}
-          </details>
         )}
       </div>
       {menu && (

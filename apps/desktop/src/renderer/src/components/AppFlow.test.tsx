@@ -40,7 +40,6 @@ function installBridge(): void {
     checkVersions: async () => [],
     listProjects: async () => [{ id: "proj_1", rootPath: "C:\\proj", name: "proj" }],
     listSessions: async () => [],
-    listDiscovered: async () => [],
     createSession: async (projectId: string, driver: "opencode") => {
       sessionSeq += 1;
       const session = makeSession({ id: `sess_${sessionSeq}`, projectId, driver });

@@ -24,7 +24,6 @@ The application is a visual desktop shell over the user's installed CLI binaries
 - One turn may be active per session, while different sessions can run concurrently.
 - Developers switch between session conversation, file inspection, diffs, agents, and real interactive terminal tabs.
 - Session and supporting tool regions should be semi-customizable. Developers may keep information visible, move it, resize it, hide it, or bring it forward as their workflow requires.
-- CLI-native sessions are discovered separately and enter the managed workspace only through explicit import.
 
 ## Capabilities and Constraints
 

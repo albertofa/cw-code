@@ -34,11 +34,3 @@ export function defaultNewSessionProjectId(
 export function concreteFilterId(projects: Project[], projectFilter: string | "all"): string | null {
   return projectFilter !== "all" && projects.some((p) => p.id === projectFilter) ? projectFilter : null;
 }
-
-export function discoveryProjectId(projectFilter: string | "all", activeProjectId: string | null): string | null {
-  return projectFilter !== "all" ? projectFilter : activeProjectId;
-}
-
-export function discoveredOwnerId(discoveredByProject: Record<string, Session[]>, session: Session): string {
-  return Object.entries(discoveredByProject).find(([, list]) => list.some((d) => d.id === session.id))?.[0] ?? session.projectId;
-}

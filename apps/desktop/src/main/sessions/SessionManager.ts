@@ -448,45 +448,6 @@ export class SessionManager {
     return this.store.listSessions(projectId);
   }
 
-  async listDiscovered(projectId: string): Promise<SessionMeta[]> {
-    const project = this.store.getProject(projectId);
-    if (!project) throw new Error(`unknown project ${projectId}`);
-    const stored = new Set(
-      this.store
-        .listSessions(projectId)
-        .map((s) => `${s.driver}:${s.resumeCursor}`)
-        .filter((k) => !k.endsWith(":"))
-    );
-    const out: SessionMeta[] = [];
-    for (const driver of Object.values(this.drivers)) {
-      let discovered: SessionMeta[] = [];
-      try {
-        discovered = await driver.listSessions(project.rootPath, projectId);
-      } catch (err) {
-        console.warn(`discovery failed for ${driver.kind}: ${(err as Error).message}`);
-        continue;
-      }
-      for (const d of discovered) {
-        if (!d.resumeCursor || stored.has(`${d.driver}:${d.resumeCursor}`)) continue;
-        stored.add(`${d.driver}:${d.resumeCursor}`);
-        out.push({ ...d, id: `ext:${d.driver}:${d.resumeCursor}` });
-      }
-    }
-    return out.sort((a, b) => b.updatedAt - a.updatedAt);
-  }
-
-  async importSession(projectId: string, driver: DriverKind, resumeCursor: string, title: string): Promise<SessionMeta> {
-    const project = this.store.getProject(projectId);
-    if (!project) throw new Error(`unknown project ${projectId}`);
-    const existing = this.store.findByCursor(projectId, driver, resumeCursor);
-    if (existing) return existing;
-    const session = this.store.createSession(projectId, driver, title || resumeCursor.slice(0, 8));
-    this.store.updateSession(session.id, { resumeCursor });
-    const stored = this.store.getSession(session.id);
-    if (!stored) throw new Error("import failed");
-    return stored;
-  }
-
   async createSession(projectId: string, driver: DriverKind, options: CreateSessionOptions = {}): Promise<SessionMeta> {
     this.assertNotReserved();
     const project = this.store.getProject(projectId);

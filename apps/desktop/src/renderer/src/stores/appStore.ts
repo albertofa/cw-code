@@ -35,7 +35,7 @@ import { getLastModel, setLastModel } from "../components/lastModel.js";
 import { formatDuration, mergeToolPairs } from "../components/toolSummaries.js";
 import { expiredHoldingIds } from "../components/workingSet.js";
 import { mergedPrBelongsToSession } from "../components/sessionPrLinks.js";
-import { defaultNewSessionProjectId, discoveredOwnerId, discoveryProjectId } from "../components/projectRecency.js";
+import { defaultNewSessionProjectId } from "../components/projectRecency.js";
 import { useNotifs } from "../components/Notifications.js";
 import { ipcErrorMessage } from "../components/ipcError.js";
 import { shouldApplyUpdateState } from "./updateThrottle.js";
@@ -148,7 +148,6 @@ interface AppState {
   shutdown: ShutdownUiState | null;
   projects: Project[];
   sessionsByProject: Record<string, Session[]>;
-  discoveredByProject: Record<string, Session[]>;
   activeProjectId: string | null;
   projectFilter: string | "all";
   activeSessionId: string | null;
@@ -202,8 +201,6 @@ interface AppState {
   settingsVersion: number;
   saveSettings(patch: SettingsPatch): Promise<AppSettings>;
   setProjectGitHubAccount(projectId: string, account: { host: string; login: string } | null): Promise<void>;
-  loadDiscovered(): Promise<void>;
-  importDiscovered(session: Session): Promise<void>;
   renameSession(sessionId: string, title: string): Promise<void>;
   regenerateSessionTitle(sessionId: string): Promise<void>;
   setSessionStatus(sessionId: string, status: SessionStatus, reason?: SessionStatusReason): Promise<void>;
@@ -311,7 +308,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   shutdown: null,
   projects: [],
   sessionsByProject: {},
-  discoveredByProject: {},
   activeProjectId: null,
   projectFilter: "all",
   activeSessionId: null,
@@ -393,7 +389,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   setProjectFilter(filter: string | "all") {
     if (filter === get().projectFilter) return;
     set({ projectFilter: filter });
-    void get().loadDiscovered();
   },
 
   async refreshGitStatus(sessionId: string) {
@@ -516,7 +511,6 @@ export const useAppStore = create<AppState>((set, get) => ({
       const ordered = [picked.id, ...all.filter((s) => s.id !== picked.id).map((s) => s.id)];
       void refreshGitStatusInBatches(ordered, (id) => get().refreshGitStatus(id));
     }
-    void get().loadDiscovered();
   },
 
   async addProject(rootPath: string) {
@@ -532,13 +526,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   async setPendingProject(projectId: string) {
-    const projectChanged = get().activeProjectId !== projectId;
     set({
       activeProjectId: projectId,
       activeSessionId: null,
       pendingWorkspace: defaultWorkspace(get().defaultUseWorktree)
     });
-    if (projectChanged) void get().loadDiscovered();
     if (get().sessionsByProject[projectId]) return;
     try {
       const sessions = await window.cw.listSessions(projectId);
@@ -553,40 +545,6 @@ export const useAppStore = create<AppState>((set, get) => ({
         message: `${name}: ${(err as Error).message}`
       });
     }
-  },
-
-  async loadDiscovered() {
-    const projectId = discoveryProjectId(get().projectFilter, get().activeProjectId);
-    if (!projectId) return;
-    try {
-      const discovered = await window.cw.listDiscovered(projectId);
-      set({ discoveredByProject: { ...get().discoveredByProject, [projectId]: discovered } });
-    } catch {
-    }
-  },
-
-  async importDiscovered(session: Session) {
-    const projectId = discoveredOwnerId(get().discoveredByProject, session);
-    if (!get().projects.some((p) => p.id === projectId)) {
-      throw new Error("The project for this CLI session is no longer registered.");
-    }
-    const projectChanged = get().activeProjectId !== projectId;
-    const imported = await window.cw.importSession(projectId, session.driver, session.resumeCursor, session.title);
-    set({
-      sessionsByProject: {
-        ...get().sessionsByProject,
-        [projectId]: [imported, ...(get().sessionsByProject[projectId] ?? [])]
-      },
-      discoveredByProject: {
-        ...get().discoveredByProject,
-        [projectId]: (get().discoveredByProject[projectId] ?? []).filter((d) => d.id !== session.id)
-      },
-      activeProjectId: projectId,
-      activeSessionId: imported.id,
-      pendingDriver: null
-    });
-    if (projectChanged) void get().loadDiscovered();
-    void get().ensureHistory(imported.id);
   },
 
   async renameSession(sessionId: string, title: string) {
@@ -727,13 +685,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     const ownerId = Object.entries(byProject).find(([, list]) =>
       list.some((s) => s.id === sessionId)
     )?.[0];
-    const projectChanged = ownerId !== undefined && ownerId !== get().activeProjectId;
     set({
       activeSessionId: sessionId,
       pendingDriver: null,
       ...(ownerId && ownerId !== get().activeProjectId ? { activeProjectId: ownerId } : {})
     });
-    if (projectChanged) void get().loadDiscovered();
     void get().ensureHistory(sessionId);
     void get().ensureComposer(sessionId);
     void get().refreshGitStatus(sessionId);
@@ -971,7 +927,6 @@ export const useAppStore = create<AppState>((set, get) => ({
         ...(stillHeld ? {} : { message: "The requested worktree no longer exists." })
       });
     }
-    const projectChanged = get().activeProjectId !== projectId;
     set({
       sessionsByProject: {
         ...get().sessionsByProject,
@@ -982,7 +937,6 @@ export const useAppStore = create<AppState>((set, get) => ({
       pendingDriver: null,
       lastDriver: driver
     });
-    if (projectChanged) void get().loadDiscovered();
     await get().ensureComposer(session.id);
     if (prefs) await get().setComposerPrefs(session.id, { ...prefs });
     void get().refreshGitStatus(session.id);

@@ -1448,10 +1448,6 @@ body.session-dragging * {
   padding: 8px 9px;
 }
 
-.discovered {
-  margin-top: 14px;
-}
-
 .session-resolved-toggle {
   display: flex;
   align-items: center;
@@ -1483,32 +1479,6 @@ body.session-dragging * {
   font-size: var(--t-xs);
   padding: 8px 9px;
   text-align: center;
-}
-
-.discovered summary {
-  font-size: var(--t-xs);
-  color: var(--faint);
-  padding: 4px 9px;
-  cursor: pointer;
-  list-style: none;
-  font-weight: 500;
-}
-
-.discovered summary::-webkit-details-marker {
-  display: none;
-}
-
-.discovered-row {
-  display: flex;
-  gap: 6px;
-  align-items: center;
-  padding: 6px 9px;
-  border-radius: var(--r-md);
-  margin-bottom: 2px;
-}
-
-.discovered-row:hover {
-  background: var(--raised);
 }
 
 .pr-unseen-dot {
