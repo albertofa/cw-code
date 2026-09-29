@@ -4,6 +4,7 @@ import type { DirEntry } from "../cw.js";
 import { FileIcon } from "./fileIcons.js";
 import { parseUnifiedDiff } from "./diffParser.js";
 import { useEditorBuffers } from "../stores/editorBuffers.js";
+import { usePanelStore } from "../stores/panelStore.js";
 
 interface FileTreeProps {
   dir: string;
@@ -127,6 +128,8 @@ export function FilePanel({ sessionId }: { sessionId: string }) {
   const pendingRef = useRef<Set<string>>(new Set());
   const registeredKeyRef = useRef<string | null>(null);
   const requestedFileRef = useRef<string | null>(null);
+  const handledRevealRef = useRef(0);
+  const revealRequest = usePanelStore((s) => s.revealRequest);
 
   const releaseBuffer = useCallback(() => {
     if (registeredKeyRef.current) useEditorBuffers.getState().unregister(registeredKeyRef.current);
@@ -242,6 +245,13 @@ export function FilePanel({ sessionId }: { sessionId: string }) {
         setStatus(`read failed for ${path}: ${err.message}`);
       });
   };
+
+  useEffect(() => {
+    if (!revealRequest || revealRequest.sessionId !== sessionId) return;
+    if (revealRequest.nonce === handledRevealRef.current) return;
+    handledRevealRef.current = revealRequest.nonce;
+    open(revealRequest.path);
+  }, [revealRequest, sessionId]);
 
   const save = () => {
     const buffer = editable && openKey ? useEditorBuffers.getState().buffers[openKey] : undefined;

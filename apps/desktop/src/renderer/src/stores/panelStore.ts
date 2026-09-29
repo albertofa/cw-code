@@ -46,6 +46,7 @@ export interface PanelActions {
   setActive(sessionId: string | undefined, panel: PanelId, tab: MainTabId): void;
   activateOrOpen(sessionId: string | undefined, tab: DockableTabId): void;
   revealTab(sessionId: string, tab: DockableTabId): void;
+  revealFile(sessionId: string, path: string, line?: number): void;
   setAutoLocation(tab: DockableTabId, panel: PanelId): void;
   setBottomHeight(sessionId: string | undefined, height: number): void;
   setBottomCollapsed(sessionId: string | undefined, collapsed: boolean): void;
@@ -53,14 +54,23 @@ export interface PanelActions {
   resetLayout(sessionId: string | undefined): void;
 }
 
+export interface RevealRequest {
+  sessionId: string;
+  path: string;
+  line?: number;
+  nonce: number;
+}
+
 export type PanelStore = PersistedPanelState & PanelActions & {
   legacySession: SessionPanelState | null;
   draggingTab: DockableTabId | null;
+  revealRequest: RevealRequest | null;
 };
 
 export const usePanelStore = create<PanelStore>((set, get) => ({
   ...loadState(),
   draggingTab: null,
+  revealRequest: null,
 
   setDraggingTab: (tab) => {
     set({ draggingTab: tab });
@@ -151,6 +161,12 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
     const panel = panelFor(current, sessionId);
     if (panel.dockByTab[tab] === "right") current.setRightVisible(sessionId, true);
     if (panel.dockByTab[tab] === "bottom" && panel.bottomCollapsed) current.setBottomCollapsed(sessionId, false);
+  },
+
+  revealFile: (sessionId, path, line) => {
+    const nonce = (get().revealRequest?.nonce ?? 0) + 1;
+    set({ revealRequest: { sessionId, path, line, nonce } });
+    get().activateOrOpen(sessionId, "files");
   },
 
   setAutoLocation: (tab, panel) => {

@@ -198,6 +198,13 @@ export function ThreadView() {
     },
     [openPreview, sessionId, basePath, activateOrOpen, setRightVisible]
   );
+  const onOpenSource = useCallback(
+    (path: string, line?: number) => {
+      if (!sessionId) return;
+      usePanelStore.getState().revealFile(sessionId, resolvePreviewPaths(basePath, path).rel, line);
+    },
+    [sessionId, basePath]
+  );
   const onOpenExternal = useCallback(
     (path: string) => {
       const { abs } = resolvePreviewPaths(basePath, path);
@@ -356,13 +363,23 @@ export function ThreadView() {
     if (m.id === streamingId) {
       return (
         <div key={m.id} className="msg-assistant">
-          <StreamingMd text={m.text} onOpenFile={onOpenPreview} onOpenExternal={onOpenExternal} />
+          <StreamingMd
+            text={m.text}
+            onOpenFile={onOpenPreview}
+            onOpenSource={onOpenSource}
+            onOpenExternal={onOpenExternal}
+          />
         </div>
       );
     }
     return (
       <div key={m.id} className="msg-assistant">
-        <Md text={m.text} onOpenFile={onOpenPreview} onOpenExternal={onOpenExternal} />
+        <Md
+          text={m.text}
+          onOpenFile={onOpenPreview}
+          onOpenSource={onOpenSource}
+          onOpenExternal={onOpenExternal}
+        />
       </div>
     );
   };
