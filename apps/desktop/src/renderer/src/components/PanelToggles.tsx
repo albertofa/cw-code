@@ -6,11 +6,13 @@ import { selectSessionPanel, usePanelStore } from "../stores/panelStore.js";
 export function PanelToggles({
   sessionId,
   splitActive,
-  isToolAvailable
+  isToolAvailable,
+  rightTop
 }: {
   sessionId: string | undefined;
   splitActive: boolean;
   isToolAvailable: (tab: DockableTabId) => boolean;
+  rightTop: DockableTabId | null;
 }) {
   const { rightVisible, dockByTab, bottomCollapsed } = usePanelStore((s) => selectSessionPanel(s, sessionId));
   const setRightVisible = usePanelStore((s) => s.setRightVisible);
@@ -27,7 +29,7 @@ export function PanelToggles({
     <div className="rail-end">
       <button
         className={`rail-b${splitActive ? " on-soft" : ""}`}
-        onClick={() => toggleRightSplit(sessionId, isToolAvailable)}
+        onClick={() => toggleRightSplit(sessionId, isToolAvailable, rightTop)}
         disabled={!sessionId}
         title={splitLabel}
         aria-label={splitLabel}

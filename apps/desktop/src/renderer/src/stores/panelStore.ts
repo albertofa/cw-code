@@ -7,6 +7,7 @@ import {
   clampSplitRatio,
   defaultSessionPanel,
   parsePanelState,
+  pickSplitTool,
   sanitizeSessionPanel,
   serializePanelState,
   tabsInPanel,
@@ -83,6 +84,7 @@ export interface PanelActions {
   requestDiffMode(sessionId: string, mode: GitDiffMode): void;
   clearDiffModeRequest(nonce: number): void;
   clearStaleDiffModeRequest(sessionId: string | null | undefined): void;
+  clearStaleRevealRequest(sessionId: string | null | undefined): void;
   setTurnDiffSummary(sessionId: string, summary: TurnDiffSummary | null | undefined): void;
   setAutoLocation(tab: DockableTabId, panel: PanelId): void;
   setBottomHeight(sessionId: string | undefined, height: number): void;
@@ -90,7 +92,11 @@ export interface PanelActions {
   setRightVisible(sessionId: string | undefined, visible: boolean): void;
   setRightSplit(sessionId: string | undefined, tab: DockableTabId | null): void;
   setRightSplitRatio(sessionId: string | undefined, ratio: number): void;
-  toggleRightSplit(sessionId: string | undefined, isAvailable?: (tab: DockableTabId) => boolean): void;
+  toggleRightSplit(
+    sessionId: string | undefined,
+    isAvailable?: (tab: DockableTabId) => boolean,
+    rightTop?: DockableTabId | null
+  ): void;
   resetLayout(sessionId: string | undefined): void;
 }
 
@@ -216,6 +222,11 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
     if (request && request.sessionId !== sessionId) set({ diffModeRequest: null });
   },
 
+  clearStaleRevealRequest: (sessionId) => {
+    const request = get().revealRequest;
+    if (request && request.sessionId !== sessionId) set({ revealRequest: null });
+  },
+
   setTurnDiffSummary: (sessionId, summary) => {
     const current = get().turnDiffSummaryBySession;
     if (summary === undefined) {
@@ -287,21 +298,22 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
     persist({ autoLocation: store.autoLocation, sessions });
   },
 
-  toggleRightSplit: (sessionId, isAvailable = () => true) => {
+  toggleRightSplit: (sessionId, isAvailable = () => true, rightTop) => {
     if (!sessionId) return;
     const store = get();
     const current = panelFor(store, sessionId);
-    const splitShowing = current.rightSplit !== null && isAvailable(current.rightSplit);
+    const top = rightTop ?? current.activeRight;
+    const split = current.rightSplit;
+    const splitShowing = split !== null && split !== top && isAvailable(split);
     if (splitShowing && current.rightVisible) {
       store.setRightSplit(sessionId, null);
       return;
     }
     if (splitShowing) {
-      store.setRightSplit(sessionId, current.rightSplit);
+      store.setRightSplit(sessionId, split);
       return;
     }
-    const other = tabsInPanel(current.dockByTab, "right").find((tab) => tab !== current.activeRight && isAvailable(tab));
-    store.setRightSplit(sessionId, other ?? (current.activeRight === "shell" ? "files" : "shell"));
+    store.setRightSplit(sessionId, pickSplitTool(current.dockByTab, top, isAvailable));
   },
 
   setRightVisible: (sessionId, visible) => {

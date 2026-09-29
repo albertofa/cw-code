@@ -1,23 +1,15 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
-  Activity,
-  Bot,
-  Eye,
   FolderGit2,
   GitBranch,
   GitFork,
-  GitMerge,
   GitPullRequest,
   History,
   Loader2,
   Lock,
-  MessageSquare,
   Play,
   Plus,
-  Sparkles,
-  Wrench,
-  X,
-  type LucideIcon
+  X
 } from "lucide-react";
 import type {
   ComposerPrefs,
@@ -31,7 +23,7 @@ import type {
   PrWorkflow,
   Session
 } from "../cw.js";
-import type { PrWorkflowIcon, PrWorkspaceChoice } from "@cw-code/contracts";
+import type { PrWorkspaceChoice } from "@cw-code/contracts";
 import { useAppStore, DEFAULT_COMPOSER } from "../stores/appStore.js";
 import { usePrStore, type RunModalState } from "../stores/prStore.js";
 import { prKey } from "./prInbox.js";
@@ -40,7 +32,9 @@ import { prChip } from "./prChip.js";
 import { updatesSince } from "./prUpdates.js";
 import { attributionText, loadFailedLogs, resolveTemplate, templateVars } from "./prWorkflows.js";
 import { harnessLabel } from "./toolTabs.js";
-import { firstDisplayedModelId, getLastModel } from "./lastModel.js";
+import { getRecentModels } from "./lastModel.js";
+import { pickInitialModel } from "./modelMenus.js";
+import { workflowIcon } from "./workflowIcons.js";
 import { shortenHome } from "./pathDisplay.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { MenuSelect } from "./MenuSelect.js";
@@ -52,16 +46,6 @@ const READ_ONLY_NOTICE =
   "cw-code only reads from GitHub. Anything the session commits, pushes, or posts goes through the CLI's own permissions.";
 
 const HARNESSES: DriverName[] = ["claude", "opencode", "codex"];
-
-const WORKFLOW_ICONS: Record<PrWorkflowIcon, LucideIcon> = {
-  eye: Eye,
-  activity: Activity,
-  message: MessageSquare,
-  wrench: Wrench,
-  merge: GitMerge,
-  bot: Bot,
-  sparkle: Sparkles
-};
 
 const ORIGIN_LABEL: Record<PrLinkOrigin, string> = {
   opened: "opened here",
@@ -245,8 +229,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
       .then((list) => {
         if (!active) return;
         setModels(list);
-        const last = getLastModel(driver);
-        setModel(last && list.some((m) => m.id === last) ? last : firstDisplayedModelId(driver, list));
+        setModel(pickInitialModel(list, useAppStore.getState().defaultModelByDriver[driver], getRecentModels(driver)) ?? undefined);
       })
       .catch((err: unknown) => {
         if (!active) return;
@@ -418,7 +401,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
     }
   };
 
-  const WorkflowIcon = workflow ? WORKFLOW_ICONS[workflow.icon] ?? Sparkles : Sparkles;
+  const WorkflowIcon = workflowIcon(workflow?.icon);
   const title = continueSession
     ? `Continue “${continueSession.title}”`
     : workflow
@@ -504,7 +487,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
                 display={workflow?.label ?? "Choose workflow"}
                 icon={<WorkflowIcon size={14} />}
                 options={pickable.map((w) => {
-                  const Icon = WORKFLOW_ICONS[w.icon] ?? Sparkles;
+                  const Icon = workflowIcon(w.icon);
                   return {
                     id: w.id,
                     label: w.label,

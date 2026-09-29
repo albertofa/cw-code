@@ -1,4 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useShallow } from "zustand/react/shallow";
 import type { DriverName } from "./cw.js";
 import { applyAppearance } from "./appearanceFonts.js";
 import { collectSubagents } from "./components/subagents.js";
@@ -23,7 +24,7 @@ import { useToolAvailability } from "./components/useToolAvailability.js";
 import { useTabMenu } from "./components/TabMenu.js";
 import { useDockDrop } from "./components/useDockDrop.js";
 import { usePanelAnimationMs, usePresence } from "./components/usePresence.js";
-import { useNotifs } from "./components/Notifications.js";
+import { Notifications, useNotifs } from "./components/Notifications.js";
 import { useAttentionBadge } from "./components/useAttentionBadge.js";
 import { visibleLayerOpen } from "./components/openLayer.js";
 import { useAppStore } from "./stores/appStore.js";
@@ -408,15 +409,12 @@ export function App() {
     return () => window.removeEventListener("cw:open-agents", onOpenAgents);
   }, [activeSessionId, activateOrOpen, setRightVisible]);
 
-  const messagesBySession = useAppStore((s) => s.messagesBySession);
-  const subagentStats = useMemo(() => {
-    const messages = activeSessionId ? (messagesBySession[activeSessionId] ?? []) : [];
-    const items = collectSubagents(messages);
-    return {
-      total: items.length,
-      running: items.filter((item) => item.status === "running").length,
-    };
-  }, [messagesBySession, activeSessionId]);
+  const subagentStats = useAppStore(
+    useShallow((s) => {
+      const items = collectSubagents((activeSessionId ? s.messagesBySession[activeSessionId] : undefined) ?? []);
+      return { total: items.length, running: items.filter((item) => item.status === "running").length };
+    })
+  );
 
   const { driver, hasPr, hasPreview, isToolAvailable, rightTop: topTool } = useToolAvailability(activeSessionId ?? undefined);
   const availableRightIds = tabsInPanel(dockByTab, "right").filter(isToolAvailable);
@@ -425,7 +423,10 @@ export function App() {
   const allTabsClosed = DOCKABLE_TABS.every((id) => dockByTab[id] === "closed" || (id === "pr" && !hasPr));
 
   return (
-    <div className={`app-shell${rightVisible && !settingsActive ? "" : " right-hidden"}`} data-driver={driver ?? "none"}>
+    <div
+      className={`app-shell${rightVisible && !settingsActive ? "" : " right-hidden"}${settingsActive ? " rail-hidden" : ""}`}
+      data-driver={driver ?? "none"}
+    >
       {preloadError && <div className="preload-error">{preloadError}</div>}
       {!preloadError && (
         <>
@@ -434,22 +435,24 @@ export function App() {
           {mainView.kind === "settings" && (
             <SettingsNav active={navIdOf(mainView.section, mainView.harness)} onBack={() => void leaveSettings(() => usePrStore.getState().openSessionView())} />
           )}
-          {mainView.kind === "settings" ? (
-            <SettingsPage
-              section={mainView.section}
-              harness={mainView.harness}
-              onBack={() => void leaveSettings(() => usePrStore.getState().openSessionView())}
-              onOpenUsage={() => void leaveSettings(() => usePrStore.getState().openUsage())}
-            />
-          ) : mainView.kind === "inbox" ? (
-            <PrInboxView />
-          ) : mainView.kind === "pr" ? (
-            <PrDetailView key={prKey(mainView.ref)} prRef={mainView.ref} />
-          ) : mainView.kind === "usage" ? (
-            <UsageView />
-          ) : (
-            <ThreadView />
-          )}
+          <div className="main-col">
+            {mainView.kind === "settings" ? (
+              <SettingsPage
+                section={mainView.section}
+                harness={mainView.harness}
+                onBack={() => void leaveSettings(() => usePrStore.getState().openSessionView())}
+                onOpenUsage={() => void leaveSettings(() => usePrStore.getState().openUsage())}
+              />
+            ) : mainView.kind === "inbox" ? (
+              <PrInboxView />
+            ) : mainView.kind === "pr" ? (
+              <PrDetailView key={prKey(mainView.ref)} prRef={mainView.ref} />
+            ) : mainView.kind === "usage" ? (
+              <UsageView />
+            ) : null}
+            <ThreadView hidden={mainView.kind !== "session"} />
+            <Notifications />
+          </div>
           {rightPresence.mounted && (
             <aside
               className={`right${rightPresence.entered ? "" : " collapsed"}${dropRight.over || draggingTab !== null ? " drop-target-active" : ""}`}

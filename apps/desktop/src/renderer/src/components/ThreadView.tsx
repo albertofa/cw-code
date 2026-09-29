@@ -1,8 +1,8 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Check, ChevronDown, Copy, Sparkles, TriangleAlert } from "lucide-react";
 import type { DockableTabId } from "@cw-code/contracts";
 import { useAppStore, type ChatMessage } from "../stores/appStore.js";
-import { Notifications, useNotifs } from "./Notifications.js";
+import { useNotifs } from "./Notifications.js";
 import { Md, StreamingMd, isPathInsideBase, resolvePreviewPaths } from "./Markdown.js";
 import { BottomPanel } from "./BottomPanel.js";
 import { MainTabStrip } from "./MainTabStrip.js";
@@ -34,6 +34,7 @@ import { selectSessionPanel, usePanelStore } from "../stores/panelStore.js";
 import { collectSubagents } from "./subagents.js";
 import { splitImageMentions } from "./imagePreview.js";
 import { ImageThumb } from "./ImageThumb.js";
+import { ThreadVisibleContext } from "./threadVisibility.js";
 
 const EMPTY_MESSAGES: ChatMessage[] = [];
 
@@ -112,7 +113,7 @@ function UserMessage({
   );
 }
 
-export function ThreadView() {
+export function ThreadView({ hidden = false }: { hidden?: boolean }) {
   const activeProjectId = useAppStore((s) => s.activeProjectId);
   const activeSessionId = useAppStore((s) => s.activeSessionId);
   const pendingDriver = useAppStore((s) => s.pendingDriver);
@@ -182,6 +183,9 @@ export function ThreadView() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
   const lastSeenIdRef = useRef<string | null>(null);
+  const hiddenRef = useRef(hidden);
+  hiddenRef.current = hidden;
+  const savedScrollTopRef = useRef(0);
   const [atBottom, setAtBottom] = useState(true);
 
   const sessionId = session?.id;
@@ -227,8 +231,15 @@ export function ThreadView() {
   useEffect(() => {
     stickRef.current = true;
     lastSeenIdRef.current = null;
+    savedScrollTopRef.current = 0;
     setAtBottom(true);
   }, [activeSessionId]);
+
+  useLayoutEffect(() => {
+    if (hidden) return;
+    const el = scrollRef.current;
+    if (el) el.scrollTop = stickRef.current ? el.scrollHeight : savedScrollTopRef.current;
+  }, [hidden]);
 
   useEffect(() => {
     const last = messages[messages.length - 1];
@@ -236,19 +247,20 @@ export function ThreadView() {
       lastSeenIdRef.current = last.id;
       if (last.role === "user") stickRef.current = true;
     }
+    if (hidden) return;
     const raf = requestAnimationFrame(() => {
       const el = scrollRef.current;
       if (el && stickRef.current) el.scrollTop = el.scrollHeight;
     });
     return () => cancelAnimationFrame(raf);
-  }, [messages, busyTurn]);
+  }, [messages, busyTurn, hidden]);
 
   useEffect(() => {
     const el = scrollRef.current;
     const inner = el?.firstElementChild;
     if (!el || !(inner instanceof HTMLElement)) return;
     const stickToBottom = () => {
-      if (stickRef.current) el.scrollTop = el.scrollHeight;
+      if (!hiddenRef.current && stickRef.current) el.scrollTop = el.scrollHeight;
     };
     const ro = new ResizeObserver(stickToBottom);
     ro.observe(inner);
@@ -257,7 +269,8 @@ export function ThreadView() {
 
   const onScroll = () => {
     const el = scrollRef.current;
-    if (!el) return;
+    if (!el || hiddenRef.current) return;
+    savedScrollTopRef.current = el.scrollTop;
     const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 64;
     stickRef.current = nearBottom;
     setAtBottom(nearBottom);
@@ -270,6 +283,14 @@ export function ThreadView() {
     setAtBottom(true);
     el.scrollTop = el.scrollHeight;
   }, []);
+
+  const frame = (children: ReactNode) => (
+    <ThreadVisibleContext.Provider value={!hidden}>
+      <div className="thread-col" hidden={hidden} style={hidden ? { display: "none" } : undefined}>
+        {children}
+      </div>
+    </ThreadVisibleContext.Provider>
+  );
 
   const head = (
     <div className="head-seg main-seg" onDoubleClick={() => window.cw.toggleMaximizeWindow()}>
@@ -297,18 +318,17 @@ export function ThreadView() {
 
   if (showNew) {
     const heroDriver = pendingDriver ?? session?.driver ?? lastDriver;
-    return (
-      <div className="thread-col">
+    return frame(
+      <>
         {head}
         <MainTabStrip sessionId={undefined} driver={heroDriver} hasPr={false} />
-        <Notifications />
         <NewThread
           key={activeProjectId}
           projectId={activeProjectId}
           driver={heroDriver}
           onDriverChange={setPendingDriver}
         />
-      </div>
+      </>
     );
   }
 
@@ -408,8 +428,8 @@ export function ThreadView() {
     );
   };
 
-  return (
-    <div className="thread-col">
+  return frame(
+    <>
       {head}
       <MainTabStrip
         sessionId={session.id}
@@ -417,7 +437,6 @@ export function ThreadView() {
         hasPr={hasPr}
         trailing={hasPr ? <PrSessionChip key={session.id} sessionId={session.id} /> : undefined}
       />
-      <Notifications />
       {showMainTool !== null ? (
         <div
           className={`main-tool-body${dropMain.over ? " drop-target-active" : ""}`}
@@ -501,6 +520,6 @@ export function ThreadView() {
       {(isBottomOpen(panelDockByTab) || draggingTab !== null) && (
         <BottomPanel sessionId={session.id} driver={session.driver} hasPr={hasPr} />
       )}
-    </div>
+    </>
   );
 }

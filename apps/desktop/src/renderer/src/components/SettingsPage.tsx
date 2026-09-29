@@ -15,7 +15,6 @@ import { EFFORTS } from "./modelMenus.js";
 import { useNotifs } from "./Notifications.js";
 import { shortenHome } from "./pathDisplay.js";
 import { PrWorkflowSettings } from "./PrWorkflowSettings.js";
-import { concreteFilterId } from "./projectRecency.js";
 import {
   copySetting,
   HARNESS_IDS,
@@ -267,7 +266,6 @@ function SourceControlSettings({ onPickBinary }: { onPickBinary: BinaryPickHandl
     return (
       useSettingsDraftStore.getState().repoSaved?.projectId ??
       state.activeProjectId ??
-      concreteFilterId(state.projects, state.projectFilter) ??
       state.projects[0]?.id ??
       null
     );

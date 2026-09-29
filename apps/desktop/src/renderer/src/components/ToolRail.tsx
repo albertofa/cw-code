@@ -108,7 +108,7 @@ export function ToolRail({
           })}
         </Fragment>
       ))}
-      <PanelToggles sessionId={sessionId} splitActive={rightVisible && rightSplit !== null} isToolAvailable={isToolAvailable} />
+      <PanelToggles sessionId={sessionId} splitActive={rightVisible && rightSplit !== null} isToolAvailable={isToolAvailable} rightTop={rightActive} />
     </nav>
   );
 }

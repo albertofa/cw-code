@@ -159,7 +159,6 @@ interface AppState {
   projects: Project[];
   sessionsByProject: Record<string, Session[]>;
   activeProjectId: string | null;
-  projectFilter: string | "all";
   activeSessionId: string | null;
   messagesBySession: Record<string, ChatMessage[]>;
   todosBySession: Record<string, TodoItem[]>;
@@ -176,7 +175,6 @@ interface AppState {
   pendingQuestions: Record<string, QuestionRequest[]>;
   pendingPrefs: ComposerPrefs;
   pendingWorkspace: CreateSessionOptions;
-  setProjectFilter(filter: string | "all"): void;
   setPendingPrefs(prefs: ComposerPrefs): void;
   setPendingWorkspace(options: CreateSessionOptions): void;
   gitStatusBySession: Record<string, GitStatus>;
@@ -321,7 +319,6 @@ export const useAppStore = create<AppState>((set, get) => ({
   projects: [],
   sessionsByProject: {},
   activeProjectId: null,
-  projectFilter: "all",
   activeSessionId: null,
   messagesBySession: {},
   todosBySession: {},
@@ -397,11 +394,6 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   setPendingWorkspace(options: CreateSessionOptions) {
     set({ pendingWorkspace: { ...get().pendingWorkspace, ...options } });
-  },
-
-  setProjectFilter(filter: string | "all") {
-    if (filter === get().projectFilter) return;
-    set({ projectFilter: filter });
   },
 
   async refreshGitStatus(sessionId: string) {
@@ -714,7 +706,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const currentProjectId = get().activeProjectId;
     const projectId =
       currentProjectId ??
-      defaultNewSessionProjectId(get().projects, get().sessionsByProject, get().activeSessionId, get().projectFilter);
+      defaultNewSessionProjectId(get().projects, get().sessionsByProject, get().activeSessionId);
     const target = driver ?? get().lastDriver;
     const previous = get().pendingDriver ?? get().lastDriver;
     const currentModel = get().pendingPrefs.model;
@@ -724,17 +716,11 @@ export const useAppStore = create<AppState>((set, get) => ({
       } catch {
       }
     }
-    let restored: string | undefined;
-    try {
-      restored = getLastModel(target) ?? undefined;
-    } catch {
-      restored = undefined;
-    }
     set({
       pendingDriver: target,
       activeSessionId: null,
       pendingWorkspace: defaultWorkspace(get().defaultUseWorktree),
-      pendingPrefs: { ...get().pendingPrefs, model: restored }
+      pendingPrefs: { ...get().pendingPrefs, model: undefined }
     });
     if (projectId && projectId !== currentProjectId) void get().setPendingProject(projectId);
   },
@@ -749,19 +735,16 @@ export const useAppStore = create<AppState>((set, get) => ({
       } catch {
       }
     }
-    let restored: string | undefined;
-    try {
-      restored = getLastModel(driver) ?? undefined;
-    } catch {
-      restored = undefined;
-    }
-    set({ pendingDriver: driver, pendingPrefs: { ...get().pendingPrefs, model: restored } });
+    set({ pendingDriver: driver, pendingPrefs: { ...get().pendingPrefs, model: undefined } });
   },
 
   async sendPendingPrompt(prompt: string, attachments: string[] = [], command?: CommandInvocation) {
     const projectId = get().activeProjectId;
     const driver = get().pendingDriver ?? get().lastDriver;
-    const prefs = get().pendingPrefs;
+    const pendingPrefs = get().pendingPrefs;
+    const prefs = pendingPrefs.model
+      ? pendingPrefs
+      : { ...pendingPrefs, model: get().defaultModelByDriver[driver] || getLastModel(driver) || undefined };
     const workspace = get().pendingWorkspace;
     if (!projectId || (!prompt.trim() && attachments.length === 0)) return;
     if (pendingPromptInFlight) return;
@@ -1483,5 +1466,8 @@ export const useAppStore = create<AppState>((set, get) => ({
 }));
 
 useAppStore.subscribe((state, previous) => {
-  if (state.activeSessionId !== previous.activeSessionId) usePanelStore.getState().clearStaleDiffModeRequest(state.activeSessionId);
+  if (state.activeSessionId === previous.activeSessionId) return;
+  const panels = usePanelStore.getState();
+  panels.clearStaleDiffModeRequest(state.activeSessionId);
+  panels.clearStaleRevealRequest(state.activeSessionId);
 });

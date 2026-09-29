@@ -48,6 +48,7 @@ interface FailedLogsEntry {
 interface FailedLogsCache {
   entries: Record<string, FailedLogsEntry>;
   request: (id: string, detail: PrDetail) => void;
+  retry: (id: string, detail: PrDetail) => void;
 }
 
 function useFailedLogsCache(): FailedLogsCache {
@@ -68,14 +69,30 @@ function useFailedLogsCache(): FailedLogsCache {
     loadFailedLogs(detail)
       .then(
         (text): FailedLogsEntry => ({ text, error: null }),
-        (err: unknown): FailedLogsEntry => ({ text: "", error: errorMessage(err) || "Could not load failed check logs" })
+        (err: unknown): FailedLogsEntry => {
+          requested.current.delete(id);
+          return { text: "", error: errorMessage(err) || "Could not load failed check logs" };
+        }
       )
       .then((entry) => {
         if (mounted.current) setEntries((prev) => ({ ...prev, [id]: entry }));
       });
   }, []);
 
-  return { entries, request };
+  const retry = useCallback(
+    (id: string, detail: PrDetail) => {
+      if (requested.current.has(id)) return;
+      setEntries((prev) => {
+        const next = { ...prev };
+        delete next[id];
+        return next;
+      });
+      request(id, detail);
+    },
+    [request]
+  );
+
+  return { entries, request, retry };
 }
 
 function rootDuration(name: string, fallback: number): number {
@@ -362,6 +379,9 @@ function PromptPreview({
       {needsLogs && logs?.error && (
         <div className="settings-error sp-preview-error" role="alert">
           Could not load failed check logs: {logs.error}
+          <button type="button" className="btn sp-btn-sm" onClick={() => detail && logsId && failedLogs.retry(logsId, detail)}>
+            <RefreshCw size={12} aria-hidden="true" /> Retry
+          </button>
         </div>
       )}
       <pre className="sp-code sp-preview" aria-label="Resolved prompt" tabIndex={0}>

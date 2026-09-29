@@ -12,6 +12,7 @@ import {
   isBottomOpen,
   parseLayout,
   parsePanelState,
+  pickSplitTool,
   resolveMainTab,
   resolveRightTop,
   sanitizeLayout,
@@ -514,6 +515,25 @@ describe("usePanelStore right split", () => {
     });
   });
 
+  it("toggleRightSplit excludes the resolved top tool, not only the stored active one", () => {
+    const store = usePanelStore.getState();
+    store.moveTab("sess_a", "files", "right");
+    store.moveTab("sess_a", "diff", "right");
+    const notDiff = (tab: DockableTabId) => tab !== "diff";
+    store.toggleRightSplit("sess_a", notDiff, "files");
+    expect(selectSessionPanel(usePanelStore.getState(), "sess_a").rightSplit).toBe("shell");
+  });
+
+  it("toggleRightSplit replaces a stored split that equals the resolved top tool", () => {
+    const store = usePanelStore.getState();
+    store.moveTab("sess_a", "files", "right");
+    store.moveTab("sess_a", "diff", "right");
+    store.setRightSplit("sess_a", "files");
+    const notDiff = (tab: DockableTabId) => tab !== "diff";
+    usePanelStore.getState().toggleRightSplit("sess_a", notDiff, "files");
+    expect(selectSessionPanel(usePanelStore.getState(), "sess_a").rightSplit).toBe("shell");
+  });
+
   it("setRightSplitRatio clamps and persists", () => {
     const store = usePanelStore.getState();
     store.setRightSplitRatio("sess_a", 0.9);
@@ -580,5 +600,19 @@ describe("resolveRightTop", () => {
     expect(resolveRightTop(dock, "diff", notDiff, "codex")).toBe("codex");
     expect(resolveRightTop(dock, "diff", notDiff, "claude")).toBe("files");
     expect(resolveRightTop(dock, "diff", () => false, "codex")).toBeNull();
+  });
+});
+
+describe("pickSplitTool", () => {
+  const dock = { ...defaultSessionPanel().dockByTab, files: "right" as const, diff: "right" as const, codex: "right" as const };
+
+  it("picks the first available right tool other than the top one", () => {
+    expect(pickSplitTool(dock, "files", () => true)).toBe("diff");
+    expect(pickSplitTool(dock, "files", (tab) => tab !== "diff")).toBe("codex");
+  });
+
+  it("falls back to the shell, or files when the shell is on top", () => {
+    expect(pickSplitTool(dock, "files", (tab) => tab === "files")).toBe("shell");
+    expect(pickSplitTool({ ...defaultSessionPanel().dockByTab, shell: "right" }, "shell", () => true)).toBe("files");
   });
 });

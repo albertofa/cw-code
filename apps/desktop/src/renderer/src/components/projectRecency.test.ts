@@ -1,10 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Project, Session } from "../cw.js";
-import {
-  concreteFilterId,
-  defaultNewSessionProjectId,
-  projectsByRecentActivity
-} from "./projectRecency.js";
+import { defaultNewSessionProjectId, projectsByRecentActivity } from "./projectRecency.js";
 
 function project(id: string): Project {
   return { id, rootPath: `C:\\Projects\\${id}`, name: id };
@@ -39,40 +35,27 @@ describe("projectsByRecentActivity", () => {
 describe("defaultNewSessionProjectId", () => {
   const byProject = { a: [session("a1", "a", 50)], b: [session("b1", "b", 10)] };
 
-  it("prefers the project that owns the active session over the filter", () => {
-    expect(defaultNewSessionProjectId(projects, byProject, "b1", "c")).toBe("b");
+  it("prefers the project that owns the active session over recency", () => {
+    expect(defaultNewSessionProjectId(projects, byProject, "b1")).toBe("b");
   });
 
-  it("uses a concrete project filter before recency", () => {
-    expect(defaultNewSessionProjectId(projects, byProject, null, "c")).toBe("c");
-    expect(defaultNewSessionProjectId(projects, byProject, "missing", "b")).toBe("b");
-  });
-
-  it("ignores a filter that points to an unregistered project", () => {
-    expect(defaultNewSessionProjectId(projects, byProject, null, "gone")).toBe("a");
+  it("ignores an unknown active session", () => {
+    expect(defaultNewSessionProjectId(projects, byProject, "missing")).toBe("a");
   });
 
   it("falls back to the most recently used project", () => {
-    expect(defaultNewSessionProjectId(projects, byProject, null, "all")).toBe("a");
+    expect(defaultNewSessionProjectId(projects, byProject, null)).toBe("a");
   });
 
   it("ignores an active session whose project is no longer registered", () => {
-    expect(defaultNewSessionProjectId([project("a")], { gone: [session("g1", "gone", 99)], ...byProject }, "g1", "all")).toBe("a");
+    expect(defaultNewSessionProjectId([project("a")], { gone: [session("g1", "gone", 99)], ...byProject }, "g1")).toBe("a");
   });
 
   it("falls back to the first project without any sessions", () => {
-    expect(defaultNewSessionProjectId(projects, {}, null, "all")).toBe("a");
+    expect(defaultNewSessionProjectId(projects, {}, null)).toBe("a");
   });
 
   it("returns null when there are no projects", () => {
-    expect(defaultNewSessionProjectId([], {}, null, "all")).toBeNull();
-  });
-});
-
-describe("concreteFilterId", () => {
-  it("returns the filter only when it names a registered project", () => {
-    expect(concreteFilterId(projects, "b")).toBe("b");
-    expect(concreteFilterId(projects, "all")).toBeNull();
-    expect(concreteFilterId(projects, "gone")).toBeNull();
+    expect(defaultNewSessionProjectId([], {}, null)).toBeNull();
   });
 });

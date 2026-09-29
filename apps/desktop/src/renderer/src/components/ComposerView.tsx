@@ -36,6 +36,7 @@ import { SlashMenu, slashOptionId, type SlashMenuItem } from "./SlashMenu.js";
 import { commandDisplay, filterCommands, mergeCommands, parseSlashInput, rankByQuery } from "./slashCommands.js";
 import { harnessLabel } from "./toolTabs.js";
 import { ipcErrorMessage } from "./ipcError.js";
+import { useThreadVisible } from "./threadVisibility.js";
 
 export interface ComposerBackend {
   imageTarget: ImageTarget;
@@ -146,6 +147,7 @@ export function ComposerView({
   const commandsKeyRef = useRef(commandsKey);
   commandsKeyRef.current = commandsKey;
   const mountedRef = useRef(true);
+  const visible = useThreadVisible();
   const commandAvailability = {
     newSession: backend.newSession !== undefined,
     rename: backend.rename !== undefined,
@@ -154,7 +156,7 @@ export function ComposerView({
 
   const autosizeComposer = () => {
     const el = composerRef.current;
-    if (!el) return;
+    if (!el || el.getClientRects().length === 0) return;
     let lineHeight = 22.5;
     try {
       const parsed = Number.parseFloat(window.getComputedStyle(el).lineHeight);
@@ -170,7 +172,7 @@ export function ComposerView({
 
   useLayoutEffect(() => {
     autosizeComposer();
-  }, [draft, resetKey]);
+  }, [draft, resetKey, visible]);
 
   useEffect(() => {
     const onResize = () => autosizeComposer();
@@ -179,7 +181,7 @@ export function ComposerView({
   }, []);
 
   useEffect(() => {
-    if (backendRef.current.busy) return;
+    if (!visible || backendRef.current.busy) return;
     const frame = requestAnimationFrame(() => {
       try {
         composerRef.current?.focus({ preventScroll: true });
@@ -187,7 +189,7 @@ export function ComposerView({
       }
     });
     return () => cancelAnimationFrame(frame);
-  }, [resetKey]);
+  }, [resetKey, visible]);
 
   useEffect(() => {
     setAttachments([]);

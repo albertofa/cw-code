@@ -14,7 +14,7 @@ import { shortenHome } from "./pathDisplay.js";
 import { PrChipBadge } from "./PrChipBadge.js";
 import { needsAttentionCount } from "./prInbox.js";
 import { anyLinkUnseen, displayChip, linksTitle, mostUrgentLink, sessionLinks } from "./sessionPrLinks.js";
-import { matchesQuickFilter, matchesSessionQuery, quickFilterCounts, toggleQuickFilter, type QuickFilter } from "./sidebarQuickFilters.js";
+import { matchesQuickFilter, matchesSessionQuery, quickFilterCounts, toggleQuickFilter, type QuickFilter, type QuickFilterFacts } from "./sidebarQuickFilters.js";
 import { compareNeedsYou, type Attention, type AttentionKind } from "./needsYou.js";
 import { useNeedsYou } from "./useNeedsYou.js";
 import appIcon from "../assets/console-c.svg";
@@ -86,9 +86,12 @@ function sessionHasUnseen(session: Session, summaryByKey: Map<string, PrSummary>
 
 const QUICK_FILTER_UI: Array<{ id: Exclude<QuickFilter, "all">; label: string; hint: string; Icon: LucideIcon }> = [
   { id: "running", label: "Running", hint: "Running", Icon: LoaderCircle },
-  { id: "pr", label: "Linked to a PR", hint: "Linked to a PR", Icon: GitPullRequest },
-  { id: "updated", label: "PR updated", hint: "PR updates, across all sections", Icon: Bell }
+  { id: "pr", label: "Linked to a PR", hint: "Linked to a PR", Icon: GitPullRequest }
 ];
+
+function quickFacts(s: Session): QuickFilterFacts {
+  return { status: s.status, linkCount: sessionLinks(s).length };
+}
 
 const HOVER_DELAY = 350;
 const HOVER_FALLBACK_HEIGHT = 280;
@@ -305,34 +308,6 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
   const slotSnap = useRef<SlotSnapshot | null>(null);
   const rowRefs = useRef(new Map<string, HTMLDivElement>());
   const prevRects = useRef(new Map<string, { top: number; height: number }>());
-  useLayoutEffect(() => {
-    const list = listRef.current;
-    if (!list) return;
-    const next = new Map<string, { top: number; height: number }>();
-    rowRefs.current.forEach((el, id) => {
-      if (!el.isConnected) {
-        rowRefs.current.delete(id);
-        return;
-      }
-      next.set(id, contentTop(el, list));
-    });
-    if (!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
-      let easing: string | null = null;
-      let duration: number | null = null;
-      prevRects.current.forEach((prev, id) => {
-        const el = rowRefs.current.get(id);
-        const cur = next.get(id);
-        if (!el || !cur || prev.height === 0 || cur.height === 0) return;
-        const dy = prev.top - cur.top;
-        if (dy === 0) return;
-        easing ??= flipEasing();
-        duration ??= flipDuration();
-        el.getAnimations().forEach((a) => a.cancel());
-        el.animate([{ transform: `translateY(${dy}px)` }, { transform: "translateY(0px)" }], { duration, easing });
-      });
-    }
-    prevRects.current = next;
-  });
   useEffect(() => {
     document.body.classList.toggle("session-dragging", dragged !== null);
     return () => document.body.classList.remove("session-dragging");
@@ -405,27 +380,20 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
     [source, attentionOf]
   );
   const attentionIds = useMemo(() => new Set(needsYouAll.map((entry) => entry.session.id)), [needsYouAll]);
-  const prUpdatedIds = useMemo(
-    () => new Set(needsYouAll.filter((entry) => entry.attention.kind === "update").map((entry) => entry.session.id)),
-    [needsYouAll]
-  );
-  const quickFacts = useCallback(
-    (s: Session) => ({ status: s.status, linkCount: sessionLinks(s).length, prUpdated: prUpdatedIds.has(s.id) }),
-    [prUpdatedIds]
-  );
-  const quickCounts = useMemo(() => quickFilterCounts(source.map(quickFacts)), [source, quickFacts]);
   const matchesQuery = useCallback(
-    (s: Session) =>
-      matchesSessionQuery(trimmedQuery, { title: s.title, project: projectNameById[s.projectId] ?? "", branch: branchOf(s) }) &&
-      matchesQuickFilter(quickFilter, quickFacts(s)),
-    [trimmedQuery, projectNameById, branchOf, quickFilter, quickFacts]
+    (s: Session) => matchesSessionQuery(trimmedQuery, { title: s.title, project: projectNameById[s.projectId] ?? "", branch: branchOf(s) }),
+    [trimmedQuery, projectNameById, branchOf]
   );
   const needsYouShown = useMemo(() => needsYouAll.filter((entry) => matchesQuery(entry.session)), [needsYouAll, matchesQuery]);
   const workingSetAll = useMemo(
     () => source.filter((s) => isWorkingSetStatus(s.status) && !attentionIds.has(s.id)).sort(compareWorkingSet),
     [source, attentionIds]
   );
-  const workingSetShown = useMemo(() => workingSetAll.filter(matchesQuery), [workingSetAll, matchesQuery]);
+  const quickCounts = useMemo(() => quickFilterCounts(workingSetAll.map(quickFacts)), [workingSetAll]);
+  const workingSetShown = useMemo(
+    () => workingSetAll.filter((s) => matchesQuery(s) && matchesQuickFilter(quickFilter, quickFacts(s))),
+    [workingSetAll, matchesQuery, quickFilter]
+  );
   const awayIds = useMemo(() => new Set([...attentionIds, ...workingSetAll.map((s) => s.id)]), [attentionIds, workingSetAll]);
   const { orderedMainAll, orderedResolvedAll } = useMemo(() => {
     const storedMain = (storedOrder?.main ?? []).filter((id) => !awayIds.has(id));
@@ -469,6 +437,42 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
   }, [idleFiltered, idleUnlimited, draggedId]);
   const idleToggleVisible = trimmedQuery === "" && idleFiltered.length > IDLE_LIMIT;
   const resolvedExpanded = trimmedQuery !== "" || resolvedOpen;
+  const rowOrderKey = [
+    needsYouShown.map((entry) => entry.session.id),
+    workingSetShown.map((s) => s.id),
+    idleShown.map((s) => s.id),
+    resolvedExpanded ? resolvedShown.map((s) => s.id) : []
+  ]
+    .map((ids) => ids.join(","))
+    .join("|");
+  useLayoutEffect(() => {
+    const list = listRef.current;
+    if (!list) return;
+    const next = new Map<string, { top: number; height: number }>();
+    rowRefs.current.forEach((el, id) => {
+      if (!el.isConnected) {
+        rowRefs.current.delete(id);
+        return;
+      }
+      next.set(id, contentTop(el, list));
+    });
+    if (!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
+      let easing: string | null = null;
+      let duration: number | null = null;
+      prevRects.current.forEach((prev, id) => {
+        const el = rowRefs.current.get(id);
+        const cur = next.get(id);
+        if (!el || !cur || prev.height === 0 || cur.height === 0) return;
+        const dy = prev.top - cur.top;
+        if (dy === 0) return;
+        easing ??= flipEasing();
+        duration ??= flipDuration();
+        el.getAnimations().forEach((a) => a.cancel());
+        el.animate([{ transform: `translateY(${dy}px)` }, { transform: "translateY(0px)" }], { duration, easing });
+      });
+    }
+    prevRects.current = next;
+  }, [rowOrderKey]);
   const workingSetVisible = source.length > 0 || quickFilter !== "all";
   const attentionCount = useMemo(() => needsAttentionCount(inboxItems ?? []), [inboxItems]);
   const anyUnseen = useMemo(() => source.some((s) => sessionHasUnseen(s, summaryByKey)), [source, summaryByKey]);
@@ -957,7 +961,7 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
             <div className="side-section">
               <div className="side-sec needs">
                 Needs you
-                <span className="side-needs-n">{needsYouShown.length}</span>
+                <span className="side-needs-n">{needsYouAll.length}</span>
               </div>
               {needsYouShown.map((entry) => renderAttentionRow(entry.session, entry.attention))}
             </div>

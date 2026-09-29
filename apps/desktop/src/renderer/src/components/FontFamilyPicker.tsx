@@ -34,7 +34,10 @@ function requestFontAccess(): Promise<void> {
       const families = [...new Set(fonts.map((font) => font.family))].sort((a, b) => a.localeCompare(b));
       setFontAccess(families.length === 0 ? { status: "denied" } : { status: "granted", families });
     })
-    .catch(() => setFontAccess({ status: "denied" }))
+    .catch((err: unknown) => {
+      console.warn("[fonts] local font access failed", err);
+      setFontAccess({ status: "denied" });
+    })
     .finally(() => {
       accessRequest = null;
     });

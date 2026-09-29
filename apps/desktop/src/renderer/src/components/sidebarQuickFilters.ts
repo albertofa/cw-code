@@ -1,13 +1,12 @@
 import type { SessionStatus } from "../cw.js";
 
-export type QuickFilter = "all" | "running" | "pr" | "updated";
+export type QuickFilter = "all" | "running" | "pr";
 
-export const QUICK_FILTERS: readonly Exclude<QuickFilter, "all">[] = ["running", "pr", "updated"];
+export const QUICK_FILTERS: readonly Exclude<QuickFilter, "all">[] = ["running", "pr"];
 
 export interface QuickFilterFacts {
   status: SessionStatus;
   linkCount: number;
-  prUpdated: boolean;
 }
 
 export function matchesQuickFilter(filter: QuickFilter, facts: QuickFilterFacts): boolean {
@@ -18,13 +17,11 @@ export function matchesQuickFilter(filter: QuickFilter, facts: QuickFilterFacts)
       return facts.status === "working";
     case "pr":
       return facts.linkCount > 0;
-    case "updated":
-      return facts.prUpdated;
   }
 }
 
 export function quickFilterCounts(items: QuickFilterFacts[]): Record<Exclude<QuickFilter, "all">, number> {
-  const counts = { running: 0, pr: 0, updated: 0 };
+  const counts = { running: 0, pr: 0 };
   for (const item of items) {
     if (item.status === "archived" || item.status === "resolved") continue;
     for (const filter of QUICK_FILTERS) if (matchesQuickFilter(filter, item)) counts[filter] += 1;

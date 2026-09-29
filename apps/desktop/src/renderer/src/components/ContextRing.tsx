@@ -12,11 +12,13 @@ import { formatTokensShort } from "./subagents.js";
 import { formatDuration } from "./toolSummaries.js";
 import { harnessLabel } from "./toolTabs.js";
 import { contextMeter, totals, turnTokens } from "./usageModel.js";
+import { useThreadVisible } from "./threadVisibility.js";
 
 const RING_CIRCUMFERENCE = 2 * Math.PI * 7.5;
 
 export function ContextRing({ sessionId, driver }: { sessionId: string; driver: DriverName }) {
   const [open, setOpen] = useState(false);
+  const visible = useThreadVisible();
   const rootRef = useRef<HTMLDivElement>(null);
   const context = useAppStore((s) => s.turnUsageBySession[sessionId]?.context);
   const lastTurn = useAppStore((s) => s.turnUsageBySession[sessionId]?.lastTurn);
@@ -51,7 +53,7 @@ export function ContextRing({ sessionId, driver }: { sessionId: string; driver: 
   }, [open, sessionId, ensureSessionRows]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || !visible) return;
     const onDown = (e: MouseEvent) => {
       if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
     };
@@ -64,7 +66,7 @@ export function ContextRing({ sessionId, driver }: { sessionId: string; driver: 
       window.removeEventListener("mousedown", onDown);
       window.removeEventListener("keydown", onKey);
     };
-  }, [open]);
+  }, [open, visible]);
 
   const planState = snapshot?.state;
   const shownPlan =

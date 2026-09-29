@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Check, ChevronLeft, ChevronRight, MessageCircleQuestion } from "lucide-react";
 import type { QuestionInfo, QuestionOption, QuestionRequest } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
+import { useThreadVisible } from "./threadVisibility.js";
 
 interface AnswerState {
   chosen: Record<string, boolean>;
@@ -43,6 +44,7 @@ function QuestionPanel({
 }) {
   const respond = useAppStore((s) => s.respondQuestion);
   const panelRef = useRef<HTMLElement>(null);
+  const visible = useThreadVisible();
   const [states, setStates] = useState<Record<string, AnswerState>>({});
   const [submitting, setSubmitting] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -51,12 +53,17 @@ function QuestionPanel({
   const active = request.questions[safeIndex];
 
   useEffect(() => {
+    if (!visible) return;
     const section = panelRef.current;
     const raf = requestAnimationFrame(() => {
       section?.querySelector<HTMLButtonElement>(".question-list .question-row")?.focus();
     });
+    return () => cancelAnimationFrame(raf);
+  }, [visible]);
+
+  useEffect(() => {
+    const section = panelRef.current;
     return () => {
-      cancelAnimationFrame(raf);
       if (section?.contains(document.activeElement)) {
         (document.activeElement as HTMLElement).blur();
         document.querySelector<HTMLTextAreaElement>(".composer-input")?.focus();

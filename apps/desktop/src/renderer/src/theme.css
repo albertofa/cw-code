@@ -244,6 +244,10 @@ body {
   right: 96px;
 }
 
+.app-shell.rail-hidden .notifs {
+  right: 140px;
+}
+
 .titlebar-brand {
   display: flex;
   align-items: center;
@@ -1482,6 +1486,14 @@ body.session-dragging * {
 
 .pr-view-state.state-merged {
   color: var(--codex);
+}
+
+.main-col {
+  flex: 1;
+  display: flex;
+  min-width: 0;
+  min-height: 0;
+  position: relative;
 }
 
 .thread-col {

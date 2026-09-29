@@ -18,19 +18,12 @@ export function projectsByRecentActivity(projects: Project[], sessionsByProject:
 export function defaultNewSessionProjectId(
   projects: Project[],
   sessionsByProject: Record<string, Session[]>,
-  activeSessionId: string | null,
-  projectFilter: string | "all"
+  activeSessionId: string | null
 ): string | null {
   const known = new Set(projects.map((p) => p.id));
   if (activeSessionId) {
     const owner = Object.entries(sessionsByProject).find(([, list]) => list.some((s) => s.id === activeSessionId))?.[0];
     if (owner && known.has(owner)) return owner;
   }
-  const filtered = concreteFilterId(projects, projectFilter);
-  if (filtered) return filtered;
   return projectsByRecentActivity(projects, sessionsByProject)[0]?.id ?? null;
-}
-
-export function concreteFilterId(projects: Project[], projectFilter: string | "all"): string | null {
-  return projectFilter !== "all" && projects.some((p) => p.id === projectFilter) ? projectFilter : null;
 }

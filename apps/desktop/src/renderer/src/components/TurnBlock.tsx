@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "re
 import { ChevronRight } from "lucide-react";
 import { describeWaitingTools, formatDuration, type PendingTool } from "./toolSummaries.js";
 import { formatElapsed } from "./turnFormat.js";
+import { useThreadVisible } from "./threadVisibility.js";
 
 function useElapsed(startedAt: number | undefined, active: boolean): number {
   const [now, setNow] = useState(() => Date.now());
@@ -46,6 +47,7 @@ export function TurnBlock({
   );
   const rootRef = useRef<HTMLDivElement>(null);
   const prevRunning = useRef(running);
+  const visible = useThreadVisible();
 
   useLayoutEffect(() => {
     if (prevRunning.current === running) return;
@@ -60,7 +62,7 @@ export function TurnBlock({
   }, [running, autoExpandIfFits, manualOpen]);
 
   useLayoutEffect(() => {
-    if (!measuring) return;
+    if (!measuring || !visible) return;
     setMeasuring(false);
     const root = rootRef.current;
     const scroll = root?.closest(".thread-scroll");
@@ -69,7 +71,7 @@ export function TurnBlock({
     } else {
       setManualOpen(null);
     }
-  }, [measuring]);
+  }, [measuring, visible]);
 
   const open = manualOpen ?? (running || measuring);
   const elapsed = useElapsed(startedAt, running);

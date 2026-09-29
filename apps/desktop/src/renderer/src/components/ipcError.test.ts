@@ -21,7 +21,13 @@ describe("ipcErrorMessage", () => {
 describe("isFileNotFound", () => {
   it("recognizes missing-file errors from the fs bridge", () => {
     expect(isFileNotFound(new Error("Error invoking remote method 'fs.readFile': Error: ENOENT: no such file or directory"))).toBe(true);
-    expect(isFileNotFound(new Error("file not found"))).toBe(true);
+    expect(isFileNotFound(new Error("Error invoking remote method 'fs.previewFile': Error: file not found: C:\\tmp\\a.png"))).toBe(true);
     expect(isFileNotFound(new Error("EACCES: permission denied"))).toBe(false);
+  });
+
+  it("does not treat other not-found errors as a missing file", () => {
+    expect(isFileNotFound(new Error("Error invoking remote method 'sessions.get': Error: Session not found"))).toBe(false);
+    expect(isFileNotFound(new Error("git not found on PATH"))).toBe(false);
+    expect(isFileNotFound(new Error("directory not found: src"))).toBe(false);
   });
 });

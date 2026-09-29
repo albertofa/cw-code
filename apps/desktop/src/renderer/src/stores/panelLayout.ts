@@ -139,6 +139,15 @@ export function resolveRightTop(
   return available[0] ?? null;
 }
 
+export function pickSplitTool(
+  dockByTab: TabDockState,
+  top: DockableTabId,
+  isAvailable: (tab: DockableTabId) => boolean
+): DockableTabId {
+  const other = tabsInPanel(dockByTab, "right").find((tab) => tab !== top && isAvailable(tab));
+  return other ?? (top === "shell" ? "files" : "shell");
+}
+
 export function isBottomOpen(dockByTab: TabDockState): boolean {
   return tabsInPanel(dockByTab, "bottom").length > 0;
 }
