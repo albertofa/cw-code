@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, powerMonitor, shell, type WebContents } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, powerMonitor, shell, type WebContents } from "electron";
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -14,6 +14,7 @@ function resolvePreload(): string {
   if (!found) console.warn(`preload not found (tried ${candidates.join(", ")})`);
   return found ?? candidates[0];
 }
+import { attentionDescription, parseAttentionState, shouldFlash } from "./attention.js";
 import { checkCliVersion, checkCliVersions, type CliVersionCheck } from "./cliVersions.js";
 import { discoverBinaries, verifyBinaryPath } from "./cli/binaryDiscovery.js";
 import { getHarnessTracePath, initHarnessTrace } from "./debug/harnessTrace.js";
@@ -107,6 +108,7 @@ interface Services {
 }
 
 let mainWindow: BrowserWindow | null = null;
+let attentionCount = 0;
 let services: Services | null = null;
 let startupState: StartupState = { mode: "ready" };
 let quitApproved = false;
@@ -289,6 +291,7 @@ async function createWindow(): Promise<void> {
     }
   });
 
+  mainWindow.on("focus", () => mainWindow?.flashFrame(false));
   mainWindow.on("maximize", () => mainWindow?.webContents.send("win.maximized", true));
   mainWindow.on("unmaximize", () => mainWindow?.webContents.send("win.maximized", false));
   mainWindow.on("unresponsive", () => appendCrashLog("window unresponsive"));
@@ -421,6 +424,18 @@ function relaunch(): void {
   app.exit(0);
 }
 
+function applyAttention(sender: WebContents, payload: unknown): void {
+  const state = parseAttentionState(payload);
+  const win = windowFromSender(sender);
+  if (!state || !win) return;
+  const previousCount = attentionCount;
+  attentionCount = state.count;
+  const overlay = state.badgeDataUrl ? nativeImage.createFromDataURL(state.badgeDataUrl) : null;
+  win.setOverlayIcon(overlay && !overlay.isEmpty() ? overlay : null, attentionDescription(state.count));
+  app.setBadgeCount(state.count);
+  if (shouldFlash(previousCount, state.count, win.isFocused())) win.flashFrame(true);
+}
+
 function registerWindowIpc(): void {
   ipcMain.on("win.minimize", (e) => windowFromSender(e.sender)?.minimize());
   ipcMain.on("win.toggle-maximize", (e) => {
@@ -435,6 +450,7 @@ function registerWindowIpc(): void {
   ipcMain.on("win.zoom-in", (e) => bumpZoom(e.sender, 1));
   ipcMain.on("win.zoom-out", (e) => bumpZoom(e.sender, -1));
   ipcMain.on("win.zoom-reset", (e) => windowFromSender(e.sender)?.webContents.setZoomLevel(0));
+  ipcMain.on("app.attention", (e, payload: unknown) => applyAttention(e.sender, payload));
 }
 
 function recoveryIssueFor(args: { file?: unknown } | undefined): MetadataIssue {

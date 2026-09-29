@@ -13,9 +13,10 @@ import { compareWorkingSet, isWorkingSetStatus } from "./workingSet.js";
 import { shortenHome } from "./pathDisplay.js";
 import { PrChipBadge } from "./PrChipBadge.js";
 import { needsAttentionCount } from "./prInbox.js";
-import { anyLinkUnseen, displayChip, linksTitle, mostUrgentLink, prSummaryLookup, sessionLinks } from "./sessionPrLinks.js";
+import { anyLinkUnseen, displayChip, linksTitle, mostUrgentLink, sessionLinks } from "./sessionPrLinks.js";
 import { matchesQuickFilter, matchesSessionQuery, quickFilterCounts, toggleQuickFilter, type QuickFilter } from "./sidebarQuickFilters.js";
-import { compareNeedsYou, firstUnseenPr, sessionAttention, type Attention, type AttentionKind } from "./needsYou.js";
+import { compareNeedsYou, type Attention, type AttentionKind } from "./needsYou.js";
+import { useNeedsYou } from "./useNeedsYou.js";
 import appIcon from "../assets/console-c.svg";
 
 const IDLE_LIMIT = 4;
@@ -240,11 +241,11 @@ function DebugMenu() {
 
 
 export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { onOpenSettings: () => void; onOpenSkills: () => void; skillsOpen?: boolean }) {
-  const { projects, sessionsByProject, activeSessionId, gitStatusBySession, homeDir, pendingDriver, pendingApprovals, pendingQuestions } = useAppStore();
+  const { projects, sessionsByProject, activeSessionId, gitStatusBySession, homeDir, pendingDriver } = useAppStore();
   const shortPath = (value: string): string => shortenHome(value, homeDir ?? undefined);
   const store = useAppStore();
   const inbox = usePrStore((s) => s.inbox);
-  const detailByKey = usePrStore((s) => s.detailByKey);
+  const { attentionOf, summaryByKey } = useNeedsYou();
   const mainView = usePrStore((s) => s.mainView);
   const openInbox = usePrStore((s) => s.openInbox);
   const openSessionView = usePrStore((s) => s.openSessionView);
@@ -359,20 +360,12 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
   const projectNameById: Record<string, string> = Object.fromEntries(projects.map((p) => [p.id, p.name]));
   const source: Session[] = Object.values(sessionsByProject).flat();
   const inboxItems = inbox?.items ?? [];
-  const summaryByKey = prSummaryLookup(inboxItems, detailByKey);
   const branchOf = (s: Session): string | undefined => gitStatusBySession[s.id]?.branch ?? s.branch;
   const quickFacts = (s: Session) => ({ status: s.status, linkCount: sessionLinks(s).length, unseen: sessionHasUnseen(s, summaryByKey) });
   const quickCounts = quickFilterCounts(source.map(quickFacts));
   const matchesQuery = (s: Session) =>
     matchesSessionQuery(query, { title: s.title, project: projectNameById[s.projectId] ?? "", branch: branchOf(s) }) &&
     matchesQuickFilter(quickFilter, quickFacts(s));
-  const attentionOf = (s: Session): Attention | null =>
-    sessionAttention({
-      session: s,
-      approvals: pendingApprovals[s.id],
-      questions: pendingQuestions[s.id],
-      unseenPr: firstUnseenPr(s, summaryByKey, detailByKey)
-    });
   const needsYouAll = source
     .flatMap((session) => {
       const attention = attentionOf(session);

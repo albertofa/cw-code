@@ -21,6 +21,7 @@ import { TOOL_TABS, isHarnessTabId, isToolTabAvailable } from "./components/tool
 import { useTabMenu } from "./components/TabMenu.js";
 import { endTabDrag, startTabDrag, useDockDrop } from "./components/useDockDrop.js";
 import { useNotifs } from "./components/Notifications.js";
+import { useAttentionBadge } from "./components/useAttentionBadge.js";
 import { useAppStore } from "./stores/appStore.js";
 import { tabsInPanel, DOCKABLE_TABS } from "./stores/panelLayout.js";
 import { selectSessionPanel, usePanelStore } from "./stores/panelStore.js";
@@ -106,6 +107,7 @@ function handleTurnEvent(msg: { sessionId: string; event: TurnEvent }): void {
 const MODAL_SELECTOR = '[role="dialog"], [role="alertdialog"], [aria-modal="true"]';
 
 export function App() {
+  useAttentionBadge();
   const activeSessionId = useAppStore((s) => s.activeSessionId);
   const sessionsByProject = useAppStore((s) => s.sessionsByProject);
   const pendingDriver = useAppStore((s) => s.pendingDriver);
