@@ -36,10 +36,7 @@ export function PtyTab({ sessionId, kind }: { sessionId: string; kind: DriverNam
 
     const pushSize = () => {
       if (disposed || !term || !ptyIdRef.current) return;
-      try {
-        window.cw.resizePty(ptyIdRef.current, term.cols, term.rows);
-      } catch {
-      }
+      window.cw.resizePty(ptyIdRef.current, term.cols, term.rows);
     };
 
     const fitAndPush = () => {
@@ -105,10 +102,7 @@ export function PtyTab({ sessionId, kind }: { sessionId: string; kind: DriverNam
       fitAddon = new FitAddon();
       term.loadAddon(fitAddon);
       term.open(divRef.current);
-      try {
-        fitAddon.fit();
-      } catch {
-      }
+      fitAndPush();
 
       offPty = window.cw.onPtyData((msg) => {
         if (msg.ptyId !== ptyIdRef.current) {

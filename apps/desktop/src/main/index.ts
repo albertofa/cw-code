@@ -909,7 +909,6 @@ function registerIpc(services: Services): void {
   ipcMain.on("pty.detach", (_e, args: { ptyId: string; token: string }) => ptys.detach(args.ptyId, args.token));
   ipcMain.on("pty.kill", (_e, args: { ptyId: string }) => ptys.kill(args.ptyId));
 
-
   ipcMain.handle("debug.openTrace", async (): Promise<{ ok: boolean; path?: string; error?: string }> => {
     const tracePath = getHarnessTracePath();
     if (!tracePath) return { ok: false, error: "harness trace is not initialized" };

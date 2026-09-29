@@ -70,6 +70,11 @@ const TYPED_FONT_ERRORS: Partial<Record<TypedFontState, string>> = {
   "not-monospace": "Not a fixed-width font"
 };
 
+function buildCandidates(families: string[], requireMonospace: boolean, value: string): string[] {
+  const listed = requireMonospace ? families.filter(isMonospaceCached) : families;
+  return value !== "" && !listed.includes(value) ? [value, ...listed] : listed;
+}
+
 export function FontFamilyPicker({
   value,
   defaultLabel,
@@ -120,7 +125,9 @@ function FontListPicker({
   const [highlight, setHighlight] = useState(0);
   const rootRef = useRef<HTMLSpanElement | null>(null);
   const listRef = useRef<HTMLSpanElement | null>(null);
+  const triggerRef = useRef<HTMLButtonElement | null>(null);
   const optionIdPrefix = useId();
+  const listboxId = `${optionIdPrefix}-listbox`;
 
   useEffect(() => {
     if (!open) return;
@@ -131,10 +138,7 @@ function FontListPicker({
     return () => document.removeEventListener("mousedown", onPointerDown);
   }, [open]);
 
-  const candidates = useMemo(() => {
-    const listed = requireMonospace ? families.filter(isMonospaceCached) : families;
-    return value !== "" && !listed.includes(value) ? [value, ...listed] : listed;
-  }, [families, requireMonospace, value]);
+  const candidates = useMemo(() => buildCandidates(families, requireMonospace, value), [families, requireMonospace, value]);
 
   const visible = useMemo(() => {
     const term = query.trim().toLowerCase();
@@ -157,22 +161,28 @@ function FontListPicker({
     }
     void requestFontAccess().then(() => {
       if (fontAccess.status === "granted") {
+        const current = buildCandidates(fontAccess.families, requireMonospace, value);
         setQuery("");
-        setHighlight(Math.max(0, ["", ...candidates].indexOf(value)));
+        setHighlight(Math.max(0, ["", ...current].indexOf(value)));
         setOpen(true);
       }
     });
   };
 
+  const closeAndRestoreFocus = () => {
+    setOpen(false);
+    triggerRef.current?.focus();
+  };
+
   const choose = (family: string) => {
     onChange(family);
-    setOpen(false);
+    closeAndRestoreFocus();
   };
 
   const onPopoverKeyDown = (event: KeyboardEvent<HTMLSpanElement>) => {
     if (event.key === "Escape") {
       event.stopPropagation();
-      setOpen(false);
+      closeAndRestoreFocus();
       return;
     }
     if (entries.length === 0) return;
@@ -199,7 +209,7 @@ function FontListPicker({
 
   return (
     <span ref={rootRef} className={`fpick${open ? " open" : ""}`}>
-      <button type="button" className="fp-trig" aria-haspopup="listbox" aria-expanded={open} onFocus={() => void requestFontAccess()} onClick={openPicker}>
+      <button ref={triggerRef} type="button" className="fp-trig" aria-haspopup="listbox" aria-expanded={open} onFocus={() => void requestFontAccess()} onClick={openPicker}>
         <span className="fp-v" style={value === "" ? { fontFamily: defaultFace } : faceStyle(value)}>
           {value === "" ? defaultLabel : value}
         </span>
@@ -212,6 +222,10 @@ function FontListPicker({
             <Search size={13} aria-hidden="true" />
             <input
               autoFocus
+              role="combobox"
+              aria-expanded="true"
+              aria-controls={listboxId}
+              aria-autocomplete="list"
               value={query}
               placeholder={requireMonospace ? "Search monospace fonts" : "Search fonts"}
               aria-label="Search fonts"
@@ -222,7 +236,7 @@ function FontListPicker({
               }}
             />
           </span>
-          <span ref={listRef} className="fp-list" role="listbox">
+          <span ref={listRef} id={listboxId} className="fp-list" role="listbox">
             {showDefault && (
               <span {...optionProps(0, "")}>
                 <span style={{ fontFamily: defaultFace }}>{defaultLabel}</span>
