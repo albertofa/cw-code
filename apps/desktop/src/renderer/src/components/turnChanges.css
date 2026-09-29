@@ -121,6 +121,13 @@
   white-space: nowrap;
 }
 
+.turn-changes-note {
+  padding: 0 12px 6px;
+  font-size: var(--t-xs);
+  color: var(--faint);
+  overflow-wrap: anywhere;
+}
+
 .turn-changes-warn {
   display: flex;
   align-items: center;

@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import type { DirEntry } from "../cw.js";
 import { FileIcon } from "./fileIcons.js";
+import { isFileNotFound } from "./ipcError.js";
 import { useEditorBuffers } from "../stores/editorBuffers.js";
 import { usePanelStore } from "../stores/panelStore.js";
 
@@ -104,8 +105,6 @@ function FileTree({
   );
 }
 
-const FILE_NOT_FOUND = /ENOENT|not found/i;
-
 function baseName(path: string): string {
   const i = path.lastIndexOf("/");
   return i >= 0 ? path.slice(i + 1) : path;
@@ -129,7 +128,8 @@ export function FilePanel({ sessionId }: { sessionId: string }) {
   const [openFile, setOpenFile] = useState<string | null>(null);
   const [openKey, setOpenKey] = useState<string | null>(null);
   const openBuffer = useEditorBuffers((s) => (openKey ? s.buffers[openKey] : undefined));
-  const editable = openBuffer !== undefined && openBuffer.path === openFile;
+  const openMissing = openBuffer?.missing === true && openBuffer.path === openFile;
+  const editable = openBuffer !== undefined && openBuffer.path === openFile && !openMissing;
   const content = editable ? openBuffer.content : "";
   const [filter, setFilter] = useState("");
   const [allFiles, setAllFiles] = useState<string[] | null>(null);
@@ -260,7 +260,7 @@ export function FilePanel({ sessionId }: { sessionId: string }) {
       .catch((err: Error) => {
         if (seqRef.current !== seq || requestedFileRef.current !== path) return;
         setStatus(
-          revealed && FILE_NOT_FOUND.test(err.message)
+          revealed && isFileNotFound(err)
             ? `File not found in this workspace: ${path}`
             : `read failed for ${path}: ${err.message}`
         );
@@ -356,7 +356,11 @@ export function FilePanel({ sessionId }: { sessionId: string }) {
               Save
             </button>
           )}
-          {status && <span className="status">{status}</span>}
+          {openMissing ? (
+            <span className="status">File not found in this workspace: {openFile}</span>
+          ) : (
+            status && <span className="status">{status}</span>
+          )}
         </div>
         <textarea
           ref={editorRef}

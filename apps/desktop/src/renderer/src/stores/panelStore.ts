@@ -82,6 +82,7 @@ export interface PanelActions {
   clearRevealRequest(nonce: number): void;
   requestDiffMode(sessionId: string, mode: GitDiffMode): void;
   clearDiffModeRequest(nonce: number): void;
+  clearStaleDiffModeRequest(sessionId: string | null | undefined): void;
   setAutoLocation(tab: DockableTabId, panel: PanelId): void;
   setBottomHeight(sessionId: string | undefined, height: number): void;
   setBottomCollapsed(sessionId: string | undefined, collapsed: boolean): void;
@@ -199,6 +200,11 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
 
   clearDiffModeRequest: (nonce) => {
     if (get().diffModeRequest?.nonce === nonce) set({ diffModeRequest: null });
+  },
+
+  clearStaleDiffModeRequest: (sessionId) => {
+    const request = get().diffModeRequest;
+    if (request && request.sessionId !== sessionId) set({ diffModeRequest: null });
   },
 
   setAutoLocation: (tab, panel) => {

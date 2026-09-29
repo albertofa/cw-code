@@ -6946,6 +6946,22 @@ button.gitbar-checkout:hover {
   white-space: nowrap;
 }
 
+.inspect-note {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  min-height: 28px;
+  padding: 0 10px;
+  border-bottom: 1px solid var(--border-soft);
+  color: var(--muted);
+  font-size: var(--t-2xs);
+}
+
+.inspect-refreshing {
+  color: var(--faint);
+}
+
 .inspect-stack {
   flex: 1;
   min-height: 0;

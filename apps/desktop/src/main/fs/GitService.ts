@@ -1113,17 +1113,17 @@ export class GitService {
       baseRef = requestedBase;
       patch = await this.diffSnapshot(root, requestedBase, requestedHead);
     } else if (mode === "staged") {
-      patch = await execDiff(binary, ["diff", "--cached", "--no-ext-diff", "--binary", "--find-renames", "--"], root);
+      patch = await execDiff(binary, ["diff", "--cached", "--no-ext-diff", "--binary", "--find-renames", "--relative", "--"], root);
     } else if (mode === "branch") {
       const branches = await this.branches(root);
       if (requestedBase && !branches.some((item) => item.name === requestedBase)) throw new Error(`unknown comparison branch '${requestedBase}'`);
       baseRef = requestedBase || await this.defaultBase(root, headRef, branches);
-      patch = await execDiff(binary, ["diff", "--no-ext-diff", "--binary", "--find-renames", `${baseRef}...HEAD`, "--"], root);
+      patch = await execDiff(binary, ["diff", "--no-ext-diff", "--binary", "--find-renames", "--relative", `${baseRef}...HEAD`, "--"], root);
     } else {
       const base = requestedBase && (await this.isCommitAncestor(root, requestedBase)) ? requestedBase : "HEAD";
-      patch = await execDiff(binary, ["diff", base, "--no-ext-diff", "--binary", "--find-renames", "--"], root);
-      const summary = await git.status();
-      const untracked = summary.not_added.filter((file) => !isAppManagedPath(file)).slice(0, UNTRACKED_DIFF_MAX_FILES);
+      patch = await execDiff(binary, ["diff", base, "--no-ext-diff", "--binary", "--find-renames", "--relative", "--"], root);
+      const listed = await execText(binary, ["ls-files", "--others", "--exclude-standard", "-z"], root, 20_000);
+      const untracked = listed.split("\0").filter((file) => file && !isAppManagedPath(file)).slice(0, UNTRACKED_DIFF_MAX_FILES);
       const parts = await mapLimit(untracked, 8, (file) =>
         execDiff(binary, ["diff", "--no-index", "--binary", "--", "/dev/null", file], root)
           .then((out) => (out.length > UNTRACKED_DIFF_MAX_BYTES_PER_FILE ? `${out.slice(0, UNTRACKED_DIFF_MAX_BYTES_PER_FILE)}\n…(truncated)` : out))

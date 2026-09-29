@@ -29,6 +29,7 @@ import type {
   UpdateState
 } from "../cw.js";
 import type { DirtyBuffer } from "./editorBuffers.js";
+import { usePanelStore } from "./panelStore.js";
 import { appendAssistantText, appendReasoningText, closeReasoning, upsertToolCall } from "../components/chatMessages.js";
 import { DEFAULT_APPEARANCE, appearanceOf, type AppearancePrefs } from "../appearanceFonts.js";
 import { getLastModel, setLastModel } from "../components/lastModel.js";
@@ -1480,3 +1481,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ sessionsByProject: next });
   }
 }));
+
+useAppStore.subscribe((state, previous) => {
+  if (state.activeSessionId !== previous.activeSessionId) usePanelStore.getState().clearStaleDiffModeRequest(state.activeSessionId);
+});

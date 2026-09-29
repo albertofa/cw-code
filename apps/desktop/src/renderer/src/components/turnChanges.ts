@@ -1,4 +1,6 @@
-import type { TurnFileChange, TurnSnapshot } from "../cw.js";
+import type { Project, Session, TurnFileChange, TurnSnapshot } from "../cw.js";
+
+const PROMPT_CLOCK_TOLERANCE_MS = 1000;
 
 export interface ThreadTurnRef {
   turnId: string;
@@ -10,7 +12,7 @@ export function snapshotTurnMatches(turn: ThreadTurnRef | undefined, snapshot: T
   if (!turn || !snapshot || turn.running) return false;
   if (turn.turnId === snapshot.turnId) return true;
   if (turn.promptedAt === undefined || snapshot.endedAt === undefined) return false;
-  return turn.promptedAt >= snapshot.capturedAt && turn.promptedAt <= snapshot.endedAt;
+  return turn.promptedAt >= snapshot.capturedAt - PROMPT_CLOCK_TOLERANCE_MS && turn.promptedAt <= snapshot.endedAt;
 }
 
 export function snapshotKey(snapshot: TurnSnapshot | undefined): string {
@@ -36,4 +38,29 @@ export function turnTotals(files: TurnFileChange[]): { added: number; deleted: n
     (sum, file) => ({ added: sum.added + file.added, deleted: sum.deleted + file.deleted }),
     { added: 0, deleted: 0 }
   );
+}
+
+function rootKey(path: string): string {
+  const normalized = path.replace(/\\/g, "/").replace(/\/+$/, "");
+  return /^[a-z]:\//i.test(normalized) || normalized.startsWith("//") ? normalized.toLowerCase() : normalized;
+}
+
+export function sameRootSessionIds(
+  sessionsByProject: Record<string, Session[]>,
+  projects: Project[],
+  sessionId: string
+): string[] {
+  const rootOf = (session: Session) => session.worktreePath ?? projects.find((project) => project.id === session.projectId)?.rootPath;
+  const sessions = Object.values(sessionsByProject).flat();
+  const current = sessions.find((session) => session.id === sessionId);
+  const root = current ? rootOf(current) : undefined;
+  if (!root) return [sessionId];
+  const key = rootKey(root);
+  return sessions
+    .filter((session) => {
+      if (session.id === sessionId) return true;
+      const other = rootOf(session);
+      return other !== undefined && rootKey(other) === key;
+    })
+    .map((session) => session.id);
 }

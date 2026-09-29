@@ -5,9 +5,10 @@ import type { TurnChanges, TurnFileChange, TurnSnapshot } from "../cw.js";
 import { useConfirm } from "./ConfirmDialog.js";
 import { useNotifs } from "./Notifications.js";
 import { FileIcon } from "./fileIcons.js";
-import { ipcErrorMessage } from "./ipcError.js";
-import { snapshotKey, splitRepoPath, turnTotals } from "./turnChanges.js";
+import { ipcErrorMessage, isFileNotFound } from "./ipcError.js";
+import { sameRootSessionIds, snapshotKey, splitRepoPath, turnTotals } from "./turnChanges.js";
 import { useAppStore } from "../stores/appStore.js";
+import { buffersForPaths, isDirtyBuffer, useEditorBuffers, type EditorBuffer } from "../stores/editorBuffers.js";
 import { usePanelStore } from "../stores/panelStore.js";
 import "./turnChanges.css";
 
@@ -17,10 +18,78 @@ const CHANGE_BADGE: Record<TurnFileChange["change"], string> = {
   modified: "M"
 };
 
+const CACHE_TTL_MS = 30_000;
+const TURN_RUNNING = "A turn is running";
+
+const changesCache = new Map<string, { at: number; changes: TurnChanges | null }>();
+
 type LoadState =
   | { status: "loading" }
   | { status: "ready"; changes: TurnChanges | null }
   | { status: "error"; message: string };
+
+type UndoPhase = "idle" | "checking" | "undoing";
+
+function cacheId(sessionId: string, key: string): string {
+  return `${sessionId}\n${key}`;
+}
+
+function cachedChanges(sessionId: string, key: string): TurnChanges | null | undefined {
+  const entry = changesCache.get(cacheId(sessionId, key));
+  if (!entry || Date.now() - entry.at > CACHE_TTL_MS) return undefined;
+  return entry.changes;
+}
+
+function cacheChanges(sessionId: string, key: string, changes: TurnChanges | null): void {
+  const now = Date.now();
+  for (const [id, entry] of changesCache) {
+    if (now - entry.at > CACHE_TTL_MS) changesCache.delete(id);
+  }
+  changesCache.set(cacheId(sessionId, key), { at: now, changes });
+}
+
+function initialState(sessionId: string, key: string): LoadState {
+  const cached = cachedChanges(sessionId, key);
+  return cached === undefined ? { status: "loading" } : { status: "ready", changes: cached };
+}
+
+function dirtyPaths(buffers: Record<string, EditorBuffer>, sessionIds: readonly string[], files: readonly TurnFileChange[]): string[] {
+  const matched = buffersForPaths(buffers, sessionIds, files.map((file) => file.path));
+  return [...new Set(matched.filter(({ buffer }) => isDirtyBuffer(buffer)).map(({ buffer }) => buffer.path))].sort();
+}
+
+function undoBlockers(changes: TurnChanges, running: boolean, dirty: readonly string[]): string[] {
+  const blockers: string[] = [];
+  if (running) blockers.push(TURN_RUNNING);
+  if (!changes.undoable) blockers.push(changes.reason ?? "This turn can’t be undone");
+  else if (!changes.endSha) blockers.push("The end-of-turn snapshot is missing");
+  if (dirty.length > 0) blockers.push(`Save or discard unsaved edits first: ${dirty.join(", ")}`);
+  return blockers;
+}
+
+async function reloadRestoredBuffers(sessionIds: readonly string[], files: readonly TurnFileChange[]): Promise<void> {
+  const store = useEditorBuffers.getState();
+  const clean = buffersForPaths(store.buffers, sessionIds, files.map((file) => file.path)).filter(({ buffer }) => !isDirtyBuffer(buffer));
+  const failures: string[] = [];
+  await Promise.all(
+    clean.map(async ({ key, buffer }) => {
+      try {
+        const text = await window.cw.readFile(buffer.sessionId, buffer.path);
+        useEditorBuffers.getState().reloadClean(key, text);
+      } catch (err) {
+        if (isFileNotFound(err)) useEditorBuffers.getState().markMissing(key);
+        else failures.push(`${buffer.path}: ${ipcErrorMessage(err)}`);
+      }
+    })
+  );
+  if (failures.length > 0) {
+    useNotifs.getState().push({
+      kind: "error",
+      title: "Could not reload open files after undo",
+      message: `Reopen them before editing: ${failures.join("; ")}`
+    });
+  }
+}
 
 function plural(count: number, word: string): string {
   return `${count} ${word}${count === 1 ? "" : "s"}`;
@@ -53,9 +122,9 @@ function UndoMessage({ files }: { files: TurnFileChange[] }) {
           </li>
         ))}
       </ul>
-      <p>Work from before the turn is kept.</p>
+      <p>Work from before the turn is kept. Git-ignored files are left untouched.</p>
       <p>Line-ending changes (autocrlf) made by tools during the turn are reverted too.</p>
-      <p>Other sessions sharing this checkout are not considered beyond cw-code’s own busy check.</p>
+      <p>Other sessions working in this same folder aren’t checked beyond cw-code’s own busy check.</p>
     </div>
   );
 }
@@ -63,18 +132,29 @@ function UndoMessage({ files }: { files: TurnFileChange[] }) {
 export function TurnChangesCard({ sessionId, snapshot }: { sessionId: string; snapshot: TurnSnapshot }) {
   const key = snapshotKey(snapshot);
   const hasStart = Boolean(snapshot.sha);
-  const [state, setState] = useState<LoadState>({ status: "loading" });
+  const [state, setState] = useState<LoadState>(() => initialState(sessionId, key));
   const [refresh, setRefresh] = useState(0);
-  const [undoing, setUndoing] = useState(false);
+  const [phase, setPhase] = useState<UndoPhase>("idle");
   const [undoneLocally, setUndoneLocally] = useState(false);
+  const turnRunning = useAppStore((s) => s.busyTurns[sessionId] !== undefined);
+  const rootIdsKey = useAppStore((s) => sameRootSessionIds(s.sessionsByProject, s.projects, sessionId).join("\n"));
+  const rootIds = rootIdsKey.split("\n");
   const { confirm, dialog } = useConfirm();
 
   useEffect(() => {
     if (!hasStart) return;
+    if (refresh === 0) {
+      const cached = cachedChanges(sessionId, key);
+      if (cached !== undefined) {
+        setState({ status: "ready", changes: cached });
+        return;
+      }
+    }
     let active = true;
     window.cw
       .getTurnChanges(sessionId)
       .then((changes) => {
+        cacheChanges(sessionId, key, changes);
         if (active) setState({ status: "ready", changes });
       })
       .catch((err: unknown) => {
@@ -88,19 +168,54 @@ export function TurnChangesCard({ sessionId, snapshot }: { sessionId: string; sn
   const refetch = () => setRefresh((value) => value + 1);
   const changes = state.status === "ready" && state.changes?.turnId === snapshot.turnId ? state.changes : null;
   const undone = snapshot.undoneAt !== undefined || undoneLocally;
+  const dirtyKey = useEditorBuffers((s) => (changes ? dirtyPaths(s.buffers, rootIds, changes.files).join("\n") : ""));
+  const dirty = dirtyKey ? dirtyKey.split("\n") : [];
+
+  const currentBlockers = (reviewed: TurnChanges) =>
+    undoBlockers(
+      reviewed,
+      useAppStore.getState().busyTurns[sessionId] !== undefined,
+      dirtyPaths(useEditorBuffers.getState().buffers, rootIds, reviewed.files)
+    );
 
   const undo = async () => {
-    const endSha = changes?.endSha;
-    if (!changes || !endSha || !changes.undoable || undoing) return;
-    const reviewed = changes;
+    if (phase !== "idle") return;
+    setPhase("checking");
+    let fresh: TurnChanges | null;
+    try {
+      fresh = await window.cw.getTurnChanges(sessionId);
+    } catch (err) {
+      const message = ipcErrorMessage(err);
+      setState({ status: "error", message });
+      useNotifs.getState().push({ kind: "error", title: "Could not undo this turn", message });
+      setPhase("idle");
+      return;
+    }
+    cacheChanges(sessionId, key, fresh);
+    setState({ status: "ready", changes: fresh });
+    const endSha = fresh?.endSha;
+    if (!fresh || !endSha || fresh.turnId !== snapshot.turnId || currentBlockers(fresh).length > 0) {
+      setPhase("idle");
+      return;
+    }
+    const reviewed = fresh;
     const ok = await confirm({
       danger: true,
       title: "Undo this turn's changes?",
       confirmLabel: "Undo changes",
       message: <UndoMessage files={reviewed.files} />
     });
-    if (!ok) return;
-    setUndoing(true);
+    if (!ok) {
+      setPhase("idle");
+      return;
+    }
+    const late = currentBlockers(reviewed);
+    if (late.length > 0) {
+      useNotifs.getState().push({ kind: "error", title: "Could not undo this turn", message: late.join(". ") });
+      setPhase("idle");
+      return;
+    }
+    setPhase("undoing");
     try {
       const result = await window.cw.undoTurn(sessionId, reviewed.turnId, endSha);
       setUndoneLocally(true);
@@ -109,10 +224,12 @@ export function TurnChangesCard({ sessionId, snapshot }: { sessionId: string; sn
         title: "Turn changes undone",
         message: `${plural(result.files.length, "file")} restored to their state before the turn.`
       });
+      const byPath = new Map([...reviewed.files, ...result.files].map((file) => [file.path, file]));
+      await reloadRestoredBuffers(rootIds, [...byPath.values()]);
     } catch (err) {
       useNotifs.getState().push({ kind: "error", title: "Could not undo this turn", message: ipcErrorMessage(err) });
     } finally {
-      setUndoing(false);
+      setPhase("idle");
       refetch();
       void useAppStore.getState().refreshGitStatus(sessionId);
     }
@@ -129,7 +246,8 @@ export function TurnChangesCard({ sessionId, snapshot }: { sessionId: string; sn
     body = <Warning>End-of-turn snapshot failed: {snapshot.endError}</Warning>;
   } else if (changes && changes.files.length > 0) {
     const totals = turnTotals(changes.files);
-    const undoTitle = changes.undoable ? "Restore the files this turn changed" : changes.reason;
+    const blockers = undone ? [] : undoBlockers(changes, turnRunning, dirty);
+    const busy = phase !== "idle";
     body = (
       <div className="turn-changes">
         <div className="turn-changes-hd">
@@ -144,14 +262,15 @@ export function TurnChangesCard({ sessionId, snapshot }: { sessionId: string; sn
                 Changes undone
               </span>
             ) : (
-              <span title={undoTitle}>
+              <span title={blockers[0] ?? "Restore the files this turn changed"}>
                 <button
                   type="button"
                   className="btn turn-changes-btn"
                   onClick={() => void undo()}
-                  disabled={!changes.undoable || undoing}
+                  disabled={blockers.length > 0}
+                  aria-busy={busy || undefined}
                 >
-                  {undoing ? "Undoing…" : "Undo"}
+                  {phase === "undoing" ? "Undoing…" : phase === "checking" ? "Checking…" : "Undo"}
                 </button>
               </span>
             )}
@@ -161,6 +280,9 @@ export function TurnChangesCard({ sessionId, snapshot }: { sessionId: string; sn
             </button>
           </span>
         </div>
+        {blockers.map((blocker) => (
+          <div key={blocker} className="turn-changes-note">{blocker}</div>
+        ))}
         {snapshot.endError && (
           <Warning>End-of-turn snapshot failed, showing changes up to now: {snapshot.endError}</Warning>
         )}

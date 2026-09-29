@@ -275,6 +275,41 @@ describe("GitService worktrees", () => {
     expect(branchDiff.patch).toContain("feature.txt");
   });
 
+  it("reports working, staged and branch paths relative to a subfolder root", async () => {
+    const { repository, service } = initSandbox();
+    const app = join(repository, "app");
+    mkdirSync(join(app, "src"), { recursive: true });
+    writeFileSync(join(app, "src", "main.ts"), "one\n", "utf8");
+    execFileSync("git", ["-C", repository, "add", "."]);
+    execFileSync("git", ["-C", repository, "-c", "user.name=cw-code", "-c", "user.email=test@cw-code.local", "commit", "-m", "app"]);
+    execFileSync("git", ["-C", repository, "checkout", "-b", "feature"]);
+    writeFileSync(join(app, "src", "main.ts"), "two\n", "utf8");
+    writeFileSync(join(repository, "README.md"), "outside\n", "utf8");
+    execFileSync("git", ["-C", repository, "add", "."]);
+    execFileSync("git", ["-C", repository, "-c", "user.name=cw-code", "-c", "user.email=test@cw-code.local", "commit", "-m", "feature"]);
+    writeFileSync(join(app, "src", "main.ts"), "three\n", "utf8");
+    writeFileSync(join(app, "staged.txt"), "staged\n", "utf8");
+    execFileSync("git", ["-C", repository, "add", "app/staged.txt"]);
+    writeFileSync(join(app, "fresh.txt"), "untracked\n", "utf8");
+    writeFileSync(join(repository, "top.txt"), "top\n", "utf8");
+
+    const working = await service.diff(app, "working");
+    expect(working.patch).toContain("+++ b/src/main.ts");
+    expect(working.patch).toContain("+++ b/staged.txt");
+    expect(working.patch).toContain("fresh.txt");
+    expect(working.patch).not.toContain("app/");
+    expect(working.patch).not.toContain("top.txt");
+
+    const staged = await service.diff(app, "staged");
+    expect(staged.patch).toContain("+++ b/staged.txt");
+    expect(staged.patch).not.toContain("app/");
+
+    const branch = await service.diff(app, "branch", "main");
+    expect(branch.patch).toContain("+++ b/src/main.ts");
+    expect(branch.patch).not.toContain("app/");
+    expect(branch.patch).not.toContain("README.md");
+  });
+
   it("removes a clean worktree and its empty session directory", async () => {
     const { sandbox, repository, service } = initSandbox();
     const worktreesRoot = join(sandbox, "worktrees");
