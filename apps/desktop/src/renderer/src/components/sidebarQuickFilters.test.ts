@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { matchesQuickFilter, matchesSessionQuery, quickFilterCounts, toggleQuickFilter, type QuickFilterFacts } from "./sidebarQuickFilters.js";
 
-const facts = (patch: Partial<QuickFilterFacts> = {}): QuickFilterFacts => ({ status: "idle", linkCount: 0, unseen: false, ...patch });
+const facts = (patch: Partial<QuickFilterFacts> = {}): QuickFilterFacts => ({ status: "idle", linkCount: 0, prUpdated: false, ...patch });
 
 describe("matchesQuickFilter", () => {
   it("lets everything through for all", () => {
@@ -17,19 +17,20 @@ describe("matchesQuickFilter", () => {
   it("matches PR-linked and updated sessions", () => {
     expect(matchesQuickFilter("pr", facts({ linkCount: 2 }))).toBe(true);
     expect(matchesQuickFilter("pr", facts())).toBe(false);
-    expect(matchesQuickFilter("updated", facts({ linkCount: 1, unseen: true }))).toBe(true);
+    expect(matchesQuickFilter("updated", facts({ linkCount: 1, prUpdated: true }))).toBe(true);
     expect(matchesQuickFilter("updated", facts({ linkCount: 1 }))).toBe(false);
   });
 });
 
 describe("quickFilterCounts", () => {
-  it("counts each filter and skips archived sessions", () => {
+  it("counts each filter and skips resolved and archived sessions", () => {
     expect(
       quickFilterCounts([
-        facts({ status: "working", linkCount: 1, unseen: true }),
+        facts({ status: "working", linkCount: 1, prUpdated: true }),
         facts({ status: "input-required" }),
         facts({ linkCount: 1 }),
-        facts({ status: "archived", linkCount: 1, unseen: true })
+        facts({ status: "resolved", linkCount: 1, prUpdated: true }),
+        facts({ status: "archived", linkCount: 1, prUpdated: true })
       ])
     ).toEqual({ running: 1, pr: 2, updated: 1 });
   });

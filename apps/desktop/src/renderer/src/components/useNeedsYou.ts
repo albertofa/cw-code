@@ -27,7 +27,7 @@ export function useNeedsYou(): NeedsYou {
       }),
     [pendingApprovals, pendingQuestions, summaryByKey, detailByKey]
   );
-  return { attentionOf, summaryByKey };
+  return useMemo(() => ({ attentionOf, summaryByKey }), [attentionOf, summaryByKey]);
 }
 
 export function useNeedsYouCount(): number {

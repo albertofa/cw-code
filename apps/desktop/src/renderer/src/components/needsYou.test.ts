@@ -84,6 +84,15 @@ describe("sessionAttention", () => {
     expect(sessionAttention({ session: session("idle"), ...all, approvals: [], questions: [] })?.kind).toBe("update");
   });
 
+  it("keeps input-required as a question even when a linked PR has unseen changes", () => {
+    const attention = sessionAttention({
+      session: session("input-required"),
+      ...noAttention,
+      unseenPr: { number: 7 }
+    });
+    expect(attention).toEqual({ kind: "question", line: "Waiting for your input" });
+  });
+
   it("uses the first line of the approval title, then its details or reason", () => {
     const line = (request: ApprovalRequest) =>
       sessionAttention({ session: session("working"), ...noAttention, approvals: [request] })?.line;

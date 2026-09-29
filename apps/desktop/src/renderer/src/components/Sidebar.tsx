@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
 import { Bell, ChartColumn, Check, ChevronDown, ChevronRight, ChevronUp, CircleHelp, Clock, GitBranch, GitPullRequest, Hash, LoaderCircle, Plus, Search, Settings, ShieldAlert, X, type LucideIcon } from "lucide-react";
 import type { DriverName, PrSummary, Session, SessionStatus } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
@@ -20,7 +20,7 @@ import { useNeedsYou } from "./useNeedsYou.js";
 import appIcon from "../assets/console-c.svg";
 
 const IDLE_LIMIT = 4;
-const FLIP_MS = 150;
+const FLIP_MS_FALLBACK = 150;
 const FLIP_EASING_FALLBACK = "cubic-bezier(0.22, 1, 0.36, 1)";
 const ORDER_KEY = "cw:order:all";
 
@@ -30,9 +30,20 @@ const ATTENTION_ACTION: Record<AttentionKind, { verb: string; Icon: LucideIcon }
   update: { verb: "Review", Icon: Bell }
 };
 
+function rootToken(name: string): string {
+  return window.getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+}
+
 function flipEasing(): string {
-  const token = window.getComputedStyle(document.documentElement).getPropertyValue("--ease-out").trim();
-  return token || FLIP_EASING_FALLBACK;
+  return rootToken("--ease-out") || FLIP_EASING_FALLBACK;
+}
+
+function flipDuration(): number {
+  const raw = rootToken("--dur-fast");
+  const value = Number.parseFloat(raw);
+  if (!Number.isFinite(value)) return FLIP_MS_FALLBACK;
+  if (raw.endsWith("ms")) return value;
+  return raw.endsWith("s") ? value * 1000 : FLIP_MS_FALLBACK;
 }
 
 function stateLabel(status: SessionStatus): string {
@@ -73,10 +84,10 @@ function sessionHasUnseen(session: Session, summaryByKey: Map<string, PrSummary>
   return anyLinkUnseen(sessionLinks(session), summaryByKey);
 }
 
-const QUICK_FILTER_UI: Array<{ id: Exclude<QuickFilter, "all">; label: string; Icon: LucideIcon }> = [
-  { id: "running", label: "Running", Icon: LoaderCircle },
-  { id: "pr", label: "Linked to a PR", Icon: GitPullRequest },
-  { id: "updated", label: "PR updated", Icon: Bell }
+const QUICK_FILTER_UI: Array<{ id: Exclude<QuickFilter, "all">; label: string; hint: string; Icon: LucideIcon }> = [
+  { id: "running", label: "Running", hint: "Running", Icon: LoaderCircle },
+  { id: "pr", label: "Linked to a PR", hint: "Linked to a PR", Icon: GitPullRequest },
+  { id: "updated", label: "PR updated", hint: "PR updates, across all sections", Icon: Bell }
 ];
 
 const HOVER_DELAY = 350;
@@ -112,6 +123,11 @@ function layoutTop(el: HTMLElement): { top: number; height: number } {
     shift = 0;
   }
   return { top: rect.top - shift, height: rect.height };
+}
+
+function contentTop(el: HTMLElement, list: HTMLElement): { top: number; height: number } {
+  const { top, height } = layoutTop(el);
+  return { top: top - list.getBoundingClientRect().top + list.scrollTop, height };
 }
 
 function slotInRows(
@@ -241,9 +257,18 @@ function DebugMenu() {
 
 
 export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { onOpenSettings: () => void; onOpenSkills: () => void; skillsOpen?: boolean }) {
-  const { projects, sessionsByProject, activeSessionId, gitStatusBySession, homeDir, pendingDriver } = useAppStore();
+  const projects = useAppStore((s) => s.projects);
+  const sessionsByProject = useAppStore((s) => s.sessionsByProject);
+  const activeSessionId = useAppStore((s) => s.activeSessionId);
+  const gitStatusBySession = useAppStore((s) => s.gitStatusBySession);
+  const homeDir = useAppStore((s) => s.homeDir);
+  const pendingDriver = useAppStore((s) => s.pendingDriver);
+  const selectStoreSession = useAppStore((s) => s.selectSession);
+  const startNewSession = useAppStore((s) => s.startNewSession);
+  const renameSession = useAppStore((s) => s.renameSession);
+  const regenerateSessionTitle = useAppStore((s) => s.regenerateSessionTitle);
+  const setSessionStatus = useAppStore((s) => s.setSessionStatus);
   const shortPath = (value: string): string => shortenHome(value, homeDir ?? undefined);
-  const store = useAppStore();
   const inbox = usePrStore((s) => s.inbox);
   const { attentionOf, summaryByKey } = useNeedsYou();
   const mainView = usePrStore((s) => s.mainView);
@@ -260,6 +285,7 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
   const [landedId, setLandedId] = useState<string | null>(null);
   const [idleShowAll, setIdleShowAll] = useState(false);
   const [resolvedOpen, setResolvedOpen] = useState(false);
+  const [storedOrder, setStoredOrder] = useState<SidebarOrder | null>(() => readStoredOrder(ORDER_KEY));
   const [hover, setHover] = useState<{ id: string; x: number; y: number } | null>(null);
   const hoverTimer = useRef<number | null>(null);
 
@@ -277,17 +303,19 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
   const rowRefs = useRef(new Map<string, HTMLDivElement>());
   const prevRects = useRef(new Map<string, { top: number; height: number }>());
   useLayoutEffect(() => {
+    const list = listRef.current;
+    if (!list) return;
     const next = new Map<string, { top: number; height: number }>();
     rowRefs.current.forEach((el, id) => {
       if (!el.isConnected) {
         rowRefs.current.delete(id);
         return;
       }
-      const { top, height } = layoutTop(el);
-      next.set(id, { top, height });
+      next.set(id, contentTop(el, list));
     });
     if (!window.matchMedia?.("(prefers-reduced-motion: reduce)").matches) {
       let easing: string | null = null;
+      let duration: number | null = null;
       prevRects.current.forEach((prev, id) => {
         const el = rowRefs.current.get(id);
         const cur = next.get(id);
@@ -295,11 +323,9 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
         const dy = prev.top - cur.top;
         if (dy === 0) return;
         easing ??= flipEasing();
+        duration ??= flipDuration();
         el.getAnimations().forEach((a) => a.cancel());
-        el.animate([{ transform: `translateY(${dy}px)` }, { transform: "translateY(0px)" }], {
-          duration: FLIP_MS,
-          easing
-        });
+        el.animate([{ transform: `translateY(${dy}px)` }, { transform: "translateY(0px)" }], { duration, easing });
       });
     }
     prevRects.current = next;
@@ -357,62 +383,89 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
     };
   }, []);
 
-  const projectNameById: Record<string, string> = Object.fromEntries(projects.map((p) => [p.id, p.name]));
-  const source: Session[] = Object.values(sessionsByProject).flat();
-  const inboxItems = inbox?.items ?? [];
-  const branchOf = (s: Session): string | undefined => gitStatusBySession[s.id]?.branch ?? s.branch;
-  const quickFacts = (s: Session) => ({ status: s.status, linkCount: sessionLinks(s).length, unseen: sessionHasUnseen(s, summaryByKey) });
-  const quickCounts = quickFilterCounts(source.map(quickFacts));
-  const matchesQuery = (s: Session) =>
-    matchesSessionQuery(query, { title: s.title, project: projectNameById[s.projectId] ?? "", branch: branchOf(s) }) &&
-    matchesQuickFilter(quickFilter, quickFacts(s));
-  const needsYouAll = source
-    .flatMap((session) => {
-      const attention = attentionOf(session);
-      return attention ? [{ session, attention, updatedAt: session.updatedAt }] : [];
-    })
-    .sort(compareNeedsYou);
-  const needsYouShown = needsYouAll.filter((entry) => matchesQuery(entry.session));
-  const attentionIds = new Set(needsYouAll.map((entry) => entry.session.id));
-  const byRecency = (a: Session, b: Session) => b.updatedAt - a.updatedAt;
-  const workingSetAll = source.filter((s) => isWorkingSetStatus(s.status) && !attentionIds.has(s.id)).sort(compareWorkingSet);
-  const workingSetShown = workingSetAll.filter(matchesQuery);
-  const awayIds = new Set([...attentionIds, ...workingSetAll.map((s) => s.id)]);
-  const storedOrder = readStoredOrder(ORDER_KEY);
-  const storedMain = (storedOrder?.main ?? []).filter((id) => !awayIds.has(id));
-  const storedResolved = (storedOrder?.resolved ?? []).filter((id) => !awayIds.has(id));
-  const storedPinned = (storedOrder?.pinned ?? []).filter((id) => !awayIds.has(id));
-  const pinnedSet = new Set(storedPinned);
-  const storedMainSet = new Set(storedMain);
-  const storedResolvedSet = new Set(storedResolved);
-  const effectiveSection = (s: Session): SidebarSection | null => {
-    if (s.status === "archived") return null;
-    if (pinnedSet.has(s.id)) {
-      const inMain = storedMainSet.has(s.id);
-      const inResolved = storedResolvedSet.has(s.id);
-      if (inMain !== inResolved) return inMain ? "main" : "resolved";
-    }
-    if (s.status === "resolved") return "resolved";
-    return "main";
-  };
-  const mainAll = source.filter((s) => !awayIds.has(s.id) && effectiveSection(s) === "main");
-  const resolvedAll = source.filter((s) => !awayIds.has(s.id) && effectiveSection(s) === "resolved");
-  const orderedMainAll = [...mainAll].sort(byRecency);
-  const orderedResolvedAll = storedOrder ? orderByStored(resolvedAll, storedResolved) : [...resolvedAll].sort(byRecency);
-  const previewMainAll = previewPlacement(orderedMainAll, orderedResolvedAll, dragged, preview, "main");
-  const previewResolvedAll = previewPlacement(orderedMainAll, orderedResolvedAll, dragged, preview, "resolved");
+  const trimmedQuery = query.trim();
+  const projectNameById = useMemo<Record<string, string>>(() => Object.fromEntries(projects.map((p) => [p.id, p.name])), [projects]);
+  const source = useMemo<Session[]>(() => Object.values(sessionsByProject).flat(), [sessionsByProject]);
+  const inboxItems = inbox?.items;
+  const branchOf = useCallback((s: Session): string | undefined => gitStatusBySession[s.id]?.branch ?? s.branch, [gitStatusBySession]);
+  const needsYouAll = useMemo(
+    () =>
+      source
+        .flatMap((session) => {
+          const attention = attentionOf(session);
+          return attention ? [{ session, attention, updatedAt: session.updatedAt }] : [];
+        })
+        .sort(compareNeedsYou),
+    [source, attentionOf]
+  );
+  const attentionIds = useMemo(() => new Set(needsYouAll.map((entry) => entry.session.id)), [needsYouAll]);
+  const prUpdatedIds = useMemo(
+    () => new Set(needsYouAll.filter((entry) => entry.attention.kind === "update").map((entry) => entry.session.id)),
+    [needsYouAll]
+  );
+  const quickFacts = useCallback(
+    (s: Session) => ({ status: s.status, linkCount: sessionLinks(s).length, prUpdated: prUpdatedIds.has(s.id) }),
+    [prUpdatedIds]
+  );
+  const quickCounts = useMemo(() => quickFilterCounts(source.map(quickFacts)), [source, quickFacts]);
+  const matchesQuery = useCallback(
+    (s: Session) =>
+      matchesSessionQuery(trimmedQuery, { title: s.title, project: projectNameById[s.projectId] ?? "", branch: branchOf(s) }) &&
+      matchesQuickFilter(quickFilter, quickFacts(s)),
+    [trimmedQuery, projectNameById, branchOf, quickFilter, quickFacts]
+  );
+  const needsYouShown = useMemo(() => needsYouAll.filter((entry) => matchesQuery(entry.session)), [needsYouAll, matchesQuery]);
+  const workingSetAll = useMemo(
+    () => source.filter((s) => isWorkingSetStatus(s.status) && !attentionIds.has(s.id)).sort(compareWorkingSet),
+    [source, attentionIds]
+  );
+  const workingSetShown = useMemo(() => workingSetAll.filter(matchesQuery), [workingSetAll, matchesQuery]);
+  const awayIds = useMemo(() => new Set([...attentionIds, ...workingSetAll.map((s) => s.id)]), [attentionIds, workingSetAll]);
+  const { orderedMainAll, orderedResolvedAll } = useMemo(() => {
+    const storedMain = (storedOrder?.main ?? []).filter((id) => !awayIds.has(id));
+    const storedResolved = (storedOrder?.resolved ?? []).filter((id) => !awayIds.has(id));
+    const pinnedSet = new Set((storedOrder?.pinned ?? []).filter((id) => !awayIds.has(id)));
+    const storedMainSet = new Set(storedMain);
+    const storedResolvedSet = new Set(storedResolved);
+    const effectiveSection = (s: Session): SidebarSection | null => {
+      if (s.status === "archived") return null;
+      if (pinnedSet.has(s.id)) {
+        const inMain = storedMainSet.has(s.id);
+        const inResolved = storedResolvedSet.has(s.id);
+        if (inMain !== inResolved) return inMain ? "main" : "resolved";
+      }
+      if (s.status === "resolved") return "resolved";
+      return "main";
+    };
+    const byRecency = (a: Session, b: Session) => b.updatedAt - a.updatedAt;
+    const mainAll = source.filter((s) => !awayIds.has(s.id) && effectiveSection(s) === "main");
+    const resolvedAll = source.filter((s) => !awayIds.has(s.id) && effectiveSection(s) === "resolved");
+    return {
+      orderedMainAll: [...mainAll].sort(byRecency),
+      orderedResolvedAll: storedOrder ? orderByStored(resolvedAll, storedResolved) : [...resolvedAll].sort(byRecency)
+    };
+  }, [source, awayIds, storedOrder]);
   const previewing = dragged !== null && preview !== null;
-  const idleFiltered = (previewing ? previewMainAll : orderedMainAll).filter(matchesQuery);
-  const resolvedShown = (previewing ? previewResolvedAll : orderedResolvedAll).filter(matchesQuery);
-  const idleUnlimited = query !== "" || idleShowAll;
-  const idleHead = idleUnlimited ? idleFiltered : idleFiltered.slice(0, IDLE_LIMIT);
-  const draggedIdle = dragged ? idleFiltered.find((s) => s.id === dragged.id) : undefined;
-  const idleShown = draggedIdle && !idleHead.includes(draggedIdle) ? [...idleHead, draggedIdle] : idleHead;
-  const idleToggleVisible = query === "" && idleFiltered.length > IDLE_LIMIT;
-  const resolvedExpanded = query !== "" || resolvedOpen;
-  const workingSetVisible = workingSetAll.length > 0 || quickFilter !== "all";
-  const attentionCount = needsAttentionCount(inboxItems);
-  const anyUnseen = source.some((s) => sessionHasUnseen(s, summaryByKey));
+  const idleFiltered = useMemo(
+    () => (previewing ? previewPlacement(orderedMainAll, orderedResolvedAll, dragged, preview, "main") : orderedMainAll).filter(matchesQuery),
+    [previewing, orderedMainAll, orderedResolvedAll, dragged, preview, matchesQuery]
+  );
+  const resolvedShown = useMemo(
+    () => (previewing ? previewPlacement(orderedMainAll, orderedResolvedAll, dragged, preview, "resolved") : orderedResolvedAll).filter(matchesQuery),
+    [previewing, orderedMainAll, orderedResolvedAll, dragged, preview, matchesQuery]
+  );
+  const idleUnlimited = trimmedQuery !== "" || idleShowAll;
+  const draggedId = dragged?.id;
+  const idleShown = useMemo(() => {
+    const head = idleUnlimited ? idleFiltered : idleFiltered.slice(0, IDLE_LIMIT);
+    const draggedIdle = draggedId ? idleFiltered.find((s) => s.id === draggedId) : undefined;
+    return draggedIdle && !head.includes(draggedIdle) ? [...head, draggedIdle] : head;
+  }, [idleFiltered, idleUnlimited, draggedId]);
+  const idleToggleVisible = trimmedQuery === "" && idleFiltered.length > IDLE_LIMIT;
+  const resolvedExpanded = trimmedQuery !== "" || resolvedOpen;
+  const workingSetVisible = source.length > 0 || quickFilter !== "all";
+  const attentionCount = useMemo(() => needsAttentionCount(inboxItems ?? []), [inboxItems]);
+  const anyUnseen = useMemo(() => source.some((s) => sessionHasUnseen(s, summaryByKey)), [source, summaryByKey]);
   const inboxActive = mainView.kind === "inbox" || mainView.kind === "pr";
   const usageActive = mainView.kind === "usage";
   const newSessionActive = !inboxActive && !usageActive && (pendingDriver !== null || !activeSessionId);
@@ -424,7 +477,7 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
   const inboxLabel = ["Pull requests", ...inboxNotes].join(", ");
   const selectSession = (sessionId: string) => {
     openSessionView();
-    store.selectSession(sessionId);
+    selectStoreSession(sessionId);
   };
   const hoverSession = hover ? (source.find((s) => s.id === hover.id) ?? null) : null;
   const hoverStatus = hoverSession?.status ?? "idle";
@@ -503,21 +556,21 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
     const draft = renameDraft.trim();
     setRenamingId(null);
     if (!draft) return;
-    void store.renameSession(sessionId, draft).catch((err: Error) => {
+    void renameSession(sessionId, draft).catch((err: Error) => {
       useNotifs.getState().push({ kind: "error", title: "Could not rename session", message: err.message });
     });
   };
 
   const regenerateTitle = (sessionId: string) => {
     setMenu(null);
-    void store.regenerateSessionTitle(sessionId).catch((err: Error) => {
+    void regenerateSessionTitle(sessionId).catch((err: Error) => {
       useNotifs.getState().push({ kind: "error", title: "Could not regenerate title", message: err.message });
     });
   };
 
   const setStatus = (sessionId: string, status: SessionStatus) => {
     setMenu(null);
-    void store.setSessionStatus(sessionId, status, "user-set-status").catch((err: Error) => {
+    void setSessionStatus(sessionId, status, "user-set-status").catch((err: Error) => {
       useNotifs.getState().push({ kind: "error", title: "Could not update session", message: err.message });
     });
   };
@@ -562,13 +615,15 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
     const nextMainIds = nextMain.map((s) => s.id);
     const nextResolvedIds = nextResolved.map((s) => s.id);
     const cross = fromSection !== toSection;
-    const prevPinned = readStoredOrder(ORDER_KEY)?.pinned ?? storedOrder?.pinned ?? [];
+    const prevPinned = storedOrder?.pinned ?? [];
     const pinned = cross ? Array.from(new Set([...prevPinned, fromId])) : [];
-    writeStoredOrder(ORDER_KEY, {
+    const nextOrder: SidebarOrder = {
       main: mergeAwayIds(storedOrder?.main ?? nextMainIds, nextMainIds, awayIds),
       resolved: mergeAwayIds(storedOrder?.resolved ?? nextResolvedIds, nextResolvedIds, awayIds),
-      pinned,
-    });
+      pinned
+    };
+    writeStoredOrder(ORDER_KEY, nextOrder);
+    setStoredOrder(nextOrder);
     if (cross) setStatus(fromId, toSection === "main" ? "idle" : "resolved");
     setLandedId(fromId);
     window.setTimeout(() => setLandedId((id) => (id === fromId ? null : id)), 850);
@@ -718,7 +773,7 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
     const beginRowDrag = (e: ReactMouseEvent) => {
       if (e.button !== 0) return;
       if ((e.target as HTMLElement).closest("input,button")) return;
-      if (renamingId === s.id || query) return;
+      if (renamingId === s.id || trimmedQuery) return;
       const pending = { id: s.id, section, title: s.title, startX: e.clientX, startY: e.clientY, active: false };
       dragRef.current = pending;
       const onMove = (ev: PointerEvent): void => {
@@ -814,14 +869,10 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
           </span>
         )}
         {renderPrChip(s)}
-        {section === "resolved" ? (
-          <span className="flat-age done">
-            <Check size={12} aria-hidden="true" />
-            {ageLabel(s.updatedAt)}
-          </span>
-        ) : (
-          <span className="flat-age">{ageLabel(s.updatedAt)}</span>
-        )}
+        <span className="flat-age">
+          {section === "resolved" && <Check size={12} aria-hidden="true" />}
+          {ageLabel(s.updatedAt)}
+        </span>
         <DriverIcon driver={s.driver} size={14} />
       </div>
     );
@@ -845,7 +896,7 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
           className={`side-new-session${newSessionActive ? " active" : ""}`}
           onClick={() => {
             openSessionView();
-            store.startNewSession();
+            startNewSession();
           }}
           title="New session (Ctrl+T)"
         >
@@ -917,14 +968,14 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
                   >
                     All
                   </button>
-                  {QUICK_FILTER_UI.map(({ id, label, Icon }) => (
+                  {QUICK_FILTER_UI.map(({ id, label, hint, Icon }) => (
                     <button
                       key={id}
                       type="button"
                       className={`side-qf${quickFilter === id ? " on" : ""}${quickCounts[id] === 0 ? " is-zero" : ""}`}
                       onClick={() => setQuickFilter((current) => toggleQuickFilter(current, id))}
                       aria-pressed={quickFilter === id}
-                      title={`${label} (${quickCounts[id]})`}
+                      title={`${hint} (${quickCounts[id]})`}
                       aria-label={`${label}, ${quickCounts[id]}`}
                     >
                       <Icon size={12} aria-hidden="true" />
@@ -934,7 +985,6 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
                 </span>
               </div>
               {workingSetShown.map((s) => renderWorkingRow(s))}
-              {workingSetShown.length === 0 && <div className="side-empty">No matches.</div>}
             </div>
           )}
           {idleShown.length > 0 && (
@@ -954,23 +1004,30 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
             </div>
           )}
           {needsYouShown.length === 0 && workingSetShown.length === 0 && idleShown.length === 0 && resolvedShown.length === 0 && (
-            <div className="side-empty">{query || quickFilter !== "all" ? "No matches." : "No sessions yet."}</div>
+            <div className="side-empty">{trimmedQuery || quickFilter !== "all" ? "No matches." : "No sessions yet."}</div>
           )}
         </div>
         {resolvedShown.length > 0 && (
           <div className="side-section">
-            <button
-              type="button"
-              className="side-sec session-resolved-toggle"
-              ref={resolvedToggleRef}
-              onClick={() => setResolvedOpen((open) => !open)}
-              aria-expanded={resolvedExpanded}
-              aria-label={`${resolvedExpanded ? "Collapse" : "Expand"} resolved sessions`}
-            >
-              <ChevronRight size={12} className={`side-sec-chev${resolvedExpanded ? " open" : ""}`} aria-hidden="true" />
-              Resolved
-              <span className="side-sec-n">{resolvedShown.length}</span>
-            </button>
+            {trimmedQuery ? (
+              <div className="side-sec session-resolved-toggle is-static">
+                Resolved
+                <span className="side-sec-n">{resolvedShown.length}</span>
+              </div>
+            ) : (
+              <button
+                type="button"
+                className="side-sec session-resolved-toggle"
+                ref={resolvedToggleRef}
+                onClick={() => setResolvedOpen((open) => !open)}
+                aria-expanded={resolvedExpanded}
+                aria-label={`${resolvedExpanded ? "Collapse" : "Expand"} resolved sessions`}
+              >
+                <ChevronRight size={12} className={`side-sec-chev${resolvedExpanded ? " open" : ""}`} aria-hidden="true" />
+                Resolved
+                <span className="side-sec-n">{resolvedShown.length}</span>
+              </button>
+            )}
             {resolvedExpanded && resolvedShown.map((s) => renderFlatRow(s, "resolved"))}
           </div>
         )}

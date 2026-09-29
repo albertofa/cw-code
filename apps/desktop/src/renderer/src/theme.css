@@ -35,6 +35,7 @@
   --violet-line: rgba(161, 140, 255, 0.45);
   --success: #59a659;
   --warning: #e8b44f;
+  --on-warning: #201b10;
   --danger: #e06c60;
   --accent: #548af7;
   --accent-soft: color-mix(in srgb, var(--accent) 15%, transparent);
@@ -741,7 +742,7 @@ body {
   align-items: center;
   gap: 6px;
   padding: 14px 8px 6px;
-  color: rgba(233, 234, 240, 0.72);
+  color: color-mix(in srgb, var(--text) 72%, transparent);
   font-size: var(--t-xs);
   font-weight: 500;
 }
@@ -773,7 +774,7 @@ body {
   display: inline-grid;
   place-items: center;
   background: var(--warning);
-  color: #201b10;
+  color: var(--on-warning);
   font-size: var(--t-3xs);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
@@ -825,7 +826,11 @@ body {
   cursor: pointer;
 }
 
-.session-resolved-toggle:hover {
+.session-resolved-toggle.is-static {
+  cursor: default;
+}
+
+button.session-resolved-toggle:hover {
   color: var(--text);
 }
 

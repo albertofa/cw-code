@@ -7,7 +7,7 @@ export const QUICK_FILTERS: readonly Exclude<QuickFilter, "all">[] = ["running",
 export interface QuickFilterFacts {
   status: SessionStatus;
   linkCount: number;
-  unseen: boolean;
+  prUpdated: boolean;
 }
 
 export function matchesQuickFilter(filter: QuickFilter, facts: QuickFilterFacts): boolean {
@@ -19,14 +19,14 @@ export function matchesQuickFilter(filter: QuickFilter, facts: QuickFilterFacts)
     case "pr":
       return facts.linkCount > 0;
     case "updated":
-      return facts.unseen;
+      return facts.prUpdated;
   }
 }
 
 export function quickFilterCounts(items: QuickFilterFacts[]): Record<Exclude<QuickFilter, "all">, number> {
   const counts = { running: 0, pr: 0, updated: 0 };
   for (const item of items) {
-    if (item.status === "archived") continue;
+    if (item.status === "archived" || item.status === "resolved") continue;
     for (const filter of QUICK_FILTERS) if (matchesQuickFilter(filter, item)) counts[filter] += 1;
   }
   return counts;
