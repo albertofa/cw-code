@@ -351,7 +351,7 @@ describe("ClaudeCliDriver persistent process", () => {
     driver.dispose();
   });
 
-  it("emits the reported permission mode on first init and again only when it changes", async () => {
+  it("emits the reported permission mode when it changes and clears it when init omits it", async () => {
     const { driver, events, children } = makeDriver();
     const handle = driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go", permissionMode: "bypassPermissions" });
     await settle();
@@ -360,9 +360,12 @@ describe("ClaudeCliDriver persistent process", () => {
     await settle();
     children[0].stdout.write(`${JSON.stringify({ type: "system", subtype: "init", permissionMode: "acceptEdits" })}\n`);
     await settle();
+    children[0].stdout.write(`${JSON.stringify({ type: "system", subtype: "init" })}\n`);
+    await settle();
     expect(events.filter((event) => event.type === "permission.mode.reported")).toEqual([
       { type: "permission.mode.reported", turnId: handle.turnId, mode: "manual" },
-      { type: "permission.mode.reported", turnId: handle.turnId, mode: "acceptEdits" }
+      { type: "permission.mode.reported", turnId: handle.turnId, mode: "acceptEdits" },
+      { type: "permission.mode.reported", turnId: handle.turnId, mode: null }
     ]);
     driver.dispose();
   });

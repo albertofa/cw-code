@@ -389,7 +389,7 @@ export class SessionManager {
     }
     if (event.type === "permission.mode.reported") {
       if (sessionId) {
-        this.store.updateSession(sessionId, { effectivePermissionMode: event.mode });
+        this.store.updateSession(sessionId, { effectivePermissionMode: event.mode ?? undefined });
         if (this.store.getSession(sessionId)) this.emitSession(sessionId);
       }
     }

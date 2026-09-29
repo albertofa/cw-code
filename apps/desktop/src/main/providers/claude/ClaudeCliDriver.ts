@@ -498,9 +498,9 @@ export class ClaudeCliDriver implements CliDriver {
     if (systemInit) {
       recordClaudeTerminalCommands(state.binary, state.cwd, systemInit.terminalSlashCommands);
       if (systemInit.model) state.mainModel = systemInit.model;
-      if (systemInit.permissionMode && state.reportedPermissionMode !== systemInit.permissionMode) {
+      if (state.reportedPermissionMode !== systemInit.permissionMode) {
         state.reportedPermissionMode = systemInit.permissionMode;
-        this.emit({ type: "permission.mode.reported", turnId: state.activeTurnId, mode: systemInit.permissionMode });
+        this.emit({ type: "permission.mode.reported", turnId: state.activeTurnId, mode: systemInit.permissionMode ?? null });
       }
       return;
     }

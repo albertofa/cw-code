@@ -1166,8 +1166,15 @@ describe("SessionManager", () => {
       turnId,
       mode: "acceptEdits"
     });
-    const sessions = await manager.listSessions(project.id);
+    let sessions = await manager.listSessions(project.id);
     expect(sessions.find((s) => s.id === a.id)?.effectivePermissionMode).toBe("acceptEdits");
+    (manager as unknown as { routeEvent(e: ThreadEvent): void }).routeEvent({
+      type: "permission.mode.reported",
+      turnId,
+      mode: null
+    });
+    sessions = await manager.listSessions(project.id);
+    expect(sessions.find((s) => s.id === a.id)?.effectivePermissionMode).toBeUndefined();
     manager.dispose();
   });
 

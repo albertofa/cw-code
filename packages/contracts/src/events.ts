@@ -110,7 +110,7 @@ export type ThreadEvent =
     }
   | { type: "approval.request"; turnId: string; request: ApprovalRequest }
   | { type: "approval.resolved"; turnId: string; requestId: string }
-  | { type: "permission.mode.reported"; turnId: string; mode: string }
+  | { type: "permission.mode.reported"; turnId: string; mode: string | null }
   | { type: "question.request"; turnId: string; request: QuestionRequest }
   | {
       type: "question.resolved";
