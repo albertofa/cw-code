@@ -105,6 +105,8 @@ function FileTree({
   );
 }
 
+const FILE_NOT_FOUND = /ENOENT|not found/i;
+
 function baseName(path: string): string {
   const i = path.lastIndexOf("/");
   return i >= 0 ? path.slice(i + 1) : path;
@@ -240,7 +242,7 @@ export function FilePanel({ sessionId }: { sessionId: string }) {
     loadDir(sessionId, seqRef.current, path);
   };
 
-  const open = (path: string, line?: number) => {
+  const open = (path: string, line?: number, revealed = false) => {
     const sid = sessionId;
     const seq = seqRef.current;
     requestedFileRef.current = path;
@@ -258,7 +260,11 @@ export function FilePanel({ sessionId }: { sessionId: string }) {
       })
       .catch((err: Error) => {
         if (seqRef.current !== seq || requestedFileRef.current !== path) return;
-        setStatus(`read failed for ${path}: ${err.message}`);
+        setStatus(
+          revealed && FILE_NOT_FOUND.test(err.message)
+            ? `File not found in this workspace: ${path}`
+            : `read failed for ${path}: ${err.message}`
+        );
       });
   };
 
@@ -266,7 +272,7 @@ export function FilePanel({ sessionId }: { sessionId: string }) {
     if (!revealRequest || revealRequest.sessionId !== sessionId) return;
     if (revealRequest.nonce === handledRevealRef.current) return;
     handledRevealRef.current = revealRequest.nonce;
-    open(revealRequest.path, revealRequest.line);
+    open(revealRequest.path, revealRequest.line, true);
     clearRevealRequest(revealRequest.nonce);
   }, [revealRequest, sessionId, clearRevealRequest]);
 

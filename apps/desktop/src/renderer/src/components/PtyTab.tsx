@@ -6,6 +6,12 @@ import { resolveTerminalFont } from "../appearanceFonts.js";
 import type { DriverName } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 
+function forceCellRemeasure(term: Terminal, font: { family: string; size: number }): void {
+  term.options.fontFamily = "monospace";
+  term.options.fontFamily = font.family;
+  term.options.fontSize = font.size;
+}
+
 export function PtyTab({ sessionId, kind }: { sessionId: string; kind: DriverName | "shell" }) {
   const divRef = useRef<HTMLDivElement>(null);
   const [error, setError] = useState<string | null>(null);
@@ -67,6 +73,20 @@ export function PtyTab({ sessionId, kind }: { sessionId: string; kind: DriverNam
 
     refitRef.current = scheduleFit;
 
+    const remeasureWhenFontLoads = (created: Terminal) => {
+      const { family, size } = terminalFontRef.current;
+      document.fonts
+        .load(`${size}px ${family}`)
+        .catch((err: unknown) => {
+          console.warn(`[pty] terminal font failed to load (${family}): ${err instanceof Error ? err.message : String(err)}`);
+        })
+        .then(() => {
+          if (disposed || termRef.current !== created) return;
+          forceCellRemeasure(created, terminalFontRef.current);
+          scheduleFit();
+        });
+    };
+
     const start = () => {
       if (disposed || !divRef.current) return;
       term = new Terminal({
@@ -103,6 +123,7 @@ export function PtyTab({ sessionId, kind }: { sessionId: string; kind: DriverNam
       term.loadAddon(fitAddon);
       term.open(divRef.current);
       fitAndPush();
+      remeasureWhenFontLoads(term);
 
       offPty = window.cw.onPtyData((msg) => {
         if (msg.ptyId !== ptyIdRef.current) {

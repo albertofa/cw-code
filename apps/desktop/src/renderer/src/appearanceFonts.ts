@@ -14,7 +14,9 @@ export type AppearancePrefs = Pick<
 >;
 
 export const DEFAULT_SANS_STACK = '"Segoe UI", system-ui, sans-serif';
-export const DEFAULT_MONO_STACK = '"JetBrains Mono Variable", "JetBrains Mono", "Cascadia Code", Consolas, monospace';
+export const DEFAULT_MONO_PRIMARY = '"JetBrains Mono Variable", "JetBrains Mono"';
+export const DEFAULT_MONO_REST = '"Cascadia Code", Consolas, monospace';
+export const DEFAULT_MONO_STACK = `${DEFAULT_MONO_PRIMARY}, ${DEFAULT_MONO_REST}`;
 export const TERMINAL_GLYPH_FALLBACK = '"Symbols Nerd Font Mono", "CaskaydiaCove Nerd Font", "JetBrainsMono Nerd Font"';
 
 export const DEFAULT_APPEARANCE: AppearancePrefs = {
@@ -85,8 +87,12 @@ export function fontStack(custom: string, fallback: string): string {
 
 export function resolveTerminalFont(p: AppearancePrefs): { family: string; size: number } {
   const chosen = p.typographyAdvanced && p.fontFamilyTerminal ? p.fontFamilyTerminal : p.fontFamilyMono;
+  const custom = cssFontFamilies(chosen);
+  const family = custom
+    ? `${custom}, ${TERMINAL_GLYPH_FALLBACK}, ${DEFAULT_MONO_STACK}`
+    : `${DEFAULT_MONO_PRIMARY}, ${TERMINAL_GLYPH_FALLBACK}, ${DEFAULT_MONO_REST}`;
   return {
-    family: fontStack(chosen, `${TERMINAL_GLYPH_FALLBACK}, ${DEFAULT_MONO_STACK}`),
+    family,
     size: p.typographyAdvanced ? p.fontSizeTerminal : p.fontSizeCode
   };
 }

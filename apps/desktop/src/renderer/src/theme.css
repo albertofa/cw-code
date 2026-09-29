@@ -931,7 +931,7 @@ body {
 
 .working-card:hover {
   border-color: color-mix(in srgb, #8ea3c7 35%, var(--border));
-  background: linear-gradient(180deg, rgba(142, 163, 199, 0.16), rgba(142, 163, 199, 0.05)), var(--bg-deep);
+  background: var(--hover);
 }
 
 .working-card.status-input-required {
@@ -5837,15 +5837,16 @@ input[type="checkbox"]:not(.settings-switch input):focus-visible {
   outline-offset: 2px;
 }
 
-.md ul:has(> li > input[type="checkbox"]) {
+.md ul.contains-task-list {
   padding-left: 1.5rem;
 }
 
-.md li:has(> input[type="checkbox"]) {
+.md li.task-list-item {
   list-style: none;
 }
 
-.md li > input[type="checkbox"]:disabled {
+.md li.task-list-item > input[type="checkbox"]:disabled,
+.md li.task-list-item > p > input[type="checkbox"]:disabled {
   margin: 0 0.5rem 0 -1.5rem;
   vertical-align: -0.2em;
   opacity: 1;
@@ -7751,10 +7752,9 @@ button.gitbar-checkout:hover {
 }
 
 .harness-row .lbl {
-  font-size: var(--t-2xs);
+  font-size: var(--t-xs);
+  font-weight: 500;
   color: var(--faint);
-  text-transform: uppercase;
-  letter-spacing: 0.08em;
 }
 
 .skill-htoggle-lg {
@@ -8054,7 +8054,7 @@ button.gitbar-checkout:hover {
   font-size: var(--t-xs);
 }
 
-.binary-picker-row:focus-within {
+.binary-picker-row:has(input:focus-visible) {
   outline: 2px solid var(--violet-ink);
   outline-offset: 1px;
 }
@@ -8505,10 +8505,9 @@ button.gitbar-checkout:hover {
 
 .settings-prwf-global h4 {
   margin: 10px 0 2px;
-  font-size: var(--t-2xs);
+  font-size: var(--t-xs);
+  font-weight: 500;
   color: var(--muted);
-  text-transform: uppercase;
-  letter-spacing: 0.05em;
 }
 
 .settings-prwf-global h4:first-child {
@@ -8810,10 +8809,8 @@ button.gitbar-checkout:hover {
 
 .wf-run-label {
   color: var(--faint);
-  font-size: var(--t-2xs);
-  font-weight: 600;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  font-size: var(--t-xs);
+  font-weight: 500;
 }
 
 .wf-run-pickers {
