@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useShallow } from "zustand/react/shallow";
 import type { DriverName } from "./cw.js";
 import { applyAppearance } from "./appearanceFonts.js";
@@ -23,6 +23,7 @@ import { ToolRail } from "./components/ToolRail.js";
 import { useToolAvailability } from "./components/useToolAvailability.js";
 import { useTabMenu } from "./components/TabMenu.js";
 import { useDockDrop } from "./components/useDockDrop.js";
+import { useResizableWidth } from "./components/useResizableWidth.js";
 import { usePanelAnimationMs, usePresence } from "./components/usePresence.js";
 import { Notifications, useNotifs } from "./components/Notifications.js";
 import { useAttentionBadge } from "./components/useAttentionBadge.js";
@@ -39,20 +40,8 @@ import type { TurnEvent } from "./cw.js";
 const VERSION_NOTIF_ID = "cli-versions";
 const BINARY_NOTIF_ID = "cli-binaries";
 
-const RIGHT_WIDTH_KEY = "cw-code:rightWidth";
 const RIGHT_WIDTH_DEFAULT = 520;
-const RIGHT_WIDTH_MIN = 320;
-const RIGHT_WIDTH_MAX = 800;
-
-function loadRightWidth(): number {
-  try {
-    const raw = window.localStorage.getItem(RIGHT_WIDTH_KEY);
-    const n = raw == null ? NaN : Number.parseInt(raw, 10);
-    if (Number.isFinite(n)) return Math.min(RIGHT_WIDTH_MAX, Math.max(RIGHT_WIDTH_MIN, n));
-  } catch {
-  }
-  return RIGHT_WIDTH_DEFAULT;
-}
+const SIDE_WIDTH_DEFAULT = 320;
 
 const pendingDeltas = new Map<string, string>();
 let deltaRaf = 0;
@@ -135,10 +124,12 @@ export function App() {
 
   const panelAnimationMs = usePanelAnimationMs();
   const rightPresence = usePresence(rightVisible, panelAnimationMs);
-  const [rightWidth, setRightWidth] = useState(loadRightWidth);
+  const rightResize = useResizableWidth({ storageKey: "cw-code:rightWidth", min: 320, max: 800, grow: "left" });
+  const rightWidth = rightResize.width ?? RIGHT_WIDTH_DEFAULT;
+  const sideResize = useResizableWidth({ storageKey: "cw-code:sidebarWidth", min: 220, max: 480, grow: "right" });
+  const shellStyle: CSSProperties & { "--side-w"?: string } = sideResize.width === null ? {} : { "--side-w": `${sideResize.width}px` };
   const [preloadError, setPreloadError] = useState<string | null>(null);
   const [skillsOpen, setSkillsOpen] = useState(false);
-  const dragRef = useRef<{ startX: number; startWidth: number } | null>(null);
   const { confirm, dialog: confirmDialog } = useConfirm();
   const settingsActive = mainView.kind === "settings";
 
@@ -166,37 +157,8 @@ export function App() {
   const leaveSettingsRef = useRef(leaveSettings);
   leaveSettingsRef.current = leaveSettings;
 
-  const applyRightWidth = (n: number) => {
-    const clamped = Math.min(RIGHT_WIDTH_MAX, Math.max(RIGHT_WIDTH_MIN, Math.round(n)));
-    setRightWidth(clamped);
-    try {
-      window.localStorage.setItem(RIGHT_WIDTH_KEY, String(clamped));
-    } catch {
-    }
-  };
-
-  const onResizeStart = (e: ReactMouseEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    dragRef.current = { startX: e.clientX, startWidth: rightWidth };
-    const onMove = (ev: MouseEvent) => {
-      const d = dragRef.current;
-      if (!d) return;
-      applyRightWidth(d.startWidth + (d.startX - ev.clientX));
-    };
-    const onUp = () => {
-      dragRef.current = null;
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-      document.body.style.userSelect = "";
-      document.body.style.cursor = "";
-      document.body.classList.remove("resizing");
-    };
-    document.body.classList.add("resizing");
-    document.body.style.userSelect = "none";
-    document.body.style.cursor = "col-resize";
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-  };
+  const sideWidthNow = () =>
+    document.querySelector<HTMLElement>(".app-body > .side:not([hidden])")?.offsetWidth ?? sideResize.width ?? SIDE_WIDTH_DEFAULT;
 
   useEffect(() => {
     if (!window.cw) {
@@ -426,6 +388,7 @@ export function App() {
     <div
       className={`app-shell${rightVisible && !settingsActive ? "" : " right-hidden"}${settingsActive ? " rail-hidden" : ""}`}
       data-driver={driver ?? "none"}
+      style={shellStyle}
     >
       {preloadError && <div className="preload-error">{preloadError}</div>}
       {!preloadError && (
@@ -434,6 +397,24 @@ export function App() {
           <Sidebar onOpenSkills={() => setSkillsOpen(true)} skillsOpen={skillsOpen} hidden={settingsActive} />
           {mainView.kind === "settings" && (
             <SettingsNav active={navIdOf(mainView.section, mainView.harness)} onBack={() => void leaveSettings(() => usePrStore.getState().openSessionView())} />
+          )}
+          {!settingsActive && (
+            <div className="side-resizer-slot">
+              <div
+                className="side-resizer"
+                role="separator"
+                aria-orientation="vertical"
+                aria-label="Resize sidebar"
+                aria-valuemin={220}
+                aria-valuemax={480}
+                aria-valuenow={sideResize.width ?? undefined}
+                tabIndex={0}
+                title="Drag to resize · double-click to reset"
+                onMouseDown={(e) => sideResize.onResizeStart(e, sideWidthNow())}
+                onKeyDown={(e) => sideResize.onResizeKey(e, sideWidthNow())}
+                onDoubleClick={() => sideResize.setWidth(null)}
+              />
+            </div>
           )}
           <div className="main-col">
             {mainView.kind === "settings" ? (
@@ -463,8 +444,8 @@ export function App() {
               <div className="right-inner" style={{ width: rightWidth }}>
                 <div
                   className="right-resizer"
-                  onMouseDown={onResizeStart}
-                  onDoubleClick={() => applyRightWidth(RIGHT_WIDTH_DEFAULT)}
+                  onMouseDown={(e) => rightResize.onResizeStart(e, rightWidth)}
+                  onDoubleClick={() => rightResize.setWidth(null)}
                   title="Drag to resize · double-click to reset"
                 />
                 {activeSessionId && topTool !== null ? (

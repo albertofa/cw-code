@@ -410,7 +410,7 @@ body {
 }
 
 .side {
-  width: 320px;
+  width: var(--side-w, 320px);
   flex: none;
   display: flex;
   flex-direction: column;
@@ -1126,7 +1126,7 @@ body.session-dragging * {
   pointer-events: none;
   max-width: 240px;
   background: var(--raised);
-  border: 1px solid var(--driver);
+  border: 1px solid var(--violet-line);
   border-radius: var(--r-md);
   padding: 7px 9px;
   box-shadow: 0 12px 32px rgba(0, 0, 0, 0.55);
@@ -1138,8 +1138,8 @@ body.session-dragging * {
 
 @keyframes session-land {
   0% {
-    background: var(--driver-soft);
-    box-shadow: inset 2px 0 0 var(--driver);
+    background: var(--violet-soft);
+    box-shadow: inset 2px 0 0 var(--violet);
   }
 
   100% {
@@ -1219,7 +1219,7 @@ body.session-dragging * {
 }
 
 .ctx-item:hover {
-  background: var(--driver-soft);
+  background: var(--hover);
 }
 
 .session-hovercard {
@@ -1294,7 +1294,7 @@ body.session-dragging * {
 }
 
 .session-hovercard-action:hover {
-  background: var(--driver-soft);
+  background: var(--hover);
 }
 
 .session-hovercard-action > svg {
@@ -1437,7 +1437,7 @@ body.session-dragging * {
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--driver);
+  background: var(--success);
   animation: cw-status-pulse 2s infinite;
 }
 
@@ -1616,7 +1616,7 @@ body.session-dragging * {
 }
 
 .reasoning-live .reasoning-icon {
-  color: var(--driver);
+  color: var(--success);
   animation: cw-status-pulse 2s infinite;
 }
 
@@ -2385,7 +2385,7 @@ body.session-dragging * {
 }
 
 .tool-state.running {
-  color: var(--driver);
+  color: var(--success);
   animation: cw-status-pulse 2s infinite;
 }
 
@@ -3562,7 +3562,7 @@ body.session-dragging * {
 
 .empty-mark {
   font-size: var(--t-2xl);
-  color: var(--driver);
+  color: var(--violet-ink);
 }
 
 .right {
@@ -3602,16 +3602,23 @@ body.resizing .bottom-panel {
   }
 }
 
-.right-resizer {
+.side-resizer-slot {
+  position: relative;
+  flex: none;
+  width: 0;
+  z-index: 10;
+}
+
+.side-resizer {
   position: absolute;
   left: -6px;
   top: 0;
   bottom: 0;
   width: 11px;
   cursor: col-resize;
-  z-index: 10;
 }
 
+.side-resizer::after,
 .right-resizer::after {
   content: "";
   position: absolute;
@@ -3623,8 +3630,28 @@ body.resizing .bottom-panel {
   background: transparent;
 }
 
+.side-resizer:hover::after,
+body.resizing .side-resizer:active::after,
 .right-resizer:hover::after {
-  background: var(--driver);
+  background: var(--border-strong);
+}
+
+.side-resizer:focus-visible {
+  outline: none;
+}
+
+.side-resizer:focus-visible::after {
+  background: var(--violet-ink);
+}
+
+.right-resizer {
+  position: absolute;
+  left: -6px;
+  top: 0;
+  bottom: 0;
+  width: 11px;
+  cursor: col-resize;
+  z-index: 10;
 }
 
 .tab {
@@ -4209,7 +4236,7 @@ body.resizing .bottom-panel {
 }
 
 .notif.info {
-  border-left-color: var(--driver);
+  border-left-color: var(--accent);
 }
 
 .notif.success {
@@ -4294,7 +4321,7 @@ body.resizing .bottom-panel {
   }
 
   25% {
-    box-shadow: 0 0 0 2px var(--driver);
+    box-shadow: 0 0 0 2px var(--violet-ink);
   }
 }
 
@@ -4320,7 +4347,7 @@ body.resizing .bottom-panel {
 }
 
 .suba-dot.running {
-  background: var(--driver);
+  background: var(--success);
   animation: cw-status-pulse 2s infinite;
 }
 
@@ -4341,7 +4368,7 @@ body.resizing .bottom-panel {
 }
 
 .suba-state.running {
-  color: var(--driver);
+  color: var(--success);
   animation: cw-status-pulse 2s infinite;
 }
 
@@ -4460,7 +4487,7 @@ body.resizing .bottom-panel {
 
 .agents-row.is-open {
   background: #292c31;
-  box-shadow: inset 3px 0 0 var(--driver);
+  box-shadow: inset 2px 0 0 var(--violet);
 }
 
 .agents-row.flash {
@@ -4528,7 +4555,7 @@ body.resizing .bottom-panel {
 }
 
 .agents-row.is-open .agents-row-chev {
-  color: var(--driver);
+  color: var(--violet-ink);
 }
 
 .agents-row.is-open .agents-row-chev svg {
@@ -4598,8 +4625,8 @@ body.resizing .bottom-panel {
   display: grid;
   place-items: center;
   border-radius: 8px;
-  background: var(--driver-soft);
-  color: var(--driver);
+  background: var(--raised);
+  color: var(--dim);
 }
 
 .agents-hero-name {
@@ -4622,9 +4649,9 @@ body.resizing .bottom-panel {
 }
 
 .agents-hero-chips .suba-badge.model {
-  border-color: var(--driver);
-  background: var(--driver-soft);
-  color: var(--driver);
+  border-color: var(--border);
+  background: var(--raised);
+  color: var(--dim);
 }
 
 .agents-hero-state {
@@ -4761,7 +4788,7 @@ body.resizing .bottom-panel {
 }
 
 .agents-tool-icon.running {
-  color: var(--driver);
+  color: var(--success);
   animation: cw-status-pulse 2s infinite;
 }
 
@@ -5090,7 +5117,7 @@ select.field option {
 
 @media (max-width: 1380px) {
   .side {
-    width: 276px;
+    width: var(--side-w, 276px);
   }
 
   :root {
@@ -5112,7 +5139,7 @@ select.field option {
 
 @media (max-width: 1120px) {
   .side {
-    width: 248px;
+    width: var(--side-w, 248px);
   }
 
   .composer-recipe-row {
@@ -5126,7 +5153,8 @@ select.field option {
 }
 
 @media (max-width: 900px) {
-  .side {
+  .side,
+  .side-resizer-slot {
     display: none;
   }
 
