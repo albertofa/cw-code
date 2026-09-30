@@ -402,6 +402,7 @@ function windowFromSender(sender: WebContents): BrowserWindow | null {
 
 const ZOOM_MIN = -5;
 const ZOOM_MAX = 5;
+const ZOOM_STEP = 0.5;
 
 function bumpZoom(sender: WebContents, delta: number): void {
   const w = windowFromSender(sender);
@@ -465,8 +466,8 @@ function registerWindowIpc(): void {
   ipcMain.on("win.close", (e) => windowFromSender(e.sender)?.close());
   ipcMain.handle("win.is-maximized", (e) => windowFromSender(e.sender)?.isMaximized() ?? false);
 
-  ipcMain.on("win.zoom-in", (e) => bumpZoom(e.sender, 1));
-  ipcMain.on("win.zoom-out", (e) => bumpZoom(e.sender, -1));
+  ipcMain.on("win.zoom-in", (e) => bumpZoom(e.sender, ZOOM_STEP));
+  ipcMain.on("win.zoom-out", (e) => bumpZoom(e.sender, -ZOOM_STEP));
   ipcMain.on("win.zoom-reset", (e) => windowFromSender(e.sender)?.webContents.setZoomLevel(0));
   ipcMain.on("app.attention", (e, payload: unknown) => applyAttention(e.sender, payload));
 }
