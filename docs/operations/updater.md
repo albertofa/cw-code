@@ -138,10 +138,10 @@ service, whether it came from IPC or from a timer.
 | `alpha` | true | `alpha` | Stable or `X.Y.Z-alpha.N` newer than the running version |
 
 - The default channel is derived from the running version
-  (`0.0.1-alpha.21` → `alpha`) and frozen: on the first start with updates
-  enabled and `updateChannel` still `null`, main saves the derived channel. An
-  alpha tester who later receives a stable build through the alpha channel
-  therefore stays on alpha instead of silently moving to stable. Choosing a
+  (`X.Y.Z` → `stable`, `X.Y.Z-alpha.N` → `alpha`) and frozen: on the first start
+  with updates enabled and `updateChannel` still `null`, main saves the derived
+  channel. An alpha tester who later receives a stable build through the alpha
+  channel therefore stays on alpha instead of silently moving to stable. Choosing a
   channel in Settings overwrites it. Dev and other disabled builds never save
   it. The renderer uses the same rule (`components/updateChannel.ts`, parity
   tested against `channelOfVersion` in main).
@@ -360,11 +360,8 @@ updaterCacheDirName: '@cw-codedesktop-updater'
   installer's URL path, `/releases/download/v<new>/cw-code-Setup-<new>-x64.exe`
   becoming `.../v<old>/cw-code-Setup-<old>-x64.exe.blockmap`. That only resolves
   when the old release used the same tag and file naming and uploaded its
-  blockmap. The legacy `v0.0.1-alpha.21` release has neither (its asset is
-  `cw-code.Setup.0.0.1-alpha.21.exe`, no blockmap), so the first update from a
-  legacy install is always a full download of about 100 MB.
-  `previousBlockmapBaseUrlOverride` stays off; a full download is correct, just
-  larger.
+  blockmap. `previousBlockmapBaseUrlOverride` stays off; a full download is
+  correct, just larger.
 - No `alpha.yml`, even for an alpha version and with
   `generateUpdatesFilesForAllChannels: true`. In app-builder-lib 26.15.3,
   `computeChannelNames` returns only `publish.channel || "latest"` when

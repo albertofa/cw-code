@@ -6,9 +6,10 @@ toolchain, the node-pty native binary, and how to package and verify a build.
 
 ## Installer identity
 
-Audited from the released legacy installer `cw-code.Setup.0.0.1-alpha.21.exe`
-(unsigned, published manually as a GitHub release asset) and its installed state,
-read-only, without mutating the developer's live install:
+Audited from the legacy installer `cw-code.Setup.0.0.1-alpha.21.exe` (unsigned,
+published manually as a GitHub release asset, removed from the releases page on
+2026-09-29) and its installed state, read-only, without mutating the developer's
+live install:
 
 - `appId: com.cwcode.app`, `productName: cw-code`. Both are load-bearing: the NSIS
   upgrade GUID is a UUIDv5 electron-builder derives from `appId`.
@@ -210,8 +211,8 @@ diagnostic on timeout) before returning.
   measures install duration, runs the packaged startup probe against the
   installed exe — a renderer that failed to load or a node-pty that failed to
   spawn is recorded as a failure, not just logged — then uninstalls as above.
-- `--upgrade-from <legacy-installer.exe>` [`--custom-dir <dir>`] [`--per-machine`]:
-  installs the legacy installer first (per-user default location, a caller-given
+- `--upgrade-from <base-installer.exe>` [`--custom-dir <dir>`] [`--per-machine`]:
+  installs the base installer first (per-user default location, a caller-given
   `--custom-dir`, or per-machine `/allusers` — never combined), reads
   `InstallLocation`/`DisplayVersion`/`Publisher` from the applicable registry
   keys, seeds cw-code's **real** default data locations with sanitized fixture
@@ -236,23 +237,15 @@ diagnostic on timeout) before returning.
   empty. This only runs safely because it's gated to a disposable environment —
   it writes to the real per-user cw-code data paths on the runner.
 
-Because the legacy release and the default `apps/desktop/package.json` version
-can be equal, the CI job packages the "new" installer for these tests with an
-explicit, unambiguously higher version
-(`pnpm --filter @cw-code/desktop exec electron-builder --win nsis --x64
---publish never -c.extraMetadata.version=0.0.2-ci.<run_number>`, applied only
-in-memory during packaging — never committed to `package.json`), so the upgrade
-assertions are meaningful. This calls `electron-builder` directly rather than
-through the `dist` script: npm/pnpm only forward trailing `-- <args>` to a
-script that references `"$@"`, and adding that to a `&&`-joined script would
-break on Windows' `cmd.exe`, so passing extra electron-builder flags always goes
-through `pnpm exec` instead of the `dist`/`dist:dir` scripts.
+The `windows` CI job (`.github/workflows/ci.yml`) builds the canonical installer
+(`pnpm --filter @cw-code/desktop dist`), rejects any update autotest path in the
+packaged `app.asar`, runs `--install` (silent install, packaged startup probe,
+uninstall), and uploads the installer, blockmap and verifier JSON as a 7-day
+artifact. The job requests no permissions beyond `contents: read`, never
+publishes, and has a 45-minute timeout.
 
-All of the above are exercised by the `windows` CI job
-(`.github/workflows/ci.yml`): it builds the installer with the CI version
-override, runs `--install`, downloads the legacy `v0.0.1-alpha.21` release asset
-with the read-only `github.token`, then runs `--upgrade-from` three times (default
-per-user path, `--custom-dir`, `--per-machine`) against it, and uploads the
-installer, blockmap, and verifier JSON as a 7-day artifact. The job requests no
-permissions beyond `contents: read`, never publishes, and has a 45-minute
-timeout to bound the several install/uninstall cycles.
+`--upgrade-from` is not run in CI: installed upgrade coverage comes from
+`upgrade-test.yml` (including the `custom-dir` and `per-machine` scenarios) and
+from the release pipeline's N -> N+1 gate (`release.yml`). `--upgrade-from`
+remains for manual runs on a disposable VM, and the installer it points at must
+still be downloadable when the run starts.
