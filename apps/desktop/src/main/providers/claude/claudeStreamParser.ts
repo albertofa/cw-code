@@ -458,6 +458,7 @@ export function parseClaudeTaskSystemLine(line: string): ClaudeTaskSystemInfo | 
 export interface ClaudeSystemInitInfo {
   terminalSlashCommands: string[];
   model?: string;
+  permissionMode?: string;
 }
 
 interface SystemInitMsg {
@@ -465,6 +466,7 @@ interface SystemInitMsg {
   subtype?: unknown;
   terminal_slash_commands?: unknown;
   model?: unknown;
+  permissionMode?: unknown;
 }
 
 export function parseClaudeSystemInit(line: string): ClaudeSystemInitInfo | null {
@@ -480,7 +482,13 @@ export function parseClaudeSystemInit(line: string): ClaudeSystemInitInfo | null
     ? msg.terminal_slash_commands.filter((c): c is string => typeof c === "string")
     : [];
   const model = typeof msg.model === "string" && msg.model ? msg.model : undefined;
-  return { terminalSlashCommands, ...(model ? { model } : {}) };
+  const permissionMode =
+    typeof msg.permissionMode === "string" && msg.permissionMode ? msg.permissionMode : undefined;
+  return {
+    terminalSlashCommands,
+    ...(model ? { model } : {}),
+    ...(permissionMode ? { permissionMode } : {})
+  };
 }
 
 export interface ClaudeCompactBoundary {

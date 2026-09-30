@@ -15,6 +15,13 @@ export function Composer({ sessionId, driver }: { sessionId: string; driver: Dri
     }
     return null;
   });
+  const effectivePermissionMode = useAppStore((s) => {
+    for (const list of Object.values(s.sessionsByProject)) {
+      const match = list.find((session) => session.id === sessionId);
+      if (match) return match.effectivePermissionMode;
+    }
+    return undefined;
+  });
 
   useEffect(() => {
     void store.ensureComposer(sessionId);
@@ -24,6 +31,7 @@ export function Composer({ sessionId, driver }: { sessionId: string; driver: Dri
     imageTarget: { sessionId, projectId: projectId ?? undefined },
     prefs,
     busy,
+    effectivePermissionMode,
     loadModels: () => window.cw.listModels(sessionId),
     loadPermissions: () => window.cw.listPermissions(sessionId),
     loadFiles: () => window.cw.listFiles(sessionId),

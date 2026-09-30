@@ -49,6 +49,8 @@ export interface SessionMeta {
   effort?: EffortLevel;
   variant?: string;
   permissionMode?: PermissionMode;
+  /** Permission mode the harness CLI reports running in, which can differ from the requested mode. */
+  effectivePermissionMode?: string;
   /** The isolated checkout used by this session. Older/imported sessions omit it. */
   worktreePath?: string;
   /** Last known branch. Live Git status remains the source of truth. */

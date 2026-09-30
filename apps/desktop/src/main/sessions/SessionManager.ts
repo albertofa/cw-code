@@ -387,6 +387,12 @@ export class SessionManager {
         this.store.updateSession(sessionId, { status: "working" }, "approval-resolved");
       }
     }
+    if (event.type === "permission.mode.reported") {
+      if (sessionId) {
+        this.store.updateSession(sessionId, { effectivePermissionMode: event.mode ?? undefined });
+        if (this.store.getSession(sessionId)) this.emitSession(sessionId);
+      }
+    }
     this.onEvent(sessionId, event);
   }
 
