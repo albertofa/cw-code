@@ -64,15 +64,22 @@
   color: var(--dim);
 }
 
-.rail-b.away::after {
+.rail-b.away::after,
+.rail-b.parked::after {
   content: "";
   position: absolute;
   right: 4px;
   bottom: 4px;
   width: 5px;
   height: 5px;
+  box-sizing: border-box;
   border-radius: 50%;
   background: var(--muted);
+}
+
+.rail-b.parked::after {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--muted);
 }
 
 .rail-badge {
@@ -159,6 +166,100 @@
   box-shadow: inset 0 1px 0 var(--line), inset 0 -1px 0 var(--line);
 }
 
+.phead:not(.sub) {
+  gap: 6px;
+  padding-left: 6px;
+  container-type: inline-size;
+}
+
+.phead .ph-grab {
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: grab;
+}
+
+.ph-tabs {
+  flex: 1 1 auto;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+}
+
+.ph-tabs .tab {
+  flex: none;
+  height: 28px;
+  padding: 0 8px;
+  border-bottom: 0;
+  border-radius: 7px;
+  color: var(--muted);
+  white-space: nowrap;
+  -webkit-app-region: no-drag;
+}
+
+.ph-tabs .tab:hover:not(.active) {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.ph-tabs .tab.active {
+  background: var(--violet-soft);
+  color: var(--text);
+}
+
+.ph-tabs .tab:focus-visible {
+  outline: 2px solid var(--violet-ink);
+  outline-offset: -2px;
+}
+
+.ph-tabs .tab-icon,
+.ph-tabs .tab-x {
+  transition: none;
+}
+
+.ph-tabs .tab:hover .tab-icon {
+  opacity: 1;
+}
+
+.ph-tabs .tab-x {
+  position: static;
+  order: 1;
+  -webkit-app-region: no-drag;
+}
+
+.ph-tabs .tab.active .tab-x,
+.ph-tabs .tab:focus-visible .tab-x {
+  opacity: 1;
+}
+
+.ph-tabs .tab-mark {
+  flex: none;
+  color: var(--faint);
+}
+
+@container (max-width: 400px) {
+  .ph-tabs .tab:not(.active) .tab-label {
+    display: none;
+  }
+}
+
+@container (max-width: 240px) {
+  .ph-tabs .tab-label {
+    display: none;
+  }
+}
+
+.tab-driver {
+  display: inline-flex;
+  flex: none;
+}
+
 .phead .ph-ic {
   flex: none;
   color: var(--violet-ink);
@@ -221,4 +322,54 @@
 .right-split-divider:focus-visible {
   outline: 2px solid var(--violet-ink);
   outline-offset: -2px;
+}
+
+.right-body,
+.right-pane {
+  position: relative;
+}
+
+.split-drop {
+  position: absolute;
+  inset: 4px;
+  z-index: 20;
+  display: grid;
+  place-items: center;
+  border: 2px dashed var(--violet);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--violet) 10%, var(--tool));
+  color: var(--violet-ink);
+  animation: split-drop-in var(--dur-fast) var(--ease-out);
+  transition: background-color var(--dur-fast) var(--ease-out);
+}
+
+.right-body > .split-drop {
+  top: auto;
+  height: 35%;
+}
+
+.split-drop.over {
+  background: color-mix(in srgb, var(--violet) 24%, var(--tool));
+}
+
+.split-drop-label {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--t-xs);
+  font-weight: 600;
+  pointer-events: none;
+}
+
+@keyframes split-drop-in {
+  from {
+    opacity: 0;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .split-drop {
+    animation: none;
+    transition: none;
+  }
 }

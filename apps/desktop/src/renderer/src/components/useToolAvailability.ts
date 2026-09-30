@@ -4,7 +4,7 @@ import { useAppStore } from "../stores/appStore.js";
 import { resolveRightTop } from "../stores/panelLayout.js";
 import { selectSessionPanel, usePanelStore } from "../stores/panelStore.js";
 import { sessionLinks } from "./sessionPrLinks.js";
-import { TOOL_TABS, isToolTabAvailable } from "./toolTabs.js";
+import { toolAvailability } from "./toolTabs.js";
 
 export interface ToolAvailability {
   driver: DriverName | undefined;
@@ -24,12 +24,7 @@ export function useToolAvailability(sessionId: string | undefined): ToolAvailabi
   const driver = pendingDriver ?? session?.driver;
   const hasPr = pendingDriver === null && sessionLinks(session).length > 0;
 
-  const isToolAvailable = (tab: DockableTabId): boolean => {
-    if (tab === "preview") return hasPreview;
-    const def = TOOL_TABS.find((item) => item.id === tab);
-    return def !== undefined && isToolTabAvailable(def, driver, hasPr);
-  };
-
+  const isToolAvailable = toolAvailability(driver, hasPr, hasPreview);
   const rightTop = resolveRightTop(dockByTab, activeRight, isToolAvailable, driver);
   return { driver, hasPr, hasPreview, isToolAvailable, rightTop };
 }

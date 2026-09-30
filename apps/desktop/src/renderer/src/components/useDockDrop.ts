@@ -2,13 +2,31 @@ import { useEffect, useRef, useState, type DragEvent as ReactDragEvent } from "r
 import type { DockableTabId, PanelId } from "@cw-code/contracts";
 import { TAB_DRAG_SESSION_MIME, TAB_DRAG_MIME, resolveDrop } from "./dockable.js";
 import { isDockableTabId } from "../stores/panelLayout.js";
-import { usePanelStore } from "../stores/panelStore.js";
+import { selectSessionPanel, usePanelStore } from "../stores/panelStore.js";
+
+const RIGHT_OVERLAY_QUERY = "(max-width: 900px)";
 
 export interface DockDropBinding {
   onDragEnter: (e: ReactDragEvent<HTMLElement>) => void;
   onDragOver: (e: ReactDragEvent<HTMLElement>) => void;
   onDragLeave: () => void;
   onDrop: (e: ReactDragEvent<HTMLElement>) => void;
+}
+
+export interface DockDropOptions {
+  onDrop?: (tab: DockableTabId) => void;
+}
+
+function closeRightOverlay(sessionId: string): void {
+  if (!window.matchMedia?.(RIGHT_OVERLAY_QUERY).matches) return;
+  if (!selectSessionPanel(usePanelStore.getState(), sessionId).rightVisible) return;
+  requestAnimationFrame(() => usePanelStore.getState().setRightVisible(sessionId, false));
+  const onPointerMove = (e: PointerEvent) => {
+    if (e.buttons !== 0) return;
+    window.removeEventListener("pointermove", onPointerMove);
+    if (usePanelStore.getState().draggingTab !== null) usePanelStore.getState().setDraggingTab(null);
+  };
+  window.addEventListener("pointermove", onPointerMove);
 }
 
 export function startTabDrag(
@@ -25,6 +43,7 @@ export function startTabDrag(
   } catch {
   }
   e.currentTarget.classList.add("tab-dragging");
+  closeRightOverlay(sessionId);
 }
 
 export function endTabDrag(e: ReactDragEvent<HTMLElement>): void {
@@ -32,10 +51,15 @@ export function endTabDrag(e: ReactDragEvent<HTMLElement>): void {
   usePanelStore.getState().setDraggingTab(null);
 }
 
-export function useDockDrop(panel: PanelId, sessionId: string | undefined): { over: boolean; bind: DockDropBinding } {
+export function useDockDrop(
+  panel: PanelId,
+  sessionId: string | undefined,
+  options: DockDropOptions = {}
+): { over: boolean; bind: DockDropBinding } {
   const [over, setOver] = useState(false);
   const depthRef = useRef(0);
   const moveTab = usePanelStore((s) => s.moveTab);
+  const dragging = usePanelStore((s) => s.draggingTab !== null);
   useEffect(() => {
     const reset = () => {
       depthRef.current = 0;
@@ -48,6 +72,11 @@ export function useDockDrop(panel: PanelId, sessionId: string | undefined): { ov
       window.removeEventListener("drop", reset);
     };
   }, []);
+  useEffect(() => {
+    if (dragging) return;
+    depthRef.current = 0;
+    setOver(false);
+  }, [dragging]);
   return {
     over,
     bind: {
@@ -75,7 +104,10 @@ export function useDockDrop(panel: PanelId, sessionId: string | undefined): { ov
         e.stopPropagation();
         setOver(false);
         const sourceSessionId = e.dataTransfer.getData(TAB_DRAG_SESSION_MIME);
-        if (sourceSessionId === sessionId && sessionId) moveTab(sessionId, drop.tab, drop.panel);
+        if (sourceSessionId === sessionId && sessionId) {
+          if (options.onDrop) options.onDrop(drop.tab);
+          else moveTab(sessionId, drop.tab, drop.panel);
+        }
         usePanelStore.getState().setDraggingTab(null);
       }
     }

@@ -28,7 +28,7 @@ import { Notifications, useNotifs } from "./components/Notifications.js";
 import { useAttentionBadge } from "./components/useAttentionBadge.js";
 import { visibleLayerOpen } from "./components/openLayer.js";
 import { useAppStore } from "./stores/appStore.js";
-import { tabsInPanel, DOCKABLE_TABS } from "./stores/panelLayout.js";
+import { rightOpenTabs, DOCKABLE_TABS } from "./stores/panelLayout.js";
 import { selectSessionPanel, usePanelStore } from "./stores/panelStore.js";
 import { usePrStore } from "./stores/prStore.js";
 import { useSettingsDraftStore } from "./stores/settingsDraftStore.js";
@@ -417,9 +417,9 @@ export function App() {
   );
 
   const { driver, hasPr, hasPreview, isToolAvailable, rightTop: topTool } = useToolAvailability(activeSessionId ?? undefined);
-  const availableRightIds = tabsInPanel(dockByTab, "right").filter(isToolAvailable);
+  const rightTabs = rightOpenTabs(dockByTab, isToolAvailable);
   const splitTool: DockableTabId | null =
-    rightSplit !== null && rightSplit !== topTool && availableRightIds.includes(rightSplit) ? rightSplit : null;
+    rightSplit !== null && rightSplit !== topTool && rightTabs.includes(rightSplit) ? rightSplit : null;
   const allTabsClosed = DOCKABLE_TABS.every((id) => dockByTab[id] === "closed" || (id === "pr" && !hasPr));
 
   return (
@@ -470,10 +470,13 @@ export function App() {
                 {activeSessionId && topTool !== null ? (
                   <RightPanelBody
                     sessionId={activeSessionId}
+                    tabs={rightTabs}
                     top={topTool}
                     split={splitTool}
                     ratio={rightSplitRatio}
+                    isToolAvailable={isToolAvailable}
                     onToolMenu={tabMenu.onTabMenuButton}
+                    onToolContextMenu={tabMenu.onTabContextMenu}
                   />
                 ) : (
                   <div className="right-body">

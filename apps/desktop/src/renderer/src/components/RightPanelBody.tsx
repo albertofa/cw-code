@@ -1,29 +1,58 @@
 import { useEffect, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
+import { Rows2 } from "lucide-react";
 import type { DockableTabId } from "@cw-code/contracts";
-import { SPLIT_RATIO_DEFAULT, SPLIT_RATIO_MAX, SPLIT_RATIO_MIN, clampSplitRatio } from "../stores/panelLayout.js";
-import { usePanelStore } from "../stores/panelStore.js";
-import { PaneHeader } from "./PaneHeader.js";
+import {
+  SPLIT_RATIO_DEFAULT,
+  SPLIT_RATIO_MAX,
+  SPLIT_RATIO_MIN,
+  clampSplitRatio,
+  resolveSplitDrop
+} from "../stores/panelLayout.js";
+import { selectSessionPanel, usePanelStore } from "../stores/panelStore.js";
+import { PaneHeader, PaneTabsHeader } from "./PaneHeader.js";
 import { ToolContent } from "./ToolContent.js";
+import { useDockDrop } from "./useDockDrop.js";
 import "./toolRail.css";
 
 const SPLIT_RATIO_KEY_STEP = 0.02;
 
 const toPercent = (value: number): number => Math.round(value * 100);
 
+function SplitDropZone({ sessionId, onDropTab }: { sessionId: string; onDropTab: (tab: DockableTabId) => void }) {
+  const drop = useDockDrop("right", sessionId, { onDrop: onDropTab });
+  return (
+    <div className={`split-drop${drop.over ? " over" : ""}`} {...drop.bind}>
+      <span className="split-drop-label">
+        <Rows2 size={14} aria-hidden="true" />
+        Open in split
+      </span>
+    </div>
+  );
+}
+
 export function RightPanelBody({
   sessionId,
+  tabs,
   top,
   split,
   ratio,
-  onToolMenu
+  isToolAvailable,
+  onToolMenu,
+  onToolContextMenu
 }: {
   sessionId: string;
+  tabs: DockableTabId[];
   top: DockableTabId;
   split: DockableTabId | null;
   ratio: number;
+  isToolAvailable: (tab: DockableTabId) => boolean;
   onToolMenu: (tab: DockableTabId) => (e: ReactMouseEvent<HTMLElement>) => void;
+  onToolContextMenu: (tab: DockableTabId) => (e: ReactMouseEvent<HTMLElement>) => void;
 }) {
   const setRightSplit = usePanelStore((s) => s.setRightSplit);
+  const placeRightSplit = usePanelStore((s) => s.placeRightSplit);
+  const draggingTab = usePanelStore((s) => s.draggingTab);
+  const dockByTab = usePanelStore((s) => selectSessionPanel(s, sessionId).dockByTab);
   const setRightSplitRatio = usePanelStore((s) => s.setRightSplitRatio);
   const [dragRatio, setDragRatio] = useState<number | null>(null);
   const bodyRef = useRef<HTMLDivElement>(null);
@@ -73,9 +102,24 @@ export function RightPanelBody({
     }
   };
 
+  const splitDropOpen = draggingTab !== null && resolveSplitDrop(dockByTab, top, split, draggingTab, isToolAvailable).ok;
+  const onSplitDrop = (tab: DockableTabId) => {
+    const drop = resolveSplitDrop(dockByTab, top, split, tab, isToolAvailable);
+    if (drop.ok) placeRightSplit(sessionId, drop);
+    else console.warn(`[panels] split drop of ${tab} rejected: ${drop.reason}`);
+  };
+  const splitDropZone = splitDropOpen ? <SplitDropZone sessionId={sessionId} onDropTab={onSplitDrop} /> : null;
+
   const panes = [
     <div className="right-pane" key={top} style={split ? { flex: `${shownRatio} 1 0` } : undefined}>
-      <PaneHeader tab={top} sessionId={sessionId} onDock={onToolMenu(top)} />
+      <PaneTabsHeader
+        sessionId={sessionId}
+        tabs={tabs}
+        top={top}
+        split={split}
+        onDock={onToolMenu(top)}
+        onTabContextMenu={onToolContextMenu}
+      />
       <div className="right-pane-body">
         <ToolContent tab={top} sessionId={sessionId} panel="right" />
       </div>
@@ -99,10 +143,11 @@ export function RightPanelBody({
         title="Drag or use arrow keys to resize · double-click or Enter to reset"
       />,
       <div className="right-pane" key={split} style={{ flex: `${1 - shownRatio} 1 0` }}>
-        <PaneHeader tab={split} sessionId={sessionId} split onDock={onToolMenu(split)} onClose={() => setRightSplit(sessionId, null)} />
+        <PaneHeader tab={split} sessionId={sessionId} onDock={onToolMenu(split)} onClose={() => setRightSplit(sessionId, null)} />
         <div className="right-pane-body">
           <ToolContent tab={split} sessionId={sessionId} panel="right" />
         </div>
+        {splitDropZone}
       </div>
     );
   }
@@ -110,6 +155,7 @@ export function RightPanelBody({
   return (
     <div className="right-body" ref={bodyRef}>
       {panes}
+      {split === null && splitDropZone}
     </div>
   );
 }

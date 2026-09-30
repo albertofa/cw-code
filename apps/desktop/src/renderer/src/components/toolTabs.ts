@@ -28,6 +28,18 @@ export function isToolTabAvailable(def: ToolTabDef, driver: DriverName | undefin
   return !def.requiresPr || hasPr;
 }
 
+export function toolAvailability(
+  driver: DriverName | undefined,
+  hasPr: boolean,
+  hasPreview: boolean
+): (tab: DockableTabId) => boolean {
+  return (tab) => {
+    if (tab === "preview") return hasPreview;
+    const def = TOOL_TABS.find((item) => item.id === tab);
+    return def !== undefined && isToolTabAvailable(def, driver, hasPr);
+  };
+}
+
 export function isHarnessTabId(tab: DockableTabId): tab is DriverName {
   return tab === "claude" || tab === "opencode" || tab === "codex";
 }

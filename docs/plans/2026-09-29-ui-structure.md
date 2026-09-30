@@ -163,7 +163,8 @@
   panelAnimationMs: number;           // default 0, clamp 0–400, Math.round to multiples of 25
   ```
 - **Tests:** `panelLayout.test.ts` covers split sanitizing (unknown tab, not docked right, equals active, ratio clamp, defaults). `SettingsStore.test.ts` covers the `panelAnimationMs` clamp and step.
-- **Done when:** `pnpm typecheck && pnpm test && pnpm build` pass, and `rg -n "right-tabbar|tool-rail-openers" apps/desktop/src/renderer/src` returns only removed-CSS leftovers (none in tsx).
+- **Revised:** the right pane header is a tab strip of every tool open on the right, in dock order. Tabs drag to main and bottom and back, each has a close (×), and the split tool carries a split marker. While a tab is being dragged, a drop zone over the split pane (or the bottom of the right body) opens it in the split. The rail stays for opening and focusing tools, and is a right drop target while the panel is hidden.
+- **Done when:** `pnpm typecheck && pnpm test && pnpm build` pass, and `rg -n "right-tabbar|tool-rail-openers" apps/desktop/src/renderer/src` finds no usage in tsx (the right strip lives in `PaneHeader.tsx` as `.ph-tabs`).
 
 ## Task 5: Session overview tool  [depends on Task 4]
 

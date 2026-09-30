@@ -13,7 +13,8 @@ import {
   tabsInPanel,
   type LoadedPanelState,
   type PersistedPanelState,
-  type SessionPanelState
+  type SessionPanelState,
+  type SplitPlacement
 } from "./panelLayout.js";
 
 const DEFAULT_SESSION_PANEL = defaultSessionPanel();
@@ -91,6 +92,7 @@ export interface PanelActions {
   setBottomCollapsed(sessionId: string | undefined, collapsed: boolean): void;
   setRightVisible(sessionId: string | undefined, visible: boolean): void;
   setRightSplit(sessionId: string | undefined, tab: DockableTabId | null): void;
+  placeRightSplit(sessionId: string | undefined, placement: SplitPlacement): void;
   setRightSplitRatio(sessionId: string | undefined, ratio: number): void;
   toggleRightSplit(
     sessionId: string | undefined,
@@ -287,6 +289,13 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
     const sessions = { ...store.sessions, [sessionId]: next };
     set({ sessions, legacySession: null });
     persist({ autoLocation: store.autoLocation, sessions });
+  },
+
+  placeRightSplit: (sessionId, placement) => {
+    if (!sessionId) return;
+    const store = get();
+    if (panelFor(store, sessionId).activeRight !== placement.top) store.setActive(sessionId, "right", placement.top);
+    get().setRightSplit(sessionId, placement.split);
   },
 
   setRightSplitRatio: (sessionId, ratio) => {

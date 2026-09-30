@@ -15,6 +15,8 @@ import {
   pickSplitTool,
   resolveMainTab,
   resolveRightTop,
+  resolveSplitDrop,
+  rightOpenTabs,
   sanitizeLayout,
   sanitizeSessionPanel,
   serializeLayout,
@@ -22,6 +24,7 @@ import {
   tabsInPanel
 } from "./panelLayout.js";
 import { selectSessionPanel, usePanelStore } from "./panelStore.js";
+import { toolAvailability } from "../components/toolTabs.js";
 
 describe("tabsInPanel", () => {
   it("starts with every tab closed", () => {
@@ -443,13 +446,50 @@ describe("usePanelStore right split", () => {
 
   it("promotes the split tool when the active right tool is closed", () => {
     const store = usePanelStore.getState();
+    store.moveTab("sess_a", "files", "right");
     store.moveTab("sess_a", "diff", "right");
     store.setRightSplit("sess_a", "shell");
     store.moveTab("sess_a", "diff", "closed");
-    expect(selectSessionPanel(usePanelStore.getState(), "sess_a")).toMatchObject({
-      activeRight: "shell",
-      rightSplit: null
-    });
+    const panel = selectSessionPanel(usePanelStore.getState(), "sess_a");
+    expect(panel).toMatchObject({ activeRight: "shell", rightSplit: null });
+    expect(rightOpenTabs(panel.dockByTab, () => true)).toEqual(["files", "shell"]);
+  });
+
+  it("placeRightSplit docks a bottom tool into the split, keeps the top tool and reveals the panel", () => {
+    const store = usePanelStore.getState();
+    store.moveTab("sess_a", "diff", "right");
+    store.moveTab("sess_a", "shell", "bottom");
+    store.setRightVisible("sess_a", false);
+    const current = selectSessionPanel(usePanelStore.getState(), "sess_a");
+    const drop = resolveSplitDrop(current.dockByTab, "diff", null, "shell", () => true);
+    expect(drop).toEqual({ ok: true, top: "diff", split: "shell" });
+    if (drop.ok) usePanelStore.getState().placeRightSplit("sess_a", drop);
+    const panel = selectSessionPanel(usePanelStore.getState(), "sess_a");
+    expect(panel).toMatchObject({ activeRight: "diff", rightSplit: "shell", rightVisible: true });
+    expect(panel.dockByTab.shell).toBe("right");
+  });
+
+  it("placeRightSplit moves the top tool into the split and promotes the next right tool", () => {
+    const store = usePanelStore.getState();
+    store.moveTab("sess_a", "files", "right");
+    store.moveTab("sess_a", "diff", "right");
+    const current = selectSessionPanel(usePanelStore.getState(), "sess_a");
+    const drop = resolveSplitDrop(current.dockByTab, "diff", null, "diff", () => true);
+    expect(drop).toEqual({ ok: true, top: "files", split: "diff" });
+    if (drop.ok) usePanelStore.getState().placeRightSplit("sess_a", drop);
+    expect(selectSessionPanel(usePanelStore.getState(), "sess_a")).toMatchObject({ activeRight: "files", rightSplit: "diff" });
+  });
+
+  it("placeRightSplit swaps the top tool with the split tool", () => {
+    const store = usePanelStore.getState();
+    store.moveTab("sess_a", "files", "right");
+    store.moveTab("sess_a", "diff", "right");
+    store.setRightSplit("sess_a", "shell");
+    const current = selectSessionPanel(usePanelStore.getState(), "sess_a");
+    const drop = resolveSplitDrop(current.dockByTab, "diff", "shell", "diff", () => true);
+    expect(drop).toEqual({ ok: true, top: "shell", split: "diff" });
+    if (drop.ok) usePanelStore.getState().placeRightSplit("sess_a", drop);
+    expect(selectSessionPanel(usePanelStore.getState(), "sess_a")).toMatchObject({ activeRight: "shell", rightSplit: "diff" });
   });
 
   it("clears the split when its tool leaves the right panel", () => {
@@ -600,6 +640,53 @@ describe("resolveRightTop", () => {
     expect(resolveRightTop(dock, "diff", notDiff, "codex")).toBe("codex");
     expect(resolveRightTop(dock, "diff", notDiff, "claude")).toBe("files");
     expect(resolveRightTop(dock, "diff", () => false, "codex")).toBeNull();
+  });
+});
+
+describe("rightOpenTabs", () => {
+  const dock = {
+    ...defaultSessionPanel().dockByTab,
+    pr: "right" as const,
+    shell: "right" as const,
+    files: "right" as const,
+    preview: "right" as const,
+    codex: "right" as const,
+    claude: "right" as const,
+    agents: "bottom" as const
+  };
+
+  it("lists right-docked tools in dock order", () => {
+    expect(rightOpenTabs(dock, () => true)).toEqual(["files", "claude", "codex", "shell", "preview", "pr"]);
+  });
+
+  it("drops a PR tool without a link, a harness of another driver and a missing preview", () => {
+    expect(rightOpenTabs(dock, toolAvailability("codex", false, false))).toEqual(["files", "codex", "shell"]);
+    expect(rightOpenTabs(dock, toolAvailability("claude", true, true))).toEqual(["files", "claude", "shell", "preview", "pr"]);
+    expect(rightOpenTabs(dock, toolAvailability(undefined, false, false))).toEqual(["files", "shell"]);
+  });
+});
+
+describe("resolveSplitDrop", () => {
+  const dock = { ...defaultSessionPanel().dockByTab, files: "right" as const, diff: "right" as const, shell: "bottom" as const };
+  const all = () => true;
+
+  it("keeps the top tool and splits a tool docked elsewhere", () => {
+    expect(resolveSplitDrop(dock, "diff", null, "shell", all)).toEqual({ ok: true, top: "diff", split: "shell" });
+    expect(resolveSplitDrop(dock, "diff", "files", "shell", all)).toEqual({ ok: true, top: "diff", split: "shell" });
+  });
+
+  it("promotes the split tool, else the next available right tool, when the top tool is dropped", () => {
+    expect(resolveSplitDrop(dock, "diff", "files", "diff", all)).toEqual({ ok: true, top: "files", split: "diff" });
+    expect(resolveSplitDrop(dock, "files", null, "files", all)).toEqual({ ok: true, top: "diff", split: "files" });
+  });
+
+  it("rejects dropping the only right tool, the split tool itself, an unavailable tool or a drop without a top tool", () => {
+    const solo = { ...defaultSessionPanel().dockByTab, diff: "right" as const };
+    expect(resolveSplitDrop(solo, "diff", null, "diff", all)).toEqual({ ok: false, reason: "only-right-tool" });
+    expect(resolveSplitDrop(dock, "files", null, "files", (tab) => tab !== "diff")).toEqual({ ok: false, reason: "only-right-tool" });
+    expect(resolveSplitDrop(dock, "diff", "files", "files", all)).toEqual({ ok: false, reason: "already-split" });
+    expect(resolveSplitDrop(dock, "diff", null, "pr", (tab) => tab !== "pr")).toEqual({ ok: false, reason: "unavailable" });
+    expect(resolveSplitDrop(dock, null, null, "shell", all)).toEqual({ ok: false, reason: "no-top-tool" });
   });
 });
 

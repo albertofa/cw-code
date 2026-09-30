@@ -5,7 +5,7 @@ import { useAppStore } from "../stores/appStore.js";
 import { selectSessionPanel, usePanelStore } from "../stores/panelStore.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { PanelToggles } from "./PanelToggles.js";
-import { endTabDrag, startTabDrag } from "./useDockDrop.js";
+import { endTabDrag, startTabDrag, useDockDrop } from "./useDockDrop.js";
 import { useLinkedPrs } from "./useLinkedPr.js";
 import { TOOL_TABS, isHarnessTabId } from "./toolTabs.js";
 import { checkCountsTone, checksTone, railGroups, type RailDotTone } from "./railTools.js";
@@ -62,10 +62,26 @@ export function ToolRail({
   const { dockByTab, rightVisible } = usePanelStore((s) => selectSessionPanel(s, sessionId));
   const autoLocation = usePanelStore((s) => s.autoLocation);
   const revealTab = usePanelStore((s) => s.revealTab);
+  const moveTab = usePanelStore((s) => s.moveTab);
+  const setRightVisible = usePanelStore((s) => s.setRightVisible);
+  const draggingTab = usePanelStore((s) => s.draggingTab);
+  const dropRail = useDockDrop("right", sessionId, {
+    onDrop: (tab) => {
+      moveTab(sessionId, tab, "right");
+      setRightVisible(sessionId, true);
+    }
+  });
   const groups = railGroups(driver, hasPr, hasPreview);
+  const dropHint = dropRail.over || (draggingTab !== null && !rightVisible);
 
   return (
-    <nav className="rail" aria-label="Tools" hidden={hidden} style={hidden ? { display: "none" } : undefined}>
+    <nav
+      className={`rail${dropHint ? " drop-target-active" : ""}`}
+      aria-label="Tools"
+      hidden={hidden}
+      style={hidden ? { display: "none" } : undefined}
+      {...dropRail.bind}
+    >
       <div className="rail-drag" onDoubleClick={() => window.cw.toggleMaximizeWindow()} />
       {groups.map((group, index) => (
         <Fragment key={group.join("+")}>
@@ -76,14 +92,16 @@ export function ToolRail({
             const docked = dockByTab[id];
             const away = docked === "main" || docked === "bottom";
             const active = rightVisible && docked === "right" && (id === rightActive || id === rightSplit);
+            const parked = docked === "right" && !active;
             const showAgents = id === "agents" && subagents.total > 0;
-            const place = docked === "closed" ? `opens in ${autoLocation[id] ?? "right"}` : `open in ${docked}`;
+            const place =
+              docked === "closed" ? `opens in ${autoLocation[id] ?? "right"}` : `open in ${docked}${parked ? ", not shown" : ""}`;
             const detail = showAgents ? ` · ${subagentTitle(subagents)}` : "";
             const label = `${def.title}${detail} · ${place}`;
             return (
               <button
                 key={id}
-                className={`rail-b${active ? " on" : ""}${away ? " away" : ""}`}
+                className={`rail-b${active ? " on" : ""}${away ? " away" : ""}${parked ? " parked" : ""}`}
                 disabled={!sessionId}
                 onClick={() => sessionId && revealTab(sessionId, id)}
                 onContextMenu={onToolContextMenu(id)}

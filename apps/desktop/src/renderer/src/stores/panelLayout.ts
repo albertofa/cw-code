@@ -133,10 +133,39 @@ export function resolveRightTop(
   isAvailable: (tab: DockableTabId) => boolean,
   preferred?: DockableTabId
 ): DockableTabId | null {
-  const available = tabsInPanel(dockByTab, "right").filter(isAvailable);
+  const available = rightOpenTabs(dockByTab, isAvailable);
   if (available.includes(activeRight)) return activeRight;
   if (preferred !== undefined && available.includes(preferred)) return preferred;
   return available[0] ?? null;
+}
+
+export function rightOpenTabs(dockByTab: TabDockState, isAvailable: (tab: DockableTabId) => boolean): DockableTabId[] {
+  return tabsInPanel(dockByTab, "right").filter(isAvailable);
+}
+
+export type SplitDropRejection = "unavailable" | "no-top-tool" | "already-split" | "only-right-tool";
+
+export interface SplitPlacement {
+  top: DockableTabId;
+  split: DockableTabId;
+}
+
+export type SplitDrop = ({ ok: true } & SplitPlacement) | { ok: false; reason: SplitDropRejection };
+
+export function resolveSplitDrop(
+  dockByTab: TabDockState,
+  top: DockableTabId | null,
+  split: DockableTabId | null,
+  dragged: DockableTabId,
+  isAvailable: (tab: DockableTabId) => boolean
+): SplitDrop {
+  if (!isAvailable(dragged)) return { ok: false, reason: "unavailable" };
+  if (top === null) return { ok: false, reason: "no-top-tool" };
+  if (dragged === split) return { ok: false, reason: "already-split" };
+  if (dragged !== top) return { ok: true, top, split: dragged };
+  const next = split ?? rightOpenTabs(dockByTab, isAvailable).find((tab) => tab !== top);
+  if (next === undefined) return { ok: false, reason: "only-right-tool" };
+  return { ok: true, top: next, split: dragged };
 }
 
 export function pickSplitTool(
@@ -144,7 +173,7 @@ export function pickSplitTool(
   top: DockableTabId,
   isAvailable: (tab: DockableTabId) => boolean
 ): DockableTabId {
-  const other = tabsInPanel(dockByTab, "right").find((tab) => tab !== top && isAvailable(tab));
+  const other = rightOpenTabs(dockByTab, isAvailable).find((tab) => tab !== top);
   return other ?? (top === "shell" ? "files" : "shell");
 }
 
