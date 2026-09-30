@@ -37,6 +37,26 @@ import { ImageThumb } from "./ImageThumb.js";
 import { ThreadVisibleContext } from "./threadVisibility.js";
 
 const EMPTY_MESSAGES: ChatMessage[] = [];
+const FOLLOW_BAND = 64;
+const SCROLL_UP_KEYS = new Set(["PageUp", "Home", "ArrowUp"]);
+
+function distanceFromBottom(el: HTMLElement): number {
+  return el.scrollHeight - el.scrollTop - el.clientHeight;
+}
+
+function pinToBottom(el: HTMLElement): void {
+  if (distanceFromBottom(el) > 1) el.scrollTop = el.scrollHeight;
+}
+
+function nestedScrollerTakesUpward(target: EventTarget | null, root: HTMLElement): boolean {
+  for (let node = target instanceof Element ? target : null; node && node !== root; node = node.parentElement) {
+    if (node.scrollTop > 0 && node.scrollHeight > node.clientHeight) {
+      const { overflowY } = getComputedStyle(node);
+      if (overflowY === "auto" || overflowY === "scroll") return true;
+    }
+  }
+  return false;
+}
 
 function UserMessage({
   message,
@@ -186,6 +206,7 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
   const hiddenRef = useRef(hidden);
   hiddenRef.current = hidden;
   const savedScrollTopRef = useRef(0);
+  const lastDistanceRef = useRef(0);
   const [atBottom, setAtBottom] = useState(true);
 
   const sessionId = session?.id;
@@ -196,6 +217,7 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
       ? "chat"
       : resolveMainTab(panelMainOrder, panelDockByTab, session.driver, panelActiveMain, hasPr);
   const showMainTool: DockableTabId | null = resolvedMainTab === "chat" ? null : resolvedMainTab;
+  const threadMounted = !showNew && showMainTool === null;
   const basePath = session?.worktreePath ?? project?.rootPath ?? "";
   const onOpenPreview = useCallback(
     (path: string) => {
@@ -232,13 +254,16 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
     stickRef.current = true;
     lastSeenIdRef.current = null;
     savedScrollTopRef.current = 0;
+    lastDistanceRef.current = 0;
     setAtBottom(true);
   }, [activeSessionId]);
 
   useLayoutEffect(() => {
     if (hidden) return;
     const el = scrollRef.current;
-    if (el) el.scrollTop = stickRef.current ? el.scrollHeight : savedScrollTopRef.current;
+    if (!el) return;
+    if (stickRef.current) pinToBottom(el);
+    else el.scrollTop = savedScrollTopRef.current;
   }, [hidden]);
 
   useEffect(() => {
@@ -250,7 +275,7 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
     if (hidden) return;
     const raf = requestAnimationFrame(() => {
       const el = scrollRef.current;
-      if (el && stickRef.current) el.scrollTop = el.scrollHeight;
+      if (el && stickRef.current) pinToBottom(el);
     });
     return () => cancelAnimationFrame(raf);
   }, [messages, busyTurn, hidden]);
@@ -258,22 +283,68 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
   useEffect(() => {
     const el = scrollRef.current;
     const inner = el?.firstElementChild;
-    if (!el || !(inner instanceof HTMLElement)) return;
-    const stickToBottom = () => {
-      if (!hiddenRef.current && stickRef.current) el.scrollTop = el.scrollHeight;
+    if (!threadMounted || !el || !(inner instanceof HTMLElement)) return;
+    let pressedInside = false;
+    const release = () => {
+      if (hiddenRef.current || !stickRef.current) return;
+      stickRef.current = false;
+      lastDistanceRef.current = distanceFromBottom(el);
+      setAtBottom(false);
     };
-    const ro = new ResizeObserver(stickToBottom);
+    const onWheel = (e: WheelEvent) => {
+      if (e.deltaY < 0 && !e.ctrlKey && el.scrollTop > 0 && !nestedScrollerTakesUpward(e.target, el)) release();
+    };
+    const onPointerDown = (e: PointerEvent) => {
+      if (e.target === el && e.offsetX >= el.clientWidth && el.scrollHeight > el.clientHeight) release();
+    };
+    const onTouchMove = () => {
+      if (distanceFromBottom(el) >= FOLLOW_BAND) release();
+    };
+    const trackPress = (e: PointerEvent) => {
+      pressedInside = e.target instanceof Node && el.contains(e.target);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!SCROLL_UP_KEYS.has(e.key) || e.defaultPrevented || e.isComposing) return;
+      if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+      const target = e.target;
+      const focusInside = target instanceof Node && el.contains(target);
+      const focusOnPage = target === document.body || target === document.documentElement;
+      if (!focusInside && !(focusOnPage && pressedInside)) return;
+      if (el.scrollTop > 0 && !nestedScrollerTakesUpward(target, el)) release();
+    };
+    const ro = new ResizeObserver(() => {
+      if (!hiddenRef.current && stickRef.current) pinToBottom(el);
+    });
     ro.observe(inner);
-    return () => ro.disconnect();
-  }, [activeSessionId, showNew]);
+    el.addEventListener("wheel", onWheel, { passive: true });
+    el.addEventListener("pointerdown", onPointerDown, { passive: true });
+    el.addEventListener("touchmove", onTouchMove, { passive: true });
+    document.addEventListener("pointerdown", trackPress, { capture: true, passive: true });
+    document.addEventListener("keydown", onKeyDown, { passive: true });
+    return () => {
+      ro.disconnect();
+      el.removeEventListener("wheel", onWheel);
+      el.removeEventListener("pointerdown", onPointerDown);
+      el.removeEventListener("touchmove", onTouchMove);
+      document.removeEventListener("pointerdown", trackPress, { capture: true });
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [activeSessionId, threadMounted]);
 
   const onScroll = () => {
     const el = scrollRef.current;
     if (!el || hiddenRef.current) return;
     savedScrollTopRef.current = el.scrollTop;
-    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 64;
-    stickRef.current = nearBottom;
-    setAtBottom(nearBottom);
+    const distance = distanceFromBottom(el);
+    const previous = lastDistanceRef.current;
+    lastDistanceRef.current = distance;
+    if (distance >= FOLLOW_BAND) {
+      stickRef.current = false;
+      setAtBottom(false);
+    } else if (distance < previous) {
+      stickRef.current = true;
+      setAtBottom(true);
+    }
   };
 
   const scrollToBottom = useCallback(() => {

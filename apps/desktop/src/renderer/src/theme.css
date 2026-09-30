@@ -82,6 +82,9 @@
   --r-lg: 12px;
   --turn-label: #b6c0dd;
   --composer-muted: var(--muted);
+  --scrollbar-size: 6px;
+  --scrollbar-thumb: rgba(255, 255, 255, 0.08);
+  --scrollbar-thumb-hover: rgba(255, 255, 255, 0.12);
 }
 
 .app-shell[data-driver="claude"] {
@@ -109,6 +112,11 @@ body,
   height: 100%;
 }
 
+html,
+body {
+  overscroll-behavior: none;
+}
+
 body {
   margin: 0;
   background: var(--bg);
@@ -123,17 +131,21 @@ body {
 }
 
 *::-webkit-scrollbar {
-  width: 10px;
-  height: 10px;
+  width: var(--scrollbar-size);
+  height: var(--scrollbar-size);
 }
 
 *::-webkit-scrollbar-thumb {
-  background: var(--border);
-  border-radius: 8px;
-  border: 2px solid var(--bg);
+  background: var(--scrollbar-thumb);
+  border-radius: 3px;
 }
 
-*::-webkit-scrollbar-track {
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--scrollbar-thumb-hover);
+}
+
+*::-webkit-scrollbar-track,
+*::-webkit-scrollbar-corner {
   background: transparent;
 }
 
@@ -1473,6 +1485,8 @@ body.session-dragging * {
   flex: 1;
   overflow-y: auto;
   min-height: 0;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
 }
 
 .thread-body {
@@ -3800,6 +3814,7 @@ body.resizing .bottom-panel {
   border: none;
   padding: 10px 12px;
   min-height: 0;
+  overscroll-behavior: contain;
 }
 
 .editor:focus {
@@ -3854,6 +3869,7 @@ body.resizing .bottom-panel {
   font-size: var(--fs-code);
   line-height: 1.6;
   overflow-x: auto;
+  overscroll-behavior-x: contain;
   padding: 6px 0;
 }
 
@@ -6232,6 +6248,7 @@ button.gitbar-checkout:hover {
   flex: 1;
   min-height: 0;
   overflow: auto;
+  overscroll-behavior: contain;
 }
 
 .inspect-dfile {
