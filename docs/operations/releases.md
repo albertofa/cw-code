@@ -13,15 +13,15 @@ validation-only.
   variable to `false` to go back to validation-only.
 - No SignPath enrollment yet (see [windows-signing.md](windows-signing.md)), so every
   release is unsigned.
-- The bootstrap VM check of commissioning step C was skipped; the owner tests the first
-  published installer in a VM instead.
-- No release has been published by this pipeline. The legacy `v0.0.1-alpha.21`
-  asset has no updater, so the N -> N+1 production-bytes test reports "bootstrap"
-  and is skipped until the first pipeline release exists.
-- The legacy alphas were published as non-prerelease releases, so
-  `/releases/latest` currently resolves to `v0.0.1-alpha.21`, which has no
-  `latest.yml`. No stable-channel client exists yet; the first stable release
-  replaces it as latest.
+- The bootstrap VM check of commissioning step C was skipped; the owner tests the
+  published installers in a VM instead.
+- The first pipeline release, `v0.0.1-alpha.22` (unsigned, 2026-09-28), is published,
+  so the N -> N+1 production-bytes test now runs against it instead of reporting
+  "bootstrap".
+- The hand-uploaded legacy releases (`v0.0.1-alpha.18` to `v0.0.1-alpha.21`) were
+  removed by the owner on 2026-09-29. `/releases/latest` no longer resolves to a
+  release: every published release is a prerelease, and the first stable release
+  will become latest.
 
 ## Flow
 
@@ -294,8 +294,8 @@ never accepts an alpha. A stable candidate takes the highest N of either channel
   checked only when N carries a `publisherName`, so an unsigned candidate over a
   signed N fails here.
 - `bootstrap` (no pipeline release exists yet): skipped with a notice. The first
-  published release is the bootstrap; its evidence is recorded by hand in
-  [rollout.md](rollout.md#c-bootstrap-candidate-over-the-real-legacy-installer-disposable-vm).
+  published release is the bootstrap; its VM check was skipped, see
+  [rollout.md](rollout.md#where-things-stand).
 - `none-compatible`: a warning in validate mode, a failure in publish mode.
 
 ## Artifacts and retention
