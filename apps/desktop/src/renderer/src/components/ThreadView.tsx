@@ -217,13 +217,12 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
   const sessionId = session?.id;
   const turnSnapshot = session?.lastTurnSnapshot;
   const changesTurnIndex = snapshotTurnMatches(turns[turns.length - 1], turnSnapshot) ? turns.length - 1 : -1;
+  const isToolAvailable = toolAvailability(session?.driver, hasPr, hasPreview);
   const resolvedMainTab =
     session === undefined
       ? "chat"
-      : resolveMainTab(panelMainOrder, panelDockByTab, session.driver, panelActiveMain, hasPr);
-  const isToolAvailable = toolAvailability(session?.driver, hasPr, hasPreview);
-  const showMainTool: DockableTabId | null =
-    resolvedMainTab === "chat" || !isToolAvailable(resolvedMainTab) ? null : resolvedMainTab;
+      : resolveMainTab(panelMainOrder, panelDockByTab, session.driver, panelActiveMain, hasPr, isToolAvailable);
+  const showMainTool: DockableTabId | null = resolvedMainTab === "chat" ? null : resolvedMainTab;
   const threadMounted = !showNew && showMainTool === null;
   const basePath = session?.worktreePath ?? project?.rootPath ?? "";
   const onOpenPreview = useCallback(
@@ -596,7 +595,7 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
         <Composer key={`composer:${session.id}`} sessionId={session.id} driver={session.driver} />
       </div>
       )}
-      {(isBottomOpen(panelDockByTab) || draggingTab !== null) && (
+      {(isBottomOpen(panelDockByTab, isToolAvailable) || draggingTab !== null) && (
         <BottomPanel sessionId={session.id} />
       )}
     </>
