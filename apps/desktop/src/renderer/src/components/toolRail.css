@@ -152,36 +152,18 @@
   box-sizing: border-box;
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 0 100px 0 12px;
+  gap: 6px;
+  padding: 0 100px 0 6px;
   box-shadow: inset 0 -1px 0 var(--line);
   -webkit-app-region: drag;
   user-select: none;
-}
-
-.phead.sub {
-  height: 36px;
-  padding-right: 8px;
-  -webkit-app-region: no-drag;
-  box-shadow: inset 0 1px 0 var(--line), inset 0 -1px 0 var(--line);
-}
-
-.phead:not(.sub) {
-  gap: 6px;
-  padding-left: 6px;
   container-type: inline-size;
 }
 
-.phead .ph-grab {
-  min-width: 0;
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  cursor: grab;
-}
-
 .ph-tabs {
-  flex: 1 1 auto;
+  --ph-fade-start: 0px;
+  --ph-fade-end: 0px;
+  flex: 0 1 auto;
   min-width: 0;
   height: 100%;
   display: flex;
@@ -190,6 +172,25 @@
   overflow-x: auto;
   overflow-y: hidden;
   scrollbar-width: none;
+  -webkit-app-region: no-drag;
+}
+
+.ph-tabs.fade-start {
+  --ph-fade-start: 24px;
+}
+
+.ph-tabs.fade-end {
+  --ph-fade-end: 24px;
+}
+
+.ph-tabs:is(.fade-start, .fade-end) {
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    black var(--ph-fade-start),
+    black calc(100% - var(--ph-fade-end)),
+    transparent
+  );
 }
 
 .ph-tabs .tab {
@@ -200,7 +201,6 @@
   border-radius: 7px;
   color: var(--muted);
   white-space: nowrap;
-  -webkit-app-region: no-drag;
 }
 
 .ph-tabs .tab:hover:not(.active) {
@@ -230,17 +230,11 @@
 .ph-tabs .tab-x {
   position: static;
   order: 1;
-  -webkit-app-region: no-drag;
 }
 
 .ph-tabs .tab.active .tab-x,
 .ph-tabs .tab:focus-visible .tab-x {
   opacity: 1;
-}
-
-.ph-tabs .tab-mark {
-  flex: none;
-  color: var(--faint);
 }
 
 @container (max-width: 400px) {
@@ -258,18 +252,6 @@
 .tab-driver {
   display: inline-flex;
   flex: none;
-}
-
-.phead .ph-ic {
-  flex: none;
-  color: var(--violet-ink);
-}
-
-.phead .ph-t {
-  font-size: var(--t-sm);
-  font-weight: 600;
-  color: var(--text);
-  white-space: nowrap;
 }
 
 .phead .ph-m {
@@ -306,70 +288,7 @@
   color: var(--text);
 }
 
-.right-split-divider {
-  flex: none;
-  height: 6px;
-  cursor: row-resize;
-  background: var(--bg-deep);
-  box-shadow: inset 0 1px 0 var(--line), inset 0 -1px 0 var(--line);
-}
-
-.right-split-divider:hover,
-.right-split-divider:focus-visible {
-  background: var(--hover);
-}
-
-.right-split-divider:focus-visible {
-  outline: 2px solid var(--violet-ink);
-  outline-offset: -2px;
-}
-
-.right-body,
-.right-pane {
-  position: relative;
-}
-
-.split-drop {
-  position: absolute;
-  inset: 4px;
-  z-index: 20;
-  display: grid;
-  place-items: center;
-  border: 2px dashed var(--violet);
-  border-radius: 8px;
-  background: color-mix(in srgb, var(--violet) 10%, var(--tool));
-  color: var(--violet-ink);
-  animation: split-drop-in var(--dur-fast) var(--ease-out);
-  transition: background-color var(--dur-fast) var(--ease-out);
-}
-
-.right-body > .split-drop {
-  top: auto;
-  height: 35%;
-}
-
-.split-drop.over {
-  background: color-mix(in srgb, var(--violet) 24%, var(--tool));
-}
-
-.split-drop-label {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  font-size: var(--t-xs);
-  font-weight: 600;
+body.right-overlay-dragging .right {
+  visibility: hidden;
   pointer-events: none;
-}
-
-@keyframes split-drop-in {
-  from {
-    opacity: 0;
-  }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .split-drop {
-    animation: none;
-    transition: none;
-  }
 }

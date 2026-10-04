@@ -4,15 +4,22 @@ import type { DockableTabId } from "@cw-code/contracts";
 import { DockTab } from "./DockTab.js";
 import { ToolContent } from "./ToolContent.js";
 import { useTabMenu } from "./TabMenu.js";
+import { sessionLinks } from "./sessionPrLinks.js";
+import { focusSiblingTab } from "./tabStripKeys.js";
+import { toolAvailability } from "./toolTabs.js";
 import { useDockDrop } from "./useDockDrop.js";
+import { findSession } from "./useLinkedPr.js";
 import { usePanelAnimationMs, usePresence } from "./usePresence.js";
-import { useToolAvailability } from "./useToolAvailability.js";
 import { BOTTOM_HEIGHT_DEFAULT, tabsInPanel } from "../stores/panelLayout.js";
+import { useAppStore } from "../stores/appStore.js";
 import { selectSessionPanel, usePanelStore } from "../stores/panelStore.js";
 
 export function BottomPanel({ sessionId }: { sessionId: string }) {
   const { dockByTab, activeBottom, bottomHeight, bottomCollapsed } = usePanelStore((s) => selectSessionPanel(s, sessionId));
-  const { isToolAvailable } = useToolAvailability(sessionId);
+  const driver = useAppStore((s) => findSession(s.sessionsByProject, sessionId)?.driver);
+  const hasPr = useAppStore((s) => sessionLinks(findSession(s.sessionsByProject, sessionId)).length > 0);
+  const hasPreview = useAppStore((s) => (s.previewBySession[sessionId] ?? null) !== null);
+  const isToolAvailable = toolAvailability(driver, hasPr, hasPreview);
   const setActive = usePanelStore((s) => s.setActive);
   const moveTab = usePanelStore((s) => s.moveTab);
   const setBottomHeight = usePanelStore((s) => s.setBottomHeight);
@@ -50,6 +57,8 @@ export function BottomPanel({ sessionId }: { sessionId: string }) {
     window.addEventListener("mouseup", onUp);
   };
 
+  if (tabs.length === 0 && draggingTab === null) return null;
+
   return (
     <section
       className={`bottom-panel${bottomCollapsed && tabs.length > 0 ? " collapsed" : ""}${dropBottom.over || draggingTab !== null ? " drop-target-active" : ""}`}
@@ -73,6 +82,7 @@ export function BottomPanel({ sessionId }: { sessionId: string }) {
         className="bottom-tabbar"
         role="tablist"
         aria-label="Bottom panel tabs"
+        onKeyDown={focusSiblingTab}
         {...dropBottom.bind}
       >
         {tabs.map((id) => (

@@ -4,17 +4,14 @@ import {
   PANEL_LAYOUT_KEY,
   PANEL_STATE_KEY,
   clampBottomHeight,
-  clampSplitRatio,
   defaultSessionPanel,
   parsePanelState,
-  pickSplitTool,
   sanitizeSessionPanel,
   serializePanelState,
   tabsInPanel,
   type LoadedPanelState,
   type PersistedPanelState,
-  type SessionPanelState,
-  type SplitPlacement
+  type SessionPanelState
 } from "./panelLayout.js";
 
 const DEFAULT_SESSION_PANEL = defaultSessionPanel();
@@ -56,13 +53,10 @@ function moveState(current: SessionPanelState, tab: DockableTabId, panel: DockLo
     activeMain = "chat";
   }
   let activeRight = current.activeRight;
-  let rightSplit = current.rightSplit;
   if (panel === "right") {
     activeRight = tab;
-    if (rightSplit === tab) rightSplit = current.activeRight;
   } else if (dockByTab[activeRight] !== "right") {
-    const promoted = rightSplit !== null && dockByTab[rightSplit] === "right" ? rightSplit : null;
-    activeRight = promoted ?? tabsInPanel(dockByTab, "right")[0] ?? activeRight;
+    activeRight = tabsInPanel(dockByTab, "right")[0] ?? activeRight;
   }
   let activeBottom = current.activeBottom;
   if (panel === "bottom") {
@@ -70,11 +64,11 @@ function moveState(current: SessionPanelState, tab: DockableTabId, panel: DockLo
   } else if (dockByTab[activeBottom] !== "bottom") {
     activeBottom = tabsInPanel(dockByTab, "bottom")[0] ?? activeBottom;
   }
-  return sanitizeSessionPanel({ ...current, dockByTab, activeMain, activeRight, activeBottom, mainOrder, rightSplit });
+  return sanitizeSessionPanel({ ...current, dockByTab, activeMain, activeRight, activeBottom, mainOrder });
 }
 
 export interface PanelActions {
-  setDraggingTab(tab: DockableTabId | null): void;
+  setDraggingTab(tab: DockableTabId | null, fromRail?: boolean): void;
   initializeSession(sessionId: string): void;
   moveTab(sessionId: string | undefined, tab: DockableTabId, panel: DockLocation): void;
   setActive(sessionId: string | undefined, panel: PanelId, tab: MainTabId): void;
@@ -91,14 +85,6 @@ export interface PanelActions {
   setBottomHeight(sessionId: string | undefined, height: number): void;
   setBottomCollapsed(sessionId: string | undefined, collapsed: boolean): void;
   setRightVisible(sessionId: string | undefined, visible: boolean): void;
-  setRightSplit(sessionId: string | undefined, tab: DockableTabId | null): void;
-  placeRightSplit(sessionId: string | undefined, placement: SplitPlacement): void;
-  setRightSplitRatio(sessionId: string | undefined, ratio: number): void;
-  toggleRightSplit(
-    sessionId: string | undefined,
-    isAvailable?: (tab: DockableTabId) => boolean,
-    rightTop?: DockableTabId | null
-  ): void;
   resetLayout(sessionId: string | undefined): void;
 }
 
@@ -124,6 +110,7 @@ export interface TurnDiffSummary {
 export type PanelStore = PersistedPanelState & PanelActions & {
   legacySession: SessionPanelState | null;
   draggingTab: DockableTabId | null;
+  dragFromRail: boolean;
   revealRequest: RevealRequest | null;
   diffModeRequest: DiffModeRequest | null;
   turnDiffSummaryBySession: Record<string, TurnDiffSummary | null>;
@@ -132,12 +119,13 @@ export type PanelStore = PersistedPanelState & PanelActions & {
 export const usePanelStore = create<PanelStore>((set, get) => ({
   ...loadState(),
   draggingTab: null,
+  dragFromRail: false,
   revealRequest: null,
   diffModeRequest: null,
   turnDiffSummaryBySession: {},
 
-  setDraggingTab: (tab) => {
-    set({ draggingTab: tab });
+  setDraggingTab: (tab, fromRail = false) => {
+    set({ draggingTab: tab, dragFromRail: tab !== null && fromRail });
   },
 
   initializeSession: (sessionId) => {
@@ -173,8 +161,7 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
     const next = {
       ...current,
       activeRight: panel === "right" ? (tab as DockableTabId) : current.activeRight,
-      activeBottom: panel === "bottom" ? (tab as DockableTabId) : current.activeBottom,
-      rightSplit: panel === "right" && current.rightSplit === tab ? current.activeRight : current.rightSplit
+      activeBottom: panel === "bottom" ? (tab as DockableTabId) : current.activeBottom
     };
     const sessions = { ...store.sessions, [sessionId]: next };
     set({ sessions, legacySession: null });
@@ -270,59 +257,6 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
     const sessions = { ...store.sessions, [sessionId]: { ...current, bottomCollapsed: collapsed } };
     set({ sessions, legacySession: null });
     persist({ autoLocation: store.autoLocation, sessions });
-  },
-
-  setRightSplit: (sessionId, tab) => {
-    if (!sessionId) return;
-    const store = get();
-    const current = panelFor(store, sessionId);
-    let base = current;
-    if (tab !== null && current.dockByTab[tab] !== "right") {
-      base = moveState(current, tab, "right");
-      if (current.dockByTab[current.activeRight] === "right") base = { ...base, activeRight: current.activeRight };
-    }
-    const next = sanitizeSessionPanel({
-      ...base,
-      rightSplit: tab,
-      rightVisible: tab === null ? base.rightVisible : true
-    });
-    const sessions = { ...store.sessions, [sessionId]: next };
-    set({ sessions, legacySession: null });
-    persist({ autoLocation: store.autoLocation, sessions });
-  },
-
-  placeRightSplit: (sessionId, placement) => {
-    if (!sessionId) return;
-    const store = get();
-    if (panelFor(store, sessionId).activeRight !== placement.top) store.setActive(sessionId, "right", placement.top);
-    get().setRightSplit(sessionId, placement.split);
-  },
-
-  setRightSplitRatio: (sessionId, ratio) => {
-    if (!sessionId) return;
-    const store = get();
-    const current = panelFor(store, sessionId);
-    const sessions = { ...store.sessions, [sessionId]: { ...current, rightSplitRatio: clampSplitRatio(ratio) } };
-    set({ sessions, legacySession: null });
-    persist({ autoLocation: store.autoLocation, sessions });
-  },
-
-  toggleRightSplit: (sessionId, isAvailable = () => true, rightTop) => {
-    if (!sessionId) return;
-    const store = get();
-    const current = panelFor(store, sessionId);
-    const top = rightTop ?? current.activeRight;
-    const split = current.rightSplit;
-    const splitShowing = split !== null && split !== top && isAvailable(split);
-    if (splitShowing && current.rightVisible) {
-      store.setRightSplit(sessionId, null);
-      return;
-    }
-    if (splitShowing) {
-      store.setRightSplit(sessionId, split);
-      return;
-    }
-    store.setRightSplit(sessionId, pickSplitTool(current.dockByTab, top, isAvailable));
   },
 
   setRightVisible: (sessionId, visible) => {

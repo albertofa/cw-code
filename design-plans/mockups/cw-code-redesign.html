@@ -275,7 +275,6 @@ code.ic { font-family: var(--mono); font-size: var(--t-sm); background: var(--ho
 .tab .ct { font-weight: 600; font-size: var(--t-3xs); color: var(--faint); }
 .rtabs .tools { margin-left: auto; display: flex; align-items: center; gap: 2px; }
 .pane { flex: 1; min-height: 0; display: flex; flex-direction: column; overflow: hidden; }
-.pane + .pane { border-top: 1px solid var(--line); }
 .ptool { height: 38px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 10px; }
 .seg { display: inline-flex; gap: 2px; padding: 2px; border-radius: 8px; background: var(--well); }
 .seg span { display: inline-flex; align-items: center; gap: 5px; height: 24px; padding: 0 9px; border-radius: 6px; font-size: var(--t-xs); font-weight: 550; color: var(--muted); white-space: nowrap; }
@@ -750,14 +749,10 @@ code.ic { font-family: var(--mono); font-size: 0.86em; font-weight: 500; color: 
 .rail-sep { width: 18px; height: 1px; background: var(--border); margin: 4px 0; flex: none; }
 .rail-end { margin-top: auto; display: flex; flex-direction: column; gap: 4px; }
 .phead { height: 40px; flex: none; display: flex; align-items: center; gap: 8px; padding: 0 100px 0 12px; box-shadow: inset 0 -1px 0 var(--line); }
-.phead.sub { padding-right: 8px; height: 36px; }
 .phead .ph-ic { color: var(--violet-ink); }
 .phead .ph-t { font-size: var(--t-sm); font-weight: 600; color: var(--text); white-space: nowrap; }
 .phead .ph-m { font-size: var(--t-xs); color: var(--faint); white-space: nowrap; }
 .phead .ph-a { margin-left: auto; display: flex; gap: 2px; }
-.term-tabs { display: flex; align-items: center; gap: 2px; margin-left: 6px; }
-.tt { height: 22px; padding: 0 8px; border-radius: 6px; font-size: var(--t-xs); color: var(--muted); display: inline-flex; align-items: center; }
-.tt.on { background: var(--raised); color: var(--text); }
 .ov { overflow: auto; padding: 12px; gap: 10px; }
 .ov-sec { background: var(--well); border-radius: 12px; padding: 10px 12px; flex: none; }
 .ov-h { display: flex; align-items: center; gap: 8px; height: 26px; font-size: var(--t-sm); color: var(--muted); }
@@ -895,7 +890,6 @@ code.ic { font-family: var(--mono); font-size: 0.86em; font-weight: 500; color: 
     <symbol id="i-panel-r" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M15 3v18"/></symbol>
     <symbol id="i-panel-b" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 15h18"/></symbol>
     <symbol id="i-panel-l" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M9 3v18"/></symbol>
-    <symbol id="i-split" viewBox="0 0 24 24"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 12h18"/></symbol>
     <symbol id="i-stop" viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="2" class="fill"/></symbol>
     <symbol id="i-clip" viewBox="0 0 24 24"><path d="m21.44 11.05-9.19 9.19a6 6 0 0 1-8.49-8.49l8.57-8.57A4 4 0 1 1 18 8.84l-8.59 8.57a2 2 0 0 1-2.83-2.83l8.49-8.48"/></symbol>
     <symbol id="i-lock" viewBox="0 0 24 24"><rect x="3" y="11" width="18" height="11" rx="2"/><path d="M7 11V7a5 5 0 0 1 10 0v4"/></symbol>
@@ -1097,7 +1091,6 @@ function rail(active = [], opts = {}) {
   return `<nav class="rail">
       ${RAIL_TOOLS.map((g) => g.map(btn).join("")).join('<span class="rail-sep"></span>')}
       <span class="rail-end">
-        <span class="rail-b${opts.split ? " on-soft" : ""}" title="Split the tool panel">${ic("split", "s16")}</span>
         <span class="rail-b${opts.collapsed ? "" : " on-soft"}" title="${opts.collapsed ? "Show" : "Hide"} tool panel">${ic("panel-r", "s16")}</span>
       </span>
     </nav>`;
@@ -1222,7 +1215,7 @@ function s1b() {
   return html.slice(0, a) + overviewPane() + html.slice(b);
 }
 
-/* ---------------- screen 2: approval + split tools ---------------- */
+/* ---------------- screen 2: approval ---------------- */
 function s2() {
   const code = [
     ["41", `<span class="k">public async</span> <span class="ty">Task</span> <span class="f">SyncAsync</span>(<span class="ty">CancellationToken</span> ct)`],
@@ -1281,27 +1274,12 @@ function s2() {
   </section>
   <section class="col right">
     ${rightTabs([{ i: "folder", l: "Files", on: 1, meta: "scheduler-api" }])}
-    <div class="pane" style="flex:1.15">
+    <div class="pane">
       <div class="ptool">
         <span class="gchip" style="background:none;padding:0;color:var(--muted)">${ic("folder", "s13")}<span class="mono" style="font-size: var(--t-xs)">src/Scheduling/</span><span class="mono" style="font-size: var(--t-xs);color:var(--text)">SlotSyncService.cs</span>${ic("chev-d", "s12 chev")}</span>
         <span class="end"><span style="color:var(--run)">Saved</span><span class="btn sm">Save</span></span>
       </div>
       <div class="editor">${code}</div>
-    </div>
-    <div class="pane" style="flex:0.85">
-      <div class="phead sub">${ic("terminal", "s16 ph-ic")}<span class="ph-t">Terminal</span><span class="term-tabs"><span class="tt on">pwsh</span><span class="tt">pwsh 2</span><span class="iconbtn" title="New terminal">${ic("plus", "s13")}</span></span><span class="ph-a"><span class="iconbtn" title="Open in main or bottom panel">${ic("dock", "s14")}</span><span class="iconbtn" title="Close">${ic("x", "s14")}</span></span></div>
-      <div class="term"><span class="pr">PS scheduler-api&gt;</span> dotnet build
-<span class="f">  Determining projects to restore...</span>
-<span class="f">  All projects are up-to-date for restore.</span>
-  Scheduling -&gt; bin/Debug/net10.0/Scheduling.dll
-  Scheduling.Tests -&gt; bin/Debug/net10.0/Scheduling.Tests.dll
-
-<span class="g">Build succeeded.</span>
-    <span class="y">0 Warning(s)</span>
-    0 Error(s)
-
-Time Elapsed 00:00:06.41
-<span class="pr">PS scheduler-api&gt;</span> <span class="caret" style="background:var(--dim)"></span></div>
     </div>
   </section>
   ${winctl}
@@ -2240,15 +2218,15 @@ const SCREENS = [
   { id: "workbench", name: "Workbench", render: s1, cap: {
       what: "Running session with the right pane on Git diff.",
       borrowed: ["<b>T3 Code</b>: work collapses to one line per tool; status as icon + word; composer with attached todo strip.", "<b>Codex</b>: review scopes including <b>Last turn</b>; changed-files summary at the end of a turn with Review and Undo."],
-      changed: ["Sessions that need you (approval, a question, a PR update) sit in their own section at the top with tinted rows, an action chip and the pending request.", "The sidebar is the working set, then idle and resolved sessions at the bottom. Project grouping and the From CLI section are gone; search covers everything.", "Settings, Usage and Skills stay in the footer where they are today; the update notice sits just above it.", "Tools move to a rail on the right edge (see Tool rail · Overview). The panel header names the open tool with its summary, here 6 files +214 −61.", "Selection uses one violet treatment everywhere. PR badges in rows are icon + number in the state color, with no pill.", "Diff files stack vertically instead of the cramped list-plus-diff grid."] } },
+      changed: ["Sessions that need you (approval, a question, a PR update) sit in their own section at the top with tinted rows, an action chip and the pending request.", "The sidebar is the working set, then idle and resolved sessions at the bottom. Project grouping and the From CLI section are gone; search covers everything.", "Settings, Usage and Skills stay in the footer where they are today; the update notice sits just above it.", "Tools move to a rail on the right edge (see Tool rail · Overview). The panel header is a tab strip of the tools open on the right; the active tab's summary sits next to it, here 6 files +214 −61.", "Selection uses one violet treatment everywhere. PR badges in rows are icon + number in the state color, with no pill.", "Diff files stack vertically instead of the cramped list-plus-diff grid."] } },
   { id: "overview", name: "Tool rail · Overview", render: s1b, cap: {
       what: "The right-edge tool rail with the new Session overview tool open.",
       borrowed: ["<b>OpenChamber</b>: a dedicated icon rail on the window's right edge that stays visible when the panel is collapsed, and a session summary panel with collapsible sections."],
-      changed: ["The rail replaces the tool icon row; the open right tools become tabs in the panel header, with drag, close and a split drop zone. The active tool gets the violet fill and a mark on the panel side; badges carry counts (6 changes, 2 subagents running) and a dot carries PR status.", "Split and hide sit at the bottom of the rail. The panel header names the tool and keeps dock (Main or Bottom) and close.", "Session overview only uses data cw-code already has: the context ring, session token counts, git and PR state, plan limits, todos, subagents and skills."] } },
-  { id: "approval", name: "Approval + split", render: s2, cap: {
-      what: "Codex session waiting on a command approval; right pane split into Files and Terminal.",
+      changed: ["The rail replaces the tool icon row; the open right tools become tabs in the panel header, each with drag and close. The active tool gets the violet fill and a mark on the panel side; badges carry counts (6 changes, 2 subagents running) and a dot carries PR status.", "The panel toggles sit at the bottom of the rail. The panel header shows one tool at a time, picked from its tabs, and keeps dock (Main or Bottom).", "Session overview only uses data cw-code already has: the context ring, session token counts, git and PR state, plan limits, todos, subagents and skills."] } },
+  { id: "approval", name: "Approval", render: s2, cap: {
+      what: "Codex session waiting on a command approval; right pane on Files.",
       borrowed: ["<b>T3 Code</b>: approval banner docked to the composer.", "<b>OpenChamber</b>: the waiting tool row shows the same amber state as the dock and the sidebar."],
-      changed: ["Approval keeps the existing actions (Allow once, Allow for session, Always allow, Reject) with keyboard hints.", "The approval tint uses the <b>--warning</b> token instead of the hard-coded rgba(255,159,10) orange.", "Split panes each get their own header; the terminal header holds its shell instances (pwsh, pwsh 2, +). The harness CLI is its own rail tool."] } },
+      changed: ["Approval keeps the existing actions (Allow once, Allow for session, Always allow, Reject) with keyboard hints.", "The approval tint uses the <b>--warning</b> token instead of the hard-coded rgba(255,159,10) orange.", "Split view was dropped: the right panel shows one tool at a time, chosen from the header tabs. The harness CLI is its own rail tool."] } },
   { id: "new", name: "New session", render: s3, cap: {
       what: "Empty state with the right pane hidden.",
       borrowed: ["<b>T3 Code</b>: a centered prompt; the composer's first pill picks the harness.", "<b>Codex</b>: Local / Worktree choice sits with the composer."],
@@ -2306,7 +2284,7 @@ SCREENS.forEach((s, i) => {
   const el = document.createElement("section");
   el.className = "screen";
   el.id = `screen-${s.id}`;
-  const RAIL_STATE = { workbench: [["diff"]], overview: [["overview"]], approval: [["files", "terminal"], { split: 1, driver: "codex" }], new: [[], { collapsed: 1 }], inbox: [[], { collapsed: 1 }], pr: [[], { collapsed: 1 }], usage: [[], { collapsed: 1 }], skills: [[], { collapsed: 1 }] };
+  const RAIL_STATE = { workbench: [["diff"]], overview: [["overview"]], approval: [["files"], { driver: "codex" }], new: [[], { collapsed: 1 }], inbox: [[], { collapsed: 1 }], pr: [[], { collapsed: 1 }], usage: [[], { collapsed: 1 }], skills: [[], { collapsed: 1 }] };
   let html = s.render();
   if (RAIL_STATE[s.id]) html = html.replace(winctl, rail(...RAIL_STATE[s.id]) + winctl);
   el.innerHTML = `<div class="fit">${html}</div>

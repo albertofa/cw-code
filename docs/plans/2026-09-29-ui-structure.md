@@ -4,7 +4,7 @@
 
 **Constraints:**
 - Visual reference: `design-plans/mockups/cw-code-redesign.html`.
-  - Screen map: 1 Workbench, 2 Tool rail · Overview, 3 Approval + split, 4 New session, 5 PR inbox, 7 Settings · PR workflows, 8 Settings · Appearance, 9 Settings · Claude Code, 11 States, 12 Model picker, 13 System.
+  - Screen map: 1 Workbench, 2 Tool rail · Overview, 3 Approval, 4 New session, 5 PR inbox, 7 Settings · PR workflows, 8 Settings · Appearance, 9 Settings · Claude Code, 11 States, 12 Model picker, 13 System.
   - Search the file for the function named in each task.
   - The plan wins where it and the mockup disagree.
 - Phase 1 tokens and controls are the only vocabulary. Colours come from `:root` in `theme.css`. Use `--violet-soft` + 2px `--violet` mark for selection, neutral `--hover`, `--accent` for information, `--update` for PR updates, `--warning` for approvals, and the `--t-*` / `--fs-*` type tokens. Checkbox, radio and switch use the phase 1 styles.
@@ -163,7 +163,8 @@
   panelAnimationMs: number;           // default 0, clamp 0–400, Math.round to multiples of 25
   ```
 - **Tests:** `panelLayout.test.ts` covers split sanitizing (unknown tab, not docked right, equals active, ratio clamp, defaults). `SettingsStore.test.ts` covers the `panelAnimationMs` clamp and step.
-- **Revised:** the right pane header is a tab strip of every tool open on the right, in dock order. Tabs drag to main and bottom and back, each has a close (×), and the split tool carries a split marker. While a tab is being dragged, a drop zone over the split pane (or the bottom of the right body) opens it in the split. The rail stays for opening and focusing tools, and is a right drop target while the panel is hidden.
+- **Revised:** the right pane header is a tab strip of every tool open on the right, in dock order. Tabs drag to main and bottom and back, and each has a close (×). The rail stays for opening and focusing tools, and is a right drop target for drags that start outside it.
+- **Revised again:** split view was removed at the user's request. The right panel shows one tool at a time, chosen from the tab strip. `rightSplit`, `rightSplitRatio`, the split toggle, the divider, the split drop zone and the "Open in split" menu item are gone; the sanitizer drops the two fields from older stored layouts.
 - **Done when:** `pnpm typecheck && pnpm test && pnpm build` pass, and `rg -n "right-tabbar|tool-rail-openers" apps/desktop/src/renderer/src` finds no usage in tsx (the right strip lives in `PaneHeader.tsx` as `.ph-tabs`).
 
 ## Task 5: Session overview tool  [depends on Task 4]

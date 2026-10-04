@@ -32,8 +32,6 @@ export interface SessionPanelState {
   activeBottom: DockableTabId;
   mainOrder: MainTabId[];
   bottomHeight: number;
-  rightSplit: DockableTabId | null;
-  rightSplitRatio: number;
   rightVisible: boolean;
   bottomCollapsed: boolean;
 }
@@ -51,10 +49,6 @@ export interface LoadedPanelState extends PersistedPanelState {
 export const BOTTOM_HEIGHT_DEFAULT = 260;
 export const BOTTOM_HEIGHT_MIN = 140;
 export const BOTTOM_HEIGHT_MAX = 520;
-
-export const SPLIT_RATIO_DEFAULT = 0.5;
-export const SPLIT_RATIO_MIN = 0.25;
-export const SPLIT_RATIO_MAX = 0.75;
 
 export const DEFAULT_DOCK: TabDockState = {
   overview: "closed",
@@ -90,9 +84,7 @@ export function defaultLayout(): PanelLayoutSnapshot {
     activeRight: "agents",
     activeBottom: "shell",
     mainOrder: ["chat"],
-    bottomHeight: BOTTOM_HEIGHT_DEFAULT,
-    rightSplit: null,
-    rightSplitRatio: SPLIT_RATIO_DEFAULT
+    bottomHeight: BOTTOM_HEIGHT_DEFAULT
   };
 }
 
@@ -104,8 +96,6 @@ export function defaultSessionPanel(): SessionPanelState {
     activeBottom: "shell",
     mainOrder: ["chat"],
     bottomHeight: BOTTOM_HEIGHT_DEFAULT,
-    rightSplit: null,
-    rightSplitRatio: SPLIT_RATIO_DEFAULT,
     rightVisible: true,
     bottomCollapsed: false
   };
@@ -143,54 +133,16 @@ export function rightOpenTabs(dockByTab: TabDockState, isAvailable: (tab: Dockab
   return tabsInPanel(dockByTab, "right").filter(isAvailable);
 }
 
-export type SplitDropRejection = "unavailable" | "no-top-tool" | "already-split" | "only-right-tool";
+const ALL_TOOLS = (): boolean => true;
 
-export interface SplitPlacement {
-  top: DockableTabId;
-  split: DockableTabId;
-}
-
-export type SplitDrop = ({ ok: true } & SplitPlacement) | { ok: false; reason: SplitDropRejection };
-
-export function resolveSplitDrop(
-  dockByTab: TabDockState,
-  top: DockableTabId | null,
-  split: DockableTabId | null,
-  dragged: DockableTabId,
-  isAvailable: (tab: DockableTabId) => boolean
-): SplitDrop {
-  if (!isAvailable(dragged)) return { ok: false, reason: "unavailable" };
-  if (top === null) return { ok: false, reason: "no-top-tool" };
-  if (dragged === split) return { ok: false, reason: "already-split" };
-  if (dragged !== top) return { ok: true, top, split: dragged };
-  const next = split ?? rightOpenTabs(dockByTab, isAvailable).find((tab) => tab !== top);
-  if (next === undefined) return { ok: false, reason: "only-right-tool" };
-  return { ok: true, top: next, split: dragged };
-}
-
-export function pickSplitTool(
-  dockByTab: TabDockState,
-  top: DockableTabId,
-  isAvailable: (tab: DockableTabId) => boolean
-): DockableTabId {
-  const other = rightOpenTabs(dockByTab, isAvailable).find((tab) => tab !== top);
-  return other ?? (top === "shell" ? "files" : "shell");
-}
-
-export function isBottomOpen(dockByTab: TabDockState): boolean {
-  return tabsInPanel(dockByTab, "bottom").length > 0;
+export function isBottomOpen(dockByTab: TabDockState, isAvailable: (tab: DockableTabId) => boolean = ALL_TOOLS): boolean {
+  return tabsInPanel(dockByTab, "bottom").some(isAvailable);
 }
 
 export function clampBottomHeight(value: unknown): number {
   const n = typeof value === "number" ? value : Number.NaN;
   if (!Number.isFinite(n)) return BOTTOM_HEIGHT_DEFAULT;
   return Math.min(BOTTOM_HEIGHT_MAX, Math.max(BOTTOM_HEIGHT_MIN, Math.round(n)));
-}
-
-export function clampSplitRatio(value: unknown): number {
-  const n = typeof value === "number" ? value : Number.NaN;
-  if (!Number.isFinite(n)) return SPLIT_RATIO_DEFAULT;
-  return Math.min(SPLIT_RATIO_MAX, Math.max(SPLIT_RATIO_MIN, n));
 }
 
 function sanitizeDock<T extends TabDockState>(raw: unknown, fallback: T, allowClosed: boolean): T {
@@ -249,9 +201,6 @@ export function sanitizeLayout(raw: unknown): PanelLayoutSnapshot {
     isDockableTabId(rawActiveBottom) && dockByTab[rawActiveBottom] === "bottom"
       ? rawActiveBottom
       : (bottomTabs[0] ?? defaults.activeBottom);
-  const rawSplit = source.rightSplit;
-  const rightSplit: DockableTabId | null =
-    isDockableTabId(rawSplit) && dockByTab[rawSplit] === "right" && rawSplit !== activeRight ? rawSplit : null;
   return {
     dockByTab,
     autoLocation,
@@ -259,9 +208,7 @@ export function sanitizeLayout(raw: unknown): PanelLayoutSnapshot {
     activeRight,
     activeBottom,
     mainOrder,
-    bottomHeight: clampBottomHeight(source.bottomHeight),
-    rightSplit,
-    rightSplitRatio: clampSplitRatio(source.rightSplitRatio)
+    bottomHeight: clampBottomHeight(source.bottomHeight)
   };
 }
 
@@ -273,9 +220,7 @@ export function serializeLayout(snapshot: PanelLayoutSnapshot): string {
     activeRight: snapshot.activeRight,
     activeBottom: snapshot.activeBottom,
     mainOrder: snapshot.mainOrder,
-    bottomHeight: snapshot.bottomHeight,
-    rightSplit: snapshot.rightSplit,
-    rightSplitRatio: snapshot.rightSplitRatio
+    bottomHeight: snapshot.bottomHeight
   });
 }
 
@@ -296,8 +241,6 @@ function sessionFromLayout(snapshot: PanelLayoutSnapshot): SessionPanelState {
     activeBottom: snapshot.activeBottom,
     mainOrder: snapshot.mainOrder,
     bottomHeight: snapshot.bottomHeight,
-    rightSplit: snapshot.rightSplit,
-    rightSplitRatio: snapshot.rightSplitRatio,
     rightVisible: true,
     bottomCollapsed: false
   };
@@ -374,12 +317,16 @@ export function resolveMainTab(
   dockByTab: TabDockState,
   driver: DockableTabId | undefined,
   activeMain: MainTabId,
-  hasPr: boolean
+  hasPr: boolean,
+  isAvailable: (tab: DockableTabId) => boolean = ALL_TOOLS
 ): MainTabId {
   const visible = mainOrder.filter(
     (id) =>
       id === "chat" ||
-      (dockByTab[id] === "main" && (!HARNESS_TABS.includes(id) || id === driver) && (id !== "pr" || hasPr))
+      (dockByTab[id] === "main" &&
+        (!HARNESS_TABS.includes(id) || id === driver) &&
+        (id !== "pr" || hasPr) &&
+        isAvailable(id))
   );
   return visible.includes(activeMain) ? activeMain : "chat";
 }

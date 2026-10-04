@@ -34,7 +34,6 @@ import { selectSessionPanel, usePanelStore } from "./stores/panelStore.js";
 import { usePrStore } from "./stores/prStore.js";
 import { useSettingsDraftStore } from "./stores/settingsDraftStore.js";
 import { prKey } from "./components/prInbox.js";
-import type { DockableTabId } from "@cw-code/contracts";
 import type { TurnEvent } from "./cw.js";
 
 const VERSION_NOTIF_ID = "cli-versions";
@@ -108,7 +107,7 @@ export function App() {
   const loadProjects = useAppStore((s) => s.loadProjects);
   const appearance = useAppStore((s) => s.appearance);
   const sessionPanel = usePanelStore((s) => selectSessionPanel(s, activeSessionId ?? undefined));
-  const { dockByTab, rightVisible, rightSplit, rightSplitRatio } = sessionPanel;
+  const { dockByTab, rightVisible } = sessionPanel;
   const initializeSession = usePanelStore((s) => s.initializeSession);
   const activateOrOpen = usePanelStore((s) => s.activateOrOpen);
   const dropRight = useDockDrop("right", activeSessionId ?? undefined);
@@ -380,8 +379,6 @@ export function App() {
 
   const { driver, hasPr, hasPreview, isToolAvailable, rightTop: topTool } = useToolAvailability(activeSessionId ?? undefined);
   const rightTabs = rightOpenTabs(dockByTab, isToolAvailable);
-  const splitTool: DockableTabId | null =
-    rightSplit !== null && rightSplit !== topTool && rightTabs.includes(rightSplit) ? rightSplit : null;
   const allTabsClosed = DOCKABLE_TABS.every((id) => dockByTab[id] === "closed" || (id === "pr" && !hasPr));
 
   return (
@@ -453,9 +450,6 @@ export function App() {
                     sessionId={activeSessionId}
                     tabs={rightTabs}
                     top={topTool}
-                    split={splitTool}
-                    ratio={rightSplitRatio}
-                    isToolAvailable={isToolAvailable}
                     onToolMenu={tabMenu.onTabMenuButton}
                     onToolContextMenu={tabMenu.onTabContextMenu}
                   />
@@ -481,7 +475,6 @@ export function App() {
             hasPreview={hasPreview}
             subagents={subagentStats}
             rightActive={topTool}
-            rightSplit={splitTool}
             isToolAvailable={isToolAvailable}
             onToolContextMenu={tabMenu.onTabContextMenu}
           />

@@ -3726,13 +3726,6 @@ body.resizing .side-resizer:active::after,
   background: var(--tool);
 }
 
-.right-pane {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-
 .right-pane-body {
   flex: 1;
   min-height: 0;

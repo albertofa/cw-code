@@ -1,46 +1,31 @@
-import { PanelBottom, PanelRight, Rows2 } from "lucide-react";
+import { PanelBottom, PanelRight } from "lucide-react";
 import type { DockableTabId } from "@cw-code/contracts";
-import { isBottomOpen, tabsInPanel } from "../stores/panelLayout.js";
+import { isBottomOpen } from "../stores/panelLayout.js";
 import { selectSessionPanel, usePanelStore } from "../stores/panelStore.js";
 
 export function PanelToggles({
   sessionId,
-  splitActive,
-  isToolAvailable,
-  rightTop
+  isToolAvailable
 }: {
   sessionId: string | undefined;
-  splitActive: boolean;
   isToolAvailable: (tab: DockableTabId) => boolean;
-  rightTop: DockableTabId | null;
 }) {
   const { rightVisible, dockByTab, bottomCollapsed } = usePanelStore((s) => selectSessionPanel(s, sessionId));
   const setRightVisible = usePanelStore((s) => s.setRightVisible);
   const setBottomCollapsed = usePanelStore((s) => s.setBottomCollapsed);
   const activateOrOpenTab = usePanelStore((s) => s.activateOrOpen);
-  const toggleRightSplit = usePanelStore((s) => s.toggleRightSplit);
 
-  const bottomOpen = isBottomOpen(dockByTab) && !bottomCollapsed;
-  const splitLabel = splitActive ? "Close the split" : "Split the tool panel";
+  const hasBottomTools = isBottomOpen(dockByTab, isToolAvailable);
+  const bottomOpen = hasBottomTools && !bottomCollapsed;
   const bottomLabel = bottomOpen ? "Hide bottom panel" : "Show bottom panel";
   const rightLabel = rightVisible ? "Hide tool panel" : "Show tool panel";
 
   return (
     <div className="rail-end">
       <button
-        className={`rail-b${splitActive ? " on-soft" : ""}`}
-        onClick={() => toggleRightSplit(sessionId, isToolAvailable, rightTop)}
-        disabled={!sessionId}
-        title={splitLabel}
-        aria-label={splitLabel}
-        aria-pressed={splitActive}
-      >
-        <Rows2 size={16} aria-hidden="true" />
-      </button>
-      <button
         className={`rail-b${bottomOpen ? " on-soft" : ""}`}
         onClick={() => {
-          if (tabsInPanel(dockByTab, "bottom").length === 0) {
+          if (!hasBottomTools) {
             activateOrOpenTab(sessionId, "shell");
             setBottomCollapsed(sessionId, false);
           } else {

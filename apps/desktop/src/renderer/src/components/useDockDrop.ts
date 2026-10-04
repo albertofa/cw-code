@@ -5,6 +5,7 @@ import { isDockableTabId } from "../stores/panelLayout.js";
 import { selectSessionPanel, usePanelStore } from "../stores/panelStore.js";
 
 const RIGHT_OVERLAY_QUERY = "(max-width: 900px)";
+const OVERLAY_DRAG_CLASS = "right-overlay-dragging";
 
 export interface DockDropBinding {
   onDragEnter: (e: ReactDragEvent<HTMLElement>) => void;
@@ -15,40 +16,47 @@ export interface DockDropBinding {
 
 export interface DockDropOptions {
   onDrop?: (tab: DockableTabId) => void;
+  ignoreRailDrags?: boolean;
 }
 
-function closeRightOverlay(sessionId: string): void {
+export interface TabDragOptions {
+  fromRail?: boolean;
+}
+
+function hideRightOverlayDuringDrag(sessionId: string): void {
   if (!window.matchMedia?.(RIGHT_OVERLAY_QUERY).matches) return;
   if (!selectSessionPanel(usePanelStore.getState(), sessionId).rightVisible) return;
-  requestAnimationFrame(() => usePanelStore.getState().setRightVisible(sessionId, false));
-  const onPointerMove = (e: PointerEvent) => {
-    if (e.buttons !== 0) return;
-    window.removeEventListener("pointermove", onPointerMove);
-    if (usePanelStore.getState().draggingTab !== null) usePanelStore.getState().setDraggingTab(null);
-  };
-  window.addEventListener("pointermove", onPointerMove);
+  requestAnimationFrame(() => {
+    if (usePanelStore.getState().draggingTab !== null) document.body.classList.add(OVERLAY_DRAG_CLASS);
+  });
+}
+
+function finishTabDrag(): void {
+  document.body.classList.remove(OVERLAY_DRAG_CLASS);
+  usePanelStore.getState().setDraggingTab(null);
 }
 
 export function startTabDrag(
   e: ReactDragEvent<HTMLElement>,
   tabId: DockableTabId,
-  sessionId: string | undefined
+  sessionId: string | undefined,
+  { fromRail = false }: TabDragOptions = {}
 ): void {
   if (!sessionId) return;
   e.dataTransfer.setData(TAB_DRAG_MIME, tabId);
   e.dataTransfer.setData(TAB_DRAG_SESSION_MIME, sessionId);
-  usePanelStore.getState().setDraggingTab(isDockableTabId(tabId) ? tabId : null);
+  usePanelStore.getState().setDraggingTab(isDockableTabId(tabId) ? tabId : null, fromRail);
   try {
     e.dataTransfer.effectAllowed = "move";
   } catch {
   }
   e.currentTarget.classList.add("tab-dragging");
-  closeRightOverlay(sessionId);
+  hideRightOverlayDuringDrag(sessionId);
 }
 
 export function endTabDrag(e: ReactDragEvent<HTMLElement>): void {
   e.currentTarget.classList.remove("tab-dragging");
-  usePanelStore.getState().setDraggingTab(null);
+  finishTabDrag();
 }
 
 export function useDockDrop(
@@ -59,6 +67,7 @@ export function useDockDrop(
   const [over, setOver] = useState(false);
   const depthRef = useRef(0);
   const moveTab = usePanelStore((s) => s.moveTab);
+  const setRightVisible = usePanelStore((s) => s.setRightVisible);
   const dragging = usePanelStore((s) => s.draggingTab !== null);
   useEffect(() => {
     const reset = () => {
@@ -77,15 +86,18 @@ export function useDockDrop(
     depthRef.current = 0;
     setOver(false);
   }, [dragging]);
+  const ignored = () => options.ignoreRailDrags === true && usePanelStore.getState().dragFromRail;
   return {
     over,
     bind: {
       onDragEnter: (e) => {
+        if (ignored()) return;
         e.preventDefault();
         depthRef.current += 1;
         setOver(true);
       },
       onDragOver: (e) => {
+        if (ignored()) return;
         e.preventDefault();
         try {
           e.dataTransfer.dropEffect = "move";
@@ -98,6 +110,7 @@ export function useDockDrop(
       },
       onDrop: (e) => {
         depthRef.current = 0;
+        if (ignored()) return;
         const drop = resolveDrop(e.dataTransfer.getData(TAB_DRAG_MIME), panel);
         if (!drop) return;
         e.preventDefault();
@@ -105,10 +118,11 @@ export function useDockDrop(
         setOver(false);
         const sourceSessionId = e.dataTransfer.getData(TAB_DRAG_SESSION_MIME);
         if (sourceSessionId === sessionId && sessionId) {
+          if (panel !== "right" && document.body.classList.contains(OVERLAY_DRAG_CLASS)) setRightVisible(sessionId, false);
           if (options.onDrop) options.onDrop(drop.tab);
           else moveTab(sessionId, drop.tab, drop.panel);
         }
-        usePanelStore.getState().setDraggingTab(null);
+        finishTabDrag();
       }
     }
   };

@@ -20,6 +20,4 @@ export interface PanelLayoutSnapshot {
   activeBottom: DockableTabId;
   mainOrder: MainTabId[];
   bottomHeight: number;
-  rightSplit: DockableTabId | null;
-  rightSplitRatio: number;
 }

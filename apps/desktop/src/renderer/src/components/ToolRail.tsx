@@ -43,7 +43,6 @@ export function ToolRail({
   hasPreview,
   subagents,
   rightActive,
-  rightSplit,
   isToolAvailable,
   onToolContextMenu,
   hidden = false
@@ -54,7 +53,6 @@ export function ToolRail({
   hasPreview: boolean;
   subagents: SubagentStats;
   rightActive: DockableTabId | null;
-  rightSplit: DockableTabId | null;
   isToolAvailable: (tab: DockableTabId) => boolean;
   onToolContextMenu: (tab: DockableTabId) => (e: ReactMouseEvent<HTMLElement>) => void;
   hidden?: boolean;
@@ -65,14 +63,16 @@ export function ToolRail({
   const moveTab = usePanelStore((s) => s.moveTab);
   const setRightVisible = usePanelStore((s) => s.setRightVisible);
   const draggingTab = usePanelStore((s) => s.draggingTab);
+  const dragFromRail = usePanelStore((s) => s.dragFromRail);
   const dropRail = useDockDrop("right", sessionId, {
+    ignoreRailDrags: true,
     onDrop: (tab) => {
       moveTab(sessionId, tab, "right");
       setRightVisible(sessionId, true);
     }
   });
   const groups = railGroups(driver, hasPr, hasPreview);
-  const dropHint = dropRail.over || (draggingTab !== null && !rightVisible);
+  const dropHint = !dragFromRail && (dropRail.over || (draggingTab !== null && !rightVisible));
 
   return (
     <nav
@@ -91,7 +91,7 @@ export function ToolRail({
             if (!def) return null;
             const docked = dockByTab[id];
             const away = docked === "main" || docked === "bottom";
-            const active = rightVisible && docked === "right" && (id === rightActive || id === rightSplit);
+            const active = rightVisible && docked === "right" && id === rightActive;
             const parked = docked === "right" && !active;
             const showAgents = id === "agents" && subagents.total > 0;
             const place =
@@ -106,7 +106,7 @@ export function ToolRail({
                 onClick={() => sessionId && revealTab(sessionId, id)}
                 onContextMenu={onToolContextMenu(id)}
                 draggable={sessionId !== undefined}
-                onDragStart={(e) => startTabDrag(e, id, sessionId)}
+                onDragStart={(e) => startTabDrag(e, id, sessionId, { fromRail: true })}
                 onDragEnd={endTabDrag}
                 data-tool={id}
                 title={label}
@@ -126,7 +126,7 @@ export function ToolRail({
           })}
         </Fragment>
       ))}
-      <PanelToggles sessionId={sessionId} splitActive={rightVisible && rightSplit !== null} isToolAvailable={isToolAvailable} rightTop={rightActive} />
+      <PanelToggles sessionId={sessionId} isToolAvailable={isToolAvailable} />
     </nav>
   );
 }

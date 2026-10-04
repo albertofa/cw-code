@@ -1,7 +1,7 @@
 import type { MouseEvent as ReactMouseEvent } from "react";
-import { Rows2 } from "lucide-react";
 import type { DockableTabId } from "@cw-code/contracts";
 import { DriverIcon } from "./DriverIcon.js";
+import { closeTabOnKey } from "./tabStripKeys.js";
 import { TOOL_TABS, isHarnessTabId } from "./toolTabs.js";
 import { endTabDrag, startTabDrag } from "./useDockDrop.js";
 import "./toolRail.css";
@@ -10,7 +10,8 @@ export function DockTab({
   tab,
   sessionId,
   active,
-  marker,
+  id,
+  controls,
   iconSize = 15,
   onActivate,
   onContextMenu,
@@ -19,7 +20,8 @@ export function DockTab({
   tab: DockableTabId;
   sessionId: string | undefined;
   active: boolean;
-  marker?: "split";
+  id?: string;
+  controls?: string;
   iconSize?: number;
   onActivate: () => void;
   onContextMenu: (e: ReactMouseEvent<HTMLElement>) => void;
@@ -27,23 +29,27 @@ export function DockTab({
 }) {
   const def = TOOL_TABS.find((item) => item.id === tab);
   if (!def) return null;
-  const name = marker === "split" ? `${def.title} (split)` : def.title;
 
   return (
     <button
       type="button"
       role="tab"
+      id={id}
+      aria-controls={controls}
       aria-selected={active}
+      aria-keyshortcuts="Delete"
+      tabIndex={active ? 0 : -1}
       onClick={onActivate}
+      onKeyDown={(e) => closeTabOnKey(e, onClose)}
       onContextMenu={onContextMenu}
       onDoubleClick={(e) => e.stopPropagation()}
       draggable
       onDragStart={(e) => startTabDrag(e, tab, sessionId)}
       onDragEnd={endTabDrag}
-      className={`tab${active ? " active" : ""}${marker === "split" ? " split" : ""}`}
+      className={`tab${active ? " active" : ""}`}
       data-tool={tab}
-      title={`${name} - drag to move, right-click for more actions`}
-      aria-label={name}
+      title={`${def.title} - drag to move, Delete to close, right-click for more actions`}
+      aria-label={def.title}
     >
       {isHarnessTabId(tab) ? (
         <span className="tab-icon tab-driver" aria-hidden="true">
@@ -54,8 +60,7 @@ export function DockTab({
       )}
       <span
         className="tab-x"
-        role="button"
-        aria-label={`Close ${def.title}`}
+        aria-hidden="true"
         title="Close tab"
         onClick={(e) => {
           e.stopPropagation();
@@ -65,7 +70,6 @@ export function DockTab({
         &times;
       </span>
       <span className="tab-label">{def.title}</span>
-      {marker === "split" && <Rows2 size={11} className="tab-mark" aria-hidden="true" />}
     </button>
   );
 }

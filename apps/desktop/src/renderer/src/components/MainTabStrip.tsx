@@ -4,11 +4,12 @@ import type { MainTabId } from "@cw-code/contracts";
 import type { DriverName } from "../cw.js";
 import { DockTab } from "./DockTab.js";
 import { DriverIcon } from "./DriverIcon.js";
-import { harnessLabel } from "./toolTabs.js";
+import { focusSiblingTab } from "./tabStripKeys.js";
+import { harnessLabel, toolAvailability } from "./toolTabs.js";
 import { useTabMenu } from "./TabMenu.js";
 import { useDockDrop } from "./useDockDrop.js";
-import { useToolAvailability } from "./useToolAvailability.js";
 import { resolveMainTab } from "../stores/panelLayout.js";
+import { useAppStore } from "../stores/appStore.js";
 import { selectSessionPanel, usePanelStore } from "../stores/panelStore.js";
 
 export function MainTabStrip({
@@ -28,10 +29,11 @@ export function MainTabStrip({
   const dropMain = useDockDrop("main", sessionId);
   const tabMenu = useTabMenu(sessionId);
   const draggingTab = usePanelStore((s) => s.draggingTab);
-  const { isToolAvailable } = useToolAvailability(sessionId);
+  const hasPreview = useAppStore((s) => (sessionId ? (s.previewBySession[sessionId] ?? null) !== null : false));
+  const isToolAvailable = toolAvailability(driver, hasPr, hasPreview);
 
   const effectiveActive: MainTabId =
-    sessionId === undefined ? "chat" : resolveMainTab(mainOrder, dockByTab, driver, activeMain, hasPr);
+    sessionId === undefined ? "chat" : resolveMainTab(mainOrder, dockByTab, driver, activeMain, hasPr, isToolAvailable);
   const chatLabel = driver === undefined ? "Chat" : harnessLabel(driver);
 
   return (
@@ -39,11 +41,13 @@ export function MainTabStrip({
       className={`main-tabbar${dropMain.over || draggingTab !== null ? " drop-target-active" : ""}`}
       role="tablist"
       aria-label="Main panel tabs"
+      onKeyDown={focusSiblingTab}
       {...dropMain.bind}
     >
       <button
         role="tab"
         aria-selected={effectiveActive === "chat"}
+        tabIndex={effectiveActive === "chat" ? 0 : -1}
         onClick={() => setActive(sessionId, "main", "chat")}
         className={`tab fixed${effectiveActive === "chat" ? " active" : ""}`}
         title={`${chatLabel} - composer and output (fixed tab)`}
