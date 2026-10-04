@@ -25,6 +25,7 @@ import { PrSessionChip } from "./PrSessionPanel.js";
 import { useLinkedPrLoader } from "./useLinkedPr.js";
 import { sessionLinks } from "./sessionPrLinks.js";
 import { TurnBlock } from "./TurnBlock.js";
+import { TurnStatusLine } from "./TurnStatusLine.js";
 import { TurnChangesCard } from "./TurnChangesCard.js";
 import { snapshotTurnMatches } from "./turnChanges.js";
 import { groupTurns, splitTurn, type ThreadNode } from "./turnGroups.js";
@@ -587,6 +588,7 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
       )}
       {showMainTool === null && (
       <div className="composer-wrap">
+        <TurnStatusLine key={`turn-status:${session.id}`} sessionId={session.id} basePath={basePath} />
         <TodoDock sessionId={session.id} />
         <PrUpdateDock key={`pr-dock:${session.id}`} sessionId={session.id} />
         <ApprovalDock sessionId={session.id} />

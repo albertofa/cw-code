@@ -1,20 +1,8 @@
-import { useEffect, useLayoutEffect, useRef, useState, type ReactNode } from "react";
+import { useId, useLayoutEffect, useRef, useState, type ReactNode } from "react";
 import { ChevronRight } from "lucide-react";
 import { describeWaitingTools, formatDuration, type PendingTool } from "./toolSummaries.js";
-import { formatElapsed } from "./turnFormat.js";
+import { useElapsed } from "./useElapsed.js";
 import { useThreadVisible } from "./threadVisibility.js";
-
-function useElapsed(startedAt: number | undefined, active: boolean): number {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    if (!active || startedAt === undefined) return;
-    setNow(Date.now());
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, [active, startedAt]);
-  if (startedAt === undefined) return 0;
-  return Math.max(0, now - startedAt);
-}
 
 export function TurnBlock({
   running,
@@ -48,6 +36,7 @@ export function TurnBlock({
   const rootRef = useRef<HTMLDivElement>(null);
   const prevRunning = useRef(running);
   const visible = useThreadVisible();
+  const foldId = useId();
 
   useLayoutEffect(() => {
     if (prevRunning.current === running) return;
@@ -78,7 +67,7 @@ export function TurnBlock({
   const waiting = running ? describeWaitingTools(pending ?? [], Date.now(), startedAt) : undefined;
   const showHead = running || hasActivity || durationMs !== undefined;
   const label = running
-    ? `Working for ${formatElapsed(elapsed)}${waiting ? ` · ${waiting}` : ""}`
+    ? `Working for ${formatDuration(elapsed)}`
     : durationMs !== undefined && durationMs > 0
       ? `Worked for ${formatDuration(durationMs)}`
       : "Worked";
@@ -87,27 +76,28 @@ export function TurnBlock({
     <div ref={rootRef} className={`turn-block${open ? " open" : ""}`}>
       {lead.length > 0 && <div className="turn-lead">{lead}</div>}
       {showHead && (
-        <button
-          type="button"
-          className={`turn-head${running ? " turn-head-live" : ""}`}
-          aria-expanded={open}
-          disabled={!hasActivity}
-          onClick={() => setManualOpen(!open)}
-        >
-          {running && <span className="pulse" aria-hidden="true" />}
-          <span className="turn-head-label">{label}</span>
-          <span className="turn-head-tail">
-            {hasActivity && !running && (
-              <span className="turn-head-hint">{open ? "Hide" : "Show work"}</span>
-            )}
+        <div className={`turn-head-row${running ? " turn-head-sticky" : ""}`}>
+          <button
+            type="button"
+            className={`turn-head${running ? " turn-head-live" : ""}`}
+            aria-expanded={hasActivity ? open : undefined}
+            aria-controls={hasActivity ? foldId : undefined}
+            disabled={!hasActivity}
+            onClick={() => setManualOpen(!open)}
+          >
             {hasActivity && (
-              <span className={`turn-caret collapse-caret${open ? " open" : ""}`} aria-hidden="true"><ChevronRight size={16} /></span>
+              <span className={`turn-caret collapse-caret${open ? " open" : ""}`} aria-hidden="true">
+                <ChevronRight size={14} />
+              </span>
             )}
-          </span>
-        </button>
+            <span className="turn-head-label">{label}</span>
+            {waiting && <span className="turn-head-detail">· {waiting}</span>}
+            <span className="turn-head-rule" aria-hidden="true" />
+          </button>
+        </div>
       )}
       {hasActivity && (
-        <div className="turn-fold" hidden={!open}>
+        <div id={foldId} className="turn-fold" hidden={!open}>
           {activity}
         </div>
       )}
