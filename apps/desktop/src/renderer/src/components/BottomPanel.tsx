@@ -1,7 +1,6 @@
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { useRef, type MouseEvent as ReactMouseEvent } from "react";
 import type { DockableTabId } from "@cw-code/contracts";
-import type { DriverName } from "../cw.js";
 import { DockTab } from "./DockTab.js";
 import { ToolContent } from "./ToolContent.js";
 import { useTabMenu } from "./TabMenu.js";
@@ -11,7 +10,7 @@ import { useToolAvailability } from "./useToolAvailability.js";
 import { BOTTOM_HEIGHT_DEFAULT, tabsInPanel } from "../stores/panelLayout.js";
 import { selectSessionPanel, usePanelStore } from "../stores/panelStore.js";
 
-export function BottomPanel({ sessionId }: { sessionId: string; driver: DriverName | undefined; hasPr: boolean }) {
+export function BottomPanel({ sessionId }: { sessionId: string }) {
   const { dockByTab, activeBottom, bottomHeight, bottomCollapsed } = usePanelStore((s) => selectSessionPanel(s, sessionId));
   const { isToolAvailable } = useToolAvailability(sessionId);
   const setActive = usePanelStore((s) => s.setActive);

@@ -35,6 +35,7 @@ import { collectSubagents } from "./subagents.js";
 import { splitImageMentions } from "./imagePreview.js";
 import { ImageThumb } from "./ImageThumb.js";
 import { ThreadVisibleContext } from "./threadVisibility.js";
+import { toolAvailability } from "./toolTabs.js";
 
 const EMPTY_MESSAGES: ChatMessage[] = [];
 const FOLLOW_BAND = 64;
@@ -151,6 +152,9 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
     activeSessionId ? (s.messagesBySession[activeSessionId] ?? EMPTY_MESSAGES) : EMPTY_MESSAGES
   );
   const busyTurn = useAppStore((s) => (activeSessionId ? s.busyTurns[activeSessionId] : undefined));
+  const hasPreview = useAppStore((s) =>
+    activeSessionId ? (s.previewBySession[activeSessionId] ?? null) !== null : false
+  );
   const historyLoading = useAppStore((s) => (activeSessionId ? !!s.loadingHistory[activeSessionId] : false));
   const historyError = useAppStore((s) => (activeSessionId ? s.historyErrorBySession[activeSessionId] : undefined));
   const ensureHistory = useAppStore((s) => s.ensureHistory);
@@ -216,7 +220,9 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
     session === undefined
       ? "chat"
       : resolveMainTab(panelMainOrder, panelDockByTab, session.driver, panelActiveMain, hasPr);
-  const showMainTool: DockableTabId | null = resolvedMainTab === "chat" ? null : resolvedMainTab;
+  const isToolAvailable = toolAvailability(session?.driver, hasPr, hasPreview);
+  const showMainTool: DockableTabId | null =
+    resolvedMainTab === "chat" || !isToolAvailable(resolvedMainTab) ? null : resolvedMainTab;
   const threadMounted = !showNew && showMainTool === null;
   const basePath = session?.worktreePath ?? project?.rootPath ?? "";
   const onOpenPreview = useCallback(
@@ -589,7 +595,7 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
       </div>
       )}
       {(isBottomOpen(panelDockByTab) || draggingTab !== null) && (
-        <BottomPanel sessionId={session.id} driver={session.driver} hasPr={hasPr} />
+        <BottomPanel sessionId={session.id} />
       )}
     </>
   );
