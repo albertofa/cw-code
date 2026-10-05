@@ -99,7 +99,7 @@ function useApprovalWait(sessionId: string | undefined, toolName: string, runnin
     if (!running || sessionId === undefined) return false;
     const pending = s.pendingApprovals[sessionId];
     if (!pending || pending.length === 0) return false;
-    return pending.some((a) => !a.toolName || a.toolName.toLowerCase() === toolName);
+    return pending.some((a) => a.toolName !== undefined && a.toolName.toLowerCase() === toolName);
   });
 }
 

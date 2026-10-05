@@ -118,10 +118,19 @@ describe("ToolCard row", () => {
     expect(el.querySelector(".tool-detail")?.textContent).toContain("errorboom");
   });
 
-  it("marks a running tool as waiting while its session has a pending approval", async () => {
-    const running = toolMsg({ id: "b3", toolName: "Bash", toolInput: { command: "rm -rf build" } });
+  it("keeps a running tool as running when the pending approval names no tool", async () => {
+    const running = toolMsg({ id: "b4", toolName: "Bash", toolInput: { command: "rm -rf build" } });
     useAppStore.setState({
       pendingApprovals: { s1: [{ requestId: "r1", kind: "command", title: "bash", decisions: ["accept", "decline"] }] }
+    });
+    const el = await render(running, "s1");
+    expect(statusOf(el)).toBe("Running");
+  });
+
+  it("marks a running tool as waiting while an approval for that tool is pending", async () => {
+    const running = toolMsg({ id: "b3", toolName: "Bash", toolInput: { command: "rm -rf build" } });
+    useAppStore.setState({
+      pendingApprovals: { s1: [{ requestId: "r1", kind: "command", title: "bash", toolName: "bash", decisions: ["accept", "decline"] }] }
     });
     const el = await render(running, "s1");
     expect(statusOf(el)).toBe("Waiting for approval");

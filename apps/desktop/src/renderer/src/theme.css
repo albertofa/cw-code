@@ -2636,14 +2636,12 @@ body.session-dragging * {
   word-break: break-word;
   max-height: 320px;
   overflow-y: auto;
-  overscroll-behavior: contain;
   font-family: var(--mono);
 }
 
 .tool-diff {
   max-height: 320px;
   overflow-y: auto;
-  overscroll-behavior: contain;
   border: 1px solid var(--border-soft);
   border-radius: var(--r-sm);
 }
