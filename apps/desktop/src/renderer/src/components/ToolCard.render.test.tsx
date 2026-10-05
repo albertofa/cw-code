@@ -61,3 +61,75 @@ describe("ToolCard path display", () => {
     expect(html).toContain("~/docs/a.md");
   });
 });
+
+describe("ToolCard row", () => {
+  let root: Root | null = null;
+  let host: HTMLDivElement | null = null;
+
+  afterEach(async () => {
+    await act(async () => {
+      root?.unmount();
+    });
+    root = null;
+    host?.remove();
+    host = null;
+    useAppStore.setState({ pendingApprovals: {} });
+  });
+
+  async function render(message: ChatMessage, sessionId?: string): Promise<HTMLDivElement> {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => {
+      root!.render(<ToolCard message={message} sessionId={sessionId} />);
+    });
+    return host;
+  }
+
+  const rowOf = (el: HTMLElement): HTMLButtonElement => el.querySelector<HTMLButtonElement>("button.tool-row")!;
+  const statusOf = (el: HTMLElement): string | null => el.querySelector(".tool-state")!.getAttribute("aria-label");
+
+  it("starts collapsed and reveals the controlled details on click", async () => {
+    const el = await render(
+      toolMsg({ id: "b1", toolName: "Bash", toolInput: { command: "pnpm test" }, toolOutput: "all green", toolDone: true })
+    );
+    const row = rowOf(el);
+    expect(row.getAttribute("aria-expanded")).toBe("false");
+    expect(el.textContent).not.toContain("all green");
+    expect(statusOf(el)).toBe("Completed");
+
+    await act(async () => {
+      row.click();
+    });
+    expect(row.getAttribute("aria-expanded")).toBe("true");
+    const detail = document.getElementById(row.getAttribute("aria-controls")!);
+    expect(detail?.textContent).toContain("$pnpm test");
+    expect(detail?.textContent).toContain("all green");
+  });
+
+  it("labels failed tools and their error output", async () => {
+    const el = await render(
+      toolMsg({ id: "b2", toolName: "Bash", toolInput: { command: "false" }, toolOutput: "boom", toolDone: true, isError: true })
+    );
+    expect(statusOf(el)).toBe("Failed");
+    await act(async () => {
+      rowOf(el).click();
+    });
+    expect(el.querySelector(".tool-detail")?.textContent).toContain("errorboom");
+  });
+
+  it("marks a running tool as waiting while its session has a pending approval", async () => {
+    const running = toolMsg({ id: "b3", toolName: "Bash", toolInput: { command: "rm -rf build" } });
+    useAppStore.setState({
+      pendingApprovals: { s1: [{ requestId: "r1", kind: "command", title: "bash", decisions: ["accept", "decline"] }] }
+    });
+    const el = await render(running, "s1");
+    expect(statusOf(el)).toBe("Waiting for approval");
+    expect(el.textContent).toContain("needs approval");
+
+    await act(async () => {
+      useAppStore.setState({ pendingApprovals: { s1: [] } });
+    });
+    expect(statusOf(el)).toBe("Running");
+  });
+});
