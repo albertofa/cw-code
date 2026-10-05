@@ -1025,7 +1025,14 @@ export const useAppStore = create<AppState>((set, get) => ({
     const sessionId = get().activeSessionId;
     const turnId = sessionId ? get().busyTurns[sessionId] : undefined;
     if (!turnId) return;
-    if (!isPendingTurn(turnId)) await window.cw.interrupt(turnId);
+    if (!isPendingTurn(turnId)) {
+      try {
+        await window.cw.interrupt(turnId);
+      } catch (err) {
+        useNotifs.getState().push({ kind: "error", title: "Could not stop the turn", message: ipcErrorMessage(err) });
+        return;
+      }
+    }
     const book = closeTurn(
       { busyTurns: get().busyTurns, turnStartedAt: get().turnStartedAt, turnDurations: get().turnDurations },
       sessionId ?? "",

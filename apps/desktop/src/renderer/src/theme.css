@@ -2535,6 +2535,28 @@ body.session-dragging * {
   box-shadow: 0 0 0 3px var(--rail-surface);
 }
 
+.turn-fold > .reasoning-live .reasoning-icon {
+  animation-name: cw-status-pulse-ink;
+}
+
+@keyframes cw-status-pulse-ink {
+  0%,
+  40% {
+    color: var(--success);
+    animation-timing-function: steps(6);
+  }
+
+  50%,
+  90% {
+    color: color-mix(in srgb, var(--success) 50%, var(--rail-surface));
+    animation-timing-function: steps(6);
+  }
+
+  100% {
+    color: var(--success);
+  }
+}
+
 .turn-fold > .reasoning > .reasoning-text {
   margin-left: 21px;
 }
