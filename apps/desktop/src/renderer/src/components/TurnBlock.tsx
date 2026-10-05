@@ -4,6 +4,10 @@ import { describeWaitingTools, formatDuration, type PendingTool } from "./toolSu
 import { useElapsed } from "./useElapsed.js";
 import { useThreadVisible } from "./threadVisibility.js";
 
+function formatToolCount(count: number): string {
+  return count === 1 ? "1 tool" : `${count} tools`;
+}
+
 export function TurnBlock({
   running,
   startedAt,
@@ -11,6 +15,7 @@ export function TurnBlock({
   hasActivity,
   autoExpandIfFits,
   pending,
+  toolCount,
   lead,
   activity,
   system,
@@ -23,6 +28,7 @@ export function TurnBlock({
   hasActivity: boolean;
   autoExpandIfFits?: boolean;
   pending?: PendingTool[];
+  toolCount?: number;
   lead: ReactNode[];
   activity: ReactNode[];
   system: ReactNode[];
@@ -71,9 +77,10 @@ export function TurnBlock({
     : durationMs !== undefined && durationMs > 0
       ? formatDuration(durationMs)
       : undefined;
+  const detail = waiting ?? (toolCount !== undefined && toolCount > 0 ? formatToolCount(toolCount) : undefined);
 
   return (
-    <div ref={rootRef} className={`turn-block${open ? " open" : ""}`}>
+    <div ref={rootRef} className={`turn-block${open ? " open" : ""}${running ? " live" : ""}`}>
       {lead.length > 0 && <div className="turn-lead">{lead}</div>}
       {showHead && (
         <div className={`turn-head-row${running ? " turn-head-sticky" : ""}`}>
@@ -85,29 +92,26 @@ export function TurnBlock({
             disabled={!hasActivity}
             onClick={() => setManualOpen(!open)}
           >
-            <span className="turn-head-lead" aria-hidden="true" />
-            <span className="turn-head-chip">
-              {running && <span className="pulse" aria-hidden="true" />}
-              {hasActivity && (
-                <span className={`turn-caret collapse-caret${open ? " open" : ""}`} aria-hidden="true">
-                  <ChevronRight size={12} />
-                </span>
-              )}
-              <span className="turn-head-label">
-                {running ? "Working" : "Worked"}
-                {duration !== undefined && (
-                  <>
-                    {" for "}
-                    <span className="turn-head-dur">{duration}</span>
-                  </>
-                )}
-              </span>
-              {waiting && (
-                <span className="turn-head-detail" title={waiting}>
-                  · {waiting}
-                </span>
+            <span className="turn-node" aria-hidden="true" />
+            <span className="turn-head-label">
+              {running ? "Working" : "Worked"}
+              {duration !== undefined && (
+                <>
+                  {" for "}
+                  <span className="turn-head-dur">{duration}</span>
+                </>
               )}
             </span>
+            {detail !== undefined && (
+              <span className="turn-head-detail" title={detail}>
+                · {detail}
+              </span>
+            )}
+            {hasActivity && (
+              <span className={`turn-caret collapse-caret${open ? " open" : ""}`} aria-hidden="true">
+                <ChevronRight size={12} />
+              </span>
+            )}
             <span className="turn-head-rule" aria-hidden="true" />
           </button>
         </div>

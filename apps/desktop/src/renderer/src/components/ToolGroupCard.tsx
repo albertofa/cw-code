@@ -27,6 +27,7 @@ export const ToolGroupCard = memo(function ToolGroupCard({
     <div className={`tool-group ${summary.status}${open ? " open" : ""}`}>
       <ToolRow
         status={summary.status}
+        Icon={summary.Icon}
         verb={verb}
         open={open}
         onToggle={() => setOpen(!open)}

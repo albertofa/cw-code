@@ -96,7 +96,7 @@ describe("ToolCard row", () => {
     const row = rowOf(el);
     expect(row.getAttribute("aria-expanded")).toBe("false");
     expect(el.textContent).not.toContain("all green");
-    expect(statusOf(el)).toBe("Completed");
+    expect(statusOf(el)).toBe("Done");
 
     await act(async () => {
       row.click();

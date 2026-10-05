@@ -1,15 +1,14 @@
 import { useEffect, useRef, useState } from "react";
-import { Bot, Check, ChevronDown, ChevronLeft, ChevronRight, CircleDot, Copy, TriangleAlert } from "lucide-react";
+import { Bot, Check, ChevronLeft, ChevronRight, Copy } from "lucide-react";
 import type { SubagentGroup, SubagentInfo } from "./subagents.js";
-import { collectAgentMessages, formatSubagentCount, formatTokensShort, groupSubagents, mergeSubagentTools } from "./subagents.js";
+import { formatSubagentCount, formatTokensShort, groupSubagents, subagentActivity } from "./subagents.js";
 import type { SubagentToolActivity } from "../cw.js";
-import { describeToolCall, formatDuration, orderToolsForDisplay } from "./toolSummaries.js";
-import { formatFileSubject, looksLikeFileMention } from "./pathDisplay.js";
+import { formatDuration, orderToolsForDisplay } from "./toolSummaries.js";
 import { Md } from "./Markdown.js";
 import { ToolCard } from "./ToolCard.js";
 import { useAppStore, type ChatMessage } from "../stores/appStore.js";
 import { usePanelStore } from "../stores/panelStore.js";
-import { subagentAnchorId } from "./SubagentCard.js";
+import { SubagentToolList, subagentAnchorId } from "./SubagentCard.js";
 
 export interface AgentsTarget {
   groupId?: string;
@@ -35,12 +34,34 @@ export function jumpToSubagentGroup(groupId: string, agentId?: string): void {
   }, 60);
 }
 
+export function useSessionWorkspace(sessionId: string | undefined): {
+  basePath: string | undefined;
+  openPreview: (path: string) => void;
+} {
+  const projects = useAppStore((s) => s.projects);
+  const activeProjectId = useAppStore((s) => s.activeProjectId);
+  const sessionsByProject = useAppStore((s) => s.sessionsByProject);
+  const openStorePreview = useAppStore((s) => s.openPreview);
+  const activateOrOpen = usePanelStore((s) => s.activateOrOpen);
+  const setRightVisible = usePanelStore((s) => s.setRightVisible);
+  const basePath = (() => {
+    for (const [pid, list] of Object.entries(sessionsByProject)) {
+      const found = list.find((s) => s.id === sessionId);
+      if (found) return found.worktreePath ?? projects.find((p) => p.id === pid)?.rootPath;
+    }
+    return projects.find((p) => p.id === activeProjectId)?.rootPath;
+  })();
+  const openPreview = (path: string) => {
+    if (!sessionId) return;
+    openStorePreview(sessionId, path, basePath ?? "");
+    activateOrOpen(sessionId, "preview");
+    setRightVisible(sessionId, true);
+  };
+  return { basePath, openPreview };
+}
+
 function copyText(text: string): void {
-  try {
-    void navigator.clipboard?.writeText(text);
-  } catch {
-    /* clipboard unavailable — selection still works */
-  }
+  void navigator.clipboard?.writeText(text).catch(() => undefined);
 }
 
 function metaLine(item: SubagentInfo, fallbackModel?: string): string {
@@ -59,12 +80,6 @@ function statusLabel(status: SubagentInfo["status"]): string {
   return "error";
 }
 
-function StatusIcon({ status, size = 13 }: { status: SubagentInfo["status"]; size?: number }) {
-  if (status === "completed") return <Check aria-hidden="true" size={size} strokeWidth={2.25} />;
-  if (status === "running") return <CircleDot aria-hidden="true" size={size} strokeWidth={2.25} />;
-  return <TriangleAlert aria-hidden="true" size={size} strokeWidth={2.25} />;
-}
-
 function RunningElapsed({ startedAt }: { startedAt: number }) {
   const [now, setNow] = useState(() => Date.now());
   useEffect(() => {
@@ -81,35 +96,6 @@ function AgentDuration({ item, live }: { item: SubagentInfo; live: boolean }) {
   return item.durationMs !== undefined ? <span>{formatDuration(item.durationMs)}</span> : null;
 }
 
-function toChatMessage(t: SubagentToolActivity, turnId: string): ChatMessage {
-  const done = t.output !== undefined;
-  return {
-    id: t.id,
-    role: "tool",
-    text: `${t.name} ${JSON.stringify(t.input ?? null)?.slice(0, 300) ?? ""}`,
-    turnId,
-    toolName: t.name,
-    toolInput: t.input,
-    ...(done ? { toolOutput: t.output, toolDone: true } : {}),
-    ...(t.isError !== undefined ? { isError: t.isError } : {}),
-    ...(t.timestamp !== undefined ? { toolStartedAt: t.timestamp } : {}),
-    ...(t.completedAt !== undefined ? { toolCompletedAt: t.completedAt } : {})
-  };
-}
-
-function toolStatus(t: SubagentToolActivity): "running" | "completed" | "error" {
-  if (t.isError) return "error";
-  return t.output !== undefined ? "completed" : "running";
-}
-
-function toolSubject(t: SubagentToolActivity, basePath?: string, homeDir?: string): string {
-  const summary = describeToolCall(t.name, t.input);
-  if (!summary?.subject) return "";
-  return summary.subjectKind === "file" || looksLikeFileMention(summary.subject)
-    ? formatFileSubject(summary.subject, basePath, homeDir)
-    : summary.subject;
-}
-
 function ClampedText({ text, label }: { text: string; label: string }) {
   const [open, setOpen] = useState(false);
   return (
@@ -121,83 +107,6 @@ function ClampedText({ text, label }: { text: string; label: string }) {
       <button className="agents-more" type="button" onClick={() => setOpen((value) => !value)}>
         {open ? "Collapse" : `Show full ${label}`}
       </button>
-    </>
-  );
-}
-
-function AgentToolList({
-  tools,
-  toolCount,
-  turnId,
-  basePath,
-  sessionId,
-  onPreview
-}: {
-  tools: SubagentToolActivity[];
-  toolCount: number;
-  turnId: string;
-  basePath?: string;
-  sessionId: string;
-  onPreview: (path: string) => void;
-}) {
-  const [expandedId, setExpandedId] = useState<string | null>(null);
-  const homeDir = useAppStore((s) => s.homeDir);
-  return (
-    <>
-      <div className="agents-tool-list">
-        {tools.map((tool) => {
-          const status = toolStatus(tool);
-          const summary = describeToolCall(tool.name, tool.input);
-          const Icon = summary?.Icon ?? CircleDot;
-          const verb = summary?.verb ?? tool.name;
-          const subject = toolSubject(tool, basePath, homeDir ?? undefined);
-          const duration =
-            tool.timestamp !== undefined && tool.completedAt !== undefined && tool.completedAt >= tool.timestamp
-              ? tool.completedAt - tool.timestamp
-              : undefined;
-          const open = expandedId === tool.id;
-          return (
-            <div key={tool.id}>
-              <button
-                type="button"
-                className="agents-tool-row"
-                aria-expanded={open}
-                onClick={() => setExpandedId(open ? null : tool.id)}
-              >
-                <span className={`agents-tool-icon ${status}`}>
-                  <Icon aria-hidden="true" size={13} />
-                </span>
-                <span className="agents-tool-verb">{verb}</span>
-                <span className="agents-tool-subject" title={subject}>
-                  {subject}
-                </span>
-                <span className="agents-tool-duration">
-                  {duration !== undefined ? formatDuration(duration) : status === "running" ? "running" : ""}
-                </span>
-                {open ? (
-                  <ChevronDown aria-hidden="true" size={14} />
-                ) : (
-                  <ChevronRight aria-hidden="true" size={14} />
-                )}
-              </button>
-              {open && (
-                <div className="agents-tool-detail">
-                  <ToolCard
-                    message={toChatMessage(tool, turnId)}
-                    basePath={basePath}
-                    sessionId={sessionId}
-                    onPreview={onPreview}
-                    defaultOpen
-                  />
-                </div>
-              )}
-            </div>
-          );
-        })}
-      </div>
-      {toolCount > tools.length && (
-        <div className="agents-tool-more">+{toolCount - tools.length} earlier tool calls not shown</div>
-      )}
     </>
   );
 }
@@ -231,11 +140,8 @@ function AgentDetail({
 }) {
   const [copied, setCopied] = useState(false);
   const model = item.model ?? fetchedModel;
-  const nested = collectAgentMessages(messages, item.id);
+  const { nested, tools, toolCount } = subagentActivity(messages, item, fetchedTools);
   const directives = nested.filter((m) => m.toolName?.toLowerCase() === "sendmessage");
-  const liveTools = nested.filter((m) => m.role === "tool" && m.toolName && m.toolName !== "result");
-  const tools = mergeSubagentTools(liveTools, [...(item.tools ?? []), ...(fetchedTools ?? [])]);
-  const toolCount = Math.max(item.toolCount, tools.length);
 
   return (
     <div className="agents-detail">
@@ -320,7 +226,7 @@ function AgentDetail({
           {toolCount > 0 && <span className="agents-section-count">{toolCount}</span>}
         </h4>
         {tools.length > 0 ? (
-          <AgentToolList
+          <SubagentToolList
             tools={tools}
             toolCount={toolCount}
             turnId={item.turnId}
@@ -363,19 +269,7 @@ export function AgentsPanel({ sessionId }: { sessionId: string }) {
   const live = useAppStore((s) => s.busyTurns[sessionId] !== undefined);
   const subagentToolsByKey = useAppStore((s) => s.subagentToolsByKey);
   const loadSubagentTools = useAppStore((s) => s.loadSubagentTools);
-  const projects = useAppStore((s) => s.projects);
-  const activeProjectId = useAppStore((s) => s.activeProjectId);
-  const sessionsByProject = useAppStore((s) => s.sessionsByProject);
-  const openPreview = useAppStore((s) => s.openPreview);
-  const activateOrOpen = usePanelStore((s) => s.activateOrOpen);
-  const setRightVisible = usePanelStore((s) => s.setRightVisible);
-  const basePath = (() => {
-    for (const [pid, list] of Object.entries(sessionsByProject)) {
-      const found = list.find((s) => s.id === sessionId);
-      if (found) return found.worktreePath ?? projects.find((p) => p.id === pid)?.rootPath;
-    }
-    return projects.find((p) => p.id === activeProjectId)?.rootPath;
-  })();
+  const { basePath, openPreview } = useSessionWorkspace(sessionId);
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [view, setView] = useState<"list" | "detail">("list");
@@ -509,11 +403,7 @@ export function AgentsPanel({ sessionId }: { sessionId: string }) {
           fetchedTools={fetchedTools}
           fetchedModel={fetched?.model}
           onBack={() => setView("list")}
-          onPreview={(p) => {
-            openPreview(sessionId, p, basePath ?? "");
-            activateOrOpen(sessionId, "preview");
-            setRightVisible(sessionId, true);
-          }}
+          onPreview={openPreview}
         />
       )}
     </div>

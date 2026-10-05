@@ -28,7 +28,7 @@ import { sessionLinks } from "./sessionPrLinks.js";
 import { TurnBlock } from "./TurnBlock.js";
 import { TurnChangesCard } from "./TurnChangesCard.js";
 import { snapshotTurnMatches } from "./turnChanges.js";
-import { groupTurns, splitTurn, type ThreadNode } from "./turnGroups.js";
+import { countActivityTools, groupTurns, splitTurn, type ThreadNode } from "./turnGroups.js";
 import { pendingToolsForTurn } from "./toolSummaries.js";
 import { durationFromMessages } from "./turnFormat.js";
 import { selectSessionPanel, usePanelStore } from "../stores/panelStore.js";
@@ -563,6 +563,7 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
               hasActivity={turn.pieces.activity.length > 0}
               autoExpandIfFits={index === turns.length - 1}
               pending={turn.pending}
+              toolCount={countActivityTools(turn.pieces.activity)}
               lead={turn.pieces.lead.map((m) => renderNode({ kind: "msg", msg: m }))}
               activity={turn.pieces.activity.map(renderNode)}
               system={turn.pieces.system.map((m) => renderNode({ kind: "msg", msg: m }))}

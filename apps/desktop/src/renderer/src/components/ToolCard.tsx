@@ -1,5 +1,5 @@
 import { memo, useEffect, useId, useRef, useState, type ReactNode } from "react";
-import { Check, ChevronRight, CircleDashed, CircleDot, Monitor, ShieldAlert, X, type LucideIcon } from "lucide-react";
+import { Check, ChevronRight, CircleDashed, CircleDot, Monitor, ShieldAlert, Wrench, X, type LucideIcon } from "lucide-react";
 import type { ChatMessage } from "../stores/appStore.js";
 import { useAppStore } from "../stores/appStore.js";
 import {
@@ -23,15 +23,14 @@ import { useElapsed } from "./useElapsed.js";
 export type ToolStatus = "complete" | "error" | "running" | "waiting" | "pending";
 
 const STATUS_LABEL: Record<ToolStatus, string> = {
-  complete: "Completed",
+  complete: "Done",
   error: "Failed",
   running: "Running",
   waiting: "Waiting for approval",
   pending: "Pending"
 };
 
-const STATUS_ICON: Record<ToolStatus, LucideIcon> = {
-  complete: Check,
+const STATUS_ICON: Record<Exclude<ToolStatus, "complete">, LucideIcon> = {
   error: X,
   running: CircleDot,
   waiting: ShieldAlert,
@@ -43,18 +42,19 @@ function baseName(path: string): string {
   return i >= 0 ? path.slice(i + 1) : path;
 }
 
-function ToolStatusIcon({ status }: { status: ToolStatus }) {
-  const Icon = STATUS_ICON[status];
+function ToolStatusIcon({ status, Icon }: { status: ToolStatus; Icon: LucideIcon }) {
+  const Glyph = status === "complete" ? Icon : STATUS_ICON[status];
   const label = STATUS_LABEL[status];
   return (
     <span className={`tool-state ${status}`} role="img" aria-label={label} title={label}>
-      <Icon size={13} strokeWidth={status === "complete" || status === "error" ? 2.5 : 2} aria-hidden="true" />
+      <Glyph size={13} strokeWidth={status === "error" ? 2.5 : 2} aria-hidden="true" />
     </span>
   );
 }
 
 export function ToolRow({
   status,
+  Icon,
   verb,
   open,
   onToggle,
@@ -64,6 +64,7 @@ export function ToolRow({
   children
 }: {
   status: ToolStatus;
+  Icon: LucideIcon;
   verb: string;
   open: boolean;
   onToggle: () => void;
@@ -81,7 +82,7 @@ export function ToolRow({
         aria-controls={controls}
         onClick={onToggle}
       >
-        <ToolStatusIcon status={status} />
+        <ToolStatusIcon status={status} Icon={Icon} />
         <span className="tool-verb">{verb}</span>
         {children}
         <span className={`tool-caret collapse-caret${open ? " open" : ""}`} aria-hidden="true">
@@ -263,6 +264,7 @@ export const ToolCard = memo(function ToolCard({
     <div className={`tool-card ${status}${open ? " open" : ""}`}>
       <ToolRow
         status={status}
+        Icon={summary?.Icon ?? Wrench}
         verb={summary?.verb ?? name}
         open={open}
         onToggle={() => setOpen((o) => !o)}
@@ -272,7 +274,7 @@ export const ToolCard = memo(function ToolCard({
           canPreview && (
             <button
               type="button"
-              className="icon-btn tool-preview-btn"
+              className="icon-btn tool-side-btn"
               title="Preview rendered file"
               aria-label="Preview rendered file"
               onClick={() => onPreview(previewPath)}
