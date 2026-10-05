@@ -688,7 +688,7 @@ export function ComposerView({
 
   return (
     <>
-    <div className="composer composer-recipe">
+    <div className={`composer composer-recipe${busy ? " composer-busy" : ""}`}>
       {slashOpen && (
         <SlashMenu
           id={slashListId}
@@ -754,7 +754,7 @@ export function ComposerView({
             onPaste={(e) => {
               void pasteFiles(e.clipboardData);
             }}
-            placeholder={blockedReason ?? "Ask cw-code — @ files, / commands, $ skills"}
+            placeholder={blockedReason ?? (busy ? "Working… stop the turn to send a new message" : "Ask cw-code — @ files, / commands, $ skills")}
             className="composer-input"
             rows={3}
             disabled={busy || sending || blockedReason !== undefined}

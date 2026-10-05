@@ -2216,7 +2216,8 @@ body.session-dragging * {
 }
 
 .turn-head-row {
-  margin: 2px -8px -4px;
+  --turn-head-out: min(18px, var(--main-gutter));
+  margin: 4px calc(-1 * var(--turn-head-out)) -2px;
 }
 
 .turn-head-sticky {
@@ -2233,14 +2234,13 @@ body.session-dragging * {
   gap: 6px;
   width: 100%;
   min-width: 0;
-  padding: 6px 8px;
+  padding: 4px 0;
   border: 0;
-  border-radius: var(--r-sm);
   font-family: var(--sans);
   font-size: var(--t-xs);
   line-height: 16px;
   font-variant-numeric: tabular-nums;
-  color: var(--turn-label);
+  color: var(--muted);
   background: none;
   text-align: left;
   white-space: nowrap;
@@ -2249,7 +2249,7 @@ body.session-dragging * {
 }
 
 .turn-head:focus-visible {
-  outline-offset: -2px;
+  outline: none;
 }
 
 .turn-head:disabled {
@@ -2264,12 +2264,41 @@ body.session-dragging * {
 
 .turn-head-lead {
   flex: none;
-  width: 12px;
+  width: calc(var(--turn-head-out) - 6px);
 }
 
 .turn-head-rule {
   flex: 1 1 24px;
   min-width: 24px;
+}
+
+.turn-head-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: 0 1 auto;
+  min-width: 0;
+  height: 24px;
+  box-sizing: border-box;
+  padding: 0 10px;
+  border: 1px solid var(--border-soft);
+  border-radius: 999px;
+  background: var(--tool);
+}
+
+.turn-head:not(:disabled) .turn-head-chip {
+  padding-left: 8px;
+}
+
+.turn-head:focus-visible .turn-head-chip {
+  outline: 2px solid var(--violet-ink);
+  outline-offset: 2px;
+}
+
+.turn-head-chip .pulse {
+  flex: none;
+  width: 6px;
+  height: 6px;
 }
 
 .turn-head-label {
@@ -2284,17 +2313,24 @@ body.session-dragging * {
 .turn-caret {
   display: inline-flex;
   flex: none;
+  margin-inline: -1px -2px;
   color: var(--faint);
 }
 
 .turn-head-detail {
   min-width: 0;
+  max-width: 280px;
   overflow: hidden;
   text-overflow: ellipsis;
   color: var(--faint);
 }
 
-.turn-head:not(:disabled):hover {
+.turn-head:not(:disabled):hover .turn-head-chip {
+  border-color: var(--border);
+  background: var(--raised);
+}
+
+.turn-head:not(:disabled):hover .turn-head-label {
   color: var(--dim);
 }
 
@@ -2306,11 +2342,16 @@ body.session-dragging * {
   color: var(--dim);
 }
 
-.turn-head:not(:disabled):hover :is(.turn-head-lead, .turn-head-rule) {
-  background: var(--border);
+.turn-head-live .turn-head-chip {
+  border-color: color-mix(in srgb, var(--success) 22%, var(--border-soft));
 }
 
-.turn-head-live .turn-head-label {
+.turn-head-live:not(:disabled):hover .turn-head-chip {
+  border-color: color-mix(in srgb, var(--success) 30%, var(--border));
+}
+
+.turn-head-live .turn-head-label,
+.turn-head-live:not(:disabled):hover .turn-head-label {
   background: linear-gradient(90deg, var(--muted) 35%, var(--text) 50%, var(--muted) 65%);
   background-size: 200% 100%;
   -webkit-background-clip: text;
@@ -2319,13 +2360,13 @@ body.session-dragging * {
   animation: turn-text-sweep 2.2s steps(30) infinite;
 }
 
-.turn-head-live .turn-head-label .turn-head-dur {
+.turn-head-live .turn-head-label .turn-head-dur,
+.turn-head-live:not(:disabled):hover .turn-head-label .turn-head-dur {
   color: transparent;
 }
 
 @container scroll-state(stuck: top) {
   .turn-head {
-    border-radius: 0;
     box-shadow: 0 1px 0 var(--line);
   }
 
@@ -2346,14 +2387,16 @@ body.session-dragging * {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .turn-head-live .turn-head-label {
+  .turn-head-live .turn-head-label,
+  .turn-head-live:not(:disabled):hover .turn-head-label {
     animation: none;
     color: var(--muted);
     background: none;
     -webkit-text-fill-color: currentColor;
   }
 
-  .turn-head-live .turn-head-label .turn-head-dur {
+  .turn-head-live .turn-head-label .turn-head-dur,
+  .turn-head-live:not(:disabled):hover .turn-head-label .turn-head-dur {
     color: var(--dim);
   }
 }
@@ -2653,6 +2696,53 @@ body.session-dragging * {
 
 .composer-input:focus {
   outline: none;
+}
+
+.composer-busy {
+  background: var(--composer-surface);
+}
+
+.composer-busy::before {
+  content: "";
+  position: absolute;
+  top: -1px;
+  left: 12px;
+  right: 12px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--success) 60%, transparent), transparent) no-repeat;
+  background-size: 40% 100%;
+  animation: composer-busy-sweep 2.8s steps(30) infinite;
+  pointer-events: none;
+}
+
+@keyframes composer-busy-sweep {
+  from {
+    background-position: -67% 0;
+  }
+
+  to {
+    background-position: 167% 0;
+  }
+}
+
+.composer-busy .composer-writing,
+.composer-busy .composer-input {
+  cursor: not-allowed;
+}
+
+.composer-busy .composer-input {
+  color: var(--faint);
+}
+
+.composer-busy .composer-input::placeholder {
+  color: var(--faint);
+  opacity: 1;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .composer-busy::before {
+    display: none;
+  }
 }
 
 .composer-recipe-row {

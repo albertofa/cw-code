@@ -86,21 +86,28 @@ export function TurnBlock({
             onClick={() => setManualOpen(!open)}
           >
             <span className="turn-head-lead" aria-hidden="true" />
-            <span className="turn-head-label">
-              {running ? "Working" : "Worked"}
-              {duration !== undefined && (
-                <>
-                  {" for "}
-                  <span className="turn-head-dur">{duration}</span>
-                </>
+            <span className="turn-head-chip">
+              {running && <span className="pulse" aria-hidden="true" />}
+              {hasActivity && (
+                <span className={`turn-caret collapse-caret${open ? " open" : ""}`} aria-hidden="true">
+                  <ChevronRight size={12} />
+                </span>
+              )}
+              <span className="turn-head-label">
+                {running ? "Working" : "Worked"}
+                {duration !== undefined && (
+                  <>
+                    {" for "}
+                    <span className="turn-head-dur">{duration}</span>
+                  </>
+                )}
+              </span>
+              {waiting && (
+                <span className="turn-head-detail" title={waiting}>
+                  · {waiting}
+                </span>
               )}
             </span>
-            {hasActivity && (
-              <span className={`turn-caret collapse-caret${open ? " open" : ""}`} aria-hidden="true">
-                <ChevronRight size={12} />
-              </span>
-            )}
-            {waiting && <span className="turn-head-detail">· {waiting}</span>}
             <span className="turn-head-rule" aria-hidden="true" />
           </button>
         </div>
