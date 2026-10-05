@@ -48,6 +48,7 @@ Core behaviors:
 - Tests cover stable contracts only: parsers and mappers, session routing and
   isolation, filesystem sandboxing, path and binary resolution helpers.
   UI components and wiring are verified by typecheck and build, not unit tests.
+- Never commit plans, mockups or design notes; keep them in the OS temp `agents-scratchpad`.
 - Before finishing work: typecheck, full test suite, and production bundle build
   must all pass. Reproduce reported bugs against live state (stored metadata,
   real CLI behavior) before changing code.
