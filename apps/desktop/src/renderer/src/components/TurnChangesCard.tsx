@@ -136,6 +136,7 @@ export function TurnChangesCard({ sessionId, snapshot }: { sessionId: string; sn
   const [refresh, setRefresh] = useState(0);
   const [phase, setPhase] = useState<UndoPhase>("idle");
   const [undoneLocally, setUndoneLocally] = useState(false);
+  const [expanded, setExpanded] = useState(false);
   const turnRunning = useAppStore((s) => s.busyTurns[sessionId] !== undefined);
   const rootIdsKey = useAppStore((s) => sameRootSessionIds(s.sessionsByProject, s.projects, sessionId).join("\n"));
   const rootIds = rootIdsKey.split("\n");
@@ -251,10 +252,19 @@ export function TurnChangesCard({ sessionId, snapshot }: { sessionId: string; sn
     body = (
       <div className="turn-changes">
         <div className="turn-changes-hd">
-          <FileDiff size={14} aria-hidden="true" />
-          <b>{plural(changes.files.length, "file")} changed</b>
-          <span className="add">+{totals.added}</span>
-          <span className="del">−{totals.deleted}</span>
+          <button
+            type="button"
+            className="turn-changes-toggle"
+            onClick={() => setExpanded((value) => !value)}
+            aria-expanded={expanded}
+            title={expanded ? "Hide changed files" : "Show changed files"}
+          >
+            <ChevronRight size={13} className="turn-changes-chevron" aria-hidden="true" />
+            <FileDiff size={14} aria-hidden="true" />
+            <b>{plural(changes.files.length, "file")} changed</b>
+            <span className="add">+{totals.added}</span>
+            <span className="del">−{totals.deleted}</span>
+          </button>
           <span className="turn-changes-end">
             {undone ? (
               <span className="turn-changes-undone">
@@ -289,7 +299,7 @@ export function TurnChangesCard({ sessionId, snapshot }: { sessionId: string; sn
         {!undone && changes.conflicts.length > 0 && (
           <Warning>Changed since the turn ended: {changes.conflicts.join(", ")}</Warning>
         )}
-        <div className="turn-changes-files">
+        {expanded && <div className="turn-changes-files">
           {changes.files.map((file) => {
             const { dir, name } = splitRepoPath(file.path);
             const deleted = file.change === "deleted";
@@ -320,7 +330,7 @@ export function TurnChangesCard({ sessionId, snapshot }: { sessionId: string; sn
               </button>
             );
           })}
-        </div>
+        </div>}
       </div>
     );
   }
