@@ -2291,8 +2291,7 @@ body.session-dragging * {
 }
 
 .turn-head-row {
-  --turn-head-out: min(18px, var(--main-gutter));
-  margin: 0 calc(-1 * var(--turn-head-out)) 2px;
+  margin-bottom: 2px;
 }
 
 .turn-lead + .turn-head-row {
@@ -2315,7 +2314,7 @@ body.session-dragging * {
   height: 28px;
   min-width: 0;
   box-sizing: border-box;
-  padding: 0 var(--turn-head-out);
+  padding: 0;
   border: 0;
   border-radius: var(--r-sm);
   font-family: var(--sans);
@@ -2427,29 +2426,27 @@ body.session-dragging * {
 }
 
 .turn-head-live .turn-head-rule {
-  overflow: hidden;
-  container-type: inline-size;
   background: linear-gradient(90deg, color-mix(in srgb, var(--success) 55%, transparent), color-mix(in srgb, var(--success) 12%, transparent) 45%, var(--border-soft) 80%);
 }
 
 .turn-head-live .turn-head-rule::after {
   content: "";
   display: block;
-  width: 48px;
   height: 1px;
-  background: linear-gradient(90deg, transparent, var(--success), transparent);
-  animation: turn-rule-run 2.4s steps(24) infinite;
+  background: linear-gradient(90deg, transparent 0, color-mix(in srgb, var(--success) 60%, transparent) 180px, transparent 360px) repeat-x;
+  background-size: 1120px 100%;
+  animation: turn-rule-sweep 2.8s linear infinite;
 }
 
 .turn-head-live .turn-head-label,
 .turn-head-live:not(:disabled):hover .turn-head-label {
   font-weight: 600;
-  background: linear-gradient(90deg, var(--dim) 35%, var(--text) 50%, var(--dim) 65%);
-  background-size: 200% 100%;
+  background: linear-gradient(90deg, var(--dim) 0, var(--dim) 120px, var(--text) 155px, var(--dim) 190px, var(--dim) 320px) repeat-x;
+  background-size: 320px 100%;
   -webkit-background-clip: text;
   background-clip: text;
   color: transparent;
-  animation: turn-text-sweep 2.2s steps(30) infinite;
+  animation: turn-text-sweep 2.8s linear infinite;
 }
 
 .turn-head-live .turn-head-label .turn-head-dur,
@@ -2460,16 +2457,6 @@ body.session-dragging * {
 
 .turn-head-live .turn-head-detail {
   color: var(--muted);
-}
-
-@keyframes turn-rule-run {
-  from {
-    transform: translateX(-48px);
-  }
-
-  to {
-    transform: translateX(calc(100cqw + 48px));
-  }
 }
 
 @container scroll-state(stuck: top) {
@@ -2484,11 +2471,21 @@ body.session-dragging * {
 
 @keyframes turn-text-sweep {
   from {
-    background-position: 200% 0;
+    background-position: 0 0;
   }
 
   to {
-    background-position: -100% 0;
+    background-position: 320px 0;
+  }
+}
+
+@keyframes turn-rule-sweep {
+  from {
+    background-position: 0 0;
+  }
+
+  to {
+    background-position: 1120px 0;
   }
 }
 
@@ -2568,7 +2565,7 @@ body.session-dragging * {
   bottom: 0;
   height: 6px;
   background: var(--success);
-  animation: turn-rail-live 1.6s steps(4, jump-none) infinite;
+  animation: turn-rail-live 2.6s ease-in-out infinite;
 }
 
 .turn-fold > * {

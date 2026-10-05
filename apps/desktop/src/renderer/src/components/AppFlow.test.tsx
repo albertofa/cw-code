@@ -69,6 +69,7 @@ function installBridge(): void {
     listModels: async () => [],
     listModelsFor: async () => delayed(modelsForResult, 900),
     listProjectFiles: async () => [],
+    getUsageLedger: async () => [],
     onTurnEvent: (cb: TurnCb) => {
       const list = listeners.get("turn") ?? [];
       list.push(cb);
