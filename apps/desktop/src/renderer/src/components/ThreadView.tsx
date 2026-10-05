@@ -21,6 +21,7 @@ import { ApprovalDock } from "./ApprovalDock.js";
 import { QuestionDock } from "./QuestionDock.js";
 import { TodoDock } from "./TodoDock.js";
 import { PrUpdateDock } from "./PrUpdateDock.js";
+import { WorkingDock } from "./WorkingDock.js";
 import { PrSessionChip } from "./PrSessionPanel.js";
 import { useLinkedPrLoader } from "./useLinkedPr.js";
 import { sessionLinks } from "./sessionPrLinks.js";
@@ -321,6 +322,7 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
       if (!hiddenRef.current && stickRef.current) pinToBottom(el);
     });
     ro.observe(inner);
+    ro.observe(el);
     el.addEventListener("wheel", onWheel, { passive: true });
     el.addEventListener("pointerdown", onPointerDown, { passive: true });
     el.addEventListener("touchmove", onTouchMove, { passive: true });
@@ -590,7 +592,8 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
         <PrUpdateDock key={`pr-dock:${session.id}`} sessionId={session.id} />
         <ApprovalDock sessionId={session.id} />
         <QuestionDock sessionId={session.id} />
-        <Composer key={`composer:${session.id}`} sessionId={session.id} driver={session.driver} basePath={basePath} />
+        <WorkingDock key={`working-dock:${session.id}`} sessionId={session.id} basePath={basePath} />
+        <Composer key={`composer:${session.id}`} sessionId={session.id} driver={session.driver} />
       </div>
       )}
       {(isBottomOpen(panelDockByTab, isToolAvailable) || draggingTab !== null) && (

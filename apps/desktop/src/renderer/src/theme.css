@@ -2761,29 +2761,6 @@ body.session-dragging * {
   background: var(--composer-surface);
 }
 
-.composer-busy::before {
-  content: "";
-  position: absolute;
-  top: -1px;
-  left: 12px;
-  right: 12px;
-  height: 1px;
-  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--success) 60%, transparent), transparent) no-repeat;
-  background-size: 40% 100%;
-  animation: composer-busy-sweep 2.8s steps(30) infinite;
-  pointer-events: none;
-}
-
-@keyframes composer-busy-sweep {
-  from {
-    background-position: -67% 0;
-  }
-
-  to {
-    background-position: 167% 0;
-  }
-}
-
 .composer-busy .composer-writing,
 .composer-busy .composer-input {
   cursor: not-allowed;
@@ -2796,12 +2773,6 @@ body.session-dragging * {
 .composer-busy .composer-input::placeholder {
   color: var(--faint);
   opacity: 1;
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .composer-busy::before {
-    display: none;
-  }
 }
 
 .composer-recipe-row {
@@ -2989,84 +2960,6 @@ body.session-dragging * {
 
 .composer-add {
   margin-left: auto;
-}
-
-.composer-working {
-  container: composer-working / inline-size;
-  flex: 1 1 0;
-  min-width: 0;
-  margin-right: -8px;
-  overflow: hidden;
-  animation: cw-reveal var(--dur-fast) var(--ease-out);
-}
-
-.composer-working-inner {
-  display: flex;
-  align-items: center;
-  justify-content: flex-end;
-  gap: 6px;
-  padding-right: 8px;
-  font-size: var(--t-xs);
-  line-height: 16px;
-  font-variant-numeric: tabular-nums;
-  color: var(--muted);
-  white-space: nowrap;
-}
-
-.composer-working .pulse {
-  flex: none;
-  width: 6px;
-  height: 6px;
-}
-
-.composer-working-label {
-  flex: none;
-  color: var(--dim);
-}
-
-.composer-working-time {
-  flex: none;
-}
-
-.composer-working-step {
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  color: var(--faint);
-}
-
-.composer-working-step::before {
-  content: "· ";
-}
-
-@container composer-working (max-width: 240px) {
-  .composer-working-step {
-    display: none;
-  }
-}
-
-@container composer-working (max-width: 128px) {
-  .composer-working-label {
-    display: none;
-  }
-}
-
-@container composer-working (max-width: 72px) {
-  .composer-working-time {
-    display: none;
-  }
-}
-
-.composer-working-announce {
-  position: absolute;
-  width: 1px;
-  height: 1px;
-  margin: -1px;
-  padding: 0;
-  overflow: hidden;
-  clip-path: inset(50%);
-  white-space: nowrap;
-  border: 0;
 }
 
 .menu {
@@ -5403,10 +5296,6 @@ select.field option {
     gap: 4px;
   }
 
-  .composer-working {
-    margin-right: -4px;
-  }
-
   .composer-recipe-row .menu-btn {
     padding-inline: 3px;
   }
@@ -5591,7 +5480,8 @@ select.field option {
 .todo-dock,
 .pr-dock,
 .approval-dock,
-.question-dock {
+.question-dock,
+.working-dock {
   position: relative;
   z-index: 1;
   box-sizing: border-box;
@@ -5606,7 +5496,7 @@ select.field option {
   animation: cw-reveal var(--dur-fast) var(--ease-out);
 }
 
-:is(.todo-dock, .pr-dock, .approval-dock, .question-dock) ~ :is(.todo-dock, .pr-dock, .approval-dock, .question-dock) {
+:is(.todo-dock, .pr-dock, .approval-dock, .question-dock) ~ :is(.todo-dock, .pr-dock, .approval-dock, .question-dock, .working-dock) {
   border-radius: 0;
 }
 
@@ -5624,6 +5514,142 @@ select.field option {
   background:
     linear-gradient(180deg, color-mix(in srgb, var(--accent) 9%, transparent), color-mix(in srgb, var(--accent) 3%, transparent)),
     var(--bg-deep);
+}
+
+.working-dock {
+  container: working-dock / inline-size;
+  border-color: color-mix(in srgb, var(--success) 30%, transparent);
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--success) 5%, transparent), color-mix(in srgb, var(--success) 2%, transparent)),
+    var(--bg-deep);
+}
+
+.working-dock::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  left: 12px;
+  right: 12px;
+  height: 1px;
+  background: linear-gradient(90deg, transparent, color-mix(in srgb, var(--success) 60%, transparent), transparent) no-repeat;
+  background-size: 40% 100%;
+  animation: working-dock-sweep 2.8s steps(30) infinite;
+  pointer-events: none;
+}
+
+@keyframes working-dock-sweep {
+  from {
+    background-position: -67% 0;
+  }
+
+  to {
+    background-position: 167% 0;
+  }
+}
+
+.working-dock-row {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  height: 34px;
+  padding: 0 6px 0 12px;
+  box-sizing: border-box;
+  color: var(--muted);
+  font-size: var(--t-sm);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.working-dock .pulse {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 18%, transparent);
+}
+
+.working-dock-label {
+  flex: none;
+  color: var(--dim);
+}
+
+.working-dock-time {
+  flex: none;
+  color: var(--muted);
+}
+
+.working-dock-step {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  color: var(--faint);
+}
+
+.working-dock-step::before {
+  content: "· ";
+}
+
+.working-dock-stop {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  flex: none;
+  height: 24px;
+  margin-left: auto;
+  padding: 0 8px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: var(--t-xs);
+  font-weight: 500;
+  cursor: pointer;
+}
+
+.working-dock-stop:hover {
+  background: color-mix(in srgb, var(--danger) 14%, transparent);
+  color: var(--danger);
+}
+
+.working-dock-stop:focus-visible {
+  outline: 2px solid var(--violet-ink);
+  outline-offset: 0;
+}
+
+@container working-dock (max-width: 320px) {
+  .working-dock-step {
+    display: none;
+  }
+}
+
+@container working-dock (max-width: 220px) {
+  .working-dock-stop {
+    width: 24px;
+    padding: 0;
+    justify-content: center;
+  }
+
+  .working-dock-stop-label {
+    display: none;
+  }
+}
+
+.working-dock-announce {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .working-dock::before {
+    display: none;
+  }
 }
 
 .approval-panel {

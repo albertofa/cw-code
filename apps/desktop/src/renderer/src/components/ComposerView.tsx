@@ -93,7 +93,6 @@ export function ComposerView({
   modelsRefreshKey = 0,
   resetStaleModel = false,
   recipePrefix,
-  statusSlot,
   usageSlot,
   footer,
   blockedReason
@@ -104,7 +103,6 @@ export function ComposerView({
   modelsRefreshKey?: number;
   resetStaleModel?: boolean;
   recipePrefix?: ReactNode;
-  statusSlot?: ReactNode;
   usageSlot?: ReactNode;
   footer?: ReactNode;
   blockedReason?: string;
@@ -868,7 +866,6 @@ export function ComposerView({
             onPick={(v) => backend.savePrefs({ permissionMode: v as PermissionMode })}
           />
         </div>
-        {statusSlot}
         <div className="menu composer-add">
           <button
             className="icon-btn composer-attach"

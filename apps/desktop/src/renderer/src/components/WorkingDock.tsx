@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState } from "react";
+import { Square } from "lucide-react";
 import { useAppStore, type ChatMessage } from "../stores/appStore.js";
 import { describeToolCall, formatDuration, isRunningTool, relativizeToBase } from "./toolSummaries.js";
 import { useElapsed } from "./useElapsed.js";
@@ -21,7 +22,12 @@ function runningStep(messages: ChatMessage[], turnId: string, basePath: string):
   return undefined;
 }
 
-export function ComposerWorkingStatus({ sessionId, basePath }: { sessionId: string; basePath: string }) {
+function WorkingElapsed({ startedAt }: { startedAt: number }) {
+  const elapsed = useElapsed(startedAt, true);
+  return <span className="working-dock-time">{formatDuration(elapsed)}</span>;
+}
+
+export function WorkingDock({ sessionId, basePath }: { sessionId: string; basePath: string }) {
   const turnId = useAppStore((s) => s.busyTurns[sessionId]);
   const startedAt = useAppStore((s) => s.turnStartedAt[sessionId]);
   const waiting = useAppStore((s) =>
@@ -35,7 +41,6 @@ export function ComposerWorkingStatus({ sessionId, basePath }: { sessionId: stri
     turnId === undefined ? undefined : runningStep(s.messagesBySession[sessionId] ?? NO_MESSAGES, turnId, basePath)
   );
   const running = turnId !== undefined;
-  const elapsed = useElapsed(startedAt, running);
   const [announcement, setAnnouncement] = useState("");
   const wasRunning = useRef(running);
 
@@ -49,18 +54,28 @@ export function ComposerWorkingStatus({ sessionId, basePath }: { sessionId: stri
 
   return (
     <>
-      <div className="composer-working-announce" role="status" aria-live="polite">
+      <div className="working-dock-announce" role="status" aria-live="polite">
         {announcement}
       </div>
       {running && (
-        <div className="composer-working" title={detail ? `Working · ${detail}` : "Working"}>
-          <div className="composer-working-inner">
+        <section className="working-dock" aria-label="Turn status">
+          <div className="working-dock-row" title={detail ? `Working · ${detail}` : "Working"}>
             <span className="pulse" aria-hidden="true" />
-            <span className="composer-working-label">Working</span>
-            {startedAt !== undefined && <span className="composer-working-time">{formatDuration(elapsed)}</span>}
-            {detail && <span className="composer-working-step">{detail}</span>}
+            <span className="working-dock-label">Working</span>
+            {startedAt !== undefined && <WorkingElapsed startedAt={startedAt} />}
+            {detail && <span className="working-dock-step">{detail}</span>}
+            <button
+              type="button"
+              className="working-dock-stop"
+              onClick={() => void useAppStore.getState().interrupt()}
+              title="Stop the turn"
+              aria-label="Stop the turn"
+            >
+              <Square size={10} fill="currentColor" aria-hidden="true" />
+              <span className="working-dock-stop-label">Stop</span>
+            </button>
           </div>
-        </div>
+        </section>
       )}
     </>
   );
