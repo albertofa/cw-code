@@ -66,11 +66,11 @@ export function TurnBlock({
   const elapsed = useElapsed(startedAt, running);
   const waiting = running ? describeWaitingTools(pending ?? [], Date.now(), startedAt) : undefined;
   const showHead = running || hasActivity || durationMs !== undefined;
-  const label = running
-    ? `Working for ${formatDuration(elapsed)}`
+  const duration = running
+    ? formatDuration(elapsed)
     : durationMs !== undefined && durationMs > 0
-      ? `Worked for ${formatDuration(durationMs)}`
-      : "Worked";
+      ? formatDuration(durationMs)
+      : undefined;
 
   return (
     <div ref={rootRef} className={`turn-block${open ? " open" : ""}`}>
@@ -85,12 +85,21 @@ export function TurnBlock({
             disabled={!hasActivity}
             onClick={() => setManualOpen(!open)}
           >
+            <span className="turn-head-lead" aria-hidden="true" />
+            <span className="turn-head-label">
+              {running ? "Working" : "Worked"}
+              {duration !== undefined && (
+                <>
+                  {" for "}
+                  <span className="turn-head-dur">{duration}</span>
+                </>
+              )}
+            </span>
             {hasActivity && (
               <span className={`turn-caret collapse-caret${open ? " open" : ""}`} aria-hidden="true">
-                <ChevronRight size={14} />
+                <ChevronRight size={12} />
               </span>
             )}
-            <span className="turn-head-label">{label}</span>
             {waiting && <span className="turn-head-detail">· {waiting}</span>}
             <span className="turn-head-rule" aria-hidden="true" />
           </button>

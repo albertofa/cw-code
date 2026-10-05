@@ -21,7 +21,7 @@ function runningStep(messages: ChatMessage[], turnId: string, basePath: string):
   return undefined;
 }
 
-export function TurnStatusLine({ sessionId, basePath }: { sessionId: string; basePath: string }) {
+export function ComposerWorkingStatus({ sessionId, basePath }: { sessionId: string; basePath: string }) {
   const turnId = useAppStore((s) => s.busyTurns[sessionId]);
   const startedAt = useAppStore((s) => s.turnStartedAt[sessionId]);
   const waiting = useAppStore((s) =>
@@ -49,22 +49,17 @@ export function TurnStatusLine({ sessionId, basePath }: { sessionId: string; bas
 
   return (
     <>
-      <div className="turn-status-announce" role="status" aria-live="polite">
+      <div className="composer-working-announce" role="status" aria-live="polite">
         {announcement}
       </div>
       {running && (
-        <div className="turn-status">
-          <span className="pulse" aria-hidden="true" />
-          <span className="turn-status-label">Working</span>
-          {startedAt !== undefined && <span className="turn-status-time">{formatDuration(elapsed)}</span>}
-          {detail && (
-            <>
-              <span className="turn-status-sep" aria-hidden="true">·</span>
-              <span className="turn-status-step" title={detail}>
-                {detail}
-              </span>
-            </>
-          )}
+        <div className="composer-working" title={detail ? `Working · ${detail}` : "Working"}>
+          <div className="composer-working-inner">
+            <span className="pulse" aria-hidden="true" />
+            <span className="composer-working-label">Working</span>
+            {startedAt !== undefined && <span className="composer-working-time">{formatDuration(elapsed)}</span>}
+            {detail && <span className="composer-working-step">{detail}</span>}
+          </div>
         </div>
       )}
     </>

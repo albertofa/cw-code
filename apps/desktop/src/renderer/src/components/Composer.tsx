@@ -3,9 +3,10 @@ import type { DriverName } from "../cw.js";
 import { useAppStore, DEFAULT_COMPOSER } from "../stores/appStore.js";
 import { usePanelStore } from "../stores/panelStore.js";
 import { ComposerView, type ComposerBackend } from "./ComposerView.js";
+import { ComposerWorkingStatus } from "./ComposerWorkingStatus.js";
 import { ContextRing } from "./ContextRing.js";
 
-export function Composer({ sessionId, driver }: { sessionId: string; driver: DriverName }) {
+export function Composer({ sessionId, driver, basePath }: { sessionId: string; driver: DriverName; basePath: string }) {
   const prefs = useAppStore((s) => s.composerBySession[sessionId] ?? DEFAULT_COMPOSER);
   const busy = useAppStore((s) => s.busyTurns[sessionId] !== undefined);
   const projectId = useAppStore((s) => {
@@ -51,6 +52,7 @@ export function Composer({ sessionId, driver }: { sessionId: string; driver: Dri
       driver={driver}
       resetKey={sessionId}
       modelsRefreshKey={modelsRefreshKey}
+      statusSlot={<ComposerWorkingStatus sessionId={sessionId} basePath={basePath} />}
       usageSlot={<ContextRing sessionId={sessionId} driver={driver} />}
     />
   );
