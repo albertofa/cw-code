@@ -1,4 +1,3 @@
-import type { ReactNode } from "react";
 import { MessageSquare } from "lucide-react";
 import type { MainTabId } from "@cw-code/contracts";
 import type { DriverName } from "../cw.js";
@@ -15,13 +14,11 @@ import { selectSessionPanel, usePanelStore } from "../stores/panelStore.js";
 export function MainTabStrip({
   sessionId,
   driver,
-  hasPr,
-  trailing
+  hasPr
 }: {
   sessionId: string | undefined;
   driver: DriverName | undefined;
   hasPr: boolean;
-  trailing?: ReactNode;
 }) {
   const { mainOrder, activeMain, dockByTab } = usePanelStore((s) => selectSessionPanel(s, sessionId));
   const setActive = usePanelStore((s) => s.setActive);
@@ -70,7 +67,6 @@ export function MainTabStrip({
             />
           );
         })}
-      {trailing && <div className="main-tabbar-trailing">{trailing}</div>}
       {tabMenu.menuNode}
     </div>
   );

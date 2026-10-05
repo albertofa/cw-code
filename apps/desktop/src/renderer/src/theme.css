@@ -191,6 +191,7 @@ body {
 .head-seg button,
 .head-seg input,
 .head-seg .menu,
+.head-seg .menu-panel,
 .head-seg a,
 .head-seg [role="button"],
 .head-seg .gh-menu,
@@ -240,8 +241,22 @@ body {
 }
 
 .head-col.col-right .git-status-pill,
-.head-col.col-right .gh-btn {
+.head-col.col-right .gh-btn,
+.head-col.col-right .pr-panel-chip-wrap {
   flex: none;
+}
+
+.head-col.col-right .pr-panel-chip {
+  height: 23px;
+  padding: 0 7px;
+  box-sizing: border-box;
+  background: var(--chip-fill);
+  border-color: var(--border);
+  border-radius: 6px;
+}
+
+.head-col.col-right .pr-panel-chip:hover {
+  background: var(--hover);
 }
 
 .head-col.col-right .git-stats,
@@ -9241,13 +9256,6 @@ button.gitbar-checkout:hover {
 .pr-dock-foot .pr-detail-btn:disabled {
   opacity: 0.45;
   cursor: default;
-}
-
-.main-tabbar-trailing {
-  display: flex;
-  align-items: center;
-  margin-left: auto;
-  padding-left: 8px;
 }
 
 .pr-panel-chip {

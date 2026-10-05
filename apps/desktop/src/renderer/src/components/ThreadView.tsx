@@ -390,6 +390,7 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
       <div className="head-col col-mid" />
       <div className="head-col col-right">
         {!showNew && sessionId && <GitPanelBar key={sessionId} sessionId={sessionId} />}
+        {hasPr && sessionId && <PrSessionChip key={sessionId} sessionId={sessionId} />}
       </div>
     </div>
   );
@@ -509,12 +510,7 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
   return frame(
     <>
       {head}
-      <MainTabStrip
-        sessionId={session.id}
-        driver={session.driver}
-        hasPr={hasPr}
-        trailing={hasPr ? <PrSessionChip key={session.id} sessionId={session.id} /> : undefined}
-      />
+      <MainTabStrip sessionId={session.id} driver={session.driver} hasPr={hasPr} />
       {showMainTool !== null ? (
         <div
           className={`main-tool-body${dropMain.over ? " drop-target-active" : ""}`}
