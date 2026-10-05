@@ -10,9 +10,37 @@
   align-items: center;
   gap: 10px;
   min-height: 38px;
-  padding: 0 8px 0 12px;
+  padding: 0 8px 0 0;
   font-size: var(--t-sm);
   color: var(--dim);
+}
+
+.turn-changes-toggle {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  align-self: stretch;
+  min-width: 0;
+  padding: 0 8px 0 10px;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.turn-changes-toggle:hover b {
+  text-decoration: underline;
+}
+
+.turn-changes-chevron {
+  flex: none;
+  color: var(--faint);
+  transition: transform var(--dur-fast) var(--ease-out);
+}
+
+.turn-changes-toggle[aria-expanded="true"] .turn-changes-chevron {
+  transform: rotate(90deg);
 }
 
 .turn-changes-hd b {

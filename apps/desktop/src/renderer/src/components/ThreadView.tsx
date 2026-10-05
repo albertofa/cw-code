@@ -389,8 +389,8 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
       </div>
       <div className="head-col col-mid" />
       <div className="head-col col-right">
-        {!showNew && sessionId && <GitPanelBar key={sessionId} sessionId={sessionId} />}
-        {hasPr && sessionId && <PrSessionChip key={sessionId} sessionId={sessionId} />}
+        {!showNew && sessionId && <GitPanelBar key={`git:${sessionId}`} sessionId={sessionId} />}
+        {hasPr && sessionId && <PrSessionChip key={`pr:${sessionId}`} sessionId={sessionId} />}
       </div>
     </div>
   );
