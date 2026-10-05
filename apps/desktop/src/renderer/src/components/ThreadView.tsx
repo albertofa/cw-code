@@ -1,9 +1,9 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { Check, ChevronDown, Copy, Sparkles, TriangleAlert } from "lucide-react";
 import type { DockableTabId } from "@cw-code/contracts";
 import { useAppStore, type ChatMessage } from "../stores/appStore.js";
-import { Notifications, useNotifs } from "./Notifications.js";
-import { Md, StreamingMd, resolvePreviewPaths } from "./Markdown.js";
+import { useNotifs } from "./Notifications.js";
+import { Md, StreamingMd, isPathInsideBase, resolvePreviewPaths } from "./Markdown.js";
 import { BottomPanel } from "./BottomPanel.js";
 import { MainTabStrip } from "./MainTabStrip.js";
 import { GitPanelBar } from "./GitPanelBar.js";
@@ -21,20 +21,44 @@ import { ApprovalDock } from "./ApprovalDock.js";
 import { QuestionDock } from "./QuestionDock.js";
 import { TodoDock } from "./TodoDock.js";
 import { PrUpdateDock } from "./PrUpdateDock.js";
+import { WorkingDock } from "./WorkingDock.js";
 import { PrSessionChip } from "./PrSessionPanel.js";
 import { useLinkedPrLoader } from "./useLinkedPr.js";
 import { sessionLinks } from "./sessionPrLinks.js";
 import { TurnBlock } from "./TurnBlock.js";
-import { groupTurns, splitTurn, type ThreadNode } from "./turnGroups.js";
+import { TurnChangesCard } from "./TurnChangesCard.js";
+import { snapshotTurnMatches } from "./turnChanges.js";
+import { countActivityTools, groupTurns, splitTurn, type ThreadNode } from "./turnGroups.js";
 import { pendingToolsForTurn } from "./toolSummaries.js";
 import { durationFromMessages } from "./turnFormat.js";
 import { selectSessionPanel, usePanelStore } from "../stores/panelStore.js";
-import { PanelToggles } from "./PanelToggles.js";
 import { collectSubagents } from "./subagents.js";
 import { splitImageMentions } from "./imagePreview.js";
 import { ImageThumb } from "./ImageThumb.js";
+import { ThreadVisibleContext } from "./threadVisibility.js";
+import { toolAvailability } from "./toolTabs.js";
 
 const EMPTY_MESSAGES: ChatMessage[] = [];
+const FOLLOW_BAND = 64;
+const SCROLL_UP_KEYS = new Set(["PageUp", "Home", "ArrowUp"]);
+
+function distanceFromBottom(el: HTMLElement): number {
+  return el.scrollHeight - el.scrollTop - el.clientHeight;
+}
+
+function pinToBottom(el: HTMLElement): void {
+  if (distanceFromBottom(el) > 1) el.scrollTop = el.scrollHeight;
+}
+
+function nestedScrollerTakesUpward(target: EventTarget | null, root: HTMLElement): boolean {
+  for (let node = target instanceof Element ? target : null; node && node !== root; node = node.parentElement) {
+    if (node.scrollTop > 0 && node.scrollHeight > node.clientHeight) {
+      const { overflowY } = getComputedStyle(node);
+      if (overflowY === "auto" || overflowY === "scroll") return true;
+    }
+  }
+  return false;
+}
 
 function UserMessage({
   message,
@@ -111,7 +135,7 @@ function UserMessage({
   );
 }
 
-export function ThreadView() {
+export function ThreadView({ hidden = false }: { hidden?: boolean }) {
   const activeProjectId = useAppStore((s) => s.activeProjectId);
   const activeSessionId = useAppStore((s) => s.activeSessionId);
   const pendingDriver = useAppStore((s) => s.pendingDriver);
@@ -129,6 +153,9 @@ export function ThreadView() {
     activeSessionId ? (s.messagesBySession[activeSessionId] ?? EMPTY_MESSAGES) : EMPTY_MESSAGES
   );
   const busyTurn = useAppStore((s) => (activeSessionId ? s.busyTurns[activeSessionId] : undefined));
+  const hasPreview = useAppStore((s) =>
+    activeSessionId ? (s.previewBySession[activeSessionId] ?? null) !== null : false
+  );
   const historyLoading = useAppStore((s) => (activeSessionId ? !!s.loadingHistory[activeSessionId] : false));
   const historyError = useAppStore((s) => (activeSessionId ? s.historyErrorBySession[activeSessionId] : undefined));
   const ensureHistory = useAppStore((s) => s.ensureHistory);
@@ -138,8 +165,7 @@ export function ThreadView() {
   const {
     activeMain: panelActiveMain,
     dockByTab: panelDockByTab,
-    mainOrder: panelMainOrder,
-    rightVisible
+    mainOrder: panelMainOrder
   } = usePanelStore((s) => selectSessionPanel(s, activeSessionId ?? undefined));
   const activateOrOpen = usePanelStore((s) => s.activateOrOpen);
   const setRightVisible = usePanelStore((s) => s.setRightVisible);
@@ -155,10 +181,12 @@ export function ThreadView() {
       groupTurns(messages).map((slice) => {
         const running = busyTurn === slice.turnId;
         const known = turnDurations?.[slice.turnId];
+        const first = slice.messages[0];
         return {
           turnId: slice.turnId,
           pieces: splitTurn(slice.messages, nestedIds, running),
           running,
+          promptedAt: first?.role === "user" ? first.timestamp : undefined,
           startedAt: running ? turnStartedAt : undefined,
           pending: running ? pendingToolsForTurn(slice.messages, slice.turnId) : undefined,
           durationMs: known ?? durationFromMessages(slice.messages)
@@ -180,14 +208,22 @@ export function ThreadView() {
   const scrollRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
   const lastSeenIdRef = useRef<string | null>(null);
+  const hiddenRef = useRef(hidden);
+  hiddenRef.current = hidden;
+  const savedScrollTopRef = useRef(0);
+  const lastDistanceRef = useRef(0);
   const [atBottom, setAtBottom] = useState(true);
 
   const sessionId = session?.id;
+  const turnSnapshot = session?.lastTurnSnapshot;
+  const changesTurnIndex = snapshotTurnMatches(turns[turns.length - 1], turnSnapshot) ? turns.length - 1 : -1;
+  const isToolAvailable = toolAvailability(session?.driver, hasPr, hasPreview);
   const resolvedMainTab =
     session === undefined
       ? "chat"
-      : resolveMainTab(panelMainOrder, panelDockByTab, session.driver, panelActiveMain, hasPr);
+      : resolveMainTab(panelMainOrder, panelDockByTab, session.driver, panelActiveMain, hasPr, isToolAvailable);
   const showMainTool: DockableTabId | null = resolvedMainTab === "chat" ? null : resolvedMainTab;
+  const threadMounted = !showNew && showMainTool === null;
   const basePath = session?.worktreePath ?? project?.rootPath ?? "";
   const onOpenPreview = useCallback(
     (path: string) => {
@@ -197,6 +233,18 @@ export function ThreadView() {
       setRightVisible(sessionId, true);
     },
     [openPreview, sessionId, basePath, activateOrOpen, setRightVisible]
+  );
+  const onOpenSource = useCallback(
+    (path: string, line?: number) => {
+      if (!sessionId) return;
+      const { rel, abs } = resolvePreviewPaths(basePath, path);
+      if (!isPathInsideBase(basePath, abs)) {
+        useNotifs.getState().push({ kind: "warning", title: "File is outside this session's workspace", message: path });
+        return;
+      }
+      usePanelStore.getState().revealFile(sessionId, rel, line);
+    },
+    [sessionId, basePath]
   );
   const onOpenExternal = useCallback(
     (path: string) => {
@@ -211,8 +259,18 @@ export function ThreadView() {
   useEffect(() => {
     stickRef.current = true;
     lastSeenIdRef.current = null;
+    savedScrollTopRef.current = 0;
+    lastDistanceRef.current = 0;
     setAtBottom(true);
   }, [activeSessionId]);
+
+  useLayoutEffect(() => {
+    if (hidden) return;
+    const el = scrollRef.current;
+    if (!el) return;
+    if (stickRef.current) pinToBottom(el);
+    else el.scrollTop = savedScrollTopRef.current;
+  }, [hidden]);
 
   useEffect(() => {
     const last = messages[messages.length - 1];
@@ -220,31 +278,80 @@ export function ThreadView() {
       lastSeenIdRef.current = last.id;
       if (last.role === "user") stickRef.current = true;
     }
+    if (hidden) return;
     const raf = requestAnimationFrame(() => {
       const el = scrollRef.current;
-      if (el && stickRef.current) el.scrollTop = el.scrollHeight;
+      if (el && stickRef.current) pinToBottom(el);
     });
     return () => cancelAnimationFrame(raf);
-  }, [messages, busyTurn]);
+  }, [messages, busyTurn, hidden]);
 
   useEffect(() => {
     const el = scrollRef.current;
     const inner = el?.firstElementChild;
-    if (!el || !(inner instanceof HTMLElement)) return;
-    const stickToBottom = () => {
-      if (stickRef.current) el.scrollTop = el.scrollHeight;
+    if (!threadMounted || !el || !(inner instanceof HTMLElement)) return;
+    let pressedInside = false;
+    const release = () => {
+      if (hiddenRef.current || !stickRef.current) return;
+      stickRef.current = false;
+      lastDistanceRef.current = distanceFromBottom(el);
+      setAtBottom(false);
     };
-    const ro = new ResizeObserver(stickToBottom);
+    const onWheel = (e: WheelEvent) => {
+      if (e.deltaY < 0 && !e.ctrlKey && el.scrollTop > 0 && !nestedScrollerTakesUpward(e.target, el)) release();
+    };
+    const onPointerDown = (e: PointerEvent) => {
+      if (e.target === el && e.offsetX >= el.clientWidth && el.scrollHeight > el.clientHeight) release();
+    };
+    const onTouchMove = () => {
+      if (distanceFromBottom(el) >= FOLLOW_BAND) release();
+    };
+    const trackPress = (e: PointerEvent) => {
+      pressedInside = e.target instanceof Node && el.contains(e.target);
+    };
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (!SCROLL_UP_KEYS.has(e.key) || e.defaultPrevented || e.isComposing) return;
+      if (e.altKey || e.ctrlKey || e.metaKey || e.shiftKey) return;
+      const target = e.target;
+      const focusInside = target instanceof Node && el.contains(target);
+      const focusOnPage = target === document.body || target === document.documentElement;
+      if (!focusInside && !(focusOnPage && pressedInside)) return;
+      if (el.scrollTop > 0 && !nestedScrollerTakesUpward(target, el)) release();
+    };
+    const ro = new ResizeObserver(() => {
+      if (!hiddenRef.current && stickRef.current) pinToBottom(el);
+    });
     ro.observe(inner);
-    return () => ro.disconnect();
-  }, [activeSessionId, showNew]);
+    ro.observe(el);
+    el.addEventListener("wheel", onWheel, { passive: true });
+    el.addEventListener("pointerdown", onPointerDown, { passive: true });
+    el.addEventListener("touchmove", onTouchMove, { passive: true });
+    document.addEventListener("pointerdown", trackPress, { capture: true, passive: true });
+    document.addEventListener("keydown", onKeyDown, { passive: true });
+    return () => {
+      ro.disconnect();
+      el.removeEventListener("wheel", onWheel);
+      el.removeEventListener("pointerdown", onPointerDown);
+      el.removeEventListener("touchmove", onTouchMove);
+      document.removeEventListener("pointerdown", trackPress, { capture: true });
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [activeSessionId, threadMounted]);
 
   const onScroll = () => {
     const el = scrollRef.current;
-    if (!el) return;
-    const nearBottom = el.scrollHeight - el.scrollTop - el.clientHeight < 64;
-    stickRef.current = nearBottom;
-    setAtBottom(nearBottom);
+    if (!el || hiddenRef.current) return;
+    savedScrollTopRef.current = el.scrollTop;
+    const distance = distanceFromBottom(el);
+    const previous = lastDistanceRef.current;
+    lastDistanceRef.current = distance;
+    if (distance >= FOLLOW_BAND) {
+      stickRef.current = false;
+      setAtBottom(false);
+    } else if (distance < previous) {
+      stickRef.current = true;
+      setAtBottom(true);
+    }
   };
 
   const scrollToBottom = useCallback(() => {
@@ -255,6 +362,14 @@ export function ThreadView() {
     el.scrollTop = el.scrollHeight;
   }, []);
 
+  const frame = (children: ReactNode) => (
+    <ThreadVisibleContext.Provider value={!hidden}>
+      <div className="thread-col" hidden={hidden} style={hidden ? { display: "none" } : undefined}>
+        {children}
+      </div>
+    </ThreadVisibleContext.Provider>
+  );
+
   const head = (
     <div className="head-seg main-seg" onDoubleClick={() => window.cw.toggleMaximizeWindow()}>
       <div className="head-col col-left">
@@ -264,8 +379,8 @@ export function ThreadView() {
               {project.name} <span className="sep">/</span> <strong>{session.title}</strong>
             </span>
           ) : project && pendingDriver ? (
-            <span title={`${project.name} / New thread`}>
-              {project.name} <span className="sep">/</span> <strong>New thread</strong>
+            <span title={`${project.name} / New session`}>
+              {project.name} <span className="sep">/</span> <strong>New session</strong>
             </span>
           ) : (
             <span className="titlebar-tagline">Desktop workspace for coding CLIs</span>
@@ -275,25 +390,24 @@ export function ThreadView() {
       <div className="head-col col-mid" />
       <div className="head-col col-right">
         {!showNew && sessionId && <GitPanelBar key={sessionId} sessionId={sessionId} />}
-        {!rightVisible && <PanelToggles sessionId={activeSessionId ?? undefined} />}
+        {hasPr && sessionId && <PrSessionChip key={sessionId} sessionId={sessionId} />}
       </div>
     </div>
   );
 
   if (showNew) {
     const heroDriver = pendingDriver ?? session?.driver ?? lastDriver;
-    return (
-      <div className="thread-col">
+    return frame(
+      <>
         {head}
         <MainTabStrip sessionId={undefined} driver={heroDriver} hasPr={false} />
-        <Notifications />
         <NewThread
           key={activeProjectId}
           projectId={activeProjectId}
           driver={heroDriver}
           onDriverChange={setPendingDriver}
         />
-      </div>
+      </>
     );
   }
 
@@ -356,13 +470,23 @@ export function ThreadView() {
     if (m.id === streamingId) {
       return (
         <div key={m.id} className="msg-assistant">
-          <StreamingMd text={m.text} onOpenFile={onOpenPreview} onOpenExternal={onOpenExternal} />
+          <StreamingMd
+            text={m.text}
+            onOpenFile={onOpenPreview}
+            onOpenSource={onOpenSource}
+            onOpenExternal={onOpenExternal}
+          />
         </div>
       );
     }
     return (
       <div key={m.id} className="msg-assistant">
-        <Md text={m.text} onOpenFile={onOpenPreview} onOpenExternal={onOpenExternal} />
+        <Md
+          text={m.text}
+          onOpenFile={onOpenPreview}
+          onOpenSource={onOpenSource}
+          onOpenExternal={onOpenExternal}
+        />
       </div>
     );
   };
@@ -383,16 +507,10 @@ export function ThreadView() {
     );
   };
 
-  return (
-    <div className="thread-col">
+  return frame(
+    <>
       {head}
-      <MainTabStrip
-        sessionId={session.id}
-        driver={session.driver}
-        hasPr={hasPr}
-        trailing={hasPr ? <PrSessionChip key={session.id} sessionId={session.id} /> : undefined}
-      />
-      <Notifications />
+      <MainTabStrip sessionId={session.id} driver={session.driver} hasPr={hasPr} />
       {showMainTool !== null ? (
         <div
           className={`main-tool-body${dropMain.over ? " drop-target-active" : ""}`}
@@ -441,10 +559,16 @@ export function ThreadView() {
               hasActivity={turn.pieces.activity.length > 0}
               autoExpandIfFits={index === turns.length - 1}
               pending={turn.pending}
+              toolCount={countActivityTools(turn.pieces.activity)}
               lead={turn.pieces.lead.map((m) => renderNode({ kind: "msg", msg: m }))}
               activity={turn.pieces.activity.map(renderNode)}
               system={turn.pieces.system.map((m) => renderNode({ kind: "msg", msg: m }))}
               pinned={renderPinnedAnswer(turn.pieces.pinned ?? [])}
+              footer={
+                index === changesTurnIndex && turnSnapshot ? (
+                  <TurnChangesCard key={turnSnapshot.turnId} sessionId={session.id} snapshot={turnSnapshot} />
+                ) : undefined
+              }
             />
           ))}
           {!atBottom && (
@@ -465,12 +589,13 @@ export function ThreadView() {
         <PrUpdateDock key={`pr-dock:${session.id}`} sessionId={session.id} />
         <ApprovalDock sessionId={session.id} />
         <QuestionDock sessionId={session.id} />
+        <WorkingDock key={`working-dock:${session.id}`} sessionId={session.id} basePath={basePath} />
         <Composer key={`composer:${session.id}`} sessionId={session.id} driver={session.driver} />
       </div>
       )}
-      {(isBottomOpen(panelDockByTab) || draggingTab !== null) && (
-        <BottomPanel sessionId={session.id} driver={session.driver} hasPr={hasPr} />
+      {(isBottomOpen(panelDockByTab, isToolAvailable) || draggingTab !== null) && (
+        <BottomPanel sessionId={session.id} />
       )}
-    </div>
+    </>
   );
 }

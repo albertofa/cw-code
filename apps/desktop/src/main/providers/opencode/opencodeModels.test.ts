@@ -123,6 +123,87 @@ describe("parseOpencodeVerboseModels", () => {
   });
 });
 
+describe("parseOpencodeVerboseModels meta", () => {
+  const verbose = [
+    "anthropic/claude-opus-5-5",
+    JSON.stringify(
+      {
+        capabilities: {
+          reasoning: true,
+          toolcall: true,
+          attachment: true,
+          input: { text: true, image: true, pdf: true, audio: false, video: false },
+          output: { text: true, image: false }
+        },
+        cost: { input: 5, output: 25 },
+        limit: { context: 1000000, output: 64000 },
+        variants: { high: {}, max: {} }
+      },
+      null,
+      2
+    )
+  ].join("\n");
+
+  it("parses cost, capabilities and modalities from a verbose sample", () => {
+    const [model] = parseOpencodeVerboseModels(verbose);
+    expect(model.meta).toEqual({
+      costInputPerM: 5,
+      costOutputPerM: 25,
+      capabilities: ["Reasoning", "Tool calling", "Attachments"],
+      input: ["text", "image", "pdf"],
+      output: ["text"]
+    });
+    expect(model.contextWindow).toBe(1000000);
+    expect(model.variants).toEqual(["high", "max"]);
+  });
+
+  it("keeps only the capabilities that are enabled", () => {
+    const [model] = parseOpencodeVerboseModels(
+      [
+        "openai/gpt-5.2",
+        JSON.stringify({ capabilities: { reasoning: false, toolcall: true, attachment: false } })
+      ].join("\n")
+    );
+    expect(model.meta).toEqual({ capabilities: ["Tool calling"] });
+  });
+
+  it("tolerates the flat shape with top-level flags and modalities", () => {
+    const [model] = parseOpencodeVerboseModels(
+      [
+        "anthropic/claude-opus-5-5",
+        JSON.stringify({
+          limit: { context: 1000000, output: 64000 },
+          cost: { input: 5, output: 25 },
+          reasoning: true,
+          tool_call: true,
+          attachment: true,
+          modalities: { input: ["text", "image", "pdf"], output: ["text"] },
+          variants: { high: {}, max: {} }
+        })
+      ].join("\n")
+    );
+    expect(model.meta).toEqual({
+      costInputPerM: 5,
+      costOutputPerM: 25,
+      capabilities: ["Reasoning", "Tool calling", "Attachments"],
+      input: ["text", "image", "pdf"],
+      output: ["text"]
+    });
+    expect(model.contextWindow).toBe(1000000);
+  });
+
+  it("leaves missing or invalid fields undefined", () => {
+    const [partial] = parseOpencodeVerboseModels(["openai/gpt-5.2", '{ "cost": { "input": 1.5 } }'].join("\n"));
+    expect(partial.meta).toEqual({ costInputPerM: 1.5 });
+    const [invalid] = parseOpencodeVerboseModels(
+      ["openai/gpt-5.2", '{ "cost": { "input": "free", "output": -1 }, "modalities": { "input": [] } }'].join("\n")
+    );
+    expect(invalid.meta).toBeUndefined();
+    const [bare] = parseOpencodeVerboseModels(["openai/gpt-5.2", '{ "variants": {} }'].join("\n"));
+    expect(bare.meta).toBeUndefined();
+  });
+});
+
 describe("OPENCODE_CURATED_MODELS", () => {
   it("has a non-empty fallback", () => {
     expect(OPENCODE_CURATED_MODELS.length).toBeGreaterThan(0);
@@ -206,6 +287,9 @@ describe("listOpencodeModels cache", () => {
 });
 
 describe("opencode models disk cache", () => {
+  const cachedWith = (model: object): string =>
+    JSON.stringify({ entries: { bin: { at: 1, models: [{ id: "a/b", label: "B", source: "live", ...model }] } } });
+
   beforeEach(() => clearOpencodeModelsCache());
   afterEach(() => clearOpencodeModelsCache());
 
@@ -239,5 +323,18 @@ describe("opencode models disk cache", () => {
     expect(
       decodeOpencodeModelsCache('{"entries":{"bin":{"at":1,"models":[{"id":"a/b","label":"B","source":"live"}]}}}')
     ).toEqual([{ binary: "bin", at: 1, models: [{ id: "a/b", label: "B", source: "live" }] }]);
+  });
+
+  it("accepts cached models that carry meta", () => {
+    const meta = { costInputPerM: 5, costOutputPerM: 25, capabilities: ["Reasoning"], input: ["text"], output: ["text"] };
+    expect(decodeOpencodeModelsCache(cachedWith({ meta }))).toEqual([
+      { binary: "bin", at: 1, models: [{ id: "a/b", label: "B", source: "live", meta }] }
+    ]);
+  });
+
+  it("rejects cached models with malformed meta", () => {
+    expect(decodeOpencodeModelsCache(cachedWith({ meta: "cheap" }))).toEqual([]);
+    expect(decodeOpencodeModelsCache(cachedWith({ meta: { costInputPerM: -1 } }))).toEqual([]);
+    expect(decodeOpencodeModelsCache(cachedWith({ meta: { capabilities: [1] } }))).toEqual([]);
   });
 });

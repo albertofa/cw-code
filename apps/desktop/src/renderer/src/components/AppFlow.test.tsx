@@ -2,6 +2,7 @@
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { DEFAULT_APPEARANCE } from "../appearanceFonts.js";
 import type { Session, TurnEvent } from "../cw.js";
 
 (globalThis as unknown as { IS_REACT_ACT_ENVIRONMENT: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
@@ -39,7 +40,6 @@ function installBridge(): void {
     checkVersions: async () => [],
     listProjects: async () => [{ id: "proj_1", rootPath: "C:\\proj", name: "proj" }],
     listSessions: async () => [],
-    listDiscovered: async () => [],
     createSession: async (projectId: string, driver: "opencode") => {
       sessionSeq += 1;
       const session = makeSession({ id: `sess_${sessionSeq}`, projectId, driver });
@@ -55,7 +55,7 @@ function installBridge(): void {
     interrupt: async () => {},
     getComposer: async () => delayed({}, 400),
     setComposer: async (_id: string, prefs: unknown) => delayed(prefs, 200),
-    getSettings: async () => ({ sourceControlRefreshIntervalSeconds: 30, prRefreshIntervalSeconds: 120, defaultUseWorktree: true }),
+    getSettings: async () => ({ ...DEFAULT_APPEARANCE, sourceControlRefreshIntervalSeconds: 30, prRefreshIntervalSeconds: 120, defaultUseWorktree: true }),
     getDefaultPrWorkflows: async () => [],
     getPrInbox: async () => ({ account: null, items: [], fetchedAt: 0, error: null }),
     getProjectGitHubRepos: async () => [],
@@ -78,8 +78,7 @@ function installBridge(): void {
     onSessionTitle: noop,
     shutdown: { onRequested: noop, onExpired: noop },
     onWindowMaximized: noop,
-    isWindowMaximized: async () => false,
-    getTerminalFont: async () => null
+    isWindowMaximized: async () => false
   };
   (window as unknown as { cw: Record<string, unknown> }).cw = new Proxy(explicit, {
     get(target, prop) {

@@ -14,6 +14,8 @@ const SETTINGS: AppSettings = {
   opencodeExtraArgs: "",
   codexExtraArgs: "",
   claudeDefaultModel: "",
+  codexDefaultModel: "",
+  opencodeDefaultModel: "",
   claudeEnabledModels: [],
   claudeCustomModel: { id: "", name: "" },
   claudeReasoningExpanded: false,
@@ -36,7 +38,17 @@ const SETTINGS: AppSettings = {
   prCloneRoot: "~/.cw-code/repos",
   prAttributionEnabled: true,
   prAttributionText: "",
-  prWorkflows: []
+  prWorkflows: [],
+  fontFamilySans: "",
+  fontFamilyMono: "",
+  fontFamilyPrompt: "",
+  fontFamilyTerminal: "",
+  fontSizeInterface: 16,
+  fontSizeCode: 14,
+  fontSizePrompt: 14,
+  fontSizeTerminal: 14,
+  typographyAdvanced: false,
+  panelAnimationMs: 0
 };
 
 describe("mapClaudePermission", () => {
@@ -1006,6 +1018,18 @@ describe("ClaudeCliDriver shutdown", () => {
     children[0].stdout.write(`${JSON.stringify({ type: "assistant", message: { content: [{ type: "text", text: "late" }] } })}\n`);
     await settle();
     expect(driver.activity().busySessionIds).toEqual(["sess_1"]);
+    driver.dispose();
+  });
+
+  it("reports a session busy after an interrupt until the CLI acknowledges it", async () => {
+    const { driver, children } = makeDriver();
+    const { turnId } = driver.startTurn({ sessionId: "sess_1", prompt: "work", cwd: "C:\\proj" });
+    await settle();
+    driver.interrupt(turnId);
+    expect(driver.activity().busySessionIds).toEqual(["sess_1"]);
+    children[0].stdout.write(`${resultLine()}\n`);
+    await settle();
+    expect(driver.activity().busySessionIds).toEqual([]);
     driver.dispose();
   });
 

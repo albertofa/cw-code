@@ -138,6 +138,7 @@ type SessionPatch = Partial<
     | "branch"
     | "prs"
     | "prUnlinked"
+    | "lastTurnSnapshot"
   >
 >;
 
@@ -256,12 +257,6 @@ export class SessionStore {
     return this.data.sessions.find((s) => s.id === id);
   }
 
-  findByCursor(projectId: string, driver: DriverKind, resumeCursor: string): SessionMeta | undefined {
-    return this.data.sessions.find(
-      (s) => s.projectId === projectId && s.driver === driver && s.resumeCursor === resumeCursor
-    );
-  }
-
   updateSession(id: string, patch: SessionPatch & { status: SessionStatus }, reason: SessionStatusReason): void;
   updateSession(id: string, patch: SessionPatch, reason?: undefined): void;
   updateSession(id: string, patch: SessionPatch, reason?: SessionStatusReason): void {
@@ -287,6 +282,8 @@ export class SessionStore {
     } else if ("prs" in patch) delete current.prs;
     if (patch.prUnlinked !== undefined) current.prUnlinked = patch.prUnlinked;
     else if ("prUnlinked" in patch) delete current.prUnlinked;
+    if (patch.lastTurnSnapshot !== undefined) current.lastTurnSnapshot = patch.lastTurnSnapshot;
+    else if ("lastTurnSnapshot" in patch) delete current.lastTurnSnapshot;
     current.updatedAt = Date.now();
     if (patch.status !== undefined && patch.status !== previousStatus) {
       traceSessionStatus({

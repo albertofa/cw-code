@@ -47,6 +47,16 @@ export function moveWorkflow(existing: PrWorkflow[], id: string, direction: "up"
   return next;
 }
 
+export function moveWorkflowTo(existing: PrWorkflow[], id: string, targetId: string): PrWorkflow[] {
+  const from = existing.findIndex((w) => w.id === id);
+  const to = existing.findIndex((w) => w.id === targetId);
+  if (from === -1 || to === -1 || from === to) return existing;
+  const next = [...existing];
+  const [moved] = next.splice(from, 1);
+  next.splice(to, 0, moved);
+  return next;
+}
+
 export function deleteWorkflow(existing: PrWorkflow[], id: string): PrWorkflow[] {
   const entry = existing.find((w) => w.id === id);
   if (!entry || entry.builtIn) return existing;

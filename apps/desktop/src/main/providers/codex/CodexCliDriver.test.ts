@@ -14,6 +14,8 @@ const SETTINGS: AppSettings = {
   opencodeExtraArgs: "",
   codexExtraArgs: "",
   claudeDefaultModel: "",
+  codexDefaultModel: "",
+  opencodeDefaultModel: "",
   claudeEnabledModels: [],
   claudeCustomModel: { id: "", name: "" },
   claudeReasoningExpanded: false,
@@ -36,7 +38,17 @@ const SETTINGS: AppSettings = {
   prCloneRoot: "~/.cw-code/repos",
   prAttributionEnabled: true,
   prAttributionText: "",
-  prWorkflows: []
+  prWorkflows: [],
+  fontFamilySans: "",
+  fontFamilyMono: "",
+  fontFamilyPrompt: "",
+  fontFamilyTerminal: "",
+  fontSizeInterface: 16,
+  fontSizeCode: 14,
+  fontSizePrompt: 14,
+  fontSizeTerminal: 14,
+  typographyAdvanced: false,
+  panelAnimationMs: 0
 };
 
 class FakeClient implements CodexAppServerLike {

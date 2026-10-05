@@ -1,13 +1,12 @@
 import type { SessionStatus } from "../cw.js";
 
-export type QuickFilter = "all" | "running" | "input" | "pr" | "updated";
+export type QuickFilter = "all" | "running" | "pr";
 
-export const QUICK_FILTERS: readonly Exclude<QuickFilter, "all">[] = ["running", "input", "pr", "updated"];
+export const QUICK_FILTERS: readonly Exclude<QuickFilter, "all">[] = ["running", "pr"];
 
 export interface QuickFilterFacts {
   status: SessionStatus;
   linkCount: number;
-  unseen: boolean;
 }
 
 export function matchesQuickFilter(filter: QuickFilter, facts: QuickFilterFacts): boolean {
@@ -16,19 +15,15 @@ export function matchesQuickFilter(filter: QuickFilter, facts: QuickFilterFacts)
       return true;
     case "running":
       return facts.status === "working";
-    case "input":
-      return facts.status === "input-required";
     case "pr":
       return facts.linkCount > 0;
-    case "updated":
-      return facts.unseen;
   }
 }
 
 export function quickFilterCounts(items: QuickFilterFacts[]): Record<Exclude<QuickFilter, "all">, number> {
-  const counts = { running: 0, input: 0, pr: 0, updated: 0 };
+  const counts = { running: 0, pr: 0 };
   for (const item of items) {
-    if (item.status === "archived") continue;
+    if (item.status === "archived" || item.status === "resolved") continue;
     for (const filter of QUICK_FILTERS) if (matchesQuickFilter(filter, item)) counts[filter] += 1;
   }
   return counts;
@@ -36,4 +31,16 @@ export function quickFilterCounts(items: QuickFilterFacts[]): Record<Exclude<Qui
 
 export function toggleQuickFilter(current: QuickFilter, picked: Exclude<QuickFilter, "all">): QuickFilter {
   return current === picked ? "all" : picked;
+}
+
+export interface SessionSearchFields {
+  title: string;
+  project: string;
+  branch: string | undefined;
+}
+
+export function matchesSessionQuery(query: string, fields: SessionSearchFields): boolean {
+  const needle = query.trim().toLowerCase();
+  if (needle === "") return true;
+  return [fields.title, fields.project, fields.branch ?? ""].some((value) => value.toLowerCase().includes(needle));
 }

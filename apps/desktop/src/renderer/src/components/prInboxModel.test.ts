@@ -7,7 +7,7 @@ import {
   formatRelativeAge,
   groupRowsByBucket,
   matchesFilter,
-  rowDeltaText
+  sessionChipState
 } from "./prInboxModel.js";
 
 function ref(overrides: Partial<PrRef> = {}): PrRef {
@@ -100,7 +100,6 @@ describe("buildInboxRows", () => {
     expect(firstRow.hasUnseenSession).toBe(false);
     expect(secondRow.linkedSessions.map((s) => s.id)).toEqual(["multi"]);
     expect(secondRow.hasUnseenSession).toBe(true);
-    expect(rowDeltaText(secondRow, 1_000)).toBe("new commits");
   });
 
   it("ignores sessions linked to a different PR", () => {
@@ -172,73 +171,6 @@ describe("groupRowsByBucket", () => {
   });
 });
 
-describe("rowDeltaText", () => {
-  it("returns null when the row has no unseen session", () => {
-    const pr = summary({ headRefOid: "sha-1", updatedAt: 100 });
-    const linked = session({ prs: [{ ref: ref(), origin: "opened", lastSeenSha: "sha-1", lastSeenAt: 200 }] });
-    const [row] = buildInboxRows([pr], [linked], () => true);
-
-    expect(rowDeltaText(row, 500)).toBeNull();
-  });
-
-  it("returns null when no linked session carries a pr link", () => {
-    const pr = summary({ headRefOid: "sha-2" });
-    const row = { pr, bucket: "waiting" as const, linkedSessions: [session({ prs: undefined })], hasUnseenSession: true, cloned: true };
-
-    expect(rowDeltaText(row, 500)).toBeNull();
-  });
-
-  it("reports new commits when the main session's last-seen sha is behind the PR head", () => {
-    const pr = summary({ headRefOid: "sha-2" });
-    const linked = session({
-      id: "s1",
-      prs: [{ ref: ref(), origin: "opened", lastSeenSha: "sha-1", lastSeenAt: 0 }]
-    });
-    const [row] = buildInboxRows([pr], [linked], () => true);
-
-    expect(rowDeltaText(row, 1_000)).toBe("new commits");
-  });
-
-  it("reports the relative update age when the sha matches but the PR updated later", () => {
-    const pr = summary({ headRefOid: "sha-1", updatedAt: 60_000 });
-    const linked = session({
-      id: "s1",
-      prs: [{ ref: ref(), origin: "opened", lastSeenSha: "sha-1", lastSeenAt: 0 }]
-    });
-    const [row] = buildInboxRows([pr], [linked], () => true);
-
-    expect(rowDeltaText(row, 120_000)).toBe("updated 1m");
-  });
-
-  it("reports the relative update age instead of new commits when the last-seen sha is unknown", () => {
-    const pr = summary({ headRefOid: "sha-2", updatedAt: 60_000 });
-    const linked = session({
-      id: "s1",
-      prs: [{ ref: ref(), origin: "opened", lastSeenSha: "", lastSeenAt: 0 }]
-    });
-    const [row] = buildInboxRows([pr], [linked], () => true);
-
-    expect(rowDeltaText(row, 120_000)).toBe("updated 1m");
-  });
-
-  it("prefers the session that opened the PR over a more recently active one", () => {
-    const pr = summary({ headRefOid: "sha-2" });
-    const opener = session({
-      id: "s1",
-      updatedAt: 10,
-      prs: [{ ref: ref(), origin: "opened", lastSeenSha: "sha-1", lastSeenAt: 0 }]
-    });
-    const active = session({
-      id: "s2",
-      updatedAt: 9_999,
-      prs: [{ ref: ref(), origin: "linked", lastSeenSha: "sha-2", lastSeenAt: 0 }]
-    });
-    const [row] = buildInboxRows([pr], [opener, active], () => true);
-
-    expect(rowDeltaText(row, 1_000)).toBe("new commits");
-  });
-});
-
 describe("formatRelativeAge", () => {
   it("formats seconds", () => {
     expect(formatRelativeAge(1_000, 1_000)).toBe("0s");
@@ -258,5 +190,24 @@ describe("formatRelativeAge", () => {
   it("formats days then weeks", () => {
     expect(formatRelativeAge(0, 24 * 60 * 60_000)).toBe("1d");
     expect(formatRelativeAge(0, 9 * 24 * 60 * 60_000)).toBe("1w");
+  });
+});
+
+describe("sessionChipState", () => {
+  const link = { ref: ref(), origin: "opened" as const, lastSeenSha: "sha-1", lastSeenAt: 200 };
+
+  it("reports a working session as running even when the PR has updates", () => {
+    const pr = summary({ headRefOid: "sha-2" });
+    expect(sessionChipState(session({ status: "working", prs: [link] }), pr, 1_000)).toEqual({ kind: "running", text: "Running" });
+  });
+
+  it("flags a session whose linked PR has unseen updates as needing review", () => {
+    const pr = summary({ headRefOid: "sha-2" });
+    expect(sessionChipState(session({ prs: [link] }), pr, 1_000)).toEqual({ kind: "review", text: "Needs review" });
+  });
+
+  it("falls back to the session age when nothing is pending", () => {
+    const pr = summary({ headRefOid: "sha-1", updatedAt: 100 });
+    expect(sessionChipState(session({ updatedAt: 0, prs: [link] }), pr, 120_000)).toEqual({ kind: "age", text: "2m" });
   });
 });

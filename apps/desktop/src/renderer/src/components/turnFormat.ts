@@ -1,12 +1,3 @@
-export function formatElapsed(ms: number): string {
-  const total = Math.max(0, Math.floor(ms / 1000));
-  if (total < 60) return total === 1 ? "1 second" : `${total} seconds`;
-  const minutes = Math.floor(total / 60);
-  if (minutes < 60) return `${minutes}m ${total % 60}s`;
-  const hours = Math.floor(minutes / 60);
-  return `${hours}h ${minutes % 60}m ${total % 60}s`;
-}
-
 export function durationFromMessages(messages: Array<{ timestamp?: number }>): number | undefined {
   if (messages.length < 2) return undefined;
   const first = messages[0].timestamp;

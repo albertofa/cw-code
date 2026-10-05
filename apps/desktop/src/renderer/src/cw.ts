@@ -3,6 +3,7 @@ import type {
   AccountUsageSnapshot,
   AccountUsageState,
   AccountUsageUnavailableReason,
+  AttentionState,
   CliBinary,
   CliDiscoveredCandidate,
   CliDiscoverResult,
@@ -137,6 +138,18 @@ export interface Session {
   prs?: SessionPrLink[];
   prUnlinked?: string[];
   effectivePermissionMode?: string;
+  lastTurnSnapshot?: TurnSnapshot;
+}
+
+export interface TurnSnapshot {
+  turnId: string;
+  sha?: string;
+  capturedAt: number;
+  error?: string;
+  endSha?: string;
+  endedAt?: number;
+  endError?: string;
+  undoneAt?: number;
 }
 
 export type CreateWorkspaceMode = "current" | "new" | "previous";
@@ -351,12 +364,21 @@ export interface ComposerPrefs {
   permissionMode?: PermissionMode;
 }
 
+export interface ModelMeta {
+  costInputPerM?: number;
+  costOutputPerM?: number;
+  capabilities?: string[];
+  input?: string[];
+  output?: string[];
+}
+
 export interface ModelOption {
   id: string;
   label: string;
   source: "live" | "curated" | "custom";
   variants?: string[];
   contextWindow?: number;
+  meta?: ModelMeta;
 }
 
 export interface PermissionOption {
@@ -437,13 +459,30 @@ export interface GitBranchInfo {
   worktreePath: string | null;
 }
 
-export type GitDiffMode = "working" | "staged" | "branch";
+export type GitDiffMode = "working" | "staged" | "branch" | "turn";
 
 export interface GitDiffResult {
   mode: GitDiffMode;
   patch: string;
   baseRef: string | null;
   headRef: string;
+}
+
+export interface TurnFileChange {
+  path: string;
+  change: "modified" | "added" | "deleted";
+  added: number;
+  deleted: number;
+  binary: boolean;
+}
+
+export interface TurnChanges {
+  turnId: string;
+  files: TurnFileChange[];
+  endSha: string | null;
+  undoable: boolean;
+  reason?: string;
+  conflicts: string[];
 }
 
 export interface CustomModel {
@@ -459,6 +498,8 @@ export interface AppSettings {
   opencodeExtraArgs: string;
   codexExtraArgs: string;
   claudeDefaultModel: string;
+  codexDefaultModel: string;
+  opencodeDefaultModel: string;
   claudeEnabledModels: string[];
   claudeCustomModel: CustomModel;
   claudeReasoningExpanded: boolean;
@@ -483,6 +524,16 @@ export interface AppSettings {
   opencodeGoUsage: boolean;
   updateChannel: UpdateChannel | null;
   updateBackgroundDownload: boolean;
+  fontFamilySans: string;
+  fontFamilyMono: string;
+  fontFamilyPrompt: string;
+  fontFamilyTerminal: string;
+  fontSizeInterface: number;
+  fontSizeCode: number;
+  fontSizePrompt: number;
+  fontSizeTerminal: number;
+  typographyAdvanced: boolean;
+  panelAnimationMs: number;
 }
 
 export type SettingsPatch = Partial<AppSettings>;
@@ -535,8 +586,6 @@ export interface CwApi {
   addProject(rootPath: string): Promise<Project>;
   getHomeDir(): Promise<string>;
   listSessions(projectId: string): Promise<Session[]>;
-  listDiscovered(projectId: string): Promise<Session[]>;
-  importSession(projectId: string, driver: DriverName, resumeCursor: string, title: string): Promise<Session>;
   createSession(projectId: string, driver: DriverName, options?: CreateSessionOptions): Promise<Session>;
   renameSession(sessionId: string, title: string): Promise<void>;
   regenerateSessionTitle(sessionId: string): Promise<string>;
@@ -578,6 +627,8 @@ export interface CwApi {
   listProjectBranches(projectId: string): Promise<GitBranchInfo[]>;
   switchGitBranch(sessionId: string, branch: string): Promise<GitStatus>;
   getGitDiff(sessionId: string, mode: GitDiffMode, baseRef?: string): Promise<GitDiffResult>;
+  getTurnChanges(sessionId: string): Promise<TurnChanges | null>;
+  undoTurn(sessionId: string, turnId: string, expectedEndSha: string): Promise<TurnChanges>;
   getSourceControlHealth(projectId?: string): Promise<SourceControlHealth>;
   setProjectGitHubAccount(projectId: string, account: { host: string; login: string } | null): Promise<Project>;
   setRepositoryGitIdentity(projectId: string, name: string, email: string): Promise<void>;
@@ -603,7 +654,6 @@ export interface CwApi {
   listDir(sessionId: string, dir?: string): Promise<DirEntry[]>;
   savePasteImage(projectId: string, mime: string, data: Uint8Array): Promise<string>;
   readImage(args: { sessionId?: string; projectId?: string; path: string }): Promise<{ mime: string; base64: string }>;
-  turnDiff(sessionId: string, since: number): Promise<string>;
   openPty(sessionId: string, kind: DriverName | "shell"): Promise<{ ptyId: string; token: string; replay: string }>;
   writePty(ptyId: string, data: string): void;
   resizePty(ptyId: string, cols: number, rows: number): void;
@@ -619,7 +669,7 @@ export interface CwApi {
   zoomIn(): void;
   zoomOut(): void;
   zoomReset(): void;
-  getTerminalFont(): Promise<string | null>;
+  setAttention(state: AttentionState): void;
   pickProjectDir(): Promise<string | null>;
   openPath(path: string): Promise<void>;
   openExternal(url: string): Promise<void>;

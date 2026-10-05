@@ -2,6 +2,7 @@ import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEven
 import { RefreshCw } from "lucide-react";
 import type { DriverName, Project, Session } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
+import { usePrStore } from "../stores/prStore.js";
 import { useUsageStore } from "../stores/usageStore.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { UsagePlanCard } from "./UsagePlanCard.js";
@@ -275,7 +276,7 @@ function SessionsTable({
   );
 }
 
-export function UsageView({ onOpenSettings }: { onOpenSettings?: (harness: DriverName) => void }) {
+export function UsageView() {
   const projects = useAppStore((s) => s.projects);
   const sessionsByProject = useAppStore((s) => s.sessionsByProject);
   const accountByDriver = useUsageStore((s) => s.accountByDriver);
@@ -286,6 +287,7 @@ export function UsageView({ onOpenSettings }: { onOpenSettings?: (harness: Drive
   const ledgerError = useUsageStore((s) => s.ledgerError);
   const refreshAccount = useUsageStore((s) => s.refreshAccount);
   const loadLedger = useUsageStore((s) => s.loadLedger);
+  const openSettings = usePrStore((s) => s.openSettings);
   const now = useNow();
 
   const [days, setDays] = useState(30);
@@ -379,7 +381,7 @@ export function UsageView({ onOpenSettings }: { onOpenSettings?: (harness: Drive
                 snapshot={accountByDriver[d]}
                 loading={!!accountLoading[d]}
                 error={accountError[d]}
-                onOpenSettings={onOpenSettings}
+                onOpenSettings={(driver) => openSettings("harness", driver)}
               />
             ))}
           </div>

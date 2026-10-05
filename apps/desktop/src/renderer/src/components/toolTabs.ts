@@ -1,4 +1,4 @@
-import { Bot, Code, Eye, Folder, GitBranch, GitPullRequest, Orbit, Sparkles, Terminal, type LucideIcon } from "lucide-react";
+import { Activity, Bot, Code, Eye, Folder, GitBranch, GitPullRequest, Orbit, Sparkles, Terminal, type LucideIcon } from "lucide-react";
 import type { DockableTabId } from "@cw-code/contracts";
 import type { DriverName } from "../cw.js";
 
@@ -11,6 +11,7 @@ export interface ToolTabDef {
 }
 
 export const TOOL_TABS: ToolTabDef[] = [
+  { id: "overview", title: "Session overview", Icon: Activity },
   { id: "files", title: "Files", Icon: Folder },
   { id: "agents", title: "Subagents", Icon: Bot },
   { id: "diff", title: "Git diff", Icon: GitBranch },
@@ -25,6 +26,18 @@ export const TOOL_TABS: ToolTabDef[] = [
 export function isToolTabAvailable(def: ToolTabDef, driver: DriverName | undefined, hasPr: boolean): boolean {
   if (def.driver !== undefined && def.driver !== driver) return false;
   return !def.requiresPr || hasPr;
+}
+
+export function toolAvailability(
+  driver: DriverName | undefined,
+  hasPr: boolean,
+  hasPreview: boolean
+): (tab: DockableTabId) => boolean {
+  return (tab) => {
+    if (tab === "preview") return hasPreview;
+    const def = TOOL_TABS.find((item) => item.id === tab);
+    return def !== undefined && isToolTabAvailable(def, driver, hasPr);
+  };
 }
 
 export function isHarnessTabId(tab: DockableTabId): tab is DriverName {

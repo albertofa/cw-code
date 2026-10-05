@@ -14,6 +14,7 @@ import {
   mergeSubagentTools,
   parseResultCounts,
   shortModelName,
+  subagentActivity,
   unwrapTaskOutput,
   type SubagentMessage
 } from "./subagents.js";
@@ -529,5 +530,28 @@ describe("mergeSubagentTools", () => {
     expect(
       mergeSubagentTools([{ id: "m1", role: "assistant", text: "hi", turnId: "t1" }], [])
     ).toEqual([]);
+  });
+});
+
+describe("subagentActivity", () => {
+  it("merges the agent's nested live tools with recorded and fetched tools", () => {
+    const messages = [
+      msg({ id: "live", toolName: "Bash", toolInput: { command: "ls" }, parentToolCallId: "agent1", toolStartedAt: 3000 }),
+      msg({ id: "other", toolName: "Read", parentToolCallId: "agent2", toolStartedAt: 1000 }),
+      msg({ id: "note", role: "assistant", parentToolCallId: "agent1" })
+    ];
+    const activity = subagentActivity(
+      messages,
+      { id: "agent1", tools: [{ id: "rec", name: "Read", input: null, timestamp: 1000 }], toolCount: 7 },
+      [{ id: "fetched", name: "Grep", input: null, timestamp: 2000 }]
+    );
+    expect(activity.nested.map((m) => m.id)).toEqual(["live", "note"]);
+    expect(activity.tools.map((t) => t.id)).toEqual(["rec", "fetched", "live"]);
+    expect(activity.toolCount).toBe(7);
+  });
+
+  it("never reports fewer tools than it can show", () => {
+    const activity = subagentActivity([], { id: "a", tools: [{ id: "x", name: "Read", input: null }], toolCount: 0 });
+    expect(activity.toolCount).toBe(1);
   });
 });

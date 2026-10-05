@@ -93,6 +93,59 @@ describe("parseInbox", () => {
     expect(bucketFor(failing)).toBe("action");
   });
 
+  it("maps the author name and avatar url", () => {
+    const json = JSON.stringify({
+      data: {
+        viewer: { login: "octocat" },
+        search: {
+          nodes: [summaryNode({ author: { login: "octocat", __typename: "User", name: "The Octocat", avatarUrl: "https://avatars.githubusercontent.com/u/1?s=48" } })]
+        }
+      }
+    });
+    expect(parseInbox(json).items[0].author).toEqual({
+      login: "octocat",
+      isBot: false,
+      name: "The Octocat",
+      avatarUrl: "https://avatars.githubusercontent.com/u/1?s=48"
+    });
+  });
+
+  it("parses a bot author without a name", () => {
+    const json = JSON.stringify({
+      data: {
+        viewer: null,
+        search: {
+          nodes: [summaryNode({ author: { login: "renovate", __typename: "Bot", avatarUrl: "https://avatars.githubusercontent.com/in/2?s=48" } })]
+        }
+      }
+    });
+    const author = parseInbox(json).items[0].author;
+    expect(author.isBot).toBe(true);
+    expect(author.name).toBeUndefined();
+    expect(author.avatarUrl).toBe("https://avatars.githubusercontent.com/in/2?s=48");
+  });
+
+  it("leaves avatarUrl and name unset when missing, blank or not https", () => {
+    const json = JSON.stringify({
+      data: {
+        viewer: null,
+        search: {
+          nodes: [
+            summaryNode({ author: { login: "octocat", __typename: "User", name: "  " } }),
+            summaryNode({
+              number: 2,
+              url: "https://github.com/acme/widgets/pull/2",
+              author: { login: "mallory", __typename: "User", avatarUrl: "http://example.test/a.png" }
+            })
+          ]
+        }
+      }
+    });
+    const [blank, insecure] = parseInbox(json).items;
+    expect(blank.author).toEqual({ login: "octocat", isBot: false });
+    expect(insecure.author).toEqual({ login: "mallory", isBot: false });
+  });
+
   it("returns an empty result for malformed JSON", () => {
     expect(parseInbox("not-json")).toEqual({ viewer: null, items: [], truncated: false });
   });

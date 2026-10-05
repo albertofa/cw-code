@@ -2,6 +2,7 @@ import { useEffect, useRef, useState } from "react";
 import { Check, ChevronLeft, ChevronRight, MessageCircleQuestion } from "lucide-react";
 import type { QuestionInfo, QuestionOption, QuestionRequest } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
+import { useThreadVisible } from "./threadVisibility.js";
 
 interface AnswerState {
   chosen: Record<string, boolean>;
@@ -43,6 +44,7 @@ function QuestionPanel({
 }) {
   const respond = useAppStore((s) => s.respondQuestion);
   const panelRef = useRef<HTMLElement>(null);
+  const visible = useThreadVisible();
   const [states, setStates] = useState<Record<string, AnswerState>>({});
   const [submitting, setSubmitting] = useState(false);
   const [activeIndex, setActiveIndex] = useState(0);
@@ -51,12 +53,17 @@ function QuestionPanel({
   const active = request.questions[safeIndex];
 
   useEffect(() => {
+    if (!visible) return;
     const section = panelRef.current;
     const raf = requestAnimationFrame(() => {
       section?.querySelector<HTMLButtonElement>(".question-list .question-row")?.focus();
     });
+    return () => cancelAnimationFrame(raf);
+  }, [visible]);
+
+  useEffect(() => {
+    const section = panelRef.current;
     return () => {
-      cancelAnimationFrame(raf);
       if (section?.contains(document.activeElement)) {
         (document.activeElement as HTMLElement).blur();
         document.querySelector<HTMLTextAreaElement>(".composer-input")?.focus();
@@ -184,16 +191,18 @@ function QuestionPanel({
   const renderOptions = (q: QuestionInfo) => {
     const state = states[q.question];
     return (
-      <div className="question-list">
+      <div className="question-list" role={q.multiSelect ? "group" : "radiogroup"} aria-label={q.question}>
         {q.options.map((o, i) => {
           const picked = state?.chosen[o.label] === true;
           return (
             <button
               key={o.label}
               className={`question-row${picked ? " picked" : ""}`}
+              role={q.multiSelect ? "checkbox" : "radio"}
+              aria-checked={picked}
               onClick={() => select(q, o, q.multiSelect)}
             >
-              <span className="question-cell">[ {picked ? <Check aria-hidden="true" size={13} /> : null} ]</span>
+              <span className={`question-cell ${q.multiSelect ? "ctl-check" : "ctl-radio"}${picked ? " on" : ""}`} aria-hidden="true" />
               <span className="question-index">{i + 1}.</span>
               <span className="question-row-body">
                 <span className="question-row-label">{o.label}</span>
@@ -205,7 +214,7 @@ function QuestionPanel({
         {q.allowCustom &&
           (state?.customOpen ? (
             <div className={`question-row question-custom-row${state.custom.trim() ? " picked" : ""}`}>
-              <span className="question-cell">[ {state.custom.trim() ? <Check aria-hidden="true" size={13} /> : null} ]</span>
+              <span className={`question-cell ${q.multiSelect ? "ctl-check" : "ctl-radio"}${state.custom.trim() ? " on" : ""}`} aria-hidden="true" />
               <span className="question-index">{q.options.length + 1}.</span>
               <span className="question-row-body">
                 <input
@@ -218,8 +227,14 @@ function QuestionPanel({
               </span>
             </div>
           ) : (
-            <button className="question-row" onClick={() => openCustom(q)} type="button">
-              <span className="question-cell">[ ]</span>
+            <button
+              className="question-row"
+              role={q.multiSelect ? "checkbox" : "radio"}
+              aria-checked={false}
+              onClick={() => openCustom(q)}
+              type="button"
+            >
+              <span className={`question-cell ${q.multiSelect ? "ctl-check" : "ctl-radio"}`} aria-hidden="true" />
               <span className="question-index">{q.options.length + 1}.</span>
               <span className="question-row-body">
                 <span className="question-row-inner">Type your own answer</span>
@@ -269,7 +284,7 @@ function QuestionPanel({
                   onClick={() => go(idx)}
                   title={q.header?.trim() || q.question}
                 >
-                  <span className="question-tab-box">{answered ? "✓" : "○"}</span>
+                  <span className={`question-tab-box ${q.multiSelect ? "ctl-check" : "ctl-radio"}${answered ? " on" : ""}`} aria-hidden="true" />
                   <span className="question-tab-label">{tabLabel(q, idx)}</span>
                 </button>
               );

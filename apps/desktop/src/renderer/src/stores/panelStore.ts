@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { DockableTabId, DockLocation, MainTabId, PanelId } from "@cw-code/contracts";
+import type { DockableTabId, DockLocation, GitDiffMode, MainTabId, PanelId } from "@cw-code/contracts";
 import {
   PANEL_LAYOUT_KEY,
   PANEL_STATE_KEY,
@@ -15,6 +15,9 @@ import {
 } from "./panelLayout.js";
 
 const DEFAULT_SESSION_PANEL = defaultSessionPanel();
+
+let revealNonce = 0;
+let diffModeNonce = 0;
 
 function loadState(): LoadedPanelState {
   try {
@@ -39,13 +42,45 @@ function panelFor(state: PanelStore, sessionId: string | undefined): SessionPane
   return state.sessions[sessionId] ?? state.legacySession ?? DEFAULT_SESSION_PANEL;
 }
 
+function moveState(current: SessionPanelState, tab: DockableTabId, panel: DockLocation): SessionPanelState {
+  const dockByTab = { ...current.dockByTab, [tab]: panel };
+  let mainOrder = current.mainOrder.filter((id) => id === "chat" || dockByTab[id] === "main");
+  if (panel === "main" && !mainOrder.includes(tab)) mainOrder = [...mainOrder, tab];
+  let activeMain = current.activeMain;
+  if (panel === "main") {
+    activeMain = tab;
+  } else if (activeMain !== "chat" && dockByTab[activeMain] !== "main") {
+    activeMain = "chat";
+  }
+  let activeRight = current.activeRight;
+  if (panel === "right") {
+    activeRight = tab;
+  } else if (dockByTab[activeRight] !== "right") {
+    activeRight = tabsInPanel(dockByTab, "right")[0] ?? activeRight;
+  }
+  let activeBottom = current.activeBottom;
+  if (panel === "bottom") {
+    activeBottom = tab;
+  } else if (dockByTab[activeBottom] !== "bottom") {
+    activeBottom = tabsInPanel(dockByTab, "bottom")[0] ?? activeBottom;
+  }
+  return sanitizeSessionPanel({ ...current, dockByTab, activeMain, activeRight, activeBottom, mainOrder });
+}
+
 export interface PanelActions {
-  setDraggingTab(tab: DockableTabId | null): void;
+  setDraggingTab(tab: DockableTabId | null, fromRail?: boolean): void;
   initializeSession(sessionId: string): void;
   moveTab(sessionId: string | undefined, tab: DockableTabId, panel: DockLocation): void;
   setActive(sessionId: string | undefined, panel: PanelId, tab: MainTabId): void;
   activateOrOpen(sessionId: string | undefined, tab: DockableTabId): void;
   revealTab(sessionId: string, tab: DockableTabId): void;
+  revealFile(sessionId: string, path: string, line?: number): void;
+  clearRevealRequest(nonce: number): void;
+  requestDiffMode(sessionId: string, mode: GitDiffMode): void;
+  clearDiffModeRequest(nonce: number): void;
+  clearStaleDiffModeRequest(sessionId: string | null | undefined): void;
+  clearStaleRevealRequest(sessionId: string | null | undefined): void;
+  setTurnDiffSummary(sessionId: string, summary: TurnDiffSummary | null | undefined): void;
   setAutoLocation(tab: DockableTabId, panel: PanelId): void;
   setBottomHeight(sessionId: string | undefined, height: number): void;
   setBottomCollapsed(sessionId: string | undefined, collapsed: boolean): void;
@@ -53,17 +88,44 @@ export interface PanelActions {
   resetLayout(sessionId: string | undefined): void;
 }
 
+export interface RevealRequest {
+  sessionId: string;
+  path: string;
+  line?: number;
+  nonce: number;
+}
+
+export interface DiffModeRequest {
+  sessionId: string;
+  mode: GitDiffMode;
+  nonce: number;
+}
+
+export interface TurnDiffSummary {
+  files: number;
+  added: number;
+  deleted: number;
+}
+
 export type PanelStore = PersistedPanelState & PanelActions & {
   legacySession: SessionPanelState | null;
   draggingTab: DockableTabId | null;
+  dragFromRail: boolean;
+  revealRequest: RevealRequest | null;
+  diffModeRequest: DiffModeRequest | null;
+  turnDiffSummaryBySession: Record<string, TurnDiffSummary | null>;
 };
 
 export const usePanelStore = create<PanelStore>((set, get) => ({
   ...loadState(),
   draggingTab: null,
+  dragFromRail: false,
+  revealRequest: null,
+  diffModeRequest: null,
+  turnDiffSummaryBySession: {},
 
-  setDraggingTab: (tab) => {
-    set({ draggingTab: tab });
+  setDraggingTab: (tab, fromRail = false) => {
+    set({ draggingTab: tab, dragFromRail: tab !== null && fromRail });
   },
 
   initializeSession: (sessionId) => {
@@ -77,36 +139,7 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
   moveTab: (sessionId, tab, panel) => {
     if (!sessionId) return;
     const store = get();
-    const current = panelFor(store, sessionId);
-    const dockByTab = { ...current.dockByTab, [tab]: panel };
-    let mainOrder = current.mainOrder.filter((id) => id === "chat" || dockByTab[id] === "main");
-    if (panel === "main" && !mainOrder.includes(tab)) mainOrder = [...mainOrder, tab];
-    let activeMain = current.activeMain;
-    if (panel === "main") {
-      activeMain = tab;
-    } else if (activeMain !== "chat" && dockByTab[activeMain] !== "main") {
-      activeMain = "chat";
-    }
-    let activeRight = current.activeRight;
-    if (panel === "right") {
-      activeRight = tab;
-    } else if (dockByTab[activeRight] !== "right") {
-      activeRight = tabsInPanel(dockByTab, "right")[0] ?? activeRight;
-    }
-    let activeBottom = current.activeBottom;
-    if (panel === "bottom") {
-      activeBottom = tab;
-    } else if (dockByTab[activeBottom] !== "bottom") {
-      activeBottom = tabsInPanel(dockByTab, "bottom")[0] ?? activeBottom;
-    }
-    const next = sanitizeSessionPanel({
-      ...current,
-      dockByTab,
-      activeMain,
-      activeRight,
-      activeBottom,
-      mainOrder
-    });
+    const next = moveState(panelFor(store, sessionId), tab, panel);
     const sessions = { ...store.sessions, [sessionId]: next };
     set({ sessions, legacySession: null });
     persist({ autoLocation: store.autoLocation, sessions });
@@ -151,6 +184,53 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
     const panel = panelFor(current, sessionId);
     if (panel.dockByTab[tab] === "right") current.setRightVisible(sessionId, true);
     if (panel.dockByTab[tab] === "bottom" && panel.bottomCollapsed) current.setBottomCollapsed(sessionId, false);
+  },
+
+  revealFile: (sessionId, path, line) => {
+    revealNonce += 1;
+    set({ revealRequest: { sessionId, path, line, nonce: revealNonce } });
+    get().revealTab(sessionId, "files");
+  },
+
+  clearRevealRequest: (nonce) => {
+    if (get().revealRequest?.nonce === nonce) set({ revealRequest: null });
+  },
+
+  requestDiffMode: (sessionId, mode) => {
+    diffModeNonce += 1;
+    set({ diffModeRequest: { sessionId, mode, nonce: diffModeNonce } });
+    get().revealTab(sessionId, "diff");
+  },
+
+  clearDiffModeRequest: (nonce) => {
+    if (get().diffModeRequest?.nonce === nonce) set({ diffModeRequest: null });
+  },
+
+  clearStaleDiffModeRequest: (sessionId) => {
+    const request = get().diffModeRequest;
+    if (request && request.sessionId !== sessionId) set({ diffModeRequest: null });
+  },
+
+  clearStaleRevealRequest: (sessionId) => {
+    const request = get().revealRequest;
+    if (request && request.sessionId !== sessionId) set({ revealRequest: null });
+  },
+
+  setTurnDiffSummary: (sessionId, summary) => {
+    const current = get().turnDiffSummaryBySession;
+    if (summary === undefined) {
+      if (!(sessionId in current)) return;
+      set({ turnDiffSummaryBySession: Object.fromEntries(Object.entries(current).filter(([id]) => id !== sessionId)) });
+      return;
+    }
+    const previous = current[sessionId];
+    const unchanged =
+      sessionId in current &&
+      (previous === null
+        ? summary === null
+        : summary !== null && previous.files === summary.files && previous.added === summary.added && previous.deleted === summary.deleted);
+    if (unchanged) return;
+    set({ turnDiffSummaryBySession: { ...current, [sessionId]: summary } });
   },
 
   setAutoLocation: (tab, panel) => {
