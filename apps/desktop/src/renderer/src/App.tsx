@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useShallow } from "zustand/react/shallow";
 import type { DriverName } from "./cw.js";
 import { applyAppearance } from "./appearanceFonts.js";
@@ -109,6 +109,7 @@ export function App() {
   const sessionPanel = usePanelStore((s) => selectSessionPanel(s, activeSessionId ?? undefined));
   const { dockByTab, rightVisible } = sessionPanel;
   const initializeSession = usePanelStore((s) => s.initializeSession);
+  const openDefaultRightTool = usePanelStore((s) => s.openDefaultRightTool);
   const activateOrOpen = usePanelStore((s) => s.activateOrOpen);
   const dropRight = useDockDrop("right", activeSessionId ?? undefined);
   const tabMenu = useTabMenu(activeSessionId ?? undefined);
@@ -117,9 +118,6 @@ export function App() {
 
   useEffect(() => applyAppearance(document.documentElement, appearance), [appearance]);
 
-  useEffect(() => {
-    if (activeSessionId) initializeSession(activeSessionId);
-  }, [activeSessionId, initializeSession]);
 
   const panelAnimationMs = usePanelAnimationMs();
   const rightPresence = usePresence(rightVisible, panelAnimationMs);
@@ -378,6 +376,12 @@ export function App() {
   );
 
   const { driver, hasPr, hasPreview, isToolAvailable, rightTop: topTool } = useToolAvailability(activeSessionId ?? undefined);
+
+  useLayoutEffect(() => {
+    if (!activeSessionId) return;
+    initializeSession(activeSessionId);
+    openDefaultRightTool(activeSessionId, isToolAvailable);
+  }, [activeSessionId, initializeSession, openDefaultRightTool]);
   const rightTabs = rightOpenTabs(dockByTab, isToolAvailable);
   const allTabsClosed = DOCKABLE_TABS.every((id) => dockByTab[id] === "closed" || (id === "pr" && !hasPr));
 

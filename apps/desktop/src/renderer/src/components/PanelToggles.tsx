@@ -12,6 +12,7 @@ export function PanelToggles({
 }) {
   const { rightVisible, dockByTab, bottomCollapsed } = usePanelStore((s) => selectSessionPanel(s, sessionId));
   const setRightVisible = usePanelStore((s) => s.setRightVisible);
+  const openDefaultRightTool = usePanelStore((s) => s.openDefaultRightTool);
   const setBottomCollapsed = usePanelStore((s) => s.setBottomCollapsed);
   const activateOrOpenTab = usePanelStore((s) => s.activateOrOpen);
 
@@ -41,7 +42,10 @@ export function PanelToggles({
       </button>
       <button
         className={`rail-b${rightVisible ? " on-soft" : ""}`}
-        onClick={() => setRightVisible(sessionId, !rightVisible)}
+        onClick={() => {
+          setRightVisible(sessionId, !rightVisible);
+          if (!rightVisible) openDefaultRightTool(sessionId, isToolAvailable);
+        }}
         disabled={!sessionId}
         title={rightLabel}
         aria-label={rightLabel}

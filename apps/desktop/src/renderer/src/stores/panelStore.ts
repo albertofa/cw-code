@@ -1,10 +1,12 @@
 import { create } from "zustand";
 import type { DockableTabId, DockLocation, GitDiffMode, MainTabId, PanelId } from "@cw-code/contracts";
 import {
+  DEFAULT_RIGHT_TOOL,
   PANEL_LAYOUT_KEY,
   PANEL_STATE_KEY,
   clampBottomHeight,
   defaultSessionPanel,
+  needsDefaultRightTool,
   parsePanelState,
   sanitizeSessionPanel,
   serializePanelState,
@@ -85,6 +87,7 @@ export interface PanelActions {
   setBottomHeight(sessionId: string | undefined, height: number): void;
   setBottomCollapsed(sessionId: string | undefined, collapsed: boolean): void;
   setRightVisible(sessionId: string | undefined, visible: boolean): void;
+  openDefaultRightTool(sessionId: string | undefined, isAvailable?: (tab: DockableTabId) => boolean): void;
   resetLayout(sessionId: string | undefined): void;
 }
 
@@ -268,12 +271,19 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
     persist({ autoLocation: store.autoLocation, sessions });
   },
 
+  openDefaultRightTool: (sessionId, isAvailable) => {
+    if (!sessionId) return;
+    const store = get();
+    if (needsDefaultRightTool(panelFor(store, sessionId), isAvailable)) store.moveTab(sessionId, DEFAULT_RIGHT_TOOL, "right");
+  },
+
   resetLayout: (sessionId) => {
     if (!sessionId) return;
     const store = get();
     const sessions = { ...store.sessions, [sessionId]: defaultSessionPanel() };
     set({ sessions, legacySession: null });
     persist({ autoLocation: store.autoLocation, sessions });
+    get().openDefaultRightTool(sessionId);
   }
 }));
 
