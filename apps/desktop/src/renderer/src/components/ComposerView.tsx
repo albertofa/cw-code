@@ -42,6 +42,7 @@ export interface ComposerBackend {
   imageTarget: ImageTarget;
   prefs: ComposerPrefs;
   busy: boolean;
+  effectivePermissionMode?: string;
   loadModels(): Promise<ModelOption[]>;
   loadPermissions(): Promise<PermissionOption[]>;
   loadFiles(): Promise<string[]>;
@@ -372,6 +373,9 @@ export function ComposerView({
   const permissions = permissionOptions ?? FALLBACK_PERMISSIONS;
   const effectivePermission = prefs.permissionMode ?? "auto";
   const permissionDisplay = permissions.find((o) => o.id === effectivePermission)?.label ?? "Auto";
+  const reportedPermission = backend.effectivePermissionMode?.trim() ?? "";
+  const showReportedPermission =
+    driver === "claude" && reportedPermission !== "" && reportedPermission !== effectivePermission;
   const permissionIcon = permissionIconFor(
     permissions.some((o) => o.id === effectivePermission) ? effectivePermission : "auto"
   );
@@ -858,9 +862,15 @@ export function ComposerView({
           <MenuSelect
             label="Permission"
             icon={permissionIcon}
-            title={permissionsError ? `Permission list failed: ${permissionsError}` : "Permission"}
+            title={
+              permissionsError
+                ? `Permission list failed: ${permissionsError}`
+                : showReportedPermission
+                  ? `${harnessLabel(driver)} CLI is running in ${reportedPermission} mode; cw-code answers its permission requests in the background.`
+                  : "Permission"
+            }
             value={effectivePermission}
-            display={permissionDisplay}
+            display={showReportedPermission ? `${permissionDisplay} · CLI ${reportedPermission}` : permissionDisplay}
             isSet={effectivePermission !== "auto"}
             options={permissions.map((o) => ({ id: o.id, label: o.label, description: o.description, icon: permissionIconFor(o.id) }))}
             onPick={(v) => backend.savePrefs({ permissionMode: v as PermissionMode })}

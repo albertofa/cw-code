@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
 import type { CliDriver, HistoryMessage, ModelOption, SessionMeta, ThreadEvent, TurnHandle, TurnSnapshot } from "@cw-code/contracts";
 import { SessionManager, type SessionManagerOptions } from "./SessionManager.js";
+import { SYNTHETIC_FULL_ACCESS_DESCRIPTION } from "../providers/permissions.js";
 import type { SessionStore } from "./SessionStore.js";
 
 class FakeDriver implements CliDriver {
@@ -541,7 +542,7 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
-  it("reports each real harness driver permission list with opencode lacking native bypass", async () => {
+  it("reports each real harness driver permission list with synthetic bypass for claude and opencode", async () => {
     const dir = mkdtempSync(join(tmpdir(), "cw-test-perms-"));
     const manager = new SessionManager({
       dbPath: join(dir, "test.db"),
@@ -554,7 +555,8 @@ describe("SessionManager", () => {
       expect(claudeModes.map((m) => m.id)).toEqual(["manual", "acceptEdits", "auto", "bypassPermissions"]);
       expect(claudeModes.find((m) => m.id === "bypassPermissions")).toMatchObject({
         label: "Bypass permissions",
-        native: true
+        native: false,
+        description: SYNTHETIC_FULL_ACCESS_DESCRIPTION
       });
       const codexModes = await manager.listPermissionModesFor(project.id, "codex");
       expect(codexModes.map((m) => m.id)).toEqual(["manual", "auto", "bypassPermissions"]);
@@ -1464,6 +1466,28 @@ describe("SessionManager", () => {
     fake.completeAll();
     sessions = await manager.listSessions(project.id);
     expect(sessions.find((s) => s.id === a.id)?.status).toBe("done");
+    manager.dispose();
+  });
+
+  it("persists the harness-reported permission mode on the session", async () => {
+    const { manager } = makeManager();
+    const project = manager.addProject("C:\\proj-permission-mode");
+    const a = await manager.createSession(project.id, "claude");
+    const turnId = await manager.startTurn(a.id, "hello");
+    (manager as unknown as { routeEvent(e: ThreadEvent): void }).routeEvent({
+      type: "permission.mode.reported",
+      turnId,
+      mode: "acceptEdits"
+    });
+    let sessions = await manager.listSessions(project.id);
+    expect(sessions.find((s) => s.id === a.id)?.effectivePermissionMode).toBe("acceptEdits");
+    (manager as unknown as { routeEvent(e: ThreadEvent): void }).routeEvent({
+      type: "permission.mode.reported",
+      turnId,
+      mode: null
+    });
+    sessions = await manager.listSessions(project.id);
+    expect(sessions.find((s) => s.id === a.id)?.effectivePermissionMode).toBeUndefined();
     manager.dispose();
   });
 

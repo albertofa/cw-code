@@ -21,6 +21,7 @@ import type {
 } from "@cw-code/contracts";
 import { parseExtraArgs } from "../../settings/settingsUtils.js";
 import { hasExited, killProcessTree, waitForExit } from "../../processTree.js";
+import { SYNTHETIC_FULL_ACCESS_DESCRIPTION } from "../permissions.js";
 import { CLAUDE_SHELL_TASK_TYPE, attributeClaudeSubagentEvent, buildClaudeAllowRule, claudeAllowResponse, claudeApprovalRequest, claudeQuestionRequest, claudeDenyResponse, claudeControlResponse, parseClaudeCompactBoundary, parseClaudeControlRequest, parseClaudeSubagentHandback, parseClaudeSystemInit, parseClaudeTaskSystemLine, parseStreamLine, type ClaudeControlRequest, type ClaudeTaskSystemInfo, type TurnDoneInfo } from "./claudeStreamParser.js";
 import { CLAUDE_COMMANDS_PROBE_ARGS, listClaudeCommands, probeClaudeCommands, recordClaudeTerminalCommands } from "./claudeCommands.js";
 import { CLAUDE_ACCOUNT_USAGE_PROBE_ARGS, probeClaudeAccountUsage } from "./claudeAccountUsage.js";
@@ -43,7 +44,7 @@ export const CLAUDE_CURATED_MODELS = [
 
 export function mapClaudePermission(mode: PermissionMode | string): string {
   if (mode === "acceptEdits") return "acceptEdits";
-  if (mode === "bypassPermissions") return "bypassPermissions";
+  if (mode === "bypassPermissions") return "manual";
   if (mode === "manual") return "manual";
   return "auto";
 }
@@ -53,7 +54,7 @@ export function listClaudePermissionModes(): PermissionOption[] {
     { id: "manual", label: "Manual", description: "Reads only; asks before edits, commands, and network.", native: true },
     { id: "acceptEdits", label: "Accept edits", description: "Reads, file edits, and common filesystem commands run without asking.", native: true },
     { id: "auto", label: "Auto", description: "Everything runs with background safety checks instead of prompts.", native: true },
-    { id: "bypassPermissions", label: "Bypass permissions", description: "Skips permission prompts. Isolated environments only.", native: true }
+    { id: "bypassPermissions", label: "Bypass permissions", description: SYNTHETIC_FULL_ACCESS_DESCRIPTION, native: false }
   ];
 }
 
@@ -148,6 +149,7 @@ interface ClaudeProcessState {
   reportedTaskCalls: Set<string>;
   handbackCallIds: Set<string>;
   permissionMode: PermissionMode;
+  reportedPermissionMode?: string;
   idleTimer?: NodeJS.Timeout;
   modelUsage: ClaudeModelUsageSnapshot;
   mainModel?: string;
@@ -496,6 +498,10 @@ export class ClaudeCliDriver implements CliDriver {
     if (systemInit) {
       recordClaudeTerminalCommands(state.binary, state.cwd, systemInit.terminalSlashCommands);
       if (systemInit.model) state.mainModel = systemInit.model;
+      if (state.reportedPermissionMode !== systemInit.permissionMode) {
+        state.reportedPermissionMode = systemInit.permissionMode;
+        this.emit({ type: "permission.mode.reported", turnId: state.activeTurnId, mode: systemInit.permissionMode ?? null });
+      }
       return;
     }
     const control = parseClaudeControlRequest(line);

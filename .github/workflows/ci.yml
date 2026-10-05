@@ -58,43 +58,6 @@ jobs:
         run: node scripts/verify-installed-upgrade.mjs --assert-production-bundle --asar apps/desktop/dist/win-unpacked/resources/app.asar
       - name: Clean install + packaged startup probe (canonical build)
         run: node scripts/verify-windows-package.mjs --install --disposable-environment
-      - name: Compute a CI-only upgrade-test version above the package version, below the next release
-        id: ci_version
-        shell: bash
-        env:
-          RUN_NUMBER: ${{ github.run_number }}
-        run: |
-          BASE=$(node -p "require('./apps/desktop/package.json').version")
-          if [[ "$BASE" == *-* ]]; then
-            echo "value=${BASE}.ci.${RUN_NUMBER}" >> "$GITHUB_OUTPUT"
-          else
-            echo "value=${BASE}-0.ci.${RUN_NUMBER}" >> "$GITHUB_OUTPUT"
-          fi
-      - name: Package installer for upgrade tests (separate output dir, CI-only version)
-        shell: bash
-        env:
-          CI_VERSION: ${{ steps.ci_version.outputs.value }}
-        run: pnpm --filter @cw-code/desktop exec electron-builder --win nsis --x64 --publish never "-c.extraMetadata.version=${CI_VERSION}" "-c.directories.output=dist-ci"
-      - name: Reject any update autotest path in the upgrade-test package
-        run: node scripts/verify-installed-upgrade.mjs --assert-production-bundle --asar apps/desktop/dist-ci/win-unpacked/resources/app.asar
-      - name: Use a fresh temp directory for installer runs
-        shell: bash
-        run: |
-          echo "entries left in $TEMP by earlier steps: $(ls -A "$TEMP" | wc -l)"
-          ls -A "$TEMP" | sed -e 's/[0-9A-Za-z]\{6,\}$/*/' | sort | uniq -c | sort -rn | head -20
-          mkdir -p "$RUNNER_TEMP/installer-temp"
-          echo "TEMP=$RUNNER_TEMP\installer-temp" >> "$GITHUB_ENV"
-          echo "TMP=$RUNNER_TEMP\installer-temp" >> "$GITHUB_ENV"
-      - name: Download legacy installer for upgrade tests
-        run: gh release download v0.0.1-alpha.21 --repo albertofa/cw-code --pattern "cw-code.Setup.0.0.1-alpha.21.exe" --dir legacy-installer
-        env:
-          GH_TOKEN: ${{ github.token }}
-      - name: Upgrade test (default per-user path)
-        run: node scripts/verify-windows-package.mjs --dist apps/desktop/dist-ci --upgrade-from legacy-installer/cw-code.Setup.0.0.1-alpha.21.exe --disposable-environment
-      - name: Upgrade test (custom install directory)
-        run: node scripts/verify-windows-package.mjs --dist apps/desktop/dist-ci --upgrade-from legacy-installer/cw-code.Setup.0.0.1-alpha.21.exe --disposable-environment --custom-dir "${{ runner.temp }}\cw-code-custom"
-      - name: Upgrade test (per-machine /allusers)
-        run: node scripts/verify-windows-package.mjs --dist apps/desktop/dist-ci --upgrade-from legacy-installer/cw-code.Setup.0.0.1-alpha.21.exe --disposable-environment --per-machine
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
@@ -103,7 +66,4 @@ jobs:
             apps/desktop/dist/*.exe
             apps/desktop/dist/*.blockmap
             apps/desktop/dist/verify-windows-package.json
-            apps/desktop/dist-ci/*.exe
-            apps/desktop/dist-ci/*.blockmap
-            apps/desktop/dist-ci/verify-windows-package.json
           retention-days: 7

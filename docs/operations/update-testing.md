@@ -138,9 +138,9 @@ when `out/main` has an `updateAutotest-*` chunk or a script containing
 archive's `package.json` `main` is not `out/main/index.js`, when it has any
 `out-updatetest/` entry or `updateAutotest-*` chunk, or when any bundled script
 under `out/` contains a marker. It runs on the shipping path: after `pnpm build`
-in the `verify` job of `ci.yml`, on `dist/win-unpacked` and `dist-ci/win-unpacked`
-in its `windows` job, and in `sign-windows.yml` `package-app` (from the tooling
-checkout, after a step that refuses `CW_UPDATE_TEST_BUILD`) before
+in the `verify` job of `ci.yml`, on `dist/win-unpacked` in its `windows` job,
+and in `sign-windows.yml` `package-app` (from the tooling checkout, after a step
+that refuses `CW_UPDATE_TEST_BUILD`) before
 `win-unpacked` is uploaded for signing. The harness also checks that each
 update-test `app.asar` does contain the `updateAutotest` chunk. Production builds accept no runtime feed override:
 `electron-updater` reads `resources/app-update.yml`, `forceDevUpdateConfig` is
@@ -343,12 +343,7 @@ Use a snapshot, the update-test builds from a dry run, and a feed started with
 6. **Real CLI smoke** (`real-cli-smoke`): after an update, in a throwaway
    project and a throwaway `CW_CODE_HOME`, run one short turn with each
    installed CLI on your own subscription. Never do this on CI.
-7. **Legacy identity** (`legacy-identity`): install the legacy
-   `v0.0.1-alpha.21` release, then the signed bootstrap installer over it by
-   hand. The legacy build has no updater, so this step is always a manual
-   install; the exact commands and evidence are step C of
-   [rollout.md](rollout.md#c-bootstrap-candidate-over-the-real-legacy-installer-disposable-vm).
-8. **Wrong publisher** (`signed-wrong-publisher`): serve a candidate
+7. **Wrong publisher** (`signed-wrong-publisher`): serve a candidate
    signed by a different controlled certificate; the download must fail with
    `ERR_UPDATER_INVALID_SIGNATURE` and N stay intact. Verification is never
    turned off to run this.

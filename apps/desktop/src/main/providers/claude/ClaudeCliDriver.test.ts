@@ -4,6 +4,7 @@ import { PassThrough } from "node:stream";
 import { join } from "node:path";
 import type { AppSettings, ThreadEvent } from "@cw-code/contracts";
 import { buildClaudeArgs, CLAUDE_IDLE_EVICT_MS, ClaudeCliDriver, claudeSettingsPath, mapClaudeEffort, mapClaudePermission, mergeClaudeAllowRule, subagentToolsResult } from "./ClaudeCliDriver.js";
+import { SYNTHETIC_FULL_ACCESS_DESCRIPTION } from "../permissions.js";
 
 const SETTINGS: AppSettings = {
   claudeBinaryPath: "claude",
@@ -54,8 +55,11 @@ describe("mapClaudePermission", () => {
   it("passes through supported modes", () => {
     expect(mapClaudePermission("auto")).toBe("auto");
     expect(mapClaudePermission("acceptEdits")).toBe("acceptEdits");
-    expect(mapClaudePermission("bypassPermissions")).toBe("bypassPermissions");
     expect(mapClaudePermission("manual")).toBe("manual");
+  });
+
+  it("maps bypass to manual so the CLI prompts and the driver auto-accepts", () => {
+    expect(mapClaudePermission("bypassPermissions")).toBe("manual");
   });
 
   it("falls back to auto for unknown values", () => {
@@ -111,6 +115,12 @@ describe("buildClaudeArgs", () => {
     expect(args).not.toContain("--model");
     expect(args).not.toContain("--effort");
     expect(args).not.toContain("--permission-mode");
+  });
+
+  it("spawns a bypass session with the manual permission flag", () => {
+    const args = buildClaudeArgs({ permissionMode: "bypassPermissions" });
+    const modePos = args.indexOf("--permission-mode");
+    expect(args[modePos + 1]).toBe("manual");
   });
 });
 
@@ -170,12 +180,13 @@ describe("mergeClaudeAllowRule", () => {
     });
   });
 
-  it("lists native permission modes including full access", async () => {
+  it("lists permission modes with full access marked synthetic", async () => {
     const { driver } = makeDriver();
     const modes = await driver.listPermissionModes();
     expect(modes.map((m) => m.id)).toEqual(["manual", "acceptEdits", "auto", "bypassPermissions"]);
     expect(modes.map((m) => m.label)).toEqual(["Manual", "Accept edits", "Auto", "Bypass permissions"]);
-    expect(modes.every((m) => m.native)).toBe(true);
+    expect(modes.map((m) => m.native)).toEqual([true, true, true, false]);
+    expect(modes.find((m) => m.id === "bypassPermissions")?.description).toBe(SYNTHETIC_FULL_ACCESS_DESCRIPTION);
     driver.dispose();
   });
 });
@@ -323,6 +334,51 @@ describe("ClaudeCliDriver persistent process", () => {
     expect(events).toContainEqual(expect.objectContaining({ type: "turn.done", backgroundTasks: 0 }));
     expect(children[0].stdin.writableEnded).toBe(false);
     expect(killed).toEqual([]);
+    driver.dispose();
+  });
+
+  it("auto-answers control requests for a bypass session without emitting an approval", async () => {
+    const { driver, events, children } = makeDriver();
+    driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go", permissionMode: "bypassPermissions" });
+    await settle();
+    children[0].stdout.write(
+      `${JSON.stringify({
+        type: "control_request",
+        request_id: "req-1",
+        request: { subtype: "can_use_tool", tool_name: "Bash", tool_use_id: "tu-1", input: { command: "rm -rf tmp" } }
+      })}\n`
+    );
+    await settle();
+    const lines = children[0].written.split("\n").filter(Boolean);
+    expect(lines).toHaveLength(2);
+    expect(JSON.parse(lines[1] ?? "")).toEqual({
+      type: "control_response",
+      response: {
+        subtype: "success",
+        request_id: "req-1",
+        response: { behavior: "allow", updatedInput: { command: "rm -rf tmp" } }
+      }
+    });
+    expect(events.some((event) => event.type === "approval.request")).toBe(false);
+    driver.dispose();
+  });
+
+  it("emits the reported permission mode when it changes and clears it when init omits it", async () => {
+    const { driver, events, children } = makeDriver();
+    const handle = driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go", permissionMode: "bypassPermissions" });
+    await settle();
+    children[0].stdout.write(`${JSON.stringify({ type: "system", subtype: "init", permissionMode: "manual" })}\n`);
+    children[0].stdout.write(`${JSON.stringify({ type: "system", subtype: "init", permissionMode: "manual" })}\n`);
+    await settle();
+    children[0].stdout.write(`${JSON.stringify({ type: "system", subtype: "init", permissionMode: "acceptEdits" })}\n`);
+    await settle();
+    children[0].stdout.write(`${JSON.stringify({ type: "system", subtype: "init" })}\n`);
+    await settle();
+    expect(events.filter((event) => event.type === "permission.mode.reported")).toEqual([
+      { type: "permission.mode.reported", turnId: handle.turnId, mode: "manual" },
+      { type: "permission.mode.reported", turnId: handle.turnId, mode: "acceptEdits" },
+      { type: "permission.mode.reported", turnId: handle.turnId, mode: null }
+    ]);
     driver.dispose();
   });
 
