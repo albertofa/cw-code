@@ -870,7 +870,7 @@ export function ComposerView({
                   : "Permission"
             }
             value={effectivePermission}
-            display={showReportedPermission ? `${permissionDisplay} · CLI ${reportedPermission}` : permissionDisplay}
+            display={permissionDisplay}
             isSet={effectivePermission !== "auto"}
             options={permissions.map((o) => ({ id: o.id, label: o.label, description: o.description, icon: permissionIconFor(o.id) }))}
             onPick={(v) => backend.savePrefs({ permissionMode: v as PermissionMode })}

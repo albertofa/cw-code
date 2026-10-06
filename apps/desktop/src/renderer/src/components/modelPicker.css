@@ -153,6 +153,22 @@
   font-weight: 500;
 }
 
+.mp-recent {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  color: var(--muted);
+}
+
+.mp-sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 .mp-ctx {
   flex: none;
   font-size: var(--t-xs);
