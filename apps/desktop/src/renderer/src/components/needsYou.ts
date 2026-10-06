@@ -115,6 +115,20 @@ export function firstUnseenPr(
   return null;
 }
 
+export interface DetailAttempt {
+  version: string;
+  fetchedAt: number;
+}
+
+export function prVersion(pr: PrSummary): string {
+  return `${pr.updatedAt}:${pr.headRefOid}`;
+}
+
+export function shouldRequestDetail(last: DetailAttempt | undefined, version: string, fetchedAt: number, loading: boolean): boolean {
+  if (loading) return false;
+  return last === undefined || last.version !== version || last.fetchedAt !== fetchedAt;
+}
+
 export function unseenPrsNeedingDetail(
   sessions: Session[],
   summaryByKey: PrSummaryLookup,

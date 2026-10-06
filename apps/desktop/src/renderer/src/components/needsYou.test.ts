@@ -9,6 +9,8 @@ import {
   needsYouCount,
   needsYouEntries,
   needsYouEntry,
+  prVersion,
+  shouldRequestDetail,
   sessionAttention,
   unseenPrsNeedingDetail,
   type Attention
@@ -225,6 +227,30 @@ describe("firstUnseenPr", () => {
     const lookup = new Map([[prKey(changed.ref), changed]]);
     const result = firstUnseenPr(session("idle", { prs: [link(1)] }), lookup, { [prKey(changed.ref)]: comment });
     expect(result?.updates?.map((u) => u.kind)).toEqual(["comment"]);
+  });
+});
+
+describe("shouldRequestDetail", () => {
+  it("waits while a load for the PR is already running", () => {
+    expect(shouldRequestDetail(undefined, "v2", 10, true)).toBe(false);
+  });
+
+  it("requests a version that arrived while an older load was running, once that load settles", () => {
+    expect(shouldRequestDetail({ version: "v1", fetchedAt: 10 }, "v2", 20, false)).toBe(true);
+  });
+
+  it("retries a failed or still-stale version on the next inbox refresh, not before", () => {
+    const last = { version: "v2", fetchedAt: 20 };
+    expect(shouldRequestDetail(last, "v2", 20, false)).toBe(false);
+    expect(shouldRequestDetail(last, "v2", 30, false)).toBe(true);
+  });
+});
+
+describe("prVersion", () => {
+  it("changes with the update time or the head commit", () => {
+    const pr = summary(1, { updatedAt: 5, headRefOid: "a" });
+    expect(prVersion(pr)).not.toBe(prVersion({ ...pr, updatedAt: 6 }));
+    expect(prVersion(pr)).not.toBe(prVersion({ ...pr, headRefOid: "b" }));
   });
 });
 
