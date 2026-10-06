@@ -1,6 +1,7 @@
 import type { PrCheck, PrDetail, PrReviewThread, PrSummary, PrTimelineItem, PrUpdate, SessionPrLink } from "@cw-code/contracts";
 
 export function hasUnseen(pr: PrSummary, link: SessionPrLink): boolean {
+  if (pr.state !== "OPEN") return false;
   return (link.lastSeenSha !== "" && pr.headRefOid !== link.lastSeenSha) || pr.updatedAt > link.lastSeenAt;
 }
 
