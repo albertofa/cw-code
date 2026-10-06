@@ -15,7 +15,7 @@ import { PrChipBadge } from "./PrChipBadge.js";
 import { needsAttentionCount } from "./prInbox.js";
 import { anyLinkUnseen, displayChip, linksTitle, mostUrgentLink, sessionLinks } from "./sessionPrLinks.js";
 import { matchesQuickFilter, matchesSessionQuery, quickFilterCounts, toggleQuickFilter, type QuickFilter, type QuickFilterFacts } from "./sidebarQuickFilters.js";
-import { compareNeedsYou, type Attention, type AttentionKind } from "./needsYou.js";
+import { needsYouEntries, type Attention, type AttentionKind } from "./needsYou.js";
 import { useNeedsYou } from "./useNeedsYou.js";
 import appIcon from "../assets/console-c.svg";
 
@@ -85,7 +85,6 @@ function sessionHasUnseen(session: Session, summaryByKey: Map<string, PrSummary>
 }
 
 const QUICK_FILTER_UI: Array<{ id: Exclude<QuickFilter, "all">; label: string; hint: string; Icon: LucideIcon }> = [
-  { id: "running", label: "Running", hint: "Running", Icon: LoaderCircle },
   { id: "pr", label: "Linked to a PR", hint: "Linked to a PR", Icon: GitPullRequest }
 ];
 
@@ -369,16 +368,7 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
   const source = useMemo<Session[]>(() => Object.values(sessionsByProject).flat(), [sessionsByProject]);
   const inboxItems = inbox?.items;
   const branchOf = useCallback((s: Session): string | undefined => gitStatusBySession[s.id]?.branch ?? s.branch, [gitStatusBySession]);
-  const needsYouAll = useMemo(
-    () =>
-      source
-        .flatMap((session) => {
-          const attention = attentionOf(session);
-          return attention ? [{ session, attention, updatedAt: session.updatedAt }] : [];
-        })
-        .sort(compareNeedsYou),
-    [source, attentionOf]
-  );
+  const needsYouAll = useMemo(() => needsYouEntries(source, attentionOf), [source, attentionOf]);
   const attentionIds = useMemo(() => new Set(needsYouAll.map((entry) => entry.session.id)), [needsYouAll]);
   const matchesQuery = useCallback(
     (s: Session) => matchesSessionQuery(trimmedQuery, { title: s.title, project: projectNameById[s.projectId] ?? "", branch: branchOf(s) }),
@@ -730,7 +720,15 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
         </span>
       );
     }
-    if (s.status === "holding") return <span className="ws-state status-holding">Holding · {ageLabel(s.updatedAt)}</span>;
+    if (s.status === "holding") return <span className="ws-state status-holding">{ageLabel(s.updatedAt)}</span>;
+    if (s.status === "done") {
+      return (
+        <span className="ws-state status-done">
+          <Check size={12} aria-hidden="true" />
+          Done · {ageLabel(s.updatedAt)}
+        </span>
+      );
+    }
     return <span className={`ws-state status-${s.status}`}>{stateLabel(s.status)}</span>;
   };
 
@@ -741,8 +739,8 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
       <div
         key={s.id}
         {...rowProps(s)}
-        className={`ws-row${s.id === activeSessionId ? " on" : ""}`}
-        aria-label={`${s.title}${projectName ? ` · ${projectName}` : ""}`}
+        className={`ws-row${s.status === "done" ? " ws-done" : ""}${s.id === activeSessionId ? " on" : ""}`}
+        aria-label={`${s.title}${projectName ? ` · ${projectName}` : ""}${s.status === "done" ? ". Turn finished" : ""}`}
       >
         <div className="ws-body">
           {renderTitle(s)}
@@ -960,10 +958,12 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
           {needsYouShown.length > 0 && (
             <div className="side-section">
               <div className="side-sec needs">
-                Needs you
+                Active
                 <span className="side-needs-n">{needsYouAll.length}</span>
               </div>
-              {needsYouShown.map((entry) => renderAttentionRow(entry.session, entry.attention))}
+              {needsYouShown.map((entry) =>
+                entry.attention ? renderAttentionRow(entry.session, entry.attention) : renderWorkingRow(entry.session)
+              )}
             </div>
           )}
           {workingSetVisible && (
@@ -1000,7 +1000,7 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
             </div>
           )}
           {idleShown.length > 0 && (
-            <div className="side-section">
+            <div className="side-section side-idle">
               <div className="side-sec">
                 Idle
                 <span className="side-sec-n">{idleFiltered.length}</span>
@@ -1020,7 +1020,7 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
           )}
         </div>
         {resolvedShown.length > 0 && (
-          <div className="side-section">
+          <div className="side-section side-resolved">
             {trimmedQuery ? (
               <div className="side-sec session-resolved-toggle is-static">
                 Resolved

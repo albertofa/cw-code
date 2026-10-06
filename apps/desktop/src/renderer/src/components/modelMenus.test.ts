@@ -14,6 +14,7 @@ import {
   hasModelDetail,
   modelDetailRows,
   pickInitialModel,
+  latestRecentModel,
   pickerSections,
   providerDriver,
   providerLabel,
@@ -195,29 +196,36 @@ describe("filterModels", () => {
 describe("pickerSections", () => {
   const models = [opt("anthropic/a", { label: "Alpha" }), opt("anthropic/b", { label: "Beta" }), opt("openai/c", { label: "Gamma" })];
 
-  it("puts recents first, then one group per OpenCode provider", () => {
-    const sections = pickerSections("opencode", models, ["openai/c", "gone", "anthropic/a"], "");
-    expect(sections.map((s) => s.id)).toEqual(["recent", "anthropic", "openai"]);
-    expect(sections[0].models.map((m) => m.id)).toEqual(["openai/c", "anthropic/a"]);
-    expect(sections.map((s) => s.icon)).toEqual(["recent", "claude", "codex"]);
+  it("makes one group per OpenCode provider", () => {
+    const sections = pickerSections("opencode", models, "");
+    expect(sections.map((s) => s.id)).toEqual(["anthropic", "openai"]);
+    expect(sections.map((s) => s.icon)).toEqual(["claude", "codex"]);
   });
 
   it("uses one harness group for Claude and Codex", () => {
-    const sections = pickerSections("claude", [opt("x"), opt("y")], ["y"], "");
-    expect(sections.map((s) => [s.label, s.icon])).toEqual([["Recent", "recent"], ["Claude Code", "claude"]]);
+    const sections = pickerSections("claude", [opt("x"), opt("y")], "");
+    expect(sections.map((s) => [s.label, s.icon])).toEqual([["Claude Code", "claude"]]);
   });
 
-  it("hides recents while searching and filters groups", () => {
-    const sections = pickerSections("opencode", models, ["anthropic/a"], "gam");
-    expect(sections.map((s) => s.id)).toEqual(["openai"]);
+  it("filters groups while searching", () => {
+    expect(pickerSections("opencode", models, "gam").map((s) => s.id)).toEqual(["openai"]);
   });
 
   it("returns nothing when the search matches nothing", () => {
-    expect(pickerSections("opencode", models, [], "zzz")).toEqual([]);
+    expect(pickerSections("opencode", models, "zzz")).toEqual([]);
+  });
+});
+
+describe("latestRecentModel", () => {
+  const models = [opt("a"), opt("b")];
+
+  it("returns the most recent model still listed", () => {
+    expect(latestRecentModel(models, ["gone", "b", "a"])).toBe("b");
   });
 
-  it("skips the recent group when no recent is listed", () => {
-    expect(pickerSections("claude", [opt("x")], ["gone"], "").map((s) => s.id)).toEqual(["claude"]);
+  it("returns null when no recent is listed", () => {
+    expect(latestRecentModel(models, ["gone"])).toBeNull();
+    expect(latestRecentModel(models, [])).toBeNull();
   });
 });
 

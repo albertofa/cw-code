@@ -15,7 +15,7 @@ export interface ModelGroup {
 export interface PickerSection {
   id: string;
   label: string;
-  icon: "recent" | DriverName;
+  icon: DriverName;
   models: ModelOption[];
 }
 
@@ -145,17 +145,17 @@ export function filterModels(models: ModelOption[], query: string): ModelOption[
   return models.filter((m) => m.label.toLowerCase().includes(q) || m.id.toLowerCase().includes(q));
 }
 
-export function pickerSections(driver: DriverName, models: ModelOption[], recents: string[], query: string): PickerSection[] {
-  const searching = query.trim() !== "";
-  const groups = groupModels(driver, filterModels(models, query)).map((group) => ({
+export function pickerSections(driver: DriverName, models: ModelOption[], query: string): PickerSection[] {
+  return groupModels(driver, filterModels(models, query)).map((group) => ({
     id: group.id,
     label: group.label,
     icon: driver === "opencode" ? providerDriver(group.id) : driver,
     models: group.models
   }));
-  const recentModels = searching ? [] : recents.flatMap((id) => models.find((m) => m.id === id) ?? []);
-  if (recentModels.length === 0) return groups;
-  return [{ id: "recent", label: "Recent", icon: "recent", models: recentModels }, ...groups];
+}
+
+export function latestRecentModel(models: ModelOption[], recents: string[]): string | null {
+  return recents.find((id) => models.some((m) => m.id === id)) ?? null;
 }
 
 export function hasModelDetail(model: ModelOption): boolean {

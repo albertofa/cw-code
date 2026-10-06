@@ -14,5 +14,5 @@ export function projectInitials(name: string): string {
 }
 
 export function projectAvatarStyle(name: string): CSSProperties {
-  return { background: `hsl(${hashHue(name)}, 32%, 36%)` };
+  return { background: `hsl(${hashHue(name)}, 32%, 32%)` };
 }

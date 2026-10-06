@@ -1,8 +1,8 @@
-import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
+import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { Check, ChevronDown, ChevronUp, History, Plus, Search, Star } from "lucide-react";
 import type { DriverName, ModelOption } from "../cw.js";
 import { DriverIcon } from "./DriverIcon.js";
-import { hasModelDetail, modelDetailRows, pickerSections, type PickerSection } from "./modelMenus.js";
+import { hasModelDetail, latestRecentModel, modelDetailRows, pickerSections, type PickerSection } from "./modelMenus.js";
 import { formatTokensShort } from "./subagents.js";
 import { harnessLabel } from "./toolTabs.js";
 import "./modelPicker.css";
@@ -22,10 +22,6 @@ interface CardPlacement {
 
 function entryKey(section: PickerSection, model: ModelOption): string {
   return `${section.id}:${model.id}`;
-}
-
-function sectionIcon(icon: PickerSection["icon"]): ReactNode {
-  return icon === "recent" ? <History size={13} aria-hidden="true" /> : <DriverIcon driver={icon} size={13} />;
 }
 
 export function ModelPicker({
@@ -69,7 +65,8 @@ export function ModelPicker({
   const listRef = useRef<HTMLDivElement | null>(null);
 
   const text = query.trim();
-  const sections = useMemo(() => pickerSections(driver, models, recents, query), [driver, models, recents, query]);
+  const sections = useMemo(() => pickerSections(driver, models, query), [driver, models, query]);
+  const recentId = useMemo(() => latestRecentModel(models, recents), [models, recents]);
   const noMatch = text !== "" && sections.length === 0;
   const entries = useMemo<Entry[]>(() => {
     if (noMatch) return [{ key: "use-custom", kind: "use-custom", text }];
@@ -80,9 +77,10 @@ export function ModelPicker({
   }, [noMatch, sections, text]);
 
   const indexByKey = useMemo(() => new Map(entries.map((entry, index) => [entry.key, index])), [entries]);
+  const recentIndex = entries.findIndex((e) => e.kind === "model" && e.model.id === recentId);
   const currentIndex = entries.findIndex((e) => e.kind === "model" && e.model.id === currentId);
   const firstRowIndex = entries.findIndex((e) => e.kind !== "custom");
-  const defaultIndex = currentIndex >= 0 ? currentIndex : Math.max(0, firstRowIndex);
+  const defaultIndex = text === "" && recentIndex >= 0 ? recentIndex : currentIndex >= 0 ? currentIndex : Math.max(0, firstRowIndex);
   const keyedIndex = activeKey === null ? -1 : (indexByKey.get(activeKey) ?? -1);
   const active = keyedIndex >= 0 ? keyedIndex : defaultIndex;
   const activeEntry: Entry | undefined = entries[active];
@@ -260,7 +258,7 @@ export function ModelPicker({
                       {sections.map((section) => (
                         <div key={section.id} className="mp-grp" role="group" aria-label={section.label}>
                           <div className="mp-gh" aria-hidden="true">
-                            {sectionIcon(section.icon)}
+                            <DriverIcon driver={section.icon} size={13} />
                             <span>{section.label}</span>
                             <span className="n">{section.models.length}</span>
                           </div>
@@ -279,6 +277,12 @@ export function ModelPicker({
                                 <span className="mp-n" title={model.id}>
                                   {model.label}
                                 </span>
+                                {model.id === recentId && (
+                                  <span className="mp-recent" title="Last used">
+                                    <History size={12} aria-hidden="true" />
+                                    <span className="mp-sr">Last used</span>
+                                  </span>
+                                )}
                                 {model.contextWindow !== undefined && <span className="mp-ctx">{formatTokensShort(model.contextWindow)}</span>}
                                 <span className="mp-end">
                                   {selected && <Check className="mp-check" size={14} aria-hidden="true" />}

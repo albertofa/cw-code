@@ -1,15 +1,34 @@
 import { describe, expect, it } from "vitest";
-import type { PrRef, PrSummary, PrUpdate, SessionPrLink } from "@cw-code/contracts";
+import type { PrDetail, PrRef, PrSummary, PrTimelineItem, PrUpdate, SessionPrLink } from "@cw-code/contracts";
 import type { ApprovalRequest, QuestionRequest, Session, SessionStatus } from "../cw.js";
 import { prKey } from "./prInbox.js";
 import {
-  ATTENTION_RANK,
   compareNeedsYou,
   firstUnseenPr,
+  NEEDS_YOU_RANK,
   needsYouCount,
+  needsYouEntries,
+  needsYouEntry,
+  prVersion,
+  shouldRequestDetail,
   sessionAttention,
+  unseenPrsNeedingDetail,
   type Attention
 } from "./needsYou.js";
+
+function detail(pr: PrSummary, timeline: PrTimelineItem[]): PrDetail {
+  return {
+    ...pr,
+    body: "",
+    createdAt: 0,
+    timeline,
+    threads: [],
+    checkRuns: [],
+    commits: [],
+    reviewers: [],
+    viewerLogin: "me"
+  };
+}
 
 function session(status: SessionStatus, overrides: Partial<Session> = {}): Session {
   return {
@@ -186,34 +205,132 @@ describe("firstUnseenPr", () => {
     expect(firstUnseenPr(session("idle", { prs: [link(1), link(2)] }), lookup, {})).toBeNull();
     expect(firstUnseenPr(session("idle"), lookup, {})).toBeNull();
   });
+
+  it("skips a PR whose current detail only holds the viewer's own activity", () => {
+    const changed = summary(1, { updatedAt: 2_000 });
+    const ownApproval = detail(changed, [{ kind: "review", at: 2_000, actor: "me", state: "APPROVED", body: "", threadIds: [] }]);
+    const lookup = new Map([[prKey(changed.ref), changed]]);
+    expect(firstUnseenPr(session("idle", { prs: [link(1)] }), lookup, { [prKey(changed.ref)]: ownApproval })).toBeNull();
+  });
+
+  it("keeps flagging while the loaded detail is older than the summary", () => {
+    const changed = summary(1, { updatedAt: 3_000 });
+    const stale = detail({ ...changed, updatedAt: 2_000 }, []);
+    const lookup = new Map([[prKey(changed.ref), changed]]);
+    const result = firstUnseenPr(session("idle", { prs: [link(1)] }), lookup, { [prKey(changed.ref)]: stale });
+    expect(result?.number).toBe(1);
+  });
+
+  it("flags a PR whose current detail has someone else's activity", () => {
+    const changed = summary(1, { updatedAt: 2_000 });
+    const comment = detail(changed, [{ kind: "comment", at: 2_000, actor: "rcosta", body: "" }]);
+    const lookup = new Map([[prKey(changed.ref), changed]]);
+    const result = firstUnseenPr(session("idle", { prs: [link(1)] }), lookup, { [prKey(changed.ref)]: comment });
+    expect(result?.updates?.map((u) => u.kind)).toEqual(["comment"]);
+  });
+});
+
+describe("shouldRequestDetail", () => {
+  it("waits while a load for the PR is already running", () => {
+    expect(shouldRequestDetail(undefined, "v2", 10, true)).toBe(false);
+  });
+
+  it("requests a version that arrived while an older load was running, once that load settles", () => {
+    expect(shouldRequestDetail({ version: "v1", fetchedAt: 10 }, "v2", 20, false)).toBe(true);
+  });
+
+  it("retries a failed or still-stale version on the next inbox refresh, not before", () => {
+    const last = { version: "v2", fetchedAt: 20 };
+    expect(shouldRequestDetail(last, "v2", 20, false)).toBe(false);
+    expect(shouldRequestDetail(last, "v2", 30, false)).toBe(true);
+  });
+});
+
+describe("prVersion", () => {
+  it("changes with the update time or the head commit", () => {
+    const pr = summary(1, { updatedAt: 5, headRefOid: "a" });
+    expect(prVersion(pr)).not.toBe(prVersion({ ...pr, updatedAt: 6 }));
+    expect(prVersion(pr)).not.toBe(prVersion({ ...pr, headRefOid: "b" }));
+  });
+});
+
+describe("unseenPrsNeedingDetail", () => {
+  const link = (number: number): SessionPrLink => ({ ref: ref(number), origin: "linked", lastSeenSha: `sha-${number}`, lastSeenAt: 1_000 });
+
+  it("lists unseen PRs of open sessions that lack a current detail, once each", () => {
+    const missing = summary(1, { updatedAt: 2_000 });
+    const stale = summary(2, { updatedAt: 3_000 });
+    const current = summary(3, { updatedAt: 2_000 });
+    const seen = summary(4, { updatedAt: 500 });
+    const lookup = new Map([missing, stale, current, seen].map((item) => [prKey(item.ref), item]));
+    const details = { [prKey(stale.ref)]: detail({ ...stale, updatedAt: 2_000 }, []), [prKey(current.ref)]: detail(current, []) };
+    const sessions = [
+      session("idle", { id: "a", prs: [link(1), link(2), link(3), link(4)] }),
+      session("holding", { id: "b", prs: [link(1)] }),
+      session("resolved", { id: "c", prs: [link(5)] })
+    ];
+    lookup.set(prKey(ref(5)), summary(5, { updatedAt: 2_000 }));
+    expect(unseenPrsNeedingDetail(sessions, lookup, details).map((pr) => pr.ref.number)).toEqual([1, 2]);
+  });
+});
+
+describe("needsYouEntry", () => {
+  it("prefers the attention over the status", () => {
+    const attention: Attention = { kind: "approval", line: "x" };
+    expect(needsYouEntry(session("working"), attention)?.slot).toBe("approval");
+  });
+
+  it("holds running sessions and turns that ended unseen", () => {
+    expect(needsYouEntry(session("working"), null)?.slot).toBe("running");
+    expect(needsYouEntry(session("done"), null)?.slot).toBe("done");
+  });
+
+  it("leaves out seen, idle, resolved and archived sessions", () => {
+    for (const status of ["holding", "idle", "resolved", "archived"] as SessionStatus[]) {
+      expect(needsYouEntry(session(status), null)).toBeNull();
+    }
+  });
 });
 
 describe("compareNeedsYou", () => {
-  const item = (kind: Attention["kind"], updatedAt: number) => ({ attention: { kind, line: "" }, updatedAt });
-
-  it("has rank 0, 1, 2 for approval, question, update", () => {
-    expect(ATTENTION_RANK).toEqual({ approval: 0, question: 1, update: 2 });
+  it("ranks approval, question, done, update, running", () => {
+    expect(NEEDS_YOU_RANK).toEqual({ approval: 0, question: 1, done: 2, update: 3, running: 4 });
   });
 
-  it("orders by kind, then most recent first", () => {
-    const sorted = [item("update", 9), item("question", 1), item("approval", 1), item("question", 5), item("approval", 8)].sort(
-      compareNeedsYou
-    );
-    expect(sorted.map((s) => `${s.attention.kind}:${s.updatedAt}`)).toEqual([
-      "approval:8",
-      "approval:1",
-      "question:5",
-      "question:1",
-      "update:9"
-    ]);
+  it("orders by slot, then most recent first", () => {
+    const item = (status: SessionStatus, updatedAt: number, kind?: Attention["kind"]) =>
+      needsYouEntry(session(status, { id: `${kind ?? status}:${updatedAt}`, updatedAt }), kind ? { kind, line: "" } : null)!;
+    const sorted = [
+      item("working", 9),
+      item("idle", 9, "update"),
+      item("done", 1),
+      item("idle", 1, "question"),
+      item("idle", 1, "approval"),
+      item("idle", 5, "question"),
+      item("done", 7)
+    ].sort(compareNeedsYou);
+    expect(sorted.map((s) => s.session.id)).toEqual(["approval:1", "question:5", "question:1", "done:7", "done:1", "update:9", "working:9"]);
+  });
+});
+
+describe("needsYouEntries", () => {
+  it("keeps only sessions that need the user, sorted", () => {
+    const sessions = [session("working", { id: "run" }), session("holding", { id: "seen" }), session("done", { id: "ended" })];
+    expect(needsYouEntries(sessions, () => null).map((entry) => entry.session.id)).toEqual(["ended", "run"]);
   });
 });
 
 describe("needsYouCount", () => {
-  it("counts the sessions that have an attention", () => {
-    const sessions = [session("working", { id: "a" }), session("idle", { id: "b" }), session("resolved", { id: "c" })];
-    const attentionOf = (s: Session): Attention | null => (s.id === "c" ? null : { kind: "update", line: "" });
-    expect(needsYouCount(sessions, attentionOf)).toBe(2);
+  it("counts sessions waiting on the user, not running ones", () => {
+    const sessions = [
+      session("working", { id: "a" }),
+      session("idle", { id: "b" }),
+      session("resolved", { id: "c" }),
+      session("done", { id: "d" }),
+      session("working", { id: "e" })
+    ];
+    const attentionOf = (s: Session): Attention | null => (s.id === "a" || s.id === "b" ? { kind: "update", line: "" } : null);
+    expect(needsYouCount(sessions, attentionOf)).toBe(3);
     expect(needsYouCount([], attentionOf)).toBe(0);
   });
 });

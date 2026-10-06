@@ -1,7 +1,7 @@
 import { execFile } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, rmdirSync, type Stats } from "node:fs";
-import { copyFile, open, lstat, readdir, rm, rmdir, unlink } from "node:fs/promises";
+import { copyFile, open, lstat, readdir, rm, rmdir, stat, unlink, utimes } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
@@ -308,6 +308,12 @@ async function lstatOrNull(path: string): Promise<Stats | null> {
     if (isMissing(error)) return null;
     throw error;
   }
+}
+
+async function copyIndexKeepingRacyCheck(indexPath: string, copyPath: string): Promise<void> {
+  await copyFile(indexPath, copyPath);
+  const { atime, mtime } = await stat(indexPath);
+  await utimes(copyPath, atime, mtime);
 }
 
 function isIndexLockError(error: unknown): boolean {
@@ -1207,7 +1213,7 @@ export class GitService {
         .split("\n")
         .map((line) => resolve(root, line.trim()));
       return await this.withObjectStoreLock(commonDir, async () => {
-        if (existsSync(indexPath)) await copyFile(indexPath, tempIndex);
+        if (existsSync(indexPath)) await copyIndexKeepingRacyCheck(indexPath, tempIndex);
         await this.addToSnapshotIndex(binary, root, remaining, env);
         const tree = (await execText(binary, [...HOOKLESS_ARGS, "write-tree"], root, remaining(), env)).trim();
         const parent = await this.headCommit(root, remaining());

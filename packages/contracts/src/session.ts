@@ -21,6 +21,7 @@ export type SessionStatusReason =
   | "user-set-status"
   | "reopen-on-select"
   | "reopen-on-restore"
+  | "turn-seen"
   | "merged-pr"
   | "app-restart-holding"
   | "app-restart-idle"
