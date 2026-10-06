@@ -27,6 +27,7 @@ import { useResizableWidth } from "./components/useResizableWidth.js";
 import { usePanelAnimationMs, usePresence } from "./components/usePresence.js";
 import { Notifications, useNotifs } from "./components/Notifications.js";
 import { useAttentionBadge } from "./components/useAttentionBadge.js";
+import { useNeedsYouDetailLoader } from "./components/useNeedsYou.js";
 import { visibleLayerOpen } from "./components/openLayer.js";
 import { useAppStore } from "./stores/appStore.js";
 import { rightOpenTabs, DOCKABLE_TABS } from "./stores/panelLayout.js";
@@ -95,6 +96,7 @@ function handleTurnEvent(msg: { sessionId: string; event: TurnEvent }): void {
 
 export function App() {
   useAttentionBadge();
+  useNeedsYouDetailLoader();
   const activeSessionId = useAppStore((s) => s.activeSessionId);
   const sessionsByProject = useAppStore((s) => s.sessionsByProject);
   const sourceControlRefreshIntervalSeconds = useAppStore((s) => s.sourceControlRefreshIntervalSeconds);

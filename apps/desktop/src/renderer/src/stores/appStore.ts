@@ -507,10 +507,6 @@ export const useAppStore = create<AppState>((set, get) => ({
         void get().setSessionStatus(picked.id, "idle", "reopen-on-restore").catch((err) =>
           console.warn(`setSessionStatus failed for ${picked.id} -> idle: ${(err as Error).message}`)
         );
-      } else if (picked.status === "done") {
-        void get().setSessionStatus(picked.id, "holding", "reopen-on-restore").catch((err) =>
-          console.warn(`setSessionStatus failed for ${picked.id} -> holding: ${(err as Error).message}`)
-        );
       }
       void get().ensureHistory(picked.id);
       void get().ensureComposer(picked.id);
@@ -679,11 +675,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const current = Object.values(byProject)
       .flat()
       .find((s) => s.id === sessionId);
-    if (current?.status === "done") {
-      void get().setSessionStatus(sessionId, "holding", "reopen-on-select").catch((err) =>
-        console.warn(`setSessionStatus failed for ${sessionId} -> holding: ${(err as Error).message}`)
-      );
-    } else if (current?.status === "resolved") {
+    if (current?.status === "resolved") {
       void get().setSessionStatus(sessionId, "idle", "reopen-on-select").catch((err) =>
         console.warn(`setSessionStatus failed for ${sessionId} -> idle: ${(err as Error).message}`)
       );

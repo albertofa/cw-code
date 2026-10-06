@@ -17,7 +17,15 @@ export interface UnseenPr {
   updates?: PrUpdate[];
 }
 
-export const ATTENTION_RANK: Record<AttentionKind, number> = { approval: 0, question: 1, update: 2 };
+export type NeedsYouSlot = AttentionKind | "done" | "running";
+
+export interface NeedsYouEntry {
+  session: Session;
+  attention: Attention | null;
+  slot: NeedsYouSlot;
+}
+
+export const NEEDS_YOU_RANK: Record<NeedsYouSlot, number> = { approval: 0, question: 1, done: 2, update: 3, running: 4 };
 
 const INPUT_FALLBACK = "Waiting for your input";
 const APPROVAL_FALLBACK = "Approval needed";
@@ -86,6 +94,10 @@ function updateLine(unseen: UnseenPr): string {
   return parts.length > 0 ? `#${unseen.number} · ${parts.join(" · ")}` : `#${unseen.number} updated`;
 }
 
+export function detailIsCurrent(detail: PrDetail | undefined, summary: PrSummary): detail is PrDetail {
+  return detail !== undefined && detail.updatedAt >= summary.updatedAt && detail.headRefOid === summary.headRefOid;
+}
+
 export function firstUnseenPr(
   session: Session,
   summaryByKey: PrSummaryLookup,
@@ -96,9 +108,29 @@ export function firstUnseenPr(
     const summary = summaryByKey.get(key);
     if (!summary || !hasUnseen(summary, link)) continue;
     const detail = detailByKey[key];
-    return { number: link.ref.number, summary, updates: detail ? updatesSince(detail, link) : undefined };
+    const updates = detail ? updatesSince(detail, link) : undefined;
+    if (updates?.length === 0 && detailIsCurrent(detail, summary)) continue;
+    return { number: link.ref.number, summary, updates };
   }
   return null;
+}
+
+export function unseenPrsNeedingDetail(
+  sessions: Session[],
+  summaryByKey: PrSummaryLookup,
+  detailByKey: Record<string, PrDetail>
+): PrSummary[] {
+  const byKey = new Map<string, PrSummary>();
+  for (const session of sessions) {
+    if (session.status === "resolved" || session.status === "archived") continue;
+    for (const link of sessionLinks(session)) {
+      const key = prKey(link.ref);
+      const summary = summaryByKey.get(key);
+      if (!summary || !hasUnseen(summary, link) || detailIsCurrent(detailByKey[key], summary)) continue;
+      byKey.set(key, summary);
+    }
+  }
+  return [...byKey.values()];
 }
 
 export function sessionAttention(input: {
@@ -116,15 +148,28 @@ export function sessionAttention(input: {
   return null;
 }
 
-export function compareNeedsYou(
-  a: { attention: Attention; updatedAt: number },
-  b: { attention: Attention; updatedAt: number }
-): number {
-  const rank = ATTENTION_RANK[a.attention.kind] - ATTENTION_RANK[b.attention.kind];
+export function needsYouEntry(session: Session, attention: Attention | null): NeedsYouEntry | null {
+  if (attention) return { session, attention, slot: attention.kind };
+  if (session.status === "done") return { session, attention: null, slot: "done" };
+  if (session.status === "working") return { session, attention: null, slot: "running" };
+  return null;
+}
+
+export function compareNeedsYou(a: NeedsYouEntry, b: NeedsYouEntry): number {
+  const rank = NEEDS_YOU_RANK[a.slot] - NEEDS_YOU_RANK[b.slot];
   if (rank !== 0) return rank;
-  return b.updatedAt - a.updatedAt;
+  return b.session.updatedAt - a.session.updatedAt;
+}
+
+export function needsYouEntries(sessions: Session[], attentionOf: (session: Session) => Attention | null): NeedsYouEntry[] {
+  return sessions
+    .flatMap((session) => {
+      const entry = needsYouEntry(session, attentionOf(session));
+      return entry ? [entry] : [];
+    })
+    .sort(compareNeedsYou);
 }
 
 export function needsYouCount(sessions: Session[], attentionOf: (session: Session) => Attention | null): number {
-  return sessions.filter((session) => attentionOf(session) !== null).length;
+  return needsYouEntries(sessions, attentionOf).filter((entry) => entry.slot !== "running").length;
 }
