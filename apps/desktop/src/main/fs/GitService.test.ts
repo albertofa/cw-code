@@ -561,6 +561,22 @@ async function undoTurn(service: GitService, repository: string, startSha: strin
 }
 
 describe("turn snapshots", () => {
+  it("captures a same-size edit whose timestamp matches the index (racy git)", async () => {
+    const { repository, service } = initSandbox();
+    const readme = join(repository, "README.md");
+    const instant = new Date("2020-01-01T00:00:00Z");
+    git(repository, "config", "core.trustctime", "false");
+    utimesSync(readme, instant, instant);
+    git(repository, "update-index", "--refresh");
+    utimesSync(join(repository, ".git", "index"), instant, instant);
+    writeFileSync(readme, "turn\n", "utf8");
+    utimesSync(readme, instant, instant);
+
+    const sha = await service.snapshotWorkingTree(repository);
+
+    expect(git(repository, "show", `${sha}:README.md`)).toBe("turn\n");
+  });
+
   it("captures dirty tracked and untracked files without touching the index, stash, refs, HEAD or reflog", async () => {
     const { repository, service } = initSandbox();
     writeFileSync(join(repository, "README.md"), "dirty\n", "utf8");
