@@ -280,7 +280,7 @@
   flex: none;
   font-family: var(--sans);
   font-size: var(--t-3xs);
-  color: color-mix(in srgb, var(--muted) 70%, transparent);
+  color: var(--faint);
 }
 
 .fp-pop {

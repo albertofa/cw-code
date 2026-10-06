@@ -386,7 +386,7 @@
 
 .sp-tag.custom {
   background: var(--accent-soft);
-  color: var(--accent);
+  color: var(--accent-ink);
 }
 
 .sp-card {

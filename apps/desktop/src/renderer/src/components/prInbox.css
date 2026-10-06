@@ -553,7 +553,7 @@
   display: inline-flex;
   align-items: center;
   border-radius: 999px;
-  background: var(--accent);
+  background: var(--accent-fill);
   color: var(--on-accent);
   font-size: var(--t-3xs);
   font-weight: 700;
