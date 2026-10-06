@@ -68,6 +68,11 @@ describe("hasUnseen", () => {
     const pr = basePr({ headRefOid: "sha-2", updatedAt: 500 });
     expect(hasUnseen(pr, baseLink({ lastSeenSha: "", lastSeenAt: 1_000 }))).toBe(false);
   });
+
+  it.each(["MERGED", "CLOSED"] as const)("is false once the PR is %s, even with commits pushed after the last look", (state) => {
+    const pr = basePr({ state, headRefOid: "sha-2", updatedAt: 2_000 });
+    expect(hasUnseen(pr, baseLink({ lastSeenSha: "sha-1", lastSeenAt: 1_000 }))).toBe(false);
+  });
 });
 
 describe("updatesSince", () => {
