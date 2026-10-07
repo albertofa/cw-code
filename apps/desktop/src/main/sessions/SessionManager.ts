@@ -145,6 +145,7 @@ export class SessionManager {
   private pendingTurns = new Set<string>();
   private pendingResolves = new Set<string>();
   private settleSweep: Promise<string[]> | null = null;
+  private idleSweep: Promise<string[]> | null = null;
   private worktreeRecovery = new Map<string, Promise<string>>();
   private branchRenamed = new Set<string>();
   private onEvent: (sessionId: string, event: ThreadEvent) => void;
@@ -677,6 +678,15 @@ export class SessionManager {
     return sweep;
   }
 
+  resolveExpiredIdleSessions(now = Date.now()): Promise<string[]> {
+    if (this.idleSweep) return this.idleSweep;
+    const sweep = this.runIdleSweep(now).finally(() => {
+      if (this.idleSweep === sweep) this.idleSweep = null;
+    });
+    this.idleSweep = sweep;
+    return sweep;
+  }
+
   private sessionBusy(sessionId: string): boolean {
     if (this.pendingTurns.has(sessionId) || this.pendingResolves.has(sessionId)) return true;
     for (const entry of this.activeTurns.values()) {
@@ -727,10 +737,36 @@ export class SessionManager {
     return settled;
   }
 
+  private async runIdleSweep(now: number): Promise<string[]> {
+    const days = this.settings.get().idleResolveAfterDays;
+    if (days <= 0) return [];
+    const cutoff = now - days * 86_400_000;
+    const resolved: string[] = [];
+    for (const session of this.store.listAllSessions()) {
+      const idleSince = session.idleSince;
+      if (session.status !== "idle" || idleSince === undefined || !Number.isFinite(idleSince) || idleSince > cutoff) continue;
+      if (this.sessionBusy(session.id)) continue;
+      const current = this.store.getSession(session.id);
+      if (!current || current.status !== "idle") continue;
+      try {
+        await this.resolveSession(session.id, "resolved", {
+          removeWorktree: true,
+          forceBranch: false,
+          reason: "idle-expired"
+        });
+        this.emitSession(session.id);
+        resolved.push(session.id);
+      } catch (err) {
+        console.warn(`idle sweep failed for session ${session.id}: ${(err as Error).message}`);
+      }
+    }
+    return resolved;
+  }
+
   async resolveSession(
     sessionId: string,
     status: SessionStatus,
-    opts: { removeWorktree?: boolean; forceBranch?: boolean } = {}
+    opts: { removeWorktree?: boolean; forceBranch?: boolean; reason?: SessionStatusReason } = {}
   ): Promise<SessionCleanupResult> {
     const session = this.store.getSession(sessionId);
     if (!session) throw new Error(`unknown session ${sessionId}`);
@@ -758,14 +794,14 @@ export class SessionManager {
     session: SessionMeta,
     status: SessionStatus,
     project: Project,
-    opts: { removeWorktree?: boolean; forceBranch?: boolean }
+    opts: { removeWorktree?: boolean; forceBranch?: boolean; reason?: SessionStatusReason }
   ): Promise<SessionCleanupResult> {
     const sessionId = session.id;
     this.turnBaseShas.delete(sessionId);
     this.firstPrompts.delete(sessionId);
     this.branchRenamed.delete(sessionId);
     this.cancelTitleTurns(sessionId);
-    this.store.updateSession(sessionId, { status }, status === "archived" ? "archive" : "resolve");
+    this.store.updateSession(sessionId, { status }, opts.reason ?? (status === "archived" ? "archive" : "resolve"));
     this.drivers[session.driver].stopSession?.(sessionId);
     const worktreePath = session.worktreePath;
     if (!worktreePath) {

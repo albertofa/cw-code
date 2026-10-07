@@ -1656,6 +1656,88 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
+  it("resolves an idle session past the cutoff, traces idle-expired and emits it", async () => {
+    const { manager, project, dir } = makePrManager({});
+    const tracePath = join(dir, "session-status.jsonl");
+    initSessionStatusTrace({ filePath: tracePath });
+    try {
+      const session = await manager.createSession(project.id, "claude", { mode: "current" });
+      const store = (manager as unknown as { store: SessionStore }).store;
+      const now = Date.now();
+      const stored = store.getSession(session.id);
+      if (!stored) throw new Error("expected session");
+      stored.idleSince = now - 31 * 86_400_000;
+      const emitted: SessionMeta[] = [];
+      manager.setSessionEmitter((meta) => emitted.push(meta));
+
+      const resolved = await manager.resolveExpiredIdleSessions(now);
+
+      expect(resolved).toEqual([session.id]);
+      expect(store.getSession(session.id)?.status).toBe("resolved");
+      expect(emitted.some((meta) => meta.id === session.id && meta.status === "resolved")).toBe(true);
+      const transitions = readStatusTransitions(tracePath);
+      expect(
+        transitions.some((entry) => entry.sessionId === session.id && entry.to === "resolved" && entry.reason === "idle-expired")
+      ).toBe(true);
+    } finally {
+      resetSessionStatusTraceForTests();
+      manager.dispose();
+    }
+  });
+
+  it("leaves idle sessions inside the configured window untouched", async () => {
+    const { manager, project } = makePrManager({});
+    const session = await manager.createSession(project.id, "claude", { mode: "current" });
+    const store = (manager as unknown as { store: SessionStore }).store;
+    const now = Date.now();
+    const stored = store.getSession(session.id);
+    if (!stored) throw new Error("expected session");
+    stored.idleSince = now - 29 * 86_400_000;
+
+    const resolved = await manager.resolveExpiredIdleSessions(now);
+
+    expect(resolved).toEqual([]);
+    expect(store.getSession(session.id)?.status).toBe("idle");
+    manager.dispose();
+  });
+
+  it("does not resolve idle sessions when idleResolveAfterDays is disabled", async () => {
+    const { manager, project } = makePrManager({});
+    const session = await manager.createSession(project.id, "claude", { mode: "current" });
+    const store = (manager as unknown as { store: SessionStore }).store;
+    const now = Date.now();
+    const stored = store.getSession(session.id);
+    if (!stored) throw new Error("expected session");
+    stored.idleSince = now - 365 * 86_400_000;
+    manager.setSettings({ idleResolveAfterDays: 0 });
+
+    const resolved = await manager.resolveExpiredIdleSessions(now);
+
+    expect(resolved).toEqual([]);
+    expect(store.getSession(session.id)?.status).toBe("idle");
+    manager.dispose();
+  });
+
+  it("removes the worktree of an expired idle session", async () => {
+    const { manager, project } = makeGitSandboxManager("cw-idle-worktree-");
+    const session = await manager.createSession(project.id, "claude");
+    if (!session.worktreePath) throw new Error("expected a worktree");
+    const worktreePath = session.worktreePath;
+    const store = (manager as unknown as { store: SessionStore }).store;
+    const now = Date.now();
+    const stored = store.getSession(session.id);
+    if (!stored) throw new Error("expected session");
+    stored.idleSince = now - 31 * 86_400_000;
+
+    const resolved = await manager.resolveExpiredIdleSessions(now);
+
+    expect(resolved).toEqual([session.id]);
+    expect(store.getSession(session.id)?.status).toBe("resolved");
+    expect(store.getSession(session.id)?.worktreePath).toBeUndefined();
+    expect(existsSync(worktreePath)).toBe(false);
+    manager.dispose();
+  });
+
   it("moves interrupted and errored sessions into holding", async () => {
     const { manager } = makeManager();
     const project = manager.addProject("C:\\proj-holding");
