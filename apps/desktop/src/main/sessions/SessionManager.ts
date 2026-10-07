@@ -80,6 +80,7 @@ export interface SessionManagerOptions {
   prHead?: (ref: PrRef) => string | null;
   prHeadRefresh?: (ref: PrRef) => Promise<string | null>;
   prState?: (ref: PrRef) => PrSummary["state"] | null;
+  prStateRefresh?: (ref: PrRef) => Promise<PrSummary["state"] | null>;
   prUpdatedAt?: (ref: PrRef) => number | null;
   usageLedger?: UsageLedger;
   driverFactory?: DriverFactory;
@@ -156,6 +157,7 @@ export class SessionManager {
   private prHead: (ref: PrRef) => string | null;
   private prHeadRefresh?: (ref: PrRef) => Promise<string | null>;
   private prState: (ref: PrRef) => PrSummary["state"] | null;
+  private prStateRefresh?: (ref: PrRef) => Promise<PrSummary["state"] | null>;
   private prUpdatedAt: (ref: PrRef) => number | null;
   private turnPrRefs = new Map<string, PrRef[]>();
   private usageLedger: UsageLedger;
@@ -173,6 +175,7 @@ export class SessionManager {
     this.prHead = opts.prHead ?? (() => null);
     this.prHeadRefresh = opts.prHeadRefresh;
     this.prState = opts.prState ?? (() => null);
+    this.prStateRefresh = opts.prStateRefresh;
     this.prUpdatedAt = opts.prUpdatedAt ?? (() => null);
     this.usageLedger = opts.usageLedger ?? new UsageLedger(dataDir ? join(dataDir, "usage") : usageDir());
     this.titleGenPath = dataDir ? join(dataDir, "title-gen") : titleGenDir();
@@ -662,6 +665,45 @@ export class SessionManager {
       if (updated) expired.push(updated);
     }
     return expired;
+  }
+
+  async settleFinishedPrSessions(): Promise<string[]> {
+    const target = this.settings.get().prFinishedSessionStatus;
+    if (target !== "idle" && target !== "resolved" && target !== "archived") return [];
+    const settled: string[] = [];
+    for (const session of this.store.listAllSessions()) {
+      if (session.status !== "holding" && session.status !== "done") continue;
+      if (!session.prs?.length) continue;
+      if (this.pendingTurns.has(session.id) || this.pendingResolves.has(session.id)) continue;
+      if ([...this.activeTurns.values()].some((entry) => entry.sessionId === session.id)) continue;
+      try {
+        let finished = false;
+        for (const link of session.prs) {
+          const known = this.prState(link.ref);
+          if (isFinishedPrState(known)) {
+            finished = true;
+            break;
+          }
+          const refresh = this.prStateRefresh;
+          const refreshed = refresh ? await refresh(link.ref).catch(() => null) : null;
+          if (isFinishedPrState(refreshed ?? known)) {
+            finished = true;
+            break;
+          }
+        }
+        if (!finished) continue;
+        if (target === "idle") {
+          this.setSessionStatus(session.id, "idle", "pr-finished");
+        } else {
+          await this.resolveSession(session.id, target, { removeWorktree: true, forceBranch: false });
+        }
+        this.emitSession(session.id);
+        settled.push(session.id);
+      } catch (err) {
+        console.warn(`finished-PR sweep failed for session ${session.id}: ${(err as Error).message}`);
+      }
+    }
+    return settled;
   }
 
   async resolveSession(

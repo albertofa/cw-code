@@ -140,6 +140,7 @@ function createServices(stores: { sessionStore: SessionStore; settingsStore: Set
     prHead: (ref) => pullRequests.knownHead(ref),
     prHeadRefresh: (ref) => pullRequests.refreshHead(ref),
     prState: (ref) => pullRequests.knownState(ref),
+    prStateRefresh: (ref) => pullRequests.refreshState(ref),
     prUpdatedAt: (ref) => pullRequests.knownUpdatedAt(ref)
   });
   const git = new GitService(() => sessions.getSettings());

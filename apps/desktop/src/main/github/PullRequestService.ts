@@ -14,7 +14,7 @@ import {
 } from "../fs/GitService.js";
 import { expandHome } from "../skills/skillPaths.js";
 import { DETAIL_QUERY, HEAD_QUERY, INBOX_QUERY, INBOX_SEARCH_LIMIT, inboxSearchQueries } from "./prQueries.js";
-import { parseDetail, parseHead, parseInbox, prKey } from "./prParsers.js";
+import { parseDetail, parseHead, parseInbox, prKey, type PrHeadInfo } from "./prParsers.js";
 
 const GH_HOST = "github.com";
 const INBOX_CACHE_TTL_MS = 30_000;
@@ -278,7 +278,7 @@ export class PullRequestService {
     if (updatedAt !== null) this.knownUpdatedAts.set(key, Math.max(updatedAt, this.knownUpdatedAts.get(key) ?? 0));
   }
 
-  async refreshHead(ref: PrRef): Promise<string | null> {
+  private async fetchHead(ref: PrRef): Promise<PrHeadInfo | null> {
     try {
       assertPrRef(ref);
       const resolution = await this.resolveAccount();
@@ -291,11 +291,21 @@ export class PullRequestService {
         REQUEST_TIMEOUT_MS,
         authenticatedEnvironment(account.host, token)
       );
-      const { headRefOid, state, updatedAt } = parseHead(stdout);
-      this.remember(ref, headRefOid, state, updatedAt);
-      return headRefOid;
+      const parsed = parseHead(stdout);
+      this.remember(ref, parsed.headRefOid, parsed.state, parsed.updatedAt);
+      return parsed;
     } catch {
       return null;
     }
+  }
+
+  async refreshHead(ref: PrRef): Promise<string | null> {
+    const head = await this.fetchHead(ref);
+    return head?.headRefOid ?? null;
+  }
+
+  async refreshState(ref: PrRef): Promise<PrSummary["state"] | null> {
+    const head = await this.fetchHead(ref);
+    return head?.state ?? null;
   }
 }
