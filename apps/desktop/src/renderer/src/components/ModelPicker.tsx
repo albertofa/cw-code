@@ -132,7 +132,7 @@ export function ModelPicker({
       left,
       top: up ? null : Math.round(rect.bottom + POP_GAP),
       bottom: up ? Math.round(vh - rect.top + POP_GAP) : null,
-      maxHeight: Math.max(MIN_POP_HEIGHT, up ? above : below)
+      maxHeight: Math.max(0, up ? above : below)
     };
     setPop((prev) => (prev && prev.left === next.left && prev.top === next.top && prev.bottom === next.bottom && prev.maxHeight === next.maxHeight ? prev : next));
   };
