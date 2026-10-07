@@ -1107,6 +1107,24 @@ describe("CodexCliDriver stopSession", () => {
     driver.dispose();
   });
 
+  it("propagates archive failures and still clears the turn bookkeeping", async () => {
+    class FailingArchiveClient extends FakeClient {
+      override async request<T>(method: string, params?: unknown): Promise<T> {
+        if (method === "thread/archive") throw new Error("archive boom");
+        return super.request<T>(method, params);
+      }
+    }
+    const failingClient = new FailingArchiveClient();
+    const { driver } = makeDriver(failingClient);
+    driver.startTurn({ sessionId: "local-1", prompt: "work", cwd: "C:\\proj" });
+    await settle();
+
+    await expect(driver.stopSession("local-1")).rejects.toThrow("archive boom");
+
+    expect(driver.activity().busySessionIds).toEqual([]);
+    driver.dispose();
+  });
+
   it("unarchives an archived thread before resuming it", async () => {
     class ArchivedResumeClient extends FakeClient {
       private archived = true;

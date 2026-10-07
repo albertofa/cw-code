@@ -567,15 +567,15 @@ export class CodexCliDriver implements CliDriver {
   async stopSession(sessionId: string): Promise<void> {
     const threadId = this.sessionThreads.get(sessionId);
     if (!threadId) return;
-    for (const turn of [...this.turns.values()]) {
-      if (turn.localSessionId !== sessionId) continue;
-      const codexTurnId = this.codexTurnId(turn);
-      if (!codexTurnId) continue;
-      await this.client
-        .request<unknown>("turn/interrupt", { threadId: turn.threadId, turnId: codexTurnId }, 5_000)
-        .catch(() => undefined);
-    }
     try {
+      for (const turn of [...this.turns.values()]) {
+        if (turn.localSessionId !== sessionId) continue;
+        const codexTurnId = this.codexTurnId(turn);
+        if (!codexTurnId) continue;
+        await this.client
+          .request<unknown>("turn/interrupt", { threadId: turn.threadId, turnId: codexTurnId }, 5_000)
+          .catch(() => undefined);
+      }
       await this.client.request<unknown>("thread/archive", { threadId }, 15_000);
       this.sessionThreads.delete(sessionId);
       traceHarnessCall({ harness: "codex", operation: "codex.stopSession", sessionId, ok: true, extra: { threadId } });
@@ -588,8 +588,10 @@ export class CodexCliDriver implements CliDriver {
         ok: false,
         error: truncateError((err as Error).message)
       });
+      throw err;
+    } finally {
+      this.clearTurnsForSession(sessionId);
     }
-    this.clearTurnsForSession(sessionId);
   }
 
   private clearTurnsForSession(sessionId: string): void {
