@@ -7,6 +7,8 @@ export interface CustomModel {
   name: string;
 }
 
+export type PrFinishedSessionStatus = "idle" | "resolved" | "archived" | "none";
+
 export interface AppSettings {
   claudeBinaryPath: string;
   opencodeBinaryPath: string;
@@ -24,6 +26,10 @@ export interface AppSettings {
   githubCliBinaryPath: string;
   sourceControlRefreshIntervalSeconds: number;
   defaultUseWorktree: boolean;
+  /** Status applied when a linked pull request is merged or closed. */
+  prFinishedSessionStatus: PrFinishedSessionStatus;
+  /** Days a session stays idle before it is automatically resolved. 0 disables. */
+  idleResolveAfterDays: number;
   /** Automatically return holding sessions to idle after the configured delay. */
   holdingAutoExpireEnabled: boolean;
   /** Hours a session stays in the holding state before returning to idle. */
