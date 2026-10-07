@@ -1941,6 +1941,76 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
+  it("honors a target change to none that lands during the refresh", async () => {
+    const widgets = { host: "github.com", owner: "acme", repo: "widgets", number: 42 };
+    const { manager, project } = makePrManager({
+      prState: () => "OPEN",
+      prStateRefresh: async () => {
+        manager.setSettings({ prFinishedSessionStatus: "none" });
+        return "MERGED";
+      }
+    });
+    const session = await manager.createSession(project.id, "claude", { mode: "current" });
+    manager.linkPr(session.id, { ref: widgets, origin: "linked", lastSeenSha: "old", lastSeenAt: 0 });
+    const store = (manager as unknown as { store: SessionStore }).store;
+    store.updateSession(session.id, { status: "holding" });
+    manager.setSettings({ prFinishedSessionStatus: "resolved" });
+
+    const settled = await manager.settleFinishedPrSessions();
+
+    expect(settled).toEqual([]);
+    expect(store.getSession(session.id)?.status).toBe("holding");
+    manager.dispose();
+  });
+
+  it("uses a target change to idle that lands during the refresh", async () => {
+    const widgets = { host: "github.com", owner: "acme", repo: "widgets", number: 42 };
+    const { manager, project } = makePrManager({
+      prState: () => "OPEN",
+      prStateRefresh: async () => {
+        manager.setSettings({ prFinishedSessionStatus: "idle" });
+        return "MERGED";
+      }
+    });
+    const session = await manager.createSession(project.id, "claude", { mode: "current" });
+    manager.linkPr(session.id, { ref: widgets, origin: "linked", lastSeenSha: "old", lastSeenAt: 0 });
+    const store = (manager as unknown as { store: SessionStore }).store;
+    store.updateSession(session.id, { status: "holding" });
+    manager.setSettings({ prFinishedSessionStatus: "resolved" });
+
+    const settled = await manager.settleFinishedPrSessions();
+
+    expect(settled).toEqual([session.id]);
+    expect(store.getSession(session.id)?.status).toBe("idle");
+    manager.dispose();
+  });
+
+  it("does not resolve when the finished PR is unlinked while the resolve waits", async () => {
+    const widgets = { host: "github.com", owner: "acme", repo: "widgets", number: 42 };
+    const { manager, project } = makePrManager({ prState: () => "MERGED" });
+    const session = await manager.createSession(project.id, "claude", { mode: "current" });
+    manager.linkPr(session.id, { ref: widgets, origin: "linked", lastSeenSha: "old", lastSeenAt: 0 });
+    const store = (manager as unknown as { store: SessionStore }).store;
+    store.updateSession(session.id, { status: "holding" });
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    store.updateSession(session.id, { lastTurnSnapshot: { turnId: "turn-wait", capturedAt: Date.now() } });
+    (manager as unknown as { endSnapshots: Map<string, Promise<void>> }).endSnapshots.set("turn-wait", gate);
+    manager.setSettings({ prFinishedSessionStatus: "resolved" });
+
+    const sweep = manager.settleFinishedPrSessions();
+    expect((manager as unknown as { pendingResolves: Set<string> }).pendingResolves.has(session.id)).toBe(true);
+    manager.unlinkPr(session.id, widgets);
+    release();
+    const settled = await sweep;
+
+    expect(settled).toEqual([]);
+    expect(store.getSession(session.id)?.status).toBe("holding");
+    manager.dispose();
+  });
+
   it("does not run overlapping sweeps concurrently", async () => {
     const widgets = { host: "github.com", owner: "acme", repo: "widgets", number: 42 };
     let release: () => void = () => {};

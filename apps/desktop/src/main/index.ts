@@ -187,6 +187,7 @@ function applyUpdatePreferences(updates: UpdateService, settings: AppSettings): 
 
 function handleShutdownRecovered(failure: string | null): void {
   servicesDisposed = false;
+  startSessionSweeps();
   if (!mainWindow || mainWindow.isDestroyed()) {
     createWindow().catch((err: Error) => appendCrashLog(`could not reopen the window after shutdown recovery: ${err.message}`));
   }

@@ -472,11 +472,17 @@ export const useAppStore = create<AppState>((set, get) => ({
     const candidates = all
       .filter((s) => s.status !== "archived")
       .sort((a, b) => b.updatedAt - a.updatedAt);
-    const picked = candidates.find((s) => !s.autoResolved) ?? candidates[0];
+    const picked = candidates.find((s) => !s.autoResolved) ?? null;
     if (!picked) {
+      const fallback = candidates[0];
+      const fallbackOwnerId = fallback
+        ? fallback.projectId ??
+          projects.find((p) => (sessionsByProject[p.id] ?? []).some((s) => s.id === fallback.id))?.id ??
+          projects[0].id
+        : projects[0].id;
       set({
         sessionsByProject,
-        activeProjectId: projects[0].id,
+        activeProjectId: fallbackOwnerId,
         activeSessionId: null,
         pendingDriver: get().lastDriver
       });
@@ -492,11 +498,9 @@ export const useAppStore = create<AppState>((set, get) => ({
         pendingDriver: null
       });
       if (picked.status === "resolved") {
-        if (!picked.autoResolved) {
-          void get().setSessionStatus(picked.id, "idle", "reopen-on-restore").catch((err) =>
-            console.warn(`setSessionStatus failed for ${picked.id} -> idle: ${(err as Error).message}`)
-          );
-        }
+        void get().setSessionStatus(picked.id, "idle", "reopen-on-restore").catch((err) =>
+          console.warn(`setSessionStatus failed for ${picked.id} -> idle: ${(err as Error).message}`)
+        );
       } else if (picked.status === "done") {
         void get().setSessionStatus(picked.id, "holding", "reopen-on-restore").catch((err) =>
           console.warn(`setSessionStatus failed for ${picked.id} -> holding: ${(err as Error).message}`)

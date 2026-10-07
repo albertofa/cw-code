@@ -159,6 +159,10 @@ function driverBusy(driver: CliDriver, sessionId: string): boolean {
   }
 }
 
+function autoFinishedTarget(value: AppSettings["prFinishedSessionStatus"]): value is "idle" | "resolved" | "archived" {
+  return value !== "none";
+}
+
 export class SessionManager {
   private store: SessionStore;
   private settings: SettingsStore;
@@ -699,8 +703,7 @@ export class SessionManager {
   }
 
   private async runFinishedPrSweep(): Promise<string[]> {
-    const target = this.settings.get().prFinishedSessionStatus;
-    if (target !== "idle" && target !== "resolved" && target !== "archived") return [];
+    if (!autoFinishedTarget(this.settings.get().prFinishedSessionStatus)) return [];
     const settled: string[] = [];
     for (const session of this.store.listAllSessions()) {
       if (session.status !== "holding" && session.status !== "done") continue;
@@ -722,14 +725,27 @@ export class SessionManager {
           }
         }
         if (!finishedRef) continue;
+        const finished = finishedRef;
         const current = this.store.getSession(session.id);
         if (!current || (current.status !== "holding" && current.status !== "done")) continue;
-        if (!findLink(current.prs, finishedRef)) continue;
+        if (!findLink(current.prs, finished)) continue;
         if (this.sessionBusy(session.id)) continue;
+        const target = this.settings.get().prFinishedSessionStatus;
+        if (!autoFinishedTarget(target)) continue;
         if (target === "idle") {
           this.setSessionStatus(session.id, "idle", "pr-finished");
         } else {
-          await this.resolveSession(session.id, target, { removeWorktree: true, forceBranch: false, auto: true });
+          const result = await this.resolveSession(session.id, target, {
+            removeWorktree: true,
+            forceBranch: false,
+            auto: true,
+            stillEligible: (candidate) =>
+              this.settings.get().prFinishedSessionStatus === target &&
+              (candidate.status === "holding" || candidate.status === "done") &&
+              findLink(candidate.prs, finished) !== undefined
+          });
+          if (this.store.getSession(session.id)?.status !== target) continue;
+          if (result.error) console.warn(`finished-PR cleanup failed for session ${session.id}: ${result.error}`);
         }
         this.emitSession(session.id);
         settled.push(session.id);
@@ -740,24 +756,32 @@ export class SessionManager {
     return settled;
   }
 
-  private async runIdleSweep(now: number): Promise<string[]> {
+  private idleCutoffReached(session: SessionMeta, now: number): boolean {
+    if (session.status !== "idle") return false;
+    const idleSince = session.idleSince;
+    if (idleSince === undefined || !Number.isFinite(idleSince)) return false;
     const days = this.settings.get().idleResolveAfterDays;
-    if (days <= 0) return [];
-    const cutoff = now - days * 86_400_000;
+    return days > 0 && idleSince <= now - days * 86_400_000;
+  }
+
+  private async runIdleSweep(now: number): Promise<string[]> {
+    if (this.settings.get().idleResolveAfterDays <= 0) return [];
     const resolved: string[] = [];
     for (const session of this.store.listAllSessions()) {
-      const idleSince = session.idleSince;
-      if (session.status !== "idle" || idleSince === undefined || !Number.isFinite(idleSince) || idleSince > cutoff) continue;
+      if (!this.idleCutoffReached(session, now)) continue;
       if (this.sessionBusy(session.id)) continue;
       const current = this.store.getSession(session.id);
-      if (!current || current.status !== "idle") continue;
+      if (!current || !this.idleCutoffReached(current, now)) continue;
       try {
-        await this.resolveSession(session.id, "resolved", {
+        const result = await this.resolveSession(session.id, "resolved", {
           removeWorktree: true,
           forceBranch: false,
           reason: "idle-expired",
-          auto: true
+          auto: true,
+          stillEligible: (candidate) => this.idleCutoffReached(candidate, now)
         });
+        if (this.store.getSession(session.id)?.status !== "resolved") continue;
+        if (result.error) console.warn(`idle-expired cleanup failed for session ${session.id}: ${result.error}`);
         this.emitSession(session.id);
         resolved.push(session.id);
       } catch (err) {
@@ -770,7 +794,13 @@ export class SessionManager {
   async resolveSession(
     sessionId: string,
     status: SessionStatus,
-    opts: { removeWorktree?: boolean; forceBranch?: boolean; reason?: SessionStatusReason; auto?: boolean } = {}
+    opts: {
+      removeWorktree?: boolean;
+      forceBranch?: boolean;
+      reason?: SessionStatusReason;
+      auto?: boolean;
+      stillEligible?: (session: SessionMeta) => boolean;
+    } = {}
   ): Promise<SessionCleanupResult> {
     const session = this.store.getSession(sessionId);
     if (!session) throw new Error(`unknown session ${sessionId}`);
@@ -791,7 +821,11 @@ export class SessionManager {
         if (this.worktreeRecovery.has(sessionId)) throw new Error("session busy (recovery in progress)");
       }
       const refreshed = this.store.getSession(sessionId);
-      return await this.resolveSessionInner(refreshed ?? session, status, project, opts);
+      const current = refreshed ?? session;
+      if (opts.stillEligible && !opts.stillEligible(current)) {
+        return { sessionId, status, worktreeOrphaned: false, worktreeRemoved: false, branchDeleted: false };
+      }
+      return await this.resolveSessionInner(current, status, project, opts);
     } finally {
       this.pendingResolves.delete(sessionId);
     }
@@ -801,7 +835,13 @@ export class SessionManager {
     session: SessionMeta,
     status: SessionStatus,
     project: Project,
-    opts: { removeWorktree?: boolean; forceBranch?: boolean; reason?: SessionStatusReason; auto?: boolean }
+    opts: {
+      removeWorktree?: boolean;
+      forceBranch?: boolean;
+      reason?: SessionStatusReason;
+      auto?: boolean;
+      stillEligible?: (session: SessionMeta) => boolean;
+    }
   ): Promise<SessionCleanupResult> {
     const sessionId = session.id;
     this.firstPrompts.delete(sessionId);
