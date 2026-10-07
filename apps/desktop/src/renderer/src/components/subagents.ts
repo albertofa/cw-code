@@ -339,6 +339,22 @@ export function collectAgentMessages<T extends { parentToolCallId?: string }>(
   return messages.filter((m) => m.parentToolCallId === agentId);
 }
 
+export interface SubagentActivity<T> {
+  nested: T[];
+  tools: SubagentToolActivity[];
+  toolCount: number;
+}
+
+export function subagentActivity<T extends SubagentMessage>(
+  messages: T[],
+  item: Pick<SubagentInfo, "id" | "tools" | "toolCount">,
+  fetched?: SubagentToolActivity[]
+): SubagentActivity<T> {
+  const nested = collectAgentMessages(messages, item.id);
+  const tools = mergeSubagentTools(nested, [...item.tools, ...(fetched ?? [])]);
+  return { nested, tools, toolCount: Math.max(item.toolCount, tools.length) };
+}
+
 export function groupStatus(items: Pick<SubagentInfo, "status">[]): SubagentStatus {
   if (items.some((i) => i.status === "running")) return "running";
   if (items.some((i) => i.status === "error")) return "error";

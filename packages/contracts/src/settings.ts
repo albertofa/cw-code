@@ -17,6 +17,8 @@ export interface AppSettings {
   opencodeExtraArgs: string;
   codexExtraArgs: string;
   claudeDefaultModel: string;
+  codexDefaultModel: string;
+  opencodeDefaultModel: string;
   claudeEnabledModels: string[];
   claudeCustomModel: CustomModel;
   claudeReasoningExpanded: boolean;
@@ -40,12 +42,24 @@ export interface AppSettings {
   autoTitleEffort: EffortLevel;
   prRefreshIntervalSeconds: number;
   prCloneRoot: string;
+  /** Append the repository owner as a folder under the clone root. */
+  prCloneIncludeOwner: boolean;
   prAttributionEnabled: boolean;
   prAttributionText: string;
   prWorkflows: PrWorkflow[];
   opencodeGoUsage: boolean;
   updateChannel: UpdateChannel | null;
   updateBackgroundDownload: boolean;
+  fontFamilySans: string;
+  fontFamilyMono: string;
+  fontFamilyPrompt: string;
+  fontFamilyTerminal: string;
+  fontSizeInterface: number;
+  fontSizeCode: number;
+  fontSizePrompt: number;
+  fontSizeTerminal: number;
+  typographyAdvanced: boolean;
+  panelAnimationMs: number;
 }
 
 export type SettingsPatch = Partial<AppSettings>;

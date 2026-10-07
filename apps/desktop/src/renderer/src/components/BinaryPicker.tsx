@@ -338,7 +338,6 @@ export function BinaryPicker(props: {
               >
                 <input
                   type="radio"
-                  className="binary-picker-radio"
                   name={`binary-picker-${binary}`}
                   checked={selected}
                   disabled={applying !== null}
@@ -378,7 +377,6 @@ export function BinaryPicker(props: {
               >
                 <input
                   type="radio"
-                  className="binary-picker-radio"
                   name={`binary-picker-${binary}`}
                   checked={false}
                   disabled
@@ -412,7 +410,6 @@ export function BinaryPicker(props: {
             >
               <input
                 type="radio"
-                className="binary-picker-radio"
                 name={`binary-picker-${binary}`}
                 checked={false}
                 disabled

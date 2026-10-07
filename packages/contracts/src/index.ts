@@ -10,12 +10,16 @@ export type {
   EffortLevel,
   ComposerPrefs,
   ModelOption,
+  ModelMeta,
   GitStatus,
   GitPullRequest,
   GitPullRequestChecks,
   GitBranchInfo,
   GitDiffMode,
   GitDiffResult,
+  TurnSnapshot,
+  TurnFileChange,
+  TurnChanges,
   GitHubAccountInfo,
   GitHubAccountSelectionSource,
   SourceControlBinaryHealth,
@@ -33,6 +37,7 @@ export type {
   PrReviewState,
   PrMergeable,
   PrBucket,
+  PrAuthor,
   PrSummary,
   PrInboxResult,
   ProjectGitHubRepo,
@@ -93,3 +98,4 @@ export type {
   ShutdownRequestedEvent,
   ShutdownExpiredEvent
 } from "./shutdown.js";
+export type { AttentionState } from "./attention.js";

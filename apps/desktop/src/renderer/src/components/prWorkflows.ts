@@ -1,4 +1,4 @@
-import type { AppSettings, PrDetail, PrSuggestCondition, PrSummary, PrUpdate, PrWorkflow, SessionMeta, SessionPrLink } from "@cw-code/contracts";
+import type { AppSettings, PrCheck, PrDetail, PrRef, PrSuggestCondition, PrSummary, PrUpdate, PrWorkflow, SessionMeta, SessionPrLink } from "@cw-code/contracts";
 import { linkFor, pickMainSession } from "./sessionPrLinks.js";
 
 export const TEMPLATE_VARS = [
@@ -71,6 +71,37 @@ export function templateVars(
     attribution: opts.attribution,
     harness: opts.harness
   };
+}
+
+const FAILED_LOG_TAIL_CHARS = 12_000;
+
+const FAILED_LOGS_TOTAL_CHARS = 30_000;
+
+export type CheckLogFetcher = (ref: PrRef, runId: number) => Promise<string>;
+
+function failingRuns(checks: PrCheck[]): Array<{ runId: number; names: string[] }> {
+  const byRun = new Map<number, string[]>();
+  for (const check of checks) {
+    if (check.status !== "failure" || check.runId === null) continue;
+    byRun.set(check.runId, [...(byRun.get(check.runId) ?? []), check.name]);
+  }
+  return [...byRun.entries()].map(([runId, names]) => ({ runId, names }));
+}
+
+function tail(text: string): string {
+  return text.length > FAILED_LOG_TAIL_CHARS ? `[…truncated]\n${text.slice(-FAILED_LOG_TAIL_CHARS)}` : text;
+}
+
+export async function loadFailedLogs(
+  detail: PrDetail,
+  fetchLog: CheckLogFetcher = (ref, runId) => window.cw.getPrCheckLog(ref, runId)
+): Promise<string> {
+  const runs = failingRuns(detail.checkRuns);
+  const logs = await Promise.all(
+    runs.map(async (run) => `### ${run.names.join(", ")} (run ${run.runId})\n${tail((await fetchLog(detail.ref, run.runId)).trim())}`)
+  );
+  const joined = logs.join("\n\n");
+  return joined.length > FAILED_LOGS_TOTAL_CHARS ? `${joined.slice(0, FAILED_LOGS_TOTAL_CHARS)}\n[…more logs truncated]` : joined;
 }
 
 export function attributionText(settings: Pick<AppSettings, "prAttributionEnabled" | "prAttributionText">, harness: string): string {

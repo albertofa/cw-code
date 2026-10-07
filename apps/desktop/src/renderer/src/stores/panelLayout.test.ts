@@ -1,5 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it } from "vitest";
+import type { DockableTabId } from "@cw-code/contracts";
 import {
   DEFAULT_AUTO,
   PANEL_LAYOUT_KEY,
@@ -11,12 +12,16 @@ import {
   parseLayout,
   parsePanelState,
   resolveMainTab,
+  resolveRightTop,
+  rightOpenTabs,
   sanitizeLayout,
+  sanitizeSessionPanel,
   serializeLayout,
   serializePanelState,
   tabsInPanel
 } from "./panelLayout.js";
 import { selectSessionPanel, usePanelStore } from "./panelStore.js";
+import { toolAvailability } from "../components/toolTabs.js";
 
 describe("tabsInPanel", () => {
   it("starts with every tab closed", () => {
@@ -32,6 +37,13 @@ describe("isBottomOpen", () => {
     const layout = defaultLayout();
     expect(isBottomOpen(layout.dockByTab)).toBe(false);
     expect(isBottomOpen({ ...layout.dockByTab, shell: "bottom" })).toBe(true);
+  });
+
+  it("stays closed when only unavailable tools are docked to the bottom", () => {
+    const dock = { ...defaultLayout().dockByTab, preview: "bottom" as const };
+    expect(isBottomOpen(dock, toolAvailability("claude", false, false))).toBe(false);
+    expect(isBottomOpen(dock, toolAvailability("claude", false, true))).toBe(true);
+    expect(isBottomOpen({ ...dock, shell: "bottom" }, toolAvailability("claude", false, false))).toBe(true);
   });
 });
 
@@ -79,6 +91,25 @@ describe("sanitizeLayout", () => {
     expect(clean.bottomHeight).toBe(200);
   });
 
+  it("defaults the overview tab to closed, auto-located right and first in dock order", () => {
+    expect(defaultLayout().dockByTab.overview).toBe("closed");
+    expect(defaultLayout().autoLocation.overview).toBe("right");
+    const clean = sanitizeLayout({ dockByTab: { overview: "right", files: "right" } });
+    expect(tabsInPanel(clean.dockByTab, "right")).toEqual(["overview", "files"]);
+    expect(sanitizeLayout({ dockByTab: { overview: "elsewhere" } }).dockByTab.overview).toBe("closed");
+  });
+
+  it("sanitizes a persisted layout without an overview key to closed with the auto default", () => {
+    const clean = sanitizeLayout({
+      dockByTab: { files: "right", shell: "bottom" },
+      autoLocation: { files: "main" },
+      mainOrder: ["chat"]
+    });
+    expect(clean.dockByTab.overview).toBe("closed");
+    expect(clean.autoLocation.overview).toBe(DEFAULT_AUTO.overview);
+    expect(clean.autoLocation.files).toBe("main");
+  });
+
   it("keeps a persisted PR tab placement and defaults it to closed", () => {
     expect(defaultLayout().dockByTab.pr).toBe("closed");
     expect(defaultLayout().autoLocation.pr).toBe("right");
@@ -105,6 +136,41 @@ describe("sanitizeLayout", () => {
     expect(clean.activeMain).toBe("chat");
     expect(clean.activeRight).toBe("shell");
     expect(clean.activeBottom).toBe("shell");
+  });
+});
+
+describe("split view removal migration", () => {
+  const preRemoval = {
+    dockByTab: { files: "right", agents: "right", shell: "right" },
+    activeRight: "files",
+    rightSplit: "shell",
+    rightSplitRatio: 0.4,
+    rightVisible: false
+  };
+
+  it("drops rightSplit and rightSplitRatio from a pre-removal session blob", () => {
+    const panel = sanitizeSessionPanel(preRemoval);
+    expect(panel).not.toHaveProperty("rightSplit");
+    expect(panel).not.toHaveProperty("rightSplitRatio");
+    expect(panel).toMatchObject({ activeRight: "files", rightVisible: false });
+    expect(tabsInPanel(panel.dockByTab, "right")).toEqual(["files", "agents", "shell"]);
+  });
+
+  it("loads a persisted pre-removal state without split fields and never writes them back", () => {
+    const raw = JSON.stringify({
+      autoLocation: { ...DEFAULT_AUTO },
+      sessions: { sess_a: preRemoval, sess_b: { ...preRemoval, rightSplit: 7, rightSplitRatio: "wide" } }
+    });
+    const loaded = parsePanelState(raw, null);
+    expect(loaded.sessions.sess_a).toEqual(sanitizeSessionPanel(preRemoval));
+    expect(loaded.sessions.sess_b).toEqual(sanitizeSessionPanel(preRemoval));
+    expect(serializePanelState(loaded)).not.toContain("rightSplit");
+  });
+
+  it("drops split fields from a legacy v2 layout", () => {
+    const legacy = parseLayout(JSON.stringify({ ...preRemoval, mainOrder: ["chat"] }));
+    expect(legacy).not.toHaveProperty("rightSplit");
+    expect(serializeLayout(legacy)).not.toContain("rightSplit");
   });
 });
 
@@ -284,7 +350,35 @@ describe("usePanelStore routing", () => {
     expect(first.dockByTab.files).toBe("closed");
     expect(first.dockByTab.shell).toBe("closed");
     expect(first.activeMain).toBe("chat");
+    expect(first.dockByTab.overview).toBe("right");
     expect(second.dockByTab.diff).toBe("right");
+  });
+
+  it("opens the session overview when the right panel is expanded with no tools", () => {
+    usePanelStore.getState().openDefaultRightTool("sess_a");
+    const state = selectSessionPanel(usePanelStore.getState(), "sess_a");
+    expect(state.dockByTab.overview).toBe("right");
+    expect(state.activeRight).toBe("overview");
+  });
+
+  it("treats unavailable right tools as empty when picking the default", () => {
+    usePanelStore.getState().moveTab("sess_a", "codex", "right");
+    usePanelStore.getState().openDefaultRightTool("sess_a", (tab) => tab !== "codex");
+    expect(selectSessionPanel(usePanelStore.getState(), "sess_a").dockByTab.overview).toBe("right");
+  });
+
+  it("leaves the right panel alone when collapsed, already populated, or overview is docked elsewhere", () => {
+    const store = usePanelStore.getState();
+    store.setRightVisible("sess_a", false);
+    store.openDefaultRightTool("sess_a");
+    store.moveTab("sess_b", "diff", "right");
+    store.openDefaultRightTool("sess_b");
+    store.moveTab("sess_c", "overview", "bottom");
+    store.openDefaultRightTool("sess_c");
+    const state = usePanelStore.getState();
+    expect(selectSessionPanel(state, "sess_a").dockByTab.overview).toBe("closed");
+    expect(selectSessionPanel(state, "sess_b").dockByTab.overview).toBe("closed");
+    expect(selectSessionPanel(state, "sess_c").dockByTab.overview).toBe("bottom");
   });
 
   it("persists an unclaimed legacy layout when global auto locations change", () => {
@@ -316,6 +410,30 @@ describe("usePanelStore routing", () => {
   });
 });
 
+describe("usePanelStore right tools", () => {
+  beforeEach(() => {
+    window.localStorage.clear();
+    usePanelStore.setState({
+      autoLocation: { ...DEFAULT_AUTO },
+      sessions: {},
+      legacySession: null,
+      draggingTab: null
+    });
+  });
+
+  it("promotes the first remaining right tool when the active right tool is closed", () => {
+    const store = usePanelStore.getState();
+    store.moveTab("sess_a", "files", "right");
+    store.moveTab("sess_a", "diff", "right");
+    store.moveTab("sess_a", "shell", "right");
+    store.setActive("sess_a", "right", "diff");
+    store.moveTab("sess_a", "diff", "closed");
+    const panel = selectSessionPanel(usePanelStore.getState(), "sess_a");
+    expect(panel.activeRight).toBe("files");
+    expect(rightOpenTabs(panel.dockByTab, () => true)).toEqual(["files", "shell"]);
+  });
+});
+
 describe("resolveMainTab", () => {
   it("keeps the active main tab and falls back to chat", () => {
     const layout = defaultLayout();
@@ -340,6 +458,17 @@ describe("resolveMainTab", () => {
     expect(resolveMainTab(layout.mainOrder, layout.dockByTab, "claude", "pr", false)).toBe("chat");
     expect(resolveMainTab(layout.mainOrder, layout.dockByTab, "claude", "pr", true)).toBe("pr");
   });
+
+  it("falls back to chat when the active main tool is unavailable, like a preview that did not survive a restart", () => {
+    const layout = defaultLayout();
+    layout.dockByTab.preview = "main";
+    layout.dockByTab.files = "main";
+    layout.mainOrder = ["chat", "files", "preview"];
+    const noPreview = toolAvailability("claude", false, false);
+    expect(resolveMainTab(layout.mainOrder, layout.dockByTab, "claude", "preview", false, noPreview)).toBe("chat");
+    expect(resolveMainTab(layout.mainOrder, layout.dockByTab, "claude", "files", false, noPreview)).toBe("files");
+    expect(resolveMainTab(layout.mainOrder, layout.dockByTab, "claude", "preview", false, toolAvailability("claude", false, true))).toBe("preview");
+  });
 });
 
 describe("usePanelStore draggingTab", () => {
@@ -351,5 +480,53 @@ describe("usePanelStore draggingTab", () => {
     expect(window.localStorage.getItem(PANEL_STATE_KEY)).toBeNull();
     usePanelStore.getState().setDraggingTab(null);
     expect(usePanelStore.getState().draggingTab).toBeNull();
+  });
+
+  it("flags drags that start on the rail and clears the flag with the drag", () => {
+    usePanelStore.getState().setDraggingTab("files", true);
+    expect(usePanelStore.getState()).toMatchObject({ draggingTab: "files", dragFromRail: true });
+    usePanelStore.getState().setDraggingTab("diff");
+    expect(usePanelStore.getState().dragFromRail).toBe(false);
+    usePanelStore.getState().setDraggingTab("files", true);
+    usePanelStore.getState().setDraggingTab(null, true);
+    expect(usePanelStore.getState()).toMatchObject({ draggingTab: null, dragFromRail: false });
+  });
+});
+
+describe("resolveRightTop", () => {
+  const dock = { ...defaultSessionPanel().dockByTab, files: "right" as const, diff: "right" as const, codex: "right" as const };
+
+  it("keeps the stored active tool when it is available", () => {
+    expect(resolveRightTop(dock, "diff", () => true, "codex")).toBe("diff");
+  });
+
+  it("prefers the driver tool, then the first available right tool", () => {
+    const notDiff = (tab: DockableTabId) => tab !== "diff";
+    expect(resolveRightTop(dock, "diff", notDiff, "codex")).toBe("codex");
+    expect(resolveRightTop(dock, "diff", notDiff, "claude")).toBe("files");
+    expect(resolveRightTop(dock, "diff", () => false, "codex")).toBeNull();
+  });
+});
+
+describe("rightOpenTabs", () => {
+  const dock = {
+    ...defaultSessionPanel().dockByTab,
+    pr: "right" as const,
+    shell: "right" as const,
+    files: "right" as const,
+    preview: "right" as const,
+    codex: "right" as const,
+    claude: "right" as const,
+    agents: "bottom" as const
+  };
+
+  it("lists right-docked tools in dock order", () => {
+    expect(rightOpenTabs(dock, () => true)).toEqual(["files", "claude", "codex", "shell", "preview", "pr"]);
+  });
+
+  it("drops a PR tool without a link, a harness of another driver and a missing preview", () => {
+    expect(rightOpenTabs(dock, toolAvailability("codex", false, false))).toEqual(["files", "codex", "shell"]);
+    expect(rightOpenTabs(dock, toolAvailability("claude", true, true))).toEqual(["files", "claude", "shell", "preview", "pr"]);
+    expect(rightOpenTabs(dock, toolAvailability(undefined, false, false))).toEqual(["files", "shell"]);
   });
 });

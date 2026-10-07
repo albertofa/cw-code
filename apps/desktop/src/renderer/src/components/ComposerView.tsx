@@ -14,10 +14,19 @@ import {
   Zap
 } from "lucide-react";
 import type { CommandInvocation, CommandOption } from "@cw-code/contracts";
-import type { ComposerPrefs, DriverName, EffortLevel, ModelOption, PermissionMode, PermissionOption } from "../cw.js";
-import { firstDisplayedModelId, getLastModel, setLastModel } from "./lastModel.js";
-import { DriverIcon } from "./DriverIcon.js";
-import { MenuSelect, type MenuOption } from "./MenuSelect.js";
+import type { ComposerPrefs, DriverName, ModelOption, PermissionMode, PermissionOption } from "../cw.js";
+import { getRecentModels, pushRecentModel } from "./lastModel.js";
+import { EffortMenu } from "./EffortMenu.js";
+import { MenuSelect } from "./MenuSelect.js";
+import { ModelPicker } from "./ModelPicker.js";
+import {
+  effortOptionsFor,
+  fallbackEffort,
+  hasContextSuffix,
+  pickInitialModel,
+  stripContextSuffix,
+  withContextSuffix
+} from "./modelMenus.js";
 import { ImageThumb } from "./ImageThumb.js";
 import { displayImagePath, type ImageTarget } from "./imagePreview.js";
 import { useAppStore } from "../stores/appStore.js";
@@ -27,11 +36,13 @@ import { SlashMenu, slashOptionId, type SlashMenuItem } from "./SlashMenu.js";
 import { commandDisplay, filterCommands, mergeCommands, parseSlashInput, rankByQuery } from "./slashCommands.js";
 import { harnessLabel } from "./toolTabs.js";
 import { ipcErrorMessage } from "./ipcError.js";
+import { useThreadVisible } from "./threadVisibility.js";
 
 export interface ComposerBackend {
   imageTarget: ImageTarget;
   prefs: ComposerPrefs;
   busy: boolean;
+  effectivePermissionMode?: string;
   loadModels(): Promise<ModelOption[]>;
   loadPermissions(): Promise<PermissionOption[]>;
   loadFiles(): Promise<string[]>;
@@ -55,35 +66,6 @@ const SLASH_NAME = /^\/(\S*)$/;
 const SLASH_ARG = /^\/(model|effort)\s+(\S*)$/;
 const SLASH_PENDING_ARGS = /^\/(\S+) +$/;
 
-const EFFORTS: Array<{ id: EffortLevel; label: string }> = [
-  { id: "minimal", label: "Minimal" },
-  { id: "low", label: "Low" },
-  { id: "medium", label: "Medium" },
-  { id: "high", label: "High" },
-  { id: "xhigh", label: "XHigh" },
-  { id: "max", label: "Max" }
-];
-
-const EFFORT_RANK: EffortLevel[] = ["minimal", "low", "medium", "high", "xhigh", "max"];
-
-function effortOptionsFor(driver: DriverName, models: ModelOption[], modelId?: string): Array<{ id: EffortLevel; label: string }> {
-  if (driver !== "opencode") return EFFORTS;
-  if (!modelId) return EFFORTS;
-  const model = models.find((m) => m.id === modelId) ?? models.find((m) => m.id.toLowerCase() === modelId.toLowerCase());
-  if (!model || model.variants === undefined) return EFFORTS;
-  if (model.variants.length === 0) return EFFORTS.filter((e) => e.id === "high");
-  const available = new Set(model.variants.map((v) => v.toLowerCase()));
-  return EFFORTS.filter((e) => available.has(e.id) || (e.id === "medium" && available.has("balanced")));
-}
-
-function fallbackEffort(current: EffortLevel, available: Array<{ id: EffortLevel; label: string }>): EffortLevel {
-  if (available.some((o) => o.id === current)) return current;
-  const want = EFFORT_RANK.indexOf(current);
-  const below = available.filter((o) => EFFORT_RANK.indexOf(o.id) <= want).sort((a, b) => EFFORT_RANK.indexOf(b.id) - EFFORT_RANK.indexOf(a.id));
-  if (below.length > 0) return below[0].id;
-  return available[0].id;
-}
-
 const FALLBACK_PERMISSIONS: PermissionOption[] = [
   { id: "manual", label: "Supervised", description: "Ask before commands and file changes.", native: true },
   { id: "acceptEdits", label: "Auto-accept edits", description: "Auto-approve edits, ask before other actions.", native: true },
@@ -98,32 +80,7 @@ function permissionIconFor(id: PermissionMode): ReactNode {
   return <Zap size={15} />;
 }
 
-function EffortIcon({ size = 15 }: { size?: number }) {
-  return (
-    <svg width={size} height={size} viewBox="0 0 20 20" fill="none" aria-hidden="true">
-      <path d="M3 9h14M7 5.5v6M13 9v5.5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" />
-    </svg>
-  );
-}
-
 const IMAGE_EXTS = new Set(["png", "jpg", "jpeg", "webp", "gif"]);
-
-function groupModelsByProvider(models: ModelOption[]): MenuOption[] {
-  const groups = new Map<string, ModelOption[]>();
-  for (const m of models) {
-    const slash = m.id.indexOf("/");
-    const provider = slash >= 0 ? m.id.slice(0, slash) : "other";
-    const list = groups.get(provider) ?? [];
-    list.push(m);
-    groups.set(provider, list);
-  }
-  const out: MenuOption[] = [];
-  for (const [provider, list] of [...groups.entries()].sort(([a], [b]) => a.localeCompare(b))) {
-    out.push({ id: `__sep:${provider}`, label: provider, separator: true });
-    for (const m of list) out.push({ id: m.id, label: m.label, hint: m.id });
-  }
-  return out;
-}
 
 function isImage(path: string): boolean {
   const ext = path.split(".").pop()?.toLowerCase() ?? "";
@@ -171,8 +128,13 @@ export function ComposerView({
   const [showCustom, setShowCustom] = useState(false);
   const [sending, setSending] = useState(false);
   const homeDir = useAppStore((s) => s.homeDir);
+  const defaultModelId = useAppStore((s) => s.defaultModelByDriver[driver]);
+  const saveDefaultModel = useAppStore((s) => s.saveDefaultModel);
   const home = homeDir ?? undefined;
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
+  const customInputRef = useRef<HTMLInputElement | null>(null);
+  const baseModelId = driver === "claude" ? stripContextSuffix(prefs.model ?? "") : (prefs.model ?? "");
+  const oneMContext = driver === "claude" && hasContextSuffix(prefs.model ?? "");
   const slashListId = useId();
   const { confirm, dialog: confirmDialog } = useConfirm();
   const [inputFocused, setInputFocused] = useState(false);
@@ -186,6 +148,7 @@ export function ComposerView({
   const commandsKeyRef = useRef(commandsKey);
   commandsKeyRef.current = commandsKey;
   const mountedRef = useRef(true);
+  const visible = useThreadVisible();
   const commandAvailability = {
     newSession: backend.newSession !== undefined,
     rename: backend.rename !== undefined,
@@ -194,7 +157,7 @@ export function ComposerView({
 
   const autosizeComposer = () => {
     const el = composerRef.current;
-    if (!el) return;
+    if (!el || el.getClientRects().length === 0) return;
     let lineHeight = 22.5;
     try {
       const parsed = Number.parseFloat(window.getComputedStyle(el).lineHeight);
@@ -210,7 +173,7 @@ export function ComposerView({
 
   useLayoutEffect(() => {
     autosizeComposer();
-  }, [draft, resetKey]);
+  }, [draft, resetKey, visible]);
 
   useEffect(() => {
     const onResize = () => autosizeComposer();
@@ -219,7 +182,7 @@ export function ComposerView({
   }, []);
 
   useEffect(() => {
-    if (backendRef.current.busy) return;
+    if (!visible || backendRef.current.busy) return;
     const frame = requestAnimationFrame(() => {
       try {
         composerRef.current?.focus({ preventScroll: true });
@@ -227,7 +190,7 @@ export function ComposerView({
       }
     });
     return () => cancelAnimationFrame(frame);
-  }, [resetKey]);
+  }, [resetKey, visible]);
 
   useEffect(() => {
     setAttachments([]);
@@ -302,21 +265,20 @@ export function ComposerView({
       .then((list) => {
         if (cancelled) return;
         setModels(list);
+        const initialModel = () =>
+          pickInitialModel(list, useAppStore.getState().defaultModelByDriver[driver], getRecentModels(driver));
         if (!prefs.model) {
-          const last = getLastModel(driver);
-          const next = (last && list.some((m) => m.id === last) ? last : undefined) ?? firstDisplayedModelId(driver, list);
+          const next = initialModel();
           if (next) backendRef.current.savePrefs({ model: next });
           setShowCustom(false);
-        } else if (list.some((m) => m.id === prefs.model)) {
-          setLastModel(driver, prefs.model);
+        } else if (list.some((m) => m.id === baseModelId)) {
           setShowCustom(false);
         } else if (resetStaleModel && list.length > 0) {
-          const last = getLastModel(driver);
-          const next = (last && list.some((m) => m.id === last) ? last : undefined) ?? firstDisplayedModelId(driver, list);
+          const next = initialModel();
           if (next) backendRef.current.savePrefs({ model: next });
           setShowCustom(false);
         } else {
-          setCustomModel(prefs.model);
+          setCustomModel(baseModelId);
           setShowCustom(true);
         }
       })
@@ -392,30 +354,28 @@ export function ComposerView({
     setPickerOpen(true);
   };
 
-  const modelValue = showCustom ? "__custom" : (prefs.model ?? "");
+  const recentModels = useMemo(() => getRecentModels(driver), [driver, models, prefs.model]);
   const modelDisplay = showCustom
     ? customModel.trim() || "Custom"
-    : (models.find((m) => m.id === prefs.model)?.label ?? "Select model");
+    : (models.find((m) => m.id === baseModelId)?.label ?? "Select model");
   const effortOptions = useMemo(
-    () => effortOptionsFor(driver, models, showCustom ? undefined : prefs.model),
-    [driver, models, showCustom, prefs.model]
+    () => effortOptionsFor(driver, models, showCustom ? undefined : baseModelId),
+    [driver, models, showCustom, baseModelId]
   );
   const effectiveEffort = prefs.effort ?? "medium";
-  const effortDisplay = EFFORTS.find((o) => o.id === effectiveEffort)?.label ?? "Medium";
 
   useEffect(() => {
     if (driver !== "opencode" || showCustom) return;
     if (effortOptions.some((o) => o.id === effectiveEffort)) return;
-    backendRef.current.savePrefs({ effort: fallbackEffort(effectiveEffort, effortOptions) });
+    const next = fallbackEffort(effectiveEffort, effortOptions);
+    if (next !== effectiveEffort) backendRef.current.savePrefs({ effort: next });
   }, [driver, showCustom, models, prefs.model, effectiveEffort, effortOptions]);
-  useEffect(() => {
-    if (!prefs.model || showCustom) return;
-    if (!models.some((m) => m.id === prefs.model)) return;
-    setLastModel(driver, prefs.model);
-  }, [driver, prefs.model, models, showCustom]);
   const permissions = permissionOptions ?? FALLBACK_PERMISSIONS;
   const effectivePermission = prefs.permissionMode ?? "auto";
   const permissionDisplay = permissions.find((o) => o.id === effectivePermission)?.label ?? "Auto";
+  const reportedPermission = backend.effectivePermissionMode?.trim() ?? "";
+  const showReportedPermission =
+    driver === "claude" && reportedPermission !== "" && reportedPermission !== effectivePermission;
   const permissionIcon = permissionIconFor(
     permissions.some((o) => o.id === effectivePermission) ? effectivePermission : "auto"
   );
@@ -452,24 +412,34 @@ export function ComposerView({
   const tagAttachments = (body: string) =>
     attachments.length > 0 ? `${body}${body ? "\n" : ""}${attachments.map((a) => `@${a}`).join("\n")}` : body;
 
+  const commitModel = (id: string) => {
+    pushRecentModel(driver, id);
+    backendRef.current.savePrefs({ model: id });
+  };
+
+  const commitCustomModel = (value: string) => {
+    commitModel(oneMContext ? withContextSuffix(value, true) : value);
+  };
+
   const applyModel = (value: string) => {
-    const wanted = value.toLowerCase();
+    const oneM = driver === "claude" && hasContextSuffix(value);
+    const base = driver === "claude" ? stripContextSuffix(value) : value;
+    const wanted = base.toLowerCase();
     const match =
-      models.find((m) => m.id === value) ??
+      models.find((m) => m.id === base) ??
       models.find((m) => m.id.toLowerCase() === wanted || m.label.toLowerCase() === wanted);
     if (!match && models.length > 0) {
-      warn(`Unknown model: ${value}`, "Pick one from the list, or use Custom… in the model menu.");
+      warn(`Unknown model: ${base}`, "Pick one from the list, or use Custom… in the model menu.");
       return;
     }
-    const id = match?.id ?? value;
+    const id = match?.id ?? base;
     if (match) {
       setShowCustom(false);
-      setLastModel(driver, id);
     } else {
       setCustomModel(id);
       setShowCustom(true);
     }
-    backendRef.current.savePrefs({ model: id });
+    commitModel(oneM ? withContextSuffix(id, true) : id);
     setDraft("");
   };
 
@@ -482,6 +452,31 @@ export function ComposerView({
     }
     backendRef.current.savePrefs({ effort: match.id });
     setDraft("");
+  };
+
+  const pickModel = (id: string) => {
+    setShowCustom(false);
+    commitModel(id);
+  };
+
+  const openCustomModel = () => {
+    setShowCustom(true);
+    requestAnimationFrame(() => customInputRef.current?.focus());
+  };
+
+  const useCustomModel = (value: string) => {
+    setCustomModel(value);
+    setShowCustom(true);
+    commitCustomModel(value);
+  };
+
+  const changeDefaultModel = (id: string) => {
+    saveDefaultModel(driver, id).catch((err: unknown) => notifyError("Could not save default model", err));
+  };
+
+  const changeContextWindow = (oneM: boolean) => {
+    if (!prefs.model) return;
+    commitModel(withContextSuffix(prefs.model, oneM));
   };
 
   const completeCommand = (command: CommandOption) => {
@@ -609,9 +604,11 @@ export function ComposerView({
   const modelArgMode = slashArg?.[1] === "model";
   let argOverflow = false;
   if (slashOpen && slashArg && argCommand) {
+    const modelQuery = driver === "claude" ? stripContextSuffix(slashArg[2]) : slashArg[2];
+    const modelSuffix = driver === "claude" && hasContextSuffix(slashArg[2]) ? "[1m]" : "";
     const options = modelArgMode
-      ? rankByQuery(models, slashArg[2], (m) => [m.id, m.label]).map((m) => ({
-          id: m.id,
+      ? rankByQuery(models, modelQuery, (m) => [m.id, m.label]).map((m) => ({
+          id: `${m.id}${modelSuffix}`,
           label: m.label,
           hint: m.label === m.id ? undefined : m.id
         }))
@@ -693,7 +690,7 @@ export function ComposerView({
 
   return (
     <>
-    <div className="composer composer-recipe">
+    <div className={`composer composer-recipe${busy ? " composer-busy" : ""}`}>
       {slashOpen && (
         <SlashMenu
           id={slashListId}
@@ -759,7 +756,7 @@ export function ComposerView({
             onPaste={(e) => {
               void pasteFiles(e.clipboardData);
             }}
-            placeholder={blockedReason ?? "Ask cw-code — @ files, / commands, $ skills"}
+            placeholder={blockedReason ?? (busy ? "Working… stop the turn to send a new message" : "Ask cw-code — @ files, / commands, $ skills")}
             className="composer-input"
             rows={3}
             disabled={busy || sending || blockedReason !== undefined}
@@ -815,42 +812,33 @@ export function ComposerView({
       <div className="composer-recipe-row">
         {recipePrefix}
         <div className="recipe-control recipe-model" title={driver}>
-          <MenuSelect
-            label="Model"
-            icon={<DriverIcon driver={driver} size={15} />}
-            title={modelsError ? `Model list failed: ${modelsError}` : "Model"}
-            value={modelValue}
+          <ModelPicker
+            driver={driver}
+            models={models}
+            currentId={showCustom ? "" : baseModelId}
             display={modelDisplay}
             isSet={showCustom || !!prefs.model}
-            searchable
-            searchPlaceholder="Filter models…"
-            options={[
-              ...(driver === "opencode"
-                ? groupModelsByProvider(models)
-                : models.map((m) => ({ id: m.id, label: m.label, hint: m.id }))),
-              { id: "__custom", label: "Custom…" }
-            ]}
-            onPick={(v) => {
-              if (v === "__custom") {
-                setShowCustom(true);
-                return;
-              }
-              setShowCustom(false);
-              if (v) setLastModel(driver, v);
-              backend.savePrefs({ model: v || undefined });
-            }}
+            title={modelsError ? `Model list failed: ${modelsError}` : "Model"}
+            error={modelsError}
+            defaultId={defaultModelId}
+            recents={recentModels}
+            onPick={pickModel}
+            onCustom={openCustomModel}
+            onUseCustom={useCustomModel}
+            onDefaultChange={changeDefaultModel}
           />
         </div>
         {showCustom && (
           <input
+            ref={customInputRef}
             className="field composer-custom"
-            placeholder="provider/model or alias"
+            placeholder={driver === "opencode" ? "provider/model or alias" : "model ID or alias"}
             aria-label="Custom model"
             value={customModel}
             onChange={(e) => setCustomModel(e.target.value)}
             onBlur={() => {
               const v = customModel.trim();
-              if (v) backend.savePrefs({ model: v });
+              if (v) commitCustomModel(v);
             }}
             onKeyDown={(e) => {
               if (e.key === "Enter") (e.target as HTMLInputElement).blur();
@@ -859,22 +847,28 @@ export function ComposerView({
           />
         )}
         <div className="recipe-control">
-          <MenuSelect
-            label="Effort"
-            icon={<EffortIcon />}
-            title="Effort"
-            value={prefs.effort ?? "medium"}
-            display={effortDisplay}
-            isSet={(prefs.effort ?? "medium") !== "medium"}
-            options={effortOptions.map((o) => ({ id: o.id, label: o.label }))}
-            onPick={(v) => backend.savePrefs({ effort: v as EffortLevel })}
+          <EffortMenu
+            driver={driver}
+            modelLabel={modelDisplay}
+            options={effortOptions}
+            effort={effectiveEffort}
+            oneM={driver === "claude" ? oneMContext : null}
+            oneMDisabledReason={prefs.model ? undefined : "Pick a model first"}
+            onEffort={(effort) => backend.savePrefs({ effort })}
+            onContext={changeContextWindow}
           />
         </div>
         <div className="recipe-control">
           <MenuSelect
             label="Permission"
             icon={permissionIcon}
-            title={permissionsError ? `Permission list failed: ${permissionsError}` : "Permission"}
+            title={
+              permissionsError
+                ? `Permission list failed: ${permissionsError}`
+                : showReportedPermission
+                  ? `${harnessLabel(driver)} CLI is running in ${reportedPermission} mode; cw-code answers its permission requests in the background.`
+                  : "Permission"
+            }
             value={effectivePermission}
             display={permissionDisplay}
             isSet={effectivePermission !== "auto"}

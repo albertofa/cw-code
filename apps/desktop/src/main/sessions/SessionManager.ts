@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import type {
   AppSettings,
   ApprovalDecision,
@@ -26,7 +27,9 @@ import type {
   ShutdownActiveTurn,
   SubagentToolsResult,
   ThreadEvent,
+  TurnChanges,
   TurnHandle,
+  TurnSnapshot,
   UsageLedgerQuery,
   UsageLedgerRow,
   WorktreePruneSummary
@@ -50,7 +53,7 @@ import {
 } from "../github/prLinks.js";
 import { prKey, prRefFromUrl } from "../github/prParsers.js";
 import { buildTurnEnv } from "./env.js";
-import { changedWorktreeBranch, isWorktreeOrphaned, looksLikeWorktree, pinsWorktree, sameWorktreePath } from "./worktreeCleanup.js";
+import { changedWorktreeBranch, isWorktreeOrphaned, looksLikeWorktree, pinsWorktree, rootsOverlap, sameWorktreePath } from "./worktreeCleanup.js";
 import { SettingsStore } from "../settings/SettingsStore.js";
 import { resolveClaudeModels } from "../settings/settingsUtils.js";
 import { permissionOption, withSyntheticFullAccess } from "../providers/permissions.js";
@@ -130,6 +133,32 @@ interface BranchOutcome {
 
 const DELTA_FLUSH_MS = 24;
 
+function gitlinkReason(paths: string[]): string {
+  return `Submodule or nested repository changes cannot be undone: ${paths.join(", ")}`;
+}
+
+function conflictReason(paths: string[]): string {
+  return `Changed since the turn ended: ${paths.join(", ")}`;
+}
+
+function turnReachesPast(turn: TurnSnapshot, since: number): boolean {
+  const endedAt = turn.endedAt ?? Number.NaN;
+  if (!Number.isFinite(turn.capturedAt) || !Number.isFinite(endedAt) || !Number.isFinite(since)) return true;
+  return Math.max(turn.capturedAt, endedAt) > since;
+}
+
+const INTERRUPT_SETTLE_TIMEOUT_MS = 3_000;
+const INTERRUPT_SETTLE_POLL_MS = 100;
+
+function driverBusy(driver: CliDriver, sessionId: string): boolean {
+  try {
+    return driver.activity?.().busySessionIds.includes(sessionId) ?? false;
+  } catch (err) {
+    console.warn(`driver activity check failed for ${sessionId}: ${(err as Error).message}`);
+    return false;
+  }
+}
+
 export class SessionManager {
   private store: SessionStore;
   private settings: SettingsStore;
@@ -156,7 +185,9 @@ export class SessionManager {
   private git: GitService;
   private worktreesRoot: string;
   private deltaBuffer = new Map<string, { sessionId: string; text: string; timer: NodeJS.Timeout }>();
-  private turnBaseShas = new Map<string, string>();
+  private pendingUndos = new Set<string>();
+  private pendingBranchSwitches = new Set<string>();
+  private endSnapshots = new Map<string, Promise<void>>();
   private disposed = false;
   private prHead: (ref: PrRef) => string | null;
   private prHeadRefresh?: (ref: PrRef) => Promise<string | null>;
@@ -366,6 +397,7 @@ export class SessionManager {
         } else {
           this.store.updateSession(event.sessionId, { resumeCursor: event.resumeCursor, status: "done" }, "turn-done");
         }
+        this.captureEndSnapshot(event.sessionId, event.turnId);
         if (wasActive && !event.isError) void this.renameBranchForTitle(event.sessionId, event.turnId);
         const covered = this.turnPrRefs.get(event.turnId) ?? [];
         this.turnPrRefs.delete(event.turnId);
@@ -377,6 +409,7 @@ export class SessionManager {
       else this.activeTurns.delete(event.turnId);
       this.turnPrRefs.delete(event.turnId);
       if (sessionId) {
+        this.captureEndSnapshot(sessionId, event.turnId);
         this.store.updateSession(
           sessionId,
           {
@@ -393,6 +426,12 @@ export class SessionManager {
     if (event.type === "approval.resolved" || event.type === "question.resolved") {
       if (sessionId && this.activeTurns.has(event.turnId)) {
         this.store.updateSession(sessionId, { status: "working" }, "approval-resolved");
+      }
+    }
+    if (event.type === "permission.mode.reported") {
+      if (sessionId) {
+        this.store.updateSession(sessionId, { effectivePermissionMode: event.mode ?? undefined });
+        if (this.store.getSession(sessionId)) this.emitSession(sessionId);
       }
     }
     this.onEvent(sessionId, event);
@@ -454,45 +493,6 @@ export class SessionManager {
     const project = this.store.getProject(projectId);
     if (!project) throw new Error(`unknown project ${projectId}`);
     return this.store.listSessions(projectId);
-  }
-
-  async listDiscovered(projectId: string): Promise<SessionMeta[]> {
-    const project = this.store.getProject(projectId);
-    if (!project) throw new Error(`unknown project ${projectId}`);
-    const stored = new Set(
-      this.store
-        .listSessions(projectId)
-        .map((s) => `${s.driver}:${s.resumeCursor}`)
-        .filter((k) => !k.endsWith(":"))
-    );
-    const out: SessionMeta[] = [];
-    for (const driver of Object.values(this.drivers)) {
-      let discovered: SessionMeta[] = [];
-      try {
-        discovered = await driver.listSessions(project.rootPath, projectId);
-      } catch (err) {
-        console.warn(`discovery failed for ${driver.kind}: ${(err as Error).message}`);
-        continue;
-      }
-      for (const d of discovered) {
-        if (!d.resumeCursor || stored.has(`${d.driver}:${d.resumeCursor}`)) continue;
-        stored.add(`${d.driver}:${d.resumeCursor}`);
-        out.push({ ...d, id: `ext:${d.driver}:${d.resumeCursor}` });
-      }
-    }
-    return out.sort((a, b) => b.updatedAt - a.updatedAt);
-  }
-
-  async importSession(projectId: string, driver: DriverKind, resumeCursor: string, title: string): Promise<SessionMeta> {
-    const project = this.store.getProject(projectId);
-    if (!project) throw new Error(`unknown project ${projectId}`);
-    const existing = this.store.findByCursor(projectId, driver, resumeCursor);
-    if (existing) return existing;
-    const session = this.store.createSession(projectId, driver, title || resumeCursor.slice(0, 8));
-    this.store.updateSession(session.id, { resumeCursor });
-    const stored = this.store.getSession(session.id);
-    if (!stored) throw new Error("import failed");
-    return stored;
   }
 
   async createSession(projectId: string, driver: DriverKind, options: CreateSessionOptions = {}): Promise<SessionMeta> {
@@ -780,8 +780,11 @@ export class SessionManager {
     }
     if (this.pendingTurns.has(sessionId)) throw new Error("session busy (turn pending)");
     if (this.pendingResolves.has(sessionId)) throw new Error("session busy (resolve pending)");
+    if (this.undoPendingOnRoot(session)) throw new Error("session busy (undo pending)");
     this.pendingResolves.add(sessionId);
     try {
+      const endingTurn = session.lastTurnSnapshot?.turnId;
+      if (endingTurn) await this.endSnapshots.get(endingTurn);
       const recovery = this.worktreeRecovery.get(sessionId);
       if (recovery) {
         await recovery.catch(() => undefined);
@@ -801,7 +804,6 @@ export class SessionManager {
     opts: { removeWorktree?: boolean; forceBranch?: boolean; reason?: SessionStatusReason; auto?: boolean }
   ): Promise<SessionCleanupResult> {
     const sessionId = session.id;
-    this.turnBaseShas.delete(sessionId);
     this.firstPrompts.delete(sessionId);
     this.branchRenamed.delete(sessionId);
     this.cancelTitleTurns(sessionId);
@@ -811,8 +813,20 @@ export class SessionManager {
       opts.reason ?? (status === "archived" ? "archive" : "resolve")
     );
     this.onResolved(sessionId);
-    this.drivers[session.driver].stopSession?.(sessionId);
     const worktreePath = session.worktreePath;
+    try {
+      await this.drivers[session.driver].stopSession?.(sessionId);
+    } catch (err) {
+      return {
+        sessionId,
+        status,
+        ...(worktreePath ? { worktreePath } : {}),
+        worktreeOrphaned: worktreePath ? isWorktreeOrphaned(this.store.listAllSessions(), worktreePath, sessionId) : false,
+        worktreeRemoved: false,
+        branchDeleted: false,
+        error: `could not stop ${session.driver} session: ${(err as Error).message}`
+      };
+    }
     if (!worktreePath) {
       return { sessionId, status, worktreeOrphaned: false, worktreeRemoved: false, branchDeleted: false };
     }
@@ -1166,18 +1180,181 @@ export class SessionManager {
     return buildTurnEnv(process.env, this.sessionEnvVars(sessionId, session, project, cwd));
   }
 
-  turnBaseSha(sessionId: string): string | null {
-    return this.turnBaseShas.get(sessionId) ?? null;
+  private async captureTurnSnapshot(sessionId: string, cwd: string): Promise<Omit<TurnSnapshot, "turnId"> | null> {
+    if (!(await this.git.isRepository(cwd))) return null;
+    const capturedAt = Date.now();
+    try {
+      return { sha: await this.git.snapshotWorkingTree(cwd), capturedAt };
+    } catch (err) {
+      const error = (err as Error).message || "snapshot failed";
+      console.warn(`turn snapshot failed for ${sessionId}: ${error}`);
+      return { capturedAt, error };
+    }
   }
 
-  private async captureTurnBaseSha(sessionId: string, cwd: string, worktreePath: string | null | undefined): Promise<void> {
-    if (!worktreePath) return;
-    try {
-      this.turnBaseShas.set(sessionId, await this.git.headSha(cwd));
-    } catch (err) {
-      this.turnBaseShas.delete(sessionId);
-      console.warn(`turn base capture failed for ${sessionId}: ${(err as Error).message}`);
+  private captureEndSnapshot(sessionId: string, turnId: string, settled?: () => Promise<void>): void {
+    const snapshot = this.store.getSession(sessionId)?.lastTurnSnapshot;
+    if (snapshot?.turnId !== turnId || snapshot.endedAt !== undefined || this.endSnapshots.has(turnId)) return;
+    if (!snapshot.sha) {
+      this.store.updateSession(sessionId, { lastTurnSnapshot: { ...snapshot, endedAt: Date.now() } });
+      return;
     }
+    const task = (settled ? settled() : Promise.resolve())
+      .then(() => this.writeEndSnapshot(sessionId, turnId))
+      .catch((err: Error) => console.warn(`turn end snapshot could not be stored for ${sessionId}: ${err.message}`))
+      .finally(() => {
+        if (this.endSnapshots.get(turnId) === task) this.endSnapshots.delete(turnId);
+      });
+    this.endSnapshots.set(turnId, task);
+  }
+
+  private async writeEndSnapshot(sessionId: string, turnId: string): Promise<void> {
+    const endedAt = Date.now();
+    let result: Pick<TurnSnapshot, "endSha" | "endError">;
+    try {
+      result = { endSha: await this.git.snapshotWorkingTree(this.rootFor(sessionId)) };
+    } catch (err) {
+      const endError = (err as Error).message || "snapshot failed";
+      console.warn(`turn end snapshot failed for ${sessionId}: ${endError}`);
+      result = { endError };
+    }
+    if (this.disposed) return;
+    const current = this.store.getSession(sessionId)?.lastTurnSnapshot;
+    if (current?.turnId !== turnId) return;
+    this.store.updateSession(sessionId, { lastTurnSnapshot: { ...current, ...result, endedAt } });
+    this.emitSession(sessionId);
+  }
+
+  private async driverSettled(driver: CliDriver, sessionId: string): Promise<void> {
+    const deadline = Date.now() + INTERRUPT_SETTLE_TIMEOUT_MS;
+    while (!this.disposed && Date.now() < deadline && driverBusy(driver, sessionId)) {
+      await delay(Math.min(INTERRUPT_SETTLE_POLL_MS, Math.max(1, deadline - Date.now())));
+    }
+  }
+
+  private async settledSnapshot(sessionId: string): Promise<{ session: SessionMeta; snapshot: TurnSnapshot | undefined }> {
+    const turnId = this.requireSession(sessionId).lastTurnSnapshot?.turnId;
+    if (turnId) await this.endSnapshots.get(turnId);
+    const session = this.requireSession(sessionId);
+    return { session, snapshot: session.lastTurnSnapshot };
+  }
+
+  private requireSession(sessionId: string): SessionMeta {
+    const session = this.store.getSession(sessionId);
+    if (!session) throw new Error(`unknown session ${sessionId}`);
+    return session;
+  }
+
+  private sessionRoot(session: SessionMeta): string | null {
+    return session.worktreePath ?? this.store.getProject(session.projectId)?.rootPath ?? null;
+  }
+
+  private sameRootSessions(session: SessionMeta): SessionMeta[] {
+    const root = this.sessionRoot(session);
+    if (!root) return [session];
+    return this.store.listAllSessions().filter((other) => {
+      if (other.id === session.id) return true;
+      const otherRoot = this.sessionRoot(other);
+      return otherRoot !== null && rootsOverlap(otherRoot, root);
+    });
+  }
+
+  private undoPendingOnRoot(session: SessionMeta): boolean {
+    return this.sameRootSessions(session).some((other) => this.pendingUndos.has(other.id));
+  }
+
+  private undoBlocker(session: SessionMeta, snapshot: TurnSnapshot): string | null {
+    if (this.hasTurnInFlight(session.id)) return "Cannot undo while a turn is running";
+    if (this.pendingUndos.has(session.id)) return "Undo already in progress";
+    if (!snapshot.endSha) {
+      if (snapshot.endError) return `The end-of-turn snapshot failed: ${snapshot.endError}`;
+      return this.endSnapshots.has(snapshot.turnId) ? "The end-of-turn snapshot is still being captured" : "The turn has no end-of-turn snapshot";
+    }
+    if (snapshot.undoneAt !== undefined) return "This turn was already undone";
+    for (const other of this.sameRootSessions(session)) {
+      if (this.pendingResolves.has(other.id)) return "session busy (resolve pending)";
+      if (this.worktreeRecovery.has(other.id)) return "session busy (recovery in progress)";
+      if (this.pendingBranchSwitches.has(other.id)) return "session busy (branch switch pending)";
+      if (other.id === session.id) continue;
+      if (this.hasTurnInFlight(other.id)) return `Another session is running a turn in this folder ("${other.title}")`;
+      if (this.pendingUndos.has(other.id)) return `Another session is undoing a turn in this folder ("${other.title}")`;
+      const otherTurn = other.lastTurnSnapshot;
+      if (otherTurn && turnReachesPast(otherTurn, snapshot.capturedAt)) {
+        return `A later turn in another session changed this folder ("${other.title}")`;
+      }
+    }
+    return null;
+  }
+
+  async turnDiffRange(sessionId: string): Promise<{ base?: string; head?: string }> {
+    const { snapshot } = await this.settledSnapshot(sessionId);
+    if (!snapshot?.sha) return {};
+    return { base: snapshot.sha, ...(snapshot.endSha ? { head: snapshot.endSha } : {}) };
+  }
+
+  async turnChanges(sessionId: string): Promise<TurnChanges | null> {
+    const { session, snapshot } = await this.settledSnapshot(sessionId);
+    if (!snapshot?.sha) return null;
+    const root = this.rootFor(sessionId);
+    const endSha = snapshot.endSha ?? null;
+    const { files, gitlinks } = await this.git.snapshotChanges(root, snapshot.sha, endSha ?? undefined);
+    const conflicts = endSha && snapshot.undoneAt === undefined
+      ? await this.git.snapshotConflicts(root, snapshot.sha, endSha, files.map((file) => file.path))
+      : [];
+    const reason = this.undoBlocker(session, snapshot)
+      ?? (gitlinks.length > 0 ? gitlinkReason(gitlinks) : null)
+      ?? (conflicts.length > 0 ? conflictReason(conflicts) : null)
+      ?? (files.length === 0 ? "The turn changed no files" : null);
+    return { turnId: snapshot.turnId, files, endSha, undoable: reason === null, ...(reason ? { reason } : {}), conflicts };
+  }
+
+  async undoTurn(sessionId: string, turnId: string, expectedEndSha: string): Promise<TurnChanges> {
+    const session = this.requireSession(sessionId);
+    const snapshot = session.lastTurnSnapshot;
+    if (this.hasTurnInFlight(sessionId)) throw new Error("Cannot undo while a turn is running");
+    if (!snapshot?.sha) throw new Error("No snapshot for the last turn");
+    if (snapshot.turnId !== turnId) throw new Error("Only the latest turn can be undone");
+    const blocker = this.undoBlocker(session, snapshot);
+    if (blocker) throw new Error(blocker);
+    const startSha = snapshot.sha;
+    const endSha = snapshot.endSha;
+    if (!endSha || endSha !== expectedEndSha) throw new Error("The turn's end snapshot changed since it was reviewed; refresh and try again");
+    this.pendingUndos.add(sessionId);
+    try {
+      const root = this.rootFor(sessionId);
+      const { files, gitlinks } = await this.git.snapshotChanges(root, startSha, endSha);
+      if (gitlinks.length > 0) throw new Error(gitlinkReason(gitlinks));
+      const conflicts = await this.git.snapshotConflicts(root, startSha, endSha, files.map((file) => file.path));
+      if (conflicts.length > 0) throw new Error(conflictReason(conflicts));
+      const restored = await this.git.restoreSnapshot(root, startSha, files);
+      const current = this.store.getSession(sessionId)?.lastTurnSnapshot;
+      if (current?.turnId === turnId) {
+        this.store.updateSession(sessionId, { lastTurnSnapshot: { ...current, undoneAt: Date.now() } });
+        this.emitSession(sessionId);
+      }
+      return { turnId, files: restored, endSha, undoable: false, reason: "This turn was already undone", conflicts: [] };
+    } finally {
+      this.pendingUndos.delete(sessionId);
+    }
+  }
+
+  async withBranchSwitch<T>(sessionId: string, run: () => Promise<T>): Promise<T> {
+    if (this.undoPendingOnRoot(this.requireSession(sessionId))) throw new Error("session busy (undo pending)");
+    if (this.pendingBranchSwitches.has(sessionId)) throw new Error("session busy (branch switch pending)");
+    this.pendingBranchSwitches.add(sessionId);
+    try {
+      return await run();
+    } finally {
+      this.pendingBranchSwitches.delete(sessionId);
+    }
+  }
+
+  private hasTurnInFlight(sessionId: string): boolean {
+    if (this.pendingTurns.has(sessionId)) return true;
+    for (const entry of this.activeTurns.values()) {
+      if (entry.sessionId === sessionId) return true;
+    }
+    return false;
   }
 
   async startTurn(
@@ -1198,10 +1375,11 @@ export class SessionManager {
     }
     if (this.pendingTurns.has(sessionId)) throw new Error("session busy (turn pending)");
     if (this.pendingResolves.has(sessionId)) throw new Error("session busy (resolve pending)");
+    if (this.undoPendingOnRoot(session)) throw new Error("session busy (undo pending)");
     this.pendingTurns.add(sessionId);
     try {
       const cwd = await this.ensureWorktree(sessionId);
-      await this.captureTurnBaseSha(sessionId, cwd, session.worktreePath);
+      const snapshot = await this.captureTurnSnapshot(sessionId, cwd);
       this.assertNotReserved();
       const firstMessage = session.title === NEW_SESSION_TITLE && !opts?.command;
       const placeholder = prompt.slice(0, 60);
@@ -1228,7 +1406,10 @@ export class SessionManager {
       });
       this.activeTurns.set(handle.turnId, { sessionId, startedAt: Date.now() });
       if (opts?.prRefs && opts.prRefs.length > 0) this.turnPrRefs.set(handle.turnId, opts.prRefs);
-      this.store.updateSession(sessionId, { status: "working" }, "turn-start");
+      const lastTurnSnapshot = snapshot ? { turnId: handle.turnId, ...snapshot } : undefined;
+      const snapshotChanged = lastTurnSnapshot !== undefined || session.lastTurnSnapshot !== undefined;
+      this.store.updateSession(sessionId, { status: "working", lastTurnSnapshot }, "turn-start");
+      if (snapshotChanged) this.emitSession(sessionId);
       if (firstMessage) this.maybeAutoTitle(sessionId, prompt, placeholder);
       return handle.turnId;
     } finally {
@@ -1466,9 +1647,11 @@ export class SessionManager {
     const sessionId = this.activeTurns.get(turnId)?.sessionId;
     if (!sessionId) return;
     const session = this.store.getSession(sessionId);
-    if (session) this.drivers[session.driver].interrupt(turnId);
+    const driver = session ? this.drivers[session.driver] : undefined;
+    driver?.interrupt(turnId);
     this.settleTurn(turnId, sessionId);
     this.turnPrRefs.delete(turnId);
+    this.captureEndSnapshot(sessionId, turnId, driver ? () => this.driverSettled(driver, sessionId) : undefined);
     this.store.updateSession(sessionId, { status: "holding" }, "turn-interrupted");
     if (!session) return;
     if (this.shutdownReserved) this.interruptedForShutdown.add(sessionId);
@@ -1778,7 +1961,6 @@ export class SessionManager {
     this.deltaBuffer.clear();
     this.cancelBackgroundWork();
     this.firstPrompts.clear();
-    this.turnBaseShas.clear();
     try {
       this.usageLedger.flush();
     } catch (err) {

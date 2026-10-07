@@ -1,7 +1,11 @@
+import { mkdirSync, mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { PrRef, PrSummary } from "@cw-code/contracts";
-import { assertPrRef, assertRunId, cloneTargetPath, mergeInboxItems } from "./PullRequestService.js";
+import type { GitService, ParsedGitHubRemote } from "../fs/GitService.js";
+import { DEFAULT_SETTINGS } from "../settings/SettingsStore.js";
+import { assertPrRef, assertRunId, cloneTargetPath, mergeInboxItems, PullRequestService } from "./PullRequestService.js";
 
 function ref(overrides: Partial<PrRef> = {}): PrRef {
   return { host: "github.com", owner: "acme", repo: "widgets", number: 1, ...overrides };
@@ -56,26 +60,42 @@ describe("cloneTargetPath", () => {
   const home = resolve("/home/tester");
 
   it("expands ~ against the given home directory and appends owner/repo", () => {
-    const target = cloneTargetPath("~/.cw-code/repos", { owner: "acme", repo: "widgets" }, home);
+    const target = cloneTargetPath("~/.cw-code/repos", { owner: "acme", repo: "widgets" }, { homeDir: home });
     expect(target).toBe(join(home, ".cw-code", "repos", "acme", "widgets"));
   });
 
   it("leaves an absolute clone root untouched", () => {
     const root = resolve("/repos");
-    const target = cloneTargetPath(root, { owner: "acme", repo: "widgets" }, home);
+    const target = cloneTargetPath(root, { owner: "acme", repo: "widgets" }, { homeDir: home });
+    expect(target).toBe(join(root, "acme", "widgets"));
+  });
+
+  it("omits the owner folder when includeOwner is false", () => {
+    const root = resolve("/repos");
+    const target = cloneTargetPath(root, { owner: "acme", repo: "widgets" }, { includeOwner: false, homeDir: home });
+    expect(target).toBe(join(root, "widgets"));
+  });
+
+  it("keeps the owner folder when includeOwner is true", () => {
+    const root = resolve("/repos");
+    const target = cloneTargetPath(root, { owner: "acme", repo: "widgets" }, { includeOwner: true, homeDir: home });
     expect(target).toBe(join(root, "acme", "widgets"));
   });
 
   it("rejects a relative clone root", () => {
-    expect(() => cloneTargetPath("repos", { owner: "acme", repo: "widgets" }, "C:\\Users\\tester")).toThrow();
+    expect(() => cloneTargetPath("repos", { owner: "acme", repo: "widgets" }, { homeDir: "C:\\Users\\tester" })).toThrow();
   });
 
   it("rejects a clone root starting with a dash", () => {
-    expect(() => cloneTargetPath("-rf", { owner: "acme", repo: "widgets" }, "C:\\Users\\tester")).toThrow();
+    expect(() => cloneTargetPath("-rf", { owner: "acme", repo: "widgets" }, { homeDir: "C:\\Users\\tester" })).toThrow();
   });
 
   it("rejects a repo segment that would escape the clone root", () => {
-    expect(() => cloneTargetPath("C:\\repos", { owner: "acme", repo: ".." }, "C:\\Users\\tester")).toThrow();
+    expect(() => cloneTargetPath("C:\\repos", { owner: "acme", repo: ".." }, { homeDir: "C:\\Users\\tester" })).toThrow();
+  });
+
+  it("rejects an owner segment that would escape the clone root when included", () => {
+    expect(() => cloneTargetPath("C:\\repos", { owner: "..", repo: "widgets" }, { homeDir: "C:\\Users\\tester" })).toThrow();
   });
 });
 
@@ -106,6 +126,94 @@ describe("assertPrRef", () => {
 
   it("rejects a host other than github.com", () => {
     expect(() => assertPrRef(ref({ host: "github.example.com" }))).toThrow();
+  });
+});
+
+function remoteFor(owner: string, repo: string): ParsedGitHubRemote {
+  return {
+    host: "github.com",
+    owner,
+    repository: repo,
+    slug: `${owner}/${repo}`,
+    url: `https://github.com/${owner}/${repo}.git`
+  };
+}
+
+function fakeGit(overrides: Partial<Pick<GitService, "repositoryRoot" | "githubRemote">> = {}): GitService {
+  return {
+    repositoryRoot: async () => {
+      throw new Error("not a repository");
+    },
+    githubRemote: async () => null,
+    ...overrides
+  } as unknown as GitService;
+}
+
+describe("PullRequestService.clone target identity", () => {
+  function prRef(owner: string): PrRef {
+    return { host: "github.com", owner, repo: "widgets", number: 1 };
+  }
+
+  function existingTarget(): { root: string; target: string } {
+    const root = mkdtempSync(join(tmpdir(), "cw-clone-test-"));
+    const target = join(root, "widgets");
+    mkdirSync(target, { recursive: true });
+    return { root, target };
+  }
+
+  function serviceAt(root: string, git: GitService): PullRequestService {
+    return new PullRequestService(
+      git,
+      () => ({ ...DEFAULT_SETTINGS, prCloneRoot: root, prCloneIncludeOwner: false }),
+      (rootPath) => ({ id: "cloned", rootPath, name: "widgets" })
+    );
+  }
+
+  it("reuses a target checkout only when its remote matches the PR repository", async () => {
+    const { root, target } = existingTarget();
+    const service = serviceAt(
+      root,
+      fakeGit({ repositoryRoot: async () => target, githubRemote: async () => remoteFor("acme", "widgets") })
+    );
+    await expect(service.clone(prRef("acme"))).resolves.toMatchObject({ rootPath: target });
+  });
+
+  it("refuses a target checkout that belongs to another repository", async () => {
+    const { root, target } = existingTarget();
+    const service = serviceAt(
+      root,
+      fakeGit({ repositoryRoot: async () => target, githubRemote: async () => remoteFor("alice", "widgets") })
+    );
+    await expect(service.clone(prRef("bob"))).rejects.toThrow(/belongs to alice\/widgets, not bob\/widgets/);
+  });
+
+  it("refuses a target checkout whose remote cannot be identified", async () => {
+    const { root, target } = existingTarget();
+    const service = serviceAt(root, fakeGit({ repositoryRoot: async () => target, githubRemote: async () => null }));
+    await expect(service.clone(prRef("acme"))).rejects.toThrow(/unrecognized GitHub remote/);
+  });
+
+  it("does not share an in-flight clone between repositories that map to the same target", async () => {
+    const { root, target } = existingTarget();
+    let release = () => {};
+    const gate = new Promise<void>((resolveGate) => {
+      release = resolveGate;
+    });
+    const service = serviceAt(
+      root,
+      fakeGit({
+        repositoryRoot: async () => {
+          await gate;
+          return target;
+        },
+        githubRemote: async () => remoteFor("alice", "widgets")
+      })
+    );
+    const first = service.clone(prRef("alice"));
+    const second = service.clone(prRef("bob"));
+    release();
+    await expect(first).resolves.toMatchObject({ rootPath: target });
+    await expect(second).rejects.toThrow(/belongs to alice\/widgets, not bob\/widgets/);
   });
 });
 

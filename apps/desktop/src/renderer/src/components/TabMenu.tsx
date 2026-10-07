@@ -4,7 +4,7 @@ import { AppWindow, PanelBottom, PanelRight, Pin, RotateCcw, X, type LucideIcon 
 import { selectSessionPanel, usePanelStore } from "../stores/panelStore.js";
 
 const MENU_WIDTH = 240;
-const MENU_HEIGHT = 220;
+const MENU_HEIGHT = 260;
 
 const PANELS: Array<{ id: PanelId; label: string; Icon: LucideIcon }> = [
   { id: "main", label: "Main", Icon: AppWindow },
@@ -112,6 +112,7 @@ export function TabMenu({
 export function useTabMenu(sessionId: string | undefined): {
   menuNode: ReactNode;
   onTabContextMenu: (tab: DockableTabId) => (e: ReactMouseEvent<HTMLElement>) => void;
+  onTabMenuButton: (tab: DockableTabId) => (e: ReactMouseEvent<HTMLElement>) => void;
 } {
   const [menu, setMenu] = useState<{ x: number; y: number; tab: DockableTabId; sessionId: string | undefined } | null>(null);
   useEffect(() => setMenu(null), [sessionId]);
@@ -122,6 +123,10 @@ export function useTabMenu(sessionId: string | undefined): {
     onTabContextMenu: (tab: DockableTabId) => (e: ReactMouseEvent<HTMLElement>) => {
       e.preventDefault();
       setMenu({ x: e.clientX, y: e.clientY, tab, sessionId });
+    },
+    onTabMenuButton: (tab: DockableTabId) => (e: ReactMouseEvent<HTMLElement>) => {
+      const rect = e.currentTarget.getBoundingClientRect();
+      setMenu({ x: rect.right - MENU_WIDTH, y: rect.bottom + 4, tab, sessionId });
     }
   };
 }

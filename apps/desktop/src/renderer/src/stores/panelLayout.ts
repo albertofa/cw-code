@@ -8,6 +8,7 @@ import type {
 } from "@cw-code/contracts";
 
 export const DOCKABLE_TABS: readonly DockableTabId[] = [
+  "overview",
   "files",
   "agents",
   "diff",
@@ -50,6 +51,7 @@ export const BOTTOM_HEIGHT_MIN = 140;
 export const BOTTOM_HEIGHT_MAX = 520;
 
 export const DEFAULT_DOCK: TabDockState = {
+  overview: "closed",
   files: "closed",
   agents: "closed",
   diff: "closed",
@@ -62,6 +64,7 @@ export const DEFAULT_DOCK: TabDockState = {
 };
 
 export const DEFAULT_AUTO: TabAutoLocation = {
+  overview: "right",
   files: "main",
   agents: "right",
   diff: "right",
@@ -114,8 +117,39 @@ export function tabsInPanel(dockByTab: TabDockState, panel: PanelId): DockableTa
   return DOCKABLE_TABS.filter((tab) => dockByTab[tab] === panel);
 }
 
-export function isBottomOpen(dockByTab: TabDockState): boolean {
-  return tabsInPanel(dockByTab, "bottom").length > 0;
+export function resolveRightTop(
+  dockByTab: TabDockState,
+  activeRight: DockableTabId,
+  isAvailable: (tab: DockableTabId) => boolean,
+  preferred?: DockableTabId
+): DockableTabId | null {
+  const available = rightOpenTabs(dockByTab, isAvailable);
+  if (available.includes(activeRight)) return activeRight;
+  if (preferred !== undefined && available.includes(preferred)) return preferred;
+  return available[0] ?? null;
+}
+
+export function rightOpenTabs(dockByTab: TabDockState, isAvailable: (tab: DockableTabId) => boolean): DockableTabId[] {
+  return tabsInPanel(dockByTab, "right").filter(isAvailable);
+}
+
+const ALL_TOOLS = (): boolean => true;
+
+export const DEFAULT_RIGHT_TOOL: DockableTabId = "overview";
+
+export function needsDefaultRightTool(
+  state: SessionPanelState,
+  isAvailable: (tab: DockableTabId) => boolean = ALL_TOOLS
+): boolean {
+  return (
+    state.rightVisible &&
+    state.dockByTab[DEFAULT_RIGHT_TOOL] === "closed" &&
+    rightOpenTabs(state.dockByTab, isAvailable).length === 0
+  );
+}
+
+export function isBottomOpen(dockByTab: TabDockState, isAvailable: (tab: DockableTabId) => boolean = ALL_TOOLS): boolean {
+  return tabsInPanel(dockByTab, "bottom").some(isAvailable);
 }
 
 export function clampBottomHeight(value: unknown): number {
@@ -296,12 +330,16 @@ export function resolveMainTab(
   dockByTab: TabDockState,
   driver: DockableTabId | undefined,
   activeMain: MainTabId,
-  hasPr: boolean
+  hasPr: boolean,
+  isAvailable: (tab: DockableTabId) => boolean = ALL_TOOLS
 ): MainTabId {
   const visible = mainOrder.filter(
     (id) =>
       id === "chat" ||
-      (dockByTab[id] === "main" && (!HARNESS_TABS.includes(id) || id === driver) && (id !== "pr" || hasPr))
+      (dockByTab[id] === "main" &&
+        (!HARNESS_TABS.includes(id) || id === driver) &&
+        (id !== "pr" || hasPr) &&
+        isAvailable(id))
   );
   return visible.includes(activeMain) ? activeMain : "chat";
 }

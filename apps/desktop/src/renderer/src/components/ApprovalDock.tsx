@@ -9,6 +9,9 @@ function ApprovalPanel({ request, position, total }: { request: ApprovalRequest;
   const homeDir = useAppStore((s) => s.homeDir);
   const shortCwd = request.cwd ? shortenHome(request.cwd, homeDir ?? undefined) : "";
   const [chosen, setChosen] = useState<ApprovalDecision | null>(null);
+  const titleEchoedInDetails = request.details?.trimStart().startsWith(request.title) ?? false;
+  const alwaysInButton = request.decisions.includes("acceptGlobal") && (request.always?.length ?? 0) > 0;
+  const alwaysPattern = request.always?.join(", ") ?? "";
 
   const act = (decision: ApprovalDecision) => {
     if (chosen !== null) return;
@@ -21,13 +24,13 @@ function ApprovalPanel({ request, position, total }: { request: ApprovalRequest;
       <header className="approval-panel-head">
         <ShieldAlert size={15} className="approval-panel-icon" />
         <span className="approval-panel-title">Approval needed</span>
-        <span className="approval-panel-count chip">
+        <span className="approval-kind chip">{request.kind}</span>
+        <span className="approval-panel-count">
           {total > 1 ? `${position} of ${total} approvals` : "1 approval"}
         </span>
-        <span className="approval-kind chip">{request.kind}</span>
       </header>
       <div className="approval-panel-body">
-        <div className="approval-title">{request.title}</div>
+        {!titleEchoedInDetails && <div className="approval-title">{request.title}</div>}
         {request.toolName ? (
           <div className="approval-meta" title={request.cwd ?? undefined}>
             {request.toolName}
@@ -46,27 +49,44 @@ function ApprovalPanel({ request, position, total }: { request: ApprovalRequest;
             ))}
           </ul>
         )}
-        {request.always && request.always.length > 0 && (
+        {request.always && request.always.length > 0 && !alwaysInButton && (
           <div className="approval-always">Always would allow: {request.always.join(", ")}</div>
         )}
       </div>
-      <footer className="approval-panel-foot">
-        <span className="approval-status">{chosen !== null ? "Responding…" : "Waiting for approval"}</span>
-        <div className="approval-actions">
-          {request.decisions.includes("accept") && (
-            <button className="btn approval-submit" onClick={() => act("accept")} disabled={chosen !== null}>
-              <Check size={14} />
-              Allow once
-            </button>
-          )}
-          {request.decisions.includes("acceptForSession") && (
-            <button className="btn" onClick={() => act("acceptForSession")} disabled={chosen !== null}>
-              Allow session
-            </button>
-          )}
-          {request.decisions.includes("acceptGlobal") && (
-            <button className="btn" onClick={() => act("acceptGlobal")} disabled={chosen !== null}>
-              Always allow
+      <div className="approval-actions">
+        {request.decisions.includes("accept") && (
+          <button className="btn approval-submit" onClick={() => act("accept")} disabled={chosen !== null}>
+            <Check size={14} />
+            Allow once
+          </button>
+        )}
+        {request.decisions.includes("acceptForSession") && (
+          <button className="btn" onClick={() => act("acceptForSession")} disabled={chosen !== null}>
+            Allow for session
+          </button>
+        )}
+        {request.decisions.includes("acceptGlobal") && (
+          <button
+            className="btn"
+            onClick={() => act("acceptGlobal")}
+            disabled={chosen !== null}
+            aria-label={alwaysInButton ? `Always allow ${alwaysPattern}` : undefined}
+          >
+            Always allow
+            {alwaysInButton && (
+              <span className="approval-pattern" title={alwaysPattern}>
+                {alwaysPattern}
+              </span>
+            )}
+          </button>
+        )}
+        <div className="approval-actions-end">
+          <span className="approval-status" role="status">
+            {chosen !== null ? "Responding…" : "Waiting for approval"}
+          </span>
+          {request.decisions.includes("cancel") && (
+            <button className="btn" onClick={() => act("cancel")} disabled={chosen !== null}>
+              Cancel
             </button>
           )}
           {request.decisions.includes("decline") && (
@@ -74,13 +94,8 @@ function ApprovalPanel({ request, position, total }: { request: ApprovalRequest;
               Reject
             </button>
           )}
-          {request.decisions.includes("cancel") && (
-            <button className="btn" onClick={() => act("cancel")} disabled={chosen !== null}>
-              Cancel
-            </button>
-          )}
         </div>
-      </footer>
+      </div>
     </section>
   );
 }

@@ -1,12 +1,16 @@
-import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
-import { Eye } from "lucide-react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useShallow } from "zustand/react/shallow";
 import type { DriverName } from "./cw.js";
+import { applyAppearance } from "./appearanceFonts.js";
 import { collectSubagents } from "./components/subagents.js";
 import { isWorkingSetStatus } from "./components/workingSet.js";
 import { Sidebar } from "./components/Sidebar.js";
 import { WindowControls } from "./components/WindowControls.js";
 import { SkillsModal } from "./components/SkillsModal.js";
-import { SettingsModal } from "./components/SettingsModal.js";
+import { SettingsPage } from "./components/SettingsPage.js";
+import { SettingsNav } from "./components/SettingsNav.js";
+import { useConfirm } from "./components/ConfirmDialog.js";
+import { navIdOf, sameValue, sectionSummary, unsavedSectionLabels } from "./components/settingsSections.js";
 import { ThreadView } from "./components/ThreadView.js";
 import { PrInboxView } from "./components/PrInboxView.js";
 import { PrDetailView } from "./components/PrDetailView.js";
@@ -14,42 +18,30 @@ import { UsageView } from "./components/UsageView.js";
 import { WorkflowRunModal } from "./components/WorkflowRunModal.js";
 import { ShutdownDialog } from "./components/ShutdownDialog.js";
 import { handleQuitRequest, handleShutdownExpired } from "./stores/shutdownFlow.js";
-import { PanelToggles } from "./components/PanelToggles.js";
-import { ToolContent } from "./components/ToolContent.js";
-import { TOOL_TABS, isHarnessTabId, isToolTabAvailable } from "./components/toolTabs.js";
+import { RightPanelBody } from "./components/RightPanelBody.js";
+import { ToolRail } from "./components/ToolRail.js";
+import { useToolAvailability } from "./components/useToolAvailability.js";
 import { useTabMenu } from "./components/TabMenu.js";
-import { endTabDrag, startTabDrag, useDockDrop } from "./components/useDockDrop.js";
-import { useNotifs } from "./components/Notifications.js";
+import { useDockDrop } from "./components/useDockDrop.js";
+import { useResizableWidth } from "./components/useResizableWidth.js";
+import { usePanelAnimationMs, usePresence } from "./components/usePresence.js";
+import { Notifications, useNotifs } from "./components/Notifications.js";
+import { useAttentionBadge } from "./components/useAttentionBadge.js";
+import { useNeedsYouDetailLoader } from "./components/useNeedsYou.js";
+import { visibleLayerOpen } from "./components/openLayer.js";
 import { useAppStore } from "./stores/appStore.js";
-import { tabsInPanel, DOCKABLE_TABS } from "./stores/panelLayout.js";
+import { rightOpenTabs, DOCKABLE_TABS } from "./stores/panelLayout.js";
 import { selectSessionPanel, usePanelStore } from "./stores/panelStore.js";
 import { usePrStore } from "./stores/prStore.js";
+import { useSettingsDraftStore } from "./stores/settingsDraftStore.js";
 import { prKey } from "./components/prInbox.js";
-import { sessionLinks } from "./components/sessionPrLinks.js";
-import type { DockableTabId } from "@cw-code/contracts";
 import type { TurnEvent } from "./cw.js";
-
-type RightTab = DockableTabId;
-
-const TABS = TOOL_TABS.filter((t) => t.id !== "preview");
 
 const VERSION_NOTIF_ID = "cli-versions";
 const BINARY_NOTIF_ID = "cli-binaries";
 
-const RIGHT_WIDTH_KEY = "cw-code:rightWidth";
 const RIGHT_WIDTH_DEFAULT = 520;
-const RIGHT_WIDTH_MIN = 320;
-const RIGHT_WIDTH_MAX = 800;
-
-function loadRightWidth(): number {
-  try {
-    const raw = window.localStorage.getItem(RIGHT_WIDTH_KEY);
-    const n = raw == null ? NaN : Number.parseInt(raw, 10);
-    if (Number.isFinite(n)) return Math.min(RIGHT_WIDTH_MAX, Math.max(RIGHT_WIDTH_MIN, n));
-  } catch {
-  }
-  return RIGHT_WIDTH_DEFAULT;
-}
+const SIDE_WIDTH_DEFAULT = 320;
 
 const pendingDeltas = new Map<string, string>();
 let deltaRaf = 0;
@@ -102,13 +94,11 @@ function handleTurnEvent(msg: { sessionId: string; event: TurnEvent }): void {
   useAppStore.getState().applyEvent(msg.sessionId, msg.event);
 }
 
-const MODAL_SELECTOR = '[role="dialog"], [role="alertdialog"], [aria-modal="true"]';
-
 export function App() {
+  useAttentionBadge();
+  useNeedsYouDetailLoader();
   const activeSessionId = useAppStore((s) => s.activeSessionId);
   const sessionsByProject = useAppStore((s) => s.sessionsByProject);
-  const pendingDriver = useAppStore((s) => s.pendingDriver);
-  const previewBySession = useAppStore((s) => s.previewBySession);
   const sourceControlRefreshIntervalSeconds = useAppStore((s) => s.sourceControlRefreshIntervalSeconds);
   const prRefreshIntervalSeconds = useAppStore((s) => s.prRefreshIntervalSeconds);
   const mainView = usePrStore((s) => s.mainView);
@@ -117,70 +107,57 @@ export function App() {
   const holdingAutoExpireEnabled = useAppStore((s) => s.holdingAutoExpireEnabled);
   const settingsVersion = useAppStore((s) => s.settingsVersion);
   const loadProjects = useAppStore((s) => s.loadProjects);
+  const appearance = useAppStore((s) => s.appearance);
   const sessionPanel = usePanelStore((s) => selectSessionPanel(s, activeSessionId ?? undefined));
-  const { dockByTab, activeRight, rightVisible } = sessionPanel;
-  const autoLocation = usePanelStore((s) => s.autoLocation);
+  const { dockByTab, rightVisible } = sessionPanel;
   const initializeSession = usePanelStore((s) => s.initializeSession);
+  const openDefaultRightTool = usePanelStore((s) => s.openDefaultRightTool);
   const activateOrOpen = usePanelStore((s) => s.activateOrOpen);
-  const setActiveTab = usePanelStore((s) => s.setActive);
-  const moveTab = usePanelStore((s) => s.moveTab);
   const dropRight = useDockDrop("right", activeSessionId ?? undefined);
   const tabMenu = useTabMenu(activeSessionId ?? undefined);
   const draggingTab = usePanelStore((s) => s.draggingTab);
   const setRightVisible = usePanelStore((s) => s.setRightVisible);
-  const revealTab = usePanelStore((s) => s.revealTab);
 
-  const openTool = (tab: DockableTabId) => {
-    if (activeSessionId) revealTab(activeSessionId, tab);
-  };
+  useEffect(() => applyAppearance(document.documentElement, appearance), [appearance]);
 
-  const preview = activeSessionId ? (previewBySession[activeSessionId] ?? null) : null;
 
-  useEffect(() => {
-    if (activeSessionId) initializeSession(activeSessionId);
-  }, [activeSessionId, initializeSession]);
-
-  const [rightWidth, setRightWidth] = useState(loadRightWidth);
+  const panelAnimationMs = usePanelAnimationMs();
+  const rightPresence = usePresence(rightVisible, panelAnimationMs);
+  const rightResize = useResizableWidth({ storageKey: "cw-code:rightWidth", min: 320, max: 800, grow: "left" });
+  const rightWidth = rightResize.width ?? RIGHT_WIDTH_DEFAULT;
+  const sideResize = useResizableWidth({ storageKey: "cw-code:sidebarWidth", min: 220, max: 480, grow: "right" });
+  const shellStyle: CSSProperties & { "--side-w"?: string } = sideResize.width === null ? {} : { "--side-w": `${sideResize.width}px` };
   const [preloadError, setPreloadError] = useState<string | null>(null);
-  const [settingsOpen, setSettingsOpen] = useState(false);
-  const [settingsHarness, setSettingsHarness] = useState<DriverName>("claude");
   const [skillsOpen, setSkillsOpen] = useState(false);
-  const dragRef = useRef<{ startX: number; startWidth: number } | null>(null);
+  const { confirm, dialog: confirmDialog } = useConfirm();
+  const settingsActive = mainView.kind === "settings";
 
-  const openSettings = (harness: DriverName = "claude") => {
-    setSettingsHarness(harness);
-    setSettingsOpen(true);
-  };
+  const openSettings = (harness?: DriverName) => usePrStore.getState().openSettings(undefined, harness);
 
-  const applyRightWidth = (n: number) => {
-    const clamped = Math.min(RIGHT_WIDTH_MAX, Math.max(RIGHT_WIDTH_MIN, Math.round(n)));
-    setRightWidth(clamped);
-    try {
-      window.localStorage.setItem(RIGHT_WIDTH_KEY, String(clamped));
-    } catch {
-    }
-  };
+  const leaveSettings = useCallback(
+    async (go: () => void) => {
+      const drafts = useSettingsDraftStore.getState();
+      if (usePrStore.getState().mainView.kind === "settings" && drafts.dirty) {
+        const changed = unsavedSectionLabels(drafts.saved, drafts.draft, !sameValue(drafts.repoDraft, drafts.repoSaved));
+        const lost = changed.length > 0 ? `Your changes in ${sectionSummary(changed)} will be lost.` : "Your unsaved changes will be lost.";
+        const ok = await confirm({
+          title: "Discard unsaved settings?",
+          message: drafts.saving ? `A save is in progress and will still finish. ${lost}` : lost,
+          danger: true,
+          confirmLabel: "Discard"
+        });
+        if (!ok) return;
+        useSettingsDraftStore.getState().discard();
+      }
+      go();
+    },
+    [confirm]
+  );
+  const leaveSettingsRef = useRef(leaveSettings);
+  leaveSettingsRef.current = leaveSettings;
 
-  const onResizeStart = (e: ReactMouseEvent<HTMLDivElement>) => {
-    e.preventDefault();
-    dragRef.current = { startX: e.clientX, startWidth: rightWidth };
-    const onMove = (ev: MouseEvent) => {
-      const d = dragRef.current;
-      if (!d) return;
-      applyRightWidth(d.startWidth + (d.startX - ev.clientX));
-    };
-    const onUp = () => {
-      dragRef.current = null;
-      window.removeEventListener("mousemove", onMove);
-      window.removeEventListener("mouseup", onUp);
-      document.body.style.userSelect = "";
-      document.body.style.cursor = "";
-    };
-    document.body.style.userSelect = "none";
-    document.body.style.cursor = "col-resize";
-    window.addEventListener("mousemove", onMove);
-    window.addEventListener("mouseup", onUp);
-  };
+  const sideWidthNow = () =>
+    document.querySelector<HTMLElement>(".app-body > .side:not([hidden])")?.offsetWidth ?? sideResize.width ?? SIDE_WIDTH_DEFAULT;
 
   useEffect(() => {
     if (!window.cw) {
@@ -207,10 +184,12 @@ export function App() {
       } else if (e.key === "0") {
         e.preventDefault();
         window.cw.zoomReset();
-      } else if (e.key.toLowerCase() === "t" && !e.shiftKey && !document.querySelector(MODAL_SELECTOR)) {
+      } else if (e.key.toLowerCase() === "t" && !e.shiftKey && !visibleLayerOpen()) {
         e.preventDefault();
-        usePrStore.getState().openSessionView();
-        useAppStore.getState().startNewSession();
+        void leaveSettingsRef.current(() => {
+          usePrStore.getState().openSessionView();
+          useAppStore.getState().startNewSession();
+        });
       }
     };
     window.addEventListener("keydown", onKey);
@@ -391,178 +370,127 @@ export function App() {
     return () => window.removeEventListener("cw:open-agents", onOpenAgents);
   }, [activeSessionId, activateOrOpen, setRightVisible]);
 
-  const messagesBySession = useAppStore((s) => s.messagesBySession);
-  const subagentStats = useMemo(() => {
-    const messages = activeSessionId ? (messagesBySession[activeSessionId] ?? []) : [];
-    const items = collectSubagents(messages);
-    return {
-      total: items.length,
-      running: items.filter((item) => item.status === "running").length,
-    };
-  }, [messagesBySession, activeSessionId]);
+  const subagentStats = useAppStore(
+    useShallow((s) => {
+      const items = collectSubagents((activeSessionId ? s.messagesBySession[activeSessionId] : undefined) ?? []);
+      return { total: items.length, running: items.filter((item) => item.status === "running").length };
+    })
+  );
 
-  const allSessions = Object.values(sessionsByProject).flat();
-  const activeSession = allSessions.find((s) => s.id === activeSessionId);
-  const driver = pendingDriver ?? activeSession?.driver;
-  const hasPr = pendingDriver === null && sessionLinks(activeSession).length > 0;
+  const { driver, hasPr, hasPreview, isToolAvailable, rightTop: topTool } = useToolAvailability(activeSessionId ?? undefined);
 
-  const visibleTabs = TABS.filter((t) => isToolTabAvailable(t, driver, hasPr));
-  const activeTab: RightTab = isHarnessTabId(activeRight) && activeRight !== driver ? (driver ?? "files") : activeRight;
-
-  const rightIds = tabsInPanel(dockByTab, "right").filter((id) => id !== "pr" || hasPr);
-  const effectiveRightTab: RightTab = rightIds.includes(activeTab) ? activeTab : (rightIds[0] ?? activeTab);
+  useLayoutEffect(() => {
+    if (!activeSessionId) return;
+    initializeSession(activeSessionId);
+    openDefaultRightTool(activeSessionId, isToolAvailable);
+  }, [activeSessionId, initializeSession, openDefaultRightTool]);
+  const rightTabs = rightOpenTabs(dockByTab, isToolAvailable);
   const allTabsClosed = DOCKABLE_TABS.every((id) => dockByTab[id] === "closed" || (id === "pr" && !hasPr));
 
-  const visibleIds = new Set(visibleTabs.map((t) => t.id));
-  const openHeaders = rightIds
-    .filter((id) => (id === "preview" ? preview !== null : visibleIds.has(id)))
-    .map((id) => {
-      if (id === "preview") return { id, title: "Preview", Icon: Eye, driver: undefined };
-      const def = TOOL_TABS.find((t) => t.id === id);
-      return { id, title: def?.title ?? id, Icon: def?.Icon ?? Eye, driver: def?.driver };
-    });
-
   return (
-    <div className={`app-shell${rightVisible ? "" : " right-hidden"}`} data-driver={driver ?? "none"}>
+    <div
+      className={`app-shell${rightVisible && !settingsActive ? "" : " right-hidden"}${settingsActive ? " rail-hidden" : ""}`}
+      data-driver={driver ?? "none"}
+      style={shellStyle}
+    >
       {preloadError && <div className="preload-error">{preloadError}</div>}
       {!preloadError && (
         <>
           <div className="app-body">
-          <Sidebar onOpenSettings={() => openSettings()} onOpenSkills={() => setSkillsOpen(true)} skillsOpen={skillsOpen} />
-          {mainView.kind === "inbox" ? (
-            <PrInboxView />
-          ) : mainView.kind === "pr" ? (
-            <PrDetailView key={prKey(mainView.ref)} prRef={mainView.ref} />
-          ) : mainView.kind === "usage" ? (
-            <UsageView onOpenSettings={openSettings} />
-          ) : (
-            <ThreadView />
+          <Sidebar onOpenSkills={() => setSkillsOpen(true)} skillsOpen={skillsOpen} hidden={settingsActive} />
+          {mainView.kind === "settings" && (
+            <SettingsNav active={navIdOf(mainView.section, mainView.harness)} onBack={() => void leaveSettings(() => usePrStore.getState().openSessionView())} />
           )}
-          {rightVisible && (
-            <aside className={`right${dropRight.over || draggingTab !== null ? " drop-target-active" : ""}`} style={{ width: rightWidth }}>
+          {!settingsActive && (
+            <div className="side-resizer-slot">
               <div
-                className="right-resizer"
-                onMouseDown={onResizeStart}
-                onDoubleClick={() => applyRightWidth(RIGHT_WIDTH_DEFAULT)}
+                className="side-resizer"
+                role="separator"
+                aria-orientation="vertical"
+                aria-label="Resize sidebar"
+                aria-valuemin={220}
+                aria-valuemax={480}
+                aria-valuenow={sideResize.width ?? undefined}
+                tabIndex={0}
                 title="Drag to resize · double-click to reset"
+                onMouseDown={(e) => sideResize.onResizeStart(e, sideWidthNow())}
+                onKeyDown={(e) => sideResize.onResizeKey(e, sideWidthNow())}
+                onDoubleClick={() => sideResize.setWidth(null)}
               />
-              <div
-                className="tabbar tool-rail"
-                onDoubleClick={() => window.cw.toggleMaximizeWindow()}
-                {...dropRight.bind}
-              >
-                <div className="tool-rail-openers">
-                {visibleTabs.map((t) => {
-                  const isAgents = t.id === "agents";
-                  const showBadge = isAgents && subagentStats.total > 0;
-                  const badgeTitle = isAgents
-                    ? `${subagentStats.total} subagent${subagentStats.total === 1 ? "" : "s"}${subagentStats.running > 0 ? ` (${subagentStats.running} running)` : ""}`
-                    : undefined;
-                  const defaultPanel = autoLocation[t.id] ?? "right";
-                  const dockedPanel = dockByTab[t.id];
-                  const placeSuffix = dockedPanel === "closed" ? `opens in ${defaultPanel}` : `open in ${dockedPanel}`;
-                  const label = showBadge ? `${t.title} · ${badgeTitle} · ${placeSuffix}` : `${t.title} · ${placeSuffix}`;
-                  return (
-                    <button
-                      key={t.id}
-                      onClick={() => openTool(t.id)}
-                      onContextMenu={tabMenu.onTabContextMenu(t.id)}
-                      className="tool-open"
-                      data-tool={t.id}
-                      title={label}
-                      aria-label={label}
-                    >
-                      <t.Icon size={15} aria-hidden="true" />
-                      {showBadge && (
-                        <span
-                          className={`tab-badge${subagentStats.running > 0 ? " running" : ""}`}
-                          title={badgeTitle}
-                          aria-hidden="true"
-                        >
-                          {subagentStats.total > 99 ? "99+" : subagentStats.total}
-                        </span>
-                      )}
-                    </button>
-                  );
-                })}
-                {preview && (
-                  <button
-                    onClick={() => openTool("preview")}
-                    onContextMenu={tabMenu.onTabContextMenu("preview")}
-                    className="tool-open"
-                    data-tool="preview"
-                    title={`Preview · opens in ${autoLocation.preview ?? "right"}`}
-                    aria-label="Preview"
-                  >
-                    <Eye size={15} aria-hidden="true" />
-                  </button>
+            </div>
+          )}
+          <div className="main-col">
+            {mainView.kind === "settings" ? (
+              <SettingsPage
+                section={mainView.section}
+                harness={mainView.harness}
+                onBack={() => void leaveSettings(() => usePrStore.getState().openSessionView())}
+                onOpenUsage={() => void leaveSettings(() => usePrStore.getState().openUsage())}
+              />
+            ) : mainView.kind === "inbox" ? (
+              <PrInboxView />
+            ) : mainView.kind === "pr" ? (
+              <PrDetailView key={prKey(mainView.ref)} prRef={mainView.ref} />
+            ) : mainView.kind === "usage" ? (
+              <UsageView />
+            ) : null}
+            <ThreadView hidden={mainView.kind !== "session"} />
+            <Notifications />
+          </div>
+          {rightPresence.mounted && (
+            <aside
+              className={`right${rightPresence.entered ? "" : " collapsed"}${dropRight.over || draggingTab !== null ? " drop-target-active" : ""}`}
+              hidden={settingsActive}
+              style={settingsActive ? { display: "none" } : { width: rightPresence.entered ? rightWidth : 0 }}
+              {...dropRight.bind}
+            >
+              <div className="right-inner" style={{ width: rightWidth }}>
+                <div
+                  className="right-resizer"
+                  onMouseDown={(e) => rightResize.onResizeStart(e, rightWidth)}
+                  onDoubleClick={() => rightResize.setWidth(null)}
+                  title="Drag to resize · double-click to reset"
+                />
+                {activeSessionId && topTool !== null ? (
+                  <RightPanelBody
+                    sessionId={activeSessionId}
+                    tabs={rightTabs}
+                    top={topTool}
+                    onToolMenu={tabMenu.onTabMenuButton}
+                    onToolContextMenu={tabMenu.onTabContextMenu}
+                  />
+                ) : (
+                  <div className="right-body">
+                    <div className="right-empty">
+                      {!activeSessionId
+                        ? "No session selected."
+                        : allTabsClosed
+                          ? "Pick a tool from the rail to open it."
+                          : "All tools are docked in other panels."}
+                    </div>
+                  </div>
                 )}
-                </div>
-                <PanelToggles sessionId={activeSessionId ?? undefined} />
-              </div>
-              {openHeaders.length > 0 && (
-              <div
-                className="right-tabbar"
-                role="tablist"
-                aria-label="Right panel tabs"
-                {...dropRight.bind}
-              >
-                {openHeaders.map((t) => (
-                  <button
-                    key={t.id}
-                    role="tab"
-                    aria-selected={effectiveRightTab === t.id}
-                    onClick={() => setActiveTab(activeSessionId ?? undefined, "right", t.id)}
-                    onContextMenu={tabMenu.onTabContextMenu(t.id)}
-                    draggable
-                    onDragStart={(e) => startTabDrag(e, t.id, activeSessionId ?? undefined)}
-                    onDragEnd={endTabDrag}
-                    className={`tab${effectiveRightTab === t.id ? " active" : ""}`}
-                    title={`${t.title} - drag to move, right-click for more actions`}
-                  >
-                    <t.Icon size={15} className={`tab-icon${t.driver ? ` driver-icon ${t.driver}` : ""}`} aria-hidden="true" />
-                    <span
-                      className="tab-x"
-                      role="button"
-                      aria-label={`Close ${t.title}`}
-                      title="Close tab"
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        moveTab(activeSessionId ?? undefined, t.id, "closed");
-                      }}
-                    >
-                      &times;
-                    </span>
-                    <span className="tab-label">{t.title}</span>
-                  </button>
-                ))}
-              </div>
-              )}
-              <div
-                className="right-body"
-                {...dropRight.bind}
-              >
-                {!activeSessionId && !preview && <div className="right-empty">No session selected.</div>}
-                {(activeSessionId || preview) &&
-                  (rightIds.length === 0 ? (
-                    <div className="right-empty">{allTabsClosed ? "Pick a tool above to open it." : "All tools are docked in other panels."}</div>
-                  ) : activeSessionId ? (
-                    <ToolContent tab={effectiveRightTab} sessionId={activeSessionId} panel="right" />
-                  ) : preview ? (
-                    <ToolContent tab="preview" sessionId={preview.sessionId} panel="right" />
-                  ) : null)}
               </div>
             </aside>
           )}
+          <ToolRail
+            hidden={settingsActive}
+            sessionId={activeSessionId ?? undefined}
+            driver={driver}
+            hasPr={hasPr}
+            hasPreview={hasPreview}
+            subagents={subagentStats}
+            rightActive={topTool}
+            isToolAvailable={isToolAvailable}
+            onToolContextMenu={tabMenu.onTabContextMenu}
+          />
           {tabMenu.menuNode}
           </div>
           <WindowControls />
-          {settingsOpen && (
-            <SettingsModal initialHarness={settingsHarness} onClose={() => setSettingsOpen(false)} />
-          )}
           {skillsOpen && <SkillsModal onClose={() => setSkillsOpen(false)} />}
           {runModal && <WorkflowRunModal request={runModal} />}
           <ShutdownDialog />
+          {confirmDialog}
         </>
       )}
     </div>

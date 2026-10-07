@@ -2,8 +2,9 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { ChevronDown, ChevronRight } from "lucide-react";
 import type { DirEntry } from "../cw.js";
 import { FileIcon } from "./fileIcons.js";
-import { parseUnifiedDiff } from "./diffParser.js";
+import { isFileNotFound } from "./ipcError.js";
 import { useEditorBuffers } from "../stores/editorBuffers.js";
+import { usePanelStore } from "../stores/panelStore.js";
 
 interface FileTreeProps {
   dir: string;
@@ -37,7 +38,7 @@ function FileTree({
         Couldn’t list {dir || "files"}: {error}{" "}
         <button
           className="btn"
-          style={{ fontSize: 11, padding: "2px 8px" }}
+          style={{ fontSize: "var(--t-2xs)", padding: "2px 8px" }}
           onClick={() => onRetryDir(dir)}
         >
           Retry
@@ -109,6 +110,16 @@ function baseName(path: string): string {
   return i >= 0 ? path.slice(i + 1) : path;
 }
 
+function lineStartOffset(text: string, line: number): number {
+  let offset = 0;
+  for (let current = 1; current < line; current++) {
+    const next = text.indexOf("\n", offset);
+    if (next < 0) break;
+    offset = next + 1;
+  }
+  return offset;
+}
+
 export function FilePanel({ sessionId }: { sessionId: string }) {
   const [childrenByDir, setChildrenByDir] = useState<Record<string, DirEntry[]>>({});
   const [expanded, setExpanded] = useState<Set<string>>(new Set());
@@ -117,7 +128,8 @@ export function FilePanel({ sessionId }: { sessionId: string }) {
   const [openFile, setOpenFile] = useState<string | null>(null);
   const [openKey, setOpenKey] = useState<string | null>(null);
   const openBuffer = useEditorBuffers((s) => (openKey ? s.buffers[openKey] : undefined));
-  const editable = openBuffer !== undefined && openBuffer.path === openFile;
+  const openMissing = openBuffer?.missing === true && openBuffer.path === openFile;
+  const editable = openBuffer !== undefined && openBuffer.path === openFile && !openMissing;
   const content = editable ? openBuffer.content : "";
   const [filter, setFilter] = useState("");
   const [allFiles, setAllFiles] = useState<string[] | null>(null);
@@ -127,6 +139,11 @@ export function FilePanel({ sessionId }: { sessionId: string }) {
   const pendingRef = useRef<Set<string>>(new Set());
   const registeredKeyRef = useRef<string | null>(null);
   const requestedFileRef = useRef<string | null>(null);
+  const handledRevealRef = useRef(0);
+  const [pendingLine, setPendingLine] = useState<{ path: string; line: number } | null>(null);
+  const editorRef = useRef<HTMLTextAreaElement>(null);
+  const revealRequest = usePanelStore((s) => s.revealRequest);
+  const clearRevealRequest = usePanelStore((s) => s.clearRevealRequest);
 
   const releaseBuffer = useCallback(() => {
     if (registeredKeyRef.current) useEditorBuffers.getState().unregister(registeredKeyRef.current);
@@ -179,6 +196,7 @@ export function FilePanel({ sessionId }: { sessionId: string }) {
     setOpenFile(null);
     setOpenKey(null);
     requestedFileRef.current = null;
+    setPendingLine(null);
     setAllFiles(null);
     setSearching(false);
     loadDir(sessionId, seq, "");
@@ -223,10 +241,11 @@ export function FilePanel({ sessionId }: { sessionId: string }) {
     loadDir(sessionId, seqRef.current, path);
   };
 
-  const open = (path: string) => {
+  const open = (path: string, line?: number, revealed = false) => {
     const sid = sessionId;
     const seq = seqRef.current;
     requestedFileRef.current = path;
+    setPendingLine(null);
     setOpenFile(path);
     window.cw
       .readFile(sid, path)
@@ -236,12 +255,34 @@ export function FilePanel({ sessionId }: { sessionId: string }) {
         releaseBuffer();
         registeredKeyRef.current = key;
         setOpenKey(key);
+        if (line !== undefined) setPendingLine({ path, line });
       })
       .catch((err: Error) => {
         if (seqRef.current !== seq || requestedFileRef.current !== path) return;
-        setStatus(`read failed for ${path}: ${err.message}`);
+        setStatus(
+          revealed && isFileNotFound(err)
+            ? `File not found in this workspace: ${path}`
+            : `read failed for ${path}: ${err.message}`
+        );
       });
   };
+
+  useEffect(() => {
+    if (!revealRequest || revealRequest.sessionId !== sessionId) return;
+    if (revealRequest.nonce === handledRevealRef.current) return;
+    handledRevealRef.current = revealRequest.nonce;
+    open(revealRequest.path, revealRequest.line, true);
+    clearRevealRequest(revealRequest.nonce);
+  }, [revealRequest, sessionId, clearRevealRequest]);
+
+  useEffect(() => {
+    const editor = editorRef.current;
+    if (!pendingLine || !editor || !editable || openFile !== pendingLine.path) return;
+    setPendingLine(null);
+    const offset = lineStartOffset(content, pendingLine.line);
+    editor.focus();
+    editor.setSelectionRange(offset, offset);
+  }, [pendingLine, content, editable, openFile]);
 
   const save = () => {
     const buffer = editable && openKey ? useEditorBuffers.getState().buffers[openKey] : undefined;
@@ -311,13 +352,18 @@ export function FilePanel({ sessionId }: { sessionId: string }) {
         <div className="editor-bar">
           <span className="path">{openFile ?? "no file open"}</span>
           {editable && (
-            <button className="btn" style={{ fontSize: 11, padding: "3px 8px" }} onClick={save}>
+            <button className="btn" style={{ fontSize: "var(--t-2xs)", padding: "3px 8px" }} onClick={save}>
               Save
             </button>
           )}
-          {status && <span className="status">{status}</span>}
+          {openMissing ? (
+            <span className="status">File not found in this workspace: {openFile}</span>
+          ) : (
+            status && <span className="status">{status}</span>
+          )}
         </div>
         <textarea
+          ref={editorRef}
           value={content}
           onChange={(e) => {
             if (editable && openKey) useEditorBuffers.getState().update(openKey, e.target.value);
@@ -327,82 +373,6 @@ export function FilePanel({ sessionId }: { sessionId: string }) {
           className="editor"
         />
       </div>
-    </div>
-  );
-}
-
-const STATUS_BADGE: Record<string, string> = {
-  added: "A",
-  deleted: "D",
-  renamed: "R",
-  modified: "M"
-};
-
-export function DiffPanel({ sessionId }: { sessionId: string }) {
-  const [diff, setDiff] = useState<string | null>(null);
-  const [collapsed, setCollapsed] = useState<Set<string>>(new Set());
-
-  useEffect(() => {
-    setDiff(null);
-    setCollapsed(new Set());
-    window.cw
-      .turnDiff(sessionId, Date.now() - 24 * 3600 * 1000)
-      .then((d) => setDiff(d))
-      .catch((err: Error) => setDiff(`diff unavailable: ${err.message}`));
-  }, [sessionId]);
-
-  if (diff == null) return <div className="diff-empty">loading…</div>;
-  if (!diff || !diff.includes("diff --git")) {
-    return <pre className="diff">{diff || "(clean — no changes)"}</pre>;
-  }
-
-  const files = parseUnifiedDiff(diff);
-  const totalAdded = files.reduce((n, f) => n + f.added, 0);
-  const totalRemoved = files.reduce((n, f) => n + f.removed, 0);
-
-  const toggle = (path: string) => {
-    setCollapsed((prev) => {
-      const next = new Set(prev);
-      if (next.has(path)) next.delete(path);
-      else next.add(path);
-      return next;
-    });
-  };
-
-  return (
-    <div className="diff-list">
-      <div className="diff-summary">
-        {files.length} file{files.length === 1 ? "" : "s"} · <span className="add">+{totalAdded}</span>{" "}
-        <span className="del">−{totalRemoved}</span>
-      </div>
-      {files.map((f) => {
-        const shut = collapsed.has(f.path);
-        return (
-          <div key={f.path} className="diff-file">
-            <div className="diff-head" onClick={() => toggle(f.path)} title={f.path}>
-              <span className="tree-chevron">{shut ? <ChevronRight size={12} /> : <ChevronDown size={12} />}</span>
-              <FileIcon name={baseName(f.path)} size={14} />
-              <span className="diff-path">{f.path}</span>
-              <span className={`diff-badge ${f.status}`}>{STATUS_BADGE[f.status]}</span>
-              <span className="diff-stats">
-                <span className="add">+{f.added}</span> <span className="del">−{f.removed}</span>
-              </span>
-            </div>
-            {!shut && (
-              <div className="diff-body">
-                {f.lines.map((l, i) => (
-                  <div key={i} className={`diff-line ${l.type}`}>
-                    <span className="diff-gutter">
-                      {l.type === "add" ? "+" : l.type === "del" ? "−" : l.type === "hunk" ? "⋯" : ""}
-                    </span>
-                    <span className="diff-text">{l.text}</span>
-                  </div>
-                ))}
-              </div>
-            )}
-          </div>
-        );
-      })}
     </div>
   );
 }

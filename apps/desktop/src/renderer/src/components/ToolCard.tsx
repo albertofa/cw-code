@@ -1,5 +1,5 @@
-import { memo, useEffect, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
-import { Check, ChevronDown, ChevronRight, Circle, CircleDot, Monitor, TriangleAlert, Wrench, type LucideIcon } from "lucide-react";
+import { memo, useEffect, useId, useRef, useState, type ReactNode } from "react";
+import { Check, ChevronRight, CircleDashed, CircleDot, Monitor, ShieldAlert, Wrench, X, type LucideIcon } from "lucide-react";
 import type { ChatMessage } from "../stores/appStore.js";
 import { useAppStore } from "../stores/appStore.js";
 import {
@@ -8,44 +8,100 @@ import {
   extractFileDiff,
   extractFileDiffFromText,
   extractFileFragment,
+  formatDuration,
+  formatToolDuration,
   recoverToolInput,
   relativizeInText,
-  stripToolNamePrefix
+  stripToolNamePrefix,
+  toolSpanMs
 } from "./toolSummaries.js";
 import { formatFileSubject, looksLikeFileMention, shortenHomeInText, stripMentionMarker } from "./pathDisplay.js";
 import { FileIcon } from "./fileIcons.js";
 import { isPreviewablePath } from "./Markdown.js";
+import { useElapsed } from "./useElapsed.js";
+
+export type ToolStatus = "complete" | "error" | "running" | "waiting" | "pending";
+
+const STATUS_LABEL: Record<ToolStatus, string> = {
+  complete: "Done",
+  error: "Failed",
+  running: "Running",
+  waiting: "Waiting for approval",
+  pending: "Pending"
+};
+
+const STATUS_ICON: Record<Exclude<ToolStatus, "complete">, LucideIcon> = {
+  error: X,
+  running: CircleDot,
+  waiting: ShieldAlert,
+  pending: CircleDashed
+};
 
 function baseName(path: string): string {
   const i = Math.max(path.lastIndexOf("/"), path.lastIndexOf("\\"));
   return i >= 0 ? path.slice(i + 1) : path;
 }
 
-function LegacyHead({ name, text, open }: { name: string; text: string; open: boolean }) {
-  const firstLine = (text.split("\n")[0] ?? "").slice(0, 120) || "…";
+function ToolStatusIcon({ status, Icon }: { status: ToolStatus; Icon: LucideIcon }) {
+  const Glyph = status === "complete" ? Icon : STATUS_ICON[status];
+  const label = STATUS_LABEL[status];
   return (
-    <>
-      <span className="tool-action">{name}</span>
-      {!open && <span className="tool-subject">{firstLine}</span>}
-    </>
+    <span className={`tool-state ${status}`} role="img" aria-label={label} title={label}>
+      <Glyph size={13} strokeWidth={status === "error" ? 2.5 : 2} aria-hidden="true" />
+    </span>
   );
 }
 
-function ToolState({ state, Icon }: { state: "complete" | "error" | "running" | "pending"; Icon?: LucideIcon }) {
-  if (state === "complete") {
-    return (
-      <span className="tool-state complete" aria-hidden="true">
-        {Icon && <Icon size={13} />}
-      </span>
-    );
-  }
-  const label = state === "error" ? "Error" : state === "running" ? "Running" : "Pending";
-  const StateIcon = state === "error" ? TriangleAlert : state === "running" ? CircleDot : Circle;
+export function ToolRow({
+  status,
+  Icon,
+  verb,
+  open,
+  onToggle,
+  controls,
+  duration,
+  trailing,
+  children
+}: {
+  status: ToolStatus;
+  Icon: LucideIcon;
+  verb: string;
+  open: boolean;
+  onToggle: () => void;
+  controls: string;
+  duration?: string;
+  trailing?: ReactNode;
+  children?: ReactNode;
+}) {
   return (
-    <span className={`tool-state ${state}`} role="img" aria-label={label} title={label}>
-      <StateIcon size={13} aria-hidden="true" />
-    </span>
+    <div className="tool-line">
+      <button
+        type="button"
+        className="tool-row"
+        aria-expanded={open}
+        aria-controls={controls}
+        onClick={onToggle}
+      >
+        <ToolStatusIcon status={status} Icon={Icon} />
+        <span className="tool-verb">{verb}</span>
+        {children}
+        <span className={`tool-caret collapse-caret${open ? " open" : ""}`} aria-hidden="true">
+          <ChevronRight size={13} />
+        </span>
+        {duration !== undefined && <span className="tool-dur">{duration}</span>}
+      </button>
+      {trailing}
+    </div>
   );
+}
+
+function useApprovalWait(sessionId: string | undefined, toolName: string, running: boolean): boolean {
+  return useAppStore((s) => {
+    if (!running || sessionId === undefined) return false;
+    const pending = s.pendingApprovals[sessionId];
+    if (!pending || pending.length === 0) return false;
+    return pending.some((a) => a.toolName !== undefined && a.toolName.toLowerCase() === toolName);
+  });
 }
 
 export const ToolCard = memo(function ToolCard({
@@ -62,7 +118,9 @@ export const ToolCard = memo(function ToolCard({
   defaultOpen?: boolean;
 }) {
   const [open, setOpen] = useState(defaultOpen ?? false);
+  const detailId = useId();
   const name = message.toolName ?? "tool";
+  const lowerName = name.toLowerCase();
   const isError = message.isError === true;
   const done = message.toolDone === true || message.toolOutput !== undefined;
   const running = message.toolInput !== undefined && !done;
@@ -71,15 +129,19 @@ export const ToolCard = memo(function ToolCard({
     if (wasRunning.current && !running) setOpen(false);
     wasRunning.current = running;
   }, [running]);
-  const state = isError ? "error" : running ? "running" : done ? "complete" : "pending";
+  const waiting = useApprovalWait(sessionId, lowerName, running);
+  const elapsed = useElapsed(message.toolStartedAt, running);
+  const status: ToolStatus = isError ? "error" : waiting ? "waiting" : running ? "running" : done ? "complete" : "pending";
   const toolInput = message.toolInput ?? recoverToolInput(name, message.text);
   const summary = describeToolCall(name, toolInput);
   const fileDiff = extractFileDiff(name, toolInput) ?? extractFileDiffFromText(name, message.text);
   const MAX_DIFF_LINES = 120;
   const visibleDiff = fileDiff?.slice(0, MAX_DIFF_LINES) ?? [];
   const hiddenDiffCount = fileDiff && fileDiff.length > visibleDiff.length ? fileDiff.length - visibleDiff.length : 0;
+  const isShell = lowerName === "bash" || lowerName === "shell";
+  let subjectUnavailable = false;
   if (summary && !summary.subject) {
-    if (name.toLowerCase() === "bash" || name.toLowerCase() === "shell") {
+    if (isShell) {
       const command = extractCommandFragment(message.text);
       if (command) {
         const flat = command.replace(/\s+/g, " ").trim();
@@ -97,15 +159,15 @@ export const ToolCard = memo(function ToolCard({
   }
   if (summary && !summary.subject) {
     const rawDetail = stripToolNamePrefix(name, message.text).trim();
-    summary.subject = rawDetail && rawDetail.toLowerCase() !== name.toLowerCase()
+    const hasDetail = Boolean(rawDetail) && rawDetail.toLowerCase() !== lowerName;
+    subjectUnavailable = !hasDetail;
+    summary.subject = hasDetail
       ? (rawDetail.length > 90 ? `${rawDetail.slice(0, 89)}…` : rawDetail)
-      : name.toLowerCase() === "bash" || name.toLowerCase() === "shell"
+      : isShell
         ? "command details unavailable"
         : "target details unavailable";
     summary.subjectKind = "text";
   }
-  const lowerName = name.toLowerCase();
-  const isShell = lowerName === "bash" || lowerName === "shell";
   const homeDir = useAppStore((s) => s.homeDir);
   const home = homeDir ?? undefined;
   const formatText = (value: string): string =>
@@ -128,7 +190,7 @@ export const ToolCard = memo(function ToolCard({
             <span
               className={`worklog-dot ${t.status === "completed" ? "completed" : t.status === "in_progress" ? "in_progress" : "pending"}`}
             >
-              {t.status === "completed" && <Check size={11} strokeWidth={3.5} aria-hidden="true" />}
+              {t.status === "completed" && <Check size={10} strokeWidth={3.5} aria-hidden="true" />}
             </span>
             <span className="worklog-label" title={t.content}>
               {t.content}
@@ -146,15 +208,36 @@ export const ToolCard = memo(function ToolCard({
         : summary?.subject;
   const previewPath = summary?.subject ? stripMentionMarker(summary.subject) : undefined;
   const output = (message.toolOutput ?? "").slice(0, 2000);
+  const spanMs = done ? toolSpanMs([message]) : undefined;
+  const duration =
+    status === "waiting"
+      ? "needs approval"
+      : running
+        ? message.toolStartedAt !== undefined
+          ? formatDuration(elapsed)
+          : "running"
+        : spanMs !== undefined
+          ? formatToolDuration(spanMs)
+          : undefined;
+  const command = isShell && summary && !subjectUnavailable ? (summary.fullSubject ?? summary.subject) : undefined;
+  const canPreview =
+    summary?.subject !== undefined &&
+    summary.subjectKind === "file" &&
+    previewPath !== undefined &&
+    isPreviewablePath(previewPath) &&
+    sessionId !== undefined &&
+    onPreview !== undefined;
 
-  let head: ReactNode;
-  if (summary) {
-    head = (
+  let subject: ReactNode;
+  if (!summary) {
+    const firstLine = (stripToolNamePrefix(name, message.text).split("\n")[0] ?? "").slice(0, 120) || "…";
+    subject = !open && <span className="tool-subject">{firstLine}</span>;
+  } else {
+    subject = (
       <>
-        <span className="tool-action">{summary.verb}</span>
         {summary.subject && summary.subjectKind === "file" && (
           <span className="tool-subject file" title={summary.subject}>
-            <FileIcon name={baseName(displaySubject ?? summary.subject)} size={13} />
+            <FileIcon name={baseName(displaySubject ?? summary.subject)} size={12} />
             <span className="tool-subject-text">{displaySubject}</span>
           </span>
         )}
@@ -173,57 +256,54 @@ export const ToolCard = memo(function ToolCard({
             {m}
           </span>
         ))}
-        {summary.subject &&
-          summary.subjectKind === "file" &&
-          previewPath &&
-          isPreviewablePath(previewPath) &&
-          sessionId &&
-          onPreview && (
-            <button
-              className="icon-btn tool-preview-btn"
-              title="Preview rendered file"
-              aria-label="Preview rendered file"
-              onClick={(e: ReactMouseEvent<HTMLButtonElement>) => {
-                e.stopPropagation();
-                onPreview(previewPath);
-              }}
-            >
-              <Monitor size={13} />
-            </button>
-          )}
       </>
     );
-  } else {
-    head = <LegacyHead name={name} text={stripToolNamePrefix(name, message.text)} open={open} />;
   }
 
   return (
-    <div
-      className={`tool-card${isError ? " error" : ""}${running ? " running" : ""}`}
-      onClick={() => setOpen((o) => !o)}
-      title={open ? "Collapse" : "Expand"}
-    >
-      <div className="tool-head">
-        <ToolState state={state} Icon={summary?.Icon ?? Wrench} />
-        {head}
-        <span className="tool-caret" aria-hidden="true">{open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</span>
-      </div>
+    <div className={`tool-card ${status}${open ? " open" : ""}`}>
+      <ToolRow
+        status={status}
+        Icon={summary?.Icon ?? Wrench}
+        verb={summary?.verb ?? name}
+        open={open}
+        onToggle={() => setOpen((o) => !o)}
+        controls={detailId}
+        duration={duration}
+        trailing={
+          canPreview && (
+            <button
+              type="button"
+              className="icon-btn tool-side-btn"
+              title="Preview rendered file"
+              aria-label="Preview rendered file"
+              onClick={() => onPreview(previewPath)}
+            >
+              <Monitor size={13} />
+            </button>
+          )
+        }
+      >
+        {subject}
+      </ToolRow>
       {open && (
-        <div className="tool-detail" onClick={(e) => e.stopPropagation()}>
-          {summary?.fullSubject && (
-            <div className="tool-meta">
-              {formatText(summary.fullSubject)}
-            </div>
-          )}
+        <div id={detailId} className="tool-detail">
+          {summary?.fullSubject && !command && <div className="tool-meta">{formatText(summary.fullSubject)}</div>}
           {summary?.meta?.map((m) => (
             <div key={m} className="tool-meta">
               {formatText(m)}
             </div>
           ))}
+          {command && (
+            <div className="tool-cmd">
+              <span className="tool-cmd-prompt" aria-hidden="true">$</span>
+              <span className="tool-cmd-text">{formatText(command)}</span>
+            </div>
+          )}
           {!summary && <pre className="tool-output">{message.text}</pre>}
           {summary && running && (
             <div className="tool-pending">
-              <span className="pulse" /> Running…
+              <span className="pulse" /> {status === "waiting" ? "Waiting for approval…" : "Running…"}
             </div>
           )}
           {visibleDiff.length > 0 && (
@@ -242,7 +322,7 @@ export const ToolCard = memo(function ToolCard({
           )}
           {summary && done && output && (
             <>
-              <div className="tool-output-label">{isError ? "error" : "output"}</div>
+              <div className={`tool-output-label${isError ? " error" : ""}`}>{isError ? "error" : "output"}</div>
               <pre className="tool-output">{output}</pre>
             </>
           )}

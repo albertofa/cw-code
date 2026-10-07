@@ -62,13 +62,21 @@ export function mergeInboxItems(lists: PrSummary[][]): PrSummary[] {
   return merged;
 }
 
-export function cloneTargetPath(cloneRoot: string, ref: Pick<PrRef, "owner" | "repo">, homeDir: string = homedir()): string {
+function repoIdentity(owner: string, repo: string): string {
+  return `${owner}/${repo}`.toLowerCase();
+}
+
+export function cloneTargetPath(
+  cloneRoot: string,
+  ref: Pick<PrRef, "owner" | "repo">,
+  { includeOwner = true, homeDir = homedir() }: { includeOwner?: boolean; homeDir?: string } = {}
+): string {
   const trimmed = cloneRoot.trim();
   if (!trimmed || trimmed.startsWith("-")) throw new Error(`invalid clone root '${cloneRoot}'`);
   const expanded = expandHome(trimmed, homeDir);
   if (!isAbsolute(expanded)) throw new Error(`clone root must be an absolute path: '${cloneRoot}'`);
   const root = resolve(expanded);
-  const target = resolve(root, ref.owner, ref.repo);
+  const target = includeOwner ? resolve(root, ref.owner, ref.repo) : resolve(root, ref.repo);
   const rel = relative(root, target);
   if (rel === "" || rel === "." || rel.startsWith("..") || isAbsolute(rel)) {
     throw new Error(`invalid clone target for ${ref.owner}/${ref.repo}`);
@@ -90,7 +98,7 @@ export class PullRequestService {
   private inboxCache: { expiresAt: number; value: PrInboxResult } | null = null;
   private inboxInFlight: Promise<PrInboxResult> | null = null;
   private accountCache = new Map<string, { expiresAt: number; value: { account: GitHubAccountInfo; token: string } }>();
-  private cloneInFlight = new Map<string, Promise<Project>>();
+  private cloneInFlight = new Map<string, { identity: string; promise: Promise<Project> }>();
   private knownHeads = new Map<string, string>();
   private knownStates = new Map<string, PrSummary["state"]>();
   private knownUpdatedAts = new Map<string, number>();
@@ -221,13 +229,19 @@ export class PullRequestService {
 
   async clone(ref: PrRef): Promise<Project> {
     assertPrRef(ref);
-    const target = cloneTargetPath(this.settings().prCloneRoot, ref);
-    const inFlight = this.cloneInFlight.get(target);
-    if (inFlight) return inFlight;
+    const settings = this.settings();
+    const target = cloneTargetPath(settings.prCloneRoot, ref, { includeOwner: settings.prCloneIncludeOwner });
+    const identity = repoIdentity(ref.owner, ref.repo);
+    for (;;) {
+      const inFlight = this.cloneInFlight.get(target);
+      if (!inFlight) break;
+      if (inFlight.identity === identity) return inFlight.promise;
+      await inFlight.promise.catch(() => undefined);
+    }
     const promise = this.computeClone(ref, target).finally(() => {
-      if (this.cloneInFlight.get(target) === promise) this.cloneInFlight.delete(target);
+      if (this.cloneInFlight.get(target)?.promise === promise) this.cloneInFlight.delete(target);
     });
-    this.cloneInFlight.set(target, promise);
+    this.cloneInFlight.set(target, { identity, promise });
     return promise;
   }
 
@@ -235,7 +249,12 @@ export class PullRequestService {
     if (existsSync(target)) {
       const repositoryRoot = await this.git.repositoryRoot(target).catch(() => null);
       if (repositoryRoot && samePath(repositoryRoot, target)) {
-        return this.addProject(target);
+        const remote = await this.git.githubRemote(target).catch(() => null);
+        if (remote && remote.host === GH_HOST && repoIdentity(remote.owner, remote.repository) === repoIdentity(ref.owner, ref.repo)) {
+          return this.addProject(target);
+        }
+        const occupant = remote ? `${remote.owner}/${remote.repository}` : "an unrecognized GitHub remote";
+        throw new Error(`'${target}' already exists and belongs to ${occupant}, not ${ref.owner}/${ref.repo}`);
       }
       let entries: string[];
       try {

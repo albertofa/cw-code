@@ -1,25 +1,7 @@
-import { memo, useState } from "react";
-import { ChevronDown, ChevronRight, Circle, CircleDot, TriangleAlert, type LucideIcon } from "lucide-react";
+import { memo, useId, useState } from "react";
 import type { ChatMessage } from "../stores/appStore.js";
-import { summarizeToolGroup } from "./toolSummaries.js";
-import { ToolCard } from "./ToolCard.js";
-
-function GroupState({ status, Icon }: { status: "complete" | "error" | "running" | "pending"; Icon: LucideIcon }) {
-  if (status === "complete") {
-    return (
-      <span className="tool-state complete" aria-hidden="true">
-        <Icon size={13} />
-      </span>
-    );
-  }
-  const label = status === "error" ? "Error" : status === "running" ? "Running" : "Pending";
-  const StateIcon = status === "error" ? TriangleAlert : status === "running" ? CircleDot : Circle;
-  return (
-    <span className={`tool-state ${status}`} role="img" aria-label={label} title={label}>
-      <StateIcon size={13} aria-hidden="true" />
-    </span>
-  );
-}
+import { formatToolDuration, summarizeToolGroup, toolSpanMs } from "./toolSummaries.js";
+import { ToolCard, ToolRow } from "./ToolCard.js";
 
 export const ToolGroupCard = memo(function ToolGroupCard({
   messages,
@@ -34,28 +16,28 @@ export const ToolGroupCard = memo(function ToolGroupCard({
 }) {
   const summary = summarizeToolGroup(messages);
   const [open, setOpen] = useState(false);
+  const itemsId = useId();
   if (!summary) return null;
-  const TypeIcon = summary.Icon;
-  const statusLabel = summary.status === "complete" ? "Completed" : summary.status === "error" ? "Error" : summary.status === "running" ? "Running" : "Pending";
+  const space = summary.text.indexOf(" ");
+  const verb = space > 0 ? summary.text.slice(0, space) : summary.text;
+  const rest = space > 0 ? summary.text.slice(space + 1) : "";
+  const spanMs = summary.hasRunning ? undefined : toolSpanMs(messages);
 
   return (
-    <div
-      className={`tool-group${summary.status === "running" ? " running" : ""}${summary.status === "error" ? " error" : ""}`}
-      title={open ? "Collapse" : "Expand"}
-    >
-      <div
-        className="tool-head"
-        onClick={() => setOpen(!open)}
-        role="button"
-        aria-expanded={open}
-        aria-label={`${summary.text} — ${statusLabel}`}
+    <div className={`tool-group ${summary.status}${open ? " open" : ""}`}>
+      <ToolRow
+        status={summary.status}
+        Icon={summary.Icon}
+        verb={verb}
+        open={open}
+        onToggle={() => setOpen(!open)}
+        controls={itemsId}
+        duration={spanMs !== undefined ? formatToolDuration(spanMs) : undefined}
       >
-        <GroupState status={summary.status} Icon={TypeIcon} />
-        <span className="tool-action tool-group-text">{summary.text}</span>
-        <span className="tool-caret" aria-hidden="true">{open ? <ChevronDown size={14} /> : <ChevronRight size={14} />}</span>
-      </div>
+        {rest && <span className="tool-group-text">{rest}</span>}
+      </ToolRow>
       {open && (
-        <div className="tool-group-items">
+        <div id={itemsId} className="tool-group-items">
           {messages.map((m) => (
             <ToolCard
               key={m.id}

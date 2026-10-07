@@ -29,11 +29,14 @@ import type {
   UpdateState
 } from "../cw.js";
 import type { DirtyBuffer } from "./editorBuffers.js";
+import { usePanelStore } from "./panelStore.js";
 import { appendAssistantText, appendReasoningText, closeReasoning, upsertToolCall } from "../components/chatMessages.js";
+import { DEFAULT_APPEARANCE, appearanceOf, type AppearancePrefs } from "../appearanceFonts.js";
 import { getLastModel, setLastModel } from "../components/lastModel.js";
+import { defaultModelPatch } from "../components/modelMenus.js";
 import { formatDuration, mergeToolPairs } from "../components/toolSummaries.js";
 import { expiredHoldingIds } from "../components/workingSet.js";
-import { defaultNewSessionProjectId, discoveredOwnerId, discoveryProjectId } from "../components/projectRecency.js";
+import { defaultNewSessionProjectId } from "../components/projectRecency.js";
 import { useNotifs } from "../components/Notifications.js";
 import { ipcErrorMessage } from "../components/ipcError.js";
 import { shouldApplyUpdateState } from "./updateThrottle.js";
@@ -98,6 +101,14 @@ function reasoningExpandedFrom(settings: AppSettings): Record<DriverName, boolea
   };
 }
 
+function defaultModelsFrom(settings: AppSettings): Record<DriverName, string> {
+  return {
+    claude: settings.claudeDefaultModel,
+    opencode: settings.opencodeDefaultModel,
+    codex: settings.codexDefaultModel
+  };
+}
+
 function readComposerMirror(sessionId: string): ComposerPrefs | null {
   try {
     const raw = window.localStorage.getItem(`cw:composer:${sessionId}`);
@@ -146,9 +157,7 @@ interface AppState {
   shutdown: ShutdownUiState | null;
   projects: Project[];
   sessionsByProject: Record<string, Session[]>;
-  discoveredByProject: Record<string, Session[]>;
   activeProjectId: string | null;
-  projectFilter: string | "all";
   activeSessionId: string | null;
   messagesBySession: Record<string, ChatMessage[]>;
   todosBySession: Record<string, TodoItem[]>;
@@ -165,7 +174,6 @@ interface AppState {
   pendingQuestions: Record<string, QuestionRequest[]>;
   pendingPrefs: ComposerPrefs;
   pendingWorkspace: CreateSessionOptions;
-  setProjectFilter(filter: string | "all"): void;
   setPendingPrefs(prefs: ComposerPrefs): void;
   setPendingWorkspace(options: CreateSessionOptions): void;
   gitStatusBySession: Record<string, GitStatus>;
@@ -175,7 +183,9 @@ interface AppState {
   holdingAutoExpireEnabled: boolean;
   holdingHours: number;
   defaultUseWorktree: boolean;
+  appearance: AppearancePrefs;
   reasoningExpandedByDriver: Record<DriverName, boolean>;
+  defaultModelByDriver: Record<DriverName, string>;
   previewBySession: Record<string, { sessionId: string; path: string; basePath: string }>;
   openPreview(sessionId: string, path: string, basePath: string): void;
   closePreview(sessionId: string): void;
@@ -198,9 +208,8 @@ interface AppState {
   setComposerPrefs(sessionId: string, prefs: ComposerPrefs): Promise<void>;
   settingsVersion: number;
   saveSettings(patch: SettingsPatch): Promise<AppSettings>;
+  saveDefaultModel(driver: DriverName, id: string): Promise<void>;
   setProjectGitHubAccount(projectId: string, account: { host: string; login: string } | null): Promise<void>;
-  loadDiscovered(): Promise<void>;
-  importDiscovered(session: Session): Promise<void>;
   renameSession(sessionId: string, title: string): Promise<void>;
   regenerateSessionTitle(sessionId: string): Promise<void>;
   setSessionStatus(sessionId: string, status: SessionStatus, reason?: SessionStatusReason): Promise<void>;
@@ -308,9 +317,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   shutdown: null,
   projects: [],
   sessionsByProject: {},
-  discoveredByProject: {},
   activeProjectId: null,
-  projectFilter: "all",
   activeSessionId: null,
   messagesBySession: {},
   todosBySession: {},
@@ -336,7 +343,9 @@ export const useAppStore = create<AppState>((set, get) => ({
   holdingAutoExpireEnabled: false,
   holdingHours: 6,
   defaultUseWorktree: true,
+  appearance: DEFAULT_APPEARANCE,
   reasoningExpandedByDriver: { claude: false, opencode: false, codex: false },
+  defaultModelByDriver: { claude: "", opencode: "", codex: "" },
   updates: null,
   updateRestartPending: false,
 
@@ -384,12 +393,6 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   setPendingWorkspace(options: CreateSessionOptions) {
     set({ pendingWorkspace: { ...get().pendingWorkspace, ...options } });
-  },
-
-  setProjectFilter(filter: string | "all") {
-    if (filter === get().projectFilter) return;
-    set({ projectFilter: filter });
-    void get().loadDiscovered();
   },
 
   async refreshGitStatus(sessionId: string) {
@@ -442,7 +445,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       holdingAutoExpireEnabled: settings.holdingAutoExpireEnabled,
       holdingHours: settings.holdingHours,
       defaultUseWorktree: settings.defaultUseWorktree,
+      appearance: appearanceOf(settings),
       reasoningExpandedByDriver: reasoningExpandedFrom(settings),
+      defaultModelByDriver: defaultModelsFrom(settings),
       pendingWorkspace: { ...get().pendingWorkspace, ...defaultWorkspace(settings.defaultUseWorktree) }
     });
     void get().hydrateActiveTurns();
@@ -502,7 +507,6 @@ export const useAppStore = create<AppState>((set, get) => ({
       const ordered = [picked.id, ...all.filter((s) => s.id !== picked.id).map((s) => s.id)];
       void refreshGitStatusInBatches(ordered, (id) => get().refreshGitStatus(id));
     }
-    void get().loadDiscovered();
   },
 
   async addProject(rootPath: string) {
@@ -518,13 +522,11 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   async setPendingProject(projectId: string) {
-    const projectChanged = get().activeProjectId !== projectId;
     set({
       activeProjectId: projectId,
       activeSessionId: null,
       pendingWorkspace: defaultWorkspace(get().defaultUseWorktree)
     });
-    if (projectChanged) void get().loadDiscovered();
     if (get().sessionsByProject[projectId]) return;
     try {
       const sessions = await window.cw.listSessions(projectId);
@@ -539,40 +541,6 @@ export const useAppStore = create<AppState>((set, get) => ({
         message: `${name}: ${(err as Error).message}`
       });
     }
-  },
-
-  async loadDiscovered() {
-    const projectId = discoveryProjectId(get().projectFilter, get().activeProjectId);
-    if (!projectId) return;
-    try {
-      const discovered = await window.cw.listDiscovered(projectId);
-      set({ discoveredByProject: { ...get().discoveredByProject, [projectId]: discovered } });
-    } catch {
-    }
-  },
-
-  async importDiscovered(session: Session) {
-    const projectId = discoveredOwnerId(get().discoveredByProject, session);
-    if (!get().projects.some((p) => p.id === projectId)) {
-      throw new Error("The project for this CLI session is no longer registered.");
-    }
-    const projectChanged = get().activeProjectId !== projectId;
-    const imported = await window.cw.importSession(projectId, session.driver, session.resumeCursor, session.title);
-    set({
-      sessionsByProject: {
-        ...get().sessionsByProject,
-        [projectId]: [imported, ...(get().sessionsByProject[projectId] ?? [])]
-      },
-      discoveredByProject: {
-        ...get().discoveredByProject,
-        [projectId]: (get().discoveredByProject[projectId] ?? []).filter((d) => d.id !== session.id)
-      },
-      activeProjectId: projectId,
-      activeSessionId: imported.id,
-      pendingDriver: null
-    });
-    if (projectChanged) void get().loadDiscovered();
-    void get().ensureHistory(imported.id);
   },
 
   async renameSession(sessionId: string, title: string) {
@@ -701,11 +669,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const current = Object.values(byProject)
       .flat()
       .find((s) => s.id === sessionId);
-    if (current?.status === "done") {
-      void get().setSessionStatus(sessionId, "holding", "reopen-on-select").catch((err) =>
-        console.warn(`setSessionStatus failed for ${sessionId} -> holding: ${(err as Error).message}`)
-      );
-    } else if (current?.status === "resolved") {
+    if (current?.status === "resolved") {
       void get().setSessionStatus(sessionId, "idle", "reopen-on-select").catch((err) =>
         console.warn(`setSessionStatus failed for ${sessionId} -> idle: ${(err as Error).message}`)
       );
@@ -713,13 +677,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     const ownerId = Object.entries(byProject).find(([, list]) =>
       list.some((s) => s.id === sessionId)
     )?.[0];
-    const projectChanged = ownerId !== undefined && ownerId !== get().activeProjectId;
     set({
       activeSessionId: sessionId,
       pendingDriver: null,
       ...(ownerId && ownerId !== get().activeProjectId ? { activeProjectId: ownerId } : {})
     });
-    if (projectChanged) void get().loadDiscovered();
     void get().ensureHistory(sessionId);
     void get().ensureComposer(sessionId);
     void get().refreshGitStatus(sessionId);
@@ -730,7 +692,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const currentProjectId = get().activeProjectId;
     const projectId =
       currentProjectId ??
-      defaultNewSessionProjectId(get().projects, get().sessionsByProject, get().activeSessionId, get().projectFilter);
+      defaultNewSessionProjectId(get().projects, get().sessionsByProject, get().activeSessionId);
     const target = driver ?? get().lastDriver;
     const previous = get().pendingDriver ?? get().lastDriver;
     const currentModel = get().pendingPrefs.model;
@@ -740,17 +702,11 @@ export const useAppStore = create<AppState>((set, get) => ({
       } catch {
       }
     }
-    let restored: string | undefined;
-    try {
-      restored = getLastModel(target) ?? undefined;
-    } catch {
-      restored = undefined;
-    }
     set({
       pendingDriver: target,
       activeSessionId: null,
       pendingWorkspace: defaultWorkspace(get().defaultUseWorktree),
-      pendingPrefs: { ...get().pendingPrefs, model: restored }
+      pendingPrefs: { ...get().pendingPrefs, model: undefined }
     });
     if (projectId && projectId !== currentProjectId) void get().setPendingProject(projectId);
   },
@@ -765,19 +721,16 @@ export const useAppStore = create<AppState>((set, get) => ({
       } catch {
       }
     }
-    let restored: string | undefined;
-    try {
-      restored = getLastModel(driver) ?? undefined;
-    } catch {
-      restored = undefined;
-    }
-    set({ pendingDriver: driver, pendingPrefs: { ...get().pendingPrefs, model: restored } });
+    set({ pendingDriver: driver, pendingPrefs: { ...get().pendingPrefs, model: undefined } });
   },
 
   async sendPendingPrompt(prompt: string, attachments: string[] = [], command?: CommandInvocation) {
     const projectId = get().activeProjectId;
     const driver = get().pendingDriver ?? get().lastDriver;
-    const prefs = get().pendingPrefs;
+    const pendingPrefs = get().pendingPrefs;
+    const prefs = pendingPrefs.model
+      ? pendingPrefs
+      : { ...pendingPrefs, model: get().defaultModelByDriver[driver] || getLastModel(driver) || undefined };
     const workspace = get().pendingWorkspace;
     if (!projectId || (!prompt.trim() && attachments.length === 0)) return;
     if (pendingPromptInFlight) return;
@@ -922,9 +875,16 @@ export const useAppStore = create<AppState>((set, get) => ({
       holdingAutoExpireEnabled: saved.holdingAutoExpireEnabled,
       holdingHours: saved.holdingHours,
       defaultUseWorktree: saved.defaultUseWorktree,
-      reasoningExpandedByDriver: reasoningExpandedFrom(saved)
+      appearance: appearanceOf(saved),
+      reasoningExpandedByDriver: reasoningExpandedFrom(saved),
+      defaultModelByDriver: defaultModelsFrom(saved)
     });
     return saved;
+  },
+
+  async saveDefaultModel(driver: DriverName, id: string) {
+    const saved = await window.cw.setSettings(defaultModelPatch(driver, id));
+    set({ defaultModelByDriver: defaultModelsFrom(saved) });
   },
 
   async setProjectGitHubAccount(projectId: string, account: { host: string; login: string } | null) {
@@ -956,7 +916,6 @@ export const useAppStore = create<AppState>((set, get) => ({
         ...(stillHeld ? {} : { message: "The requested worktree no longer exists." })
       });
     }
-    const projectChanged = get().activeProjectId !== projectId;
     set({
       sessionsByProject: {
         ...get().sessionsByProject,
@@ -967,7 +926,6 @@ export const useAppStore = create<AppState>((set, get) => ({
       pendingDriver: null,
       lastDriver: driver
     });
-    if (projectChanged) void get().loadDiscovered();
     await get().ensureComposer(session.id);
     if (prefs) await get().setComposerPrefs(session.id, { ...prefs });
     void get().refreshGitStatus(session.id);
@@ -1053,7 +1011,14 @@ export const useAppStore = create<AppState>((set, get) => ({
     const sessionId = get().activeSessionId;
     const turnId = sessionId ? get().busyTurns[sessionId] : undefined;
     if (!turnId) return;
-    if (!isPendingTurn(turnId)) await window.cw.interrupt(turnId);
+    if (!isPendingTurn(turnId)) {
+      try {
+        await window.cw.interrupt(turnId);
+      } catch (err) {
+        useNotifs.getState().push({ kind: "error", title: "Could not stop the turn", message: ipcErrorMessage(err) });
+        return;
+      }
+    }
     const book = closeTurn(
       { busyTurns: get().busyTurns, turnStartedAt: get().turnStartedAt, turnDurations: get().turnDurations },
       sessionId ?? "",
@@ -1492,3 +1457,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ sessionsByProject: next });
   }
 }));
+
+useAppStore.subscribe((state, previous) => {
+  if (state.activeSessionId === previous.activeSessionId) return;
+  const panels = usePanelStore.getState();
+  panels.clearStaleDiffModeRequest(state.activeSessionId);
+  panels.clearStaleRevealRequest(state.activeSessionId);
+});

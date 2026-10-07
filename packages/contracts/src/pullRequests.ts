@@ -15,13 +15,20 @@ export type PrMergeable = "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
 
 export type PrBucket = "review" | "action" | "ready" | "waiting" | "merged";
 
+export interface PrAuthor {
+  login: string;
+  isBot: boolean;
+  name?: string;
+  avatarUrl?: string;
+}
+
 export interface PrSummary {
   ref: PrRef;
   url: string;
   title: string;
   state: "OPEN" | "CLOSED" | "MERGED";
   isDraft: boolean;
-  author: { login: string; isBot: boolean };
+  author: PrAuthor;
   viewerIsAuthor: boolean;
   reviewRequestedFromViewer: boolean;
   headRefName: string;

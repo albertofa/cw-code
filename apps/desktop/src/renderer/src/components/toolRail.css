@@ -1,0 +1,294 @@
+.rail {
+  width: 44px;
+  flex: none;
+  box-sizing: border-box;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 0 0 10px;
+  background: var(--bg);
+  box-shadow: inset 1px 0 0 var(--line);
+  min-height: 0;
+}
+
+.rail-drag {
+  width: 100%;
+  height: 48px;
+  flex: none;
+  -webkit-app-region: drag;
+}
+
+.rail-b {
+  position: relative;
+  width: 32px;
+  height: 32px;
+  flex: none;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.rail-b:hover:not(:disabled, .on) {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.rail-b:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+.rail-b.on {
+  background: var(--violet-soft);
+  color: var(--violet-ink);
+}
+
+.rail-b.on::before {
+  content: "";
+  position: absolute;
+  left: -6px;
+  top: 7px;
+  bottom: 7px;
+  width: 2px;
+  border-radius: 2px;
+  background: var(--violet);
+}
+
+.rail-b.on-soft {
+  color: var(--dim);
+}
+
+.rail-b.away::after,
+.rail-b.parked::after {
+  content: "";
+  position: absolute;
+  right: 4px;
+  bottom: 4px;
+  width: 5px;
+  height: 5px;
+  box-sizing: border-box;
+  border-radius: 50%;
+  background: var(--muted);
+}
+
+.rail-b.parked::after {
+  background: transparent;
+  box-shadow: inset 0 0 0 1px var(--muted);
+}
+
+.rail-badge {
+  position: absolute;
+  top: 1px;
+  right: 0;
+  min-width: 15px;
+  height: 15px;
+  box-sizing: border-box;
+  padding: 0 4px;
+  display: grid;
+  place-items: center;
+  border-radius: 8px;
+  background: var(--raised);
+  color: var(--dim);
+  box-shadow: 0 0 0 2px var(--bg);
+  font-size: var(--t-3xs);
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  pointer-events: none;
+}
+
+.rail-badge.run {
+  background: var(--success);
+  color: var(--on-success);
+}
+
+.rail-dot {
+  position: absolute;
+  top: 5px;
+  right: 5px;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  box-shadow: 0 0 0 2px var(--bg);
+  pointer-events: none;
+}
+
+.rail-dot.success {
+  background: var(--success);
+}
+
+.rail-dot.danger {
+  background: var(--danger);
+}
+
+.rail-dot.warning {
+  background: var(--warning);
+}
+
+.rail-sep {
+  width: 18px;
+  height: 1px;
+  flex: none;
+  margin: 4px 0;
+  background: var(--border);
+}
+
+.rail-end {
+  margin-top: auto;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+}
+
+.phead {
+  height: 40px;
+  flex: none;
+  box-sizing: border-box;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 100px 0 6px;
+  box-shadow: inset 0 -1px 0 var(--line);
+  -webkit-app-region: drag;
+  user-select: none;
+  container-type: inline-size;
+}
+
+.ph-tabs {
+  --ph-fade-start: 0px;
+  --ph-fade-end: 0px;
+  flex: 0 1 auto;
+  min-width: 0;
+  height: 100%;
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  overflow-x: auto;
+  overflow-y: hidden;
+  scrollbar-width: none;
+  -webkit-app-region: no-drag;
+}
+
+.ph-tabs.fade-start {
+  --ph-fade-start: 24px;
+}
+
+.ph-tabs.fade-end {
+  --ph-fade-end: 24px;
+}
+
+.ph-tabs:is(.fade-start, .fade-end) {
+  mask-image: linear-gradient(
+    to right,
+    transparent,
+    black var(--ph-fade-start),
+    black calc(100% - var(--ph-fade-end)),
+    transparent
+  );
+}
+
+.ph-tabs .tab {
+  flex: none;
+  height: 28px;
+  padding: 0 8px;
+  border-bottom: 0;
+  border-radius: 7px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.ph-tabs .tab:hover:not(.active) {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.ph-tabs .tab.active {
+  background: var(--violet-soft);
+  color: var(--text);
+}
+
+.ph-tabs .tab:focus-visible {
+  outline: 2px solid var(--violet-ink);
+  outline-offset: -2px;
+}
+
+.ph-tabs .tab-icon,
+.ph-tabs .tab-x {
+  transition: none;
+}
+
+.ph-tabs .tab:hover .tab-icon {
+  opacity: 1;
+}
+
+.ph-tabs .tab-x {
+  position: static;
+  order: 1;
+}
+
+.ph-tabs .tab.active .tab-x,
+.ph-tabs .tab:focus-visible .tab-x {
+  opacity: 1;
+}
+
+@container (max-width: 400px) {
+  .ph-tabs .tab:not(.active) .tab-label {
+    display: none;
+  }
+}
+
+@container (max-width: 240px) {
+  .ph-tabs .tab-label {
+    display: none;
+  }
+}
+
+.tab-driver {
+  display: inline-flex;
+  flex: none;
+}
+
+.phead .ph-m {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  font-size: var(--t-xs);
+  color: var(--faint);
+  white-space: nowrap;
+}
+
+.phead .ph-a {
+  margin-left: auto;
+  display: flex;
+  gap: 2px;
+}
+
+.phead .ph-btn {
+  width: 28px;
+  height: 28px;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--muted);
+  cursor: pointer;
+  -webkit-app-region: no-drag;
+}
+
+.phead .ph-btn:hover {
+  background: var(--hover);
+  color: var(--text);
+}
+
+body.right-overlay-dragging .right {
+  visibility: hidden;
+  pointer-events: none;
+}

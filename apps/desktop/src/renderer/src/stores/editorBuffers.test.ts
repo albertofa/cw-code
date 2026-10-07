@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import { bufferKey, useEditorBuffers } from "./editorBuffers.js";
+import { bufferKey, buffersForPaths, isDirtyBuffer, useEditorBuffers } from "./editorBuffers.js";
 
 const store = () => useEditorBuffers.getState();
 
@@ -91,6 +91,37 @@ describe("editorBuffers", () => {
     store().markSaved("missing", "x");
     store().discard("missing");
     store().unregister("missing");
+    expect(store().reloadClean("missing", "x")).toBe(false);
+    expect(store().markMissing("missing")).toBe(false);
     expect(store().buffers).toEqual({});
+  });
+
+  it("reloads and marks missing only clean buffers, never unsaved edits", () => {
+    const clean = store().register("sess_a", "clean.ts", "v1");
+    const dirty = store().register("sess_a", "dirty.ts", "v1");
+    store().update(dirty, "edited");
+    expect(store().reloadClean(clean, "v0")).toBe(true);
+    expect(store().reloadClean(dirty, "v0")).toBe(false);
+    expect(store().buffers[clean]).toMatchObject({ saved: "v0", content: "v0", refs: 1 });
+    expect(store().buffers[dirty]).toMatchObject({ saved: "v1", content: "edited" });
+    expect(store().markMissing(clean)).toBe(true);
+    expect(store().markMissing(dirty)).toBe(false);
+    expect(store().buffers[clean].missing).toBe(true);
+    expect(store().buffers[dirty].missing).toBeUndefined();
+    store().register("sess_a", "clean.ts", "back");
+    expect(store().buffers[clean]).toMatchObject({ saved: "back", content: "back", refs: 2 });
+    expect(store().buffers[clean].missing).toBeUndefined();
+  });
+
+  it("finds buffers for the given sessions and paths", () => {
+    const a = store().register("sess_a", "src/a.ts", "a");
+    store().register("sess_a", "src/other.ts", "o");
+    const b = store().register("sess_b", "src/a.ts", "b");
+    store().register("sess_c", "src/a.ts", "c");
+    const found = buffersForPaths(store().buffers, ["sess_a", "sess_b"], ["src/a.ts"]).map((match) => match.key).sort();
+    expect(found).toEqual([a, b].sort());
+    expect(isDirtyBuffer(store().buffers[a])).toBe(false);
+    store().update(a, "edited");
+    expect(isDirtyBuffer(store().buffers[a])).toBe(true);
   });
 });
