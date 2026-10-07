@@ -56,6 +56,8 @@ const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 const SHUTDOWN_REASONS: ShutdownReason[] = ["quit", "update"];
 const SHUTDOWN_TIMEOUT_MAX_MS = 120_000;
 const RENDERER_SHUTDOWN_ACK_MS = 5_000;
+const SESSION_SETTLE_INTERVAL_MS = 60_000;
+const SESSION_SETTLE_INITIAL_DELAY_MS = 5_000;
 
 function parseShutdownPrepare(args: unknown): ShutdownPrepareRequest {
   const request = (args && typeof args === "object" ? args : {}) as Record<string, unknown>;
@@ -114,6 +116,8 @@ let startupState: StartupState = { mode: "ready" };
 let quitApproved = false;
 let servicesDisposed = false;
 let shutdownAckTimer: NodeJS.Timeout | null = null;
+let sessionSettleTimer: NodeJS.Timeout | null = null;
+let sessionSettleInitialTimer: NodeJS.Timeout | null = null;
 
 function createUpdateService(settings: AppSettings): UpdateService {
   const logger = createUpdateLogFile({
@@ -144,7 +148,9 @@ function createServices(stores: { sessionStore: SessionStore; settingsStore: Set
     prHead: (ref) => pullRequests.knownHead(ref),
     prHeadRefresh: (ref) => pullRequests.refreshHead(ref),
     prState: (ref) => pullRequests.knownState(ref),
-    prUpdatedAt: (ref) => pullRequests.knownUpdatedAt(ref)
+    prStateRefresh: (ref) => pullRequests.refreshState(ref),
+    prUpdatedAt: (ref) => pullRequests.knownUpdatedAt(ref),
+    onResolved: (sessionId) => ptys.killSession(sessionId)
   });
   pullRequests = new PullRequestService(git, () => sessions.getSettings(), (rootPath) => sessions.addProject(rootPath));
   const ptys = new PtyPool(() => sessions.getSettings());
@@ -181,6 +187,7 @@ function applyUpdatePreferences(updates: UpdateService, settings: AppSettings): 
 
 function handleShutdownRecovered(failure: string | null): void {
   servicesDisposed = false;
+  startSessionSweeps();
   if (!mainWindow || mainWindow.isDestroyed()) {
     createWindow().catch((err: Error) => appendCrashLog(`could not reopen the window after shutdown recovery: ${err.message}`));
   }
@@ -207,9 +214,39 @@ function clearShutdownAck(): void {
   shutdownAckTimer = null;
 }
 
+function runSessionSweeps(): void {
+  const running = services;
+  if (!running || !running.shutdown.isIdle()) return;
+  void running.sessions.settleFinishedPrSessions();
+  void running.sessions.resolveExpiredIdleSessions();
+}
+
+function startSessionSweeps(): void {
+  stopSessionSweeps();
+  sessionSettleInitialTimer = setTimeout(() => {
+    sessionSettleInitialTimer = null;
+    runSessionSweeps();
+  }, SESSION_SETTLE_INITIAL_DELAY_MS);
+  sessionSettleInitialTimer.unref?.();
+  sessionSettleTimer = setInterval(runSessionSweeps, SESSION_SETTLE_INTERVAL_MS);
+  sessionSettleTimer.unref?.();
+}
+
+function stopSessionSweeps(): void {
+  if (sessionSettleInitialTimer) {
+    clearTimeout(sessionSettleInitialTimer);
+    sessionSettleInitialTimer = null;
+  }
+  if (sessionSettleTimer) {
+    clearInterval(sessionSettleTimer);
+    sessionSettleTimer = null;
+  }
+}
+
 function disposeServices(): void {
   if (!services || servicesDisposed) return;
   servicesDisposed = true;
+  stopSessionSweeps();
   try {
     services.sessions.flush();
   } catch (err) {
@@ -1079,6 +1116,7 @@ async function startApp(): Promise<void> {
     registerIpc(services);
     services.updates.start();
     registerShutdownIpc(services);
+    startSessionSweeps();
   } else {
     startupState = { mode: "recovery", issues: stores.issues, dataDir: userdataDir() };
     for (const issue of stores.issues) {

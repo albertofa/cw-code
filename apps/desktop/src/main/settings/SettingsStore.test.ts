@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
-import type { AppSettings, DriverKind, EffortLevel, PrWorkflow } from "@cw-code/contracts";
+import type { AppSettings, DriverKind, EffortLevel, PrFinishedSessionStatus, PrWorkflow } from "@cw-code/contracts";
 import { MetadataError } from "../storage/metadataDocument.js";
 import { DEFAULT_SETTINGS, SETTINGS_SCHEMA_VERSION, SettingsStore } from "./SettingsStore.js";
 
@@ -271,6 +271,52 @@ describe("SettingsStore", () => {
     const filePath = tempFilePath();
     writeFileSync(filePath, JSON.stringify({ holdingHours: 0 }), "utf8");
     expect(new SettingsStore(filePath).get()).toMatchObject({ holdingHours: 6, holdingAutoExpireEnabled: false });
+  });
+
+  it("includes PR finished-session defaults", () => {
+    const settings = new SettingsStore(tempFilePath()).get();
+    expect(settings.prFinishedSessionStatus).toBe("idle");
+    expect(settings.idleResolveAfterDays).toBe(30);
+  });
+
+  it("accepts every PR finished-session status and falls back on an invalid value", () => {
+    const store = new SettingsStore(tempFilePath());
+    for (const status of ["idle", "resolved", "archived", "none"] as PrFinishedSessionStatus[]) {
+      expect(store.set({ prFinishedSessionStatus: status }).prFinishedSessionStatus).toBe(status);
+    }
+    expect(store.set({ prFinishedSessionStatus: "bogus" as unknown as PrFinishedSessionStatus }).prFinishedSessionStatus).toBe("idle");
+  });
+
+  it("rounds and clamps the idle resolve delay", () => {
+    const store = new SettingsStore(tempFilePath());
+    expect(store.set({ idleResolveAfterDays: 0 }).idleResolveAfterDays).toBe(0);
+    expect(store.set({ idleResolveAfterDays: -5 }).idleResolveAfterDays).toBe(0);
+    expect(store.set({ idleResolveAfterDays: 500 }).idleResolveAfterDays).toBe(365);
+    expect(store.set({ idleResolveAfterDays: 9.6 }).idleResolveAfterDays).toBe(10);
+    expect(store.set({ idleResolveAfterDays: Number.NaN }).idleResolveAfterDays).toBe(30);
+    expect(store.set({ idleResolveAfterDays: Number.POSITIVE_INFINITY }).idleResolveAfterDays).toBe(30);
+  });
+
+  it("round-trips PR finished-session settings", () => {
+    const filePath = tempFilePath();
+    const store = new SettingsStore(filePath);
+    const updated = store.set({ prFinishedSessionStatus: "archived", idleResolveAfterDays: 0 });
+    expect(updated).toMatchObject({ prFinishedSessionStatus: "archived", idleResolveAfterDays: 0 });
+    expect(new SettingsStore(filePath).get()).toEqual(updated);
+  });
+
+  it("repairs invalid PR finished-session settings from disk without touching other settings", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const filePath = tempFilePath();
+    writeFileSync(filePath, JSON.stringify({ schemaVersion: 1, holdingHours: 5, prFinishedSessionStatus: 3, idleResolveAfterDays: "soon" }), "utf8");
+
+    expect(new SettingsStore(filePath).get()).toMatchObject({
+      holdingHours: 5,
+      prFinishedSessionStatus: "idle",
+      idleResolveAfterDays: 30
+    });
+    expect(existsSync(`${filePath}.before-repair.bak`)).toBe(true);
+    warn.mockRestore();
   });
 
   it("includes auto-title defaults", () => {

@@ -36,7 +36,6 @@ import { getLastModel, setLastModel } from "../components/lastModel.js";
 import { defaultModelPatch } from "../components/modelMenus.js";
 import { formatDuration, mergeToolPairs } from "../components/toolSummaries.js";
 import { expiredHoldingIds } from "../components/workingSet.js";
-import { mergedPrBelongsToSession } from "../components/sessionPrLinks.js";
 import { defaultNewSessionProjectId } from "../components/projectRecency.js";
 import { useNotifs } from "../components/Notifications.js";
 import { ipcErrorMessage } from "../components/ipcError.js";
@@ -400,18 +399,6 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       const status = await window.cw.getGitStatus(sessionId);
       set({ gitStatusBySession: { ...get().gitStatusBySession, [sessionId]: status } });
-      if (status.pullRequest?.state === "MERGED") {
-        const current = Object.values(get().sessionsByProject)
-          .flat()
-          .find((s) => s.id === sessionId);
-        if (current && (current.status === "holding" || current.status === "done") && sessionId !== get().activeSessionId) {
-          if (mergedPrBelongsToSession(status.pullRequest, current)) {
-            void get().setSessionStatus(sessionId, "idle", "merged-pr").catch((err) =>
-              console.warn(`setSessionStatus failed for ${sessionId} -> idle: ${(err as Error).message}`)
-            );
-          }
-        }
-      }
     } catch {
       // Git errors are rendered by the session-level GitBar when selected.
     }
@@ -482,13 +469,20 @@ export const useAppStore = create<AppState>((set, get) => ({
       sessionsByProject[p.id] = lists[i];
     });
     const all = Object.values(sessionsByProject).flat();
-    const picked = all
+    const candidates = all
       .filter((s) => s.status !== "archived")
-      .sort((a, b) => b.updatedAt - a.updatedAt)[0];
+      .sort((a, b) => b.updatedAt - a.updatedAt);
+    const picked = candidates.find((s) => !s.autoResolved) ?? null;
     if (!picked) {
+      const fallback = candidates[0];
+      const fallbackOwnerId = fallback
+        ? fallback.projectId ??
+          projects.find((p) => (sessionsByProject[p.id] ?? []).some((s) => s.id === fallback.id))?.id ??
+          projects[0].id
+        : projects[0].id;
       set({
         sessionsByProject,
-        activeProjectId: projects[0].id,
+        activeProjectId: fallbackOwnerId,
         activeSessionId: null,
         pendingDriver: get().lastDriver
       });
@@ -506,6 +500,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       if (picked.status === "resolved") {
         void get().setSessionStatus(picked.id, "idle", "reopen-on-restore").catch((err) =>
           console.warn(`setSessionStatus failed for ${picked.id} -> idle: ${(err as Error).message}`)
+        );
+      } else if (picked.status === "done") {
+        void get().setSessionStatus(picked.id, "holding", "reopen-on-restore").catch((err) =>
+          console.warn(`setSessionStatus failed for ${picked.id} -> holding: ${(err as Error).message}`)
         );
       }
       void get().ensureHistory(picked.id);

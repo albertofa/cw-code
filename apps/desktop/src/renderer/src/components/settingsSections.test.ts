@@ -37,6 +37,8 @@ function settingsFixture(overrides: Partial<AppSettings> = {}): AppSettings {
     defaultUseWorktree: true,
     holdingAutoExpireEnabled: true,
     holdingHours: 24,
+    prFinishedSessionStatus: "idle",
+    idleResolveAfterDays: 30,
     autoTitleEnabled: true,
     autoTitleDriver: "claude",
     autoTitleModel: "",

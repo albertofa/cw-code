@@ -48,6 +48,8 @@ const SETTING_OWNER: Record<keyof AppSettings, SettingsNavId> = {
   defaultUseWorktree: "sourceControl",
   holdingAutoExpireEnabled: "general",
   holdingHours: "general",
+  prFinishedSessionStatus: "general",
+  idleResolveAfterDays: "general",
   autoTitleEnabled: "general",
   autoTitleDriver: "general",
   autoTitleModel: "general",

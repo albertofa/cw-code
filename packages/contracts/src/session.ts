@@ -22,10 +22,11 @@ export type SessionStatusReason =
   | "reopen-on-select"
   | "reopen-on-restore"
   | "turn-seen"
-  | "merged-pr"
+  | "pr-finished"
   | "app-restart-holding"
   | "app-restart-idle"
   | "holding-expired"
+  | "idle-expired"
   | "unknown";
 
 export interface Project {
@@ -53,6 +54,10 @@ export interface SessionMeta {
   effectivePermissionMode?: string;
   /** The isolated checkout used by this session. Older/imported sessions omit it. */
   worktreePath?: string;
+  /** When the session last entered the idle status. */
+  idleSince?: number;
+  /** True when the session was resolved by an automatic sweep rather than by the user. */
+  autoResolved?: boolean;
   /** Last known branch. Live Git status remains the source of truth. */
   branch?: string;
   prs?: SessionPrLink[];

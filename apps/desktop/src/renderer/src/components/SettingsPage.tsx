@@ -226,6 +226,33 @@ function GeneralSettings() {
             <span>hours</span>
           </span>
         </SettingsRow>
+        <SettingsRow label="When a linked pull request is merged or closed" hint="A session in Holding or Done moves to this status." htmlFor="sp-pr-finished-status">
+          <select
+            id="sp-pr-finished-status"
+            className="field sp-select"
+            value={draft.prFinishedSessionStatus}
+            onChange={(e) => set({ prFinishedSessionStatus: e.target.value as AppSettings["prFinishedSessionStatus"] })}
+          >
+            <option value="idle">Go idle</option>
+            <option value="resolved">Resolve</option>
+            <option value="archived">Archive</option>
+            <option value="none">Do nothing</option>
+          </select>
+        </SettingsRow>
+        <SettingsRow label="Resolve idle sessions after" hint="Days a session stays idle before resolving. 0 disables." htmlFor="sp-idle-resolve-days">
+          <span className="sp-number">
+            <input
+              id="sp-idle-resolve-days"
+              className="field"
+              type="number"
+              min={0}
+              max={365}
+              value={draft.idleResolveAfterDays}
+              onChange={(e) => set({ idleResolveAfterDays: Number(e.target.value) })}
+            />
+            <span>days</span>
+          </span>
+        </SettingsRow>
       </SettingsGroup>
 
       <SettingsGroup title="About">

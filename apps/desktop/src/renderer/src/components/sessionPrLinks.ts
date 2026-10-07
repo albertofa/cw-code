@@ -42,16 +42,6 @@ export function prRefFromUrl(url: string): PrRef | null {
   return { host: match[1].toLowerCase(), owner: match[2], repo: match[3], number };
 }
 
-export function mergedPrBelongsToSession(
-  pullRequest: GitPullRequest | null,
-  session: (LinkedSession & { worktreePath?: string }) | undefined
-): boolean {
-  if (!pullRequest) return false;
-  if (session?.worktreePath) return true;
-  const ref = prRefFromUrl(pullRequest.url);
-  return ref !== null && linkFor(session, ref) !== undefined;
-}
-
 export function prSummaryLookup(inboxItems: PrSummary[], detailByKey: Record<string, PrDetail>): Map<string, PrSummary> {
   const byKey = new Map<string, PrSummary>(Object.entries(detailByKey));
   for (const item of inboxItems) byKey.set(prKey(item.ref), item);
