@@ -56,26 +56,42 @@ describe("cloneTargetPath", () => {
   const home = resolve("/home/tester");
 
   it("expands ~ against the given home directory and appends owner/repo", () => {
-    const target = cloneTargetPath("~/.cw-code/repos", { owner: "acme", repo: "widgets" }, home);
+    const target = cloneTargetPath("~/.cw-code/repos", { owner: "acme", repo: "widgets" }, { homeDir: home });
     expect(target).toBe(join(home, ".cw-code", "repos", "acme", "widgets"));
   });
 
   it("leaves an absolute clone root untouched", () => {
     const root = resolve("/repos");
-    const target = cloneTargetPath(root, { owner: "acme", repo: "widgets" }, home);
+    const target = cloneTargetPath(root, { owner: "acme", repo: "widgets" }, { homeDir: home });
+    expect(target).toBe(join(root, "acme", "widgets"));
+  });
+
+  it("omits the owner folder when includeOwner is false", () => {
+    const root = resolve("/repos");
+    const target = cloneTargetPath(root, { owner: "acme", repo: "widgets" }, { includeOwner: false, homeDir: home });
+    expect(target).toBe(join(root, "widgets"));
+  });
+
+  it("keeps the owner folder when includeOwner is true", () => {
+    const root = resolve("/repos");
+    const target = cloneTargetPath(root, { owner: "acme", repo: "widgets" }, { includeOwner: true, homeDir: home });
     expect(target).toBe(join(root, "acme", "widgets"));
   });
 
   it("rejects a relative clone root", () => {
-    expect(() => cloneTargetPath("repos", { owner: "acme", repo: "widgets" }, "C:\\Users\\tester")).toThrow();
+    expect(() => cloneTargetPath("repos", { owner: "acme", repo: "widgets" }, { homeDir: "C:\\Users\\tester" })).toThrow();
   });
 
   it("rejects a clone root starting with a dash", () => {
-    expect(() => cloneTargetPath("-rf", { owner: "acme", repo: "widgets" }, "C:\\Users\\tester")).toThrow();
+    expect(() => cloneTargetPath("-rf", { owner: "acme", repo: "widgets" }, { homeDir: "C:\\Users\\tester" })).toThrow();
   });
 
   it("rejects a repo segment that would escape the clone root", () => {
-    expect(() => cloneTargetPath("C:\\repos", { owner: "acme", repo: ".." }, "C:\\Users\\tester")).toThrow();
+    expect(() => cloneTargetPath("C:\\repos", { owner: "acme", repo: ".." }, { homeDir: "C:\\Users\\tester" })).toThrow();
+  });
+
+  it("rejects an owner segment that would escape the clone root when included", () => {
+    expect(() => cloneTargetPath("C:\\repos", { owner: "..", repo: "widgets" }, { homeDir: "C:\\Users\\tester" })).toThrow();
   });
 });
 

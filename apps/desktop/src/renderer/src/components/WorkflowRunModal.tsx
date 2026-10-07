@@ -71,9 +71,10 @@ function isTextEntry(target: EventTarget | null): boolean {
   return target instanceof HTMLElement && (target.closest(".menu-panel") !== null || target.matches("textarea, input, select"));
 }
 
-function clonePathHint(root: string, ref: PrRef): string {
+function clonePathHint(root: string, ref: PrRef, includeOwner: boolean): string {
   const sep = root.includes("\\") ? "\\" : "/";
-  return `${root.replace(/[\\/]+$/, "")}${sep}${ref.owner}${sep}${ref.repo}`;
+  const base = root.replace(/[\\/]+$/, "");
+  return includeOwner ? `${base}${sep}${ref.owner}${sep}${ref.repo}` : `${base}${sep}${ref.repo}`;
 }
 
 function Segment<T extends string>({
@@ -466,7 +467,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
                 </span>
                 <span className="wf-run-muted">It isn't a project yet, so the session needs a local copy first.</span>
                 {settings && (
-                  <span className="wf-run-path">{shortenHome(clonePathHint(settings.prCloneRoot, ref), homeDir ?? undefined)}</span>
+                  <span className="wf-run-path">{shortenHome(clonePathHint(settings.prCloneRoot, ref, settings.prCloneIncludeOwner), homeDir ?? undefined)}</span>
                 )}
                 {stage === "clone" && (
                   <span className="wf-run-status">

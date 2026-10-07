@@ -518,6 +518,8 @@ export interface AppSettings {
   autoTitleEffort: EffortLevel;
   prRefreshIntervalSeconds: number;
   prCloneRoot: string;
+  /** Append the repository owner as a folder under the clone root. */
+  prCloneIncludeOwner: boolean;
   prAttributionEnabled: boolean;
   prAttributionText: string;
   prWorkflows: PrWorkflow[];

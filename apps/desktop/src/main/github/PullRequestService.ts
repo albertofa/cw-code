@@ -61,13 +61,17 @@ export function mergeInboxItems(lists: PrSummary[][]): PrSummary[] {
   return merged;
 }
 
-export function cloneTargetPath(cloneRoot: string, ref: Pick<PrRef, "owner" | "repo">, homeDir: string = homedir()): string {
+export function cloneTargetPath(
+  cloneRoot: string,
+  ref: Pick<PrRef, "owner" | "repo">,
+  { includeOwner = true, homeDir = homedir() }: { includeOwner?: boolean; homeDir?: string } = {}
+): string {
   const trimmed = cloneRoot.trim();
   if (!trimmed || trimmed.startsWith("-")) throw new Error(`invalid clone root '${cloneRoot}'`);
   const expanded = expandHome(trimmed, homeDir);
   if (!isAbsolute(expanded)) throw new Error(`clone root must be an absolute path: '${cloneRoot}'`);
   const root = resolve(expanded);
-  const target = resolve(root, ref.owner, ref.repo);
+  const target = includeOwner ? resolve(root, ref.owner, ref.repo) : resolve(root, ref.repo);
   const rel = relative(root, target);
   if (rel === "" || rel === "." || rel.startsWith("..") || isAbsolute(rel)) {
     throw new Error(`invalid clone target for ${ref.owner}/${ref.repo}`);
@@ -219,7 +223,8 @@ export class PullRequestService {
 
   async clone(ref: PrRef): Promise<Project> {
     assertPrRef(ref);
-    const target = cloneTargetPath(this.settings().prCloneRoot, ref);
+    const settings = this.settings();
+    const target = cloneTargetPath(settings.prCloneRoot, ref, { includeOwner: settings.prCloneIncludeOwner });
     const inFlight = this.cloneInFlight.get(target);
     if (inFlight) return inFlight;
     const promise = this.computeClone(ref, target).finally(() => {

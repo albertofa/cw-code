@@ -54,6 +54,7 @@ const SETTING_OWNER: Record<keyof AppSettings, SettingsNavId> = {
   autoTitleEffort: "general",
   prRefreshIntervalSeconds: "prWorkflows",
   prCloneRoot: "prWorkflows",
+  prCloneIncludeOwner: "prWorkflows",
   prAttributionEnabled: "prWorkflows",
   prAttributionText: "prWorkflows",
   prWorkflows: "prWorkflows",

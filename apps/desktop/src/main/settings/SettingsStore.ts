@@ -97,6 +97,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   autoTitleEffort: "low",
   prRefreshIntervalSeconds: 120,
   prCloneRoot: "~/.cw-code/repos",
+  prCloneIncludeOwner: true,
   prAttributionEnabled: true,
   prAttributionText: "— drafted with {{harness}} in cw-code",
   prWorkflows: defaultPrWorkflows(),
@@ -214,6 +215,7 @@ function sanitize(patch: SettingsPatch): SettingsPatch {
   if (patch.prCloneRoot !== undefined) {
     out.prCloneRoot = (typeof patch.prCloneRoot === "string" && patch.prCloneRoot.trim()) || DEFAULT_SETTINGS.prCloneRoot;
   }
+  if (patch.prCloneIncludeOwner !== undefined) out.prCloneIncludeOwner = patch.prCloneIncludeOwner === true;
   if (patch.prAttributionEnabled !== undefined) out.prAttributionEnabled = patch.prAttributionEnabled === true;
   if (patch.prAttributionText !== undefined) {
     out.prAttributionText =

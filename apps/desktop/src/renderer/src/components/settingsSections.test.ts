@@ -43,6 +43,7 @@ function settingsFixture(overrides: Partial<AppSettings> = {}): AppSettings {
     autoTitleEffort: "low",
     prRefreshIntervalSeconds: 120,
     prCloneRoot: "",
+    prCloneIncludeOwner: true,
     prAttributionEnabled: true,
     prAttributionText: "— {{harness}} via cw-code",
     prWorkflows: [
