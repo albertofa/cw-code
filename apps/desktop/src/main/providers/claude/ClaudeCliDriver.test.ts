@@ -25,6 +25,8 @@ const SETTINGS: AppSettings = {
   githubCliBinaryPath: "gh",
   sourceControlRefreshIntervalSeconds: 30,
   defaultUseWorktree: true,
+  prFinishedSessionStatus: "idle",
+  idleResolveAfterDays: 30,
   holdingHours: 6,
   holdingAutoExpireEnabled: false,
   autoTitleEnabled: true,

@@ -16,6 +16,7 @@ import type {
   PrCiState,
   PrCommit,
   PrDetail,
+  PrFinishedSessionStatus,
   PrInboxResult,
   ProjectGitHubRepo,
   PrLinkOrigin,
@@ -466,6 +467,8 @@ export interface AppSettings {
   githubCliBinaryPath: string;
   sourceControlRefreshIntervalSeconds: number;
   defaultUseWorktree: boolean;
+  prFinishedSessionStatus: PrFinishedSessionStatus;
+  idleResolveAfterDays: number;
   holdingAutoExpireEnabled: boolean;
   /** Hours a session stays in the holding state before returning to idle. */
   holdingHours: number;

@@ -1,6 +1,14 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import type { AppSettings, PrSuggestCondition, PrWorkflow, PrWorkflowIcon, PrWorkspaceChoice, SettingsPatch } from "@cw-code/contracts";
+import type {
+  AppSettings,
+  PrFinishedSessionStatus,
+  PrSuggestCondition,
+  PrWorkflow,
+  PrWorkflowIcon,
+  PrWorkspaceChoice,
+  SettingsPatch
+} from "@cw-code/contracts";
 import { CLAUDE_CURATED_MODELS } from "../providers/claude/ClaudeCliDriver.js";
 import { writeFileAtomic } from "../storage/atomicFile.js";
 import { backupBeforeRepair } from "../storage/backups.js";
@@ -24,6 +32,7 @@ const VALID_PR_CONDITIONS: readonly PrSuggestCondition[] = [
   "draft"
 ];
 const VALID_PR_WORKSPACES: readonly PrWorkspaceChoice[] = ["checkout", "worktree", "linked"];
+const VALID_PR_FINISHED_STATUSES: readonly PrFinishedSessionStatus[] = ["idle", "resolved", "archived", "none"];
 
 function sanitizeWorkflowEntry(entry: unknown): PrWorkflow | null {
   if (!entry || typeof entry !== "object") return null;
@@ -87,6 +96,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   githubCliBinaryPath: defaultCliBinaryPath("gh"),
   sourceControlRefreshIntervalSeconds: 30,
   defaultUseWorktree: true,
+  prFinishedSessionStatus: "idle",
+  idleResolveAfterDays: 30,
   holdingAutoExpireEnabled: false,
   holdingHours: 6,
   autoTitleEnabled: true,
@@ -155,6 +166,15 @@ function sanitize(patch: SettingsPatch): SettingsPatch {
     out.sourceControlRefreshIntervalSeconds = Number.isFinite(value) ? Math.min(3600, Math.max(5, value)) : 30;
   }
   if (patch.defaultUseWorktree !== undefined) out.defaultUseWorktree = patch.defaultUseWorktree === true;
+  if (patch.prFinishedSessionStatus !== undefined) {
+    out.prFinishedSessionStatus = VALID_PR_FINISHED_STATUSES.includes(patch.prFinishedSessionStatus)
+      ? patch.prFinishedSessionStatus
+      : DEFAULT_SETTINGS.prFinishedSessionStatus;
+  }
+  if (patch.idleResolveAfterDays !== undefined) {
+    const value = Math.round(Number(patch.idleResolveAfterDays));
+    out.idleResolveAfterDays = Number.isFinite(value) ? Math.min(365, Math.max(0, value)) : 30;
+  }
   if (patch.holdingAutoExpireEnabled !== undefined) out.holdingAutoExpireEnabled = patch.holdingAutoExpireEnabled === true;
   if (patch.holdingHours !== undefined) {
     const value = Math.round(Number(patch.holdingHours));

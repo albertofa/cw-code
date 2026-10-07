@@ -26,7 +26,7 @@ import {
 import type { AppSettings, DriverName, EffortLevel, ModelOption, SourceControlHealth, WorktreePruneSummary } from "../cw.js";
 import { BinaryPicker } from "./BinaryPicker.js";
 import { TOOL_TABS } from "./toolTabs.js";
-import type { PanelId, PrSuggestCondition, PrWorkflow, PrWorkflowIcon, PrWorkspaceChoice } from "@cw-code/contracts";
+import type { PanelId, PrFinishedSessionStatus, PrSuggestCondition, PrWorkflow, PrWorkflowIcon, PrWorkspaceChoice } from "@cw-code/contracts";
 import { useAppStore } from "../stores/appStore.js";
 import { concreteFilterId } from "./projectRecency.js";
 import { usePanelStore } from "../stores/panelStore.js";
@@ -769,6 +769,42 @@ export function SettingsModal({
           <span className="settings-number-field">
             <input className="field" type="number" min={1} max={168} value={draft.holdingHours} onChange={(e) => set({ holdingHours: Number(e.target.value) })} aria-label="Holding delay in hours" />
             <span>hours</span>
+          </span>
+        </label>
+      </div>
+      <div className="settings-card">
+        <label className="settings-card-controls">
+          <span className="settings-card-text">
+            <span className="settings-label">When a linked pull request is merged or closed</span>
+          </span>
+          <select
+            className="field"
+            value={draft.prFinishedSessionStatus}
+            onChange={(e) => set({ prFinishedSessionStatus: e.target.value as PrFinishedSessionStatus })}
+            aria-label="When a linked pull request is merged or closed"
+          >
+            <option value="idle">Go idle</option>
+            <option value="resolved">Resolve</option>
+            <option value="archived">Archive</option>
+            <option value="none">Do nothing</option>
+          </select>
+        </label>
+        <label className="settings-card-controls">
+          <span className="settings-card-text">
+            <span className="settings-label">Resolve idle sessions after</span>
+            <span className="settings-hint">0 disables</span>
+          </span>
+          <span className="settings-number-field">
+            <input
+              className="field"
+              type="number"
+              min={0}
+              max={365}
+              value={draft.idleResolveAfterDays}
+              onChange={(e) => set({ idleResolveAfterDays: Number(e.target.value) })}
+              aria-label="Resolve idle sessions after in days"
+            />
+            <span>days</span>
           </span>
         </label>
       </div>
