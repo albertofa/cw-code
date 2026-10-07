@@ -464,9 +464,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       sessionsByProject[p.id] = lists[i];
     });
     const all = Object.values(sessionsByProject).flat();
-    const picked = all
+    const candidates = all
       .filter((s) => s.status !== "archived")
-      .sort((a, b) => b.updatedAt - a.updatedAt)[0];
+      .sort((a, b) => b.updatedAt - a.updatedAt);
+    const picked = candidates.find((s) => !s.autoResolved) ?? candidates[0];
     if (!picked) {
       set({
         sessionsByProject,
@@ -486,9 +487,11 @@ export const useAppStore = create<AppState>((set, get) => ({
         pendingDriver: null
       });
       if (picked.status === "resolved") {
-        void get().setSessionStatus(picked.id, "idle", "reopen-on-restore").catch((err) =>
-          console.warn(`setSessionStatus failed for ${picked.id} -> idle: ${(err as Error).message}`)
-        );
+        if (!picked.autoResolved) {
+          void get().setSessionStatus(picked.id, "idle", "reopen-on-restore").catch((err) =>
+            console.warn(`setSessionStatus failed for ${picked.id} -> idle: ${(err as Error).message}`)
+          );
+        }
       } else if (picked.status === "done") {
         void get().setSessionStatus(picked.id, "holding", "reopen-on-restore").catch((err) =>
           console.warn(`setSessionStatus failed for ${picked.id} -> holding: ${(err as Error).message}`)

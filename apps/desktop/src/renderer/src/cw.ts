@@ -137,6 +137,7 @@ export interface Session {
   branch?: string;
   prs?: SessionPrLink[];
   prUnlinked?: string[];
+  autoResolved?: boolean;
 }
 
 export type CreateWorkspaceMode = "current" | "new" | "previous";

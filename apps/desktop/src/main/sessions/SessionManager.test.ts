@@ -181,7 +181,7 @@ async function waitForSessionPrSeen(
   return (await manager.listSessions(projectId)).find((s) => s.id === sessionId);
 }
 
-function makePrManager(opts: Pick<SessionManagerOptions, "prHead" | "prHeadRefresh" | "prState" | "prStateRefresh">) {
+function makePrManager(opts: Pick<SessionManagerOptions, "prHead" | "prHeadRefresh" | "prState" | "prStateRefresh" | "onResolved">) {
   const dir = mkdtempSync(join(tmpdir(), "cw-test-"));
   const manager = new SessionManager({ dbPath: join(dir, "test.db"), settingsPath: join(dir, "settings.json"), ...opts });
   const fake = new FakeDriver((e) => (manager as unknown as { routeEvent(e: ThreadEvent): void }).routeEvent(e));
@@ -1652,7 +1652,49 @@ describe("SessionManager", () => {
 
     expect(settled).toEqual([session.id]);
     expect(store.getSession(session.id)?.status).toBe("resolved");
+    expect(store.getSession(session.id)?.autoResolved).toBe(true);
     expect(emitted.some((meta) => meta.id === session.id && meta.status === "resolved")).toBe(true);
+    manager.dispose();
+  });
+
+  it("marks a sweep-resolved session autoResolved but not a manual resolve", async () => {
+    const widgets = { host: "github.com", owner: "acme", repo: "widgets", number: 42 };
+    const { manager, project } = makePrManager({ prState: () => "MERGED" });
+    const swept = await manager.createSession(project.id, "claude", { mode: "current" });
+    const manual = await manager.createSession(project.id, "claude", { mode: "current" });
+    manager.linkPr(swept.id, { ref: widgets, origin: "linked", lastSeenSha: "old", lastSeenAt: 0 });
+    const store = (manager as unknown as { store: SessionStore }).store;
+    store.updateSession(swept.id, { status: "holding" });
+    manager.setSettings({ prFinishedSessionStatus: "resolved" });
+
+    await manager.settleFinishedPrSessions();
+    await manager.resolveSession(manual.id, "resolved");
+
+    expect(store.getSession(swept.id)?.status).toBe("resolved");
+    expect(store.getSession(swept.id)?.autoResolved).toBe(true);
+    expect(store.getSession(manual.id)?.status).toBe("resolved");
+    expect(store.getSession(manual.id)).not.toHaveProperty("autoResolved");
+    manager.dispose();
+  });
+
+  it("invokes onResolved for a sweep resolve and not for a direct status set", async () => {
+    const widgets = { host: "github.com", owner: "acme", repo: "widgets", number: 42 };
+    const resolvedIds: string[] = [];
+    const { manager, project } = makePrManager({
+      prState: () => "MERGED",
+      onResolved: (sessionId) => resolvedIds.push(sessionId)
+    });
+    const session = await manager.createSession(project.id, "claude", { mode: "current" });
+    manager.linkPr(session.id, { ref: widgets, origin: "linked", lastSeenSha: "old", lastSeenAt: 0 });
+    const store = (manager as unknown as { store: SessionStore }).store;
+    store.updateSession(session.id, { status: "holding" });
+    manager.setSettings({ prFinishedSessionStatus: "resolved" });
+
+    await manager.settleFinishedPrSessions();
+    expect(resolvedIds).toEqual([session.id]);
+
+    manager.setSessionStatus(session.id, "idle", "user-set-status");
+    expect(resolvedIds).toEqual([session.id]);
     manager.dispose();
   });
 
@@ -1674,6 +1716,7 @@ describe("SessionManager", () => {
 
       expect(resolved).toEqual([session.id]);
       expect(store.getSession(session.id)?.status).toBe("resolved");
+      expect(store.getSession(session.id)?.autoResolved).toBe(true);
       expect(emitted.some((meta) => meta.id === session.id && meta.status === "resolved")).toBe(true);
       const transitions = readStatusTransitions(tracePath);
       expect(

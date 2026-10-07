@@ -129,6 +129,10 @@ function resetRuntimeStatuses(sessions: SessionMeta[]): boolean {
       delete session.idleSince;
       changed = true;
     }
+    if (session.autoResolved !== undefined && typeof session.autoResolved !== "boolean") {
+      delete session.autoResolved;
+      changed = true;
+    }
     if (session.status === "idle" && session.idleSince === undefined && Number.isFinite(session.updatedAt)) {
       session.idleSince = session.updatedAt;
       changed = true;
@@ -151,6 +155,7 @@ type SessionPatch = Partial<
     | "branch"
     | "prs"
     | "prUnlinked"
+    | "autoResolved"
   >
 >;
 
@@ -299,11 +304,14 @@ export class SessionStore {
     } else if ("prs" in patch) delete current.prs;
     if (patch.prUnlinked !== undefined) current.prUnlinked = patch.prUnlinked;
     else if ("prUnlinked" in patch) delete current.prUnlinked;
+    if (patch.autoResolved !== undefined) current.autoResolved = patch.autoResolved;
+    else if ("autoResolved" in patch) delete current.autoResolved;
     const now = Date.now();
     current.updatedAt = now;
     if (patch.status !== undefined && patch.status !== previousStatus) {
       if (patch.status === "idle") current.idleSince = now;
       else if (previousStatus === "idle") delete current.idleSince;
+      if (patch.status !== "resolved" && patch.status !== "archived") delete current.autoResolved;
       traceSessionStatus({
         sessionId: id,
         driver: current.driver,

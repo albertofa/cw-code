@@ -145,7 +145,8 @@ function createServices(stores: { sessionStore: SessionStore; settingsStore: Set
     prHeadRefresh: (ref) => pullRequests.refreshHead(ref),
     prState: (ref) => pullRequests.knownState(ref),
     prStateRefresh: (ref) => pullRequests.refreshState(ref),
-    prUpdatedAt: (ref) => pullRequests.knownUpdatedAt(ref)
+    prUpdatedAt: (ref) => pullRequests.knownUpdatedAt(ref),
+    onResolved: (sessionId) => ptys.killSession(sessionId)
   });
   const git = new GitService(() => sessions.getSettings());
   pullRequests = new PullRequestService(git, () => sessions.getSettings(), (rootPath) => sessions.addProject(rootPath));

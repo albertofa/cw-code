@@ -167,6 +167,54 @@ describe("SessionStore", () => {
     expect(persisted.sessions.find((s) => s.id === "sess_resolved")).not.toHaveProperty("idleSince");
   });
 
+  it("sets autoResolved on automatic resolves and clears it when the status leaves resolved or archived", () => {
+    const store = makeStore();
+    const project = store.addProject("C:/proj1");
+    const session = store.createSession(project.id, "claude", "a");
+
+    store.updateSession(session.id, { status: "resolved", autoResolved: true }, "idle-expired");
+    expect(store.getSession(session.id)?.autoResolved).toBe(true);
+
+    store.updateSession(session.id, { status: "idle" }, "reopen-on-select");
+    expect(store.getSession(session.id)).not.toHaveProperty("autoResolved");
+
+    store.updateSession(session.id, { status: "archived", autoResolved: true }, "pr-finished");
+    expect(store.getSession(session.id)?.autoResolved).toBe(true);
+
+    store.updateSession(session.id, { status: "working" }, "turn-start");
+    expect(store.getSession(session.id)).not.toHaveProperty("autoResolved");
+  });
+
+  it("does not set autoResolved on a manual resolve", () => {
+    const store = makeStore();
+    const project = store.addProject("C:/proj1");
+    const session = store.createSession(project.id, "claude", "a");
+
+    store.updateSession(session.id, { status: "resolved" }, "resolve");
+
+    expect(store.getSession(session.id)).not.toHaveProperty("autoResolved");
+  });
+
+  it("drops malformed autoResolved flags on load and keeps valid ones", () => {
+    const { file, dbPath } = writeRaw(
+      `{"projects":[],"sessions":[` +
+        `{"id":"sess_auto","projectId":"proj_1","driver":"claude","title":"t","status":"resolved","resumeCursor":"","createdAt":1,"updatedAt":100,"autoResolved":true},` +
+        `{"id":"sess_bad","projectId":"proj_1","driver":"claude","title":"t","status":"resolved","resumeCursor":"","createdAt":1,"updatedAt":100,"autoResolved":"yes"},` +
+        `{"id":"sess_null","projectId":"proj_1","driver":"claude","title":"t","status":"resolved","resumeCursor":"","createdAt":1,"updatedAt":100,"autoResolved":null}` +
+        `]}`
+    );
+
+    const store = new SessionStore(dbPath);
+
+    expect(store.getSession("sess_auto")?.autoResolved).toBe(true);
+    expect(store.getSession("sess_bad")).not.toHaveProperty("autoResolved");
+    expect(store.getSession("sess_null")).not.toHaveProperty("autoResolved");
+
+    const persisted = readJson(file);
+    expect(persisted.sessions.find((s) => s.id === "sess_auto")?.autoResolved).toBe(true);
+    expect(persisted.sessions.find((s) => s.id === "sess_bad")).not.toHaveProperty("autoResolved");
+  });
+
   it("round-trips a session's pull request links", () => {
     const store = makeStore();
     const project = store.addProject("C:/proj1");

@@ -74,6 +74,7 @@ export interface SessionManagerOptions {
   settingsStore?: SettingsStore;
   onEvent?: (sessionId: string, event: ThreadEvent) => void;
   onTitle?: (sessionId: string, title: string) => void;
+  onResolved?: (sessionId: string) => void;
   drivers?: Partial<Record<DriverKind, CliDriver>>;
   gitService?: GitService;
   worktreesRoot?: string;
@@ -150,6 +151,7 @@ export class SessionManager {
   private branchRenamed = new Set<string>();
   private onEvent: (sessionId: string, event: ThreadEvent) => void;
   private onTitle: (sessionId: string, title: string) => void;
+  private onResolved: (sessionId: string) => void;
   private onSession: (session: SessionMeta) => void = () => {};
   private git: GitService;
   private worktreesRoot: string;
@@ -172,6 +174,7 @@ export class SessionManager {
     this.settings = opts.settingsStore ?? new SettingsStore(opts.settingsPath ?? (dataDir ? join(dataDir, "cw-settings.json") : settingsFilePath()));
     this.onEvent = opts.onEvent ?? (() => {});
     this.onTitle = opts.onTitle ?? (() => {});
+    this.onResolved = opts.onResolved ?? (() => {});
     this.git = opts.gitService ?? new GitService(() => this.settings.get());
     this.worktreesRoot = opts.worktreesRoot ?? worktreesDir();
     this.prHead = opts.prHead ?? (() => null);
@@ -726,7 +729,7 @@ export class SessionManager {
         if (target === "idle") {
           this.setSessionStatus(session.id, "idle", "pr-finished");
         } else {
-          await this.resolveSession(session.id, target, { removeWorktree: true, forceBranch: false });
+          await this.resolveSession(session.id, target, { removeWorktree: true, forceBranch: false, auto: true });
         }
         this.emitSession(session.id);
         settled.push(session.id);
@@ -752,7 +755,8 @@ export class SessionManager {
         await this.resolveSession(session.id, "resolved", {
           removeWorktree: true,
           forceBranch: false,
-          reason: "idle-expired"
+          reason: "idle-expired",
+          auto: true
         });
         this.emitSession(session.id);
         resolved.push(session.id);
@@ -766,7 +770,7 @@ export class SessionManager {
   async resolveSession(
     sessionId: string,
     status: SessionStatus,
-    opts: { removeWorktree?: boolean; forceBranch?: boolean; reason?: SessionStatusReason } = {}
+    opts: { removeWorktree?: boolean; forceBranch?: boolean; reason?: SessionStatusReason; auto?: boolean } = {}
   ): Promise<SessionCleanupResult> {
     const session = this.store.getSession(sessionId);
     if (!session) throw new Error(`unknown session ${sessionId}`);
@@ -794,14 +798,19 @@ export class SessionManager {
     session: SessionMeta,
     status: SessionStatus,
     project: Project,
-    opts: { removeWorktree?: boolean; forceBranch?: boolean; reason?: SessionStatusReason }
+    opts: { removeWorktree?: boolean; forceBranch?: boolean; reason?: SessionStatusReason; auto?: boolean }
   ): Promise<SessionCleanupResult> {
     const sessionId = session.id;
     this.turnBaseShas.delete(sessionId);
     this.firstPrompts.delete(sessionId);
     this.branchRenamed.delete(sessionId);
     this.cancelTitleTurns(sessionId);
-    this.store.updateSession(sessionId, { status }, opts.reason ?? (status === "archived" ? "archive" : "resolve"));
+    this.store.updateSession(
+      sessionId,
+      { status, ...(opts.auto ? { autoResolved: true } : {}) },
+      opts.reason ?? (status === "archived" ? "archive" : "resolve")
+    );
+    this.onResolved(sessionId);
     this.drivers[session.driver].stopSession?.(sessionId);
     const worktreePath = session.worktreePath;
     if (!worktreePath) {
