@@ -655,8 +655,18 @@ export function PrWorkflowSettings() {
             Clone root
           </label>
           <input id="sp-clone-root" className="field sp-mono-field" value={draft.prCloneRoot} placeholder="~/.cw-code/repos" onChange={(e) => set({ prCloneRoot: e.target.value })} />
+          <label className="sp-inline-switch" htmlFor="sp-clone-owner">
+            <SettingsSwitch
+              id="sp-clone-owner"
+              checked={draft.prCloneIncludeOwner}
+              onChange={(next) => set({ prCloneIncludeOwner: next })}
+              label="Append the owner folder to the clone path"
+            />
+            Append owner folder
+          </label>
           <small>
-            PRs from repos that aren't projects yet clone to <span className="sp-mono">&lt;root&gt;/&lt;owner&gt;/&lt;repo&gt;</span>.
+            PRs from repos that aren't projects yet clone to{" "}
+            <span className="sp-mono">&lt;root&gt;{draft.prCloneIncludeOwner ? "/&lt;owner&gt;" : ""}/&lt;repo&gt;</span>.
           </small>
         </div>
         <div className="sp-strip-col">

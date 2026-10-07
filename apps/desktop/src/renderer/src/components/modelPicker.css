@@ -1,10 +1,17 @@
 .mp-pop,
 .em {
+  z-index: 45;
+  animation: cw-pop-in var(--dur-fast) var(--ease-out);
+}
+
+.mp-pop {
+  position: fixed;
+}
+
+.em {
   position: absolute;
   bottom: calc(100% + 6px);
   left: 0;
-  z-index: 45;
-  animation: cw-pop-in var(--dur-fast) var(--ease-out);
 }
 
 .mp {

@@ -36,6 +36,7 @@ const SETTINGS: AppSettings = {
   autoTitleEffort: "low",
   prRefreshIntervalSeconds: 120,
   prCloneRoot: "~/.cw-code/repos",
+  prCloneIncludeOwner: true,
   prAttributionEnabled: true,
   prAttributionText: "",
   prWorkflows: [],

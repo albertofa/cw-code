@@ -306,6 +306,7 @@ describe("SettingsStore", () => {
     const settings = new SettingsStore(tempFilePath()).get();
     expect(settings.prRefreshIntervalSeconds).toBe(120);
     expect(settings.prCloneRoot).toBe("~/.cw-code/repos");
+    expect(settings.prCloneIncludeOwner).toBe(true);
     expect(settings.prAttributionEnabled).toBe(true);
     expect(settings.prWorkflows.map((w) => w.id)).toEqual(["resolve-conflicts", "fix-ci", "address-feedback", "review", "babysit"]);
     expect(settings.prWorkflows.every((w) => w.builtIn && w.enabled)).toBe(true);
@@ -324,6 +325,12 @@ describe("SettingsStore", () => {
     const store = new SettingsStore(tempFilePath());
     expect(store.set({ prAttributionEnabled: "yes" as unknown as boolean }).prAttributionEnabled).toBe(false);
     expect(store.set({ prAttributionText: "  custom {{harness}}  " }).prAttributionText).toBe("custom {{harness}}");
+  });
+
+  it("coerces the clone owner folder toggle with strict true", () => {
+    const store = new SettingsStore(tempFilePath());
+    expect(store.set({ prCloneIncludeOwner: "yes" as unknown as boolean }).prCloneIncludeOwner).toBe(false);
+    expect(store.set({ prCloneIncludeOwner: true }).prCloneIncludeOwner).toBe(true);
   });
 
   it("falls back to PR defaults for non-string values without resetting other settings", () => {
