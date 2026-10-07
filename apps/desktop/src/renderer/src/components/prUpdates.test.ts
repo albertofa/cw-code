@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PrCheck, PrDetail, PrTimelineItem, SessionPrLink } from "@cw-code/contracts";
-import { firstUnseenIndex, hasUnseen, seenThrough, updatesSince } from "./prUpdates.js";
+import { detailNeedsRefresh, detailRefreshKey, firstUnseenIndex, hasUnseen, seenThrough, updatesSince } from "./prUpdates.js";
 
 function basePr(overrides: Partial<PrDetail> = {}): PrDetail {
   return {
@@ -319,6 +319,67 @@ describe("updatesSince", () => {
     const timeline: PrTimelineItem[] = [{ kind: "commits", at: 1_600, actor: "albertofa", commits: [theirs, mine] }];
     const detail = basePr({ timeline, headRefOid: "sha-3", viewerLogin: "albertofa" });
     expect(updatesSince(detail, baseLink()).map((update) => update.kind)).toEqual(["commits"]);
+  });
+});
+
+describe("detailNeedsRefresh", () => {
+  it("does not refresh when there is no summary to compare", () => {
+    expect(detailNeedsRefresh(undefined, undefined)).toBe(false);
+    expect(detailNeedsRefresh(basePr(), undefined)).toBe(false);
+  });
+
+  it("refreshes when no detail is cached yet", () => {
+    expect(detailNeedsRefresh(undefined, basePr())).toBe(true);
+  });
+
+  it("does not refresh a detail that is ahead of the summary", () => {
+    const detail = basePr({ updatedAt: 2_000 });
+    expect(detailNeedsRefresh(detail, basePr({ updatedAt: 1_000 }))).toBe(false);
+  });
+
+  it("does not refresh when the summary matches the detail", () => {
+    expect(detailNeedsRefresh(basePr(), basePr())).toBe(false);
+  });
+
+  it("refreshes when the summary is newer", () => {
+    expect(detailNeedsRefresh(basePr({ updatedAt: 1_000 }), basePr({ updatedAt: 1_500 }))).toBe(true);
+  });
+
+  it("refreshes when the head moved within the same second", () => {
+    const detail = basePr({ headRefOid: "sha-1", updatedAt: 1_000 });
+    const summary = basePr({ headRefOid: "sha-2", updatedAt: 1_000 });
+    expect(detailNeedsRefresh(detail, summary)).toBe(true);
+  });
+
+  it("refreshes when checks changed without an updatedAt bump", () => {
+    const detail = basePr({ ci: "pending", updatedAt: 1_000 });
+    const summary = basePr({ ci: "failing", updatedAt: 1_000 });
+    expect(detailNeedsRefresh(detail, summary)).toBe(true);
+  });
+
+  it("refreshes when the state changed", () => {
+    const detail = basePr({ state: "OPEN", updatedAt: 1_000 });
+    const summary = basePr({ state: "MERGED", updatedAt: 1_000 });
+    expect(detailNeedsRefresh(detail, summary)).toBe(true);
+  });
+});
+
+describe("detailRefreshKey", () => {
+  const key = "github.com/acme/widgets#42";
+
+  it("is empty without a summary", () => {
+    expect(detailRefreshKey(key, undefined)).toBe("");
+  });
+
+  it("changes when the summary's activity advances", () => {
+    expect(detailRefreshKey(key, basePr({ updatedAt: 1_000 }))).not.toBe(detailRefreshKey(key, basePr({ updatedAt: 1_500 })));
+    expect(detailRefreshKey(key, basePr({ headRefOid: "sha-1" }))).not.toBe(detailRefreshKey(key, basePr({ headRefOid: "sha-2" })));
+    expect(detailRefreshKey(key, basePr({ ci: "pending" }))).not.toBe(detailRefreshKey(key, basePr({ ci: "passing" })));
+    expect(detailRefreshKey(key, basePr({ state: "OPEN" }))).not.toBe(detailRefreshKey(key, basePr({ state: "MERGED" })));
+  });
+
+  it("is stable for an unchanged summary", () => {
+    expect(detailRefreshKey(key, basePr())).toBe(detailRefreshKey(key, basePr()));
   });
 });
 

@@ -33,6 +33,22 @@ export function updatesSince(detail: PrDetail, link: SessionPrLink): PrUpdate[] 
   return updates.sort((a, b) => b.at - a.at);
 }
 
+export function detailNeedsRefresh(detail: PrDetail | undefined, summary: PrSummary | undefined): boolean {
+  if (!summary) return false;
+  if (!detail) return true;
+  if (summary.updatedAt < detail.updatedAt) return false;
+  return (
+    detail.updatedAt < summary.updatedAt ||
+    detail.headRefOid !== summary.headRefOid ||
+    detail.ci !== summary.ci ||
+    detail.state !== summary.state
+  );
+}
+
+export function detailRefreshKey(key: string, summary: PrSummary | undefined): string {
+  return summary ? `${key}@${summary.headRefOid}:${summary.updatedAt}:${summary.ci}:${summary.state}` : "";
+}
+
 export function seenThrough(pr: PrSummary | null | undefined, updates: PrUpdate[]): number | null {
   const times = updates.map((update) => update.at);
   if (pr) times.push(pr.updatedAt);
