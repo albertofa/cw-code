@@ -705,8 +705,20 @@ export class SessionManager {
     this.branchRenamed.delete(sessionId);
     this.cancelTitleTurns(sessionId);
     this.store.updateSession(sessionId, { status }, status === "archived" ? "archive" : "resolve");
-    this.drivers[session.driver].stopSession?.(sessionId);
     const worktreePath = session.worktreePath;
+    try {
+      await this.drivers[session.driver].stopSession?.(sessionId);
+    } catch (err) {
+      return {
+        sessionId,
+        status,
+        ...(worktreePath ? { worktreePath } : {}),
+        worktreeOrphaned: worktreePath ? isWorktreeOrphaned(this.store.listAllSessions(), worktreePath, sessionId) : false,
+        worktreeRemoved: false,
+        branchDeleted: false,
+        error: `could not stop ${session.driver} session: ${(err as Error).message}`
+      };
+    }
     if (!worktreePath) {
       return { sessionId, status, worktreeOrphaned: false, worktreeRemoved: false, branchDeleted: false };
     }

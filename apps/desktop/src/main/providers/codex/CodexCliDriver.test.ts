@@ -1097,6 +1097,69 @@ describe("CodexCliDriver", () => {
   });
 });
 
+describe("CodexCliDriver stopSession", () => {
+  it("interrupts the active turn, archives the session thread, and clears its bookkeeping", async () => {
+    const client = new FakeClient();
+    const { driver } = makeDriver(client);
+    driver.startTurn({ sessionId: "local-1", prompt: "work", cwd: "C:\\proj" });
+    await settle();
+
+    await driver.stopSession("local-1");
+
+    expect(client.requests.map((r) => r.method)).toEqual(["thread/start", "turn/start", "turn/interrupt", "thread/archive"]);
+    expect(client.requests[3].params).toEqual({ threadId: "thr_1" });
+    expect(driver.activity().busySessionIds).toEqual([]);
+    driver.dispose();
+  });
+
+  it("does not touch the app-server for a session it never ran", async () => {
+    const client = new FakeClient();
+    const { driver } = makeDriver(client);
+    await driver.stopSession("missing");
+    expect(client.requests).toEqual([]);
+    driver.dispose();
+  });
+
+  it("propagates archive failures and still clears the turn bookkeeping", async () => {
+    class FailingArchiveClient extends FakeClient {
+      override async request<T>(method: string, params?: unknown): Promise<T> {
+        if (method === "thread/archive") throw new Error("archive boom");
+        return super.request<T>(method, params);
+      }
+    }
+    const failingClient = new FailingArchiveClient();
+    const { driver } = makeDriver(failingClient);
+    driver.startTurn({ sessionId: "local-1", prompt: "work", cwd: "C:\\proj" });
+    await settle();
+
+    await expect(driver.stopSession("local-1")).rejects.toThrow("archive boom");
+
+    expect(driver.activity().busySessionIds).toEqual([]);
+    driver.dispose();
+  });
+
+  it("unarchives an archived thread before resuming it", async () => {
+    class ArchivedResumeClient extends FakeClient {
+      private archived = true;
+      override async request<T>(method: string, params?: unknown): Promise<T> {
+        if (method === "thread/resume" && this.archived) {
+          this.archived = false;
+          throw new Error("session thr_x is archived. Run `codex unarchive thr_x` to unarchive it first.");
+        }
+        return super.request<T>(method, params);
+      }
+    }
+    const archivedClient = new ArchivedResumeClient();
+    const { driver } = makeDriver(archivedClient);
+    driver.startTurn({ sessionId: "local-1", prompt: "continue", cwd: "C:\\proj", resumeCursor: "thr_x" });
+    await settle();
+
+    expect(archivedClient.requests.map((r) => r.method)).toEqual(["thread/unarchive", "thread/resume", "turn/start"]);
+    expect(archivedClient.requests[0].params).toEqual({ threadId: "thr_x" });
+    driver.dispose();
+  });
+});
+
 describe("CodexCliDriver shutdown", () => {
   it("reports every session with a running turn", async () => {
     const client = new FakeClient();

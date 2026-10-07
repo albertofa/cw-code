@@ -181,6 +181,32 @@ describe("TracingCliDriver", () => {
     expect(records[0]).toMatchObject({ operation: "claude.interrupt" });
   });
 
+  it("awaits an async stopSession before tracing it", async () => {
+    let released = false;
+    const withStop = new TracingCliDriver({
+      kind: "codex",
+      stopSession: () =>
+        new Promise<void>((resolve) => {
+          setTimeout(() => {
+            released = true;
+            resolve();
+          }, 10);
+        })
+    } as unknown as CliDriver);
+    const pending = withStop.stopSession("s1");
+    expect(released).toBe(false);
+    await pending;
+    expect(released).toBe(true);
+    const records = readRecords();
+    expect(records).toHaveLength(1);
+    expect(records[0]).toMatchObject({
+      harness: "codex",
+      operation: "codex.stopSession",
+      sessionId: "s1",
+      ok: true
+    });
+  });
+
   it("leaves getAccountUsage undefined for drivers without support", () => {
     const tracing = new TracingCliDriver(new FakeDriver());
     expect(tracing.getAccountUsage).toBeUndefined();

@@ -155,12 +155,11 @@ export class TracingCliDriver implements CliDriver {
     };
   }
 
-  stopSession(sessionId: string): void {
+  stopSession(sessionId: string): void | Promise<void> {
     if (typeof this.inner.stopSession !== "function") return;
     const start = Date.now();
     const operation = `${this.kind}.stopSession`;
-    try {
-      this.inner.stopSession(sessionId);
+    const traceSuccess = () =>
       traceHarnessCall({
         harness: this.kind,
         operation,
@@ -168,7 +167,7 @@ export class TracingCliDriver implements CliDriver {
         durationMs: Date.now() - start,
         ok: true
       });
-    } catch (err) {
+    const traceFailure = (err: unknown) =>
       traceHarnessCall({
         harness: this.kind,
         operation,
@@ -177,6 +176,17 @@ export class TracingCliDriver implements CliDriver {
         ok: false,
         error: truncateError((err as Error).message)
       });
+    try {
+      const result = this.inner.stopSession(sessionId);
+      if (result && typeof (result as Promise<void>).then === "function") {
+        return (result as Promise<void>).then(traceSuccess, (err) => {
+          traceFailure(err);
+          throw err;
+        });
+      }
+      traceSuccess();
+    } catch (err) {
+      traceFailure(err);
       throw err;
     }
   }
