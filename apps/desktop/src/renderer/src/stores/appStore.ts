@@ -33,7 +33,6 @@ import { appendAssistantText, appendReasoningText, closeReasoning, upsertToolCal
 import { getLastModel, setLastModel } from "../components/lastModel.js";
 import { formatDuration, mergeToolPairs } from "../components/toolSummaries.js";
 import { expiredHoldingIds } from "../components/workingSet.js";
-import { mergedPrBelongsToSession } from "../components/sessionPrLinks.js";
 import { defaultNewSessionProjectId, discoveredOwnerId, discoveryProjectId } from "../components/projectRecency.js";
 import { useNotifs } from "../components/Notifications.js";
 import { ipcErrorMessage } from "../components/ipcError.js";
@@ -397,18 +396,6 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       const status = await window.cw.getGitStatus(sessionId);
       set({ gitStatusBySession: { ...get().gitStatusBySession, [sessionId]: status } });
-      if (status.pullRequest?.state === "MERGED") {
-        const current = Object.values(get().sessionsByProject)
-          .flat()
-          .find((s) => s.id === sessionId);
-        if (current && (current.status === "holding" || current.status === "done") && sessionId !== get().activeSessionId) {
-          if (mergedPrBelongsToSession(status.pullRequest, current)) {
-            void get().setSessionStatus(sessionId, "idle", "merged-pr").catch((err) =>
-              console.warn(`setSessionStatus failed for ${sessionId} -> idle: ${(err as Error).message}`)
-            );
-          }
-        }
-      }
     } catch {
       // Git errors are rendered by the session-level GitBar when selected.
     }
