@@ -1909,6 +1909,35 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
+  it("waits for the driver to stop the session before removing its worktree", async () => {
+    const { manager, project, fake } = makeGitSandboxManager("cw-resolve-stop-await-");
+    const session = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    const worktreePath = session.worktreePath;
+    if (!worktreePath) throw new Error("expected a worktree-backed session");
+
+    let releaseStop: (() => void) | undefined;
+    fake.stopSession = () =>
+      new Promise<void>((resolve) => {
+        releaseStop = resolve;
+      });
+    let settled = false;
+    const pending = manager.resolveSession(session.id, "resolved", { removeWorktree: true }).then((result) => {
+      settled = true;
+      return result;
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    expect(releaseStop).toBeTypeOf("function");
+    expect(settled).toBe(false);
+    expect(existsSync(worktreePath)).toBe(true);
+
+    releaseStop!();
+    const result = await pending;
+
+    expect(result.worktreeRemoved).toBe(true);
+    expect(existsSync(worktreePath)).toBe(false);
+    manager.dispose();
+  });
+
   it("rejects startTurn on resolved or archived sessions", async () => {
     const { manager } = makeManager();
     const project = manager.addProject("C:\\proj-resolve-reject");

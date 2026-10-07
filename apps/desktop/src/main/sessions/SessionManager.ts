@@ -709,7 +709,7 @@ export class SessionManager {
     this.branchRenamed.delete(sessionId);
     this.cancelTitleTurns(sessionId);
     this.store.updateSession(sessionId, { status }, status === "archived" ? "archive" : "resolve");
-    this.drivers[session.driver].stopSession?.(sessionId);
+    await this.drivers[session.driver].stopSession?.(sessionId);
     const worktreePath = session.worktreePath;
     if (!worktreePath) {
       return { sessionId, status, worktreeOrphaned: false, worktreeRemoved: false, branchDeleted: false };
