@@ -88,6 +88,85 @@ describe("SessionStore", () => {
     });
   });
 
+  it("stamps idleSince when a session is created", () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1000);
+    const store = makeStore();
+    const project = store.addProject("C:/proj1");
+    const session = store.createSession(project.id, "claude", "a");
+
+    expect(session).toMatchObject({ idleSince: 1000, updatedAt: 1000 });
+    expect(store.getSession(session.id)?.idleSince).toBe(1000);
+    now.mockRestore();
+  });
+
+  it("stamps a fresh idleSince when entering idle and clears it when leaving", () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1000);
+    const store = makeStore();
+    const project = store.addProject("C:/proj1");
+    const session = store.createSession(project.id, "claude", "a");
+
+    now.mockReturnValue(2000);
+    store.updateSession(session.id, { status: "working" }, "turn-start");
+    expect(store.getSession(session.id)?.idleSince).toBeUndefined();
+
+    now.mockReturnValue(3000);
+    store.updateSession(session.id, { status: "idle" }, "turn-done");
+    expect(store.getSession(session.id)?.idleSince).toBe(3000);
+
+    now.mockReturnValue(4000);
+    store.updateSession(session.id, { status: "done" }, "resolve");
+    expect(store.getSession(session.id)?.idleSince).toBeUndefined();
+    now.mockRestore();
+  });
+
+  it("leaves idleSince untouched for patches that do not change status", () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(1000);
+    const store = makeStore();
+    const project = store.addProject("C:/proj1");
+    const session = store.createSession(project.id, "claude", "a");
+
+    now.mockReturnValue(5000);
+    store.updateSession(session.id, { title: "renamed" });
+    store.updateSession(session.id, { status: "idle" });
+    expect(store.getSession(session.id)?.idleSince).toBe(1000);
+    now.mockRestore();
+  });
+
+  it("stamps idleSince when a holding session expires", () => {
+    const now = vi.spyOn(Date, "now").mockReturnValue(7777);
+    const { dir, store } = seedStore([{ id: "sess_holding", status: "holding", updatedAt: 1234 }]);
+
+    const expired = store.expireHolding("sess_holding");
+
+    expect(expired).toMatchObject({ status: "idle", updatedAt: 1234, idleSince: 7777 });
+    expect(new SessionStore(join(dir, "test.db")).getSession("sess_holding")?.idleSince).toBe(7777);
+    now.mockRestore();
+  });
+
+  it("backfills idleSince from updatedAt on load, dropping unusable values and persisting the result", () => {
+    const { file, dbPath } = writeRaw(
+      `{"projects":[],"sessions":[` +
+        `{"id":"sess_legacy","projectId":"proj_1","driver":"claude","title":"t","status":"idle","resumeCursor":"","createdAt":1,"updatedAt":4242},` +
+        `{"id":"sess_kept","projectId":"proj_1","driver":"claude","title":"t","status":"idle","resumeCursor":"","createdAt":1,"updatedAt":100,"idleSince":999},` +
+        `{"id":"sess_infinity","projectId":"proj_1","driver":"claude","title":"t","status":"idle","resumeCursor":"","createdAt":1,"updatedAt":100,"idleSince":1e999},` +
+        `{"id":"sess_null","projectId":"proj_1","driver":"claude","title":"t","status":"idle","resumeCursor":"","createdAt":1,"updatedAt":200,"idleSince":null},` +
+        `{"id":"sess_resolved","projectId":"proj_1","driver":"claude","title":"t","status":"resolved","resumeCursor":"","createdAt":1,"updatedAt":300,"idleSince":1e999}` +
+        `]}`
+    );
+
+    const store = new SessionStore(dbPath);
+
+    expect(store.getSession("sess_legacy")?.idleSince).toBe(4242);
+    expect(store.getSession("sess_kept")?.idleSince).toBe(999);
+    expect(store.getSession("sess_infinity")?.idleSince).toBe(100);
+    expect(store.getSession("sess_null")?.idleSince).toBe(200);
+    expect(store.getSession("sess_resolved")).not.toHaveProperty("idleSince");
+
+    const persisted = readJson(file);
+    expect(persisted.sessions.find((s) => s.id === "sess_legacy")?.idleSince).toBe(4242);
+    expect(persisted.sessions.find((s) => s.id === "sess_resolved")).not.toHaveProperty("idleSince");
+  });
+
   it("round-trips a session's pull request links", () => {
     const store = makeStore();
     const project = store.addProject("C:/proj1");
@@ -182,7 +261,12 @@ describe("SessionStore", () => {
       [...original.projects].sort((a, b) => a.name.localeCompare(b.name))
     );
     for (const session of original.sessions) {
-      const expected = session.status === "working" ? { ...session, status: "holding" } : session;
+      const expected =
+        session.status === "working"
+          ? { ...session, status: "holding" }
+          : session.status === "idle"
+            ? { ...session, idleSince: session.updatedAt }
+            : session;
       expect(store.getSession(session.id)).toEqual(expected);
     }
     const persisted = readJson(file);

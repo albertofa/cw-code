@@ -106,19 +106,33 @@ function resetRuntimeStatuses(sessions: SessionMeta[]): boolean {
     const previous = session.status;
     if (!session.status) {
       session.status = "idle";
+      changed = true;
+      traceSessionStatus({
+        sessionId: session.id,
+        driver: session.driver,
+        from: null,
+        to: "idle",
+        reason: "app-restart-idle"
+      });
     } else if (session.status === "working" || session.status === "input-required") {
       session.status = "holding";
-    } else {
-      continue;
+      changed = true;
+      traceSessionStatus({
+        sessionId: session.id,
+        driver: session.driver,
+        from: previous,
+        to: "holding",
+        reason: "app-restart-holding"
+      });
     }
-    changed = true;
-    traceSessionStatus({
-      sessionId: session.id,
-      driver: session.driver,
-      from: previous ?? null,
-      to: session.status,
-      reason: previous ? "app-restart-holding" : "app-restart-idle"
-    });
+    if (session.idleSince !== undefined && !Number.isFinite(session.idleSince)) {
+      delete session.idleSince;
+      changed = true;
+    }
+    if (session.status === "idle" && session.idleSince === undefined && Number.isFinite(session.updatedAt)) {
+      session.idleSince = session.updatedAt;
+      changed = true;
+    }
   }
   return changed;
 }
@@ -226,6 +240,7 @@ export class SessionStore {
       resumeCursor: "",
       createdAt: now,
       updatedAt: now,
+      idleSince: now,
       ...(workspace.worktreePath ? { worktreePath: normalizeRoot(workspace.worktreePath) } : {}),
       ...(workspace.branch ? { branch: workspace.branch } : {})
     };
@@ -284,8 +299,11 @@ export class SessionStore {
     } else if ("prs" in patch) delete current.prs;
     if (patch.prUnlinked !== undefined) current.prUnlinked = patch.prUnlinked;
     else if ("prUnlinked" in patch) delete current.prUnlinked;
-    current.updatedAt = Date.now();
+    const now = Date.now();
+    current.updatedAt = now;
     if (patch.status !== undefined && patch.status !== previousStatus) {
+      if (patch.status === "idle") current.idleSince = now;
+      else if (previousStatus === "idle") delete current.idleSince;
       traceSessionStatus({
         sessionId: id,
         driver: current.driver,
@@ -301,6 +319,7 @@ export class SessionStore {
     const session = this.getSession(id);
     if (!session || session.status !== "holding") return null;
     session.status = "idle";
+    session.idleSince = Date.now();
     traceSessionStatus({
       sessionId: id,
       driver: session.driver,
