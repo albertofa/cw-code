@@ -191,8 +191,12 @@ function makePrManager(opts: Pick<SessionManagerOptions, "prHead" | "prHeadRefre
   return { manager, fake, project, dir };
 }
 
-function setPrFinishedTarget(manager: SessionManager, target: "idle" | "resolved" | "archived" | "none"): void {
-  (manager as unknown as { settings: { data: { prFinishedSessionStatus: string } } }).settings.data.prFinishedSessionStatus = target;
+function readStatusTransitions(path: string): Array<{ sessionId: string; to: string; reason: string }> {
+  return readFileSync(path, "utf8")
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line) as { sessionId: string; to: string; reason: string });
 }
 
 function makeGitSandboxManager(prefix: string) {
@@ -1398,16 +1402,13 @@ describe("SessionManager", () => {
       manager.linkPr(session.id, { ref: widgets, origin: "linked", lastSeenSha: "old", lastSeenAt: 0 });
       const store = (manager as unknown as { store: SessionStore }).store;
       store.updateSession(session.id, { status: "holding" });
-      setPrFinishedTarget(manager, "idle");
+      manager.setSettings({ prFinishedSessionStatus: "idle" });
 
       const settled = await manager.settleFinishedPrSessions();
 
       expect(settled).toEqual([session.id]);
       expect(store.getSession(session.id)?.status).toBe("idle");
-      const transitions = readFileSync(tracePath, "utf8")
-        .trim()
-        .split("\n")
-        .map((line) => JSON.parse(line) as { sessionId: string; to: string; reason: string });
+      const transitions = readStatusTransitions(tracePath);
       expect(transitions.some((entry) => entry.sessionId === session.id && entry.to === "idle" && entry.reason === "pr-finished")).toBe(true);
     } finally {
       resetSessionStatusTraceForTests();
@@ -1415,20 +1416,28 @@ describe("SessionManager", () => {
     }
   });
 
-  it("settles a done session with a closed linked PR to idle", async () => {
+  it("settles a done session with a closed linked PR to idle and traces pr-finished", async () => {
     const widgets = { host: "github.com", owner: "acme", repo: "widgets", number: 7 };
-    const { manager, project } = makePrManager({ prState: () => "CLOSED" });
-    const session = await manager.createSession(project.id, "claude", { mode: "current" });
-    manager.linkPr(session.id, { ref: widgets, origin: "linked", lastSeenSha: "old", lastSeenAt: 0 });
-    const store = (manager as unknown as { store: SessionStore }).store;
-    store.updateSession(session.id, { status: "done" });
-    setPrFinishedTarget(manager, "idle");
+    const { manager, project, dir } = makePrManager({ prState: () => "CLOSED" });
+    const tracePath = join(dir, "session-status.jsonl");
+    initSessionStatusTrace({ filePath: tracePath });
+    try {
+      const session = await manager.createSession(project.id, "claude", { mode: "current" });
+      manager.linkPr(session.id, { ref: widgets, origin: "linked", lastSeenSha: "old", lastSeenAt: 0 });
+      const store = (manager as unknown as { store: SessionStore }).store;
+      store.updateSession(session.id, { status: "done" });
+      manager.setSettings({ prFinishedSessionStatus: "idle" });
 
-    const settled = await manager.settleFinishedPrSessions();
+      const settled = await manager.settleFinishedPrSessions();
 
-    expect(settled).toEqual([session.id]);
-    expect(store.getSession(session.id)?.status).toBe("idle");
-    manager.dispose();
+      expect(settled).toEqual([session.id]);
+      expect(store.getSession(session.id)?.status).toBe("idle");
+      const transitions = readStatusTransitions(tracePath);
+      expect(transitions.some((entry) => entry.sessionId === session.id && entry.to === "idle" && entry.reason === "pr-finished")).toBe(true);
+    } finally {
+      resetSessionStatusTraceForTests();
+      manager.dispose();
+    }
   });
 
   it("settles when the refreshed state is finished even though the known state is stale", async () => {
@@ -1438,12 +1447,46 @@ describe("SessionManager", () => {
     manager.linkPr(session.id, { ref: widgets, origin: "linked", lastSeenSha: "old", lastSeenAt: 0 });
     const store = (manager as unknown as { store: SessionStore }).store;
     store.updateSession(session.id, { status: "holding" });
-    setPrFinishedTarget(manager, "idle");
+    manager.setSettings({ prFinishedSessionStatus: "idle" });
 
     const settled = await manager.settleFinishedPrSessions();
 
     expect(settled).toEqual([session.id]);
     expect(store.getSession(session.id)?.status).toBe("idle");
+    manager.dispose();
+  });
+
+  it("settles when a later linked PR is the finished one", async () => {
+    const widgets = { host: "github.com", owner: "acme", repo: "widgets", number: 42 };
+    const gadgets = { host: "github.com", owner: "acme", repo: "gadgets", number: 7 };
+    const { manager, project } = makePrManager({ prState: (ref) => (ref.number === 7 ? "MERGED" : "OPEN") });
+    const session = await manager.createSession(project.id, "claude", { mode: "current" });
+    manager.linkPr(session.id, { ref: widgets, origin: "linked", lastSeenSha: "old", lastSeenAt: 0 });
+    manager.linkPr(session.id, { ref: gadgets, origin: "linked", lastSeenSha: "old", lastSeenAt: 0 });
+    const store = (manager as unknown as { store: SessionStore }).store;
+    store.updateSession(session.id, { status: "holding" });
+    manager.setSettings({ prFinishedSessionStatus: "idle" });
+
+    const settled = await manager.settleFinishedPrSessions();
+
+    expect(settled).toEqual([session.id]);
+    expect(store.getSession(session.id)?.status).toBe("idle");
+    manager.dispose();
+  });
+
+  it("leaves an open PR session alone when the refresh reports it still open", async () => {
+    const widgets = { host: "github.com", owner: "acme", repo: "widgets", number: 42 };
+    const { manager, project } = makePrManager({ prState: () => "OPEN", prStateRefresh: async () => "OPEN" });
+    const session = await manager.createSession(project.id, "claude", { mode: "current" });
+    manager.linkPr(session.id, { ref: widgets, origin: "linked", lastSeenSha: "old", lastSeenAt: 0 });
+    const store = (manager as unknown as { store: SessionStore }).store;
+    store.updateSession(session.id, { status: "holding" });
+    manager.setSettings({ prFinishedSessionStatus: "idle" });
+
+    const settled = await manager.settleFinishedPrSessions();
+
+    expect(settled).toEqual([]);
+    expect(store.getSession(session.id)?.status).toBe("holding");
     manager.dispose();
   });
 
@@ -1461,7 +1504,7 @@ describe("SessionManager", () => {
     manager.linkPr(session.id, { ref: widgets, origin: "linked", lastSeenSha: "old", lastSeenAt: 0 });
     const store = (manager as unknown as { store: SessionStore }).store;
     store.updateSession(session.id, { status: "holding" });
-    setPrFinishedTarget(manager, "idle");
+    manager.setSettings({ prFinishedSessionStatus: "idle" });
 
     const settled = await manager.settleFinishedPrSessions();
 
@@ -1485,7 +1528,7 @@ describe("SessionManager", () => {
     manager.linkPr(session.id, { ref: widgets, origin: "linked", lastSeenSha: "old", lastSeenAt: 0 });
     const store = (manager as unknown as { store: SessionStore }).store;
     store.updateSession(session.id, { status: "holding" });
-    setPrFinishedTarget(manager, "none");
+    manager.setSettings({ prFinishedSessionStatus: "none" });
 
     const settled = await manager.settleFinishedPrSessions();
 
@@ -1503,13 +1546,94 @@ describe("SessionManager", () => {
     const turnId = await manager.startTurn(session.id, "hello");
     const store = (manager as unknown as { store: SessionStore }).store;
     store.updateSession(session.id, { status: "holding" });
-    setPrFinishedTarget(manager, "idle");
+    manager.setSettings({ prFinishedSessionStatus: "idle" });
 
     const settled = await manager.settleFinishedPrSessions();
 
     expect(settled).toEqual([]);
     expect(store.getSession(session.id)?.status).toBe("holding");
     fake.complete(turnId);
+    manager.dispose();
+  });
+
+  it("leaves the session alone when its status changes during the refresh", async () => {
+    const widgets = { host: "github.com", owner: "acme", repo: "widgets", number: 42 };
+    let sessionId = "";
+    const { manager, project } = makePrManager({
+      prState: () => "OPEN",
+      prStateRefresh: async () => {
+        (manager as unknown as { store: SessionStore }).store.updateSession(sessionId, { status: "working" });
+        return "MERGED";
+      }
+    });
+    const session = await manager.createSession(project.id, "claude", { mode: "current" });
+    sessionId = session.id;
+    manager.linkPr(session.id, { ref: widgets, origin: "linked", lastSeenSha: "old", lastSeenAt: 0 });
+    const store = (manager as unknown as { store: SessionStore }).store;
+    store.updateSession(session.id, { status: "holding" });
+    manager.setSettings({ prFinishedSessionStatus: "idle" });
+
+    const settled = await manager.settleFinishedPrSessions();
+
+    expect(settled).toEqual([]);
+    expect(store.getSession(session.id)?.status).toBe("working");
+    manager.dispose();
+  });
+
+  it("leaves the session alone when the finished PR is unlinked during the refresh", async () => {
+    const widgets = { host: "github.com", owner: "acme", repo: "widgets", number: 42 };
+    let sessionId = "";
+    const { manager, project } = makePrManager({
+      prState: () => "OPEN",
+      prStateRefresh: async () => {
+        manager.unlinkPr(sessionId, widgets);
+        return "MERGED";
+      }
+    });
+    const session = await manager.createSession(project.id, "claude", { mode: "current" });
+    sessionId = session.id;
+    manager.linkPr(session.id, { ref: widgets, origin: "linked", lastSeenSha: "old", lastSeenAt: 0 });
+    const store = (manager as unknown as { store: SessionStore }).store;
+    store.updateSession(session.id, { status: "holding" });
+    manager.setSettings({ prFinishedSessionStatus: "idle" });
+
+    const settled = await manager.settleFinishedPrSessions();
+
+    expect(settled).toEqual([]);
+    expect(store.getSession(session.id)?.status).toBe("holding");
+    manager.dispose();
+  });
+
+  it("does not run overlapping sweeps concurrently", async () => {
+    const widgets = { host: "github.com", owner: "acme", repo: "widgets", number: 42 };
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    let refreshCalls = 0;
+    const { manager, project } = makePrManager({
+      prState: () => "OPEN",
+      prStateRefresh: async () => {
+        refreshCalls += 1;
+        await gate;
+        return "MERGED";
+      }
+    });
+    const session = await manager.createSession(project.id, "claude", { mode: "current" });
+    manager.linkPr(session.id, { ref: widgets, origin: "linked", lastSeenSha: "old", lastSeenAt: 0 });
+    const store = (manager as unknown as { store: SessionStore }).store;
+    store.updateSession(session.id, { status: "holding" });
+    manager.setSettings({ prFinishedSessionStatus: "idle" });
+
+    const first = manager.settleFinishedPrSessions();
+    const second = manager.settleFinishedPrSessions();
+    release();
+    const [a, b] = await Promise.all([first, second]);
+
+    expect(refreshCalls).toBe(1);
+    expect(a).toEqual([session.id]);
+    expect(b).toEqual([session.id]);
+    expect(store.getSession(session.id)?.status).toBe("idle");
     manager.dispose();
   });
 
@@ -1520,7 +1644,7 @@ describe("SessionManager", () => {
     manager.linkPr(session.id, { ref: widgets, origin: "linked", lastSeenSha: "old", lastSeenAt: 0 });
     const store = (manager as unknown as { store: SessionStore }).store;
     store.updateSession(session.id, { status: "holding" });
-    setPrFinishedTarget(manager, "resolved");
+    manager.setSettings({ prFinishedSessionStatus: "resolved" });
     const emitted: SessionMeta[] = [];
     manager.setSessionEmitter((meta) => emitted.push(meta));
 

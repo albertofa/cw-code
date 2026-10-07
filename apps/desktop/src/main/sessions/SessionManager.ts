@@ -144,6 +144,7 @@ export class SessionManager {
   private firstPrompts = new Map<string, string>();
   private pendingTurns = new Set<string>();
   private pendingResolves = new Set<string>();
+  private settleSweep: Promise<string[]> | null = null;
   private worktreeRecovery = new Map<string, Promise<string>>();
   private branchRenamed = new Set<string>();
   private onEvent: (sessionId: string, event: ThreadEvent) => void;
@@ -667,31 +668,51 @@ export class SessionManager {
     return expired;
   }
 
-  async settleFinishedPrSessions(): Promise<string[]> {
+  settleFinishedPrSessions(): Promise<string[]> {
+    if (this.settleSweep) return this.settleSweep;
+    const sweep = this.runFinishedPrSweep().finally(() => {
+      if (this.settleSweep === sweep) this.settleSweep = null;
+    });
+    this.settleSweep = sweep;
+    return sweep;
+  }
+
+  private sessionBusy(sessionId: string): boolean {
+    if (this.pendingTurns.has(sessionId) || this.pendingResolves.has(sessionId)) return true;
+    for (const entry of this.activeTurns.values()) {
+      if (entry.sessionId === sessionId) return true;
+    }
+    return false;
+  }
+
+  private async runFinishedPrSweep(): Promise<string[]> {
     const target = this.settings.get().prFinishedSessionStatus;
     if (target !== "idle" && target !== "resolved" && target !== "archived") return [];
     const settled: string[] = [];
     for (const session of this.store.listAllSessions()) {
       if (session.status !== "holding" && session.status !== "done") continue;
       if (!session.prs?.length) continue;
-      if (this.pendingTurns.has(session.id) || this.pendingResolves.has(session.id)) continue;
-      if ([...this.activeTurns.values()].some((entry) => entry.sessionId === session.id)) continue;
+      if (this.sessionBusy(session.id)) continue;
       try {
-        let finished = false;
+        let finishedRef: PrRef | null = null;
         for (const link of session.prs) {
           const known = this.prState(link.ref);
           if (isFinishedPrState(known)) {
-            finished = true;
+            finishedRef = link.ref;
             break;
           }
           const refresh = this.prStateRefresh;
           const refreshed = refresh ? await refresh(link.ref).catch(() => null) : null;
           if (isFinishedPrState(refreshed ?? known)) {
-            finished = true;
+            finishedRef = link.ref;
             break;
           }
         }
-        if (!finished) continue;
+        if (!finishedRef) continue;
+        const current = this.store.getSession(session.id);
+        if (!current || (current.status !== "holding" && current.status !== "done")) continue;
+        if (!findLink(current.prs, finishedRef)) continue;
+        if (this.sessionBusy(session.id)) continue;
         if (target === "idle") {
           this.setSessionStatus(session.id, "idle", "pr-finished");
         } else {
