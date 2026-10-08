@@ -402,7 +402,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
         if (!targetProjectId) {
           current = "clone";
           setStage(current);
-          const project = await window.cw.clonePrRepo(ref);
+          const project = await window.cw.cloneGitHubRepo(ref);
           await Promise.all([refreshProjectRepos(), app.loadProjects()]);
           targetProjectId = project.id;
         }

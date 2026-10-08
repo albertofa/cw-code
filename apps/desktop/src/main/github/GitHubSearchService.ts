@@ -26,7 +26,7 @@ export function assertCountBase(countBase: unknown): asserts countBase is string
   if (countBase.trim().length > MAX_QUERY_LENGTH) throw new Error(`count base must be at most ${MAX_QUERY_LENGTH} characters`);
 }
 
-function assertSearchKind(kind: unknown): asserts kind is SearchKind {
+export function assertSearchKind(kind: unknown): asserts kind is SearchKind {
   if (kind !== "pr" && kind !== "issue") throw new Error(`invalid search kind '${String(kind)}'`);
 }
 
