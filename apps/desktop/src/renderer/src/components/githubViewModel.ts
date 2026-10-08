@@ -127,8 +127,22 @@ export function groupItems<T>(
     .filter((group) => group.items.length > 0);
 }
 
+const MENTION_KEYS: ReadonlySet<string> = new Set(["mentions", "involves"]);
+const KIND_VALUES: ReadonlySet<string> = new Set<GitHubKind>(["pr", "issue", "run"]);
+
 export function mentionsMode(query: string): boolean {
-  return tokenize(query).some((token) => token.kind === "qual" && !token.neg && token.key === "mentions" && (token.value ?? "").toLowerCase() === "@me");
+  return tokenize(query).some(
+    (token) => token.kind === "qual" && !token.neg && MENTION_KEYS.has(token.key ?? "") && (token.value ?? "").toLowerCase() === "@me"
+  );
+}
+
+export function retargetQuery(query: string, kind: GitHubKind): string {
+  const kept = tokenize(query).filter((token) => {
+    if (token.kind !== "qual" || token.neg || token.key !== "is") return token.kind !== "space";
+    const value = (token.value ?? "").toLowerCase();
+    return !KIND_VALUES.has(value) || value === kind;
+  });
+  return `${kept.map((token) => token.text).join(" ")} `;
 }
 
 export function sortOf(kind: GitHubKind, query: string): string {

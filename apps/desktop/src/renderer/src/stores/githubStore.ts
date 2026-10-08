@@ -96,6 +96,7 @@ const QUERY_DEBOUNCE_MS = 350;
 const VIEW_COUNTS_TTL_MS = 60_000;
 const MAX_WATCHED_RUNS = 30;
 const MAX_COUNT_QUERIES = 20;
+export const MAX_RESULT_ENTRIES_PER_KIND = 20;
 const MAX_SOURCE_REPOS = 20;
 const MAX_SOURCE_ORGS = 5;
 const MIN_REFRESH_SECONDS = 30;
@@ -170,6 +171,14 @@ export function scopeSplitQuery(split: SplitQuery): SplitQuery {
 export function searchKey(kind: GitHubKind, query: string, clonedRepos: RepoRef[]): string {
   if (kind === "run") return `run:${JSON.stringify(cappedRunSources(query, clonedRepos))}`;
   return `${kind}:${normalizeQuery(scopeSplitQuery(splitQuery(kind, query)).remote)}`;
+}
+
+export function evictionCandidates(keys: string[], touched: ReadonlyMap<string, number>, protectedKeys: ReadonlySet<string | null>, max: number): string[] {
+  if (keys.length <= max) return [];
+  return keys
+    .filter((key) => !protectedKeys.has(key))
+    .sort((a, b) => (touched.get(a) ?? 0) - (touched.get(b) ?? 0))
+    .slice(0, keys.length - max);
 }
 
 function runKeyOf(ref: RunRef): string {
@@ -250,6 +259,9 @@ export const useGitHubStore = create<GitHubStore>((set, get) => {
   let refreshTimer: ReturnType<typeof setTimeout> | null = null;
   let unsubscribers: Array<() => void> = [];
   let watchedSignature: string | null = null;
+  const touched = new Map<string, number>();
+  let touchClock = 0;
+  let persistFailure: string | null = null;
   let savedViewsLoaded = false;
   let mutations: Promise<void> = Promise.resolve();
 
@@ -266,6 +278,23 @@ export const useGitHubStore = create<GitHubStore>((set, get) => {
       get().syncContext();
     }
   };
+
+  const touch = (key: string) => {
+    touchClock += 1;
+    touched.set(key, touchClock);
+  };
+
+  function prune<T>(kind: GitHubKind, select: (state: GitHubStore) => Record<string, Loadable<T>>, assign: (results: Record<string, Loadable<T>>) => Partial<GitHubStore>) {
+    const results = select(get());
+    const dropped = evictionCandidates(Object.keys(results), touched, new Set([latestKeys[kind], settledKeys[kind]]), MAX_RESULT_ENTRIES_PER_KIND);
+    if (dropped.length === 0) return;
+    const next = { ...results };
+    for (const key of dropped) {
+      delete next[key];
+      touched.delete(key);
+    }
+    set(assign(next));
+  }
 
   const clonedRepos = (): RepoRef[] => clonedReposOf(usePrStore.getState().projectRepos);
 
@@ -299,8 +328,14 @@ export const useGitHubStore = create<GitHubStore>((set, get) => {
     const loading: Loadable<T> = seed
       ? { loading: true, data: seed, error: null, stale: true }
       : { loading: true, data: own?.data ?? null, error: null, ...(own?.stale ? { stale: true } : {}) };
+    touch(key);
     set((state) => assign(withEntry(select(state), key, loading)));
-    const settle = (next: Loadable<T>) => set((state) => assign(withEntry(select(state), key, next)));
+    prune(kind, select, assign);
+    const settle = (next: Loadable<T>) => {
+      touch(key);
+      set((state) => assign(withEntry(select(state), key, next)));
+      prune(kind, select, assign);
+    };
     try {
       const fetched = await fetcher();
       if (keySequences.get(key) !== sequence) return;
@@ -381,10 +416,12 @@ export const useGitHubStore = create<GitHubStore>((set, get) => {
   const persistViews = async (next: SavedGitHubView[]): Promise<boolean> => {
     try {
       const saved = await window.cw.setSettings({ githubSavedViews: next });
-      set({ savedViews: saved.githubSavedViews ?? next, error: null });
+      const ownError = persistFailure;
+      persistFailure = null;
+      set((state) => ({ savedViews: saved.githubSavedViews ?? next, error: ownError !== null && state.error === ownError ? null : state.error }));
       return true;
     } catch (err) {
-      fail("saving views failed", err);
+      persistFailure = fail("saving views failed", err);
       return false;
     }
   };

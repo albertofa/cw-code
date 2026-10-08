@@ -14,6 +14,7 @@ import {
   isViewEdited,
   liveRunRefs,
   mentionsMode,
+  retargetQuery,
   runRefsSignature,
   sortOf
 } from "./githubViewModel.js";
@@ -146,6 +147,17 @@ describe("query helpers", () => {
     expect(mentionsMode("is:issue mentions:@me state:open")).toBe(true);
     expect(mentionsMode("is:issue -mentions:@me")).toBe(false);
     expect(mentionsMode("is:issue mentions:someone")).toBe(false);
+  });
+
+  it("treats a non-negated involves:@me like mentions:@me", () => {
+    expect(mentionsMode("is:issue involves:@me state:open")).toBe(true);
+    expect(mentionsMode("is:issue -involves:@me")).toBe(false);
+  });
+
+  it("drops other kind tokens when retargeting a query", () => {
+    expect(retargetQuery("is:pr author:@me is:issue ", "issue")).toBe("author:@me is:issue ");
+    expect(retargetQuery("is:run -is:pr repo:acme/widgets", "run")).toBe("is:run -is:pr repo:acme/widgets ");
+    expect(retargetQuery("is:pr is:pr label:bug", "pr")).toBe("is:pr is:pr label:bug ");
   });
 
   it("reads the sort qualifier with per-kind defaults", () => {

@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import type { GitHubKind, IssueSummary, PrSummary, RepoRef, WorkflowRunSummary } from "../cw.js";
+import type { GitHubKind, GitHubViewGroup, IssueSummary, PrSummary, RepoRef, WorkflowRunSummary } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import {
   BUILTIN_VIEWS,
@@ -16,6 +16,7 @@ import { GitHubHeader } from "./GitHubHeader.js";
 import { GitHubResults, type Listing } from "./GitHubResults.js";
 import { GitHubToolbar } from "./GitHubToolbar.js";
 import { GitHubViewMenu } from "./GitHubViewMenu.js";
+import { useRetainedEntry } from "./useRetainedEntry.js";
 import { addQualifier, applyLocalFilters, normalizeQuery, queryProblems, runMatches, sortRuns, splitQuery } from "./githubQuery.js";
 import {
   KIND_NOUNS,
@@ -45,6 +46,8 @@ function builtinQuery(id: string): string {
 
 const ISSUE_INBOX_QUERY = builtinQuery("issue:inbox");
 const RUN_WATCHING_QUERY = builtinQuery("run:watching");
+
+const MODAL_SELECTOR = '[role="dialog"], [role="alertdialog"], [aria-modal="true"]';
 
 function isEditingTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
@@ -100,7 +103,7 @@ export function GitHubView() {
   useEffect(() => {
     const onKeyDown = (event: KeyboardEvent) => {
       if (event.key !== "/" || event.ctrlKey || event.metaKey || event.altKey || event.defaultPrevented) return;
-      if (isEditingTarget(event.target)) return;
+      if (isEditingTarget(event.target) || document.querySelector(MODAL_SELECTOR)) return;
       event.preventDefault();
       inputRef.current?.focus();
     };
@@ -115,9 +118,9 @@ export function GitHubView() {
   const issueMentionsMode = useMemo(() => mentionsMode(tab.query), [tab.query]);
 
   const resultKey = useMemo(() => searchKey(kind, tab.query, kind === "run" ? cloned : []), [kind, tab.query, cloned]);
-  const prEntry = prResults[resultKey];
-  const issueEntry = issueResults[resultKey];
-  const runEntry = runResults[resultKey];
+  const prEntry = useRetainedEntry(kind === "pr" ? prResults[resultKey] : undefined);
+  const issueEntry = useRetainedEntry(kind === "issue" ? issueResults[resultKey] : undefined);
+  const runEntry = useRetainedEntry(kind === "run" ? runResults[resultKey] : undefined);
   const entry = kind === "pr" ? prEntry : kind === "issue" ? issueEntry : runEntry;
 
   const cachedPrs = useMemo(() => Object.values(prResults).flatMap((result) => result.data?.items ?? NO_PRS), [prResults]);
@@ -137,9 +140,9 @@ export function GitHubView() {
     }
     const local = split?.local ?? [];
     const context = buildLocalContext(sessions, isCloned);
-    if (kind === "pr") return { kind, items: applyLocalFilters(prEntry?.data?.items ?? NO_PRS, local, context) };
-    return { kind, items: applyLocalFilters(issueEntry?.data?.items ?? NO_ISSUES, local, context) };
-  }, [kind, tab.query, runEntry, prEntry, issueEntry, split, runContext, sessions, isCloned]);
+    if (kind === "pr") return { kind, items: remoteEmpty ? NO_PRS : applyLocalFilters(prEntry?.data?.items ?? NO_PRS, local, context) };
+    return { kind, items: remoteEmpty ? NO_ISSUES : applyLocalFilters(issueEntry?.data?.items ?? NO_ISSUES, local, context) };
+  }, [kind, tab.query, runEntry, prEntry, issueEntry, split, remoteEmpty, runContext, sessions, isCloned]);
 
   const liveRefs = useMemo(() => (listing.kind === "run" ? liveRunRefs(listing.items) : []), [listing]);
   const liveSignature = runRefsSignature(liveRefs);
@@ -176,15 +179,25 @@ export function GitHubView() {
   const showLoading = !remoteEmpty && !hasItems && (entry === undefined || entry.loading);
   const showEmpty = !remoteEmpty && !hasItems && entry !== undefined && !entry.loading && entry.error === null;
 
-  const onQueryChange = (query: string) => setQuery(kind, query);
-  const onAddQualifier = (key: string, value: string) => setQuery(kind, addQualifier(useGitHubStore.getState().tabs[kind].query, key, value));
-  const openViews = (saving: boolean) => {
+  const countsUnavailable = split !== null && split.local.length > 0;
+  const viewId = view?.id ?? null;
+
+  const onQueryChange = useCallback((query: string) => setQuery(kind, query), [kind, setQuery]);
+  const onAddQualifier = useCallback(
+    (key: string, value: string) => setQuery(kind, addQualifier(useGitHubStore.getState().tabs[kind].query, key, value)),
+    [kind, setQuery]
+  );
+  const onToggleGroup = useCallback((groupId: string) => toggleCollapsed(kind, groupId), [kind, toggleCollapsed]);
+  const onGroupChange = useCallback((group: GitHubViewGroup) => setGroup(kind, group), [kind, setGroup]);
+  const onRefresh = useCallback(() => void refresh(true), [refresh]);
+  const openViews = useCallback((saving: boolean) => {
     const button = viewButtonRef.current;
     if (button) setViewsMenu({ anchor: anchorRectOf(button), saving });
-  };
-  const reset = () => {
-    if (view) selectView(view.id);
-  };
+  }, []);
+  const closeViews = useCallback(() => setViewsMenu(null), []);
+  const reset = useCallback(() => {
+    if (viewId) selectView(viewId);
+  }, [viewId, selectView]);
 
   return (
     <div className="thread-col pr-view pr-inbox-view hub-view">
@@ -207,7 +220,7 @@ export function GitHubView() {
         onQueryChange={onQueryChange}
         onOpenViews={openViews}
         onReset={reset}
-        onRefresh={() => void refresh(true)}
+        onRefresh={onRefresh}
       />
       <div className="pr-view-body pr-inbox-body">
         {storeError && (
@@ -221,7 +234,7 @@ export function GitHubView() {
         {entry?.error && (
           <div className="pr-view-error" role="alert">
             <span>{entry.error}</span>
-            <button type="button" className="pr-view-retry" onClick={() => void refresh(true)}>
+            <button type="button" className="pr-view-retry" onClick={onRefresh}>
               Retry
             </button>
           </div>
@@ -232,12 +245,13 @@ export function GitHubView() {
           group={tab.group}
           openCount={searchData?.openCount ?? null}
           closedCount={searchData?.closedCount ?? null}
+          countsUnavailable={countsUnavailable}
           visibleCount={listing.items.length}
           problems={problems}
           refreshing={loading && hasItems}
           truncatedLimit={searchData?.truncated ? searchData.limit : null}
           onQueryChange={onQueryChange}
-          onGroupChange={(group) => setGroup(kind, group)}
+          onGroupChange={onGroupChange}
         />
         {remoteEmpty && <div className="pr-view-empty">Type a query or pick a view</div>}
         {showLoading && <div className="pr-view-empty">Loading {KIND_NOUNS[kind]}…</div>}
@@ -261,15 +275,15 @@ export function GitHubView() {
               mode={tab.group}
               collapsed={tab.collapsed}
               viewer={viewer}
-              issueMentionsMode={issueMentionsMode}
+              mentionsMode={issueMentionsMode}
               isCloned={isCloned}
-              onToggle={(groupId) => toggleCollapsed(kind, groupId)}
+              onToggle={onToggleGroup}
               onAddQualifier={onAddQualifier}
             />
           </div>
         )}
       </div>
-      {viewsMenu && <GitHubViewMenu anchor={viewsMenu.anchor} initialSaving={viewsMenu.saving} onClose={() => setViewsMenu(null)} />}
+      {viewsMenu && <GitHubViewMenu anchor={viewsMenu.anchor} initialSaving={viewsMenu.saving} onClose={closeViews} />}
     </div>
   );
 }

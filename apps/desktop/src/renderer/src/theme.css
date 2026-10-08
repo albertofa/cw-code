@@ -12369,7 +12369,7 @@ button.gitbar-checkout:hover {
   padding: 0 5px;
   border-radius: 99px;
   background: var(--accent);
-  color: #fff;
+  color: var(--text);
   font-size: 10px;
   font-weight: 700;
   font-variant-numeric: tabular-nums;
@@ -12439,7 +12439,7 @@ button.gitbar-checkout:hover {
 
 .hub-view-btn:hover,
 .hub-view-btn.open {
-  background: #35373c;
+  background: color-mix(in srgb, var(--raised) 82%, var(--text));
 }
 
 .hub-view-btn .lucide {
@@ -12513,7 +12513,7 @@ button.gitbar-checkout:hover {
 }
 
 .hub-q-input::selection {
-  background: rgba(84, 138, 247, 0.35);
+  background: color-mix(in srgb, var(--accent) 35%, transparent);
   color: transparent;
 }
 
@@ -12526,14 +12526,14 @@ button.gitbar-checkout:hover {
 }
 
 .q-val {
-  color: #8fb4ff;
+  color: color-mix(in srgb, var(--accent) 55%, var(--text));
 }
 
 .q-me {
-  color: #d4c4ff;
-  background: rgba(180, 156, 255, 0.2);
+  color: color-mix(in srgb, var(--codex) 65%, var(--text));
+  background: var(--codex-soft);
   border-radius: 3px;
-  box-shadow: 0 0 0 1.5px rgba(180, 156, 255, 0.2);
+  box-shadow: 0 0 0 1.5px var(--codex-soft);
 }
 
 .q-neg {
@@ -12547,7 +12547,7 @@ button.gitbar-checkout:hover {
 }
 
 .q-local .q-key {
-  color: #d9b66a;
+  color: var(--warning);
 }
 
 .hub-search-end {
@@ -12585,7 +12585,18 @@ button.gitbar-checkout:hover {
 }
 
 .hub-mini-btn.accent {
-  color: #a9c5ff;
+  color: color-mix(in srgb, var(--accent) 55%, var(--text));
+}
+
+.hub-mini-btn.danger {
+  color: var(--danger);
+}
+
+.hub-delete-ask {
+  align-self: center;
+  color: var(--muted);
+  font-size: 11.5px;
+  padding-right: 4px;
 }
 
 .hub-mini-btn:disabled {
@@ -12682,8 +12693,8 @@ button.gitbar-checkout:hover {
   height: 15px;
   padding: 0 5px;
   border-radius: 4px;
-  background: rgba(232, 180, 79, 0.14);
-  color: #d9b66a;
+  background: color-mix(in srgb, var(--warning) 14%, transparent);
+  color: var(--warning);
   font-size: 9.5px;
   font-weight: 700;
   letter-spacing: 0.03em;
@@ -12889,7 +12900,7 @@ button.gitbar-checkout:hover {
 }
 
 .hub-state-tab.on b {
-  background: #3a3d44;
+  background: var(--border);
   color: var(--text);
 }
 

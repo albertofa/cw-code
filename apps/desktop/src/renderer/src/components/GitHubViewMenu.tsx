@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type KeyboardEvent } from "react";
+import { useEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import { BookmarkPlus, Pencil, Settings2, Trash2 } from "lucide-react";
 import type { GitHubKind } from "../cw.js";
 import { SAVED_VIEW_ICON, resolveViews, useGitHubStore, type GitHubView } from "../stores/githubStore.js";
@@ -40,6 +40,8 @@ export function GitHubViewMenu({ anchor, initialSaving, onClose }: { anchor: Anc
   const [managing, setManaging] = useState(false);
   const [renamingId, setRenamingId] = useState<string | null>(null);
   const [renameValue, setRenameValue] = useState("");
+  const [confirmingDeleteId, setConfirmingDeleteId] = useState<string | null>(null);
+  const renamingRef = useRef<string | null>(null);
 
   const views = useMemo(() => resolveViews(kind, org, savedViews), [kind, org, savedViews]);
   const builtin = useMemo(() => views.filter((view) => !view.saved), [views]);
@@ -69,9 +71,23 @@ export function GitHubViewMenu({ anchor, initialSaving, onClose }: { anchor: Anc
     onClose();
   };
 
-  const confirmRename = (id: string) => {
-    const trimmed = renameValue.trim();
+  const startRename = (view: GitHubView) => {
+    renamingRef.current = view.id;
+    setRenamingId(view.id);
+    setRenameValue(view.name);
+    setConfirmingDeleteId(null);
+  };
+
+  const cancelRename = () => {
+    renamingRef.current = null;
     setRenamingId(null);
+  };
+
+  const confirmRename = (id: string) => {
+    if (renamingRef.current !== id) return;
+    renamingRef.current = null;
+    setRenamingId(null);
+    const trimmed = renameValue.trim();
     if (trimmed) void renameView(id, trimmed);
   };
 
@@ -81,7 +97,7 @@ export function GitHubViewMenu({ anchor, initialSaving, onClose }: { anchor: Anc
       confirmRename(id);
     } else if (event.key === "Escape") {
       event.stopPropagation();
-      setRenamingId(null);
+      cancelRename();
     }
   };
 
@@ -103,33 +119,53 @@ export function GitHubViewMenu({ anchor, initialSaving, onClose }: { anchor: Anc
               aria-label={`Rename ${view.name}`}
               onChange={(event) => setRenameValue(event.target.value)}
               onKeyDown={(event) => onRenameKey(event, view.id)}
+              onBlur={() => confirmRename(view.id)}
             />
           ) : (
             <ViewText view={view} />
           )}
-          <span className="hub-view-actions">
-            <button
-              type="button"
-              className="hub-mini-btn"
-              title={`Rename ${view.name}`}
-              aria-label={`Rename ${view.name}`}
-              onClick={() => {
-                setRenamingId(view.id);
-                setRenameValue(view.name);
-              }}
-            >
-              <Pencil size={12} aria-hidden="true" />
-            </button>
-            <button
-              type="button"
-              className="hub-mini-btn"
-              title={`Delete ${view.name}`}
-              aria-label={`Delete ${view.name}`}
-              onClick={() => void deleteView(view.id)}
-            >
-              <Trash2 size={12} aria-hidden="true" />
-            </button>
-          </span>
+          {confirmingDeleteId === view.id ? (
+            <span className="hub-view-actions">
+              <span className="hub-delete-ask">Delete?</span>
+              <button
+                type="button"
+                className="hub-mini-btn danger"
+                onClick={() => {
+                  setConfirmingDeleteId(null);
+                  void deleteView(view.id);
+                }}
+              >
+                Yes
+              </button>
+              <button type="button" className="hub-mini-btn" onClick={() => setConfirmingDeleteId(null)}>
+                No
+              </button>
+            </span>
+          ) : (
+            <span className="hub-view-actions">
+              <button
+                type="button"
+                className="hub-mini-btn"
+                title={`Rename ${view.name}`}
+                aria-label={`Rename ${view.name}`}
+                onClick={() => startRename(view)}
+              >
+                <Pencil size={12} aria-hidden="true" />
+              </button>
+              <button
+                type="button"
+                className="hub-mini-btn"
+                title={`Delete ${view.name}`}
+                aria-label={`Delete ${view.name}`}
+                onClick={() => {
+                  cancelRename();
+                  setConfirmingDeleteId(view.id);
+                }}
+              >
+                <Trash2 size={12} aria-hidden="true" />
+              </button>
+            </span>
+          )}
         </div>
       );
     }
@@ -193,7 +229,8 @@ export function GitHubViewMenu({ anchor, initialSaving, onClose }: { anchor: Anc
         aria-pressed={managing}
         onClick={() => {
           setManaging((value) => !value);
-          setRenamingId(null);
+          cancelRename();
+          setConfirmingDeleteId(null);
         }}
       >
         <Settings2 size={13} aria-hidden="true" />

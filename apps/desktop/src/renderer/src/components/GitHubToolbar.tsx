@@ -6,6 +6,7 @@ import { SORT_LABELS, sortKeysFor, stateOf, withQualifier, withState } from "./g
 import { GROUP_LABELS, sortOf } from "./githubViewModel.js";
 
 const GROUP_MODES: GitHubViewGroup[] = ["triage", "repo", "none"];
+const COUNTS_UNAVAILABLE_TITLE = "Counts unavailable with cw-only filters";
 
 function groupLabel(kind: GitHubKind, mode: GitHubViewGroup): string {
   if (mode === "triage") return GROUP_LABELS[kind];
@@ -41,6 +42,7 @@ export function GitHubToolbar({
   group,
   openCount,
   closedCount,
+  countsUnavailable,
   visibleCount,
   problems,
   refreshing,
@@ -53,6 +55,7 @@ export function GitHubToolbar({
   group: GitHubViewGroup;
   openCount: number | null;
   closedCount: number | null;
+  countsUnavailable: boolean;
   visibleCount: number;
   problems: string[];
   refreshing: boolean;
@@ -72,9 +75,9 @@ export function GitHubToolbar({
           {visibleCount} workflow {visibleCount === 1 ? "run" : "runs"}
         </span>
       ) : (
-        <div className="hub-state-tabs">
-          <StateTab state="open" current={currentState} count={openCount} kind={kind} onSelect={() => onQueryChange(withState(query, "open"))} />
-          <StateTab state="closed" current={currentState} count={closedCount} kind={kind} onSelect={() => onQueryChange(withState(query, "closed"))} />
+        <div className="hub-state-tabs" title={countsUnavailable ? COUNTS_UNAVAILABLE_TITLE : undefined}>
+          <StateTab state="open" current={currentState} count={countsUnavailable ? null : openCount} kind={kind} onSelect={() => onQueryChange(withState(query, "open"))} />
+          <StateTab state="closed" current={currentState} count={countsUnavailable ? null : closedCount} kind={kind} onSelect={() => onQueryChange(withState(query, "closed"))} />
         </div>
       )}
       <div className="hub-toolbar-right">

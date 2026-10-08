@@ -1,4 +1,4 @@
-import { useMemo, type ReactNode } from "react";
+import { memo, useMemo, type ReactNode } from "react";
 import { ChevronRight, GitBranch, MessageSquare, Timer } from "lucide-react";
 import type { IssueSummary, PrSummary, WorkflowRunSummary } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
@@ -39,7 +39,6 @@ export type GitHubRowProps = (
   | { kind: "run"; item: WorkflowRunSummary }
 ) & {
   viewer: string | null;
-  issueMentionsMode: boolean;
   onAddQualifier: (key: string, value: string) => void;
 };
 
@@ -287,7 +286,7 @@ function toSubject(props: GitHubRowProps): RowSubject {
   return { kind: "run", run: props.item };
 }
 
-export function GitHubRow(props: GitHubRowProps) {
+export const GitHubRow = memo(function GitHubRow(props: GitHubRowProps) {
   const { viewer, onAddQualifier } = props;
   const subject = useMemo(() => toSubject(props), [props.kind, props.item]);
   const sessionsByProject = useAppStore((s) => s.sessionsByProject);
@@ -364,4 +363,4 @@ export function GitHubRow(props: GitHubRowProps) {
       />
     </div>
   );
-}
+});

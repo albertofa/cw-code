@@ -1,4 +1,4 @@
-import { Fragment, useEffect, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from "react";
+import { Fragment, useCallback, useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import type { GitHubKind } from "../cw.js";
 import { GitHubAvatar } from "./GitHubAvatar.js";
@@ -12,7 +12,7 @@ import {
   type AutocompleteItem,
   type SuggestionSource
 } from "./githubQuery.js";
-import { KIND_NOUNS } from "./githubViewModel.js";
+import { KIND_NOUNS, retargetQuery } from "./githubViewModel.js";
 
 const AC_WIDTH_FALLBACK = 320;
 const AC_EDGE_MARGIN = 8;
@@ -61,11 +61,12 @@ function SuggestionLead({ item }: { item: AutocompleteItem }) {
   return icon ? <NamedIcon name={icon} size={14} /> : <span className="hub-ac-lead-spacer" />;
 }
 
-function Suggestion({ item, active, onPick }: { item: AutocompleteItem; active: boolean; onPick: () => void }) {
+function Suggestion({ item, id, active, onPick }: { item: AutocompleteItem; id: string; active: boolean; onPick: () => void }) {
   const className = `hub-ac-item${active ? " active" : ""}`;
+  const optionProps = { id, role: "option", "aria-selected": active, tabIndex: -1 } as const;
   if (item.kind === "key") {
     return (
-      <button type="button" className={className} onClick={onPick}>
+      <button type="button" className={className} onClick={onPick} {...optionProps}>
         <span className="k">{item.label}</span>
         {item.local && <span className="hub-ac-tag">cw</span>}
         <span className="hub-ac-desc">{item.description}</span>
@@ -74,14 +75,14 @@ function Suggestion({ item, active, onPick }: { item: AutocompleteItem; active: 
   }
   if (item.kind === "exclude") {
     return (
-      <button type="button" className={className} onClick={onPick}>
+      <button type="button" className={className} onClick={onPick} {...optionProps}>
         <NamedIcon name="CircleMinus" size={14} />
         <span className="lbl">{item.label}</span>
       </button>
     );
   }
   return (
-    <button type="button" className={className} onClick={onPick}>
+    <button type="button" className={className} onClick={onPick} {...optionProps}>
       <SuggestionLead item={item} />
       <span className="lbl">{item.label}</span>
       {item.local && <span className="hub-ac-tag">cw</span>}
@@ -103,6 +104,8 @@ export function GitHubQueryEditor({
   inputRef: RefObject<HTMLInputElement | null>;
   onChange: (query: string) => void;
 }) {
+  const listId = useId();
+  const optionId = (index: number) => `${listId}-option-${index}`;
   const wrapRef = useRef<HTMLDivElement | null>(null);
   const highlightRef = useRef<HTMLDivElement | null>(null);
   const panelRef = useRef<HTMLDivElement | null>(null);
@@ -137,19 +140,35 @@ export function GitHubQueryEditor({
     syncScroll();
   });
 
-  useLayoutEffect(() => {
+  const tokenStart = result?.tokenStart ?? 0;
+  const reposition = useCallback(() => {
     const input = inputRef.current;
     const wrap = wrapRef.current;
-    if (!visible || !result || !input || !wrap) return;
+    if (!input || !wrap) return;
     const wrapRect = wrap.getBoundingClientRect();
     const barRect = wrap.closest(".hub-search")?.getBoundingClientRect() ?? wrapRect;
     const width = panelRef.current?.offsetWidth ?? AC_WIDTH_FALLBACK;
-    const x = wrapRect.left + textWidth(input, query.slice(0, result.tokenStart)) - input.scrollLeft - AC_CARET_OFFSET;
-    setPosition({
-      left: Math.max(AC_EDGE_MARGIN, Math.min(x, window.innerWidth - width - AC_EDGE_MARGIN)),
-      top: barRect.bottom + AC_TOP_GAP
-    });
-  }, [visible, query, result?.tokenStart]);
+    const x = wrapRect.left + textWidth(input, query.slice(0, tokenStart)) - input.scrollLeft - AC_CARET_OFFSET;
+    const left = Math.max(AC_EDGE_MARGIN, Math.min(x, window.innerWidth - width - AC_EDGE_MARGIN));
+    const top = barRect.bottom + AC_TOP_GAP;
+    setPosition((previous) => (previous && previous.left === left && previous.top === top ? previous : { left, top }));
+  }, [inputRef, query, tokenStart]);
+
+  useLayoutEffect(() => {
+    if (visible) reposition();
+  }, [visible, reposition, items.length]);
+
+  useEffect(() => {
+    if (!visible) return;
+    window.addEventListener("resize", reposition);
+    const panel = panelRef.current;
+    const observer = panel && typeof ResizeObserver !== "undefined" ? new ResizeObserver(reposition) : null;
+    if (panel) observer?.observe(panel);
+    return () => {
+      window.removeEventListener("resize", reposition);
+      observer?.disconnect();
+    };
+  }, [visible, reposition]);
 
   useEffect(() => {
     if (visible) panelRef.current?.querySelector(".active")?.scrollIntoView({ block: "nearest" });
@@ -159,26 +178,30 @@ export function GitHubQueryEditor({
     const item = items[index];
     if (!item || !result) return;
     const applied = applyAutocomplete(query, result, item, kind);
-    pendingCaret.current = applied.caret;
-    setCaret(applied.caret);
+    const nextQuery = applied.switchKind ? retargetQuery(applied.query, applied.switchKind) : applied.query;
+    const nextCaret = applied.switchKind ? nextQuery.length : applied.caret;
+    pendingCaret.current = nextCaret;
+    setCaret(nextCaret);
     setActive(0);
     setOpen(applied.reopen);
-    onChange(applied.query);
+    onChange(nextQuery);
     inputRef.current?.focus();
   };
 
   const onKeyDown = (event: KeyboardEvent<HTMLInputElement>) => {
     if (event.key === "Escape") {
-      if (open) {
+      if (visible) {
         event.preventDefault();
         event.stopPropagation();
         setOpen(false);
         return;
       }
+      setOpen(false);
       event.currentTarget.blur();
       return;
     }
-    if (visible && items.length > 0) {
+    const tokenIsEmpty = result !== null && result.tokenStart === result.tokenEnd;
+    if (visible && items.length > 0 && !(event.key === "Tab" && tokenIsEmpty)) {
       if (event.key === "ArrowDown") {
         event.preventDefault();
         setActive((activeIndex + 1) % items.length);
@@ -214,8 +237,12 @@ export function GitHubQueryEditor({
         value={query}
         spellCheck={false}
         autoComplete="off"
+        role="combobox"
         aria-label="Search query"
+        aria-autocomplete="list"
+        aria-controls={listId}
         aria-expanded={visible}
+        aria-activedescendant={visible && items.length > 0 ? optionId(activeIndex) : undefined}
         placeholder={`Search ${KIND_NOUNS[kind]} — try author:@me or repo:`}
         onChange={(event) => {
           setActive(0);
@@ -247,6 +274,9 @@ export function GitHubQueryEditor({
         createPortal(
           <div
             ref={panelRef}
+            id={listId}
+            role="listbox"
+            aria-label="Query suggestions"
             className="hub-ac"
             style={position ?? { left: 0, top: 0, visibility: "hidden" }}
             onMouseDown={(event) => event.preventDefault()}
@@ -256,6 +286,7 @@ export function GitHubQueryEditor({
               <Suggestion
                 key={`${item.kind}:${item.neg ? "-" : ""}${item.key}:${item.value ?? ""}`}
                 item={item}
+                id={optionId(index)}
                 active={index === activeIndex}
                 onPick={() => accept(index)}
               />
