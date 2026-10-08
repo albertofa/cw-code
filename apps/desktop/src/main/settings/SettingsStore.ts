@@ -100,7 +100,7 @@ function sanitizeSavedView(entry: unknown): SavedGitHubView | null {
   if (typeof o.name !== "string" || typeof o.query !== "string") return null;
   const name = o.name.trim();
   const query = o.query.trim();
-  if (name.length > MAX_VIEW_NAME_LENGTH || query.length > MAX_VIEW_QUERY_LENGTH) return null;
+  if (!name || !query || name.length > MAX_VIEW_NAME_LENGTH || query.length > MAX_VIEW_QUERY_LENGTH) return null;
   return { id, kind: o.kind as GitHubKind, name, query, group: o.group as GitHubViewGroup };
 }
 

@@ -380,9 +380,9 @@ export function execWithStatus(command: string, args: string[], cwd: string, tim
   return new Promise((resolvePromise, reject) => {
     execFile(command, args, { cwd, timeout, windowsHide: true, maxBuffer: 16 * 1024 * 1024, env: env ?? withNonInteractiveEnv() }, (error, stdout, stderr) => {
       if (!error) return resolvePromise({ code: 0, stdout: String(stdout), stderr: String(stderr) });
-      const failure = error as NodeJS.ErrnoException & { killed?: boolean };
-      if (failure.killed || typeof failure.code !== "number") return reject(new Error(String(stderr || error.message).trim()));
-      resolvePromise({ code: failure.code, stdout: String(stdout), stderr: String(stderr) });
+      if (error.killed) return reject(new Error(`timed out after ${timeout}ms: ${command} ${args[0] ?? ""}`.trim()));
+      if (typeof error.code !== "number") return reject(new Error(String(stderr || error.message).trim()));
+      resolvePromise({ code: error.code, stdout: String(stdout), stderr: String(stderr) });
     });
   });
 }

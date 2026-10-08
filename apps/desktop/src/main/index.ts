@@ -614,7 +614,13 @@ function registerGitHubIpc({ sessions, pullRequests, githubSearch, runs, runWatc
     const { sessionId, link } = parseArgs(args, "sessions.linkIssue");
     if (typeof sessionId !== "string" || !isValidIssueLink(link)) throw new Error("invalid issue link");
     assertIssueRef(link.ref);
-    return sessions.linkIssue(sessionId, link);
+    const { host, owner, repo, number } = link.ref;
+    return sessions.linkIssue(sessionId, {
+      ref: { host, owner, repo, number },
+      origin: link.origin,
+      ...(link.workflowId !== undefined ? { workflowId: link.workflowId } : {}),
+      lastSeenAt: link.lastSeenAt
+    });
   });
   ipcMain.handle("sessions.unlinkIssue", (_e, args: unknown) => {
     const { sessionId, ref } = parseArgs(args, "sessions.unlinkIssue");
@@ -633,7 +639,13 @@ function registerGitHubIpc({ sessions, pullRequests, githubSearch, runs, runWatc
     const { sessionId, link } = parseArgs(args, "sessions.linkRun");
     if (typeof sessionId !== "string" || !isValidRunLink(link)) throw new Error("invalid run link");
     assertRunRef(link.ref);
-    return sessions.linkRun(sessionId, link);
+    const { host, owner, repo, runId } = link.ref;
+    return sessions.linkRun(sessionId, {
+      ref: { host, owner, repo, runId },
+      origin: link.origin,
+      ...(link.workflowId !== undefined ? { workflowId: link.workflowId } : {}),
+      lastSeenAt: link.lastSeenAt
+    });
   });
   ipcMain.handle("sessions.unlinkRun", (_e, args: unknown) => {
     const { sessionId, ref } = parseArgs(args, "sessions.unlinkRun");

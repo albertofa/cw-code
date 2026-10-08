@@ -376,6 +376,8 @@ describe("SettingsStore", () => {
         { ...view, id: "long-name", name: "n".repeat(81) },
         { ...view, id: "long-query", query: "q".repeat(513) },
         { ...view, id: "no-query", query: undefined },
+        { ...view, id: "blank-name", name: "   " },
+        { ...view, id: "blank-query", query: "  " },
         { ...view, id: "edge", kind: "run", name: "n".repeat(80), query: "q".repeat(512), group: "repo" },
         "not-an-object",
         null
