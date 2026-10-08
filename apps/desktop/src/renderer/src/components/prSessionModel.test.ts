@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PrDetail, PrWorkflow, SessionPrLink } from "@cw-code/contracts";
-import { defaultFollowUpWorkflowId, followUpPrompt, followUpWorkflow, needsFailedLogs, whyLinkedText } from "./prSessionModel.js";
+import { defaultFollowUpWorkflowId, followUpPrompt, followUpWorkflow, needsFailedLogs, needsRunFailedLogs, whyLinkedText } from "./prSessionModel.js";
 
 function link(overrides: Partial<SessionPrLink> = {}): SessionPrLink {
   return {
@@ -92,6 +92,13 @@ describe("needsFailedLogs", () => {
   it("detects the failed-logs variable", () => {
     expect(needsFailedLogs("logs:\n{{ checks.failedLogs }}")).toBe(true);
     expect(needsFailedLogs("{{checks.summary}}")).toBe(false);
+  });
+});
+
+describe("needsRunFailedLogs", () => {
+  it("detects the run failed-logs variable", () => {
+    expect(needsRunFailedLogs("{{ run.failedLogs }}")).toBe(true);
+    expect(needsRunFailedLogs("{{run.failedJobs}} {{checks.failedLogs}}")).toBe(false);
   });
 });
 

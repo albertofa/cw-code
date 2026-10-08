@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from "react";
+import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import {
   Activity,
   AlertTriangle,
@@ -36,8 +36,24 @@ import { UpdatesSettings } from "./UpdatesSettings.js";
 import { DriverIcon } from "./DriverIcon.js";
 import appIcon from "../assets/console-c.svg";
 import { version as appVersion, description as appDescription } from "../../../../package.json";
-import { attributionText, TEMPLATE_VARS } from "./prWorkflows.js";
-import { createWorkflow, deleteWorkflow, duplicateWorkflow, insertAtCursor, moveWorkflow, resetWorkflowTo } from "./prWorkflowEditor.js";
+import { attributionText, TEMPLATE_VARS_BY_TARGET } from "./prWorkflows.js";
+import {
+  changeWorkflowTarget,
+  CONDITIONS_BY_TARGET,
+  createWorkflow,
+  deleteWorkflow,
+  duplicateWorkflow,
+  groupWorkflowsByTarget,
+  insertAtCursor,
+  moveWorkflow,
+  resetWorkflowTo,
+  TARGET_HEADINGS,
+  unavailableVarsMessage,
+  unknownTemplateVars,
+  WORKFLOW_TARGETS,
+  workflowsValidationError,
+  type WorkflowTarget
+} from "./prWorkflowEditor.js";
 
 const WORKFLOW_ICONS: Record<PrWorkflowIcon, typeof Eye> = {
   eye: Eye,
@@ -62,21 +78,22 @@ const CONDITION_LABELS: Record<PrSuggestCondition, string> = {
   "run-failed": "Run failed"
 };
 
-const ALL_CONDITIONS: PrSuggestCondition[] = [
-  "review-requested",
-  "author",
-  "checks-failing",
-  "changes-requested",
-  "conflicts",
-  "bot-author",
-  "draft"
-];
-
 const WORKSPACE_OPTIONS: Array<{ id: PrWorkspaceChoice; label: string; hint: string }> = [
   { id: "checkout", label: "Current checkout", hint: "Use the project folder as-is." },
   { id: "worktree", label: "Worktree at PR head", hint: "Check the PR head out into a new worktree." },
   { id: "linked", label: "Linked session's workspace", hint: "Reuse the linked session's workspace; falls back to a worktree." }
 ];
+
+const NON_PR_WORKSPACE_OPTIONS: Array<{ id: PrWorkspaceChoice; label: string; hint: string }> = [
+  WORKSPACE_OPTIONS[0],
+  { id: "worktree", label: "New worktree", hint: "Start the session in a new isolated worktree." }
+];
+
+const TARGET_SUBJECTS: Record<WorkflowTarget, string> = {
+  pr: "this PR",
+  issue: "this issue",
+  run: "this run"
+};
 
 // Must match CLAUDE_CURATED_MODELS in apps/desktop/src/main/providers/claude/ClaudeCliDriver.ts.
 // Main drops unknown ids on save, so keep this list in sync with the driver.
@@ -332,11 +349,18 @@ export function SettingsModal({
 
   const onSave = async () => {
     if (!draft || saving) return;
+    const workflowError = workflowsValidationError(draft.prWorkflows);
+    if (workflowError) {
+      setCategory("prWorkflows");
+      setSaveError(workflowError);
+      return;
+    }
     setSaving(true);
     setSaveError(null);
     try {
       const store = useAppStore.getState();
-      await store.saveSettings(draft);
+      const { githubSavedViews: _savedViews, ...patch } = draft;
+      await store.saveSettings(patch);
       if (configId) {
         const [host, login] = projectAccount.split("\t");
         await store.setProjectGitHubAccount(configId, host && login ? { host, login } : null);
@@ -421,6 +445,11 @@ export function SettingsModal({
   const updateSelectedWorkflow = (patch: Partial<PrWorkflow>) => {
     if (!draft || !selectedWorkflowId) return;
     setWorkflows(draft.prWorkflows.map((w) => (w.id === selectedWorkflowId ? { ...w, ...patch } : w)));
+  };
+
+  const changeSelectedTarget = (next: WorkflowTarget) => {
+    if (!draft || !selectedWorkflowId) return;
+    setWorkflows(draft.prWorkflows.map((w) => (w.id === selectedWorkflowId ? changeWorkflowTarget(w, next) : w)));
   };
 
   const toggleCondition = (workflow: PrWorkflow, condition: PrSuggestCondition) => {
@@ -962,6 +991,7 @@ export function SettingsModal({
     const workflows = draft.prWorkflows;
     const selected = workflows.find((w) => w.id === selectedWorkflowId) ?? null;
     const SelectedIcon = selected ? WORKFLOW_ICONS[selected.icon] : null;
+    const unknown = selected ? unknownTemplateVars(selected) : { startPrompt: [], updatePrompt: [] };
     return (
       <div className="settings-prwf">
         <div className="settings-prwf-list">
@@ -972,60 +1002,67 @@ export function SettingsModal({
             </button>
           </div>
           <div className="settings-prwf-list-body">
-            {workflows.map((w, index) => {
-              const Icon = WORKFLOW_ICONS[w.icon];
-              return (
-                <div
-                  key={w.id}
-                  className={`settings-prwf-item${selected?.id === w.id ? " active" : ""}`}
-                  onClick={() => setSelectedWorkflowId(w.id)}
-                >
-                  <span className="settings-prwf-item-reorder">
-                    <button
-                      className="icon-btn"
-                      aria-label={`Move ${w.label} up`}
-                      disabled={index === 0}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        moveWorkflowEntry(w.id, "up");
-                      }}
-                    >
-                      <ArrowUp size={12} aria-hidden="true" />
-                    </button>
-                    <button
-                      className="icon-btn"
-                      aria-label={`Move ${w.label} down`}
-                      disabled={index === workflows.length - 1}
-                      onClick={(e) => {
-                        e.stopPropagation();
-                        moveWorkflowEntry(w.id, "down");
-                      }}
-                    >
-                      <ArrowDown size={12} aria-hidden="true" />
-                    </button>
-                  </span>
-                  <Icon size={15} aria-hidden="true" />
-                  <span className="settings-prwf-item-text">
-                    <span className="settings-prwf-item-name">
-                      {w.label}
-                      {!w.builtIn && <span className="settings-tag">custom</span>}
-                    </span>
-                    <span className="settings-prwf-item-hint">
-                      {w.suggestWhen.length > 0 ? w.suggestWhen.map((c) => CONDITION_LABELS[c]).join(", ") : "Manual only"}
-                    </span>
-                  </span>
-                  <span className="settings-switch" onClick={(e) => e.stopPropagation()}>
-                    <input
-                      type="checkbox"
-                      checked={w.enabled}
-                      onChange={() => toggleWorkflowEnabled(w.id)}
-                      aria-label={`Enable ${w.label}`}
-                    />
-                    <span className="track" aria-hidden="true" />
-                  </span>
+            {groupWorkflowsByTarget(workflows).map((group) => (
+              <Fragment key={group.target}>
+                <div className="settings-hint" role="heading" aria-level={4}>
+                  {TARGET_HEADINGS[group.target]}
                 </div>
-              );
-            })}
+                {group.workflows.map((w, index) => {
+                  const Icon = WORKFLOW_ICONS[w.icon];
+                  return (
+                    <div
+                      key={w.id}
+                      className={`settings-prwf-item${selected?.id === w.id ? " active" : ""}`}
+                      onClick={() => setSelectedWorkflowId(w.id)}
+                    >
+                      <span className="settings-prwf-item-reorder">
+                        <button
+                          className="icon-btn"
+                          aria-label={`Move ${w.label} up`}
+                          disabled={index === 0}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            moveWorkflowEntry(w.id, "up");
+                          }}
+                        >
+                          <ArrowUp size={12} aria-hidden="true" />
+                        </button>
+                        <button
+                          className="icon-btn"
+                          aria-label={`Move ${w.label} down`}
+                          disabled={index === group.workflows.length - 1}
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            moveWorkflowEntry(w.id, "down");
+                          }}
+                        >
+                          <ArrowDown size={12} aria-hidden="true" />
+                        </button>
+                      </span>
+                      <Icon size={15} aria-hidden="true" />
+                      <span className="settings-prwf-item-text">
+                        <span className="settings-prwf-item-name">
+                          {w.label}
+                          {!w.builtIn && <span className="settings-tag">custom</span>}
+                        </span>
+                        <span className="settings-prwf-item-hint">
+                          {w.suggestWhen.length > 0 ? w.suggestWhen.map((c) => CONDITION_LABELS[c]).join(", ") : "Manual only"}
+                        </span>
+                      </span>
+                      <span className="settings-switch" onClick={(e) => e.stopPropagation()}>
+                        <input
+                          type="checkbox"
+                          checked={w.enabled}
+                          onChange={() => toggleWorkflowEnabled(w.id)}
+                          aria-label={`Enable ${w.label}`}
+                        />
+                        <span className="track" aria-hidden="true" />
+                      </span>
+                    </div>
+                  );
+                })}
+              </Fragment>
+            ))}
           </div>
           <div className="settings-prwf-global">
             <h4>Repositories</h4>
@@ -1140,9 +1177,29 @@ export function SettingsModal({
             {resetError && <div className="settings-error">{resetError}</div>}
 
             <section className="settings-prwf-block">
+              <h4>Applies to<span className="settings-hint">Which GitHub items this workflow runs on.</span></h4>
+              {selected.builtIn ? (
+                <span className="settings-tag">{TARGET_HEADINGS[selected.target]}</span>
+              ) : (
+                <div className="seg settings-prwf-workspace">
+                  {WORKFLOW_TARGETS.map((t) => (
+                    <button
+                      key={t}
+                      type="button"
+                      className={selected.target === t ? "on" : ""}
+                      onClick={() => changeSelectedTarget(t)}
+                    >
+                      {TARGET_HEADINGS[t]}
+                    </button>
+                  ))}
+                </div>
+              )}
+            </section>
+
+            <section className="settings-prwf-block">
               <h4>Suggest when<span className="settings-hint">Shows as the row&apos;s primary action in the inbox and tops the workflow menu.</span></h4>
               <div className="settings-prwf-conds">
-                {ALL_CONDITIONS.map((c) => (
+                {CONDITIONS_BY_TARGET[selected.target].map((c) => (
                   <button
                     key={c}
                     type="button"
@@ -1158,7 +1215,7 @@ export function SettingsModal({
             <section className="settings-prwf-block">
               <h4>Default workspace</h4>
               <div className="seg settings-prwf-workspace">
-                {WORKSPACE_OPTIONS.map((opt) => (
+                {(selected.target === "pr" ? WORKSPACE_OPTIONS : NON_PR_WORKSPACE_OPTIONS).map((opt) => (
                   <button
                     key={opt.id}
                     type="button"
@@ -1182,16 +1239,19 @@ export function SettingsModal({
                 onChange={(e) => updateSelectedWorkflow({ startPrompt: e.target.value })}
               />
               <div className="settings-prwf-vars">
-                {TEMPLATE_VARS.map((v) => (
+                {TEMPLATE_VARS_BY_TARGET[selected.target].map((v) => (
                   <button key={v} type="button" className="settings-prwf-var" onClick={() => insertTemplateVar("startPrompt", selected, v)}>
                     {`{{${v}}}`}
                   </button>
                 ))}
               </div>
+              {unknown.startPrompt.length > 0 && (
+                <div className="settings-error">{unavailableVarsMessage(unknown.startPrompt, selected.target)}</div>
+              )}
             </section>
 
             <section className="settings-prwf-block">
-              <h4>Follow-up prompt<span className="settings-hint">Sent from the update card for sessions linked to this PR.</span></h4>
+              <h4>Follow-up prompt<span className="settings-hint">Sent when you continue a session linked to {TARGET_SUBJECTS[selected.target]}.</span></h4>
               <textarea
                 ref={updatePromptRef}
                 className="field settings-prwf-textarea"
@@ -1200,12 +1260,15 @@ export function SettingsModal({
                 onChange={(e) => updateSelectedWorkflow({ updatePrompt: e.target.value })}
               />
               <div className="settings-prwf-vars">
-                {TEMPLATE_VARS.map((v) => (
+                {TEMPLATE_VARS_BY_TARGET[selected.target].map((v) => (
                   <button key={v} type="button" className="settings-prwf-var" onClick={() => insertTemplateVar("updatePrompt", selected, v)}>
                     {`{{${v}}}`}
                   </button>
                 ))}
               </div>
+              {unknown.updatePrompt.length > 0 && (
+                <div className="settings-error">{unavailableVarsMessage(unknown.updatePrompt, selected.target)}</div>
+              )}
             </section>
           </div>
         ) : (
@@ -1252,7 +1315,7 @@ export function SettingsModal({
               onClick={() => setCategory("prWorkflows")}
               aria-current={category === "prWorkflows"}
             >
-              <GitPullRequest size={14} aria-hidden="true" /> PR workflows
+              <GitPullRequest size={14} aria-hidden="true" /> Workflows
             </button>
             <div className="settings-nav-group">Harnesses</div>
             <button

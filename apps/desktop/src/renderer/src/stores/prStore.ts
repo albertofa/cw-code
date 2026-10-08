@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { GitHubKind, PrDetail, PrInboxResult, PrRef, ProjectGitHubRepo, WorkflowSubject } from "../cw.js";
+import type { GitHubKind, PrDetail, PrInboxResult, PrRef, ProjectGitHubRepo, RepoRef, WorkflowSubject } from "../cw.js";
 import { prKey } from "../components/prInbox.js";
 import { errorMessage } from "../components/errorMessage.js";
 import { useGitHubStore } from "./githubStore.js";
@@ -37,7 +37,7 @@ interface PrState {
   openSessionView(): void;
   openUsage(): void;
   refreshProjectRepos(): Promise<void>;
-  projectIdForRef(ref: PrRef): string | null;
+  projectIdForRef<T extends RepoRef>(ref: T): string | null;
   openRunModal(state: RunModalState): void;
   closeRunModal(): void;
 }
@@ -156,7 +156,7 @@ export const usePrStore = create<PrState>((set, get) => ({
     }
   },
 
-  projectIdForRef(ref: PrRef) {
+  projectIdForRef<T extends RepoRef>(ref: T) {
     const owner = ref.owner.toLowerCase();
     const repo = ref.repo.toLowerCase();
     const match = get().projectRepos.find(

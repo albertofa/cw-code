@@ -3,6 +3,8 @@ import { attributionText, resolveTemplate, templateVars } from "./prWorkflows.js
 
 const FAILED_LOGS_PATTERN = /\{\{\s*checks\.failedLogs\s*\}\}/;
 
+const RUN_FAILED_LOGS_PATTERN = /\{\{\s*run\.failedLogs\s*\}\}/;
+
 function fallbackWorkflowId(pr: Pick<PrSummary, "viewerIsAuthor"> | null): string {
   return pr !== null && !pr.viewerIsAuthor ? "review" : "babysit";
 }
@@ -22,6 +24,10 @@ export function followUpWorkflow(
 
 export function needsFailedLogs(template: string): boolean {
   return FAILED_LOGS_PATTERN.test(template);
+}
+
+export function needsRunFailedLogs(template: string): boolean {
+  return RUN_FAILED_LOGS_PATTERN.test(template);
 }
 
 export function followUpPrompt(

@@ -1,4 +1,19 @@
-import type { AppSettings, PrDetail, PrSuggestCondition, PrSummary, PrUpdate, PrWorkflow, SessionMeta, SessionPrLink } from "@cw-code/contracts";
+import type {
+  AppSettings,
+  IssueComment,
+  IssueDetail,
+  PrDetail,
+  PrSuggestCondition,
+  PrSummary,
+  PrUpdate,
+  PrWorkflow,
+  RunJob,
+  RunRef,
+  SessionIssueLink,
+  SessionMeta,
+  SessionPrLink,
+  WorkflowRunSummary
+} from "@cw-code/contracts";
 import { linkFor, pickMainSession } from "./sessionPrLinks.js";
 
 export const TEMPLATE_VARS = [
@@ -20,6 +35,44 @@ export const TEMPLATE_VARS = [
   "attribution",
   "harness"
 ] as const;
+
+export const ISSUE_TEMPLATE_VARS = [
+  "issue.number",
+  "issue.title",
+  "issue.body",
+  "issue.url",
+  "issue.repo",
+  "issue.labels",
+  "issue.comments",
+  "issue.delta",
+  "attribution",
+  "harness"
+] as const;
+
+export const RUN_TEMPLATE_VARS = [
+  "run.id",
+  "run.number",
+  "run.workflow",
+  "run.url",
+  "run.repo",
+  "run.branch",
+  "run.sha",
+  "run.event",
+  "run.failedJobs",
+  "run.failedLogs",
+  "attribution",
+  "harness"
+] as const;
+
+export const TEMPLATE_VARS_BY_TARGET: Record<PrWorkflow["target"], readonly string[]> = {
+  pr: TEMPLATE_VARS,
+  issue: ISSUE_TEMPLATE_VARS,
+  run: RUN_TEMPLATE_VARS
+};
+
+const ISSUE_COMMENTS_LIMIT = 10;
+
+const FAILED_JOB_CONCLUSIONS: ReadonlySet<RunJob["conclusion"]> = new Set(["failure", "timed_out", "startup_failure"]);
 
 export function resolveTemplate(template: string, vars: Record<string, string>): string {
   return template.replace(/\{\{\s*([\w.]+)\s*\}\}/g, (match, name: string) => (name in vars ? vars[name] : match));
@@ -68,6 +121,74 @@ export function templateVars(
     "checks.failedLogs": opts.failedLogs ?? "",
     "pr.delta": (opts.updates ?? []).map((u) => u.summary).join("\n"),
     "session.lastSeenSha": opts.link?.lastSeenSha ?? "",
+    attribution: opts.attribution,
+    harness: opts.harness
+  };
+}
+
+function formatComments(comments: IssueComment[]): string {
+  return comments.map((comment) => `${comment.author}: ${comment.body}`).join("\n");
+}
+
+export function issueTemplateVars(
+  issue: IssueDetail,
+  opts: { link?: SessionIssueLink; attribution: string; harness: string }
+): Record<string, string> {
+  const lastSeenAt = opts.link?.lastSeenAt;
+  const fresh = lastSeenAt === undefined ? [] : issue.comments.filter((comment) => comment.createdAt > lastSeenAt);
+  return {
+    "issue.number": String(issue.ref.number),
+    "issue.title": issue.title,
+    "issue.body": issue.body,
+    "issue.url": issue.url,
+    "issue.repo": `${issue.ref.owner}/${issue.ref.repo}`,
+    "issue.labels": issue.labels.join(", "),
+    "issue.comments": formatComments(issue.comments.slice(-ISSUE_COMMENTS_LIMIT)),
+    "issue.delta": formatComments(fresh),
+    attribution: opts.attribution,
+    harness: opts.harness
+  };
+}
+
+export function failedJobNames(jobs: RunJob[]): string[] {
+  return jobs.filter((job) => FAILED_JOB_CONCLUSIONS.has(job.conclusion)).map((job) => job.name);
+}
+
+export function runTemplateVars(
+  run: WorkflowRunSummary,
+  opts: { failedLogs?: string; attribution: string; harness: string }
+): Record<string, string> {
+  return {
+    "run.id": String(run.ref.runId),
+    "run.number": String(run.runNumber),
+    "run.workflow": run.workflowName,
+    "run.url": run.url,
+    "run.repo": `${run.ref.owner}/${run.ref.repo}`,
+    "run.branch": run.branch ?? "",
+    "run.sha": run.headSha,
+    "run.event": run.event,
+    "run.failedJobs": failedJobNames(run.jobs).join(", "),
+    "run.failedLogs": opts.failedLogs ?? "",
+    attribution: opts.attribution,
+    harness: opts.harness
+  };
+}
+
+export function runRefTemplateVars(
+  ref: RunRef,
+  opts: { failedLogs?: string; attribution: string; harness: string }
+): Record<string, string> {
+  return {
+    "run.id": String(ref.runId),
+    "run.number": "",
+    "run.workflow": "",
+    "run.url": "",
+    "run.repo": `${ref.owner}/${ref.repo}`,
+    "run.branch": "",
+    "run.sha": "",
+    "run.event": "",
+    "run.failedJobs": "",
+    "run.failedLogs": opts.failedLogs ?? "",
     attribution: opts.attribution,
     harness: opts.harness
   };

@@ -1,13 +1,13 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
   Activity,
+  AlertTriangle,
   Bot,
   Eye,
   FolderGit2,
   GitBranch,
   GitFork,
   GitMerge,
-  GitPullRequest,
   History,
   Loader2,
   Lock,
@@ -24,37 +24,39 @@ import type {
   CreateSessionOptions,
   DriverName,
   ModelOption,
-  PrCheck,
-  PrDetail,
   PrLinkOrigin,
   PrRef,
-  PrSummary,
   PrWorkflow,
-  Session
+  RepoRef,
+  Session,
+  WorkflowSubject
 } from "../cw.js";
 import type { PrWorkflowIcon, PrWorkspaceChoice } from "@cw-code/contracts";
 import { useAppStore, DEFAULT_COMPOSER } from "../stores/appStore.js";
+import { useGitHubStore } from "../stores/githubStore.js";
 import { usePrStore, type RunModalState } from "../stores/prStore.js";
-import { prKey } from "./prInbox.js";
-import { linkFor } from "./sessionPrLinks.js";
-import { prChip } from "./prChip.js";
-import { updatesSince } from "./prUpdates.js";
-import { attributionText, resolveTemplate, templateVars } from "./prWorkflows.js";
+import { resolveTemplate } from "./prWorkflows.js";
 import { harnessLabel } from "./toolTabs.js";
 import { firstDisplayedModelId, getLastModel } from "./lastModel.js";
 import { shortenHome } from "./pathDisplay.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { MenuSelect } from "./MenuSelect.js";
 import { errorMessage } from "./errorMessage.js";
-import { needsFailedLogs } from "./prSessionModel.js";
 import { usePrSettings } from "./useLinkedPr.js";
+import { IssueCard, PrCard, RunCard } from "./WorkflowSubjectCards.js";
+import { useWorkflowSubjectData } from "./useWorkflowSubjectData.js";
+import {
+  effectiveSubject,
+  findCachedRun,
+  repoOf,
+  runBaseBranch,
+  subjectKey,
+  subjectLink,
+  workflowsForSubject
+} from "./workflowSubject.js";
 
 const READ_ONLY_NOTICE =
   "cw-code only reads from GitHub. Anything the session commits, pushes, or posts goes through the CLI's own permissions.";
-
-const FAILED_LOG_TAIL_CHARS = 12_000;
-
-const FAILED_LOGS_TOTAL_CHARS = 30_000;
 
 const HARNESSES: DriverName[] = ["claude", "opencode", "codex"];
 
@@ -76,34 +78,25 @@ const ORIGIN_LABEL: Record<PrLinkOrigin, string> = {
 
 type Stage = "clone" | "create" | "link" | "send" | "seen";
 
-const STAGE_LABEL: Record<Stage, string> = {
-  clone: "Cloning repository",
-  create: "Creating session",
-  link: "Linking session to the pull request",
-  send: "Sending prompt",
-  seen: "Marking the pull request as seen"
+const SUBJECT_NOUN: Record<WorkflowSubject["kind"], string> = {
+  pr: "pull request",
+  issue: "issue",
+  run: "workflow run"
 };
 
-function failingRuns(checks: PrCheck[]): Array<{ runId: number; names: string[] }> {
-  const byRun = new Map<number, string[]>();
-  for (const check of checks) {
-    if (check.status !== "failure" || check.runId === null) continue;
-    byRun.set(check.runId, [...(byRun.get(check.runId) ?? []), check.name]);
+function stageLabel(stage: Stage, noun: string): string {
+  switch (stage) {
+    case "clone":
+      return "Cloning repository";
+    case "create":
+      return "Creating session";
+    case "link":
+      return `Linking session to the ${noun}`;
+    case "send":
+      return "Sending prompt";
+    case "seen":
+      return `Marking the ${noun} as seen`;
   }
-  return [...byRun.entries()].map(([runId, names]) => ({ runId, names }));
-}
-
-function tail(text: string): string {
-  return text.length > FAILED_LOG_TAIL_CHARS ? `[…truncated]\n${text.slice(-FAILED_LOG_TAIL_CHARS)}` : text;
-}
-
-async function loadFailedLogs(ref: PrRef, checks: PrCheck[]): Promise<string> {
-  const runs = failingRuns(checks);
-  const logs = await Promise.all(
-    runs.map(async (run) => `### ${run.names.join(", ")} (run ${run.runId})\n${tail((await window.cw.getPrCheckLog(ref, run.runId)).trim())}`)
-  );
-  const joined = logs.join("\n\n");
-  return joined.length > FAILED_LOGS_TOTAL_CHARS ? `${joined.slice(0, FAILED_LOGS_TOTAL_CHARS)}\n[…more logs truncated]` : joined;
 }
 
 function pushNote(ref: PrRef, headRefName: string, sessionBranch: string): string {
@@ -114,9 +107,20 @@ function isTextEntry(target: EventTarget | null): boolean {
   return target instanceof HTMLElement && (target.closest(".menu-panel") !== null || target.matches("textarea, input, select"));
 }
 
-function clonePathHint(root: string, ref: PrRef): string {
+function clonePathHint(root: string, ref: RepoRef): string {
   const sep = root.includes("\\") ? "\\" : "/";
   return `${root.replace(/[\\/]+$/, "")}${sep}${ref.owner}${sep}${ref.repo}`;
+}
+
+function newSessionHint(subject: WorkflowSubject, runNumber: number | undefined): string {
+  switch (subject.kind) {
+    case "pr":
+      return `linked to #${subject.ref.number}`;
+    case "issue":
+      return `linked to #${subject.ref.number}`;
+    case "run":
+      return runNumber === undefined ? `linked to run ${subject.ref.runId}` : `linked to run #${runNumber}`;
+  }
 }
 
 function Segment<T extends string>({
@@ -156,53 +160,14 @@ function Segment<T extends string>({
   );
 }
 
-function PrCard({ pr }: { pr: PrSummary }) {
-  const chip = prChip({ pr, git: null });
-  return (
-    <div className="wf-run-pr">
-      <GitPullRequest size={16} aria-hidden="true" className="wf-run-pr-icon" />
-      <div className="wf-run-pr-text">
-        <div className="wf-run-pr-title" title={pr.title}>
-          {pr.title} <span className="wf-run-muted">#{pr.ref.number}</span>
-        </div>
-        <div className="wf-run-pr-meta">
-          <span>{pr.ref.owner}/{pr.ref.repo}</span>
-          <span aria-hidden="true">·</span>
-          <span className="wf-run-branch">{pr.headRefName}</span>
-          <span aria-hidden="true">→</span>
-          <span className="wf-run-branch">{pr.baseRefName}</span>
-        </div>
-      </div>
-      {chip && (
-        <span className={`pr-chip tone-${chip.tone}`} title={chip.title}>
-          {chip.title.replace(/^PR #\d+ · /, "")}
-        </span>
-      )}
-    </div>
-  );
-}
-
 export function WorkflowRunModal({ request }: { request: RunModalState }) {
-  const closeRunModal = usePrStore((s) => s.closeRunModal);
-  const unsupported = request.subject.kind !== "pr";
-  useEffect(() => {
-    if (unsupported) closeRunModal();
-  }, [unsupported]);
-  if (request.subject.kind !== "pr") return null;
-  return <PrWorkflowRunModal request={request} prRef={request.subject.ref} />;
-}
-
-function PrWorkflowRunModal({ request, prRef: ref }: { request: RunModalState; prRef: PrRef }) {
-  const key = prKey(ref);
-  const detail: PrDetail | undefined = usePrStore((s) => s.detailByKey[key]);
-  const detailError = usePrStore((s) => s.detailErrorByKey[key]);
-  const summary = usePrStore((s) => s.inbox?.items.find((item) => prKey(item.ref) === key));
+  const baseSubject = request.subject;
   const projectRepos = usePrStore((s) => s.projectRepos);
   const projectIdForRef = usePrStore((s) => s.projectIdForRef);
-  const loadDetail = usePrStore((s) => s.loadDetail);
   const refreshProjectRepos = usePrStore((s) => s.refreshProjectRepos);
   const openSessionView = usePrStore((s) => s.openSessionView);
   const closeRunModal = usePrStore((s) => s.closeRunModal);
+  const runCaches = useGitHubStore((s) => s.runResults);
   const sessionsByProject = useAppStore((s) => s.sessionsByProject);
   const pendingPrefs = useAppStore((s) => s.pendingPrefs);
   const lastDriver = useAppStore((s) => s.lastDriver);
@@ -220,8 +185,6 @@ function PrWorkflowRunModal({ request, prRef: ref }: { request: RunModalState; p
   const [modelsError, setModelsError] = useState<string | null>(null);
   const [model, setModel] = useState<string | undefined>(undefined);
   const [workspaceChoice, setWorkspaceChoice] = useState<PrWorkspaceChoice | null>(null);
-  const [failedLogs, setFailedLogs] = useState<{ sha: string; text: string } | null>(null);
-  const [logsError, setLogsError] = useState<string | null>(null);
   const [prompt, setPrompt] = useState("");
   const [stage, setStage] = useState<Stage | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -230,11 +193,26 @@ function PrWorkflowRunModal({ request, prRef: ref }: { request: RunModalState; p
   const runningRef = useRef(false);
   const dialogRef = useRef<HTMLDivElement>(null);
 
+  const cachedRun = useMemo(
+    () => (baseSubject.kind === "run" ? findCachedRun(runCaches, baseSubject.ref) : undefined),
+    [runCaches, baseSubject]
+  );
+  const workflows = useMemo(
+    () => workflowsForSubject(settings?.prWorkflows ?? [], baseSubject, cachedRun),
+    [settings, baseSubject, cachedRun]
+  );
+  const pickable = workflows.filter((w) => w.enabled || w.id === workflowId);
+  const workflow: PrWorkflow | undefined = workflows.find((w) => w.id === workflowId);
+  const subject = useMemo(() => effectiveSubject(baseSubject, workflow, cachedRun), [baseSubject, workflow, cachedRun]);
+  const key = subjectKey(subject);
+  const noun = SUBJECT_NOUN[subject.kind];
+  const repo = repoOf(subject);
+
   const allSessions = useMemo(() => Object.values(sessionsByProject).flat(), [sessionsByProject]);
   const linkedSessions = useMemo(
     () =>
       allSessions
-        .filter((s) => s.status !== "archived" && linkFor(s, ref) !== undefined)
+        .filter((s) => s.status !== "archived" && subjectLink(s, subject) !== undefined)
         .sort((a, b) => b.updatedAt - a.updatedAt),
     [allSessions, key]
   );
@@ -242,27 +220,30 @@ function PrWorkflowRunModal({ request, prRef: ref }: { request: RunModalState; p
   const targetOptions: Session[] =
     continueSession && !linkedSessions.includes(continueSession) ? [continueSession, ...linkedSessions] : linkedSessions;
 
-  const projectId = useMemo(() => projectIdForRef(ref), [projectIdForRef, projectRepos, ref]);
+  const projectId = useMemo(() => projectIdForRef(repo), [projectIdForRef, projectRepos, key]);
   const needsClone = !continueSession && reposReady && projectId === null;
-  const workflows = settings?.prWorkflows ?? [];
-  const pickable = workflows.filter((w) => w.enabled || w.id === workflowId);
-  const workflow: PrWorkflow | undefined = workflows.find((w) => w.id === workflowId);
   const effectiveDriver = continueSession?.driver ?? driver;
   const harness = harnessLabel(effectiveDriver);
-  const linkedWorktree = linkedSessions.find((s) => s.worktreePath && s.projectId === projectId);
+  const linkedWorktree =
+    subject.kind === "pr" ? linkedSessions.find((s) => s.worktreePath && s.projectId === projectId) : undefined;
   const requestedWorkspace = workspaceChoice ?? workflow?.workspace ?? "worktree";
   const workspace: PrWorkspaceChoice = requestedWorkspace === "linked" && !linkedWorktree ? "worktree" : requestedWorkspace;
   const template = workflow ? (continueSession ? workflow.updatePrompt : workflow.startPrompt) : "";
-  const needsLogs = needsFailedLogs(template);
-  const logsReady = !needsLogs || (detail !== undefined && failedLogs?.sha === detail.headRefOid);
+  const data = useWorkflowSubjectData({
+    subject,
+    cachedRun,
+    template,
+    continueSession,
+    settings,
+    hasWorkflow: workflow !== undefined,
+    harness
+  });
   const working = stage !== null;
   const sessionBusy = continueSession ? busyTurns[continueSession.id] !== undefined : false;
-  const pr: PrSummary | undefined = detail ?? summary;
 
   useEffect(() => {
-    void loadDetail(ref);
     void refreshProjectRepos().finally(() => setReposReady(true));
-  }, [key]);
+  }, []);
 
   useEffect(() => {
     setWorkspaceChoice(null);
@@ -295,42 +276,15 @@ function PrWorkflowRunModal({ request, prRef: ref }: { request: RunModalState; p
     };
   }, [driver, projectId, continueSession?.id, settingsVersion]);
 
-  const headSha = detail?.headRefOid;
-  useEffect(() => {
-    if (!needsLogs || !detail || failedLogs?.sha === detail.headRefOid) return;
-    let active = true;
-    setLogsError(null);
-    loadFailedLogs(ref, detail.checkRuns)
-      .then((text) => {
-        if (active) setFailedLogs({ sha: detail.headRefOid, text });
-      })
-      .catch((err: unknown) => {
-        if (!active) return;
-        setLogsError(errorMessage(err));
-        setFailedLogs({ sha: detail.headRefOid, text: "" });
-      });
-    return () => {
-      active = false;
-    };
-  }, [needsLogs, headSha]);
-
   const resolved = useMemo(() => {
-    if (!detail || !workflow || !settings || !logsReady) return null;
-    const link = continueSession ? linkFor(continueSession, ref) : undefined;
-    const vars = templateVars(detail, {
-      link,
-      updates: continueSession && link ? updatesSince(detail, link) : undefined,
-      failedLogs: needsLogs ? failedLogs?.text : undefined,
-      attribution: attributionText(settings, harness),
-      harness
-    });
-    const text = resolveTemplate(template, vars);
+    if (!data.vars || !workflow) return null;
+    const text = resolveTemplate(template, data.vars);
     const override = request.promptOverride?.trim();
     if (!override) return text;
     return continueSession ? override : `${text}\n\n${override}`;
-  }, [detail, workflow, settings, logsReady, continueSession, needsLogs, failedLogs, harness, template, request.promptOverride]);
+  }, [data.vars, workflow, continueSession, template, request.promptOverride]);
 
-  const prefillKey = resolved === null ? null : [workflowId, target, headSha ?? "", effectiveDriver].join("\n");
+  const prefillKey = resolved === null ? null : [workflowId, target, data.revision, effectiveDriver].join("\n");
   useEffect(() => {
     if (prefillKey === null || resolved === null || dirty) return;
     setPrompt(resolved);
@@ -343,6 +297,8 @@ function PrWorkflowRunModal({ request, prRef: ref }: { request: RunModalState; p
   const pickWorkflow = (id: string) => {
     setDirty(false);
     setWorkflowId(id);
+    const next = workflows.find((w) => w.id === id);
+    if (effectiveSubject(baseSubject, next, cachedRun).kind !== subject.kind) setTarget("");
   };
 
   const pickTarget = (id: string) => {
@@ -366,19 +322,89 @@ function PrWorkflowRunModal({ request, prRef: ref }: { request: RunModalState; p
     return () => window.removeEventListener("keydown", onKey, true);
   });
 
-  const workspaceOptions = (targetProjectId: string | null): CreateSessionOptions => {
-    if (workspace === "checkout" || !detail) return { mode: "current" };
-    const prHead = {
-      number: ref.number,
-      headRefName: detail.headRefName,
-      headRefOid: detail.headRefOid,
-      viewerIsAuthor: detail.viewerIsAuthor
-    };
-    if (workspace === "linked" && linkedWorktree?.worktreePath && linkedWorktree.projectId === targetProjectId) {
-      return { mode: "previous", reuseWorktreePath: linkedWorktree.worktreePath, prHead };
+  const resolveRunBase = async (targetProjectId: string): Promise<string | undefined> => {
+    try {
+      return runBaseBranch(await window.cw.listProjectBranches(targetProjectId), data.run?.branch ?? null);
+    } catch (err) {
+      console.warn(`[github] could not resolve the base branch for run workspace: ${errorMessage(err)}`);
+      return undefined;
     }
-    return { mode: "new", prHead };
   };
+
+  const workspaceOptions = async (targetProjectId: string | null): Promise<CreateSessionOptions> => {
+    if (workspace === "checkout") return { mode: "current" };
+    switch (subject.kind) {
+      case "pr": {
+        const detail = data.prDetail;
+        if (!detail) return { mode: "current" };
+        const prHead = {
+          number: subject.ref.number,
+          headRefName: detail.headRefName,
+          headRefOid: detail.headRefOid,
+          viewerIsAuthor: detail.viewerIsAuthor
+        };
+        if (workspace === "linked" && linkedWorktree?.worktreePath && linkedWorktree.projectId === targetProjectId) {
+          return { mode: "previous", reuseWorktreePath: linkedWorktree.worktreePath, prHead };
+        }
+        return { mode: "new", prHead };
+      }
+      case "issue":
+        return { mode: "new" };
+      case "run": {
+        const baseBranch = targetProjectId ? await resolveRunBase(targetProjectId) : undefined;
+        return baseBranch ? { mode: "new", baseBranch } : { mode: "new" };
+      }
+    }
+  };
+
+  const linkSession = (sessionId: string, workflowIdToLink: string): Promise<Session> => {
+    switch (subject.kind) {
+      case "pr": {
+        const detail = data.prDetail;
+        if (!detail) throw new Error("pull request details are not loaded");
+        return window.cw.linkSessionPr(sessionId, {
+          ref: subject.ref,
+          origin: "workflow",
+          workflowId: workflowIdToLink,
+          lastSeenSha: detail.headRefOid,
+          lastSeenAt: Math.max(Date.now(), detail.updatedAt)
+        });
+      }
+      case "issue": {
+        const issue = data.issue;
+        if (!issue) throw new Error("issue details are not loaded");
+        return window.cw.linkSessionIssue(sessionId, {
+          ref: subject.ref,
+          origin: "workflow",
+          workflowId: workflowIdToLink,
+          lastSeenAt: Math.max(Date.now(), issue.updatedAt)
+        });
+      }
+      case "run":
+        return window.cw.linkSessionRun(sessionId, {
+          ref: subject.ref,
+          origin: "workflow",
+          workflowId: workflowIdToLink,
+          lastSeenAt: Math.max(Date.now(), data.run?.updatedAt ?? 0)
+        });
+    }
+  };
+
+  const markSeen = async (sessionId: string): Promise<Session | null> => {
+    switch (subject.kind) {
+      case "pr": {
+        const detail = data.prDetail;
+        if (!detail) return null;
+        return window.cw.markSessionPrSeen(sessionId, subject.ref, detail.headRefOid, detail.updatedAt);
+      }
+      case "issue":
+        return window.cw.markSessionIssueSeen(sessionId, subject.ref, Date.now());
+      case "run":
+        return null;
+    }
+  };
+
+  const sendOptions = subject.kind === "pr" ? { prRefs: [subject.ref] } : undefined;
 
   const finish = (sessionId: string) => {
     openSessionView();
@@ -387,7 +413,7 @@ function PrWorkflowRunModal({ request, prRef: ref }: { request: RunModalState; p
   };
 
   const run = async () => {
-    if (!detail || !workflow || runningRef.current || !prompt.trim()) return;
+    if (!data.loaded || !workflow || runningRef.current || !prompt.trim()) return;
     runningRef.current = true;
     const app = useAppStore.getState();
     setError(null);
@@ -397,10 +423,13 @@ function PrWorkflowRunModal({ request, prRef: ref }: { request: RunModalState; p
         current = "send";
         setStage(current);
         await app.ensureComposer(continueSession.id);
-        await app.sendPromptTo(continueSession.id, prompt, undefined, { prRefs: [ref] });
-        current = "seen";
-        setStage(current);
-        app.applySession(await window.cw.markSessionPrSeen(continueSession.id, ref, detail.headRefOid, detail.updatedAt));
+        await app.sendPromptTo(continueSession.id, prompt, undefined, sendOptions);
+        if (subject.kind !== "run") {
+          current = "seen";
+          setStage(current);
+          const updated = await markSeen(continueSession.id);
+          if (updated) app.applySession(updated);
+        }
         finish(continueSession.id);
         return;
       }
@@ -411,43 +440,43 @@ function PrWorkflowRunModal({ request, prRef: ref }: { request: RunModalState; p
         if (!targetProjectId) {
           current = "clone";
           setStage(current);
-          const project = await window.cw.cloneGitHubRepo(ref);
+          const project = await window.cw.cloneGitHubRepo(subject.ref);
           await Promise.all([refreshProjectRepos(), app.loadProjects()]);
           targetProjectId = project.id;
         }
         current = "create";
         setStage(current);
         const prefs: ComposerPrefs = { ...DEFAULT_COMPOSER, ...pendingPrefs, model };
-        const options = workspaceOptions(targetProjectId);
+        const options = await workspaceOptions(targetProjectId);
         const session = await app.createSessionIn(targetProjectId, driver, prefs, options);
         sessionId = session.id;
+        const detail = data.prDetail;
         note =
-          options.mode !== "current" && detail.viewerIsAuthor && session.branch && session.branch !== detail.headRefName
-            ? pushNote(ref, detail.headRefName, session.branch)
+          subject.kind === "pr" &&
+          detail &&
+          options.mode !== "current" &&
+          detail.viewerIsAuthor &&
+          session.branch &&
+          session.branch !== detail.headRefName
+            ? pushNote(subject.ref, detail.headRefName, session.branch)
             : null;
         setCreated({ sessionId, linked: false, note });
       }
       if (!created?.linked) {
         current = "link";
         setStage(current);
-        const linked = await window.cw.linkSessionPr(sessionId, {
-          ref,
-          origin: "workflow",
-          workflowId: workflow.id,
-          lastSeenSha: detail.headRefOid,
-          lastSeenAt: Math.max(Date.now(), detail.updatedAt)
-        });
+        const linked = await linkSession(sessionId, workflow.id);
         useAppStore.getState().applySession(linked);
         setCreated({ sessionId, linked: true, note });
       }
       current = "send";
       setStage(current);
-      await useAppStore.getState().sendPromptTo(sessionId, note ? `${prompt}\n\n${note}` : prompt, undefined, { prRefs: [ref] });
+      await useAppStore.getState().sendPromptTo(sessionId, note ? `${prompt}\n\n${note}` : prompt, undefined, sendOptions);
       finish(sessionId);
     } catch (err) {
       const message = errorMessage(err);
       console.warn(`[pr] workflow run failed at ${current}: ${message}`);
-      setError(`${STAGE_LABEL[current]} failed: ${message}`);
+      setError(`${stageLabel(current, noun)} failed: ${message}`);
     } finally {
       runningRef.current = false;
       setStage(null);
@@ -471,9 +500,25 @@ function PrWorkflowRunModal({ request, prRef: ref }: { request: RunModalState; p
     : hasOverride
       ? "Follow-up prompt"
       : "Follow-up prompt (the workflow's “on update” template)";
-  const showPushNote = !continueSession && workspace !== "checkout" && pr?.viewerIsAuthor === true;
-  const blocked = !detail || !workflow || !prompt.trim() || !logsReady || sessionBusy || (!continueSession && !reposReady);
+  const showPushNote = subject.kind === "pr" && !continueSession && workspace !== "checkout" && data.pr?.viewerIsAuthor === true;
+  const blocked = !data.loaded || !workflow || !prompt.trim() || !data.logsReady || sessionBusy || (!continueSession && !reposReady);
   const actionLabel = continueSession ? "Send" : created ? "Retry" : "Start session";
+  const worktreeHint =
+    subject.kind === "pr"
+      ? data.pr
+        ? `isolated, from ${data.pr.headRefName}`
+        : "isolated, from the PR head"
+      : subject.kind === "run" && data.run?.branch
+        ? `isolated, from ${data.run.branch}`
+        : "isolated, from the project's current branch";
+  const card =
+    subject.kind === "pr" ? (
+      data.pr && <PrCard pr={data.pr} />
+    ) : subject.kind === "issue" ? (
+      data.issue && <IssueCard issue={data.issue} />
+    ) : (
+      <RunCard run={data.run} runRef={subject.ref} />
+    );
 
   return (
     <div className="settings-backdrop" onClick={close}>
@@ -495,13 +540,19 @@ function PrWorkflowRunModal({ request, prRef: ref }: { request: RunModalState; p
         </div>
 
         <div className="wf-run-body">
-          {pr ? <PrCard pr={pr} /> : !detailError && <div className="wf-run-status">Loading pull request…</div>}
-          {detailError && (
+          {card || (!data.error && <div className="wf-run-status">Loading {noun}…</div>)}
+          {data.error && (
             <div className="wf-run-error" role="alert">
-              Could not load the pull request: {detailError}
-              <button className="btn" onClick={() => void loadDetail(ref)}>
+              Could not load the {noun}: {data.error}
+              <button className="btn" onClick={data.retry}>
                 Retry
               </button>
+            </div>
+          )}
+          {subject.kind === "run" && !data.run && (
+            <div className="wf-run-status">
+              <AlertTriangle size={12} aria-hidden="true" /> This run isn't in the loaded results, so its details are
+              unavailable. Prompt variables that need them will be empty.
             </div>
           )}
           {settingsError && (
@@ -515,11 +566,11 @@ function PrWorkflowRunModal({ request, prRef: ref }: { request: RunModalState; p
               <FolderGit2 size={15} aria-hidden="true" />
               <div className="wf-run-clone-text">
                 <span className="wf-run-clone-title">
-                  Clone {ref.owner}/{ref.repo} and add it as a cw-code project
+                  Clone {repo.owner}/{repo.repo} and add it as a cw-code project
                 </span>
                 <span className="wf-run-muted">It isn't a project yet, so the session needs a local copy first.</span>
                 {settings && (
-                  <span className="wf-run-path">{shortenHome(clonePathHint(settings.prCloneRoot, ref), homeDir ?? undefined)}</span>
+                  <span className="wf-run-path">{shortenHome(clonePathHint(settings.prCloneRoot, repo), homeDir ?? undefined)}</span>
                 )}
                 {stage === "clone" && (
                   <span className="wf-run-status">
@@ -608,14 +659,14 @@ function PrWorkflowRunModal({ request, prRef: ref }: { request: RunModalState; p
                 disabled={working || created !== null}
                 onPick={pickTarget}
                 options={[
-                  { id: "", icon: <Plus size={14} />, title: "New session", hint: `linked to #${ref.number}` },
+                  { id: "", icon: <Plus size={14} />, title: "New session", hint: newSessionHint(subject, data.run?.runNumber) },
                   ...targetOptions.map((s) => {
-                    const link = linkFor(s, ref);
+                    const link = subjectLink(s, subject);
                     return {
                       id: s.id,
                       icon: <DriverIcon driver={s.driver} size={14} />,
                       title: `Continue “${s.title}”`,
-                      hint: link ? ORIGIN_LABEL[link.origin] : "not linked to this pull request"
+                      hint: link ? ORIGIN_LABEL[link.origin] : `not linked to this ${noun}`
                     };
                   })
                 ]}
@@ -642,7 +693,7 @@ function PrWorkflowRunModal({ request, prRef: ref }: { request: RunModalState; p
                     id: "worktree" as const,
                     icon: <GitFork size={14} />,
                     title: "New worktree",
-                    hint: pr ? `isolated, from ${pr.headRefName}` : "isolated, from the PR head"
+                    hint: worktreeHint
                   },
                   ...(linkedWorktree
                     ? [
@@ -656,10 +707,10 @@ function PrWorkflowRunModal({ request, prRef: ref }: { request: RunModalState; p
                     : [])
                 ]}
               />
-              {showPushNote && pr && (
+              {showPushNote && data.pr && (
                 <span className="wf-run-muted wf-run-note">
-                  Unless your local {pr.headRefName} matches the PR head, the session works on a new cw/ branch. The
-                  prompt will tell it to update the PR with: git push origin HEAD:{pr.headRefName}
+                  Unless your local {data.pr.headRefName} matches the PR head, the session works on a new cw/ branch. The
+                  prompt will tell it to update the PR with: git push origin HEAD:{data.pr.headRefName}
                 </span>
               )}
             </div>
@@ -681,14 +732,14 @@ function PrWorkflowRunModal({ request, prRef: ref }: { request: RunModalState; p
               placeholder={resolved === null ? "Resolving template…" : undefined}
             />
           </label>
-          {needsLogs && !logsReady && !logsError && (
+          {data.logsNeeded && !data.logsReady && !data.logsError && (
             <div className="wf-run-status">
-              <Loader2 size={12} className="wf-run-spin" aria-hidden="true" /> Fetching failed check logs…
+              <Loader2 size={12} className="wf-run-spin" aria-hidden="true" /> Fetching failed {subject.kind === "pr" ? "check" : "run"} logs…
             </div>
           )}
-          {logsError && (
+          {data.logsError && (
             <div className="wf-run-error" role="alert">
-              Could not fetch failed check logs: {logsError}
+              Could not fetch failed {subject.kind === "pr" ? "check" : "run"} logs: {data.logsError}
             </div>
           )}
           {sessionBusy && <div className="wf-run-status">This session is running a turn. Wait for it to finish before sending.</div>}
@@ -709,7 +760,7 @@ function PrWorkflowRunModal({ request, prRef: ref }: { request: RunModalState; p
           </button>
           <button className="btn btn-primary wf-run-go" onClick={() => void run()} disabled={blocked || working}>
             {working ? <Loader2 size={13} className="wf-run-spin" aria-hidden="true" /> : <Play size={13} aria-hidden="true" />}
-            {working && stage ? STAGE_LABEL[stage] : actionLabel}
+            {working && stage ? stageLabel(stage, noun) : actionLabel}
           </button>
         </div>
       </div>

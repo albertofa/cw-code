@@ -1,6 +1,18 @@
 import { describe, expect, it } from "vitest";
-import type { PrDetail, PrSummary, PrWorkflow, SessionMeta } from "@cw-code/contracts";
-import { attributionText, primaryAction, resolveTemplate, suggestedWorkflow, templateVars } from "./prWorkflows.js";
+import type { IssueDetail, PrDetail, PrSummary, PrWorkflow, SessionMeta, WorkflowRunSummary } from "@cw-code/contracts";
+import {
+  attributionText,
+  failedJobNames,
+  issueTemplateVars,
+  primaryAction,
+  resolveTemplate,
+  runRefTemplateVars,
+  runTemplateVars,
+  suggestedWorkflow,
+  TEMPLATE_VARS,
+  TEMPLATE_VARS_BY_TARGET,
+  templateVars
+} from "./prWorkflows.js";
 
 function prSummary(overrides: Partial<PrSummary> = {}): PrSummary {
   return {
@@ -193,5 +205,148 @@ describe("primaryAction", () => {
   it("returns none when nothing is linked and no workflow is suggested", () => {
     const pr = prSummary({ viewerIsAuthor: false, reviewRequestedFromViewer: false });
     expect(primaryAction(pr, [], [reviewWorkflow])).toEqual({ kind: "none" });
+  });
+});
+
+function issueDetail(overrides: Partial<IssueDetail> = {}): IssueDetail {
+  return {
+    ref: { host: "github.com", owner: "acme", repo: "widgets", number: 7 },
+    url: "https://github.com/acme/widgets/issues/7",
+    title: "Crash on start",
+    state: "OPEN",
+    stateReason: null,
+    author: { login: "reporter", isBot: false },
+    assignees: [],
+    labels: ["bug", "p1"],
+    milestone: null,
+    commentsCount: 0,
+    linkedPrs: [],
+    createdAt: 0,
+    updatedAt: 0,
+    body: "It crashes.",
+    comments: [],
+    viewerLogin: "me",
+    ...overrides
+  };
+}
+
+function runSummary(overrides: Partial<WorkflowRunSummary> = {}): WorkflowRunSummary {
+  return {
+    ref: { host: "github.com", owner: "acme", repo: "widgets", runId: 99 },
+    url: "https://github.com/acme/widgets/actions/runs/99",
+    workflowName: "CI",
+    runNumber: 12,
+    event: "push",
+    branch: "main",
+    headSha: "deadbeef",
+    title: "fix",
+    actor: "dev",
+    status: "completed",
+    conclusion: "failure",
+    prNumber: null,
+    onDefaultBranch: true,
+    createdAt: 0,
+    updatedAt: 0,
+    jobs: [],
+    ...overrides
+  };
+}
+
+const baseOpts = { attribution: "signed", harness: "Claude Code" };
+
+describe("issueTemplateVars", () => {
+  it("fills the scalar fields and joins labels", () => {
+    const vars = issueTemplateVars(issueDetail(), baseOpts);
+    expect(vars["issue.number"]).toBe("7");
+    expect(vars["issue.repo"]).toBe("acme/widgets");
+    expect(vars["issue.title"]).toBe("Crash on start");
+    expect(vars["issue.labels"]).toBe("bug, p1");
+    expect(vars.attribution).toBe("signed");
+    expect(vars.harness).toBe("Claude Code");
+  });
+
+  it("formats comments as author: body", () => {
+    const issue = issueDetail({ comments: [{ author: "a", body: "first", createdAt: 1 }] });
+    expect(issueTemplateVars(issue, baseOpts)["issue.comments"]).toBe("a: first");
+  });
+
+  it("keeps only the last 10 comments", () => {
+    const comments = Array.from({ length: 12 }, (_, i) => ({ author: "a", body: `c${i}`, createdAt: i }));
+    const lines = issueTemplateVars(issueDetail({ comments }), baseOpts)["issue.comments"].split("\n");
+    expect(lines).toHaveLength(10);
+    expect(lines[0]).toBe("a: c2");
+    expect(lines[9]).toBe("a: c11");
+  });
+
+  it("limits the delta to comments after the link's lastSeenAt", () => {
+    const comments = [
+      { author: "a", body: "old", createdAt: 100 },
+      { author: "b", body: "same", createdAt: 200 },
+      { author: "c", body: "new", createdAt: 300 }
+    ];
+    const link = { ref: issueDetail().ref, origin: "workflow" as const, lastSeenAt: 200 };
+    expect(issueTemplateVars(issueDetail({ comments }), { ...baseOpts, link })["issue.delta"]).toBe("c: new");
+  });
+
+  it("leaves the delta empty without a link", () => {
+    const comments = [{ author: "a", body: "x", createdAt: 100 }];
+    expect(issueTemplateVars(issueDetail({ comments }), baseOpts)["issue.delta"]).toBe("");
+  });
+});
+
+describe("runTemplateVars", () => {
+  it("lists failed jobs and ignores passing ones", () => {
+    const job = (name: string, conclusion: WorkflowRunSummary["jobs"][number]["conclusion"]) => ({
+      name,
+      status: "completed" as const,
+      conclusion,
+      startedAt: null,
+      completedAt: null,
+      url: null
+    });
+    const run = runSummary({ jobs: [job("build", "success"), job("test", "failure"), job("lint", "timed_out"), job("docs", "cancelled")] });
+    expect(failedJobNames(run.jobs)).toEqual(["test", "lint"]);
+    expect(runTemplateVars(run, baseOpts)["run.failedJobs"]).toBe("test, lint");
+  });
+
+  it("fills the run fields and failed logs", () => {
+    const vars = runTemplateVars(runSummary(), { ...baseOpts, failedLogs: "boom" });
+    expect(vars["run.id"]).toBe("99");
+    expect(vars["run.number"]).toBe("12");
+    expect(vars["run.workflow"]).toBe("CI");
+    expect(vars["run.repo"]).toBe("acme/widgets");
+    expect(vars["run.branch"]).toBe("main");
+    expect(vars["run.sha"]).toBe("deadbeef");
+    expect(vars["run.event"]).toBe("push");
+    expect(vars["run.failedLogs"]).toBe("boom");
+  });
+
+  it("uses empty strings for a missing branch and missing logs", () => {
+    const vars = runTemplateVars(runSummary({ branch: null }), baseOpts);
+    expect(vars["run.branch"]).toBe("");
+    expect(vars["run.failedLogs"]).toBe("");
+  });
+});
+
+describe("runRefTemplateVars", () => {
+  it("resolves everything that needs run data to an empty string", () => {
+    const vars = runRefTemplateVars(runSummary().ref, baseOpts);
+    expect(vars["run.id"]).toBe("99");
+    expect(vars["run.repo"]).toBe("acme/widgets");
+    expect(vars["run.workflow"]).toBe("");
+    expect(vars["run.failedJobs"]).toBe("");
+  });
+});
+
+describe("TEMPLATE_VARS_BY_TARGET", () => {
+  it("keeps the PR variables for pr workflows", () => {
+    expect(TEMPLATE_VARS_BY_TARGET.pr).toBe(TEMPLATE_VARS);
+  });
+
+  it("covers every variable each target's vars function produces", () => {
+    const issueKeys = Object.keys(issueTemplateVars(issueDetail(), baseOpts)).sort();
+    const runKeys = Object.keys(runTemplateVars(runSummary(), baseOpts)).sort();
+    expect([...TEMPLATE_VARS_BY_TARGET.issue].sort()).toEqual(issueKeys);
+    expect([...TEMPLATE_VARS_BY_TARGET.run].sort()).toEqual(runKeys);
   });
 });
