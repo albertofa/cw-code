@@ -43,6 +43,7 @@ export interface LocalContext {
 export interface RunContext {
   viewer: string;
   involvedPrKeys: ReadonlySet<string>;
+  isDefaultBranchRun(run: WorkflowRunSummary): boolean;
   hasSession(run: WorkflowRunSummary): boolean;
 }
 
@@ -82,7 +83,7 @@ export type RunStatusKey = "failure" | "in_progress" | "queued" | "success" | "c
 
 const TOKEN_RE = /\s+|-?[A-Za-z][\w-]*:(?:"[^"]*"?|\S*)|"[^"]*"?|\S+/g;
 const QUALIFIER_RE = /^(-?)([A-Za-z][\w-]*):([\s\S]*)$/;
-const OR_KEYS: ReadonlySet<string> = new Set(["repo", "org", "user", "author", "actor", "workflow", "branch", "event", "status"]);
+const OR_KEYS: ReadonlySet<string> = new Set(["repo", "org", "author", "actor", "workflow", "branch", "event", "status"]);
 const STATE_VALUES: ReadonlySet<string> = new Set(["open", "closed", "merged"]);
 const KIND_VALUES: ReadonlySet<string> = new Set(["pr", "issue", "run"]);
 const DEFAULT_REMOTE_SORT = "updated-desc";
@@ -212,7 +213,7 @@ const PR_QUALIFIERS: QualifierDef[] = [
   REPO_DEF,
   ORG_DEF,
   LABEL_DEF,
-  { key: "no", description: "Missing a field", local: false, enumValues: options(["label", "assignee", "reviewers"]) },
+  { key: "no", description: "Missing a field", local: false, enumValues: options(["label", "assignee", "milestone"]) },
   { key: "review", description: "Review decision", local: false, enumValues: options(["approved", "changes_requested", "required", "none"]) },
   { key: "status", description: "Checks", local: false, enumValues: options(["success", "failure", "pending"]) },
   { key: "draft", description: "Draft or ready", local: false, enumValues: BOOLEAN_VALUES },
@@ -247,7 +248,7 @@ const ISSUE_QUALIFIERS: QualifierDef[] = [
   { key: "no", description: "Missing a field", local: false, enumValues: options(["label", "assignee", "milestone"]) },
   { key: "milestone", description: "In milestone", local: false, valueSource: "milestone" },
   { key: "linked", description: "Linked to a PR", local: false, enumValues: [{ value: "pr", description: "has a linked pull request" }] },
-  { key: "reason", description: "Close reason", local: false, enumValues: options(["completed", "not_planned"]) },
+  { key: "reason", description: "Close reason", local: false, enumValues: options(["completed", "not planned"]) },
   ARCHIVED_DEF,
   sortDef("issue"),
   HAS_DEF,
@@ -311,11 +312,15 @@ export function queryProblems(kind: GitHubKind, q: string): string[] {
   return problems;
 }
 
+function lowerValue(t: QueryToken): string {
+  return (t.value ?? "").toLowerCase();
+}
+
 export function kindFromQuery(q: string): GitHubKind | null {
   let found: GitHubKind | null = null;
   for (const t of tokenize(q)) {
-    if (t.kind === "qual" && !t.neg && t.key === "is" && t.value && KIND_VALUES.has(t.value)) {
-      found = t.value as GitHubKind;
+    if (t.kind === "qual" && !t.neg && t.key === "is" && KIND_VALUES.has(lowerValue(t))) {
+      found = lowerValue(t) as GitHubKind;
     }
   }
   return found;
@@ -323,19 +328,19 @@ export function kindFromQuery(q: string): GitHubKind | null {
 
 function isStateToken(t: QueryToken): boolean {
   if (t.kind !== "qual" || t.neg) return false;
-  return t.key === "state" || (t.key === "is" && STATE_VALUES.has(t.value ?? ""));
+  return t.key === "state" || (t.key === "is" && STATE_VALUES.has(lowerValue(t)));
 }
 
 function isLocalToken(t: QueryToken): boolean {
   if (t.kind !== "qual") return false;
-  const value = t.value ?? "";
+  const value = lowerValue(t);
   if (t.key === "has") return value === "" || value === "session";
   if (t.key === "cloned") return true;
   return t.key === "is" && value === "unread";
 }
 
 function localFilterOf(t: QueryToken): LocalFilter | null {
-  const value = (t.value ?? "").toLowerCase();
+  const value = lowerValue(t);
   if (t.key === "has" && value === "session") return { key: "has", value, neg: !!t.neg };
   if (t.key === "cloned" && (value === "true" || value === "false")) return { key: "cloned", value, neg: !!t.neg };
   if (t.key === "is" && value === "unread") return { key: "is", value, neg: !!t.neg };
@@ -350,12 +355,12 @@ export function splitQuery(kind: "pr" | "issue", q: string): SplitQuery {
   const validSorts = sortKeysFor(kind);
   for (const t of tokens) {
     if (t.kind === "space") continue;
-    if (t.kind === "qual" && (isLocalToken(t) || !t.value)) {
+    if (t.kind === "qual" && (isLocalToken(t) || !t.value || tokenProblem(kind, t))) {
       const filter = localFilterOf(t);
       if (filter) local.push(filter);
       continue;
     }
-    if (t.kind === "qual" && !t.neg && t.key === "sort" && t.value && validSorts.includes(t.value)) sort = t.value;
+    if (t.kind === "qual" && !t.neg && t.key === "sort" && validSorts.includes(lowerValue(t))) sort = lowerValue(t);
     remoteTokens.push(t);
   }
   return {
@@ -370,9 +375,10 @@ export function stateOf(q: string): "open" | "closed" | null {
   let state: "open" | "closed" | null = null;
   for (const t of tokenize(q)) {
     if (t.kind !== "qual" || t.neg) continue;
-    if (t.key === "state" && (t.value === "open" || t.value === "closed")) state = t.value;
-    if (t.key === "is" && t.value === "open") state = "open";
-    if (t.key === "is" && (t.value === "closed" || t.value === "merged")) state = "closed";
+    const value = lowerValue(t);
+    if (t.key === "state" && (value === "open" || value === "closed")) state = value;
+    if (t.key === "is" && value === "open") state = "open";
+    if (t.key === "is" && (value === "closed" || value === "merged")) state = "closed";
   }
   return state;
 }
@@ -460,13 +466,14 @@ function runQualifierMatches(run: WorkflowRunSummary, key: string, value: string
     case "actor":
       return sameLogin(run.actor, value, ctx.viewer);
     case "event":
-      return run.event === value;
+      return run.event.toLowerCase() === lowered;
     case "status":
       return runStatusOf(run) === lowered;
     case "involves":
       if (sameLogin(run.actor, value, ctx.viewer)) return true;
       if (loginFromQuery(value, ctx.viewer).toLowerCase() !== ctx.viewer.toLowerCase()) return false;
-      return run.prNumber !== null && ctx.involvedPrKeys.has(prKeyOf(run.ref, run.prNumber));
+      if (run.prNumber !== null && ctx.involvedPrKeys.has(prKeyOf(run.ref, run.prNumber))) return true;
+      return ctx.isDefaultBranchRun(run);
     case "has":
       return lowered === "session" && ctx.hasSession(run);
     default:
@@ -634,9 +641,11 @@ function tokenAtCaret(q: string, caret: number): QueryToken {
 
 export function autocomplete(kind: GitHubKind, q: string, caret: number, source: SuggestionSource): AutocompleteResult {
   const token = tokenAtCaret(q, caret);
-  const base = { tokenStart: token.start, tokenEnd: token.end };
   const typed = q.slice(token.start, caret);
   const qualifier = QUALIFIER_RE.exec(typed);
+  const editsKeyOnly = !qualifier && token.kind === "qual";
+  const keyEnd = token.start + (token.neg ? 1 : 0) + (token.rawKey?.length ?? 0) + 1;
+  const base = { tokenStart: token.start, tokenEnd: editsKeyOnly ? keyEnd : token.end };
 
   if (qualifier) {
     const neg = qualifier[1] === "-";
@@ -697,6 +706,7 @@ export function applyAutocomplete(
   const prefix = item.neg ? "-" : "";
   let replacement: string;
   let reopen = false;
+  const gluesToNext = result.tokenStart === result.tokenEnd && after !== "" && !/^\s/.test(after);
   if (item.kind === "key") {
     replacement = `${prefix}${item.key}:`;
     reopen = true;
@@ -712,8 +722,9 @@ export function applyAutocomplete(
     item.kind === "value" && item.key === "is" && !item.neg && KIND_VALUES.has(value) && value !== currentKind
       ? (value as GitHubKind)
       : null;
+  const separator = reopen && gluesToNext ? " " : "";
   return {
-    query: before + replacement + after,
+    query: before + replacement + separator + after,
     caret: (before + replacement).length,
     reopen: reopen && switchKind === null,
     switchKind,

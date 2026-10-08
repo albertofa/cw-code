@@ -53,7 +53,7 @@ function run(overrides: Partial<WorkflowRunSummary> = {}): WorkflowRunSummary {
   };
 }
 
-const runCtx: RunContext = { viewer: "albertofa", involvedPrKeys: new Set(), hasSession: () => false };
+const runCtx: RunContext = { viewer: "albertofa", involvedPrKeys: new Set(), isDefaultBranchRun: () => false, hasSession: () => false };
 
 function pr(overrides: Partial<PrSummary> & { owner?: string } = {}): PrSummary {
   const { owner = "albertofa", ...rest } = overrides;
@@ -106,6 +106,12 @@ describe("queryProblems", () => {
     expect(queryProblems("pr", "foo:bar")).toEqual(["Unknown qualifier foo:"]);
   });
 
+  it("uses GitHub's syntax for close reasons and drops no:reviewers", () => {
+    expect(queryProblems("issue", 'reason:"not planned" reason:completed')).toEqual([]);
+    expect(queryProblems("issue", "reason:not_planned")).toEqual(["not_planned isn't a valid value for reason:"]);
+    expect(queryProblems("pr", "no:reviewers")).toEqual(["reviewers isn't a valid value for no:"]);
+  });
+
   it("flags bad enum values", () => {
     expect(queryProblems("run", "status:broken")).toEqual(["broken isn't a valid value for status:"]);
   });
@@ -143,6 +149,31 @@ describe("splitQuery", () => {
     const split = splitQuery("issue", "is:issue is:open state:closed label:bug -is:closed");
     expect(split.remote).toBe("is:issue is:open state:closed label:bug -is:closed");
     expect(split.countBase).toBe("is:issue label:bug -is:closed");
+  });
+
+  it("normalizes the casing of local qualifiers", () => {
+    const split = splitQuery("pr", "is:pr is:Unread -Has:Session cloned:TRUE");
+    expect(split.remote).toBe("is:pr");
+    expect(split.local).toEqual([
+      { key: "is", value: "unread", neg: false },
+      { key: "has", value: "session", neg: true },
+      { key: "cloned", value: "true", neg: false },
+    ]);
+    expect(queryProblems("pr", "is:Unread has:Session")).toEqual([]);
+  });
+
+  it("keeps tokens with problems out of remote and countBase", () => {
+    const split = splitQuery("pr", "is:pr foo:bar sort:bogus status:broken is:open label:perf");
+    expect(split.remote).toBe("is:pr is:open label:perf");
+    expect(split.countBase).toBe("is:pr label:perf");
+    expect(split.sort).toBe("updated-desc");
+  });
+
+  it("reads sort and state values case-insensitively", () => {
+    expect(splitQuery("pr", "is:pr Sort:Created-Asc").sort).toBe("created-asc");
+    expect(stateOf("is:Merged")).toBe("closed");
+    expect(withState("is:Open is:pr", "closed")).toBe("is:pr state:closed");
+    expect(kindFromQuery("is:Issue")).toBe("issue");
   });
 
   it("defaults the sort and reads a valid sort value", () => {
@@ -268,6 +299,18 @@ describe("runMatches", () => {
     expect(runMatches(run({ actor: "lcosta", prNumber: 9 }), "involves:@me", involved)).toBe(true);
     expect(runMatches(run({ actor: "lcosta", prNumber: 8 }), "involves:@me", involved)).toBe(false);
     expect(runMatches(run({ actor: "lcosta", prNumber: null }), "involves:@me", involved)).toBe(false);
+  });
+
+  it("matches involves:@me for default-branch runs reported by the context", () => {
+    const defaultBranch = { ...runCtx, isDefaultBranchRun: (r: WorkflowRunSummary) => r.branch === "main" };
+    expect(runMatches(run({ actor: "lcosta", branch: "main" }), "involves:@me", defaultBranch)).toBe(true);
+    expect(runMatches(run({ actor: "lcosta", branch: "feat/x" }), "involves:@me", defaultBranch)).toBe(false);
+    expect(runMatches(run({ actor: "lcosta", branch: "main" }), "involves:@me", runCtx)).toBe(false);
+  });
+
+  it("matches event case-insensitively and branch exactly", () => {
+    expect(runMatches(run({ event: "push" }), "event:Push", runCtx)).toBe(true);
+    expect(runMatches(run({ branch: "main" }), "branch:Main", runCtx)).toBe(false);
   });
 
   it("evaluates has:session through the context", () => {
@@ -424,6 +467,31 @@ describe("applyAutocomplete", () => {
 
     const mid = autocomplete("pr", "author:l foo", 8, SOURCE);
     expect(applyAutocomplete("author:l foo", mid, mid.items.find((i) => i.value === "lcosta")!, "pr").query).toBe("author:lcosta foo");
+  });
+
+  it("separates a key inserted right before another token", () => {
+    const q = "is:pr foo";
+    const result = autocomplete("pr", q, 6, SOURCE);
+    expect([result.tokenStart, result.tokenEnd]).toEqual([6, 6]);
+    const item = result.items.find((i) => i.key === "author")!;
+    expect(applyAutocomplete(q, result, item, "pr")).toEqual({ query: "is:pr author: foo", caret: 13, reopen: true, switchKind: null });
+  });
+
+  it("replaces only the key when the caret is inside the key of a finished qualifier", () => {
+    const q = "author:lcosta";
+    const result = autocomplete("pr", q, 3, SOURCE);
+    expect([result.tokenStart, result.tokenEnd]).toEqual([0, 7]);
+    const item = result.items.find((i) => i.key === "author")!;
+    expect(applyAutocomplete(q, result, item, "pr")).toEqual({ query: "author:lcosta", caret: 7, reopen: true, switchKind: null });
+    const negated = autocomplete("pr", "-aut:x", 4, SOURCE);
+    expect(applyAutocomplete("-aut:x", negated, negated.items[0], "pr").query).toBe("-author:x");
+  });
+
+  it("inserts close reasons with quotes", () => {
+    const q = "reason:";
+    const result = autocomplete("issue", q, 7, SOURCE);
+    const item = result.items.find((i) => i.value === "not planned")!;
+    expect(applyAutocomplete(q, result, item, "issue").query).toBe('reason:"not planned" ');
   });
 
   it("quotes values with spaces and keeps negation", () => {
