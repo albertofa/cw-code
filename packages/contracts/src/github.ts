@@ -116,6 +116,7 @@ export interface WorkflowRunSummary {
   status: RunStatus;
   conclusion: RunConclusion;
   prNumber: number | null;
+  onDefaultBranch: boolean;
   /** Epoch milliseconds. */
   createdAt: number;
   /** Epoch milliseconds. */

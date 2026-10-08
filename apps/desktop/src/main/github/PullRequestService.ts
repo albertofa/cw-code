@@ -13,8 +13,8 @@ const INBOX_CACHE_TTL_MS = 30_000;
 const REQUEST_TIMEOUT_MS = 20_000;
 const CLONE_TIMEOUT_MS = 5 * 60_000;
 
-const OWNER_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]*)$/;
-const REPO_RE = /^[A-Za-z0-9._-]+$/;
+export const OWNER_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]*)$/;
+export const REPO_RE = /^[A-Za-z0-9._-]+$/;
 
 function isSafePositiveInt(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0;

@@ -46,6 +46,7 @@ function run(overrides: Partial<WorkflowRunSummary> = {}): WorkflowRunSummary {
     status: "completed",
     conclusion: "success",
     prNumber: null,
+    onDefaultBranch: false,
     createdAt: 1000,
     updatedAt: 2000,
     jobs: [],
