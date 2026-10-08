@@ -370,6 +370,23 @@ export function execText(command: string, args: string[], cwd: string, timeout =
   });
 }
 
+export interface ExecStatusResult {
+  code: number;
+  stdout: string;
+  stderr: string;
+}
+
+export function execWithStatus(command: string, args: string[], cwd: string, timeout: number, env?: NodeJS.ProcessEnv): Promise<ExecStatusResult> {
+  return new Promise((resolvePromise, reject) => {
+    execFile(command, args, { cwd, timeout, windowsHide: true, maxBuffer: 16 * 1024 * 1024, env: env ?? withNonInteractiveEnv() }, (error, stdout, stderr) => {
+      if (!error) return resolvePromise({ code: 0, stdout: String(stdout), stderr: String(stderr) });
+      const failure = error as NodeJS.ErrnoException & { killed?: boolean };
+      if (failure.killed || typeof failure.code !== "number") return reject(new Error(String(stderr || error.message).trim()));
+      resolvePromise({ code: failure.code, stdout: String(stdout), stderr: String(stderr) });
+    });
+  });
+}
+
 function execDiff(binary: string, args: string[], cwd: string): Promise<string> {
   return new Promise((resolvePromise, reject) => {
     execFile(binary, args, { cwd, timeout: 20_000, windowsHide: true, maxBuffer: 32 * 1024 * 1024, env: withNonInteractiveEnv() }, (error, stdout, stderr) => {
