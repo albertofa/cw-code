@@ -2,32 +2,19 @@ import { existsSync } from "node:fs";
 import { mkdir, readdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
-import type { AppSettings, GitHubAccountInfo, PrDetail, PrInboxResult, PrRef, PrSummary, Project } from "@cw-code/contracts";
-import {
-  authenticatedEnvironment,
-  defaultBinary,
-  execText,
-  fetchGhAuthStatus,
-  fetchGhToken,
-  selectGitHubAccount,
-  type GitService
-} from "../fs/GitService.js";
+import type { AppSettings, PrDetail, PrInboxResult, PrRef, PrSummary, Project } from "@cw-code/contracts";
+import { authenticatedEnvironment, execText, type GitService } from "../fs/GitService.js";
 import { expandHome } from "../skills/skillPaths.js";
+import { GH_HOST, githubCliBinary, resolveGitHubAccount, type AccountResolution } from "./githubAccount.js";
 import { DETAIL_QUERY, HEAD_QUERY, INBOX_QUERY, INBOX_SEARCH_LIMIT, inboxSearchQueries } from "./prQueries.js";
 import { parseDetail, parseHead, parseInbox, prKey } from "./prParsers.js";
 
-const GH_HOST = "github.com";
 const INBOX_CACHE_TTL_MS = 30_000;
-const ACCOUNT_CACHE_TTL_MS = 60_000;
 const REQUEST_TIMEOUT_MS = 20_000;
 const CLONE_TIMEOUT_MS = 5 * 60_000;
 
 const OWNER_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]*)$/;
 const REPO_RE = /^[A-Za-z0-9._-]+$/;
-
-function isMissingBinaryError(message: string): boolean {
-  return /ENOENT|not recognized as an internal or external command|command not found|no such file or directory/i.test(message);
-}
 
 function isSafePositiveInt(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
@@ -83,12 +70,9 @@ function samePath(a: string, b: string): boolean {
   return normalize(a) === normalize(b);
 }
 
-type AccountResolution = { account: GitHubAccountInfo; token: string } | { error: string };
-
 export class PullRequestService {
   private inboxCache: { expiresAt: number; value: PrInboxResult } | null = null;
   private inboxInFlight: Promise<PrInboxResult> | null = null;
-  private accountCache = new Map<string, { expiresAt: number; value: { account: GitHubAccountInfo; token: string } }>();
   private cloneInFlight = new Map<string, Promise<Project>>();
   private knownHeads = new Map<string, string>();
   private knownStates = new Map<string, PrSummary["state"]>();
@@ -101,31 +85,11 @@ export class PullRequestService {
   ) {}
 
   private githubCliBinary(): string {
-    return this.settings().githubCliBinaryPath?.trim() || defaultBinary("gh");
+    return githubCliBinary(this.settings);
   }
 
-  private async resolveAccount(): Promise<AccountResolution> {
-    const cached = this.accountCache.get(GH_HOST);
-    if (cached && cached.expiresAt > Date.now()) return cached.value;
-    const binary = this.githubCliBinary();
-    let accounts: GitHubAccountInfo[];
-    try {
-      accounts = await fetchGhAuthStatus(binary, homedir());
-    } catch (error) {
-      const message = (error as Error).message;
-      return { error: isMissingBinaryError(message) ? "GitHub CLI not found" : message || "GitHub CLI unavailable" };
-    }
-    const selection = selectGitHubAccount(accounts, GH_HOST, "");
-    if (!selection.account) return { error: selection.error ?? "No authenticated github.com account in gh" };
-    try {
-      const token = await fetchGhToken(binary, homedir(), GH_HOST, selection.account.login);
-      if (!token) return { error: `No token available for ${selection.account.login}` };
-      const resolution = { account: selection.account, token };
-      this.accountCache.set(GH_HOST, { expiresAt: Date.now() + ACCOUNT_CACHE_TTL_MS, value: resolution });
-      return resolution;
-    } catch (error) {
-      return { error: (error as Error).message || "GitHub CLI unavailable" };
-    }
+  private resolveAccount(): Promise<AccountResolution> {
+    return resolveGitHubAccount(this.settings);
   }
 
   async inbox(force = false): Promise<PrInboxResult> {
