@@ -1,4 +1,4 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
+import { useEffect, useMemo, useState } from "react";
 import {
   AlertTriangle,
   Check,
@@ -23,6 +23,7 @@ import type { PrBucket, PrRef, PrSummary, PrWorkflow, Session } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import { selectSessionPanel, usePanelStore } from "../stores/panelStore.js";
 import { usePrStore } from "../stores/prStore.js";
+import { AnchoredPopover, anchorRectOf, type AnchorRect } from "./AnchoredPopover.js";
 import { PanelToggles } from "./PanelToggles.js";
 import { projectAvatarStyle, projectInitials } from "./avatar.js";
 import { DriverIcon } from "./DriverIcon.js";
@@ -168,69 +169,6 @@ function RefreshButton({ fetchedAt, loading, onRefresh }: { fetchedAt: number | 
     >
       <RefreshCw size={15} aria-hidden="true" className={loading ? "pr-inbox-spin" : undefined} />
     </button>
-  );
-}
-
-interface AnchorRect {
-  left: number;
-  right: number;
-  top: number;
-  bottom: number;
-}
-
-function anchorRectOf(el: HTMLElement): AnchorRect {
-  const r = el.getBoundingClientRect();
-  return { left: r.left, right: r.right, top: r.top, bottom: r.bottom };
-}
-
-function InboxPopover({
-  anchor,
-  align = "left",
-  label,
-  onClose,
-  className,
-  children
-}: {
-  anchor: AnchorRect;
-  align?: "left" | "right";
-  label: string;
-  onClose: () => void;
-  className?: string;
-  children: ReactNode;
-}) {
-  const panelRef = useRef<HTMLDivElement | null>(null);
-  const [pos, setPos] = useState(() => ({ left: anchor.left, top: anchor.bottom + 4 }));
-
-  useLayoutEffect(() => {
-    const el = panelRef.current;
-    if (!el) return;
-    const rect = el.getBoundingClientRect();
-    const rawLeft = align === "right" ? anchor.right - rect.width : anchor.left;
-    const left = Math.max(8, Math.min(rawLeft, window.innerWidth - rect.width - 8));
-    const top = Math.max(8, Math.min(anchor.bottom + 4, window.innerHeight - rect.height - 8));
-    setPos({ left, top });
-  }, [anchor, align]);
-
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (e.key === "Escape") onClose();
-    };
-    window.addEventListener("keydown", onKey);
-    return () => window.removeEventListener("keydown", onKey);
-  }, [onClose]);
-
-  return (
-    <>
-      <div className="menu-backdrop" onClick={onClose} />
-      <div
-        ref={panelRef}
-        className={`pr-inbox-popover${className ? ` ${className}` : ""}`}
-        style={{ left: pos.left, top: pos.top }}
-        aria-label={label}
-      >
-        {children}
-      </div>
-    </>
   );
 }
 
@@ -491,18 +429,18 @@ export function PrInboxView() {
       </div>
 
       {sessionsPopover && sessionsRow && (
-        <InboxPopover
+        <AnchoredPopover
           anchor={sessionsPopover.anchor}
           align="left"
           label={`Sessions linked to #${sessionsRow.pr.ref.number}`}
           onClose={() => setSessionsPopover(null)}
         >
           <SessionsPopoverContent row={sessionsRow} workflows={workflows} onSelect={goToSession} />
-        </InboxPopover>
+        </AnchoredPopover>
       )}
 
       {workflowPopover && (
-        <InboxPopover anchor={workflowPopover.anchor} align="right" label="Run a workflow" onClose={() => setWorkflowPopover(null)}>
+        <AnchoredPopover anchor={workflowPopover.anchor} align="right" label="Run a workflow" onClose={() => setWorkflowPopover(null)}>
           <WorkflowPopoverContent
             workflows={workflows}
             suggestedId={workflowRow ? (suggestedWorkflow(workflowRow.pr, workflows)?.id ?? null) : null}
@@ -512,7 +450,7 @@ export function PrInboxView() {
               openExternalLink(workflowPopover.url);
             }}
           />
-        </InboxPopover>
+        </AnchoredPopover>
       )}
     </div>
   );
