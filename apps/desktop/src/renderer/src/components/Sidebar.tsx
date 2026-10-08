@@ -447,8 +447,8 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
     attentionCount > 0 ? `${attentionCount} need${attentionCount === 1 ? "s" : ""} you` : null,
     anyUnseen ? "updates available" : null
   ].filter(Boolean);
-  const inboxTitle = ["Pull requests", ...inboxNotes].join(" · ");
-  const inboxLabel = ["Pull requests", ...inboxNotes].join(", ");
+  const inboxTitle = ["GitHub", ...inboxNotes].join(" · ");
+  const inboxLabel = ["GitHub", ...inboxNotes].join(", ");
   const selectSession = (sessionId: string) => {
     openSessionView();
     store.selectSession(sessionId);
@@ -1008,7 +1008,7 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
             aria-pressed={inboxActive}
           >
             <GitPullRequest size={15} aria-hidden="true" />
-            <span className="side-nav-label">Pull requests</span>
+            <span className="side-nav-label">GitHub</span>
             <span className="side-nav-end">
               {anyUnseen && <span className="pr-unseen-dot" aria-hidden="true" />}
               {attentionCount > 0 && (

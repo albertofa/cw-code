@@ -43,6 +43,10 @@ describe("prBucket", () => {
     expect(prBucket(summary({ state: "MERGED", ci: "failing" }))).toBe("merged");
   });
 
+  it("puts closed unmerged pull requests in closed", () => {
+    expect(prBucket(summary({ state: "CLOSED", ci: "failing" }))).toBe("closed");
+  });
+
   it("puts review requests from someone else in review", () => {
     expect(prBucket(summary({ viewerIsAuthor: false, reviewRequestedFromViewer: true }))).toBe("review");
   });

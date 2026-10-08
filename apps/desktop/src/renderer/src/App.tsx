@@ -8,7 +8,7 @@ import { WindowControls } from "./components/WindowControls.js";
 import { SkillsModal } from "./components/SkillsModal.js";
 import { SettingsModal } from "./components/SettingsModal.js";
 import { ThreadView } from "./components/ThreadView.js";
-import { PrInboxView } from "./components/PrInboxView.js";
+import { GitHubView } from "./components/GitHubView.js";
 import { PrDetailView } from "./components/PrDetailView.js";
 import { UsageView } from "./components/UsageView.js";
 import { WorkflowRunModal } from "./components/WorkflowRunModal.js";
@@ -430,7 +430,7 @@ export function App() {
           <div className="app-body">
           <Sidebar onOpenSettings={() => openSettings()} onOpenSkills={() => setSkillsOpen(true)} skillsOpen={skillsOpen} />
           {mainView.kind === "github" ? (
-            <PrInboxView />
+            <GitHubView />
           ) : mainView.kind === "pr" ? (
             <PrDetailView key={prKey(mainView.ref)} prRef={mainView.ref} />
           ) : mainView.kind === "usage" ? (
