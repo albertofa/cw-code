@@ -8,6 +8,7 @@ const ACCOUNT_CACHE_TTL_MS = 60_000;
 export type AccountResolution = { account: GitHubAccountInfo; token: string } | { error: string };
 
 const accountCache = new Map<string, { expiresAt: number; value: { account: GitHubAccountInfo; token: string } }>();
+const accountInFlight = new Map<string, Promise<AccountResolution>>();
 
 function isMissingBinaryError(message: string): boolean {
   return /ENOENT|not recognized as an internal or external command|command not found|no such file or directory/i.test(message);
@@ -17,11 +18,21 @@ export function githubCliBinary(settings: () => AppSettings): string {
   return settings().githubCliBinaryPath?.trim() || defaultBinary("gh");
 }
 
-export async function resolveGitHubAccount(settings: () => AppSettings): Promise<AccountResolution> {
+export function resolveGitHubAccount(settings: () => AppSettings): Promise<AccountResolution> {
   const binary = githubCliBinary(settings);
   const cacheKey = `${GH_HOST}|${binary}`;
   const cached = accountCache.get(cacheKey);
-  if (cached && cached.expiresAt > Date.now()) return cached.value;
+  if (cached && cached.expiresAt > Date.now()) return Promise.resolve(cached.value);
+  const pending = accountInFlight.get(cacheKey);
+  if (pending) return pending;
+  const promise = computeAccount(binary, cacheKey).finally(() => {
+    if (accountInFlight.get(cacheKey) === promise) accountInFlight.delete(cacheKey);
+  });
+  accountInFlight.set(cacheKey, promise);
+  return promise;
+}
+
+async function computeAccount(binary: string, cacheKey: string): Promise<AccountResolution> {
   let accounts: GitHubAccountInfo[];
   try {
     accounts = await fetchGhAuthStatus(binary, homedir());

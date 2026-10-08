@@ -114,7 +114,8 @@ function parseReviewers(value: unknown): PrReviewer[] {
     const login = asString(asRecord(node.author).login);
     if (!login) continue;
     const state = asString(node.state);
-    reviewers.push({ login, state: (REVIEWER_STATES.has(state) ? state : "PENDING") as PrReviewer["state"] });
+    if (!REVIEWER_STATES.has(state)) continue;
+    reviewers.push({ login, state: state as PrReviewer["state"] });
   }
   return reviewers;
 }

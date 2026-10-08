@@ -138,9 +138,23 @@ describe("reviewers and assignees", () => {
     ]);
   });
 
-  it("maps an unknown review state to PENDING and skips reviews without an author", () => {
+  it("drops dismissed and unknown review states and reviews without an author", () => {
     const pr = parseOne({
-      latestReviews: { nodes: [{ author: { login: "bob" }, state: "DISMISSED" }, { author: null, state: "APPROVED" }] }
+      latestReviews: {
+        nodes: [
+          { author: { login: "bob" }, state: "DISMISSED" },
+          { author: { login: "carol" }, state: "WHATEVER" },
+          { author: null, state: "APPROVED" }
+        ]
+      }
+    });
+    expect(pr.reviewers).toEqual([]);
+  });
+
+  it("keeps a dismissed reviewer as PENDING only when a review is requested again", () => {
+    const pr = parseOne({
+      latestReviews: { nodes: [{ author: { login: "bob" }, state: "DISMISSED" }] },
+      reviewRequests: { nodes: [{ requestedReviewer: { login: "bob" } }] }
     });
     expect(pr.reviewers).toEqual([{ login: "bob", state: "PENDING" }]);
   });

@@ -1,4 +1,4 @@
-import type { RepoRef, RunRef } from "@cw-code/contracts";
+import type { IssueRef, RepoRef, RunRef } from "@cw-code/contracts";
 import { GH_HOST } from "./githubAccount.js";
 import { OWNER_RE, REPO_RE, assertRunId } from "./PullRequestService.js";
 
@@ -19,4 +19,10 @@ export function assertRepoRef(ref: unknown): asserts ref is RepoRef {
 export function assertRunRef(ref: unknown): asserts ref is RunRef {
   assertRepoRef(ref);
   assertRunId((ref as Partial<RunRef>).runId as number);
+}
+
+export function assertIssueRef(ref: unknown): asserts ref is IssueRef {
+  assertRepoRef(ref);
+  const number = (ref as Partial<IssueRef>).number;
+  if (typeof number !== "number" || !Number.isSafeInteger(number) || number <= 0) throw new Error(`invalid issue number '${String(number)}'`);
 }

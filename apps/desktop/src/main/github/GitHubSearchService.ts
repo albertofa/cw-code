@@ -6,7 +6,7 @@ import { ISSUE_DETAIL_QUERY, ISSUE_SEARCH_QUERY, MAX_COUNT_QUERIES, countsQuery 
 import { parseCounts, parseIssueDetail, parseIssueSearch } from "./issueParsers.js";
 import { INBOX_SEARCH_LIMIT, PR_SEARCH_QUERY } from "./prQueries.js";
 import { parsePrSearch } from "./prParsers.js";
-import { assertPrRef } from "./PullRequestService.js";
+import { assertIssueRef } from "./githubRefs.js";
 
 const SEARCH_CACHE_TTL_MS = 30_000;
 const REQUEST_TIMEOUT_MS = 20_000;
@@ -21,10 +21,23 @@ export function assertSearchQuery(query: unknown): asserts query is string {
   if (trimmed.length > MAX_QUERY_LENGTH) throw new Error(`search query must be at most ${MAX_QUERY_LENGTH} characters`);
 }
 
+export function assertCountBase(countBase: unknown): asserts countBase is string {
+  if (typeof countBase !== "string") throw new Error("count base must be a string");
+  if (countBase.trim().length > MAX_QUERY_LENGTH) throw new Error(`count base must be at most ${MAX_QUERY_LENGTH} characters`);
+}
+
+function assertSearchKind(kind: unknown): asserts kind is SearchKind {
+  if (kind !== "pr" && kind !== "issue") throw new Error(`invalid search kind '${String(kind)}'`);
+}
+
+const TYPE_QUALIFIER_PATTERNS: Record<SearchKind, RegExp> = {
+  pr: /(^|\s)(is|type):pr(?=\s|$)/i,
+  issue: /(^|\s)(is|type):issue(?=\s|$)/i
+};
+
 export function withTypeQualifier(kind: SearchKind, query: string): string {
   const trimmed = query.trim();
-  const qualified = new RegExp(`(^|\\s)(is|type):${kind}(?=\\s|$)`, "i").test(trimmed);
-  return qualified ? trimmed : `${trimmed} is:${kind}`.trim();
+  return TYPE_QUALIFIER_PATTERNS[kind].test(trimmed) ? trimmed : `${trimmed} is:${kind}`.trim();
 }
 
 function normalizeQuery(query: string): string {
@@ -40,9 +53,11 @@ export class GitHubSearchService {
   search(kind: "pr", query: string, countBase: string, force?: boolean): Promise<GitHubSearchResult<PrSummary>>;
   search(kind: "issue", query: string, countBase: string, force?: boolean): Promise<GitHubSearchResult<IssueSummary>>;
   async search(kind: SearchKind, query: string, countBase: string, force = false): Promise<GitHubSearchResult<PrSummary | IssueSummary>> {
+    assertSearchKind(kind);
     assertSearchQuery(query);
+    assertCountBase(countBase);
     const remote = withTypeQualifier(kind, normalizeQuery(query));
-    const base = withTypeQualifier(kind, normalizeQuery(typeof countBase === "string" ? countBase : ""));
+    const base = withTypeQualifier(kind, normalizeQuery(countBase));
     const key = `${kind}\n${remote}\n${base}`;
     const cached = this.cache.get(key);
     if (!force && cached && cached.expiresAt > Date.now()) return cached.value;
@@ -112,6 +127,7 @@ export class GitHubSearchService {
   }
 
   async counts(kind: SearchKind, queries: string[]): Promise<Array<number | null>> {
+    assertSearchKind(kind);
     if (!Array.isArray(queries) || queries.length > MAX_COUNT_QUERIES) throw new Error(`counts accepts at most ${MAX_COUNT_QUERIES} queries`);
     if (queries.length === 0) return [];
     queries.forEach(assertSearchQuery);
@@ -130,7 +146,7 @@ export class GitHubSearchService {
   }
 
   async issueDetail(ref: IssueRef): Promise<IssueDetail> {
-    assertPrRef(ref);
+    assertIssueRef(ref);
     const resolution = await resolveGitHubAccount(this.settings);
     if ("error" in resolution) throw new Error(resolution.error);
     const { account, token } = resolution;
