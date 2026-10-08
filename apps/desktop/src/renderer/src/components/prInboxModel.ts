@@ -72,7 +72,8 @@ export const BUCKET_TITLE: Record<PrBucket, string> = {
   action: "Your PRs · needs action",
   ready: "Ready to merge",
   waiting: "Waiting",
-  merged: "Recently merged"
+  merged: "Recently merged",
+  closed: "Closed"
 };
 
 export const BUCKET_HINT: Record<PrBucket, string> = {
@@ -80,7 +81,8 @@ export const BUCKET_HINT: Record<PrBucket, string> = {
   action: "failing checks · changes requested · conflicts",
   ready: "approved + green · merge on GitHub",
   waiting: "draft or awaiting reviewers · includes others' PRs you're only involved in",
-  merged: "last 7 days"
+  merged: "last 7 days",
+  closed: "not merged"
 };
 
 export const DEFAULT_COLLAPSED_BUCKETS: PrBucket[] = ["merged"];

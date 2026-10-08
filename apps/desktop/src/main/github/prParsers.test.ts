@@ -138,6 +138,8 @@ describe("bucketFor", () => {
     review: "none",
     mergeable: "MERGEABLE",
     labels: [],
+    reviewers: [],
+    assignees: [],
     updatedAt: 0
   };
 

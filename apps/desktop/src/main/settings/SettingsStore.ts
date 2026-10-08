@@ -21,8 +21,12 @@ const VALID_PR_CONDITIONS: readonly PrSuggestCondition[] = [
   "changes-requested",
   "conflicts",
   "bot-author",
-  "draft"
+  "draft",
+  "issue-assigned",
+  "issue-bug",
+  "run-failed"
 ];
+const VALID_WORKFLOW_TARGETS: readonly PrWorkflow["target"][] = ["pr", "issue", "run"];
 const VALID_PR_WORKSPACES: readonly PrWorkspaceChoice[] = ["checkout", "worktree", "linked"];
 
 function sanitizeWorkflowEntry(entry: unknown): PrWorkflow | null {
@@ -42,6 +46,7 @@ function sanitizeWorkflowEntry(entry: unknown): PrWorkflow | null {
     icon: o.icon as PrWorkflowIcon,
     builtIn: o.builtIn === true,
     enabled: o.enabled === true,
+    target: VALID_WORKFLOW_TARGETS.includes(o.target as PrWorkflow["target"]) ? (o.target as PrWorkflow["target"]) : "pr",
     suggestWhen: o.suggestWhen.filter((c): c is PrSuggestCondition => VALID_PR_CONDITIONS.includes(c as PrSuggestCondition)),
     workspace: o.workspace as PrWorkspaceChoice,
     startPrompt: o.startPrompt,
@@ -98,6 +103,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   prAttributionEnabled: true,
   prAttributionText: "— drafted with {{harness}} in cw-code",
   prWorkflows: defaultPrWorkflows(),
+  githubSavedViews: [],
   opencodeGoUsage: false,
   updateChannel: null,
   updateBackgroundDownload: true
@@ -188,6 +194,7 @@ function sanitize(patch: SettingsPatch): SettingsPatch {
       typeof patch.prAttributionText === "string" ? patch.prAttributionText.trim() : DEFAULT_SETTINGS.prAttributionText;
   }
   if (patch.prWorkflows !== undefined) out.prWorkflows = sanitizePrWorkflows(patch.prWorkflows);
+  if (patch.githubSavedViews !== undefined) out.githubSavedViews = Array.isArray(patch.githubSavedViews) ? patch.githubSavedViews : [];
   if (patch.updateChannel !== undefined) {
     out.updateChannel = patch.updateChannel === "stable" || patch.updateChannel === "alpha" ? patch.updateChannel : DEFAULT_SETTINGS.updateChannel;
   }
@@ -207,7 +214,8 @@ function defaults(): AppSettings {
     ...DEFAULT_SETTINGS,
     claudeEnabledModels: [...DEFAULT_SETTINGS.claudeEnabledModels],
     claudeCustomModel: { ...DEFAULT_SETTINGS.claudeCustomModel },
-    prWorkflows: cloneWorkflows(DEFAULT_SETTINGS.prWorkflows)
+    prWorkflows: cloneWorkflows(DEFAULT_SETTINGS.prWorkflows),
+    githubSavedViews: [...DEFAULT_SETTINGS.githubSavedViews]
   };
 }
 
@@ -267,7 +275,12 @@ export class SettingsStore {
   }
 
   get(): AppSettings {
-    return { ...this.data, claudeEnabledModels: [...this.data.claudeEnabledModels], prWorkflows: cloneWorkflows(this.data.prWorkflows) };
+    return {
+      ...this.data,
+      claudeEnabledModels: [...this.data.claudeEnabledModels],
+      prWorkflows: cloneWorkflows(this.data.prWorkflows),
+      githubSavedViews: this.data.githubSavedViews.map((view) => ({ ...view }))
+    };
   }
 
   set(patch: SettingsPatch): AppSettings {

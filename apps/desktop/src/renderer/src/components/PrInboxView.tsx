@@ -68,7 +68,8 @@ const BUCKET_ICONS: Record<PrBucket, LucideIcon> = {
   action: AlertTriangle,
   ready: GitMerge,
   waiting: Clock,
-  merged: GitMerge
+  merged: GitMerge,
+  closed: Circle
 };
 
 const BUCKET_ICON_TONE: Record<PrBucket, string> = {
@@ -76,7 +77,8 @@ const BUCKET_ICON_TONE: Record<PrBucket, string> = {
   action: "warn",
   ready: "ok",
   waiting: "neutral",
-  merged: "neutral"
+  merged: "neutral",
+  closed: "neutral"
 };
 
 interface Tone {

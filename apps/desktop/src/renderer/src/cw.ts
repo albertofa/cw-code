@@ -29,6 +29,27 @@ import type {
   PrTimelineItem,
   PrWorkflow,
   SessionPrLink,
+  GitHubAccountRef,
+  GitHubKind,
+  GitHubSearchResult,
+  GitHubViewGroup,
+  IssueComment,
+  IssueDetail,
+  IssueLinkedPr,
+  IssueRef,
+  IssueSummary,
+  RepoRef,
+  RunConclusion,
+  RunJob,
+  RunRef,
+  RunSources,
+  RunStatus,
+  RunsResult,
+  SavedGitHubView,
+  SessionIssueLink,
+  SessionRunLink,
+  WorkflowRunSummary,
+  WorkflowSubject,
   ShutdownActiveTurn,
   ShutdownAssessment,
   ShutdownCommitResult,
@@ -92,6 +113,27 @@ export type {
   PrTimelineItem,
   PrWorkflow,
   SessionPrLink,
+  GitHubAccountRef,
+  GitHubKind,
+  GitHubSearchResult,
+  GitHubViewGroup,
+  IssueComment,
+  IssueDetail,
+  IssueLinkedPr,
+  IssueRef,
+  IssueSummary,
+  RepoRef,
+  RunConclusion,
+  RunJob,
+  RunRef,
+  RunSources,
+  RunStatus,
+  RunsResult,
+  SavedGitHubView,
+  SessionIssueLink,
+  SessionRunLink,
+  WorkflowRunSummary,
+  WorkflowSubject,
   TokenCounts,
   TurnModelUsage,
   UpdateActionCode,
@@ -135,6 +177,8 @@ export interface Session {
   worktreePath?: string;
   branch?: string;
   prs?: SessionPrLink[];
+  issues?: SessionIssueLink[];
+  runs?: SessionRunLink[];
   prUnlinked?: string[];
 }
 
@@ -478,6 +522,7 @@ export interface AppSettings {
   prAttributionEnabled: boolean;
   prAttributionText: string;
   prWorkflows: PrWorkflow[];
+  githubSavedViews: SavedGitHubView[];
   opencodeGoUsage: boolean;
   updateChannel: UpdateChannel | null;
   updateBackgroundDownload: boolean;

@@ -191,7 +191,7 @@ describe("SettingsStore", () => {
       expect(settings[key]).toEqual(original[key]);
     }
     const workflows = original.prWorkflows as PrWorkflow[];
-    expect(settings.prWorkflows[0]).toEqual(workflows[0]);
+    expect(settings.prWorkflows[0]).toEqual({ ...workflows[0], target: "pr" });
     expect(settings.prWorkflows.find((w) => w.id === "review")).toMatchObject({ builtIn: true, enabled: false });
     const persisted = JSON.parse(readFileSync(filePath, "utf8")) as Record<string, unknown>;
     expect(persisted.schemaVersion).toBe(SETTINGS_SCHEMA_VERSION);

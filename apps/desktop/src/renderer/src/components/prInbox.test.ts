@@ -25,6 +25,8 @@ function summary(overrides: Partial<PrSummary> = {}): PrSummary {
     review: "none",
     mergeable: "MERGEABLE",
     labels: [],
+    reviewers: [],
+    assignees: [],
     updatedAt: 1_000,
     ...overrides
   };

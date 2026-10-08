@@ -36,7 +36,8 @@ const SETTINGS: AppSettings = {
   prCloneRoot: "~/.cw-code/repos",
   prAttributionEnabled: true,
   prAttributionText: "",
-  prWorkflows: []
+  prWorkflows: [],
+  githubSavedViews: []
 };
 
 class FakeClient implements CodexAppServerLike {

@@ -10,6 +10,7 @@ function workflow(overrides: Partial<PrWorkflow> = {}): PrWorkflow {
     icon: "eye",
     builtIn: true,
     enabled: true,
+    target: "pr",
     suggestWhen: ["review-requested"],
     workspace: "checkout",
     startPrompt: "start",

@@ -13,7 +13,7 @@ export type PrReviewState = "approved" | "changes_requested" | "review_required"
 
 export type PrMergeable = "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
 
-export type PrBucket = "review" | "action" | "ready" | "waiting" | "merged";
+export type PrBucket = "review" | "action" | "ready" | "waiting" | "merged" | "closed";
 
 export interface PrSummary {
   ref: PrRef;
@@ -37,6 +37,8 @@ export interface PrSummary {
   review: PrReviewState;
   mergeable: PrMergeable;
   labels: string[];
+  reviewers: PrReviewer[];
+  assignees: string[];
   /** Epoch milliseconds. */
   updatedAt: number;
 }
@@ -110,7 +112,6 @@ export interface PrDetail extends PrSummary {
   threads: PrReviewThread[];
   checkRuns: PrCheck[];
   commits: PrCommit[];
-  reviewers: PrReviewer[];
   viewerLogin: string;
 }
 
@@ -133,7 +134,7 @@ export interface PrUpdate {
   summary: string;
 }
 
-export type PrSuggestCondition = "review-requested" | "author" | "checks-failing" | "changes-requested" | "conflicts" | "bot-author" | "draft";
+export type PrSuggestCondition = "review-requested" | "author" | "checks-failing" | "changes-requested" | "conflicts" | "bot-author" | "draft" | "issue-assigned" | "issue-bug" | "run-failed";
 
 export type PrWorkspaceChoice = "checkout" | "worktree" | "linked";
 
@@ -146,6 +147,7 @@ export interface PrWorkflow {
   icon: PrWorkflowIcon;
   builtIn: boolean;
   enabled: boolean;
+  target: "pr" | "issue" | "run";
   suggestWhen: PrSuggestCondition[];
   workspace: PrWorkspaceChoice;
   startPrompt: string;

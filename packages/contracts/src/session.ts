@@ -1,4 +1,5 @@
 import type { SessionPrLink } from "./pullRequests.js";
+import type { SessionIssueLink, SessionRunLink } from "./github.js";
 import type { CommandInvocation } from "./commands.js";
 
 export type DriverKind = "claude" | "opencode" | "codex";
@@ -54,6 +55,8 @@ export interface SessionMeta {
   /** Last known branch. Live Git status remains the source of truth. */
   branch?: string;
   prs?: SessionPrLink[];
+  issues?: SessionIssueLink[];
+  runs?: SessionRunLink[];
   /** prKeys of PRs the user explicitly unlinked from this session, so auto-link does not re-attach them. */
   prUnlinked?: string[];
 }

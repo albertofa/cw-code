@@ -9,6 +9,7 @@ export function defaultPrWorkflows(): PrWorkflow[] {
       icon: "merge",
       builtIn: true,
       enabled: true,
+      target: "pr",
       suggestWhen: ["conflicts"],
       workspace: "worktree",
       startPrompt: `#{{pr.number}} ({{pr.head}}) conflicts with {{pr.base}}.
@@ -22,6 +23,7 @@ Merge {{pr.base}} into the head branch, keep both intents, run typecheck and tes
       icon: "wrench",
       builtIn: true,
       enabled: true,
+      target: "pr",
       suggestWhen: ["checks-failing"],
       workspace: "linked",
       startPrompt: `Checks failing on #{{pr.number}} at {{pr.sha}}: {{checks.summary}}
@@ -38,6 +40,7 @@ Reproduce locally, fix the root cause, commit on {{pr.head}}.`,
       icon: "message",
       builtIn: true,
       enabled: true,
+      target: "pr",
       suggestWhen: ["changes-requested"],
       workspace: "linked",
       startPrompt: `PR #{{pr.number}} has unresolved threads:
@@ -54,6 +57,7 @@ Apply each change or explain why not. One commit per thread on {{pr.head}}.`,
       icon: "eye",
       builtIn: true,
       enabled: true,
+      target: "pr",
       suggestWhen: ["review-requested"],
       workspace: "checkout",
       startPrompt: `Review pull request #{{pr.number}} "{{pr.title}}" in {{pr.repo}}.
@@ -76,6 +80,7 @@ Re-review only \`git diff {{session.lastSeenSha}}..{{pr.sha}}\` and say whether 
       icon: "activity",
       builtIn: true,
       enabled: true,
+      target: "pr",
       suggestWhen: ["author"],
       workspace: "linked",
       startPrompt: `You own PR #{{pr.number}} on {{pr.head}}. Take it to mergeable:

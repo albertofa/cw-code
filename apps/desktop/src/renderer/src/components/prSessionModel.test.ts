@@ -20,6 +20,7 @@ function workflow(id: string, overrides: Partial<PrWorkflow> = {}): PrWorkflow {
     icon: "eye",
     builtIn: id === "review" || id === "babysit",
     enabled: true,
+    target: "pr",
     suggestWhen: [],
     workspace: "linked",
     startPrompt: "start",
@@ -51,6 +52,8 @@ function detail(overrides: Partial<PrDetail> = {}): PrDetail {
     review: "none",
     mergeable: "MERGEABLE",
     labels: [],
+    reviewers: [],
+    assignees: [],
     updatedAt: 2000,
     body: "",
     createdAt: 0,
@@ -58,7 +61,6 @@ function detail(overrides: Partial<PrDetail> = {}): PrDetail {
     threads: [],
     checkRuns: [],
     commits: [],
-    reviewers: [],
     viewerLogin: "",
     ...overrides
   };

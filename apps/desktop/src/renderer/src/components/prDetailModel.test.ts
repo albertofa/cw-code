@@ -25,6 +25,8 @@ function prSummary(overrides: Partial<PrSummary> = {}): PrSummary {
     review: "none",
     mergeable: "MERGEABLE",
     labels: [],
+    reviewers: [],
+    assignees: [],
     updatedAt: 1000,
     ...overrides
   };
@@ -53,6 +55,7 @@ function workflow(overrides: Partial<PrWorkflow> = {}): PrWorkflow {
     icon: "eye",
     builtIn: true,
     enabled: true,
+    target: "pr",
     suggestWhen: ["review-requested"],
     workspace: "checkout",
     startPrompt: "start",

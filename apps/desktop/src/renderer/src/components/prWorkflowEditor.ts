@@ -19,6 +19,7 @@ export function createWorkflow(existing: PrWorkflow[]): PrWorkflow[] {
     icon: "sparkle",
     builtIn: false,
     enabled: true,
+    target: "pr",
     suggestWhen: [],
     workspace: "checkout",
     startPrompt: "",

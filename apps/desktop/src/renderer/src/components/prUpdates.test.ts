@@ -25,6 +25,8 @@ function basePr(overrides: Partial<PrDetail> = {}): PrDetail {
     review: "none",
     mergeable: "MERGEABLE",
     labels: [],
+    reviewers: [],
+    assignees: [],
     updatedAt: 1_000,
     body: "",
     createdAt: 500,
@@ -32,7 +34,6 @@ function basePr(overrides: Partial<PrDetail> = {}): PrDetail {
     threads: [],
     checkRuns: [],
     commits: [],
-    reviewers: [],
     viewerLogin: "",
     ...overrides
   };

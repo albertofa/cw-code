@@ -56,7 +56,10 @@ const CONDITION_LABELS: Record<PrSuggestCondition, string> = {
   "changes-requested": "Changes requested",
   conflicts: "Has conflicts",
   "bot-author": "Author is a bot",
-  draft: "Draft"
+  draft: "Draft",
+  "issue-assigned": "Issue assigned to me",
+  "issue-bug": "Issue labeled bug",
+  "run-failed": "Run failed"
 };
 
 const ALL_CONDITIONS: PrSuggestCondition[] = [

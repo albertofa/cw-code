@@ -141,6 +141,8 @@ function parseSummaryNode(node: Record<string, unknown>, viewer: string | null):
     review: reviewStateFrom(node.reviewDecision),
     mergeable: mergeableFrom(node.mergeable),
     labels: asNodes(node.labels).map((label) => asString(label.name)).filter(Boolean),
+    reviewers: [],
+    assignees: [],
     updatedAt: asEpochMs(node.updatedAt)
   };
 }
