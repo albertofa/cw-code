@@ -1,25 +1,20 @@
 import { Fragment, useCallback, useEffect, useRef, useState } from "react";
 import {
-  Activity,
   AlertTriangle,
   ArrowDown,
   ArrowUp,
   Bot,
   CheckCircle2,
   Copy,
-  Eye,
   Gauge,
   GitBranch,
-  GitMerge,
   GitPullRequest,
-  MessageSquare,
   Plus,
   RefreshCw,
   RotateCcw,
   Sparkles,
   Star,
   Trash2,
-  Wrench,
   X,
   XCircle
 } from "lucide-react";
@@ -34,6 +29,7 @@ import { useNotifs } from "./Notifications.js";
 import { MenuSelect } from "./MenuSelect.js";
 import { UpdatesSettings } from "./UpdatesSettings.js";
 import { DriverIcon } from "./DriverIcon.js";
+import { WORKFLOW_ICONS, workflowIcon } from "./workflowIcons.js";
 import appIcon from "../assets/console-c.svg";
 import { version as appVersion, description as appDescription } from "../../../../package.json";
 import { attributionText, TEMPLATE_VARS_BY_TARGET } from "./prWorkflows.js";
@@ -55,16 +51,6 @@ import {
   workflowsValidationError,
   type WorkflowTarget
 } from "./prWorkflowEditor.js";
-
-const WORKFLOW_ICONS: Record<PrWorkflowIcon, typeof Eye> = {
-  eye: Eye,
-  activity: Activity,
-  message: MessageSquare,
-  wrench: Wrench,
-  merge: GitMerge,
-  bot: Bot,
-  sparkle: Sparkles
-};
 
 const CONDITION_LABELS: Record<PrSuggestCondition, string> = {
   "review-requested": "Review requested from me",
@@ -999,7 +985,7 @@ export function SettingsModal({
   const prWorkflowsFields = draft && (() => {
     const workflows = draft.prWorkflows;
     const selected = workflows.find((w) => w.id === selectedWorkflowId) ?? null;
-    const SelectedIcon = selected ? WORKFLOW_ICONS[selected.icon] : null;
+    const SelectedIcon = selected ? workflowIcon(selected.icon) : null;
     const issues = selected ? templateVarIssues(selected) : null;
     return (
       <div className="settings-prwf">
@@ -1017,7 +1003,7 @@ export function SettingsModal({
                   {TARGET_HEADINGS[group.target]}
                 </div>
                 {group.workflows.map((w, index) => {
-                  const Icon = WORKFLOW_ICONS[w.icon];
+                  const Icon = workflowIcon(w.icon);
                   return (
                     <div
                       key={w.id}
@@ -1164,7 +1150,7 @@ export function SettingsModal({
                 display={selected.icon}
                 icon={<SelectedIcon size={13} aria-hidden="true" />}
                 options={(Object.keys(WORKFLOW_ICONS) as PrWorkflowIcon[]).map((id) => {
-                  const OptionIcon = WORKFLOW_ICONS[id];
+                  const OptionIcon = workflowIcon(id);
                   return { id, label: id, icon: <OptionIcon size={13} aria-hidden="true" /> };
                 })}
                 onPick={(id) => updateSelectedWorkflow({ icon: id as PrWorkflowIcon })}

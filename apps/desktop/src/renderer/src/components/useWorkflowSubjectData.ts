@@ -134,7 +134,7 @@ export function useWorkflowSubjectData(input: {
     : prRef && prDetail
       ? prDetail.headRefOid
       : runRef
-        ? `${runKey(runRef)}@${cachedRun?.updatedAt ?? 0}:${cachedRun?.status ?? ""}`
+        ? `${runKey(runRef)}:${cachedRun?.status ?? ""}:${cachedRun?.conclusion ?? ""}`
         : null;
   const logsReady = !logsNeeded || (logsId !== null && logs?.id === logsId);
 

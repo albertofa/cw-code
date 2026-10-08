@@ -173,6 +173,17 @@ export function searchKey(kind: GitHubKind, query: string, clonedRepos: RepoRef[
   return `${kind}:${normalizeQuery(scopeSplitQuery(splitQuery(kind, query)).remote)}`;
 }
 
+function builtinQuery(id: string): string {
+  return BUILTIN_VIEWS.find((view) => view.id === id)?.query ?? "";
+}
+
+export function badgeSearchKeys(clonedRepos: RepoRef[]): { issue: string; run: string } {
+  return {
+    issue: searchKey("issue", builtinQuery("issue:inbox"), []),
+    run: searchKey("run", builtinQuery("run:watching"), clonedRepos)
+  };
+}
+
 export function evictionCandidates(keys: string[], touched: ReadonlyMap<string, number>, protectedKeys: ReadonlySet<string | null>, max: number): string[] {
   if (keys.length <= max) return [];
   return keys
@@ -286,7 +297,9 @@ export const useGitHubStore = create<GitHubStore>((set, get) => {
 
   function prune<T>(kind: GitHubKind, select: (state: GitHubStore) => Record<string, Loadable<T>>, assign: (results: Record<string, Loadable<T>>) => Partial<GitHubStore>) {
     const results = select(get());
-    const dropped = evictionCandidates(Object.keys(results), touched, new Set([latestKeys[kind], settledKeys[kind]]), MAX_RESULT_ENTRIES_PER_KIND);
+    const badgeKeys = badgeSearchKeys(clonedRepos());
+    const protectedKeys = new Set<string | null>([latestKeys[kind], settledKeys[kind], kind === "issue" ? badgeKeys.issue : null, kind === "run" ? badgeKeys.run : null]);
+    const dropped = evictionCandidates(Object.keys(results), touched, protectedKeys, MAX_RESULT_ENTRIES_PER_KIND);
     if (dropped.length === 0) return;
     const next = { ...results };
     for (const key of dropped) {

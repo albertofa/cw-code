@@ -1,7 +1,7 @@
 import { Activity, Bot, Eye, GitMerge, MessageSquare, Sparkles, Wrench, type LucideIcon } from "lucide-react";
 import type { PrWorkflowIcon } from "@cw-code/contracts";
 
-const WORKFLOW_ICONS: Record<PrWorkflowIcon, LucideIcon> = {
+export const WORKFLOW_ICONS: Record<PrWorkflowIcon, LucideIcon> = {
   eye: Eye,
   activity: Activity,
   message: MessageSquare,

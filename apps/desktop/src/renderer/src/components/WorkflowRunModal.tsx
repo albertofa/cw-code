@@ -1,23 +1,15 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
-  Activity,
   AlertTriangle,
-  Bot,
-  Eye,
   FolderGit2,
   GitBranch,
   GitFork,
-  GitMerge,
   History,
   Loader2,
   Lock,
-  MessageSquare,
   Play,
   Plus,
-  Sparkles,
-  Wrench,
-  X,
-  type LucideIcon
+  X
 } from "lucide-react";
 import type {
   ComposerPrefs,
@@ -31,7 +23,7 @@ import type {
   Session,
   WorkflowSubject
 } from "../cw.js";
-import type { PrWorkflowIcon, PrWorkspaceChoice } from "@cw-code/contracts";
+import type { PrWorkspaceChoice } from "@cw-code/contracts";
 import { useAppStore, DEFAULT_COMPOSER } from "../stores/appStore.js";
 import { useGitHubStore } from "../stores/githubStore.js";
 import { usePrStore, type RunModalState } from "../stores/prStore.js";
@@ -40,6 +32,7 @@ import { harnessLabel } from "./toolTabs.js";
 import { firstDisplayedModelId, getLastModel } from "./lastModel.js";
 import { shortenHome } from "./pathDisplay.js";
 import { DriverIcon } from "./DriverIcon.js";
+import { workflowIcon } from "./workflowIcons.js";
 import { MenuSelect } from "./MenuSelect.js";
 import { errorMessage } from "./errorMessage.js";
 import { usePrSettings } from "./useLinkedPr.js";
@@ -63,16 +56,6 @@ const READ_ONLY_NOTICE =
   "cw-code only reads from GitHub. Anything the session commits, pushes, or posts goes through the CLI's own permissions.";
 
 const HARNESSES: DriverName[] = ["claude", "opencode", "codex"];
-
-const WORKFLOW_ICONS: Record<PrWorkflowIcon, LucideIcon> = {
-  eye: Eye,
-  activity: Activity,
-  message: MessageSquare,
-  wrench: Wrench,
-  merge: GitMerge,
-  bot: Bot,
-  sparkle: Sparkles
-};
 
 const ORIGIN_LABEL: Record<PrLinkOrigin, string> = {
   opened: "opened here",
@@ -505,7 +488,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
     }
   };
 
-  const WorkflowIcon = workflow ? WORKFLOW_ICONS[workflow.icon] ?? Sparkles : Sparkles;
+  const WorkflowIcon = workflow ? workflowIcon(workflow.icon) : workflowIcon("sparkle");
   const title = continueSession
     ? `Continue “${continueSession.title}”`
     : workflow
@@ -614,7 +597,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
                 display={workflow?.label ?? "Choose workflow"}
                 icon={<WorkflowIcon size={14} />}
                 options={pickable.map((w) => {
-                  const Icon = WORKFLOW_ICONS[w.icon] ?? Sparkles;
+                  const Icon = workflowIcon(w.icon);
                   return {
                     id: w.id,
                     label: w.label,

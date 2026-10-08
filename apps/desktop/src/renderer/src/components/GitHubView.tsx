@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { GitHubKind, GitHubViewGroup, IssueSummary, PrSummary, RepoRef, WorkflowRunSummary } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import {
-  BUILTIN_VIEWS,
+  badgeSearchKeys,
   clonedReposOf,
   resolveViews,
   scopeSplitQuery,
@@ -39,13 +39,6 @@ import {
 const NO_PRS: PrSummary[] = [];
 const NO_ISSUES: IssueSummary[] = [];
 const NO_RUNS: WorkflowRunSummary[] = [];
-
-function builtinQuery(id: string): string {
-  return BUILTIN_VIEWS.find((view) => view.id === id)?.query ?? "";
-}
-
-const ISSUE_INBOX_QUERY = builtinQuery("issue:inbox");
-const RUN_WATCHING_QUERY = builtinQuery("run:watching");
 
 const MODAL_SELECTOR = '[role="dialog"], [role="alertdialog"], [aria-modal="true"]';
 
@@ -152,8 +145,9 @@ export function GitHubView() {
   }, [stableLiveRefs, setWatchedRuns]);
 
   const badges = useMemo<Record<GitHubKind, TabBadge>>(() => {
-    const issues = issueResults[searchKey("issue", ISSUE_INBOX_QUERY, [])]?.data?.items ?? NO_ISSUES;
-    const runs = runResults[searchKey("run", RUN_WATCHING_QUERY, cloned)]?.data?.items ?? NO_RUNS;
+    const keys = badgeSearchKeys(cloned);
+    const issues = issueResults[keys.issue]?.data?.items ?? NO_ISSUES;
+    const runs = runResults[keys.run]?.data?.items ?? NO_RUNS;
     return {
       pr: prBadge(inbox?.items ?? NO_PRS),
       issue: { count: assignedOpenIssueCount(issues, viewer), tone: "quiet" },

@@ -1,8 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
-  Activity,
   AlertTriangle,
-  Bot,
   Check,
   ChevronRight,
   CircleCheck,
@@ -14,12 +12,10 @@ import {
   Lock,
   MessageSquare,
   RefreshCw,
-  Sparkles,
   Wrench,
   X
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import type { PrWorkflowIcon } from "@cw-code/contracts";
 import type { PrCheck, PrDetail, PrRef, PrReviewThread, PrTimelineItem, PrWorkflow, Session } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import { selectSessionPanel, usePanelStore } from "../stores/panelStore.js";
@@ -27,7 +23,8 @@ import { usePrStore, type PrDetailTab } from "../stores/prStore.js";
 import { PanelToggles } from "./PanelToggles.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { Md } from "./Markdown.js";
-import { useNotifs } from "./Notifications.js";
+import { openExternalLink } from "./externalLink.js";
+import { workflowIcon } from "./workflowIcons.js";
 import { PrFilesPanel } from "./PrFilesPanel.js";
 import { prKey } from "./prInbox.js";
 import { firstUnseenIndex } from "./prUpdates.js";
@@ -36,27 +33,7 @@ import { suggestedWorkflow } from "./prWorkflows.js";
 import { linkedSessionsBarState, mergeBoxState, threadQuoteText, threadSendTarget, type LinkedBarState } from "./prDetailModel.js";
 import { linkFor, pickMainSession, sessionsLinkedTo } from "./sessionPrLinks.js";
 
-const WORKFLOW_ICONS: Record<PrWorkflowIcon, LucideIcon> = {
-  eye: Eye,
-  activity: Activity,
-  message: MessageSquare,
-  wrench: Wrench,
-  merge: GitMerge,
-  bot: Bot,
-  sparkle: Sparkles
-};
-
 const MAX_LOG_LINES = 2000;
-
-function workflowIcon(icon: PrWorkflowIcon): LucideIcon {
-  return WORKFLOW_ICONS[icon] ?? Sparkles;
-}
-
-function openExternalLink(url: string): void {
-  void window.cw.openExternal(url).catch(() => {
-    useNotifs.getState().push({ kind: "error", title: "Could not open link", message: url });
-  });
-}
 
 function ageLabel(ts: number): string {
   const mins = Math.max(1, Math.round((Date.now() - ts) / 60000));
