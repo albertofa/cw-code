@@ -11,7 +11,6 @@ import {
   continueSessionFor,
   rowAction,
   rowDelta,
-  rowHasUnseen,
   unseenSessionIds,
   runBucket,
   runVerdict,
@@ -440,13 +439,13 @@ describe("run unseen dot", () => {
   it("is set when the run's PR has unseen updates in a linked session", () => {
     const lookup = (): PrSummary => pr({ updatedAt: 9000 });
     expect([...unseenSessionIds(subject, [prSession], lookup)]).toEqual(["pr"]);
-    expect(rowHasUnseen(subject, [prSession], () => pr({ updatedAt: 1000 }))).toBe(false);
-    expect(rowHasUnseen(subject, [prSession])).toBe(false);
+    expect(unseenSessionIds(subject, [prSession], () => pr({ updatedAt: 1000 })).size).toBe(0);
+    expect(unseenSessionIds(subject, [prSession]).size).toBe(0);
   });
 
   it("is set when a run-linked session last saw the run before its last update", () => {
     expect([...unseenSessionIds(subject, [runSession])]).toEqual(["run"]);
-    expect(rowHasUnseen({ kind: "run", run: run({ updatedAt: 1500 }) }, [runSession])).toBe(false);
+    expect(unseenSessionIds({ kind: "run", run: run({ updatedAt: 1500 }) }, [runSession]).size).toBe(0);
   });
 });
 

@@ -61,7 +61,7 @@ export interface GitHubStore {
   renameView(id: string, name: string): Promise<void>;
   deleteView(id: string): Promise<void>;
   loadSavedViews(): Promise<void>;
-  setActive(active: boolean): void;
+  setActive(active: boolean, force?: boolean): void;
   setWatchedRuns(refs: RunRef[]): void;
   syncContext(): void;
   clearError(): void;
@@ -177,12 +177,23 @@ function builtinQuery(id: string): string {
   return BUILTIN_VIEWS.find((view) => view.id === id)?.query ?? "";
 }
 
-export function badgeSearchKeys(clonedRepos: RepoRef[]): { issue: string; run: string } {
+type BadgeKind = "issue" | "run";
+
+const BADGE_KINDS: BadgeKind[] = ["issue", "run"];
+
+const BADGE_QUERIES: Record<BadgeKind, string> = {
+  issue: builtinQuery("issue:inbox"),
+  run: builtinQuery("run:watching")
+};
+
+export function badgeSearchKeys(clonedRepos: RepoRef[]): Record<BadgeKind, string> {
   return {
-    issue: searchKey("issue", builtinQuery("issue:inbox"), []),
-    run: searchKey("run", builtinQuery("run:watching"), clonedRepos)
+    issue: searchKey("issue", BADGE_QUERIES.issue, []),
+    run: searchKey("run", BADGE_QUERIES.run, clonedRepos)
   };
 }
+
+const SAVED_VIEWS_LOADING = "Saved views are still loading";
 
 export function evictionCandidates(keys: string[], touched: ReadonlyMap<string, number>, protectedKeys: ReadonlySet<string | null>, max: number): string[] {
   if (keys.length <= max) return [];
@@ -326,6 +337,7 @@ export const useGitHubStore = create<GitHubStore>((set, get) => {
   async function load<T extends { account: GitHubAccountRef | null; error: string | null }>(
     kind: GitHubKind,
     key: string,
+    track: boolean,
     select: (state: GitHubStore) => Record<string, Loadable<T>>,
     assign: (results: Record<string, Loadable<T>>) => Partial<GitHubStore>,
     fetcher: () => Promise<T>,
@@ -333,10 +345,10 @@ export const useGitHubStore = create<GitHubStore>((set, get) => {
   ): Promise<void> {
     const sequence = (keySequences.get(key) ?? 0) + 1;
     keySequences.set(key, sequence);
-    latestKeys[kind] = key;
+    if (track) latestKeys[kind] = key;
     const results = select(get());
     const own = results[key];
-    const settledKey = settledKeys[kind];
+    const settledKey = track ? settledKeys[kind] : null;
     const seed = own?.data ? null : settledKey && settledKey !== key ? (results[settledKey]?.data ?? null) : null;
     const loading: Loadable<T> = seed
       ? { loading: true, data: seed, error: null, stale: true }
@@ -354,7 +366,7 @@ export const useGitHubStore = create<GitHubStore>((set, get) => {
       if (keySequences.get(key) !== sequence) return;
       const data = reconcile(fetched, select(get()));
       settle({ loading: false, data, error: data.error });
-      if (data.error === null && latestKeys[kind] === key) settledKeys[kind] = key;
+      if (track && data.error === null && latestKeys[kind] === key) settledKeys[kind] = key;
       noteViewer(data.account);
     } catch (err) {
       const message = errorMessage(err);
@@ -365,15 +377,14 @@ export const useGitHubStore = create<GitHubStore>((set, get) => {
     }
   }
 
-  async function fetchKind(kind: GitHubKind, force: boolean): Promise<void> {
-    cancelTimer(kind);
-    const query = get().tabs[kind].query;
+  async function fetchQuery(kind: GitHubKind, query: string, force: boolean, track: boolean): Promise<void> {
     if (kind === "run") {
       const repos = clonedRepos();
       const sources = cappedRunSources(query, repos);
       await load(
         "run",
         searchKey("run", query, repos),
+        track,
         (state) => state.runResults,
         (runResults) => ({ runResults }),
         () => window.cw.getGitHubRuns(sources, force),
@@ -388,6 +399,7 @@ export const useGitHubStore = create<GitHubStore>((set, get) => {
       await load(
         "pr",
         key,
+        track,
         (state) => state.prResults,
         (prResults) => ({ prResults }),
         () => window.cw.searchGitHub("pr", split.remote, split.countBase, force)
@@ -397,11 +409,30 @@ export const useGitHubStore = create<GitHubStore>((set, get) => {
     await load(
       "issue",
       key,
+      track,
       (state) => state.issueResults,
       (issueResults) => ({ issueResults }),
       () => window.cw.searchGitHub("issue", split.remote, split.countBase, force)
     );
   }
+
+  async function fetchKind(kind: GitHubKind, force: boolean): Promise<void> {
+    cancelTimer(kind);
+    await fetchQuery(kind, get().tabs[kind].query, force, true);
+  }
+
+  const refreshBadges = (onlyMissing: boolean) => {
+    const repos = clonedRepos();
+    const keys = badgeSearchKeys(repos);
+    const current = get().kind;
+    for (const kind of BADGE_KINDS) {
+      const key = keys[kind];
+      if (kind === current && key === searchKey(kind, get().tabs[kind].query, repos)) continue;
+      const entry = kind === "issue" ? get().issueResults[key] : get().runResults[key];
+      if (entry?.loading || (onlyMissing && entry?.data)) continue;
+      void fetchQuery(kind, BADGE_QUERIES[kind], false, false);
+    }
+  };
 
   const scheduleFetch = (kind: GitHubKind) => {
     cancelTimer(kind);
@@ -439,11 +470,18 @@ export const useGitHubStore = create<GitHubStore>((set, get) => {
     }
   };
 
+  const savedViewsReady = (): boolean => {
+    if (savedViewsLoaded) return true;
+    set({ error: SAVED_VIEWS_LOADING });
+    return false;
+  };
+
   const scheduleRefresh = () => {
     if (refreshTimer !== null) clearTimeout(refreshTimer);
     const seconds = Math.max(MIN_REFRESH_SECONDS, useAppStore.getState().prRefreshIntervalSeconds || DEFAULT_REFRESH_SECONDS);
     refreshTimer = setTimeout(() => {
       void fetchKind(get().kind, false);
+      refreshBadges(false);
       scheduleRefresh();
     }, seconds * 1000);
   };
@@ -572,6 +610,7 @@ export const useGitHubStore = create<GitHubStore>((set, get) => {
       const query = normalizeQuery(tabs[kind].query);
       const group = tabs[kind].group;
       return enqueue(async () => {
+        if (!savedViewsReady()) return;
         const nameProblem = validateViewName(trimmed);
         if (nameProblem) {
           set({ error: nameProblem });
@@ -594,6 +633,7 @@ export const useGitHubStore = create<GitHubStore>((set, get) => {
     renameView(id: string, name: string) {
       const trimmed = name.trim();
       return enqueue(async () => {
+        if (!savedViewsReady()) return;
         const nameProblem = validateViewName(trimmed);
         if (nameProblem) {
           set({ error: nameProblem });
@@ -610,6 +650,7 @@ export const useGitHubStore = create<GitHubStore>((set, get) => {
 
     deleteView(id: string) {
       return enqueue(async () => {
+        if (!savedViewsReady()) return;
         const { savedViews } = get();
         if (!savedViews.some((view) => view.id === id)) {
           set({ error: "View not found" });
@@ -626,13 +667,13 @@ export const useGitHubStore = create<GitHubStore>((set, get) => {
       try {
         const settings = await window.cw.getSettings();
         savedViewsLoaded = true;
-        set({ savedViews: settings.githubSavedViews ?? [] });
+        set((state) => ({ savedViews: settings.githubSavedViews ?? [], error: state.error === SAVED_VIEWS_LOADING ? null : state.error }));
       } catch (err) {
         fail("loading saved views failed", err);
       }
     },
 
-    setActive(active: boolean) {
+    setActive(active: boolean, force?: boolean) {
       set({ active });
       void window.cw.setGitHubActive(active).catch((err: unknown) => {
         fail("setActive failed", err);
@@ -644,9 +685,9 @@ export const useGitHubStore = create<GitHubStore>((set, get) => {
       }
       subscribe();
       scheduleRefresh();
-      get().syncContext();
       if (!savedViewsLoaded) void get().loadSavedViews();
-      void fetchKind(get().kind, true);
+      void fetchKind(get().kind, force === true);
+      get().syncContext();
     },
 
     setWatchedRuns(refs: RunRef[]) {
@@ -676,6 +717,7 @@ export const useGitHubStore = create<GitHubStore>((set, get) => {
       const viewer = get().viewer ?? prState.inbox?.account?.login ?? null;
       const org = orgFromRepos(prState.projectRepos, viewer);
       if (viewer !== get().viewer || org !== get().org) set({ viewer, org });
+      if (get().active) refreshBadges(true);
       const previousRunKey = latestKeys.run;
       if (previousRunKey === null) return;
       const runKey = searchKey("run", get().tabs.run.query, clonedRepos());

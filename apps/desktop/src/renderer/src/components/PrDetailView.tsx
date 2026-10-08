@@ -154,7 +154,7 @@ export function PrDetailView({ prRef }: { prRef: PrRef }) {
   const sessionsByProject = useAppStore((s) => s.sessionsByProject);
   const selectSession = useAppStore((s) => s.selectSession);
   const { settings, error: settingsError } = usePrSettings();
-  const workflows = useMemo<PrWorkflow[]>(() => settings?.prWorkflows ?? [], [settings]);
+  const workflows = useMemo<PrWorkflow[]>(() => (settings?.prWorkflows ?? []).filter((workflow) => workflow.target === "pr"), [settings]);
   const [selectedCheckIndex, setSelectedCheckIndex] = useState<number | null>(null);
   const [logByRunId, setLogByRunId] = useState<Record<number, string>>({});
   const [logLoadingRunId, setLogLoadingRunId] = useState<number | null>(null);

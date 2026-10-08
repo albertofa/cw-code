@@ -83,11 +83,11 @@ export function GitHubView() {
   const [viewsMenu, setViewsMenu] = useState<ViewsMenuState | null>(null);
 
   useEffect(() => {
-    const sync = () => useGitHubStore.getState().setActive(!document.hidden);
-    sync();
-    document.addEventListener("visibilitychange", sync);
+    const onVisibility = () => useGitHubStore.getState().setActive(!document.hidden, true);
+    useGitHubStore.getState().setActive(!document.hidden);
+    document.addEventListener("visibilitychange", onVisibility);
     return () => {
-      document.removeEventListener("visibilitychange", sync);
+      document.removeEventListener("visibilitychange", onVisibility);
       useGitHubStore.getState().setActive(false);
       useGitHubStore.getState().setWatchedRuns([]);
     };

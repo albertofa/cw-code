@@ -390,7 +390,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
           ref: subject.ref,
           origin: "workflow",
           workflowId: workflowIdToLink,
-          lastSeenAt: Math.max(Date.now(), data.run?.updatedAt ?? 0)
+          lastSeenAt: data.run?.updatedAt ?? Date.now()
         });
     }
   };
@@ -405,7 +405,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
       case "issue":
         return data.issue ? window.cw.markSessionIssueSeen(sessionId, subject.ref, issueDataTime(data.issue)) : null;
       case "run":
-        return null;
+        return data.run ? window.cw.markSessionRunSeen(sessionId, subject.ref, data.run.updatedAt) : null;
     }
   };
 
@@ -429,12 +429,10 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
         setStage(current);
         await app.ensureComposer(continueSession.id);
         await app.sendPromptTo(continueSession.id, prompt, undefined, sendOptions);
-        if (subject.kind !== "run") {
-          current = "seen";
-          setStage(current);
-          const updated = await markSeen(continueSession.id);
-          if (updated) app.applySession(updated);
-        }
+        current = "seen";
+        setStage(current);
+        const updated = await markSeen(continueSession.id);
+        if (updated) app.applySession(updated);
         finish(continueSession.id);
         return;
       }

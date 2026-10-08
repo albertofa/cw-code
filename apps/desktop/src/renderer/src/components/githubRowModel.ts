@@ -526,8 +526,8 @@ function sessionIsUnseen(subject: RowSubject, session: LinkedSession, lookupPr: 
   return pr !== undefined && sessionHasUnseenPr(pr, session);
 }
 
-export function rowHasUnseen(subject: RowSubject, sessions: LinkedSession[], lookupPr: PrLookup = NO_PR_LOOKUP): boolean {
-  return sessions.some((session) => sessionIsUnseen(subject, session, lookupPr));
+function rowHasUnseen(subject: RowSubject, sessions: LinkedSession[]): boolean {
+  return sessions.some((session) => sessionIsUnseen(subject, session, NO_PR_LOOKUP));
 }
 
 export function rowDelta(subject: RowSubject, sessions: LinkedSession[], now: number): string | null {
