@@ -20,7 +20,7 @@ import {
   isValidRunLink,
   issueKey,
   linkFromStatus,
-  markIssueLinkSeen,
+  markLinkSeenAt,
   markSeen,
   prHeadPlan,
   removeIssueLink,
@@ -427,9 +427,21 @@ describe("issue and run links", () => {
     expect(removeRunLink([runLink, other], { ...runLink.ref })).toEqual([other]);
   });
 
-  it("never moves an issue's lastSeenAt backwards", () => {
-    expect(markIssueLinkSeen(issueLink, 100)).toEqual({ ...issueLink, lastSeenAt: 100 });
-    expect(markIssueLinkSeen(issueLink, 1)).toEqual(issueLink);
+  it("matches links case-insensitively on host, owner and repo", () => {
+    const shouting = { ...issueLink.ref, host: "GitHub.com", owner: "ACME", repo: "Widgets" };
+    expect(issueKey(shouting)).toBe("github.com/acme/widgets#12");
+    expect(runKey({ ...runLink.ref, owner: "Acme" })).toBe("github.com/acme/widgets/runs/987");
+    const refreshed = { ...issueLink, ref: shouting, lastSeenAt: 9 };
+    expect(upsertIssueLink([issueLink], refreshed)).toEqual([refreshed]);
+    expect(findRunLink([runLink], { ...runLink.ref, repo: "WIDGETS" })).toBe(runLink);
+    expect(removeRunLink([runLink], { ...runLink.ref, owner: "ACME" })).toEqual([]);
+  });
+
+  it("never moves an issue's or a run's lastSeenAt backwards", () => {
+    expect(markLinkSeenAt(issueLink, 100)).toEqual({ ...issueLink, lastSeenAt: 100 });
+    expect(markLinkSeenAt(issueLink, 1)).toEqual(issueLink);
+    expect(markLinkSeenAt(runLink, 100)).toEqual({ ...runLink, lastSeenAt: 100 });
+    expect(markLinkSeenAt(runLink, 1)).toEqual(runLink);
   });
 });
 

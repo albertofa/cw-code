@@ -67,6 +67,7 @@ function installBridge(): void {
     setGitHubActive: async () => {},
     onGitHubRunsChanged: noop,
     onGitHubCiActivity: noop,
+    markSessionRunSeen: async (sessionId: string) => makeSession({ id: sessionId }),
     getHomeDir: async () => "C:\\Users\\test",
     getGitStatus: async () => {
       throw new Error("no git");

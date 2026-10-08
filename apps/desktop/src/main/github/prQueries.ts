@@ -46,6 +46,7 @@ const PR_SUMMARY_FIELDS = `
     nodes {
       author {
         login
+        __typename
       }
       state
     }

@@ -59,12 +59,16 @@ export function isValidPrLink(value: unknown): value is SessionPrLink {
   return hasLinkEnvelope(link) && typeof link.lastSeenSha === "string";
 }
 
+function repoKey(ref: RepoRef): string {
+  return `${ref.host}/${ref.owner}/${ref.repo}`.toLowerCase();
+}
+
 export function issueKey(ref: IssueRef): string {
-  return `${ref.host}/${ref.owner}/${ref.repo}#${ref.number}`;
+  return `${repoKey(ref)}#${ref.number}`;
 }
 
 export function runKey(ref: RunRef): string {
-  return `${ref.host}/${ref.owner}/${ref.repo}/runs/${ref.runId}`;
+  return `${repoKey(ref)}/runs/${ref.runId}`;
 }
 
 export function isValidIssueLink(value: unknown): value is SessionIssueLink {
@@ -123,7 +127,7 @@ export function removeRunLink(runs: SessionRunLink[] | undefined, ref: RunRef): 
   return removeByKey(runs, ref, runKey);
 }
 
-export function markIssueLinkSeen(link: SessionIssueLink, seenAt: number): SessionIssueLink {
+export function markLinkSeenAt<T extends SessionIssueLink | SessionRunLink>(link: T, seenAt: number): T {
   return { ...link, lastSeenAt: Math.max(link.lastSeenAt, seenAt) };
 }
 

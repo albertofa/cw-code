@@ -44,9 +44,10 @@ import {
   authorLocalBranch,
   findIssueLink,
   findLink,
+  findRunLink,
   isFinishedPrState,
   linkFromStatus,
-  markIssueLinkSeen,
+  markLinkSeenAt,
   markSeen,
   prHeadPlan,
   removeIssueLink,
@@ -650,7 +651,14 @@ export class SessionManager {
   markIssueSeen(sessionId: string, ref: IssueRef, seenAt: number): SessionMeta {
     const session = this.requireSession(sessionId);
     const link = findIssueLink(session.issues, ref);
-    if (link) this.store.updateSession(sessionId, { issues: upsertIssueLink(session.issues, markIssueLinkSeen(link, seenAt)) });
+    if (link) this.store.updateSession(sessionId, { issues: upsertIssueLink(session.issues, markLinkSeenAt(link, seenAt)) });
+    return this.emitSession(sessionId);
+  }
+
+  markRunSeen(sessionId: string, ref: RunRef, seenAt: number): SessionMeta {
+    const session = this.requireSession(sessionId);
+    const link = findRunLink(session.runs, ref);
+    if (link) this.store.updateSession(sessionId, { runs: upsertRunLink(session.runs, markLinkSeenAt(link, seenAt)) });
     return this.emitSession(sessionId);
   }
 

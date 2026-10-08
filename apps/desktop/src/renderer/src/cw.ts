@@ -650,6 +650,7 @@ export interface CwApi {
   markSessionIssueSeen(sessionId: string, ref: IssueRef, seenAt: number): Promise<Session>;
   linkSessionRun(sessionId: string, link: SessionRunLink): Promise<Session>;
   unlinkSessionRun(sessionId: string, ref: RunRef): Promise<Session>;
+  markSessionRunSeen(sessionId: string, ref: RunRef, seenAt: number): Promise<Session>;
   onTurnEvent(cb: (msg: { sessionId: string; event: TurnEvent }) => void): () => void;
   onSessionTitle(cb: (msg: { sessionId: string; title: string }) => void): () => void;
   onSessionUpdated(cb: (session: Session) => void): () => void;

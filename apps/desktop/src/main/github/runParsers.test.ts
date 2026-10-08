@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { graphqlOutcome, graphqlPartialFailure, mapRestRun, newCiActivity, parseRunSuites } from "./runParsers.js";
+import { mapRestRun, newCiActivity, parseRunSuites } from "./runParsers.js";
 
 function suite(runId: number | null, overrides: Record<string, unknown> = {}) {
   return {
@@ -133,6 +133,11 @@ describe("parseRunSuites", () => {
     ]);
   });
 
+  it("suffixes a Bot creator with [bot]", () => {
+    const json = JSON.stringify({ data: { search: { nodes: [prNode(3, [suite(800, { creator: { login: "dependabot", __typename: "Bot" } })])] } } });
+    expect(parseRunSuites(json)[0].actor).toBe("dependabot[bot]");
+  });
+
   it("drops suites without a workflow run", () => {
     const json = JSON.stringify({ data: { search: { nodes: [prNode(1, [suite(null), suite(400)])] } } });
     expect(parseRunSuites(json).map((run) => run.ref.runId)).toEqual([400]);
@@ -166,31 +171,6 @@ describe("parseRunSuites", () => {
     expect(parseRunSuites(JSON.stringify({ data: { r0: null, o0: null, search: null } }))).toEqual([]);
     expect(parseRunSuites("not json")).toEqual([]);
     expect(parseRunSuites("[]")).toEqual([]);
-  });
-});
-
-describe("graphqlOutcome", () => {
-  it("reports data presence and the first error message", () => {
-    expect(graphqlOutcome(JSON.stringify({ data: { r0: null }, errors: [{ message: "Could not resolve" }] }))).toEqual({
-      hasData: true,
-      message: "Could not resolve"
-    });
-    expect(graphqlOutcome(JSON.stringify({ errors: [{ message: "Bad credentials" }] }))).toEqual({ hasData: false, message: "Bad credentials" });
-    expect(graphqlOutcome("garbage")).toEqual({ hasData: false, message: null });
-  });
-});
-
-describe("graphqlPartialFailure", () => {
-  it("describes errors that arrive together with data", () => {
-    expect(graphqlPartialFailure(JSON.stringify({ data: { r0: null }, errors: [{ message: "Could not resolve to a Repository" }] }))).toBe(
-      "Some sources failed: Could not resolve to a Repository"
-    );
-  });
-
-  it("is null for clean responses and for responses without data", () => {
-    expect(graphqlPartialFailure(JSON.stringify({ data: { r0: {} } }))).toBeNull();
-    expect(graphqlPartialFailure(JSON.stringify({ errors: [{ message: "Bad credentials" }] }))).toBeNull();
-    expect(graphqlPartialFailure("garbage")).toBeNull();
   });
 });
 
@@ -273,6 +253,12 @@ describe("mapRestRun", () => {
   it("maps a completed failure with no PR and no jobs payload", () => {
     const run = mapRestRun({ ...restRun, status: "completed", conclusion: "failure", pull_requests: [], display_title: "" }, null);
     expect(run).toMatchObject({ status: "completed", conclusion: "failure", prNumber: null, title: "CI", jobs: [] });
+  });
+
+  it("suffixes a Bot actor with [bot] once", () => {
+    expect(mapRestRun({ ...restRun, actor: { login: "dependabot", type: "Bot" } }, null)?.actor).toBe("dependabot[bot]");
+    expect(mapRestRun({ ...restRun, actor: { login: "dependabot[bot]", type: "Bot" } }, null)?.actor).toBe("dependabot[bot]");
+    expect(mapRestRun({ ...restRun, actor: { login: "octocat", type: "User" } }, null)?.actor).toBe("octocat");
   });
 
   it("returns null for payloads without an id or a run url", () => {

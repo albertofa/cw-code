@@ -50,6 +50,19 @@ export function asEpochMs(value: unknown): number {
   return Number.isFinite(ms) ? ms : 0;
 }
 
+const BOT_LOGIN_SUFFIX = "[bot]";
+
+export function withBotSuffix(login: string): string {
+  return login && !login.toLowerCase().endsWith(BOT_LOGIN_SUFFIX) ? `${login}${BOT_LOGIN_SUFFIX}` : login;
+}
+
+export function actorLoginOf(actor: unknown): { login: string; isBot: boolean } {
+  const record = asRecord(actor);
+  const login = asString(record.login);
+  const isBot = asString(record.__typename) === "Bot";
+  return { login: isBot ? withBotSuffix(login) : login, isBot };
+}
+
 function rollupStates(statusCheckRollup: unknown): string[] {
   return asNodes(asRecord(statusCheckRollup).contexts).map((context) => asString(context.conclusion) || asString(context.status) || asString(context.state));
 }
@@ -111,7 +124,7 @@ function prStateFrom(value: unknown): PrSummary["state"] {
 function parseReviewers(value: unknown): PrReviewer[] {
   const reviewers: PrReviewer[] = [];
   for (const node of asNodes(value)) {
-    const login = asString(asRecord(node.author).login);
+    const { login } = actorLoginOf(node.author);
     if (!login) continue;
     const state = asString(node.state);
     if (!REVIEWER_STATES.has(state)) continue;
@@ -136,8 +149,7 @@ function parseSummaryNode(node: Record<string, unknown>, viewer: string | null):
   const ref = prRefFromUrl(url);
   const number = asNumber(node.number);
   if (!ref || number <= 0) return null;
-  const author = asRecord(node.author);
-  const login = asString(author.login);
+  const author = actorLoginOf(node.author);
   const reviewerLogins = asNodes(node.reviewRequests)
     .map((request) => asString(asRecord(request.requestedReviewer).login))
     .filter(Boolean);
@@ -149,7 +161,7 @@ function parseSummaryNode(node: Record<string, unknown>, viewer: string | null):
     title: asString(node.title, `Pull request #${number}`),
     state: prStateFrom(node.state),
     isDraft: asBool(node.isDraft),
-    author: { login, isBot: asString(author.__typename) === "Bot" },
+    author,
     viewerIsAuthor: asBool(node.viewerDidAuthor),
     reviewRequestedFromViewer: viewer !== null && reviewerLogins.includes(viewer),
     headRefName: asString(node.headRefName),
@@ -178,6 +190,18 @@ export function parseJsonObject(json: string): Record<string, unknown> | null {
   } catch {
     return null;
   }
+}
+
+export function graphqlOutcome(json: string): { hasData: boolean; message: string | null } {
+  const root = asRecord(parseJsonObject(json));
+  const errors = Array.isArray(root.errors) ? root.errors : [];
+  const message = errors.map((error) => asString(asRecord(error).message)).find(Boolean) ?? null;
+  return { hasData: root.data !== null && typeof root.data === "object", message };
+}
+
+export function graphqlPartialFailure(json: string, subject: "sources" | "results"): string | null {
+  const { hasData, message } = graphqlOutcome(json);
+  return hasData && message ? `Some ${subject} failed: ${message}` : null;
 }
 
 function issueCountOf(value: unknown): number | null {

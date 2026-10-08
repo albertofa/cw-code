@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { assertCountBase, assertSearchQuery, GitHubSearchService, withTypeQualifier } from "./GitHubSearchService.js";
+import { assertCountBase, assertSearchQuery, GitHubSearchService, interpretSearchResponse, withTypeQualifier } from "./GitHubSearchService.js";
 
 describe("assertCountBase", () => {
   it("accepts an empty or blank string and one up to 512 characters", () => {
@@ -44,6 +44,51 @@ describe("assertSearchQuery", () => {
 
   it("measures the trimmed length", () => {
     expect(() => assertSearchQuery(`  ${"a".repeat(512)}  `)).not.toThrow();
+  });
+});
+
+describe("interpretSearchResponse", () => {
+  const issueNode = {
+    number: 4,
+    url: "https://github.com/acme/widgets/issues/4",
+    title: "Crash",
+    state: "OPEN",
+    author: { login: "octocat", __typename: "User" }
+  };
+
+  function response(body: unknown, code = 0, stderr = "") {
+    return { code, stdout: typeof body === "string" ? body : JSON.stringify(body), stderr };
+  }
+
+  it("returns items with a clean response", () => {
+    const outcome = interpretSearchResponse("issue", response({ data: { viewer: { login: "octocat" }, results: { issueCount: 1, nodes: [issueNode] }, open: { issueCount: 1 }, closed: { issueCount: 0 } } }));
+    expect(outcome.error).toBeNull();
+    expect(outcome.items).toHaveLength(1);
+    expect(outcome.openCount).toBe(1);
+  });
+
+  it("keeps the parsed items and reports the first error when data and errors arrive together", () => {
+    const outcome = interpretSearchResponse(
+      "issue",
+      response({ data: { viewer: { login: "octocat" }, results: { issueCount: 1, nodes: [issueNode] }, open: null, closed: { issueCount: 2 } }, errors: [{ message: "Something went wrong" }] }, 1)
+    );
+    expect(outcome.items).toHaveLength(1);
+    expect(outcome.openCount).toBeNull();
+    expect(outcome.closedCount).toBe(2);
+    expect(outcome.error).toBe("Some results failed: Something went wrong");
+  });
+
+  it("fails completely when there is no data", () => {
+    expect(interpretSearchResponse("pr", response({ errors: [{ message: "Bad credentials" }] }, 1))).toEqual({
+      items: [],
+      openCount: null,
+      closedCount: null,
+      truncated: false,
+      error: "Bad credentials"
+    });
+    expect(interpretSearchResponse("pr", response("", 1, "gh: not logged in\n")).error).toBe("gh: not logged in");
+    expect(interpretSearchResponse("pr", response("", 2)).error).toBe("GitHub CLI exited with code 2");
+    expect(interpretSearchResponse("pr", response({ data: {} })).error).toBe("Unexpected response from GitHub");
   });
 });
 

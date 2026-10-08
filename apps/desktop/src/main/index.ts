@@ -653,6 +653,13 @@ function registerGitHubIpc({ sessions, pullRequests, githubSearch, runs, runWatc
     assertRunRef(ref);
     return sessions.unlinkRun(sessionId, ref);
   });
+  ipcMain.handle("sessions.markRunSeen", (_e, args: unknown) => {
+    const { sessionId, ref, seenAt } = parseArgs(args, "sessions.markRunSeen");
+    if (typeof sessionId !== "string") throw new Error("invalid sessionId");
+    assertRunRef(ref);
+    if (typeof seenAt !== "number" || !Number.isFinite(seenAt)) throw new Error("invalid seenAt");
+    return sessions.markRunSeen(sessionId, ref, seenAt);
+  });
 }
 
 function registerShutdownIpc({ shutdown }: Services): void {

@@ -1,11 +1,11 @@
 import { homedir } from "node:os";
 import type { AppSettings, GitHubSearchResult, IssueDetail, IssueRef, IssueSummary, PrSummary } from "@cw-code/contracts";
-import { authenticatedEnvironment, execText } from "../fs/GitService.js";
+import { authenticatedEnvironment, execText, execWithStatus, type ExecStatusResult } from "../fs/GitService.js";
 import { githubCliBinary, resolveGitHubAccount } from "./githubAccount.js";
 import { ISSUE_DETAIL_QUERY, ISSUE_SEARCH_QUERY, MAX_COUNT_QUERIES, countsQuery } from "./issueQueries.js";
 import { parseCounts, parseIssueDetail, parseIssueSearch } from "./issueParsers.js";
 import { INBOX_SEARCH_LIMIT, PR_SEARCH_QUERY } from "./prQueries.js";
-import { parsePrSearch } from "./prParsers.js";
+import { graphqlOutcome, graphqlPartialFailure, parsePrSearch } from "./prParsers.js";
 import { assertIssueRef } from "./githubRefs.js";
 
 const SEARCH_CACHE_TTL_MS = 30_000;
@@ -42,6 +42,23 @@ export function withTypeQualifier(kind: SearchKind, query: string): string {
 
 function normalizeQuery(query: string): string {
   return query.trim().replace(/\s+/g, " ");
+}
+
+export type SearchResponseOutcome = Pick<GitHubSearchResult<PrSummary | IssueSummary>, "items" | "openCount" | "closedCount" | "truncated" | "error">;
+
+export function interpretSearchResponse(kind: SearchKind, response: ExecStatusResult): SearchResponseOutcome {
+  const failed = { items: [], openCount: null, closedCount: null, truncated: false };
+  const { hasData, message } = graphqlOutcome(response.stdout);
+  if (!hasData) return { ...failed, error: message || response.stderr.trim() || `GitHub CLI exited with code ${response.code}` };
+  const parsed = kind === "pr" ? parsePrSearch(response.stdout) : parseIssueSearch(response.stdout);
+  if (parsed.viewer === null) return { ...failed, error: message || "Unexpected response from GitHub" };
+  return {
+    items: parsed.items,
+    openCount: parsed.openCount,
+    closedCount: parsed.closedCount,
+    truncated: parsed.truncated,
+    error: graphqlPartialFailure(response.stdout, "results")
+  };
 }
 
 export class GitHubSearchService {
@@ -91,7 +108,7 @@ export class GitHubSearchService {
     const { account, token } = resolution;
     const accountInfo = { host: account.host, login: account.login };
     try {
-      const stdout = await execText(
+      const response = await execWithStatus(
         githubCliBinary(this.settings),
         [
           "api",
@@ -109,18 +126,7 @@ export class GitHubSearchService {
         REQUEST_TIMEOUT_MS,
         authenticatedEnvironment(account.host, token)
       );
-      const parsed = kind === "pr" ? parsePrSearch(stdout) : parseIssueSearch(stdout);
-      if (parsed.viewer === null) return { ...empty, account: accountInfo, error: "Unexpected response from GitHub" };
-      return {
-        account: accountInfo,
-        items: parsed.items,
-        openCount: parsed.openCount,
-        closedCount: parsed.closedCount,
-        truncated: parsed.truncated,
-        limit: INBOX_SEARCH_LIMIT,
-        fetchedAt,
-        error: null
-      };
+      return { ...interpretSearchResponse(kind, response), account: accountInfo, limit: INBOX_SEARCH_LIMIT, fetchedAt };
     } catch (error) {
       return { ...empty, account: accountInfo, error: (error as Error).message || "GitHub CLI error" };
     }

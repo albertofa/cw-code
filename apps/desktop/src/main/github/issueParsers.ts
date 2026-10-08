@@ -1,5 +1,5 @@
 import type { IssueComment, IssueDetail, IssueLinkedPr, IssueRef, IssueSummary } from "@cw-code/contracts";
-import { asBool, asEpochMs, asNodes, asNumber, asRecord, asString, parseJsonObject, parseSearchPage } from "./prParsers.js";
+import { actorLoginOf, asBool, asEpochMs, asNodes, asNumber, asRecord, asString, parseJsonObject, parseSearchPage } from "./prParsers.js";
 
 const ISSUE_URL_RE = /^https?:\/\/([^/]+)\/([^/]+)\/([^/]+)\/issues\/(\d+)/i;
 const STATE_REASONS = new Set(["COMPLETED", "NOT_PLANNED", "REOPENED"]);
@@ -39,7 +39,7 @@ function parseIssueNode(node: Record<string, unknown>): IssueSummary | null {
   const ref = issueRefFromUrl(url);
   const number = asNumber(node.number);
   if (!ref || number <= 0) return null;
-  const author = asRecord(node.author);
+  const author = actorLoginOf(node.author);
   const milestone = asString(asRecord(node.milestone).title);
   return {
     ref,
@@ -47,7 +47,7 @@ function parseIssueNode(node: Record<string, unknown>): IssueSummary | null {
     title: asString(node.title, `Issue #${number}`),
     state: asString(node.state) === "CLOSED" ? "CLOSED" : "OPEN",
     stateReason: parseStateReason(node.stateReason),
-    author: { login: asString(author.login) || GHOST_LOGIN, isBot: asString(author.__typename) === "Bot" },
+    author: { login: author.login || GHOST_LOGIN, isBot: author.isBot },
     assignees: asNodes(node.assignees).map((assignee) => asString(assignee.login)).filter(Boolean),
     labels: asNodes(node.labels).map((label) => asString(label.name)).filter(Boolean),
     milestone: milestone || null,

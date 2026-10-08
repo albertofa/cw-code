@@ -148,6 +148,7 @@ export interface CwApi {
   markSessionIssueSeen(sessionId: string, ref: IssueRef, seenAt: number): Promise<SessionMeta>;
   linkSessionRun(sessionId: string, link: SessionRunLink): Promise<SessionMeta>;
   unlinkSessionRun(sessionId: string, ref: RunRef): Promise<SessionMeta>;
+  markSessionRunSeen(sessionId: string, ref: RunRef, seenAt: number): Promise<SessionMeta>;
   onTurnEvent(cb: (event: unknown) => void): () => void;
   onSessionTitle(cb: (msg: { sessionId: string; title: string }) => void): () => void;
   onSessionUpdated(cb: (session: SessionMeta) => void): () => void;
@@ -332,6 +333,8 @@ const api: CwApi = {
     ipcRenderer.invoke("sessions.markIssueSeen", { sessionId, ref, seenAt }),
   linkSessionRun: (sessionId: string, link: SessionRunLink) => ipcRenderer.invoke("sessions.linkRun", { sessionId, link }),
   unlinkSessionRun: (sessionId: string, ref: RunRef) => ipcRenderer.invoke("sessions.unlinkRun", { sessionId, ref }),
+  markSessionRunSeen: (sessionId: string, ref: RunRef, seenAt: number) =>
+    ipcRenderer.invoke("sessions.markRunSeen", { sessionId, ref, seenAt }),
   onTurnEvent: (cb) => {
     const listener = (_e: unknown, event: unknown) => cb(event);
     ipcRenderer.on("turn.event", listener as never);

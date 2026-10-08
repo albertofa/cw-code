@@ -1,6 +1,6 @@
 import type { RepoRef, RunConclusion, RunJob, RunRef, RunStatus, WorkflowRunSummary } from "@cw-code/contracts";
 import { GH_HOST } from "./githubAccount.js";
-import { asEpochMs, asNodes, asNumber, asRecord, asString, parseJsonObject } from "./prParsers.js";
+import { actorLoginOf, asEpochMs, asNodes, asNumber, asRecord, asString, parseJsonObject, withBotSuffix } from "./prParsers.js";
 
 const CONCLUSIONS = new Set<string>(["success", "failure", "cancelled", "skipped", "neutral", "timed_out", "action_required", "stale", "startup_failure"]);
 const RUN_URL_RE = /^https?:\/\/([^/]+)\/([^/]+)\/([^/]+)\/actions\/runs\/(\d+)/i;
@@ -68,7 +68,7 @@ function suiteToRun(suite: Record<string, unknown>, context: CommitContext): Wor
   if (!repo) return null;
   const status = mapRunStatus(suite.status);
   const branch = asString(asRecord(suite.branch).name);
-  const actor = asString(asRecord(suite.creator).login);
+  const actor = actorLoginOf(suite.creator).login;
   const createdAt = asEpochMs(workflowRun.createdAt) || asEpochMs(suite.createdAt);
   return {
     ref: { host: repo.host, owner: repo.owner, repo: repo.repo, runId },
@@ -136,13 +136,6 @@ export function parseRunSuites(json: string): WorkflowRunSummary[] {
   return [...unique.values()];
 }
 
-export function graphqlOutcome(json: string): { hasData: boolean; message: string | null } {
-  const root = asRecord(parseJsonObject(json));
-  const errors = Array.isArray(root.errors) ? root.errors : [];
-  const message = errors.map((error) => asString(asRecord(error).message)).find(Boolean) ?? null;
-  return { hasData: root.data !== null && typeof root.data === "object", message };
-}
-
 export function mapRestRun(run: unknown, jobs: unknown): WorkflowRunSummary | null {
   const record = asRecord(run);
   const runId = asNumber(record.id);
@@ -154,7 +147,9 @@ export function mapRestRun(run: unknown, jobs: unknown): WorkflowRunSummary | nu
   const jobList = Array.isArray(jobs) ? jobs : asRecord(jobs).jobs;
   const pullRequestNumber = Array.isArray(record.pull_requests) ? asNumber(asRecord(record.pull_requests[0]).number) : 0;
   const branch = asString(record.head_branch);
-  const actor = asString(asRecord(record.actor).login);
+  const actorRecord = asRecord(record.actor);
+  const actorLogin = asString(actorRecord.login);
+  const actor = actorRecord.type === "Bot" ? withBotSuffix(actorLogin) : actorLogin;
   return {
     ref: { ...ref, runId },
     url,
@@ -189,9 +184,4 @@ export function newCiActivity(notifications: unknown, since: number): { found: b
     }
   }
   return { found, latest };
-}
-
-export function graphqlPartialFailure(json: string): string | null {
-  const { hasData, message } = graphqlOutcome(json);
-  return hasData && message ? `Some sources failed: ${message}` : null;
 }

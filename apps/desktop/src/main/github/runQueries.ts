@@ -18,6 +18,7 @@ checkSuites(${paging}: ${SUITES_PER_COMMIT}) {
     }
     creator {
       login
+      __typename
     }
     app {
       slug

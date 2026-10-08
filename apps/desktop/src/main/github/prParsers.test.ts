@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PrSummary } from "@cw-code/contracts";
-import { bucketFor, ciFromRollup, parseDetail, parseHead, parseInbox, parsePrSearch, prKey, prRefFromUrl } from "./prParsers.js";
+import { actorLoginOf, bucketFor, ciFromRollup, graphqlOutcome, graphqlPartialFailure, parseDetail, parseHead, parseInbox, parsePrSearch, prKey, prRefFromUrl, withBotSuffix } from "./prParsers.js";
 
 function rollupNode(state: string) {
   return { __typename: "CheckRun", conclusion: state };
@@ -77,7 +77,7 @@ describe("parseInbox", () => {
     expect(result.items).toHaveLength(4);
 
     const bot = result.items.find((item) => item.ref.number === 10)!;
-    expect(bot.author.isBot).toBe(true);
+    expect(bot.author).toEqual({ login: "dependabot[bot]", isBot: true });
     expect(bot.reviewRequestedFromViewer).toBe(true);
     expect(bucketFor(bot)).toBe("review");
 
@@ -159,6 +159,21 @@ describe("reviewers and assignees", () => {
     expect(pr.reviewers).toEqual([{ login: "bob", state: "PENDING" }]);
   });
 
+  it("suffixes bot reviewers with [bot] like GitHub logins", () => {
+    const pr = parseOne({
+      latestReviews: {
+        nodes: [
+          { author: { login: "copilot-pull-request-reviewer", __typename: "Bot" }, state: "COMMENTED" },
+          { author: { login: "bob", __typename: "User" }, state: "APPROVED" }
+        ]
+      }
+    });
+    expect(pr.reviewers).toEqual([
+      { login: "copilot-pull-request-reviewer[bot]", state: "COMMENTED" },
+      { login: "bob", state: "APPROVED" }
+    ]);
+  });
+
   it("parses assignees and tolerates their absence", () => {
     expect(parseOne({ assignees: { nodes: [{ login: "alice" }, { login: "bob" }, {}] } }).assignees).toEqual(["alice", "bob"]);
     expect(parseOne({}).assignees).toEqual([]);
@@ -202,6 +217,41 @@ describe("parsePrSearch", () => {
     expect(missing.openCount).toBeNull();
     expect(missing.closedCount).toBeNull();
     expect(parsePrSearch("not-json")).toEqual({ viewer: null, items: [], openCount: null, closedCount: null, truncated: false });
+  });
+});
+
+describe("graphqlOutcome", () => {
+  it("reports data presence and the first error message", () => {
+    expect(graphqlOutcome(JSON.stringify({ data: { r0: null }, errors: [{ message: "Could not resolve" }] }))).toEqual({
+      hasData: true,
+      message: "Could not resolve"
+    });
+    expect(graphqlOutcome(JSON.stringify({ errors: [{ message: "Bad credentials" }] }))).toEqual({ hasData: false, message: "Bad credentials" });
+    expect(graphqlOutcome("garbage")).toEqual({ hasData: false, message: null });
+  });
+});
+
+describe("graphqlPartialFailure", () => {
+  it("describes errors that arrive together with data, labelled by subject", () => {
+    const partial = JSON.stringify({ data: { r0: null }, errors: [{ message: "Could not resolve to a Repository" }] });
+    expect(graphqlPartialFailure(partial, "sources")).toBe("Some sources failed: Could not resolve to a Repository");
+    expect(graphqlPartialFailure(partial, "results")).toBe("Some results failed: Could not resolve to a Repository");
+  });
+
+  it("is null for clean responses and for responses without data", () => {
+    expect(graphqlPartialFailure(JSON.stringify({ data: { r0: {} } }), "sources")).toBeNull();
+    expect(graphqlPartialFailure(JSON.stringify({ errors: [{ message: "Bad credentials" }] }), "sources")).toBeNull();
+    expect(graphqlPartialFailure("garbage", "results")).toBeNull();
+  });
+});
+
+describe("bot logins", () => {
+  it("suffixes Bot actors once and leaves users untouched", () => {
+    expect(actorLoginOf({ login: "dependabot", __typename: "Bot" })).toEqual({ login: "dependabot[bot]", isBot: true });
+    expect(actorLoginOf({ login: "octocat", __typename: "User" })).toEqual({ login: "octocat", isBot: false });
+    expect(actorLoginOf(null)).toEqual({ login: "", isBot: false });
+    expect(withBotSuffix("renovate[bot]")).toBe("renovate[bot]");
+    expect(withBotSuffix("")).toBe("");
   });
 });
 

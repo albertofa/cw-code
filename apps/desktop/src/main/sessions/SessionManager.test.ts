@@ -1435,6 +1435,35 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
+  it("marks a workflow run seen without moving lastSeenAt backwards, persisting and emitting", async () => {
+    const { manager } = makeManager();
+    const emitted: SessionMeta[] = [];
+    manager.setSessionEmitter((meta) => emitted.push(meta));
+    const project = manager.addProject("C:\\proj-run-seen");
+    const session = await manager.createSession(project.id, "claude");
+    const run = { host: "github.com", owner: "acme", repo: "widgets", runId: 987 };
+    const other = { ...run, runId: 988 };
+    manager.linkRun(session.id, { ref: run, origin: "workflow", workflowId: "investigate-run", lastSeenAt: 7 });
+    manager.linkRun(session.id, { ref: other, origin: "linked", lastSeenAt: 3 });
+    emitted.length = 0;
+
+    let meta = manager.markRunSeen(session.id, { ...run, owner: "ACME" }, 500);
+    expect(meta.runs?.map((link) => [link.ref.runId, link.lastSeenAt])).toEqual([
+      [987, 500],
+      [988, 3]
+    ]);
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0]?.runs).toEqual(meta.runs);
+
+    meta = manager.markRunSeen(session.id, run, 100);
+    expect(meta.runs?.[0]?.lastSeenAt).toBe(500);
+
+    const [stored] = (await manager.listSessions(project.id)).filter((s) => s.id === session.id);
+    expect(stored?.runs).toEqual(meta.runs);
+    expect(() => manager.markRunSeen("missing", run, 1)).toThrow("unknown session");
+    manager.dispose();
+  });
+
   it("moves interrupted and errored sessions into holding", async () => {
     const { manager } = makeManager();
     const project = manager.addProject("C:\\proj-holding");

@@ -100,7 +100,7 @@ describe("parseIssueSearch", () => {
         issueNode({ number: 6, url: "https://github.com/acme/widgets/issues/6", author: null })
       ])
     );
-    expect(result.items[0].author).toEqual({ login: "dependabot", isBot: true });
+    expect(result.items[0].author).toEqual({ login: "dependabot[bot]", isBot: true });
     expect(result.items[1].author).toEqual({ login: "ghost", isBot: false });
   });
 
