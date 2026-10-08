@@ -83,7 +83,7 @@ export type RunStatusKey = "failure" | "in_progress" | "queued" | "success" | "c
 
 const TOKEN_RE = /\s+|-?[A-Za-z][\w-]*:(?:"[^"]*"?|\S*)|"[^"]*"?|\S+/g;
 const QUALIFIER_RE = /^(-?)([A-Za-z][\w-]*):([\s\S]*)$/;
-const OR_KEYS: ReadonlySet<string> = new Set(["repo", "org", "author", "actor", "workflow", "branch", "event", "status"]);
+const OR_KEYS: ReadonlySet<string> = new Set(["repo", "org", "user", "author", "actor", "workflow", "branch", "event", "status"]);
 const STATE_VALUES: ReadonlySet<string> = new Set(["open", "closed", "merged"]);
 const KIND_VALUES: ReadonlySet<string> = new Set(["pr", "issue", "run"]);
 const DEFAULT_REMOTE_SORT = "updated-desc";
@@ -187,6 +187,28 @@ function person(key: string, description: string): QualifierDef {
   return { key, description, local: false, valueSource: "people" };
 }
 
+function freeText(key: string, description: string): QualifierDef {
+  return { key, description, local: false };
+}
+
+const GITHUB_SEARCH_QUALIFIERS: QualifierDef[] = [
+  freeText("created", "Created date, e.g. >2026-01-01"),
+  freeText("updated", "Updated date, e.g. >2026-01-01"),
+  freeText("closed", "Closed date, e.g. >2026-01-01"),
+  freeText("comments", "Comment count, e.g. >10"),
+  person("commenter", "Commented by"),
+  { key: "in", description: "Search in", local: false, enumValues: options(["title", "body", "comments"]) },
+  person("user", "Owned by user or org"),
+  freeText("language", "Repository language"),
+];
+
+const GITHUB_PR_SEARCH_QUALIFIERS: QualifierDef[] = [
+  freeText("head", "Head branch"),
+  freeText("base", "Base branch"),
+  freeText("merged", "Merged date, e.g. >2026-01-01"),
+  freeText("team-review-requested", "Review requested from a team"),
+];
+
 const PR_QUALIFIERS: QualifierDef[] = [
   {
     key: "is",
@@ -200,6 +222,7 @@ const PR_QUALIFIERS: QualifierDef[] = [
       { value: "closed", description: "" },
       { value: "merged", description: "" },
       { value: "draft", description: "" },
+      { value: "locked", description: "" },
       { value: "unread", description: "updated since you looked", local: true },
     ],
   },
@@ -219,6 +242,8 @@ const PR_QUALIFIERS: QualifierDef[] = [
   { key: "draft", description: "Draft or ready", local: false, enumValues: BOOLEAN_VALUES },
   ARCHIVED_DEF,
   sortDef("pr"),
+  ...GITHUB_SEARCH_QUALIFIERS,
+  ...GITHUB_PR_SEARCH_QUALIFIERS,
   HAS_DEF,
   CLONED_DEF,
 ];
@@ -234,6 +259,7 @@ const ISSUE_QUALIFIERS: QualifierDef[] = [
       { value: "run", description: "switch to Actions" },
       { value: "open", description: "" },
       { value: "closed", description: "" },
+      { value: "locked", description: "" },
       { value: "unread", description: "updated since you looked", local: true },
     ],
   },
@@ -251,6 +277,7 @@ const ISSUE_QUALIFIERS: QualifierDef[] = [
   { key: "reason", description: "Close reason", local: false, enumValues: options(["completed", "not planned"]) },
   ARCHIVED_DEF,
   sortDef("issue"),
+  ...GITHUB_SEARCH_QUALIFIERS,
   HAS_DEF,
   CLONED_DEF,
 ];
@@ -355,7 +382,8 @@ export function splitQuery(kind: "pr" | "issue", q: string): SplitQuery {
   const validSorts = sortKeysFor(kind);
   for (const t of tokens) {
     if (t.kind === "space") continue;
-    if (t.kind === "qual" && (isLocalToken(t) || !t.value || tokenProblem(kind, t))) {
+    const invalidValue = t.kind === "qual" && !!t.key && !!definitionOf(kind, t.key) && !!tokenProblem(kind, t);
+    if (t.kind === "qual" && (isLocalToken(t) || !t.value || invalidValue)) {
       const filter = localFilterOf(t);
       if (filter) local.push(filter);
       continue;

@@ -163,11 +163,29 @@ describe("splitQuery", () => {
     expect(queryProblems("pr", "is:Unread has:Session")).toEqual([]);
   });
 
-  it("keeps tokens with problems out of remote and countBase", () => {
-    const split = splitQuery("pr", "is:pr foo:bar sort:bogus status:broken is:open label:perf");
+  it("drops known keys with an invalid value from remote and countBase", () => {
+    const split = splitQuery("pr", "is:pr sort:bogus status:broken has:foo cloned:yes is:open label:perf");
     expect(split.remote).toBe("is:pr is:open label:perf");
     expect(split.countBase).toBe("is:pr label:perf");
     expect(split.sort).toBe("updated-desc");
+    expect(split.local).toEqual([]);
+  });
+
+  it("passes unknown keys through to remote and countBase as typed", () => {
+    const split = splitQuery("issue", "is:issue foo:bar is:open");
+    expect(split.remote).toBe("is:issue foo:bar is:open");
+    expect(split.countBase).toBe("is:issue foo:bar");
+    expect(queryProblems("issue", "foo:bar")).toEqual(["Unknown qualifier foo:"]);
+  });
+
+  it("validates GitHub's standard search qualifiers", () => {
+    expect(
+      queryProblems("pr", "created:>2026-01-01 updated:<2026-02-01 closed:2026-03-01 comments:>5 commenter:lcosta in:title user:acme language:go head:feat/x base:main merged:>2026-01-01 team-review-requested:acme/core is:locked"),
+    ).toEqual([]);
+    expect(queryProblems("issue", "created:>2026-01-01 in:body is:locked language:go")).toEqual([]);
+    expect(queryProblems("issue", "head:feat/x")).toEqual(["Unknown qualifier head:"]);
+    expect(queryProblems("pr", "in:author")).toEqual(["author isn't a valid value for in:"]);
+    expect(splitQuery("pr", "created:>2026-01-01 in:title").remote).toBe("created:>2026-01-01 in:title");
   });
 
   it("reads sort and state values case-insensitively", () => {
@@ -436,6 +454,14 @@ describe("autocomplete", () => {
     expect(autocomplete("pr", "is:unr", 6, SOURCE).items).toMatchObject([{ value: "unread", local: true }]);
     const label = autocomplete("issue", "label:", 6, SOURCE).items.find((i) => i.value === "bug");
     expect(label?.labelColor).toMatch(/^hsl\(\d+,55%,58%\)$/);
+  });
+
+  it("autocompletes the standard search qualifiers", () => {
+    expect(autocomplete("pr", "crea", 4, SOURCE).items).toMatchObject([{ key: "created", description: "Created date, e.g. >2026-01-01" }]);
+    expect(autocomplete("pr", "in:", 3, SOURCE).items.map((i) => i.value)).toEqual(["title", "body", "comments"]);
+    expect(autocomplete("pr", "is:lock", 7, SOURCE).items.map((i) => i.value)).toEqual(["locked"]);
+    expect(autocomplete("issue", "hea", 3, SOURCE).items).toEqual([]);
+    expect(autocomplete("pr", "hea", 3, SOURCE).items.map((i) => i.key)).toEqual(["head"]);
   });
 
   it("only offers @me for involves on runs", () => {
