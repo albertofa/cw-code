@@ -350,3 +350,23 @@ describe("TEMPLATE_VARS_BY_TARGET", () => {
     expect([...TEMPLATE_VARS_BY_TARGET.run].sort()).toEqual(runKeys);
   });
 });
+
+describe("issueTemplateVars truncation", () => {
+  it("caps the body at 8000 characters with a marker", () => {
+    const vars = issueTemplateVars(issueDetail({ body: "b".repeat(9000) }), baseOpts);
+    expect(vars["issue.body"]).toBe(`${"b".repeat(8000)}\n[…truncated]`);
+  });
+
+  it("leaves a body at the cap untouched", () => {
+    expect(issueTemplateVars(issueDetail({ body: "b".repeat(8000) }), baseOpts)["issue.body"]).toHaveLength(8000);
+  });
+
+  it("caps each comment at 2000 characters in comments and delta", () => {
+    const comments = [{ author: "a", body: "c".repeat(2500), createdAt: 300 }];
+    const link = { ref: issueDetail().ref, origin: "workflow" as const, lastSeenAt: 100 };
+    const vars = issueTemplateVars(issueDetail({ comments }), { ...baseOpts, link });
+    const expected = `a: ${"c".repeat(2000)}\n[…truncated]`;
+    expect(vars["issue.comments"]).toBe(expected);
+    expect(vars["issue.delta"]).toBe(expected);
+  });
+});

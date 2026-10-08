@@ -5,7 +5,9 @@ import {
   findCachedRun,
   issueKey,
   prRefForRun,
-  runBaseBranch,
+  issueDataTime,
+  resolveIssueBase,
+  resolveRunBase,
   runKey,
   subjectLink,
   workflowsForSubject
@@ -130,13 +132,58 @@ describe("subjectLink", () => {
   });
 });
 
-describe("runBaseBranch", () => {
-  const branch = (name: string, remote: boolean): GitBranchInfo => ({ name, label: name, current: false, remote, worktreePath: null });
+const branch = (name: string, remote: boolean, current = false): GitBranchInfo => ({
+  name,
+  label: remote ? name.slice(name.indexOf("/") + 1) : name,
+  current,
+  remote,
+  worktreePath: null
+});
 
-  it("prefers a local branch, then a remote one, else nothing", () => {
-    expect(runBaseBranch([branch("origin/feat", true), branch("feat", false)], "feat")).toBe("feat");
-    expect(runBaseBranch([branch("origin/feat", true)], "feat")).toBe("origin/feat");
-    expect(runBaseBranch([branch("main", false)], "feat")).toBeUndefined();
-    expect(runBaseBranch([branch("main", false)], null)).toBeUndefined();
+describe("resolveRunBase", () => {
+  it("prefers origin/<branch> over a local branch", () => {
+    const result = resolveRunBase([branch("feat", false), branch("origin/feat", true)], "feat");
+    expect(result).toEqual({ baseBranch: "origin/feat", hint: "isolated, from origin/feat" });
+  });
+
+  it("uses the local branch when no origin ref is listed", () => {
+    expect(resolveRunBase([branch("feat", false)], "feat").baseBranch).toBe("feat");
+  });
+
+  it("matches exactly, never by suffix", () => {
+    const branches = [branch("main", false, true), branch("origin/other/feat", true), branch("upstream/feat", true), branch("my-feat", false)];
+    const result = resolveRunBase(branches, "feat");
+    expect(result.baseBranch).toBeUndefined();
+    expect(result.hint).toBe("isolated, from main — run branch feat not found locally or on origin");
+  });
+
+  it("warns when the run has no branch", () => {
+    const result = resolveRunBase([branch("main", false, true)], null);
+    expect(result.baseBranch).toBeUndefined();
+    expect(result.hint).toContain("the run has no branch");
+  });
+});
+
+describe("resolveIssueBase", () => {
+  it("follows origin/main, main, origin/master, master", () => {
+    expect(resolveIssueBase([branch("master", false), branch("origin/main", true)]).baseBranch).toBe("origin/main");
+    expect(resolveIssueBase([branch("master", false), branch("main", false)]).baseBranch).toBe("main");
+    expect(resolveIssueBase([branch("master", false), branch("origin/master", true)]).baseBranch).toBe("origin/master");
+    expect(resolveIssueBase([branch("master", false)]).baseBranch).toBe("master");
+  });
+
+  it("omits the base and says so when none exists", () => {
+    const result = resolveIssueBase([branch("develop", false, true)]);
+    expect(result.baseBranch).toBeUndefined();
+    expect(result.hint).toContain("develop");
+    expect(result.hint).toContain("none of");
+  });
+});
+
+describe("issueDataTime", () => {
+  it("returns the latest of the issue update and its newest comment", () => {
+    expect(issueDataTime({ updatedAt: 100, comments: [{ author: "a", body: "", createdAt: 300 }, { author: "b", body: "", createdAt: 200 }] })).toBe(300);
+    expect(issueDataTime({ updatedAt: 500, comments: [{ author: "a", body: "", createdAt: 300 }] })).toBe(500);
+    expect(issueDataTime({ updatedAt: 100, comments: [] })).toBe(100);
   });
 });

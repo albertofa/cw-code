@@ -72,6 +72,12 @@ export const TEMPLATE_VARS_BY_TARGET: Record<PrWorkflow["target"], readonly stri
 
 const ISSUE_COMMENTS_LIMIT = 10;
 
+const ISSUE_BODY_MAX_CHARS = 8_000;
+
+const ISSUE_COMMENT_MAX_CHARS = 2_000;
+
+const TRUNCATION_MARKER = "[…truncated]";
+
 const FAILED_JOB_CONCLUSIONS: ReadonlySet<RunJob["conclusion"]> = new Set(["failure", "timed_out", "startup_failure"]);
 
 export function resolveTemplate(template: string, vars: Record<string, string>): string {
@@ -126,8 +132,12 @@ export function templateVars(
   };
 }
 
+function capText(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max)}\n${TRUNCATION_MARKER}` : text;
+}
+
 function formatComments(comments: IssueComment[]): string {
-  return comments.map((comment) => `${comment.author}: ${comment.body}`).join("\n");
+  return comments.map((comment) => `${comment.author}: ${capText(comment.body, ISSUE_COMMENT_MAX_CHARS)}`).join("\n");
 }
 
 export function issueTemplateVars(
@@ -139,7 +149,7 @@ export function issueTemplateVars(
   return {
     "issue.number": String(issue.ref.number),
     "issue.title": issue.title,
-    "issue.body": issue.body,
+    "issue.body": capText(issue.body, ISSUE_BODY_MAX_CHARS),
     "issue.url": issue.url,
     "issue.repo": `${issue.ref.owner}/${issue.ref.repo}`,
     "issue.labels": issue.labels.join(", "),

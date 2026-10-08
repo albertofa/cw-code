@@ -110,35 +110,76 @@ export function insertAtCursor(value: string, insertText: string, start: number,
   return { value: next, cursor: from + insertText.length };
 }
 
-function unknownVars(template: string, target: WorkflowTarget): string[] {
-  const allowed = TEMPLATE_VARS_BY_TARGET[target];
-  const found = [...template.matchAll(TEMPLATE_VAR_PATTERN)].map((match) => match[1]);
-  return [...new Set(found.filter((name) => !allowed.includes(name)))];
+function namespacesOf(target: WorkflowTarget): Set<string> {
+  return new Set(TEMPLATE_VARS_BY_TARGET[target].filter((name) => name.includes(".")).map((name) => name.slice(0, name.indexOf("."))));
 }
 
-export function unknownTemplateVars(workflow: PrWorkflow): { startPrompt: string[]; updatePrompt: string[] } {
+function foreignNamespaces(target: WorkflowTarget): Set<string> {
+  const own = namespacesOf(target);
+  const foreign = new Set<string>();
+  for (const other of WORKFLOW_TARGETS) {
+    if (other === target) continue;
+    for (const namespace of namespacesOf(other)) if (!own.has(namespace)) foreign.add(namespace);
+  }
+  return foreign;
+}
+
+export interface TemplateVarIssues {
+  foreign: string[];
+  unknown: string[];
+}
+
+function classifyVars(template: string, target: WorkflowTarget): TemplateVarIssues {
+  const allowed = TEMPLATE_VARS_BY_TARGET[target];
+  const foreignSpaces = foreignNamespaces(target);
+  const found = [...new Set([...template.matchAll(TEMPLATE_VAR_PATTERN)].map((match) => match[1]))];
+  const outside = found.filter((name) => !allowed.includes(name));
+  const isForeign = (name: string) => foreignSpaces.has(name.slice(0, Math.max(0, name.indexOf("."))));
+  return { foreign: outside.filter(isForeign), unknown: outside.filter((name) => !isForeign(name)) };
+}
+
+export function templateVarIssues(workflow: PrWorkflow): { startPrompt: TemplateVarIssues; updatePrompt: TemplateVarIssues } {
   return {
-    startPrompt: unknownVars(workflow.startPrompt, workflow.target),
-    updatePrompt: unknownVars(workflow.updatePrompt, workflow.target)
+    startPrompt: classifyVars(workflow.startPrompt, workflow.target),
+    updatePrompt: classifyVars(workflow.updatePrompt, workflow.target)
   };
 }
 
-export function unavailableVarsMessage(names: string[], target: WorkflowTarget): string {
+export function foreignVarsMessage(names: string[], target: WorkflowTarget): string {
   const list = names.map((name) => `{{${name}}}`).join(", ");
-  return `${list} ${names.length === 1 ? "is" : "are"} not available for ${TARGET_HEADINGS[target].toLowerCase()} workflows.`;
+  return `${list} ${names.length === 1 ? "belongs" : "belong"} to another workflow target and is not available for ${TARGET_HEADINGS[target].toLowerCase()} workflows.`;
+}
+
+export function unknownVarsMessage(names: string[]): string {
+  const list = names.map((name) => `{{${name}}}`).join(", ");
+  return `${list} ${names.length === 1 ? "is" : "are"} not a built-in variable and will be sent as written.`;
+}
+
+function hasChanged(workflow: PrWorkflow, original: PrWorkflow[]): boolean {
+  const before = original.find((w) => w.id === workflow.id);
+  return (
+    !before ||
+    before.target !== workflow.target ||
+    before.startPrompt !== workflow.startPrompt ||
+    before.updatePrompt !== workflow.updatePrompt
+  );
 }
 
 export function workflowValidationError(workflow: PrWorkflow): string | null {
-  const unknown = unknownTemplateVars(workflow);
-  const names = [...new Set([...unknown.startPrompt, ...unknown.updatePrompt])];
+  const issues = templateVarIssues(workflow);
+  const names = [...new Set([...issues.startPrompt.foreign, ...issues.updatePrompt.foreign])];
   if (names.length === 0) return null;
-  return `“${workflow.label}”: ${unavailableVarsMessage(names, workflow.target)}`;
+  return `“${workflow.label}”: ${foreignVarsMessage(names, workflow.target)}`;
 }
 
-export function workflowsValidationError(workflows: PrWorkflow[]): string | null {
+export function workflowsValidationError(
+  workflows: PrWorkflow[],
+  original: PrWorkflow[]
+): { workflowId: string; message: string } | null {
   for (const workflow of workflows) {
-    const error = workflowValidationError(workflow);
-    if (error) return error;
+    if (!hasChanged(workflow, original)) continue;
+    const message = workflowValidationError(workflow);
+    if (message) return { workflowId: workflow.id, message };
   }
   return null;
 }

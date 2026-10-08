@@ -48,11 +48,15 @@ import { useWorkflowSubjectData } from "./useWorkflowSubjectData.js";
 import {
   effectiveSubject,
   findCachedRun,
+  baseFailureHint,
+  issueDataTime,
   repoOf,
-  runBaseBranch,
+  resolveIssueBase,
+  resolveRunBase,
   subjectKey,
   subjectLink,
-  workflowsForSubject
+  workflowsForSubject,
+  type WorktreeBase
 } from "./workflowSubject.js";
 
 const READ_ONLY_NOTICE =
@@ -190,6 +194,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
   const [error, setError] = useState<string | null>(null);
   const [created, setCreated] = useState<{ sessionId: string; linked: boolean; note: string | null } | null>(null);
   const [dirty, setDirty] = useState(false);
+  const [baseState, setBaseState] = useState<{ request: string; base: WorktreeBase } | null>(null);
   const runningRef = useRef(false);
   const dialogRef = useRef<HTMLDivElement>(null);
 
@@ -238,6 +243,11 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
     hasWorkflow: workflow !== undefined,
     harness
   });
+  const runBranch = data.run?.branch ?? null;
+  const baseWanted = !continueSession && subject.kind !== "pr" && projectId !== null;
+  const baseRequest = baseWanted ? [projectId, subject.kind, runBranch ?? ""].join("\n") : null;
+  const base = baseRequest !== null && baseState?.request === baseRequest ? baseState.base : null;
+  const baseLoading = workspace === "worktree" && baseRequest !== null && base === null;
   const working = stage !== null;
   const sessionBusy = continueSession ? busyTurns[continueSession.id] !== undefined : false;
 
@@ -248,6 +258,17 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
   useEffect(() => {
     setWorkspaceChoice(null);
   }, [workflowId]);
+
+  useEffect(() => {
+    if (baseRequest === null || projectId === null) return;
+    let active = true;
+    void fetchBase(projectId).then((resolution) => {
+      if (active) setBaseState({ request: baseRequest, base: resolution });
+    });
+    return () => {
+      active = false;
+    };
+  }, [baseRequest]);
 
   useEffect(() => {
     if (continueSession) void useAppStore.getState().ensureComposer(continueSession.id);
@@ -322,12 +343,14 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
     return () => window.removeEventListener("keydown", onKey, true);
   });
 
-  const resolveRunBase = async (targetProjectId: string): Promise<string | undefined> => {
+  const fetchBase = async (targetProjectId: string): Promise<WorktreeBase> => {
     try {
-      return runBaseBranch(await window.cw.listProjectBranches(targetProjectId), data.run?.branch ?? null);
+      const branches = await window.cw.listProjectBranches(targetProjectId);
+      return subject.kind === "run" ? resolveRunBase(branches, runBranch) : resolveIssueBase(branches);
     } catch (err) {
-      console.warn(`[github] could not resolve the base branch for run workspace: ${errorMessage(err)}`);
-      return undefined;
+      const message = errorMessage(err);
+      console.warn(`[workflow] could not resolve the base branch for the ${subject.kind} workspace: ${message}`);
+      return baseFailureHint(message);
     }
   };
 
@@ -349,10 +372,9 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
         return { mode: "new", prHead };
       }
       case "issue":
-        return { mode: "new" };
       case "run": {
-        const baseBranch = targetProjectId ? await resolveRunBase(targetProjectId) : undefined;
-        return baseBranch ? { mode: "new", baseBranch } : { mode: "new" };
+        const resolution = base && targetProjectId === projectId ? base : targetProjectId ? await fetchBase(targetProjectId) : null;
+        return resolution?.baseBranch ? { mode: "new", baseBranch: resolution.baseBranch } : { mode: "new" };
       }
     }
   };
@@ -377,7 +399,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
           ref: subject.ref,
           origin: "workflow",
           workflowId: workflowIdToLink,
-          lastSeenAt: Math.max(Date.now(), issue.updatedAt)
+          lastSeenAt: issueDataTime(issue)
         });
       }
       case "run":
@@ -398,7 +420,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
         return window.cw.markSessionPrSeen(sessionId, subject.ref, detail.headRefOid, detail.updatedAt);
       }
       case "issue":
-        return window.cw.markSessionIssueSeen(sessionId, subject.ref, Date.now());
+        return data.issue ? window.cw.markSessionIssueSeen(sessionId, subject.ref, issueDataTime(data.issue)) : null;
       case "run":
         return null;
     }
@@ -475,7 +497,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
       finish(sessionId);
     } catch (err) {
       const message = errorMessage(err);
-      console.warn(`[pr] workflow run failed at ${current}: ${message}`);
+      console.warn(`[workflow] ${subject.kind} run failed at ${current}: ${message}`);
       setError(`${stageLabel(current, noun)} failed: ${message}`);
     } finally {
       runningRef.current = false;
@@ -501,16 +523,17 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
       ? "Follow-up prompt"
       : "Follow-up prompt (the workflow's “on update” template)";
   const showPushNote = subject.kind === "pr" && !continueSession && workspace !== "checkout" && data.pr?.viewerIsAuthor === true;
-  const blocked = !data.loaded || !workflow || !prompt.trim() || !data.logsReady || sessionBusy || (!continueSession && !reposReady);
+  const blocked =
+    !data.loaded || !workflow || !prompt.trim() || !data.logsReady || baseLoading || sessionBusy || (!continueSession && !reposReady);
   const actionLabel = continueSession ? "Send" : created ? "Retry" : "Start session";
   const worktreeHint =
     subject.kind === "pr"
       ? data.pr
         ? `isolated, from ${data.pr.headRefName}`
         : "isolated, from the PR head"
-      : subject.kind === "run" && data.run?.branch
-        ? `isolated, from ${data.run.branch}`
-        : "isolated, from the project's current branch";
+      : projectId === null
+        ? "isolated, base branch resolved after cloning"
+        : (base?.hint ?? "isolated, resolving base branch…");
   const card =
     subject.kind === "pr" ? (
       data.pr && <PrCard pr={data.pr} />

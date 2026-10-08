@@ -1,27 +1,9 @@
 import { Activity, CircleDot, GitPullRequest } from "lucide-react";
 import type { IssueDetail, PrSummary, RunRef, WorkflowRunSummary } from "../cw.js";
-import { prChip, type PrChipTone } from "./prChip.js";
+import { prChip } from "./prChip.js";
+import { runVerdict } from "./githubRowModel.js";
 
 const SHORT_SHA_LENGTH = 7;
-
-export function runVerdict(run: Pick<WorkflowRunSummary, "status" | "conclusion">): { tone: PrChipTone; label: string } {
-  if (run.status === "queued") return { tone: "info", label: "Queued" };
-  if (run.status === "in_progress") return { tone: "info", label: "Running" };
-  switch (run.conclusion) {
-    case "success":
-      return { tone: "ok", label: "Passed" };
-    case "failure":
-    case "timed_out":
-    case "startup_failure":
-      return { tone: "bad", label: "Failed" };
-    case "action_required":
-      return { tone: "warn", label: "Action required" };
-    case "cancelled":
-      return { tone: "neutral", label: "Cancelled" };
-    default:
-      return { tone: "neutral", label: "Finished" };
-  }
-}
 
 export function PrCard({ pr }: { pr: PrSummary }) {
   const chip = prChip({ pr, git: null });
@@ -61,7 +43,7 @@ export function IssueCard({ issue }: { issue: IssueDetail }) {
         <div className="wf-run-pr-meta">
           <span>{issue.ref.owner}/{issue.ref.repo}</span>
           {issue.labels.map((label) => (
-            <span key={label} className="wf-run-branch">{label}</span>
+            <span key={label} className="pr-inbox-label">{label}</span>
           ))}
         </div>
       </div>
@@ -110,7 +92,7 @@ export function RunCard({ run, runRef }: { run: WorkflowRunSummary | undefined; 
           <span className="wf-run-branch">{run.headSha.slice(0, SHORT_SHA_LENGTH)}</span>
         </div>
       </div>
-      <span className={`pr-chip tone-${verdict.tone}`}>{verdict.label}</span>
+      <span className={`pr-chip tone-${verdict.tone}`}>{verdict.text}</span>
     </div>
   );
 }

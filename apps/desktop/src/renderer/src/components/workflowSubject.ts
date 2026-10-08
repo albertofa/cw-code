@@ -1,5 +1,6 @@
 import type {
   GitBranchInfo,
+  IssueDetail,
   IssueRef,
   PrLinkOrigin,
   PrRef,
@@ -99,9 +100,41 @@ export function effectiveSubject(
   return ref ? { kind: "pr", ref } : subject;
 }
 
-export function runBaseBranch(branches: GitBranchInfo[], branch: string | null): string | undefined {
-  if (!branch) return undefined;
+export interface WorktreeBase {
+  baseBranch: string | undefined;
+  hint: string;
+}
+
+const ISSUE_BASE_CANDIDATES = ["origin/main", "main", "origin/master", "master"];
+
+function currentBranchName(branches: GitBranchInfo[]): string {
+  return branches.find((item) => item.current)?.name ?? "the current branch";
+}
+
+export function resolveRunBase(branches: GitBranchInfo[], branch: string | null): WorktreeBase {
+  const fallback = currentBranchName(branches);
+  if (!branch) return { baseBranch: undefined, hint: `isolated, from ${fallback} — the run has no branch` };
+  const remote = branches.find((item) => item.remote && item.name === `origin/${branch}`);
   const local = branches.find((item) => !item.remote && item.name === branch);
-  if (local) return local.name;
-  return branches.find((item) => item.remote && item.name.endsWith(`/${branch}`))?.name;
+  const found = remote ?? local;
+  if (found) return { baseBranch: found.name, hint: `isolated, from ${found.name}` };
+  return { baseBranch: undefined, hint: `isolated, from ${fallback} — run branch ${branch} not found locally or on origin` };
+}
+
+export function resolveIssueBase(branches: GitBranchInfo[]): WorktreeBase {
+  for (const candidate of ISSUE_BASE_CANDIDATES) {
+    if (branches.some((item) => item.name === candidate)) return { baseBranch: candidate, hint: `isolated, from ${candidate}` };
+  }
+  return {
+    baseBranch: undefined,
+    hint: `isolated, from ${currentBranchName(branches)} — none of ${ISSUE_BASE_CANDIDATES.join(", ")} exists`
+  };
+}
+
+export function baseFailureHint(message: string): WorktreeBase {
+  return { baseBranch: undefined, hint: `isolated, from the project's current branch — could not list branches: ${message}` };
+}
+
+export function issueDataTime(issue: Pick<IssueDetail, "updatedAt" | "comments">): number {
+  return issue.comments.reduce((latest, comment) => Math.max(latest, comment.createdAt), issue.updatedAt);
 }

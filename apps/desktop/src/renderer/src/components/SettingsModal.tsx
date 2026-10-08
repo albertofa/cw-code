@@ -48,8 +48,9 @@ import {
   moveWorkflow,
   resetWorkflowTo,
   TARGET_HEADINGS,
-  unavailableVarsMessage,
-  unknownTemplateVars,
+  foreignVarsMessage,
+  templateVarIssues,
+  unknownVarsMessage,
   WORKFLOW_TARGETS,
   workflowsValidationError,
   type WorkflowTarget
@@ -153,6 +154,7 @@ export function SettingsModal({
   const [pruneSummary, setPruneSummary] = useState<WorktreePruneSummary | null>(null);
   const [pruneError, setPruneError] = useState<string | null>(null);
   const [selectedWorkflowId, setSelectedWorkflowId] = useState<string | null>(null);
+  const [savedWorkflows, setSavedWorkflows] = useState<PrWorkflow[]>([]);
   const [resetBusyId, setResetBusyId] = useState<string | null>(null);
   const [resetError, setResetError] = useState<string | null>(null);
   const startPromptRef = useRef<HTMLTextAreaElement | null>(null);
@@ -172,7 +174,10 @@ export function SettingsModal({
     setLoadError(null);
     void window.cw
       .getSettings()
-      .then((s) => setDraft(s))
+      .then((s) => {
+        setDraft(s);
+        setSavedWorkflows(s.prWorkflows);
+      })
       .catch((err) => setLoadError(err instanceof Error ? err.message : "Could not load settings"))
       .finally(() => setLoading(false));
   }, []);
@@ -349,10 +354,14 @@ export function SettingsModal({
 
   const onSave = async () => {
     if (!draft || saving) return;
-    const workflowError = workflowsValidationError(draft.prWorkflows);
+    const workflowError = workflowsValidationError(draft.prWorkflows, savedWorkflows);
     if (workflowError) {
       setCategory("prWorkflows");
-      setSaveError(workflowError);
+      setSelectedWorkflowId(workflowError.workflowId);
+      setSaveError(workflowError.message);
+      requestAnimationFrame(() => {
+        document.querySelector(`[data-workflow-id="${CSS.escape(workflowError.workflowId)}"]`)?.scrollIntoView({ block: "nearest" });
+      });
       return;
     }
     setSaving(true);
@@ -991,7 +1000,7 @@ export function SettingsModal({
     const workflows = draft.prWorkflows;
     const selected = workflows.find((w) => w.id === selectedWorkflowId) ?? null;
     const SelectedIcon = selected ? WORKFLOW_ICONS[selected.icon] : null;
-    const unknown = selected ? unknownTemplateVars(selected) : { startPrompt: [], updatePrompt: [] };
+    const issues = selected ? templateVarIssues(selected) : null;
     return (
       <div className="settings-prwf">
         <div className="settings-prwf-list">
@@ -1012,6 +1021,7 @@ export function SettingsModal({
                   return (
                     <div
                       key={w.id}
+                      data-workflow-id={w.id}
                       className={`settings-prwf-item${selected?.id === w.id ? " active" : ""}`}
                       onClick={() => setSelectedWorkflowId(w.id)}
                     >
@@ -1245,8 +1255,11 @@ export function SettingsModal({
                   </button>
                 ))}
               </div>
-              {unknown.startPrompt.length > 0 && (
-                <div className="settings-error">{unavailableVarsMessage(unknown.startPrompt, selected.target)}</div>
+              {issues && issues.startPrompt.foreign.length > 0 && (
+                <div className="settings-error">{foreignVarsMessage(issues.startPrompt.foreign, selected.target)}</div>
+              )}
+              {issues && issues.startPrompt.unknown.length > 0 && (
+                <div className="settings-hint">{unknownVarsMessage(issues.startPrompt.unknown)}</div>
               )}
             </section>
 
@@ -1266,8 +1279,11 @@ export function SettingsModal({
                   </button>
                 ))}
               </div>
-              {unknown.updatePrompt.length > 0 && (
-                <div className="settings-error">{unavailableVarsMessage(unknown.updatePrompt, selected.target)}</div>
+              {issues && issues.updatePrompt.foreign.length > 0 && (
+                <div className="settings-error">{foreignVarsMessage(issues.updatePrompt.foreign, selected.target)}</div>
+              )}
+              {issues && issues.updatePrompt.unknown.length > 0 && (
+                <div className="settings-hint">{unknownVarsMessage(issues.updatePrompt.unknown)}</div>
               )}
             </section>
           </div>

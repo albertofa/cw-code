@@ -129,7 +129,13 @@ export function useWorkflowSubjectData(input: {
   const issueError = issueLoad?.key === issueKeyValue ? (issueLoad.error ?? null) : null;
 
   const logsNeeded = subject.kind === "pr" ? needsFailedLogs(template) : subject.kind === "run" ? needsRunFailedLogs(template) : false;
-  const logsId = !logsNeeded ? null : prRef && prDetail ? prDetail.headRefOid : runRef ? runKey(runRef) : null;
+  const logsId = !logsNeeded
+    ? null
+    : prRef && prDetail
+      ? prDetail.headRefOid
+      : runRef
+        ? `${runKey(runRef)}@${cachedRun?.updatedAt ?? 0}:${cachedRun?.status ?? ""}`
+        : null;
   const logsReady = !logsNeeded || (logsId !== null && logs?.id === logsId);
 
   useEffect(() => {
