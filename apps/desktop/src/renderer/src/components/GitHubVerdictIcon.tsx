@@ -18,7 +18,7 @@ import {
   TriangleAlert,
   type LucideIcon
 } from "lucide-react";
-import type { Verdict, VerdictIcon } from "./githubRowModel.js";
+import { diffBlocks, type Verdict, type VerdictIcon } from "./githubRowModel.js";
 
 const VERDICT_ICONS: Record<VerdictIcon, LucideIcon> = {
   "git-merge": GitMerge,
@@ -52,4 +52,21 @@ export function VerdictGlyph({
   const Icon = VERDICT_ICONS[verdict.icon];
   const className = [toneClass ? `tone-${verdict.tone}` : "", verdict.spin ? "pr-inbox-spin" : ""].filter(Boolean).join(" ");
   return <Icon size={size} aria-hidden="true" className={className || undefined} />;
+}
+
+export function DiffBar({ additions, deletions }: { additions: number; deletions: number }) {
+  const blocks = diffBlocks(additions, deletions);
+  return (
+    <span className="hub-diffbar" aria-hidden="true">
+      {Array.from({ length: blocks.add }, (_, i) => (
+        <i key={`a${i}`} className="a" />
+      ))}
+      {Array.from({ length: blocks.del }, (_, i) => (
+        <i key={`d${i}`} className="d" />
+      ))}
+      {Array.from({ length: blocks.neutral }, (_, i) => (
+        <i key={`n${i}`} />
+      ))}
+    </span>
+  );
 }

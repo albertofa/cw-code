@@ -10,6 +10,9 @@ import {
   prVerdict,
   continueSessionFor,
   rowAction,
+  rowDelta,
+  rowHasUnseen,
+  unseenSessionIds,
   runBucket,
   runVerdict,
   sessionsForIssue,
@@ -332,6 +335,12 @@ describe("session lookup", () => {
   });
 });
 
+type ActInput = Parameters<typeof rowAction>[0];
+
+function act(input: Omit<ActInput, "unseen"> & { unseen?: ReadonlySet<string> }) {
+  return rowAction({ unseen: new Set<string>(), ...input });
+}
+
 describe("rowAction", () => {
   const prWorkflows = [
     workflow({ id: "review", label: "Review", suggestWhen: ["review-requested"] }),
@@ -345,22 +354,22 @@ describe("rowAction", () => {
     });
 
   it("opens the linked session for a PR", () => {
-    const action = rowAction({ subject: { kind: "pr", pr: pr() }, viewer: "me", sessions: [session()], workflows: prWorkflows });
+    const action = act({ subject: { kind: "pr", pr: pr() }, viewer: "me", sessions: [session()], workflows: prWorkflows });
     expect(action).toMatchObject({ kind: "session", mode: "open", label: "Review", meta: "idle", count: 1 });
   });
 
   it("continues a review session when the head moved", () => {
-    const action = rowAction({ subject: { kind: "pr", pr: pr({ headRefOid: "def456" }) }, viewer: "me", sessions: [session()], workflows: prWorkflows });
+    const action = act({ subject: { kind: "pr", pr: pr({ headRefOid: "def456" }) }, viewer: "me", sessions: [session()], workflows: prWorkflows });
     expect(action).toMatchObject({ kind: "session", mode: "continue", label: "Re-review", meta: "new", workflowId: "review" });
   });
 
   it("marks a working session", () => {
-    const action = rowAction({ subject: { kind: "pr", pr: pr() }, viewer: "me", sessions: [session({ status: "working" })], workflows: prWorkflows });
+    const action = act({ subject: { kind: "pr", pr: pr() }, viewer: "me", sessions: [session({ status: "working" })], workflows: prWorkflows });
     expect(action).toMatchObject({ kind: "session", meta: "working" });
   });
 
   it("suggests a workflow, flagging urgent ones, and falls back to the first enabled", () => {
-    const suggested = rowAction({
+    const suggested = act({
       subject: { kind: "pr", pr: pr({ ci: "failing", viewerIsAuthor: true }) },
       viewer: "me",
       sessions: [],
@@ -368,25 +377,34 @@ describe("rowAction", () => {
     });
     expect(suggested).toMatchObject({ kind: "workflow", urgent: true });
     expect(suggested.kind === "workflow" && suggested.workflow.id).toBe("fix-ci");
-    const fallback = rowAction({ subject: { kind: "pr", pr: pr() }, viewer: "me", sessions: [], workflows: prWorkflows });
+    const fallback = act({ subject: { kind: "pr", pr: pr() }, viewer: "me", sessions: [], workflows: prWorkflows });
     expect(fallback).toMatchObject({ kind: "workflow", urgent: false });
     expect(fallback.kind === "workflow" && fallback.workflow.id).toBe("review");
   });
 
   it("falls back to GitHub for finished subjects and logs for runs without workflows", () => {
-    expect(rowAction({ subject: { kind: "pr", pr: pr({ state: "MERGED" }) }, viewer: "me", sessions: [], workflows: prWorkflows })).toEqual({ kind: "github" });
-    expect(rowAction({ subject: { kind: "issue", issue: issue({ state: "CLOSED" }) }, viewer: "me", sessions: [], workflows: prWorkflows })).toEqual({ kind: "github" });
-    expect(rowAction({ subject: { kind: "run", run: run() }, viewer: "me", sessions: [], workflows: prWorkflows })).toEqual({ kind: "logs" });
+    expect(act({ subject: { kind: "pr", pr: pr({ state: "MERGED" }) }, viewer: "me", sessions: [], workflows: prWorkflows })).toEqual({ kind: "github" });
+    expect(act({ subject: { kind: "issue", issue: issue({ state: "CLOSED" }) }, viewer: "me", sessions: [], workflows: prWorkflows })).toEqual({ kind: "github" });
+    expect(act({ subject: { kind: "run", run: run() }, viewer: "me", sessions: [], workflows: prWorkflows })).toEqual({ kind: "logs" });
+  });
+
+  it("never falls back to the first enabled run workflow", () => {
+    const runWorkflows = [workflow({ id: "run-ci", target: "run", suggestWhen: ["run-failed"] }), workflow({ id: "other-run", target: "run" })];
+    expect(act({ subject: { kind: "run", run: run() }, viewer: "me", sessions: [], workflows: runWorkflows })).toEqual({ kind: "logs" });
+    const failed = act({ subject: { kind: "run", run: run({ conclusion: "failure", actor: "me" }) }, viewer: "me", sessions: [], workflows: runWorkflows });
+    expect(failed).toMatchObject({ kind: "workflow", urgent: true });
+    expect(failed.kind === "workflow" && failed.workflow.id).toBe("run-ci");
   });
 
   it("opens the latest session on a merged PR", () => {
-    const action = rowAction({ subject: { kind: "pr", pr: pr({ state: "MERGED" }) }, viewer: "me", sessions: [session()], workflows: prWorkflows });
+    const action = act({ subject: { kind: "pr", pr: pr({ state: "MERGED" }) }, viewer: "me", sessions: [session()], workflows: prWorkflows });
     expect(action).toMatchObject({ kind: "session", mode: "open" });
   });
 
   it("flags an issue session with new activity as unseen", () => {
     const issueSession = sessionMeta({ id: "i1", updatedAt: 9, issues: [{ ref: issue().ref, origin: "workflow", lastSeenAt: 500 }] });
-    const action = rowAction({ subject: { kind: "issue", issue: issue({ updatedAt: 900 }) }, viewer: "me", sessions: [issueSession], workflows: prWorkflows });
+    const subject = { kind: "issue" as const, issue: issue({ updatedAt: 900 }) };
+    const action = act({ subject, viewer: "me", sessions: [issueSession], workflows: prWorkflows, unseen: unseenSessionIds(subject, [issueSession]) });
     expect(action).toMatchObject({ kind: "session", meta: "unseen" });
   });
 });
@@ -401,9 +419,47 @@ describe("continueSessionFor", () => {
     expect(continueSessionFor({ kind: "run", run: run() }, "pr", [prSession])).toBeNull();
   });
 
-  it("continues the latest session for issue and run workflows", () => {
-    expect(continueSessionFor({ kind: "issue", issue: issue() }, "issue", [prSession, other])?.id).toBe("other");
-    expect(continueSessionFor({ kind: "run", run: run() }, "run", [])).toBeNull();
+  it("continues only sessions linked to the issue for issue workflows", () => {
+    const linked = sessionMeta({ id: "linked", updatedAt: 3, issues: [{ ref: issue().ref, origin: "workflow", lastSeenAt: 0 }] });
+    expect(continueSessionFor({ kind: "issue", issue: issue() }, "issue", [prSession, other, linked])?.id).toBe("linked");
+    expect(continueSessionFor({ kind: "issue", issue: issue() }, "issue", [prSession, other])).toBeNull();
+  });
+
+  it("continues only sessions linked to the run for run workflows", () => {
+    const linked = sessionMeta({ id: "linked", updatedAt: 3, runs: [{ ref: run().ref, origin: "workflow", lastSeenAt: 0 }] });
+    expect(continueSessionFor({ kind: "run", run: run({ prNumber: 42 }) }, "run", [prSession, other, linked])?.id).toBe("linked");
+    expect(continueSessionFor({ kind: "run", run: run({ prNumber: 42 }) }, "run", [prSession, other])).toBeNull();
+  });
+});
+
+describe("run unseen dot", () => {
+  const prSession = sessionMeta({ id: "pr", prs: [{ ref: pr().ref, origin: "opened", lastSeenAt: 5000, lastSeenSha: "abc123" }] });
+  const runSession = sessionMeta({ id: "run", runs: [{ ref: run().ref, origin: "workflow", lastSeenAt: 2000 }] });
+  const subject = { kind: "run" as const, run: run({ prNumber: 42, updatedAt: 3000 }) };
+
+  it("is set when the run's PR has unseen updates in a linked session", () => {
+    const lookup = (): PrSummary => pr({ updatedAt: 9000 });
+    expect([...unseenSessionIds(subject, [prSession], lookup)]).toEqual(["pr"]);
+    expect(rowHasUnseen(subject, [prSession], () => pr({ updatedAt: 1000 }))).toBe(false);
+    expect(rowHasUnseen(subject, [prSession])).toBe(false);
+  });
+
+  it("is set when a run-linked session last saw the run before its last update", () => {
+    expect([...unseenSessionIds(subject, [runSession])]).toEqual(["run"]);
+    expect(rowHasUnseen({ kind: "run", run: run({ updatedAt: 1500 }) }, [runSession])).toBe(false);
+  });
+});
+
+describe("rowDelta", () => {
+  const link = (lastSeenSha: string) => ({ ref: pr().ref, origin: "workflow" as const, lastSeenAt: 500, lastSeenSha });
+  const now = 1000 + 3 * 3_600_000;
+
+  it("says new commits when the head moved and updated <age> otherwise", () => {
+    const moved = sessionMeta({ prs: [link("old")] });
+    expect(rowDelta({ kind: "pr", pr: pr() }, [moved], now)).toBe("new commits");
+    const same = sessionMeta({ prs: [link("abc123")] });
+    expect(rowDelta({ kind: "pr", pr: pr() }, [same], now)).toBe("updated 3h");
+    expect(rowDelta({ kind: "pr", pr: pr({ updatedAt: 100 }) }, [same], now)).toBeNull();
   });
 });
 

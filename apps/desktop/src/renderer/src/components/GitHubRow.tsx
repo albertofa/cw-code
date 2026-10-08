@@ -3,13 +3,13 @@ import { ChevronRight, GitBranch, MessageSquare, Timer } from "lucide-react";
 import type { IssueSummary, PrSummary, WorkflowRunSummary } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import { usePrStore } from "../stores/prStore.js";
+import { prKey } from "./prInbox.js";
 import { GitHubAvatar } from "./GitHubAvatar.js";
 import { HoverCard, PeopleCard, StatusCard, type HoverSubject } from "./GitHubHoverCard.js";
 import { GitHubRowAction } from "./GitHubRowAction.js";
-import { VerdictGlyph } from "./GitHubVerdictIcon.js";
+import { DiffBar, VerdictGlyph } from "./GitHubVerdictIcon.js";
 import { openExternalLink } from "./externalLink.js";
 import {
-  diffBlocks,
   formatDuration,
   externalLinkOf,
   issueVerdict,
@@ -18,7 +18,7 @@ import {
   prGates,
   prVerdict,
   rowDelta,
-  rowHasUnseen,
+  unseenSessionIds,
   runDurationMs,
   runVerdict,
   sessionsForIssue,
@@ -28,11 +28,10 @@ import {
   type RowSubject
 } from "./githubRowModel.js";
 import { formatRelativeAge } from "./prInboxModel.js";
-import { useNow } from "./useNow.js";
+import { useNow } from "./usageFormat.js";
 import { usePrWorkflows } from "./usePrWorkflows.js";
 
 const LIVE_TICK_MS = 1000;
-const IDLE_TICK_MS = 30_000;
 
 export type GitHubRowProps = (
   | { kind: "pr"; item: PrSummary }
@@ -200,27 +199,10 @@ function PeopleCell({ subject, viewer }: { subject: RowSubject; viewer: string |
   );
 }
 
-function DiffBar({ additions, deletions }: { additions: number; deletions: number }) {
-  const blocks = diffBlocks(additions, deletions);
-  return (
-    <span className="hub-diffbar" aria-hidden="true">
-      {Array.from({ length: blocks.add }, (_, i) => (
-        <i key={`a${i}`} className="a" />
-      ))}
-      {Array.from({ length: blocks.del }, (_, i) => (
-        <i key={`d${i}`} className="d" />
-      ))}
-      {Array.from({ length: blocks.neutral }, (_, i) => (
-        <i key={`n${i}`} />
-      ))}
-    </span>
-  );
-}
-
 function GateCell({ subject, viewer, now }: { subject: RowSubject; viewer: string | null; now: number }) {
   const hover: HoverSubject =
     subject.kind === "pr" ? { kind: "pr", item: subject.pr } : subject.kind === "issue" ? { kind: "issue", item: subject.issue } : { kind: "run", item: subject.run };
-  const card = <StatusCard subject={hover} viewer={viewer} />;
+  const card = <StatusCard subject={hover} viewer={viewer} now={now} />;
 
   if (subject.kind === "pr") {
     const { pr } = subject;
@@ -312,9 +294,10 @@ export function GitHubRow(props: GitHubRowProps) {
   const openPr = usePrStore((s) => s.openPr);
   const { host, owner, repo } = props.item.ref;
   const cloned = usePrStore((s) => s.projectIdForRef({ host, owner, repo }) !== null);
-  const workflows = usePrWorkflows();
+  const inboxItems = usePrStore((s) => s.inbox?.items);
+  const { workflows, error: workflowsError, reload: reloadWorkflows } = usePrWorkflows();
   const live = props.kind === "run" && props.item.status === "in_progress";
-  const now = useNow(live ? LIVE_TICK_MS : IDLE_TICK_MS);
+  const now = useNow(live ? LIVE_TICK_MS : undefined);
 
   const allSessions = useMemo(() => Object.values(sessionsByProject).flat(), [sessionsByProject]);
   const sessions = useMemo(() => {
@@ -323,8 +306,13 @@ export function GitHubRow(props: GitHubRowProps) {
     return sessionsForRun(subject.run, allSessions);
   }, [subject, allSessions]);
 
-  const unseen = rowHasUnseen(subject, sessions);
-  const delta = rowDelta(subject, sessions);
+  const lookupPr = useMemo(() => {
+    const byKey = new Map((inboxItems ?? []).map((pr) => [prKey(pr.ref), pr]));
+    return (ref: PrSummary["ref"]) => byKey.get(prKey(ref));
+  }, [inboxItems]);
+  const unseenIds = useMemo(() => unseenSessionIds(subject, sessions, lookupPr), [subject, sessions, lookupPr]);
+  const unseen = unseenIds.size > 0;
+  const delta = rowDelta(subject, sessions, now);
   const state = stateGlyph(subject);
   const labels = subject.kind === "pr" ? subject.pr.labels : subject.kind === "issue" ? subject.issue.labels : [];
   const title = subject.kind === "pr" ? subject.pr.title : subject.kind === "issue" ? subject.issue.title : subject.run.title;
@@ -364,7 +352,16 @@ export function GitHubRow(props: GitHubRowProps) {
       </div>
       <PeopleCell subject={subject} viewer={viewer} />
       <GateCell subject={subject} viewer={viewer} now={now} />
-      <GitHubRowAction subject={subject} viewer={viewer} sessions={sessions} workflows={workflows} />
+      <GitHubRowAction
+        subject={subject}
+        viewer={viewer}
+        sessions={sessions}
+        workflows={workflows}
+        workflowsError={workflowsError}
+        onReloadWorkflows={reloadWorkflows}
+        unseen={unseenIds}
+        now={now}
+      />
     </div>
   );
 }

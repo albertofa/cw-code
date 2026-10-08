@@ -17,6 +17,7 @@ import type {
 import { hasUnseen } from "./prUpdates.js";
 import { primaryAction, suggestedWorkflow } from "./prWorkflows.js";
 import { prBucket } from "./prInbox.js";
+import { formatRelativeAge } from "./prInboxModel.js";
 import { linkFor, pickMainSession, sessionsLinkedTo } from "./sessionPrLinks.js";
 
 export type Tone = "ok" | "bad" | "warn" | "info" | "neutral" | "merged";
@@ -404,11 +405,12 @@ interface RowActionInput<S> {
   viewer: string | null;
   sessions: S[];
   workflows: PrWorkflow[];
+  unseen: ReadonlySet<string>;
 }
 
 type ActionSession = SessionMeta;
 
-function isFinished(subject: RowSubject): boolean {
+export function isFinished(subject: RowSubject): boolean {
   if (subject.kind === "pr") return subject.pr.state !== "OPEN";
   if (subject.kind === "issue") return subject.issue.state !== "OPEN";
   return false;
@@ -429,14 +431,8 @@ function subjectSuggestion(subject: RowSubject, viewer: string | null): Suggesti
   return subject;
 }
 
-function sessionUnseen(subject: RowSubject, session: LinkedSession): boolean {
-  if (subject.kind === "pr") return sessionHasUnseenPr(subject.pr, session);
-  if (subject.kind === "issue") return sessionHasUnseenIssue(subject.issue, session);
-  return false;
-}
-
 function sessionAction<S extends ActionSession>(
-  { subject, sessions, workflows }: RowActionInput<S>,
+  { subject, sessions, workflows, unseen }: RowActionInput<S>,
   session: S,
   mode: "open" | "continue",
   workflowId: string | null = null
@@ -447,7 +443,7 @@ function sessionAction<S extends ActionSession>(
   let meta: SessionActivity = "idle";
   if (session.status === "working") meta = "working";
   else if (mode === "continue") meta = "new";
-  else if (sessionUnseen(subject, session)) meta = "unseen";
+  else if (unseen.has(session.id)) meta = "unseen";
   return { kind: "session", session, label, mode, workflowId, meta, count: sessions.length };
 }
 
@@ -468,9 +464,12 @@ export function rowAction<S extends ActionSession>(input: RowActionInput<S>): Ro
   }
   if (isFinished(subject)) return { kind: "github" };
   const suggested = suggestedWorkflowFor(subjectSuggestion(subject, viewer), targetWorkflows);
+  if (subject.kind === "run") {
+    return suggested ? { kind: "workflow", workflow: suggested, urgent: isUrgent(subject, viewer) } : { kind: "logs" };
+  }
   const workflow = suggested ?? targetWorkflows.find((candidate) => candidate.enabled) ?? null;
   if (workflow) return { kind: "workflow", workflow, urgent: suggested !== null && isUrgent(subject, viewer) };
-  return subject.kind === "run" ? { kind: "logs" } : { kind: "github" };
+  return { kind: "github" };
 }
 
 export function continueSessionFor<S extends LinkedSession>(subject: RowSubject, workflowTarget: PrWorkflow["target"], sessions: S[]): S | null {
@@ -478,7 +477,10 @@ export function continueSessionFor<S extends LinkedSession>(subject: RowSubject,
     const ref = subject.kind === "pr" ? subject.pr.ref : subject.kind === "run" ? runPrRef(subject.run) : null;
     return ref ? pickMainSession(sessionsLinkedTo(sessions, ref), ref) : null;
   }
-  return latestSession(sessions);
+  if (workflowTarget === "issue") {
+    return subject.kind === "issue" ? latestSession(sessions.filter((session) => issueLinkFor(session, subject.issue.ref) !== undefined)) : null;
+  }
+  return subject.kind === "run" ? latestSession(sessions.filter((session) => runLinkFor(session, subject.run.ref) !== undefined)) : null;
 }
 
 export function externalLinkOf(subject: RowSubject): string {
@@ -502,19 +504,41 @@ export function stateGlyph(subject: RowSubject): Verdict {
   return { tone: "merged", icon: "circle-check-big", text: "Closed as completed" };
 }
 
-export function rowHasUnseen(subject: RowSubject, sessions: LinkedSession[]): boolean {
-  if (subject.kind === "pr") return sessions.some((session) => sessionHasUnseenPr(subject.pr, session));
-  if (subject.kind === "issue") return sessions.some((session) => sessionHasUnseenIssue(subject.issue, session));
-  return false;
+export type PrLookup = (ref: PrSummary["ref"]) => PrSummary | undefined;
+
+const NO_PR_LOOKUP: PrLookup = () => undefined;
+
+export function unseenSessionIds(subject: RowSubject, sessions: LinkedSession[], lookupPr: PrLookup = NO_PR_LOOKUP): Set<string> {
+  const ids = new Set<string>();
+  for (const session of sessions) {
+    if (sessionIsUnseen(subject, session, lookupPr)) ids.add(session.id);
+  }
+  return ids;
 }
 
-export function rowDelta(subject: RowSubject, sessions: LinkedSession[]): string | null {
-  if (!rowHasUnseen(subject, sessions)) return null;
+function sessionIsUnseen(subject: RowSubject, session: LinkedSession, lookupPr: PrLookup): boolean {
+  if (subject.kind === "pr") return sessionHasUnseenPr(subject.pr, session);
+  if (subject.kind === "issue") return sessionHasUnseenIssue(subject.issue, session);
+  const runLink = runLinkFor(session, subject.run.ref);
+  if (runLink && runLink.lastSeenAt < subject.run.updatedAt) return true;
+  const prRef = runPrRef(subject.run);
+  const pr = prRef ? lookupPr(prRef) : undefined;
+  return pr !== undefined && sessionHasUnseenPr(pr, session);
+}
+
+export function rowHasUnseen(subject: RowSubject, sessions: LinkedSession[], lookupPr: PrLookup = NO_PR_LOOKUP): boolean {
+  return sessions.some((session) => sessionIsUnseen(subject, session, lookupPr));
+}
+
+export function rowDelta(subject: RowSubject, sessions: LinkedSession[], now: number): string | null {
+  if (subject.kind === "run" || !rowHasUnseen(subject, sessions)) return null;
   if (subject.kind === "issue") return "new activity";
-  if (subject.kind !== "pr") return null;
-  const main = pickMainSession(sessions.filter((session) => linkFor(session, subject.pr.ref) !== undefined), subject.pr.ref);
-  const link = linkFor(main ?? undefined, subject.pr.ref);
-  return link && link.lastSeenSha !== "" && subject.pr.headRefOid !== link.lastSeenSha ? "new commits" : null;
+  const { pr } = subject;
+  const main = pickMainSession(sessionsLinkedTo(sessions, pr.ref), pr.ref);
+  const link = linkFor(main ?? undefined, pr.ref);
+  if (!link) return null;
+  if (link.lastSeenSha !== "" && pr.headRefOid !== link.lastSeenSha) return "new commits";
+  return `updated ${formatRelativeAge(pr.updatedAt, now)}`;
 }
 
 export type JobPip = "ok" | "bad" | "warn" | "neutral";

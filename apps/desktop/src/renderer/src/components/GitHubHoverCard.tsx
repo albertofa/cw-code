@@ -20,8 +20,8 @@ import type { IssueSummary, PrReviewer, PrSummary, WorkflowRunSummary } from "..
 import { usePrStore } from "../stores/prStore.js";
 import { anchorRectOf, type AnchorRect } from "./AnchoredPopover.js";
 import { GitHubAvatar } from "./GitHubAvatar.js";
-import { VerdictGlyph } from "./GitHubVerdictIcon.js";
-import { buttonProps, openExternalLink } from "./externalLink.js";
+import { DiffBar, VerdictGlyph } from "./GitHubVerdictIcon.js";
+import { openExternalLink } from "./externalLink.js";
 import {
   formatDuration,
   isJobFailed,
@@ -33,30 +33,30 @@ import {
   reviewerBadge,
   runDurationMs,
   sameLogin,
+  stateGlyph,
   type Tone
 } from "./githubRowModel.js";
 import { formatRelativeAge } from "./prInboxModel.js";
 import { prRefFromUrl } from "./sessionPrLinks.js";
-import { useNow } from "./useNow.js";
 
 const SHOW_DELAY_MS = 280;
 const SWITCH_DELAY_MS = 60;
 const HIDE_DELAY_MS = 140;
 const CARD_GAP = 6;
 const VIEWPORT_MARGIN = 8;
-const LIVE_TICK_MS = 1000;
-const IDLE_TICK_MS = 30_000;
 
 let activeClose: (() => void) | null = null;
 
 function HoverCardPanel({
   anchor,
+  anchorEl,
   onEnter,
   onLeave,
   onDismiss,
   children
 }: {
   anchor: AnchorRect;
+  anchorEl: HTMLElement | null;
   onEnter: () => void;
   onLeave: () => void;
   onDismiss: () => void;
@@ -81,8 +81,7 @@ function HoverCardPanel({
       if (e.key === "Escape") onDismiss();
     };
     const onScroll = (e: Event) => {
-      if (e.target instanceof Node && panelRef.current?.contains(e.target)) return;
-      onDismiss();
+      if (anchorEl && e.target instanceof Node && e.target.contains(anchorEl)) onDismiss();
     };
     window.addEventListener("keydown", onKey);
     window.addEventListener("scroll", onScroll, true);
@@ -90,7 +89,7 @@ function HoverCardPanel({
       window.removeEventListener("keydown", onKey);
       window.removeEventListener("scroll", onScroll, true);
     };
-  }, [onDismiss]);
+  }, [anchorEl, onDismiss]);
 
   return createPortal(
     <div
@@ -154,7 +153,7 @@ export function HoverCard({ className, card, children }: { className: string; ca
         {children}
       </div>
       {anchor && (
-        <HoverCardPanel anchor={anchor} onEnter={cancelHide} onLeave={scheduleHide} onDismiss={close}>
+        <HoverCardPanel anchor={anchor} anchorEl={anchorRef.current} onEnter={cancelHide} onLeave={scheduleHide} onDismiss={close}>
           {card}
         </HoverCardPanel>
       )}
@@ -281,6 +280,7 @@ export function PeopleCard({ subject, viewer }: { subject: HoverSubject; viewer:
 }
 
 function PrStatusCard({ pr, viewer }: { pr: PrSummary; viewer: string | null }) {
+  const state = stateGlyph({ kind: "pr", pr });
   const openPr = usePrStore((s) => s.openPr);
   const verdict = prVerdict(pr, viewer);
   const gates = prGates(pr, viewer);
@@ -289,7 +289,9 @@ function PrStatusCard({ pr, viewer }: { pr: PrSummary; viewer: string | null }) 
   return (
     <>
       <div className="hub-card-head">
-        <VerdictGlyph verdict={verdict} />
+        <VerdictGlyph verdict={state} />
+        <span className={`tone-${state.tone}`}>{state.text}</span>
+        <span className="tone-neutral">·</span>
         <span className={`tone-${verdict.tone}`}>{verdict.text}</span>
         <span className="sub">
           {pr.ref.repo}#{pr.ref.number}
@@ -301,13 +303,13 @@ function PrStatusCard({ pr, viewer }: { pr: PrSummary; viewer: string | null }) 
           <span className="grow">{gates.checks.text}</span>
         </div>
         {failed > 0 && (
-          <div className="hub-card-line click" {...buttonProps(() => openPr(pr.ref, "checks"))}>
+          <button type="button" className="hub-card-line click" onClick={() => openPr(pr.ref, "checks")}>
             <CircleX size={12} aria-hidden="true" className="tone-bad" />
             <span className="grow">{failed} failing</span>
             <span className="end">
               logs <ChevronRight size={11} aria-hidden="true" />
             </span>
-          </div>
+          </button>
         )}
         {pending > 0 && (
           <div className="hub-card-line">
@@ -334,6 +336,7 @@ function PrStatusCard({ pr, viewer }: { pr: PrSummary; viewer: string | null }) 
           <span className="hub-diff">
             <span className="pr-inbox-add">+{pr.additions}</span> <span className="pr-inbox-del">−{pr.deletions}</span>
           </span>
+          <DiffBar additions={pr.additions} deletions={pr.deletions} />
           <span className="grow hub-card-muted">{pr.changedFiles} files</span>
         </div>
         <div className="hub-card-line">
@@ -359,9 +362,8 @@ function PrStatusCard({ pr, viewer }: { pr: PrSummary; viewer: string | null }) 
   );
 }
 
-function IssueStatusCard({ issue }: { issue: IssueSummary }) {
+function IssueStatusCard({ issue, now }: { issue: IssueSummary; now: number }) {
   const openPr = usePrStore((s) => s.openPr);
-  const now = useNow();
   const verdict = issueVerdict(issue);
   const stateText = issue.state === "OPEN" ? "Open" : issue.stateReason === "NOT_PLANNED" ? "Closed · not planned" : "Closed · completed";
   const openLinked = (url: string) => {
@@ -383,11 +385,11 @@ function IssueStatusCard({ issue }: { issue: IssueSummary }) {
           issue.linkedPrs.map((linked) => {
             const linkedVerdict = linkedPrVerdict(linked);
             return (
-              <div key={linked.number} className="hub-card-line click" {...buttonProps(() => openLinked(linked.url))}>
+              <button key={linked.number} type="button" className="hub-card-line click" onClick={() => openLinked(linked.url)}>
                 <VerdictGlyph verdict={linkedVerdict} size={12} />
                 <span className="grow">#{linked.number}</span>
                 <span className={`end tone-${linkedVerdict.tone}`}>{linked.state === "OPEN" && linked.isDraft ? "Draft" : linked.state.toLowerCase()}</span>
-              </div>
+              </button>
             );
           })
         ) : (
@@ -443,18 +445,24 @@ function JobGlyph({ job }: { job: Job }) {
 
 function JobLine({ job, now }: { job: Job; now: number }) {
   const url = job.url;
-  const clickable = isJobFailed(job) && url !== null;
-  return (
-    <div className={`hub-card-line${clickable ? " click" : ""}`} {...(clickable ? buttonProps(() => openExternalLink(url)) : {})}>
+  const content = (
+    <>
       <JobGlyph job={job} />
       <span className="grow">{job.name}</span>
       <span className="end">{jobDuration(job, now)}</span>
-    </div>
+    </>
   );
+  if (isJobFailed(job) && url !== null) {
+    return (
+      <button type="button" className="hub-card-line click" onClick={() => openExternalLink(url)}>
+        {content}
+      </button>
+    );
+  }
+  return <div className="hub-card-line">{content}</div>;
 }
 
-function RunStatusCard({ run }: { run: WorkflowRunSummary }) {
-  const now = useNow(run.status === "in_progress" ? LIVE_TICK_MS : IDLE_TICK_MS);
+function RunStatusCard({ run, now }: { run: WorkflowRunSummary; now: number }) {
   const duration = runDurationMs(run, now);
   return (
     <>
@@ -481,8 +489,8 @@ function RunStatusCard({ run }: { run: WorkflowRunSummary }) {
   );
 }
 
-export function StatusCard({ subject, viewer }: { subject: HoverSubject; viewer: string | null }) {
+export function StatusCard({ subject, viewer, now }: { subject: HoverSubject; viewer: string | null; now: number }) {
   if (subject.kind === "pr") return <PrStatusCard pr={subject.item} viewer={viewer} />;
-  if (subject.kind === "issue") return <IssueStatusCard issue={subject.item} />;
-  return <RunStatusCard run={subject.item} />;
+  if (subject.kind === "issue") return <IssueStatusCard issue={subject.item} now={now} />;
+  return <RunStatusCard run={subject.item} now={now} />;
 }

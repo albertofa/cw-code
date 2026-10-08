@@ -1,5 +1,5 @@
 import { useState } from "react";
-import { ChevronDown, ExternalLink, FileText, GitPullRequest } from "lucide-react";
+import { ChevronDown, Copy, ExternalLink, FileText, GitPullRequest } from "lucide-react";
 import type { PrWorkflow, Session, WorkflowSubject } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import { usePrStore } from "../stores/prStore.js";
@@ -9,18 +9,18 @@ import {
   continueSessionFor,
   enabledWorkflowsFor,
   externalLinkOf,
+  isFinished,
   originLabel,
   rowAction,
   runPrRef,
-  rowHasUnseen,
   sessionLinkOf,
   suggestedWorkflowFor,
   type RowSubject,
   type SuggestionSubject
 } from "./githubRowModel.js";
 import { openExternalLink } from "./externalLink.js";
+import { useNotifs } from "./Notifications.js";
 import { formatRelativeAge } from "./prInboxModel.js";
-import { useNow } from "./useNow.js";
 import { workflowIcon } from "./workflowIcons.js";
 
 type SessionMode = "continue" | "new";
@@ -74,6 +74,10 @@ function ActionMenu({
   viewer,
   sessions,
   workflows,
+  workflowsError,
+  onReloadWorkflows,
+  unseen,
+  now,
   anchor,
   onClose
 }: {
@@ -81,10 +85,13 @@ function ActionMenu({
   viewer: string | null;
   sessions: Session[];
   workflows: PrWorkflow[];
+  workflowsError: string | null;
+  onReloadWorkflows: () => void;
+  unseen: ReadonlySet<string>;
+  now: number;
   anchor: AnchorRect;
   onClose: () => void;
 }) {
-  const now = useNow();
   const selectSession = useAppStore((s) => s.selectSession);
   const openSessionView = usePrStore((s) => s.openSessionView);
   const openRunModal = usePrStore((s) => s.openRunModal);
@@ -94,7 +101,8 @@ function ActionMenu({
   const url = externalLinkOf(subject);
   const prRef = subject.kind === "run" ? runPrRef(subject.run) : null;
   const suggested = suggestedWorkflowFor(suggestionSubject(subject, viewer), workflows);
-  const ownWorkflows = enabledWorkflowsFor(subject.kind, workflows);
+  const finishedPr = subject.kind === "pr" && isFinished(subject);
+  const ownWorkflows = finishedPr ? [] : enabledWorkflowsFor(subject.kind, workflows);
   const prWorkflows = prRef ? enabledWorkflowsFor("pr", workflows) : [];
 
   const goToSession = (sessionId: string) => {
@@ -116,6 +124,13 @@ function ActionMenu({
     openExternalLink(target);
   };
 
+  const copyBranch = (branch: string) => {
+    onClose();
+    void navigator.clipboard.writeText(branch).catch(() => {
+      useNotifs.getState().push({ kind: "error", title: "Could not copy branch name", message: branch });
+    });
+  };
+
   return (
     <AnchoredPopover anchor={anchor} align="right" label="Sessions and workflows" onClose={onClose}>
       {sessions.length > 0 && (
@@ -131,7 +146,7 @@ function ActionMenu({
                   {session.status === "working" ? "working now" : `active ${formatRelativeAge(session.updatedAt, now)} ago`}
                 </span>
               </span>
-              {rowHasUnseen(subject, [session]) ? (
+              {unseen.has(session.id) ? (
                 <span className="pr-inbox-popover-badge">new</span>
               ) : session.status === "working" ? (
                 <span className="pulse" />
@@ -166,27 +181,41 @@ function ActionMenu({
           <div className="pr-inbox-popover-sep" />
         </>
       )}
-      <div className="pr-inbox-popover-head">
-        Run workflow
-        {sessions.length > 0 && (
-          <span className="hub-menu-head-right">
-            <span className="hub-seg">
-              <button type="button" className={mode === "continue" ? "on" : ""} onClick={() => setMode("continue")}>
-                Continue session
-              </button>
-              <button type="button" className={mode === "new" ? "on" : ""} onClick={() => setMode("new")}>
-                New session
-              </button>
-            </span>
-          </span>
-        )}
-      </div>
-      {ownWorkflows.length === 0 && prWorkflows.length === 0 && <div className="pr-inbox-popover-empty">No enabled workflows.</div>}
-      <WorkflowItems workflows={ownWorkflows} suggestedId={suggested?.id ?? null} onPick={runWorkflow} />
-      {prRef && prWorkflows.length > 0 && (
+      {!finishedPr && (
         <>
-          <div className="pr-inbox-popover-head">On PR #{prRef.number}</div>
-          <WorkflowItems workflows={prWorkflows} suggestedId={null} onPick={runWorkflow} />
+          <div className="pr-inbox-popover-head">
+            Run workflow
+            {sessions.length > 0 && (
+              <span className="hub-menu-head-right">
+                <span className="hub-seg">
+                  <button type="button" className={mode === "continue" ? "on" : ""} aria-pressed={mode === "continue"} onClick={() => setMode("continue")}>
+                    Continue session
+                  </button>
+                  <button type="button" className={mode === "new" ? "on" : ""} aria-pressed={mode === "new"} onClick={() => setMode("new")}>
+                    New session
+                  </button>
+                </span>
+              </span>
+            )}
+          </div>
+          {workflowsError && (
+            <div className="pr-inbox-popover-empty" role="alert">
+              Could not load workflows: {workflowsError}{" "}
+              <button type="button" className="pr-view-retry" onClick={onReloadWorkflows}>
+                Retry
+              </button>
+            </div>
+          )}
+          {!workflowsError && ownWorkflows.length === 0 && prWorkflows.length === 0 && (
+            <div className="pr-inbox-popover-empty">No enabled workflows.</div>
+          )}
+          <WorkflowItems workflows={ownWorkflows} suggestedId={suggested?.id ?? null} onPick={runWorkflow} />
+          {prRef && prWorkflows.length > 0 && (
+            <>
+              <div className="pr-inbox-popover-head">On PR #{prRef.number}</div>
+              <WorkflowItems workflows={prWorkflows} suggestedId={null} onPick={runWorkflow} />
+            </>
+          )}
         </>
       )}
       <div className="pr-inbox-popover-sep" />
@@ -194,6 +223,12 @@ function ActionMenu({
         <ExternalLink size={13} aria-hidden="true" />
         <span>Open on GitHub</span>
       </button>
+      {subject.kind === "pr" && (
+        <button type="button" className="pr-inbox-popover-item" onClick={() => copyBranch(subject.pr.headRefName)}>
+          <Copy size={13} aria-hidden="true" />
+          <span>Copy branch name</span>
+        </button>
+      )}
     </AnchoredPopover>
   );
 }
@@ -202,20 +237,27 @@ export function GitHubRowAction({
   subject,
   viewer,
   sessions,
-  workflows
+  workflows,
+  workflowsError,
+  onReloadWorkflows,
+  unseen,
+  now
 }: {
   subject: RowSubject;
   viewer: string | null;
   sessions: Session[];
   workflows: PrWorkflow[];
+  workflowsError: string | null;
+  onReloadWorkflows: () => void;
+  unseen: ReadonlySet<string>;
+  now: number;
 }) {
-  const now = useNow();
   const selectSession = useAppStore((s) => s.selectSession);
   const openSessionView = usePrStore((s) => s.openSessionView);
   const openRunModal = usePrStore((s) => s.openRunModal);
   const [menuAnchor, setMenuAnchor] = useState<AnchorRect | null>(null);
 
-  const action = rowAction({ subject, viewer, sessions, workflows });
+  const action = rowAction({ subject, viewer, sessions, workflows, unseen });
   const closeMenu = () => setMenuAnchor(null);
   const url = externalLinkOf(subject);
 
@@ -225,6 +267,7 @@ export function GitHubRowAction({
       className={`hub-action-caret${menuAnchor ? " open" : ""}`}
       title="Sessions and workflows"
       aria-label="Sessions and workflows"
+      aria-haspopup="menu"
       aria-expanded={menuAnchor !== null}
       onClick={(e) => setMenuAnchor(menuAnchor ? null : anchorRectOf(e.currentTarget))}
     >
@@ -233,7 +276,18 @@ export function GitHubRowAction({
   );
 
   const menu = menuAnchor && (
-    <ActionMenu subject={subject} viewer={viewer} sessions={sessions} workflows={workflows} anchor={menuAnchor} onClose={closeMenu} />
+    <ActionMenu
+      subject={subject}
+      viewer={viewer}
+      sessions={sessions}
+      workflows={workflows}
+      workflowsError={workflowsError}
+      onReloadWorkflows={onReloadWorkflows}
+      unseen={unseen}
+      now={now}
+      anchor={menuAnchor}
+      onClose={closeMenu}
+    />
   );
 
   if (action.kind === "session") {
