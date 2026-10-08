@@ -12,15 +12,19 @@ import type {
   DriverKind,
   GitStatus,
   HistoryMessage,
+  IssueRef,
   ModelOption,
   PermissionOption,
   PrRef,
   PrSummary,
   Project,
   RetryConnectionResult,
+  RunRef,
   SessionCleanupResult,
+  SessionIssueLink,
   SessionMeta,
   SessionPrLink,
+  SessionRunLink,
   SessionStatus,
   SettingsPatch,
   ShutdownActiveTurn,
@@ -38,14 +42,20 @@ import {
   addUnlinkedKey,
   applyTurnSeen,
   authorLocalBranch,
+  findIssueLink,
   findLink,
   isFinishedPrState,
   linkFromStatus,
+  markIssueLinkSeen,
   markSeen,
   prHeadPlan,
+  removeIssueLink,
   removeLink,
+  removeRunLink,
   removeUnlinkedKey,
+  upsertIssueLink,
   upsertLink,
+  upsertRunLink,
   type PrHeadPlan
 } from "../github/prLinks.js";
 import { prKey, prRefFromUrl } from "../github/prParsers.js";
@@ -623,6 +633,43 @@ export class SessionManager {
     const link = findLink(session.prs, ref);
     if (link) this.store.updateSession(sessionId, { prs: upsertLink(session.prs, markSeen(link, headSha, seenAt ?? Date.now())) });
     return this.emitSession(sessionId);
+  }
+
+  linkIssue(sessionId: string, link: SessionIssueLink): SessionMeta {
+    const session = this.requireSession(sessionId);
+    this.store.updateSession(sessionId, { issues: upsertIssueLink(session.issues, link) });
+    return this.emitSession(sessionId);
+  }
+
+  unlinkIssue(sessionId: string, ref: IssueRef): SessionMeta {
+    const session = this.requireSession(sessionId);
+    this.store.updateSession(sessionId, { issues: removeIssueLink(session.issues, ref) });
+    return this.emitSession(sessionId);
+  }
+
+  markIssueSeen(sessionId: string, ref: IssueRef, seenAt: number): SessionMeta {
+    const session = this.requireSession(sessionId);
+    const link = findIssueLink(session.issues, ref);
+    if (link) this.store.updateSession(sessionId, { issues: upsertIssueLink(session.issues, markIssueLinkSeen(link, seenAt)) });
+    return this.emitSession(sessionId);
+  }
+
+  linkRun(sessionId: string, link: SessionRunLink): SessionMeta {
+    const session = this.requireSession(sessionId);
+    this.store.updateSession(sessionId, { runs: upsertRunLink(session.runs, link) });
+    return this.emitSession(sessionId);
+  }
+
+  unlinkRun(sessionId: string, ref: RunRef): SessionMeta {
+    const session = this.requireSession(sessionId);
+    this.store.updateSession(sessionId, { runs: removeRunLink(session.runs, ref) });
+    return this.emitSession(sessionId);
+  }
+
+  private requireSession(sessionId: string): SessionMeta {
+    const session = this.store.getSession(sessionId);
+    if (!session) throw new Error(`unknown session ${sessionId}`);
+    return session;
   }
 
   private syncPrSeenAfterTurn(sessionId: string, coveredRefs: PrRef[]): void {

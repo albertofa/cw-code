@@ -1383,6 +1383,58 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
+  it("links, marks seen and unlinks an issue, persisting and emitting each change", async () => {
+    const { manager } = makeManager();
+    const emitted: SessionMeta[] = [];
+    manager.setSessionEmitter((meta) => emitted.push(meta));
+    const project = manager.addProject("C:\\proj-issue-links");
+    const session = await manager.createSession(project.id, "claude");
+    const widgets = { host: "github.com", owner: "acme", repo: "widgets", number: 12 };
+    const gadgets = { host: "github.com", owner: "acme", repo: "gadgets", number: 3 };
+    emitted.length = 0;
+
+    manager.linkIssue(session.id, { ref: widgets, origin: "workflow", workflowId: "implement", lastSeenAt: 5 });
+    manager.linkIssue(session.id, { ref: gadgets, origin: "linked", lastSeenAt: 1 });
+    let meta = manager.markIssueSeen(session.id, widgets, 900);
+    expect(meta.issues?.map((link) => [link.ref.number, link.origin, link.lastSeenAt])).toEqual([
+      [12, "workflow", 900],
+      [3, "linked", 1]
+    ]);
+    expect(emitted).toHaveLength(3);
+    expect(emitted.at(-1)?.issues).toEqual(meta.issues);
+
+    meta = manager.markIssueSeen(session.id, widgets, 100);
+    expect(meta.issues?.[0]?.lastSeenAt).toBe(900);
+
+    const [stored] = (await manager.listSessions(project.id)).filter((s) => s.id === session.id);
+    expect(stored?.issues).toEqual(meta.issues);
+
+    manager.unlinkIssue(session.id, widgets);
+    meta = manager.unlinkIssue(session.id, gadgets);
+    expect(meta).not.toHaveProperty("issues");
+    expect(emitted.at(-1)).not.toHaveProperty("issues");
+    manager.dispose();
+  });
+
+  it("links and unlinks a workflow run", async () => {
+    const { manager } = makeManager();
+    const emitted: SessionMeta[] = [];
+    manager.setSessionEmitter((meta) => emitted.push(meta));
+    const project = manager.addProject("C:\\proj-run-links");
+    const session = await manager.createSession(project.id, "claude");
+    const run = { host: "github.com", owner: "acme", repo: "widgets", runId: 987 };
+    emitted.length = 0;
+
+    let meta = manager.linkRun(session.id, { ref: run, origin: "workflow", workflowId: "investigate-run", lastSeenAt: 7 });
+    meta = manager.linkRun(session.id, { ref: { ...run }, origin: "workflow", workflowId: "investigate-run", lastSeenAt: 8 });
+    expect(meta.runs).toEqual([{ ref: run, origin: "workflow", workflowId: "investigate-run", lastSeenAt: 8 }]);
+    expect(emitted).toHaveLength(2);
+
+    meta = manager.unlinkRun(session.id, run);
+    expect(meta).not.toHaveProperty("runs");
+    manager.dispose();
+  });
+
   it("moves interrupted and errored sessions into holding", async () => {
     const { manager } = makeManager();
     const project = manager.addProject("C:\\proj-holding");

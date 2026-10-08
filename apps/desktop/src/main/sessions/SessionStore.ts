@@ -137,6 +137,8 @@ type SessionPatch = Partial<
     | "branch"
     | "prs"
     | "prUnlinked"
+    | "issues"
+    | "runs"
   >
 >;
 
@@ -282,6 +284,14 @@ export class SessionStore {
       if (patch.prs.length === 0) delete current.prs;
       else current.prs = patch.prs;
     } else if ("prs" in patch) delete current.prs;
+    if (patch.issues !== undefined) {
+      if (patch.issues.length === 0) delete current.issues;
+      else current.issues = patch.issues;
+    }
+    if (patch.runs !== undefined) {
+      if (patch.runs.length === 0) delete current.runs;
+      else current.runs = patch.runs;
+    }
     if (patch.prUnlinked !== undefined) current.prUnlinked = patch.prUnlinked;
     else if ("prUnlinked" in patch) delete current.prUnlinked;
     current.updatedAt = Date.now();

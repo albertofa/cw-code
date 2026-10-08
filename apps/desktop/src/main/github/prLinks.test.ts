@@ -1,16 +1,35 @@
 import { describe, expect, it } from "vitest";
-import type { GitBranchInfo, GitPullRequest, GitStatus, SessionMeta, SessionPrLink } from "@cw-code/contracts";
+import type {
+  GitBranchInfo,
+  GitPullRequest,
+  GitStatus,
+  SessionIssueLink,
+  SessionMeta,
+  SessionPrLink,
+  SessionRunLink
+} from "@cw-code/contracts";
 import {
   applyTurnSeen,
   authorLocalBranch,
   canOwnAutoLink,
+  findIssueLink,
   findLink,
+  findRunLink,
+  isValidIssueLink,
   isValidPrLink,
+  isValidRunLink,
+  issueKey,
   linkFromStatus,
+  markIssueLinkSeen,
   markSeen,
   prHeadPlan,
+  removeIssueLink,
   removeLink,
-  upsertLink
+  removeRunLink,
+  runKey,
+  upsertIssueLink,
+  upsertLink,
+  upsertRunLink
 } from "./prLinks.js";
 import { changedWorktreeBranch } from "../sessions/worktreeCleanup.js";
 
@@ -344,6 +363,73 @@ describe("authorLocalBranch", () => {
     const prHead = { number: 1, headRefName: "feature", headRefOid: "sha", viewerIsAuthor: true };
     expect(authorLocalBranch({ prHead }, [local])).toBe(local);
     expect(authorLocalBranch({ prHead: { ...prHead, viewerIsAuthor: false } }, [local])).toBeNull();
+  });
+});
+
+describe("issue and run links", () => {
+  const issueLink: SessionIssueLink = {
+    ref: { host: "github.com", owner: "acme", repo: "widgets", number: 12 },
+    origin: "workflow",
+    workflowId: "implement",
+    lastSeenAt: 5
+  };
+  const runLink: SessionRunLink = {
+    ref: { host: "github.com", owner: "acme", repo: "widgets", runId: 987 },
+    origin: "linked",
+    lastSeenAt: 5
+  };
+
+  it("builds stable keys", () => {
+    expect(issueKey(issueLink.ref)).toBe("github.com/acme/widgets#12");
+    expect(runKey(runLink.ref)).toBe("github.com/acme/widgets/runs/987");
+  });
+
+  it("validates issue links", () => {
+    expect(isValidIssueLink(issueLink)).toBe(true);
+    expect(isValidIssueLink({ ...issueLink, workflowId: undefined })).toBe(true);
+    expect(isValidIssueLink(null)).toBe(false);
+    expect(isValidIssueLink({ ...issueLink, ref: undefined })).toBe(false);
+    expect(isValidIssueLink({ ...issueLink, ref: { ...issueLink.ref, number: 0 } })).toBe(false);
+    expect(isValidIssueLink({ ...issueLink, ref: { ...issueLink.ref, number: 1.5 } })).toBe(false);
+    expect(isValidIssueLink({ ...issueLink, ref: { ...issueLink.ref, repo: "" } })).toBe(false);
+    expect(isValidIssueLink({ ...issueLink, origin: "imported" })).toBe(false);
+    expect(isValidIssueLink({ ...issueLink, workflowId: 3 })).toBe(false);
+    expect(isValidIssueLink({ ...issueLink, lastSeenAt: Number.NaN })).toBe(false);
+  });
+
+  it("validates run links", () => {
+    expect(isValidRunLink(runLink)).toBe(true);
+    expect(isValidRunLink(issueLink)).toBe(false);
+    expect(isValidRunLink({ ...runLink, ref: { ...runLink.ref, runId: -1 } })).toBe(false);
+    expect(isValidRunLink({ ...runLink, ref: { ...runLink.ref, host: "" } })).toBe(false);
+    expect(isValidRunLink({ ...runLink, origin: undefined })).toBe(false);
+    expect(isValidRunLink({ ...runLink, lastSeenAt: "1" })).toBe(false);
+  });
+
+  it("upserts, finds and removes issue links by ref value", () => {
+    const other: SessionIssueLink = { ...issueLink, ref: { ...issueLink.ref, number: 13 } };
+    const refreshed = { ...issueLink, lastSeenAt: 50 };
+    expect(upsertIssueLink(undefined, issueLink)).toEqual([issueLink]);
+    expect(upsertIssueLink([issueLink], other)).toEqual([issueLink, other]);
+    expect(upsertIssueLink([issueLink, other], refreshed)).toEqual([refreshed, other]);
+    expect(findIssueLink([issueLink, other], { ...other.ref })).toBe(other);
+    expect(findIssueLink(undefined, other.ref)).toBeUndefined();
+    expect(removeIssueLink([issueLink, other], { ...issueLink.ref })).toEqual([other]);
+    expect(removeIssueLink(undefined, issueLink.ref)).toEqual([]);
+  });
+
+  it("upserts, finds and removes run links by ref value", () => {
+    const other: SessionRunLink = { ...runLink, ref: { ...runLink.ref, runId: 988 } };
+    const refreshed = { ...runLink, lastSeenAt: 50 };
+    expect(upsertRunLink(undefined, runLink)).toEqual([runLink]);
+    expect(upsertRunLink([runLink, other], refreshed)).toEqual([refreshed, other]);
+    expect(findRunLink([runLink, other], { ...other.ref })).toBe(other);
+    expect(removeRunLink([runLink, other], { ...runLink.ref })).toEqual([other]);
+  });
+
+  it("never moves an issue's lastSeenAt backwards", () => {
+    expect(markIssueLinkSeen(issueLink, 100)).toEqual({ ...issueLink, lastSeenAt: 100 });
+    expect(markIssueLinkSeen(issueLink, 1)).toEqual(issueLink);
   });
 });
 

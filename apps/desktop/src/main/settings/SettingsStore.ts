@@ -1,6 +1,16 @@
 import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
-import type { AppSettings, PrSuggestCondition, PrWorkflow, PrWorkflowIcon, PrWorkspaceChoice, SettingsPatch } from "@cw-code/contracts";
+import type {
+  AppSettings,
+  GitHubKind,
+  GitHubViewGroup,
+  PrSuggestCondition,
+  PrWorkflow,
+  PrWorkflowIcon,
+  PrWorkspaceChoice,
+  SavedGitHubView,
+  SettingsPatch
+} from "@cw-code/contracts";
 import { CLAUDE_CURATED_MODELS } from "../providers/claude/ClaudeCliDriver.js";
 import { writeFileAtomic } from "../storage/atomicFile.js";
 import { backupBeforeRepair } from "../storage/backups.js";
@@ -28,6 +38,11 @@ const VALID_PR_CONDITIONS: readonly PrSuggestCondition[] = [
 ];
 const VALID_WORKFLOW_TARGETS: readonly PrWorkflow["target"][] = ["pr", "issue", "run"];
 const VALID_PR_WORKSPACES: readonly PrWorkspaceChoice[] = ["checkout", "worktree", "linked"];
+const VALID_VIEW_KINDS: readonly GitHubKind[] = ["pr", "issue", "run"];
+const VALID_VIEW_GROUPS: readonly GitHubViewGroup[] = ["triage", "repo", "none"];
+const MAX_SAVED_VIEWS = 50;
+const MAX_VIEW_NAME_LENGTH = 80;
+const MAX_VIEW_QUERY_LENGTH = 512;
 
 function sanitizeWorkflowEntry(entry: unknown): PrWorkflow | null {
   if (!entry || typeof entry !== "object") return null;
@@ -73,6 +88,34 @@ function sanitizePrWorkflows(raw: unknown): PrWorkflow[] {
     if (!seenIds.has(builtIn.id)) sanitized.push({ ...builtIn, enabled: enabledById.get(builtIn.id) ?? builtIn.enabled });
   }
   return sanitized;
+}
+
+function sanitizeSavedView(entry: unknown): SavedGitHubView | null {
+  if (!entry || typeof entry !== "object") return null;
+  const o = entry as Record<string, unknown>;
+  const id = typeof o.id === "string" ? o.id.trim() : "";
+  if (!id) return null;
+  if (!VALID_VIEW_KINDS.includes(o.kind as GitHubKind)) return null;
+  if (!VALID_VIEW_GROUPS.includes(o.group as GitHubViewGroup)) return null;
+  if (typeof o.name !== "string" || typeof o.query !== "string") return null;
+  const name = o.name.trim();
+  const query = o.query.trim();
+  if (name.length > MAX_VIEW_NAME_LENGTH || query.length > MAX_VIEW_QUERY_LENGTH) return null;
+  return { id, kind: o.kind as GitHubKind, name, query, group: o.group as GitHubViewGroup };
+}
+
+function sanitizeSavedViews(raw: unknown): SavedGitHubView[] {
+  const list = Array.isArray(raw) ? raw : [];
+  const seenIds = new Set<string>();
+  const views: SavedGitHubView[] = [];
+  for (const entry of list) {
+    const view = sanitizeSavedView(entry);
+    if (!view || seenIds.has(view.id)) continue;
+    seenIds.add(view.id);
+    views.push(view);
+    if (views.length === MAX_SAVED_VIEWS) break;
+  }
+  return views;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -194,7 +237,7 @@ function sanitize(patch: SettingsPatch): SettingsPatch {
       typeof patch.prAttributionText === "string" ? patch.prAttributionText.trim() : DEFAULT_SETTINGS.prAttributionText;
   }
   if (patch.prWorkflows !== undefined) out.prWorkflows = sanitizePrWorkflows(patch.prWorkflows);
-  if (patch.githubSavedViews !== undefined) out.githubSavedViews = Array.isArray(patch.githubSavedViews) ? patch.githubSavedViews : [];
+  if (patch.githubSavedViews !== undefined) out.githubSavedViews = sanitizeSavedViews(patch.githubSavedViews);
   if (patch.updateChannel !== undefined) {
     out.updateChannel = patch.updateChannel === "stable" || patch.updateChannel === "alpha" ? patch.updateChannel : DEFAULT_SETTINGS.updateChannel;
   }
