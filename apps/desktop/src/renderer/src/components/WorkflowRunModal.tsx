@@ -183,7 +183,16 @@ function PrCard({ pr }: { pr: PrSummary }) {
 }
 
 export function WorkflowRunModal({ request }: { request: RunModalState }) {
-  const { ref } = request;
+  const closeRunModal = usePrStore((s) => s.closeRunModal);
+  const unsupported = request.subject.kind !== "pr";
+  useEffect(() => {
+    if (unsupported) closeRunModal();
+  }, [unsupported]);
+  if (request.subject.kind !== "pr") return null;
+  return <PrWorkflowRunModal request={request} prRef={request.subject.ref} />;
+}
+
+function PrWorkflowRunModal({ request, prRef: ref }: { request: RunModalState; prRef: PrRef }) {
   const key = prKey(ref);
   const detail: PrDetail | undefined = usePrStore((s) => s.detailByKey[key]);
   const detailError = usePrStore((s) => s.detailErrorByKey[key]);

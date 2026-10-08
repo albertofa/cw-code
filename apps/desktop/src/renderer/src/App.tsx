@@ -429,7 +429,7 @@ export function App() {
         <>
           <div className="app-body">
           <Sidebar onOpenSettings={() => openSettings()} onOpenSkills={() => setSkillsOpen(true)} skillsOpen={skillsOpen} />
-          {mainView.kind === "inbox" ? (
+          {mainView.kind === "github" ? (
             <PrInboxView />
           ) : mainView.kind === "pr" ? (
             <PrDetailView key={prKey(mainView.ref)} prRef={mainView.ref} />

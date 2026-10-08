@@ -1,15 +1,16 @@
 import { create } from "zustand";
-import type { PrDetail, PrInboxResult, PrRef, ProjectGitHubRepo } from "../cw.js";
+import type { GitHubKind, PrDetail, PrInboxResult, PrRef, ProjectGitHubRepo, WorkflowSubject } from "../cw.js";
 import { prKey } from "../components/prInbox.js";
 import { errorMessage } from "../components/errorMessage.js";
+import { useGitHubStore } from "./githubStore.js";
 
 export type PrDetailTab = "conversation" | "commits" | "checks" | "files";
 
-export type MainView = { kind: "session" } | { kind: "inbox" } | { kind: "pr"; ref: PrRef; tab: PrDetailTab } | { kind: "usage" };
+export type MainView = { kind: "session" } | { kind: "github" } | { kind: "pr"; ref: PrRef; tab: PrDetailTab } | { kind: "usage" };
 
 export interface RunModalState {
   workflowId: string;
-  ref: PrRef;
+  subject: WorkflowSubject;
   continueSessionId?: string;
   promptOverride?: string;
 }
@@ -30,7 +31,7 @@ interface PrState {
   refreshInbox(force?: boolean): Promise<void>;
   loadDetail(ref: PrRef): Promise<void>;
   loadDiff(ref: PrRef, force?: boolean): Promise<void>;
-  openInbox(): void;
+  openGitHub(kind?: GitHubKind): void;
   openPr(ref: PrRef, tab?: PrDetailTab): void;
   setPrTab(tab: PrDetailTab): void;
   openSessionView(): void;
@@ -69,6 +70,7 @@ export const usePrStore = create<PrState>((set, get) => ({
     try {
       const inbox = await window.cw.getPrInbox(force);
       set({ inbox, inboxLoading: false, inboxError: null });
+      useGitHubStore.getState().syncContext();
     } catch (err) {
       const message = errorMessage(err);
       console.warn(`[pr] inbox refresh failed: ${message}`);
@@ -119,8 +121,9 @@ export const usePrStore = create<PrState>((set, get) => ({
     }
   },
 
-  openInbox() {
-    set({ mainView: { kind: "inbox" } });
+  openGitHub(kind?: GitHubKind) {
+    if (kind) useGitHubStore.getState().setKind(kind);
+    set({ mainView: { kind: "github" } });
     if (!get().inbox && !get().inboxLoading) void get().refreshInbox();
   },
 
@@ -147,6 +150,7 @@ export const usePrStore = create<PrState>((set, get) => ({
   async refreshProjectRepos() {
     try {
       set({ projectRepos: await window.cw.getProjectGitHubRepos() });
+      useGitHubStore.getState().syncContext();
     } catch (err) {
       console.warn(`[pr] project repo lookup failed: ${errorMessage(err)}`);
     }

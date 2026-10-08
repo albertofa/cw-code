@@ -166,7 +166,7 @@ export function PrDetailView({ prRef }: { prRef: PrRef }) {
   const loading = usePrStore((s) => s.detailLoadingByKey[key] ?? false);
   const error = usePrStore((s) => s.detailErrorByKey[key]);
   const activeTab = usePrStore((s) => (s.mainView.kind === "pr" ? s.mainView.tab : "conversation"));
-  const openInbox = usePrStore((s) => s.openInbox);
+  const openGitHub = usePrStore((s) => s.openGitHub);
   const setPrTab = usePrStore((s) => s.setPrTab);
   const loadDetail = usePrStore((s) => s.loadDetail);
   const loadDiff = usePrStore((s) => s.loadDiff);
@@ -208,7 +208,7 @@ export function PrDetailView({ prRef }: { prRef: PrRef }) {
   };
 
   const openWorkflow = (workflowId: string, continueSessionId?: string) => {
-    openRunModal({ workflowId, ref: prRef, continueSessionId });
+    openRunModal({ workflowId, subject: { kind: "pr", ref: prRef }, continueSessionId });
   };
 
   const openSession = (sessionId: string) => {
@@ -218,7 +218,7 @@ export function PrDetailView({ prRef }: { prRef: PrRef }) {
 
   const sendThreadToSession = (thread: PrReviewThread) => {
     const target = threadSendTarget(mainSession, prRef, suggested);
-    openRunModal({ ...target, ref: prRef, promptOverride: threadQuoteText(thread, prRef) });
+    openRunModal({ ...target, subject: { kind: "pr", ref: prRef }, promptOverride: threadQuoteText(thread, prRef) });
   };
 
   const onFixCi = fixCiWorkflow ? () => openWorkflow(fixCiWorkflow.id, mainSession?.id) : null;
@@ -282,7 +282,7 @@ export function PrDetailView({ prRef }: { prRef: PrRef }) {
       <div className="head-seg main-seg" onDoubleClick={() => window.cw.toggleMaximizeWindow()}>
         <div className="head-col col-left">
           <nav className="pr-detail-crumbs" aria-label="Breadcrumb">
-            <button className="pr-detail-crumb-link" onClick={openInbox}>Pull requests</button>
+            <button className="pr-detail-crumb-link" onClick={() => openGitHub("pr")}>Pull requests</button>
             <ChevronRight size={12} aria-hidden="true" />
             <span>{prRef.owner}/{prRef.repo}</span>
             <ChevronRight size={12} aria-hidden="true" />

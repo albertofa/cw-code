@@ -189,7 +189,7 @@ export function PrSessionPanel({ sessionId }: { sessionId: string }) {
   const now = Date.now();
 
   const sendThread = (thread: PrReviewThread) => {
-    openRunModal({ workflowId, ref: link.ref, continueSessionId: sessionId, promptOverride: threadQuoteText(thread, link.ref) });
+    openRunModal({ workflowId, subject: { kind: "pr", ref: link.ref }, continueSessionId: sessionId, promptOverride: threadQuoteText(thread, link.ref) });
   };
 
   const unlink = async () => {

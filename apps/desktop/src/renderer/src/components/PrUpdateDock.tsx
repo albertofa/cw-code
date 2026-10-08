@@ -162,7 +162,7 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
   }
 
   const openInModal = (entry: DockEntry) => {
-    openRunModal({ workflowId: entry.workflowId, ref: entry.item.link.ref, continueSessionId: sessionId });
+    openRunModal({ workflowId: entry.workflowId, subject: { kind: "pr", ref: entry.item.link.ref }, continueSessionId: sessionId });
   };
 
   const send = async () => {

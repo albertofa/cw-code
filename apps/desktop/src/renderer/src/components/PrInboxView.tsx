@@ -362,7 +362,7 @@ export function PrInboxView() {
   const runWorkflow = (ref: PrRef, workflowId: string, continueSessionId?: string) => {
     setSessionsPopover(null);
     setWorkflowPopover(null);
-    openRunModal({ workflowId, ref, continueSessionId });
+    openRunModal({ workflowId, subject: { kind: "pr", ref }, continueSessionId });
   };
 
   const openExternalLink = (url: string) => {

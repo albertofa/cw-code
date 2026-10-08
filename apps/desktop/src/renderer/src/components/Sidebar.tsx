@@ -243,7 +243,7 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
   const inbox = usePrStore((s) => s.inbox);
   const detailByKey = usePrStore((s) => s.detailByKey);
   const mainView = usePrStore((s) => s.mainView);
-  const openInbox = usePrStore((s) => s.openInbox);
+  const openGitHub = usePrStore((s) => s.openGitHub);
   const openSessionView = usePrStore((s) => s.openSessionView);
   const openUsage = usePrStore((s) => s.openUsage);
   const [query, setQuery] = useState("");
@@ -438,7 +438,7 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
   }
   const attentionCount = needsAttentionCount(inboxItems);
   const anyUnseen = Object.values(sessionsByProject).some((list) => list.some((s) => sessionHasUnseen(s, summaryByKey)));
-  const inboxActive = mainView.kind === "inbox" || mainView.kind === "pr";
+  const inboxActive = mainView.kind === "github" || mainView.kind === "pr";
   const usageActive = mainView.kind === "usage";
   const newSessionActive = !inboxActive && !usageActive && (pendingDriver !== null || !activeSessionId);
   const liveCount = (list: Session[] | undefined): number => (list ?? []).filter((s) => s.status !== "archived").length;
@@ -1002,7 +1002,7 @@ export function Sidebar({ onOpenSettings, onOpenSkills, skillsOpen = false }: { 
           <button
             type="button"
             className={`side-nav-row${inboxActive ? " active" : ""}`}
-            onClick={openInbox}
+            onClick={() => openGitHub()}
             title={inboxTitle}
             aria-label={inboxLabel}
             aria-pressed={inboxActive}
