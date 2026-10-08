@@ -1,6 +1,16 @@
 import type { IssueRef, RepoRef, RunRef } from "@cw-code/contracts";
 import { GH_HOST } from "./githubAccount.js";
-import { OWNER_RE, REPO_RE, assertRunId } from "./PullRequestService.js";
+
+export const OWNER_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]*)$/;
+export const REPO_RE = /^[A-Za-z0-9._-]+$/;
+
+export function isSafePositiveInt(value: unknown): value is number {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
+
+export function assertRunId(runId: number): void {
+  if (!isSafePositiveInt(runId)) throw new Error(`invalid check run id '${String(runId)}'`);
+}
 
 export function assertOwnerLogin(login: unknown): asserts login is string {
   if (typeof login !== "string" || !OWNER_RE.test(login)) throw new Error(`invalid organization '${String(login)}'`);

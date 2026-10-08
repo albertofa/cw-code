@@ -2,9 +2,10 @@ import { existsSync } from "node:fs";
 import { mkdir, readdir } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, relative, resolve } from "node:path";
-import type { AppSettings, PrDetail, PrInboxResult, PrRef, PrSummary, Project } from "@cw-code/contracts";
+import type { AppSettings, PrDetail, PrInboxResult, PrRef, PrSummary, Project, RepoRef } from "@cw-code/contracts";
 import { authenticatedEnvironment, execText, type GitService } from "../fs/GitService.js";
 import { expandHome } from "../skills/skillPaths.js";
+import { OWNER_RE, REPO_RE, assertRepoRef, assertRunId, isSafePositiveInt } from "./githubRefs.js";
 import { GH_HOST, githubCliBinary, resolveGitHubAccount, type AccountResolution } from "./githubAccount.js";
 import { DETAIL_QUERY, HEAD_QUERY, INBOX_QUERY, INBOX_SEARCH_LIMIT, inboxSearchQueries } from "./prQueries.js";
 import { parseDetail, parseHead, parseInbox, prKey } from "./prParsers.js";
@@ -12,13 +13,6 @@ import { parseDetail, parseHead, parseInbox, prKey } from "./prParsers.js";
 const INBOX_CACHE_TTL_MS = 30_000;
 const REQUEST_TIMEOUT_MS = 20_000;
 const CLONE_TIMEOUT_MS = 5 * 60_000;
-
-export const OWNER_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]*)$/;
-export const REPO_RE = /^[A-Za-z0-9._-]+$/;
-
-function isSafePositiveInt(value: unknown): value is number {
-  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
-}
 
 export function assertPrRef(ref: PrRef): void {
   if (!ref || typeof ref !== "object") throw new Error("invalid pull request reference");
@@ -28,10 +22,6 @@ export function assertPrRef(ref: PrRef): void {
     throw new Error(`invalid repository name '${String(ref.repo)}'`);
   }
   if (!isSafePositiveInt(ref.number)) throw new Error(`invalid pull request number '${String(ref.number)}'`);
-}
-
-export function assertRunId(runId: number): void {
-  if (!isSafePositiveInt(runId)) throw new Error(`invalid check run id '${String(runId)}'`);
 }
 
 export function mergeInboxItems(lists: PrSummary[][]): PrSummary[] {
@@ -181,8 +171,8 @@ export class PullRequestService {
     );
   }
 
-  async clone(ref: PrRef): Promise<Project> {
-    assertPrRef(ref);
+  async clone(ref: RepoRef): Promise<Project> {
+    assertRepoRef(ref);
     const target = cloneTargetPath(this.settings().prCloneRoot, ref);
     const inFlight = this.cloneInFlight.get(target);
     if (inFlight) return inFlight;
@@ -193,7 +183,7 @@ export class PullRequestService {
     return promise;
   }
 
-  private async computeClone(ref: PrRef, target: string): Promise<Project> {
+  private async computeClone(ref: RepoRef, target: string): Promise<Project> {
     if (existsSync(target)) {
       const repositoryRoot = await this.git.repositoryRoot(target).catch(() => null);
       if (repositoryRoot && samePath(repositoryRoot, target)) {

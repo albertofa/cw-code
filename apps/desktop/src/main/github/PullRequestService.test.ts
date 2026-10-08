@@ -1,7 +1,8 @@
 import { join, resolve } from "node:path";
 import { describe, expect, it } from "vitest";
 import type { PrRef, PrSummary } from "@cw-code/contracts";
-import { assertPrRef, assertRunId, cloneTargetPath, mergeInboxItems } from "./PullRequestService.js";
+import { assertRunId } from "./githubRefs.js";
+import { assertPrRef, cloneTargetPath, mergeInboxItems } from "./PullRequestService.js";
 
 function ref(overrides: Partial<PrRef> = {}): PrRef {
   return { host: "github.com", owner: "acme", repo: "widgets", number: 1, ...overrides };

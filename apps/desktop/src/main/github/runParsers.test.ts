@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { graphqlOutcome, mapRestRun, newCiActivity, parseRunSuites } from "./runParsers.js";
+import { graphqlOutcome, graphqlPartialFailure, mapRestRun, newCiActivity, parseRunSuites } from "./runParsers.js";
 
 function suite(runId: number | null, overrides: Record<string, unknown> = {}) {
   return {
@@ -91,7 +91,7 @@ describe("parseRunSuites", () => {
   });
 
   it("maps a default-branch source with the commit headline and no PR number", () => {
-    const scheduled = suite(200, { status: "QUEUED", conclusion: null, workflowRun: { ...suite(200).workflowRun, event: "schedule" } });
+    const scheduled = suite(200, { status: "QUEUED", conclusion: null, branch: { name: "main" }, workflowRun: { ...suite(200).workflowRun, event: "schedule" } });
     const [run] = parseRunSuites(JSON.stringify({ data: { r0: defaultBranch("acme/widgets", [scheduled]) } }));
     expect(run).toMatchObject({
       ref: { owner: "acme", repo: "widgets", runId: 200 },
@@ -110,7 +110,8 @@ describe("parseRunSuites", () => {
       data: {
         o0: {
           repositories: {
-            nodes: [defaultBranch("acme/widgets", [suite(300)]), defaultBranch("acme/gadgets", [suite(301, { status: "IN_PROGRESS", conclusion: null })])]
+            nodes: [defaultBranch("acme/widgets", [suite(300, { branch: { name: "main" } })]),
+              defaultBranch("acme/gadgets", [suite(301, { status: "IN_PROGRESS", conclusion: null, branch: { name: "main" } })])]
           }
         }
       }
@@ -119,6 +120,17 @@ describe("parseRunSuites", () => {
     expect(runs.map((run) => `${run.ref.owner}/${run.ref.repo}#${run.ref.runId}`)).toEqual(["acme/widgets#300", "acme/gadgets#301"]);
     expect(runs[1].status).toBe("in_progress");
     expect(runs.every((run) => run.onDefaultBranch)).toBe(true);
+  });
+
+  it("flags onDefaultBranch only for suites on the default branch itself", () => {
+    const json = JSON.stringify({
+      data: { r0: defaultBranch("acme/widgets", [suite(700, { branch: { name: "main" } }), suite(701, { branch: { name: "feature" } }), suite(702, { branch: null })]) }
+    });
+    expect(parseRunSuites(json).map((run) => [run.ref.runId, run.onDefaultBranch])).toEqual([
+      [700, true],
+      [701, false],
+      [702, false]
+    ]);
   });
 
   it("drops suites without a workflow run", () => {
@@ -165,6 +177,20 @@ describe("graphqlOutcome", () => {
     });
     expect(graphqlOutcome(JSON.stringify({ errors: [{ message: "Bad credentials" }] }))).toEqual({ hasData: false, message: "Bad credentials" });
     expect(graphqlOutcome("garbage")).toEqual({ hasData: false, message: null });
+  });
+});
+
+describe("graphqlPartialFailure", () => {
+  it("describes errors that arrive together with data", () => {
+    expect(graphqlPartialFailure(JSON.stringify({ data: { r0: null }, errors: [{ message: "Could not resolve to a Repository" }] }))).toBe(
+      "Some sources failed: Could not resolve to a Repository"
+    );
+  });
+
+  it("is null for clean responses and for responses without data", () => {
+    expect(graphqlPartialFailure(JSON.stringify({ data: { r0: {} } }))).toBeNull();
+    expect(graphqlPartialFailure(JSON.stringify({ errors: [{ message: "Bad credentials" }] }))).toBeNull();
+    expect(graphqlPartialFailure("garbage")).toBeNull();
   });
 });
 

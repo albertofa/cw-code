@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import type { AppSettings, RunRef, WorkflowRunSummary } from "@cw-code/contracts";
-import { RunWatcher } from "./RunWatcher.js";
+import { RunWatcher, rateLimitDelayMs } from "./RunWatcher.js";
 import type { GhExec } from "./RunsService.js";
 
 const REF_A: RunRef = { host: "github.com", owner: "acme", repo: "widgets", runId: 1 };
@@ -28,6 +28,10 @@ function restRun(id: number, status: string, conclusion: string | null = null) {
 
 function ok(headers: string[], body: unknown) {
   return { code: 0, stdout: `HTTP/2.0 200 OK\r\n${headers.join("\r\n")}\r\n\r\n${JSON.stringify(body)}`, stderr: "" };
+}
+
+function failure(statusLine: string, headers: string[] = []) {
+  return { code: 1, stdout: `${[statusLine, ...headers].join("\r\n")}\r\n\r\n{}`, stderr: "" };
 }
 
 function notModified() {
@@ -128,15 +132,78 @@ describe("RunWatcher", () => {
     watcher.dispose();
   });
 
-  it("stops every timer when an empty set is watched while hidden", async () => {
-    const { exec, watcher } = setup(async () => notModified());
+  it("pauses every timer while hidden, even with runs watched, and resumes when visible", async () => {
+    const { exec, watcher } = setup(async (args) => (isJobsCall(args) ? NO_JOBS : notModified()));
     watcher.setActive(false);
     watcher.watch([REF_A]);
-    expect(vi.getTimerCount()).toBeGreaterThan(0);
-    watcher.watch([]);
     expect(vi.getTimerCount()).toBe(0);
     await vi.advanceTimersByTimeAsync(120_000);
     expect(exec).not.toHaveBeenCalled();
+
+    watcher.setActive(true);
+    expect(vi.getTimerCount()).toBe(2);
+    watcher.setActive(false);
+    expect(vi.getTimerCount()).toBe(0);
+    watcher.dispose();
+  });
+
+  it("stops the runs timer when an empty set is watched while visible", () => {
+    const { watcher } = setup(async () => notModified());
+    watcher.watch([REF_A]);
+    expect(vi.getTimerCount()).toBe(2);
+    watcher.watch([]);
+    expect(vi.getTimerCount()).toBe(1);
+    watcher.dispose();
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it("discards a notifications result that completes after a pause", async () => {
+    let release: (value: Awaited<ReturnType<GhExec>>) => void = () => undefined;
+    const { watcher } = setup(() => new Promise((resolve) => (release = resolve)));
+    const onCiActivity = vi.fn();
+    watcher.onCiActivity = onCiActivity;
+    watcher.watch([]);
+    await vi.advanceTimersByTimeAsync(60_000);
+    watcher.setActive(false);
+    release(ok([], [{ reason: "ci_activity", updated_at: "2024-03-01T11:00:00Z" }]));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(onCiActivity).not.toHaveBeenCalled();
+    watcher.dispose();
+  });
+
+  it("emits the polled ref and unwatches a run that returns 404, warning once", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const upperRef: RunRef = { host: "github.com", owner: "Acme", repo: "Widgets", runId: 1 };
+    const { exec, watcher, changed } = setup(async (args) => {
+      if (isJobsCall(args)) return NO_JOBS;
+      if (args.at(-1)?.includes("/runs/2")) return failure("HTTP/2.0 404 Not Found");
+      return ok([], restRun(1, "in_progress"));
+    });
+    watcher.watch([upperRef, REF_B]);
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(changed[0][0].ref).toEqual(upperRef);
+    await vi.advanceTimersByTimeAsync(30_000);
+    const missing = exec.mock.calls.filter(([args]) => args.at(-1)?.endsWith("/runs/2"));
+    expect(missing).toHaveLength(1);
+    expect(warn.mock.calls.filter(([message]) => String(message).includes("404"))).toHaveLength(1);
+    expect(String(warn.mock.calls[0][0])).toContain("[github]");
+    warn.mockRestore();
+    watcher.dispose();
+  });
+
+  it("delays the next poll until the advertised retry-after and warns once", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const { exec, watcher } = setup(async () => failure("HTTP/2.0 429 Too Many Requests", ["retry-after: 120"]));
+    const runCalls = () => exec.mock.calls.filter(([args]) => args.at(-1)?.endsWith("/runs/1")).length;
+    watcher.watch([REF_A]);
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(runCalls()).toBe(1);
+    await vi.advanceTimersByTimeAsync(119_000);
+    expect(runCalls()).toBe(1);
+    await vi.advanceTimersByTimeAsync(1_000);
+    expect(runCalls()).toBe(2);
+    expect(warn.mock.calls.filter(([message]) => String(message).includes("runs/1") && String(message).includes("429"))).toHaveLength(1);
+    warn.mockRestore();
     watcher.dispose();
   });
 
@@ -191,6 +258,7 @@ describe("RunWatcher", () => {
   });
 
   it("survives exec failures and keeps polling", async () => {
+    vi.spyOn(console, "warn").mockImplementation(() => undefined);
     let call = 0;
     const { watcher, changed } = setup(async (args) => {
       call += 1;
@@ -198,12 +266,29 @@ describe("RunWatcher", () => {
       if (isJobsCall(args)) return NO_JOBS;
       return ok([], restRun(1, "in_progress"));
     });
-    watcher.setActive(false);
     watcher.watch([REF_A]);
     await vi.advanceTimersByTimeAsync(15_000);
     expect(changed).toHaveLength(0);
     await vi.advanceTimersByTimeAsync(15_000);
     expect(changed).toHaveLength(1);
     watcher.dispose();
+  });
+});
+
+describe("rateLimitDelayMs", () => {
+  const now = Date.parse("2024-03-01T10:00:00Z");
+
+  it("uses retry-after seconds and never goes below 60 seconds", () => {
+    expect(rateLimitDelayMs({ "retry-after": "120" }, now)).toBe(120_000);
+    expect(rateLimitDelayMs({ "retry-after": "5" }, now)).toBe(60_000);
+  });
+
+  it("falls back to x-ratelimit-reset epoch seconds", () => {
+    expect(rateLimitDelayMs({ "x-ratelimit-reset": String(now / 1000 + 300) }, now)).toBe(300_000);
+    expect(rateLimitDelayMs({ "x-ratelimit-reset": String(now / 1000 - 10) }, now)).toBe(60_000);
+  });
+
+  it("defaults to 60 seconds without headers", () => {
+    expect(rateLimitDelayMs({}, now)).toBe(60_000);
   });
 });

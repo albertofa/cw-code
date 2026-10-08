@@ -5,7 +5,7 @@ import { assertSearchQuery, withTypeQualifier } from "./GitHubSearchService.js";
 import { githubCliBinary, resolveGitHubAccount } from "./githubAccount.js";
 import { assertOwnerLogin, assertRepoRef, assertRunRef } from "./githubRefs.js";
 import { MAX_RUN_ORGS, MAX_RUN_REPOS, RUNS_PR_QUERY, runsSourcesQuery } from "./runQueries.js";
-import { graphqlOutcome, parseRunSuites } from "./runParsers.js";
+import { graphqlOutcome, graphqlPartialFailure, parseRunSuites } from "./runParsers.js";
 
 const RUNS_CACHE_TTL_MS = 30_000;
 const REQUEST_TIMEOUT_MS = 20_000;
@@ -53,8 +53,18 @@ function normalizeSources(sources: RunSources): NormalizedSources {
   };
 }
 
-function cacheKey(sources: NormalizedSources): string {
-  return JSON.stringify([sources.prSearchQuery, sources.repos.map((repo) => `${repo.owner}/${repo.repo}`.toLowerCase()), sources.orgs.map((org) => org.toLowerCase())]);
+function cacheKey(login: string, sources: NormalizedSources): string {
+  return JSON.stringify([
+    login.toLowerCase(),
+    sources.prSearchQuery,
+    sources.repos.map((repo) => `${repo.owner}/${repo.repo}`.toLowerCase()),
+    sources.orgs.map((org) => org.toLowerCase())
+  ]);
+}
+
+interface SourceRuns {
+  runs: WorkflowRunSummary[];
+  warning: string | null;
 }
 
 export class RunsService {
@@ -68,12 +78,15 @@ export class RunsService {
 
   async runs(sources: RunSources, force = false): Promise<RunsResult> {
     const normalized = normalizeSources(sources);
-    const key = cacheKey(normalized);
+    const resolution = await resolveGitHubAccount(this.settings);
+    if ("error" in resolution) return { account: null, items: [], fetchedAt: Date.now(), error: resolution.error };
+    const account: GitHubAccountRef = { host: resolution.account.host, login: resolution.account.login };
+    const key = cacheKey(account.login, normalized);
     const cached = this.cache.get(key);
     if (!force && cached && cached.expiresAt > Date.now()) return cached.value;
     const pending = this.inFlight.get(key);
     if (pending) return pending;
-    const promise = this.compute(normalized)
+    const promise = this.compute(normalized, account)
       .then((value) => {
         if (value.error === null) this.remember(key, value);
         return value;
@@ -93,12 +106,9 @@ export class RunsService {
     this.cache.set(key, { expiresAt: now + RUNS_CACHE_TTL_MS, value });
   }
 
-  private async compute(sources: NormalizedSources): Promise<RunsResult> {
+  private async compute(sources: NormalizedSources, account: GitHubAccountRef): Promise<RunsResult> {
     const fetchedAt = Date.now();
-    const resolution = await resolveGitHubAccount(this.settings);
-    if ("error" in resolution) return { account: null, items: [], fetchedAt, error: resolution.error };
-    const account: GitHubAccountRef = { host: resolution.account.host, login: resolution.account.login };
-    const requests: Array<Promise<WorkflowRunSummary[]>> = [];
+    const requests: Array<Promise<SourceRuns>> = [];
     if (sources.prSearchQuery !== null) {
       requests.push(this.request(["-f", `query=${RUNS_PR_QUERY}`, "-f", `q=${sources.prSearchQuery}`]));
     }
@@ -111,24 +121,25 @@ export class RunsService {
     }
     const settled = await Promise.allSettled(requests);
     const items = new Map<number, WorkflowRunSummary>();
-    const failures: string[] = [];
+    const problems: string[] = [];
     for (const outcome of settled) {
       if (outcome.status === "rejected") {
-        failures.push((outcome.reason as Error).message || "GitHub CLI error");
+        problems.push((outcome.reason as Error).message || "GitHub CLI error");
         continue;
       }
-      for (const run of outcome.value) {
+      if (outcome.value.warning) problems.push(outcome.value.warning);
+      for (const run of outcome.value.runs) {
         if (!items.has(run.ref.runId)) items.set(run.ref.runId, run);
       }
     }
-    return { account, items: [...items.values()], fetchedAt, error: failures[0] ?? null };
+    return { account, items: [...items.values()], fetchedAt, error: problems[0] ?? null };
   }
 
-  private async request(graphqlArgs: string[]): Promise<WorkflowRunSummary[]> {
+  private async request(graphqlArgs: string[]): Promise<SourceRuns> {
     const { code, stdout, stderr } = await this.exec(["api", "graphql", ...graphqlArgs]);
     const outcome = graphqlOutcome(stdout);
     if (!outcome.hasData) throw new Error(outcome.message || stderr.trim() || `GitHub CLI exited with code ${code}`);
-    return parseRunSuites(stdout);
+    return { runs: parseRunSuites(stdout), warning: graphqlPartialFailure(stdout) };
   }
 
   async runLog(ref: RunRef): Promise<string> {

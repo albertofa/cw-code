@@ -55,7 +55,7 @@ interface CommitContext {
   sha: string;
   title: string;
   prNumber: number | null;
-  onDefaultBranch: boolean;
+  defaultBranch: string | null;
 }
 
 function suiteToRun(suite: Record<string, unknown>, context: CommitContext): WorkflowRunSummary | null {
@@ -83,7 +83,7 @@ function suiteToRun(suite: Record<string, unknown>, context: CommitContext): Wor
     status,
     conclusion: status === "completed" ? mapRunConclusion(suite.conclusion) : null,
     prNumber: context.prNumber,
-    onDefaultBranch: context.onDefaultBranch,
+    onDefaultBranch: context.defaultBranch !== null && branch === context.defaultBranch,
     createdAt,
     updatedAt: asEpochMs(workflowRun.updatedAt) || asEpochMs(suite.updatedAt) || createdAt,
     jobs: asNodes(suite.checkRuns).map((job) => mapJob(job, "detailsUrl", "startedAt", "completedAt"))
@@ -106,7 +106,7 @@ function pullRequestRuns(data: Record<string, unknown>): WorkflowRunSummary[] {
       sha: asString(commit.oid),
       title: asString(node.title),
       prNumber: number,
-      onDefaultBranch: false
+      defaultBranch: null
     });
   });
 }
@@ -118,7 +118,7 @@ function defaultBranchRuns(repository: Record<string, unknown>): WorkflowRunSumm
     sha: asString(commit.oid),
     title: asString(commit.messageHeadline),
     prNumber: null,
-    onDefaultBranch: true
+    defaultBranch: asString(asRecord(repository.defaultBranchRef).name) || null
   });
 }
 
@@ -189,4 +189,9 @@ export function newCiActivity(notifications: unknown, since: number): { found: b
     }
   }
   return { found, latest };
+}
+
+export function graphqlPartialFailure(json: string): string | null {
+  const { hasData, message } = graphqlOutcome(json);
+  return hasData && message ? `Some sources failed: ${message}` : null;
 }
