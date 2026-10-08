@@ -207,6 +207,83 @@ describe("RunWatcher", () => {
     watcher.dispose();
   });
 
+  it("treats a 403 without rate-limit headers as a normal failure and a 403 with remaining 0 as a rate limit", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    let headers: string[] = [];
+    const { exec, watcher } = setup(async () => failure("HTTP/2.0 403 Forbidden", headers));
+    const runCalls = () => exec.mock.calls.filter(([args]) => args.at(-1)?.endsWith("/runs/1")).length;
+    watcher.watch([REF_A]);
+    await vi.advanceTimersByTimeAsync(15_000);
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(runCalls()).toBe(2);
+    expect(warn.mock.calls.filter(([message]) => String(message).includes("runs/1"))).toHaveLength(1);
+
+    headers = ["x-ratelimit-remaining: 0", `x-ratelimit-reset: ${Date.now() / 1000 + 300}`];
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(runCalls()).toBe(3);
+    await vi.advanceTimersByTimeAsync(200_000);
+    expect(runCalls()).toBe(3);
+    await vi.advanceTimersByTimeAsync(100_000);
+    expect(runCalls()).toBe(4);
+    warn.mockRestore();
+    watcher.dispose();
+  });
+
+  it("warns again when a scope fails after recovering", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const responses = [failure("HTTP/2.0 500 Server Error"), failure("HTTP/2.0 500 Server Error"), notModified(), failure("HTTP/2.0 500 Server Error")];
+    let call = 0;
+    const { watcher } = setup(async () => responses[Math.min(call++, responses.length - 1)]);
+    watcher.setActive(false);
+    watcher.setActive(true);
+    watcher.watch([REF_A]);
+    for (let tick = 0; tick < 4; tick += 1) await vi.advanceTimersByTimeAsync(15_000);
+    expect(warn.mock.calls.filter(([message]) => String(message).includes("runs/1"))).toHaveLength(2);
+    warn.mockRestore();
+    watcher.dispose();
+  });
+
+  it("discards the whole tick when a pause happens during a later batch", async () => {
+    const refs = [1, 2, 3, 4, 5].map((runId) => ({ ...REF_A, runId }));
+    let releaseFifth: (value: Awaited<ReturnType<GhExec>>) => void = () => undefined;
+    let fifthCalls = 0;
+    const { exec, watcher, changed } = setup((args) => {
+      if (isJobsCall(args)) return Promise.resolve(NO_JOBS);
+      const path = args.at(-1) ?? "";
+      if (path.endsWith("/runs/5") && fifthCalls++ === 0) return new Promise((resolve) => (releaseFifth = resolve));
+      return Promise.resolve(ok(['etag: "e"'], restRun(Number(path.split("/").pop()), "in_progress")));
+    });
+    watcher.watch(refs);
+    await vi.advanceTimersByTimeAsync(15_000);
+    watcher.setActive(false);
+    releaseFifth(ok(['etag: "e"'], restRun(5, "in_progress")));
+    await vi.advanceTimersByTimeAsync(0);
+    expect(changed).toHaveLength(0);
+
+    watcher.setActive(true);
+    await vi.advanceTimersByTimeAsync(15_000);
+    const firstRunCalls = exec.mock.calls.filter(([args]) => args.at(-1)?.endsWith("/runs/1"));
+    expect(firstRunCalls.at(-1)?.[0]).not.toContain('If-None-Match: "e"');
+    expect(changed).toHaveLength(1);
+    expect(changed[0]).toHaveLength(5);
+    watcher.dispose();
+  });
+
+  it("resumes polling after dispose when watch and setActive are called again", async () => {
+    const { exec, watcher, changed } = setup(async (args) => (isJobsCall(args) ? NO_JOBS : ok([], restRun(1, "in_progress"))));
+    watcher.watch([REF_A]);
+    watcher.dispose();
+    expect(vi.getTimerCount()).toBe(0);
+    await vi.advanceTimersByTimeAsync(60_000);
+    expect(exec).not.toHaveBeenCalled();
+
+    watcher.setActive(true);
+    watcher.watch([REF_A]);
+    await vi.advanceTimersByTimeAsync(15_000);
+    expect(changed).toHaveLength(1);
+    watcher.dispose();
+  });
+
   it("keeps polling notifications while visible with nothing watched, and stops on dispose", async () => {
     const { exec, watcher } = setup(async () => notModified());
     watcher.watch([]);

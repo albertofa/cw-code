@@ -9,6 +9,7 @@ const RUN_POLL_INTERVAL_MS = 15_000;
 const MIN_NOTIFICATIONS_INTERVAL_SECONDS = 60;
 const MIN_RATE_LIMIT_DELAY_MS = 60_000;
 const RUN_POLL_CONCURRENCY = 4;
+const NOTIFICATIONS_SCOPE = "notifications";
 
 function runKey(ref: RunRef): string {
   return `${ref.host}/${ref.owner}/${ref.repo}/runs/${ref.runId}`.toLowerCase();
@@ -18,8 +19,9 @@ function runPath(ref: RunRef): string {
   return `repos/${ref.owner}/${ref.repo}/actions/runs/${ref.runId}`;
 }
 
-function isRateLimited(status: number): boolean {
-  return status === 403 || status === 429;
+function isRateLimited(status: number, headers: Record<string, string>): boolean {
+  if (status === 429) return true;
+  return status === 403 && (headers["x-ratelimit-remaining"] === "0" || headers["retry-after"] !== undefined);
 }
 
 export function rateLimitDelayMs(headers: Record<string, string>, now: number): number {
@@ -38,9 +40,8 @@ export class RunWatcher {
   private watched = new Map<string, RunRef>();
   private etags = new Map<string, string>();
   private active = true;
-  private disposed = false;
   private epoch = 0;
-  private warned = new Set<string>();
+  private warned = new Map<string, Set<string>>();
   private runsTimer: ReturnType<typeof setTimeout> | null = null;
   private runsBusy = false;
   private runsBlockedUntil = 0;
@@ -66,6 +67,9 @@ export class RunWatcher {
     for (const key of this.etags.keys()) {
       if (!next.has(key)) this.etags.delete(key);
     }
+    for (const scope of this.warned.keys()) {
+      if (scope !== NOTIFICATIONS_SCOPE && !next.has(scope)) this.warned.delete(scope);
+    }
     this.watched = next;
     this.reconcile();
   }
@@ -78,26 +82,33 @@ export class RunWatcher {
 
   dispose(): void {
     this.epoch += 1;
-    this.disposed = true;
     this.watched.clear();
     this.etags.clear();
     this.warned.clear();
-    this.reconcile();
+    this.runsBlockedUntil = 0;
+    this.notificationsBlockedUntil = 0;
+    this.notificationsIntervalSeconds = MIN_NOTIFICATIONS_INTERVAL_SECONDS;
+    this.clearRunsTimer();
+    this.clearNotificationsTimer();
   }
 
   private reconcile(): void {
-    const polling = !this.disposed && this.active;
-    if (polling && this.watched.size > 0) this.scheduleRuns();
+    if (this.active && this.watched.size > 0) this.scheduleRuns();
     else this.clearRunsTimer();
-    if (polling) this.scheduleNotifications();
+    if (this.active) this.scheduleNotifications();
     else this.clearNotificationsTimer();
   }
 
-  private warnOnce(scope: string, status: string): void {
-    const key = `${scope}|${status}`;
-    if (this.warned.has(key)) return;
-    this.warned.add(key);
-    console.warn(`[github] ${scope} polling failed: ${status}`);
+  private warnOnce(scope: string, status: string, detail?: string): void {
+    const seen = this.warned.get(scope) ?? new Set<string>();
+    this.warned.set(scope, seen);
+    if (seen.has(status)) return;
+    seen.add(status);
+    console.warn(`[github] ${scope} polling failed: ${status}${detail ? ` (${detail})` : ""}`);
+  }
+
+  private markHealthy(scope: string): void {
+    this.warned.delete(scope);
   }
 
   private clearRunsTimer(): void {
@@ -132,35 +143,38 @@ export class RunWatcher {
   private async pollRuns(): Promise<void> {
     const epoch = this.epoch;
     const refs = [...this.watched.values()];
-    const changed: WorkflowRunSummary[] = [];
+    const outcomes: RunPoll[] = [];
     for (let offset = 0; offset < refs.length; offset += RUN_POLL_CONCURRENCY) {
       const batch = refs.slice(offset, offset + RUN_POLL_CONCURRENCY);
-      const polled = await Promise.all(
-        batch.map((ref) =>
-          this.pollRun(ref).catch((error: Error): RunPoll => {
-            this.warnOnce(runKey(ref), `error ${error.message}`);
-            return { kind: "unchanged" };
-          })
-        )
+      outcomes.push(
+        ...(await Promise.all(
+          batch.map((ref) =>
+            this.pollRun(ref).catch((error: Error): RunPoll => {
+              this.warnOnce(runKey(ref), "error", error.message);
+              return { kind: "unchanged" };
+            })
+          )
+        ))
       );
-      if (epoch !== this.epoch) return;
-      batch.forEach((ref, index) => {
-        const key = runKey(ref);
-        const outcome = polled[index];
-        if (!this.watched.has(key)) return;
-        if (outcome.kind === "gone") {
+    }
+    if (epoch !== this.epoch) return;
+    const changed: WorkflowRunSummary[] = [];
+    refs.forEach((ref, index) => {
+      const key = runKey(ref);
+      const outcome = outcomes[index];
+      if (!this.watched.has(key)) return;
+      if (outcome.kind === "gone") {
+        this.watched.delete(key);
+        this.etags.delete(key);
+      } else if (outcome.kind === "changed") {
+        if (outcome.etag) this.etags.set(key, outcome.etag);
+        if (outcome.run.status === "completed") {
           this.watched.delete(key);
           this.etags.delete(key);
-        } else if (outcome.kind === "changed") {
-          if (outcome.etag) this.etags.set(key, outcome.etag);
-          if (outcome.run.status === "completed") {
-            this.watched.delete(key);
-            this.etags.delete(key);
-          }
-          changed.push(outcome.run);
         }
-      });
-    }
+        changed.push(outcome.run);
+      }
+    });
     if (changed.length > 0) this.onRunsChanged(changed);
   }
 
@@ -173,12 +187,15 @@ export class RunWatcher {
       this.warnOnce(key, "unparseable response");
       return { kind: "unchanged" };
     }
-    if (response.status === 304) return { kind: "unchanged" };
+    if (response.status === 304) {
+      this.markHealthy(key);
+      return { kind: "unchanged" };
+    }
     if (response.status === 404 || response.status === 410) {
       this.warnOnce(key, String(response.status));
       return { kind: "gone" };
     }
-    if (isRateLimited(response.status)) {
+    if (isRateLimited(response.status, response.headers)) {
       this.warnOnce(key, String(response.status));
       this.runsBlockedUntil = Date.now() + rateLimitDelayMs(response.headers, Date.now());
       return { kind: "unchanged" };
@@ -189,7 +206,7 @@ export class RunWatcher {
     }
     const jobs = await this.exec(["api", `${runPath(ref)}/jobs?per_page=100`]);
     if (jobs.code !== 0) {
-      this.warnOnce(key, `jobs exit ${jobs.code}`);
+      this.warnOnce(key, "jobs failed", `exit ${jobs.code}`);
       return { kind: "unchanged" };
     }
     const summary = mapRestRun(JSON.parse(response.body) as unknown, JSON.parse(jobs.stdout) as unknown);
@@ -197,6 +214,7 @@ export class RunWatcher {
       this.warnOnce(key, "unexpected run payload");
       return { kind: "unchanged" };
     }
+    this.markHealthy(key);
     return { kind: "changed", run: { ...summary, ref }, etag: response.headers["etag"] ?? null };
   }
 
@@ -211,7 +229,7 @@ export class RunWatcher {
     this.notificationsTimer = null;
     this.notificationsBusy = true;
     try {
-      await this.pollNotifications().catch((error: Error) => this.warnOnce("notifications", `error ${error.message}`));
+      await this.pollNotifications().catch((error: Error) => this.warnOnce(NOTIFICATIONS_SCOPE, "error", error.message));
     } finally {
       this.notificationsBusy = false;
       this.reconcile();
@@ -224,20 +242,22 @@ export class RunWatcher {
     const response = parseGhIncludeOutput((await this.exec(["api", "-i", ...headers, "notifications"])).stdout);
     if (epoch !== this.epoch) return;
     if (!response) {
-      this.warnOnce("notifications", "unparseable response");
+      this.warnOnce(NOTIFICATIONS_SCOPE, "unparseable response");
       return;
     }
-    if (isRateLimited(response.status)) {
-      this.warnOnce("notifications", String(response.status));
+    if (isRateLimited(response.status, response.headers)) {
+      this.warnOnce(NOTIFICATIONS_SCOPE, String(response.status));
       this.notificationsBlockedUntil = Date.now() + rateLimitDelayMs(response.headers, Date.now());
       return;
     }
     const pollSeconds = Number.parseInt(response.headers["x-poll-interval"] ?? "", 10);
     this.notificationsIntervalSeconds = Math.max(MIN_NOTIFICATIONS_INTERVAL_SECONDS, Number.isFinite(pollSeconds) ? pollSeconds : 0);
-    if (response.status !== 200) {
-      if (response.status !== 304) this.warnOnce("notifications", String(response.status));
+    if (response.status !== 200 && response.status !== 304) {
+      this.warnOnce(NOTIFICATIONS_SCOPE, String(response.status));
       return;
     }
+    this.markHealthy(NOTIFICATIONS_SCOPE);
+    if (response.status === 304) return;
     this.lastModified = response.headers["last-modified"] ?? this.lastModified;
     const activity = newCiActivity(JSON.parse(response.body) as unknown, this.ciSince ?? Date.now());
     if (!activity.found) return;
