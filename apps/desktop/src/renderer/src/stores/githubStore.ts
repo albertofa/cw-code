@@ -140,12 +140,26 @@ export function cappedRunSources(query: string, clonedRepos: RepoRef[]): RunSour
   return { ...sources, repos: sources.repos.slice(0, MAX_SOURCE_REPOS), orgs: sources.orgs.slice(0, MAX_SOURCE_ORGS) };
 }
 
-const NON_SCOPING_KEYS: ReadonlySet<string> = new Set(["is", "state", "sort", "archived"]);
+const SCOPING_KEYS: ReadonlySet<string> = new Set([
+  "author",
+  "assignee",
+  "involves",
+  "mentions",
+  "review-requested",
+  "reviewed-by",
+  "team-review-requested",
+  "commenter",
+  "org",
+  "repo",
+  "user",
+  "head",
+  "base"
+]);
 const SCOPE_QUALIFIER = "involves:@me";
 
 function scoped(query: string): string {
-  const meaningful = tokenize(query).some((token) => token.kind === "text" || (token.kind === "qual" && !NON_SCOPING_KEYS.has(token.key ?? "")));
-  return meaningful ? query : `${query} ${SCOPE_QUALIFIER}`.trim();
+  const hasScope = tokenize(query).some((token) => token.kind === "qual" && !token.neg && SCOPING_KEYS.has(token.key ?? ""));
+  return hasScope ? query : `${query} ${SCOPE_QUALIFIER}`.trim();
 }
 
 export function scopeSplitQuery(split: SplitQuery): SplitQuery {
@@ -284,7 +298,7 @@ export const useGitHubStore = create<GitHubStore>((set, get) => {
     const seed = own?.data ? null : settledKey && settledKey !== key ? (results[settledKey]?.data ?? null) : null;
     const loading: Loadable<T> = seed
       ? { loading: true, data: seed, error: null, stale: true }
-      : { loading: true, data: own?.data ?? null, error: null };
+      : { loading: true, data: own?.data ?? null, error: null, ...(own?.stale ? { stale: true } : {}) };
     set((state) => assign(withEntry(select(state), key, loading)));
     const settle = (next: Loadable<T>) => set((state) => assign(withEntry(select(state), key, next)));
     try {
@@ -320,6 +334,7 @@ export const useGitHubStore = create<GitHubStore>((set, get) => {
       return;
     }
     const split = scopeSplitQuery(splitQuery(kind, query));
+    if (!split.remote.trim()) return;
     const key = searchKey(kind, query, []);
     if (kind === "pr") {
       await load(
@@ -614,7 +629,7 @@ export const useGitHubStore = create<GitHubStore>((set, get) => {
       const previousRunKey = latestKeys.run;
       if (previousRunKey === null) return;
       const runKey = searchKey("run", get().tabs.run.query, clonedRepos());
-      const live = (get().active && get().kind === "run") || Object.keys(get().runResults).length > 0;
+      const live = get().active && (get().kind === "run" || Object.keys(get().runResults).length > 0);
       if (runKey !== previousRunKey && live) void fetchKind("run", false);
     },
 
@@ -624,4 +639,7 @@ export const useGitHubStore = create<GitHubStore>((set, get) => {
   };
 });
 
-import.meta.hot?.dispose(() => teardownRuntime());
+import.meta.hot?.dispose(() => {
+  teardownRuntime();
+  void window.cw?.setGitHubActive(false).catch(() => undefined);
+});
