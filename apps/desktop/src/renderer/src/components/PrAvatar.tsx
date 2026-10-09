@@ -1,5 +1,5 @@
 import { useState, type CSSProperties } from "react";
-import { projectAvatarStyle, projectInitials } from "./avatar.js";
+import { projectAvatarStyle, projectInitials, stripBotSuffix } from "./avatar.js";
 import "./prInbox.css";
 
 interface PrAvatarProps {
@@ -8,8 +8,6 @@ interface PrAvatarProps {
   avatarUrl?: string;
   size?: number;
 }
-
-const BOT_SUFFIX = /\[bot\]$/;
 
 export function PrAvatar({ login, name, avatarUrl, size = 24 }: PrAvatarProps) {
   const [failedUrl, setFailedUrl] = useState<string | null>(null);
@@ -20,7 +18,7 @@ export function PrAvatar({ login, name, avatarUrl, size = 24 }: PrAvatarProps) {
       {showImage ? (
         <img src={avatarUrl} alt="" referrerPolicy="no-referrer" loading="lazy" onError={() => setFailedUrl(avatarUrl)} />
       ) : (
-        projectInitials((name || login).replace(BOT_SUFFIX, ""))
+        projectInitials(stripBotSuffix(name || login))
       )}
     </span>
   );

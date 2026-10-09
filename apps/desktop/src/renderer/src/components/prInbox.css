@@ -146,7 +146,7 @@
   border-radius: var(--r-sm);
 }
 
-.pr-inbox-view .pr-inbox-label {
+.pr-inbox-label {
   flex: none;
   padding: 1px 7px;
   border: 1px solid var(--border);
@@ -179,11 +179,11 @@
   text-overflow: ellipsis;
 }
 
-.pr-inbox-view .pr-inbox-add {
+.pr-inbox-add {
   color: var(--success);
 }
 
-.pr-inbox-view .pr-inbox-del {
+.pr-inbox-del {
   color: var(--danger);
 }
 

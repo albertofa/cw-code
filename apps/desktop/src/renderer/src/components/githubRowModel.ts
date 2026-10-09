@@ -85,9 +85,7 @@ export function sameLogin(a: string | null | undefined, b: string | null | undef
   return !!a && !!b && a.toLowerCase() === b.toLowerCase();
 }
 
-export function isBotLogin(login: string): boolean {
-  return /\[bot\]$/.test(login);
-}
+export { isBotLogin } from "./avatar.js";
 
 function isViewerRequested(pr: PrSummary, viewer: string | null): boolean {
   return pr.reviewRequestedFromViewer || pr.reviewers.some((reviewer) => reviewer.state === "PENDING" && sameLogin(reviewer.login, viewer));

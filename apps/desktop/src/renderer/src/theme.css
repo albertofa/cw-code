@@ -10608,37 +10608,43 @@ button.gitbar-checkout:hover {
 /* github hub: rows */
 
 .hub-row .tone-info,
+.hub-row .pr-inbox-state.tone-info,
 .hub-card .tone-info {
   color: var(--accent);
 }
 
 .hub-row .tone-warn,
+.hub-row .pr-inbox-state.tone-warn,
 .hub-card .tone-warn {
   color: var(--warning);
 }
 
 .hub-row .tone-ok,
+.hub-row .pr-inbox-state.tone-ok,
 .hub-card .tone-ok {
   color: var(--success);
 }
 
 .hub-row .tone-bad,
+.hub-row .pr-inbox-state.tone-bad,
 .hub-card .tone-bad {
   color: var(--danger);
 }
 
 .hub-row .tone-neutral,
+.hub-row .pr-inbox-state.tone-neutral,
 .hub-card .tone-neutral {
   color: var(--faint);
 }
 
 .hub-row .tone-merged,
+.hub-row .pr-inbox-state.tone-merged,
 .hub-card .tone-merged {
   color: var(--codex);
 }
 
 .hub-row .pr-inbox-title-line {
-  font-size: 14px;
+  font-size: var(--t-sm);
 }
 
 .hub-row:hover .pr-inbox-title-link {
@@ -10719,7 +10725,7 @@ button.gitbar-checkout:hover {
   align-items: center;
   gap: 3px;
   font-family: var(--mono);
-  font-size: 11px;
+  font-size: var(--t-2xs);
   color: var(--muted);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -10836,7 +10842,7 @@ button.gitbar-checkout:hover {
 
 .hub-people-none {
   color: var(--faint);
-  font-size: 11.5px;
+  font-size: var(--t-xs);
 }
 
 .hub-gate {
@@ -10860,7 +10866,7 @@ button.gitbar-checkout:hover {
   display: flex;
   align-items: center;
   gap: 5px;
-  font-size: 12px;
+  font-size: var(--t-xs);
   font-weight: 600;
   white-space: nowrap;
   overflow: hidden;
@@ -10875,7 +10881,7 @@ button.gitbar-checkout:hover {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 11px;
+  font-size: var(--t-2xs);
   color: var(--muted);
   white-space: nowrap;
 }
@@ -10892,7 +10898,7 @@ button.gitbar-checkout:hover {
 
 .hub-diff {
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: var(--t-3xs);
   font-variant-numeric: tabular-nums;
 }
 
@@ -10978,7 +10984,7 @@ button.gitbar-checkout:hover {
   border-radius: var(--r-sm) 0 0 var(--r-sm);
   background: transparent;
   color: var(--dim);
-  font-size: 12px;
+  font-size: var(--t-xs);
   cursor: pointer;
   white-space: nowrap;
 }
@@ -11084,7 +11090,7 @@ button.gitbar-checkout:hover {
 .hub-action-meta {
   flex: none;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--t-2xs);
   font-variant-numeric: tabular-nums;
 }
 
@@ -11108,7 +11114,7 @@ button.gitbar-checkout:hover {
   background: var(--raised);
   border: 1px solid var(--border);
   color: var(--dim);
-  font-size: 9.5px;
+  font-size: var(--t-3xs);
   font-weight: 700;
   display: inline-grid;
   place-items: center;
@@ -11119,7 +11125,7 @@ button.gitbar-checkout:hover {
   max-width: 360px;
   padding: 10px 12px 12px;
   gap: 0;
-  font-size: 12px;
+  font-size: var(--t-xs);
 }
 
 .hub-card-head {
@@ -11130,7 +11136,7 @@ button.gitbar-checkout:hover {
   margin-bottom: 4px;
   border-bottom: 1px solid var(--border-soft);
   color: var(--text);
-  font-size: 12.5px;
+  font-size: var(--t-desc);
   font-weight: 650;
   min-width: 0;
 }
@@ -11139,7 +11145,7 @@ button.gitbar-checkout:hover {
   margin-left: auto;
   color: var(--faint);
   font-weight: 500;
-  font-size: 11px;
+  font-size: var(--t-2xs);
   font-family: var(--mono);
   white-space: nowrap;
   overflow: hidden;
@@ -11162,7 +11168,7 @@ button.gitbar-checkout:hover {
 
 .hub-card-label {
   color: var(--faint);
-  font-size: 10.5px;
+  font-size: var(--t-3xs);
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -11203,7 +11209,7 @@ button.gitbar-checkout:hover {
 .hub-card-line .end {
   flex: none;
   color: var(--muted);
-  font-size: 11px;
+  font-size: var(--t-2xs);
   font-variant-numeric: tabular-nums;
 }
 
@@ -11233,7 +11239,7 @@ button.gitbar-checkout:hover {
 
 .hub-card-you {
   color: #a9c5ff;
-  font-size: 10.5px;
+  font-size: var(--t-3xs);
   font-weight: 600;
 }
 
@@ -11254,7 +11260,7 @@ button.gitbar-checkout:hover {
   background: transparent;
   color: var(--muted);
   font-family: var(--sans);
-  font-size: 11px;
+  font-size: var(--t-2xs);
   font-weight: 600;
   cursor: pointer;
   white-space: nowrap;
@@ -11363,7 +11369,7 @@ button.gitbar-checkout:hover {
   background: transparent;
   color: var(--muted);
   font-family: var(--sans);
-  font-size: 12.5px;
+  font-size: var(--t-desc);
   font-weight: 500;
   cursor: pointer;
   white-space: nowrap;
@@ -11392,7 +11398,7 @@ button.gitbar-checkout:hover {
   border-radius: 99px;
   background: var(--accent);
   color: var(--text);
-  font-size: 10px;
+  font-size: var(--t-3xs);
   font-weight: 700;
   font-variant-numeric: tabular-nums;
   display: inline-grid;
@@ -11451,7 +11457,7 @@ button.gitbar-checkout:hover {
   background: var(--raised);
   color: var(--text);
   font-family: var(--sans);
-  font-size: 12px;
+  font-size: var(--t-xs);
   font-weight: 600;
   cursor: pointer;
   white-space: nowrap;
@@ -11476,7 +11482,7 @@ button.gitbar-checkout:hover {
 
 .hub-view-mod {
   color: var(--warning);
-  font-size: 11px;
+  font-size: var(--t-2xs);
   font-weight: 500;
   font-style: italic;
 }
@@ -11500,7 +11506,7 @@ button.gitbar-checkout:hover {
 .hub-q-hl,
 .hub-q-input {
   font-family: var(--sans);
-  font-size: 12.5px;
+  font-size: var(--t-desc);
   letter-spacing: 0;
   font-weight: 400;
 }
@@ -11595,7 +11601,7 @@ button.gitbar-checkout:hover {
   background: transparent;
   color: var(--muted);
   font-family: var(--sans);
-  font-size: 11.5px;
+  font-size: var(--t-xs);
   font-weight: 600;
   cursor: pointer;
   white-space: nowrap;
@@ -11617,7 +11623,7 @@ button.gitbar-checkout:hover {
 .hub-delete-ask {
   align-self: center;
   color: var(--muted);
-  font-size: 11.5px;
+  font-size: var(--t-xs);
   padding-right: 4px;
 }
 
@@ -11643,7 +11649,7 @@ button.gitbar-checkout:hover {
 .hub-ac-head {
   padding: 6px 8px 3px;
   color: var(--faint);
-  font-size: 10.5px;
+  font-size: var(--t-3xs);
   font-weight: 700;
   letter-spacing: 0.06em;
   text-transform: uppercase;
@@ -11660,7 +11666,7 @@ button.gitbar-checkout:hover {
   background: transparent;
   color: var(--dim);
   font-family: var(--sans);
-  font-size: 12.5px;
+  font-size: var(--t-desc);
   text-align: left;
   cursor: pointer;
   min-width: 0;
@@ -11678,7 +11684,7 @@ button.gitbar-checkout:hover {
 
 .hub-ac-item .k {
   font-family: var(--mono);
-  font-size: 11.5px;
+  font-size: var(--t-xs);
   color: var(--text);
   flex: none;
 }
@@ -11699,7 +11705,7 @@ button.gitbar-checkout:hover {
   margin-left: auto;
   padding-left: 10px;
   color: var(--faint);
-  font-size: 11px;
+  font-size: var(--t-2xs);
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -11717,7 +11723,7 @@ button.gitbar-checkout:hover {
   border-radius: 4px;
   background: color-mix(in srgb, var(--warning) 14%, transparent);
   color: var(--warning);
-  font-size: 9.5px;
+  font-size: var(--t-3xs);
   font-weight: 700;
   letter-spacing: 0.03em;
   display: inline-grid;
@@ -11727,7 +11733,7 @@ button.gitbar-checkout:hover {
 .hub-ac-empty {
   padding: 8px;
   color: var(--faint);
-  font-size: 12px;
+  font-size: var(--t-xs);
 }
 
 .hub-ac-empty.bad {
@@ -11741,12 +11747,12 @@ button.gitbar-checkout:hover {
   padding: 6px 8px 2px;
   border-top: 1px solid var(--border-soft);
   color: var(--faint);
-  font-size: 10.5px;
+  font-size: var(--t-3xs);
 }
 
 .hub-ac-foot kbd {
   font-family: var(--mono);
-  font-size: 10px;
+  font-size: var(--t-3xs);
   color: var(--muted);
 }
 
@@ -11805,13 +11811,13 @@ button.gitbar-checkout:hover {
 }
 
 .hub-view-item .n {
-  font-size: 12.5px;
+  font-size: var(--t-desc);
   font-weight: 500;
 }
 
 .hub-view-item .qq {
   font-family: var(--mono);
-  font-size: 10.5px;
+  font-size: var(--t-3xs);
   color: var(--faint);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -11825,7 +11831,7 @@ button.gitbar-checkout:hover {
 
 .hub-count {
   color: var(--faint);
-  font-size: 11px;
+  font-size: var(--t-2xs);
   font-variant-numeric: tabular-nums;
 }
 
@@ -11848,7 +11854,7 @@ button.gitbar-checkout:hover {
   border-radius: var(--r-sm);
   color: var(--text);
   font-family: var(--sans);
-  font-size: 12px;
+  font-size: var(--t-xs);
   outline: none;
 }
 
@@ -11891,7 +11897,7 @@ button.gitbar-checkout:hover {
   background: transparent;
   color: var(--muted);
   font-family: var(--sans);
-  font-size: 12.5px;
+  font-size: var(--t-desc);
   font-weight: 500;
   cursor: pointer;
 }
@@ -11914,7 +11920,7 @@ button.gitbar-checkout:hover {
   border-radius: 99px;
   background: var(--raised);
   color: var(--dim);
-  font-size: 11px;
+  font-size: var(--t-2xs);
   font-weight: 600;
   display: inline-grid;
   place-items: center;
@@ -11928,7 +11934,7 @@ button.gitbar-checkout:hover {
 
 .hub-result-count {
   color: var(--muted);
-  font-size: 12.5px;
+  font-size: var(--t-desc);
   padding-left: 4px;
 }
 
@@ -11938,7 +11944,7 @@ button.gitbar-checkout:hover {
   align-items: center;
   gap: 8px;
   color: var(--faint);
-  font-size: 11.5px;
+  font-size: var(--t-xs);
   min-width: 0;
 }
 
@@ -11947,7 +11953,7 @@ button.gitbar-checkout:hover {
   align-items: center;
   gap: 5px;
   color: var(--warning);
-  font-size: 11.5px;
+  font-size: var(--t-xs);
   white-space: nowrap;
 }
 

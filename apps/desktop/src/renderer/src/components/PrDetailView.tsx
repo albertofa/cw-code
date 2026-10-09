@@ -20,6 +20,7 @@ import type { PrCheck, PrDetail, PrRef, PrReviewThread, PrTimelineItem, PrWorkfl
 import { useAppStore } from "../stores/appStore.js";
 import { usePrStore, type PrDetailTab } from "../stores/prStore.js";
 import { PrAvatar } from "./PrAvatar.js";
+import { stripBotSuffix } from "./avatar.js";
 import { workflowIcon } from "./workflowIcons.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { Md } from "./Markdown.js";
@@ -529,7 +530,7 @@ function ConversationTab({
 }
 
 function ActorAvatar({ actor, detail }: { actor: string; detail: PrDetail }) {
-  const isAuthor = actor === detail.author.login;
+  const isAuthor = stripBotSuffix(actor) === stripBotSuffix(detail.author.login);
   return <PrAvatar login={actor} name={isAuthor ? detail.author.name : undefined} avatarUrl={isAuthor ? detail.author.avatarUrl : undefined} size={20} />;
 }
 
