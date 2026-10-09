@@ -5,6 +5,7 @@ import "./prInbox.css";
 import {
   badgeSearchKeys,
   clonedReposOf,
+  githubProjectRepos,
   resolveViews,
   scopeSplitQuery,
   searchKey,
@@ -154,7 +155,7 @@ export function GitHubView() {
   }, [inbox, issueResults, runResults, cloned, viewer, runContext]);
 
   const suggestionSource = useMemo(
-    () => buildSuggestionSource({ viewer, prs: [...(inbox?.items ?? NO_PRS), ...cachedPrs], issues: cachedIssues, runs: cachedRuns, repos: projectRepos }),
+    () => buildSuggestionSource({ viewer, prs: [...(inbox?.items ?? NO_PRS), ...cachedPrs], issues: cachedIssues, runs: cachedRuns, repos: githubProjectRepos(projectRepos) }),
     [viewer, inbox, cachedPrs, cachedIssues, cachedRuns, projectRepos]
   );
 

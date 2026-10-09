@@ -126,14 +126,24 @@ export function resolveViews(kind: GitHubKind, org: string | null, savedViews: S
   return [...builtin, ...saved];
 }
 
+const GITHUB_HOST = "github.com";
+
+function onGitHub(repo: ProjectGitHubRepo): boolean {
+  return repo.host.toLowerCase() === GITHUB_HOST;
+}
+
+export function githubProjectRepos(repos: ProjectGitHubRepo[]): ProjectGitHubRepo[] {
+  return repos.filter(onGitHub);
+}
+
 export function orgFromRepos(repos: ProjectGitHubRepo[], viewer: string | null): string | null {
   if (!viewer) return null;
   const login = viewer.toLowerCase();
-  return repos.find((repo) => repo.owner.toLowerCase() !== login)?.owner ?? null;
+  return repos.find((repo) => onGitHub(repo) && repo.owner.toLowerCase() !== login)?.owner ?? null;
 }
 
 export function clonedReposOf(repos: ProjectGitHubRepo[]): RepoRef[] {
-  return repos.map((repo) => ({ host: repo.host, owner: repo.owner, repo: repo.repo }));
+  return githubProjectRepos(repos).map((repo) => ({ host: repo.host, owner: repo.owner, repo: repo.repo }));
 }
 
 export function cappedRunSources(query: string, clonedRepos: RepoRef[]): RunSources {

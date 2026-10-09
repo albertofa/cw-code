@@ -1,6 +1,7 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
-import { badgeSearchKeys, BUILTIN_VIEWS, evictionCandidates, searchKey } from "./githubStore.js";
+import type { ProjectGitHubRepo } from "../cw.js";
+import { badgeSearchKeys, BUILTIN_VIEWS, cappedRunSources, clonedReposOf, evictionCandidates, orgFromRepos, searchKey } from "./githubStore.js";
 
 describe("evictionCandidates", () => {
   const touched = new Map([
@@ -49,5 +50,24 @@ describe("badgeSearchKeys", () => {
   it("changes the run key with the cloned repos but not the issue key", () => {
     expect(badgeSearchKeys([]).issue).toBe(badgeSearchKeys(cloned).issue);
     expect(badgeSearchKeys([]).run).not.toBe(badgeSearchKeys(cloned).run);
+  });
+});
+
+describe("non-GitHub project remotes", () => {
+  const repos: ProjectGitHubRepo[] = [
+    { projectId: "p1", host: "git-codecommit.sa-east-1.amazonaws.com", owner: "v1", repo: "repos" },
+    { projectId: "p2", host: "github.com", owner: "nuria-tech", repo: "nuria-hub" },
+    { projectId: "p3", host: "GitHub.com", owner: "albertofa", repo: "cw-code" }
+  ];
+
+  it("keeps only github.com repos as run sources", () => {
+    const cloned = clonedReposOf(repos);
+    expect(cloned.map((repo) => `${repo.owner}/${repo.repo}`)).toEqual(["nuria-tech/nuria-hub", "albertofa/cw-code"]);
+    expect(cappedRunSources("is:run involves:@me", cloned).repos.every((repo) => repo.host.toLowerCase() === "github.com")).toBe(true);
+  });
+
+  it("never picks a non-GitHub owner for the org views", () => {
+    expect(orgFromRepos(repos, "albertofa")).toBe("nuria-tech");
+    expect(orgFromRepos([repos[0]], "albertofa")).toBeNull();
   });
 });
