@@ -12,12 +12,14 @@ itself. The pipeline details live in [releases.md](releases.md), signing in
 
 ## Where things stand
 
-- Legacy releases `v0.0.1-alpha.18` to `v0.0.1-alpha.21` were uploaded by hand:
-  not marked prerelease, asset `cw-code.Setup.<version>.exe`, no `latest.yml`,
-  unsigned, no updater. `/releases/latest` resolves to `v0.0.1-alpha.21`.
-- Nobody can update in-app yet. Users of those builds need one manual install of
-  the first updater-enabled release (the bootstrap). The installer keeps the
-  install identity: per-user HKCU key under GUID
+- The first pipeline release, `v0.0.1-alpha.22`, is published (unsigned, alpha,
+  prerelease, 2026-09-28), so in-app updates work from it.
+- The hand-uploaded legacy releases `v0.0.1-alpha.18` to `v0.0.1-alpha.21`
+  (asset `cw-code.Setup.<version>.exe`, no `latest.yml`, unsigned, no updater)
+  were removed by the owner on 2026-09-29. `/releases/latest` no longer resolves
+  to a release, because every published release is a prerelease. Users still
+  running a legacy build need one manual install of a pipeline release; the
+  installer keeps the install identity: per-user HKCU key under GUID
   `d6e18d04-bf35-5bfe-9145-b95301660833`, a custom install folder, per-machine
   scope, and `~/.cw-code` untouched (see
   [windows-packaging.md](windows-packaging.md#installer-identity)).
@@ -25,7 +27,7 @@ itself. The pipeline details live in [releases.md](releases.md), signing in
   unsigned automatic alpha publishing ahead of this checklist:
   `CW_RELEASE_PUBLISHING_ENABLED=true`, and `release-publish` has no required
   reviewer, so every green CI push to `main` outside the 6-hour window publishes
-  an alpha. Step C was skipped; the owner tests the first published installer in
+  an alpha. Step C was skipped; the owner tests the published installers in
   a VM instead. Steps B and D's signing approvals do not apply until SignPath
   exists.
 
@@ -114,65 +116,21 @@ Record:
 
 ### C. Bootstrap candidate over the real legacy installer (disposable VM)
 
-Use a fresh Windows 11 x64 VM snapshot with no cw-code on it, Node 24, pnpm
-11.5.3, git and `gh`. Never do this on a machine where you use cw-code: the
-script installs, seeds the real `%USERPROFILE%\.cw-code` and uninstalls.
-
-Prepare once, then take a snapshot:
-
-```powershell
-git clone https://github.com/albertofa/cw-code; cd cw-code
-git checkout <source SHA from B>
-pnpm install --frozen-lockfile
-gh run download <run id from B> --repo albertofa/cw-code --name cw-code-<version>-windows-signpath-attempt<n>-release --dir candidate
-gh release download v0.0.1-alpha.21 --repo albertofa/cw-code --pattern "cw-code.Setup.0.0.1-alpha.21.exe" --dir legacy
-```
-
-The signed final artifact is kept for 14 days, so finish this step within two
-weeks of B or rerun B.
-
-Scripted runs, one per fresh snapshot:
-
-```powershell
-node scripts/verify-windows-package.mjs --dist candidate --upgrade-from legacy/cw-code.Setup.0.0.1-alpha.21.exe --disposable-environment
-node scripts/verify-windows-package.mjs --dist candidate --upgrade-from legacy/cw-code.Setup.0.0.1-alpha.21.exe --custom-dir C:\cw-code-custom --disposable-environment
-# from an elevated prompt:
-node scripts/verify-windows-package.mjs --dist candidate --upgrade-from legacy/cw-code.Setup.0.0.1-alpha.21.exe --per-machine --disposable-environment
-```
-
-Each run installs the legacy build, seeds cw-code data, installs the candidate
-over it, then checks `InstallLocation` unchanged, `DisplayVersion` and
-`Publisher` updated, the seeded files byte-identical and a startup probe on
-the upgraded app, and uninstalls. The report lands in
-`candidate/verify-windows-package.json`; copy it out before the next run.
-
-Then one interactive run on a fresh snapshot, the way a user will do it:
-
-1. Double-click the legacy installer, choose "Only for me", default folder.
-2. Start cw-code, add a throwaway project, run one short turn with each CLI
-   you have (your own subscription), close it.
-3. Double-click `candidate/cw-code-Setup-<version>-x64.exe`. Note whether
-   SmartScreen appears and what publisher it shows. The wizard must upgrade
-   in place.
-4. Start cw-code: the project and sessions are there, a session resumes with
-   its CLI context, Settings > Updates shows the new version and channel
-   Alpha. A check reports an error at this point because no pipeline release
-   is published yet; that is expected only for this unpublished candidate.
-
-Record:
-
-| Case | Result, `DisplayVersion` before/after, `InstallLocation` |
-| --- | --- |
-| Per-user default folder (scripted) | `<fill>` |
-| Per-user custom folder (scripted) | `<fill>` |
-| Per-machine (scripted, elevated) | `<fill>` |
-| Interactive legacy -> candidate, SmartScreen, CLI resume | `<fill>` |
+Removed from the checklist on 2026-09-29: the owner deleted the legacy releases
+(`v0.0.1-alpha.18` to `v0.0.1-alpha.21`), so there is no legacy installer left
+to download and this one-time check cannot run. It was already recorded as
+skipped during commissioning; the owner tested the published installer in a VM
+instead (see [Where things stand](#where-things-stand)). The per-user,
+custom-directory and per-machine in-place upgrade paths remain covered by the
+automated scenarios in [update-testing.md](update-testing.md), and by
+`verify-candidate`'s N -> N+1 production-bytes gate in
+[releases.md](releases.md#upgrade-gate) for pipeline releases.
 
 ### D. Enable production and publish the bootstrap alpha
 
-1. B and C are complete for the same source SHA, and `main` still points at
-   it. An alpha always builds `main`'s head at dispatch time; if `main` moved,
-   repeat B and C for the new head or hold merges until D is done.
+1. B is complete for the same source SHA (C was skipped, see above), and `main`
+   still points at it. An alpha always builds `main`'s head at dispatch time; if
+   `main` moved, repeat B for the new head or hold merges until D is done.
 2. A green `upgrade-test.yml` run with every automated scenario exists for
    that exact SHA. This is required, not optional. For the bootstrap,
    `verify-candidate` skips the N -> N+1 upgrade (there is no pipeline-built N),
@@ -220,7 +178,7 @@ Record:
    longer accepts it as already published. The same rule applies to every
    later edit of release notes, including the withdrawal note.
 8. In a fresh VM, download the published installer from the release page and
-   repeat the interactive part of C once with those exact bytes.
+   run the interactive install check once with those exact bytes.
 9. Leave production on only if E follows soon; otherwise turn it off (G).
 
 Record:
@@ -233,7 +191,7 @@ Record:
 | Published installer size and sha512 (`alpha.yml`) | `<fill>` |
 | `verify-publication` result | `<fill>` |
 | Feed monitor summary line | `<fill>` |
-| Interactive legacy -> published bootstrap | `<fill>` |
+| Interactive install of the published bootstrap (D.8) | `<fill>` |
 
 ### E. A second real alpha, installed in-app by the bootstrap build
 
@@ -243,9 +201,9 @@ not used at all.
 1. Merge at least one change to `main` after the bootstrap (an unchanged head
    is skipped by the planner) and let CI pass.
 2. Prepare a disposable VM with the bootstrap installed. The best base is the
-   snapshot from D.7, which went legacy -> bootstrap. Create a project and a
-   few sessions with real CLIs, open a terminal tab, leave one file edited but
-   unsaved. Record the "before" state:
+   snapshot from D.8, which has the published bootstrap installed. Create a
+   project and a few sessions with real CLIs, open a terminal tab, leave one
+   file edited but unsaved. Record the "before" state:
 
    ```powershell
    $db = Get-Content "$HOME\.cw-code\userdata\cw-code.db.json" -Raw | ConvertFrom-Json
@@ -550,7 +508,9 @@ tab.
   old blockmap URL from the running version's release, so deleting an older
   release's blockmap turns every update from that version into a full
   download of about 100 MB, and deleting an installer removes the recovery
-  path for users on it. This also applies to the legacy releases.
+  path for users on it. The hand-uploaded legacy releases are the one
+  exception: the owner removed them on 2026-09-29 because they predate the
+  updater and should not stay offered for download.
 - **Workflow artifacts** (full table in
   [releases.md](releases.md#artifacts-and-retention)): release plans, release
   sets and release evidence 30 days; `sign-windows.yml` intermediates 3 days

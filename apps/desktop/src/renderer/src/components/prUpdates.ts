@@ -1,6 +1,7 @@
 import type { PrCheck, PrDetail, PrReviewThread, PrSummary, PrTimelineItem, PrUpdate, SessionPrLink } from "@cw-code/contracts";
 
 export function hasUnseen(pr: PrSummary, link: SessionPrLink): boolean {
+  if (pr.state !== "OPEN") return false;
   return (link.lastSeenSha !== "" && pr.headRefOid !== link.lastSeenSha) || pr.updatedAt > link.lastSeenAt;
 }
 
@@ -30,6 +31,22 @@ export function updatesSince(detail: PrDetail, link: SessionPrLink): PrUpdate[] 
     updates.push({ kind: "comment", at: detail.updatedAt, actor: null, summary: "PR updated" });
   }
   return updates.sort((a, b) => b.at - a.at);
+}
+
+export function detailNeedsRefresh(detail: PrDetail | undefined, summary: PrSummary | undefined): boolean {
+  if (!summary) return false;
+  if (!detail) return true;
+  if (summary.updatedAt < detail.updatedAt) return false;
+  return (
+    detail.updatedAt < summary.updatedAt ||
+    detail.headRefOid !== summary.headRefOid ||
+    detail.ci !== summary.ci ||
+    detail.state !== summary.state
+  );
+}
+
+export function detailRefreshKey(key: string, summary: PrSummary | undefined): string {
+  return summary ? `${key}@${summary.headRefOid}:${summary.updatedAt}:${summary.ci}:${summary.state}` : "";
 }
 
 export function seenThrough(pr: PrSummary | null | undefined, updates: PrUpdate[]): number | null {

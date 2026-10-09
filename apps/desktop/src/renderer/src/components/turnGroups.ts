@@ -92,6 +92,16 @@ export function buildThreadNodes(messages: ChatMessage[], nestedIds: Set<string>
   return out;
 }
 
+export function countActivityTools(nodes: ThreadNode[]): number {
+  let count = 0;
+  for (const n of nodes) {
+    if (n.kind === "tools") count += n.items.length;
+    else if (n.kind === "sub") count += n.group.items.length;
+    else if (n.msg.role === "tool") count++;
+  }
+  return count;
+}
+
 /**
  * Reasoning and a tool call that completed without producing anything are
  * transparent to the answer: the model's reply flows straight through them. A

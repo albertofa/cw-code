@@ -1,12 +1,18 @@
 import { create } from "zustand";
-import type { GitHubKind, PrDetail, PrInboxResult, PrRef, ProjectGitHubRepo, RepoRef, WorkflowSubject } from "../cw.js";
+import type { DriverName, GitHubKind, PrDetail, PrInboxResult, PrRef, ProjectGitHubRepo, RepoRef, WorkflowSubject } from "../cw.js";
 import { prKey } from "../components/prInbox.js";
+import type { SettingsSection } from "../components/settingsSections.js";
 import { errorMessage } from "../components/errorMessage.js";
 import { useGitHubStore } from "./githubStore.js";
 
 export type PrDetailTab = "conversation" | "commits" | "checks" | "files";
 
-export type MainView = { kind: "session" } | { kind: "github" } | { kind: "pr"; ref: PrRef; tab: PrDetailTab } | { kind: "usage" };
+export type MainView =
+  | { kind: "session" }
+  | { kind: "github" }
+  | { kind: "pr"; ref: PrRef; tab: PrDetailTab }
+  | { kind: "usage" }
+  | { kind: "settings"; section: SettingsSection; harness?: DriverName };
 
 export interface RunModalState {
   workflowId: string;
@@ -36,6 +42,7 @@ interface PrState {
   setPrTab(tab: PrDetailTab): void;
   openSessionView(): void;
   openUsage(): void;
+  openSettings(section?: SettingsSection, harness?: DriverName): void;
   refreshProjectRepos(): Promise<void>;
   projectIdForRef<T extends RepoRef>(ref: T): string | null;
   openRunModal(state: RunModalState): void;
@@ -145,6 +152,10 @@ export const usePrStore = create<PrState>((set, get) => ({
 
   openUsage() {
     set({ mainView: { kind: "usage" } });
+  },
+
+  openSettings(section?: SettingsSection, harness?: DriverName) {
+    set({ mainView: { kind: "settings", section: section ?? (harness ? "harness" : "general"), harness } });
   },
 
   async refreshProjectRepos() {

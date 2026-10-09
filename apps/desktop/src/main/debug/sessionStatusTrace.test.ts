@@ -47,14 +47,14 @@ describe("session status trace", () => {
 
     store.updateSession(session.id, { status: "working" }, "turn-start");
     store.updateSession(session.id, { status: "done" }, "turn-done");
-    store.updateSession(session.id, { status: "idle" }, "merged-pr");
+    store.updateSession(session.id, { status: "idle" }, "pr-finished");
 
     const lines = readLines(filePath);
     expect(lines.map((l) => [l.from, l.to, l.reason])).toEqual([
       [null, "idle", "session-created"],
       ["idle", "working", "turn-start"],
       ["working", "done", "turn-done"],
-      ["done", "idle", "merged-pr"]
+      ["done", "idle", "pr-finished"]
     ]);
     expect(lines.every((l) => l.sessionId === session.id && l.driver === "claude")).toBe(true);
     expect(lines.map((l) => l.seq)).toEqual([0, 1, 2, 3]);

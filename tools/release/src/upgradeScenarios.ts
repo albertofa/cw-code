@@ -336,7 +336,6 @@ export const MANUAL_SCENARIOS: readonly ManualScenario[] = [
   { id: "insufficient-disk", title: "Insufficient disk space for the download or the install" },
   { id: "dirty-buffers", title: "Update and restart with unsaved editor buffers and open terminals" },
   { id: "real-cli-smoke", title: "Real claude/opencode/codex smoke in an isolated project after the update" },
-  { id: "legacy-identity", title: "Legacy com.cwcode.app install updated with production bytes" },
   { id: "signed-wrong-publisher", title: "Signed installer from a different publisher is rejected (controlled fixture, step 09)" }
 ];
 

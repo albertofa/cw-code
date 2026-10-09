@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, powerMonitor, shell, type WebContents } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, powerMonitor, shell, type WebContents } from "electron";
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -14,6 +14,7 @@ function resolvePreload(): string {
   if (!found) console.warn(`preload not found (tried ${candidates.join(", ")})`);
   return found ?? candidates[0];
 }
+import { attentionDescription, parseAttentionState, resetsAttention, shouldFlash } from "./attention.js";
 import { checkCliVersion, checkCliVersions, type CliVersionCheck } from "./cliVersions.js";
 import { discoverBinaries, verifyBinaryPath } from "./cli/binaryDiscovery.js";
 import { getHarnessTracePath, initHarnessTrace } from "./debug/harnessTrace.js";
@@ -29,7 +30,8 @@ import { SessionManager } from "./sessions/SessionManager.js";
 import { AccountUsageService } from "./usage/AccountUsageService.js";
 import { SkillsStore } from "./skills/SkillsStore.js";
 import { FileService, IMAGE_MAX_BYTES, imageExtMime } from "./fs/FileService.js";
-import { GitService } from "./fs/GitService.js";
+import { GitService, sweepStaleSnapshotIndexes } from "./fs/GitService.js";
+import { assertOpenablePath } from "./fs/openPathPolicy.js";
 import { assertPrRef, PullRequestService } from "./github/PullRequestService.js";
 import { assertCountBase, assertSearchKind, assertSearchQuery, GitHubSearchService } from "./github/GitHubSearchService.js";
 import { assertIssueRef, assertOwnerLogin, assertRepoRef, assertRunRef } from "./github/githubRefs.js";
@@ -39,7 +41,6 @@ import { MAX_RUN_ORGS, MAX_RUN_REPOS } from "./github/runQueries.js";
 import { RunsService } from "./github/RunsService.js";
 import { MAX_WATCHED_RUNS, RunWatcher } from "./github/RunWatcher.js";
 import { PtyPool } from "./pty/PtyPool.js";
-import { readWindowsTerminalFontFace } from "./pty/terminalFont.js";
 import { defaultPrWorkflows } from "./settings/prWorkflowDefaults.js";
 import { configuredCliBinaryPath } from "./settings/settingsUtils.js";
 import { initOpencodeModelsCache } from "./providers/opencode/opencodeModels.js";
@@ -62,6 +63,8 @@ const DAY_RE = /^\d{4}-\d{2}-\d{2}$/;
 const SHUTDOWN_REASONS: ShutdownReason[] = ["quit", "update"];
 const SHUTDOWN_TIMEOUT_MAX_MS = 120_000;
 const RENDERER_SHUTDOWN_ACK_MS = 5_000;
+const SESSION_SETTLE_INTERVAL_MS = 60_000;
+const SESSION_SETTLE_INITIAL_DELAY_MS = 5_000;
 
 function parseShutdownPrepare(args: unknown): ShutdownPrepareRequest {
   const request = (args && typeof args === "object" ? args : {}) as Record<string, unknown>;
@@ -156,11 +159,14 @@ interface Services {
 }
 
 let mainWindow: BrowserWindow | null = null;
+let attentionCount: number | null = null;
 let services: Services | null = null;
 let startupState: StartupState = { mode: "ready" };
 let quitApproved = false;
 let servicesDisposed = false;
 let shutdownAckTimer: NodeJS.Timeout | null = null;
+let sessionSettleTimer: NodeJS.Timeout | null = null;
+let sessionSettleInitialTimer: NodeJS.Timeout | null = null;
 
 function createUpdateService(settings: AppSettings): UpdateService {
   const logger = createUpdateLogFile({
@@ -183,15 +189,18 @@ function createUpdateService(settings: AppSettings): UpdateService {
 
 function createServices(stores: { sessionStore: SessionStore; settingsStore: SettingsStore }): Services {
   let pullRequests: PullRequestService;
-  const sessions = new SessionManager({
+  const git: GitService = new GitService(() => sessions.getSettings());
+  const sessions: SessionManager = new SessionManager({
     sessionStore: stores.sessionStore,
     settingsStore: stores.settingsStore,
+    gitService: git,
     prHead: (ref) => pullRequests.knownHead(ref),
     prHeadRefresh: (ref) => pullRequests.refreshHead(ref),
     prState: (ref) => pullRequests.knownState(ref),
-    prUpdatedAt: (ref) => pullRequests.knownUpdatedAt(ref)
+    prStateRefresh: (ref) => pullRequests.refreshState(ref),
+    prUpdatedAt: (ref) => pullRequests.knownUpdatedAt(ref),
+    onResolved: (sessionId) => ptys.killSession(sessionId)
   });
-  const git = new GitService(() => sessions.getSettings());
   pullRequests = new PullRequestService(git, () => sessions.getSettings(), (rootPath) => sessions.addProject(rootPath));
   const githubSearch = new GitHubSearchService(() => sessions.getSettings());
   const runs = new RunsService(() => sessions.getSettings());
@@ -233,6 +242,7 @@ function applyUpdatePreferences(updates: UpdateService, settings: AppSettings): 
 
 function handleShutdownRecovered(failure: string | null): void {
   servicesDisposed = false;
+  startSessionSweeps();
   if (!mainWindow || mainWindow.isDestroyed()) {
     createWindow().catch((err: Error) => appendCrashLog(`could not reopen the window after shutdown recovery: ${err.message}`));
   }
@@ -259,9 +269,39 @@ function clearShutdownAck(): void {
   shutdownAckTimer = null;
 }
 
+function runSessionSweeps(): void {
+  const running = services;
+  if (!running || !running.shutdown.isIdle()) return;
+  void running.sessions.settleFinishedPrSessions();
+  void running.sessions.resolveExpiredIdleSessions();
+}
+
+function startSessionSweeps(): void {
+  stopSessionSweeps();
+  sessionSettleInitialTimer = setTimeout(() => {
+    sessionSettleInitialTimer = null;
+    runSessionSweeps();
+  }, SESSION_SETTLE_INITIAL_DELAY_MS);
+  sessionSettleInitialTimer.unref?.();
+  sessionSettleTimer = setInterval(runSessionSweeps, SESSION_SETTLE_INTERVAL_MS);
+  sessionSettleTimer.unref?.();
+}
+
+function stopSessionSweeps(): void {
+  if (sessionSettleInitialTimer) {
+    clearTimeout(sessionSettleInitialTimer);
+    sessionSettleInitialTimer = null;
+  }
+  if (sessionSettleTimer) {
+    clearInterval(sessionSettleTimer);
+    sessionSettleTimer = null;
+  }
+}
+
 function disposeServices(): void {
   if (!services || servicesDisposed) return;
   servicesDisposed = true;
+  stopSessionSweeps();
   try {
     services.sessions.flush();
   } catch (err) {
@@ -344,6 +384,7 @@ async function createWindow(): Promise<void> {
     }
   });
 
+  mainWindow.on("focus", () => mainWindow?.flashFrame(false));
   mainWindow.on("maximize", () => mainWindow?.webContents.send("win.maximized", true));
   mainWindow.on("unmaximize", () => mainWindow?.webContents.send("win.maximized", false));
   mainWindow.on("unresponsive", () => appendCrashLog("window unresponsive"));
@@ -361,7 +402,11 @@ async function createWindow(): Promise<void> {
     );
     services?.ptys.detachAll();
     recoverAbandonedShutdown();
+    if (mainWindow) resetAttention(mainWindow);
     void webContents.reload();
+  });
+  webContents.on("did-start-navigation", (navigation) => {
+    if (mainWindow && resetsAttention(navigation)) resetAttention(mainWindow);
   });
   webContents.on("did-navigate", () => recoverAbandonedShutdown());
   webContents.on("did-finish-load", () => recoverAbandonedShutdown());
@@ -450,6 +495,7 @@ function windowFromSender(sender: WebContents): BrowserWindow | null {
 
 const ZOOM_MIN = -5;
 const ZOOM_MAX = 5;
+const ZOOM_STEP = 0.5;
 
 function bumpZoom(sender: WebContents, delta: number): void {
   const w = windowFromSender(sender);
@@ -476,6 +522,32 @@ function relaunch(): void {
   app.exit(0);
 }
 
+function setAttentionIndicators(win: BrowserWindow, count: number, badgeDataUrl: string | null): void {
+  if (process.platform === "win32") {
+    const overlay = badgeDataUrl ? nativeImage.createFromDataURL(badgeDataUrl) : null;
+    win.setOverlayIcon(overlay && !overlay.isEmpty() ? overlay : null, attentionDescription(count));
+  } else {
+    app.setBadgeCount(count);
+  }
+}
+
+function resetAttention(win: BrowserWindow): void {
+  attentionCount = null;
+  setAttentionIndicators(win, 0, null);
+  win.flashFrame(false);
+}
+
+function applyAttention(sender: WebContents, payload: unknown): void {
+  const state = parseAttentionState(payload);
+  const win = windowFromSender(sender);
+  if (!state || !win) return;
+  const flash = shouldFlash(attentionCount, state.count, win.isFocused());
+  attentionCount = state.count;
+  setAttentionIndicators(win, state.count, state.badgeDataUrl);
+  if (state.count === 0) win.flashFrame(false);
+  else if (flash) win.flashFrame(true);
+}
+
 function registerWindowIpc(): void {
   ipcMain.on("win.minimize", (e) => windowFromSender(e.sender)?.minimize());
   ipcMain.on("win.toggle-maximize", (e) => {
@@ -487,9 +559,10 @@ function registerWindowIpc(): void {
   ipcMain.on("win.close", (e) => windowFromSender(e.sender)?.close());
   ipcMain.handle("win.is-maximized", (e) => windowFromSender(e.sender)?.isMaximized() ?? false);
 
-  ipcMain.on("win.zoom-in", (e) => bumpZoom(e.sender, 1));
-  ipcMain.on("win.zoom-out", (e) => bumpZoom(e.sender, -1));
+  ipcMain.on("win.zoom-in", (e) => bumpZoom(e.sender, ZOOM_STEP));
+  ipcMain.on("win.zoom-out", (e) => bumpZoom(e.sender, -ZOOM_STEP));
   ipcMain.on("win.zoom-reset", (e) => windowFromSender(e.sender)?.webContents.setZoomLevel(0));
+  ipcMain.on("app.attention", (e, payload: unknown) => applyAttention(e.sender, payload));
 }
 
 function recoveryIssueFor(args: { file?: unknown } | undefined): MetadataIssue {
@@ -777,12 +850,6 @@ function registerIpc(services: Services): void {
   ipcMain.handle("projects.add", (_e, rootPath: string) => sessions.addProject(rootPath));
   ipcMain.handle("os.homeDir", () => homedir());
   ipcMain.handle("sessions.list", (_e, projectId: string) => sessions.listSessions(projectId));
-  ipcMain.handle("sessions.discovered", (_e, projectId: string) => sessions.listDiscovered(projectId));
-  ipcMain.handle(
-    "sessions.import",
-    (_e, args: { projectId: string; driver: DriverName; resumeCursor: string; title: string }) =>
-      sessions.importSession(args.projectId, args.driver, args.resumeCursor, args.title)
-  );
   ipcMain.handle("sessions.create", (_e, args: { projectId: string; driver: DriverName; options?: CreateSessionOptions }) =>
     sessions.createSession(args.projectId, args.driver, args.options)
   );
@@ -921,15 +988,26 @@ function registerIpc(services: Services): void {
   ipcMain.handle("git.projectBranches", (_e, args: { projectId: string }) =>
     git.branches(sessions.rootForProject(args.projectId))
   );
-  ipcMain.handle("git.switchBranch", async (_e, args: { sessionId: string; branch: string }) => {
-    const root = await sessions.ensureWorktree(args.sessionId);
-    const status = await git.switchBranch(root, args.branch, sessions.projectForSession(args.sessionId));
-    sessions.updateSessionBranch(args.sessionId, status.branch);
-    return status;
-  });
-  ipcMain.handle("git.diff", (_e, args: { sessionId: string; mode: GitDiffMode; baseRef?: string }) =>
-    sessions.ensureWorktree(args.sessionId).then((root) => git.diff(root, args.mode, args.baseRef))
+  ipcMain.handle("git.switchBranch", (_e, args: { sessionId: string; branch: string }) =>
+    sessions.withBranchSwitch(args.sessionId, async () => {
+      const root = await sessions.ensureWorktree(args.sessionId);
+      const status = await git.switchBranch(root, args.branch, sessions.projectForSession(args.sessionId));
+      sessions.updateSessionBranch(args.sessionId, status.branch);
+      return status;
+    })
   );
+  ipcMain.handle("git.diff", async (_e, args: { sessionId: string; mode: GitDiffMode; baseRef?: string }) => {
+    const root = await sessions.ensureWorktree(args.sessionId);
+    if (args.mode !== "turn") return git.diff(root, args.mode, args.baseRef);
+    const range = await sessions.turnDiffRange(args.sessionId);
+    return git.diff(root, "turn", range.base, range.head);
+  });
+  ipcMain.handle("git.turnChanges", (_e, args: { sessionId: string }) => sessions.turnChanges(args.sessionId));
+  ipcMain.handle("git.undoTurn", (_e, args: { sessionId: string; turnId: string; expectedEndSha: string }) => {
+    if (typeof args.turnId !== "string" || !args.turnId) throw new Error("invalid turnId");
+    if (typeof args.expectedEndSha !== "string" || !args.expectedEndSha) throw new Error("invalid expectedEndSha");
+    return sessions.undoTurn(args.sessionId, args.turnId, args.expectedEndSha);
+  });
   ipcMain.handle("git.health", (_e, args: { projectId?: string }) => {
     if (!args.projectId) return git.health();
     const project = sessions.getProject(args.projectId);
@@ -1036,11 +1114,6 @@ function registerIpc(services: Services): void {
       throw lastError ?? new Error("no root available to read image");
     }
   );
-  ipcMain.handle("git.turnDiff", async (_e, args: { sessionId: string; since: number }) => {
-    const root = await sessions.ensureWorktree(args.sessionId);
-    return git.turnDiff(root, args.since, sessions.turnBaseSha(args.sessionId));
-  });
-
   ipcMain.handle("pty.open", (_e, args: { sessionId: string; kind: PtyKind }) =>
     sessions.ensureWorktree(args.sessionId).then((root) =>
       ptys.open(
@@ -1061,8 +1134,6 @@ function registerIpc(services: Services): void {
   );
   ipcMain.on("pty.detach", (_e, args: { ptyId: string; token: string }) => ptys.detach(args.ptyId, args.token));
   ipcMain.on("pty.kill", (_e, args: { ptyId: string }) => ptys.kill(args.ptyId));
-
-  ipcMain.handle("term.font", () => readWindowsTerminalFontFace());
 
   ipcMain.handle("debug.openTrace", async (): Promise<{ ok: boolean; path?: string; error?: string }> => {
     const tracePath = getHarnessTracePath();
@@ -1087,7 +1158,7 @@ function registerIpc(services: Services): void {
   });
 
   ipcMain.handle("shell.openPath", (_e, args: { path: string }): Promise<void> =>
-    shell.openExternal(pathToFileURL(args.path).href).then(() => undefined)
+    shell.openExternal(pathToFileURL(assertOpenablePath(args.path)).href).then(() => undefined)
   );
 
   ipcMain.handle("shell.openExternal", (_e, args: { url: string }): Promise<void> => {
@@ -1187,9 +1258,17 @@ async function startApp(): Promise<void> {
       .catch((err) => {
         console.warn(`orphan server sweep failed: ${(err as Error).message}`);
       });
+    sweepStaleSnapshotIndexes()
+      .then((removed) => {
+        if (removed > 0) console.warn(`removed ${removed} stale turn snapshot index file(s)`);
+      })
+      .catch((err) => {
+        console.warn(`turn snapshot index sweep failed: ${(err as Error).message}`);
+      });
     registerIpc(services);
     services.updates.start();
     registerShutdownIpc(services);
+    startSessionSweeps();
   } else {
     startupState = { mode: "recovery", issues: stores.issues, dataDir: userdataDir() };
     for (const issue of stores.issues) {

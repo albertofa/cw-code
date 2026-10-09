@@ -1,5 +1,6 @@
 import type {
   GitPullRequestChecks,
+  PrAuthor,
   PrBucket,
   PrCheck,
   PrCiState,
@@ -144,12 +145,23 @@ function mergeReviewers(reviewed: PrReviewer[], requestedLogins: string[]): PrRe
   return merged;
 }
 
+function parseAuthor(author: Record<string, unknown>): PrAuthor {
+  const { login, isBot } = actorLoginOf(author);
+  const name = asString(author.name).trim();
+  const avatarUrl = asString(author.avatarUrl);
+  return {
+    login,
+    isBot,
+    ...(name ? { name } : {}),
+    ...(avatarUrl.startsWith("https://") ? { avatarUrl } : {})
+  };
+}
+
 function parseSummaryNode(node: Record<string, unknown>, viewer: string | null): PrSummary | null {
   const url = asString(node.url);
   const ref = prRefFromUrl(url);
   const number = asNumber(node.number);
   if (!ref || number <= 0) return null;
-  const author = actorLoginOf(node.author);
   const reviewerLogins = asNodes(node.reviewRequests)
     .map((request) => asString(asRecord(request.requestedReviewer).login))
     .filter(Boolean);
@@ -161,7 +173,7 @@ function parseSummaryNode(node: Record<string, unknown>, viewer: string | null):
     title: asString(node.title, `Pull request #${number}`),
     state: prStateFrom(node.state),
     isDraft: asBool(node.isDraft),
-    author,
+    author: parseAuthor(asRecord(node.author)),
     viewerIsAuthor: asBool(node.viewerDidAuthor),
     reviewRequestedFromViewer: viewer !== null && reviewerLogins.includes(viewer),
     headRefName: asString(node.headRefName),

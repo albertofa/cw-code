@@ -1,5 +1,7 @@
 import {
+  Children,
   createContext,
+  isValidElement,
   memo,
   useContext,
   useMemo,
@@ -13,12 +15,25 @@ import remarkGfm from "remark-gfm";
 import type { Components } from "react-markdown";
 import { renderToStaticMarkup } from "react-dom/server";
 import { useNotifs } from "./Notifications.js";
-import { Check, ExternalLink } from "lucide-react";
+import {
+  Check,
+  ExternalLink,
+  FileCode,
+  Info,
+  Lightbulb,
+  MessageSquareWarning,
+  OctagonAlert,
+  TriangleAlert,
+  WrapText,
+  type LucideIcon
+} from "lucide-react";
 import { GitHubMark } from "./GitHubMark.js";
 import { FileIcon } from "./fileIcons.js";
 import { shortenHome } from "./pathDisplay.js";
 import { useAppStore } from "../stores/appStore.js";
 import { isHttpsLink } from "./releaseNotes.js";
+import { parseFilePath, type FileRef } from "./markdownPaths.js";
+import { parseAlertMarker, type AlertKind } from "./markdownAlerts.js";
 
 const PREVIEW_EXTS = new Set(["md", "markdown", "html", "htm"]);
 const HTML_EXTS = new Set(["html", "htm"]);
@@ -39,7 +54,7 @@ export function isHtmlPath(path: string): boolean {
 
 export function isLocalPreviewLink(href: string): boolean {
   const clean = href.split("#")[0].split("?")[0];
-  if (!clean || clean.startsWith("//")) return false;
+  if (!clean || /^[\\/]{2}/.test(clean)) return false;
   if (/^[a-zA-Z]:[\\/]/.test(clean)) return isPreviewablePath(clean);
   if (/^[a-zA-Z][a-zA-Z0-9+.-]*:/.test(clean)) return false;
   return isPreviewablePath(clean);
@@ -98,9 +113,20 @@ export function buildPreviewHtml(title: string, markdown: string): string {
 const BlockCodeContext = createContext(false);
 const InLinkContext = createContext(false);
 
+function codeLanguage(children: ReactNode): string | null {
+  for (const child of Children.toArray(children)) {
+    if (!isValidElement<{ className?: string }>(child)) continue;
+    const match = /language-([\w+#.-]+)/.exec(child.props.className ?? "");
+    if (match) return match[1];
+  }
+  return null;
+}
+
 function Pre({ children }: { children?: ReactNode }) {
   const preRef = useRef<HTMLPreElement>(null);
   const [copied, setCopied] = useState(false);
+  const [wrapped, setWrapped] = useState(false);
+  const language = codeLanguage(children);
 
   const copy = () => {
     const text = preRef.current?.querySelector("code")?.textContent ?? preRef.current?.textContent ?? "";
@@ -116,10 +142,26 @@ function Pre({ children }: { children?: ReactNode }) {
 
   return (
     <BlockCodeContext.Provider value={true}>
-      <div className="md-pre">
-        <button className="md-copy" onClick={copy} title="Copy code">
-          {copied ? <Check aria-hidden="true" size={14} /> : "Copy"}
-        </button>
+      <div className={wrapped ? "md-pre md-pre-wrapped" : "md-pre"}>
+        <div className="md-pre-head">
+          <FileCode aria-hidden="true" size={14} />
+          {language && <span className="md-pre-lang">{language}</span>}
+          <div className="md-pre-actions">
+            <button
+              type="button"
+              className="md-pre-btn"
+              aria-pressed={wrapped}
+              aria-label="Wrap long lines"
+              title={wrapped ? "Stop wrapping lines" : "Wrap long lines"}
+              onClick={() => setWrapped((value) => !value)}
+            >
+              <WrapText aria-hidden="true" size={14} />
+            </button>
+            <button type="button" className="md-copy" onClick={copy} title="Copy code">
+              {copied ? <Check aria-hidden="true" size={14} /> : "Copy"}
+            </button>
+          </div>
+        </div>
         <pre ref={preRef}>{children}</pre>
       </div>
     </BlockCodeContext.Provider>
@@ -242,22 +284,62 @@ function reactText(node: ReactNode): string {
   return "";
 }
 
+function fileBaseName(path: string): string {
+  return path.split(/[\\/]/).pop() ?? path;
+}
+
+function lineLabel({ line, endLine }: FileRef): string {
+  if (line === undefined) return "";
+  return endLine === undefined ? `:${line}` : `:${line}-${endLine}`;
+}
+
+function SourceChip({
+  fileRef,
+  onOpenSource
+}: {
+  fileRef: FileRef;
+  onOpenSource: (path: string, line?: number) => void;
+}) {
+  const name = fileBaseName(fileRef.path);
+  const label = lineLabel(fileRef);
+  return (
+    <button
+      type="button"
+      className="md-file-chip"
+      title={`${fileRef.path}${label}`}
+      onClick={(e) => {
+        e.stopPropagation();
+        onOpenSource(fileRef.path, fileRef.line);
+      }}
+    >
+      <FileIcon name={name} size={13} />
+      <span className="md-file-chip-name">{name}</span>
+      {label && <span className="md-file-chip-line">{label}</span>}
+    </button>
+  );
+}
+
 function MdCode({
   children,
   className,
   onOpenFile,
+  onOpenSource,
   onOpenExternal
 }: {
   children?: ReactNode;
   className?: string;
   onOpenFile?: (path: string) => void;
+  onOpenSource?: (path: string, line?: number) => void;
   onOpenExternal?: (path: string) => void;
 }) {
   const inBlock = useContext(BlockCodeContext);
+  const inLink = useContext(InLinkContext);
   const text = reactText(children).trim();
   if (!inBlock && text.length > 0 && !/\s/.test(text) && isLocalPreviewLink(text) && isHtmlPath(text)) {
     return <HtmlFileChip href={text} label={text} onOpenFile={onOpenFile} onOpenExternal={onOpenExternal} />;
   }
+  const fileRef = !inBlock && !inLink && onOpenSource ? parseFilePath(text) : null;
+  if (fileRef && onOpenSource) return <SourceChip fileRef={fileRef} onOpenSource={onOpenSource} />;
   return <code className={className}>{children}</code>;
 }
 
@@ -265,6 +347,65 @@ function MdTable({ children }: { children?: ReactNode }) {
   return (
     <div className="md-table-wrap">
       <table>{children}</table>
+    </div>
+  );
+}
+
+const ALERTS: Record<AlertKind, { label: string; Icon: LucideIcon }> = {
+  note: { label: "Note", Icon: Info },
+  tip: { label: "Tip", Icon: Lightbulb },
+  important: { label: "Important", Icon: MessageSquareWarning },
+  warning: { label: "Warning", Icon: TriangleAlert },
+  caution: { label: "Caution", Icon: OctagonAlert }
+};
+
+interface AlertContent {
+  kind: AlertKind;
+  body: ReactNode[];
+}
+
+function stripLeadingBreak(nodes: ReactNode[]): ReactNode[] {
+  const [head, ...rest] = nodes;
+  if (!isValidElement(head) || head.type !== "br") return nodes;
+  const [next, ...others] = rest;
+  if (typeof next !== "string") return rest;
+  const trimmed = next.trimStart();
+  return trimmed ? [trimmed, ...others] : others;
+}
+
+function extractAlert(children: ReactNode): AlertContent | null {
+  const nodes = Children.toArray(children);
+  const firstIndex = nodes.findIndex((node) => isValidElement(node));
+  const first = nodes[firstIndex];
+  if (!isValidElement<{ children?: ReactNode }>(first) || first.type !== "p") return null;
+  const inline = Children.toArray(first.props.children);
+  const head = inline[0];
+  if (typeof head !== "string") return null;
+  const newline = head.indexOf("\n");
+  const marker = parseAlertMarker(newline < 0 ? head : head.slice(0, newline));
+  if (!marker) return null;
+  const tail = newline < 0 ? "" : head.slice(newline + 1);
+  const firstText = [marker.rest, tail].filter(Boolean).join("\n");
+  const after = inline.slice(1);
+  const firstParagraph = firstText ? [firstText, ...after] : stripLeadingBreak(after);
+  const rest = nodes.slice(firstIndex + 1);
+  return {
+    kind: marker.kind,
+    body: firstParagraph.length > 0 ? [<p key="alert-first">{firstParagraph}</p>, ...rest] : rest
+  };
+}
+
+function MdBlockquote({ children }: { children?: ReactNode }) {
+  const alert = extractAlert(children);
+  if (!alert) return <blockquote>{children}</blockquote>;
+  const { label, Icon } = ALERTS[alert.kind];
+  return (
+    <div className={`md-alert ${alert.kind}`}>
+      <div className="md-alert-head">
+        <Icon aria-hidden="true" size={14} />
+        {label}
+      </div>
+      {alert.body}
     </div>
   );
 }
@@ -300,6 +441,7 @@ function HttpsOnlyImage({ src, alt }: { src?: string; alt?: string }) {
 const HTTPS_ONLY_COMPONENTS: Components = {
   pre: Pre,
   table: MdTable,
+  blockquote: MdBlockquote,
   a: ({ href, children }) => <HttpsOnlyLink href={href}>{children}</HttpsOnlyLink>,
   img: ({ src, alt }) => <HttpsOnlyImage src={typeof src === "string" ? src : undefined} alt={alt} />
 };
@@ -307,12 +449,14 @@ const HTTPS_ONLY_COMPONENTS: Components = {
 export const Md = memo(function Md({
   text,
   onOpenFile,
+  onOpenSource,
   onOpenExternal,
   allowImages = true,
   linkPolicy = "default"
 }: {
   text: string;
   onOpenFile?: (path: string) => void;
+  onOpenSource?: (path: string, line?: number) => void;
   onOpenExternal?: (path: string) => void;
   allowImages?: boolean;
   linkPolicy?: "default" | "https-only";
@@ -323,12 +467,15 @@ export const Md = memo(function Md({
         ? HTTPS_ONLY_COMPONENTS
         : {
             pre: Pre,
-            code: (props) => <MdCode {...props} onOpenFile={onOpenFile} onOpenExternal={onOpenExternal} />,
+            code: (props) => (
+              <MdCode {...props} onOpenFile={onOpenFile} onOpenSource={onOpenSource} onOpenExternal={onOpenExternal} />
+            ),
             table: MdTable,
+            blockquote: MdBlockquote,
             a: (props) => <MdLink {...props} onOpenFile={onOpenFile} onOpenExternal={onOpenExternal} />,
             ...(allowImages ? {} : { img: ({ src, alt }) => <MdImageLink src={typeof src === "string" ? src : undefined} alt={alt} /> })
           },
-    [onOpenFile, onOpenExternal, allowImages, linkPolicy]
+    [onOpenFile, onOpenSource, onOpenExternal, allowImages, linkPolicy]
   );
   return (
     <div className="md">
@@ -342,20 +489,25 @@ export const Md = memo(function Md({
 export const StreamingMd = memo(function StreamingMd({
   text,
   onOpenFile,
+  onOpenSource,
   onOpenExternal
 }: {
   text: string;
   onOpenFile?: (path: string) => void;
+  onOpenSource?: (path: string, line?: number) => void;
   onOpenExternal?: (path: string) => void;
 }) {
   const components = useMemo<Components>(
     () => ({
       pre: Pre,
-      code: (props) => <MdCode {...props} onOpenFile={onOpenFile} onOpenExternal={onOpenExternal} />,
+      code: (props) => (
+        <MdCode {...props} onOpenFile={onOpenFile} onOpenSource={onOpenSource} onOpenExternal={onOpenExternal} />
+      ),
       table: MdTable,
+      blockquote: MdBlockquote,
       a: (props) => <MdLink {...props} onOpenFile={onOpenFile} onOpenExternal={onOpenExternal} />
     }),
-    [onOpenFile, onOpenExternal]
+    [onOpenFile, onOpenSource, onOpenExternal]
   );
   const sanitized = useMemo(() => sanitizeStreamingMarkdown(text), [text]);
   return (

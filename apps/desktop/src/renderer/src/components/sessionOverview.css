@@ -1,0 +1,273 @@
+.session-overview {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+}
+
+.ov-sec {
+  flex: none;
+  background: var(--bg-deep);
+  border-radius: var(--r-lg);
+  padding: 10px 12px;
+}
+
+.ov-h {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 26px;
+  font-size: var(--t-sm);
+  color: var(--muted);
+}
+
+.ov-toggle {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 100%;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.ov-toggle b {
+  color: var(--text);
+  font-weight: 600;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ov-toggle:focus-visible {
+  outline: 2px solid var(--violet-ink);
+  outline-offset: 2px;
+  border-radius: var(--r-sm);
+}
+
+.ov-chev {
+  display: inline-flex;
+  color: var(--faint);
+}
+
+.ov-r {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--t-xs);
+  color: var(--muted);
+}
+
+.ov-faint {
+  color: var(--faint);
+}
+
+.ov-error {
+  color: var(--danger);
+}
+
+.session-overview .mono {
+  font-family: var(--mono);
+}
+
+.ov-body {
+  padding-top: 2px;
+}
+
+.ov-kv {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 26px;
+  font-size: var(--t-xs);
+  color: var(--muted);
+}
+
+.ov-kv > span:first-child {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ov-kv > b {
+  margin-left: auto;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  font-weight: 500;
+  color: var(--dim);
+  white-space: nowrap;
+}
+
+.ov-kv .add {
+  color: var(--success);
+}
+
+.ov-kv .del {
+  color: var(--danger);
+}
+
+.ov-note {
+  min-height: 26px;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: var(--t-xs);
+  color: var(--faint);
+}
+
+.ov-note.error {
+  color: var(--danger);
+}
+
+.ov-note b {
+  font-weight: 600;
+}
+
+.ov-ctx {
+  margin-bottom: 6px;
+}
+
+.ov-ctx.warn .usage-track i {
+  background: var(--warning);
+}
+
+.ov-ctx.danger .usage-track i {
+  background: var(--danger);
+}
+
+.ov-pr {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  cursor: pointer;
+}
+
+.ov-pr:focus-visible,
+.ov-link:focus-visible,
+.ov-icon-btn:focus-visible {
+  outline: 2px solid var(--violet-ink);
+  outline-offset: 2px;
+  border-radius: var(--r-sm);
+}
+
+.ov-pr-reason {
+  color: var(--muted);
+}
+
+.ov-icon-btn {
+  position: relative;
+  width: 22px;
+  height: 22px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.ov-icon-btn::before {
+  content: "";
+  position: absolute;
+  inset: -1px;
+}
+
+.ov-icon-btn:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.ov-icon-btn:disabled {
+  cursor: default;
+}
+
+.ov-spin {
+  animation: cw-spin 900ms linear infinite;
+}
+
+.ov-plan .usage-meters {
+  gap: 10px;
+  margin: 4px 0 6px;
+}
+
+.ov-plan .usage-meter-top {
+  font-size: var(--t-xs);
+}
+
+.ov-plan .usage-meter-val {
+  font-size: var(--t-xs);
+}
+
+.ov-link {
+  display: block;
+  margin: 6px 0 0 auto;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: var(--t-xs);
+  cursor: pointer;
+}
+
+.ov-link:hover {
+  text-decoration: underline;
+}
+
+.ov-todo {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 26px;
+  font-size: var(--t-xs);
+  color: var(--dim);
+}
+
+.ov-todo-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ov-agent.running {
+  color: var(--success);
+}
+
+.ov-agent.completed {
+  color: var(--muted);
+}
+
+.ov-agent.error {
+  color: var(--danger);
+}
+
+.ov-chev svg {
+  transition: transform var(--dur-base) var(--ease-out);
+}
+
+.ov-sec.closed .ov-chev svg {
+  transform: rotate(-90deg);
+}

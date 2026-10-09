@@ -106,19 +106,37 @@ function resetRuntimeStatuses(sessions: SessionMeta[]): boolean {
     const previous = session.status;
     if (!session.status) {
       session.status = "idle";
+      changed = true;
+      traceSessionStatus({
+        sessionId: session.id,
+        driver: session.driver,
+        from: null,
+        to: "idle",
+        reason: "app-restart-idle"
+      });
     } else if (session.status === "working" || session.status === "input-required") {
       session.status = "holding";
-    } else {
-      continue;
+      changed = true;
+      traceSessionStatus({
+        sessionId: session.id,
+        driver: session.driver,
+        from: previous,
+        to: "holding",
+        reason: "app-restart-holding"
+      });
     }
-    changed = true;
-    traceSessionStatus({
-      sessionId: session.id,
-      driver: session.driver,
-      from: previous ?? null,
-      to: session.status,
-      reason: previous ? "app-restart-holding" : "app-restart-idle"
-    });
+    if (session.idleSince !== undefined && !Number.isFinite(session.idleSince)) {
+      delete session.idleSince;
+      changed = true;
+    }
+    if (session.autoResolved !== undefined && typeof session.autoResolved !== "boolean") {
+      delete session.autoResolved;
+      changed = true;
+    }
+    if (session.status === "idle" && session.idleSince === undefined && Number.isFinite(session.updatedAt)) {
+      session.idleSince = session.updatedAt;
+      changed = true;
+    }
   }
   return changed;
 }
@@ -133,12 +151,15 @@ type SessionPatch = Partial<
     | "effort"
     | "variant"
     | "permissionMode"
+    | "effectivePermissionMode"
     | "worktreePath"
     | "branch"
     | "prs"
     | "prUnlinked"
     | "issues"
     | "runs"
+    | "autoResolved"
+    | "lastTurnSnapshot"
   >
 >;
 
@@ -228,6 +249,7 @@ export class SessionStore {
       resumeCursor: "",
       createdAt: now,
       updatedAt: now,
+      idleSince: now,
       ...(workspace.worktreePath ? { worktreePath: normalizeRoot(workspace.worktreePath) } : {}),
       ...(workspace.branch ? { branch: workspace.branch } : {})
     };
@@ -257,12 +279,6 @@ export class SessionStore {
     return this.data.sessions.find((s) => s.id === id);
   }
 
-  findByCursor(projectId: string, driver: DriverKind, resumeCursor: string): SessionMeta | undefined {
-    return this.data.sessions.find(
-      (s) => s.projectId === projectId && s.driver === driver && s.resumeCursor === resumeCursor
-    );
-  }
-
   updateSession(id: string, patch: SessionPatch & { status: SessionStatus }, reason: SessionStatusReason): void;
   updateSession(id: string, patch: SessionPatch, reason?: undefined): void;
   updateSession(id: string, patch: SessionPatch, reason?: SessionStatusReason): void {
@@ -276,6 +292,8 @@ export class SessionStore {
     if (patch.effort !== undefined) current.effort = patch.effort;
     if (patch.variant !== undefined) current.variant = patch.variant;
     if (patch.permissionMode !== undefined) current.permissionMode = patch.permissionMode;
+    if (patch.effectivePermissionMode !== undefined) current.effectivePermissionMode = patch.effectivePermissionMode;
+    else if ("effectivePermissionMode" in patch) delete current.effectivePermissionMode;
     if (patch.worktreePath !== undefined) current.worktreePath = normalizeRoot(patch.worktreePath);
     else if ("worktreePath" in patch) delete current.worktreePath;
     if (patch.branch !== undefined) current.branch = patch.branch;
@@ -294,8 +312,16 @@ export class SessionStore {
     } else if ("runs" in patch) delete current.runs;
     if (patch.prUnlinked !== undefined) current.prUnlinked = patch.prUnlinked;
     else if ("prUnlinked" in patch) delete current.prUnlinked;
-    current.updatedAt = Date.now();
+    if (patch.autoResolved !== undefined) current.autoResolved = patch.autoResolved;
+    else if ("autoResolved" in patch) delete current.autoResolved;
+    if (patch.lastTurnSnapshot !== undefined) current.lastTurnSnapshot = patch.lastTurnSnapshot;
+    else if ("lastTurnSnapshot" in patch) delete current.lastTurnSnapshot;
+    const now = Date.now();
+    current.updatedAt = now;
     if (patch.status !== undefined && patch.status !== previousStatus) {
+      if (patch.status === "idle") current.idleSince = now;
+      else if (previousStatus === "idle") delete current.idleSince;
+      if (patch.status !== "resolved" && patch.status !== "archived") delete current.autoResolved;
       traceSessionStatus({
         sessionId: id,
         driver: current.driver,
@@ -311,6 +337,7 @@ export class SessionStore {
     const session = this.getSession(id);
     if (!session || session.status !== "holding") return null;
     session.status = "idle";
+    session.idleSince = Date.now();
     traceSessionStatus({
       sessionId: id,
       driver: session.driver,

@@ -20,6 +20,7 @@ import { useNotifs } from "./Notifications.js";
 import { MenuSelect } from "./MenuSelect.js";
 import { GitHubMark } from "./GitHubMark.js";
 import { shortenHome } from "./pathDisplay.js";
+import { useThreadVisible } from "./threadVisibility.js";
 
 export function GitPanelBar({ sessionId }: { sessionId: string }) {
   const [branches, setBranches] = useState<GitBranchInfo[]>([]);
@@ -31,6 +32,7 @@ export function GitPanelBar({ sessionId }: { sessionId: string }) {
     | null
   >(null);
   const [ghOpen, setGhOpen] = useState(false);
+  const visible = useThreadVisible();
   const cardRef = useRef<HTMLDivElement | null>(null);
   const closeTimer = useRef<number | null>(null);
   const refreshGitStatus = useAppStore((state) => state.refreshGitStatus);
@@ -43,13 +45,13 @@ export function GitPanelBar({ sessionId }: { sessionId: string }) {
   }, []);
 
   useEffect(() => {
-    if (!ghOpen) return;
+    if (!ghOpen || !visible) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === "Escape") setGhOpen(false);
     };
     window.addEventListener("keydown", onKey);
     return () => window.removeEventListener("keydown", onKey);
-  }, [ghOpen]);
+  }, [ghOpen, visible]);
 
   useLayoutEffect(() => {
     if (!hoverCard) return;

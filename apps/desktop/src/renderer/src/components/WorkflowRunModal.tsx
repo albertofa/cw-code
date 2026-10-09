@@ -29,10 +29,11 @@ import { useGitHubStore } from "../stores/githubStore.js";
 import { usePrStore, type RunModalState } from "../stores/prStore.js";
 import { resolveTemplate } from "./prWorkflows.js";
 import { harnessLabel } from "./toolTabs.js";
-import { firstDisplayedModelId, getLastModel } from "./lastModel.js";
+import { getRecentModels } from "./lastModel.js";
+import { pickInitialModel } from "./modelMenus.js";
+import { workflowIcon } from "./workflowIcons.js";
 import { shortenHome } from "./pathDisplay.js";
 import { DriverIcon } from "./DriverIcon.js";
-import { workflowIcon } from "./workflowIcons.js";
 import { MenuSelect } from "./MenuSelect.js";
 import { errorMessage } from "./errorMessage.js";
 import { usePrSettings } from "./useLinkedPr.js";
@@ -94,9 +95,10 @@ function isTextEntry(target: EventTarget | null): boolean {
   return target instanceof HTMLElement && (target.closest(".menu-panel") !== null || target.matches("textarea, input, select"));
 }
 
-function clonePathHint(root: string, ref: RepoRef): string {
+function clonePathHint(root: string, ref: RepoRef, includeOwner: boolean): string {
   const sep = root.includes("\\") ? "\\" : "/";
-  return `${root.replace(/[\\/]+$/, "")}${sep}${ref.owner}${sep}${ref.repo}`;
+  const base = root.replace(/[\\/]+$/, "");
+  return includeOwner ? `${base}${sep}${ref.owner}${sep}${ref.repo}` : `${base}${sep}${ref.repo}`;
 }
 
 function newSessionHint(subject: WorkflowSubject, runNumber: number | undefined): string {
@@ -266,8 +268,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
       .then((list) => {
         if (!active) return;
         setModels(list);
-        const last = getLastModel(driver);
-        setModel(last && list.some((m) => m.id === last) ? last : firstDisplayedModelId(driver, list));
+        setModel(pickInitialModel(list, useAppStore.getState().defaultModelByDriver[driver], getRecentModels(driver)) ?? undefined);
       })
       .catch((err: unknown) => {
         if (!active) return;
@@ -486,7 +487,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
     }
   };
 
-  const WorkflowIcon = workflow ? workflowIcon(workflow.icon) : workflowIcon("sparkle");
+  const WorkflowIcon = workflowIcon(workflow?.icon);
   const title = continueSession
     ? `Continue “${continueSession.title}”`
     : workflow
@@ -574,7 +575,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
                 </span>
                 <span className="wf-run-muted">It isn't a project yet, so the session needs a local copy first.</span>
                 {settings && (
-                  <span className="wf-run-path">{shortenHome(clonePathHint(settings.prCloneRoot, repo), homeDir ?? undefined)}</span>
+                  <span className="wf-run-path">{shortenHome(clonePathHint(settings.prCloneRoot, repo, settings.prCloneIncludeOwner), homeDir ?? undefined)}</span>
                 )}
                 {stage === "clone" && (
                   <span className="wf-run-status">

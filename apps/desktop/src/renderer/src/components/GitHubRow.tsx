@@ -178,7 +178,7 @@ function PeopleCell({ subject, viewer }: { subject: RowSubject; viewer: string |
   const noReviewers = subject.kind === "pr" && subject.pr.state === "OPEN" && !subject.pr.isDraft;
   return (
     <HoverCard className="hub-people" card={card}>
-      <GitHubAvatar login={stack.author} />
+      <GitHubAvatar login={stack.author} avatarUrl={subject.kind === "pr" ? subject.pr.author.avatarUrl : undefined} />
       {stack.others.length > 0 ? (
         <>
           <span className="hub-people-arrow">

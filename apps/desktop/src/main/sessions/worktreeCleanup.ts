@@ -1,11 +1,22 @@
 import { statSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join, resolve, sep } from "node:path";
 import type { GitStatus, SessionMeta } from "@cw-code/contracts";
 
 export function sameWorktreePath(a: string, b: string): boolean {
   const left = resolve(a).replace(/[\\/]+$/, "");
   const right = resolve(b).replace(/[\\/]+$/, "");
   return process.platform === "win32" ? left.toLowerCase() === right.toLowerCase() : left === right;
+}
+
+function comparableRoot(path: string): string {
+  const resolved = resolve(path).replace(/[\\/]+$/, "");
+  return process.platform === "win32" || process.platform === "darwin" ? resolved.toLowerCase() : resolved;
+}
+
+export function rootsOverlap(a: string, b: string): boolean {
+  const left = comparableRoot(a);
+  const right = comparableRoot(b);
+  return left === right || right.startsWith(`${left}${sep}`) || left.startsWith(`${right}${sep}`);
 }
 
 export function changedWorktreeBranch(session: SessionMeta, status: GitStatus): string | null {

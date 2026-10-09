@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import type { GitHubKind, GitHubViewGroup, IssueSummary, PrSummary, RepoRef, WorkflowRunSummary } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
+import "./prInbox.css";
 import {
   badgeSearchKeys,
   clonedReposOf,
@@ -9,7 +10,6 @@ import {
   searchKey,
   useGitHubStore
 } from "../stores/githubStore.js";
-import { selectSessionPanel, usePanelStore } from "../stores/panelStore.js";
 import { usePrStore } from "../stores/prStore.js";
 import { anchorRectOf, type AnchorRect } from "./AnchoredPopover.js";
 import { GitHubHeader } from "./GitHubHeader.js";
@@ -75,8 +75,6 @@ export function GitHubView() {
   const projectRepos = usePrStore((s) => s.projectRepos);
   const projectIdForRef = usePrStore((s) => s.projectIdForRef);
   const sessionsByProject = useAppStore((s) => s.sessionsByProject);
-  const activeSessionId = useAppStore((s) => s.activeSessionId) ?? undefined;
-  const rightVisible = usePanelStore((s) => selectSessionPanel(s, activeSessionId).rightVisible);
 
   const inputRef = useRef<HTMLInputElement | null>(null);
   const viewButtonRef = useRef<HTMLButtonElement | null>(null);
@@ -205,8 +203,6 @@ export function GitHubView() {
         account={account}
         fetchedAt={entry?.data?.fetchedAt ?? null}
         loading={loading}
-        panelSessionId={activeSessionId}
-        showPanelToggles={!rightVisible}
         inputRef={inputRef}
         viewButtonRef={viewButtonRef}
         viewsOpen={viewsMenu !== null}

@@ -10,12 +10,16 @@ export type {
   EffortLevel,
   ComposerPrefs,
   ModelOption,
+  ModelMeta,
   GitStatus,
   GitPullRequest,
   GitPullRequestChecks,
   GitBranchInfo,
   GitDiffMode,
   GitDiffResult,
+  TurnSnapshot,
+  TurnFileChange,
+  TurnChanges,
   GitHubAccountInfo,
   GitHubAccountSelectionSource,
   SourceControlBinaryHealth,
@@ -26,13 +30,14 @@ export type {
 } from "./session.js";
 export type { ThreadEvent, SessionEvent, HistoryMessage, TodoItem, SubagentToolActivity, SubagentToolSummary, ToolUsage, ApprovalDecision, ApprovalKind, ApprovalRequest, QuestionInfo, QuestionOption, QuestionRequest } from "./events.js";
 export type { CliDriver, DriverActivity, TurnHandle, RetryConnectionRequest, RetryConnectionResult, SubagentToolsResult } from "./provider.js";
-export type { AppSettings, CustomModel, SettingsPatch } from "./settings.js";
+export type { AppSettings, CustomModel, PrFinishedSessionStatus, SettingsPatch } from "./settings.js";
 export type {
   PrRef,
   PrCiState,
   PrReviewState,
   PrMergeable,
   PrBucket,
+  PrAuthor,
   PrSummary,
   PrInboxResult,
   ProjectGitHubRepo,
@@ -116,3 +121,4 @@ export type {
   ShutdownRequestedEvent,
   ShutdownExpiredEvent
 } from "./shutdown.js";
+export type { AttentionState } from "./attention.js";

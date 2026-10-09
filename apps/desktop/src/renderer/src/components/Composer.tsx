@@ -6,7 +6,6 @@ import { ComposerView, type ComposerBackend } from "./ComposerView.js";
 import { ContextRing } from "./ContextRing.js";
 
 export function Composer({ sessionId, driver }: { sessionId: string; driver: DriverName }) {
-  const store = useAppStore();
   const prefs = useAppStore((s) => s.composerBySession[sessionId] ?? DEFAULT_COMPOSER);
   const busy = useAppStore((s) => s.busyTurns[sessionId] !== undefined);
   const projectId = useAppStore((s) => {
@@ -15,32 +14,42 @@ export function Composer({ sessionId, driver }: { sessionId: string; driver: Dri
     }
     return null;
   });
+  const effectivePermissionMode = useAppStore((s) => {
+    for (const list of Object.values(s.sessionsByProject)) {
+      const match = list.find((session) => session.id === sessionId);
+      if (match) return match.effectivePermissionMode;
+    }
+    return undefined;
+  });
+
+  const modelsRefreshKey = useAppStore((s) => s.settingsVersion);
 
   useEffect(() => {
-    void store.ensureComposer(sessionId);
+    void useAppStore.getState().ensureComposer(sessionId);
   }, [sessionId]);
 
   const backend: ComposerBackend = {
     imageTarget: { sessionId, projectId: projectId ?? undefined },
     prefs,
     busy,
+    effectivePermissionMode,
     loadModels: () => window.cw.listModels(sessionId),
     loadPermissions: () => window.cw.listPermissions(sessionId),
     loadFiles: () => window.cw.listFiles(sessionId),
     loadCommands: () => window.cw.listCommands(sessionId),
     savePrefs: (p) => {
-      void store.setComposerPrefs(sessionId, p);
+      void useAppStore.getState().setComposerPrefs(sessionId, p);
     },
-    send: (body, attachments, command) => store.sendPrompt(body, attachments, command),
-    newSession: () => store.startNewSession(driver),
-    rename: (title) => store.renameSession(sessionId, title),
+    send: (body, attachments, command) => useAppStore.getState().sendPrompt(body, attachments, command),
+    newSession: () => useAppStore.getState().startNewSession(driver),
+    rename: (title) => useAppStore.getState().renameSession(sessionId, title),
     openTerminal: () => usePanelStore.getState().revealTab(sessionId, driver),
     savePasteImage: (mime, data) =>
       projectId
         ? window.cw.savePasteImage(projectId, mime, data)
         : Promise.reject(new Error("project not available")),
     interrupt: () => {
-      void store.interrupt();
+      void useAppStore.getState().interrupt();
     }
   };
 
@@ -49,7 +58,7 @@ export function Composer({ sessionId, driver }: { sessionId: string; driver: Dri
       backend={backend}
       driver={driver}
       resetKey={sessionId}
-      modelsRefreshKey={useAppStore((s) => s.settingsVersion)}
+      modelsRefreshKey={modelsRefreshKey}
       usageSlot={<ContextRing sessionId={sessionId} driver={driver} />}
     />
   );

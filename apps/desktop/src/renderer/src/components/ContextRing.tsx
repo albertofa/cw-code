@@ -4,20 +4,21 @@ import { useAppStore } from "../stores/appStore.js";
 import { useUsageStore } from "../stores/usageStore.js";
 import { usePrStore } from "../stores/prStore.js";
 import { DriverIcon } from "./DriverIcon.js";
-import { UsageMeter } from "./UsageMeter.js";
-import { UsageBalanceRow } from "./UsageBalanceRow.js";
+import { PlanMeters } from "./PlanMeters.js";
 import { unavailableTitle } from "./UsagePlanCard.js";
 import { useNow, formatCostUsd } from "./usageFormat.js";
 import { formatRelativeAge } from "./prInboxModel.js";
 import { formatTokensShort } from "./subagents.js";
 import { formatDuration } from "./toolSummaries.js";
 import { harnessLabel } from "./toolTabs.js";
-import { totals } from "./usageModel.js";
+import { contextMeter, totals, turnTokens } from "./usageModel.js";
+import { useThreadVisible } from "./threadVisibility.js";
 
 const RING_CIRCUMFERENCE = 2 * Math.PI * 7.5;
 
 export function ContextRing({ sessionId, driver }: { sessionId: string; driver: DriverName }) {
   const [open, setOpen] = useState(false);
+  const visible = useThreadVisible();
   const rootRef = useRef<HTMLDivElement>(null);
   const context = useAppStore((s) => s.turnUsageBySession[sessionId]?.context);
   const lastTurn = useAppStore((s) => s.turnUsageBySession[sessionId]?.lastTurn);
@@ -52,7 +53,7 @@ export function ContextRing({ sessionId, driver }: { sessionId: string; driver: 
   }, [open, sessionId, ensureSessionRows]);
 
   useEffect(() => {
-    if (!open) return;
+    if (!open || !visible) return;
     const onDown = (e: MouseEvent) => {
       if (rootRef.current && !rootRef.current.contains(e.target as Node)) setOpen(false);
     };
@@ -65,18 +66,19 @@ export function ContextRing({ sessionId, driver }: { sessionId: string; driver: 
       window.removeEventListener("mousedown", onDown);
       window.removeEventListener("keydown", onKey);
     };
-  }, [open]);
+  }, [open, visible]);
+
+  const planState = snapshot?.state;
+  const shownPlan =
+    planState?.status === "ok" ? planState : planState?.status === "error" ? snapshot?.lastGood?.state : undefined;
 
   const sessTotals = useMemo(() => totals(sessionRows ?? []), [sessionRows]);
 
-  const percent = context ? Math.min(1, context.usedTokens / Math.max(1, context.windowTokens)) : null;
-  const severityClass = percent === null ? "" : percent >= 0.95 ? " danger" : percent >= 0.8 ? " warn" : "";
+  const meter = context ? contextMeter(context) : null;
+  const percent = meter?.percent ?? null;
+  const severityClass = meter?.severity ? ` ${meter.severity}` : "";
   const title = percent === null ? "No context data yet" : `Context window · ${Math.round(percent * 100)}% used`;
   const dashArray = percent === null ? `0 ${RING_CIRCUMFERENCE.toFixed(1)}` : `${Math.max(0, percent * RING_CIRCUMFERENCE).toFixed(1)} ${RING_CIRCUMFERENCE.toFixed(1)}`;
-
-  const lastTurnTokens = lastTurn
-    ? lastTurn.inputTokens + lastTurn.cacheReadTokens + lastTurn.cacheWriteTokens + lastTurn.outputTokens
-    : 0;
 
   return (
     <div className="context-ring-wrap" ref={rootRef}>
@@ -144,31 +146,23 @@ export function ContextRing({ sessionId, driver }: { sessionId: string; driver: 
                 <span>Last turn</span>
                 <b>
                   {lastTurn
-                    ? `${formatTokensShort(lastTurnTokens)} tok${lastTurn.durationMs !== undefined ? ` · ${formatDuration(lastTurn.durationMs)}` : ""}`
+                    ? `${formatTokensShort(turnTokens(lastTurn))} tok${lastTurn.durationMs !== undefined ? ` · ${formatDuration(lastTurn.durationMs)}` : ""}`
                     : "—"}
                 </b>
               </div>
+            )}
+            {sessionError && sessionRows && (
+              <div className="context-dock-sub context-dock-error">Couldn&apos;t refresh session usage: {sessionError}</div>
             )}
           </section>
           <section className="context-dock-sec">
             <div className="context-dock-plan">
               <DriverIcon driver={driver} size={14} />
               <b>{harnessLabel(driver)}</b>
-              {snapshot?.state.status === "ok" && snapshot.state.plan && (
-                <span className="usage-plan-chip">{snapshot.state.plan}</span>
-              )}
+              {shownPlan?.plan && <span className="usage-plan-chip">{shownPlan.plan}</span>}
             </div>
             {snapshot?.state.status === "ok" ? (
-              <>
-                <div className="usage-meters">
-                  {snapshot.state.windows.map((w) => (
-                    <UsageMeter key={w.id} window={w} />
-                  ))}
-                </div>
-                {snapshot.state.balances.map((b) => (
-                  <UsageBalanceRow key={b.id} balance={b} />
-                ))}
-              </>
+              <PlanMeters state={snapshot.state} />
             ) : !snapshot && accountLoading ? (
               <div className="context-dock-sub">Loading plan limits…</div>
             ) : !snapshot && accountError ? (
@@ -178,9 +172,21 @@ export function ContextRing({ sessionId, driver }: { sessionId: string; driver: 
                 <b>{unavailableTitle(snapshot.state.reason)}</b> {snapshot.state.message}
               </div>
             ) : snapshot?.state.status === "error" ? (
-              <div className="context-dock-sub context-dock-error">
-                <b>Couldn&apos;t load plan limits</b> {snapshot.state.message}
-              </div>
+              <>
+                {snapshot.lastGood && (
+                  <div className="usage-stale context-dock-stale">
+                    <PlanMeters state={snapshot.lastGood.state} />
+                  </div>
+                )}
+                <div className="context-dock-sub context-dock-error">
+                  <b>
+                    {snapshot.lastGood
+                      ? `Couldn't refresh · showing data from ${formatRelativeAge(snapshot.lastGood.fetchedAt, now)} ago`
+                      : "Couldn't load plan limits"}
+                  </b>{" "}
+                  {snapshot.state.message}
+                </div>
+              </>
             ) : (
               <div className="context-dock-sub">Loading plan limits…</div>
             )}

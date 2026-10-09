@@ -5,7 +5,6 @@ import type { GitHubView } from "../stores/githubStore.js";
 import { GitHubAvatar } from "./GitHubAvatar.js";
 import { GitHubQueryEditor } from "./GitHubQueryEditor.js";
 import { KIND_ICONS, NamedIcon } from "./GitHubIcon.js";
-import { PanelToggles } from "./PanelToggles.js";
 import type { SuggestionSource } from "./githubQuery.js";
 import { KIND_LABELS, KIND_ORDER, type TabBadge } from "./githubViewModel.js";
 import { formatRelativeAge } from "./prInboxModel.js";
@@ -57,8 +56,6 @@ export function GitHubHeader({
   account,
   fetchedAt,
   loading,
-  panelSessionId,
-  showPanelToggles,
   inputRef,
   viewButtonRef,
   viewsOpen,
@@ -77,8 +74,6 @@ export function GitHubHeader({
   account: HubAccount | null;
   fetchedAt: number | null;
   loading: boolean;
-  panelSessionId: string | undefined;
-  showPanelToggles: boolean;
   inputRef: RefObject<HTMLInputElement | null>;
   viewButtonRef: RefObject<HTMLButtonElement | null>;
   viewsOpen: boolean;
@@ -155,7 +150,6 @@ export function GitHubHeader({
           </span>
         )}
         <RefreshButton fetchedAt={fetchedAt} loading={loading} onRefresh={onRefresh} />
-        {showPanelToggles && <PanelToggles sessionId={panelSessionId} />}
       </div>
     </div>
   );

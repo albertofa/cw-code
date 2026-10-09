@@ -2,7 +2,6 @@ import { useEffect, useMemo, useState } from "react";
 import type {
   AppSettings,
   IssueDetail,
-  PrCheck,
   PrDetail,
   PrRef,
   PrSummary,
@@ -15,44 +14,10 @@ import { usePrStore } from "../stores/prStore.js";
 import { prKey } from "./prInbox.js";
 import { linkFor } from "./sessionPrLinks.js";
 import { updatesSince } from "./prUpdates.js";
-import { attributionText, issueTemplateVars, runRefTemplateVars, runTemplateVars, templateVars } from "./prWorkflows.js";
+import { attributionText, issueTemplateVars, loadFailedLogs, loadRunFailedLogs, runRefTemplateVars, runTemplateVars, templateVars } from "./prWorkflows.js";
 import { needsFailedLogs, needsRunFailedLogs } from "./prSessionModel.js";
 import { errorMessage } from "./errorMessage.js";
 import { issueKey, runKey } from "./workflowSubject.js";
-
-const FAILED_LOG_TAIL_CHARS = 12_000;
-
-const FAILED_LOGS_TOTAL_CHARS = 30_000;
-
-function failingRuns(checks: PrCheck[]): Array<{ runId: number; names: string[] }> {
-  const byRun = new Map<number, string[]>();
-  for (const check of checks) {
-    if (check.status !== "failure" || check.runId === null) continue;
-    byRun.set(check.runId, [...(byRun.get(check.runId) ?? []), check.name]);
-  }
-  return [...byRun.entries()].map(([runId, names]) => ({ runId, names }));
-}
-
-function tail(text: string): string {
-  return text.length > FAILED_LOG_TAIL_CHARS ? `[…truncated]\n${text.slice(-FAILED_LOG_TAIL_CHARS)}` : text;
-}
-
-function capTotal(sections: string[]): string {
-  const joined = sections.join("\n\n");
-  return joined.length > FAILED_LOGS_TOTAL_CHARS ? `${joined.slice(0, FAILED_LOGS_TOTAL_CHARS)}\n[…more logs truncated]` : joined;
-}
-
-async function loadPrFailedLogs(ref: PrRef, checks: PrCheck[]): Promise<string> {
-  const runs = failingRuns(checks);
-  const logs = await Promise.all(
-    runs.map(async (run) => `### ${run.names.join(", ")} (run ${run.runId})\n${tail((await window.cw.getPrCheckLog(ref, run.runId)).trim())}`)
-  );
-  return capTotal(logs);
-}
-
-async function loadRunFailedLogs(ref: RunRef): Promise<string> {
-  return capTotal([tail((await window.cw.getRunLog(ref)).trim())]);
-}
 
 export interface WorkflowSubjectData {
   pr: PrSummary | undefined;
@@ -140,7 +105,7 @@ export function useWorkflowSubjectData(input: {
 
   useEffect(() => {
     if (!logsNeeded || logsId === null || logs?.id === logsId) return;
-    const source = prRef && prDetail ? loadPrFailedLogs(prRef, prDetail.checkRuns) : runRef ? loadRunFailedLogs(runRef) : null;
+    const source = prRef && prDetail ? loadFailedLogs(prDetail) : runRef ? loadRunFailedLogs(runRef) : null;
     if (!source) return;
     let active = true;
     setLogsError(null);

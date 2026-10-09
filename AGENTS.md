@@ -15,8 +15,8 @@ Core behaviors:
 
 - One window multiplexes unlimited parallel sessions; one active turn per session.
 - The CLI is always the source of truth. The app stores only its own metadata
-  (projects, titles, resume cursors). CLI-native sessions are never auto-imported;
-  they appear in a separate discovered section and enter the app via explicit import.
+  (projects, titles, resume cursors). The app manages only sessions it created; CLI-native
+  sessions are never imported.
 - History display is best-effort (local transcripts / server API); continuing a
   session always resumes full CLI context, independent of what history shows.
 
@@ -48,6 +48,7 @@ Core behaviors:
 - Tests cover stable contracts only: parsers and mappers, session routing and
   isolation, filesystem sandboxing, path and binary resolution helpers.
   UI components and wiring are verified by typecheck and build, not unit tests.
+- Never commit plans, mockups or design notes; keep them in the OS temp `agents-scratchpad`.
 - Before finishing work: typecheck, full test suite, and production bundle build
   must all pass. Reproduce reported bugs against live state (stored metadata,
   real CLI behavior) before changing code.

@@ -1,24 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { durationFromMessages, formatElapsed } from "./turnFormat.js";
-
-describe("formatElapsed", () => {
-  it("formats sub-minute durations with singular seconds", () => {
-    expect(formatElapsed(0)).toBe("0 seconds");
-    expect(formatElapsed(1_000)).toBe("1 second");
-    expect(formatElapsed(50_000)).toBe("50 seconds");
-    expect(formatElapsed(59_000)).toBe("59 seconds");
-  });
-
-  it("formats minute and hour durations", () => {
-    expect(formatElapsed(60_000)).toBe("1m 0s");
-    expect(formatElapsed(183_000)).toBe("3m 3s");
-    expect(formatElapsed(3_723_000)).toBe("1h 2m 3s");
-  });
-
-  it("floors partial seconds", () => {
-    expect(formatElapsed(1_999)).toBe("1 second");
-  });
-});
+import { durationFromMessages } from "./turnFormat.js";
 
 describe("durationFromMessages", () => {
   it("returns the span between the first and last timestamps", () => {

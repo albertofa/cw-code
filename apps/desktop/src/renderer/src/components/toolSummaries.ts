@@ -661,3 +661,22 @@ export function formatDuration(ms: number): string {
   const hours = Math.floor(minutes / 60);
   return `${hours}h ${minutes % 60}m ${total % 60}s`;
 }
+
+export function formatToolDuration(ms: number): string {
+  if (ms >= 10_000) return formatDuration(ms);
+  return `${(Math.max(ms, 100) / 1000).toFixed(1)}s`;
+}
+
+type TimedTool = { toolStartedAt?: number; toolCompletedAt?: number };
+
+export function toolSpanMs(tools: TimedTool[]): number | undefined {
+  let start = Infinity;
+  let end = -Infinity;
+  for (const t of tools) {
+    if (typeof t.toolStartedAt !== "number" || typeof t.toolCompletedAt !== "number") continue;
+    if (t.toolCompletedAt < t.toolStartedAt) continue;
+    start = Math.min(start, t.toolStartedAt);
+    end = Math.max(end, t.toolCompletedAt);
+  }
+  return end >= start ? end - start : undefined;
+}

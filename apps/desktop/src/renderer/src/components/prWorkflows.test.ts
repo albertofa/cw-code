@@ -1,9 +1,10 @@
 import { describe, expect, it } from "vitest";
-import type { IssueDetail, PrDetail, PrSummary, PrWorkflow, SessionMeta, WorkflowRunSummary } from "@cw-code/contracts";
+import type { IssueDetail, PrCheck, PrDetail, PrRef, PrSummary, PrWorkflow, SessionMeta, WorkflowRunSummary } from "@cw-code/contracts";
 import {
   attributionText,
   failedJobNames,
   issueTemplateVars,
+  loadFailedLogs,
   primaryAction,
   resolveTemplate,
   runRefTemplateVars,
@@ -368,5 +369,50 @@ describe("issueTemplateVars truncation", () => {
     const expected = `a: ${"c".repeat(2000)}\n[…truncated]`;
     expect(vars["issue.comments"]).toBe(expected);
     expect(vars["issue.delta"]).toBe(expected);
+  });
+});
+
+function check(overrides: Partial<PrCheck> = {}): PrCheck {
+  return { name: "test", workflow: "ci", status: "failure", url: null, runId: 1, completedAt: null, ...overrides };
+}
+
+describe("loadFailedLogs", () => {
+  it("fetches each failing run once, labels it with its checks and joins the sections", async () => {
+    const calls: Array<{ ref: PrRef; runId: number }> = [];
+    const detail = prDetail({
+      checkRuns: [
+        check({ name: "unit", runId: 7 }),
+        check({ name: "lint", runId: 7 }),
+        check({ name: "e2e", runId: 9 }),
+        check({ name: "build", status: "success", runId: 11 }),
+        check({ name: "external", runId: null })
+      ]
+    });
+    const text = await loadFailedLogs(detail, async (ref, runId) => {
+      calls.push({ ref, runId });
+      return `  log ${runId}  \n`;
+    });
+    expect(calls.map((c) => c.runId)).toEqual([7, 9]);
+    expect(calls[0].ref).toEqual(detail.ref);
+    expect(text).toBe("### unit, lint (run 7)\nlog 7\n\n### e2e (run 9)\nlog 9");
+  });
+
+  it("keeps only the tail of a long run log", async () => {
+    const detail = prDetail({ checkRuns: [check({ runId: 3 })] });
+    const log = `${"a".repeat(100)}${"b".repeat(12_000)}`;
+    const text = await loadFailedLogs(detail, async () => log);
+    expect(text).toBe(`### test (run 3)\n[…truncated]\n${"b".repeat(12_000)}`);
+  });
+
+  it("caps the joined logs and marks the cut", async () => {
+    const detail = prDetail({ checkRuns: [1, 2, 3].map((runId) => check({ name: `job${runId}`, runId })) });
+    const text = await loadFailedLogs(detail, async () => "x".repeat(11_000));
+    expect(text.endsWith("\n[…more logs truncated]")).toBe(true);
+    expect(text.length).toBe(30_000 + "\n[…more logs truncated]".length);
+  });
+
+  it("returns an empty string when no run failed", async () => {
+    const detail = prDetail({ checkRuns: [check({ status: "success" })] });
+    expect(await loadFailedLogs(detail, async () => "unused")).toBe("");
   });
 });

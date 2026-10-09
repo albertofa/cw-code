@@ -9,6 +9,7 @@ import {
   groupWorkflowsByTarget,
   insertAtCursor,
   moveWorkflow,
+  moveWorkflowTo,
   newWorkflowId,
   resetWorkflowTo,
   templateVarIssues,
@@ -87,6 +88,30 @@ describe("moveWorkflow", () => {
     const existing = [workflow({ id: "a" }), workflow({ id: "b" })];
     expect(moveWorkflow(existing, "a", "up")).toBe(existing);
     expect(moveWorkflow(existing, "b", "down")).toBe(existing);
+  });
+});
+
+describe("moveWorkflowTo", () => {
+  const existing = [workflow({ id: "a" }), workflow({ id: "b" }), workflow({ id: "c" }), workflow({ id: "d" })];
+
+  it("moves an entry down into the target's slot", () => {
+    expect(moveWorkflowTo(existing, "a", "c").map((w) => w.id)).toEqual(["b", "c", "a", "d"]);
+  });
+
+  it("moves an entry up into the target's slot", () => {
+    expect(moveWorkflowTo(existing, "d", "b").map((w) => w.id)).toEqual(["a", "d", "b", "c"]);
+  });
+
+  it("is a no-op for the same entry or an unknown id", () => {
+    expect(moveWorkflowTo(existing, "b", "b")).toBe(existing);
+    expect(moveWorkflowTo(existing, "missing", "b")).toBe(existing);
+    expect(moveWorkflowTo(existing, "b", "missing")).toBe(existing);
+  });
+
+  it("refuses to move an entry onto another target's workflow", () => {
+    const mixed = [workflow({ id: "a" }), workflow({ id: "x", target: "issue" }), workflow({ id: "b" })];
+    expect(moveWorkflowTo(mixed, "a", "x")).toBe(mixed);
+    expect(moveWorkflowTo(mixed, "b", "a").map((w) => w.id)).toEqual(["b", "a", "x"]);
   });
 });
 

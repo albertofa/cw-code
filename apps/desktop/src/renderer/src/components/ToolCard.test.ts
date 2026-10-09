@@ -8,6 +8,7 @@ import {
   extractFileFragment,
   extractPatchFiles,
   formatDuration,
+  formatToolDuration,
   mergeToolPairs,
   orderToolsForDisplay,
   pendingToolsForTurn,
@@ -15,7 +16,8 @@ import {
   relativizeInText,
   relativizeToBase,
   stripToolNamePrefix,
-  summarizeToolGroup
+  summarizeToolGroup,
+  toolSpanMs
 } from "./toolSummaries.js";
 import type { ChatMessage } from "../stores/appStore.js";
 
@@ -345,6 +347,31 @@ describe("formatDuration", () => {
     expect(formatDuration(3000)).toBe("3s");
     expect(formatDuration(806000)).toBe("13m 26s");
     expect(formatDuration(3723000)).toBe("1h 2m 3s");
+  });
+});
+
+describe("formatToolDuration", () => {
+  it("shows tenths under ten seconds and falls back to formatDuration above", () => {
+    expect(formatToolDuration(20)).toBe("0.1s");
+    expect(formatToolDuration(340)).toBe("0.3s");
+    expect(formatToolDuration(3800)).toBe("3.8s");
+    expect(formatToolDuration(806000)).toBe("13m 26s");
+  });
+});
+
+describe("toolSpanMs", () => {
+  it("spans the earliest start to the latest completion", () => {
+    expect(
+      toolSpanMs([
+        { toolStartedAt: 1000, toolCompletedAt: 1500 },
+        { toolStartedAt: 1200, toolCompletedAt: 4000 }
+      ])
+    ).toBe(3000);
+  });
+
+  it("ignores tools without both timestamps or with inverted ones", () => {
+    expect(toolSpanMs([{ toolStartedAt: 1000 }, { toolStartedAt: 5000, toolCompletedAt: 4000 }])).toBeUndefined();
+    expect(toolSpanMs([{ toolStartedAt: 1000 }, { toolStartedAt: 2000, toolCompletedAt: 2300 }])).toBe(300);
   });
 });
 

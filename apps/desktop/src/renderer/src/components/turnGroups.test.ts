@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildThreadNodes, groupTurns, splitTurn } from "./turnGroups.js";
+import { buildThreadNodes, countActivityTools, groupTurns, splitTurn } from "./turnGroups.js";
 import type { ChatMessage } from "../stores/appStore.js";
 
 function msg(partial: Partial<ChatMessage> & Pick<ChatMessage, "id" | "role" | "turnId">): ChatMessage {
@@ -304,5 +304,25 @@ describe("splitTurn", () => {
     ];
     expect(splitTurn(messages, nestedIds, true).pinned).toBeUndefined();
     expect(splitTurn(messages, nestedIds, false).pinned?.map((m) => m.id)).toEqual(["a1"]);
+  });
+});
+
+describe("countActivityTools", () => {
+  it("counts lone tools, grouped tools and subagents but not prose or reasoning", () => {
+    const nodes = buildThreadNodes(
+      [
+        msg({ id: "r", role: "reasoning", turnId: "x" }),
+        msg({ id: "t1", role: "tool", turnId: "x", toolName: "read" }),
+        msg({ id: "t2", role: "tool", turnId: "x", toolName: "read" }),
+        msg({ id: "a", role: "assistant", turnId: "x" }),
+        msg({ id: "s1", role: "tool", turnId: "x", toolName: "Task" }),
+        msg({ id: "s2", role: "tool", turnId: "x", toolName: "Task" }),
+        msg({ id: "b", role: "assistant", turnId: "x" }),
+        msg({ id: "t3", role: "tool", turnId: "x", toolName: "bash" })
+      ],
+      new Set()
+    );
+    expect(countActivityTools(nodes)).toBe(5);
+    expect(countActivityTools([])).toBe(0);
   });
 });
