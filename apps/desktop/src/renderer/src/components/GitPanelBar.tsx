@@ -21,6 +21,7 @@ import { MenuSelect } from "./MenuSelect.js";
 import { GitHubMark } from "./GitHubMark.js";
 import { shortenHome } from "./pathDisplay.js";
 import { useThreadVisible } from "./threadVisibility.js";
+import { linkFor, prRefFromUrl } from "./sessionPrLinks.js";
 
 export function GitPanelBar({ sessionId }: { sessionId: string }) {
   const [branches, setBranches] = useState<GitBranchInfo[]>([]);
@@ -38,6 +39,13 @@ export function GitPanelBar({ sessionId }: { sessionId: string }) {
   const refreshGitStatus = useAppStore((state) => state.refreshGitStatus);
   const status = useAppStore((state) => state.gitStatusBySession[sessionId] ?? null);
   const homeDir = useAppStore((state) => state.homeDir);
+  const prChipCoversBranchPr = useAppStore((state) => {
+    const url = state.gitStatusBySession[sessionId]?.pullRequest?.url;
+    const ref = url ? prRefFromUrl(url) : null;
+    if (!ref) return false;
+    const session = Object.values(state.sessionsByProject).flat().find((item) => item.id === sessionId);
+    return linkFor(session, ref) !== undefined;
+  });
   const shortPath = (value: string): string => shortenHome(value, homeDir ?? undefined);
 
   useEffect(() => () => {
@@ -241,7 +249,7 @@ export function GitPanelBar({ sessionId }: { sessionId: string }) {
             searchPlaceholder="Filter branches…"
           />
         </div>
-        {pullRequest && (
+        {pullRequest && !prChipCoversBranchPr && (
           <button
             type="button"
             className={`git-status-pill ${pillState}`}
