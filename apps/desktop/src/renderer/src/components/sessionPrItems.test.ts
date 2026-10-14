@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { GitPullRequest, PrDetail, PrRef, PrSummary, SessionPrLink } from "@cw-code/contracts";
 import { prKey } from "./prInbox.js";
-import { sessionPrItemLabel, sessionPrItems, sessionPrItemsTitle } from "./sessionPrItems.js";
+import { canLinkItem, sessionPrItemLabel, sessionPrItems, sessionPrItemsTitle, withBranchSummary } from "./sessionPrItems.js";
 
 function ref(number: number): PrRef {
   return { host: "github.com", owner: "acme", repo: "widgets", number };
@@ -131,6 +131,59 @@ describe("sessionPrItems", () => {
     const items = sessionPrItems({ prs: [link(7)] }, null, new Map(), {});
     expect(items[0]).toMatchObject({ title: null, unseen: false });
     expect(items[0].chip.label).toBe("#7");
+  });
+});
+
+describe("branch item support and linking", () => {
+  it("marks github.com items as supported and keeps other hosts visible but unsupported", () => {
+    const [supported] = sessionPrItems({}, gitPr(18), new Map(), {});
+    expect(supported.supported).toBe(true);
+    const [other] = sessionPrItems({}, gitPr(18, { url: "https://ghe.acme.io/acme/widgets/pull/18" }), new Map(), {});
+    expect(other).toMatchObject({ source: "branch", supported: false, url: "https://ghe.acme.io/acme/widgets/pull/18" });
+    expect(other.ref.host).toBe("ghe.acme.io");
+  });
+
+  it("offers linking only for an open, supported branch item", () => {
+    const branch = (overrides: Partial<GitPullRequest>) => sessionPrItems({}, gitPr(18, overrides), new Map(), {})[0];
+    expect(canLinkItem(branch({}))).toBe(true);
+    expect(canLinkItem(branch({ state: "MERGED" }))).toBe(false);
+    expect(canLinkItem(branch({ state: "CLOSED" }))).toBe(false);
+    expect(canLinkItem(branch({ url: "https://ghe.acme.io/acme/widgets/pull/18" }))).toBe(false);
+  });
+
+  it("never offers linking for a linked item", () => {
+    const [linked] = sessionPrItems({ prs: [link(1)] }, null, lookup(summary(1)), {});
+    expect(canLinkItem(linked)).toBe(false);
+  });
+
+  it("takes the state from the known summary before the git status", () => {
+    const [item] = sessionPrItems({}, gitPr(18), lookup(summary(18, { state: "MERGED" })), {});
+    expect(item.state).toBe("MERGED");
+  });
+
+  it("keeps recency finite so ordering never yields NaN", () => {
+    const items = sessionPrItems({ prs: [link(1), link(2)] }, gitPr(18), new Map(), {});
+    expect(items.every((item) => Number.isFinite(item.updatedAt))).toBe(true);
+  });
+});
+
+describe("withBranchSummary", () => {
+  it("adds the inbox summary of an unlinked branch PR", () => {
+    const inboxPr = summary(18, { headRefOid: "head-18" });
+    const result = withBranchSummary(new Map(), gitPr(18), [inboxPr]);
+    expect(result.get(prKey(ref(18)))).toBe(inboxPr);
+    const [item] = sessionPrItems({}, gitPr(18), result, {});
+    expect(item.headSha).toBe("head-18");
+  });
+
+  it("keeps the lookup untouched when the PR is known, absent, or the url is unparseable", () => {
+    const known = lookup(summary(18));
+    expect(withBranchSummary(known, gitPr(18), [summary(18, { title: "other" })])).toBe(known);
+    const empty = new Map<string, PrSummary>();
+    expect(withBranchSummary(empty, gitPr(18), [summary(1)])).toBe(empty);
+    expect(withBranchSummary(empty, gitPr(18), undefined)).toBe(empty);
+    expect(withBranchSummary(empty, gitPr(18, { url: "nope" }), [summary(18)])).toBe(empty);
+    expect(withBranchSummary(empty, null, [summary(18)])).toBe(empty);
   });
 });
 

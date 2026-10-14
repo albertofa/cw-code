@@ -5,7 +5,7 @@ import { usePrStore } from "../stores/prStore.js";
 import { prKey } from "./prInbox.js";
 import { detailNeedsRefresh, detailRefreshKey, hasUnseen } from "./prUpdates.js";
 import { errorMessage } from "./errorMessage.js";
-import { sessionPrItems, type SessionPrItem } from "./sessionPrItems.js";
+import { sessionPrItems, withBranchSummary, type SessionPrItem } from "./sessionPrItems.js";
 import { sessionLinks, type PrSummaryLookup } from "./sessionPrLinks.js";
 
 export interface LinkedPr {
@@ -77,7 +77,11 @@ export function useSessionPrItems(sessionId: string): { items: SessionPrItem[]; 
   const { session, summaryByKey } = useLinkedPrs(sessionId);
   const gitPr = useAppStore((s) => s.gitStatusBySession[sessionId]?.pullRequest ?? null);
   const detailByKey = usePrStore((s) => s.detailByKey);
-  const items = useMemo(() => sessionPrItems(session, gitPr, summaryByKey, detailByKey), [session, gitPr, summaryByKey, detailByKey]);
+  const inboxItems = usePrStore((s) => s.inbox?.items);
+  const items = useMemo(
+    () => sessionPrItems(session, gitPr, withBranchSummary(summaryByKey, gitPr, inboxItems), detailByKey),
+    [session, gitPr, summaryByKey, inboxItems, detailByKey]
+  );
   return { items, session };
 }
 

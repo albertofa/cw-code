@@ -14,6 +14,8 @@ export interface SessionPrItem {
   chip: PrChip;
   title: string | null;
   url: string;
+  state: GitPullRequest["state"];
+  supported: boolean;
   headSha: string;
   detail: PrDetail | undefined;
   unseen: boolean;
@@ -25,7 +27,12 @@ interface LinkedSession {
   prs?: SessionPrLink[];
 }
 
-const NO_RECENCY = Number.NEGATIVE_INFINITY;
+const NO_RECENCY = 0;
+const SUPPORTED_HOST = "github.com";
+
+function isSupportedHost(ref: PrRef): boolean {
+  return ref.host.toLowerCase() === SUPPORTED_HOST;
+}
 
 function refUrl(ref: PrRef): string {
   return `https://${ref.host}/${ref.owner}/${ref.repo}/pull/${ref.number}`;
@@ -50,6 +57,8 @@ function linkedItem(
     chip,
     title: basis?.title ?? git?.title ?? null,
     url: basis?.url ?? git?.url ?? refUrl(link.ref),
+    state: basis?.state ?? git?.state ?? "OPEN",
+    supported: isSupportedHost(link.ref),
     headSha: basis?.headRefOid ?? "",
     detail: detailByKey[key],
     unseen: basis !== undefined && hasUnseen(basis, link),
@@ -75,6 +84,8 @@ function branchItem(
     chip,
     title: basis?.title ?? gitPr.title,
     url: gitPr.url,
+    state: basis?.state ?? gitPr.state,
+    supported: isSupportedHost(ref),
     headSha: basis?.headRefOid ?? "",
     detail: detailByKey[key],
     unseen: false,
@@ -105,4 +116,21 @@ export function sessionPrItemLabel(item: SessionPrItem): string {
 
 export function sessionPrItemsTitle(items: SessionPrItem[]): string {
   return items.map((item) => `${item.chip.label} ${item.chip.reason}`).join(" · ");
+}
+
+export function canLinkItem(item: SessionPrItem): boolean {
+  return item.source === "branch" && item.supported && item.state === "OPEN";
+}
+
+export function withBranchSummary(
+  summaryByKey: PrSummaryLookup,
+  gitPr: GitPullRequest | null,
+  inboxItems: PrSummary[] | undefined
+): PrSummaryLookup {
+  const ref = gitPr ? prRefFromUrl(gitPr.url) : null;
+  if (!ref) return summaryByKey;
+  const key = prKey(ref);
+  if (summaryByKey.has(key)) return summaryByKey;
+  const found = inboxItems?.find((item) => prKey(item.ref) === key);
+  return found ? new Map(summaryByKey).set(key, found) : summaryByKey;
 }

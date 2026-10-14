@@ -9270,6 +9270,23 @@ button.gitbar-checkout:hover {
   max-width: 480px;
 }
 
+.pr-links-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 8px;
+  color: var(--dim);
+  font-size: var(--t-xs);
+  white-space: nowrap;
+}
+
+.pr-links-row .name {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
 .pr-links-source {
   flex: none;
   min-width: 42px;

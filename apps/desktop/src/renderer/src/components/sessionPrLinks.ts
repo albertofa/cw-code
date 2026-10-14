@@ -92,10 +92,10 @@ export function mostUrgentLink(
 ): SessionPrLink | null {
   let best: SessionPrLink | null = null;
   let bestRank = Number.POSITIVE_INFINITY;
-  let bestUpdated = Number.NEGATIVE_INFINITY;
+  let bestUpdated = 0;
   for (const link of links) {
     const rank = urgencyRank(link, summaryByKey, gitPr);
-    const updated = summaryByKey.get(prKey(link.ref))?.updatedAt ?? Number.NEGATIVE_INFINITY;
+    const updated = summaryByKey.get(prKey(link.ref))?.updatedAt ?? 0;
     if (rank < bestRank || (rank === bestRank && updated > bestUpdated)) {
       best = link;
       bestRank = rank;
