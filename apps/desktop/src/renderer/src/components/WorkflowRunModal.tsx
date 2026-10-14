@@ -43,11 +43,14 @@ import {
   effectiveSubject,
   findCachedRun,
   baseFailureHint,
+  isLinkedTo,
   issueDataTime,
+  otherSessionCandidates,
   repoOf,
   resolveIssueBase,
   resolveRunBase,
   subjectKey,
+  subjectLabel,
   subjectLink,
   workflowsForSubject,
   type WorktreeBase
@@ -101,17 +104,6 @@ function clonePathHint(root: string, ref: RepoRef, includeOwner: boolean): strin
   return includeOwner ? `${base}${sep}${ref.owner}${sep}${ref.repo}` : `${base}${sep}${ref.repo}`;
 }
 
-function newSessionHint(subject: WorkflowSubject, runNumber: number | undefined): string {
-  switch (subject.kind) {
-    case "pr":
-      return `linked to #${subject.ref.number}`;
-    case "issue":
-      return `linked to #${subject.ref.number}`;
-    case "run":
-      return runNumber === undefined ? `linked to run ${subject.ref.runId}` : `linked to run #${runNumber}`;
-  }
-}
-
 function Segment<T extends string>({
   label,
   value,
@@ -158,6 +150,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
   const closeRunModal = usePrStore((s) => s.closeRunModal);
   const runCaches = useGitHubStore((s) => s.runResults);
   const sessionsByProject = useAppStore((s) => s.sessionsByProject);
+  const projects = useAppStore((s) => s.projects);
   const pendingPrefs = useAppStore((s) => s.pendingPrefs);
   const lastDriver = useAppStore((s) => s.lastDriver);
   const composerBySession = useAppStore((s) => s.composerBySession);
@@ -207,10 +200,13 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
     [allSessions, key]
   );
   const continueSession: Session | undefined = target ? allSessions.find((s) => s.id === target) : undefined;
-  const targetOptions: Session[] =
-    continueSession && !linkedSessions.includes(continueSession) ? [continueSession, ...linkedSessions] : linkedSessions;
-
   const projectId = useMemo(() => projectIdForRef(repo), [projectIdForRef, projectRepos, key]);
+  const continueLinked = continueSession ? isLinkedTo(continueSession, subject) : false;
+  const otherSessions = useMemo(
+    () => otherSessionCandidates(allSessions, subject, projectId, continueLinked ? undefined : continueSession?.id),
+    [allSessions, key, projectId, continueSession?.id, continueLinked]
+  );
+  const projectName = projects.find((p) => p.id === projectId)?.name ?? "this project";
   const needsClone = !continueSession && reposReady && projectId === null;
   const effectiveDriver = continueSession?.driver ?? driver;
   const harness = harnessLabel(effectiveDriver);
@@ -218,7 +214,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
     subject.kind === "pr" ? linkedSessions.find((s) => s.worktreePath && s.projectId === projectId) : undefined;
   const requestedWorkspace = workspaceChoice ?? workflow?.workspace ?? "worktree";
   const workspace: PrWorkspaceChoice = requestedWorkspace === "linked" && !linkedWorktree ? "worktree" : requestedWorkspace;
-  const template = workflow ? (continueSession ? workflow.updatePrompt : workflow.startPrompt) : "";
+  const template = workflow ? (continueLinked ? workflow.updatePrompt : workflow.startPrompt) : "";
   const data = useWorkflowSubjectData({
     subject,
     cachedRun,
@@ -426,6 +422,11 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
     let current: Stage = "send";
     try {
       if (continueSession) {
+        if (!continueLinked) {
+          current = "link";
+          setStage(current);
+          app.applySession(await linkSession(continueSession.id, workflow.id));
+        }
         current = "send";
         setStage(current);
         await app.ensureComposer(continueSession.id);
@@ -503,7 +504,9 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
     ? "Prompt"
     : hasOverride
       ? "Follow-up prompt"
-      : "Follow-up prompt (the workflow's “on update” template)";
+      : continueLinked
+        ? "Follow-up prompt (the workflow's “on update” template)"
+        : "Prompt (the workflow's start template, this session hasn't worked on it yet)";
   const showPushNote = subject.kind === "pr" && !continueSession && workspace !== "checkout" && data.pr?.viewerIsAuthor === true;
   const blocked =
     !data.loaded || !workflow || !prompt.trim() || !data.logsReady || baseLoading || sessionBusy || (!continueSession && !reposReady);
@@ -655,17 +658,22 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
             </div>
           )}
 
-          {targetOptions.length > 0 && (
+          {(linkedSessions.length > 0 || otherSessions.length > 0) && (
             <div className="wf-run-field">
-              <span className="wf-run-label">Session</span>
+              <span className="wf-run-label">{linkedSessions.length > 0 ? "Linked sessions" : "Session"}</span>
               <Segment
                 label="Session"
                 value={target}
                 disabled={working || created !== null}
                 onPick={pickTarget}
                 options={[
-                  { id: "", icon: <Plus size={14} />, title: "New session", hint: newSessionHint(subject, data.run?.runNumber) },
-                  ...targetOptions.map((s) => {
+                  {
+                    id: "",
+                    icon: <Plus size={14} />,
+                    title: "New session",
+                    hint: `linked to ${subjectLabel(subject, data.run?.runNumber)}`
+                  },
+                  ...linkedSessions.map((s) => {
                     const link = subjectLink(s, subject);
                     return {
                       id: s.id,
@@ -675,6 +683,29 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
                     };
                   })
                 ]}
+              />
+            </div>
+          )}
+
+          {otherSessions.length > 0 && (
+            <div className="wf-run-field">
+              <span className="wf-run-label">Other sessions in {projectName}</span>
+              <MenuSelect
+                label="Other sessions"
+                direction="down"
+                value={otherSessions.some((s) => s.id === target) ? target : ""}
+                display={otherSessions.find((s) => s.id === target)?.title ?? "Continue another session…"}
+                isSet={otherSessions.some((s) => s.id === target)}
+                options={otherSessions.map((s) => ({
+                  id: s.id,
+                  label: s.title,
+                  hint: `will be linked to ${subjectLabel(subject, data.run?.runNumber)}`,
+                  icon: <DriverIcon driver={s.driver} size={13} />,
+                  disabled: working || created !== null
+                }))}
+                onPick={pickTarget}
+                searchable={otherSessions.length > 5}
+                searchPlaceholder="Filter sessions…"
               />
             </div>
           )}

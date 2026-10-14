@@ -3,12 +3,15 @@ import type { GitBranchInfo, PrWorkflow, RunRef, WorkflowRunSummary, WorkflowSub
 import {
   effectiveSubject,
   findCachedRun,
+  isLinkedTo,
   issueKey,
+  otherSessionCandidates,
   prRefForRun,
   issueDataTime,
   resolveIssueBase,
   resolveRunBase,
   runKey,
+  subjectLabel,
   subjectLink,
   workflowsForSubject
 } from "./workflowSubject.js";
@@ -185,5 +188,71 @@ describe("issueDataTime", () => {
     expect(issueDataTime({ updatedAt: 100, comments: [{ author: "a", body: "", createdAt: 300 }, { author: "b", body: "", createdAt: 200 }] })).toBe(300);
     expect(issueDataTime({ updatedAt: 500, comments: [{ author: "a", body: "", createdAt: 300 }] })).toBe(500);
     expect(issueDataTime({ updatedAt: 100, comments: [] })).toBe(100);
+  });
+});
+
+describe("isLinkedTo and subjectLabel", () => {
+  const prRef = { host: "github.com", owner: "acme", repo: "widgets", number: 5 };
+  const issueRef = { host: "github.com", owner: "acme", repo: "widgets", number: 3 };
+
+  it("reports whether a session is linked to the subject", () => {
+    const session = { prs: [{ ref: prRef, origin: "opened" as const }] };
+    expect(isLinkedTo(session, { kind: "pr", ref: prRef })).toBe(true);
+    expect(isLinkedTo(session, { kind: "pr", ref: { ...prRef, number: 6 } })).toBe(false);
+    expect(isLinkedTo(session, { kind: "issue", ref: issueRef })).toBe(false);
+    expect(isLinkedTo({}, runSubject)).toBe(false);
+  });
+
+  it("labels each subject kind", () => {
+    expect(subjectLabel({ kind: "pr", ref: prRef }, undefined)).toBe("#5");
+    expect(subjectLabel({ kind: "issue", ref: issueRef }, undefined)).toBe("#3");
+    expect(subjectLabel(runSubject, 12)).toBe("run #12");
+    expect(subjectLabel(runSubject, undefined)).toBe("run 99");
+  });
+});
+
+describe("otherSessionCandidates", () => {
+  const prRef = { host: "github.com", owner: "acme", repo: "widgets", number: 5 };
+  const subject: WorkflowSubject = { kind: "pr", ref: prRef };
+
+  function session(id: string, overrides: Partial<{ projectId: string; status: string; updatedAt: number; linked: boolean }> = {}) {
+    const { linked, ...rest } = overrides;
+    return {
+      id,
+      projectId: "p1",
+      status: "idle",
+      updatedAt: 0,
+      ...(linked ? { prs: [{ ref: prRef, origin: "opened" as const }] } : {}),
+      ...rest
+    };
+  }
+
+  it("keeps unlinked, non-archived sessions of the project, newest first", () => {
+    const sessions = [
+      session("old", { updatedAt: 1 }),
+      session("new", { updatedAt: 9 }),
+      session("linked", { linked: true, updatedAt: 5 }),
+      session("archived", { status: "archived", updatedAt: 7 }),
+      session("other-project", { projectId: "p2", updatedAt: 8 })
+    ];
+    expect(otherSessionCandidates(sessions, subject, "p1").map((s) => s.id)).toEqual(["new", "old"]);
+  });
+
+  it("limits the list", () => {
+    const sessions = Array.from({ length: 12 }, (_, i) => session(`s${i}`, { updatedAt: i }));
+    const result = otherSessionCandidates(sessions, subject, "p1");
+    expect(result).toHaveLength(8);
+    expect(result[0].id).toBe("s11");
+  });
+
+  it("returns nothing without a project", () => {
+    expect(otherSessionCandidates([session("a")], subject, null)).toEqual([]);
+  });
+
+  it("pins a preselected unlinked session that falls outside the list", () => {
+    const sessions = [session("a", { updatedAt: 3 }), session("far", { projectId: "p2" }), session("linked", { linked: true })];
+    expect(otherSessionCandidates(sessions, subject, "p1", "far").map((s) => s.id)).toEqual(["far", "a"]);
+    expect(otherSessionCandidates(sessions, subject, "p1", "linked").map((s) => s.id)).toEqual(["a"]);
+    expect(otherSessionCandidates(sessions, subject, "p1", "a").map((s) => s.id)).toEqual(["a"]);
   });
 });

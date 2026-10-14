@@ -64,6 +64,48 @@ export function subjectLink(
   }
 }
 
+export function isLinkedTo(session: SessionWithLinks, subject: WorkflowSubject): boolean {
+  return subjectLink(session, subject) !== undefined;
+}
+
+export function subjectLabel(subject: WorkflowSubject, runNumber: number | undefined): string {
+  switch (subject.kind) {
+    case "pr":
+    case "issue":
+      return `#${subject.ref.number}`;
+    case "run":
+      return runNumber === undefined ? `run ${subject.ref.runId}` : `run #${runNumber}`;
+  }
+}
+
+export const OTHER_SESSIONS_LIMIT = 8;
+
+interface CandidateSession extends SessionWithLinks {
+  id: string;
+  projectId: string;
+  status: string;
+  updatedAt: number;
+}
+
+export function otherSessionCandidates<S extends CandidateSession>(
+  sessions: S[],
+  subject: WorkflowSubject,
+  projectId: string | null,
+  pinnedId?: string,
+  limit = OTHER_SESSIONS_LIMIT
+): S[] {
+  const eligible = sessions.filter((s) => s.status !== "archived" && !isLinkedTo(s, subject));
+  const inProject =
+    projectId === null
+      ? []
+      : eligible
+          .filter((s) => s.projectId === projectId)
+          .sort((a, b) => b.updatedAt - a.updatedAt)
+          .slice(0, limit);
+  const pinned = pinnedId === undefined || inProject.some((s) => s.id === pinnedId) ? undefined : eligible.find((s) => s.id === pinnedId);
+  return pinned ? [pinned, ...inProject] : inProject;
+}
+
 export function findCachedRun(
   caches: Record<string, { data: RunsResult | null }>,
   ref: RunRef
