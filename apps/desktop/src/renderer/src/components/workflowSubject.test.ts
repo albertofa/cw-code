@@ -255,4 +255,9 @@ describe("otherSessionCandidates", () => {
     expect(otherSessionCandidates(sessions, subject, "p1", "linked").map((s) => s.id)).toEqual(["a"]);
     expect(otherSessionCandidates(sessions, subject, "p1", "a").map((s) => s.id)).toEqual(["a"]);
   });
+
+  it("pins an archived preselected session", () => {
+    const sessions = [session("a", { updatedAt: 3 }), session("gone", { status: "archived" })];
+    expect(otherSessionCandidates(sessions, subject, "p1", "gone").map((s) => s.id)).toEqual(["gone", "a"]);
+  });
 });

@@ -102,7 +102,10 @@ export function otherSessionCandidates<S extends CandidateSession>(
           .filter((s) => s.projectId === projectId)
           .sort((a, b) => b.updatedAt - a.updatedAt)
           .slice(0, limit);
-  const pinned = pinnedId === undefined || inProject.some((s) => s.id === pinnedId) ? undefined : eligible.find((s) => s.id === pinnedId);
+  const pinned =
+    pinnedId === undefined || inProject.some((s) => s.id === pinnedId)
+      ? undefined
+      : sessions.find((s) => s.id === pinnedId && !isLinkedTo(s, subject));
   return pinned ? [pinned, ...inProject] : inProject;
 }
 

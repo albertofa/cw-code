@@ -170,6 +170,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
   const [prompt, setPrompt] = useState("");
   const [stage, setStage] = useState<Stage | null>(null);
   const [error, setError] = useState<string | null>(null);
+  const [linkedHere, setLinkedHere] = useState<string | null>(null);
   const [created, setCreated] = useState<{ sessionId: string; linked: boolean; note: string | null } | null>(null);
   const [dirty, setDirty] = useState(false);
   const [baseState, setBaseState] = useState<{ request: string; base: WorktreeBase } | null>(null);
@@ -195,18 +196,27 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
   const linkedSessions = useMemo(
     () =>
       allSessions
-        .filter((s) => s.status !== "archived" && subjectLink(s, subject) !== undefined)
+        .filter((s) => s.status !== "archived" && isLinkedTo(s, subject))
         .sort((a, b) => b.updatedAt - a.updatedAt),
     [allSessions, key]
   );
   const continueSession: Session | undefined = target ? allSessions.find((s) => s.id === target) : undefined;
   const projectId = useMemo(() => projectIdForRef(repo), [projectIdForRef, projectRepos, key]);
-  const continueLinked = continueSession ? isLinkedTo(continueSession, subject) : false;
+  const continueAlreadyLinked = continueSession ? isLinkedTo(continueSession, subject) : false;
+  const continueLinkKey = continueSession ? `${continueSession.id}\n${key}` : null;
+  const updateMode = continueSession !== undefined && continueAlreadyLinked && linkedHere !== continueLinkKey;
+  const linkedOptions: Session[] =
+    continueSession && continueAlreadyLinked && !linkedSessions.includes(continueSession)
+      ? [continueSession, ...linkedSessions]
+      : linkedSessions;
   const otherSessions = useMemo(
-    () => otherSessionCandidates(allSessions, subject, projectId, continueLinked ? undefined : continueSession?.id),
-    [allSessions, key, projectId, continueSession?.id, continueLinked]
+    () => otherSessionCandidates(allSessions, subject, projectId, continueAlreadyLinked ? undefined : continueSession?.id),
+    [allSessions, key, projectId, continueSession?.id, continueAlreadyLinked]
   );
-  const projectName = projects.find((p) => p.id === projectId)?.name ?? "this project";
+  const projectNameOf = (id: string) => projects.find((p) => p.id === id)?.name ?? "another project";
+  const otherSessionsLabel = otherSessions.every((s) => s.projectId === projectId)
+    ? `Other sessions in ${projectNameOf(projectId ?? "")}`
+    : "Other sessions";
   const needsClone = !continueSession && reposReady && projectId === null;
   const effectiveDriver = continueSession?.driver ?? driver;
   const harness = harnessLabel(effectiveDriver);
@@ -214,12 +224,12 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
     subject.kind === "pr" ? linkedSessions.find((s) => s.worktreePath && s.projectId === projectId) : undefined;
   const requestedWorkspace = workspaceChoice ?? workflow?.workspace ?? "worktree";
   const workspace: PrWorkspaceChoice = requestedWorkspace === "linked" && !linkedWorktree ? "worktree" : requestedWorkspace;
-  const template = workflow ? (continueLinked ? workflow.updatePrompt : workflow.startPrompt) : "";
+  const template = workflow ? (updateMode ? workflow.updatePrompt : workflow.startPrompt) : "";
   const data = useWorkflowSubjectData({
     subject,
     cachedRun,
     template,
-    continueSession,
+    continueSession: updateMode ? continueSession : undefined,
     settings,
     hasWorkflow: workflow !== undefined,
     harness
@@ -282,8 +292,8 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
     const text = resolveTemplate(template, data.vars);
     const override = request.promptOverride?.trim();
     if (!override) return text;
-    return continueSession ? override : `${text}\n\n${override}`;
-  }, [data.vars, workflow, continueSession, template, request.promptOverride]);
+    return updateMode ? override : `${text}\n\n${override}`;
+  }, [data.vars, workflow, updateMode, template, request.promptOverride]);
 
   const prefillKey = resolved === null ? null : [workflowId, target, data.revision, effectiveDriver].join("\n");
   useEffect(() => {
@@ -359,7 +369,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
     }
   };
 
-  const linkSession = (sessionId: string, workflowIdToLink: string): Promise<Session> => {
+  const linkSession = (sessionId: string, workflowIdToLink: string, deferSeen = false): Promise<Session> => {
     switch (subject.kind) {
       case "pr": {
         const detail = data.prDetail;
@@ -368,8 +378,8 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
           ref: subject.ref,
           origin: "workflow",
           workflowId: workflowIdToLink,
-          lastSeenSha: detail.headRefOid,
-          lastSeenAt: Math.max(Date.now(), detail.updatedAt)
+          lastSeenSha: deferSeen ? "" : detail.headRefOid,
+          lastSeenAt: detail.updatedAt
         });
       }
       case "issue": {
@@ -422,10 +432,11 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
     let current: Stage = "send";
     try {
       if (continueSession) {
-        if (!continueLinked) {
+        if (!continueAlreadyLinked) {
           current = "link";
           setStage(current);
-          app.applySession(await linkSession(continueSession.id, workflow.id));
+          app.applySession(await linkSession(continueSession.id, workflow.id, true));
+          setLinkedHere(continueLinkKey);
         }
         current = "send";
         setStage(current);
@@ -502,11 +513,11 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
   const hasOverride = Boolean(request.promptOverride?.trim());
   const promptLabel = !continueSession
     ? "Prompt"
-    : hasOverride
-      ? "Follow-up prompt"
-      : continueLinked
-        ? "Follow-up prompt (the workflow's “on update” template)"
-        : "Prompt (the workflow's start template, this session hasn't worked on it yet)";
+    : !updateMode
+      ? "Prompt (the workflow's start template, this session hasn't worked on it yet)"
+      : hasOverride
+        ? "Follow-up prompt"
+        : "Follow-up prompt (the workflow's “on update” template)";
   const showPushNote = subject.kind === "pr" && !continueSession && workspace !== "checkout" && data.pr?.viewerIsAuthor === true;
   const blocked =
     !data.loaded || !workflow || !prompt.trim() || !data.logsReady || baseLoading || sessionBusy || (!continueSession && !reposReady);
@@ -658,9 +669,9 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
             </div>
           )}
 
-          {(linkedSessions.length > 0 || otherSessions.length > 0) && (
+          {(linkedOptions.length > 0 || otherSessions.length > 0) && (
             <div className="wf-run-field">
-              <span className="wf-run-label">{linkedSessions.length > 0 ? "Linked sessions" : "Session"}</span>
+              <span className="wf-run-label">Session</span>
               <Segment
                 label="Session"
                 value={target}
@@ -673,7 +684,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
                     title: "New session",
                     hint: `linked to ${subjectLabel(subject, data.run?.runNumber)}`
                   },
-                  ...linkedSessions.map((s) => {
+                  ...linkedOptions.map((s) => {
                     const link = subjectLink(s, subject);
                     return {
                       id: s.id,
@@ -689,7 +700,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
 
           {otherSessions.length > 0 && (
             <div className="wf-run-field">
-              <span className="wf-run-label">Other sessions in {projectName}</span>
+              <span className="wf-run-label">{otherSessionsLabel}</span>
               <MenuSelect
                 label="Other sessions"
                 direction="down"
@@ -699,7 +710,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
                 options={otherSessions.map((s) => ({
                   id: s.id,
                   label: s.title,
-                  hint: `will be linked to ${subjectLabel(subject, data.run?.runNumber)}`,
+                  hint: `will be linked to ${subjectLabel(subject, data.run?.runNumber)}${s.projectId === projectId ? "" : ` · ${projectNameOf(s.projectId)}`}`,
                   icon: <DriverIcon driver={s.driver} size={13} />,
                   disabled: working || created !== null
                 }))}
