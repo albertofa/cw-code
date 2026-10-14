@@ -5,6 +5,7 @@ import { usePrStore } from "../stores/prStore.js";
 import { prKey } from "./prInbox.js";
 import { detailNeedsRefresh, detailRefreshKey, hasUnseen } from "./prUpdates.js";
 import { errorMessage } from "./errorMessage.js";
+import { sessionPrItems, type SessionPrItem } from "./sessionPrItems.js";
 import { sessionLinks, type PrSummaryLookup } from "./sessionPrLinks.js";
 
 export interface LinkedPr {
@@ -70,6 +71,14 @@ export function useLinkedPrs(sessionId: string): LinkedPrs {
     });
     return { session, items, summaryByKey };
   }, [session, links, inbox, detailByKey, loadingByKey, errorByKey]);
+}
+
+export function useSessionPrItems(sessionId: string): { items: SessionPrItem[]; session: Session | undefined } {
+  const { session, summaryByKey } = useLinkedPrs(sessionId);
+  const gitPr = useAppStore((s) => s.gitStatusBySession[sessionId]?.pullRequest ?? null);
+  const detailByKey = usePrStore((s) => s.detailByKey);
+  const items = useMemo(() => sessionPrItems(session, gitPr, summaryByKey, detailByKey), [session, gitPr, summaryByKey, detailByKey]);
+  return { items, session };
 }
 
 function isFinishedAndCached(detail: PrDetail | undefined): boolean {

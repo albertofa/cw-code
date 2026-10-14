@@ -2,7 +2,7 @@ import type { PrUpdate, PrUpdateKind } from "@cw-code/contracts";
 import type { ApprovalRequest, PrDetail, PrSummary, QuestionRequest, Session } from "../cw.js";
 import { prKey } from "./prInbox.js";
 import { hasUnseen, updatesSince } from "./prUpdates.js";
-import { sessionLinks, type PrSummaryLookup } from "./sessionPrLinks.js";
+import { compareUrgency, prUrgency, sessionLinks, type PrSummaryLookup } from "./sessionPrLinks.js";
 
 export type AttentionKind = "approval" | "question" | "update";
 
@@ -15,6 +15,7 @@ export interface UnseenPr {
   number: number;
   summary?: PrSummary;
   updates?: PrUpdate[];
+  more?: number;
 }
 
 export type NeedsYouSlot = AttentionKind | "done" | "running";
@@ -91,6 +92,7 @@ function updateParts(unseen: UnseenPr): string[] {
 
 function updateLine(unseen: UnseenPr): string {
   const parts = updateParts(unseen).slice(0, MAX_UPDATE_PARTS);
+  if (unseen.more) parts.push(`+${unseen.more} more updated`);
   return parts.length > 0 ? `#${unseen.number} · ${parts.join(" · ")}` : `#${unseen.number} updated`;
 }
 
@@ -103,6 +105,7 @@ export function firstUnseenPr(
   summaryByKey: PrSummaryLookup,
   detailByKey: Record<string, PrDetail>
 ): UnseenPr | null {
+  const unseen: (UnseenPr & { summary: PrSummary })[] = [];
   for (const link of sessionLinks(session)) {
     const key = prKey(link.ref);
     const summary = summaryByKey.get(key);
@@ -110,9 +113,12 @@ export function firstUnseenPr(
     const detail = detailByKey[key];
     const updates = detail ? updatesSince(detail, link) : undefined;
     if (updates?.length === 0 && detailIsCurrent(detail, summary)) continue;
-    return { number: link.ref.number, summary, updates };
+    unseen.push({ number: link.ref.number, summary, updates });
   }
-  return null;
+  if (unseen.length === 0) return null;
+  const rank = (item: UnseenPr & { summary: PrSummary }) => ({ urgency: prUrgency(item.summary, null), updatedAt: item.summary.updatedAt });
+  const [first] = [...unseen].sort((a, b) => compareUrgency(rank(a), rank(b)));
+  return unseen.length > 1 ? { ...first, more: unseen.length - 1 } : first;
 }
 
 export interface DetailAttempt {

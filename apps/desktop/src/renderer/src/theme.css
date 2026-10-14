@@ -248,7 +248,6 @@ body {
   gap: 5px;
 }
 
-.head-col.col-right .git-status-pill,
 .head-col.col-right .gh-btn,
 .head-col.col-right .pr-panel-chip-wrap {
   flex: none;
@@ -3688,58 +3687,6 @@ body.session-dragging * {
   color: var(--text);
   background: #313338;
   border-color: var(--border-strong);
-}
-
-.git-status-pill {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-  height: 23px;
-  padding: 0 7px;
-  border: 1px solid var(--border);
-  border-radius: 6px;
-  background: #262931;
-  color: var(--dim);
-  font-family: var(--sans);
-  font-size: var(--t-xs);
-  font-weight: 600;
-  cursor: pointer;
-  box-sizing: border-box;
-  white-space: nowrap;
-}
-
-.git-status-pill:hover {
-  background: #313338;
-  border-color: var(--border-strong);
-}
-
-.git-status-pill .pill-icon {
-  display: inline-flex;
-  align-items: center;
-}
-
-.git-status-pill.ok {
-  border-color: #2c4a3c;
-}
-
-.git-status-pill.ok .pill-icon {
-  color: var(--success);
-}
-
-.git-status-pill.fail {
-  border-color: #4a2e2c;
-}
-
-.git-status-pill.fail .pill-icon {
-  color: var(--danger);
-}
-
-.git-status-pill.pending {
-  border-color: #4a412c;
-}
-
-.git-status-pill.pending .pill-icon {
-  color: var(--warning);
 }
 
 .git-stats {
@@ -9319,7 +9266,53 @@ button.gitbar-checkout:hover {
 .pr-links-menu {
   left: auto;
   right: 0;
-  max-width: 360px;
+  min-width: 340px;
+  max-width: 480px;
+}
+
+.pr-links-source {
+  flex: none;
+  min-width: 42px;
+  color: var(--faint);
+  font-size: var(--t-3xs);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+
+.pr-links-source.branch {
+  color: var(--violet);
+}
+
+.pr-links-action {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 7px;
+  background: transparent;
+  border: 1px solid var(--border);
+  border-radius: var(--r-sm);
+  color: var(--dim);
+  font-family: var(--sans);
+  font-size: var(--t-2xs);
+  cursor: pointer;
+}
+
+.pr-links-action:hover:not(:disabled) {
+  background: var(--raised);
+  color: var(--text);
+}
+
+.pr-links-action:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+
+.pr-links-github {
+  flex: none;
+  display: inline-flex;
+  padding: 2px 4px;
 }
 
 .pr-chip-more {

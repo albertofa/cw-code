@@ -70,13 +70,19 @@ export function displayChip(link: SessionPrLink, summaryByKey: PrSummaryLookup, 
   );
 }
 
-function urgencyRank(link: SessionPrLink, summaryByKey: PrSummaryLookup, gitPr: GitPullRequest | null | undefined): number {
-  const summary = summaryByKey.get(prKey(link.ref));
-  const git = gitFor(link, gitPr);
+export function prUrgency(summary: PrSummary | undefined, git: GitPullRequest | null): number {
   const chip = prChip({ pr: summary ?? null, git });
   if (!chip) return UNKNOWN_RANK;
   if ((summary?.state ?? git?.state) !== "OPEN") return FINISHED_RANK;
   return TONE_RANK[chip.tone];
+}
+
+export function compareUrgency(a: { urgency: number; updatedAt: number }, b: { urgency: number; updatedAt: number }): number {
+  return a.urgency - b.urgency || b.updatedAt - a.updatedAt;
+}
+
+function urgencyRank(link: SessionPrLink, summaryByKey: PrSummaryLookup, gitPr: GitPullRequest | null | undefined): number {
+  return prUrgency(summaryByKey.get(prKey(link.ref)), gitFor(link, gitPr));
 }
 
 export function mostUrgentLink(

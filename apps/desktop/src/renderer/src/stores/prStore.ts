@@ -32,6 +32,7 @@ interface PrState {
   diffLoadingByKey: Record<string, boolean>;
   diffErrorByKey: Record<string, string>;
   mainView: MainView;
+  selectedPrKeyBySession: Record<string, string>;
   projectRepos: ProjectGitHubRepo[];
   runModal: RunModalState | null;
   refreshInbox(force?: boolean): Promise<void>;
@@ -39,6 +40,7 @@ interface PrState {
   loadDiff(ref: PrRef, force?: boolean): Promise<void>;
   openGitHub(kind?: GitHubKind): void;
   openPr(ref: PrRef, tab?: PrDetailTab): void;
+  selectSessionPr(sessionId: string, key: string | null): void;
   setPrTab(tab: PrDetailTab): void;
   openSessionView(): void;
   openUsage(): void;
@@ -67,6 +69,7 @@ export const usePrStore = create<PrState>((set, get) => ({
   diffLoadingByKey: {},
   diffErrorByKey: {},
   mainView: { kind: "session" },
+  selectedPrKeyBySession: {},
   projectRepos: [],
   runModal: null,
 
@@ -137,6 +140,16 @@ export const usePrStore = create<PrState>((set, get) => ({
   openPr(ref: PrRef, tab: PrDetailTab = "conversation") {
     set({ mainView: { kind: "pr", ref, tab } });
     void get().loadDetail(ref);
+  },
+
+  selectSessionPr(sessionId: string, key: string | null) {
+    const current = get().selectedPrKeyBySession;
+    if (key === null) {
+      set({ selectedPrKeyBySession: without(current, sessionId) });
+      return;
+    }
+    if (current[sessionId] === key) return;
+    set({ selectedPrKeyBySession: { ...current, [sessionId]: key } });
   },
 
   setPrTab(tab: PrDetailTab) {
