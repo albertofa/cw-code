@@ -52,6 +52,7 @@ import {
   linkFromStatus,
   markLinkSeenAt,
   markSeen,
+  onlyFinishedLinks,
   prHeadPlan,
   removeIssueLink,
   removeLink,
@@ -800,7 +801,8 @@ export class SessionManager {
     const links = session?.prs ?? [];
     if (links.length === 0) return;
     const coveredKeys = new Set(coveredRefs.map((ref) => prKey(ref)));
-    const targets = links.map((link) => ({ ref: link.ref, covered: links.length === 1 || coveredKeys.has(prKey(link.ref)) }));
+    const soleLinkCovered = coveredKeys.size === 0 && links.length === 1;
+    const targets = links.map((link) => ({ ref: link.ref, covered: soleLinkCovered || coveredKeys.has(prKey(link.ref)) }));
     const worktreePath = session?.worktreePath;
     const now = Date.now();
     void (async () => {
@@ -868,25 +870,20 @@ export class SessionManager {
       if (!session.prs?.length) continue;
       if (this.sessionBusy(session.id)) continue;
       try {
-        let finishedRef: PrRef | null = null;
+        const finishedKeys = new Set<string>();
         for (const link of session.prs) {
           const known = this.prState(link.ref);
-          if (isFinishedPrState(known)) {
-            finishedRef = link.ref;
-            break;
+          if (!isFinishedPrState(known)) {
+            const refresh = this.prStateRefresh;
+            const refreshed = refresh ? await refresh(link.ref).catch(() => null) : null;
+            if (!isFinishedPrState(refreshed ?? known)) break;
           }
-          const refresh = this.prStateRefresh;
-          const refreshed = refresh ? await refresh(link.ref).catch(() => null) : null;
-          if (isFinishedPrState(refreshed ?? known)) {
-            finishedRef = link.ref;
-            break;
-          }
+          finishedKeys.add(prKey(link.ref));
         }
-        if (!finishedRef) continue;
-        const finished = finishedRef;
+        if (finishedKeys.size !== session.prs.length) continue;
         const current = this.store.getSession(session.id);
         if (!current || (current.status !== "holding" && current.status !== "done")) continue;
-        if (!findLink(current.prs, finished)) continue;
+        if (!onlyFinishedLinks(current.prs, finishedKeys)) continue;
         if (this.sessionBusy(session.id)) continue;
         const target = this.settings.get().prFinishedSessionStatus;
         if (!autoFinishedTarget(target)) continue;
@@ -900,7 +897,7 @@ export class SessionManager {
             stillEligible: (candidate) =>
               this.settings.get().prFinishedSessionStatus === target &&
               (candidate.status === "holding" || candidate.status === "done") &&
-              findLink(candidate.prs, finished) !== undefined
+              onlyFinishedLinks(candidate.prs, finishedKeys)
           });
           if (this.store.getSession(session.id)?.status !== target) continue;
           if (result.error) console.warn(`finished-PR cleanup failed for session ${session.id}: ${result.error}`);

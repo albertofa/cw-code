@@ -195,6 +195,11 @@ export function applyTurnSeen(
   return next;
 }
 
+export function onlyFinishedLinks(prs: SessionPrLink[] | undefined, finishedKeys: ReadonlySet<string>): boolean {
+  if (!prs?.length) return false;
+  return prs.every((link) => finishedKeys.has(prKey(link.ref)));
+}
+
 export type PrHeadPlan =
   | { kind: "attach"; branch: string }
   | { kind: "base"; branch: string }

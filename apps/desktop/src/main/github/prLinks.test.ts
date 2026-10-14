@@ -22,6 +22,7 @@ import {
   linkFromStatus,
   markLinkSeenAt,
   markSeen,
+  onlyFinishedLinks,
   prHeadPlan,
   removeIssueLink,
   removeLink,
@@ -32,6 +33,7 @@ import {
   upsertRunLink
 } from "./prLinks.js";
 import { changedWorktreeBranch } from "../sessions/worktreeCleanup.js";
+import { prKey } from "./prParsers.js";
 
 function session(overrides: Partial<SessionMeta> = {}): SessionMeta {
   return {
@@ -287,6 +289,27 @@ describe("applyTurnSeen", () => {
   it("marks covered links seen through GitHub's updatedAt when the local clock is behind", () => {
     const next = applyTurnSeen([covered], [{ ref: covered.ref, covered: true, head: "new-42", seenAt: 111 }], null, 100);
     expect(next).toEqual([{ ...covered, lastSeenSha: "new-42", lastSeenAt: 111 }]);
+  });
+});
+
+describe("onlyFinishedLinks", () => {
+  const first: SessionPrLink = {
+    ref: { host: "github.com", owner: "acme", repo: "widgets", number: 42 },
+    origin: "opened",
+    lastSeenSha: "a",
+    lastSeenAt: 1
+  };
+  const second: SessionPrLink = { ...first, ref: { ...first.ref, number: 7 } };
+
+  it("is true only when every link is in the finished set", () => {
+    const keys = new Set([prKey(first.ref), prKey(second.ref)]);
+    expect(onlyFinishedLinks([first, second], keys)).toBe(true);
+    expect(onlyFinishedLinks([first, second], new Set([prKey(first.ref)]))).toBe(false);
+  });
+
+  it("is false without links", () => {
+    expect(onlyFinishedLinks(undefined, new Set())).toBe(false);
+    expect(onlyFinishedLinks([], new Set())).toBe(false);
   });
 });
 
