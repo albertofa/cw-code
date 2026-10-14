@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { GitService, countUntrackedLines, fetchArgsForRef, gitPathTarget, isAppManagedPath, isValidBranchName, mapLimit, parseGitHubAccounts, parseGitHubRemote, parseNumstat, parsePorcelainV2Status, parsePrNumber, parsePullRequest, parseWorktreeList, pickDefaultBase, selectGitHubAccount, sweepStaleSnapshotIndexes, worktreeNameFor } from "./GitService.js";
+import { GitService, countUntrackedLines, fetchArgsForRef, gitPathTarget, isAppManagedPath, isValidBranchName, mapLimit, parseGitHubAccounts, parseGitHubRemote, parseNumstat, parsePorcelainV2Status, parsePrNumber, parsePullRequest, parseWorktreeList, pickDefaultBase, redactUrlCredentials, selectGitHubAccount, sweepStaleSnapshotIndexes, worktreeNameFor } from "./GitService.js";
 
 function initSandbox(): { sandbox: string; repository: string; service: GitService } {
   const sandbox = mkdtempSync(join(tmpdir(), "cw-git-"));
@@ -51,16 +51,28 @@ describe("fetchArgsForRef", () => {
     expect(fetchArgsForRef("origin/+x:refs/heads/foo")).toBeNull();
     expect(fetchArgsForRef("origin/x..y")).toBeNull();
   });
+
+  it("keeps plus signs inside branch names without letting them start a refspec", () => {
+    expect(fetchArgsForRef("origin/feature/c++")).toEqual(["fetch", "-q", "origin", "+refs/heads/feature/c++:refs/remotes/origin/feature/c++"]);
+  });
+});
+
+describe("redactUrlCredentials", () => {
+  it("strips user and token from URLs", () => {
+    expect(redactUrlCredentials("fatal: unable to access 'https://user:tok3n@github.com/o/r.git/'")).toBe("fatal: unable to access 'https://github.com/o/r.git/'");
+    expect(redactUrlCredentials("ssh://git@host/o/r")).toBe("ssh://host/o/r");
+    expect(redactUrlCredentials("plain text https://github.com/o/r")).toBe("plain text https://github.com/o/r");
+  });
 });
 
 describe("isValidBranchName", () => {
   it("accepts ordinary branch names", () => {
-    for (const name of ["main", "feature/x", "cw/1234abcd", "release-1.2", "user/fix_bug"]) expect(isValidBranchName(name)).toBe(true);
+    for (const name of ["main", "feature/x", "cw/1234abcd", "release-1.2", "user/fix_bug", "feature/c++", "a+b"]) expect(isValidBranchName(name)).toBe(true);
   });
 
   it("rejects names git would refuse or that could be read as options", () => {
     const invalid = [
-      "", "-x", "/x", "x/", "a//b", "a..b", "a@{b", "@", "a b", "a\tb", "a:b", "a+b", "a*b", "a?b", "a[b", "a\\b", "a^b", "a~b",
+      "", "-x", "/x", "x/", "a//b", "a..b", "a@{b", "@", "a b", "a\tb", "a:b", "a*b", "a?b", "a[b", "a\\b", "a^b", "a~b",
       "x.lock", "a/x.lock", "x.", ".hidden", "a/.hidden", "a\u007fb"
     ];
     for (const name of invalid) expect(isValidBranchName(name), JSON.stringify(name)).toBe(false);
@@ -461,6 +473,129 @@ describe("GitService worktrees", () => {
   it("rejects an unknown requested base", async () => {
     const { repository, service } = initSandbox();
     await expect(service.resolveBase(repository, "nope")).rejects.toThrow("unknown base branch 'nope'");
+  });
+
+  function commitOnRemoteBranch(pusher: string, branch: string, file: string): string {
+    execFileSync("git", ["-C", pusher, "fetch", "origin"]);
+    const exists = execFileSync("git", ["-C", pusher, "branch", "-r", "--list", `origin/${branch}`], { encoding: "utf8" }).trim() !== "";
+    if (exists) execFileSync("git", ["-C", pusher, "switch", "-C", branch, `origin/${branch}`]);
+    else execFileSync("git", ["-C", pusher, "switch", "-C", branch, "origin/main"]);
+    writeFileSync(join(pusher, file), "remote\n", "utf8");
+    execFileSync("git", ["-C", pusher, "add", file]);
+    execFileSync("git", ["-C", pusher, "-c", "user.name=cw-code", "-c", "user.email=test@cw-code.local", "commit", "-m", `add ${file}`]);
+    execFileSync("git", ["-C", pusher, "push", "origin", branch]);
+    return execFileSync("git", ["-C", pusher, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+  }
+
+  function localCommit(repository: string, file: string): string {
+    writeFileSync(join(repository, file), "local\n", "utf8");
+    execFileSync("git", ["-C", repository, "add", file]);
+    execFileSync("git", ["-C", repository, "-c", "user.name=cw-code", "-c", "user.email=test@cw-code.local", "commit", "-m", `local ${file}`]);
+    return execFileSync("git", ["-C", repository, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+  }
+
+  it("uses an exact local ref without fetching or preferring origin", async () => {
+    const { sandbox, repository, service } = initSandbox();
+    const { pusher } = withOrigin(repository, sandbox);
+    execFileSync("git", ["-C", repository, "branch", "feature/pr"]);
+    execFileSync("git", ["-C", repository, "push", "origin", "feature/pr"]);
+    commitOnRemoteBranch(pusher, "feature/pr", "remote-pr.txt");
+    execFileSync("git", ["-C", repository, "remote", "set-url", "origin", join(sandbox, "missing.git")]);
+
+    expect(await service.resolveBase(repository, "feature/pr", { exact: true })).toEqual({ ref: "feature/pr", fetched: false, warning: null });
+    await expect(service.resolveBase(repository, "nope", { exact: true })).rejects.toThrow("unknown base branch 'nope'");
+    await expect(service.resolveBase(repository, "-x", { exact: true })).rejects.toThrow("invalid base branch '-x'");
+  });
+
+  it("creates a worktree from the exact local branch even when origin has a newer branch of the same name", async () => {
+    const { sandbox, repository, service } = initSandbox();
+    const { pusher } = withOrigin(repository, sandbox);
+    execFileSync("git", ["-C", repository, "switch", "-c", "feature/pr"]);
+    const localTip = localCommit(repository, "local-pr.txt");
+    execFileSync("git", ["-C", repository, "push", "origin", "feature/pr"]);
+    const remoteTip = commitOnRemoteBranch(pusher, "feature/pr", "remote-pr.txt");
+    execFileSync("git", ["-C", repository, "switch", "main"]);
+
+    const exact = await service.createWorktree(repository, "project", "sess_exact1", join(sandbox, "worktrees"), "feature/pr", { exact: true });
+    expect(execFileSync("git", ["-C", exact.path, "rev-parse", "HEAD"], { encoding: "utf8" }).trim()).toBe(localTip);
+    expect(exact.baseWarning).toBeNull();
+
+    const preferred = await service.createWorktree(repository, "project", "sess_exact2", join(sandbox, "worktrees"), "feature/pr");
+    expect(execFileSync("git", ["-C", preferred.path, "rev-parse", "HEAD"], { encoding: "utf8" }).trim()).toBe(remoteTip);
+  });
+
+  it("uses the local branch with a warning when it has commits that are not on origin", async () => {
+    const { sandbox, repository, service } = initSandbox();
+    const { pusher } = withOrigin(repository, sandbox);
+    execFileSync("git", ["-C", repository, "switch", "-c", "feature/x"]);
+    const localTip = localCommit(repository, "local-x.txt");
+    execFileSync("git", ["-C", repository, "switch", "main"]);
+    commitOnRemoteBranch(pusher, "feature/x", "remote-x.txt");
+
+    const resolved = await service.resolveBase(repository, "feature/x");
+    expect(resolved).toEqual({ ref: "feature/x", fetched: true, warning: "Using local feature/x: it has commits that aren't on origin" });
+    expect(execFileSync("git", ["-C", repository, "rev-parse", "feature/x"], { encoding: "utf8" }).trim()).toBe(localTip);
+  });
+
+  it("uses the fetched origin branch when the local branch is an ancestor of it", async () => {
+    const { sandbox, repository, service } = initSandbox();
+    const { pusher } = withOrigin(repository, sandbox);
+    execFileSync("git", ["-C", repository, "branch", "feature/y"]);
+    const remoteTip = commitOnRemoteBranch(pusher, "feature/y", "remote-y.txt");
+
+    const resolved = await service.resolveBase(repository, "feature/y");
+    expect(resolved).toEqual({ ref: "origin/feature/y", fetched: true, warning: null });
+    expect(execFileSync("git", ["-C", repository, "rev-parse", "origin/feature/y"], { encoding: "utf8" }).trim()).toBe(remoteTip);
+  });
+
+  it("creates branches from fully qualified refs so a tag with the same name cannot hijack the base", async () => {
+    const { repository, service } = initSandbox();
+    const initial = execFileSync("git", ["-C", repository, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+    execFileSync("git", ["-C", repository, "branch", "amb"]);
+    const later = localCommit(repository, "later.txt");
+    execFileSync("git", ["-C", repository, "tag", "amb", later]);
+
+    const branch = await service.switchToNewBranch(repository, "cw/amb1", "amb");
+    expect(branch).toBe("cw/amb1");
+    expect(execFileSync("git", ["-C", repository, "rev-parse", "HEAD"], { encoding: "utf8" }).trim()).toBe(initial);
+  });
+
+  it("discovers origin's default branch when no origin refs are known locally", async () => {
+    const { sandbox, repository, service } = initSandbox();
+    const remote = join(sandbox, "remote.git");
+    execFileSync("git", ["clone", "--bare", repository, remote]);
+    execFileSync("git", ["-C", repository, "remote", "add", "origin", remote]);
+
+    const resolved = await service.resolveBase(repository);
+    expect(resolved).toEqual({ ref: "origin/main", fetched: true, warning: null });
+  });
+
+  it("falls back to the local default branch with a notice when origin's default cannot be discovered", async () => {
+    const { sandbox, repository, service } = initSandbox();
+    execFileSync("git", ["-C", repository, "remote", "add", "origin", join(sandbox, "missing.git")]);
+
+    const resolved = await service.resolveBase(repository);
+    expect(resolved.ref).toBe("main");
+    expect(resolved.warning).toMatch(/^Could not determine origin's default branch \(.+\); using main$/);
+  });
+
+  it("retries the branch switch once when the index is briefly locked", async () => {
+    const { repository, service } = initSandbox();
+    execFileSync("git", ["-C", repository, "switch", "-c", "other"]);
+    localCommit(repository, "other.txt");
+    execFileSync("git", ["-C", repository, "switch", "main"]);
+    const lock = join(repository, ".git", "index.lock");
+
+    writeFileSync(lock, "", "utf8");
+    await expect(service.switchToNewBranch(repository, "cw/locked1", "other")).rejects.toThrow(/index\.lock/);
+
+    const timer = setTimeout(() => rmSync(lock, { force: true }), 80);
+    try {
+      expect(await service.switchToNewBranch(repository, "cw/locked2", "other")).toBe("cw/locked2");
+    } finally {
+      clearTimeout(timer);
+      rmSync(lock, { force: true });
+    }
   });
 
   it("switches the checkout to a uniquely named new branch and detects tracked changes", async () => {

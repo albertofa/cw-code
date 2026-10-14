@@ -246,6 +246,17 @@ function commitOnRemote(pusher: string, file: string): string {
   return gitOut(pusher, "rev-parse", "HEAD");
 }
 
+function commitOnRemoteBranch(pusher: string, branch: string, file: string): string {
+  gitOut(pusher, "fetch", "origin");
+  const known = gitOut(pusher, "branch", "-r", "--list", `origin/${branch}`) !== "";
+  gitOut(pusher, "switch", "-C", branch, known ? `origin/${branch}` : "origin/main");
+  writeFileSync(join(pusher, file), "remote\n", "utf8");
+  gitOut(pusher, "add", file);
+  gitOut(pusher, "-c", "user.name=cw-code", "-c", "user.email=test@cw-code.local", "commit", "-m", `add ${file}`);
+  gitOut(pusher, "push", "origin", branch);
+  return gitOut(pusher, "rev-parse", "HEAD");
+}
+
 function hasUpstream(repository: string, branch: string): boolean {
   try {
     execFileSync("git", ["-C", repository, "rev-parse", "--abbrev-ref", `${branch}@{upstream}`], { stdio: "pipe" });
@@ -788,6 +799,147 @@ describe("SessionManager", () => {
     expect(session.createNotice).toMatch(/^Could not fetch origin\/main/);
     const stored = (await manager.listSessions(project.id)).find((s) => s.id === session.id);
     expect(stored && "createNotice" in stored).toBe(false);
+    manager.dispose();
+  });
+
+  it("runs a current-checkout session without a branch and with a notice when the repository has no commits yet", async () => {
+    const { manager, project } = makeGitSandboxManager("cw-session-current-unborn-");
+    const empty = join(dirname(project.rootPath), "empty");
+    execFileSync("git", ["init", "-b", "main", empty]);
+    const emptyProject = manager.addProject(empty);
+
+    const session = await manager.createSession(emptyProject.id, "claude", { mode: "current" });
+
+    expect(session.branch).toBeUndefined();
+    expect(session.createNotice).toBe(`${emptyProject.name} has no commits yet; the session runs without its own branch`);
+    manager.dispose();
+  });
+
+  it("stays on the author's PR branch without a dirty check when it is already checked out in the project folder", async () => {
+    const { manager, project, repository } = makeGitSandboxManager("cw-session-current-at-root-");
+    gitOut(repository, "switch", "-c", "feature/pr");
+    const headRefOid = gitOut(repository, "rev-parse", "HEAD");
+    writeFileSync(join(repository, "README.md"), "dirty\n", "utf8");
+
+    const session = await manager.createSession(project.id, "claude", {
+      mode: "current",
+      prHead: { number: 7, headRefName: "feature/pr", headRefOid, viewerIsAuthor: true }
+    });
+
+    expect(session.branch).toBe("feature/pr");
+    expect(session.worktreePath).toBeUndefined();
+    expect(gitOut(repository, "branch", "--show-current")).toBe("feature/pr");
+    expect(readFileSync(join(repository, "README.md"), "utf8")).toBe("dirty\n");
+    expect(gitOut(repository, "branch", "--list", "cw/*")).toBe("");
+    manager.dispose();
+  });
+
+  it("refuses a current-checkout session while another session is running a turn in the same folder", async () => {
+    const { manager, fake, project, repository } = makeGitSandboxManager("cw-session-current-busy-");
+    const running = await manager.createSession(project.id, "claude", { mode: "current" });
+    await manager.startTurn(running.id, "work");
+    const branchBefore = gitOut(repository, "branch", "--show-current");
+
+    await expect(manager.createSession(project.id, "claude", { mode: "current" })).rejects.toThrow(
+      `${running.title} is running in ${project.name} — wait for it to finish or use a new worktree`
+    );
+
+    expect(gitOut(repository, "branch", "--show-current")).toBe(branchBefore);
+    expect(await manager.listSessions(project.id)).toHaveLength(1);
+    fake.completeAll();
+    manager.dispose();
+  });
+
+  it("serializes concurrent current-checkout creations in the same folder", async () => {
+    const { manager, project } = makeGitSandboxManager("cw-session-current-serial-");
+    const git = (manager as unknown as { git: { switchToNewBranch(root: string, name: string, base: string): Promise<string> } }).git;
+    const original = git.switchToNewBranch.bind(git);
+    const events: string[] = [];
+    git.switchToNewBranch = async (root, name, base) => {
+      events.push(`start:${name}`);
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 150));
+      const branch = await original(root, name, base);
+      events.push(`end:${name}`);
+      return branch;
+    };
+
+    const [first, second] = await Promise.all([
+      manager.createSession(project.id, "claude", { mode: "current" }),
+      manager.createSession(project.id, "claude", { mode: "current" })
+    ]);
+
+    const names = [first, second].map((session) => `cw/${session.id.replace(/^sess_/, "")}`);
+    expect(events).toHaveLength(4);
+    expect(names).toContain(events[0]?.replace("start:", ""));
+    expect(events[1]).toBe(events[0]?.replace("start:", "end:"));
+    expect(events[3]).toBe(events[2]?.replace("start:", "end:"));
+    expect(events[2]).not.toBe(events[0]);
+    expect(first.branch).not.toBe(second.branch);
+    manager.dispose();
+  });
+
+  it("re-checks the working tree right before switching, after the base was fetched", async () => {
+    const { manager, project, repository } = makeGitSandboxManager("cw-session-current-recheck-");
+    const git = (manager as unknown as { git: { resolveBase(...args: unknown[]): Promise<unknown> } }).git;
+    const original = git.resolveBase.bind(git);
+    git.resolveBase = async (...args: unknown[]) => {
+      const resolved = await original(...args);
+      writeFileSync(join(repository, "README.md"), "edited during fetch\n", "utf8");
+      return resolved;
+    };
+
+    await expect(manager.createSession(project.id, "claude", { mode: "current" })).rejects.toThrow(
+      `${project.name} has uncommitted changes — commit or stash them, or use a new worktree`
+    );
+
+    expect(gitOut(repository, "branch", "--show-current")).toBe("main");
+    expect(await manager.listSessions(project.id)).toHaveLength(0);
+    manager.dispose();
+  });
+
+  it("creates a PR worktree from the exact local branch even when origin has a newer branch of the same name", async () => {
+    const { manager, project, repository } = makeGitSandboxManager("cw-session-exact-base-");
+    const { pusher } = attachOrigin(repository);
+    gitOut(repository, "switch", "-c", "feature/pr");
+    const headRefOid = gitOut(repository, "rev-parse", "HEAD");
+    gitOut(repository, "push", "origin", "feature/pr");
+    commitOnRemoteBranch(pusher, "feature/pr", "remote-pr.txt");
+
+    const session = await manager.createSession(project.id, "claude", {
+      mode: "new",
+      prHead: { number: 7, headRefName: "feature/pr", headRefOid, viewerIsAuthor: true }
+    });
+
+    expect(session.worktreePath).toBeTruthy();
+    expect(session.branch).toMatch(/^cw\//);
+    expect(gitOut(session.worktreePath ?? "", "rev-parse", "HEAD")).toBe(headRefOid);
+    expect(session.createNotice).toBeUndefined();
+    manager.dispose();
+  });
+
+  it("recovers a worktree from the exact local branch and keeps unpushed commits", async () => {
+    const { manager, project, repository } = makeGitSandboxManager("cw-recover-exact-");
+    const { pusher } = attachOrigin(repository);
+    const session = await manager.createSession(project.id, "claude", { mode: "new", baseBranch: "main" });
+    const worktreePath = session.worktreePath;
+    const original = session.branch;
+    if (!worktreePath || !original) throw new Error("expected a worktree-backed session with a branch");
+    writeFileSync(join(worktreePath, "unpushed.txt"), "local\n", "utf8");
+    gitOut(worktreePath, "add", "unpushed.txt");
+    gitOut(worktreePath, "-c", "user.name=cw-code", "-c", "user.email=test@cw-code.local", "commit", "-m", "unpushed");
+    const localTip = gitOut(worktreePath, "rev-parse", "HEAD");
+    gitOut(repository, "push", "origin", original);
+    commitOnRemoteBranch(pusher, original, "remote-extra.txt");
+
+    rmSync(worktreePath, { recursive: true, force: true });
+    gitOut(repository, "worktree", "prune");
+    const elsewhere = join(worktreePath, "..", `${session.id}-elsewhere`);
+    gitOut(repository, "worktree", "add", elsewhere, original);
+
+    const root = await manager.ensureWorktree(session.id);
+
+    expect(root).toBe(worktreePath);
+    expect(gitOut(worktreePath, "rev-parse", "HEAD")).toBe(localTip);
     manager.dispose();
   });
 

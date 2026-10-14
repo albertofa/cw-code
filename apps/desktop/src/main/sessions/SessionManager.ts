@@ -64,7 +64,7 @@ import {
 } from "../github/prLinks.js";
 import { prKey, prRefFromUrl } from "../github/prParsers.js";
 import { buildTurnEnv } from "./env.js";
-import { changedWorktreeBranch, isWorktreeOrphaned, looksLikeWorktree, pinsWorktree, rootsOverlap, sameWorktreePath } from "./worktreeCleanup.js";
+import { changedWorktreeBranch, comparableRoot, isWorktreeOrphaned, looksLikeWorktree, pinsWorktree, rootsOverlap, sameWorktreePath } from "./worktreeCleanup.js";
 import { SettingsStore } from "../settings/SettingsStore.js";
 import { resolveClaudeModels } from "../settings/settingsUtils.js";
 import { permissionOption, withSyntheticFullAccess } from "../providers/permissions.js";
@@ -193,6 +193,7 @@ export class SessionManager {
   private firstPrompts = new Map<string, string>();
   private pendingTurns = new Set<string>();
   private pendingResolves = new Set<string>();
+  private folderChains = new Map<string, Promise<void>>();
   private settleSweep: Promise<string[]> | null = null;
   private idleSweep: Promise<string[]> | null = null;
   private worktreeRecovery = new Map<string, Promise<string>>();
@@ -554,31 +555,97 @@ export class SessionManager {
     id: string,
     options: CreateSessionOptions
   ): Promise<SessionMeta> {
-    if (!(await this.git.hasCommits(project.rootPath))) {
-      return this.store.createSession(project.id, driver, "New session", { id });
+    return this.withFolderLock(project.rootPath, () => this.createCurrentCheckoutSessionLocked(project, driver, id, options));
+  }
+
+  private async withFolderLock<T>(root: string, run: () => Promise<T>): Promise<T> {
+    const key = comparableRoot(root);
+    const previous = this.folderChains.get(key) ?? Promise.resolve();
+    const next = previous.then(run);
+    const tail = next.then(
+      () => undefined,
+      () => undefined
+    );
+    this.folderChains.set(key, tail);
+    try {
+      return await next;
+    } finally {
+      if (this.folderChains.get(key) === tail) this.folderChains.delete(key);
     }
-    if (await this.git.isWorkingTreeDirty(project.rootPath)) {
-      throw new Error(`${project.name} has uncommitted changes — commit or stash them, or use a new worktree`);
+  }
+
+  private async createCurrentCheckoutSessionLocked(
+    project: Project,
+    driver: DriverKind,
+    id: string,
+    options: CreateSessionOptions
+  ): Promise<SessionMeta> {
+    this.assertNotReserved();
+    if (!(await this.git.hasCommits(project.rootPath))) {
+      const session = this.store.createSession(project.id, driver, "New session", { id });
+      return withCreateNotice(session, `${project.name} has no commits yet; the session runs without its own branch`);
     }
     const plan = options.prHead ? await this.planPrHead(project, options) : null;
     this.assertNotReserved();
-    if (plan?.kind === "attach") {
-      await this.git.checkoutBranch(project.rootPath, plan.branch);
+    if (plan?.kind === "base" && (await this.isCheckedOutAtRoot(project, plan.branch))) {
       return this.store.createSession(project.id, driver, "New session", { id, branch: plan.branch });
     }
-    const requestedBase = await this.requestedBase(project, plan, options);
+    await this.assertCheckoutReady(project);
+    if (plan?.kind === "attach") {
+      await this.git.checkoutBranch(project.rootPath, plan.branch);
+      await this.git.initSubmodules(project.rootPath);
+      return this.store.createSession(project.id, driver, "New session", { id, branch: plan.branch });
+    }
+    const { base, exact } = await this.requestedBase(project, plan, options);
     this.assertNotReserved();
-    const resolved = await this.git.resolveBase(project.rootPath, requestedBase);
+    const resolved = await this.git.resolveBase(project.rootPath, base, { exact });
     this.assertNotReserved();
+    await this.assertCheckoutReady(project);
     const branch = await this.git.switchToNewBranch(project.rootPath, sessionBranchName(id), resolved.ref);
+    await this.git.initSubmodules(project.rootPath);
     const session = this.store.createSession(project.id, driver, "New session", { id, branch });
     return withCreateNotice(session, resolved.warning);
   }
 
-  private async requestedBase(project: Project, plan: PrHeadPlan | null, options: CreateSessionOptions): Promise<string | undefined> {
-    if (plan?.kind === "base") return plan.branch;
-    if (plan?.kind === "fetch") return this.git.fetchPullRequestHead(project.rootPath, plan.number);
-    return options.baseBranch;
+  private async isCheckedOutAtRoot(project: Project, branch: string): Promise<boolean> {
+    const info = (await this.git.branches(project.rootPath)).find((item) => !item.remote && item.name === branch);
+    if (!info?.worktreePath) return false;
+    const repositoryRoot = await this.git.repositoryRoot(project.rootPath);
+    return sameWorktreePath(info.worktreePath, project.rootPath) || sameWorktreePath(info.worktreePath, repositoryRoot);
+  }
+
+  private async assertCheckoutReady(project: Project): Promise<void> {
+    const busy = this.busySiblingOnFolder(project);
+    if (busy) throw new Error(`${busy.title} is running in ${project.name} — wait for it to finish or use a new worktree`);
+    if (await this.git.isWorkingTreeDirty(project.rootPath)) {
+      throw new Error(`${project.name} has uncommitted changes — commit or stash them, or use a new worktree`);
+    }
+  }
+
+  private busySiblingOnFolder(project: Project): SessionMeta | null {
+    return (
+      this.store.listAllSessions().find((other) => {
+        if (other.worktreePath || !pinsWorktree(other)) return false;
+        const otherRoot = this.sessionRoot(other);
+        if (otherRoot === null || !rootsOverlap(otherRoot, project.rootPath)) return false;
+        return (
+          this.hasTurnInFlight(other.id) ||
+          this.pendingUndos.has(other.id) ||
+          this.pendingBranchSwitches.has(other.id) ||
+          this.pendingResolves.has(other.id)
+        );
+      }) ?? null
+    );
+  }
+
+  private async requestedBase(
+    project: Project,
+    plan: PrHeadPlan | null,
+    options: CreateSessionOptions
+  ): Promise<{ base: string | undefined; exact: boolean }> {
+    if (plan?.kind === "base") return { base: plan.branch, exact: true };
+    if (plan?.kind === "fetch") return { base: await this.git.fetchPullRequestHead(project.rootPath, plan.number), exact: true };
+    return { base: options.baseBranch, exact: false };
   }
 
   private async createSessionWorktree(project: Project, id: string, options: CreateSessionOptions): Promise<CreatedWorktree> {
@@ -588,9 +655,9 @@ export class SessionManager {
       const target = join(this.worktreesRoot, safeSegment(project.id), safeSegment(id));
       return this.git.attachWorktree(project.rootPath, target, plan.branch);
     }
-    const base = await this.requestedBase(project, plan, options);
+    const { base, exact } = await this.requestedBase(project, plan, options);
     this.assertNotReserved();
-    return this.git.createWorktree(project.rootPath, project.id, id, this.worktreesRoot, base);
+    return this.git.createWorktree(project.rootPath, project.id, id, this.worktreesRoot, base, { exact });
   }
 
   private async planPrHead(project: Project, options: CreateSessionOptions): Promise<PrHeadPlan | null> {
@@ -1888,7 +1955,8 @@ export class SessionManager {
         project.id,
         sessionId,
         this.worktreesRoot,
-        session.branch
+        session.branch,
+        { exact: true }
       );
     } catch (err) {
       throw new Error(
