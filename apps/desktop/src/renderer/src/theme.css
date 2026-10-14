@@ -6413,6 +6413,10 @@ select.field option {
   font-size: var(--t-2xs);
 }
 
+.newthread-error {
+  margin: 8px 14px 0;
+}
+
 .composer-footer {
   position: relative;
   z-index: 1;

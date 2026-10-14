@@ -174,6 +174,7 @@ interface AppState {
   pendingQuestions: Record<string, QuestionRequest[]>;
   pendingPrefs: ComposerPrefs;
   pendingWorkspace: CreateSessionOptions;
+  newSessionError: string | null;
   setPendingPrefs(prefs: ComposerPrefs): void;
   setPendingWorkspace(options: CreateSessionOptions): void;
   gitStatusBySession: Record<string, GitStatus>;
@@ -337,6 +338,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   pendingQuestions: {},
   pendingPrefs: { ...DEFAULT_COMPOSER },
   pendingWorkspace: defaultWorkspace(true),
+  newSessionError: null,
   gitStatusBySession: {},
   sourceControlRefreshIntervalSeconds: 30,
   prRefreshIntervalSeconds: 120,
@@ -392,7 +394,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   setPendingWorkspace(options: CreateSessionOptions) {
-    set({ pendingWorkspace: { ...get().pendingWorkspace, ...options } });
+    set({ pendingWorkspace: { ...get().pendingWorkspace, ...options }, newSessionError: null });
   },
 
   async refreshGitStatus(sessionId: string) {
@@ -529,7 +531,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({
       activeProjectId: projectId,
       activeSessionId: null,
-      pendingWorkspace: defaultWorkspace(get().defaultUseWorktree)
+      pendingWorkspace: defaultWorkspace(get().defaultUseWorktree),
+      newSessionError: null
     });
     if (get().sessionsByProject[projectId]) return;
     try {
@@ -710,6 +713,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       pendingDriver: target,
       activeSessionId: null,
       pendingWorkspace: defaultWorkspace(get().defaultUseWorktree),
+      newSessionError: null,
       pendingPrefs: { ...get().pendingPrefs, model: undefined }
     });
     if (projectId && projectId !== currentProjectId) void get().setPendingProject(projectId);
@@ -739,16 +743,13 @@ export const useAppStore = create<AppState>((set, get) => ({
     if (!projectId || (!prompt.trim() && attachments.length === 0)) return;
     if (pendingPromptInFlight) return;
     pendingPromptInFlight = true;
+    set({ newSessionError: null });
     try {
       try {
         await get().createSession(driver, prefs, workspace);
       } catch (err) {
-        useNotifs.getState().push({
-          kind: "error",
-          title: "Could not start session",
-          message: (err as Error).message
-        });
-        return;
+        set({ newSessionError: ipcErrorMessage(err) });
+        throw err;
       }
       await get().sendPrompt(prompt, attachments, command);
     } finally {
@@ -907,7 +908,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   async createSessionIn(projectId: string, driver: DriverName, prefs?: ComposerPrefs, workspace?: CreateSessionOptions) {
     const { createNotice, ...session } = await window.cw.createSession(projectId, driver, workspace);
     if (createNotice) {
-      useNotifs.getState().push({ kind: "warning", title: "Session base", message: createNotice });
+      useNotifs.getState().push({ kind: "warning", title: "Session base", message: createNotice, sticky: true });
     }
     if (
       workspace?.mode === "previous" &&

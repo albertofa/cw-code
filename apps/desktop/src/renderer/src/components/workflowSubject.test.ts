@@ -139,14 +139,21 @@ describe("subjectLink", () => {
 
 describe("resolveRunBase", () => {
   it("passes the run branch through for main to fetch", () => {
-    expect(resolveRunBase("feat")).toEqual({ baseBranch: "feat", source: "feat (fetched from origin)" });
+    expect(resolveRunBase({ branch: "feat" })).toEqual({ baseBranch: "feat", source: "feat (fetched from origin)" });
   });
 
   it("falls back to the default branch when the run has no branch", () => {
-    const result = resolveRunBase(null);
+    const result = resolveRunBase({ branch: null });
     expect(result.baseBranch).toBeUndefined();
     expect(result.source).toContain("the default branch (fetched from origin)");
     expect(result.source).toContain("the run has no branch");
+  });
+
+  it("does not claim the run has no branch when the run is unavailable", () => {
+    const result = resolveRunBase(undefined);
+    expect(result.baseBranch).toBeUndefined();
+    expect(result.source).toContain("the run's branch is unknown");
+    expect(result.source).not.toContain("no branch");
   });
 });
 
@@ -163,7 +170,7 @@ describe("workspace hints", () => {
     expect(baseWorkspaceHint(issue, "checkout", "widgets")).toBe(
       "switches widgets to a new branch from the default branch (fetched from origin)"
     );
-    expect(baseWorkspaceHint(resolveRunBase("feat"), "checkout", null)).toBe(
+    expect(baseWorkspaceHint(resolveRunBase({ branch: "feat" }), "checkout", null)).toBe(
       "switches the project to a new branch from feat (fetched from origin)"
     );
   });
@@ -171,7 +178,9 @@ describe("workspace hints", () => {
   it("describes the PR worktree and the checkout switch", () => {
     expect(prWorkspaceHint("fix/x", "worktree", "widgets")).toBe("isolated, from fix/x");
     expect(prWorkspaceHint(null, "worktree", "widgets")).toBe("isolated, from the PR head");
-    expect(prWorkspaceHint("fix/x", "checkout", "widgets")).toBe("switches widgets to the PR branch");
+    expect(prWorkspaceHint("fix/x", "checkout", "widgets")).toBe(
+      "switches widgets to the PR branch (or a new branch from the PR head)"
+    );
   });
 });
 

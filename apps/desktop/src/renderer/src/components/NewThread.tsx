@@ -32,6 +32,7 @@ export function NewThread({
   const prefs = useAppStore((s) => s.pendingPrefs);
   const modelsRefreshKey = useAppStore((s) => s.settingsVersion);
   const workspace = useAppStore((s) => s.pendingWorkspace);
+  const newSessionError = useAppStore((s) => s.newSessionError);
   const homeDir = useAppStore((s) => s.homeDir);
   const project = useAppStore((s) => (projectId ? s.projects.find((p) => p.id === projectId) : undefined));
   const [branches, setBranches] = useState<GitBranchInfo[]>([]);
@@ -50,7 +51,8 @@ export function NewThread({
     window.cw.listProjectBranches(projectKey).then((items) => {
       if (!active) return;
       setBranches(items);
-      if (workspace.baseBranch && !items.some((item) => item.name === workspace.baseBranch)) {
+      const pendingBase = useAppStore.getState().pendingWorkspace.baseBranch;
+      if (pendingBase && !items.some((item) => item.name === pendingBase)) {
         store.setPendingWorkspace({ baseBranch: undefined });
       }
     }).catch((error: Error) => {
@@ -79,7 +81,7 @@ export function NewThread({
     {
       id: "current",
       label: "Current checkout",
-      description: "Work directly in the project on the current branch",
+      description: `No worktree — switches ${project?.name ?? "the project"} to a new branch from the selected base`,
       icon: <GitBranch size={13} />
     },
     {
@@ -250,6 +252,11 @@ export function NewThread({
             </div>
           }
         />
+        {newSessionError && (
+          <div className="wf-run-error newthread-error" role="alert">
+            {newSessionError}
+          </div>
+        )}
       </div>
     </div>
   );

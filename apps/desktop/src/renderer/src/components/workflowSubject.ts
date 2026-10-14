@@ -155,9 +155,10 @@ export function resolveIssueBase(): WorkflowBase {
   return { baseBranch: undefined, source: DEFAULT_BASE_SOURCE };
 }
 
-export function resolveRunBase(branch: string | null): WorkflowBase {
-  if (!branch) return { baseBranch: undefined, source: `${DEFAULT_BASE_SOURCE} — the run has no branch` };
-  return { baseBranch: branch, source: `${branch} (fetched from origin)` };
+export function resolveRunBase(run: Pick<WorkflowRunSummary, "branch"> | undefined): WorkflowBase {
+  if (!run) return { baseBranch: undefined, source: `${DEFAULT_BASE_SOURCE} — the run's branch is unknown` };
+  if (!run.branch) return { baseBranch: undefined, source: `${DEFAULT_BASE_SOURCE} — the run has no branch` };
+  return { baseBranch: run.branch, source: `${run.branch} (fetched from origin)` };
 }
 
 export type WorkflowWorkspaceMode = "worktree" | "checkout";
@@ -168,7 +169,9 @@ export function baseWorkspaceHint(base: WorkflowBase, mode: WorkflowWorkspaceMod
 }
 
 export function prWorkspaceHint(headRefName: string | null, mode: WorkflowWorkspaceMode, projectName: string | null): string {
-  if (mode === "checkout") return `switches ${projectName ?? "the project"} to the PR branch`;
+  if (mode === "checkout") {
+    return `switches ${projectName ?? "the project"} to the PR branch (or a new branch from the PR head)`;
+  }
   return `isolated, from ${headRefName ?? "the PR head"}`;
 }
 

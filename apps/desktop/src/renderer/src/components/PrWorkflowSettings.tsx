@@ -49,7 +49,7 @@ const CONDITION_LABELS: Record<PrSuggestCondition, string> = {
 
 type WorkspaceOption = { id: PrWorkspaceChoice; label: string; hint: string; Icon: LucideIcon };
 
-const CHECKOUT_OPTION: WorkspaceOption = { id: "checkout", label: "Current checkout", hint: "Use the project folder as-is.", Icon: Folder };
+const CHECKOUT_OPTION: WorkspaceOption = { id: "checkout", label: "Current checkout", hint: "No worktree — switches the project folder to the session's branch.", Icon: Folder };
 
 const WORKSPACE_OPTIONS: Record<WorkflowTarget, WorkspaceOption[]> = {
   pr: [

@@ -235,7 +235,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
     harness
   });
   const base: WorkflowBase | null =
-    subject.kind === "issue" ? resolveIssueBase() : subject.kind === "run" ? resolveRunBase(data.run?.branch ?? null) : null;
+    subject.kind === "issue" ? resolveIssueBase() : subject.kind === "run" ? resolveRunBase(data.run) : null;
   const working = stage !== null;
   const sessionBusy = continueSession ? busyTurns[continueSession.id] !== undefined : false;
 
@@ -324,7 +324,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
     switch (subject.kind) {
       case "pr": {
         const detail = data.prDetail;
-        if (!detail) return { mode: "current" };
+        if (!detail) throw new Error("pull request details are not loaded");
         const prHead = {
           number: subject.ref.number,
           headRefName: detail.headRefName,
