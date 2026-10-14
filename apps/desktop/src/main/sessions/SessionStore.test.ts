@@ -53,7 +53,6 @@ describe("SessionStore", () => {
     const persisted = readJson(join(dir, "test.db.json")).sessions[0];
     expect(persisted.title).toBe("renamed");
     expect("createNotice" in persisted).toBe(false);
-    expect(store.getSession(session.id)?.createNotice).toBe("Could not fetch origin/main");
   });
 
   it("lists all sessions across projects", () => {

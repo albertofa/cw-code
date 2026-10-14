@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { GitService, countUntrackedLines, fetchArgsForRef, gitPathTarget, isAppManagedPath, mapLimit, parseGitHubAccounts, parseGitHubRemote, parseNumstat, parsePorcelainV2Status, parsePrNumber, parsePullRequest, parseWorktreeList, pickDefaultBase, selectGitHubAccount, sweepStaleSnapshotIndexes, worktreeNameFor } from "./GitService.js";
+import { GitService, countUntrackedLines, fetchArgsForRef, gitPathTarget, isAppManagedPath, isValidBranchName, mapLimit, parseGitHubAccounts, parseGitHubRemote, parseNumstat, parsePorcelainV2Status, parsePrNumber, parsePullRequest, parseWorktreeList, pickDefaultBase, selectGitHubAccount, sweepStaleSnapshotIndexes, worktreeNameFor } from "./GitService.js";
 
 function initSandbox(): { sandbox: string; repository: string; service: GitService } {
   const sandbox = mkdtempSync(join(tmpdir(), "cw-git-"));
@@ -33,15 +33,37 @@ describe("pickDefaultBase", () => {
 });
 
 describe("fetchArgsForRef", () => {
-  it("maps an origin ref to a single-branch fetch", () => {
-    expect(fetchArgsForRef("origin/main")).toEqual(["fetch", "-q", "origin", "main"]);
-    expect(fetchArgsForRef("origin/feature/topic")).toEqual(["fetch", "-q", "origin", "feature/topic"]);
+  it("maps an origin ref to an explicit single-branch refspec", () => {
+    expect(fetchArgsForRef("origin/main")).toEqual(["fetch", "-q", "origin", "+refs/heads/main:refs/remotes/origin/main"]);
+    expect(fetchArgsForRef("origin/feature/x")).toEqual(["fetch", "-q", "origin", "+refs/heads/feature/x:refs/remotes/origin/feature/x"]);
   });
 
   it("does not fetch local refs", () => {
     expect(fetchArgsForRef("main")).toBeNull();
     expect(fetchArgsForRef("cw/1234abcd")).toBeNull();
     expect(fetchArgsForRef("origin/")).toBeNull();
+  });
+
+  it("refuses branch parts that could inject fetch options or refspecs", () => {
+    expect(fetchArgsForRef("origin/-x")).toBeNull();
+    expect(fetchArgsForRef("origin/--upload-pack=calc")).toBeNull();
+    expect(fetchArgsForRef("origin/a:b")).toBeNull();
+    expect(fetchArgsForRef("origin/+x:refs/heads/foo")).toBeNull();
+    expect(fetchArgsForRef("origin/x..y")).toBeNull();
+  });
+});
+
+describe("isValidBranchName", () => {
+  it("accepts ordinary branch names", () => {
+    for (const name of ["main", "feature/x", "cw/1234abcd", "release-1.2", "user/fix_bug"]) expect(isValidBranchName(name)).toBe(true);
+  });
+
+  it("rejects names git would refuse or that could be read as options", () => {
+    const invalid = [
+      "", "-x", "/x", "x/", "a//b", "a..b", "a@{b", "@", "a b", "a\tb", "a:b", "a+b", "a*b", "a?b", "a[b", "a\\b", "a^b", "a~b",
+      "x.lock", "a/x.lock", "x.", ".hidden", "a/.hidden", "a\u007fb"
+    ];
+    for (const name of invalid) expect(isValidBranchName(name), JSON.stringify(name)).toBe(false);
   });
 });
 
@@ -317,6 +339,33 @@ describe("GitService worktrees", () => {
     expect(execFileSync("git", ["-C", created.path, "rev-parse", "HEAD"], { encoding: "utf8" }).trim()).toBe(remoteHead);
   });
 
+  function hasUpstream(repository: string, branch: string): boolean {
+    try {
+      execFileSync("git", ["-C", repository, "rev-parse", "--abbrev-ref", `${branch}@{upstream}`], { stdio: "pipe" });
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  it("does not set the fetched base as upstream of a new worktree branch", async () => {
+    const { sandbox, repository, service } = initSandbox();
+    withOrigin(repository, sandbox);
+
+    const created = await service.createWorktree(repository, "project", "sess_notrack1", join(sandbox, "worktrees"));
+    expect(created.baseRef).toBe("origin/main");
+    expect(hasUpstream(repository, created.branch)).toBe(false);
+  });
+
+  it("does not set the fetched base as upstream of a branch switched to in the checkout", async () => {
+    const { sandbox, repository, service } = initSandbox();
+    withOrigin(repository, sandbox);
+
+    const branch = await service.switchToNewBranch(repository, "cw/notrack2", "origin/main");
+    expect(branch).toBe("cw/notrack2");
+    expect(hasUpstream(repository, branch)).toBe(false);
+  });
+
   it("falls back to the local copy of the base with a warning when the fetch fails", async () => {
     const { sandbox, repository, service } = initSandbox();
     withOrigin(repository, sandbox);
@@ -340,6 +389,73 @@ describe("GitService worktrees", () => {
   it("uses the default local branch without fetching when the repository has no remote", async () => {
     const { repository, service } = initSandbox();
     expect(await service.resolveBase(repository)).toEqual({ ref: "main", fetched: false, warning: null });
+  });
+
+  it("rejects an invalid requested base before fetching", async () => {
+    const { sandbox, repository, service } = initSandbox();
+    withOrigin(repository, sandbox);
+    for (const base of ["origin/-x", "origin/a:b", "origin/x..y", "-x", "a b"]) {
+      await expect(service.resolveBase(repository, base)).rejects.toThrow(`invalid base branch '${base}'`);
+    }
+  });
+
+  it("fetches a requested origin branch that is not tracked locally yet", async () => {
+    const { sandbox, repository, service } = initSandbox();
+    const { pusher } = withOrigin(repository, sandbox);
+    execFileSync("git", ["-C", pusher, "switch", "-c", "feature/x"]);
+    writeFileSync(join(pusher, "x.txt"), "x\n", "utf8");
+    execFileSync("git", ["-C", pusher, "add", "x.txt"]);
+    execFileSync("git", ["-C", pusher, "-c", "user.name=cw-code", "-c", "user.email=test@cw-code.local", "commit", "-m", "x"]);
+    execFileSync("git", ["-C", pusher, "push", "origin", "feature/x"]);
+    const tip = execFileSync("git", ["-C", pusher, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+
+    const resolved = await service.resolveBase(repository, "origin/feature/x");
+    expect(resolved).toEqual({ ref: "origin/feature/x", fetched: true, warning: null });
+    expect(execFileSync("git", ["-C", repository, "rev-parse", "origin/feature/x"], { encoding: "utf8" }).trim()).toBe(tip);
+  });
+
+  it("prefers the freshly fetched origin copy of a bare branch name", async () => {
+    const { sandbox, repository, service } = initSandbox();
+    const { pusher } = withOrigin(repository, sandbox);
+    const remoteHead = commitOnRemote(pusher, "remote.txt");
+
+    const resolved = await service.resolveBase(repository, "main");
+    expect(resolved).toEqual({ ref: "origin/main", fetched: true, warning: null });
+    expect(execFileSync("git", ["-C", repository, "rev-parse", "origin/main"], { encoding: "utf8" }).trim()).toBe(remoteHead);
+  });
+
+  it("uses a purely local bare branch without a warning when origin does not have it", async () => {
+    const { sandbox, repository, service } = initSandbox();
+    withOrigin(repository, sandbox);
+    execFileSync("git", ["-C", repository, "branch", "local-only"]);
+
+    expect(await service.resolveBase(repository, "local-only")).toEqual({ ref: "local-only", fetched: false, warning: null });
+  });
+
+  it("uses a bare branch without a warning when the repository has no origin remote", async () => {
+    const { repository, service } = initSandbox();
+    expect(await service.resolveBase(repository, "main")).toEqual({ ref: "main", fetched: false, warning: null });
+  });
+
+  it("falls back to the local bare branch with a warning when the fetch fails", async () => {
+    const { sandbox, repository, service } = initSandbox();
+    withOrigin(repository, sandbox);
+    execFileSync("git", ["-C", repository, "remote", "set-url", "origin", join(sandbox, "missing.git")]);
+
+    const resolved = await service.resolveBase(repository, "main");
+    expect(resolved.ref).toBe("main");
+    expect(resolved.warning).toMatch(/^Could not fetch origin\/main \(.+\); using the local branch main$/);
+  });
+
+  it("throws for a requested base that cannot be fetched and does not exist locally, regardless of network state", async () => {
+    const { sandbox, repository, service } = initSandbox();
+    withOrigin(repository, sandbox);
+    await expect(service.resolveBase(repository, "nope")).rejects.toThrow("unknown base branch 'nope'");
+    await expect(service.resolveBase(repository, "origin/nope")).rejects.toThrow("unknown base branch 'origin/nope'");
+
+    execFileSync("git", ["-C", repository, "remote", "set-url", "origin", join(sandbox, "missing.git")]);
+    await expect(service.resolveBase(repository, "nope")).rejects.toThrow("unknown base branch 'nope'");
+    await expect(service.resolveBase(repository, "origin/nope")).rejects.toThrow("unknown base branch 'origin/nope'");
   });
 
   it("rejects an unknown requested base", async () => {
