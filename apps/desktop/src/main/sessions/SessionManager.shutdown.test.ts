@@ -57,12 +57,12 @@ class GatedGit extends GitService {
 
   override async createWorktree(projectRoot: string, _projectKey: string, sessionId: string, worktreesRoot: string): Promise<CreatedWorktree> {
     this.worktreeCalls.push(`create:${sessionId}`);
-    return { path: join(worktreesRoot, sessionId), branch: `cw/${sessionId}`, repositoryRoot: projectRoot };
+    return { path: join(worktreesRoot, sessionId), branch: `cw/${sessionId}`, repositoryRoot: projectRoot, baseRef: "main", baseWarning: null };
   }
 
   override async attachWorktree(repoRoot: string, path: string, branch: string): Promise<CreatedWorktree> {
     this.worktreeCalls.push(`attach:${branch}`);
-    return { path, branch, repositoryRoot: repoRoot };
+    return { path, branch, repositoryRoot: repoRoot, baseRef: branch, baseWarning: null };
   }
 }
 

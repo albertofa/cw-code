@@ -185,6 +185,7 @@ export interface Session {
   autoResolved?: boolean;
   effectivePermissionMode?: string;
   lastTurnSnapshot?: TurnSnapshot;
+  createNotice?: string;
 }
 
 export interface TurnSnapshot {

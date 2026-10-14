@@ -586,7 +586,7 @@ export class SessionManager {
       if (rel === "" || rel.startsWith("..") || isAbsolute(rel)) return null;
       const branch = entry.branch ?? (await this.git.currentBranch(path));
       if (!branch) return null;
-      return { path, branch, repositoryRoot };
+      return { path, branch, repositoryRoot, baseRef: branch, baseWarning: null };
     } catch (err) {
       console.warn(`worktree reuse rejected for '${requested}': ${(err as Error).message}`);
       return null;

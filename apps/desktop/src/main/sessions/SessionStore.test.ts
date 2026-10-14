@@ -42,6 +42,20 @@ function seedStore(sessions: Array<Partial<SessionMeta>>): { dir: string; store:
 }
 
 describe("SessionStore", () => {
+  it("never persists the transient createNotice field", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cw-store-"));
+    const dbPath = join(dir, "test.db");
+    const store = new SessionStore(dbPath);
+    const project = store.addProject("C:/proj1");
+    const session = store.createSession(project.id, "claude", "a");
+    session.createNotice = "Could not fetch origin/main";
+    store.updateSession(session.id, { title: "renamed" });
+    const persisted = readJson(join(dir, "test.db.json")).sessions[0];
+    expect(persisted.title).toBe("renamed");
+    expect("createNotice" in persisted).toBe(false);
+    expect(store.getSession(session.id)?.createNotice).toBe("Could not fetch origin/main");
+  });
+
   it("lists all sessions across projects", () => {
     const store = makeStore();
     const p1 = store.addProject("C:/proj1");

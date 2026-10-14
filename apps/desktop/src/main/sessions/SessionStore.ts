@@ -141,6 +141,13 @@ function resetRuntimeStatuses(sessions: SessionMeta[]): boolean {
   return changed;
 }
 
+function withoutTransientFields(session: SessionMeta): SessionMeta {
+  if (!("createNotice" in session)) return session;
+  const persisted = { ...session };
+  delete persisted.createNotice;
+  return persisted;
+}
+
 type SessionPatch = Partial<
   Pick<
     SessionMeta,
@@ -190,7 +197,7 @@ export class SessionStore {
   private persist(): void {
     writeFileAtomic(
       this.filePath,
-      JSON.stringify({ schemaVersion: SESSION_SCHEMA_VERSION, projects: this.data.projects, sessions: this.data.sessions, ...this.extras })
+      JSON.stringify({ schemaVersion: SESSION_SCHEMA_VERSION, projects: this.data.projects, sessions: this.data.sessions.map(withoutTransientFields), ...this.extras })
     );
     this.lastGood.afterPersist();
   }

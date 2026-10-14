@@ -27,6 +27,14 @@ export interface CreatedWorktree {
   path: string;
   branch: string;
   repositoryRoot: string;
+  baseRef: string;
+  baseWarning: string | null;
+}
+
+export interface ResolvedBase {
+  ref: string;
+  fetched: boolean;
+  warning: string | null;
 }
 
 export interface RemoveWorktreeResult {
@@ -665,6 +673,24 @@ export const BRANCH_CACHE_TTL_MS = 15_000;
 const LAYOUT_CACHE_TTL_MS = 5 * 60_000;
 const REMOTE_CACHE_TTL_MS = 5 * 60_000;
 const BASE_CANDIDATES = ["main", "master", "origin/main", "origin/master"];
+const DEFAULT_BASE_ORDER = ["origin/main", "origin/master", "main", "master"];
+const BASE_FETCH_TIMEOUT_MS = 20_000;
+const ORIGIN_PREFIX = "origin/";
+
+export function pickDefaultBase(originHead: string | null, existing: string[]): string | null {
+  if (originHead) return originHead;
+  return DEFAULT_BASE_ORDER.find((name) => existing.includes(name)) ?? null;
+}
+
+export function fetchArgsForRef(ref: string): string[] | null {
+  if (!ref.startsWith(ORIGIN_PREFIX) || ref.length === ORIGIN_PREFIX.length) return null;
+  return ["fetch", "-q", "origin", ref.slice(ORIGIN_PREFIX.length)];
+}
+
+function fetchFailureReason(error: unknown): string {
+  const line = (error as Error).message.replace(/\r/g, "").split("\n").map((part) => part.trim()).find(Boolean) ?? "unknown error";
+  return line.replace(/^fatal:\s*/i, "").slice(0, 160);
+}
 
 interface RepoLayout {
   repositoryRoot: string;
@@ -893,13 +919,82 @@ export class GitService {
     }
   }
 
+  private async listRefNames(root: string): Promise<Set<string>> {
+    const output = await this.git(root).raw(["for-each-ref", "--format=%(refname:short)", "refs/heads", "refs/remotes"]);
+    return new Set(output.replace(/\r/g, "").split("\n").map((line) => line.trim()).filter(Boolean));
+  }
+
+  private async originHeadRef(root: string): Promise<string | null> {
+    try {
+      const value = (await execText(this.settings().gitBinaryPath, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], root)).trim();
+      return value || null;
+    } catch {
+      return null;
+    }
+  }
+
+  async defaultBaseRef(root: string): Promise<string | null> {
+    const refs = await this.listRefNames(root);
+    const originHead = await this.originHeadRef(root);
+    return pickDefaultBase(originHead && refs.has(originHead) ? originHead : null, [...refs]);
+  }
+
+  async fetchBase(root: string, ref: string): Promise<ResolvedBase> {
+    const args = fetchArgsForRef(ref);
+    if (!args) return { ref, fetched: false, warning: null };
+    try {
+      await execText(this.settings().gitBinaryPath, args, root, BASE_FETCH_TIMEOUT_MS);
+    } catch (error) {
+      return this.baseAfterFetchFailure(root, ref, fetchFailureReason(error));
+    }
+    this.invalidateBranches(root);
+    return { ref, fetched: true, warning: null };
+  }
+
+  private async baseAfterFetchFailure(root: string, ref: string, reason: string): Promise<ResolvedBase> {
+    const prefix = `Could not fetch ${ref} (${reason})`;
+    const refs = await this.listRefNames(root);
+    if (refs.has(ref)) return { ref, fetched: false, warning: `${prefix}; using the local copy` };
+    const local = ref.slice(ORIGIN_PREFIX.length);
+    if (refs.has(local)) return { ref: local, fetched: false, warning: `${prefix}; ${ref} is not available locally, using ${local}` };
+    const current = (await this.currentBranch(root)) ?? "HEAD";
+    return { ref: current, fetched: false, warning: `${prefix}; ${ref} is not available locally, using ${current}` };
+  }
+
+  async resolveBase(root: string, requestedBase?: string): Promise<ResolvedBase> {
+    const requested = requestedBase?.trim();
+    if (requested) {
+      const resolved = await this.fetchBase(root, requested);
+      if (resolved.ref !== "HEAD" && !(await this.listRefNames(root)).has(resolved.ref)) throw new Error(`unknown base branch '${requested}'`);
+      return resolved;
+    }
+    const defaultRef = await this.defaultBaseRef(root);
+    if (defaultRef) return this.fetchBase(root, defaultRef);
+    const current = (await this.currentBranch(root)) ?? "HEAD";
+    return { ref: current, fetched: false, warning: `No default branch found; using ${current}` };
+  }
+
+  async isWorkingTreeDirty(root: string): Promise<boolean> {
+    return (await this.git(root).raw(["status", "--porcelain", "--untracked-files=no"])).trim().length > 0;
+  }
+
+  async switchToNewBranch(root: string, name: string, base: string): Promise<string> {
+    if (!name || name.startsWith("-") || !base || base.startsWith("-")) throw new Error("invalid branch name or base");
+    const git = this.git(root);
+    const branch = await this.withUniqueBranchName(git, name, async (candidate) => {
+      await git.raw(["switch", "-c", candidate, base]);
+      return candidate;
+    });
+    this.invalidateStatus(root);
+    this.invalidateBranches(root);
+    return branch;
+  }
+
   async createWorktree(projectRoot: string, projectKey: string, sessionId: string, worktreesRoot: string, requestedBase?: string): Promise<CreatedWorktree> {
     const repositoryRoot = await this.repositoryRoot(projectRoot);
     const git = this.git(repositoryRoot);
-    const branches = await this.branches(repositoryRoot);
-    const current = branches.find((item) => item.current)?.name;
-    const base = requestedBase?.trim() || current || "HEAD";
-    if (base !== "HEAD" && !branches.some((item) => item.name === base)) throw new Error(`unknown base branch '${base}'`);
+    const resolved = await this.resolveBase(repositoryRoot, requestedBase);
+    const base = resolved.ref;
     const parent = join(worktreesRoot, safeSegment(projectKey));
     const target = join(parent, safeSegment(sessionId));
     mkdirSync(parent, { recursive: true });
@@ -909,7 +1004,7 @@ export class GitService {
     await this.initSubmodules(target);
     this.invalidateStatus(repositoryRoot);
     this.invalidateBranches(repositoryRoot);
-    return { path: resolve(target), branch, repositoryRoot };
+    return { path: resolve(target), branch, repositoryRoot, baseRef: base, baseWarning: resolved.warning };
   }
 
   async attachWorktree(repoRoot: string, path: string, branch: string): Promise<CreatedWorktree> {
@@ -932,7 +1027,7 @@ export class GitService {
     await this.initSubmodules(target);
     this.invalidateStatus(repositoryRoot);
     this.invalidateBranches(repositoryRoot);
-    return { path: target, branch, repositoryRoot };
+    return { path: target, branch, repositoryRoot, baseRef: branch, baseWarning: null };
   }
 
   async removeWorktree(repoRoot: string, path: string, opts: { force?: boolean } = {}): Promise<RemoveWorktreeResult> {

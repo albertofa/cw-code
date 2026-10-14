@@ -67,6 +67,7 @@ export interface SessionMeta {
   /** prKeys of PRs the user explicitly unlinked from this session, so auto-link does not re-attach them. */
   prUnlinked?: string[];
   lastTurnSnapshot?: TurnSnapshot;
+  createNotice?: string;
 }
 
 export interface TurnSnapshot {
