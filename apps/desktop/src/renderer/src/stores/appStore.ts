@@ -905,7 +905,10 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   async createSessionIn(projectId: string, driver: DriverName, prefs?: ComposerPrefs, workspace?: CreateSessionOptions) {
-    const session = await window.cw.createSession(projectId, driver, workspace);
+    const { createNotice, ...session } = await window.cw.createSession(projectId, driver, workspace);
+    if (createNotice) {
+      useNotifs.getState().push({ kind: "warning", title: "Session base", message: createNotice });
+    }
     if (
       workspace?.mode === "previous" &&
       workspace.reuseWorktreePath &&

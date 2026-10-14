@@ -1,12 +1,14 @@
 import { describe, expect, it } from "vitest";
-import type { GitBranchInfo, PrWorkflow, RunRef, WorkflowRunSummary, WorkflowSubject } from "../cw.js";
+import type { PrWorkflow, RunRef, WorkflowRunSummary, WorkflowSubject } from "../cw.js";
 import {
+  baseWorkspaceHint,
   effectiveSubject,
   findCachedRun,
   isLinkedTo,
   issueKey,
   otherSessionCandidates,
   prRefForRun,
+  prWorkspaceHint,
   issueDataTime,
   resolveIssueBase,
   resolveRunBase,
@@ -135,51 +137,41 @@ describe("subjectLink", () => {
   });
 });
 
-const branch = (name: string, remote: boolean, current = false): GitBranchInfo => ({
-  name,
-  label: remote ? name.slice(name.indexOf("/") + 1) : name,
-  current,
-  remote,
-  worktreePath: null
-});
-
 describe("resolveRunBase", () => {
-  it("prefers origin/<branch> over a local branch", () => {
-    const result = resolveRunBase([branch("feat", false), branch("origin/feat", true)], "feat");
-    expect(result).toEqual({ baseBranch: "origin/feat", hint: "isolated, from origin/feat" });
+  it("passes the run branch through for main to fetch", () => {
+    expect(resolveRunBase("feat")).toEqual({ baseBranch: "feat", source: "feat (fetched from origin)" });
   });
 
-  it("uses the local branch when no origin ref is listed", () => {
-    expect(resolveRunBase([branch("feat", false)], "feat").baseBranch).toBe("feat");
-  });
-
-  it("matches exactly, never by suffix", () => {
-    const branches = [branch("main", false, true), branch("origin/other/feat", true), branch("upstream/feat", true), branch("my-feat", false)];
-    const result = resolveRunBase(branches, "feat");
+  it("falls back to the default branch when the run has no branch", () => {
+    const result = resolveRunBase(null);
     expect(result.baseBranch).toBeUndefined();
-    expect(result.hint).toBe("isolated, from main — run branch feat not found locally or on origin");
-  });
-
-  it("warns when the run has no branch", () => {
-    const result = resolveRunBase([branch("main", false, true)], null);
-    expect(result.baseBranch).toBeUndefined();
-    expect(result.hint).toContain("the run has no branch");
+    expect(result.source).toContain("the default branch (fetched from origin)");
+    expect(result.source).toContain("the run has no branch");
   });
 });
 
 describe("resolveIssueBase", () => {
-  it("follows origin/main, main, origin/master, master", () => {
-    expect(resolveIssueBase([branch("master", false), branch("origin/main", true)]).baseBranch).toBe("origin/main");
-    expect(resolveIssueBase([branch("master", false), branch("main", false)]).baseBranch).toBe("main");
-    expect(resolveIssueBase([branch("master", false), branch("origin/master", true)]).baseBranch).toBe("origin/master");
-    expect(resolveIssueBase([branch("master", false)]).baseBranch).toBe("master");
+  it("omits the base so main resolves the fetched default branch", () => {
+    expect(resolveIssueBase()).toEqual({ baseBranch: undefined, source: "the default branch (fetched from origin)" });
+  });
+});
+
+describe("workspace hints", () => {
+  it("describes the isolated worktree and the checkout switch for issue and run bases", () => {
+    const issue = resolveIssueBase();
+    expect(baseWorkspaceHint(issue, "worktree", "widgets")).toBe("isolated, from the default branch (fetched from origin)");
+    expect(baseWorkspaceHint(issue, "checkout", "widgets")).toBe(
+      "switches widgets to a new branch from the default branch (fetched from origin)"
+    );
+    expect(baseWorkspaceHint(resolveRunBase("feat"), "checkout", null)).toBe(
+      "switches the project to a new branch from feat (fetched from origin)"
+    );
   });
 
-  it("omits the base and says so when none exists", () => {
-    const result = resolveIssueBase([branch("develop", false, true)]);
-    expect(result.baseBranch).toBeUndefined();
-    expect(result.hint).toContain("develop");
-    expect(result.hint).toContain("none of");
+  it("describes the PR worktree and the checkout switch", () => {
+    expect(prWorkspaceHint("fix/x", "worktree", "widgets")).toBe("isolated, from fix/x");
+    expect(prWorkspaceHint(null, "worktree", "widgets")).toBe("isolated, from the PR head");
+    expect(prWorkspaceHint("fix/x", "checkout", "widgets")).toBe("switches widgets to the PR branch");
   });
 });
 

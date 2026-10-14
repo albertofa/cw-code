@@ -40,12 +40,13 @@ import { usePrSettings } from "./useLinkedPr.js";
 import { IssueCard, PrCard, RunCard } from "./WorkflowSubjectCards.js";
 import { useWorkflowSubjectData } from "./useWorkflowSubjectData.js";
 import {
+  baseWorkspaceHint,
   effectiveSubject,
   findCachedRun,
-  baseFailureHint,
   isLinkedTo,
   issueDataTime,
   otherSessionCandidates,
+  prWorkspaceHint,
   repoOf,
   resolveIssueBase,
   resolveRunBase,
@@ -53,7 +54,7 @@ import {
   subjectLabel,
   subjectLink,
   workflowsForSubject,
-  type WorktreeBase
+  type WorkflowBase
 } from "./workflowSubject.js";
 
 const READ_ONLY_NOTICE =
@@ -173,7 +174,6 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
   const [linkedHere, setLinkedHere] = useState<string | null>(null);
   const [created, setCreated] = useState<{ sessionId: string; linked: boolean; note: string | null } | null>(null);
   const [dirty, setDirty] = useState(false);
-  const [baseState, setBaseState] = useState<{ request: string; base: WorktreeBase } | null>(null);
   const runningRef = useRef(false);
   const dialogRef = useRef<HTMLDivElement>(null);
 
@@ -234,11 +234,8 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
     hasWorkflow: workflow !== undefined,
     harness
   });
-  const runBranch = data.run?.branch ?? null;
-  const baseWanted = !continueSession && subject.kind !== "pr" && projectId !== null;
-  const baseRequest = baseWanted ? [projectId, subject.kind, runBranch ?? ""].join("\n") : null;
-  const base = baseRequest !== null && baseState?.request === baseRequest ? baseState.base : null;
-  const baseLoading = workspace === "worktree" && baseRequest !== null && base === null;
+  const base: WorkflowBase | null =
+    subject.kind === "issue" ? resolveIssueBase() : subject.kind === "run" ? resolveRunBase(data.run?.branch ?? null) : null;
   const working = stage !== null;
   const sessionBusy = continueSession ? busyTurns[continueSession.id] !== undefined : false;
 
@@ -249,17 +246,6 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
   useEffect(() => {
     setWorkspaceChoice(null);
   }, [workflowId]);
-
-  useEffect(() => {
-    if (baseRequest === null || projectId === null) return;
-    let active = true;
-    void fetchBase(projectId).then((resolution) => {
-      if (active) setBaseState({ request: baseRequest, base: resolution });
-    });
-    return () => {
-      active = false;
-    };
-  }, [baseRequest]);
 
   useEffect(() => {
     if (continueSession) void useAppStore.getState().ensureComposer(continueSession.id);
@@ -333,19 +319,8 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
     return () => window.removeEventListener("keydown", onKey, true);
   });
 
-  const fetchBase = async (targetProjectId: string): Promise<WorktreeBase> => {
-    try {
-      const branches = await window.cw.listProjectBranches(targetProjectId);
-      return subject.kind === "run" ? resolveRunBase(branches, runBranch) : resolveIssueBase(branches);
-    } catch (err) {
-      const message = errorMessage(err);
-      console.warn(`[workflow] could not resolve the base branch for the ${subject.kind} workspace: ${message}`);
-      return baseFailureHint(message);
-    }
-  };
-
-  const workspaceOptions = async (targetProjectId: string | null): Promise<CreateSessionOptions> => {
-    if (workspace === "checkout") return { mode: "current" };
+  const workspaceOptions = (targetProjectId: string | null): CreateSessionOptions => {
+    const mode = workspace === "checkout" ? "current" : "new";
     switch (subject.kind) {
       case "pr": {
         const detail = data.prDetail;
@@ -359,13 +334,11 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
         if (workspace === "linked" && linkedWorktree?.worktreePath && linkedWorktree.projectId === targetProjectId) {
           return { mode: "previous", reuseWorktreePath: linkedWorktree.worktreePath, prHead };
         }
-        return { mode: "new", prHead };
+        return { mode, prHead };
       }
       case "issue":
-      case "run": {
-        const resolution = base && targetProjectId === projectId ? base : targetProjectId ? await fetchBase(targetProjectId) : null;
-        return resolution?.baseBranch ? { mode: "new", baseBranch: resolution.baseBranch } : { mode: "new" };
-      }
+      case "run":
+        return base?.baseBranch ? { mode, baseBranch: base.baseBranch } : { mode };
     }
   };
 
@@ -379,7 +352,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
           origin: "workflow",
           workflowId: workflowIdToLink,
           lastSeenSha: deferSeen ? "" : detail.headRefOid,
-          lastSeenAt: detail.updatedAt
+          lastSeenAt: deferSeen ? 0 : detail.updatedAt
         });
       }
       case "issue": {
@@ -389,7 +362,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
           ref: subject.ref,
           origin: "workflow",
           workflowId: workflowIdToLink,
-          lastSeenAt: issueDataTime(issue)
+          lastSeenAt: deferSeen ? 0 : issueDataTime(issue)
         });
       }
       case "run":
@@ -397,7 +370,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
           ref: subject.ref,
           origin: "workflow",
           workflowId: workflowIdToLink,
-          lastSeenAt: data.run?.updatedAt ?? Date.now()
+          lastSeenAt: deferSeen ? 0 : (data.run?.updatedAt ?? Date.now())
         });
     }
   };
@@ -463,14 +436,13 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
         current = "create";
         setStage(current);
         const prefs: ComposerPrefs = { ...DEFAULT_COMPOSER, ...pendingPrefs, model };
-        const options = await workspaceOptions(targetProjectId);
+        const options = workspaceOptions(targetProjectId);
         const session = await app.createSessionIn(targetProjectId, driver, prefs, options);
         sessionId = session.id;
         const detail = data.prDetail;
         note =
           subject.kind === "pr" &&
           detail &&
-          options.mode !== "current" &&
           detail.viewerIsAuthor &&
           session.branch &&
           session.branch !== detail.headRefName
@@ -518,18 +490,12 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
       : hasOverride
         ? "Follow-up prompt"
         : "Follow-up prompt (the workflow's “on update” template)";
-  const showPushNote = subject.kind === "pr" && !continueSession && workspace !== "checkout" && data.pr?.viewerIsAuthor === true;
-  const blocked =
-    !data.loaded || !workflow || !prompt.trim() || !data.logsReady || baseLoading || sessionBusy || (!continueSession && !reposReady);
+  const showPushNote = subject.kind === "pr" && !continueSession && data.pr?.viewerIsAuthor === true;
+  const blocked = !data.loaded || !workflow || !prompt.trim() || !data.logsReady || sessionBusy || (!continueSession && !reposReady);
   const actionLabel = continueSession ? "Send" : created ? "Retry" : "Start session";
-  const worktreeHint =
-    subject.kind === "pr"
-      ? data.pr
-        ? `isolated, from ${data.pr.headRefName}`
-        : "isolated, from the PR head"
-      : projectId === null
-        ? "isolated, base branch resolved after cloning"
-        : (base?.hint ?? "isolated, resolving base branch…");
+  const projectName = projectId ? projectNameOf(projectId) : repo.repo;
+  const workspaceHint = (mode: "worktree" | "checkout"): string =>
+    base ? baseWorkspaceHint(base, mode, projectName) : prWorkspaceHint(data.pr?.headRefName ?? null, mode, projectName);
   const card =
     subject.kind === "pr" ? (
       data.pr && <PrCard pr={data.pr} />
@@ -734,13 +700,13 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
                     id: "checkout" as const,
                     icon: <GitBranch size={14} />,
                     title: "Current checkout",
-                    hint: "work in the project on its current branch"
+                    hint: workspaceHint("checkout")
                   },
                   {
                     id: "worktree" as const,
                     icon: <GitFork size={14} />,
                     title: "New worktree",
-                    hint: worktreeHint
+                    hint: workspaceHint("worktree")
                   },
                   ...(linkedWorktree
                     ? [

@@ -1,5 +1,4 @@
 import type {
-  GitBranchInfo,
   IssueDetail,
   IssueRef,
   PrLinkOrigin,
@@ -145,39 +144,32 @@ export function effectiveSubject(
   return ref ? { kind: "pr", ref } : subject;
 }
 
-export interface WorktreeBase {
+export interface WorkflowBase {
   baseBranch: string | undefined;
-  hint: string;
+  source: string;
 }
 
-const ISSUE_BASE_CANDIDATES = ["origin/main", "main", "origin/master", "master"];
+const DEFAULT_BASE_SOURCE = "the default branch (fetched from origin)";
 
-function currentBranchName(branches: GitBranchInfo[]): string {
-  return branches.find((item) => item.current)?.name ?? "the current branch";
+export function resolveIssueBase(): WorkflowBase {
+  return { baseBranch: undefined, source: DEFAULT_BASE_SOURCE };
 }
 
-export function resolveRunBase(branches: GitBranchInfo[], branch: string | null): WorktreeBase {
-  const fallback = currentBranchName(branches);
-  if (!branch) return { baseBranch: undefined, hint: `isolated, from ${fallback} — the run has no branch` };
-  const remote = branches.find((item) => item.remote && item.name === `origin/${branch}`);
-  const local = branches.find((item) => !item.remote && item.name === branch);
-  const found = remote ?? local;
-  if (found) return { baseBranch: found.name, hint: `isolated, from ${found.name}` };
-  return { baseBranch: undefined, hint: `isolated, from ${fallback} — run branch ${branch} not found locally or on origin` };
+export function resolveRunBase(branch: string | null): WorkflowBase {
+  if (!branch) return { baseBranch: undefined, source: `${DEFAULT_BASE_SOURCE} — the run has no branch` };
+  return { baseBranch: branch, source: `${branch} (fetched from origin)` };
 }
 
-export function resolveIssueBase(branches: GitBranchInfo[]): WorktreeBase {
-  for (const candidate of ISSUE_BASE_CANDIDATES) {
-    if (branches.some((item) => item.name === candidate)) return { baseBranch: candidate, hint: `isolated, from ${candidate}` };
-  }
-  return {
-    baseBranch: undefined,
-    hint: `isolated, from ${currentBranchName(branches)} — none of ${ISSUE_BASE_CANDIDATES.join(", ")} exists`
-  };
+export type WorkflowWorkspaceMode = "worktree" | "checkout";
+
+export function baseWorkspaceHint(base: WorkflowBase, mode: WorkflowWorkspaceMode, projectName: string | null): string {
+  if (mode === "worktree") return `isolated, from ${base.source}`;
+  return `switches ${projectName ?? "the project"} to a new branch from ${base.source}`;
 }
 
-export function baseFailureHint(message: string): WorktreeBase {
-  return { baseBranch: undefined, hint: `isolated, from the project's current branch — could not list branches: ${message}` };
+export function prWorkspaceHint(headRefName: string | null, mode: WorkflowWorkspaceMode, projectName: string | null): string {
+  if (mode === "checkout") return `switches ${projectName ?? "the project"} to the PR branch`;
+  return `isolated, from ${headRefName ?? "the PR head"}`;
 }
 
 export function issueDataTime(issue: Pick<IssueDetail, "updatedAt" | "comments">): number {
