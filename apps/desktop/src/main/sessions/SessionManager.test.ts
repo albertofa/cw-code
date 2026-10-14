@@ -222,6 +222,39 @@ function makeGitSandboxManager(prefix: string) {
   return { manager, fake, project, repository, received };
 }
 
+function gitOut(repository: string, ...args: string[]): string {
+  return execFileSync("git", ["-C", repository, ...args], { encoding: "utf8" }).trim();
+}
+
+function attachOrigin(repository: string): { remote: string; pusher: string } {
+  const sandbox = dirname(repository);
+  const remote = join(sandbox, "remote.git");
+  execFileSync("git", ["clone", "--bare", repository, remote]);
+  gitOut(repository, "remote", "add", "origin", remote);
+  gitOut(repository, "fetch", "origin");
+  gitOut(repository, "remote", "set-head", "origin", "main");
+  const pusher = join(sandbox, "pusher");
+  execFileSync("git", ["clone", remote, pusher]);
+  return { remote, pusher };
+}
+
+function commitOnRemote(pusher: string, file: string): string {
+  writeFileSync(join(pusher, file), "remote\n", "utf8");
+  gitOut(pusher, "add", file);
+  gitOut(pusher, "-c", "user.name=cw-code", "-c", "user.email=test@cw-code.local", "commit", "-m", `add ${file}`);
+  gitOut(pusher, "push", "origin", "HEAD:main");
+  return gitOut(pusher, "rev-parse", "HEAD");
+}
+
+function hasUpstream(repository: string, branch: string): boolean {
+  try {
+    execFileSync("git", ["-C", repository, "rev-parse", "--abbrev-ref", `${branch}@{upstream}`], { stdio: "pipe" });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 function storedSnapshot(manager: SessionManager, sessionId: string): TurnSnapshot | undefined {
   return (manager as unknown as { store: SessionStore }).store.getSession(sessionId)?.lastTurnSnapshot;
 }
@@ -659,6 +692,115 @@ describe("SessionManager", () => {
     const session = await manager.createSession(project.id, "claude", { mode: "current" });
     expect(session.worktreePath).toBeUndefined();
     expect(manager.rootFor(session.id)).toBe(project.rootPath);
+    manager.dispose();
+  });
+
+  it("branches a current-checkout session from the freshly fetched default branch", async () => {
+    const { manager, project, repository } = makeGitSandboxManager("cw-session-current-base-");
+    const { pusher } = attachOrigin(repository);
+    const remoteHead = commitOnRemote(pusher, "remote.txt");
+
+    const session = await manager.createSession(project.id, "claude", { mode: "current" });
+
+    expect(session.worktreePath).toBeUndefined();
+    expect(session.branch).toBe(`cw/${session.id.replace(/^sess_/, "")}`);
+    expect(session.createNotice).toBeUndefined();
+    expect(gitOut(repository, "branch", "--show-current")).toBe(session.branch);
+    expect(gitOut(repository, "rev-parse", "HEAD")).toBe(remoteHead);
+    expect(gitOut(repository, "rev-parse", "origin/main")).toBe(remoteHead);
+    expect(hasUpstream(repository, session.branch ?? "")).toBe(false);
+    expect((await manager.listSessions(project.id))[0]?.branch).toBe(session.branch);
+    expect(manager.rootFor(session.id)).toBe(project.rootPath);
+    manager.dispose();
+  });
+
+  it("branches a current-checkout session from the requested base", async () => {
+    const { manager, project, repository } = makeGitSandboxManager("cw-session-current-requested-");
+    gitOut(repository, "branch", "release");
+    gitOut(repository, "switch", "release");
+    writeFileSync(join(repository, "release.txt"), "release\n", "utf8");
+    gitOut(repository, "add", "release.txt");
+    gitOut(repository, "-c", "user.name=cw-code", "-c", "user.email=test@cw-code.local", "commit", "-m", "release work");
+    const releaseHead = gitOut(repository, "rev-parse", "HEAD");
+    gitOut(repository, "switch", "main");
+
+    const session = await manager.createSession(project.id, "claude", { mode: "current", baseBranch: "release" });
+
+    expect(gitOut(repository, "branch", "--show-current")).toBe(session.branch);
+    expect(gitOut(repository, "rev-parse", "HEAD")).toBe(releaseHead);
+    manager.dispose();
+  });
+
+  it("refuses a current-checkout session when the working tree has uncommitted changes", async () => {
+    const { manager, project, repository } = makeGitSandboxManager("cw-session-current-dirty-");
+    writeFileSync(join(repository, "README.md"), "dirty\n", "utf8");
+
+    await expect(manager.createSession(project.id, "claude", { mode: "current" })).rejects.toThrow(
+      `${project.name} has uncommitted changes — commit or stash them, or use a new worktree`
+    );
+
+    expect(gitOut(repository, "branch", "--show-current")).toBe("main");
+    expect(readFileSync(join(repository, "README.md"), "utf8")).toBe("dirty\n");
+    expect(await manager.listSessions(project.id)).toHaveLength(0);
+    manager.dispose();
+  });
+
+  it("switches a current-checkout PR session to the author's local branch at the PR head", async () => {
+    const { manager, project, repository } = makeGitSandboxManager("cw-session-current-attach-");
+    gitOut(repository, "branch", "feature/pr");
+    const headRefOid = gitOut(repository, "rev-parse", "feature/pr");
+
+    const session = await manager.createSession(project.id, "claude", {
+      mode: "current",
+      prHead: { number: 7, headRefName: "feature/pr", headRefOid, viewerIsAuthor: true }
+    });
+
+    expect(session.branch).toBe("feature/pr");
+    expect(session.worktreePath).toBeUndefined();
+    expect(gitOut(repository, "branch", "--show-current")).toBe("feature/pr");
+    expect(gitOut(repository, "branch", "--list", `cw/${session.id.replace(/^sess_/, "")}`)).toBe("");
+    manager.dispose();
+  });
+
+  it("returns a create notice without persisting it when the base fetch falls back", async () => {
+    const { manager, project, repository } = makeGitSandboxManager("cw-session-current-offline-");
+    attachOrigin(repository);
+    gitOut(repository, "remote", "set-url", "origin", join(dirname(repository), "missing.git"));
+
+    const session = await manager.createSession(project.id, "claude", { mode: "current" });
+
+    expect(session.createNotice).toMatch(/^Could not fetch origin\/main \(.+\); using the local copy$/);
+    expect(session.branch).toMatch(/^cw\//);
+    const stored = (await manager.listSessions(project.id)).find((s) => s.id === session.id);
+    expect(stored).toBeDefined();
+    expect(stored && "createNotice" in stored).toBe(false);
+    manager.dispose();
+  });
+
+  it("returns the create notice for a new-worktree session when the base fetch falls back", async () => {
+    const { manager, project, repository } = makeGitSandboxManager("cw-session-new-offline-");
+    attachOrigin(repository);
+    gitOut(repository, "remote", "set-url", "origin", join(dirname(repository), "missing.git"));
+
+    const session = await manager.createSession(project.id, "claude", { mode: "new" });
+
+    expect(session.worktreePath).toBeTruthy();
+    expect(session.createNotice).toMatch(/^Could not fetch origin\/main/);
+    const stored = (await manager.listSessions(project.id)).find((s) => s.id === session.id);
+    expect(stored && "createNotice" in stored).toBe(false);
+    manager.dispose();
+  });
+
+  it("does not remove the project folder or delete the branch when a current-checkout session is resolved", async () => {
+    const { manager, project, repository } = makeGitSandboxManager("cw-session-current-resolve-");
+    const session = await manager.createSession(project.id, "claude", { mode: "current" });
+    if (!session.branch) throw new Error("expected a branch on the current-checkout session");
+
+    const result = await manager.resolveSession(session.id, "resolved", { removeWorktree: true, forceBranch: true });
+
+    expect(result).toMatchObject({ worktreeRemoved: false, branchDeleted: false, worktreeOrphaned: false });
+    expect(existsSync(join(repository, "README.md"))).toBe(true);
+    expect(gitOut(repository, "branch", "--list", session.branch)).not.toBe("");
     manager.dispose();
   });
 

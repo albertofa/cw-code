@@ -165,9 +165,15 @@ describe("linkFromStatus", () => {
     expect(linkFromStatus(session(), open, 100, null)).toMatchObject({ lastSeenSha: "" });
   });
 
-  it("returns null for a session running in the project's current checkout", () => {
+  it("returns null for a legacy session in the project's current checkout without a recorded branch", () => {
     const open = status({ pullRequest: pullRequest() });
-    expect(linkFromStatus(session({ worktreePath: undefined }), open, 100)).toBeNull();
+    expect(linkFromStatus(session({ worktreePath: undefined, branch: undefined }), open, 100)).toBeNull();
+  });
+
+  it("links a current-checkout session whose recorded branch is the checked-out branch", () => {
+    const open = status({ pullRequest: pullRequest() });
+    expect(linkFromStatus(session({ worktreePath: undefined }), open, 100)).toMatchObject({ origin: "opened" });
+    expect(linkFromStatus(session({ worktreePath: undefined, branch: "other" }), open, 100)).toBeNull();
   });
 
   it("returns null for archived and resolved sessions", () => {
@@ -189,9 +195,11 @@ describe("linkFromStatus", () => {
 });
 
 describe("auto-link ownership", () => {
-  it("only lets live worktree sessions own an auto-link", () => {
+  it("lets live worktree sessions and current-checkout sessions with a recorded branch own an auto-link", () => {
     expect(canOwnAutoLink(session())).toBe(true);
-    expect(canOwnAutoLink(session({ worktreePath: undefined }))).toBe(false);
+    expect(canOwnAutoLink(session({ worktreePath: undefined }))).toBe(true);
+    expect(canOwnAutoLink(session({ worktreePath: undefined, branch: undefined }))).toBe(false);
+    expect(canOwnAutoLink(session({ worktreePath: undefined, status: "resolved" }))).toBe(false);
     expect(canOwnAutoLink(session({ status: "archived" }))).toBe(false);
     expect(canOwnAutoLink(session({ status: "resolved" }))).toBe(false);
   });

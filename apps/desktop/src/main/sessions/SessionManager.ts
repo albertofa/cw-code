@@ -72,7 +72,7 @@ import { TracingCliDriver } from "../debug/tracingDriver.js";
 import { CLAUDE_CURATED_MODELS, ClaudeCliDriver } from "../providers/claude/ClaudeCliDriver.js";
 import { OpencodeDriver } from "../providers/opencode/OpencodeDriver.js";
 import { CodexCliDriver } from "../providers/codex/CodexCliDriver.js";
-import { defaultBinary, execText, GitService, safeSegment, type CreatedWorktree, type RemoveWorktreeResult } from "../fs/GitService.js";
+import { defaultBinary, execText, GitService, safeSegment, sessionBranchName, type CreatedWorktree, type RemoveWorktreeResult } from "../fs/GitService.js";
 import { resolveAttachments } from "./attachments.js";
 import { AUTO_TITLE_TIMEOUT_MS, buildTitlePrompt, sanitizeGeneratedTitle } from "./autoTitle.js";
 import { branchNameForTitle, TEMP_BRANCH_PATTERN } from "./branchName.js";
@@ -160,6 +160,10 @@ function turnReachesPast(turn: TurnSnapshot, since: number): boolean {
 
 const INTERRUPT_SETTLE_TIMEOUT_MS = 3_000;
 const INTERRUPT_SETTLE_POLL_MS = 100;
+
+function withCreateNotice(session: SessionMeta, notice: string | null): SessionMeta {
+  return notice ? { ...session, createNotice: notice } : session;
+}
 
 function driverBusy(driver: CliDriver, sessionId: string): boolean {
   try {
@@ -516,10 +520,13 @@ export class SessionManager {
     if (!project) throw new Error(`unknown project ${projectId}`);
     const id = `sess_${randomUUID().slice(0, 8)}`;
     const mode = options.mode ?? (options.useWorktree === false ? "current" : "new");
-    const repository = mode !== "current" && (await this.git.isRepository(project.rootPath));
+    const repository = await this.git.isRepository(project.rootPath);
     this.assertNotReserved();
     if (!repository) {
       return this.store.createSession(projectId, driver, "New session", { id });
+    }
+    if (mode === "current") {
+      return this.createCurrentCheckoutSession(project, driver, id, options);
     }
     if (mode === "previous" && options.reuseWorktreePath) {
       const reused = await this.reusableWorktree(project, options.reuseWorktreePath);
@@ -533,11 +540,45 @@ export class SessionManager {
       }
     }
     const worktree = await this.createSessionWorktree(project, id, options);
-    return this.store.createSession(projectId, driver, "New session", {
+    const session = this.store.createSession(projectId, driver, "New session", {
       id,
       worktreePath: worktree.path,
       branch: worktree.branch
     });
+    return withCreateNotice(session, worktree.baseWarning);
+  }
+
+  private async createCurrentCheckoutSession(
+    project: Project,
+    driver: DriverKind,
+    id: string,
+    options: CreateSessionOptions
+  ): Promise<SessionMeta> {
+    if (!(await this.git.hasCommits(project.rootPath))) {
+      return this.store.createSession(project.id, driver, "New session", { id });
+    }
+    if (await this.git.isWorkingTreeDirty(project.rootPath)) {
+      throw new Error(`${project.name} has uncommitted changes — commit or stash them, or use a new worktree`);
+    }
+    const plan = options.prHead ? await this.planPrHead(project, options) : null;
+    this.assertNotReserved();
+    if (plan?.kind === "attach") {
+      await this.git.checkoutBranch(project.rootPath, plan.branch);
+      return this.store.createSession(project.id, driver, "New session", { id, branch: plan.branch });
+    }
+    const requestedBase = await this.requestedBase(project, plan, options);
+    this.assertNotReserved();
+    const resolved = await this.git.resolveBase(project.rootPath, requestedBase);
+    this.assertNotReserved();
+    const branch = await this.git.switchToNewBranch(project.rootPath, sessionBranchName(id), resolved.ref);
+    const session = this.store.createSession(project.id, driver, "New session", { id, branch });
+    return withCreateNotice(session, resolved.warning);
+  }
+
+  private async requestedBase(project: Project, plan: PrHeadPlan | null, options: CreateSessionOptions): Promise<string | undefined> {
+    if (plan?.kind === "base") return plan.branch;
+    if (plan?.kind === "fetch") return this.git.fetchPullRequestHead(project.rootPath, plan.number);
+    return options.baseBranch;
   }
 
   private async createSessionWorktree(project: Project, id: string, options: CreateSessionOptions): Promise<CreatedWorktree> {
@@ -547,12 +588,7 @@ export class SessionManager {
       const target = join(this.worktreesRoot, safeSegment(project.id), safeSegment(id));
       return this.git.attachWorktree(project.rootPath, target, plan.branch);
     }
-    const base =
-      plan?.kind === "base"
-        ? plan.branch
-        : plan?.kind === "fetch"
-          ? await this.git.fetchPullRequestHead(project.rootPath, plan.number)
-          : options.baseBranch;
+    const base = await this.requestedBase(project, plan, options);
     this.assertNotReserved();
     return this.git.createWorktree(project.rootPath, project.id, id, this.worktreesRoot, base);
   }

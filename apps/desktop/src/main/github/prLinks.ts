@@ -17,7 +17,7 @@ import { prKey, prRefFromUrl } from "./prParsers.js";
 const MAX_UNLINKED_KEYS = 20;
 
 export function canOwnAutoLink(session: SessionMeta): boolean {
-  if (!session.worktreePath) return false;
+  if (!session.worktreePath && !session.branch) return false;
   return session.status !== "resolved" && session.status !== "archived";
 }
 
