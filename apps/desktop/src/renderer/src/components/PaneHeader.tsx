@@ -87,6 +87,7 @@ export function PaneTabsHeader({
 }) {
   const setActive = usePanelStore((s) => s.setActive);
   const moveTab = usePanelStore((s) => s.moveTab);
+  const setRightVisible = usePanelStore((s) => s.setRightVisible);
   const summary = usePaneSummary(top, sessionId);
   const strip = useScrollEdges(tabs.join(","));
 
@@ -108,7 +109,7 @@ export function PaneTabsHeader({
             active={id === top}
             id={rightTabId(idBase, id)}
             controls={panelId}
-            onActivate={() => setActive(sessionId, "right", id)}
+            onActivate={() => (id === top ? setRightVisible(sessionId, false) : setActive(sessionId, "right", id))}
             onContextMenu={onTabContextMenu(id)}
             onClose={() => moveTab(sessionId, id, "closed")}
           />

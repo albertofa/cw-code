@@ -1,6 +1,5 @@
 import { ChevronDown, ChevronUp } from "lucide-react";
 import { useRef, type MouseEvent as ReactMouseEvent } from "react";
-import type { DockableTabId } from "@cw-code/contracts";
 import { DockTab } from "./DockTab.js";
 import { ToolContent } from "./ToolContent.js";
 import { useTabMenu } from "./TabMenu.js";
@@ -10,7 +9,7 @@ import { toolAvailability } from "./toolTabs.js";
 import { useDockDrop } from "./useDockDrop.js";
 import { findSession } from "./useLinkedPr.js";
 import { usePanelAnimationMs, usePresence } from "./usePresence.js";
-import { BOTTOM_HEIGHT_DEFAULT, tabsInPanel } from "../stores/panelLayout.js";
+import { BOTTOM_HEIGHT_DEFAULT, resolveBottomActive, tabsInPanel } from "../stores/panelLayout.js";
 import { useAppStore } from "../stores/appStore.js";
 import { selectSessionPanel, usePanelStore } from "../stores/panelStore.js";
 
@@ -31,7 +30,7 @@ export function BottomPanel({ sessionId }: { sessionId: string }) {
   const body = usePresence(!bottomCollapsed, usePanelAnimationMs());
 
   const tabs = tabsInPanel(dockByTab, "bottom").filter(isToolAvailable);
-  const effectiveActive: DockableTabId | null = tabs.includes(activeBottom) ? activeBottom : (tabs[0] ?? null);
+  const effectiveActive = resolveBottomActive(dockByTab, activeBottom, isToolAvailable);
 
   const onResizeStart = (e: ReactMouseEvent<HTMLDivElement>) => {
     e.preventDefault();
@@ -93,6 +92,10 @@ export function BottomPanel({ sessionId }: { sessionId: string }) {
             active={effectiveActive === id}
             iconSize={14}
             onActivate={() => {
+              if (effectiveActive === id && !bottomCollapsed) {
+                setBottomCollapsed(sessionId, true);
+                return;
+              }
               setActive(sessionId, "bottom", id);
               if (bottomCollapsed) setBottomCollapsed(sessionId, false);
             }}

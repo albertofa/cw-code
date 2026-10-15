@@ -133,6 +133,15 @@ export function rightOpenTabs(dockByTab: TabDockState, isAvailable: (tab: Dockab
   return tabsInPanel(dockByTab, "right").filter(isAvailable);
 }
 
+export function resolveBottomActive(
+  dockByTab: TabDockState,
+  activeBottom: DockableTabId,
+  isAvailable: (tab: DockableTabId) => boolean
+): DockableTabId | null {
+  const available = tabsInPanel(dockByTab, "bottom").filter(isAvailable);
+  return available.includes(activeBottom) ? activeBottom : (available[0] ?? null);
+}
+
 const ALL_TOOLS = (): boolean => true;
 
 export const DEFAULT_RIGHT_TOOL: DockableTabId = "overview";
