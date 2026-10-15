@@ -2,7 +2,9 @@ import { useEffect, type ReactNode } from "react";
 import type { DriverName } from "../cw.js";
 import { useAppStore, DEFAULT_COMPOSER } from "../stores/appStore.js";
 import { usePanelStore } from "../stores/panelStore.js";
+import { useBranchStore } from "../stores/branchStore.js";
 import { ComposerView, type ComposerBackend } from "./ComposerView.js";
+import { useBranchMismatch } from "./useBranchMismatch.js";
 import { ContextRing } from "./ContextRing.js";
 
 export function Composer({ sessionId, driver, top }: { sessionId: string; driver: DriverName; top?: ReactNode }) {
@@ -23,6 +25,7 @@ export function Composer({ sessionId, driver, top }: { sessionId: string; driver
   });
 
   const modelsRefreshKey = useAppStore((s) => s.settingsVersion);
+  const { mismatch } = useBranchMismatch(sessionId);
 
   useEffect(() => {
     void useAppStore.getState().ensureComposer(sessionId);
@@ -33,6 +36,14 @@ export function Composer({ sessionId, driver, top }: { sessionId: string; driver
     prefs,
     busy,
     effectivePermissionMode,
+    branchGuard: {
+      mismatch,
+      switchBranch: async () => {
+        if (mismatch) await useBranchStore.getState().switchToSessionBranch(sessionId, mismatch.sessionBranch);
+      },
+      acceptFolderHead: () => useBranchStore.getState().acceptFolderHead(sessionId),
+      refreshMismatch: () => useBranchStore.getState().refreshMismatch(sessionId)
+    },
     loadModels: () => window.cw.listModels(sessionId),
     loadPermissions: () => window.cw.listPermissions(sessionId),
     loadFiles: () => window.cw.listFiles(sessionId),
@@ -40,7 +51,11 @@ export function Composer({ sessionId, driver, top }: { sessionId: string; driver
     savePrefs: (p) => {
       void useAppStore.getState().setComposerPrefs(sessionId, p);
     },
-    send: (body, attachments, command) => useAppStore.getState().sendPrompt(body, attachments, command),
+    send: (body, attachments, command, acceptFolderHead) =>
+      useAppStore.getState().sendPromptTo(sessionId, body, attachments, {
+        ...(command ? { command } : {}),
+        ...(acceptFolderHead ? { acceptFolderHead } : {})
+      }),
     newSession: () => useAppStore.getState().startNewSession(driver),
     rename: (title) => useAppStore.getState().renameSession(sessionId, title),
     openTerminal: () => usePanelStore.getState().revealTab(sessionId, driver),

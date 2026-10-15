@@ -83,6 +83,8 @@ function summary(number: number, overrides: Partial<PrSummary> = {}): PrSummary 
     review: "none",
     mergeable: "MERGEABLE",
     labels: [],
+    reviewers: [],
+    assignees: [],
     updatedAt: 500,
     ...overrides
   };
@@ -170,6 +172,14 @@ describe("sessionAttention", () => {
     expect(line({ number: 3, updates: [] })).toBe("#3 updated");
   });
 
+  it("appends how many other PRs were updated", () => {
+    const line = (unseenPr: Parameters<typeof sessionAttention>[0]["unseenPr"]) =>
+      sessionAttention({ session: session("idle"), ...noAttention, unseenPr })?.line;
+    expect(line({ number: 16, more: 1 })).toBe("#16 · +1 more updated");
+    expect(line({ number: 16, updates: [update("comment")], more: 2 })).toBe("#16 · 1 new comment · +2 more updated");
+    expect(line({ number: 16, more: 0 })).toBe("#16 updated");
+  });
+
   it("never flags resolved or archived sessions", () => {
     const full = { approvals: [approval()], questions: [question("Q?")], unseenPr: { number: 1 } };
     expect(sessionAttention({ session: session("resolved"), ...full })).toBeNull();
@@ -198,6 +208,29 @@ describe("firstUnseenPr", () => {
     const lookup = new Map([seen, changed].map((item) => [prKey(item.ref), item]));
     const result = firstUnseenPr(session("idle", { prs: [link(1), link(2)] }), lookup, {});
     expect(result).toEqual({ number: 2, summary: changed, updates: undefined });
+  });
+
+  it("picks the most urgent unseen PR, not the first in link order, and counts the others", () => {
+    const calm = summary(1, { updatedAt: 2_000, review: "approved" });
+    const failing = summary(2, { updatedAt: 2_000, ci: "failing", checks: { total: 1, passed: 0, failed: 1, pending: 0 } });
+    const merged = summary(3, { updatedAt: 2_000, state: "MERGED" });
+    const lookup = new Map([calm, failing, merged].map((item) => [prKey(item.ref), item]));
+    const result = firstUnseenPr(session("idle", { prs: [link(1), link(2), link(3)] }), lookup, {});
+    expect(result).toEqual({ number: 2, summary: failing, updates: undefined, more: 1 });
+  });
+
+  it("breaks an urgency tie by the most recent update", () => {
+    const older = summary(1, { updatedAt: 2_000 });
+    const newer = summary(2, { updatedAt: 3_000 });
+    const lookup = new Map([older, newer].map((item) => [prKey(item.ref), item]));
+    expect(firstUnseenPr(session("idle", { prs: [link(1), link(2)] }), lookup, {})?.number).toBe(2);
+  });
+
+  it("does not count seen PRs as other updates", () => {
+    const changed = summary(1, { updatedAt: 2_000 });
+    const seen = summary(2, { updatedAt: 500 });
+    const lookup = new Map([changed, seen].map((item) => [prKey(item.ref), item]));
+    expect(firstUnseenPr(session("idle", { prs: [link(1), link(2)] }), lookup, {})?.more).toBeUndefined();
   });
 
   it("returns null when every linked PR is seen or unknown", () => {

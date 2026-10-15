@@ -57,6 +57,29 @@ export type {
   PrWorkflowIcon,
   PrWorkflow
 } from "./pullRequests.js";
+export type {
+  RepoRef,
+  IssueRef,
+  RunRef,
+  GitHubKind,
+  GitHubViewGroup,
+  SavedGitHubView,
+  GitHubAccountRef,
+  GitHubSearchResult,
+  IssueLinkedPr,
+  IssueSummary,
+  IssueComment,
+  IssueDetail,
+  RunStatus,
+  RunConclusion,
+  RunJob,
+  WorkflowRunSummary,
+  RunSources,
+  RunsResult,
+  SessionIssueLink,
+  SessionRunLink,
+  WorkflowSubject
+} from "./github.js";
 export type { PanelId, DockLocation, DockableTabId, MainTabId, TabDockState, TabAutoLocation, PanelLayoutSnapshot } from "./panels.js";
 export type { CliBinary, BinarySource, CliDiscoveredCandidate, CliDiscoverResult } from "./cli.js";
 export type { HarnessId, SkillSource, SkillMeta, SkillDetail, SkillsListResult, SkillSaveInput } from "./skills.js";

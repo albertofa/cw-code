@@ -1,5 +1,6 @@
 import type { DriverKind, EffortLevel } from "./session.js";
 import type { PrWorkflow } from "./pullRequests.js";
+import type { SavedGitHubView } from "./github.js";
 import type { UpdateChannel } from "./updates.js";
 
 export interface CustomModel {
@@ -47,6 +48,7 @@ export interface AppSettings {
   prAttributionEnabled: boolean;
   prAttributionText: string;
   prWorkflows: PrWorkflow[];
+  githubSavedViews: SavedGitHubView[];
   opencodeGoUsage: boolean;
   updateChannel: UpdateChannel | null;
   updateBackgroundDownload: boolean;

@@ -1,4 +1,5 @@
 import type { SessionPrLink } from "./pullRequests.js";
+import type { SessionIssueLink, SessionRunLink } from "./github.js";
 import type { CommandInvocation } from "./commands.js";
 
 export type DriverKind = "claude" | "opencode" | "codex";
@@ -61,9 +62,12 @@ export interface SessionMeta {
   /** Last known branch. Live Git status remains the source of truth. */
   branch?: string;
   prs?: SessionPrLink[];
+  issues?: SessionIssueLink[];
+  runs?: SessionRunLink[];
   /** prKeys of PRs the user explicitly unlinked from this session, so auto-link does not re-attach them. */
   prUnlinked?: string[];
   lastTurnSnapshot?: TurnSnapshot;
+  createNotice?: string;
 }
 
 export interface TurnSnapshot {
@@ -82,6 +86,8 @@ export type CreateWorkspaceMode = "current" | "new" | "previous";
 export interface CreateSessionOptions {
   /** Ref used as the starting point for the new session branch. */
   baseBranch?: string;
+  /** When baseBranch is not found on origin or locally, start from the default branch instead of failing. */
+  baseFallback?: "default";
   /** Defaults to true for Git repositories. Ignored when mode is set. */
   useWorktree?: boolean;
   /** Workspace selection for the new session. When omitted, useWorktree decides. */
@@ -168,6 +174,7 @@ export interface GitPullRequest {
 export interface GitStatus {
   available: boolean;
   branch: string;
+  headSha?: string | null;
   dirtyCount: number;
   addedLines: number;
   deletedLines: number;

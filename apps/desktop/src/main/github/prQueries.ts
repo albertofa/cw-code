@@ -41,6 +41,20 @@ const PR_SUMMARY_FIELDS = `
       }
     }
   }
+  assignees(first: 10) {
+    nodes {
+      login
+    }
+  }
+  latestReviews(first: 20) {
+    nodes {
+      author {
+        login
+        __typename
+      }
+      state
+    }
+  }
   ciCommits: commits(last: 1) {
     nodes {
       commit {
@@ -80,6 +94,34 @@ ${PR_SUMMARY_FIELDS}
         }
       }
     }
+  }
+}
+`;
+
+export const PR_SEARCH_QUERY = `
+query($q: String!, $open: String!, $closed: String!) {
+  viewer {
+    login
+  }
+  results: search(type: ISSUE, first: ${INBOX_SEARCH_LIMIT}, query: $q) {
+    issueCount
+    nodes {
+      ... on PullRequest {
+        __typename
+${PR_SUMMARY_FIELDS}
+        reviewThreads(first: 100) {
+          nodes {
+            isResolved
+          }
+        }
+      }
+    }
+  }
+  open: search(type: ISSUE, first: 0, query: $open) {
+    issueCount
+  }
+  closed: search(type: ISSUE, first: 0, query: $closed) {
+    issueCount
   }
 }
 `;
@@ -208,14 +250,6 @@ ${PR_SUMMARY_FIELDS}
               }
             }
           }
-        }
-      }
-      latestReviews(first: 20) {
-        nodes {
-          author {
-            login
-          }
-          state
         }
       }
       commits(last: 100) {

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, type ReactNode } from "react";
 import { useShallow } from "zustand/react/shallow";
 import { Bot, ChartColumn, ChevronDown, Gauge, GitBranch, ListChecks, RefreshCw, Sparkles } from "lucide-react";
-import type { AccountUsageOk, DriverName, GitPullRequest, TodoItem } from "../cw.js";
+import type { AccountUsageOk, DriverName, TodoItem } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import { usePrStore } from "../stores/prStore.js";
 import { useSkillsStore } from "../stores/skillsStore.js";
@@ -10,13 +10,11 @@ import { DriverIcon } from "./DriverIcon.js";
 import { PrChipBadge } from "./PrChipBadge.js";
 import { PlanMeters } from "./PlanMeters.js";
 import { unavailableTitle } from "./UsagePlanCard.js";
-import { prChip } from "./prChip.js";
 import { formatRelativeAge } from "./prInboxModel.js";
-import { displayChip } from "./sessionPrLinks.js";
 import { collectSubagents, formatTokensShort, isSubagentMessage } from "./subagents.js";
 import { formatDuration } from "./toolSummaries.js";
 import { harnessLabel } from "./toolTabs.js";
-import { findSession, useLinkedPrs } from "./useLinkedPr.js";
+import { findSession, useSessionPrItems } from "./useLinkedPr.js";
 import { formatCostUsd, useNow } from "./usageFormat.js";
 import { contextMeter, totals, turnTokens } from "./usageModel.js";
 import "./sessionOverview.css";
@@ -103,35 +101,26 @@ function ChangesSummary({ dirtyCount, addedLines, deletedLines }: { dirtyCount: 
   );
 }
 
-function PullRequestRow({ sessionId, gitPr, githubError }: { sessionId: string; gitPr: GitPullRequest | null; githubError: string | null }) {
-  const { items, summaryByKey } = useLinkedPrs(sessionId);
+function PullRequestRow({ sessionId, githubError }: { sessionId: string; githubError: string | null }) {
+  const { items } = useSessionPrItems(sessionId);
   const openPr = usePrStore((s) => s.openPr);
   if (items.length > 0) {
     return (
       <>
-        {items.map((item) => {
-          const chip = displayChip(item.link, summaryByKey, gitPr);
-          return (
-            <Row key={item.key} label="Pull request">
-              <button type="button" className="ov-pr" onClick={() => openPr(item.link.ref)} title={`Open ${chip.title}`}>
-                <PrChipBadge chip={chip} />
-                <span className="ov-pr-reason">{chip.reason}</span>
-              </button>
-            </Row>
-          );
-        })}
+        {items.map((item) => (
+          <Row key={item.key} label={item.source === "linked" ? "Linked PR" : "Branch PR"}>
+            <button type="button" className="ov-pr" onClick={() => openPr(item.ref)} title={`Open ${item.chip.title}`}>
+              <PrChipBadge chip={item.chip} />
+              <span className="ov-pr-reason">{item.chip.reason}</span>
+            </button>
+          </Row>
+        ))}
       </>
     );
   }
-  const chip = prChip({ pr: null, git: gitPr });
   return (
     <Row label="Pull request">
-      {chip ? (
-        <>
-          <PrChipBadge chip={chip} />
-          <span className="ov-pr-reason">{chip.reason}</span>
-        </>
-      ) : githubError ? (
+      {githubError ? (
         <span className="ov-error" title={githubError}>
           GitHub unavailable
         </span>
@@ -158,7 +147,7 @@ function WorkspaceSection({ sessionId }: { sessionId: string }) {
           <Row label="Changes">
             <ChangesSummary dirtyCount={status.dirtyCount} addedLines={status.addedLines} deletedLines={status.deletedLines} />
           </Row>
-          <PullRequestRow sessionId={sessionId} gitPr={status.pullRequest} githubError={status.githubError} />
+          <PullRequestRow sessionId={sessionId} githubError={status.githubError} />
         </>
       ) : status ? (
         <Note>Not a git repository.</Note>

@@ -1,4 +1,21 @@
-import type { AppSettings, PrCheck, PrDetail, PrRef, PrSuggestCondition, PrSummary, PrUpdate, PrWorkflow, SessionMeta, SessionPrLink } from "@cw-code/contracts";
+import type {
+  AppSettings,
+  IssueComment,
+  IssueDetail,
+  PrCheck,
+  PrDetail,
+  PrRef,
+  PrSuggestCondition,
+  PrSummary,
+  PrUpdate,
+  PrWorkflow,
+  RunJob,
+  RunRef,
+  SessionIssueLink,
+  SessionMeta,
+  SessionPrLink,
+  WorkflowRunSummary
+} from "@cw-code/contracts";
 import { linkFor, pickMainSession } from "./sessionPrLinks.js";
 
 export const TEMPLATE_VARS = [
@@ -20,6 +37,50 @@ export const TEMPLATE_VARS = [
   "attribution",
   "harness"
 ] as const;
+
+export const ISSUE_TEMPLATE_VARS = [
+  "issue.number",
+  "issue.title",
+  "issue.body",
+  "issue.url",
+  "issue.repo",
+  "issue.labels",
+  "issue.comments",
+  "issue.delta",
+  "attribution",
+  "harness"
+] as const;
+
+export const RUN_TEMPLATE_VARS = [
+  "run.id",
+  "run.number",
+  "run.workflow",
+  "run.url",
+  "run.repo",
+  "run.branch",
+  "run.sha",
+  "run.event",
+  "run.failedJobs",
+  "run.failedLogs",
+  "attribution",
+  "harness"
+] as const;
+
+export const TEMPLATE_VARS_BY_TARGET: Record<PrWorkflow["target"], readonly string[]> = {
+  pr: TEMPLATE_VARS,
+  issue: ISSUE_TEMPLATE_VARS,
+  run: RUN_TEMPLATE_VARS
+};
+
+const ISSUE_COMMENTS_LIMIT = 10;
+
+const ISSUE_BODY_MAX_CHARS = 8_000;
+
+const ISSUE_COMMENT_MAX_CHARS = 2_000;
+
+const TRUNCATION_MARKER = "[…truncated]";
+
+const FAILED_JOB_CONCLUSIONS: ReadonlySet<RunJob["conclusion"]> = new Set(["failure", "timed_out", "startup_failure"]);
 
 export function resolveTemplate(template: string, vars: Record<string, string>): string {
   return template.replace(/\{\{\s*([\w.]+)\s*\}\}/g, (match, name: string) => (name in vars ? vars[name] : match));
@@ -73,6 +134,78 @@ export function templateVars(
   };
 }
 
+function capText(text: string, max: number): string {
+  return text.length > max ? `${text.slice(0, max)}\n${TRUNCATION_MARKER}` : text;
+}
+
+function formatComments(comments: IssueComment[]): string {
+  return comments.map((comment) => `${comment.author}: ${capText(comment.body, ISSUE_COMMENT_MAX_CHARS)}`).join("\n");
+}
+
+export function issueTemplateVars(
+  issue: IssueDetail,
+  opts: { link?: SessionIssueLink; attribution: string; harness: string }
+): Record<string, string> {
+  const lastSeenAt = opts.link?.lastSeenAt;
+  const fresh = lastSeenAt === undefined ? [] : issue.comments.filter((comment) => comment.createdAt > lastSeenAt);
+  return {
+    "issue.number": String(issue.ref.number),
+    "issue.title": issue.title,
+    "issue.body": capText(issue.body, ISSUE_BODY_MAX_CHARS),
+    "issue.url": issue.url,
+    "issue.repo": `${issue.ref.owner}/${issue.ref.repo}`,
+    "issue.labels": issue.labels.join(", "),
+    "issue.comments": formatComments(issue.comments.slice(-ISSUE_COMMENTS_LIMIT)),
+    "issue.delta": formatComments(fresh),
+    attribution: opts.attribution,
+    harness: opts.harness
+  };
+}
+
+export function failedJobNames(jobs: RunJob[]): string[] {
+  return jobs.filter((job) => FAILED_JOB_CONCLUSIONS.has(job.conclusion)).map((job) => job.name);
+}
+
+export function runTemplateVars(
+  run: WorkflowRunSummary,
+  opts: { failedLogs?: string; attribution: string; harness: string }
+): Record<string, string> {
+  return {
+    "run.id": String(run.ref.runId),
+    "run.number": String(run.runNumber),
+    "run.workflow": run.workflowName,
+    "run.url": run.url,
+    "run.repo": `${run.ref.owner}/${run.ref.repo}`,
+    "run.branch": run.branch ?? "",
+    "run.sha": run.headSha,
+    "run.event": run.event,
+    "run.failedJobs": failedJobNames(run.jobs).join(", "),
+    "run.failedLogs": opts.failedLogs ?? "",
+    attribution: opts.attribution,
+    harness: opts.harness
+  };
+}
+
+export function runRefTemplateVars(
+  ref: RunRef,
+  opts: { failedLogs?: string; attribution: string; harness: string }
+): Record<string, string> {
+  return {
+    "run.id": String(ref.runId),
+    "run.number": "",
+    "run.workflow": "",
+    "run.url": "",
+    "run.repo": `${ref.owner}/${ref.repo}`,
+    "run.branch": "",
+    "run.sha": "",
+    "run.event": "",
+    "run.failedJobs": "",
+    "run.failedLogs": opts.failedLogs ?? "",
+    attribution: opts.attribution,
+    harness: opts.harness
+  };
+}
+
 const FAILED_LOG_TAIL_CHARS = 12_000;
 
 const FAILED_LOGS_TOTAL_CHARS = 30_000;
@@ -89,7 +222,7 @@ function failingRuns(checks: PrCheck[]): Array<{ runId: number; names: string[] 
 }
 
 function tail(text: string): string {
-  return text.length > FAILED_LOG_TAIL_CHARS ? `[…truncated]\n${text.slice(-FAILED_LOG_TAIL_CHARS)}` : text;
+  return text.length > FAILED_LOG_TAIL_CHARS ? `${TRUNCATION_MARKER}\n${text.slice(-FAILED_LOG_TAIL_CHARS)}` : text;
 }
 
 export async function loadFailedLogs(
@@ -100,7 +233,15 @@ export async function loadFailedLogs(
   const logs = await Promise.all(
     runs.map(async (run) => `### ${run.names.join(", ")} (run ${run.runId})\n${tail((await fetchLog(detail.ref, run.runId)).trim())}`)
   );
-  const joined = logs.join("\n\n");
+  return capFailedLogs(logs);
+}
+
+export async function loadRunFailedLogs(ref: RunRef, fetchLog: (ref: RunRef) => Promise<string> = (run) => window.cw.getRunLog(run)): Promise<string> {
+  return capFailedLogs([tail((await fetchLog(ref)).trim())]);
+}
+
+function capFailedLogs(sections: string[]): string {
+  const joined = sections.join("\n\n");
   return joined.length > FAILED_LOGS_TOTAL_CHARS ? `${joined.slice(0, FAILED_LOGS_TOTAL_CHARS)}\n[…more logs truncated]` : joined;
 }
 

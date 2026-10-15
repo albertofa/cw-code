@@ -20,6 +20,7 @@ import { NewThread } from "./NewThread.js";
 import { ApprovalDock } from "./ApprovalDock.js";
 import { QuestionDock } from "./QuestionDock.js";
 import { TodoDock } from "./TodoDock.js";
+import { BranchMismatchDock } from "./BranchMismatchNotice.js";
 import { PrUpdateDock } from "./PrUpdateDock.js";
 import { WorkingDock } from "./WorkingDock.js";
 import { PrSessionChip } from "./PrSessionPanel.js";
@@ -408,7 +409,7 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
       <div className="head-col col-mid" />
       <div className="head-col col-right">
         {!showNew && sessionId && <GitPanelBar key={`git:${sessionId}`} sessionId={sessionId} />}
-        {hasPr && sessionId && <PrSessionChip key={`pr:${sessionId}`} sessionId={sessionId} />}
+        {!showNew && sessionId && <PrSessionChip key={`pr:${sessionId}`} sessionId={sessionId} />}
       </div>
     </div>
   );
@@ -608,6 +609,7 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
           top={
             <>
               <TodoDock sessionId={session.id} />
+              <BranchMismatchDock key={`branch-dock:${session.id}`} sessionId={session.id} />
               <PrUpdateDock key={`pr-dock:${session.id}`} sessionId={session.id} />
               <ApprovalDock sessionId={session.id} />
               <QuestionDock sessionId={session.id} />

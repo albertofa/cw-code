@@ -276,7 +276,7 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
   const inbox = usePrStore((s) => s.inbox);
   const { attentionOf, summaryByKey } = useNeedsYou();
   const mainView = usePrStore((s) => s.mainView);
-  const openInbox = usePrStore((s) => s.openInbox);
+  const openGitHub = usePrStore((s) => s.openGitHub);
   const openSessionView = usePrStore((s) => s.openSessionView);
   const openUsage = usePrStore((s) => s.openUsage);
   const openSettings = usePrStore((s) => s.openSettings);
@@ -466,15 +466,15 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
   const workingSetVisible = source.length > 0 || quickFilter !== "all";
   const attentionCount = useMemo(() => needsAttentionCount(inboxItems ?? []), [inboxItems]);
   const anyUnseen = useMemo(() => source.some((s) => sessionHasUnseen(s, summaryByKey)), [source, summaryByKey]);
-  const inboxActive = mainView.kind === "inbox" || mainView.kind === "pr";
+  const inboxActive = mainView.kind === "github" || mainView.kind === "pr";
   const usageActive = mainView.kind === "usage";
   const newSessionActive = !inboxActive && !usageActive && (pendingDriver !== null || !activeSessionId);
   const inboxNotes = [
     attentionCount > 0 ? `${attentionCount} need${attentionCount === 1 ? "s" : ""} you` : null,
     anyUnseen ? "updates available" : null
   ].filter(Boolean);
-  const inboxTitle = ["Pull requests", ...inboxNotes].join(" · ");
-  const inboxLabel = ["Pull requests", ...inboxNotes].join(", ");
+  const inboxTitle = ["GitHub", ...inboxNotes].join(" · ");
+  const inboxLabel = ["GitHub", ...inboxNotes].join(", ");
   const selectSession = (sessionId: string) => {
     openSessionView();
     selectStoreSession(sessionId);
@@ -935,13 +935,13 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
           <button
             type="button"
             className={`side-nav-row${inboxActive ? " active" : ""}`}
-            onClick={openInbox}
+            onClick={() => openGitHub()}
             title={inboxTitle}
             aria-label={inboxLabel}
             aria-pressed={inboxActive}
           >
             <GitPullRequest size={15} aria-hidden="true" />
-            <span className="side-nav-label">Pull requests</span>
+            <span className="side-nav-label">GitHub</span>
             <span className="side-nav-end">
               {anyUnseen && <span className="pr-unseen-dot" aria-hidden="true" />}
               {attentionCount > 0 && (

@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { AccountUsageSnapshot, AppSettings, AttentionState, CliBinary, CliDiscoveredCandidate, CliDiscoverResult, CommandInvocation, CommandOption, CreateSessionOptions, GitBranchInfo, GitDiffMode, GitDiffResult, GitStatus, HarnessId, ModelMeta, PrDetail, PrInboxResult, Project, ProjectGitHubRepo, PrRef, PrWorkflow, RetryConnectionResult, SessionCleanupResult, SessionMeta, SessionPrLink, SessionStatus, SessionStatusReason, ShutdownAssessment, ShutdownCommitResult, ShutdownExpiredEvent, ShutdownPrepareRequest, ShutdownPrepareResult, ShutdownRequestedEvent, SkillDetail, SkillMeta, SkillSaveInput, SkillsListResult, SourceControlHealth, StartupState, SubagentToolsResult, TurnChanges, UpdateActionResult, UpdateChannel, UpdateInstallRequest, UpdateState, UsageLedgerQuery, UsageLedgerRow, WorktreePruneSummary } from "@cw-code/contracts";
+import type { AccountUsageSnapshot, AppSettings, AttentionState, CliBinary, CliDiscoveredCandidate, CliDiscoverResult, CommandInvocation, CommandOption, CreateSessionOptions, GitBranchInfo, GitDiffMode, GitDiffResult, GitHubSearchResult, GitStatus, HarnessId, IssueDetail, IssueRef, IssueSummary, ModelMeta, PrDetail, PrInboxResult, Project, ProjectGitHubRepo, PrRef, PrSummary, PrWorkflow, RepoRef, RetryConnectionResult, RunRef, RunSources, RunsResult, SessionCleanupResult, SessionIssueLink, SessionMeta, SessionPrLink, SessionRunLink, SessionStatus, SessionStatusReason, ShutdownAssessment, ShutdownCommitResult, ShutdownExpiredEvent, ShutdownPrepareRequest, ShutdownPrepareResult, ShutdownRequestedEvent, SkillDetail, SkillMeta, SkillSaveInput, SkillsListResult, SourceControlHealth, StartupState, SubagentToolsResult, TurnChanges, UpdateActionResult, UpdateChannel, UpdateInstallRequest, UpdateState, UsageLedgerQuery, UsageLedgerRow, WorkflowRunSummary, WorktreePruneSummary } from "@cw-code/contracts";
 
 export type PermissionMode = "auto" | "acceptEdits" | "bypassPermissions" | "manual";
 export type EffortLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
@@ -89,7 +89,7 @@ export interface CwApi {
   getSubagentTools(sessionId: string, agentId: string): Promise<SubagentToolsResult>;
   activeTurns(): Promise<Array<{ sessionId: string; turnId: string; startedAt: number }>>;
   retryConnection(sessionId: string): Promise<RetryConnectionResult>;
-  startTurn(sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[]; command?: CommandInvocation; prRefs?: PrRef[] }): Promise<string>;
+  startTurn(sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[]; command?: CommandInvocation; prRefs?: PrRef[]; acceptFolderHead?: string }): Promise<string>;
   interrupt(turnId: string): Promise<void>;
   respondApproval(requestId: string, decision: "accept" | "acceptForSession" | "acceptGlobal" | "decline" | "cancel"): Promise<void>;
   respondQuestion(requestId: string, answers: Record<string, string>): Promise<void>;
@@ -130,11 +130,27 @@ export interface CwApi {
   getPrDetail(ref: PrRef): Promise<PrDetail>;
   getPrDiff(ref: PrRef): Promise<string>;
   getPrCheckLog(ref: PrRef, runId: number): Promise<string>;
-  clonePrRepo(ref: PrRef): Promise<Project>;
+  searchGitHub(kind: "pr", query: string, countBase: string, force?: boolean): Promise<GitHubSearchResult<PrSummary>>;
+  searchGitHub(kind: "issue", query: string, countBase: string, force?: boolean): Promise<GitHubSearchResult<IssueSummary>>;
+  countGitHub(kind: "pr" | "issue", queries: string[]): Promise<Array<number | null>>;
+  getIssueDetail(ref: IssueRef): Promise<IssueDetail>;
+  getGitHubRuns(sources: RunSources, force?: boolean): Promise<RunsResult>;
+  getRunLog(ref: RunRef): Promise<string>;
+  watchGitHubRuns(refs: RunRef[]): Promise<void>;
+  setGitHubActive(active: boolean): Promise<void>;
+  onGitHubRunsChanged(cb: (runs: WorkflowRunSummary[]) => void): () => void;
+  onGitHubCiActivity(cb: () => void): () => void;
+  cloneGitHubRepo(repo: RepoRef): Promise<Project>;
   getProjectGitHubRepos(): Promise<ProjectGitHubRepo[]>;
   linkSessionPr(sessionId: string, link: SessionPrLink): Promise<SessionMeta>;
   unlinkSessionPr(sessionId: string, ref: PrRef): Promise<SessionMeta>;
   markSessionPrSeen(sessionId: string, ref: PrRef, headSha: string | null, seenAt: number | null): Promise<SessionMeta>;
+  linkSessionIssue(sessionId: string, link: SessionIssueLink): Promise<SessionMeta>;
+  unlinkSessionIssue(sessionId: string, ref: IssueRef): Promise<SessionMeta>;
+  markSessionIssueSeen(sessionId: string, ref: IssueRef, seenAt: number): Promise<SessionMeta>;
+  linkSessionRun(sessionId: string, link: SessionRunLink): Promise<SessionMeta>;
+  unlinkSessionRun(sessionId: string, ref: RunRef): Promise<SessionMeta>;
+  markSessionRunSeen(sessionId: string, ref: RunRef, seenAt: number): Promise<SessionMeta>;
   onTurnEvent(cb: (event: unknown) => void): () => void;
   onSessionTitle(cb: (msg: { sessionId: string; title: string }) => void): () => void;
   onSessionUpdated(cb: (session: SessionMeta) => void): () => void;
@@ -233,8 +249,16 @@ const api: CwApi = {
     ipcRenderer.invoke("sessions.subagentTools", { sessionId, agentId }),
   activeTurns: () => ipcRenderer.invoke("sessions.activeTurns"),
   retryConnection: (sessionId: string) => ipcRenderer.invoke("sessions.retryConnection", { sessionId }),
-  startTurn: (sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[]; command?: CommandInvocation; prRefs?: PrRef[] }) =>
-    ipcRenderer.invoke("turns.start", { sessionId, prompt, prefs: opts?.prefs, attachments: opts?.attachments, command: opts?.command, prRefs: opts?.prRefs }),
+  startTurn: (sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[]; command?: CommandInvocation; prRefs?: PrRef[]; acceptFolderHead?: string }) =>
+    ipcRenderer.invoke("turns.start", {
+      sessionId,
+      prompt,
+      prefs: opts?.prefs,
+      attachments: opts?.attachments,
+      command: opts?.command,
+      prRefs: opts?.prRefs,
+      acceptFolderHead: opts?.acceptFolderHead
+    }),
   interrupt: (turnId: string) => ipcRenderer.invoke("turns.interrupt", { turnId }),
   respondApproval: (requestId: string, decision: "accept" | "acceptForSession" | "acceptGlobal" | "decline" | "cancel") =>
     ipcRenderer.invoke("approvals.respond", { requestId, decision }),
@@ -288,12 +312,38 @@ const api: CwApi = {
   getPrDetail: (ref: PrRef) => ipcRenderer.invoke("prs.detail", { ref }),
   getPrDiff: (ref: PrRef) => ipcRenderer.invoke("prs.diff", { ref }),
   getPrCheckLog: (ref: PrRef, runId: number) => ipcRenderer.invoke("prs.checkLog", { ref, runId }),
-  clonePrRepo: (ref: PrRef) => ipcRenderer.invoke("prs.clone", { ref }),
+  searchGitHub: (kind: "pr" | "issue", query: string, countBase: string, force?: boolean) =>
+    ipcRenderer.invoke("github.search", { kind, query, countBase, force }),
+  countGitHub: (kind: "pr" | "issue", queries: string[]) => ipcRenderer.invoke("github.counts", { kind, queries }),
+  getIssueDetail: (ref: IssueRef) => ipcRenderer.invoke("github.issueDetail", { ref }),
+  getGitHubRuns: (sources: RunSources, force?: boolean) => ipcRenderer.invoke("github.runs", { sources, force }),
+  getRunLog: (ref: RunRef) => ipcRenderer.invoke("github.runLog", { ref }),
+  watchGitHubRuns: (refs: RunRef[]) => ipcRenderer.invoke("github.watchRuns", { refs }),
+  setGitHubActive: (active: boolean) => ipcRenderer.invoke("github.setActive", { active }),
+  onGitHubRunsChanged: (cb) => {
+    const listener = (_e: unknown, runs: WorkflowRunSummary[]) => cb(runs);
+    ipcRenderer.on("github.runsChanged", listener as never);
+    return () => ipcRenderer.removeListener("github.runsChanged", listener as never);
+  },
+  onGitHubCiActivity: (cb) => {
+    const listener = () => cb();
+    ipcRenderer.on("github.ciActivity", listener as never);
+    return () => ipcRenderer.removeListener("github.ciActivity", listener as never);
+  },
+  cloneGitHubRepo: (repo: RepoRef) => ipcRenderer.invoke("github.clone", { repo }),
   getProjectGitHubRepos: () => ipcRenderer.invoke("prs.projectRepos"),
   linkSessionPr: (sessionId: string, link: SessionPrLink) => ipcRenderer.invoke("sessions.linkPr", { sessionId, link }),
   unlinkSessionPr: (sessionId: string, ref: PrRef) => ipcRenderer.invoke("sessions.unlinkPr", { sessionId, ref }),
   markSessionPrSeen: (sessionId: string, ref: PrRef, headSha: string | null, seenAt: number | null) =>
     ipcRenderer.invoke("sessions.markPrSeen", { sessionId, ref, headSha, seenAt }),
+  linkSessionIssue: (sessionId: string, link: SessionIssueLink) => ipcRenderer.invoke("sessions.linkIssue", { sessionId, link }),
+  unlinkSessionIssue: (sessionId: string, ref: IssueRef) => ipcRenderer.invoke("sessions.unlinkIssue", { sessionId, ref }),
+  markSessionIssueSeen: (sessionId: string, ref: IssueRef, seenAt: number) =>
+    ipcRenderer.invoke("sessions.markIssueSeen", { sessionId, ref, seenAt }),
+  linkSessionRun: (sessionId: string, link: SessionRunLink) => ipcRenderer.invoke("sessions.linkRun", { sessionId, link }),
+  unlinkSessionRun: (sessionId: string, ref: RunRef) => ipcRenderer.invoke("sessions.unlinkRun", { sessionId, ref }),
+  markSessionRunSeen: (sessionId: string, ref: RunRef, seenAt: number) =>
+    ipcRenderer.invoke("sessions.markRunSeen", { sessionId, ref, seenAt }),
   onTurnEvent: (cb) => {
     const listener = (_e: unknown, event: unknown) => cb(event);
     ipcRenderer.on("turn.event", listener as never);

@@ -42,6 +42,7 @@ const SETTINGS: AppSettings = {
   prAttributionEnabled: true,
   prAttributionText: "",
   prWorkflows: [],
+  githubSavedViews: [],
   fontFamilySans: "",
   fontFamilyMono: "",
   fontFamilyPrompt: "",

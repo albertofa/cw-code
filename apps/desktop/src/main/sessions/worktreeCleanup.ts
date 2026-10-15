@@ -8,7 +8,7 @@ export function sameWorktreePath(a: string, b: string): boolean {
   return process.platform === "win32" ? left.toLowerCase() === right.toLowerCase() : left === right;
 }
 
-function comparableRoot(path: string): string {
+export function comparableRoot(path: string): string {
   const resolved = resolve(path).replace(/[\\/]+$/, "");
   return process.platform === "win32" || process.platform === "darwin" ? resolved.toLowerCase() : resolved;
 }

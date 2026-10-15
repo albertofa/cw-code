@@ -59,6 +59,15 @@ function installBridge(): void {
     getDefaultPrWorkflows: async () => [],
     getPrInbox: async () => ({ account: null, items: [], fetchedAt: 0, error: null }),
     getProjectGitHubRepos: async () => [],
+    searchGitHub: async () => ({ account: null, items: [], openCount: null, closedCount: null, truncated: false, limit: 50, fetchedAt: 0, error: null }),
+    countGitHub: async () => [],
+    getGitHubRuns: async () => ({ account: null, items: [], fetchedAt: 0, error: null }),
+    getRunLog: async () => "",
+    watchGitHubRuns: async () => {},
+    setGitHubActive: async () => {},
+    onGitHubRunsChanged: noop,
+    onGitHubCiActivity: noop,
+    markSessionRunSeen: async (sessionId: string) => makeSession({ id: sessionId }),
     getHomeDir: async () => "C:\\Users\\test",
     getGitStatus: async () => {
       throw new Error("no git");

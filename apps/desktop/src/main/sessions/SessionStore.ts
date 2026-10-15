@@ -141,6 +141,13 @@ function resetRuntimeStatuses(sessions: SessionMeta[]): boolean {
   return changed;
 }
 
+function withoutTransientFields(session: SessionMeta): SessionMeta {
+  if (!("createNotice" in session)) return session;
+  const persisted = { ...session };
+  delete persisted.createNotice;
+  return persisted;
+}
+
 type SessionPatch = Partial<
   Pick<
     SessionMeta,
@@ -156,6 +163,8 @@ type SessionPatch = Partial<
     | "branch"
     | "prs"
     | "prUnlinked"
+    | "issues"
+    | "runs"
     | "autoResolved"
     | "lastTurnSnapshot"
   >
@@ -188,7 +197,7 @@ export class SessionStore {
   private persist(): void {
     writeFileAtomic(
       this.filePath,
-      JSON.stringify({ schemaVersion: SESSION_SCHEMA_VERSION, projects: this.data.projects, sessions: this.data.sessions, ...this.extras })
+      JSON.stringify({ schemaVersion: SESSION_SCHEMA_VERSION, projects: this.data.projects, sessions: this.data.sessions.map(withoutTransientFields), ...this.extras })
     );
     this.lastGood.afterPersist();
   }
@@ -300,6 +309,14 @@ export class SessionStore {
       if (patch.prs.length === 0) delete current.prs;
       else current.prs = patch.prs;
     } else if ("prs" in patch) delete current.prs;
+    if (patch.issues !== undefined) {
+      if (patch.issues.length === 0) delete current.issues;
+      else current.issues = patch.issues;
+    } else if ("issues" in patch) delete current.issues;
+    if (patch.runs !== undefined) {
+      if (patch.runs.length === 0) delete current.runs;
+      else current.runs = patch.runs;
+    } else if ("runs" in patch) delete current.runs;
     if (patch.prUnlinked !== undefined) current.prUnlinked = patch.prUnlinked;
     else if ("prUnlinked" in patch) delete current.prUnlinked;
     if (patch.autoResolved !== undefined) current.autoResolved = patch.autoResolved;

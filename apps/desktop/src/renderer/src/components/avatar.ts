@@ -6,6 +6,16 @@ export function hashHue(s: string): number {
   return h % 360;
 }
 
+const BOT_LOGIN_SUFFIX = /[bot]$/;
+
+export function isBotLogin(login: string): boolean {
+  return BOT_LOGIN_SUFFIX.test(login);
+}
+
+export function stripBotSuffix(login: string): string {
+  return login.replace(BOT_LOGIN_SUFFIX, "");
+}
+
 export function projectInitials(name: string): string {
   const parts = name.split(/[^A-Za-z0-9]+/).filter(Boolean);
   if (parts.length === 0) return name.slice(0, 1).toUpperCase() || "?";

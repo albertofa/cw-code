@@ -31,6 +31,27 @@ import type {
   PrTimelineItem,
   PrWorkflow,
   SessionPrLink,
+  GitHubAccountRef,
+  GitHubKind,
+  GitHubSearchResult,
+  GitHubViewGroup,
+  IssueComment,
+  IssueDetail,
+  IssueLinkedPr,
+  IssueRef,
+  IssueSummary,
+  RepoRef,
+  RunConclusion,
+  RunJob,
+  RunRef,
+  RunSources,
+  RunStatus,
+  RunsResult,
+  SavedGitHubView,
+  SessionIssueLink,
+  SessionRunLink,
+  WorkflowRunSummary,
+  WorkflowSubject,
   ShutdownActiveTurn,
   ShutdownAssessment,
   ShutdownCommitResult,
@@ -94,6 +115,27 @@ export type {
   PrTimelineItem,
   PrWorkflow,
   SessionPrLink,
+  GitHubAccountRef,
+  GitHubKind,
+  GitHubSearchResult,
+  GitHubViewGroup,
+  IssueComment,
+  IssueDetail,
+  IssueLinkedPr,
+  IssueRef,
+  IssueSummary,
+  RepoRef,
+  RunConclusion,
+  RunJob,
+  RunRef,
+  RunSources,
+  RunStatus,
+  RunsResult,
+  SavedGitHubView,
+  SessionIssueLink,
+  SessionRunLink,
+  WorkflowRunSummary,
+  WorkflowSubject,
   TokenCounts,
   TurnModelUsage,
   UpdateActionCode,
@@ -137,10 +179,13 @@ export interface Session {
   worktreePath?: string;
   branch?: string;
   prs?: SessionPrLink[];
+  issues?: SessionIssueLink[];
+  runs?: SessionRunLink[];
   prUnlinked?: string[];
   autoResolved?: boolean;
   effectivePermissionMode?: string;
   lastTurnSnapshot?: TurnSnapshot;
+  createNotice?: string;
 }
 
 export interface TurnSnapshot {
@@ -158,6 +203,7 @@ export type CreateWorkspaceMode = "current" | "new" | "previous";
 
 export interface CreateSessionOptions {
   baseBranch?: string;
+  baseFallback?: "default";
   useWorktree?: boolean;
   mode?: CreateWorkspaceMode;
   reuseWorktreePath?: string;
@@ -393,6 +439,7 @@ export interface PermissionOption {
 export interface GitStatus {
   available: boolean;
   branch: string;
+  headSha?: string | null;
   dirtyCount: number;
   addedLines: number;
   deletedLines: number;
@@ -527,6 +574,7 @@ export interface AppSettings {
   prAttributionEnabled: boolean;
   prAttributionText: string;
   prWorkflows: PrWorkflow[];
+  githubSavedViews: SavedGitHubView[];
   opencodeGoUsage: boolean;
   updateChannel: UpdateChannel | null;
   updateBackgroundDownload: boolean;
@@ -603,7 +651,7 @@ export interface CwApi {
   getSubagentTools(sessionId: string, agentId: string): Promise<SubagentToolsResult>;
   activeTurns(): Promise<ActiveTurn[]>;
   retryConnection(sessionId: string): Promise<RetryConnectionResult>;
-  startTurn(sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[]; command?: CommandInvocation; prRefs?: PrRef[] }): Promise<string>;
+  startTurn(sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[]; command?: CommandInvocation; prRefs?: PrRef[]; acceptFolderHead?: string }): Promise<string>;
   interrupt(turnId: string): Promise<void>;
   respondApproval(requestId: string, decision: ApprovalDecision): Promise<void>;
   respondQuestion(requestId: string, answers: Record<string, string>): Promise<void>;
@@ -644,11 +692,27 @@ export interface CwApi {
   getPrDetail(ref: PrRef): Promise<PrDetail>;
   getPrDiff(ref: PrRef): Promise<string>;
   getPrCheckLog(ref: PrRef, runId: number): Promise<string>;
-  clonePrRepo(ref: PrRef): Promise<Project>;
+  searchGitHub(kind: "pr", query: string, countBase: string, force?: boolean): Promise<GitHubSearchResult<PrSummary>>;
+  searchGitHub(kind: "issue", query: string, countBase: string, force?: boolean): Promise<GitHubSearchResult<IssueSummary>>;
+  countGitHub(kind: "pr" | "issue", queries: string[]): Promise<Array<number | null>>;
+  getIssueDetail(ref: IssueRef): Promise<IssueDetail>;
+  getGitHubRuns(sources: RunSources, force?: boolean): Promise<RunsResult>;
+  getRunLog(ref: RunRef): Promise<string>;
+  watchGitHubRuns(refs: RunRef[]): Promise<void>;
+  setGitHubActive(active: boolean): Promise<void>;
+  onGitHubRunsChanged(cb: (runs: WorkflowRunSummary[]) => void): () => void;
+  onGitHubCiActivity(cb: () => void): () => void;
+  cloneGitHubRepo(repo: RepoRef): Promise<Project>;
   getProjectGitHubRepos(): Promise<ProjectGitHubRepo[]>;
   linkSessionPr(sessionId: string, link: SessionPrLink): Promise<Session>;
   unlinkSessionPr(sessionId: string, ref: PrRef): Promise<Session>;
   markSessionPrSeen(sessionId: string, ref: PrRef, headSha: string | null, seenAt: number | null): Promise<Session>;
+  linkSessionIssue(sessionId: string, link: SessionIssueLink): Promise<Session>;
+  unlinkSessionIssue(sessionId: string, ref: IssueRef): Promise<Session>;
+  markSessionIssueSeen(sessionId: string, ref: IssueRef, seenAt: number): Promise<Session>;
+  linkSessionRun(sessionId: string, link: SessionRunLink): Promise<Session>;
+  unlinkSessionRun(sessionId: string, ref: RunRef): Promise<Session>;
+  markSessionRunSeen(sessionId: string, ref: RunRef, seenAt: number): Promise<Session>;
   onTurnEvent(cb: (msg: { sessionId: string; event: TurnEvent }) => void): () => void;
   onSessionTitle(cb: (msg: { sessionId: string; title: string }) => void): () => void;
   onSessionUpdated(cb: (session: Session) => void): () => void;

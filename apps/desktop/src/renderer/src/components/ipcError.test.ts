@@ -12,6 +12,11 @@ describe("ipcErrorMessage", () => {
     expect(ipcErrorMessage(err)).toBe("bad cwd");
   });
 
+  it("returns only the sentence of a branch mismatch rejection", () => {
+    const err = new Error("Error invoking remote method 'turns.start': Error: [cw-branch-mismatch] widgets is on main, not this session's branch cw/a.");
+    expect(ipcErrorMessage(err)).toBe("widgets is on main, not this session's branch cw/a.");
+  });
+
   it("keeps messages without the prefix and stringifies non-errors", () => {
     expect(ipcErrorMessage(new Error("plain failure"))).toBe("plain failure");
     expect(ipcErrorMessage("text")).toBe("text");

@@ -204,6 +204,8 @@ function makeGitSandboxManager(prefix: string) {
   const sandbox = mkdtempSync(join(tmpdir(), prefix));
   const repository = join(sandbox, "repo");
   execFileSync("git", ["init", "-b", "main", repository]);
+  execFileSync("git", ["-C", repository, "config", "core.autocrlf", "false"]);
+  execFileSync("git", ["-C", repository, "config", "core.eol", "lf"]);
   writeFileSync(join(repository, "README.md"), "base\n", "utf8");
   execFileSync("git", ["-C", repository, "add", "README.md"]);
   execFileSync("git", ["-C", repository, "-c", "user.name=cw-code", "-c", "user.email=test@cw-code.local", "commit", "-m", "initial"]);
@@ -220,6 +222,54 @@ function makeGitSandboxManager(prefix: string) {
   manager.setSettings({ autoTitleEnabled: false });
   const project = manager.addProject(repository);
   return { manager, fake, project, repository, received };
+}
+
+function gitOut(repository: string, ...args: string[]): string {
+  return execFileSync("git", ["-C", repository, ...args], { encoding: "utf8" }).trim();
+}
+
+function folderHead(repository: string): string {
+  return gitOut(repository, "rev-parse", "--abbrev-ref", "HEAD");
+}
+
+function attachOrigin(repository: string): { remote: string; pusher: string } {
+  const sandbox = dirname(repository);
+  const remote = join(sandbox, "remote.git");
+  execFileSync("git", ["clone", "--bare", repository, remote]);
+  gitOut(repository, "remote", "add", "origin", remote);
+  gitOut(repository, "fetch", "origin");
+  gitOut(repository, "remote", "set-head", "origin", "main");
+  const pusher = join(sandbox, "pusher");
+  execFileSync("git", ["clone", remote, pusher]);
+  return { remote, pusher };
+}
+
+function commitOnRemote(pusher: string, file: string): string {
+  writeFileSync(join(pusher, file), "remote\n", "utf8");
+  gitOut(pusher, "add", file);
+  gitOut(pusher, "-c", "user.name=cw-code", "-c", "user.email=test@cw-code.local", "commit", "-m", `add ${file}`);
+  gitOut(pusher, "push", "origin", "HEAD:main");
+  return gitOut(pusher, "rev-parse", "HEAD");
+}
+
+function commitOnRemoteBranch(pusher: string, branch: string, file: string): string {
+  gitOut(pusher, "fetch", "origin");
+  const known = gitOut(pusher, "branch", "-r", "--list", `origin/${branch}`) !== "";
+  gitOut(pusher, "switch", "-C", branch, known ? `origin/${branch}` : "origin/main");
+  writeFileSync(join(pusher, file), "remote\n", "utf8");
+  gitOut(pusher, "add", file);
+  gitOut(pusher, "-c", "user.name=cw-code", "-c", "user.email=test@cw-code.local", "commit", "-m", `add ${file}`);
+  gitOut(pusher, "push", "origin", branch);
+  return gitOut(pusher, "rev-parse", "HEAD");
+}
+
+function hasUpstream(repository: string, branch: string): boolean {
+  try {
+    execFileSync("git", ["-C", repository, "rev-parse", "--abbrev-ref", `${branch}@{upstream}`], { stdio: "pipe" });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 function storedSnapshot(manager: SessionManager, sessionId: string): TurnSnapshot | undefined {
@@ -662,6 +712,521 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
+  it("branches a current-checkout session from the freshly fetched default branch", async () => {
+    const { manager, project, repository } = makeGitSandboxManager("cw-session-current-base-");
+    const { pusher } = attachOrigin(repository);
+    const remoteHead = commitOnRemote(pusher, "remote.txt");
+
+    const session = await manager.createSession(project.id, "claude", { mode: "current" });
+
+    expect(session.worktreePath).toBeUndefined();
+    expect(session.branch).toBe(`cw/${session.id.replace(/^sess_/, "")}`);
+    expect(session.createNotice).toBeUndefined();
+    expect(gitOut(repository, "branch", "--show-current")).toBe(session.branch);
+    expect(gitOut(repository, "rev-parse", "HEAD")).toBe(remoteHead);
+    expect(gitOut(repository, "rev-parse", "origin/main")).toBe(remoteHead);
+    expect(hasUpstream(repository, session.branch ?? "")).toBe(false);
+    expect((await manager.listSessions(project.id))[0]?.branch).toBe(session.branch);
+    expect(manager.rootFor(session.id)).toBe(project.rootPath);
+    manager.dispose();
+  });
+
+  it("branches a current-checkout session from the requested base", async () => {
+    const { manager, project, repository } = makeGitSandboxManager("cw-session-current-requested-");
+    gitOut(repository, "branch", "release");
+    gitOut(repository, "switch", "release");
+    writeFileSync(join(repository, "release.txt"), "release\n", "utf8");
+    gitOut(repository, "add", "release.txt");
+    gitOut(repository, "-c", "user.name=cw-code", "-c", "user.email=test@cw-code.local", "commit", "-m", "release work");
+    const releaseHead = gitOut(repository, "rev-parse", "HEAD");
+    gitOut(repository, "switch", "main");
+
+    const session = await manager.createSession(project.id, "claude", { mode: "current", baseBranch: "release" });
+
+    expect(gitOut(repository, "branch", "--show-current")).toBe(session.branch);
+    expect(gitOut(repository, "rev-parse", "HEAD")).toBe(releaseHead);
+    manager.dispose();
+  });
+
+  it("refuses a current-checkout session when the working tree has uncommitted changes", async () => {
+    const { manager, project, repository } = makeGitSandboxManager("cw-session-current-dirty-");
+    writeFileSync(join(repository, "README.md"), "dirty\n", "utf8");
+
+    await expect(manager.createSession(project.id, "claude", { mode: "current" })).rejects.toThrow(
+      `${project.name} has uncommitted changes — commit or stash them, or use a new worktree`
+    );
+
+    expect(gitOut(repository, "branch", "--show-current")).toBe("main");
+    expect(readFileSync(join(repository, "README.md"), "utf8")).toBe("dirty\n");
+    expect(await manager.listSessions(project.id)).toHaveLength(0);
+    manager.dispose();
+  });
+
+  it("switches a current-checkout PR session to the author's local branch at the PR head", async () => {
+    const { manager, project, repository } = makeGitSandboxManager("cw-session-current-attach-");
+    gitOut(repository, "branch", "feature/pr");
+    const headRefOid = gitOut(repository, "rev-parse", "feature/pr");
+
+    const session = await manager.createSession(project.id, "claude", {
+      mode: "current",
+      prHead: { number: 7, headRefName: "feature/pr", headRefOid, viewerIsAuthor: true }
+    });
+
+    expect(session.branch).toBe("feature/pr");
+    expect(session.worktreePath).toBeUndefined();
+    expect(gitOut(repository, "branch", "--show-current")).toBe("feature/pr");
+    expect(gitOut(repository, "branch", "--list", `cw/${session.id.replace(/^sess_/, "")}`)).toBe("");
+    manager.dispose();
+  });
+
+  it("returns a create notice without persisting it when the base fetch falls back", async () => {
+    const { manager, project, repository } = makeGitSandboxManager("cw-session-current-offline-");
+    attachOrigin(repository);
+    gitOut(repository, "remote", "set-url", "origin", join(dirname(repository), "missing.git"));
+
+    const session = await manager.createSession(project.id, "claude", { mode: "current" });
+
+    expect(session.createNotice).toMatch(/^Could not fetch origin\/main \(.+\); using the local copy$/);
+    expect(session.branch).toMatch(/^cw\//);
+    const stored = (await manager.listSessions(project.id)).find((s) => s.id === session.id);
+    expect(stored).toBeDefined();
+    expect(stored && "createNotice" in stored).toBe(false);
+    manager.dispose();
+  });
+
+  it.each(["current", "new"] as const)("falls back to the fetched default when the run branch is missing in %s mode", async (mode) => {
+    const { manager, project, repository } = makeGitSandboxManager(`cw-session-fallback-${mode}-`);
+    const { pusher } = attachOrigin(repository);
+    const remoteHead = commitOnRemote(pusher, "remote.txt");
+
+    const session = await manager.createSession(project.id, "claude", { mode, baseBranch: "gone/run", baseFallback: "default" });
+
+    expect(session.createNotice).toBe("Run branch 'gone/run' wasn't found on origin or locally; started from origin/main");
+    expect(gitOut(session.worktreePath ?? repository, "rev-parse", "HEAD")).toBe(remoteHead);
+    expect(session.branch).toMatch(/^cw\//);
+    manager.dispose();
+  });
+
+  it.each(["current", "new"] as const)("refuses the fallback in %s mode when the fetch failed and there is no local copy", async (mode) => {
+    const { manager, project, repository } = makeGitSandboxManager(`cw-session-fallback-failed-${mode}-`);
+    attachOrigin(repository);
+    gitOut(repository, "remote", "set-url", "origin", join(dirname(repository), "missing.git"));
+
+    await expect(manager.createSession(project.id, "claude", { mode, baseBranch: "gone/run", baseFallback: "default" })).rejects.toThrow(
+      /^Could not fetch run branch 'gone\/run' \(.+\) and it isn't available locally$/
+    );
+    expect(await manager.listSessions(project.id)).toHaveLength(0);
+    manager.dispose();
+  });
+
+  it("emits the session when its branch is updated", async () => {
+    const { manager, project } = makeGitSandboxManager("cw-session-branch-emit-");
+    const emitted: SessionMeta[] = [];
+    manager.setSessionEmitter((meta) => emitted.push(structuredClone(meta)));
+    const session = await manager.createSession(project.id, "claude", { mode: "new" });
+
+    manager.updateSessionBranch(session.id, "feature/switched");
+
+    expect(emitted.at(-1)?.id).toBe(session.id);
+    expect(emitted.at(-1)?.branch).toBe("feature/switched");
+    manager.dispose();
+  });
+
+  it("refuses a branch switch while any session on the same folder has a turn in flight", async () => {
+    const { manager, fake, project } = makeGitSandboxManager("cw-session-switch-busy-");
+    const idle = await manager.createSession(project.id, "claude", { mode: "current" });
+    const running = await manager.createSession(project.id, "claude", { mode: "current" });
+    await manager.startTurn(running.id, "work");
+    const message = `${running.title} is running in ${project.name} — wait for it to finish before switching branches`;
+
+    await expect(manager.withBranchSwitch(running.id, async () => "switched")).rejects.toThrow(message);
+    await expect(manager.withBranchSwitch(idle.id, async () => "switched")).rejects.toThrow(message);
+
+    fake.completeAll();
+    await vi.waitFor(async () => expect(await manager.withBranchSwitch(idle.id, async () => "switched")).toBe("switched"));
+    manager.dispose();
+  });
+
+  it("refuses a turn while a same-folder branch switch is pending and allows it afterwards", async () => {
+    const { manager, project, repository } = makeGitSandboxManager("cw-session-turn-during-switch-");
+    const switching = await manager.createSession(project.id, "claude", { mode: "current" });
+    const other = await manager.createSession(project.id, "claude", { mode: "current" });
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolveGate) => {
+      release = resolveGate;
+    });
+    const pendingSwitch = manager.withBranchSwitch(switching.id, () => gate);
+    await vi.waitFor(() => expect((manager as unknown as { pendingBranchSwitches: Set<string> }).pendingBranchSwitches.has(switching.id)).toBe(true));
+
+    const message = `${project.name} is switching branches — try again in a moment`;
+    await expect(manager.startTurn(other.id, "blocked", { acceptFolderHead: folderHead(repository) })).rejects.toThrow(message);
+    await expect(manager.startTurn(switching.id, "blocked", { acceptFolderHead: folderHead(repository) })).rejects.toThrow(message);
+
+    release();
+    await pendingSwitch;
+    await expect(manager.startTurn(other.id, "allowed", { acceptFolderHead: folderHead(repository) })).resolves.toEqual(expect.any(String));
+    manager.dispose();
+  });
+
+  it("refuses a sibling turn while a current-checkout create is moving the folder and allows it afterwards", async () => {
+    const { manager, project, repository } = makeGitSandboxManager("cw-session-turn-during-create-");
+    const sibling = await manager.createSession(project.id, "claude", { mode: "current" });
+    const git = (manager as unknown as { git: { switchToNewBranch: (root: string, name: string, base: string) => Promise<string> } }).git;
+    const realSwitch = git.switchToNewBranch.bind(git);
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolveGate) => {
+      release = resolveGate;
+    });
+    let reached = false;
+    git.switchToNewBranch = async (root, name, base) => {
+      reached = true;
+      await gate;
+      return realSwitch(root, name, base);
+    };
+
+    const pendingCreate = manager.createSession(project.id, "claude", { mode: "current" });
+    await vi.waitFor(() => expect(reached).toBe(true));
+
+    await expect(manager.startTurn(sibling.id, "blocked", { acceptFolderHead: folderHead(repository) })).rejects.toThrow(
+      `${project.name} is switching branches — try again in a moment`
+    );
+
+    release();
+    await pendingCreate;
+    await expect(manager.startTurn(sibling.id, "allowed", { acceptFolderHead: folderHead(repository) })).resolves.toEqual(expect.any(String));
+    manager.dispose();
+  });
+
+  it("serializes concurrent branch switches and records the branch HEAD ends up on", async () => {
+    const { manager, project, repository } = makeGitSandboxManager("cw-session-switch-serial-");
+    const first = await manager.createSession(project.id, "claude", { mode: "current" });
+    const second = await manager.createSession(project.id, "claude", { mode: "current" });
+    gitOut(repository, "branch", "feature-1");
+    gitOut(repository, "branch", "feature-2");
+    const git = (manager as unknown as { git: { checkoutBranch: (root: string, name: string) => Promise<string> } }).git;
+    const realCheckout = git.checkoutBranch.bind(git);
+    let active = 0;
+    let maxActive = 0;
+    git.checkoutBranch = async (root, name) => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      try {
+        await new Promise((resolveDelay) => setTimeout(resolveDelay, 50));
+        return await realCheckout(root, name);
+      } finally {
+        active -= 1;
+      }
+    };
+
+    const results = await Promise.all([manager.switchBranch(first.id, "feature-1"), manager.switchBranch(second.id, "feature-2")]);
+
+    expect(maxActive).toBe(1);
+    expect(results.map((status) => status.branch)).toEqual(["feature-1", "feature-2"]);
+    expect(folderHead(repository)).toBe("feature-2");
+    const stored = await manager.listSessions(project.id);
+    expect(stored.find((session) => session.id === first.id)?.branch).toBe("feature-1");
+    expect(stored.find((session) => session.id === second.id)?.branch).toBe(folderHead(repository));
+    manager.dispose();
+  });
+
+  it("refuses a current-checkout branch switch over uncommitted changes but not a worktree one", async () => {
+    const { manager, project, repository } = makeGitSandboxManager("cw-session-switch-dirty-");
+    const shared = await manager.createSession(project.id, "claude", { mode: "current" });
+    gitOut(repository, "branch", "feature");
+    writeFileSync(join(repository, "README.md"), "dirty\n", "utf8");
+
+    await expect(manager.switchBranch(shared.id, "feature")).rejects.toThrow(
+      `${project.name} has uncommitted changes — commit or stash them before switching branches`
+    );
+    expect(folderHead(repository)).toBe(shared.branch);
+    gitOut(repository, "checkout", "--", "README.md");
+
+    const isolated = await manager.createSession(project.id, "claude", { mode: "new" });
+    const worktreePath = isolated.worktreePath;
+    if (!worktreePath) throw new Error("expected a worktree-backed session");
+    writeFileSync(join(worktreePath, "README.md"), "dirty\n", "utf8");
+
+    await manager.switchBranch(isolated.id, "feature");
+
+    expect(folderHead(worktreePath)).toBe("feature");
+    expect((await manager.listSessions(project.id)).find((session) => session.id === isolated.id)?.branch).toBe("feature");
+    manager.dispose();
+  });
+
+  it("rejects a turn when the shared folder is on another branch and accepts an explicit override", async () => {
+    const { manager, project, repository } = makeGitSandboxManager("cw-session-branch-guard-");
+    const first = await manager.createSession(project.id, "claude", { mode: "current" });
+    const second = await manager.createSession(project.id, "claude", { mode: "current" });
+
+    await expect(manager.startTurn(first.id, "go")).rejects.toThrow(
+      `[cw-branch-mismatch] ${project.name} is on ${second.branch}, not this session's branch ${first.branch}.`
+    );
+    await expect(manager.startTurn(first.id, "go", { acceptFolderHead: "something-else" })).rejects.toThrow("[cw-branch-mismatch]");
+    await expect(manager.startTurn(first.id, "go", { acceptFolderHead: folderHead(repository) })).resolves.toEqual(expect.any(String));
+    manager.dispose();
+  });
+
+  it("reports a detached HEAD in the mismatch and accepts the full commit sha", async () => {
+    const { manager, project, repository } = makeGitSandboxManager("cw-session-branch-guard-detached-");
+    const session = await manager.createSession(project.id, "claude", { mode: "current" });
+    gitOut(repository, "checkout", "--detach");
+    const sha = gitOut(repository, "rev-parse", "HEAD");
+
+    await expect(manager.startTurn(session.id, "go")).rejects.toThrow(
+      `[cw-branch-mismatch] ${project.name} is on a detached HEAD, not this session's branch ${session.branch}.`
+    );
+    await expect(manager.startTurn(session.id, "go", { acceptFolderHead: "HEAD" })).rejects.toThrow("[cw-branch-mismatch]");
+    await expect(manager.startTurn(session.id, "go", { acceptFolderHead: sha })).resolves.toEqual(expect.any(String));
+    manager.dispose();
+  });
+
+  it("does not apply the branch guard to worktree sessions or sessions without a recorded branch", async () => {
+    const { manager, project, repository } = makeGitSandboxManager("cw-session-branch-guard-exempt-");
+    const isolated = await manager.createSession(project.id, "claude", { mode: "new" });
+    gitOut(repository, "switch", "-c", "elsewhere");
+    await expect(manager.startTurn(isolated.id, "go")).resolves.toEqual(expect.any(String));
+
+    const unbornRoot = join(dirname(repository), "unborn");
+    execFileSync("git", ["init", "-b", "main", unbornRoot]);
+    const unbornProject = manager.addProject(unbornRoot);
+    const unborn = await manager.createSession(unbornProject.id, "claude", { mode: "current" });
+    expect(unborn.branch).toBeUndefined();
+    await expect(manager.startTurn(unborn.id, "go")).resolves.toEqual(expect.any(String));
+    manager.dispose();
+  });
+
+  it.each(["current", "new"] as const)("refuses to fall back for a run branch when there is no origin remote in %s mode", async (mode) => {
+    const { manager, project } = makeGitSandboxManager(`cw-session-fallback-no-origin-${mode}-`);
+
+    await expect(manager.createSession(project.id, "claude", { mode, baseBranch: "gone/run", baseFallback: "default" })).rejects.toThrow(
+      `Can't check run branch 'gone/run': ${project.name} has no origin remote`
+    );
+    expect(await manager.listSessions(project.id)).toHaveLength(0);
+    manager.dispose();
+  });
+
+  it("still throws for a missing run branch without the fallback", async () => {
+    const { manager, project, repository } = makeGitSandboxManager("cw-session-nofallback-");
+    attachOrigin(repository);
+
+    await expect(manager.createSession(project.id, "claude", { mode: "new", baseBranch: "gone/run" })).rejects.toThrow(
+      "unknown base branch 'gone/run'"
+    );
+    await expect(manager.createSession(project.id, "claude", { mode: "current", baseBranch: "gone/run" })).rejects.toThrow(
+      "unknown base branch 'gone/run'"
+    );
+    expect(await manager.listSessions(project.id)).toHaveLength(0);
+    manager.dispose();
+  });
+
+  it("does not fall back for an invalid base branch name", async () => {
+    const { manager, project } = makeGitSandboxManager("cw-session-fallback-invalid-");
+
+    await expect(
+      manager.createSession(project.id, "claude", { mode: "new", baseBranch: "-x", baseFallback: "default" })
+    ).rejects.toThrow("invalid base branch '-x'");
+    manager.dispose();
+  });
+
+  it("rejects an unsupported base fallback value", async () => {
+    const { manager, project } = makeGitSandboxManager("cw-session-fallback-bad-");
+
+    await expect(
+      manager.createSession(project.id, "claude", { mode: "new", baseFallback: "main" as unknown as "default" })
+    ).rejects.toThrow("invalid base fallback");
+    manager.dispose();
+  });
+
+  it.each(["current", "new"] as const)("notes when the repository has remotes but none named origin in %s mode", async (mode) => {
+    const { manager, project, repository } = makeGitSandboxManager(`cw-session-no-origin-${mode}-`);
+    attachOrigin(repository);
+    gitOut(repository, "remote", "rename", "origin", "upstream");
+
+    const session = await manager.createSession(project.id, "claude", { mode });
+
+    expect(session.createNotice).toBe("No 'origin' remote; started from local main without fetching");
+    manager.dispose();
+  });
+
+  it("notes a missing origin remote for an explicitly requested local base", async () => {
+    const { manager, project, repository } = makeGitSandboxManager("cw-session-no-origin-requested-");
+    attachOrigin(repository);
+    gitOut(repository, "remote", "rename", "origin", "upstream");
+
+    const session = await manager.createSession(project.id, "claude", { mode: "new", baseBranch: "main" });
+
+    expect(session.createNotice).toBe("No 'origin' remote; started from local main without fetching");
+    manager.dispose();
+  });
+
+  it("returns the create notice for a new-worktree session when the base fetch falls back", async () => {
+    const { manager, project, repository } = makeGitSandboxManager("cw-session-new-offline-");
+    attachOrigin(repository);
+    gitOut(repository, "remote", "set-url", "origin", join(dirname(repository), "missing.git"));
+
+    const session = await manager.createSession(project.id, "claude", { mode: "new" });
+
+    expect(session.worktreePath).toBeTruthy();
+    expect(session.createNotice).toMatch(/^Could not fetch origin\/main/);
+    const stored = (await manager.listSessions(project.id)).find((s) => s.id === session.id);
+    expect(stored && "createNotice" in stored).toBe(false);
+    manager.dispose();
+  });
+
+  it("runs a current-checkout session without a branch and with a notice when the repository has no commits yet", async () => {
+    const { manager, project } = makeGitSandboxManager("cw-session-current-unborn-");
+    const empty = join(dirname(project.rootPath), "empty");
+    execFileSync("git", ["init", "-b", "main", empty]);
+    const emptyProject = manager.addProject(empty);
+
+    const session = await manager.createSession(emptyProject.id, "claude", { mode: "current" });
+
+    expect(session.branch).toBeUndefined();
+    expect(session.createNotice).toBe(`${emptyProject.name} has no commits yet; the session runs without its own branch`);
+    manager.dispose();
+  });
+
+  it("stays on the author's PR branch without a dirty check when it is already checked out in the project folder", async () => {
+    const { manager, project, repository } = makeGitSandboxManager("cw-session-current-at-root-");
+    gitOut(repository, "switch", "-c", "feature/pr");
+    const headRefOid = gitOut(repository, "rev-parse", "HEAD");
+    writeFileSync(join(repository, "README.md"), "dirty\n", "utf8");
+
+    const session = await manager.createSession(project.id, "claude", {
+      mode: "current",
+      prHead: { number: 7, headRefName: "feature/pr", headRefOid, viewerIsAuthor: true }
+    });
+
+    expect(session.branch).toBe("feature/pr");
+    expect(session.worktreePath).toBeUndefined();
+    expect(gitOut(repository, "branch", "--show-current")).toBe("feature/pr");
+    expect(readFileSync(join(repository, "README.md"), "utf8")).toBe("dirty\n");
+    expect(gitOut(repository, "branch", "--list", "cw/*")).toBe("");
+    manager.dispose();
+  });
+
+  it("refuses a current-checkout session while another session is running a turn in the same folder", async () => {
+    const { manager, fake, project, repository } = makeGitSandboxManager("cw-session-current-busy-");
+    const running = await manager.createSession(project.id, "claude", { mode: "current" });
+    await manager.startTurn(running.id, "work");
+    const branchBefore = gitOut(repository, "branch", "--show-current");
+
+    await expect(manager.createSession(project.id, "claude", { mode: "current" })).rejects.toThrow(
+      `${running.title} is running in ${project.name} — wait for it to finish or use a new worktree`
+    );
+
+    expect(gitOut(repository, "branch", "--show-current")).toBe(branchBefore);
+    expect(await manager.listSessions(project.id)).toHaveLength(1);
+    fake.completeAll();
+    manager.dispose();
+  });
+
+  it("serializes concurrent current-checkout creations in the same folder", async () => {
+    const { manager, project } = makeGitSandboxManager("cw-session-current-serial-");
+    const git = (manager as unknown as { git: { switchToNewBranch(root: string, name: string, base: string): Promise<string> } }).git;
+    const original = git.switchToNewBranch.bind(git);
+    const events: string[] = [];
+    git.switchToNewBranch = async (root, name, base) => {
+      events.push(`start:${name}`);
+      await new Promise((resolveDelay) => setTimeout(resolveDelay, 150));
+      const branch = await original(root, name, base);
+      events.push(`end:${name}`);
+      return branch;
+    };
+
+    const [first, second] = await Promise.all([
+      manager.createSession(project.id, "claude", { mode: "current" }),
+      manager.createSession(project.id, "claude", { mode: "current" })
+    ]);
+
+    const names = [first, second].map((session) => `cw/${session.id.replace(/^sess_/, "")}`);
+    expect(events).toHaveLength(4);
+    expect(names).toContain(events[0]?.replace("start:", ""));
+    expect(events[1]).toBe(events[0]?.replace("start:", "end:"));
+    expect(events[3]).toBe(events[2]?.replace("start:", "end:"));
+    expect(events[2]).not.toBe(events[0]);
+    expect(first.branch).not.toBe(second.branch);
+    manager.dispose();
+  });
+
+  it("re-checks the working tree right before switching, after the base was fetched", async () => {
+    const { manager, project, repository } = makeGitSandboxManager("cw-session-current-recheck-");
+    const git = (manager as unknown as { git: { resolveBase(...args: unknown[]): Promise<unknown> } }).git;
+    const original = git.resolveBase.bind(git);
+    git.resolveBase = async (...args: unknown[]) => {
+      const resolved = await original(...args);
+      writeFileSync(join(repository, "README.md"), "edited during fetch\n", "utf8");
+      return resolved;
+    };
+
+    await expect(manager.createSession(project.id, "claude", { mode: "current" })).rejects.toThrow(
+      `${project.name} has uncommitted changes — commit or stash them, or use a new worktree`
+    );
+
+    expect(gitOut(repository, "branch", "--show-current")).toBe("main");
+    expect(await manager.listSessions(project.id)).toHaveLength(0);
+    manager.dispose();
+  });
+
+  it("creates a PR worktree from the exact local branch even when origin has a newer branch of the same name", async () => {
+    const { manager, project, repository } = makeGitSandboxManager("cw-session-exact-base-");
+    const { pusher } = attachOrigin(repository);
+    gitOut(repository, "switch", "-c", "feature/pr");
+    const headRefOid = gitOut(repository, "rev-parse", "HEAD");
+    gitOut(repository, "push", "origin", "feature/pr");
+    commitOnRemoteBranch(pusher, "feature/pr", "remote-pr.txt");
+
+    const session = await manager.createSession(project.id, "claude", {
+      mode: "new",
+      prHead: { number: 7, headRefName: "feature/pr", headRefOid, viewerIsAuthor: true }
+    });
+
+    expect(session.worktreePath).toBeTruthy();
+    expect(session.branch).toMatch(/^cw\//);
+    expect(gitOut(session.worktreePath ?? "", "rev-parse", "HEAD")).toBe(headRefOid);
+    expect(session.createNotice).toBeUndefined();
+    manager.dispose();
+  });
+
+  it("recovers a worktree from the exact local branch and keeps unpushed commits", async () => {
+    const { manager, project, repository } = makeGitSandboxManager("cw-recover-exact-");
+    const { pusher } = attachOrigin(repository);
+    const session = await manager.createSession(project.id, "claude", { mode: "new", baseBranch: "main" });
+    const worktreePath = session.worktreePath;
+    const original = session.branch;
+    if (!worktreePath || !original) throw new Error("expected a worktree-backed session with a branch");
+    writeFileSync(join(worktreePath, "unpushed.txt"), "local\n", "utf8");
+    gitOut(worktreePath, "add", "unpushed.txt");
+    gitOut(worktreePath, "-c", "user.name=cw-code", "-c", "user.email=test@cw-code.local", "commit", "-m", "unpushed");
+    const localTip = gitOut(worktreePath, "rev-parse", "HEAD");
+    gitOut(repository, "push", "origin", original);
+    commitOnRemoteBranch(pusher, original, "remote-extra.txt");
+
+    rmSync(worktreePath, { recursive: true, force: true });
+    gitOut(repository, "worktree", "prune");
+    const elsewhere = join(worktreePath, "..", `${session.id}-elsewhere`);
+    gitOut(repository, "worktree", "add", elsewhere, original);
+
+    const root = await manager.ensureWorktree(session.id);
+
+    expect(root).toBe(worktreePath);
+    expect(gitOut(worktreePath, "rev-parse", "HEAD")).toBe(localTip);
+    manager.dispose();
+  });
+
+  it("does not remove the project folder or delete the branch when a current-checkout session is resolved", async () => {
+    const { manager, project, repository } = makeGitSandboxManager("cw-session-current-resolve-");
+    const session = await manager.createSession(project.id, "claude", { mode: "current" });
+    if (!session.branch) throw new Error("expected a branch on the current-checkout session");
+
+    const result = await manager.resolveSession(session.id, "resolved", { removeWorktree: true, forceBranch: true });
+
+    expect(result).toMatchObject({ worktreeRemoved: false, branchDeleted: false, worktreeOrphaned: false });
+    expect(existsSync(join(repository, "README.md"))).toBe(true);
+    expect(gitOut(repository, "branch", "--list", session.branch)).not.toBe("");
+    manager.dispose();
+  });
+
   it("treats a missing mode with useWorktree false as current checkout", async () => {
     const { manager, project } = makeGitSandboxManager("cw-session-compat-");
     const session = await manager.createSession(project.id, "claude", { useWorktree: false });
@@ -833,13 +1398,13 @@ describe("SessionManager", () => {
     const first = await manager.createSession(project.id, "claude", { mode: "current" });
     const second = await manager.createSession(project.id, "claude", { mode: "current" });
 
-    const firstTurn = await manager.startTurn(first.id, "first");
+    const firstTurn = await manager.startTurn(first.id, "first", { acceptFolderHead: folderHead(repository) });
     writeFileSync(join(repository, "first.txt"), "first\n", "utf8");
     fake.complete(firstTurn);
     const firstEnd = (await manager.turnChanges(first.id))?.endSha;
     if (!firstEnd) throw new Error("expected an end snapshot");
 
-    const secondTurn = await manager.startTurn(second.id, "second");
+    const secondTurn = await manager.startTurn(second.id, "second", { acceptFolderHead: folderHead(repository) });
     await expect(manager.undoTurn(first.id, firstTurn, firstEnd)).rejects.toThrow("Another session is running a turn in this folder");
     writeFileSync(join(repository, "second.txt"), "second\n", "utf8");
     fake.complete(secondTurn);
@@ -921,7 +1486,7 @@ describe("SessionManager", () => {
     const child = await manager.createSession(manager.addProject(nestedRoot).id, "claude", { mode: "current" });
     const sibling = await manager.createSession(manager.addProject(siblingRoot).id, "claude", { mode: "current" });
     const runTurn = async (sessionId: string, file: string) => {
-      const turnId = await manager.startTurn(sessionId, "go");
+      const turnId = await manager.startTurn(sessionId, "go", { acceptFolderHead: folderHead(repository) });
       writeFileSync(file, "turn\n", "utf8");
       fake.complete(turnId);
       await endSnapshotsSettled(manager);
@@ -947,7 +1512,7 @@ describe("SessionManager", () => {
     const first = await manager.createSession(project.id, "claude", { mode: "current" });
     const second = await manager.createSession(project.id, "claude", { mode: "current" });
     const store = (manager as unknown as { store: SessionStore }).store;
-    const turnId = await manager.startTurn(first.id, "go");
+    const turnId = await manager.startTurn(first.id, "go", { acceptFolderHead: folderHead(repository) });
     writeFileSync(join(repository, "first.txt"), "first\n", "utf8");
     fake.complete(turnId);
     const endSha = (await manager.turnChanges(first.id))?.endSha;
@@ -1031,9 +1596,12 @@ describe("SessionManager", () => {
     fake.complete(turnId);
     const endSha = (await manager.turnChanges(session.id))?.endSha;
     if (!endSha) throw new Error("expected an end snapshot");
-    const internals = manager as unknown as { pendingResolves: Set<string>; worktreeRecovery: Map<string, Promise<string>> };
+    const internals = manager as unknown as {
+      pendingResolves: Map<string, { status: string; promise: Promise<unknown> }>;
+      worktreeRecovery: Map<string, Promise<string>>;
+    };
 
-    internals.pendingResolves.add(session.id);
+    internals.pendingResolves.set(session.id, { status: "resolved", promise: new Promise(() => {}) });
     await expect(manager.undoTurn(session.id, turnId, endSha)).rejects.toThrow("session busy (resolve pending)");
     internals.pendingResolves.delete(session.id);
 
@@ -1627,6 +2195,47 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
+  it("does not mark the only link seen when the turn names a different pull request", async () => {
+    const widgets = { host: "github.com", owner: "acme", repo: "widgets", number: 42 };
+    const gadgets = { host: "github.com", owner: "acme", repo: "gadgets", number: 7 };
+    const refreshed: number[] = [];
+    const { manager, fake, project } = makePrManager({
+      prHeadRefresh: async (ref) => {
+        refreshed.push(ref.number);
+        return `fresh-${ref.number}`;
+      }
+    });
+    const session = await manager.createSession(project.id, "claude", { mode: "current" });
+    manager.linkPr(session.id, { ref: widgets, origin: "linked", lastSeenSha: "old-42", lastSeenAt: 0 });
+
+    const turnId = await manager.startTurn(session.id, "hello", { prRefs: [gadgets] });
+    fake.complete(turnId);
+
+    const updated = await waitForSessionPrSeen(manager, project.id, session.id, "fresh-42");
+    expect(refreshed).toEqual([42]);
+    expect(updated?.prs?.map((link) => [link.ref.number, link.lastSeenSha, link.lastSeenAt])).toEqual([[42, "old-42", 0]]);
+    manager.dispose();
+  });
+
+  it("marks only the named link seen when several are linked", async () => {
+    const widgets = { host: "github.com", owner: "acme", repo: "widgets", number: 42 };
+    const gadgets = { host: "github.com", owner: "acme", repo: "gadgets", number: 7 };
+    const { manager, fake, project } = makePrManager({ prHeadRefresh: async (ref) => `fresh-${ref.number}` });
+    const session = await manager.createSession(project.id, "claude", { mode: "current" });
+    manager.linkPr(session.id, { ref: widgets, origin: "linked", lastSeenSha: "old-42", lastSeenAt: 0 });
+    manager.linkPr(session.id, { ref: gadgets, origin: "linked", lastSeenSha: "old-7", lastSeenAt: 0 });
+
+    const turnId = await manager.startTurn(session.id, "hello", { prRefs: [widgets] });
+    fake.complete(turnId);
+
+    const updated = await waitForSessionPrSeen(manager, project.id, session.id, "fresh-42");
+    expect(updated?.prs?.map((link) => [link.ref.number, link.lastSeenSha])).toEqual([
+      [42, "fresh-42"],
+      [7, "old-7"]
+    ]);
+    manager.dispose();
+  });
+
   it("absorbs the session's own push on an uncovered link without advancing lastSeenAt", async () => {
     const widgets = { host: "github.com", owner: "acme", repo: "widgets", number: 42 };
     const gadgets = { host: "github.com", owner: "acme", repo: "gadgets", number: 7 };
@@ -1729,6 +2338,87 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
+  it("links, marks seen and unlinks an issue, persisting and emitting each change", async () => {
+    const { manager } = makeManager();
+    const emitted: SessionMeta[] = [];
+    manager.setSessionEmitter((meta) => emitted.push(meta));
+    const project = manager.addProject("C:\\proj-issue-links");
+    const session = await manager.createSession(project.id, "claude");
+    const widgets = { host: "github.com", owner: "acme", repo: "widgets", number: 12 };
+    const gadgets = { host: "github.com", owner: "acme", repo: "gadgets", number: 3 };
+    emitted.length = 0;
+
+    manager.linkIssue(session.id, { ref: widgets, origin: "workflow", workflowId: "implement", lastSeenAt: 5 });
+    manager.linkIssue(session.id, { ref: gadgets, origin: "linked", lastSeenAt: 1 });
+    let meta = manager.markIssueSeen(session.id, widgets, 900);
+    expect(meta.issues?.map((link) => [link.ref.number, link.origin, link.lastSeenAt])).toEqual([
+      [12, "workflow", 900],
+      [3, "linked", 1]
+    ]);
+    expect(emitted).toHaveLength(3);
+    expect(emitted.at(-1)?.issues).toEqual(meta.issues);
+
+    meta = manager.markIssueSeen(session.id, widgets, 100);
+    expect(meta.issues?.[0]?.lastSeenAt).toBe(900);
+
+    const [stored] = (await manager.listSessions(project.id)).filter((s) => s.id === session.id);
+    expect(stored?.issues).toEqual(meta.issues);
+
+    manager.unlinkIssue(session.id, widgets);
+    meta = manager.unlinkIssue(session.id, gadgets);
+    expect(meta).not.toHaveProperty("issues");
+    expect(emitted.at(-1)).not.toHaveProperty("issues");
+    manager.dispose();
+  });
+
+  it("links and unlinks a workflow run", async () => {
+    const { manager } = makeManager();
+    const emitted: SessionMeta[] = [];
+    manager.setSessionEmitter((meta) => emitted.push(meta));
+    const project = manager.addProject("C:\\proj-run-links");
+    const session = await manager.createSession(project.id, "claude");
+    const run = { host: "github.com", owner: "acme", repo: "widgets", runId: 987 };
+    emitted.length = 0;
+
+    let meta = manager.linkRun(session.id, { ref: run, origin: "workflow", workflowId: "investigate-run", lastSeenAt: 7 });
+    meta = manager.linkRun(session.id, { ref: { ...run }, origin: "workflow", workflowId: "investigate-run", lastSeenAt: 8 });
+    expect(meta.runs).toEqual([{ ref: run, origin: "workflow", workflowId: "investigate-run", lastSeenAt: 8 }]);
+    expect(emitted).toHaveLength(2);
+
+    meta = manager.unlinkRun(session.id, run);
+    expect(meta).not.toHaveProperty("runs");
+    manager.dispose();
+  });
+
+  it("marks a workflow run seen without moving lastSeenAt backwards, persisting and emitting", async () => {
+    const { manager } = makeManager();
+    const emitted: SessionMeta[] = [];
+    manager.setSessionEmitter((meta) => emitted.push(meta));
+    const project = manager.addProject("C:\\proj-run-seen");
+    const session = await manager.createSession(project.id, "claude");
+    const run = { host: "github.com", owner: "acme", repo: "widgets", runId: 987 };
+    const other = { ...run, runId: 988 };
+    manager.linkRun(session.id, { ref: run, origin: "workflow", workflowId: "investigate-run", lastSeenAt: 7 });
+    manager.linkRun(session.id, { ref: other, origin: "linked", lastSeenAt: 3 });
+    emitted.length = 0;
+
+    let meta = manager.markRunSeen(session.id, { ...run, owner: "ACME" }, 500);
+    expect(meta.runs?.map((link) => [link.ref.runId, link.lastSeenAt])).toEqual([
+      [987, 500],
+      [988, 3]
+    ]);
+    expect(emitted).toHaveLength(1);
+    expect(emitted[0]?.runs).toEqual(meta.runs);
+
+    meta = manager.markRunSeen(session.id, run, 100);
+    expect(meta.runs?.[0]?.lastSeenAt).toBe(500);
+
+    const [stored] = (await manager.listSessions(project.id)).filter((s) => s.id === session.id);
+    expect(stored?.runs).toEqual(meta.runs);
+    expect(() => manager.markRunSeen("missing", run, 1)).toThrow("unknown session");
+    manager.dispose();
+  });
+
   it("settles a holding session with a merged linked PR to idle and traces pr-finished", async () => {
     const widgets = { host: "github.com", owner: "acme", repo: "widgets", number: 42 };
     const { manager, project, dir } = makePrManager({ prState: () => "MERGED" });
@@ -1793,7 +2483,25 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
-  it("settles when a later linked PR is the finished one", async () => {
+  it("settles only when every linked PR is finished", async () => {
+    const widgets = { host: "github.com", owner: "acme", repo: "widgets", number: 42 };
+    const gadgets = { host: "github.com", owner: "acme", repo: "gadgets", number: 7 };
+    const { manager, project } = makePrManager({ prState: (ref) => (ref.number === 7 ? "MERGED" : "CLOSED") });
+    const session = await manager.createSession(project.id, "claude", { mode: "current" });
+    manager.linkPr(session.id, { ref: widgets, origin: "linked", lastSeenSha: "old", lastSeenAt: 0 });
+    manager.linkPr(session.id, { ref: gadgets, origin: "linked", lastSeenSha: "old", lastSeenAt: 0 });
+    const store = (manager as unknown as { store: SessionStore }).store;
+    store.updateSession(session.id, { status: "holding" });
+    manager.setSettings({ prFinishedSessionStatus: "idle" });
+
+    const settled = await manager.settleFinishedPrSessions();
+
+    expect(settled).toEqual([session.id]);
+    expect(store.getSession(session.id)?.status).toBe("idle");
+    manager.dispose();
+  });
+
+  it("leaves a session alone when one linked PR is finished and another is still open", async () => {
     const widgets = { host: "github.com", owner: "acme", repo: "widgets", number: 42 };
     const gadgets = { host: "github.com", owner: "acme", repo: "gadgets", number: 7 };
     const { manager, project } = makePrManager({ prState: (ref) => (ref.number === 7 ? "MERGED" : "OPEN") });
@@ -1806,8 +2514,29 @@ describe("SessionManager", () => {
 
     const settled = await manager.settleFinishedPrSessions();
 
-    expect(settled).toEqual([session.id]);
-    expect(store.getSession(session.id)?.status).toBe("idle");
+    expect(settled).toEqual([]);
+    expect(store.getSession(session.id)?.status).toBe("holding");
+    manager.dispose();
+  });
+
+  it("leaves a session alone when one linked PR is finished and another has an unknown state", async () => {
+    const widgets = { host: "github.com", owner: "acme", repo: "widgets", number: 42 };
+    const gadgets = { host: "github.com", owner: "acme", repo: "gadgets", number: 7 };
+    const { manager, project } = makePrManager({
+      prState: (ref) => (ref.number === 7 ? "MERGED" : null),
+      prStateRefresh: async () => null
+    });
+    const session = await manager.createSession(project.id, "claude", { mode: "current" });
+    manager.linkPr(session.id, { ref: widgets, origin: "linked", lastSeenSha: "old", lastSeenAt: 0 });
+    manager.linkPr(session.id, { ref: gadgets, origin: "linked", lastSeenSha: "old", lastSeenAt: 0 });
+    const store = (manager as unknown as { store: SessionStore }).store;
+    store.updateSession(session.id, { status: "holding" });
+    manager.setSettings({ prFinishedSessionStatus: "idle" });
+
+    const settled = await manager.settleFinishedPrSessions();
+
+    expect(settled).toEqual([]);
+    expect(store.getSession(session.id)?.status).toBe("holding");
     manager.dispose();
   });
 
@@ -2768,6 +3497,54 @@ describe("SessionManager", () => {
     await manager.startTurn(a.id, "hello");
     await expect(manager.resolveSession(a.id, "archived")).rejects.toThrow("session busy (turn active)");
     fake.completeAll();
+    manager.dispose();
+  });
+
+  it("shares one cleanup between concurrent resolves of the same status", async () => {
+    const { manager, project } = makeGitSandboxManager("cw-resolve-coalesce-");
+    const session = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    const worktreePath = session.worktreePath;
+    if (!worktreePath) throw new Error("expected a worktree-backed session");
+
+    const [first, second] = await Promise.all([
+      manager.resolveSession(session.id, "resolved", { removeWorktree: true }),
+      manager.resolveSession(session.id, "resolved", { removeWorktree: true })
+    ]);
+
+    expect(second).toBe(first);
+    expect(first.worktreeRemoved).toBe(true);
+    expect(existsSync(worktreePath)).toBe(false);
+    manager.dispose();
+  });
+
+  it("queues a different resolve status behind the pending one", async () => {
+    const { manager, project } = makeGitSandboxManager("cw-resolve-queue-");
+    const session = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    if (!session.worktreePath) throw new Error("expected a worktree-backed session");
+
+    const [resolved, archived] = await Promise.all([
+      manager.resolveSession(session.id, "resolved", { removeWorktree: true }),
+      manager.resolveSession(session.id, "archived")
+    ]);
+
+    expect(resolved.status).toBe("resolved");
+    expect(archived.status).toBe("archived");
+    const stored = (await manager.listSessions(project.id)).find((s) => s.id === session.id);
+    expect(stored?.status).toBe("archived");
+    manager.dispose();
+  });
+
+  it("emits the resolved status before worktree cleanup finishes", async () => {
+    const { manager, project } = makeGitSandboxManager("cw-resolve-emit-");
+    const session = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    const emitted: SessionMeta[] = [];
+    manager.setSessionEmitter((meta) => emitted.push(meta));
+
+    const pending = manager.resolveSession(session.id, "resolved", { removeWorktree: true });
+
+    expect(emitted[0]?.status).toBe("resolved");
+    expect(emitted[0]?.worktreePath).toBe(session.worktreePath);
+    await pending;
     manager.dispose();
   });
 

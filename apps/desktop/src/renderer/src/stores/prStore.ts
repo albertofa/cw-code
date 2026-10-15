@@ -1,21 +1,22 @@
 import { create } from "zustand";
-import type { DriverName, PrDetail, PrInboxResult, PrRef, ProjectGitHubRepo } from "../cw.js";
+import type { DriverName, GitHubKind, PrDetail, PrInboxResult, PrRef, ProjectGitHubRepo, RepoRef, WorkflowSubject } from "../cw.js";
 import { prKey } from "../components/prInbox.js";
 import type { SettingsSection } from "../components/settingsSections.js";
 import { errorMessage } from "../components/errorMessage.js";
+import { useGitHubStore } from "./githubStore.js";
 
 export type PrDetailTab = "conversation" | "commits" | "checks" | "files";
 
 export type MainView =
   | { kind: "session" }
-  | { kind: "inbox" }
+  | { kind: "github" }
   | { kind: "pr"; ref: PrRef; tab: PrDetailTab }
   | { kind: "usage" }
   | { kind: "settings"; section: SettingsSection; harness?: DriverName };
 
 export interface RunModalState {
   workflowId: string;
-  ref: PrRef;
+  subject: WorkflowSubject;
   continueSessionId?: string;
   promptOverride?: string;
 }
@@ -31,19 +32,21 @@ interface PrState {
   diffLoadingByKey: Record<string, boolean>;
   diffErrorByKey: Record<string, string>;
   mainView: MainView;
+  selectedPrKeyBySession: Record<string, string>;
   projectRepos: ProjectGitHubRepo[];
   runModal: RunModalState | null;
   refreshInbox(force?: boolean): Promise<void>;
   loadDetail(ref: PrRef): Promise<void>;
   loadDiff(ref: PrRef, force?: boolean): Promise<void>;
-  openInbox(): void;
+  openGitHub(kind?: GitHubKind): void;
   openPr(ref: PrRef, tab?: PrDetailTab): void;
+  selectSessionPr(sessionId: string, key: string | null): void;
   setPrTab(tab: PrDetailTab): void;
   openSessionView(): void;
   openUsage(): void;
   openSettings(section?: SettingsSection, harness?: DriverName): void;
   refreshProjectRepos(): Promise<void>;
-  projectIdForRef(ref: PrRef): string | null;
+  projectIdForRef<T extends RepoRef>(ref: T): string | null;
   openRunModal(state: RunModalState): void;
   closeRunModal(): void;
 }
@@ -66,6 +69,7 @@ export const usePrStore = create<PrState>((set, get) => ({
   diffLoadingByKey: {},
   diffErrorByKey: {},
   mainView: { kind: "session" },
+  selectedPrKeyBySession: {},
   projectRepos: [],
   runModal: null,
 
@@ -76,6 +80,7 @@ export const usePrStore = create<PrState>((set, get) => ({
     try {
       const inbox = await window.cw.getPrInbox(force);
       set({ inbox, inboxLoading: false, inboxError: null });
+      useGitHubStore.getState().syncContext();
     } catch (err) {
       const message = errorMessage(err);
       console.warn(`[pr] inbox refresh failed: ${message}`);
@@ -126,14 +131,25 @@ export const usePrStore = create<PrState>((set, get) => ({
     }
   },
 
-  openInbox() {
-    set({ mainView: { kind: "inbox" } });
+  openGitHub(kind?: GitHubKind) {
+    if (kind) useGitHubStore.getState().setKind(kind);
+    set({ mainView: { kind: "github" } });
     if (!get().inbox && !get().inboxLoading) void get().refreshInbox();
   },
 
   openPr(ref: PrRef, tab: PrDetailTab = "conversation") {
     set({ mainView: { kind: "pr", ref, tab } });
     void get().loadDetail(ref);
+  },
+
+  selectSessionPr(sessionId: string, key: string | null) {
+    const current = get().selectedPrKeyBySession;
+    if (key === null) {
+      set({ selectedPrKeyBySession: without(current, sessionId) });
+      return;
+    }
+    if (current[sessionId] === key) return;
+    set({ selectedPrKeyBySession: { ...current, [sessionId]: key } });
   },
 
   setPrTab(tab: PrDetailTab) {
@@ -158,12 +174,13 @@ export const usePrStore = create<PrState>((set, get) => ({
   async refreshProjectRepos() {
     try {
       set({ projectRepos: await window.cw.getProjectGitHubRepos() });
+      useGitHubStore.getState().syncContext();
     } catch (err) {
       console.warn(`[pr] project repo lookup failed: ${errorMessage(err)}`);
     }
   },
 
-  projectIdForRef(ref: PrRef) {
+  projectIdForRef<T extends RepoRef>(ref: T) {
     const owner = ref.owner.toLowerCase();
     const repo = ref.repo.toLowerCase();
     const match = get().projectRepos.find(

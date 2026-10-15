@@ -23,7 +23,7 @@ import { appendCrashLog, initCrashLog } from "./debug/crashLog.js";
 import { RendererProbeTracker, runPackageProbe } from "./debug/packageProbe.js";
 import { claudeCommandsCachePath, cwCodeHome, ensureAppDirs, attachmentsDir, logsDir, migrateFromUserData, opencodeModelsCachePath, sessionDbPath, settingsFilePath, userdataDir } from "./paths/appPaths.js";
 import { reapOrphanedServers } from "./orphanServers.js";
-import type { AppSettings, ApprovalDecision, CliBinary, CommandInvocation, CreateSessionOptions, GitDiffMode, ProjectGitHubRepo, PrRef, SessionPrLink, MetadataIssue, SessionStatus, SettingsPatch, ShutdownCommitResult, ShutdownExpiredEvent, ShutdownPrepareRequest, ShutdownReason, ShutdownRequestedEvent, StartupState, UpdateActionResult, UpdateState, UsageLedgerQuery } from "@cw-code/contracts";
+import type { AppSettings, ApprovalDecision, CliBinary, CommandInvocation, CreateSessionOptions, GitDiffMode, ProjectGitHubRepo, PrRef, RepoRef, RunRef, RunSources, SessionPrLink, MetadataIssue, SessionStatus, SettingsPatch, ShutdownCommitResult, ShutdownExpiredEvent, ShutdownPrepareRequest, ShutdownReason, ShutdownRequestedEvent, StartupState, UpdateActionResult, UpdateState, UsageLedgerQuery } from "@cw-code/contracts";
 import type { DriverKind, HarnessId, SkillSaveInput } from "@cw-code/contracts";
 import type { PtyKind } from "./pty/PtyPool.js";
 import { SessionManager } from "./sessions/SessionManager.js";
@@ -33,6 +33,13 @@ import { FileService, IMAGE_MAX_BYTES, imageExtMime } from "./fs/FileService.js"
 import { GitService, sweepStaleSnapshotIndexes } from "./fs/GitService.js";
 import { assertOpenablePath } from "./fs/openPathPolicy.js";
 import { assertPrRef, PullRequestService } from "./github/PullRequestService.js";
+import { assertCountBase, assertSearchKind, assertSearchQuery, GitHubSearchService } from "./github/GitHubSearchService.js";
+import { assertIssueRef, assertOwnerLogin, assertRepoRef, assertRunRef } from "./github/githubRefs.js";
+import { MAX_COUNT_QUERIES } from "./github/issueQueries.js";
+import { isValidIssueLink, isValidRunLink } from "./github/prLinks.js";
+import { MAX_RUN_ORGS, MAX_RUN_REPOS } from "./github/runQueries.js";
+import { RunsService } from "./github/RunsService.js";
+import { MAX_WATCHED_RUNS, RunWatcher } from "./github/RunWatcher.js";
 import { PtyPool } from "./pty/PtyPool.js";
 import { defaultPrWorkflows } from "./settings/prWorkflowDefaults.js";
 import { configuredCliBinaryPath } from "./settings/settingsUtils.js";
@@ -97,12 +104,54 @@ function isValidUsageLedgerQuery(query: unknown): query is UsageLedgerQuery | un
   return true;
 }
 
+function parseArgs(args: unknown, channel: string): Record<string, unknown> {
+  if (!args || typeof args !== "object") throw new Error(`${channel} requires an argument object`);
+  return args as Record<string, unknown>;
+}
+
+function parseOptionalBoolean(value: unknown, name: string): boolean | undefined {
+  if (value !== undefined && typeof value !== "boolean") throw new Error(`${name} must be a boolean`);
+  return value;
+}
+
+function parseList<T>(value: unknown, max: number, name: string, assertItem: (item: unknown) => asserts item is T): T[] {
+  if (!Array.isArray(value) || value.length > max) throw new Error(`${name} must be an array of at most ${max} items`);
+  const items: T[] = [];
+  for (const item of value) {
+    assertItem(item);
+    items.push(item);
+  }
+  return items;
+}
+
+function parseRunSources(value: unknown): RunSources {
+  const { prSearchQuery, repos, orgs } = parseArgs(value, "github.runs sources");
+  let query: string | null = null;
+  if (prSearchQuery !== null) {
+    assertSearchQuery(prSearchQuery);
+    query = prSearchQuery;
+  }
+  return {
+    prSearchQuery: query,
+    repos: parseList<RepoRef>(repos, MAX_RUN_REPOS, "repos", assertRepoRef),
+    orgs: parseList<string>(orgs, MAX_RUN_ORGS, "orgs", assertOwnerLogin)
+  };
+}
+
+function sendToMainWindow(channel: string, payload?: unknown): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send(channel, payload);
+}
+
 interface Services {
   sessions: SessionManager;
   skills: SkillsStore;
   files: FileService;
   git: GitService;
   pullRequests: PullRequestService;
+  githubSearch: GitHubSearchService;
+  runs: RunsService;
+  runWatcher: RunWatcher;
   ptys: PtyPool;
   accountUsage: AccountUsageService;
   updates: UpdateService;
@@ -153,6 +202,9 @@ function createServices(stores: { sessionStore: SessionStore; settingsStore: Set
     onResolved: (sessionId) => ptys.killSession(sessionId)
   });
   pullRequests = new PullRequestService(git, () => sessions.getSettings(), (rootPath) => sessions.addProject(rootPath));
+  const githubSearch = new GitHubSearchService(() => sessions.getSettings());
+  const runs = new RunsService(() => sessions.getSettings());
+  const runWatcher = new RunWatcher(() => sessions.getSettings());
   const ptys = new PtyPool(() => sessions.getSettings());
   const settings = stores.settingsStore.get();
   const updates = createUpdateService(settings);
@@ -170,6 +222,9 @@ function createServices(stores: { sessionStore: SessionStore; settingsStore: Set
     files: new FileService(),
     git,
     pullRequests,
+    githubSearch,
+    runs,
+    runWatcher,
     ptys,
     accountUsage: new AccountUsageService(() => sessions.driversForProbe()),
     shutdown: new ShutdownCoordinator({ sessions, ptys, onRecovered: handleShutdownRecovered, onExpired: handleShutdownExpired }),
@@ -252,6 +307,7 @@ function disposeServices(): void {
   } catch (err) {
     console.warn(`flush before exit failed: ${(err as Error).message}`);
   }
+  services.runWatcher.dispose();
   services.updates.dispose();
   services.sessions.dispose();
   services.ptys.dispose();
@@ -583,6 +639,102 @@ function registerUpdateIpc(services: Services): void {
   });
 }
 
+function registerGitHubIpc({ sessions, pullRequests, githubSearch, runs, runWatcher }: Services): void {
+  runWatcher.onRunsChanged = (changed) => sendToMainWindow("github.runsChanged", changed);
+  runWatcher.onCiActivity = () => sendToMainWindow("github.ciActivity");
+  ipcMain.handle("github.search", (_e, args: unknown) => {
+    const { kind, query, countBase, force } = parseArgs(args, "github.search");
+    assertSearchKind(kind);
+    assertSearchQuery(query);
+    assertCountBase(countBase);
+    const forced = parseOptionalBoolean(force, "force");
+    return kind === "pr" ? githubSearch.search("pr", query, countBase, forced) : githubSearch.search("issue", query, countBase, forced);
+  });
+  ipcMain.handle("github.counts", (_e, args: unknown) => {
+    const { kind, queries } = parseArgs(args, "github.counts");
+    assertSearchKind(kind);
+    return githubSearch.counts(kind, parseList<string>(queries, MAX_COUNT_QUERIES, "queries", assertSearchQuery));
+  });
+  ipcMain.handle("github.issueDetail", (_e, args: unknown) => {
+    const { ref } = parseArgs(args, "github.issueDetail");
+    assertIssueRef(ref);
+    return githubSearch.issueDetail(ref);
+  });
+  ipcMain.handle("github.runs", (_e, args: unknown) => {
+    const { sources, force } = parseArgs(args, "github.runs");
+    return runs.runs(parseRunSources(sources), parseOptionalBoolean(force, "force"));
+  });
+  ipcMain.handle("github.runLog", (_e, args: unknown) => {
+    const { ref } = parseArgs(args, "github.runLog");
+    assertRunRef(ref);
+    return runs.runLog(ref);
+  });
+  ipcMain.handle("github.watchRuns", (_e, args: unknown) => {
+    const { refs } = parseArgs(args, "github.watchRuns");
+    runWatcher.watch(parseList<RunRef>(refs, MAX_WATCHED_RUNS, "refs", assertRunRef));
+  });
+  ipcMain.handle("github.setActive", (_e, args: unknown) => {
+    const { active } = parseArgs(args, "github.setActive");
+    if (typeof active !== "boolean") throw new Error("active must be a boolean");
+    runWatcher.setActive(active);
+  });
+  ipcMain.handle("github.clone", (_e, args: unknown) => {
+    const { repo } = parseArgs(args, "github.clone");
+    assertRepoRef(repo);
+    return pullRequests.clone(repo);
+  });
+  ipcMain.handle("sessions.linkIssue", (_e, args: unknown) => {
+    const { sessionId, link } = parseArgs(args, "sessions.linkIssue");
+    if (typeof sessionId !== "string" || !isValidIssueLink(link)) throw new Error("invalid issue link");
+    assertIssueRef(link.ref);
+    const { host, owner, repo, number } = link.ref;
+    return sessions.linkIssue(sessionId, {
+      ref: { host, owner, repo, number },
+      origin: link.origin,
+      ...(link.workflowId !== undefined ? { workflowId: link.workflowId } : {}),
+      lastSeenAt: link.lastSeenAt
+    });
+  });
+  ipcMain.handle("sessions.unlinkIssue", (_e, args: unknown) => {
+    const { sessionId, ref } = parseArgs(args, "sessions.unlinkIssue");
+    if (typeof sessionId !== "string") throw new Error("invalid sessionId");
+    assertIssueRef(ref);
+    return sessions.unlinkIssue(sessionId, ref);
+  });
+  ipcMain.handle("sessions.markIssueSeen", (_e, args: unknown) => {
+    const { sessionId, ref, seenAt } = parseArgs(args, "sessions.markIssueSeen");
+    if (typeof sessionId !== "string") throw new Error("invalid sessionId");
+    assertIssueRef(ref);
+    if (typeof seenAt !== "number" || !Number.isFinite(seenAt)) throw new Error("invalid seenAt");
+    return sessions.markIssueSeen(sessionId, ref, seenAt);
+  });
+  ipcMain.handle("sessions.linkRun", (_e, args: unknown) => {
+    const { sessionId, link } = parseArgs(args, "sessions.linkRun");
+    if (typeof sessionId !== "string" || !isValidRunLink(link)) throw new Error("invalid run link");
+    assertRunRef(link.ref);
+    const { host, owner, repo, runId } = link.ref;
+    return sessions.linkRun(sessionId, {
+      ref: { host, owner, repo, runId },
+      origin: link.origin,
+      ...(link.workflowId !== undefined ? { workflowId: link.workflowId } : {}),
+      lastSeenAt: link.lastSeenAt
+    });
+  });
+  ipcMain.handle("sessions.unlinkRun", (_e, args: unknown) => {
+    const { sessionId, ref } = parseArgs(args, "sessions.unlinkRun");
+    if (typeof sessionId !== "string") throw new Error("invalid sessionId");
+    assertRunRef(ref);
+    return sessions.unlinkRun(sessionId, ref);
+  });
+  ipcMain.handle("sessions.markRunSeen", (_e, args: unknown) => {
+    const { sessionId, ref, seenAt } = parseArgs(args, "sessions.markRunSeen");
+    if (typeof sessionId !== "string") throw new Error("invalid sessionId");
+    assertRunRef(ref);
+    if (typeof seenAt !== "number" || !Number.isFinite(seenAt)) throw new Error("invalid seenAt");
+    return sessions.markRunSeen(sessionId, ref, seenAt);
+  });
+}
+
 function registerShutdownIpc({ shutdown }: Services): void {
   ipcMain.handle("shutdown.assess", () => {
     clearShutdownAck();
@@ -606,6 +758,7 @@ function registerShutdownIpc({ shutdown }: Services): void {
 function registerIpc(services: Services): void {
   const { sessions, skills, files, git, pullRequests, ptys, accountUsage, updates } = services;
   registerUpdateIpc(services);
+  registerGitHubIpc(services);
   sessions.setEmitter((sessionId, event) => {
     mainWindow?.webContents.send("turn.event", { sessionId, event });
   });
@@ -747,15 +900,18 @@ function registerIpc(services: Services): void {
         attachments?: string[];
         command?: CommandInvocation;
         prRefs?: PrRef[];
+        acceptFolderHead?: string;
       }
     ) => {
       if (args.prRefs !== undefined && !Array.isArray(args.prRefs)) throw new Error("invalid prRefs");
+      if (args.acceptFolderHead !== undefined && typeof args.acceptFolderHead !== "string") throw new Error("invalid acceptFolderHead");
       for (const ref of args.prRefs ?? []) assertPrRef(ref);
       return sessions.startTurn(args.sessionId, args.prompt, {
         prefs: args.prefs,
         attachments: args.attachments,
         ...(args.command ? { command: args.command } : {}),
-        prRefs: args.prRefs
+        prRefs: args.prRefs,
+        ...(args.acceptFolderHead !== undefined ? { acceptFolderHead: args.acceptFolderHead } : {})
       });
     }
   );
@@ -836,12 +992,7 @@ function registerIpc(services: Services): void {
     git.branches(sessions.rootForProject(args.projectId))
   );
   ipcMain.handle("git.switchBranch", (_e, args: { sessionId: string; branch: string }) =>
-    sessions.withBranchSwitch(args.sessionId, async () => {
-      const root = await sessions.ensureWorktree(args.sessionId);
-      const status = await git.switchBranch(root, args.branch, sessions.projectForSession(args.sessionId));
-      sessions.updateSessionBranch(args.sessionId, status.branch);
-      return status;
-    })
+    sessions.switchBranch(args.sessionId, args.branch)
   );
   ipcMain.handle("git.diff", async (_e, args: { sessionId: string; mode: GitDiffMode; baseRef?: string }) => {
     const root = await sessions.ensureWorktree(args.sessionId);
@@ -884,7 +1035,6 @@ function registerIpc(services: Services): void {
   ipcMain.handle("prs.detail", (_e, args: { ref: PrRef }) => pullRequests.detail(args.ref));
   ipcMain.handle("prs.diff", (_e, args: { ref: PrRef }) => pullRequests.diff(args.ref));
   ipcMain.handle("prs.checkLog", (_e, args: { ref: PrRef; runId: number }) => pullRequests.failedCheckLog(args.ref, args.runId));
-  ipcMain.handle("prs.clone", (_e, args: { ref: PrRef }) => pullRequests.clone(args.ref));
   ipcMain.handle("prs.projectRepos", async (): Promise<ProjectGitHubRepo[]> => {
     const repos = await Promise.all(
       sessions.listProjects().map(async (project) => {

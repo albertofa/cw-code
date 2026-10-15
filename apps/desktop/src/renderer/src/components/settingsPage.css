@@ -1141,6 +1141,21 @@
   gap: 2px;
 }
 
+.sp-wf-group {
+  padding: 10px 6px 4px;
+  font-size: var(--t-xs);
+  font-weight: 500;
+  color: var(--faint);
+}
+
+.sp-wf-group:first-child {
+  padding-top: 0;
+}
+
+.sp-target-tag {
+  margin-left: auto;
+}
+
 .sp-wf {
   position: relative;
   display: flex;
