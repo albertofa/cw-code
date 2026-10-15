@@ -868,6 +868,35 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
+  it("refuses a sibling turn while a current-checkout create is moving the folder and allows it afterwards", async () => {
+    const { manager, project, repository } = makeGitSandboxManager("cw-session-turn-during-create-");
+    const sibling = await manager.createSession(project.id, "claude", { mode: "current" });
+    const git = (manager as unknown as { git: { switchToNewBranch: (root: string, name: string, base: string) => Promise<string> } }).git;
+    const realSwitch = git.switchToNewBranch.bind(git);
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolveGate) => {
+      release = resolveGate;
+    });
+    let reached = false;
+    git.switchToNewBranch = async (root, name, base) => {
+      reached = true;
+      await gate;
+      return realSwitch(root, name, base);
+    };
+
+    const pendingCreate = manager.createSession(project.id, "claude", { mode: "current" });
+    await vi.waitFor(() => expect(reached).toBe(true));
+
+    await expect(manager.startTurn(sibling.id, "blocked", { acceptFolderHead: folderHead(repository) })).rejects.toThrow(
+      `${project.name} is switching branches — try again in a moment`
+    );
+
+    release();
+    await pendingCreate;
+    await expect(manager.startTurn(sibling.id, "allowed", { acceptFolderHead: folderHead(repository) })).resolves.toEqual(expect.any(String));
+    manager.dispose();
+  });
+
   it("serializes concurrent branch switches and records the branch HEAD ends up on", async () => {
     const { manager, project, repository } = makeGitSandboxManager("cw-session-switch-serial-");
     const first = await manager.createSession(project.id, "claude", { mode: "current" });

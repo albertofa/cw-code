@@ -208,6 +208,7 @@ export class SessionManager {
   private deltaBuffer = new Map<string, { sessionId: string; text: string; timer: NodeJS.Timeout }>();
   private pendingUndos = new Set<string>();
   private pendingBranchSwitches = new Set<string>();
+  private pendingCheckoutRoots = new Set<string>();
   private endSnapshots = new Map<string, Promise<void>>();
   private disposed = false;
   private prHead: (ref: PrRef) => string | null;
@@ -596,19 +597,34 @@ export class SessionManager {
     }
     await this.assertCheckoutReady(project);
     if (plan?.kind === "attach") {
-      await this.git.checkoutBranch(project.rootPath, plan.branch);
-      await this.git.initSubmodules(project.rootPath);
+      await this.withPendingCheckout(project, async () => {
+        await this.assertCheckoutReady(project);
+        await this.git.checkoutBranch(project.rootPath, plan.branch);
+        await this.git.initSubmodules(project.rootPath);
+      });
       return this.store.createSession(project.id, driver, "New session", { id, branch: plan.branch });
     }
     const { base, ...baseOptions } = await this.requestedBase(project, plan, options);
     this.assertNotReserved();
     const resolved = await this.git.resolveBase(project.rootPath, base, baseOptions);
     this.assertNotReserved();
-    await this.assertCheckoutReady(project);
-    const branch = await this.git.switchToNewBranch(project.rootPath, sessionBranchName(id), resolved.ref);
-    await this.git.initSubmodules(project.rootPath);
+    const branch = await this.withPendingCheckout(project, async () => {
+      await this.assertCheckoutReady(project);
+      const created = await this.git.switchToNewBranch(project.rootPath, sessionBranchName(id), resolved.ref);
+      await this.git.initSubmodules(project.rootPath);
+      return created;
+    });
     const session = this.store.createSession(project.id, driver, "New session", { id, branch });
     return withCreateNotice(session, resolved.warning);
+  }
+
+  private async withPendingCheckout<T>(project: Project, run: () => Promise<T>): Promise<T> {
+    this.pendingCheckoutRoots.add(project.rootPath);
+    try {
+      return await run();
+    } finally {
+      this.pendingCheckoutRoots.delete(project.rootPath);
+    }
   }
 
   private async isCheckedOutAtRoot(project: Project, branch: string): Promise<boolean> {
@@ -1452,7 +1468,9 @@ export class SessionManager {
   }
 
   private branchSwitchPendingOnRoot(session: SessionMeta): boolean {
-    return this.sameRootSessions(session).some((other) => this.pendingBranchSwitches.has(other.id));
+    if (this.sameRootSessions(session).some((other) => this.pendingBranchSwitches.has(other.id))) return true;
+    const root = this.sessionRoot(session);
+    return root !== null && [...this.pendingCheckoutRoots].some((pending) => rootsOverlap(pending, root));
   }
 
   private async assertFolderOnSessionBranch(session: SessionMeta, project: Project, cwd: string, acceptedHead: string | undefined): Promise<void> {
