@@ -6,7 +6,11 @@ export function ProjectMonogram({ name, size = 16, title }: { name: string; size
   const { monogram, color } = deriveProjectIdentity(name);
   const isSingleGlyph = Array.from(graphemeSegmenter.segment(monogram)).length === 1;
   return (
-    <span className="project-mono" style={{ color, width: size, height: size }} title={title} aria-hidden="true">
+    <span
+      className="project-mono"
+      style={{ color, width: size, height: size }}
+      {...(title ? { title, role: "img", "aria-label": title } : { "aria-hidden": true })}
+    >
       <svg viewBox="0 0 16 16">
         <text
           x="8"

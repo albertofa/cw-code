@@ -11,7 +11,6 @@
   --bg-deep: #151922;
   --card: #1b202b;
   --overlay: #1f2330;
-  --composer-surface: #242734;
   --user-msg: #232735;
   --hover: #1d2029;
   --raised: #262a36;
@@ -451,53 +450,6 @@ body {
   gap: 6px;
 }
 
-.search-row {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  background: var(--bg-deep);
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
-  padding: 0 4px 0 9px;
-}
-
-.search-row:focus-within {
-  border-color: var(--violet-line);
-}
-
-.search-row .search-icon {
-  color: var(--faint);
-  font-size: var(--t-xs);
-  flex: none;
-}
-
-.search-row input {
-  flex: 1;
-  min-width: 0;
-  background: transparent;
-  border: none;
-  color: var(--text);
-  font-family: var(--sans);
-  font-size: var(--t-sm);
-  padding: 8px 0;
-}
-
-.search-row input::placeholder {
-  color: var(--faint);
-}
-
-.search-row input:focus {
-  outline: none;
-}
-
-.search-row .icon-btn {
-  padding: 1px 6px;
-}
-
-.picker {
-  position: relative;
-}
-
 .side-new-session {
   display: flex;
   align-items: center;
@@ -652,72 +604,6 @@ body {
   font-variant-numeric: tabular-nums;
   display: inline-grid;
   place-items: center;
-}
-
-.picker-backdrop {
-  position: fixed;
-  inset: 0;
-  z-index: 40;
-}
-
-.picker-panel {
-  position: absolute;
-  top: calc(100% + 6px);
-  left: 0;
-  right: 0;
-  z-index: 45;
-  background: var(--overlay);
-  border: 1px solid var(--border);
-  border-radius: var(--r-lg);
-  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.5);
-  padding: 8px;
-  display: flex;
-  flex-direction: column;
-  gap: 6px;
-}
-
-.picker-list {
-  overflow-y: auto;
-  display: flex;
-  flex-direction: column;
-  max-height: 240px;
-}
-
-.picker-row {
-  display: flex;
-  align-items: center;
-  gap: 8px;
-  padding: 6px 7px;
-  border-radius: var(--r-md);
-  cursor: pointer;
-}
-
-.picker-row:hover {
-  background: var(--hover);
-}
-
-.picker-row.active {
-  background: var(--violet-soft);
-  box-shadow: inset 2px 0 0 var(--violet);
-}
-
-.picker-row.active svg {
-  color: var(--violet-ink);
-}
-
-.picker-row .name {
-  flex: 1;
-  min-width: 0;
-  font-size: var(--t-sm);
-  color: var(--dim);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.picker-row:hover .name,
-.picker-row.active .name {
-  color: var(--text);
 }
 
 .project-mono {
@@ -2874,6 +2760,7 @@ body.session-dragging * {
 
 .thread-stage {
   position: relative;
+  isolation: isolate;
   flex: 1;
   min-height: 0;
   display: flex;
@@ -5626,7 +5513,6 @@ select.field option {
 }
 
 .menu-panel,
-.picker-panel,
 .ctx-menu,
 .session-hovercard,
 .context-dock,
@@ -6436,11 +6322,14 @@ select.field option {
 }
 
 .composer-where .menu {
+  flex: 0 1 auto;
   min-width: 0;
 }
 
 .composer-where .menu-btn {
   box-sizing: border-box;
+  max-width: 100%;
+  min-width: 0;
   height: 28px;
   padding: 0 8px;
   gap: 6px;
@@ -6465,12 +6354,26 @@ select.field option {
   color: var(--faint);
 }
 
+.composer-where .menu-btn-icon,
+.composer-where .menu-chevron {
+  flex: none;
+}
+
 .composer-where .menu-value {
+  min-width: 0;
   max-width: 220px;
 }
 
+.composer-where .project-picker-btn {
+  max-width: min(360px, 100%);
+}
+
 .composer-where .workspace-hint {
+  min-width: 0;
   padding: 0 8px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
   font-size: var(--t-xs);
 }
 
@@ -6478,6 +6381,7 @@ select.field option {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+  min-width: 0;
   height: 28px;
   padding: 0 8px;
   color: var(--dim);
@@ -6486,7 +6390,14 @@ select.field option {
 }
 
 .composer-where .ws-current svg {
+  flex: none;
   color: var(--muted);
+}
+
+.composer-where .ws-current-label {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .gitbar-location {

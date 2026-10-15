@@ -226,8 +226,8 @@
 
 .fp-composer {
   padding: 12px 14px;
-  border-radius: 10px;
-  background: var(--composer-surface);
+  border-radius: 18px;
+  background: color-mix(in srgb, var(--panel) 68%, transparent);
   line-height: 1.625;
   color: var(--text);
 }

@@ -17,6 +17,7 @@ export function NewSessionProjectPicker({ project }: { project: Project | undefi
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
   const [highlight, setHighlight] = useState(0);
+  const [navigated, setNavigated] = useState(false);
   const [adding, setAdding] = useState(false);
   const listId = useId();
   const triggerRef = useRef<HTMLButtonElement>(null);
@@ -25,6 +26,7 @@ export function NewSessionProjectPicker({ project }: { project: Project | undefi
     setOpen(false);
     setQuery("");
     setHighlight(0);
+    setNavigated(false);
   };
 
   const q = query.trim().toLowerCase();
@@ -34,6 +36,7 @@ export function NewSessionProjectPicker({ project }: { project: Project | undefi
     : ordered;
   const addIndex = visible.length;
   const active = Math.min(highlight, addIndex);
+  const hasTarget = visible.length > 0 || navigated;
   const optionId = (index: number) => `${listId}-opt-${index}`;
 
   useLayoutEffect(() => {
@@ -73,10 +76,11 @@ export function NewSessionProjectPicker({ project }: { project: Project | undefi
       const step = e.key === "ArrowDown" ? 1 : -1;
       const count = addIndex + 1;
       setHighlight((active + step + count) % count);
+      setNavigated(true);
     } else if (e.key === "Enter") {
       e.preventDefault();
       e.stopPropagation();
-      activate(active);
+      if (hasTarget) activate(active);
     }
   };
 
@@ -121,7 +125,7 @@ export function NewSessionProjectPicker({ project }: { project: Project | undefi
                   aria-expanded="true"
                   aria-autocomplete="list"
                   aria-controls={listId}
-                  aria-activedescendant={optionId(active)}
+                  aria-activedescendant={hasTarget ? optionId(active) : undefined}
                   placeholder="Find a project"
                   autoComplete="off"
                   spellCheck={false}
@@ -129,6 +133,7 @@ export function NewSessionProjectPicker({ project }: { project: Project | undefi
                   onChange={(e) => {
                     setQuery(e.target.value);
                     setHighlight(0);
+                    setNavigated(false);
                   }}
                   onKeyDown={onSearchKeyDown}
                 />
@@ -163,7 +168,7 @@ export function NewSessionProjectPicker({ project }: { project: Project | undefi
                   )}
                   <div
                     id={optionId(addIndex)}
-                    className={`mp-act${active === addIndex && !adding ? " hi" : ""}`}
+                    className={`mp-act${hasTarget && active === addIndex && !adding ? " hi" : ""}`}
                     role="option"
                     aria-selected={false}
                     aria-disabled={adding}

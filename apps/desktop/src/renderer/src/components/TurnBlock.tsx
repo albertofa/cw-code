@@ -61,8 +61,7 @@ export function TurnBlock({
     setMeasuring(false);
     const root = rootRef.current;
     const scroll = root?.closest(".thread-scroll");
-    const stage = root?.closest<HTMLElement>(".thread-stage");
-    const overlay = stage ? Number.parseFloat(stage.style.getPropertyValue("--composer-overlay-h")) || 0 : 0;
+    const overlay = root?.closest(".thread-stage")?.querySelector(".composer-wrap")?.getBoundingClientRect().height ?? 0;
     if (root && scroll && root.offsetHeight > 0 && root.offsetHeight <= scroll.clientHeight - overlay) {
       setManualOpen(true);
     } else {

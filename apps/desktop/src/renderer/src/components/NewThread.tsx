@@ -199,7 +199,7 @@ export function NewThread({
           {baseBranchSelect ?? reuseSelect ?? (currentBranch && (
             <span className="ws-current" title={`Working in the project on ${currentBranch.name}`}>
               <GitBranch size={13} aria-hidden="true" />
-              {currentBranch.label}
+              <span className="ws-current-label">{currentBranch.label}</span>
             </span>
           ))}
         </>
