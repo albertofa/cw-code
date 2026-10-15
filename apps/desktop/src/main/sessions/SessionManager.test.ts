@@ -803,6 +803,46 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
+  it.each(["current", "new"] as const)("refuses the fallback in %s mode when the fetch failed and there is no local copy", async (mode) => {
+    const { manager, project, repository } = makeGitSandboxManager(`cw-session-fallback-failed-${mode}-`);
+    attachOrigin(repository);
+    gitOut(repository, "remote", "set-url", "origin", join(dirname(repository), "missing.git"));
+
+    await expect(manager.createSession(project.id, "claude", { mode, baseBranch: "gone/run", baseFallback: "default" })).rejects.toThrow(
+      /^Could not fetch run branch 'gone\/run' \(.+\) and it isn't available locally$/
+    );
+    expect(await manager.listSessions(project.id)).toHaveLength(0);
+    manager.dispose();
+  });
+
+  it("emits the session when its branch is updated", async () => {
+    const { manager, project } = makeGitSandboxManager("cw-session-branch-emit-");
+    const emitted: SessionMeta[] = [];
+    manager.setSessionEmitter((meta) => emitted.push(structuredClone(meta)));
+    const session = await manager.createSession(project.id, "claude", { mode: "new" });
+
+    manager.updateSessionBranch(session.id, "feature/switched");
+
+    expect(emitted.at(-1)?.id).toBe(session.id);
+    expect(emitted.at(-1)?.branch).toBe("feature/switched");
+    manager.dispose();
+  });
+
+  it("refuses a branch switch while any session on the same folder has a turn in flight", async () => {
+    const { manager, fake, project } = makeGitSandboxManager("cw-session-switch-busy-");
+    const idle = await manager.createSession(project.id, "claude", { mode: "current" });
+    const running = await manager.createSession(project.id, "claude", { mode: "current" });
+    await manager.startTurn(running.id, "work");
+    const message = `${running.title} is running in ${project.name} — wait for it to finish before switching branches`;
+
+    await expect(manager.withBranchSwitch(running.id, async () => "switched")).rejects.toThrow(message);
+    await expect(manager.withBranchSwitch(idle.id, async () => "switched")).rejects.toThrow(message);
+
+    fake.completeAll();
+    await vi.waitFor(async () => expect(await manager.withBranchSwitch(idle.id, async () => "switched")).toBe("switched"));
+    manager.dispose();
+  });
+
   it("still throws for a missing run branch without the fallback", async () => {
     const { manager, project, repository } = makeGitSandboxManager("cw-session-nofallback-");
     attachOrigin(repository);

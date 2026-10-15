@@ -507,6 +507,30 @@ describe("GitService worktrees", () => {
     await expect(service.resolveBase(repository, "-x", { exact: true })).rejects.toThrow("invalid base branch '-x'");
   });
 
+  it("never falls back to the default for an exact base that is missing", async () => {
+    const { sandbox, repository, service } = initSandbox();
+    withOrigin(repository, sandbox);
+
+    await expect(service.resolveBase(repository, "nope", { exact: true, fallbackToDefault: true })).rejects.toThrow(
+      "unknown base branch 'nope'"
+    );
+  });
+
+  it("falls back to the default only when the requested branch is missing, not when the fetch failed", async () => {
+    const { sandbox, repository, service } = initSandbox();
+    withOrigin(repository, sandbox);
+
+    const missing = await service.resolveBase(repository, "gone/run", { fallbackToDefault: true });
+    expect(missing.ref).toBe("origin/main");
+    expect(missing.warning).toBe("Run branch 'gone/run' wasn't found on origin or locally; started from origin/main");
+
+    execFileSync("git", ["-C", repository, "remote", "set-url", "origin", join(sandbox, "missing.git")]);
+    await expect(service.resolveBase(repository, "gone/run", { fallbackToDefault: true })).rejects.toThrow(
+      /^Could not fetch run branch 'gone\/run' \(.+\) and it isn't available locally$/
+    );
+    await expect(service.resolveBase(repository, "gone/run")).rejects.toThrow("unknown base branch 'gone/run'");
+  });
+
   it("creates a worktree from the exact local branch even when origin has a newer branch of the same name", async () => {
     const { sandbox, repository, service } = initSandbox();
     const { pusher } = withOrigin(repository, sandbox);

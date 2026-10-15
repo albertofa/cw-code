@@ -1531,8 +1531,14 @@ export class SessionManager {
   }
 
   async withBranchSwitch<T>(sessionId: string, run: () => Promise<T>): Promise<T> {
-    if (this.undoPendingOnRoot(this.requireSession(sessionId))) throw new Error("session busy (undo pending)");
+    const session = this.requireSession(sessionId);
+    if (this.undoPendingOnRoot(session)) throw new Error("session busy (undo pending)");
     if (this.pendingBranchSwitches.has(sessionId)) throw new Error("session busy (branch switch pending)");
+    const running = this.sameRootSessions(session).find((other) => this.hasTurnInFlight(other.id));
+    if (running) {
+      const projectName = this.store.getProject(running.projectId)?.name ?? "this folder";
+      throw new Error(`${running.title} is running in ${projectName} — wait for it to finish before switching branches`);
+    }
     this.pendingBranchSwitches.add(sessionId);
     try {
       return await run();
@@ -1980,6 +1986,7 @@ export class SessionManager {
   updateSessionBranch(sessionId: string, branch: string): void {
     if (!this.store.getSession(sessionId)) throw new Error(`unknown session ${sessionId}`);
     this.store.updateSession(sessionId, { branch });
+    this.emitSession(sessionId);
   }
 
   private async renameBranchForTitle(sessionId: string, turnId: string): Promise<void> {

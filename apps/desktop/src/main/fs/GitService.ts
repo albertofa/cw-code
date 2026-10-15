@@ -713,10 +713,15 @@ export interface ResolveBaseOptions {
   fallbackToDefault?: boolean;
 }
 
+type RemoteNames = () => Promise<string[]>;
+
 export class UnknownBaseBranchError extends Error {
-  constructor(ref: string) {
+  readonly fetchFailure?: string;
+
+  constructor(ref: string, fetchFailure?: string) {
     super(`unknown base branch '${ref}'`);
     this.name = "UnknownBaseBranchError";
+    this.fetchFailure = fetchFailure;
   }
 }
 
@@ -986,21 +991,19 @@ export class GitService {
     return pickDefaultBase(await this.originHeadRef(root), [...refs]);
   }
 
-  private async remoteNames(root: string): Promise<string[]> {
-    try {
-      const output = await execText(this.settings().gitBinaryPath, ["remote"], root);
-      return output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
-    } catch {
-      return [];
-    }
+  private remoteNamesOnce(root: string): RemoteNames {
+    let pending: Promise<string[]> | null = null;
+    return () => {
+      pending ??= execText(this.settings().gitBinaryPath, ["remote"], root).then(
+        (output) => output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean),
+        () => []
+      );
+      return pending;
+    };
   }
 
-  private async hasOriginRemote(root: string): Promise<boolean> {
-    return (await this.remoteNames(root)).includes("origin");
-  }
-
-  private async missingOriginNotice(root: string, ref: string): Promise<string | null> {
-    const remotes = await this.remoteNames(root);
+  private async missingOriginNotice(remoteNames: RemoteNames, ref: string): Promise<string | null> {
+    const remotes = await remoteNames();
     if (remotes.length === 0 || remotes.includes("origin")) return null;
     return `No 'origin' remote; started from local ${ref} without fetching`;
   }
@@ -1086,14 +1089,14 @@ export class GitService {
     return { ref, fetched: false, warning: null };
   }
 
-  private async resolveRequestedBase(root: string, requested: string): Promise<ResolvedBase> {
+  private async resolveRequestedBase(root: string, requested: string, remoteNames: RemoteNames): Promise<ResolvedBase> {
     const explicitRemote = requested.startsWith(ORIGIN_PREFIX);
     const remoteRef = explicitRemote ? requested : `${ORIGIN_PREFIX}${requested}`;
     const localName = remoteRef.slice(ORIGIN_PREFIX.length);
     const args = isValidBranchName(requested) && isValidBranchName(localName) ? fetchArgsForRef(remoteRef) : null;
     if (!args) throw new Error(`invalid base branch '${requested}'`);
     if (requested === "HEAD") return { ref: "HEAD", fetched: false, warning: null };
-    const outcome: BaseFetchOutcome = (await this.hasOriginRemote(root)) ? await this.runBaseFetch(root, args) : { kind: "noRemote" };
+    const outcome: BaseFetchOutcome = (await remoteNames()).includes("origin") ? await this.runBaseFetch(root, args) : { kind: "noRemote" };
     if (outcome.kind === "fetched") {
       this.invalidateBranches(root);
       const unpushed =
@@ -1109,20 +1112,20 @@ export class GitService {
     const prefix = `Could not fetch ${remoteRef} (${reason})`;
     if (!explicitRemote && refs.has(localName)) {
       if (outcome.kind === "failed") return { ref: localName, fetched: false, warning: `${prefix}; using the local branch ${localName}` };
-      const warning = outcome.kind === "noRemote" ? await this.missingOriginNotice(root, localName) : null;
+      const warning = outcome.kind === "noRemote" ? await this.missingOriginNotice(remoteNames, localName) : null;
       return { ref: localName, fetched: false, warning };
     }
     if (refs.has(remoteRef)) return { ref: remoteRef, fetched: false, warning: `${prefix}; using the local copy` };
     if (explicitRemote && refs.has(localName)) {
       return { ref: localName, fetched: false, warning: `${prefix}; ${remoteRef} is not available locally, using ${localName}` };
     }
-    throw new UnknownBaseBranchError(requested);
+    throw new UnknownBaseBranchError(requested, outcome.kind === "failed" ? outcome.reason : undefined);
   }
 
-  private async resolveDefaultBase(root: string): Promise<ResolvedBase> {
+  private async resolveDefaultBase(root: string, remoteNames: RemoteNames): Promise<ResolvedBase> {
     let ref = await this.defaultBaseRef(root);
     let discoveryWarning: string | null = null;
-    if (!ref?.startsWith(ORIGIN_PREFIX) && (await this.hasOriginRemote(root))) {
+    if (!ref?.startsWith(ORIGIN_PREFIX) && (await remoteNames()).includes("origin")) {
       const discovered = await this.discoverOriginDefaultBranch(root);
       if ("ref" in discovered) {
         ref = discovered.ref;
@@ -1136,19 +1139,23 @@ export class GitService {
       return { ref: current, fetched: false, warning: `No default branch found; using ${current}` };
     }
     const resolved = await this.fetchBase(root, ref);
-    const missingOrigin = resolved.fetched ? null : await this.missingOriginNotice(root, resolved.ref);
+    const missingOrigin = resolved.fetched ? null : await this.missingOriginNotice(remoteNames, resolved.ref);
     return { ...resolved, warning: resolved.warning ?? discoveryWarning ?? missingOrigin };
   }
 
   async resolveBase(root: string, requestedBase?: string, opts: ResolveBaseOptions = {}): Promise<ResolvedBase> {
     const requested = requestedBase?.trim();
-    if (!requested) return this.resolveDefaultBase(root);
+    const remoteNames = this.remoteNamesOnce(root);
+    if (!requested) return this.resolveDefaultBase(root, remoteNames);
     if (opts.exact) return this.resolveExactBase(root, requested);
     try {
-      return await this.resolveRequestedBase(root, requested);
+      return await this.resolveRequestedBase(root, requested, remoteNames);
     } catch (error) {
       if (!opts.fallbackToDefault || !(error instanceof UnknownBaseBranchError)) throw error;
-      const fallback = await this.resolveDefaultBase(root);
+      if (error.fetchFailure !== undefined) {
+        throw new Error(`Could not fetch run branch '${requested}' (${error.fetchFailure}) and it isn't available locally`);
+      }
+      const fallback = await this.resolveDefaultBase(root, remoteNames);
       const notice = `Run branch '${requested}' wasn't found on origin or locally; started from ${fallback.ref}`;
       return { ...fallback, warning: fallback.warning ? `${notice}; ${fallback.warning}` : notice };
     }
