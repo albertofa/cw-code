@@ -25,7 +25,7 @@ export function Composer({ sessionId, driver }: { sessionId: string; driver: Dri
   });
 
   const modelsRefreshKey = useAppStore((s) => s.settingsVersion);
-  const { mismatch, projectName } = useBranchMismatch(sessionId);
+  const { mismatch } = useBranchMismatch(sessionId);
 
   useEffect(() => {
     void useAppStore.getState().ensureComposer(sessionId);
@@ -38,7 +38,6 @@ export function Composer({ sessionId, driver }: { sessionId: string; driver: Dri
     effectivePermissionMode,
     branchGuard: {
       mismatch,
-      projectName,
       switchBranch: async () => {
         if (mismatch) await useBranchStore.getState().switchToSessionBranch(sessionId, mismatch.sessionBranch);
       },

@@ -6,6 +6,7 @@ import { selectSessionPanel, usePanelStore } from "../stores/panelStore.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { PanelToggles } from "./PanelToggles.js";
 import { endTabDrag, startTabDrag, useDockDrop } from "./useDockDrop.js";
+import { branchMismatch } from "./sessionBranch.js";
 import { useLinkedPrs } from "./useLinkedPr.js";
 import { TOOL_TABS, isHarnessTabId } from "./toolTabs.js";
 import { checkCountsTone, checksTone, railGroups, type RailDotTone } from "./railTools.js";
@@ -17,8 +18,9 @@ export interface SubagentStats {
 }
 
 function PrDot({ sessionId }: { sessionId: string }) {
-  const { items } = useLinkedPrs(sessionId);
-  const fallback = useAppStore((s) => s.gitStatusBySession[sessionId]?.pullRequest?.checks);
+  const { items, session } = useLinkedPrs(sessionId);
+  const gitStatus = useAppStore((s) => s.gitStatusBySession[sessionId]);
+  const fallback = branchMismatch(session, gitStatus) ? undefined : gitStatus?.pullRequest?.checks;
   const linked = checksTone(items.flatMap((item) => (item.summary ?? item.detail)?.ci ?? []));
   const tone: RailDotTone | null = linked ?? checkCountsTone(fallback);
   if (tone === null) return null;

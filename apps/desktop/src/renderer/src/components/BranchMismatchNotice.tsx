@@ -1,22 +1,21 @@
-import { useState } from "react";
+import { useEffect, useState } from "react";
+import { useAppStore } from "../stores/appStore.js";
 import { TriangleAlert } from "lucide-react";
 import { useBranchStore } from "../stores/branchStore.js";
 import { ipcErrorMessage } from "./ipcError.js";
-import type { BranchMismatch } from "./sessionBranch.js";
+import { keepLabel, mismatchSentence, sendHereLabel, type BranchMismatch } from "./sessionBranch.js";
 import { useBranchMismatch } from "./useBranchMismatch.js";
-
-function MismatchText({ projectName, mismatch }: { projectName: string; mismatch: BranchMismatch }) {
-  return (
-    <>
-      {projectName} is on <b>{mismatch.folderBranch}</b>, not this session's branch <b>{mismatch.sessionBranch}</b>.
-    </>
-  );
-}
 
 export function BranchMismatchDock({ sessionId }: { sessionId: string }) {
   const { mismatch, projectName } = useBranchMismatch(sessionId);
   const [switching, setSwitching] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const turnBusy = useAppStore((s) => s.busyTurns[sessionId] !== undefined);
+  const hasMismatch = mismatch !== null;
+
+  useEffect(() => {
+    if (!hasMismatch) setError(null);
+  }, [hasMismatch]);
 
   if (!mismatch) return null;
 
@@ -36,11 +35,16 @@ export function BranchMismatchDock({ sessionId }: { sessionId: string }) {
     <section className="pr-dock branch-dock" aria-label="Branch mismatch">
       <div className="pr-dock-head">
         <TriangleAlert size={14} className="pr-dock-head-icon warn" aria-hidden="true" />
-        <span className="pr-dock-title branch-dock-title" title={`${projectName} is on ${mismatch.folderBranch}`}>
-          <MismatchText projectName={projectName} mismatch={mismatch} />
+        <span className="pr-dock-title branch-dock-title" title={mismatchSentence(projectName, mismatch)}>
+          {mismatchSentence(projectName, mismatch)}
         </span>
         <span className="pr-dock-spacer" />
-        <button className="pr-detail-btn primary sm" onClick={() => void switchBranch()} disabled={switching}>
+        <button
+          className="pr-detail-btn primary sm"
+          onClick={() => void switchBranch()}
+          disabled={switching || turnBusy}
+          title={turnBusy ? "Wait for the running turn to finish before switching branches" : undefined}
+        >
           Switch to {mismatch.sessionBranch}
         </button>
         <button
@@ -48,7 +52,7 @@ export function BranchMismatchDock({ sessionId }: { sessionId: string }) {
           onClick={() => useBranchStore.getState().keepFolderBranch(sessionId, mismatch.folderBranch)}
           disabled={switching}
         >
-          Keep working on {mismatch.folderBranch}
+          {keepLabel(mismatch)}
         </button>
       </div>
       {error && (
@@ -61,17 +65,17 @@ export function BranchMismatchDock({ sessionId }: { sessionId: string }) {
 }
 
 export function BranchSendChoice({
-  projectName,
   mismatch,
   busy,
+  switchDisabled,
   error,
   onSwitchAndSend,
   onSendHere,
   onCancel
 }: {
-  projectName: string;
   mismatch: BranchMismatch;
   busy: boolean;
+  switchDisabled: boolean;
   error: string | null;
   onSwitchAndSend: () => void;
   onSendHere: () => void;
@@ -80,14 +84,14 @@ export function BranchSendChoice({
   return (
     <div className="branch-choice" role="alertdialog" aria-label="Choose a branch before sending">
       <div className="branch-choice-text">
-        <MismatchText projectName={projectName} mismatch={mismatch} />
+        Switch to <b>{mismatch.sessionBranch}</b> before sending?
       </div>
       <div className="branch-choice-actions">
-        <button type="button" className="pr-detail-btn primary sm" onClick={onSwitchAndSend} disabled={busy}>
+        <button type="button" className="pr-detail-btn primary sm" onClick={onSwitchAndSend} disabled={busy || switchDisabled}>
           Switch and send
         </button>
         <button type="button" className="pr-detail-btn sm" onClick={onSendHere} disabled={busy}>
-          Send on {mismatch.folderBranch}
+          {sendHereLabel(mismatch)}
         </button>
         <button type="button" className="pr-detail-btn ghost sm" onClick={onCancel} disabled={busy}>
           Cancel

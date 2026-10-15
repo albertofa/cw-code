@@ -1,5 +1,12 @@
 import { describe, expect, it } from "vitest";
-import { activeBranchMismatch, branchMismatch } from "./sessionBranch.js";
+import {
+  activeBranchMismatch,
+  branchMismatch,
+  keepLabel,
+  mismatchSentence,
+  sendHereLabel,
+  shouldResetKeptBranch
+} from "./sessionBranch.js";
 
 const onMain = { available: true, branch: "main" };
 
@@ -46,5 +53,47 @@ describe("activeBranchMismatch", () => {
       sessionBranch: "cw/a",
       folderBranch: "cw/b"
     });
+  });
+});
+
+describe("shouldResetKeptBranch", () => {
+  it("does nothing when no branch was kept", () => {
+    expect(shouldResetKeptBranch(undefined, onMain)).toBe(false);
+  });
+
+  it("keeps the choice while the folder stays on the kept branch", () => {
+    expect(shouldResetKeptBranch("main", onMain)).toBe(false);
+  });
+
+  it("resets once the folder is on a different branch", () => {
+    expect(shouldResetKeptBranch("main", { available: true, branch: "cw/b" })).toBe(true);
+  });
+
+  it("does not reset while the status is missing or unavailable", () => {
+    expect(shouldResetKeptBranch("main", undefined)).toBe(false);
+    expect(shouldResetKeptBranch("main", { available: false, branch: "" })).toBe(false);
+  });
+
+  it("warns again when the folder leaves and returns to the kept branch", () => {
+    const session = { branch: "cw/a" };
+    expect(activeBranchMismatch(session, onMain, "main")).toBeNull();
+    expect(shouldResetKeptBranch("main", { available: true, branch: "cw/b" })).toBe(true);
+    expect(activeBranchMismatch(session, onMain, undefined)).not.toBeNull();
+  });
+});
+
+describe("mismatch wording", () => {
+  it("names the folder branch", () => {
+    const mismatch = { sessionBranch: "cw/a", folderBranch: "main" };
+    expect(mismatchSentence("widgets", mismatch)).toBe("widgets is on main, not this session's branch cw/a.");
+    expect(keepLabel(mismatch)).toBe("Keep working on main");
+    expect(sendHereLabel(mismatch)).toBe("Send on main");
+  });
+
+  it("describes a detached HEAD", () => {
+    const mismatch = { sessionBranch: "cw/a", folderBranch: "HEAD" };
+    expect(mismatchSentence("widgets", mismatch)).toBe("widgets is in a detached HEAD state, not on this session's branch cw/a.");
+    expect(keepLabel(mismatch)).toBe("Keep working here");
+    expect(sendHereLabel(mismatch)).toBe("Send here");
   });
 });

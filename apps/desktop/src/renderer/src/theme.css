@@ -9091,10 +9091,6 @@ button.gitbar-checkout:hover {
   font-weight: 500;
 }
 
-.pr-dock-title.branch-dock-title b {
-  font-weight: 650;
-}
-
 .branch-choice {
   display: flex;
   flex-direction: column;

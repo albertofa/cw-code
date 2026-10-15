@@ -42,7 +42,6 @@ import { useThreadVisible } from "./threadVisibility.js";
 
 export interface BranchGuard {
   mismatch: BranchMismatch | null;
-  projectName: string;
   switchBranch(): Promise<void>;
   keepFolderBranch(): void;
 }
@@ -140,6 +139,7 @@ export function ComposerView({
   const [choiceOpen, setChoiceOpen] = useState(false);
   const [choiceBusy, setChoiceBusy] = useState(false);
   const [choiceError, setChoiceError] = useState<string | null>(null);
+  const pendingSendRef = useRef<(() => void) | null>(null);
   const homeDir = useAppStore((s) => s.homeDir);
   const defaultModelId = useAppStore((s) => s.defaultModelByDriver[driver]);
   const saveDefaultModel = useAppStore((s) => s.saveDefaultModel);
@@ -213,6 +213,7 @@ export function ComposerView({
     setCustomModel("");
     setAddOpen(false);
     setPickerOpen(false);
+    pendingSendRef.current = null;
     setChoiceOpen(false);
     setChoiceError(null);
   }, [resetKey]);
@@ -553,9 +554,14 @@ export function ComposerView({
       setDraft("");
       return;
     }
+    if (holdForBranchChoice(() => void dispatchCommand(command, args, key))) return;
+    await dispatchCommand(command, args, key);
+  };
+
+  const dispatchCommand = async (command: CommandOption, args: string, key: string): Promise<void> => {
     setSending(true);
     try {
-      await b.send(commandDisplay(command.name, args), [], { name: command.name, args });
+      await backendRef.current.send(commandDisplay(command.name, args), [], { name: command.name, args });
       if (isCurrent(key)) clearComposer();
     } catch (err) {
       notifySendError(err);
@@ -565,6 +571,11 @@ export function ComposerView({
   };
 
   const sendPlain = (body: string, key: string = commandsKey) => {
+    if (holdForBranchChoice(() => dispatchPlain(body, key))) return;
+    dispatchPlain(body, key);
+  };
+
+  const dispatchPlain = (body: string, key: string) => {
     setSending(true);
     void backendRef.current
       .send(tagAttachments(body), attachments)
@@ -603,12 +614,21 @@ export function ComposerView({
       void sendSlash(body);
       return;
     }
-    if (backend.branchGuard?.mismatch) {
-      setChoiceError(null);
-      setChoiceOpen(true);
-      return;
-    }
     sendPlain(body);
+  };
+
+  const holdForBranchChoice = (action: () => void): boolean => {
+    if (!backendRef.current.branchGuard?.mismatch) return false;
+    pendingSendRef.current = action;
+    setChoiceError(null);
+    setChoiceOpen(true);
+    return true;
+  };
+
+  const closeBranchChoice = () => {
+    pendingSendRef.current = null;
+    setChoiceOpen(false);
+    setChoiceError(null);
   };
 
   const resolveBranchChoice = async (choice: "switch" | "here"): Promise<void> => {
@@ -625,13 +645,13 @@ export function ComposerView({
       return;
     }
     setChoiceBusy(false);
-    setChoiceOpen(false);
-    sendPlain(draft.trim());
+    const action = pendingSendRef.current;
+    closeBranchChoice();
+    action?.();
   };
 
   const cancelBranchChoice = () => {
-    setChoiceOpen(false);
-    setChoiceError(null);
+    closeBranchChoice();
     focusComposer();
   };
 
@@ -639,8 +659,12 @@ export function ComposerView({
   const hasBranchMismatch = branchMismatch !== null;
 
   useEffect(() => {
-    if (!hasBranchMismatch) setChoiceOpen(false);
+    if (!hasBranchMismatch) closeBranchChoice();
   }, [hasBranchMismatch]);
+
+  useEffect(() => {
+    closeBranchChoice();
+  }, [draft, attachments]);
 
   const slashName = SLASH_NAME.exec(draft);
   const slashArg = SLASH_ARG.exec(draft);
@@ -763,9 +787,9 @@ export function ComposerView({
       )}
       {choiceOpen && branchMismatch && backend.branchGuard && (
         <BranchSendChoice
-          projectName={backend.branchGuard.projectName}
           mismatch={branchMismatch}
           busy={choiceBusy}
+          switchDisabled={busy}
           error={choiceError}
           onSwitchAndSend={() => void resolveBranchChoice("switch")}
           onSendHere={() => void resolveBranchChoice("here")}

@@ -28,3 +28,27 @@ export function activeBranchMismatch(
   if (!mismatch || mismatch.folderBranch === keptFolderBranch) return null;
   return mismatch;
 }
+
+export function shouldResetKeptBranch(keptFolderBranch: string | undefined, status: BranchStatus | null | undefined): boolean {
+  if (keptFolderBranch === undefined || !status?.available) return false;
+  return status.branch !== keptFolderBranch;
+}
+
+const DETACHED_HEAD = "HEAD";
+
+export function isDetachedHead(mismatch: BranchMismatch): boolean {
+  return mismatch.folderBranch === DETACHED_HEAD;
+}
+
+export function mismatchSentence(projectName: string, mismatch: BranchMismatch): string {
+  const where = isDetachedHead(mismatch) ? "in a detached HEAD state" : `on ${mismatch.folderBranch}`;
+  return `${projectName} is ${where}, not ${isDetachedHead(mismatch) ? "on " : ""}this session's branch ${mismatch.sessionBranch}.`;
+}
+
+export function keepLabel(mismatch: BranchMismatch): string {
+  return isDetachedHead(mismatch) ? "Keep working here" : `Keep working on ${mismatch.folderBranch}`;
+}
+
+export function sendHereLabel(mismatch: BranchMismatch): string {
+  return isDetachedHead(mismatch) ? "Send here" : `Send on ${mismatch.folderBranch}`;
+}
