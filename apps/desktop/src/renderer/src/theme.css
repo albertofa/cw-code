@@ -9376,12 +9376,6 @@ button.gitbar-checkout:hover {
   cursor: default;
 }
 
-.pr-links-github {
-  flex: none;
-  display: inline-flex;
-  padding: 2px 4px;
-}
-
 .pr-chip-more {
   margin-left: 2px;
 }

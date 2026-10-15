@@ -100,19 +100,8 @@ function PrMenuRow({
           Link to this session
         </button>
       )}
-      {item.supported && (
-        <button type="button" className="pr-links-action" aria-label={`Open pull request #${number} in the app`} onClick={onOpen}>
-          Open
-        </button>
-      )}
-      <button
-        type="button"
-        className="icon-btn pr-links-github"
-        title="Open on GitHub"
-        aria-label={`Open pull request #${number} on GitHub`}
-        onClick={() => openExternalLink(item.url)}
-      >
-        <ExternalLink size={12} aria-hidden="true" />
+      <button type="button" className="pr-links-action" aria-label={`Open pull request #${number}`} onClick={onOpen}>
+        Open
       </button>
     </div>
   );
