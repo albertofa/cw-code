@@ -11,6 +11,7 @@ import {
   isBottomOpen,
   parseLayout,
   parsePanelState,
+  resolveBottomActive,
   resolveMainTab,
   resolveRightTop,
   rightOpenTabs,
@@ -505,6 +506,20 @@ describe("resolveRightTop", () => {
     expect(resolveRightTop(dock, "diff", notDiff, "codex")).toBe("codex");
     expect(resolveRightTop(dock, "diff", notDiff, "claude")).toBe("files");
     expect(resolveRightTop(dock, "diff", () => false, "codex")).toBeNull();
+  });
+});
+
+describe("resolveBottomActive", () => {
+  const dock = { ...defaultSessionPanel().dockByTab, shell: "bottom" as const, diff: "bottom" as const };
+
+  it("keeps the stored active tool when it is available", () => {
+    expect(resolveBottomActive(dock, "shell", () => true)).toBe("shell");
+  });
+
+  it("falls back to the first available bottom tool", () => {
+    expect(resolveBottomActive(dock, "shell", (tab) => tab !== "shell")).toBe("diff");
+    expect(resolveBottomActive(dock, "files", () => true)).toBe("diff");
+    expect(resolveBottomActive(dock, "shell", () => false)).toBeNull();
   });
 });
 

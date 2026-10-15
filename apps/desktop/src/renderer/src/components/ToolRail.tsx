@@ -2,6 +2,7 @@ import { Fragment, type MouseEvent as ReactMouseEvent } from "react";
 import type { DockableTabId } from "@cw-code/contracts";
 import type { DriverName } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
+import { resolveBottomActive } from "../stores/panelLayout.js";
 import { selectSessionPanel, usePanelStore } from "../stores/panelStore.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { PanelToggles } from "./PanelToggles.js";
@@ -59,11 +60,12 @@ export function ToolRail({
   onToolContextMenu: (tab: DockableTabId) => (e: ReactMouseEvent<HTMLElement>) => void;
   hidden?: boolean;
 }) {
-  const { dockByTab, rightVisible } = usePanelStore((s) => selectSessionPanel(s, sessionId));
+  const { dockByTab, rightVisible, activeBottom, bottomCollapsed } = usePanelStore((s) => selectSessionPanel(s, sessionId));
   const autoLocation = usePanelStore((s) => s.autoLocation);
   const revealTab = usePanelStore((s) => s.revealTab);
   const moveTab = usePanelStore((s) => s.moveTab);
   const setRightVisible = usePanelStore((s) => s.setRightVisible);
+  const setBottomCollapsed = usePanelStore((s) => s.setBottomCollapsed);
   const draggingTab = usePanelStore((s) => s.draggingTab);
   const dragFromRail = usePanelStore((s) => s.dragFromRail);
   const dropRail = useDockDrop("right", sessionId, {
@@ -75,6 +77,14 @@ export function ToolRail({
   });
   const groups = railGroups(driver, hasPr, hasPreview);
   const dropHint = !dragFromRail && (dropRail.over || (draggingTab !== null && !rightVisible));
+  const bottomShown = bottomCollapsed ? null : resolveBottomActive(dockByTab, activeBottom, isToolAvailable);
+
+  const onToolClick = (id: DockableTabId, rightShown: boolean) => {
+    if (!sessionId) return;
+    if (rightShown) setRightVisible(sessionId, false);
+    else if (id === bottomShown) setBottomCollapsed(sessionId, true);
+    else revealTab(sessionId, id);
+  };
 
   return (
     <nav
@@ -105,7 +115,7 @@ export function ToolRail({
                 key={id}
                 className={`rail-b${active ? " on" : ""}${away ? " away" : ""}${parked ? " parked" : ""}`}
                 disabled={!sessionId}
-                onClick={() => sessionId && revealTab(sessionId, id)}
+                onClick={() => onToolClick(id, active)}
                 onContextMenu={onToolContextMenu(id)}
                 draggable={sessionId !== undefined}
                 onDragStart={(e) => startTabDrag(e, id, sessionId, { fromRail: true })}
