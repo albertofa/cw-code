@@ -193,7 +193,7 @@ export class SessionManager {
   private titleTurns = new Map<string, TitleTurn>();
   private firstPrompts = new Map<string, string>();
   private pendingTurns = new Set<string>();
-  private pendingResolves = new Set<string>();
+  private pendingResolves = new Map<string, { status: SessionStatus; promise: Promise<SessionCleanupResult> }>();
   private folderChains = new Map<string, Promise<void>>();
   private settleSweep: Promise<string[]> | null = null;
   private idleSweep: Promise<string[]> | null = null;
@@ -983,26 +983,49 @@ export class SessionManager {
       if (entry.sessionId === sessionId) throw new Error("session busy (turn active)");
     }
     if (this.pendingTurns.has(sessionId)) throw new Error("session busy (turn pending)");
-    if (this.pendingResolves.has(sessionId)) throw new Error("session busy (resolve pending)");
-    if (this.undoPendingOnRoot(session)) throw new Error("session busy (undo pending)");
-    this.pendingResolves.add(sessionId);
-    try {
-      const endingTurn = session.lastTurnSnapshot?.turnId;
-      if (endingTurn) await this.endSnapshots.get(endingTurn);
-      const recovery = this.worktreeRecovery.get(sessionId);
-      if (recovery) {
-        await recovery.catch(() => undefined);
-        if (this.worktreeRecovery.has(sessionId)) throw new Error("session busy (recovery in progress)");
-      }
-      const refreshed = this.store.getSession(sessionId);
-      const current = refreshed ?? session;
-      if (opts.stillEligible && !opts.stillEligible(current)) {
-        return { sessionId, status, worktreeOrphaned: false, worktreeRemoved: false, branchDeleted: false };
-      }
-      return await this.resolveSessionInner(current, status, project, opts);
-    } finally {
-      this.pendingResolves.delete(sessionId);
+    const pending = this.pendingResolves.get(sessionId);
+    if (pending) {
+      if (pending.status === status) return pending.promise;
+      await pending.promise.catch(() => undefined);
+      return this.resolveSession(sessionId, status, opts);
     }
+    if (this.undoPendingOnRoot(session)) throw new Error("session busy (undo pending)");
+    const run = this.runResolve(session, status, project, opts);
+    const entry = { status, promise: run };
+    this.pendingResolves.set(sessionId, entry);
+    try {
+      return await run;
+    } finally {
+      if (this.pendingResolves.get(sessionId) === entry) this.pendingResolves.delete(sessionId);
+    }
+  }
+
+  private async runResolve(
+    session: SessionMeta,
+    status: SessionStatus,
+    project: Project,
+    opts: {
+      removeWorktree?: boolean;
+      forceBranch?: boolean;
+      reason?: SessionStatusReason;
+      auto?: boolean;
+      stillEligible?: (session: SessionMeta) => boolean;
+    }
+  ): Promise<SessionCleanupResult> {
+    const sessionId = session.id;
+    const endingTurn = session.lastTurnSnapshot?.turnId;
+    if (endingTurn) await this.endSnapshots.get(endingTurn);
+    const recovery = this.worktreeRecovery.get(sessionId);
+    if (recovery) {
+      await recovery.catch(() => undefined);
+      if (this.worktreeRecovery.has(sessionId)) throw new Error("session busy (recovery in progress)");
+    }
+    const refreshed = this.store.getSession(sessionId);
+    const current = refreshed ?? session;
+    if (opts.stillEligible && !opts.stillEligible(current)) {
+      return { sessionId, status, worktreeOrphaned: false, worktreeRemoved: false, branchDeleted: false };
+    }
+    return await this.resolveSessionInner(current, status, project, opts);
   }
 
   private async resolveSessionInner(
@@ -1026,6 +1049,7 @@ export class SessionManager {
       { status, ...(opts.auto ? { autoResolved: true } : {}) },
       opts.reason ?? (status === "archived" ? "archive" : "resolve")
     );
+    this.emitSession(sessionId);
     this.onResolved(sessionId);
     const worktreePath = session.worktreePath;
     try {
