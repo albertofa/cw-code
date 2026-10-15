@@ -3057,119 +3057,75 @@ body.session-dragging * {
   margin-bottom: -10px;
 }
 
-.newthread-picker {
-  display: inline-flex;
-  min-width: 0;
-}
-
-.newthread-project-btn {
+.project-picker-btn {
   display: inline-flex;
   align-items: center;
-  gap: 9px;
+  gap: 7px;
   min-width: 0;
   max-width: 360px;
-  height: 36px;
-  padding: 0 10px 0 8px;
-  background: var(--raised);
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
-  color: var(--text);
-  font-family: var(--sans);
-  font-size: var(--t-sm);
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.newthread-project-btn:hover,
-.newthread-project-btn.open {
-  border-color: color-mix(in srgb, var(--accent) 55%, var(--border));
-}
-
-.newthread-project-btn.unset {
-  color: var(--warning);
-  border-color: color-mix(in srgb, var(--warning) 45%, var(--border));
-}
-
-.newthread-project-name {
-  flex: 1;
-  min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.newthread-project-chevron {
-  flex: none;
-  display: inline-flex;
-  color: var(--muted);
-}
-
-.newthread-picker-panel {
-  left: 0;
-  right: auto;
-  top: calc(100% + 6px);
-  width: min(460px, 90vw);
-  font-size: var(--t-sm);
-  font-weight: 400;
-  text-align: left;
-}
-
-.newthread-picker-panel .side-empty {
-  display: block;
-}
-
-.newthread-picker-panel .newthread-picker-name {
-  flex: none;
-  max-width: 45%;
-  font-weight: 600;
-}
-
-.newthread-picker-path {
-  flex: 1;
-  min-width: 0;
-  color: var(--faint);
-  font-family: var(--mono);
-  font-size: var(--t-xs);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.newthread-picker-check {
-  flex: none;
-  width: 14px;
-  display: inline-flex;
-  color: var(--accent);
-}
-
-.newthread-add-project {
-  flex: none;
-  display: inline-flex;
-  align-items: center;
-  justify-content: center;
-  width: 36px;
-  height: 36px;
-  padding: 0;
+  height: 28px;
+  padding: 0 8px 0 5px;
   background: transparent;
-  border: 1px solid var(--border);
-  border-radius: var(--r-md);
-  color: var(--dim);
-  font-family: var(--sans);
-  font-size: var(--t-sm);
-  font-weight: 500;
+  border: 0;
+  border-radius: var(--r-sm);
+  color: var(--text);
+  font: 600 var(--t-desc) var(--sans);
   cursor: pointer;
 }
 
-.newthread-add-project:hover:not(:disabled) {
-  background: var(--raised);
-  color: var(--text);
+.project-picker-btn:hover,
+.project-picker-btn.open {
+  background: var(--hover);
 }
 
-.newthread-add-project:disabled {
+.project-picker-btn.unset {
+  color: var(--warning);
+}
+
+.project-picker-btn svg {
+  flex: none;
+}
+
+.project-picker-name {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-picker-chevron {
+  flex: none;
+  display: inline-flex;
+  color: var(--faint);
+}
+
+.project-picker-pop {
+  position: absolute;
+  top: calc(100% + 6px);
+  left: 0;
+  z-index: 45;
+  width: min(420px, calc(100vw - 32px));
+  animation: cw-pop-in var(--dur-fast) var(--ease-out);
+}
+
+.project-picker-pop .mp {
+  width: 100%;
+}
+
+.project-picker-pop .mp-act[aria-disabled="true"] {
   opacity: 0.5;
   cursor: default;
 }
 
+.project-path {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font: var(--t-2xs) var(--mono);
+  color: var(--faint);
+}
 .newthread-composer {
   width: min(860px, 100%);
   margin: 0;
