@@ -304,6 +304,29 @@ function turnDones(events: ThreadEvent[]): Array<Extract<ThreadEvent, { type: "t
 }
 
 describe("ClaudeCliDriver persistent process", () => {
+  it("keeps API limit errors separate from prose and later task reports", async () => {
+    const { driver, events, children } = makeDriver();
+    driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
+    await settle();
+    const limit = "You've hit your session limit · resets 6:50pm (America/Sao_Paulo)";
+    children[0].stdout.write(`${taskStartedLine("task-1", "call-1")}\n`);
+    children[0].stdout.write(`${JSON.stringify({
+      type: "assistant", isApiErrorMessage: true, error: "rate_limit",
+      message: { content: [{ type: "text", text: limit }] }
+    })}\n`);
+    children[0].stdout.write(`${taskNotificationLine("task-1", "call-1", "Run typecheck, log to scratchpad")}\n`);
+    children[0].stdout.write(`${resultLine({ result: "" })}\n`);
+    await settle();
+    expect(events.filter((event) => event.type === "assistant.delta")).toEqual([]);
+    expect(turnDones(events)).toContainEqual(expect.objectContaining({ isError: true, resultText: limit }));
+    driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "continue" });
+    await settle();
+    children[0].stdout.write(`${resultLine()}\n`);
+    await settle();
+    expect(turnDones(events).at(-1)).toEqual(expect.objectContaining({ isError: false }));
+    driver.dispose();
+  });
+
   it("reuses one process for a second turn in the same session", async () => {
     const { driver, events, children, spawnCalls } = makeDriver();
     const first = driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "first prompt" });
