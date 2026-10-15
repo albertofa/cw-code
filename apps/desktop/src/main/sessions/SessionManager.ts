@@ -73,7 +73,7 @@ import { TracingCliDriver } from "../debug/tracingDriver.js";
 import { CLAUDE_CURATED_MODELS, ClaudeCliDriver } from "../providers/claude/ClaudeCliDriver.js";
 import { OpencodeDriver } from "../providers/opencode/OpencodeDriver.js";
 import { CodexCliDriver } from "../providers/codex/CodexCliDriver.js";
-import { defaultBinary, execText, GitService, safeSegment, sessionBranchName, type CreatedWorktree, type RemoveWorktreeResult } from "../fs/GitService.js";
+import { defaultBinary, execText, GitService, safeSegment, sessionBranchName, type CreatedWorktree, type RemoveWorktreeResult, type ResolveBaseOptions } from "../fs/GitService.js";
 import { resolveAttachments } from "./attachments.js";
 import { AUTO_TITLE_TIMEOUT_MS, buildTitlePrompt, sanitizeGeneratedTitle } from "./autoTitle.js";
 import { branchNameForTitle, TEMP_BRANCH_PATTERN } from "./branchName.js";
@@ -518,6 +518,9 @@ export class SessionManager {
 
   async createSession(projectId: string, driver: DriverKind, options: CreateSessionOptions = {}): Promise<SessionMeta> {
     this.assertNotReserved();
+    if (options.baseFallback !== undefined && options.baseFallback !== "default") {
+      throw new Error("invalid base fallback");
+    }
     const project = this.store.getProject(projectId);
     if (!project) throw new Error(`unknown project ${projectId}`);
     const id = `sess_${randomUUID().slice(0, 8)}`;
@@ -597,9 +600,9 @@ export class SessionManager {
       await this.git.initSubmodules(project.rootPath);
       return this.store.createSession(project.id, driver, "New session", { id, branch: plan.branch });
     }
-    const { base, exact } = await this.requestedBase(project, plan, options);
+    const { base, ...baseOptions } = await this.requestedBase(project, plan, options);
     this.assertNotReserved();
-    const resolved = await this.git.resolveBase(project.rootPath, base, { exact });
+    const resolved = await this.git.resolveBase(project.rootPath, base, baseOptions);
     this.assertNotReserved();
     await this.assertCheckoutReady(project);
     const branch = await this.git.switchToNewBranch(project.rootPath, sessionBranchName(id), resolved.ref);
@@ -643,10 +646,10 @@ export class SessionManager {
     project: Project,
     plan: PrHeadPlan | null,
     options: CreateSessionOptions
-  ): Promise<{ base: string | undefined; exact: boolean }> {
+  ): Promise<{ base: string | undefined } & ResolveBaseOptions> {
     if (plan?.kind === "base") return { base: plan.branch, exact: true };
     if (plan?.kind === "fetch") return { base: await this.git.fetchPullRequestHead(project.rootPath, plan.number), exact: true };
-    return { base: options.baseBranch, exact: false };
+    return { base: options.baseBranch, exact: false, fallbackToDefault: options.baseFallback === "default" };
   }
 
   private async createSessionWorktree(project: Project, id: string, options: CreateSessionOptions): Promise<CreatedWorktree> {
@@ -656,9 +659,9 @@ export class SessionManager {
       const target = join(this.worktreesRoot, safeSegment(project.id), safeSegment(id));
       return this.git.attachWorktree(project.rootPath, target, plan.branch);
     }
-    const { base, exact } = await this.requestedBase(project, plan, options);
+    const { base, ...baseOptions } = await this.requestedBase(project, plan, options);
     this.assertNotReserved();
-    return this.git.createWorktree(project.rootPath, project.id, id, this.worktreesRoot, base, { exact });
+    return this.git.createWorktree(project.rootPath, project.id, id, this.worktreesRoot, base, baseOptions);
   }
 
   private async planPrHead(project: Project, options: CreateSessionOptions): Promise<PrHeadPlan | null> {

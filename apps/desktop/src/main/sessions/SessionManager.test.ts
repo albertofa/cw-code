@@ -204,6 +204,8 @@ function makeGitSandboxManager(prefix: string) {
   const sandbox = mkdtempSync(join(tmpdir(), prefix));
   const repository = join(sandbox, "repo");
   execFileSync("git", ["init", "-b", "main", repository]);
+  execFileSync("git", ["-C", repository, "config", "core.autocrlf", "false"]);
+  execFileSync("git", ["-C", repository, "config", "core.eol", "lf"]);
   writeFileSync(join(repository, "README.md"), "base\n", "utf8");
   execFileSync("git", ["-C", repository, "add", "README.md"]);
   execFileSync("git", ["-C", repository, "-c", "user.name=cw-code", "-c", "user.email=test@cw-code.local", "commit", "-m", "initial"]);
@@ -785,6 +787,73 @@ describe("SessionManager", () => {
     const stored = (await manager.listSessions(project.id)).find((s) => s.id === session.id);
     expect(stored).toBeDefined();
     expect(stored && "createNotice" in stored).toBe(false);
+    manager.dispose();
+  });
+
+  it.each(["current", "new"] as const)("falls back to the fetched default when the run branch is missing in %s mode", async (mode) => {
+    const { manager, project, repository } = makeGitSandboxManager(`cw-session-fallback-${mode}-`);
+    const { pusher } = attachOrigin(repository);
+    const remoteHead = commitOnRemote(pusher, "remote.txt");
+
+    const session = await manager.createSession(project.id, "claude", { mode, baseBranch: "gone/run", baseFallback: "default" });
+
+    expect(session.createNotice).toBe("Run branch 'gone/run' wasn't found on origin or locally; started from origin/main");
+    expect(gitOut(session.worktreePath ?? repository, "rev-parse", "HEAD")).toBe(remoteHead);
+    expect(session.branch).toMatch(/^cw\//);
+    manager.dispose();
+  });
+
+  it("still throws for a missing run branch without the fallback", async () => {
+    const { manager, project, repository } = makeGitSandboxManager("cw-session-nofallback-");
+    attachOrigin(repository);
+
+    await expect(manager.createSession(project.id, "claude", { mode: "new", baseBranch: "gone/run" })).rejects.toThrow(
+      "unknown base branch 'gone/run'"
+    );
+    await expect(manager.createSession(project.id, "claude", { mode: "current", baseBranch: "gone/run" })).rejects.toThrow(
+      "unknown base branch 'gone/run'"
+    );
+    expect(await manager.listSessions(project.id)).toHaveLength(0);
+    manager.dispose();
+  });
+
+  it("does not fall back for an invalid base branch name", async () => {
+    const { manager, project } = makeGitSandboxManager("cw-session-fallback-invalid-");
+
+    await expect(
+      manager.createSession(project.id, "claude", { mode: "new", baseBranch: "-x", baseFallback: "default" })
+    ).rejects.toThrow("invalid base branch '-x'");
+    manager.dispose();
+  });
+
+  it("rejects an unsupported base fallback value", async () => {
+    const { manager, project } = makeGitSandboxManager("cw-session-fallback-bad-");
+
+    await expect(
+      manager.createSession(project.id, "claude", { mode: "new", baseFallback: "main" as unknown as "default" })
+    ).rejects.toThrow("invalid base fallback");
+    manager.dispose();
+  });
+
+  it.each(["current", "new"] as const)("notes when the repository has remotes but none named origin in %s mode", async (mode) => {
+    const { manager, project, repository } = makeGitSandboxManager(`cw-session-no-origin-${mode}-`);
+    attachOrigin(repository);
+    gitOut(repository, "remote", "rename", "origin", "upstream");
+
+    const session = await manager.createSession(project.id, "claude", { mode });
+
+    expect(session.createNotice).toBe("No 'origin' remote; started from local main without fetching");
+    manager.dispose();
+  });
+
+  it("notes a missing origin remote for an explicitly requested local base", async () => {
+    const { manager, project, repository } = makeGitSandboxManager("cw-session-no-origin-requested-");
+    attachOrigin(repository);
+    gitOut(repository, "remote", "rename", "origin", "upstream");
+
+    const session = await manager.createSession(project.id, "claude", { mode: "new", baseBranch: "main" });
+
+    expect(session.createNotice).toBe("No 'origin' remote; started from local main without fetching");
     manager.dispose();
   });
 

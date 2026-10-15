@@ -708,6 +708,18 @@ export function fetchArgsForRef(ref: string): string[] | null {
   return ["fetch", "-q", "origin", `+refs/heads/${branch}:refs/remotes/${ref}`];
 }
 
+export interface ResolveBaseOptions {
+  exact?: boolean;
+  fallbackToDefault?: boolean;
+}
+
+export class UnknownBaseBranchError extends Error {
+  constructor(ref: string) {
+    super(`unknown base branch '${ref}'`);
+    this.name = "UnknownBaseBranchError";
+  }
+}
+
 type BaseFetchOutcome =
   | { kind: "fetched" }
   | { kind: "missing" }
@@ -974,13 +986,23 @@ export class GitService {
     return pickDefaultBase(await this.originHeadRef(root), [...refs]);
   }
 
-  private async hasOriginRemote(root: string): Promise<boolean> {
+  private async remoteNames(root: string): Promise<string[]> {
     try {
       const output = await execText(this.settings().gitBinaryPath, ["remote"], root);
-      return output.split(/\r?\n/).some((line) => line.trim() === "origin");
+      return output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
     } catch {
-      return false;
+      return [];
     }
+  }
+
+  private async hasOriginRemote(root: string): Promise<boolean> {
+    return (await this.remoteNames(root)).includes("origin");
+  }
+
+  private async missingOriginNotice(root: string, ref: string): Promise<string | null> {
+    const remotes = await this.remoteNames(root);
+    if (remotes.length === 0 || remotes.includes("origin")) return null;
+    return `No 'origin' remote; started from local ${ref} without fetching`;
   }
 
   private async refExists(root: string, fullRef: string): Promise<boolean> {
@@ -1060,7 +1082,7 @@ export class GitService {
 
   private async resolveExactBase(root: string, ref: string): Promise<ResolvedBase> {
     if (!isValidBranchName(ref)) throw new Error(`invalid base branch '${ref}'`);
-    if (ref !== "HEAD" && !(await this.listRefNames(root)).has(ref)) throw new Error(`unknown base branch '${ref}'`);
+    if (ref !== "HEAD" && !(await this.listRefNames(root)).has(ref)) throw new UnknownBaseBranchError(ref);
     return { ref, fetched: false, warning: null };
   }
 
@@ -1086,14 +1108,15 @@ export class GitService {
     const reason = outcome.kind === "failed" ? outcome.reason : reasons[outcome.kind];
     const prefix = `Could not fetch ${remoteRef} (${reason})`;
     if (!explicitRemote && refs.has(localName)) {
-      const quiet = outcome.kind !== "failed";
-      return { ref: localName, fetched: false, warning: quiet ? null : `${prefix}; using the local branch ${localName}` };
+      if (outcome.kind === "failed") return { ref: localName, fetched: false, warning: `${prefix}; using the local branch ${localName}` };
+      const warning = outcome.kind === "noRemote" ? await this.missingOriginNotice(root, localName) : null;
+      return { ref: localName, fetched: false, warning };
     }
     if (refs.has(remoteRef)) return { ref: remoteRef, fetched: false, warning: `${prefix}; using the local copy` };
     if (explicitRemote && refs.has(localName)) {
       return { ref: localName, fetched: false, warning: `${prefix}; ${remoteRef} is not available locally, using ${localName}` };
     }
-    throw new Error(`unknown base branch '${requested}'`);
+    throw new UnknownBaseBranchError(requested);
   }
 
   private async resolveDefaultBase(root: string): Promise<ResolvedBase> {
@@ -1113,13 +1136,22 @@ export class GitService {
       return { ref: current, fetched: false, warning: `No default branch found; using ${current}` };
     }
     const resolved = await this.fetchBase(root, ref);
-    return { ...resolved, warning: resolved.warning ?? discoveryWarning };
+    const missingOrigin = resolved.fetched ? null : await this.missingOriginNotice(root, resolved.ref);
+    return { ...resolved, warning: resolved.warning ?? discoveryWarning ?? missingOrigin };
   }
 
-  async resolveBase(root: string, requestedBase?: string, opts: { exact?: boolean } = {}): Promise<ResolvedBase> {
+  async resolveBase(root: string, requestedBase?: string, opts: ResolveBaseOptions = {}): Promise<ResolvedBase> {
     const requested = requestedBase?.trim();
-    if (requested) return opts.exact ? this.resolveExactBase(root, requested) : this.resolveRequestedBase(root, requested);
-    return this.resolveDefaultBase(root);
+    if (!requested) return this.resolveDefaultBase(root);
+    if (opts.exact) return this.resolveExactBase(root, requested);
+    try {
+      return await this.resolveRequestedBase(root, requested);
+    } catch (error) {
+      if (!opts.fallbackToDefault || !(error instanceof UnknownBaseBranchError)) throw error;
+      const fallback = await this.resolveDefaultBase(root);
+      const notice = `Run branch '${requested}' wasn't found on origin or locally; started from ${fallback.ref}`;
+      return { ...fallback, warning: fallback.warning ? `${notice}; ${fallback.warning}` : notice };
+    }
   }
 
   async hasCommits(root: string): Promise<boolean> {
@@ -1159,7 +1191,7 @@ export class GitService {
     sessionId: string,
     worktreesRoot: string,
     requestedBase?: string,
-    opts: { exact?: boolean } = {}
+    opts: ResolveBaseOptions = {}
   ): Promise<CreatedWorktree> {
     const repositoryRoot = await this.repositoryRoot(projectRoot);
     const git = this.git(repositoryRoot);

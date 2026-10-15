@@ -203,6 +203,7 @@ export type CreateWorkspaceMode = "current" | "new" | "previous";
 
 export interface CreateSessionOptions {
   baseBranch?: string;
+  baseFallback?: "default";
   useWorktree?: boolean;
   mode?: CreateWorkspaceMode;
   reuseWorktreePath?: string;

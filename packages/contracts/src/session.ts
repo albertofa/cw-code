@@ -86,6 +86,8 @@ export type CreateWorkspaceMode = "current" | "new" | "previous";
 export interface CreateSessionOptions {
   /** Ref used as the starting point for the new session branch. */
   baseBranch?: string;
+  /** When baseBranch is not found on origin or locally, start from the default branch instead of failing. */
+  baseFallback?: "default";
   /** Defaults to true for Git repositories. Ignored when mode is set. */
   useWorktree?: boolean;
   /** Workspace selection for the new session. When omitted, useWorktree decides. */
