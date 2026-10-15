@@ -149,6 +149,7 @@ export interface WorkflowBase {
   source: string;
 }
 
+const RUN_BASE_FALLBACK = "falls back to the default branch if it no longer exists";
 const DEFAULT_BASE_SOURCE = "the default branch (fetched from origin)";
 
 export function resolveIssueBase(): WorkflowBase {
@@ -158,7 +159,7 @@ export function resolveIssueBase(): WorkflowBase {
 export function resolveRunBase(run: Pick<WorkflowRunSummary, "branch"> | undefined): WorkflowBase {
   if (!run) return { baseBranch: undefined, source: `${DEFAULT_BASE_SOURCE} — the run's branch is unknown` };
   if (!run.branch) return { baseBranch: undefined, source: `${DEFAULT_BASE_SOURCE} — the run has no branch` };
-  return { baseBranch: run.branch, source: `${run.branch} (fetched from origin)` };
+  return { baseBranch: run.branch, source: `${run.branch} (fetched from origin; ${RUN_BASE_FALLBACK})` };
 }
 
 export type WorkflowWorkspaceMode = "worktree" | "checkout";

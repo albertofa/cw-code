@@ -20,6 +20,7 @@ import { NewThread } from "./NewThread.js";
 import { ApprovalDock } from "./ApprovalDock.js";
 import { QuestionDock } from "./QuestionDock.js";
 import { TodoDock } from "./TodoDock.js";
+import { BranchMismatchDock } from "./BranchMismatchNotice.js";
 import { PrUpdateDock } from "./PrUpdateDock.js";
 import { WorkingDock } from "./WorkingDock.js";
 import { PrSessionChip } from "./PrSessionPanel.js";
@@ -588,6 +589,7 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
       {showMainTool === null && (
       <div className="composer-wrap">
         <TodoDock sessionId={session.id} />
+        <BranchMismatchDock key={`branch-dock:${session.id}`} sessionId={session.id} />
         <PrUpdateDock key={`pr-dock:${session.id}`} sessionId={session.id} />
         <ApprovalDock sessionId={session.id} />
         <QuestionDock sessionId={session.id} />

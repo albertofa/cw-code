@@ -91,6 +91,17 @@ describe("sessionPrItems", () => {
     expect(items[0].source).toBe("linked");
   });
 
+  it("omits the folder branch PR when the folder is on another session's branch", () => {
+    const items = sessionPrItems({ prs: [link(16)] }, gitPr(18), lookup(summary(16)), {}, true);
+    expect(items.map((item) => [item.ref.number, item.source])).toEqual([[16, "linked"]]);
+    expect(sessionPrItems({}, gitPr(18), new Map(), {}, true)).toEqual([]);
+  });
+
+  it("keeps a linked PR that happens to match the folder branch PR when mismatched", () => {
+    const items = sessionPrItems({ prs: [link(16)] }, gitPr(16), lookup(summary(16)), {}, true);
+    expect(items.map((item) => [item.ref.number, item.source])).toEqual([[16, "linked"]]);
+  });
+
   it("ignores a branch PR whose url is not a pull request url", () => {
     expect(sessionPrItems({}, gitPr(18, { url: "https://example.com/x" }), new Map(), {})).toEqual([]);
   });

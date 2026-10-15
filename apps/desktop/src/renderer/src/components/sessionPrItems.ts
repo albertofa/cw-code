@@ -98,12 +98,13 @@ export function sessionPrItems(
   session: LinkedSession | undefined,
   gitPr: GitPullRequest | null,
   summaryByKey: PrSummaryLookup,
-  detailByKey: Record<string, PrDetail>
+  detailByKey: Record<string, PrDetail>,
+  branchMismatched = false
 ): SessionPrItem[] {
   const branchRef = gitPr ? prRefFromUrl(gitPr.url) : null;
   const branchKey = branchRef ? prKey(branchRef) : null;
   const items = sessionLinks(session).map((link) => linkedItem(link, gitPr, branchKey, summaryByKey, detailByKey));
-  if (gitPr && branchRef && !items.some((item) => item.key === branchKey)) {
+  if (gitPr && branchRef && !branchMismatched && !items.some((item) => item.key === branchKey)) {
     const branch = branchItem(branchRef, gitPr, summaryByKey, detailByKey);
     if (branch) items.push(branch);
   }

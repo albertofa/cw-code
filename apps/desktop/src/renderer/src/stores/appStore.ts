@@ -61,6 +61,13 @@ function isPendingTurn(value: string | undefined): boolean {
   return value !== undefined && value.startsWith(PENDING_PREFIX);
 }
 
+export class NewSessionRefusedError extends Error {
+  constructor(message: string) {
+    super(message);
+    this.name = "NewSessionRefusedError";
+  }
+}
+
 async function refreshGitStatusInBatches(ids: string[], refresh: (id: string) => Promise<void>): Promise<void> {
   for (let i = 0; i < ids.length; i += GIT_REFRESH_BATCH) {
     await Promise.all(ids.slice(i, i + GIT_REFRESH_BATCH).map((id) => refresh(id)));
@@ -748,8 +755,9 @@ export const useAppStore = create<AppState>((set, get) => ({
       try {
         await get().createSession(driver, prefs, workspace);
       } catch (err) {
-        set({ newSessionError: ipcErrorMessage(err) });
-        throw err;
+        const message = ipcErrorMessage(err);
+        set({ newSessionError: message });
+        throw new NewSessionRefusedError(message);
       }
       await get().sendPrompt(prompt, attachments, command);
     } finally {

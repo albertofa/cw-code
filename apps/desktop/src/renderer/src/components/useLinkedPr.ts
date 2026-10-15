@@ -5,6 +5,7 @@ import { usePrStore } from "../stores/prStore.js";
 import { prKey } from "./prInbox.js";
 import { detailNeedsRefresh, detailRefreshKey, hasUnseen } from "./prUpdates.js";
 import { errorMessage } from "./errorMessage.js";
+import { branchMismatch } from "./sessionBranch.js";
 import { sessionPrItems, withBranchSummary, type SessionPrItem } from "./sessionPrItems.js";
 import { sessionLinks, type PrSummaryLookup } from "./sessionPrLinks.js";
 
@@ -75,12 +76,14 @@ export function useLinkedPrs(sessionId: string): LinkedPrs {
 
 export function useSessionPrItems(sessionId: string): { items: SessionPrItem[]; session: Session | undefined } {
   const { session, summaryByKey } = useLinkedPrs(sessionId);
-  const gitPr = useAppStore((s) => s.gitStatusBySession[sessionId]?.pullRequest ?? null);
+  const gitStatus = useAppStore((s) => s.gitStatusBySession[sessionId]);
+  const gitPr = gitStatus?.pullRequest ?? null;
   const detailByKey = usePrStore((s) => s.detailByKey);
   const inboxItems = usePrStore((s) => s.inbox?.items);
+  const mismatched = branchMismatch(session, gitStatus) !== null;
   const items = useMemo(
-    () => sessionPrItems(session, gitPr, withBranchSummary(summaryByKey, gitPr, inboxItems), detailByKey),
-    [session, gitPr, summaryByKey, inboxItems, detailByKey]
+    () => sessionPrItems(session, gitPr, withBranchSummary(summaryByKey, gitPr, inboxItems), detailByKey, mismatched),
+    [session, gitPr, summaryByKey, inboxItems, detailByKey, mismatched]
   );
   return { items, session };
 }

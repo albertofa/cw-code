@@ -36,6 +36,7 @@ import { shortenHome } from "./pathDisplay.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { MenuSelect } from "./MenuSelect.js";
 import { errorMessage } from "./errorMessage.js";
+import { ipcErrorMessage } from "./ipcError.js";
 import { usePrSettings } from "./useLinkedPr.js";
 import { IssueCard, PrCard, RunCard } from "./WorkflowSubjectCards.js";
 import { useWorkflowSubjectData } from "./useWorkflowSubjectData.js";
@@ -337,8 +338,9 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
         return { mode, prHead };
       }
       case "issue":
-      case "run":
         return base?.baseBranch ? { mode, baseBranch: base.baseBranch } : { mode };
+      case "run":
+        return base?.baseBranch ? { mode, baseBranch: base.baseBranch, baseFallback: "default" } : { mode };
     }
   };
 
@@ -462,7 +464,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
       await useAppStore.getState().sendPromptTo(sessionId, note ? `${prompt}\n\n${note}` : prompt, undefined, sendOptions);
       finish(sessionId);
     } catch (err) {
-      const message = errorMessage(err);
+      const message = ipcErrorMessage(err);
       console.warn(`[workflow] ${subject.kind} run failed at ${current}: ${message}`);
       setError(`${stageLabel(current, noun)} failed: ${message}`);
     } finally {

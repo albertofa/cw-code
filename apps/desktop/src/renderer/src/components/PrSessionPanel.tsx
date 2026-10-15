@@ -147,7 +147,7 @@ export function PrSessionChip({ sessionId }: { sessionId: string }) {
   }, [menuOpen]);
 
   useEffect(() => {
-    if (selectedKey !== null && !items.some((item) => item.key === selectedKey)) selectSessionPr(sessionId, null);
+    if (selectedKey !== null && items.length > 0 && !items.some((item) => item.key === selectedKey)) selectSessionPr(sessionId, null);
   }, [items, selectedKey, sessionId, selectSessionPr]);
 
   const top = items[0];

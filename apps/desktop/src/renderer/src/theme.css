@@ -9073,6 +9073,56 @@ button.gitbar-checkout:hover {
   color: var(--danger);
 }
 
+.branch-dock {
+  border-color: color-mix(in srgb, var(--warning) 42%, transparent);
+}
+
+.branch-dock .pr-dock-head {
+  flex-wrap: wrap;
+}
+
+.pr-dock-head-icon.warn {
+  color: var(--warning);
+}
+
+.pr-dock-title.branch-dock-title {
+  flex: 1 1 240px;
+  white-space: normal;
+  font-weight: 500;
+}
+
+.pr-dock-title.branch-dock-title b {
+  font-weight: 650;
+}
+
+.branch-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 0 10px 8px;
+  padding: 8px 10px;
+  border: 1px solid color-mix(in srgb, var(--warning) 42%, transparent);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--warning) 7%, transparent);
+  font-size: var(--t-xs);
+  color: var(--text);
+}
+
+.branch-choice-text b {
+  font-weight: 650;
+}
+
+.branch-choice-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.branch-choice-error {
+  color: var(--danger);
+  white-space: pre-wrap;
+}
+
 .pr-dock-title {
   min-width: 0;
   overflow: hidden;

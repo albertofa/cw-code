@@ -27,19 +27,29 @@ import {
   stripContextSuffix,
   withContextSuffix
 } from "./modelMenus.js";
+import { BranchSendChoice } from "./BranchMismatchNotice.js";
 import { ImageThumb } from "./ImageThumb.js";
 import { displayImagePath, type ImageTarget } from "./imagePreview.js";
-import { useAppStore } from "../stores/appStore.js";
+import { NewSessionRefusedError, useAppStore } from "../stores/appStore.js";
 import { useConfirm } from "./ConfirmDialog.js";
 import { useNotifs } from "./Notifications.js";
 import { SlashMenu, slashOptionId, type SlashMenuItem } from "./SlashMenu.js";
 import { commandDisplay, filterCommands, mergeCommands, parseSlashInput, rankByQuery } from "./slashCommands.js";
+import type { BranchMismatch } from "./sessionBranch.js";
 import { harnessLabel } from "./toolTabs.js";
 import { ipcErrorMessage } from "./ipcError.js";
 import { useThreadVisible } from "./threadVisibility.js";
 
+export interface BranchGuard {
+  mismatch: BranchMismatch | null;
+  projectName: string;
+  switchBranch(): Promise<void>;
+  keepFolderBranch(): void;
+}
+
 export interface ComposerBackend {
   imageTarget: ImageTarget;
+  branchGuard?: BranchGuard;
   prefs: ComposerPrefs;
   busy: boolean;
   effectivePermissionMode?: string;
@@ -127,6 +137,9 @@ export function ComposerView({
   const [customModel, setCustomModel] = useState("");
   const [showCustom, setShowCustom] = useState(false);
   const [sending, setSending] = useState(false);
+  const [choiceOpen, setChoiceOpen] = useState(false);
+  const [choiceBusy, setChoiceBusy] = useState(false);
+  const [choiceError, setChoiceError] = useState<string | null>(null);
   const homeDir = useAppStore((s) => s.homeDir);
   const defaultModelId = useAppStore((s) => s.defaultModelByDriver[driver]);
   const saveDefaultModel = useAppStore((s) => s.saveDefaultModel);
@@ -200,6 +213,8 @@ export function ComposerView({
     setCustomModel("");
     setAddOpen(false);
     setPickerOpen(false);
+    setChoiceOpen(false);
+    setChoiceError(null);
   }, [resetKey]);
 
   useEffect(() => {
@@ -405,6 +420,11 @@ export function ComposerView({
     useNotifs.getState().push({ kind: "error", title, message: ipcErrorMessage(err) });
   };
 
+  const notifySendError = (err: unknown) => {
+    if (err instanceof NewSessionRefusedError) return;
+    notifyError("Could not send", err);
+  };
+
   const focusComposer = () => {
     requestAnimationFrame(() => composerRef.current?.focus({ preventScroll: true }));
   };
@@ -538,7 +558,7 @@ export function ComposerView({
       await b.send(commandDisplay(command.name, args), [], { name: command.name, args });
       if (isCurrent(key)) clearComposer();
     } catch (err) {
-      notifyError("Could not send", err);
+      notifySendError(err);
     } finally {
       setSending(false);
     }
@@ -551,7 +571,7 @@ export function ComposerView({
       .then(() => {
         if (isCurrent(key)) clearComposer();
       })
-      .catch((err: unknown) => notifyError("Could not send", err))
+      .catch(notifySendError)
       .finally(() => setSending(false));
   };
 
@@ -583,8 +603,44 @@ export function ComposerView({
       void sendSlash(body);
       return;
     }
+    if (backend.branchGuard?.mismatch) {
+      setChoiceError(null);
+      setChoiceOpen(true);
+      return;
+    }
     sendPlain(body);
   };
+
+  const resolveBranchChoice = async (choice: "switch" | "here"): Promise<void> => {
+    const guard = backendRef.current.branchGuard;
+    if (!guard) return;
+    setChoiceBusy(true);
+    setChoiceError(null);
+    try {
+      if (choice === "switch") await guard.switchBranch();
+      else guard.keepFolderBranch();
+    } catch (err) {
+      setChoiceError(ipcErrorMessage(err));
+      setChoiceBusy(false);
+      return;
+    }
+    setChoiceBusy(false);
+    setChoiceOpen(false);
+    sendPlain(draft.trim());
+  };
+
+  const cancelBranchChoice = () => {
+    setChoiceOpen(false);
+    setChoiceError(null);
+    focusComposer();
+  };
+
+  const branchMismatch = backend.branchGuard?.mismatch ?? null;
+  const hasBranchMismatch = branchMismatch !== null;
+
+  useEffect(() => {
+    if (!hasBranchMismatch) setChoiceOpen(false);
+  }, [hasBranchMismatch]);
 
   const slashName = SLASH_NAME.exec(draft);
   const slashArg = SLASH_ARG.exec(draft);
@@ -703,6 +759,17 @@ export function ComposerView({
           moreText={argOverflow ? "Keep typing to narrow down" : undefined}
           onHover={setSlashIndex}
           onPick={(index) => slashEntries[index]?.accept()}
+        />
+      )}
+      {choiceOpen && branchMismatch && backend.branchGuard && (
+        <BranchSendChoice
+          projectName={backend.branchGuard.projectName}
+          mismatch={branchMismatch}
+          busy={choiceBusy}
+          error={choiceError}
+          onSwitchAndSend={() => void resolveBranchChoice("switch")}
+          onSendHere={() => void resolveBranchChoice("here")}
+          onCancel={cancelBranchChoice}
         />
       )}
       {attachments.length > 0 && (

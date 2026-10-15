@@ -139,7 +139,10 @@ describe("subjectLink", () => {
 
 describe("resolveRunBase", () => {
   it("passes the run branch through for main to fetch", () => {
-    expect(resolveRunBase({ branch: "feat" })).toEqual({ baseBranch: "feat", source: "feat (fetched from origin)" });
+    expect(resolveRunBase({ branch: "feat" })).toEqual({
+      baseBranch: "feat",
+      source: "feat (fetched from origin; falls back to the default branch if it no longer exists)"
+    });
   });
 
   it("falls back to the default branch when the run has no branch", () => {
@@ -171,7 +174,7 @@ describe("workspace hints", () => {
       "switches widgets to a new branch from the default branch (fetched from origin)"
     );
     expect(baseWorkspaceHint(resolveRunBase({ branch: "feat" }), "checkout", null)).toBe(
-      "switches the project to a new branch from feat (fetched from origin)"
+      "switches the project to a new branch from feat (fetched from origin; falls back to the default branch if it no longer exists)"
     );
   });
 
