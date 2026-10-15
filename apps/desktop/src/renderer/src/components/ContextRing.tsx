@@ -90,7 +90,7 @@ export function ContextRing({ sessionId, driver }: { sessionId: string; driver: 
         aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
       >
-        <svg width={18} height={18} viewBox="0 0 20 20">
+        <svg width={14} height={14} viewBox="0 0 20 20" aria-hidden="true">
           <circle cx={10} cy={10} r={7.5} fill="none" stroke="var(--border)" strokeWidth={2.5} />
           {percent !== null && (
             <circle
@@ -106,6 +106,7 @@ export function ContextRing({ sessionId, driver }: { sessionId: string; driver: 
             />
           )}
         </svg>
+        {percent !== null && <span className="context-ring-pct">{Math.round(percent * 100)}%</span>}
       </button>
       {open && (
         <div className={`context-dock ${driver}`}>

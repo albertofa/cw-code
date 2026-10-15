@@ -208,6 +208,8 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
   useLinkedPrLoader(showNew ? undefined : session?.id);
   useMarkTurnSeen(showNew ? undefined : session?.id, session?.status, !hidden);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const stageRef = useRef<HTMLDivElement>(null);
+  const composerWrapRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
   const lastSeenIdRef = useRef<string | null>(null);
   const hiddenRef = useRef(hidden);
@@ -338,6 +340,20 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
       document.removeEventListener("pointerdown", trackPress, { capture: true });
       document.removeEventListener("keydown", onKeyDown);
     };
+  }, [activeSessionId, threadMounted]);
+
+  useLayoutEffect(() => {
+    const stage = stageRef.current;
+    const wrap = composerWrapRef.current;
+    if (!threadMounted || !stage || !wrap) return;
+    const sync = () => {
+      if (wrap.getClientRects().length === 0) return;
+      stage.style.setProperty("--composer-overlay-h", `${Math.ceil(wrap.getBoundingClientRect().height)}px`);
+    };
+    sync();
+    const ro = new ResizeObserver(sync);
+    ro.observe(wrap);
+    return () => ro.disconnect();
   }, [activeSessionId, threadMounted]);
 
   const onScroll = () => {
@@ -521,6 +537,7 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
           <ToolContent tab={showMainTool} sessionId={session.id} panel="main" />
         </div>
       ) : (
+      <div className="thread-stage" ref={stageRef}>
       <div
         className={`thread-body${dropMain.over ? " drop-target-active" : ""}`}
         {...dropMain.bind}
@@ -573,26 +590,32 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
               }
             />
           ))}
-          {!atBottom && (
-            <div className="jump-bottom-wrap">
-              <button className="jump-bottom" onClick={scrollToBottom} title="Scroll to bottom" aria-label="Scroll to bottom">
-                <ChevronDown size={14} aria-hidden="true" />
-                Scroll to bottom
-              </button>
-            </div>
-          )}
+          <div className="thread-composer-spacer" aria-hidden="true" />
           </div>
         </div>
       </div>
+      {!atBottom && (
+        <button className="jump-bottom" onClick={scrollToBottom} title="Scroll to bottom" aria-label="Scroll to bottom">
+          <ChevronDown size={14} aria-hidden="true" />
+          Scroll to bottom
+        </button>
       )}
-      {showMainTool === null && (
-      <div className="composer-wrap">
-        <TodoDock sessionId={session.id} />
-        <PrUpdateDock key={`pr-dock:${session.id}`} sessionId={session.id} />
-        <ApprovalDock sessionId={session.id} />
-        <QuestionDock sessionId={session.id} />
-        <WorkingDock key={`working-dock:${session.id}`} sessionId={session.id} basePath={basePath} />
-        <Composer key={`composer:${session.id}`} sessionId={session.id} driver={session.driver} />
+      <div className="composer-wrap" ref={composerWrapRef}>
+        <Composer
+          key={`composer:${session.id}`}
+          sessionId={session.id}
+          driver={session.driver}
+          top={
+            <>
+              <TodoDock sessionId={session.id} />
+              <PrUpdateDock key={`pr-dock:${session.id}`} sessionId={session.id} />
+              <ApprovalDock sessionId={session.id} />
+              <QuestionDock sessionId={session.id} />
+              <WorkingDock key={`working-dock:${session.id}`} sessionId={session.id} basePath={basePath} />
+            </>
+          }
+        />
+      </div>
       </div>
       )}
       {(isBottomOpen(panelDockByTab, isToolAvailable) || draggingTab !== null) && (

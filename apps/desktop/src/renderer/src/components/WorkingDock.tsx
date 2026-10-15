@@ -1,5 +1,4 @@
 import { useEffect, useRef, useState } from "react";
-import { Square } from "lucide-react";
 import { useAppStore, type ChatMessage } from "../stores/appStore.js";
 import { describeToolCall, formatDuration, isRunningTool, relativizeToBase } from "./toolSummaries.js";
 import { useElapsed } from "./useElapsed.js";
@@ -62,18 +61,8 @@ export function WorkingDock({ sessionId, basePath }: { sessionId: string; basePa
           <div className="working-dock-row" title={detail ? `Working · ${detail}` : "Working"}>
             <span className="pulse" aria-hidden="true" />
             <span className="working-dock-label">Working</span>
-            {startedAt !== undefined && <WorkingElapsed startedAt={startedAt} />}
             {detail && <span className="working-dock-step">{detail}</span>}
-            <button
-              type="button"
-              className="working-dock-stop"
-              onClick={() => void useAppStore.getState().interrupt()}
-              title="Stop the turn"
-              aria-label="Stop the turn"
-            >
-              <Square size={10} fill="currentColor" aria-hidden="true" />
-              <span className="working-dock-stop-label">Stop</span>
-            </button>
+            {startedAt !== undefined && <WorkingElapsed startedAt={startedAt} />}
           </div>
         </section>
       )}

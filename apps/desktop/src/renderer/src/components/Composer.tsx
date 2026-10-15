@@ -1,11 +1,11 @@
-import { useEffect } from "react";
+import { useEffect, type ReactNode } from "react";
 import type { DriverName } from "../cw.js";
 import { useAppStore, DEFAULT_COMPOSER } from "../stores/appStore.js";
 import { usePanelStore } from "../stores/panelStore.js";
 import { ComposerView, type ComposerBackend } from "./ComposerView.js";
 import { ContextRing } from "./ContextRing.js";
 
-export function Composer({ sessionId, driver }: { sessionId: string; driver: DriverName }) {
+export function Composer({ sessionId, driver, top }: { sessionId: string; driver: DriverName; top?: ReactNode }) {
   const prefs = useAppStore((s) => s.composerBySession[sessionId] ?? DEFAULT_COMPOSER);
   const busy = useAppStore((s) => s.busyTurns[sessionId] !== undefined);
   const projectId = useAppStore((s) => {
@@ -60,6 +60,7 @@ export function Composer({ sessionId, driver }: { sessionId: string; driver: Dri
       resetKey={sessionId}
       modelsRefreshKey={modelsRefreshKey}
       usageSlot={<ContextRing sessionId={sessionId} driver={driver} />}
+      top={top}
     />
   );
 }
