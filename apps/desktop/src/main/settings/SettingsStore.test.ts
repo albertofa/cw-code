@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
-import type { AppSettings, DriverKind, EffortLevel, PrWorkflow } from "@cw-code/contracts";
+import type { AppSettings, DriverKind, EffortLevel, PrFinishedSessionStatus, PrWorkflow } from "@cw-code/contracts";
 import { MetadataError } from "../storage/metadataDocument.js";
 import { DEFAULT_SETTINGS, SETTINGS_SCHEMA_VERSION, SettingsStore } from "./SettingsStore.js";
 
@@ -273,6 +273,52 @@ describe("SettingsStore", () => {
     expect(new SettingsStore(filePath).get()).toMatchObject({ holdingHours: 6, holdingAutoExpireEnabled: false });
   });
 
+  it("includes PR finished-session defaults", () => {
+    const settings = new SettingsStore(tempFilePath()).get();
+    expect(settings.prFinishedSessionStatus).toBe("idle");
+    expect(settings.idleResolveAfterDays).toBe(30);
+  });
+
+  it("accepts every PR finished-session status and falls back on an invalid value", () => {
+    const store = new SettingsStore(tempFilePath());
+    for (const status of ["idle", "resolved", "archived", "none"] as PrFinishedSessionStatus[]) {
+      expect(store.set({ prFinishedSessionStatus: status }).prFinishedSessionStatus).toBe(status);
+    }
+    expect(store.set({ prFinishedSessionStatus: "bogus" as unknown as PrFinishedSessionStatus }).prFinishedSessionStatus).toBe("idle");
+  });
+
+  it("rounds and clamps the idle resolve delay", () => {
+    const store = new SettingsStore(tempFilePath());
+    expect(store.set({ idleResolveAfterDays: 0 }).idleResolveAfterDays).toBe(0);
+    expect(store.set({ idleResolveAfterDays: -5 }).idleResolveAfterDays).toBe(0);
+    expect(store.set({ idleResolveAfterDays: 500 }).idleResolveAfterDays).toBe(365);
+    expect(store.set({ idleResolveAfterDays: 9.6 }).idleResolveAfterDays).toBe(10);
+    expect(store.set({ idleResolveAfterDays: Number.NaN }).idleResolveAfterDays).toBe(30);
+    expect(store.set({ idleResolveAfterDays: Number.POSITIVE_INFINITY }).idleResolveAfterDays).toBe(30);
+  });
+
+  it("round-trips PR finished-session settings", () => {
+    const filePath = tempFilePath();
+    const store = new SettingsStore(filePath);
+    const updated = store.set({ prFinishedSessionStatus: "archived", idleResolveAfterDays: 0 });
+    expect(updated).toMatchObject({ prFinishedSessionStatus: "archived", idleResolveAfterDays: 0 });
+    expect(new SettingsStore(filePath).get()).toEqual(updated);
+  });
+
+  it("repairs invalid PR finished-session settings from disk without touching other settings", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const filePath = tempFilePath();
+    writeFileSync(filePath, JSON.stringify({ schemaVersion: 1, holdingHours: 5, prFinishedSessionStatus: 3, idleResolveAfterDays: "soon" }), "utf8");
+
+    expect(new SettingsStore(filePath).get()).toMatchObject({
+      holdingHours: 5,
+      prFinishedSessionStatus: "idle",
+      idleResolveAfterDays: 30
+    });
+    expect(existsSync(`${filePath}.before-repair.bak`)).toBe(true);
+    warn.mockRestore();
+  });
+
   it("includes auto-title defaults", () => {
     const settings = new SettingsStore(tempFilePath()).get();
     expect(settings.autoTitleEnabled).toBe(true);
@@ -306,6 +352,7 @@ describe("SettingsStore", () => {
     const settings = new SettingsStore(tempFilePath()).get();
     expect(settings.prRefreshIntervalSeconds).toBe(120);
     expect(settings.prCloneRoot).toBe("~/.cw-code/repos");
+    expect(settings.prCloneIncludeOwner).toBe(true);
     expect(settings.prAttributionEnabled).toBe(true);
     expect(settings.prWorkflows.map((w) => w.id)).toEqual(["resolve-conflicts", "fix-ci", "address-feedback", "review", "babysit"]);
     expect(settings.prWorkflows.every((w) => w.builtIn && w.enabled)).toBe(true);
@@ -324,6 +371,12 @@ describe("SettingsStore", () => {
     const store = new SettingsStore(tempFilePath());
     expect(store.set({ prAttributionEnabled: "yes" as unknown as boolean }).prAttributionEnabled).toBe(false);
     expect(store.set({ prAttributionText: "  custom {{harness}}  " }).prAttributionText).toBe("custom {{harness}}");
+  });
+
+  it("coerces the clone owner folder toggle with strict true", () => {
+    const store = new SettingsStore(tempFilePath());
+    expect(store.set({ prCloneIncludeOwner: "yes" as unknown as boolean }).prCloneIncludeOwner).toBe(false);
+    expect(store.set({ prCloneIncludeOwner: true }).prCloneIncludeOwner).toBe(true);
   });
 
   it("falls back to PR defaults for non-string values without resetting other settings", () => {
@@ -439,5 +492,106 @@ describe("SettingsStore", () => {
         codexReasoningExpanded: true
       })
     ).toMatchObject({ claudeReasoningExpanded: true, opencodeReasoningExpanded: false, codexReasoningExpanded: true });
+  });
+
+  it("defaults typography to the built-in stacks and sizes", () => {
+    expect(new SettingsStore(tempFilePath()).get()).toMatchObject({
+      fontFamilySans: "",
+      fontFamilyMono: "",
+      fontFamilyPrompt: "",
+      fontFamilyTerminal: "",
+      fontSizeInterface: 16,
+      fontSizeCode: 14,
+      fontSizePrompt: 14,
+      fontSizeTerminal: 14,
+      typographyAdvanced: false
+    });
+  });
+
+  it("trims font families and caps them at 200 characters", () => {
+    const store = new SettingsStore(tempFilePath());
+    expect(store.set({ fontFamilySans: '  "Segoe UI Variable Text"  ' }).fontFamilySans).toBe('"Segoe UI Variable Text"');
+    expect(store.set({ fontFamilyMono: "a".repeat(300) }).fontFamilyMono).toHaveLength(200);
+    expect(store.set({ fontFamilyPrompt: 42 as unknown as string }).fontFamilyPrompt).toBe("");
+  });
+
+  it("rounds and clamps typography sizes", () => {
+    const store = new SettingsStore(tempFilePath());
+    expect(store.set({ fontSizeInterface: 4, fontSizeCode: 99, fontSizePrompt: 12.4, fontSizeTerminal: 2 })).toMatchObject({
+      fontSizeInterface: 12,
+      fontSizeCode: 18,
+      fontSizePrompt: 12,
+      fontSizeTerminal: 8
+    });
+    expect(store.set({ fontSizeInterface: 25, fontSizeCode: 9.6, fontSizePrompt: 19.5, fontSizeTerminal: 21 })).toMatchObject({
+      fontSizeInterface: 20,
+      fontSizeCode: 10,
+      fontSizePrompt: 20,
+      fontSizeTerminal: 20
+    });
+  });
+
+  it("resets non-finite typography sizes to the defaults", () => {
+    const store = new SettingsStore(tempFilePath());
+    expect(
+      store.set({
+        fontSizeInterface: Number.NaN,
+        fontSizeCode: "wide" as unknown as number,
+        fontSizePrompt: Number.POSITIVE_INFINITY
+      })
+    ).toMatchObject({ fontSizeInterface: 16, fontSizeCode: 14, fontSizePrompt: 14 });
+  });
+
+  it("resets null typography sizes to the defaults instead of the minimum", () => {
+    const store = new SettingsStore(tempFilePath());
+    store.set({ fontSizeInterface: 18, fontSizeTerminal: 18 });
+    expect(
+      store.set({
+        fontSizeInterface: null as unknown as number,
+        fontSizeTerminal: null as unknown as number
+      })
+    ).toMatchObject({ fontSizeInterface: 16, fontSizeTerminal: 14 });
+  });
+
+  it("coerces the advanced typography switch with strict true", () => {
+    const store = new SettingsStore(tempFilePath());
+    expect(store.set({ typographyAdvanced: true }).typographyAdvanced).toBe(true);
+    expect(store.set({ typographyAdvanced: "yes" as unknown as boolean }).typographyAdvanced).toBe(false);
+  });
+
+  it("defaults panel animation to off", () => {
+    expect(new SettingsStore(tempFilePath()).get().panelAnimationMs).toBe(0);
+  });
+
+  it("clamps panel animation to 0-400 in steps of 25", () => {
+    const store = new SettingsStore(tempFilePath());
+    expect(store.set({ panelAnimationMs: 175 }).panelAnimationMs).toBe(175);
+    expect(store.set({ panelAnimationMs: 160 }).panelAnimationMs).toBe(150);
+    expect(store.set({ panelAnimationMs: 163 }).panelAnimationMs).toBe(175);
+    expect(store.set({ panelAnimationMs: -50 }).panelAnimationMs).toBe(0);
+    expect(store.set({ panelAnimationMs: 900 }).panelAnimationMs).toBe(400);
+  });
+
+  it("defaults every harness default model to empty", () => {
+    expect(new SettingsStore(tempFilePath()).get()).toMatchObject({
+      claudeDefaultModel: "",
+      codexDefaultModel: "",
+      opencodeDefaultModel: ""
+    });
+  });
+
+  it("trims harness default models and resets non-strings to empty", () => {
+    const store = new SettingsStore(tempFilePath());
+    expect(store.set({ codexDefaultModel: "  gpt-5.5-codex  " }).codexDefaultModel).toBe("gpt-5.5-codex");
+    expect(store.set({ opencodeDefaultModel: " anthropic/claude-opus-5 " }).opencodeDefaultModel).toBe("anthropic/claude-opus-5");
+    expect(store.set({ codexDefaultModel: 7 as unknown as string }).codexDefaultModel).toBe("");
+    expect(store.set({ opencodeDefaultModel: null as unknown as string }).opencodeDefaultModel).toBe("");
+  });
+
+  it("resets a non-finite panel animation to off", () => {
+    const store = new SettingsStore(tempFilePath());
+    store.set({ panelAnimationMs: 200 });
+    expect(store.set({ panelAnimationMs: Number.NaN }).panelAnimationMs).toBe(0);
+    expect(store.set({ panelAnimationMs: "slow" as unknown as number }).panelAnimationMs).toBe(0);
   });
 });

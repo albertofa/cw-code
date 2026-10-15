@@ -6,6 +6,7 @@ export interface EditorBuffer {
   saved: string;
   content: string;
   refs: number;
+  missing?: boolean;
 }
 
 export interface DirtyBuffer {
@@ -15,6 +16,11 @@ export interface DirtyBuffer {
   content: string;
 }
 
+export interface MatchedBuffer {
+  key: string;
+  buffer: EditorBuffer;
+}
+
 interface EditorBuffersState {
   buffers: Record<string, EditorBuffer>;
   register(sessionId: string, path: string, saved: string): string;
@@ -22,11 +28,29 @@ interface EditorBuffersState {
   markSaved(key: string, saved: string): void;
   discard(key: string): void;
   unregister(key: string): void;
+  reloadClean(key: string, saved: string): boolean;
+  markMissing(key: string): boolean;
   dirty(): DirtyBuffer[];
 }
 
 export function bufferKey(sessionId: string, path: string): string {
   return `${sessionId}\n${path}`;
+}
+
+export function isDirtyBuffer(buffer: EditorBuffer): boolean {
+  return buffer.content !== buffer.saved;
+}
+
+export function buffersForPaths(
+  buffers: Record<string, EditorBuffer>,
+  sessionIds: readonly string[],
+  paths: readonly string[]
+): MatchedBuffer[] {
+  const sessions = new Set(sessionIds);
+  const wanted = new Set(paths);
+  return Object.entries(buffers)
+    .filter(([, buffer]) => sessions.has(buffer.sessionId) && wanted.has(buffer.path))
+    .map(([key, buffer]) => ({ key, buffer }));
 }
 
 function withBuffer(
@@ -53,7 +77,7 @@ export const useEditorBuffers = create<EditorBuffersState>((set, get) => ({
     const next: EditorBuffer = !existing
       ? { sessionId, path, saved, content: saved, refs: 1 }
       : existing.content === existing.saved
-        ? { ...existing, saved, content: saved, refs: existing.refs + 1 }
+        ? { sessionId, path, saved, content: saved, refs: existing.refs + 1 }
         : { ...existing, refs: existing.refs + 1 };
     set({ buffers: { ...get().buffers, [key]: next } });
     return key;
@@ -70,9 +94,21 @@ export const useEditorBuffers = create<EditorBuffersState>((set, get) => ({
   unregister(key) {
     set({ buffers: withBuffer(get().buffers, key, (buffer) => (buffer.refs > 0 ? { ...buffer, refs: buffer.refs - 1 } : buffer)) });
   },
+  reloadClean(key, saved) {
+    const current = get().buffers[key];
+    if (!current || isDirtyBuffer(current)) return false;
+    set({ buffers: { ...get().buffers, [key]: { sessionId: current.sessionId, path: current.path, saved, content: saved, refs: current.refs } } });
+    return true;
+  },
+  markMissing(key) {
+    const current = get().buffers[key];
+    if (!current || isDirtyBuffer(current)) return false;
+    set({ buffers: { ...get().buffers, [key]: { ...current, missing: true } } });
+    return true;
+  },
   dirty() {
     return Object.entries(get().buffers)
-      .filter(([, buffer]) => buffer.content !== buffer.saved)
+      .filter(([, buffer]) => isDirtyBuffer(buffer))
       .map(([key, buffer]) => ({ key, sessionId: buffer.sessionId, path: buffer.path, content: buffer.content }));
   }
 }));

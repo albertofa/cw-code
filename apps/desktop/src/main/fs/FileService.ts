@@ -1,19 +1,30 @@
-import { existsSync, mkdirSync, readFileSync, readdirSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
 import { readdir, stat } from "node:fs/promises";
-import { isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
+import { extname, isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
 import { attachmentsDir } from "../paths/appPaths.js";
 
+const UNC_OR_DEVICE_PREFIX = /^[\\/]{2}/;
+
 function assertInside(root: string, target: string): string {
-  const abs = resolve(root, target.replace(/\\/g, "/"));
-  const rel = relative(resolve(root), abs);
-  if (rel === ".." || rel.startsWith(`..${sep}`) || abs !== resolve(abs)) {
+  if (UNC_OR_DEVICE_PREFIX.test(target)) throw new Error(`path escapes project root: ${target}`);
+  const base = resolve(root);
+  const abs = resolve(base, target.replace(/\\/g, "/"));
+  const rel = relative(base, abs);
+  if (isAbsolute(rel) || rel === ".." || rel.startsWith(`..${sep}`)) {
     throw new Error(`path escapes project root: ${target}`);
   }
-  void abs;
   return abs;
 }
 
 const PREVIEW_MAX_BYTES = 2 * 1024 * 1024;
+
+const OUTSIDE_PREVIEW_EXTS = new Set([".md", ".markdown", ".html", ".htm"]);
+
+function assertOutsidePreviewable(path: string, requested: string): void {
+  if (UNC_OR_DEVICE_PREFIX.test(path)) throw new Error(`network and device paths cannot be previewed: ${requested}`);
+  if (!isAbsolute(path)) throw new Error(`absolute path required: ${requested}`);
+  if (!OUTSIDE_PREVIEW_EXTS.has(extname(path).toLowerCase())) throw new Error(`not a previewable file: ${requested}`);
+}
 
 const PASTE_EXTS: Record<string, string> = {
   "image/png": "png",
@@ -74,14 +85,15 @@ export class FileService {
   }
 
   readOutsideFile(target: string): string {
-    if (!isAbsolute(target)) throw new Error(`absolute path required: ${target}`);
-    const abs = resolve(target);
-    let stat: ReturnType<typeof statSync>;
+    assertOutsidePreviewable(target, target);
+    let abs: string;
     try {
-      stat = statSync(abs);
+      abs = realpathSync(resolve(target));
     } catch {
       throw new Error(`file not found: ${target}`);
     }
+    assertOutsidePreviewable(abs, target);
+    const stat = statSync(abs);
     if (!stat.isFile()) throw new Error(`not a file: ${target}`);
     if (stat.size > PREVIEW_MAX_BYTES) throw new Error(`file too large to preview: ${target}`);
     return readFileSync(abs, "utf8");

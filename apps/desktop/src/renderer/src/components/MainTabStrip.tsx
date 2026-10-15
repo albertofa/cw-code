@@ -1,24 +1,24 @@
-import type { ReactNode } from "react";
 import { MessageSquare } from "lucide-react";
-import type { DockableTabId, MainTabId } from "@cw-code/contracts";
+import type { MainTabId } from "@cw-code/contracts";
 import type { DriverName } from "../cw.js";
+import { DockTab } from "./DockTab.js";
 import { DriverIcon } from "./DriverIcon.js";
-import { TOOL_TABS, harnessLabel, isToolTabAvailable } from "./toolTabs.js";
+import { focusSiblingTab } from "./tabStripKeys.js";
+import { harnessLabel, toolAvailability } from "./toolTabs.js";
 import { useTabMenu } from "./TabMenu.js";
-import { endTabDrag, startTabDrag, useDockDrop } from "./useDockDrop.js";
+import { useDockDrop } from "./useDockDrop.js";
 import { resolveMainTab } from "../stores/panelLayout.js";
+import { useAppStore } from "../stores/appStore.js";
 import { selectSessionPanel, usePanelStore } from "../stores/panelStore.js";
 
 export function MainTabStrip({
   sessionId,
   driver,
-  hasPr,
-  trailing
+  hasPr
 }: {
   sessionId: string | undefined;
   driver: DriverName | undefined;
   hasPr: boolean;
-  trailing?: ReactNode;
 }) {
   const { mainOrder, activeMain, dockByTab } = usePanelStore((s) => selectSessionPanel(s, sessionId));
   const setActive = usePanelStore((s) => s.setActive);
@@ -26,9 +26,11 @@ export function MainTabStrip({
   const dropMain = useDockDrop("main", sessionId);
   const tabMenu = useTabMenu(sessionId);
   const draggingTab = usePanelStore((s) => s.draggingTab);
+  const hasPreview = useAppStore((s) => (sessionId ? (s.previewBySession[sessionId] ?? null) !== null : false));
+  const isToolAvailable = toolAvailability(driver, hasPr, hasPreview);
 
   const effectiveActive: MainTabId =
-    sessionId === undefined ? "chat" : resolveMainTab(mainOrder, dockByTab, driver, activeMain, hasPr);
+    sessionId === undefined ? "chat" : resolveMainTab(mainOrder, dockByTab, driver, activeMain, hasPr, isToolAvailable);
   const chatLabel = driver === undefined ? "Chat" : harnessLabel(driver);
 
   return (
@@ -36,11 +38,13 @@ export function MainTabStrip({
       className={`main-tabbar${dropMain.over || draggingTab !== null ? " drop-target-active" : ""}`}
       role="tablist"
       aria-label="Main panel tabs"
+      onKeyDown={focusSiblingTab}
       {...dropMain.bind}
     >
       <button
         role="tab"
         aria-selected={effectiveActive === "chat"}
+        tabIndex={effectiveActive === "chat" ? 0 : -1}
         onClick={() => setActive(sessionId, "main", "chat")}
         className={`tab fixed${effectiveActive === "chat" ? " active" : ""}`}
         title={`${chatLabel} - composer and output (fixed tab)`}
@@ -50,42 +54,19 @@ export function MainTabStrip({
       </button>
       {sessionId !== undefined &&
         mainOrder.map((id) => {
-          if (id === "chat") return null;
-          if (dockByTab[id] !== "main") return null;
-          const def = TOOL_TABS.find((item) => item.id === id);
-          if (!def || !isToolTabAvailable(def, driver, hasPr)) return null;
-          const tabId = id as DockableTabId;
+          if (id === "chat" || dockByTab[id] !== "main" || !isToolAvailable(id)) return null;
           return (
-            <button
+            <DockTab
               key={id}
-              role="tab"
-              aria-selected={effectiveActive === id}
-              onClick={() => setActive(sessionId, "main", tabId)}
-              onContextMenu={tabMenu.onTabContextMenu(tabId)}
-              draggable
-              onDragStart={(e) => startTabDrag(e, tabId, sessionId)}
-              onDragEnd={endTabDrag}
-              className={`tab${effectiveActive === id ? " active" : ""}`}
-              title={`${def.title} - drag to move, right-click for more actions`}
-            >
-              <def.Icon size={15} className={`tab-icon${def.driver ? ` driver-icon ${def.driver}` : ""}`} aria-hidden="true" />
-              <span
-                className="tab-x"
-                role="button"
-                aria-label={`Close ${def.title}`}
-                title="Close tab"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  moveTab(sessionId, tabId, "closed");
-                }}
-              >
-                &times;
-              </span>
-              <span className="tab-label">{def.title}</span>
-            </button>
+              tab={id}
+              sessionId={sessionId}
+              active={effectiveActive === id}
+              onActivate={() => setActive(sessionId, "main", id)}
+              onContextMenu={tabMenu.onTabContextMenu(id)}
+              onClose={() => moveTab(sessionId, id, "closed")}
+            />
           );
         })}
-      {trailing && <div className="main-tabbar-trailing">{trailing}</div>}
       {tabMenu.menuNode}
     </div>
   );

@@ -47,8 +47,8 @@ export interface CliDriver {
   getSubagentTools?(projectRoot: string, resumeCursor: string, agentId: string): Promise<SubagentToolsResult>;
   startTurn(request: TurnRequest): TurnHandle;
   interrupt(turnId: string): void;
-  /** Force-stop all work for a local session (kill the underlying process). */
-  stopSession?(sessionId: string): void;
+  /** Force-stop all work for a local session (kill the underlying process). Callers await the result before deleting session resources. */
+  stopSession?(sessionId: string): void | Promise<void>;
   /** Re-establish the CLI connection for a session after a disconnect and refetch its state. */
   retryConnection?(request: RetryConnectionRequest): Promise<RetryConnectionResult>;
   renameSession(sessionId: string, title: string): Promise<void>;

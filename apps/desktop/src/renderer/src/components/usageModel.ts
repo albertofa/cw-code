@@ -1,4 +1,4 @@
-import type { DriverName, UsageLedgerRow } from "../cw.js";
+import type { ContextUsage, DriverName, TokenCounts, UsageLedgerRow } from "../cw.js";
 
 export type UsageMetric = "all" | "fresh";
 
@@ -25,6 +25,13 @@ export interface SessionUsageRow {
   turns: number;
   tokens: number;
   costUsd: number | null;
+}
+
+export type ContextSeverity = "warn" | "danger" | null;
+
+export interface ContextMeter {
+  percent: number;
+  severity: ContextSeverity;
 }
 
 export interface UsageTotals {
@@ -132,7 +139,7 @@ export function topSessions(rows: UsageLedgerRow[], limit = 5): SessionUsageRow[
       costUsd: null
     };
     entry.turns += row.turns;
-    entry.tokens += row.inputTokens + row.cacheReadTokens + row.cacheWriteTokens + row.outputTokens;
+    entry.tokens += turnTokens(row);
     entry.costUsd = addCost(entry.costUsd, row.costUsd);
     byKey.set(row.sessionId, entry);
   }
@@ -168,4 +175,13 @@ export function totals(rows: UsageLedgerRow[]): UsageTotals {
     sessions: sessions.size,
     unpricedTurns
   };
+}
+
+export function contextMeter(context: ContextUsage): ContextMeter {
+  const percent = Math.min(1, context.usedTokens / Math.max(1, context.windowTokens));
+  return { percent, severity: percent >= 0.95 ? "danger" : percent >= 0.8 ? "warn" : null };
+}
+
+export function turnTokens(counts: Pick<TokenCounts, "inputTokens" | "cacheReadTokens" | "cacheWriteTokens" | "outputTokens">): number {
+  return counts.inputTokens + counts.cacheReadTokens + counts.cacheWriteTokens + counts.outputTokens;
 }

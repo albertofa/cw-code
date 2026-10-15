@@ -250,15 +250,13 @@ describe("appStore pending model per harness", () => {
     });
   });
 
-  it("remembers the last model per harness when switching drivers", () => {
+  it("remembers the outgoing model and leaves the next harness model for the composer to pick", () => {
     setLastModel("claude", "sonnet");
     useAppStore.setState({ pendingPrefs: { ...DEFAULT_COMPOSER, model: "alpha/m1" } });
     useAppStore.getState().setPendingDriver("claude");
     expect(useAppStore.getState().pendingDriver).toBe("claude");
-    expect(useAppStore.getState().pendingPrefs.model).toBe("sonnet");
+    expect(useAppStore.getState().pendingPrefs.model).toBeUndefined();
     expect(getLastModel("opencode")).toBe("alpha/m1");
-    useAppStore.getState().setPendingDriver("opencode");
-    expect(useAppStore.getState().pendingPrefs.model).toBe("alpha/m1");
   });
 
   it("clears the model when the next harness has no remembered model", () => {
@@ -267,16 +265,18 @@ describe("appStore pending model per harness", () => {
     expect(useAppStore.getState().pendingPrefs.model).toBeUndefined();
   });
 
-  it("restores the target harness model when opening a new session", () => {
+  it("does not seed a recent model over the harness default when opening a new session", () => {
     setLastModel("opencode", "alpha/m1");
     useAppStore.setState({
       pendingDriver: "claude",
       lastDriver: "claude",
-      pendingPrefs: { ...DEFAULT_COMPOSER, model: "sonnet" }
+      pendingPrefs: { ...DEFAULT_COMPOSER, model: "sonnet" },
+      defaultModelByDriver: { claude: "", opencode: "beta/m2", codex: "" }
     });
     useAppStore.getState().startNewSession("opencode");
     expect(useAppStore.getState().pendingDriver).toBe("opencode");
-    expect(useAppStore.getState().pendingPrefs.model).toBe("alpha/m1");
+    expect(useAppStore.getState().pendingPrefs.model).toBeUndefined();
+    expect(getLastModel("claude")).toBe("sonnet");
   });
 });
 

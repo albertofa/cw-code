@@ -1,6 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import type { EffortLevel, ModelOption } from "@cw-code/contracts";
+import type { EffortLevel, ModelMeta, ModelOption } from "@cw-code/contracts";
 import { execCliFile } from "../../cli/spawnCli.js";
 import { traceHarnessCall, truncateError } from "../../debug/harnessTrace.js";
 
@@ -68,6 +68,49 @@ export function parseOpencodeModels(stdout: string): ModelOption[] {
   return out.sort((a, b) => a.id.localeCompare(b.id));
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function nonNegativeNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : undefined;
+}
+
+function modalityList(value: unknown): string[] | undefined {
+  const entries = Array.isArray(value)
+    ? value.filter((v): v is string => typeof v === "string" && v.length > 0)
+    : isRecord(value)
+      ? Object.entries(value).filter(([, on]) => on === true).map(([name]) => name)
+      : [];
+  return entries.length > 0 ? entries : undefined;
+}
+
+function capabilityList(model: Record<string, unknown>): string[] | undefined {
+  const nested = isRecord(model.capabilities) ? model.capabilities : {};
+  const flags: Array<[unknown, string]> = [
+    [model.reasoning ?? nested.reasoning, "Reasoning"],
+    [model.tool_call ?? nested.toolcall, "Tool calling"],
+    [model.attachment ?? nested.attachment, "Attachments"]
+  ];
+  const enabled = flags.filter(([on]) => on === true).map(([, label]) => label);
+  return enabled.length > 0 ? enabled : undefined;
+}
+
+export function parseModelMeta(model: Record<string, unknown>): ModelMeta | undefined {
+  const cost = isRecord(model.cost) ? model.cost : {};
+  const modalities = isRecord(model.modalities) ? model.modalities : {};
+  const nested = isRecord(model.capabilities) ? model.capabilities : {};
+  const meta: ModelMeta = {
+    costInputPerM: nonNegativeNumber(cost.input),
+    costOutputPerM: nonNegativeNumber(cost.output),
+    capabilities: capabilityList(model),
+    input: modalityList(modalities.input ?? nested.input),
+    output: modalityList(modalities.output ?? nested.output)
+  };
+  const defined = Object.fromEntries(Object.entries(meta).filter(([, value]) => value !== undefined)) as ModelMeta;
+  return Object.keys(defined).length > 0 ? defined : undefined;
+}
+
 const MODEL_ID_LINE_RE = /^([a-z0-9][a-z0-9-_]*\/\S+)$/i;
 
 export function parseOpencodeVerboseModels(stdout: string): ModelOption[] {
@@ -116,8 +159,10 @@ export function parseOpencodeVerboseModels(stdout: string): ModelOption[] {
     }
     let variants: string[] | undefined;
     let contextWindow: number | undefined;
+    let meta: ModelMeta | undefined;
     try {
-      const parsed = JSON.parse(lines.slice(j, end + 1).join("\n")) as { variants?: unknown; limit?: unknown };
+      const parsed = JSON.parse(lines.slice(j, end + 1).join("\n")) as Record<string, unknown>;
+      meta = parseModelMeta(parsed);
       if (parsed.variants && typeof parsed.variants === "object" && !Array.isArray(parsed.variants)) {
         variants = Object.keys(parsed.variants as Record<string, unknown>);
       } else if (Array.isArray(parsed.variants)) {
@@ -140,7 +185,8 @@ export function parseOpencodeVerboseModels(stdout: string): ModelOption[] {
         label: labelForModel(id),
         source: "live",
         ...(variants !== undefined ? { variants } : {}),
-        ...(contextWindow !== undefined ? { contextWindow } : {})
+        ...(contextWindow !== undefined ? { contextWindow } : {}),
+        ...(meta !== undefined ? { meta } : {})
       });
     }
     i = end + 1;
@@ -209,9 +255,20 @@ function queryModels(binary: string, args: string[]): Promise<string> {
   );
 }
 
+function isStringList(value: unknown): boolean {
+  return Array.isArray(value) && value.every((item) => typeof item === "string");
+}
+
+function isModelMeta(value: unknown): boolean {
+  if (!isRecord(value)) return false;
+  if (value.costInputPerM !== undefined && nonNegativeNumber(value.costInputPerM) === undefined) return false;
+  if (value.costOutputPerM !== undefined && nonNegativeNumber(value.costOutputPerM) === undefined) return false;
+  return [value.capabilities, value.input, value.output].every((list) => list === undefined || isStringList(list));
+}
+
 function isModelOption(value: unknown): value is ModelOption {
   if (!value || typeof value !== "object") return false;
-  const model = value as { id?: unknown; label?: unknown; source?: unknown; variants?: unknown; contextWindow?: unknown };
+  const model = value as { id?: unknown; label?: unknown; source?: unknown; variants?: unknown; contextWindow?: unknown; meta?: unknown };
   if (typeof model.id !== "string" || !model.id) return false;
   if (typeof model.label !== "string") return false;
   if (model.source !== "live" && model.source !== "curated" && model.source !== "custom") return false;
@@ -222,6 +279,7 @@ function isModelOption(value: unknown): value is ModelOption {
   if (model.contextWindow !== undefined) {
     if (typeof model.contextWindow !== "number" || !Number.isFinite(model.contextWindow) || model.contextWindow <= 0) return false;
   }
+  if (model.meta !== undefined && !isModelMeta(model.meta)) return false;
   return true;
 }
 

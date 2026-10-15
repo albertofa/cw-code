@@ -134,6 +134,7 @@ export class CodexCliDriver implements CliDriver {
   private reasoningKinds = new Map<string, Map<string, "summary" | "text">>();
   private defaultModelIdCache: string | null = null;
   private skillPaths = new Map<string, Map<string, string>>();
+  private sessionThreads = new Map<string, string>();
 
   constructor(
     private emit: (event: ThreadEvent) => void,
@@ -365,6 +366,7 @@ export class CodexCliDriver implements CliDriver {
       const threadId = request.resumeCursor
         ? await this.resumeThread(request, perms)
         : await this.startThread(request, perms);
+      this.sessionThreads.set(request.sessionId, threadId);
       const active: ActiveTurn = {
         turnId,
         localSessionId: request.sessionId,
@@ -507,15 +509,23 @@ export class CodexCliDriver implements CliDriver {
     perms: ReturnType<typeof mapPermissionMode>
   ): Promise<string> {
     const threadId = request.resumeCursor as string;
-    const res = await this.client.request<{ thread: { id: string } }>("thread/resume", {
+    const params = {
       threadId,
       cwd: request.cwd,
       approvalPolicy: perms.approvalPolicy,
       sandbox: perms.sandbox,
       ...(perms.approvalsReviewer ? { approvalsReviewer: perms.approvalsReviewer } : {}),
       ...(request.model ? { model: request.model } : {})
-    });
-    return res.thread.id || threadId;
+    };
+    try {
+      const res = await this.client.request<{ thread: { id: string } }>("thread/resume", params);
+      return res.thread.id || threadId;
+    } catch (err) {
+      if (!/archived/i.test((err as Error).message ?? "")) throw err;
+      await this.client.request<unknown>("thread/unarchive", { threadId });
+      const res = await this.client.request<{ thread: { id: string } }>("thread/resume", params);
+      return res.thread.id || threadId;
+    }
   }
 
   private async defaultModelId(): Promise<string | null> {
@@ -552,6 +562,52 @@ export class CodexCliDriver implements CliDriver {
       if (driverTurnId === turn.turnId) return codexId;
     }
     return undefined;
+  }
+
+  async stopSession(sessionId: string): Promise<void> {
+    const threadId = this.sessionThreads.get(sessionId);
+    if (!threadId) return;
+    try {
+      for (const turn of [...this.turns.values()]) {
+        if (turn.localSessionId !== sessionId) continue;
+        const codexTurnId = this.codexTurnId(turn);
+        if (!codexTurnId) continue;
+        await this.client
+          .request<unknown>("turn/interrupt", { threadId: turn.threadId, turnId: codexTurnId }, 5_000)
+          .catch(() => undefined);
+      }
+      await this.client.request<unknown>("thread/archive", { threadId }, 15_000);
+      this.sessionThreads.delete(sessionId);
+      traceHarnessCall({ harness: "codex", operation: "codex.stopSession", sessionId, ok: true, extra: { threadId } });
+    } catch (err) {
+      traceHarnessCall({
+        harness: "codex",
+        operation: "codex.stopSession",
+        sessionId,
+        resumeCursor: threadId,
+        ok: false,
+        error: truncateError((err as Error).message)
+      });
+      throw err;
+    } finally {
+      this.clearTurnsForSession(sessionId);
+    }
+  }
+
+  private clearTurnsForSession(sessionId: string): void {
+    for (const turn of [...this.turns.values()]) {
+      if (turn.localSessionId !== sessionId) continue;
+      this.turns.delete(turn.turnId);
+      this.reasoningKinds.delete(turn.turnId);
+      for (const [codexId, driverTurnId] of [...this.turnByCodexId]) {
+        if (driverTurnId === turn.turnId) this.turnByCodexId.delete(codexId);
+      }
+      for (const [requestId, question] of [...this.pendingQuestions]) {
+        if (question.turnId !== turn.turnId) continue;
+        this.pendingQuestions.delete(requestId);
+        this.emit({ type: "question.resolved", turnId: turn.turnId, requestId, answers: null });
+      }
+    }
   }
 
   async respondToApproval(requestId: string, decision: ApprovalDecision): Promise<void> {

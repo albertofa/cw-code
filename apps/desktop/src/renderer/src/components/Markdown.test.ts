@@ -54,6 +54,8 @@ describe("isLocalPreviewLink", () => {
     expect(isLocalPreviewLink("https://x.com/a.md")).toBe(false);
     expect(isLocalPreviewLink("mailto:a@b.c")).toBe(false);
     expect(isLocalPreviewLink("//x.com/a.md")).toBe(false);
+    expect(isLocalPreviewLink("\\\\server\\share\\a.md")).toBe(false);
+    expect(isLocalPreviewLink("\\/server/a.md")).toBe(false);
     expect(isLocalPreviewLink("a.ts")).toBe(false);
     expect(isLocalPreviewLink("#frag")).toBe(false);
   });

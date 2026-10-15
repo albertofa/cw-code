@@ -7,7 +7,6 @@ export type SessionStatus = "idle" | "working" | "input-required" | "done" | "ho
 
 export type SessionStatusReason =
   | "session-created"
-  | "session-discovered"
   | "turn-start"
   | "turn-done"
   | "turn-done-background"
@@ -22,10 +21,12 @@ export type SessionStatusReason =
   | "user-set-status"
   | "reopen-on-select"
   | "reopen-on-restore"
-  | "merged-pr"
+  | "turn-seen"
+  | "pr-finished"
   | "app-restart-holding"
   | "app-restart-idle"
   | "holding-expired"
+  | "idle-expired"
   | "unknown";
 
 export interface Project {
@@ -49,13 +50,31 @@ export interface SessionMeta {
   effort?: EffortLevel;
   variant?: string;
   permissionMode?: PermissionMode;
+  /** Permission mode the harness CLI reports running in, which can differ from the requested mode. */
+  effectivePermissionMode?: string;
   /** The isolated checkout used by this session. Older/imported sessions omit it. */
   worktreePath?: string;
+  /** When the session last entered the idle status. */
+  idleSince?: number;
+  /** True when the session was resolved by an automatic sweep rather than by the user. */
+  autoResolved?: boolean;
   /** Last known branch. Live Git status remains the source of truth. */
   branch?: string;
   prs?: SessionPrLink[];
   /** prKeys of PRs the user explicitly unlinked from this session, so auto-link does not re-attach them. */
   prUnlinked?: string[];
+  lastTurnSnapshot?: TurnSnapshot;
+}
+
+export interface TurnSnapshot {
+  turnId: string;
+  sha?: string;
+  capturedAt: number;
+  error?: string;
+  endSha?: string;
+  endedAt?: number;
+  endError?: string;
+  undoneAt?: number;
 }
 
 export type CreateWorkspaceMode = "current" | "new" | "previous";
@@ -109,12 +128,21 @@ export interface ComposerPrefs {
   permissionMode?: PermissionMode;
 }
 
+export interface ModelMeta {
+  costInputPerM?: number;
+  costOutputPerM?: number;
+  capabilities?: string[];
+  input?: string[];
+  output?: string[];
+}
+
 export interface ModelOption {
   id: string;
   label: string;
   source: "live" | "curated" | "custom";
   variants?: string[];
   contextWindow?: number;
+  meta?: ModelMeta;
 }
 
 export interface GitPullRequestChecks {
@@ -237,11 +265,28 @@ export interface WorktreePruneSummary {
   clearedSessionIds: string[];
 }
 
-export type GitDiffMode = "working" | "staged" | "branch";
+export type GitDiffMode = "working" | "staged" | "branch" | "turn";
 
 export interface GitDiffResult {
   mode: GitDiffMode;
   patch: string;
   baseRef: string | null;
   headRef: string;
+}
+
+export interface TurnFileChange {
+  path: string;
+  change: "modified" | "added" | "deleted";
+  added: number;
+  deleted: number;
+  binary: boolean;
+}
+
+export interface TurnChanges {
+  turnId: string;
+  files: TurnFileChange[];
+  endSha: string | null;
+  undoable: boolean;
+  reason?: string;
+  conflicts: string[];
 }

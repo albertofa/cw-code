@@ -19,6 +19,10 @@ coverage/
 /upgrade-base/
 /apps/desktop/dist-installer/
 
+# Plans, mockups and design notes stay outside the repo
+/docs/plans/
+/design-plans/
+
 # Local configuration and credentials
 .env
 .env.*

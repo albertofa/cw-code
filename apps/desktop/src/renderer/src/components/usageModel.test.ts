@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { UsageLedgerRow } from "../cw.js";
-import { byModel, dailyByDriver, topSessions, totals } from "./usageModel.js";
+import { byModel, contextMeter, dailyByDriver, topSessions, totals, turnTokens } from "./usageModel.js";
 
 function row(overrides: Partial<UsageLedgerRow> = {}): UsageLedgerRow {
   return {
@@ -118,5 +118,29 @@ describe("totals", () => {
     const result = totals(rows);
     expect(result.costUsd).toBe(2.5);
     expect(result.unpricedTurns).toBe(1);
+  });
+});
+
+describe("contextMeter", () => {
+  it("returns the used share with no severity below 80%", () => {
+    expect(contextMeter({ usedTokens: 50, windowTokens: 100 })).toEqual({ percent: 0.5, severity: null });
+  });
+
+  it("flags warn from 80% and danger from 95%", () => {
+    expect(contextMeter({ usedTokens: 80, windowTokens: 100 }).severity).toBe("warn");
+    expect(contextMeter({ usedTokens: 94, windowTokens: 100 }).severity).toBe("warn");
+    expect(contextMeter({ usedTokens: 95, windowTokens: 100 }).severity).toBe("danger");
+  });
+
+  it("caps at 100% and survives an empty window", () => {
+    expect(contextMeter({ usedTokens: 300, windowTokens: 100 }).percent).toBe(1);
+    expect(contextMeter({ usedTokens: 0, windowTokens: 0 })).toEqual({ percent: 0, severity: null });
+  });
+});
+
+describe("turnTokens", () => {
+  it("sums input, cache and output tokens but not reasoning", () => {
+    const counts = { inputTokens: 10, cacheReadTokens: 20, cacheWriteTokens: 30, outputTokens: 40, reasoningTokens: 99 };
+    expect(turnTokens(counts)).toBe(100);
   });
 });

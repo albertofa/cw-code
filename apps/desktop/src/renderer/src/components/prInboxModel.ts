@@ -1,7 +1,7 @@
 import type { PrBucket, PrRef, PrSummary, Session } from "../cw.js";
 import { prBucket } from "./prInbox.js";
 import { hasUnseen } from "./prUpdates.js";
-import { linkFor, pickMainSession, sessionsLinkedTo } from "./sessionPrLinks.js";
+import { linkFor, sessionsLinkedTo } from "./sessionPrLinks.js";
 
 export type PrInboxFilterId = "all" | "review" | "action" | "updated" | "with-session" | "not-cloned";
 
@@ -96,14 +96,6 @@ export function groupRowsByBucket(rows: PrInboxRow[]): PrInboxGroup[] {
   );
 }
 
-export function rowDeltaText(row: PrInboxRow, nowMs: number): string | null {
-  if (!row.hasUnseenSession) return null;
-  const link = linkFor(pickMainSession(row.linkedSessions, row.pr.ref) ?? undefined, row.pr.ref);
-  if (!link) return null;
-  if (link.lastSeenSha !== "" && row.pr.headRefOid !== link.lastSeenSha) return "new commits";
-  return `updated ${formatRelativeAge(row.pr.updatedAt, nowMs)}`;
-}
-
 export function formatRelativeAge(fromMs: number, nowMs: number): string {
   const totalSeconds = Math.max(0, Math.round((nowMs - fromMs) / 1000));
   if (totalSeconds < 60) return `${totalSeconds}s`;
@@ -114,4 +106,16 @@ export function formatRelativeAge(fromMs: number, nowMs: number): string {
   const days = Math.round(hours / 24);
   if (days < 7) return `${days}d`;
   return `${Math.round(days / 7)}w`;
+}
+
+export interface SessionChipState {
+  kind: "running" | "review" | "age";
+  text: string;
+}
+
+export function sessionChipState(session: Session, pr: PrSummary, nowMs: number): SessionChipState {
+  if (session.status === "working") return { kind: "running", text: "Running" };
+  const link = linkFor(session, pr.ref);
+  if (link && hasUnseen(pr, link)) return { kind: "review", text: "Needs review" };
+  return { kind: "age", text: formatRelativeAge(session.updatedAt, nowMs) };
 }

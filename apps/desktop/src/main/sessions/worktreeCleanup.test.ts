@@ -1,9 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { findStaleWorktreeDirs, isWorktreeOrphaned, sameWorktreePath } from "./worktreeCleanup.js";
+import { findStaleWorktreeDirs, isWorktreeOrphaned, rootsOverlap, sameWorktreePath } from "./worktreeCleanup.js";
 import type { SessionStatus } from "@cw-code/contracts";
 import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, sep } from "node:path";
 
 interface Row {
   id: string;
@@ -122,5 +122,25 @@ describe("findStaleWorktreeDirs", () => {
 
   it("returns everything when no session has a worktree", () => {
     expect(findStaleWorktreeDirs([{ id: "a", status: "idle" }], ["C:/wt/proj/sess1"])).toEqual(["C:/wt/proj/sess1"]);
+  });
+});
+
+describe("rootsOverlap", () => {
+  const base = mkdtempSync(join(tmpdir(), "cw-roots-"));
+  const repo = join(base, "repo");
+
+  it("matches equal roots and roots nested in either direction", () => {
+    expect(rootsOverlap(repo, `${repo}${sep}`)).toBe(true);
+    expect(rootsOverlap(repo, join(repo, "packages", "app"))).toBe(true);
+    expect(rootsOverlap(join(repo, "packages", "app"), repo)).toBe(true);
+  });
+
+  it("does not match a sibling that only shares a name prefix", () => {
+    expect(rootsOverlap(repo, `${repo}2`)).toBe(false);
+    expect(rootsOverlap(`${repo}2`, join(repo, "sub"))).toBe(false);
+  });
+
+  it.runIf(process.platform === "win32" || process.platform === "darwin")("ignores letter case on case-insensitive platforms", () => {
+    expect(rootsOverlap(repo.toUpperCase(), join(repo, "sub"))).toBe(true);
   });
 });

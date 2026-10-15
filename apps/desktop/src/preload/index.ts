@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { AccountUsageSnapshot, AppSettings, CliBinary, CliDiscoveredCandidate, CliDiscoverResult, CommandInvocation, CommandOption, CreateSessionOptions, GitBranchInfo, GitDiffMode, GitDiffResult, GitStatus, HarnessId, PrDetail, PrInboxResult, Project, ProjectGitHubRepo, PrRef, PrWorkflow, RetryConnectionResult, SessionCleanupResult, SessionMeta, SessionPrLink, SessionStatus, SessionStatusReason, ShutdownAssessment, ShutdownCommitResult, ShutdownExpiredEvent, ShutdownPrepareRequest, ShutdownPrepareResult, ShutdownRequestedEvent, SkillDetail, SkillMeta, SkillSaveInput, SkillsListResult, SourceControlHealth, StartupState, SubagentToolsResult, UpdateActionResult, UpdateChannel, UpdateInstallRequest, UpdateState, UsageLedgerQuery, UsageLedgerRow, WorktreePruneSummary } from "@cw-code/contracts";
+import type { AccountUsageSnapshot, AppSettings, AttentionState, CliBinary, CliDiscoveredCandidate, CliDiscoverResult, CommandInvocation, CommandOption, CreateSessionOptions, GitBranchInfo, GitDiffMode, GitDiffResult, GitStatus, HarnessId, ModelMeta, PrDetail, PrInboxResult, Project, ProjectGitHubRepo, PrRef, PrWorkflow, RetryConnectionResult, SessionCleanupResult, SessionMeta, SessionPrLink, SessionStatus, SessionStatusReason, ShutdownAssessment, ShutdownCommitResult, ShutdownExpiredEvent, ShutdownPrepareRequest, ShutdownPrepareResult, ShutdownRequestedEvent, SkillDetail, SkillMeta, SkillSaveInput, SkillsListResult, SourceControlHealth, StartupState, SubagentToolsResult, TurnChanges, UpdateActionResult, UpdateChannel, UpdateInstallRequest, UpdateState, UsageLedgerQuery, UsageLedgerRow, WorktreePruneSummary } from "@cw-code/contracts";
 
 export type PermissionMode = "auto" | "acceptEdits" | "bypassPermissions" | "manual";
 export type EffortLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
@@ -16,6 +16,8 @@ export interface ModelOption {
   label: string;
   source: "live" | "curated" | "custom";
   variants?: string[];
+  contextWindow?: number;
+  meta?: ModelMeta;
 }
 
 export interface PermissionOption {
@@ -76,8 +78,6 @@ export interface CwApi {
   addProject(rootPath: string): Promise<Project>;
   getHomeDir(): Promise<string>;
   listSessions(projectId: string): Promise<unknown[]>;
-  listDiscovered(projectId: string): Promise<unknown[]>;
-  importSession(projectId: string, driver: DriverName, resumeCursor: string, title: string): Promise<unknown>;
   createSession(projectId: string, driver: DriverName, options?: CreateSessionOptions): Promise<unknown>;
   renameSession(sessionId: string, title: string): Promise<void>;
   regenerateSessionTitle(sessionId: string): Promise<string>;
@@ -119,6 +119,8 @@ export interface CwApi {
   listProjectBranches(projectId: string): Promise<GitBranchInfo[]>;
   switchGitBranch(sessionId: string, branch: string): Promise<GitStatus>;
   getGitDiff(sessionId: string, mode: GitDiffMode, baseRef?: string): Promise<GitDiffResult>;
+  getTurnChanges(sessionId: string): Promise<TurnChanges | null>;
+  undoTurn(sessionId: string, turnId: string, expectedEndSha: string): Promise<TurnChanges>;
   getSourceControlHealth(projectId?: string): Promise<SourceControlHealth>;
   setProjectGitHubAccount(projectId: string, account: { host: string; login: string } | null): Promise<Project>;
   setRepositoryGitIdentity(projectId: string, name: string, email: string): Promise<void>;
@@ -144,7 +146,6 @@ export interface CwApi {
   listDir(sessionId: string, dir?: string): Promise<DirEntry[]>;
   savePasteImage(projectId: string, mime: string, data: Uint8Array): Promise<string>;
   readImage(args: { sessionId?: string; projectId?: string; path: string }): Promise<{ mime: string; base64: string }>;
-  turnDiff(sessionId: string, since: number): Promise<string>;
   openPty(sessionId: string, kind: PtyKindName): Promise<{ ptyId: string; token: string; replay: string }>;
   writePty(ptyId: string, data: string): void;
   resizePty(ptyId: string, cols: number, rows: number): void;
@@ -160,7 +161,7 @@ export interface CwApi {
   zoomIn(): void;
   zoomOut(): void;
   zoomReset(): void;
-  getTerminalFont(): Promise<string | null>;
+  setAttention(state: AttentionState): void;
   pickProjectDir(): Promise<string | null>;
   openPath(path: string): Promise<void>;
   openExternal(url: string): Promise<void>;
@@ -214,9 +215,6 @@ const api: CwApi = {
   addProject: (rootPath: string) => ipcRenderer.invoke("projects.add", rootPath),
   getHomeDir: () => ipcRenderer.invoke("os.homeDir"),
   listSessions: (projectId: string) => ipcRenderer.invoke("sessions.list", projectId),
-  listDiscovered: (projectId: string) => ipcRenderer.invoke("sessions.discovered", projectId),
-  importSession: (projectId: string, driver: DriverName, resumeCursor: string, title: string) =>
-    ipcRenderer.invoke("sessions.import", { projectId, driver, resumeCursor, title }),
   createSession: (projectId: string, driver: DriverName, options?: CreateSessionOptions) =>
     ipcRenderer.invoke("sessions.create", { projectId, driver, options }),
   renameSession: (sessionId: string, title: string) =>
@@ -276,6 +274,9 @@ const api: CwApi = {
   switchGitBranch: (sessionId: string, branch: string) => ipcRenderer.invoke("git.switchBranch", { sessionId, branch }),
   getGitDiff: (sessionId: string, mode: GitDiffMode, baseRef?: string) =>
     ipcRenderer.invoke("git.diff", { sessionId, mode, baseRef }),
+  getTurnChanges: (sessionId: string) => ipcRenderer.invoke("git.turnChanges", { sessionId }),
+  undoTurn: (sessionId: string, turnId: string, expectedEndSha: string) =>
+    ipcRenderer.invoke("git.undoTurn", { sessionId, turnId, expectedEndSha }),
   getSourceControlHealth: (projectId?: string) => ipcRenderer.invoke("git.health", { projectId }),
   setProjectGitHubAccount: (projectId: string, account: { host: string; login: string } | null) =>
     ipcRenderer.invoke("git.setProjectAccount", { projectId, account }),
@@ -319,7 +320,6 @@ const api: CwApi = {
     ipcRenderer.invoke("fs.savePasteImage", { projectId, mime, data }),
   readImage: (args: { sessionId?: string; projectId?: string; path: string }) =>
     ipcRenderer.invoke("fs.readImage", args),
-  turnDiff: (sessionId: string, since: number) => ipcRenderer.invoke("git.turnDiff", { sessionId, since }),
   openPty: (sessionId: string, kind: PtyKindName) =>
     ipcRenderer.invoke("pty.open", { sessionId, kind }),
   writePty: (ptyId: string, data: string) => ipcRenderer.send("pty.write", { ptyId, data }),
@@ -349,7 +349,7 @@ const api: CwApi = {
   zoomIn: () => ipcRenderer.send("win.zoom-in"),
   zoomOut: () => ipcRenderer.send("win.zoom-out"),
   zoomReset: () => ipcRenderer.send("win.zoom-reset"),
-  getTerminalFont: () => ipcRenderer.invoke("term.font"),
+  setAttention: (state: AttentionState) => ipcRenderer.send("app.attention", state),
   pickProjectDir: () => ipcRenderer.invoke("projects.pick"),
   openPath: (path: string) => ipcRenderer.invoke("shell.openPath", { path }),
   openExternal: (url: string) => ipcRenderer.invoke("shell.openExternal", { url }),
