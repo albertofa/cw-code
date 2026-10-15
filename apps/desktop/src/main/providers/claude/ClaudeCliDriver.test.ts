@@ -504,6 +504,61 @@ describe("ClaudeCliDriver persistent process", () => {
     driver.dispose();
   });
 
+  it("keeps the turn working while a SendMessage-resumed agent runs in the background", async () => {
+    const { driver, events, children } = makeDriver();
+    const handle = driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
+    await settle();
+    const taskId = "ab7488a5ab7cc189e";
+    children[0].stdout.write(
+      `${JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", id: "agent-call", name: "Agent", input: { subagent_type: "general-purpose", run_in_background: false } }] } })}\n`
+    );
+    children[0].stdout.write(
+      `${JSON.stringify({ type: "system", subtype: "task_started", task_id: taskId, tool_use_id: "agent-call", task_type: "local_agent", is_backgrounded: false })}\n`
+    );
+    children[0].stdout.write(
+      `${JSON.stringify({ type: "assistant", parent_tool_use_id: "agent-call", message: { content: [{ type: "tool_use", id: "handback-1", name: "SubagentHandback", input: { message: "READY" } }] } })}\n`
+    );
+    children[0].stdout.write(
+      `${JSON.stringify({ type: "system", subtype: "task_notification", task_id: taskId, tool_use_id: "agent-call", status: "completed" })}\n`
+    );
+    children[0].stdout.write(
+      `${JSON.stringify({ type: "user", message: { content: [{ tool_use_id: "agent-call", content: [{ type: "text", text: "This agent's report was delivered to you as a message." }] }] } })}\n`
+    );
+    children[0].stdout.write(
+      `${JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", id: "send-call", name: "SendMessage", input: { to: taskId, message: "keep going" } }] } })}\n`
+    );
+    children[0].stdout.write(
+      `${JSON.stringify({ type: "system", subtype: "background_tasks_changed", tasks: [{ task_id: taskId, task_type: "local_agent", subagent_type: "general-purpose" }] })}\n`
+    );
+    children[0].stdout.write(
+      `${JSON.stringify({ type: "system", subtype: "task_started", task_id: taskId, tool_use_id: "send-call", task_type: "local_agent", is_backgrounded: true })}\n`
+    );
+    children[0].stdout.write(
+      `${JSON.stringify({ type: "user", message: { content: [{ tool_use_id: "send-call", content: [{ type: "text", text: JSON.stringify({ success: true, message: "Resuming agent ab7488a" }) }] }] } })}\n`
+    );
+    children[0].stdout.write(`${resultLine({ result: "waiting", num_turns: 3 })}\n`);
+    await settle();
+
+    expect(turnDones(events).map((event) => event.backgroundTasks)).toEqual([1]);
+
+    children[0].stdout.write(
+      `${JSON.stringify({ type: "assistant", parent_tool_use_id: "agent-call", message: { content: [{ type: "tool_use", id: "handback-2", name: "SubagentHandback", input: { message: "DONE" } }] } })}\n`
+    );
+    children[0].stdout.write(
+      `${JSON.stringify({ type: "system", subtype: "task_notification", task_id: taskId, tool_use_id: "send-call", status: "completed" })}\n`
+    );
+    children[0].stdout.write(`${taskChangeLineWithIds([])}\n`);
+    children[0].stdout.write(
+      `${resultLine({ origin: { kind: "task-notification" }, result: "agent finished", num_turns: 4 })}\n`
+    );
+    await settle();
+
+    const dones = turnDones(events);
+    expect(dones.map((event) => event.backgroundTasks)).toEqual([1, 0]);
+    expect(dones[1]).toMatchObject({ turnId: handle.turnId, resultText: "agent finished" });
+    driver.dispose();
+  });
+
   it("emits a later final task-notification once after an initial result with live work", async () => {
     const { driver, events, children } = makeDriver();
     driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
