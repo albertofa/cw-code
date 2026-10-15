@@ -1493,10 +1493,10 @@ export class SessionManager {
       return this.endSnapshots.has(snapshot.turnId) ? "The end-of-turn snapshot is still being captured" : "The turn has no end-of-turn snapshot";
     }
     if (snapshot.undoneAt !== undefined) return "This turn was already undone";
+    if (this.branchSwitchPendingOnRoot(session)) return "session busy (branch switch pending)";
     for (const other of this.sameRootSessions(session)) {
       if (this.pendingResolves.has(other.id)) return "session busy (resolve pending)";
       if (this.worktreeRecovery.has(other.id)) return "session busy (recovery in progress)";
-      if (this.pendingBranchSwitches.has(other.id)) return "session busy (branch switch pending)";
       if (other.id === session.id) continue;
       if (this.hasTurnInFlight(other.id)) return `Another session is running a turn in this folder ("${other.title}")`;
       if (this.pendingUndos.has(other.id)) return `Another session is undoing a turn in this folder ("${other.title}")`;

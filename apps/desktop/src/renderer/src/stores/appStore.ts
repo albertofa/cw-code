@@ -425,8 +425,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         tracker.applied = sequence;
         set({ gitStatusBySession: { ...get().gitStatusBySession, [sessionId]: status } });
         useBranchStore.getState().reconcileKeptHead(sessionId, status);
-      } catch {
-        // Git errors are rendered by the session-level GitBar when selected.
+      } catch (err) {
+        console.warn(`git status refresh failed for ${sessionId}: ${ipcErrorMessage(err)}`);
       }
     })();
     tracker.issued = sequence;
@@ -440,7 +440,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const session = Object.values(get().sessionsByProject)
       .flat()
       .find((item) => item.id === sessionId);
-    const siblings = session
+    const siblings = session && !session.worktreePath
       ? currentCheckoutSessionIds(get().sessionsByProject[session.projectId] ?? []).filter((id) => id !== sessionId)
       : [];
     void refreshGitStatusInBatches(siblings, (id) => get().refreshGitStatus(id));

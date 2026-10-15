@@ -129,7 +129,7 @@ export function GitPanelBar({ sessionId }: { sessionId: string }) {
     setSwitching(true);
     setError("");
     window.cw.switchGitBranch(sessionId, branch).then(() => {
-      void refreshGitStatus(sessionId);
+      void useAppStore.getState().refreshProjectCheckoutGitStatus(sessionId);
       return window.cw.listGitBranches(sessionId);
     }).then(setBranches).catch((reason: Error) => setError(reason.message)).finally(() => setSwitching(false));
   };
