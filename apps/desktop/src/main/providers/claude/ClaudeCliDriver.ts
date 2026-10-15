@@ -148,6 +148,7 @@ interface ClaudeProcessState {
   backgroundCallStartedAt: Map<string, number>;
   reportedTaskCalls: Set<string>;
   handbackCallIds: Set<string>;
+  agentMessageCallIds: Set<string>;
   permissionMode: PermissionMode;
   reportedPermissionMode?: string;
   idleTimer?: NodeJS.Timeout;
@@ -386,6 +387,10 @@ export class ClaudeCliDriver implements CliDriver {
       this.trackBackgroundCall(state, event.toolCallId, background);
       return;
     }
+    if (name === "sendmessage") {
+      state.agentMessageCallIds.add(event.toolCallId);
+      return;
+    }
     if (name !== "agent" && name !== "task") return;
     if (
       event.input !== null &&
@@ -463,6 +468,7 @@ export class ClaudeCliDriver implements CliDriver {
     state.backgroundCallStartedAt.clear();
     state.reportedTaskCalls.clear();
     state.handbackCallIds.clear();
+    state.agentMessageCallIds.clear();
     state.taskToolCalls.clear();
   }
 
@@ -529,10 +535,9 @@ export class ClaudeCliDriver implements CliDriver {
       }
       if (event.type === "tool.result") {
         if (state.handbackCallIds.delete(event.toolCallId) || state.reportedTaskCalls.has(event.toolCallId)) continue;
-        if (
-          state.backgroundAgentCallIds.has(event.toolCallId) &&
-          !this.isAsyncAgentLaunchAcknowledgement(event.output)
-        ) {
+        const acknowledgement =
+          state.agentMessageCallIds.delete(event.toolCallId) || this.isAsyncAgentLaunchAcknowledgement(event.output);
+        if (state.backgroundAgentCallIds.has(event.toolCallId) && !acknowledgement) {
           this.completeTaskResult(state, event);
           continue;
         }
@@ -870,6 +875,7 @@ export class ClaudeCliDriver implements CliDriver {
       backgroundCallStartedAt: new Map(),
       reportedTaskCalls: new Set(),
       handbackCallIds: new Set(),
+      agentMessageCallIds: new Set(),
       permissionMode: request.permissionMode ?? "auto",
       modelUsage: {}
     };
