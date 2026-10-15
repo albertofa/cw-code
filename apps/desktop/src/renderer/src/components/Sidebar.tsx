@@ -7,7 +7,7 @@ import { DriverIcon } from "./DriverIcon.js";
 import { UpdateIndicator } from "./UpdateIndicator.js";
 import { useNotifs } from "./Notifications.js";
 import { getLastModel } from "./lastModel.js";
-import { projectAvatarStyle as avatarStyle, projectInitials as initials } from "./avatar.js";
+import { ProjectMonogram } from "./ProjectMonogram.js";
 import { mergeAwayIds } from "./sidebarOrder.js";
 import { compareWorkingSet, isWorkingSetStatus } from "./workingSet.js";
 import { shortenHome } from "./pathDisplay.js";
@@ -703,7 +703,7 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
             {verb}
           </span>
           <span className="ws-side-row">
-            <span className="avatar sm" style={avatarStyle(projectName)} title={projectName}>{initials(projectName)}</span>
+            <span title={projectName}><ProjectMonogram name={projectName} size={14} /></span>
             <DriverIcon driver={s.driver} size={14} />
           </span>
         </div>
@@ -745,7 +745,7 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
         <div className="ws-body">
           {renderTitle(s)}
           <div className="ws-meta">
-            <span className="avatar sm" style={avatarStyle(projectName)}>{initials(projectName)}</span>
+            <ProjectMonogram name={projectName} size={14} />
             <span className="ws-meta-text">{projectName}</span>
             {branch ? (
               <>
@@ -1128,9 +1128,7 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
         <div className="session-hovercard" style={{ left: hover.x, top: hover.y }} aria-hidden="true">
           <div className="session-hovercard-title">{hoverSession.title}</div>
           <div className="session-hovercard-row">
-            <span className="avatar sm" style={avatarStyle(hoverProject)} aria-hidden="true">
-              {initials(hoverProject)}
-            </span>
+            <ProjectMonogram name={hoverProject} size={14} />
             <span className="hovercard-text">{hoverProject}</span>
           </div>
           <div className="session-hovercard-row">
