@@ -1,4 +1,5 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import {
   ArrowUp,
   AtSign,
@@ -979,7 +980,7 @@ export function ComposerView({
         {usageSlot}
       </div>
     </div>
-    {confirmDialog}
+    {confirmDialog && createPortal(confirmDialog, document.body)}
     </>
   );
 }

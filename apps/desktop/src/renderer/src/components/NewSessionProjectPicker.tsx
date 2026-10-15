@@ -39,7 +39,7 @@ export function NewSessionProjectPicker({ project }: { project: Project | undefi
   useLayoutEffect(() => {
     if (!open) return;
     document.getElementById(optionId(active))?.scrollIntoView({ block: "nearest" });
-  }, [open, active, visible.length]);
+  }, [open, active, query, visible.length]);
 
   const pick = (id: string) => {
     close();

@@ -703,7 +703,7 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
             {verb}
           </span>
           <span className="ws-side-row">
-            <span title={projectName}><ProjectMonogram name={projectName} size={14} /></span>
+            <ProjectMonogram name={projectName} size={14} title={projectName} />
             <DriverIcon driver={s.driver} size={14} />
           </span>
         </div>

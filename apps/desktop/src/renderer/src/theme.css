@@ -960,13 +960,6 @@ button.session-resolved-toggle:hover {
   flex: none;
 }
 
-.ws-meta .avatar {
-  width: 16px;
-  height: 16px;
-  border-radius: 4px;
-  font-size: var(--t-3xs);
-}
-
 .ws-meta-text {
   flex: none;
   max-width: 45%;
@@ -998,13 +991,6 @@ button.session-resolved-toggle:hover {
   display: flex;
   align-items: center;
   gap: 8px;
-}
-
-.ws-side-row .avatar {
-  width: 16px;
-  height: 16px;
-  border-radius: 4px;
-  font-size: var(--t-3xs);
 }
 
 .ws-state {
@@ -1557,6 +1543,7 @@ body.session-dragging * {
   min-height: 0;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
+  scroll-padding-bottom: var(--composer-overlay-h, 0px);
 }
 
 .thread-body {
@@ -2672,9 +2659,8 @@ body.session-dragging * {
   position: absolute;
   left: 50%;
   bottom: calc(var(--composer-overlay-h, 0px) + 10px);
-  z-index: 30;
+  z-index: 10;
   transform: translateX(-50%);
-  isolation: isolate;
   display: inline-flex;
   align-items: center;
   gap: 6px;
@@ -2930,7 +2916,7 @@ body.session-dragging * {
   padding: 8px var(--main-gutter) 20px;
 }
 
-.composer-wrap > * {
+.composer-wrap > .composer {
   pointer-events: auto;
 }
 
@@ -2978,7 +2964,12 @@ body.session-dragging * {
 .composer-top {
   display: flex;
   flex-direction: column;
+  gap: 6px;
   min-width: 0;
+}
+
+.composer-top:has(> :is(.todo-dock, .pr-dock, .approval-dock, .question-dock, .working-dock)) {
+  padding-bottom: 6px;
 }
 
 .composer-card {
@@ -3026,7 +3017,6 @@ body.session-dragging * {
 }
 
 .composer-busy .composer-input {
-  min-height: 36px;
   color: var(--faint);
 }
 
@@ -3585,7 +3575,7 @@ body.session-dragging * {
   padding: 10px 12px 0;
 }
 
-.composer .chip {
+.attach-chips .chip {
   background: var(--surface-inset);
 }
 
@@ -5716,9 +5706,12 @@ select.field option {
   position: relative;
   box-sizing: border-box;
   width: 100%;
-  margin: 0 0 6px;
   padding: 0 2px;
   animation: cw-reveal var(--dur-fast) var(--ease-out);
+}
+
+.todo-dock + .working-dock-announce + .working-dock {
+  margin-top: -6px;
 }
 
 .pr-dock,
@@ -5727,7 +5720,6 @@ select.field option {
   position: relative;
   box-sizing: border-box;
   width: 100%;
-  margin: 0 0 6px;
   border-radius: var(--r-lg);
   overflow: hidden;
   animation: cw-reveal var(--dur-fast) var(--ease-out);
