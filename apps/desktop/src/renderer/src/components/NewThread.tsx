@@ -11,6 +11,8 @@ import { NewSessionAddProject, NewSessionProjectPicker } from "./NewSessionProje
 
 const NO_PROJECT_HINT = "Choose a project to start a session";
 const NO_SESSIONS: Session[] = [];
+const DEFAULT_BASE_ID = "";
+const DEFAULT_BASE_LABEL = "Default branch (latest from origin)";
 
 const HARNESS: Array<{ id: DriverName; label: string; blurb: string }> = [
   { id: "claude", label: "Claude", blurb: "Anthropic CLI harness" },
@@ -30,6 +32,7 @@ export function NewThread({
   const prefs = useAppStore((s) => s.pendingPrefs);
   const modelsRefreshKey = useAppStore((s) => s.settingsVersion);
   const workspace = useAppStore((s) => s.pendingWorkspace);
+  const newSessionError = useAppStore((s) => s.newSessionError);
   const homeDir = useAppStore((s) => s.homeDir);
   const project = useAppStore((s) => (projectId ? s.projects.find((p) => p.id === projectId) : undefined));
   const [branches, setBranches] = useState<GitBranchInfo[]>([]);
@@ -48,9 +51,9 @@ export function NewThread({
     window.cw.listProjectBranches(projectKey).then((items) => {
       if (!active) return;
       setBranches(items);
-      const current = items.find((item) => item.current) ?? items[0];
-      if ((!workspace.baseBranch || !items.some((item) => item.name === workspace.baseBranch)) && current) {
-        store.setPendingWorkspace({ baseBranch: current.name });
+      const pendingBase = useAppStore.getState().pendingWorkspace.baseBranch;
+      if (pendingBase && !items.some((item) => item.name === pendingBase)) {
+        store.setPendingWorkspace({ baseBranch: undefined });
       }
     }).catch((error: Error) => {
       if (active) setBranchError(error.message);
@@ -78,7 +81,7 @@ export function NewThread({
     {
       id: "current",
       label: "Current checkout",
-      description: "Work directly in the project on the current branch",
+      description: `No worktree — switches ${project?.name ?? "the project"} to a new branch from the selected base`,
       icon: <GitBranch size={13} />
     },
     {
@@ -141,24 +144,37 @@ export function NewThread({
     />
   );
 
-  const baseBranchSelect = mode === "new" && branches.length > 0 ? (
-    <MenuSelect
-      label="Base branch"
-      title="Choose the branch this session starts from"
-      value={workspace.baseBranch ?? branches[0].name}
-      display={branches.find((item) => item.name === workspace.baseBranch)?.label ?? "Choose base branch"}
-      icon={<GitBranch size={13} aria-hidden="true" />}
-      options={branches.map((item) => ({
-        id: item.name,
-        label: item.label,
-        hint: item.remote ? `${item.name} (remote)` : item.name,
-        description: item.current ? "Current branch" : item.remote ? "Remote branch" : undefined,
-        icon: <GitBranch size={13} />
-      }))}
-      onPick={(baseBranch) => store.setPendingWorkspace({ baseBranch })}
-      searchable
-      searchPlaceholder="Filter branches…"
-    />
+  const baseBranchSelect = (mode === "new" || mode === "current") && branches.length > 0 ? (
+    <>
+      <MenuSelect
+        label="Base branch"
+        title="Choose the branch this session starts from"
+        value={workspace.baseBranch ?? DEFAULT_BASE_ID}
+        display={workspace.baseBranch ? (branches.find((item) => item.name === workspace.baseBranch)?.label ?? workspace.baseBranch) : DEFAULT_BASE_LABEL}
+        icon={<GitBranch size={13} aria-hidden="true" />}
+        options={[
+          {
+            id: DEFAULT_BASE_ID,
+            label: DEFAULT_BASE_LABEL,
+            description: "Fetched before the session branch is created",
+            icon: <GitBranch size={13} />
+          },
+          ...branches.map((item) => ({
+            id: item.name,
+            label: item.label,
+            hint: item.remote ? `${item.name} (remote)` : item.name,
+            description: item.current ? "Current branch" : item.remote ? "Remote branch" : undefined,
+            icon: <GitBranch size={13} />
+          }))
+        ]}
+        onPick={(id) => store.setPendingWorkspace({ baseBranch: id === DEFAULT_BASE_ID ? undefined : id })}
+        searchable
+        searchPlaceholder="Filter branches…"
+      />
+      {mode === "current" && project && (
+        <span className="workspace-hint">switches {project.name} to a new branch</span>
+      )}
+    </>
   ) : null;
 
   const reuseSelect = mode === "previous" && selectedCandidate ? (
@@ -236,6 +252,11 @@ export function NewThread({
             </div>
           }
         />
+        {newSessionError && (
+          <div className="wf-run-error newthread-error" role="alert">
+            {newSessionError}
+          </div>
+        )}
       </div>
     </div>
   );

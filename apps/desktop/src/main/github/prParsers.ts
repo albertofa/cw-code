@@ -24,31 +24,44 @@ const REVIEWER_STATES = new Set(["APPROVED", "CHANGES_REQUESTED", "COMMENTED", "
 
 const PR_URL_RE = /^https?:\/\/([^/]+)\/([^/]+)\/([^/]+)\/pull\/(\d+)/i;
 
-function asRecord(value: unknown): Record<string, unknown> {
+export function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
 }
 
-function asString(value: unknown, fallback = ""): string {
+export function asString(value: unknown, fallback = ""): string {
   return typeof value === "string" ? value : fallback;
 }
 
-function asNumber(value: unknown, fallback = 0): number {
+export function asNumber(value: unknown, fallback = 0): number {
   return typeof value === "number" && Number.isFinite(value) ? value : fallback;
 }
 
-function asBool(value: unknown): boolean {
+export function asBool(value: unknown): boolean {
   return value === true;
 }
 
-function asNodes(value: unknown): Record<string, unknown>[] {
+export function asNodes(value: unknown): Record<string, unknown>[] {
   const list = asRecord(value).nodes;
   return Array.isArray(list) ? list.map(asRecord) : [];
 }
 
-function asEpochMs(value: unknown): number {
+export function asEpochMs(value: unknown): number {
   if (typeof value !== "string") return 0;
   const ms = Date.parse(value);
   return Number.isFinite(ms) ? ms : 0;
+}
+
+const BOT_LOGIN_SUFFIX = "[bot]";
+
+export function withBotSuffix(login: string): string {
+  return login && !login.toLowerCase().endsWith(BOT_LOGIN_SUFFIX) ? `${login}${BOT_LOGIN_SUFFIX}` : login;
+}
+
+export function actorLoginOf(actor: unknown): { login: string; isBot: boolean } {
+  const record = asRecord(actor);
+  const login = asString(record.login);
+  const isBot = asString(record.__typename) === "Bot";
+  return { login: isBot ? withBotSuffix(login) : login, isBot };
 }
 
 function rollupStates(statusCheckRollup: unknown): string[] {
@@ -84,6 +97,7 @@ export function prRefFromUrl(url: string): PrRef | null {
 
 export function bucketFor(pr: PrSummary): PrBucket {
   if (pr.state === "MERGED") return "merged";
+  if (pr.state === "CLOSED") return "closed";
   if (!pr.viewerIsAuthor && pr.reviewRequestedFromViewer) return "review";
   if (pr.viewerIsAuthor && (pr.ci === "failing" || pr.review === "changes_requested" || pr.mergeable === "CONFLICTING")) return "action";
   if (pr.viewerIsAuthor && pr.review === "approved" && pr.ci === "passing") return "ready";
@@ -108,12 +122,36 @@ function prStateFrom(value: unknown): PrSummary["state"] {
   return state === "CLOSED" || state === "MERGED" ? state : "OPEN";
 }
 
+function parseReviewers(value: unknown): PrReviewer[] {
+  const reviewers: PrReviewer[] = [];
+  for (const node of asNodes(value)) {
+    const { login } = actorLoginOf(node.author);
+    if (!login) continue;
+    const state = asString(node.state);
+    if (!REVIEWER_STATES.has(state)) continue;
+    reviewers.push({ login, state: state as PrReviewer["state"] });
+  }
+  return reviewers;
+}
+
+function mergeReviewers(reviewed: PrReviewer[], requestedLogins: string[]): PrReviewer[] {
+  const seen = new Set(reviewed.map((reviewer) => reviewer.login));
+  const merged = [...reviewed];
+  for (const login of requestedLogins) {
+    if (seen.has(login)) continue;
+    seen.add(login);
+    merged.push({ login, state: "PENDING" });
+  }
+  return merged;
+}
+
 function parseAuthor(author: Record<string, unknown>): PrAuthor {
+  const { login, isBot } = actorLoginOf(author);
   const name = asString(author.name).trim();
   const avatarUrl = asString(author.avatarUrl);
   return {
-    login: asString(author.login),
-    isBot: asString(author.__typename) === "Bot",
+    login,
+    isBot,
     ...(name ? { name } : {}),
     ...(avatarUrl.startsWith("https://") ? { avatarUrl } : {})
   };
@@ -151,8 +189,75 @@ function parseSummaryNode(node: Record<string, unknown>, viewer: string | null):
     review: reviewStateFrom(node.reviewDecision),
     mergeable: mergeableFrom(node.mergeable),
     labels: asNodes(node.labels).map((label) => asString(label.name)).filter(Boolean),
+    reviewers: mergeReviewers(parseReviewers(node.latestReviews), reviewerLogins),
+    assignees: asNodes(node.assignees).map((assignee) => asString(assignee.login)).filter(Boolean),
     updatedAt: asEpochMs(node.updatedAt)
   };
+}
+
+export function parseJsonObject(json: string): Record<string, unknown> | null {
+  try {
+    const parsed: unknown = JSON.parse(json);
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? (parsed as Record<string, unknown>) : null;
+  } catch {
+    return null;
+  }
+}
+
+export function graphqlOutcome(json: string): { hasData: boolean; message: string | null } {
+  const root = asRecord(parseJsonObject(json));
+  const errors = Array.isArray(root.errors) ? root.errors : [];
+  const message = errors.map((error) => asString(asRecord(error).message)).find(Boolean) ?? null;
+  return { hasData: root.data !== null && typeof root.data === "object", message };
+}
+
+export function graphqlPartialFailure(json: string, subject: "sources" | "results"): string | null {
+  const { hasData, message } = graphqlOutcome(json);
+  return hasData && message ? `Some ${subject} failed: ${message}` : null;
+}
+
+function issueCountOf(value: unknown): number | null {
+  const count = asRecord(value).issueCount;
+  return typeof count === "number" && Number.isFinite(count) ? count : null;
+}
+
+export interface SearchPage {
+  viewer: string | null;
+  nodes: Record<string, unknown>[];
+  openCount: number | null;
+  closedCount: number | null;
+  truncated: boolean;
+}
+
+export function parseSearchPage(json: string): SearchPage {
+  const root = parseJsonObject(json);
+  if (!root) return { viewer: null, nodes: [], openCount: null, closedCount: null, truncated: false };
+  const data = asRecord(root.data);
+  const nodes = asNodes(data.results);
+  const total = issueCountOf(data.results);
+  return {
+    viewer: asString(asRecord(data.viewer).login) || null,
+    nodes,
+    openCount: issueCountOf(data.open),
+    closedCount: issueCountOf(data.closed),
+    truncated: total !== null ? total > nodes.length : nodes.length >= INBOX_SEARCH_LIMIT
+  };
+}
+
+export function parsePrSearch(json: string): {
+  viewer: string | null;
+  items: PrSummary[];
+  openCount: number | null;
+  closedCount: number | null;
+  truncated: boolean;
+} {
+  const { nodes, ...page } = parseSearchPage(json);
+  const items: PrSummary[] = [];
+  for (const node of nodes) {
+    const summary = parseSummaryNode(node, page.viewer);
+    if (summary) items.push(summary);
+  }
+  return { ...page, items };
 }
 
 export function parseInbox(json: string): { viewer: string | null; items: PrSummary[]; truncated: boolean } {
@@ -212,17 +317,6 @@ function parseThreads(value: unknown): PrReviewThread[] {
         comments: parseThreadComments(thread.comments)
       };
     });
-}
-
-function parseReviewers(value: unknown): PrReviewer[] {
-  const reviewers: PrReviewer[] = [];
-  for (const node of asNodes(value)) {
-    const login = asString(asRecord(node.author).login);
-    if (!login) continue;
-    const state = asString(node.state);
-    reviewers.push({ login, state: (REVIEWER_STATES.has(state) ? state : "PENDING") as PrReviewer["state"] });
-  }
-  return reviewers;
 }
 
 function checkStatusFrom(conclusion: string, status: string): PrCheck["status"] {
@@ -364,7 +458,6 @@ export function parseDetail(json: string, viewer: string): PrDetail | null {
     threads: parseThreads(pr.threads),
     checkRuns: parseCheckRuns(pr.checkRunCommits),
     commits: asNodes(pr.commits).map(parseCommitNode).filter((commit) => commit.oid),
-    reviewers: parseReviewers(pr.latestReviews),
     viewerLogin: viewer
   };
 }

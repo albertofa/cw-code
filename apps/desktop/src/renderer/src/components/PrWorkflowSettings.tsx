@@ -1,5 +1,5 @@
-import { useCallback, useEffect, useLayoutEffect, useRef, useState, type DragEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from "react";
-import { Copy, Folder, FolderGit2, GitFork, GitPullRequest, GripVertical, History, Pencil, Plus, RefreshCw, RotateCcw, Trash2, type LucideIcon } from "lucide-react";
+import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, type DragEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from "react";
+import { AlertTriangle, Copy, Folder, FolderGit2, GitFork, GitPullRequest, GripVertical, History, Pencil, Plus, RefreshCw, RotateCcw, Trash2, type LucideIcon } from "lucide-react";
 import type { PrSuggestCondition, PrWorkflow, PrWorkflowIcon, PrWorkspaceChoice } from "@cw-code/contracts";
 import type { AppSettings, PrDetail, PrSummary } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
@@ -10,11 +10,29 @@ import { MenuSelect } from "./MenuSelect.js";
 import { useNotifs } from "./Notifications.js";
 import { prKey } from "./prInbox.js";
 import { needsFailedLogs } from "./prSessionModel.js";
-import { createWorkflow, deleteWorkflow, duplicateWorkflow, insertAtCursor, moveWorkflow, moveWorkflowTo, resetWorkflowTo } from "./prWorkflowEditor.js";
-import { attributionText, loadFailedLogs, resolveTemplate, TEMPLATE_VARS, templateVars } from "./prWorkflows.js";
+import {
+  changeWorkflowTarget,
+  CONDITIONS_BY_TARGET,
+  createWorkflow,
+  deleteWorkflow,
+  duplicateWorkflow,
+  foreignVarsMessage,
+  groupWorkflowsByTarget,
+  insertAtCursor,
+  moveWorkflow,
+  moveWorkflowTo,
+  resetWorkflowTo,
+  TARGET_HEADINGS,
+  templateVarIssues,
+  unknownVarsMessage,
+  WORKFLOW_TARGETS,
+  type TemplateVarIssues,
+  type WorkflowTarget
+} from "./prWorkflowEditor.js";
+import { attributionText, loadFailedLogs, resolveTemplate, TEMPLATE_VARS_BY_TARGET, templateVars } from "./prWorkflows.js";
 import { SettingsPageHead, SettingsSwitch } from "./SettingsLayout.js";
 import { harnessLabel } from "./toolTabs.js";
-import { WORKFLOW_ICONS } from "./workflowIcons.js";
+import { WORKFLOW_ICONS, workflowIcon } from "./workflowIcons.js";
 
 const CONDITION_LABELS: Record<PrSuggestCondition, string> = {
   "review-requested": "Review requested from me",
@@ -23,16 +41,31 @@ const CONDITION_LABELS: Record<PrSuggestCondition, string> = {
   "changes-requested": "Changes requested",
   conflicts: "Has conflicts",
   "bot-author": "Author is a bot",
-  draft: "Draft"
+  draft: "Draft",
+  "issue-assigned": "Issue assigned to me",
+  "issue-bug": "Issue labeled bug",
+  "run-failed": "Run failed"
 };
 
-const ALL_CONDITIONS: PrSuggestCondition[] = ["review-requested", "author", "checks-failing", "changes-requested", "conflicts", "bot-author", "draft"];
+type WorkspaceOption = { id: PrWorkspaceChoice; label: string; hint: string; Icon: LucideIcon };
 
-const WORKSPACE_OPTIONS: Array<{ id: PrWorkspaceChoice; label: string; hint: string; Icon: LucideIcon }> = [
-  { id: "checkout", label: "Current checkout", hint: "Use the project folder as-is.", Icon: Folder },
-  { id: "worktree", label: "Worktree at PR head", hint: "Check the PR head out into a new worktree.", Icon: GitFork },
-  { id: "linked", label: "Linked session's workspace", hint: "Reuse it; falls back to a worktree.", Icon: History }
-];
+const CHECKOUT_OPTION: WorkspaceOption = { id: "checkout", label: "Current checkout", hint: "No worktree — switches the project folder to the session's branch.", Icon: Folder };
+
+const WORKSPACE_OPTIONS: Record<WorkflowTarget, WorkspaceOption[]> = {
+  pr: [
+    CHECKOUT_OPTION,
+    { id: "worktree", label: "Worktree at PR head", hint: "Check the PR head out into a new worktree.", Icon: GitFork },
+    { id: "linked", label: "Linked session's workspace", hint: "Reuse it; falls back to a worktree.", Icon: History }
+  ],
+  issue: [CHECKOUT_OPTION, { id: "worktree", label: "New worktree", hint: "Start the session in a new isolated worktree.", Icon: GitFork }],
+  run: [CHECKOUT_OPTION, { id: "worktree", label: "New worktree", hint: "Start the session in a new isolated worktree.", Icon: GitFork }]
+};
+
+const TARGET_SUBJECTS: Record<WorkflowTarget, string> = {
+  pr: "this PR",
+  issue: "this issue",
+  run: "this run"
+};
 
 const ICON_IDS = Object.keys(WORKFLOW_ICONS) as PrWorkflowIcon[];
 
@@ -165,6 +198,7 @@ function WorkflowList({
   };
 
   const dragIndex = dragId ? workflows.findIndex((w) => w.id === dragId) : -1;
+  const dragTarget = dragIndex >= 0 ? workflows[dragIndex].target : null;
 
   return (
     <div className="sp-wf-list">
@@ -177,57 +211,66 @@ function WorkflowList({
         </button>
       </div>
       <div ref={listRef} className="sp-wf-rows">
-        {workflows.map((w, index) => {
-          const Icon = WORKFLOW_ICONS[w.icon];
-          const selected = w.id === selectedId;
-          const over = overId === w.id && dragId !== null && dragId !== w.id;
-          return (
-            <div
-              key={w.id}
-              data-glide-id={w.id}
-              className={`sp-wf${selected ? " on" : ""}${dragId === w.id ? " dragging" : ""}${over ? (index > dragIndex ? " over-after" : " over-before") : ""}`}
-              onDragOver={(e) => {
-                if (!dragId) return;
-                e.preventDefault();
-                e.dataTransfer.dropEffect = "move";
-                if (overId !== w.id) setOverId(w.id);
-              }}
-              onDrop={(e) => onDrop(e, w.id)}
-            >
-              <button
-                type="button"
-                className="sp-grip"
-                draggable
-                aria-label={`Reorder ${w.label}`}
-                title="Drag, or use the arrow keys, to reorder"
-                onKeyDown={(e) => onGripKey(e, w.id)}
-                onDragStart={(e) => {
-                  e.dataTransfer.effectAllowed = "move";
-                  e.dataTransfer.setData("text/plain", w.id);
-                  setDragId(w.id);
-                }}
-                onDragEnd={endDrag}
-              >
-                <GripVertical size={14} aria-hidden="true" />
-              </button>
-              <button type="button" className="sp-wf-main" aria-pressed={selected} onClick={() => onSelect(w.id)}>
-                <span className="sp-wf-ic">
-                  <Icon size={14} aria-hidden="true" />
-                </span>
-                <span className="sp-wf-b">
-                  <b>{w.label}</b>
-                  <span>{suggestHint(w)}</span>
-                </span>
-              </button>
-              {!w.builtIn && <span className="sp-tag">custom</span>}
-              <SettingsSwitch
-                checked={w.enabled}
-                onChange={(next) => onChange(workflows.map((item) => (item.id === w.id ? { ...item, enabled: next } : item)))}
-                label={`Enable ${w.label}`}
-              />
+        {groupWorkflowsByTarget(workflows).map((group) => (
+          <Fragment key={group.target}>
+            <div className="sp-wf-group" role="heading" aria-level={3}>
+              {TARGET_HEADINGS[group.target]}
             </div>
-          );
-        })}
+            {group.workflows.map((w) => {
+              const index = workflows.indexOf(w);
+              const Icon = workflowIcon(w.icon);
+              const selected = w.id === selectedId;
+              const over = overId === w.id && dragId !== null && dragId !== w.id;
+              return (
+                <div
+                  key={w.id}
+                  data-glide-id={w.id}
+                  data-workflow-id={w.id}
+                  className={`sp-wf${selected ? " on" : ""}${dragId === w.id ? " dragging" : ""}${over ? (index > dragIndex ? " over-after" : " over-before") : ""}`}
+                  onDragOver={(e) => {
+                    if (!dragId || dragTarget !== w.target) return;
+                    e.preventDefault();
+                    e.dataTransfer.dropEffect = "move";
+                    if (overId !== w.id) setOverId(w.id);
+                  }}
+                  onDrop={(e) => onDrop(e, w.id)}
+                >
+                  <button
+                    type="button"
+                    className="sp-grip"
+                    draggable
+                    aria-label={`Reorder ${w.label}`}
+                    title="Drag, or use the arrow keys, to reorder"
+                    onKeyDown={(e) => onGripKey(e, w.id)}
+                    onDragStart={(e) => {
+                      e.dataTransfer.effectAllowed = "move";
+                      e.dataTransfer.setData("text/plain", w.id);
+                      setDragId(w.id);
+                    }}
+                    onDragEnd={endDrag}
+                  >
+                    <GripVertical size={14} aria-hidden="true" />
+                  </button>
+                  <button type="button" className="sp-wf-main" aria-pressed={selected} onClick={() => onSelect(w.id)}>
+                    <span className="sp-wf-ic">
+                      <Icon size={14} aria-hidden="true" />
+                    </span>
+                    <span className="sp-wf-b">
+                      <b>{w.label}</b>
+                      <span>{suggestHint(w)}</span>
+                    </span>
+                  </button>
+                  {!w.builtIn && <span className="sp-tag">custom</span>}
+                  <SettingsSwitch
+                    checked={w.enabled}
+                    onChange={(next) => onChange(workflows.map((item) => (item.id === w.id ? { ...item, enabled: next } : item)))}
+                    label={`Enable ${w.label}`}
+                  />
+                </div>
+              );
+            })}
+          </Fragment>
+        ))}
         {workflows.length === 0 && <p className="sp-hint">No workflows configured.</p>}
       </div>
     </div>
@@ -237,7 +280,7 @@ function WorkflowList({
 function IconPicker({ value, onPick }: { value: PrWorkflowIcon; onPick: (icon: PrWorkflowIcon) => void }) {
   const [open, setOpen] = useState(false);
   const triggerRef = useRef<HTMLButtonElement>(null);
-  const Icon = WORKFLOW_ICONS[value];
+  const Icon = workflowIcon(value);
 
   useEffect(() => {
     if (!open) return;
@@ -265,7 +308,7 @@ function IconPicker({ value, onPick }: { value: PrWorkflowIcon; onPick: (icon: P
             aria-label="Workflow icon"
           >
             {ICON_IDS.map((id) => {
-              const Option = WORKFLOW_ICONS[id];
+              const Option = workflowIcon(id);
               return (
                 <button
                   key={id}
@@ -396,6 +439,7 @@ function PromptBox({
   hint,
   field,
   workflow,
+  issues,
   onChange,
   preview
 }: {
@@ -403,6 +447,7 @@ function PromptBox({
   hint: string;
   field: PromptField;
   workflow: PrWorkflow;
+  issues: TemplateVarIssues;
   onChange: (patch: Partial<PrWorkflow>) => void;
   preview: (template: string) => ReactNode;
 }) {
@@ -449,7 +494,7 @@ function PromptBox({
           />
           <div className="sp-vars" role="group" aria-label={`Insert a variable into the ${title.toLowerCase()}`}>
             <span>Insert</span>
-            {TEMPLATE_VARS.map((v) => (
+            {TEMPLATE_VARS_BY_TARGET[workflow.target].map((v) => (
               <button key={v} type="button" className="sp-var" onClick={() => insert(v)}>
                 {`{{${v}}}`}
               </button>
@@ -458,6 +503,16 @@ function PromptBox({
         </>
       ) : (
         preview(value)
+      )}
+      {issues.foreign.length > 0 && (
+        <div className="sp-issue error" role="alert">
+          <AlertTriangle size={13} aria-hidden="true" /> {foreignVarsMessage(issues.foreign, workflow.target)}
+        </div>
+      )}
+      {issues.unknown.length > 0 && (
+        <div className="sp-issue warning">
+          <AlertTriangle size={13} aria-hidden="true" /> {unknownVarsMessage(issues.unknown)}
+        </div>
       )}
     </div>
   );
@@ -476,9 +531,13 @@ function WorkflowEditor({ workflow, settings, onChange, onDuplicate, onDelete, o
   const prs = usePrStore((s) => s.inbox?.items ?? NO_PRS);
   const [previewPr, setPreviewPr] = useState<string | null>(null);
   const failedLogs = useFailedLogsCache();
-  const preview = (template: string) => (
-    <PromptPreview template={template} prs={prs} prKeyValue={previewPr} onPickPr={setPreviewPr} settings={settings} failedLogs={failedLogs} />
-  );
+  const issues = templateVarIssues(workflow);
+  const preview = (template: string) =>
+    workflow.target === "pr" ? (
+      <PromptPreview template={template} prs={prs} prKeyValue={previewPr} onPickPr={setPreviewPr} settings={settings} failedLogs={failedLogs} />
+    ) : (
+      <div className="sp-code sp-preview-empty">Preview is available for pull request workflows.</div>
+    );
 
   const toggleCondition = (condition: PrSuggestCondition) => {
     const has = workflow.suggestWhen.includes(condition);
@@ -523,13 +582,33 @@ function WorkflowEditor({ workflow, settings, onChange, onDuplicate, onDelete, o
           {resetError}
         </div>
       )}
+      <div className="sp-h6">
+        Applies to <small>Which GitHub items this workflow runs on.</small>
+        {workflow.builtIn ? (
+          <span className="sp-tag sp-target-tag">{TARGET_HEADINGS[workflow.target]}</span>
+        ) : (
+          <span className="seg sp-seg-sm" role="group" aria-label="Applies to">
+            {WORKFLOW_TARGETS.map((t) => (
+              <button
+                key={t}
+                type="button"
+                className={workflow.target === t ? "on" : ""}
+                aria-pressed={workflow.target === t}
+                onClick={() => onChange(changeWorkflowTarget(workflow, t))}
+              >
+                {TARGET_HEADINGS[t]}
+              </button>
+            ))}
+          </span>
+        )}
+      </div>
       <div className="sp-ed-grid">
         <fieldset className="sp-fieldset">
           <legend className="sp-h6">
             Suggest when <small>Shown as the row's primary action and at the top of the workflow menu.</small>
           </legend>
           <div className="sp-cbgrid">
-            {ALL_CONDITIONS.map((c) => (
+            {CONDITIONS_BY_TARGET[workflow.target].map((c) => (
               <label key={c} className={`sp-cbl${workflow.suggestWhen.includes(c) ? " on" : ""}`}>
                 <input type="checkbox" checked={workflow.suggestWhen.includes(c)} onChange={() => toggleCondition(c)} />
                 {CONDITION_LABELS[c]}
@@ -540,7 +619,7 @@ function WorkflowEditor({ workflow, settings, onChange, onDuplicate, onDelete, o
         <fieldset className="sp-fieldset">
           <legend className="sp-h6">Default workspace</legend>
           <div className="sp-wsopts" role="radiogroup" aria-label="Default workspace">
-            {WORKSPACE_OPTIONS.map((opt) => (
+            {WORKSPACE_OPTIONS[workflow.target].map((opt) => (
               <label key={opt.id} className={`sp-wsopt${workflow.workspace === opt.id ? " on" : ""}`}>
                 <input type="radio" name={`sp-workspace-${workflow.id}`} checked={workflow.workspace === opt.id} onChange={() => onChange({ workspace: opt.id })} />
                 <span>
@@ -562,15 +641,17 @@ function WorkflowEditor({ workflow, settings, onChange, onDuplicate, onDelete, o
           hint="Sent when the workflow starts or continues a session."
           field="startPrompt"
           workflow={workflow}
+          issues={issues.startPrompt}
           onChange={onChange}
           preview={preview}
         />
         <PromptBox
           key={`${workflow.id}:update`}
           title="Follow-up prompt"
-          hint="Sent from the update card for linked sessions."
+          hint={`Sent when you continue a session linked to ${TARGET_SUBJECTS[workflow.target]}.`}
           field="updatePrompt"
           workflow={workflow}
+          issues={issues.updatePrompt}
           onChange={onChange}
           preview={preview}
         />
@@ -583,6 +664,8 @@ export function PrWorkflowSettings() {
   const draft = useSettingsDraftStore((s) => s.draft);
   const lastDriver = useAppStore((s) => s.lastDriver);
   const set = useSettingsDraftStore((s) => s.set);
+  const invalidWorkflowId = useSettingsDraftStore((s) => s.invalidWorkflowId);
+  const clearInvalidWorkflow = useSettingsDraftStore((s) => s.clearInvalidWorkflow);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [resetBusyId, setResetBusyId] = useState<string | null>(null);
   const [resetError, setResetError] = useState<string | null>(null);
@@ -591,6 +674,15 @@ export function PrWorkflowSettings() {
     const prStore = usePrStore.getState();
     if (!prStore.inbox && !prStore.inboxLoading) void prStore.refreshInbox();
   }, []);
+
+  useEffect(() => {
+    if (!invalidWorkflowId) return;
+    setSelectedId(invalidWorkflowId);
+    clearInvalidWorkflow();
+    requestAnimationFrame(() => {
+      document.querySelector(`[data-workflow-id="${CSS.escape(invalidWorkflowId)}"]`)?.scrollIntoView({ block: "nearest" });
+    });
+  }, [invalidWorkflowId, clearInvalidWorkflow]);
 
   if (!draft) return null;
   const workflows = draft.prWorkflows;
@@ -645,7 +737,7 @@ export function PrWorkflowSettings() {
 
   return (
     <>
-      <SettingsPageHead title="PR workflows" description="Actions offered on pull requests in the inbox, the PR view and the update card." />
+      <SettingsPageHead title="Workflows" description="Actions offered on pull requests, issues and workflow runs in the GitHub hub, their detail views and the update card." />
       <div className="sp-strip">
         <div className="sp-strip-col">
           <h2>

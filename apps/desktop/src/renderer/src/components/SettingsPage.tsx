@@ -4,6 +4,7 @@ import type { PanelId } from "@cw-code/contracts";
 import type { AppSettings, DriverName, ModelOption, SourceControlHealth, WorktreePruneSummary } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import { usePanelStore } from "../stores/panelStore.js";
+import { usePrStore } from "../stores/prStore.js";
 import { accountKey, useSettingsDraftStore } from "../stores/settingsDraftStore.js";
 import { AppearanceSettings } from "./AppearanceSettings.js";
 import { BinaryPicker } from "./BinaryPicker.js";
@@ -692,6 +693,8 @@ export function SettingsPage({
   const applied = useSettingsDraftStore((s) => s.applied);
   const set = useSettingsDraftStore((s) => s.set);
   const recheckHarnesses = useSettingsDraftStore((s) => s.recheckHarnesses);
+  const invalidWorkflowId = useSettingsDraftStore((s) => s.invalidWorkflowId);
+  const openSettings = usePrStore((s) => s.openSettings);
   const onBackRef = useRef(onBack);
   onBackRef.current = onBack;
   const navId = navIdOf(section, harness);
@@ -699,6 +702,10 @@ export function SettingsPage({
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (invalidWorkflowId && section !== "prWorkflows") openSettings("prWorkflows");
+  }, [invalidWorkflowId, section, openSettings]);
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => {

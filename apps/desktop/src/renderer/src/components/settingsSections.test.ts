@@ -56,12 +56,14 @@ function settingsFixture(overrides: Partial<AppSettings> = {}): AppSettings {
         icon: "eye",
         builtIn: true,
         enabled: true,
+        target: "pr",
         suggestWhen: ["review-requested"],
         workspace: "checkout",
         startPrompt: "start",
         updatePrompt: "update"
       }
     ],
+    githubSavedViews: [],
     opencodeGoUsage: false,
     updateChannel: null,
     updateBackgroundDownload: true,
@@ -109,7 +111,7 @@ describe("changedSections", () => {
     expect(changedSections(saved, draft)).toEqual(["general", "appearance", "opencode", "codex"]);
   });
 
-  it("attributes workflow edits to PR workflows", () => {
+  it("attributes workflow edits to the Workflows page", () => {
     const saved = settingsFixture();
     const draft = settingsFixture({ prWorkflows: [{ ...saved.prWorkflows[0], startPrompt: "changed" }] });
     expect(changedSections(saved, draft)).toEqual(["prWorkflows"]);
@@ -122,6 +124,13 @@ describe("settingsPatch", () => {
     const draft = settingsFixture({ holdingHours: 12, prWorkflows: [{ ...saved.prWorkflows[0], label: "Deep review" }] });
     expect(settingsPatch(saved, draft)).toEqual({ holdingHours: 12, prWorkflows: draft.prWorkflows });
     expect(settingsPatch(saved, settingsFixture())).toEqual({});
+  });
+
+  it("never carries the saved views owned by the GitHub hub", () => {
+    const saved = settingsFixture();
+    const draft = settingsFixture({ githubSavedViews: [{ id: "v1", kind: "pr", name: "Mine", query: "author:@me", group: "none" }] });
+    expect(settingsPatch(saved, draft)).toEqual({});
+    expect(changedSections(saved, draft)).toEqual([]);
   });
 });
 
@@ -252,7 +261,7 @@ describe("settingsDraftStore save", () => {
     bridge = installSaveBridge();
     useNotifs.setState({ notifs: [] });
     const saved = settingsFixture();
-    useSettingsDraftStore.setState({ saved, draft: saved, dirty: false, saving: false, repoSaved: null, repoDraft: null, saveError: null });
+    useSettingsDraftStore.setState({ saved, draft: saved, dirty: false, saving: false, repoSaved: null, repoDraft: null, saveError: null, invalidWorkflowId: null });
   });
 
   it("sends only the changed keys and re-syncs saved from the stored value", async () => {
@@ -321,6 +330,28 @@ describe("settingsDraftStore save", () => {
     expect(state.saveError).toBe(expected);
     expect(useNotifs.getState().notifs.at(-1)?.message).toBe(expected);
     expect(unsavedSectionLabels(state.saved, state.draft, !sameValue(state.repoDraft, state.repoSaved))).toEqual(["Source control"]);
+  });
+
+  it("blocks the save and names the workflow when an edited prompt uses another target's variables", async () => {
+    const saved = settingsFixture();
+    useSettingsDraftStore.getState().set({ prWorkflows: [{ ...saved.prWorkflows[0], startPrompt: "{{issue.title}}" }] });
+    await useSettingsDraftStore.getState().save();
+    const state = useSettingsDraftStore.getState();
+    expect(bridge.patches).toEqual([]);
+    expect(state.invalidWorkflowId).toBe("review");
+    expect(state.saveError).toContain("{{issue.title}}");
+    expect(state.dirty).toBe(true);
+  });
+
+  it("saves an edited prompt whose unknown variables sit outside every target namespace", async () => {
+    const saved = settingsFixture();
+    const prWorkflows = [{ ...saved.prWorkflows[0], startPrompt: "{{ github.sha }}" }];
+    useSettingsDraftStore.getState().set({ prWorkflows });
+    const saving = useSettingsDraftStore.getState().save();
+    expect(bridge.patches).toEqual([{ prWorkflows }]);
+    bridge.pending[0].resolve(settingsFixture({ prWorkflows }));
+    await saving;
+    expect(useSettingsDraftStore.getState().invalidWorkflowId).toBeNull();
   });
 
   it("skips the settings write when only the repository changed", async () => {

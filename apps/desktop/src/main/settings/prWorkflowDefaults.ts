@@ -9,6 +9,7 @@ export function defaultPrWorkflows(): PrWorkflow[] {
       icon: "merge",
       builtIn: true,
       enabled: true,
+      target: "pr",
       suggestWhen: ["conflicts"],
       workspace: "worktree",
       startPrompt: `#{{pr.number}} ({{pr.head}}) conflicts with {{pr.base}}.
@@ -22,6 +23,7 @@ Merge {{pr.base}} into the head branch, keep both intents, run typecheck and tes
       icon: "wrench",
       builtIn: true,
       enabled: true,
+      target: "pr",
       suggestWhen: ["checks-failing"],
       workspace: "linked",
       startPrompt: `Checks failing on #{{pr.number}} at {{pr.sha}}: {{checks.summary}}
@@ -38,6 +40,7 @@ Reproduce locally, fix the root cause, commit on {{pr.head}}.`,
       icon: "message",
       builtIn: true,
       enabled: true,
+      target: "pr",
       suggestWhen: ["changes-requested"],
       workspace: "linked",
       startPrompt: `PR #{{pr.number}} has unresolved threads:
@@ -54,6 +57,7 @@ Apply each change or explain why not. One commit per thread on {{pr.head}}.`,
       icon: "eye",
       builtIn: true,
       enabled: true,
+      target: "pr",
       suggestWhen: ["review-requested"],
       workspace: "checkout",
       startPrompt: `Review pull request #{{pr.number}} "{{pr.title}}" in {{pr.repo}}.
@@ -76,6 +80,7 @@ Re-review only \`git diff {{session.lastSeenSha}}..{{pr.sha}}\` and say whether 
       icon: "activity",
       builtIn: true,
       enabled: true,
+      target: "pr",
       suggestWhen: ["author"],
       workspace: "linked",
       startPrompt: `You own PR #{{pr.number}} on {{pr.head}}. Take it to mergeable:
@@ -87,6 +92,83 @@ Push after each green local run. Never force-push without asking.
 {{pr.delta}}
 
 Handle it with the same rules as before.`
+    },
+    {
+      id: "implement",
+      label: "Implement",
+      description: "Plan, implement on a branch, test, and open a pull request.",
+      icon: "sparkle",
+      builtIn: true,
+      enabled: true,
+      target: "issue",
+      suggestWhen: ["issue-assigned"],
+      workspace: "worktree",
+      startPrompt: `Implement {{issue.repo}}#{{issue.number}} "{{issue.title}}".
+
+{{issue.body}}
+
+Recent discussion:
+{{issue.comments}}
+
+Plan first, then implement on this branch, run typecheck and tests, and open a pull request that references #{{issue.number}}.
+{{attribution}}`,
+      updatePrompt: `Issue #{{issue.number}} has new activity since your last turn:
+{{issue.delta}}`
+    },
+    {
+      id: "investigate",
+      label: "Investigate",
+      description: "Find the root cause and report it with evidence.",
+      icon: "eye",
+      builtIn: true,
+      enabled: true,
+      target: "issue",
+      suggestWhen: ["issue-bug"],
+      workspace: "checkout",
+      startPrompt: `Investigate {{issue.repo}}#{{issue.number}} "{{issue.title}}".
+
+{{issue.body}}
+
+{{issue.comments}}
+
+Find the root cause and report it with file:line evidence. Do not change code unless asked.`,
+      updatePrompt: `Issue #{{issue.number}} changed:
+{{issue.delta}}`
+    },
+    {
+      id: "triage",
+      label: "Triage",
+      description: "Suggest labels, severity, duplicates and the next step.",
+      icon: "message",
+      builtIn: true,
+      enabled: true,
+      target: "issue",
+      suggestWhen: [],
+      workspace: "checkout",
+      startPrompt: `Triage {{issue.repo}}#{{issue.number}} "{{issue.title}}" (labels: {{issue.labels}}).
+
+{{issue.body}}
+
+Suggest labels, severity, likely duplicates and the next step. Report in chat only.`,
+      updatePrompt: `Issue #{{issue.number}} changed:
+{{issue.delta}}`
+    },
+    {
+      id: "investigate-run",
+      label: "Investigate run",
+      description: "Read the failed jobs, reproduce locally and propose a fix.",
+      icon: "wrench",
+      builtIn: true,
+      enabled: true,
+      target: "run",
+      suggestWhen: ["run-failed"],
+      workspace: "worktree",
+      startPrompt: `{{run.workflow}} #{{run.number}} failed on {{run.branch}} at {{run.sha}} ({{run.event}}).
+Failed jobs: {{run.failedJobs}}
+{{run.failedLogs}}
+
+Reproduce locally, find the root cause and propose a fix.`,
+      updatePrompt: `{{run.workflow}} #{{run.number}} changed: {{run.failedJobs}}`
     }
   ];
 }

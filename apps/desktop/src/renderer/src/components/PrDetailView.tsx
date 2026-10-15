@@ -20,10 +20,11 @@ import type { PrCheck, PrDetail, PrRef, PrReviewThread, PrTimelineItem, PrWorkfl
 import { useAppStore } from "../stores/appStore.js";
 import { usePrStore, type PrDetailTab } from "../stores/prStore.js";
 import { PrAvatar } from "./PrAvatar.js";
+import { stripBotSuffix } from "./avatar.js";
 import { workflowIcon } from "./workflowIcons.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { Md } from "./Markdown.js";
-import { useNotifs } from "./Notifications.js";
+import { openExternalLink } from "./externalLink.js";
 import { PrFilesPanel } from "./PrFilesPanel.js";
 import { prKey } from "./prInbox.js";
 import { firstUnseenIndex } from "./prUpdates.js";
@@ -33,12 +34,6 @@ import { linkedSessionsBarState, mergeBoxState, threadQuoteText, threadSendTarge
 import { linkFor, pickMainSession, sessionsLinkedTo } from "./sessionPrLinks.js";
 
 const MAX_LOG_LINES = 2000;
-
-function openExternalLink(url: string): void {
-  void window.cw.openExternal(url).catch(() => {
-    useNotifs.getState().push({ kind: "error", title: "Could not open link", message: url });
-  });
-}
 
 function ageLabel(ts: number): string {
   const mins = Math.max(1, Math.round((Date.now() - ts) / 60000));
@@ -148,7 +143,7 @@ export function PrDetailView({ prRef }: { prRef: PrRef }) {
   const loading = usePrStore((s) => s.detailLoadingByKey[key] ?? false);
   const error = usePrStore((s) => s.detailErrorByKey[key]);
   const activeTab = usePrStore((s) => (s.mainView.kind === "pr" ? s.mainView.tab : "conversation"));
-  const openInbox = usePrStore((s) => s.openInbox);
+  const openGitHub = usePrStore((s) => s.openGitHub);
   const setPrTab = usePrStore((s) => s.setPrTab);
   const loadDetail = usePrStore((s) => s.loadDetail);
   const loadDiff = usePrStore((s) => s.loadDiff);
@@ -157,7 +152,7 @@ export function PrDetailView({ prRef }: { prRef: PrRef }) {
   const sessionsByProject = useAppStore((s) => s.sessionsByProject);
   const selectSession = useAppStore((s) => s.selectSession);
   const { settings, error: settingsError } = usePrSettings();
-  const workflows = useMemo<PrWorkflow[]>(() => settings?.prWorkflows ?? [], [settings]);
+  const workflows = useMemo<PrWorkflow[]>(() => (settings?.prWorkflows ?? []).filter((workflow) => workflow.target === "pr"), [settings]);
   const [selectedCheckIndex, setSelectedCheckIndex] = useState<number | null>(null);
   const [logByRunId, setLogByRunId] = useState<Record<number, string>>({});
   const [logLoadingRunId, setLogLoadingRunId] = useState<number | null>(null);
@@ -188,7 +183,7 @@ export function PrDetailView({ prRef }: { prRef: PrRef }) {
   };
 
   const openWorkflow = (workflowId: string, continueSessionId?: string) => {
-    openRunModal({ workflowId, ref: prRef, continueSessionId });
+    openRunModal({ workflowId, subject: { kind: "pr", ref: prRef }, continueSessionId });
   };
 
   const openSession = (sessionId: string) => {
@@ -198,7 +193,7 @@ export function PrDetailView({ prRef }: { prRef: PrRef }) {
 
   const sendThreadToSession = (thread: PrReviewThread) => {
     const target = threadSendTarget(mainSession, prRef, suggested);
-    openRunModal({ ...target, ref: prRef, promptOverride: threadQuoteText(thread, prRef) });
+    openRunModal({ ...target, subject: { kind: "pr", ref: prRef }, promptOverride: threadQuoteText(thread, prRef) });
   };
 
   const onFixCi = fixCiWorkflow ? () => openWorkflow(fixCiWorkflow.id, mainSession?.id) : null;
@@ -262,7 +257,7 @@ export function PrDetailView({ prRef }: { prRef: PrRef }) {
       <div className="head-seg main-seg" onDoubleClick={() => window.cw.toggleMaximizeWindow()}>
         <div className="head-col col-left">
           <nav className="pr-detail-crumbs" aria-label="Breadcrumb">
-            <button className="pr-detail-crumb-link" onClick={openInbox}>Pull requests</button>
+            <button className="pr-detail-crumb-link" onClick={() => openGitHub("pr")}>Pull requests</button>
             <ChevronRight size={12} aria-hidden="true" />
             <span>{prRef.owner}/{prRef.repo}</span>
             <ChevronRight size={12} aria-hidden="true" />
@@ -535,7 +530,7 @@ function ConversationTab({
 }
 
 function ActorAvatar({ actor, detail }: { actor: string; detail: PrDetail }) {
-  const isAuthor = actor === detail.author.login;
+  const isAuthor = stripBotSuffix(actor) === stripBotSuffix(detail.author.login);
   return <PrAvatar login={actor} name={isAuthor ? detail.author.name : undefined} avatarUrl={isAuthor ? detail.author.avatarUrl : undefined} size={20} />;
 }
 

@@ -27,6 +27,14 @@ export interface CreatedWorktree {
   path: string;
   branch: string;
   repositoryRoot: string;
+  baseRef: string;
+  baseWarning: string | null;
+}
+
+export interface ResolvedBase {
+  ref: string;
+  fetched: boolean;
+  warning: string | null;
 }
 
 export interface RemoveWorktreeResult {
@@ -447,6 +455,7 @@ export interface PorcelainStatusFile {
 
 export interface PorcelainStatus {
   branch: string;
+  headSha: string | null;
   upstream: string | null;
   tracking: { ahead: number; behind: number } | null;
   files: PorcelainStatusFile[];
@@ -464,12 +473,15 @@ function fieldsAfter(record: string, count: number): string {
 }
 
 export function parsePorcelainV2Status(stdout: string): PorcelainStatus {
-  const status: PorcelainStatus = { branch: "HEAD", upstream: null, tracking: null, files: [] };
+  const status: PorcelainStatus = { branch: "HEAD", headSha: null, upstream: null, tracking: null, files: [] };
   const records = stdout.split("\0");
   for (let i = 0; i < records.length; i++) {
     const record = records[i];
     if (!record) continue;
-    if (record.startsWith("# branch.head ")) {
+    if (record.startsWith("# branch.oid ")) {
+      const oid = record.slice("# branch.oid ".length);
+      status.headSha = oid === "(initial)" ? null : oid;
+    } else if (record.startsWith("# branch.head ")) {
       const head = record.slice("# branch.head ".length);
       status.branch = head === "(detached)" ? "HEAD" : head;
     } else if (record.startsWith("# branch.upstream ")) {
@@ -576,6 +588,23 @@ export function execText(command: string, args: string[], cwd: string, timeout =
   });
 }
 
+export interface ExecStatusResult {
+  code: number;
+  stdout: string;
+  stderr: string;
+}
+
+export function execWithStatus(command: string, args: string[], cwd: string, timeout: number, env?: NodeJS.ProcessEnv): Promise<ExecStatusResult> {
+  return new Promise((resolvePromise, reject) => {
+    execFile(command, args, { cwd, timeout, windowsHide: true, maxBuffer: 16 * 1024 * 1024, env: env ?? withNonInteractiveEnv() }, (error, stdout, stderr) => {
+      if (!error) return resolvePromise({ code: 0, stdout: String(stdout), stderr: String(stderr) });
+      if (error.killed) return reject(new Error(`timed out after ${timeout}ms: ${command} ${args[0] ?? ""}`.trim()));
+      if (typeof error.code !== "number") return reject(new Error(String(stderr || error.message).trim()));
+      resolvePromise({ code: error.code, stdout: String(stdout), stderr: String(stderr) });
+    });
+  });
+}
+
 function execDiff(binary: string, args: string[], cwd: string): Promise<string> {
   return new Promise((resolvePromise, reject) => {
     execFile(binary, args, { cwd, timeout: 20_000, windowsHide: true, maxBuffer: 32 * 1024 * 1024, env: withNonInteractiveEnv() }, (error, stdout, stderr) => {
@@ -625,6 +654,10 @@ export function safeSegment(value: string): string {
   return value.replace(/[^a-zA-Z0-9._-]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 80) || "workspace";
 }
 
+export function sessionBranchName(sessionId: string): string {
+  return `cw/${safeSegment(sessionId.replace(/^sess_/, ""))}`;
+}
+
 function nextBranchCandidate(base: string, branch: string): string | null {
   if (branch === base) return `${base}-1`;
   if (!branch.startsWith(`${base}-`)) return null;
@@ -648,6 +681,91 @@ export const BRANCH_CACHE_TTL_MS = 15_000;
 const LAYOUT_CACHE_TTL_MS = 5 * 60_000;
 const REMOTE_CACHE_TTL_MS = 5 * 60_000;
 const BASE_CANDIDATES = ["main", "master", "origin/main", "origin/master"];
+const DEFAULT_BASE_ORDER = ["origin/main", "origin/master", "main", "master"];
+const BASE_FETCH_TIMEOUT_MS = 20_000;
+const LS_REMOTE_NO_MATCHING_REF = 2;
+const BASE_FETCH_LOCK_RETRY_MS = 300;
+const ORIGIN_PREFIX = "origin/";
+
+export function pickDefaultBase(originHead: string | null, existing: string[]): string | null {
+  if (originHead) return originHead;
+  return DEFAULT_BASE_ORDER.find((name) => existing.includes(name)) ?? null;
+}
+
+function hasForbiddenRefCharacter(name: string): boolean {
+  for (const character of name) {
+    const code = character.charCodeAt(0);
+    if (code <= 0x20 || code === 0x7f || ":*?[\\^~".includes(character)) return true;
+  }
+  return false;
+}
+
+export function isValidBranchName(name: string): boolean {
+  if (!name || name === "@" || name.startsWith("-") || name.startsWith("/") || name.endsWith("/") || name.endsWith(".")) return false;
+  if (hasForbiddenRefCharacter(name) || name.includes("..") || name.includes("@{")) return false;
+  return name.split("/").every((part) => part.length > 0 && !part.startsWith(".") && !part.endsWith(".lock"));
+}
+
+export function fetchArgsForRef(ref: string): string[] | null {
+  if (!ref.startsWith(ORIGIN_PREFIX)) return null;
+  const branch = ref.slice(ORIGIN_PREFIX.length);
+  if (!isValidBranchName(branch)) return null;
+  return ["fetch", "-q", "origin", `+refs/heads/${branch}:refs/remotes/${ref}`];
+}
+
+export interface ResolveBaseOptions {
+  exact?: boolean;
+  fallbackToDefault?: boolean;
+  projectName?: string;
+}
+
+export interface FolderHead {
+  value: string;
+  detached: boolean;
+}
+
+interface RemoteLookup {
+  names: string[];
+  failure: string | null;
+}
+
+type RemoteNames = () => Promise<RemoteLookup>;
+
+export interface OriginCheckFailure {
+  failure: string | null;
+}
+
+export class UnknownBaseBranchError extends Error {
+  readonly fetchFailure?: string;
+  readonly originCheck?: OriginCheckFailure;
+
+  constructor(ref: string, fetchFailure?: string, originCheck?: OriginCheckFailure) {
+    super(`unknown base branch '${ref}'`);
+    this.name = "UnknownBaseBranchError";
+    this.fetchFailure = fetchFailure;
+    this.originCheck = originCheck;
+  }
+}
+
+type BaseFetchOutcome =
+  | { kind: "fetched" }
+  | { kind: "missing" }
+  | { kind: "noRemote" }
+  | { kind: "failed"; reason: string };
+
+export function redactUrlCredentials(text: string): string {
+  return text.replace(/\b([a-z][a-z0-9+.-]*:\/\/)[^\s/@]+@/gi, "$1");
+}
+
+function fetchFailureReason(error: unknown): string {
+  const line = redactUrlCredentials((error as Error).message).replace(/\r/g, "").split("\n").map((part) => part.trim()).find(Boolean) ?? "unknown error";
+  return line.replace(/^fatal:\s*/i, "").slice(0, 160);
+}
+
+function networkFailureReason(error: unknown): string {
+  if (/^timed out after/.test((error as Error).message)) return `timed out after ${BASE_FETCH_TIMEOUT_MS / 1000}s`;
+  return fetchFailureReason(error);
+}
 
 interface RepoLayout {
   repositoryRoot: string;
@@ -797,6 +915,19 @@ export class GitService {
     }
   }
 
+  async folderHead(root: string): Promise<FolderHead | null> {
+    const binary = this.settings().gitBinaryPath;
+    try {
+      const abbreviated = (await execText(binary, ["rev-parse", "--abbrev-ref", "HEAD"], root)).trim();
+      if (!abbreviated) return null;
+      if (abbreviated !== "HEAD") return { value: abbreviated, detached: false };
+      const sha = (await execText(binary, ["rev-parse", "HEAD"], root)).trim();
+      return sha ? { value: sha, detached: true } : null;
+    } catch {
+      return null;
+    }
+  }
+
   async repositoryRoot(root: string): Promise<string> {
     const value = (await this.git(root).revparse(["--show-toplevel"])).trim();
     if (!value) throw new Error(`${root} is not a Git repository`);
@@ -832,9 +963,9 @@ export class GitService {
     } catch {}
   }
 
-  private async addWorktree(git: ReturnType<GitService["git"]>, branch: string, target: string, base: string): Promise<string> {
+  private async addWorktree(git: ReturnType<GitService["git"]>, branch: string, target: string, base: string, startPoint: string): Promise<string> {
     try {
-      await git.raw(["worktree", "add", "-b", branch, target, base]);
+      await git.raw(["worktree", "add", "--no-track", "-b", branch, target, startPoint]);
       return branch;
     } catch (error) {
       const message = (error as Error).message;
@@ -845,7 +976,7 @@ export class GitService {
         if (existsSync(target) && readdirSync(target).length === 0) {
           rmdirSync(target);
           try {
-            await git.raw(["worktree", "add", "-b", branch, target, base]);
+            await git.raw(["worktree", "add", "--no-track", "-b", branch, target, startPoint]);
             return branch;
           } catch (retryError) {
             await this.discardBranch(git, branch);
@@ -867,7 +998,7 @@ export class GitService {
     this.remoteCache.delete(key);
   }
 
-  private async initSubmodules(worktreePath: string): Promise<void> {
+  async initSubmodules(worktreePath: string): Promise<void> {
     if (!existsSync(join(worktreePath, ".gitmodules"))) return;
     try {
       await execText(this.settings().gitBinaryPath, ["-C", worktreePath, "submodule", "update", "--init", "--recursive"], worktreePath, 120_000);
@@ -876,23 +1007,275 @@ export class GitService {
     }
   }
 
-  async createWorktree(projectRoot: string, projectKey: string, sessionId: string, worktreesRoot: string, requestedBase?: string): Promise<CreatedWorktree> {
+  private async listRefNames(root: string): Promise<Set<string>> {
+    const output = await this.git(root).raw(["for-each-ref", "--format=%(refname:short)", "refs/heads", "refs/remotes"]);
+    return new Set(output.replace(/\r/g, "").split("\n").map((line) => line.trim()).filter(Boolean));
+  }
+
+  private async originHeadRef(root: string): Promise<string | null> {
+    try {
+      const value = (await execText(this.settings().gitBinaryPath, ["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], root)).trim();
+      return value || null;
+    } catch {
+      return null;
+    }
+  }
+
+  async defaultBaseRef(root: string): Promise<string | null> {
+    const refs = await this.listRefNames(root);
+    return pickDefaultBase(await this.originHeadRef(root), [...refs]);
+  }
+
+  private remoteNamesOnce(root: string): RemoteNames {
+    let pending: Promise<RemoteLookup> | null = null;
+    return () => {
+      pending ??= execText(this.settings().gitBinaryPath, ["remote"], root).then(
+        (output): RemoteLookup => ({ names: output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean), failure: null }),
+        (error): RemoteLookup => ({ names: [], failure: fetchFailureReason(error) })
+      );
+      return pending;
+    };
+  }
+
+  private async missingOriginNotice(remoteNames: RemoteNames, ref: string): Promise<string | null> {
+    const remotes = (await remoteNames()).names;
+    if (remotes.length === 0 || remotes.includes("origin")) return null;
+    return `No 'origin' remote; started from local ${ref} without fetching`;
+  }
+
+  private async refExists(root: string, fullRef: string): Promise<boolean> {
+    try {
+      await execText(this.settings().gitBinaryPath, ["show-ref", "--verify", "--quiet", fullRef], root);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  private async qualifyRef(root: string, ref: string): Promise<string> {
+    const candidates = ref.startsWith(ORIGIN_PREFIX) ? [`refs/remotes/${ref}`, `refs/heads/${ref}`] : [`refs/heads/${ref}`, `refs/remotes/${ref}`];
+    for (const candidate of candidates) {
+      if (await this.refExists(root, candidate)) return candidate;
+    }
+    return ref;
+  }
+
+  private async isAncestor(root: string, ancestor: string, descendant: string): Promise<boolean> {
+    try {
+      const result = await execWithStatus(this.settings().gitBinaryPath, ["merge-base", "--is-ancestor", ancestor, descendant], root, 10_000);
+      return result.code === 0;
+    } catch {
+      return false;
+    }
+  }
+
+  private async originLacksBranch(root: string, branch: string): Promise<boolean> {
+    try {
+      const result = await execWithStatus(
+        this.settings().gitBinaryPath,
+        ["ls-remote", "--exit-code", "origin", `refs/heads/${branch}`],
+        root,
+        BASE_FETCH_TIMEOUT_MS,
+        cleanAuthEnvironment()
+      );
+      return result.code === LS_REMOTE_NO_MATCHING_REF;
+    } catch {
+      return false;
+    }
+  }
+
+  private async runBaseFetch(root: string, remoteRef: string, attempt = 0): Promise<BaseFetchOutcome> {
+    const args = fetchArgsForRef(remoteRef);
+    if (!args) throw new Error(`invalid base branch '${remoteRef}'`);
+    let result: ExecStatusResult;
+    try {
+      result = await execWithStatus(this.settings().gitBinaryPath, args, root, BASE_FETCH_TIMEOUT_MS, cleanAuthEnvironment());
+    } catch (error) {
+      return { kind: "failed", reason: networkFailureReason(error) };
+    }
+    if (result.code === 0) return { kind: "fetched" };
+    if (attempt === 0 && /cannot lock ref/i.test(result.stderr)) {
+      await delay(BASE_FETCH_LOCK_RETRY_MS);
+      return this.runBaseFetch(root, remoteRef, attempt + 1);
+    }
+    if (await this.originLacksBranch(root, remoteRef.slice(ORIGIN_PREFIX.length))) return { kind: "missing" };
+    return { kind: "failed", reason: fetchFailureReason(new Error(result.stderr || `git fetch exited with code ${result.code}`)) };
+  }
+
+  private async discoverOriginDefaultBranch(root: string): Promise<{ ref: string } | { failure: string }> {
+    try {
+      const result = await execWithStatus(this.settings().gitBinaryPath, ["ls-remote", "--symref", "origin", "HEAD"], root, BASE_FETCH_TIMEOUT_MS, cleanAuthEnvironment());
+      if (result.code !== 0) return { failure: fetchFailureReason(new Error(result.stderr || `git ls-remote exited with code ${result.code}`)) };
+      const branch = /^ref:\s+refs\/heads\/(\S+)\s+HEAD/m.exec(result.stdout)?.[1];
+      if (!branch || !isValidBranchName(branch)) return { failure: "origin did not report a default branch" };
+      return { ref: `${ORIGIN_PREFIX}${branch}` };
+    } catch (error) {
+      return { failure: networkFailureReason(error) };
+    }
+  }
+
+  async fetchBase(root: string, ref: string): Promise<ResolvedBase> {
+    if (!fetchArgsForRef(ref)) return { ref, fetched: false, warning: null };
+    const outcome = await this.runBaseFetch(root, ref);
+    if (outcome.kind === "fetched") {
+      this.invalidateBranches(root);
+      return { ref, fetched: true, warning: null };
+    }
+    return this.baseAfterFetchFailure(root, ref, outcome.kind === "failed" ? outcome.reason : "branch not found on origin");
+  }
+
+  private async baseAfterFetchFailure(root: string, ref: string, reason: string): Promise<ResolvedBase> {
+    const prefix = `Could not fetch ${ref} (${reason})`;
+    const refs = await this.listRefNames(root);
+    if (refs.has(ref)) return { ref, fetched: false, warning: `${prefix}; using the local copy` };
+    const local = ref.slice(ORIGIN_PREFIX.length);
+    if (refs.has(local)) return { ref: local, fetched: false, warning: `${prefix}; ${ref} is not available locally, using ${local}` };
+    const current = (await this.currentBranch(root)) ?? "HEAD";
+    return { ref: current, fetched: false, warning: `${prefix}; ${ref} is not available locally, using ${current}` };
+  }
+
+  private async resolveExactBase(root: string, ref: string): Promise<ResolvedBase> {
+    if (!isValidBranchName(ref)) throw new Error(`invalid base branch '${ref}'`);
+    if (ref !== "HEAD" && !(await this.listRefNames(root)).has(ref)) throw new UnknownBaseBranchError(ref);
+    return { ref, fetched: false, warning: null };
+  }
+
+  private async resolveRequestedBase(root: string, requested: string, remoteNames: RemoteNames): Promise<ResolvedBase> {
+    const explicitRemote = requested.startsWith(ORIGIN_PREFIX);
+    const remoteRef = explicitRemote ? requested : `${ORIGIN_PREFIX}${requested}`;
+    const localName = remoteRef.slice(ORIGIN_PREFIX.length);
+    const valid = isValidBranchName(requested) && isValidBranchName(localName) && fetchArgsForRef(remoteRef) !== null;
+    if (!valid) throw new Error(`invalid base branch '${requested}'`);
+    if (requested === "HEAD") return { ref: "HEAD", fetched: false, warning: null };
+    const remotes = await remoteNames();
+    const outcome: BaseFetchOutcome = remotes.names.includes("origin") ? await this.runBaseFetch(root, remoteRef) : { kind: "noRemote" };
+    if (outcome.kind === "fetched") {
+      this.invalidateBranches(root);
+      const unpushed =
+        !explicitRemote &&
+        (await this.refExists(root, `refs/heads/${localName}`)) &&
+        !(await this.isAncestor(root, `refs/heads/${localName}`, `refs/remotes/${remoteRef}`));
+      if (unpushed) return { ref: localName, fetched: true, warning: `Using local ${localName}: it has commits that aren't on origin` };
+      return { ref: remoteRef, fetched: true, warning: null };
+    }
+    const refs = await this.listRefNames(root);
+    const reasons = { missing: "branch not found on origin", noRemote: "no origin remote" };
+    const reason = outcome.kind === "failed" ? outcome.reason : reasons[outcome.kind];
+    const prefix = `Could not fetch ${remoteRef} (${reason})`;
+    if (!explicitRemote && refs.has(localName)) {
+      if (outcome.kind === "failed") return { ref: localName, fetched: false, warning: `${prefix}; using the local branch ${localName}` };
+      const warning = outcome.kind === "noRemote" ? await this.missingOriginNotice(remoteNames, localName) : null;
+      return { ref: localName, fetched: false, warning };
+    }
+    if (refs.has(remoteRef)) return { ref: remoteRef, fetched: false, warning: `${prefix}; using the local copy` };
+    if (explicitRemote && refs.has(localName)) {
+      return { ref: localName, fetched: false, warning: `${prefix}; ${remoteRef} is not available locally, using ${localName}` };
+    }
+    throw new UnknownBaseBranchError(
+      requested,
+      outcome.kind === "failed" ? outcome.reason : undefined,
+      outcome.kind === "noRemote" ? { failure: remotes.failure } : undefined
+    );
+  }
+
+  private async resolveDefaultBase(root: string, remoteNames: RemoteNames): Promise<ResolvedBase> {
+    let ref = await this.defaultBaseRef(root);
+    let discoveryWarning: string | null = null;
+    if (!ref?.startsWith(ORIGIN_PREFIX) && (await remoteNames()).names.includes("origin")) {
+      const discovered = await this.discoverOriginDefaultBranch(root);
+      if ("ref" in discovered) {
+        ref = discovered.ref;
+      } else {
+        ref = ref ?? (await this.currentBranch(root)) ?? "HEAD";
+        discoveryWarning = `Could not determine origin's default branch (${discovered.failure}); using ${ref}`;
+      }
+    }
+    if (!ref) {
+      const current = (await this.currentBranch(root)) ?? "HEAD";
+      return { ref: current, fetched: false, warning: `No default branch found; using ${current}` };
+    }
+    const resolved = await this.fetchBase(root, ref);
+    const missingOrigin = resolved.fetched ? null : await this.missingOriginNotice(remoteNames, resolved.ref);
+    return { ...resolved, warning: resolved.warning ?? discoveryWarning ?? missingOrigin };
+  }
+
+  async resolveBase(root: string, requestedBase?: string, opts: ResolveBaseOptions = {}): Promise<ResolvedBase> {
+    const requested = requestedBase?.trim();
+    const remoteNames = this.remoteNamesOnce(root);
+    if (!requested) return this.resolveDefaultBase(root, remoteNames);
+    if (opts.exact) return this.resolveExactBase(root, requested);
+    try {
+      return await this.resolveRequestedBase(root, requested, remoteNames);
+    } catch (error) {
+      if (!opts.fallbackToDefault || !(error instanceof UnknownBaseBranchError)) throw error;
+      if (error.fetchFailure !== undefined) {
+        throw new Error(`Could not fetch run branch '${requested}' (${error.fetchFailure}) and it isn't available locally`);
+      }
+      if (error.originCheck) {
+        const subject = opts.projectName ?? "this repository";
+        const detail = error.originCheck.failure === null ? `${subject} has no origin remote` : `could not list the remotes of ${subject} (${error.originCheck.failure})`;
+        throw new Error(`Can't check run branch '${requested}': ${detail}`);
+      }
+      const fallback = await this.resolveDefaultBase(root, remoteNames);
+      const notice = `Run branch '${requested}' wasn't found on origin or locally; started from ${fallback.ref}`;
+      return { ...fallback, warning: fallback.warning ? `${notice}; ${fallback.warning}` : notice };
+    }
+  }
+
+  async hasCommits(root: string): Promise<boolean> {
+    return (await this.headCommit(root, 10_000)) !== null;
+  }
+
+  async isWorkingTreeDirty(root: string): Promise<boolean> {
+    return (await this.git(root).raw(["status", "--porcelain", "--untracked-files=no"])).trim().length > 0;
+  }
+
+  private async rawWithIndexLockRetry(git: ReturnType<GitService["git"]>, args: string[]): Promise<void> {
+    try {
+      await git.raw(args);
+    } catch (error) {
+      if (!isIndexLockError(error)) throw error;
+      await delay(RESTORE_LOCK_RETRY_MS);
+      await git.raw(args);
+    }
+  }
+
+  async switchToNewBranch(root: string, name: string, base: string): Promise<string> {
+    if (!name || name.startsWith("-") || !base || base.startsWith("-")) throw new Error("invalid branch name or base");
+    const git = this.git(root);
+    const startPoint = await this.qualifyRef(root, base);
+    const branch = await this.withUniqueBranchName(git, name, async (candidate) => {
+      await this.rawWithIndexLockRetry(git, ["switch", "--no-track", "-c", candidate, startPoint]);
+      return candidate;
+    });
+    this.invalidateStatus(root);
+    this.invalidateBranches(root);
+    return branch;
+  }
+
+  async createWorktree(
+    projectRoot: string,
+    projectKey: string,
+    sessionId: string,
+    worktreesRoot: string,
+    requestedBase?: string,
+    opts: ResolveBaseOptions = {}
+  ): Promise<CreatedWorktree> {
     const repositoryRoot = await this.repositoryRoot(projectRoot);
     const git = this.git(repositoryRoot);
-    const branches = await this.branches(repositoryRoot);
-    const current = branches.find((item) => item.current)?.name;
-    const base = requestedBase?.trim() || current || "HEAD";
-    if (base !== "HEAD" && !branches.some((item) => item.name === base)) throw new Error(`unknown base branch '${base}'`);
+    const resolved = await this.resolveBase(repositoryRoot, requestedBase, opts);
+    const base = resolved.ref;
+    const startPoint = await this.qualifyRef(repositoryRoot, base);
     const parent = join(worktreesRoot, safeSegment(projectKey));
     const target = join(parent, safeSegment(sessionId));
     mkdirSync(parent, { recursive: true });
     if (existsSync(target) && readdirSync(target).length === 0) rmdirSync(target);
-    const branch = await this.withUniqueBranchName(git, `cw/${safeSegment(sessionId.replace(/^sess_/, ""))}`,
-      (name) => this.addWorktree(git, name, target, base));
+    const branch = await this.withUniqueBranchName(git, sessionBranchName(sessionId),
+      (name) => this.addWorktree(git, name, target, base, startPoint));
     await this.initSubmodules(target);
     this.invalidateStatus(repositoryRoot);
     this.invalidateBranches(repositoryRoot);
-    return { path: resolve(target), branch, repositoryRoot };
+    return { path: resolve(target), branch, repositoryRoot, baseRef: base, baseWarning: resolved.warning };
   }
 
   async attachWorktree(repoRoot: string, path: string, branch: string): Promise<CreatedWorktree> {
@@ -915,7 +1298,7 @@ export class GitService {
     await this.initSubmodules(target);
     this.invalidateStatus(repositoryRoot);
     this.invalidateBranches(repositoryRoot);
-    return { path: target, branch, repositoryRoot };
+    return { path: target, branch, repositoryRoot, baseRef: branch, baseWarning: null };
   }
 
   async removeWorktree(repoRoot: string, path: string, opts: { force?: boolean } = {}): Promise<RemoveWorktreeResult> {
@@ -1034,13 +1417,17 @@ export class GitService {
     if (!Number.isSafeInteger(number) || number <= 0) throw new Error(`invalid pull request number '${String(number)}'`);
     const repositoryRoot = await this.repositoryRoot(repoRoot);
     const branch = `cw-pr/${number}`;
-    await execText(
-      this.settings().gitBinaryPath,
-      ["-C", repositoryRoot, "fetch", "origin", `+pull/${number}/head:${branch}`],
-      repositoryRoot,
-      120_000,
-      cleanAuthEnvironment()
-    );
+    try {
+      await execText(
+        this.settings().gitBinaryPath,
+        ["-C", repositoryRoot, "fetch", "origin", `+pull/${number}/head:${branch}`],
+        repositoryRoot,
+        120_000,
+        cleanAuthEnvironment()
+      );
+    } catch (error) {
+      throw new Error(redactUrlCredentials((error as Error).message));
+    }
     this.invalidateBranches(repositoryRoot);
     return branch;
   }
@@ -1107,7 +1494,7 @@ export class GitService {
     return result.sort((a, b) => Number(b.current) - Number(a.current) || Number(a.remote) - Number(b.remote) || a.label.localeCompare(b.label));
   }
 
-  async switchBranch(root: string, name: string, project?: Project): Promise<GitStatus> {
+  async checkoutBranch(root: string, name: string): Promise<string> {
     if (!name || name.startsWith("-")) throw new Error("invalid branch name");
     const branches = await this.branches(root);
     const target = branches.find((item) => item.name === name);
@@ -1121,6 +1508,11 @@ export class GitService {
     this.statusDone.delete(key);
     this.statusInFlight.delete(key);
     this.invalidateBranches(root);
+    return target.label;
+  }
+
+  async switchBranch(root: string, name: string, project?: Project): Promise<GitStatus> {
+    await this.checkoutBranch(root, name);
     return this.status(root, project);
   }
 
@@ -1581,6 +1973,7 @@ export class GitService {
     const fallback: GitStatus = {
       available: false,
       branch: "not a repository",
+      headSha: null,
       dirtyCount: 0,
       addedLines: 0,
       deletedLines: 0,
@@ -1624,6 +2017,7 @@ export class GitService {
       return {
         available: true,
         branch,
+        headSha: summary.headSha,
         dirtyCount,
         addedLines: lineCounts.addedLines,
         deletedLines: lineCounts.deletedLines,

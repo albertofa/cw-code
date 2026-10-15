@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi } from "vitest";
-import type { AppSettings, DriverKind, EffortLevel, PrFinishedSessionStatus, PrWorkflow } from "@cw-code/contracts";
+import type { AppSettings, DriverKind, EffortLevel, PrFinishedSessionStatus, PrWorkflow, SavedGitHubView } from "@cw-code/contracts";
 import { MetadataError } from "../storage/metadataDocument.js";
 import { DEFAULT_SETTINGS, SETTINGS_SCHEMA_VERSION, SettingsStore } from "./SettingsStore.js";
 
@@ -191,7 +191,7 @@ describe("SettingsStore", () => {
       expect(settings[key]).toEqual(original[key]);
     }
     const workflows = original.prWorkflows as PrWorkflow[];
-    expect(settings.prWorkflows[0]).toEqual(workflows[0]);
+    expect(settings.prWorkflows[0]).toEqual({ ...workflows[0], target: "pr" });
     expect(settings.prWorkflows.find((w) => w.id === "review")).toMatchObject({ builtIn: true, enabled: false });
     const persisted = JSON.parse(readFileSync(filePath, "utf8")) as Record<string, unknown>;
     expect(persisted.schemaVersion).toBe(SETTINGS_SCHEMA_VERSION);
@@ -354,8 +354,102 @@ describe("SettingsStore", () => {
     expect(settings.prCloneRoot).toBe("~/.cw-code/repos");
     expect(settings.prCloneIncludeOwner).toBe(true);
     expect(settings.prAttributionEnabled).toBe(true);
-    expect(settings.prWorkflows.map((w) => w.id)).toEqual(["resolve-conflicts", "fix-ci", "address-feedback", "review", "babysit"]);
+    expect(settings.prWorkflows.map((w) => w.id)).toEqual([
+      "resolve-conflicts",
+      "fix-ci",
+      "address-feedback",
+      "review",
+      "babysit",
+      "implement",
+      "investigate",
+      "triage",
+      "investigate-run"
+    ]);
     expect(settings.prWorkflows.every((w) => w.builtIn && w.enabled)).toBe(true);
+    expect(settings.githubSavedViews).toEqual([]);
+  });
+
+  it("ships issue and run built-in workflows with their targets and suggestions", () => {
+    const byId = new Map(new SettingsStore(tempFilePath()).get().prWorkflows.map((w) => [w.id, w]));
+    expect(byId.get("implement")).toMatchObject({ target: "issue", suggestWhen: ["issue-assigned"], workspace: "worktree", icon: "sparkle" });
+    expect(byId.get("investigate")).toMatchObject({ target: "issue", suggestWhen: ["issue-bug"], workspace: "checkout", icon: "eye" });
+    expect(byId.get("triage")).toMatchObject({ target: "issue", suggestWhen: [], workspace: "checkout", icon: "message" });
+    expect(byId.get("investigate-run")).toMatchObject({ target: "run", suggestWhen: ["run-failed"], workspace: "worktree", icon: "wrench" });
+    expect(byId.get("implement")?.startPrompt).toContain('Implement {{issue.repo}}#{{issue.number}} "{{issue.title}}".\n\n{{issue.body}}');
+    expect(byId.get("investigate-run")?.updatePrompt).toBe("{{run.workflow}} #{{run.number}} changed: {{run.failedJobs}}");
+  });
+
+  it("appends the new built-in workflows to saved workflows from before they existed", () => {
+    const filePath = tempFilePath();
+    const legacy = DEFAULT_SETTINGS.prWorkflows
+      .filter((w) => w.target === "pr")
+      .map((w) => ({ ...w, target: undefined, enabled: w.id !== "babysit" }));
+    writeFileSync(filePath, JSON.stringify({ schemaVersion: SETTINGS_SCHEMA_VERSION, prWorkflows: legacy }), "utf8");
+
+    const workflows = new SettingsStore(filePath).get().prWorkflows;
+
+    expect(workflows.map((w) => w.id)).toEqual([...legacy.map((w) => w.id), "implement", "investigate", "triage", "investigate-run"]);
+    expect(workflows.slice(0, legacy.length).every((w) => w.target === "pr")).toBe(true);
+    expect(workflows.find((w) => w.id === "babysit")?.enabled).toBe(false);
+    expect(workflows.find((w) => w.id === "implement")).toMatchObject({ builtIn: true, enabled: true, target: "issue" });
+  });
+
+  it("fills a missing workflow target with pr and keeps valid ones", () => {
+    const store = new SettingsStore(tempFilePath());
+    const base = { ...DEFAULT_SETTINGS.prWorkflows[0]!, builtIn: false };
+    const updated = store.set({
+      prWorkflows: [
+        { ...base, id: "no-target", target: undefined },
+        { ...base, id: "bad-target", target: "team" },
+        { ...base, id: "for-issue", target: "issue" }
+      ] as unknown as PrWorkflow[]
+    });
+    const target = (id: string) => updated.prWorkflows.find((w) => w.id === id)?.target;
+    expect(target("no-target")).toBe("pr");
+    expect(target("bad-target")).toBe("pr");
+    expect(target("for-issue")).toBe("issue");
+  });
+
+  it("sanitizes saved GitHub views", () => {
+    const store = new SettingsStore(tempFilePath());
+    const view = { id: "v1", kind: "pr", name: "  Mine  ", query: "  is:open author:@me  ", group: "none" };
+    const updated = store.set({
+      githubSavedViews: [
+        view,
+        { ...view, id: "v1", name: "duplicate" },
+        { ...view, id: "bad-kind", kind: "discussion" },
+        { ...view, id: "bad-group", group: "owner" },
+        { ...view, id: "", name: "no id" },
+        { ...view, id: "long-name", name: "n".repeat(81) },
+        { ...view, id: "long-query", query: "q".repeat(513) },
+        { ...view, id: "no-query", query: undefined },
+        { ...view, id: "blank-name", name: "   " },
+        { ...view, id: "blank-query", query: "  " },
+        { ...view, id: "edge", kind: "run", name: "n".repeat(80), query: "q".repeat(512), group: "repo" },
+        "not-an-object",
+        null
+      ] as unknown as SavedGitHubView[]
+    });
+    expect(updated.githubSavedViews.map((v) => v.id)).toEqual(["v1", "edge"]);
+    expect(updated.githubSavedViews[0]).toEqual({ id: "v1", kind: "pr", name: "Mine", query: "is:open author:@me", group: "none" });
+  });
+
+  it("caps saved GitHub views at 50 and treats a non-array as empty", () => {
+    const store = new SettingsStore(tempFilePath());
+    const many = Array.from({ length: 60 }, (_, i) => ({ id: `v${i}`, kind: "issue", name: `View ${i}`, query: "is:open", group: "repo" }));
+    const capped = store.set({ githubSavedViews: many as SavedGitHubView[] }).githubSavedViews;
+    expect(capped).toHaveLength(50);
+    expect(capped[49]?.id).toBe("v49");
+    expect(store.set({ githubSavedViews: "nope" as unknown as SavedGitHubView[] }).githubSavedViews).toEqual([]);
+  });
+
+  it("persists saved GitHub views across restarts and repairs invalid ones from disk", () => {
+    const filePath = tempFilePath();
+    new SettingsStore(filePath).set({ githubSavedViews: [{ id: "a", kind: "run", name: "Org runs", query: "org:acme", group: "repo" }] });
+    expect(new SettingsStore(filePath).get().githubSavedViews).toEqual([{ id: "a", kind: "run", name: "Org runs", query: "org:acme", group: "repo" }]);
+
+    writeFileSync(filePath, JSON.stringify({ schemaVersion: SETTINGS_SCHEMA_VERSION, githubSavedViews: [{ id: "x", kind: "nope" }] }), "utf8");
+    expect(new SettingsStore(filePath).get().githubSavedViews).toEqual([]);
   });
 
   it("clamps the PR refresh interval and trims the clone root", () => {

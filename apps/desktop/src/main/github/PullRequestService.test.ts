@@ -5,7 +5,8 @@ import { describe, expect, it } from "vitest";
 import type { PrRef, PrSummary } from "@cw-code/contracts";
 import type { GitService, ParsedGitHubRemote } from "../fs/GitService.js";
 import { DEFAULT_SETTINGS } from "../settings/SettingsStore.js";
-import { assertPrRef, assertRunId, cloneTargetPath, mergeInboxItems, PullRequestService } from "./PullRequestService.js";
+import { assertRunId } from "./githubRefs.js";
+import { assertPrRef, cloneTargetPath, mergeInboxItems, PullRequestService } from "./PullRequestService.js";
 
 function ref(overrides: Partial<PrRef> = {}): PrRef {
   return { host: "github.com", owner: "acme", repo: "widgets", number: 1, ...overrides };
@@ -34,6 +35,8 @@ function summary(overrides: Partial<PrSummary> = {}): PrSummary {
     review: "none",
     mergeable: "UNKNOWN",
     labels: [],
+    reviewers: [],
+    assignees: [],
     updatedAt: 0,
     ...overrides
   };

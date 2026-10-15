@@ -1,10 +1,23 @@
-import type { CreateSessionOptions, GitBranchInfo, GitStatus, PrRef, PrSummary, SessionMeta, SessionPrLink } from "@cw-code/contracts";
+import type {
+  CreateSessionOptions,
+  GitBranchInfo,
+  GitStatus,
+  IssueRef,
+  PrRef,
+  PrSummary,
+  RepoRef,
+  RunRef,
+  SessionIssueLink,
+  SessionMeta,
+  SessionPrLink,
+  SessionRunLink
+} from "@cw-code/contracts";
 import { prKey, prRefFromUrl } from "./prParsers.js";
 
 const MAX_UNLINKED_KEYS = 20;
 
 export function canOwnAutoLink(session: SessionMeta): boolean {
-  if (!session.worktreePath) return false;
+  if (!session.worktreePath && !session.branch) return false;
   return session.status !== "resolved" && session.status !== "archived";
 }
 
@@ -23,16 +36,99 @@ function isNonEmptyString(value: unknown): value is string {
   return typeof value === "string" && value.length > 0;
 }
 
+function isPositiveInteger(value: unknown): boolean {
+  return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
+}
+
+function hasRepoRef(ref: Partial<RepoRef> | undefined): boolean {
+  if (!ref || typeof ref !== "object") return false;
+  return isNonEmptyString(ref.host) && isNonEmptyString(ref.owner) && isNonEmptyString(ref.repo);
+}
+
+function hasLinkEnvelope(link: { origin?: unknown; workflowId?: unknown; lastSeenAt?: unknown }): boolean {
+  if (link.origin !== "opened" && link.origin !== "workflow" && link.origin !== "linked") return false;
+  if (link.workflowId !== undefined && typeof link.workflowId !== "string") return false;
+  return typeof link.lastSeenAt === "number" && Number.isFinite(link.lastSeenAt);
+}
+
 export function isValidPrLink(value: unknown): value is SessionPrLink {
   if (!value || typeof value !== "object") return false;
   const link = value as Partial<SessionPrLink>;
   const ref = link.ref as Partial<PrRef> | undefined;
-  if (!ref || typeof ref !== "object") return false;
-  if (!isNonEmptyString(ref.host) || !isNonEmptyString(ref.owner) || !isNonEmptyString(ref.repo)) return false;
-  if (typeof ref.number !== "number" || !Number.isSafeInteger(ref.number) || ref.number <= 0) return false;
-  if (link.origin !== "opened" && link.origin !== "workflow" && link.origin !== "linked") return false;
-  if (link.workflowId !== undefined && typeof link.workflowId !== "string") return false;
-  return typeof link.lastSeenSha === "string" && typeof link.lastSeenAt === "number" && Number.isFinite(link.lastSeenAt);
+  if (!hasRepoRef(ref) || !isPositiveInteger(ref?.number)) return false;
+  return hasLinkEnvelope(link) && typeof link.lastSeenSha === "string";
+}
+
+function repoKey(ref: RepoRef): string {
+  return `${ref.host}/${ref.owner}/${ref.repo}`.toLowerCase();
+}
+
+export function issueKey(ref: IssueRef): string {
+  return `${repoKey(ref)}#${ref.number}`;
+}
+
+export function runKey(ref: RunRef): string {
+  return `${repoKey(ref)}/runs/${ref.runId}`;
+}
+
+export function isValidIssueLink(value: unknown): value is SessionIssueLink {
+  if (!value || typeof value !== "object") return false;
+  const link = value as Partial<SessionIssueLink>;
+  const ref = link.ref as Partial<IssueRef> | undefined;
+  return hasRepoRef(ref) && isPositiveInteger(ref?.number) && hasLinkEnvelope(link);
+}
+
+export function isValidRunLink(value: unknown): value is SessionRunLink {
+  if (!value || typeof value !== "object") return false;
+  const link = value as Partial<SessionRunLink>;
+  const ref = link.ref as Partial<RunRef> | undefined;
+  return hasRepoRef(ref) && isPositiveInteger(ref?.runId) && hasLinkEnvelope(link);
+}
+
+function findByKey<T extends { ref: R }, R>(links: T[] | undefined, ref: R, keyOf: (ref: R) => string): T | undefined {
+  const key = keyOf(ref);
+  return links?.find((link) => keyOf(link.ref) === key);
+}
+
+function upsertByKey<T extends { ref: R }, R>(links: T[] | undefined, link: T, keyOf: (ref: R) => string): T[] {
+  const key = keyOf(link.ref);
+  const current = links ?? [];
+  const index = current.findIndex((existing) => keyOf(existing.ref) === key);
+  if (index < 0) return [...current, link];
+  return current.map((existing, i) => (i === index ? link : existing));
+}
+
+function removeByKey<T extends { ref: R }, R>(links: T[] | undefined, ref: R, keyOf: (ref: R) => string): T[] {
+  const key = keyOf(ref);
+  return (links ?? []).filter((link) => keyOf(link.ref) !== key);
+}
+
+export function findIssueLink(issues: SessionIssueLink[] | undefined, ref: IssueRef): SessionIssueLink | undefined {
+  return findByKey(issues, ref, issueKey);
+}
+
+export function upsertIssueLink(issues: SessionIssueLink[] | undefined, link: SessionIssueLink): SessionIssueLink[] {
+  return upsertByKey(issues, link, issueKey);
+}
+
+export function removeIssueLink(issues: SessionIssueLink[] | undefined, ref: IssueRef): SessionIssueLink[] {
+  return removeByKey(issues, ref, issueKey);
+}
+
+export function findRunLink(runs: SessionRunLink[] | undefined, ref: RunRef): SessionRunLink | undefined {
+  return findByKey(runs, ref, runKey);
+}
+
+export function upsertRunLink(runs: SessionRunLink[] | undefined, link: SessionRunLink): SessionRunLink[] {
+  return upsertByKey(runs, link, runKey);
+}
+
+export function removeRunLink(runs: SessionRunLink[] | undefined, ref: RunRef): SessionRunLink[] {
+  return removeByKey(runs, ref, runKey);
+}
+
+export function markLinkSeenAt<T extends SessionIssueLink | SessionRunLink>(link: T, seenAt: number): T {
+  return { ...link, lastSeenAt: Math.max(link.lastSeenAt, seenAt) };
 }
 
 export function findLink(prs: SessionPrLink[] | undefined, ref: PrRef): SessionPrLink | undefined {
@@ -97,6 +193,11 @@ export function applyTurnSeen(
     }
   }
   return next;
+}
+
+export function onlyFinishedLinks(prs: SessionPrLink[] | undefined, finishedKeys: ReadonlySet<string>): boolean {
+  if (!prs?.length) return false;
+  return prs.every((link) => finishedKeys.has(prKey(link.ref)));
 }
 
 export type PrHeadPlan =

@@ -2,11 +2,14 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type {
   AppSettings,
+  GitHubKind,
+  GitHubViewGroup,
   PrFinishedSessionStatus,
   PrSuggestCondition,
   PrWorkflow,
   PrWorkflowIcon,
   PrWorkspaceChoice,
+  SavedGitHubView,
   SettingsPatch
 } from "@cw-code/contracts";
 import { CLAUDE_CURATED_MODELS } from "../providers/claude/ClaudeCliDriver.js";
@@ -29,9 +32,18 @@ const VALID_PR_CONDITIONS: readonly PrSuggestCondition[] = [
   "changes-requested",
   "conflicts",
   "bot-author",
-  "draft"
+  "draft",
+  "issue-assigned",
+  "issue-bug",
+  "run-failed"
 ];
+const VALID_WORKFLOW_TARGETS: readonly PrWorkflow["target"][] = ["pr", "issue", "run"];
 const VALID_PR_WORKSPACES: readonly PrWorkspaceChoice[] = ["checkout", "worktree", "linked"];
+const VALID_VIEW_KINDS: readonly GitHubKind[] = ["pr", "issue", "run"];
+const VALID_VIEW_GROUPS: readonly GitHubViewGroup[] = ["triage", "repo", "none"];
+const MAX_SAVED_VIEWS = 50;
+const MAX_VIEW_NAME_LENGTH = 80;
+const MAX_VIEW_QUERY_LENGTH = 512;
 const VALID_PR_FINISHED_STATUSES: readonly PrFinishedSessionStatus[] = ["idle", "resolved", "archived", "none"];
 
 function sanitizeWorkflowEntry(entry: unknown): PrWorkflow | null {
@@ -51,6 +63,7 @@ function sanitizeWorkflowEntry(entry: unknown): PrWorkflow | null {
     icon: o.icon as PrWorkflowIcon,
     builtIn: o.builtIn === true,
     enabled: o.enabled === true,
+    target: VALID_WORKFLOW_TARGETS.includes(o.target as PrWorkflow["target"]) ? (o.target as PrWorkflow["target"]) : "pr",
     suggestWhen: o.suggestWhen.filter((c): c is PrSuggestCondition => VALID_PR_CONDITIONS.includes(c as PrSuggestCondition)),
     workspace: o.workspace as PrWorkspaceChoice,
     startPrompt: o.startPrompt,
@@ -77,6 +90,34 @@ function sanitizePrWorkflows(raw: unknown): PrWorkflow[] {
     if (!seenIds.has(builtIn.id)) sanitized.push({ ...builtIn, enabled: enabledById.get(builtIn.id) ?? builtIn.enabled });
   }
   return sanitized;
+}
+
+function sanitizeSavedView(entry: unknown): SavedGitHubView | null {
+  if (!entry || typeof entry !== "object") return null;
+  const o = entry as Record<string, unknown>;
+  const id = typeof o.id === "string" ? o.id.trim() : "";
+  if (!id) return null;
+  if (!VALID_VIEW_KINDS.includes(o.kind as GitHubKind)) return null;
+  if (!VALID_VIEW_GROUPS.includes(o.group as GitHubViewGroup)) return null;
+  if (typeof o.name !== "string" || typeof o.query !== "string") return null;
+  const name = o.name.trim();
+  const query = o.query.trim();
+  if (!name || !query || name.length > MAX_VIEW_NAME_LENGTH || query.length > MAX_VIEW_QUERY_LENGTH) return null;
+  return { id, kind: o.kind as GitHubKind, name, query, group: o.group as GitHubViewGroup };
+}
+
+function sanitizeSavedViews(raw: unknown): SavedGitHubView[] {
+  const list = Array.isArray(raw) ? raw : [];
+  const seenIds = new Set<string>();
+  const views: SavedGitHubView[] = [];
+  for (const entry of list) {
+    const view = sanitizeSavedView(entry);
+    if (!view || seenIds.has(view.id)) continue;
+    seenIds.add(view.id);
+    views.push(view);
+    if (views.length === MAX_SAVED_VIEWS) break;
+  }
+  return views;
 }
 
 export const DEFAULT_SETTINGS: AppSettings = {
@@ -112,6 +153,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   prAttributionEnabled: true,
   prAttributionText: "— drafted with {{harness}} in cw-code",
   prWorkflows: defaultPrWorkflows(),
+  githubSavedViews: [],
   opencodeGoUsage: false,
   updateChannel: null,
   updateBackgroundDownload: true,
@@ -242,6 +284,7 @@ function sanitize(patch: SettingsPatch): SettingsPatch {
       typeof patch.prAttributionText === "string" ? patch.prAttributionText.trim() : DEFAULT_SETTINGS.prAttributionText;
   }
   if (patch.prWorkflows !== undefined) out.prWorkflows = sanitizePrWorkflows(patch.prWorkflows);
+  if (patch.githubSavedViews !== undefined) out.githubSavedViews = sanitizeSavedViews(patch.githubSavedViews);
   if (patch.updateChannel !== undefined) {
     out.updateChannel = patch.updateChannel === "stable" || patch.updateChannel === "alpha" ? patch.updateChannel : DEFAULT_SETTINGS.updateChannel;
   }
@@ -271,7 +314,8 @@ function defaults(): AppSettings {
     ...DEFAULT_SETTINGS,
     claudeEnabledModels: [...DEFAULT_SETTINGS.claudeEnabledModels],
     claudeCustomModel: { ...DEFAULT_SETTINGS.claudeCustomModel },
-    prWorkflows: cloneWorkflows(DEFAULT_SETTINGS.prWorkflows)
+    prWorkflows: cloneWorkflows(DEFAULT_SETTINGS.prWorkflows),
+    githubSavedViews: [...DEFAULT_SETTINGS.githubSavedViews]
   };
 }
 
@@ -331,7 +375,12 @@ export class SettingsStore {
   }
 
   get(): AppSettings {
-    return { ...this.data, claudeEnabledModels: [...this.data.claudeEnabledModels], prWorkflows: cloneWorkflows(this.data.prWorkflows) };
+    return {
+      ...this.data,
+      claudeEnabledModels: [...this.data.claudeEnabledModels],
+      prWorkflows: cloneWorkflows(this.data.prWorkflows),
+      githubSavedViews: this.data.githubSavedViews.map((view) => ({ ...view }))
+    };
   }
 
   set(patch: SettingsPatch): AppSettings {

@@ -23,11 +23,13 @@ export const SETTINGS_NAV: SettingsNavItem[] = [
   { id: "appearance", label: "Appearance", group: "app" },
   { id: "updates", label: "Updates", group: "app" },
   { id: "sourceControl", label: "Source control", group: "app" },
-  { id: "prWorkflows", label: "PR workflows", group: "app" },
+  { id: "prWorkflows", label: "Workflows", group: "app" },
   ...HARNESS_IDS.map((id): SettingsNavItem => ({ id, label: HARNESS_NAMES[id], group: "harnesses" }))
 ];
 
-const SETTING_OWNER: Record<keyof AppSettings, SettingsNavId> = {
+export type DraftSettingKey = Exclude<keyof AppSettings, "githubSavedViews">;
+
+const SETTING_OWNER: Record<DraftSettingKey, SettingsNavId> = {
   claudeBinaryPath: "claude",
   opencodeBinaryPath: "opencode",
   codexBinaryPath: "codex",
@@ -109,7 +111,7 @@ export function sameValue(a: unknown, b: unknown): boolean {
   return left.length === right.size && left.every(([key, value]) => right.has(key) && sameValue(value, right.get(key)));
 }
 
-export const SETTING_KEYS = Object.keys(SETTING_OWNER) as Array<keyof AppSettings>;
+export const SETTING_KEYS = Object.keys(SETTING_OWNER) as DraftSettingKey[];
 
 export function copySetting<K extends keyof AppSettings>(target: Partial<AppSettings>, source: AppSettings, key: K): void {
   target[key] = source[key];

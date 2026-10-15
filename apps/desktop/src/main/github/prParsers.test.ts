@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PrSummary } from "@cw-code/contracts";
-import { bucketFor, ciFromRollup, parseDetail, parseHead, parseInbox, prKey, prRefFromUrl } from "./prParsers.js";
+import { actorLoginOf, bucketFor, ciFromRollup, graphqlOutcome, graphqlPartialFailure, parseDetail, parseHead, parseInbox, parsePrSearch, prKey, prRefFromUrl, withBotSuffix } from "./prParsers.js";
 
 function rollupNode(state: string) {
   return { __typename: "CheckRun", conclusion: state };
@@ -77,7 +77,7 @@ describe("parseInbox", () => {
     expect(result.items).toHaveLength(4);
 
     const bot = result.items.find((item) => item.ref.number === 10)!;
-    expect(bot.author.isBot).toBe(true);
+    expect(bot.author).toEqual({ login: "dependabot[bot]", isBot: true });
     expect(bot.reviewRequestedFromViewer).toBe(true);
     expect(bucketFor(bot)).toBe("review");
 
@@ -168,6 +168,146 @@ describe("parseInbox", () => {
   });
 });
 
+describe("reviewers and assignees", () => {
+  function parseOne(overrides: Record<string, unknown>) {
+    const json = JSON.stringify({ data: { viewer: { login: "octocat" }, search: { nodes: [summaryNode(overrides)] } } });
+    return parseInbox(json).items[0];
+  }
+
+  it("merges latest reviews with pending requests, pending only for logins without a review", () => {
+    const pr = parseOne({
+      latestReviews: {
+        nodes: [
+          { author: { login: "bob" }, state: "APPROVED" },
+          { author: { login: "carol" }, state: "CHANGES_REQUESTED" }
+        ]
+      },
+      reviewRequests: { nodes: [{ requestedReviewer: { login: "carol" } }, { requestedReviewer: { login: "dave" } }, { requestedReviewer: {} }] }
+    });
+    expect(pr.reviewers).toEqual([
+      { login: "bob", state: "APPROVED" },
+      { login: "carol", state: "CHANGES_REQUESTED" },
+      { login: "dave", state: "PENDING" }
+    ]);
+  });
+
+  it("drops dismissed and unknown review states and reviews without an author", () => {
+    const pr = parseOne({
+      latestReviews: {
+        nodes: [
+          { author: { login: "bob" }, state: "DISMISSED" },
+          { author: { login: "carol" }, state: "WHATEVER" },
+          { author: null, state: "APPROVED" }
+        ]
+      }
+    });
+    expect(pr.reviewers).toEqual([]);
+  });
+
+  it("keeps a dismissed reviewer as PENDING only when a review is requested again", () => {
+    const pr = parseOne({
+      latestReviews: { nodes: [{ author: { login: "bob" }, state: "DISMISSED" }] },
+      reviewRequests: { nodes: [{ requestedReviewer: { login: "bob" } }] }
+    });
+    expect(pr.reviewers).toEqual([{ login: "bob", state: "PENDING" }]);
+  });
+
+  it("suffixes bot reviewers with [bot] like GitHub logins", () => {
+    const pr = parseOne({
+      latestReviews: {
+        nodes: [
+          { author: { login: "copilot-pull-request-reviewer", __typename: "Bot" }, state: "COMMENTED" },
+          { author: { login: "bob", __typename: "User" }, state: "APPROVED" }
+        ]
+      }
+    });
+    expect(pr.reviewers).toEqual([
+      { login: "copilot-pull-request-reviewer[bot]", state: "COMMENTED" },
+      { login: "bob", state: "APPROVED" }
+    ]);
+  });
+
+  it("parses assignees and tolerates their absence", () => {
+    expect(parseOne({ assignees: { nodes: [{ login: "alice" }, { login: "bob" }, {}] } }).assignees).toEqual(["alice", "bob"]);
+    expect(parseOne({}).assignees).toEqual([]);
+    expect(parseOne({}).reviewers).toEqual([]);
+  });
+});
+
+describe("parsePrSearch", () => {
+  function searchJson(nodes: unknown[], issueCount: number | null) {
+    return JSON.stringify({
+      data: {
+        viewer: { login: "octocat" },
+        results: issueCount === null ? { nodes } : { issueCount, nodes },
+        open: { issueCount: 7 },
+        closed: { issueCount: 3 }
+      }
+    });
+  }
+
+  it("parses items, counts and the viewer", () => {
+    const result = parsePrSearch(searchJson([summaryNode()], 1));
+    expect(result.viewer).toBe("octocat");
+    expect(result.items).toHaveLength(1);
+    expect(result.openCount).toBe(7);
+    expect(result.closedCount).toBe(3);
+    expect(result.truncated).toBe(false);
+  });
+
+  it("flags truncation when the total exceeds the returned page", () => {
+    expect(parsePrSearch(searchJson([summaryNode()], 80)).truncated).toBe(true);
+  });
+
+  it("falls back to the page size when the total is missing", () => {
+    const nodes = Array.from({ length: 50 }, (_, index) => summaryNode({ number: index + 1, url: `https://github.com/acme/widgets/pull/${index + 1}` }));
+    expect(parsePrSearch(searchJson(nodes, null)).truncated).toBe(true);
+    expect(parsePrSearch(searchJson(nodes.slice(0, 3), null)).truncated).toBe(false);
+  });
+
+  it("returns null counts when the aliases are missing and an empty result for malformed JSON", () => {
+    const missing = parsePrSearch(JSON.stringify({ data: { viewer: { login: "octocat" }, results: { nodes: [] } } }));
+    expect(missing.openCount).toBeNull();
+    expect(missing.closedCount).toBeNull();
+    expect(parsePrSearch("not-json")).toEqual({ viewer: null, items: [], openCount: null, closedCount: null, truncated: false });
+  });
+});
+
+describe("graphqlOutcome", () => {
+  it("reports data presence and the first error message", () => {
+    expect(graphqlOutcome(JSON.stringify({ data: { r0: null }, errors: [{ message: "Could not resolve" }] }))).toEqual({
+      hasData: true,
+      message: "Could not resolve"
+    });
+    expect(graphqlOutcome(JSON.stringify({ errors: [{ message: "Bad credentials" }] }))).toEqual({ hasData: false, message: "Bad credentials" });
+    expect(graphqlOutcome("garbage")).toEqual({ hasData: false, message: null });
+  });
+});
+
+describe("graphqlPartialFailure", () => {
+  it("describes errors that arrive together with data, labelled by subject", () => {
+    const partial = JSON.stringify({ data: { r0: null }, errors: [{ message: "Could not resolve to a Repository" }] });
+    expect(graphqlPartialFailure(partial, "sources")).toBe("Some sources failed: Could not resolve to a Repository");
+    expect(graphqlPartialFailure(partial, "results")).toBe("Some results failed: Could not resolve to a Repository");
+  });
+
+  it("is null for clean responses and for responses without data", () => {
+    expect(graphqlPartialFailure(JSON.stringify({ data: { r0: {} } }), "sources")).toBeNull();
+    expect(graphqlPartialFailure(JSON.stringify({ errors: [{ message: "Bad credentials" }] }), "sources")).toBeNull();
+    expect(graphqlPartialFailure("garbage", "results")).toBeNull();
+  });
+});
+
+describe("bot logins", () => {
+  it("suffixes Bot actors once and leaves users untouched", () => {
+    expect(actorLoginOf({ login: "dependabot", __typename: "Bot" })).toEqual({ login: "dependabot[bot]", isBot: true });
+    expect(actorLoginOf({ login: "octocat", __typename: "User" })).toEqual({ login: "octocat", isBot: false });
+    expect(actorLoginOf(null)).toEqual({ login: "", isBot: false });
+    expect(withBotSuffix("renovate[bot]")).toBe("renovate[bot]");
+    expect(withBotSuffix("")).toBe("");
+  });
+});
+
 describe("bucketFor", () => {
   const base: PrSummary = {
     ref: { host: "github.com", owner: "acme", repo: "widgets", number: 1 },
@@ -191,8 +331,15 @@ describe("bucketFor", () => {
     review: "none",
     mergeable: "MERGEABLE",
     labels: [],
+    reviewers: [],
+    assignees: [],
     updatedAt: 0
   };
+
+  it("is closed when state is CLOSED regardless of other fields", () => {
+    expect(bucketFor({ ...base, state: "CLOSED", viewerIsAuthor: true, ci: "failing" })).toBe("closed");
+    expect(bucketFor({ ...base, state: "CLOSED", reviewRequestedFromViewer: true })).toBe("closed");
+  });
 
   it("is merged when state is MERGED regardless of other fields", () => {
     expect(bucketFor({ ...base, state: "MERGED", viewerIsAuthor: true, review: "approved", ci: "failing" })).toBe("merged");
@@ -357,6 +504,32 @@ describe("parseDetail", () => {
       comments: [{ author: "bob", body: "fix this", createdAt: Date.parse("2024-01-03T00:05:00Z") }]
     }]);
     expect(detail.unresolvedThreads).toBe(1);
+  });
+
+  it("takes reviewers from the summary, merging latest reviews with pending requests", () => {
+    const json = JSON.stringify({
+      data: {
+        repository: {
+          pullRequest: {
+            ...summaryNode({
+              viewerDidAuthor: true,
+              reviewRequests: { nodes: [{ requestedReviewer: { login: "erin" } }, { requestedReviewer: { login: "bob" } }] }
+            }),
+            body: "",
+            createdAt: "2024-01-01T00:00:00Z",
+            timelineItems: { nodes: [] },
+            threads: { nodes: [] },
+            latestReviews: { nodes: [{ author: { login: "bob" }, state: "APPROVED" }] },
+            commits: { nodes: [] },
+            checkRunCommits: { nodes: [] }
+          }
+        }
+      }
+    });
+    expect(parseDetail(json, "octocat")!.reviewers).toEqual([
+      { login: "bob", state: "APPROVED" },
+      { login: "erin", state: "PENDING" }
+    ]);
   });
 
   it("leaves threadIds empty when no thread references the review", () => {

@@ -1,6 +1,21 @@
 import { describe, expect, it } from "vitest";
 import type { PrWorkflow } from "@cw-code/contracts";
-import { createWorkflow, deleteWorkflow, duplicateWorkflow, insertAtCursor, moveWorkflow, moveWorkflowTo, newWorkflowId, resetWorkflowTo } from "./prWorkflowEditor.js";
+import {
+  changeWorkflowTarget,
+  CONDITIONS_BY_TARGET,
+  createWorkflow,
+  deleteWorkflow,
+  duplicateWorkflow,
+  groupWorkflowsByTarget,
+  insertAtCursor,
+  moveWorkflow,
+  moveWorkflowTo,
+  newWorkflowId,
+  resetWorkflowTo,
+  templateVarIssues,
+  workflowsValidationError,
+  workflowValidationError
+} from "./prWorkflowEditor.js";
 
 function workflow(overrides: Partial<PrWorkflow> = {}): PrWorkflow {
   return {
@@ -10,6 +25,7 @@ function workflow(overrides: Partial<PrWorkflow> = {}): PrWorkflow {
     icon: "eye",
     builtIn: true,
     enabled: true,
+    target: "pr",
     suggestWhen: ["review-requested"],
     workspace: "checkout",
     startPrompt: "start",
@@ -91,6 +107,12 @@ describe("moveWorkflowTo", () => {
     expect(moveWorkflowTo(existing, "missing", "b")).toBe(existing);
     expect(moveWorkflowTo(existing, "b", "missing")).toBe(existing);
   });
+
+  it("refuses to move an entry onto another target's workflow", () => {
+    const mixed = [workflow({ id: "a" }), workflow({ id: "x", target: "issue" }), workflow({ id: "b" })];
+    expect(moveWorkflowTo(mixed, "a", "x")).toBe(mixed);
+    expect(moveWorkflowTo(mixed, "b", "a").map((w) => w.id)).toEqual(["b", "a", "x"]);
+  });
 });
 
 describe("deleteWorkflow", () => {
@@ -152,5 +174,116 @@ describe("insertAtCursor", () => {
 
   it("clamps out-of-range positions to the text bounds", () => {
     expect(insertAtCursor("hi", "!", 10, 20)).toEqual({ value: "hi!", cursor: 3 });
+  });
+});
+
+describe("createWorkflow target", () => {
+  it("defaults to pr and accepts another target", () => {
+    expect(createWorkflow([])[0].target).toBe("pr");
+    expect(createWorkflow([], "issue")[0].target).toBe("issue");
+  });
+});
+
+describe("moveWorkflow across targets", () => {
+  it("swaps with the nearest neighbor of the same target", () => {
+    const existing = [
+      workflow({ id: "a", target: "pr" }),
+      workflow({ id: "x", target: "issue" }),
+      workflow({ id: "b", target: "pr" })
+    ];
+    expect(moveWorkflow(existing, "b", "up").map((w) => w.id)).toEqual(["b", "x", "a"]);
+    expect(moveWorkflow(existing, "x", "up")).toBe(existing);
+    expect(moveWorkflow(existing, "x", "down")).toBe(existing);
+  });
+});
+
+describe("groupWorkflowsByTarget", () => {
+  it("groups in pr, issue, run order and skips empty groups", () => {
+    const groups = groupWorkflowsByTarget([
+      workflow({ id: "r", target: "run" }),
+      workflow({ id: "p1", target: "pr" }),
+      workflow({ id: "p2", target: "pr" })
+    ]);
+    expect(groups.map((g) => [g.target, g.workflows.map((w) => w.id)])).toEqual([
+      ["pr", ["p1", "p2"]],
+      ["run", ["r"]]
+    ]);
+  });
+});
+
+describe("changeWorkflowTarget", () => {
+  it("drops conditions that do not apply to the new target", () => {
+    const next = changeWorkflowTarget(workflow({ suggestWhen: ["review-requested", "draft"] }), "issue");
+    expect(next.target).toBe("issue");
+    expect(next.suggestWhen).toEqual([]);
+  });
+
+  it("keeps conditions that apply to the new target", () => {
+    const next = changeWorkflowTarget(workflow({ target: "issue", suggestWhen: ["issue-bug"] }), "issue");
+    expect(next.suggestWhen).toEqual(["issue-bug"]);
+  });
+
+  it("replaces the linked workspace outside pr targets", () => {
+    expect(changeWorkflowTarget(workflow({ workspace: "linked" }), "run").workspace).toBe("worktree");
+    expect(changeWorkflowTarget(workflow({ workspace: "linked" }), "pr").workspace).toBe("linked");
+  });
+});
+
+describe("CONDITIONS_BY_TARGET", () => {
+  it("offers the issue and run conditions only on their targets", () => {
+    expect(CONDITIONS_BY_TARGET.issue).toEqual(["issue-assigned", "issue-bug"]);
+    expect(CONDITIONS_BY_TARGET.run).toEqual(["run-failed"]);
+    expect(CONDITIONS_BY_TARGET.pr).not.toContain("issue-bug");
+  });
+});
+
+describe("template variable validation", () => {
+  it("accepts variables that belong to the workflow's target", () => {
+    const issue = workflow({ target: "issue", startPrompt: "{{issue.title}} {{ attribution }}", updatePrompt: "{{issue.delta}}" });
+    expect(workflowValidationError(issue)).toBeNull();
+  });
+
+  it("rejects a variable from another target's namespace", () => {
+    const issue = workflow({ label: "Mixed", target: "issue", startPrompt: "{{pr.number}}", updatePrompt: "{{run.id}} {{checks.summary}} {{issue.delta}}" });
+    expect(templateVarIssues(issue)).toEqual({
+      startPrompt: { foreign: ["pr.number"], unknown: [] },
+      updatePrompt: { foreign: ["run.id", "checks.summary"], unknown: [] }
+    });
+    const error = workflowValidationError(issue);
+    expect(error).toContain("{{pr.number}}");
+    expect(error).toContain("{{run.id}}");
+    expect(error).toContain("issues");
+  });
+
+  it("rejects issue and run variables on a pr workflow", () => {
+    expect(workflowValidationError(workflow({ startPrompt: "{{issue.title}}" }))).toContain("{{issue.title}}");
+    expect(workflowValidationError(workflow({ updatePrompt: "{{run.id}}" }))).toContain("{{run.id}}");
+  });
+
+  it("allows variables outside every target namespace and reports them as unknown", () => {
+    const issue = workflow({ target: "issue", startPrompt: "{{ github.sha }} {{foo}} {{issue.nope}}" });
+    expect(workflowValidationError(issue)).toBeNull();
+    expect(templateVarIssues(issue).startPrompt).toEqual({ foreign: [], unknown: ["github.sha", "foo", "issue.nope"] });
+  });
+
+  it("allows an unknown variable inside the workflow's own namespace", () => {
+    expect(workflowValidationError(workflow({ startPrompt: "{{pr.nope}}" }))).toBeNull();
+  });
+
+  it("only validates workflows changed in the draft", () => {
+    const original = [workflow({ id: "legacy", target: "issue", startPrompt: "{{pr.number}}" }), workflow({ id: "ok" })];
+    expect(workflowsValidationError(original, original)).toBeNull();
+    const edited = [original[0], workflow({ id: "ok", target: "run", startPrompt: "{{pr.title}}" })];
+    expect(workflowsValidationError(edited, original)).toEqual({
+      workflowId: "ok",
+      message: expect.stringContaining("{{pr.title}}")
+    });
+  });
+
+  it("validates a new workflow and a workflow whose target changed", () => {
+    const original = [workflow({ id: "a", startPrompt: "{{pr.number}}" })];
+    const retargeted = [{ ...original[0], target: "issue" as const }];
+    expect(workflowsValidationError(retargeted, original)?.workflowId).toBe("a");
+    expect(workflowsValidationError([...original, workflow({ id: "b", target: "run", startPrompt: "{{issue.title}}" })], original)?.workflowId).toBe("b");
   });
 });

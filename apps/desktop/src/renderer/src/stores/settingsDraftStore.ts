@@ -2,6 +2,7 @@ import { create } from "zustand";
 import type { AppSettings, CwApi } from "../cw.js";
 import { errorMessage } from "../components/errorMessage.js";
 import { useNotifs } from "../components/Notifications.js";
+import { workflowsValidationError } from "../components/prWorkflowEditor.js";
 import { copySetting, SETTING_KEYS, sameValue, settingsPatch } from "../components/settingsSections.js";
 import { useAppStore } from "./appStore.js";
 
@@ -23,6 +24,7 @@ interface SettingsDraftState {
   loadError: string | null;
   saving: boolean;
   saveError: string | null;
+  invalidWorkflowId: string | null;
   repoSaved: RepoDraft | null;
   repoDraft: RepoDraft | null;
   harnessChecks: HarnessCheck[] | null;
@@ -35,6 +37,7 @@ interface SettingsDraftState {
   setRepo(patch: Partial<RepoDraft>): void;
   discard(): void;
   save(): Promise<void>;
+  clearInvalidWorkflow(): void;
   recheckHarnesses(): Promise<void>;
 }
 
@@ -86,6 +89,7 @@ export const useSettingsDraftStore = create<SettingsDraftState>((set, get) => ({
   loadError: null,
   saving: false,
   saveError: null,
+  invalidWorkflowId: null,
   repoSaved: null,
   repoDraft: null,
   harnessChecks: null,
@@ -94,7 +98,7 @@ export const useSettingsDraftStore = create<SettingsDraftState>((set, get) => ({
 
   async load() {
     const request = ++loadSeq;
-    set({ loading: true, loadError: null, saveError: null, saved: null, draft: null, repoSaved: null, repoDraft: null, dirty: false });
+    set({ loading: true, loadError: null, saveError: null, invalidWorkflowId: null, saved: null, draft: null, repoSaved: null, repoDraft: null, dirty: false });
     try {
       const settings = await window.cw.getSettings();
       if (request !== loadSeq) return;
@@ -135,16 +139,21 @@ export const useSettingsDraftStore = create<SettingsDraftState>((set, get) => ({
 
   discard() {
     if (get().saving) discardedDuringSave = true;
-    set({ draft: get().saved, repoDraft: get().repoSaved, dirty: false, saveError: null });
+    set({ draft: get().saved, repoDraft: get().repoSaved, dirty: false, saveError: null, invalidWorkflowId: null });
   },
 
   async save() {
     const { saved, draft, repoDraft, repoSaved, saving } = get();
     if (!saved || !draft || saving) return;
+    const workflowError = workflowsValidationError(draft.prWorkflows, saved.prWorkflows);
+    if (workflowError) {
+      set({ saveError: workflowError.message, invalidWorkflowId: workflowError.workflowId });
+      return;
+    }
     const patch = settingsPatch(saved, draft);
     const settingsChanged = Object.keys(patch).length > 0;
     discardedDuringSave = false;
-    set({ saving: true, saveError: null });
+    set({ saving: true, saveError: null, invalidWorkflowId: null });
     try {
       if (settingsChanged) {
         const stored = await useAppStore.getState().saveSettings(patch);
@@ -176,6 +185,10 @@ export const useSettingsDraftStore = create<SettingsDraftState>((set, get) => ({
       }
     }
     set({ saving: false });
+  },
+
+  clearInvalidWorkflow() {
+    set({ invalidWorkflowId: null });
   },
 
   async recheckHarnesses() {

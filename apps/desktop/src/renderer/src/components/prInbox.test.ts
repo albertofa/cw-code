@@ -25,6 +25,8 @@ function summary(overrides: Partial<PrSummary> = {}): PrSummary {
     review: "none",
     mergeable: "MERGEABLE",
     labels: [],
+    reviewers: [],
+    assignees: [],
     updatedAt: 1_000,
     ...overrides
   };
@@ -39,6 +41,10 @@ describe("prKey", () => {
 describe("prBucket", () => {
   it("puts merged pull requests in merged", () => {
     expect(prBucket(summary({ state: "MERGED", ci: "failing" }))).toBe("merged");
+  });
+
+  it("puts closed unmerged pull requests in closed", () => {
+    expect(prBucket(summary({ state: "CLOSED", ci: "failing" }))).toBe("closed");
   });
 
   it("puts review requests from someone else in review", () => {

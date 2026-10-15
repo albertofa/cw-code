@@ -4,15 +4,12 @@ import {
   ArrowUp,
   ArrowUpFromLine,
   ChevronDown,
-  CircleCheck,
   Folder,
   FolderOpen,
   GitBranch,
   GitCommitHorizontal,
   GitFork,
-  GitPullRequest,
-  Loader,
-  X
+  GitPullRequest
 } from "lucide-react";
 import type { GitBranchInfo } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
@@ -113,32 +110,6 @@ export function GitPanelBar({ sessionId }: { sessionId: string }) {
   if (!status.available) return <div className="gitbar gitbar-head"><span className="gitbar-dim">Not a Git repository</span></div>;
 
   const pullRequest = status.pullRequest;
-  const pillState = pullRequest
-    ? pullRequest.checks.failed > 0
-      ? "fail"
-      : pullRequest.checks.pending > 0
-        ? "pending"
-        : "ok"
-    : "ok";
-  const prStateLabel = pullRequest
-    ? pullRequest.isDraft
-      ? "draft"
-      : pullRequest.state.toLowerCase()
-    : "";
-  const checksLabel = pullRequest
-    ? pullRequest.checks.total === 0
-      ? ""
-      : pullRequest.checks.failed > 0
-        ? "checks failing"
-        : pullRequest.checks.pending > 0
-          ? "checks running"
-          : "checks passing"
-    : "";
-  const pillTitle = pullRequest
-    ? checksLabel
-      ? `PR #${pullRequest.number} ${prStateLabel} · ${checksLabel}`
-      : `PR #${pullRequest.number} ${prStateLabel}`
-    : "";
 
   const openWorktree = () => {
     if (!status || !status.worktreePath) return;
@@ -158,7 +129,7 @@ export function GitPanelBar({ sessionId }: { sessionId: string }) {
     setSwitching(true);
     setError("");
     window.cw.switchGitBranch(sessionId, branch).then(() => {
-      void refreshGitStatus(sessionId);
+      void useAppStore.getState().refreshProjectCheckoutGitStatus(sessionId);
       return window.cw.listGitBranches(sessionId);
     }).then(setBranches).catch((reason: Error) => setError(reason.message)).finally(() => setSwitching(false));
   };
@@ -241,25 +212,6 @@ export function GitPanelBar({ sessionId }: { sessionId: string }) {
             searchPlaceholder="Filter branches…"
           />
         </div>
-        {pullRequest && (
-          <button
-            type="button"
-            className={`git-status-pill ${pillState}`}
-            title={pillTitle}
-            onClick={() => void window.cw.openExternal(pullRequest.url)}
-          >
-            <span>#{pullRequest.number}</span>
-            <span className="pill-icon" aria-hidden="true">
-              {pillState === "fail" ? (
-                <X size={11} />
-              ) : pillState === "pending" ? (
-                <Loader size={11} />
-              ) : (
-                <CircleCheck size={11} />
-              )}
-            </span>
-          </button>
-        )}
         {showStats && (
           <button
             type="button"

@@ -12,7 +12,7 @@ import { SettingsNav } from "./components/SettingsNav.js";
 import { useConfirm } from "./components/ConfirmDialog.js";
 import { navIdOf, sameValue, sectionSummary, unsavedSectionLabels } from "./components/settingsSections.js";
 import { ThreadView } from "./components/ThreadView.js";
-import { PrInboxView } from "./components/PrInboxView.js";
+import { GitHubView } from "./components/GitHubView.js";
 import { PrDetailView } from "./components/PrDetailView.js";
 import { UsageView } from "./components/UsageView.js";
 import { WorkflowRunModal } from "./components/WorkflowRunModal.js";
@@ -427,8 +427,8 @@ export function App() {
                 onBack={() => void leaveSettings(() => usePrStore.getState().openSessionView())}
                 onOpenUsage={() => void leaveSettings(() => usePrStore.getState().openUsage())}
               />
-            ) : mainView.kind === "inbox" ? (
-              <PrInboxView />
+            ) : mainView.kind === "github" ? (
+              <GitHubView />
             ) : mainView.kind === "pr" ? (
               <PrDetailView key={prKey(mainView.ref)} prRef={mainView.ref} />
             ) : mainView.kind === "usage" ? (
