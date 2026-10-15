@@ -1031,9 +1031,12 @@ describe("SessionManager", () => {
     fake.complete(turnId);
     const endSha = (await manager.turnChanges(session.id))?.endSha;
     if (!endSha) throw new Error("expected an end snapshot");
-    const internals = manager as unknown as { pendingResolves: Set<string>; worktreeRecovery: Map<string, Promise<string>> };
+    const internals = manager as unknown as {
+      pendingResolves: Map<string, { status: string; promise: Promise<unknown> }>;
+      worktreeRecovery: Map<string, Promise<string>>;
+    };
 
-    internals.pendingResolves.add(session.id);
+    internals.pendingResolves.set(session.id, { status: "resolved", promise: new Promise(() => {}) });
     await expect(manager.undoTurn(session.id, turnId, endSha)).rejects.toThrow("session busy (resolve pending)");
     internals.pendingResolves.delete(session.id);
 
@@ -2768,6 +2771,54 @@ describe("SessionManager", () => {
     await manager.startTurn(a.id, "hello");
     await expect(manager.resolveSession(a.id, "archived")).rejects.toThrow("session busy (turn active)");
     fake.completeAll();
+    manager.dispose();
+  });
+
+  it("shares one cleanup between concurrent resolves of the same status", async () => {
+    const { manager, project } = makeGitSandboxManager("cw-resolve-coalesce-");
+    const session = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    const worktreePath = session.worktreePath;
+    if (!worktreePath) throw new Error("expected a worktree-backed session");
+
+    const [first, second] = await Promise.all([
+      manager.resolveSession(session.id, "resolved", { removeWorktree: true }),
+      manager.resolveSession(session.id, "resolved", { removeWorktree: true })
+    ]);
+
+    expect(second).toBe(first);
+    expect(first.worktreeRemoved).toBe(true);
+    expect(existsSync(worktreePath)).toBe(false);
+    manager.dispose();
+  });
+
+  it("queues a different resolve status behind the pending one", async () => {
+    const { manager, project } = makeGitSandboxManager("cw-resolve-queue-");
+    const session = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    if (!session.worktreePath) throw new Error("expected a worktree-backed session");
+
+    const [resolved, archived] = await Promise.all([
+      manager.resolveSession(session.id, "resolved", { removeWorktree: true }),
+      manager.resolveSession(session.id, "archived")
+    ]);
+
+    expect(resolved.status).toBe("resolved");
+    expect(archived.status).toBe("archived");
+    const stored = (await manager.listSessions(project.id)).find((s) => s.id === session.id);
+    expect(stored?.status).toBe("archived");
+    manager.dispose();
+  });
+
+  it("emits the resolved status before worktree cleanup finishes", async () => {
+    const { manager, project } = makeGitSandboxManager("cw-resolve-emit-");
+    const session = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    const emitted: SessionMeta[] = [];
+    manager.setSessionEmitter((meta) => emitted.push(meta));
+
+    const pending = manager.resolveSession(session.id, "resolved", { removeWorktree: true });
+
+    expect(emitted[0]?.status).toBe("resolved");
+    expect(emitted[0]?.worktreePath).toBe(session.worktreePath);
+    await pending;
     manager.dispose();
   });
 
