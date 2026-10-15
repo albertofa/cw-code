@@ -174,6 +174,7 @@ export interface GitPullRequest {
 export interface GitStatus {
   available: boolean;
   branch: string;
+  headSha?: string | null;
   dirtyCount: number;
   addedLines: number;
   deletedLines: number;

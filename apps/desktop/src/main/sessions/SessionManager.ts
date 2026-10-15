@@ -649,7 +649,7 @@ export class SessionManager {
   ): Promise<{ base: string | undefined } & ResolveBaseOptions> {
     if (plan?.kind === "base") return { base: plan.branch, exact: true };
     if (plan?.kind === "fetch") return { base: await this.git.fetchPullRequestHead(project.rootPath, plan.number), exact: true };
-    return { base: options.baseBranch, exact: false, fallbackToDefault: options.baseFallback === "default" };
+    return { base: options.baseBranch, exact: false, fallbackToDefault: options.baseFallback === "default", projectName: project.name };
   }
 
   private async createSessionWorktree(project: Project, id: string, options: CreateSessionOptions): Promise<CreatedWorktree> {
@@ -1451,6 +1451,18 @@ export class SessionManager {
     });
   }
 
+  private branchSwitchPendingOnRoot(session: SessionMeta): boolean {
+    return this.sameRootSessions(session).some((other) => this.pendingBranchSwitches.has(other.id));
+  }
+
+  private async assertFolderOnSessionBranch(session: SessionMeta, project: Project, cwd: string, acceptedHead: string | undefined): Promise<void> {
+    if (session.worktreePath || !session.branch) return;
+    const head = await this.git.folderHead(cwd);
+    if (!head || head.value === session.branch || head.value === acceptedHead) return;
+    const label = head.detached ? "a detached HEAD" : head.value;
+    throw new Error(`[cw-branch-mismatch] ${project.name} is on ${label}, not this session's branch ${session.branch}.`);
+  }
+
   private undoPendingOnRoot(session: SessionMeta): boolean {
     return this.sameRootSessions(session).some((other) => this.pendingUndos.has(other.id));
   }
@@ -1530,10 +1542,32 @@ export class SessionManager {
     }
   }
 
+  async switchBranch(sessionId: string, branch: string): Promise<GitStatus> {
+    return this.withBranchSwitch(sessionId, async () => {
+      const session = this.requireSession(sessionId);
+      const project = this.projectForSession(sessionId);
+      const root = await this.ensureWorktree(sessionId);
+      if (!session.worktreePath && (await this.git.isWorkingTreeDirty(root))) {
+        throw new Error(`${project.name} has uncommitted changes — commit or stash them before switching branches`);
+      }
+      const label = await this.git.checkoutBranch(root, branch);
+      const head = await this.git.currentBranch(root);
+      if (head !== label) throw new Error(`Switching ${project.name} to '${label}' did not take effect; it is on ${head ?? "a detached HEAD"}`);
+      this.updateSessionBranch(sessionId, label);
+      return this.git.status(root, project);
+    });
+  }
+
   async withBranchSwitch<T>(sessionId: string, run: () => Promise<T>): Promise<T> {
     const session = this.requireSession(sessionId);
+    if (session.worktreePath) return this.runBranchSwitch(sessionId, run);
+    return this.withFolderLock(this.rootForProject(session.projectId), () => this.runBranchSwitch(sessionId, run));
+  }
+
+  private async runBranchSwitch<T>(sessionId: string, run: () => Promise<T>): Promise<T> {
+    const session = this.requireSession(sessionId);
     if (this.undoPendingOnRoot(session)) throw new Error("session busy (undo pending)");
-    if (this.pendingBranchSwitches.has(sessionId)) throw new Error("session busy (branch switch pending)");
+    if (this.branchSwitchPendingOnRoot(session)) throw new Error("session busy (branch switch pending)");
     const running = this.sameRootSessions(session).find((other) => this.hasTurnInFlight(other.id));
     if (running) {
       const projectName = this.store.getProject(running.projectId)?.name ?? "this folder";
@@ -1558,7 +1592,7 @@ export class SessionManager {
   async startTurn(
     sessionId: string,
     prompt: string,
-    opts?: { prefs?: ComposerPrefs; attachments?: string[]; command?: CommandInvocation; prRefs?: PrRef[] }
+    opts?: { prefs?: ComposerPrefs; attachments?: string[]; command?: CommandInvocation; prRefs?: PrRef[]; acceptFolderHead?: string }
   ): Promise<string> {
     this.assertNotReserved();
     const session = this.store.getSession(sessionId);
@@ -1574,9 +1608,11 @@ export class SessionManager {
     if (this.pendingTurns.has(sessionId)) throw new Error("session busy (turn pending)");
     if (this.pendingResolves.has(sessionId)) throw new Error("session busy (resolve pending)");
     if (this.undoPendingOnRoot(session)) throw new Error("session busy (undo pending)");
+    if (this.branchSwitchPendingOnRoot(session)) throw new Error(`${project.name} is switching branches — try again in a moment`);
     this.pendingTurns.add(sessionId);
     try {
       const cwd = await this.ensureWorktree(sessionId);
+      await this.assertFolderOnSessionBranch(session, project, cwd, opts?.acceptFolderHead);
       const snapshot = await this.captureTurnSnapshot(sessionId, cwd);
       this.assertNotReserved();
       const firstMessage = session.title === NEW_SESSION_TITLE && !opts?.command;

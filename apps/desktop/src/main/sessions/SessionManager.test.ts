@@ -228,6 +228,10 @@ function gitOut(repository: string, ...args: string[]): string {
   return execFileSync("git", ["-C", repository, ...args], { encoding: "utf8" }).trim();
 }
 
+function folderHead(repository: string): string {
+  return gitOut(repository, "rev-parse", "--abbrev-ref", "HEAD");
+}
+
 function attachOrigin(repository: string): { remote: string; pusher: string } {
   const sandbox = dirname(repository);
   const remote = join(sandbox, "remote.git");
@@ -843,6 +847,135 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
+  it("refuses a turn while a same-folder branch switch is pending and allows it afterwards", async () => {
+    const { manager, project, repository } = makeGitSandboxManager("cw-session-turn-during-switch-");
+    const switching = await manager.createSession(project.id, "claude", { mode: "current" });
+    const other = await manager.createSession(project.id, "claude", { mode: "current" });
+    let release: () => void = () => {};
+    const gate = new Promise<void>((resolveGate) => {
+      release = resolveGate;
+    });
+    const pendingSwitch = manager.withBranchSwitch(switching.id, () => gate);
+    await vi.waitFor(() => expect((manager as unknown as { pendingBranchSwitches: Set<string> }).pendingBranchSwitches.has(switching.id)).toBe(true));
+
+    const message = `${project.name} is switching branches — try again in a moment`;
+    await expect(manager.startTurn(other.id, "blocked", { acceptFolderHead: folderHead(repository) })).rejects.toThrow(message);
+    await expect(manager.startTurn(switching.id, "blocked", { acceptFolderHead: folderHead(repository) })).rejects.toThrow(message);
+
+    release();
+    await pendingSwitch;
+    await expect(manager.startTurn(other.id, "allowed", { acceptFolderHead: folderHead(repository) })).resolves.toEqual(expect.any(String));
+    manager.dispose();
+  });
+
+  it("serializes concurrent branch switches and records the branch HEAD ends up on", async () => {
+    const { manager, project, repository } = makeGitSandboxManager("cw-session-switch-serial-");
+    const first = await manager.createSession(project.id, "claude", { mode: "current" });
+    const second = await manager.createSession(project.id, "claude", { mode: "current" });
+    gitOut(repository, "branch", "feature-1");
+    gitOut(repository, "branch", "feature-2");
+    const git = (manager as unknown as { git: { checkoutBranch: (root: string, name: string) => Promise<string> } }).git;
+    const realCheckout = git.checkoutBranch.bind(git);
+    let active = 0;
+    let maxActive = 0;
+    git.checkoutBranch = async (root, name) => {
+      active += 1;
+      maxActive = Math.max(maxActive, active);
+      try {
+        await new Promise((resolveDelay) => setTimeout(resolveDelay, 50));
+        return await realCheckout(root, name);
+      } finally {
+        active -= 1;
+      }
+    };
+
+    const results = await Promise.all([manager.switchBranch(first.id, "feature-1"), manager.switchBranch(second.id, "feature-2")]);
+
+    expect(maxActive).toBe(1);
+    expect(results.map((status) => status.branch)).toEqual(["feature-1", "feature-2"]);
+    expect(folderHead(repository)).toBe("feature-2");
+    const stored = await manager.listSessions(project.id);
+    expect(stored.find((session) => session.id === first.id)?.branch).toBe("feature-1");
+    expect(stored.find((session) => session.id === second.id)?.branch).toBe(folderHead(repository));
+    manager.dispose();
+  });
+
+  it("refuses a current-checkout branch switch over uncommitted changes but not a worktree one", async () => {
+    const { manager, project, repository } = makeGitSandboxManager("cw-session-switch-dirty-");
+    const shared = await manager.createSession(project.id, "claude", { mode: "current" });
+    gitOut(repository, "branch", "feature");
+    writeFileSync(join(repository, "README.md"), "dirty\n", "utf8");
+
+    await expect(manager.switchBranch(shared.id, "feature")).rejects.toThrow(
+      `${project.name} has uncommitted changes — commit or stash them before switching branches`
+    );
+    expect(folderHead(repository)).toBe(shared.branch);
+    gitOut(repository, "checkout", "--", "README.md");
+
+    const isolated = await manager.createSession(project.id, "claude", { mode: "new" });
+    const worktreePath = isolated.worktreePath;
+    if (!worktreePath) throw new Error("expected a worktree-backed session");
+    writeFileSync(join(worktreePath, "README.md"), "dirty\n", "utf8");
+
+    await manager.switchBranch(isolated.id, "feature");
+
+    expect(folderHead(worktreePath)).toBe("feature");
+    expect((await manager.listSessions(project.id)).find((session) => session.id === isolated.id)?.branch).toBe("feature");
+    manager.dispose();
+  });
+
+  it("rejects a turn when the shared folder is on another branch and accepts an explicit override", async () => {
+    const { manager, project, repository } = makeGitSandboxManager("cw-session-branch-guard-");
+    const first = await manager.createSession(project.id, "claude", { mode: "current" });
+    const second = await manager.createSession(project.id, "claude", { mode: "current" });
+
+    await expect(manager.startTurn(first.id, "go")).rejects.toThrow(
+      `[cw-branch-mismatch] ${project.name} is on ${second.branch}, not this session's branch ${first.branch}.`
+    );
+    await expect(manager.startTurn(first.id, "go", { acceptFolderHead: "something-else" })).rejects.toThrow("[cw-branch-mismatch]");
+    await expect(manager.startTurn(first.id, "go", { acceptFolderHead: folderHead(repository) })).resolves.toEqual(expect.any(String));
+    manager.dispose();
+  });
+
+  it("reports a detached HEAD in the mismatch and accepts the full commit sha", async () => {
+    const { manager, project, repository } = makeGitSandboxManager("cw-session-branch-guard-detached-");
+    const session = await manager.createSession(project.id, "claude", { mode: "current" });
+    gitOut(repository, "checkout", "--detach");
+    const sha = gitOut(repository, "rev-parse", "HEAD");
+
+    await expect(manager.startTurn(session.id, "go")).rejects.toThrow(
+      `[cw-branch-mismatch] ${project.name} is on a detached HEAD, not this session's branch ${session.branch}.`
+    );
+    await expect(manager.startTurn(session.id, "go", { acceptFolderHead: "HEAD" })).rejects.toThrow("[cw-branch-mismatch]");
+    await expect(manager.startTurn(session.id, "go", { acceptFolderHead: sha })).resolves.toEqual(expect.any(String));
+    manager.dispose();
+  });
+
+  it("does not apply the branch guard to worktree sessions or sessions without a recorded branch", async () => {
+    const { manager, project, repository } = makeGitSandboxManager("cw-session-branch-guard-exempt-");
+    const isolated = await manager.createSession(project.id, "claude", { mode: "new" });
+    gitOut(repository, "switch", "-c", "elsewhere");
+    await expect(manager.startTurn(isolated.id, "go")).resolves.toEqual(expect.any(String));
+
+    const unbornRoot = join(dirname(repository), "unborn");
+    execFileSync("git", ["init", "-b", "main", unbornRoot]);
+    const unbornProject = manager.addProject(unbornRoot);
+    const unborn = await manager.createSession(unbornProject.id, "claude", { mode: "current" });
+    expect(unborn.branch).toBeUndefined();
+    await expect(manager.startTurn(unborn.id, "go")).resolves.toEqual(expect.any(String));
+    manager.dispose();
+  });
+
+  it.each(["current", "new"] as const)("refuses to fall back for a run branch when there is no origin remote in %s mode", async (mode) => {
+    const { manager, project } = makeGitSandboxManager(`cw-session-fallback-no-origin-${mode}-`);
+
+    await expect(manager.createSession(project.id, "claude", { mode, baseBranch: "gone/run", baseFallback: "default" })).rejects.toThrow(
+      `Can't check run branch 'gone/run': ${project.name} has no origin remote`
+    );
+    expect(await manager.listSessions(project.id)).toHaveLength(0);
+    manager.dispose();
+  });
+
   it("still throws for a missing run branch without the fallback", async () => {
     const { manager, project, repository } = makeGitSandboxManager("cw-session-nofallback-");
     attachOrigin(repository);
@@ -1236,13 +1369,13 @@ describe("SessionManager", () => {
     const first = await manager.createSession(project.id, "claude", { mode: "current" });
     const second = await manager.createSession(project.id, "claude", { mode: "current" });
 
-    const firstTurn = await manager.startTurn(first.id, "first");
+    const firstTurn = await manager.startTurn(first.id, "first", { acceptFolderHead: folderHead(repository) });
     writeFileSync(join(repository, "first.txt"), "first\n", "utf8");
     fake.complete(firstTurn);
     const firstEnd = (await manager.turnChanges(first.id))?.endSha;
     if (!firstEnd) throw new Error("expected an end snapshot");
 
-    const secondTurn = await manager.startTurn(second.id, "second");
+    const secondTurn = await manager.startTurn(second.id, "second", { acceptFolderHead: folderHead(repository) });
     await expect(manager.undoTurn(first.id, firstTurn, firstEnd)).rejects.toThrow("Another session is running a turn in this folder");
     writeFileSync(join(repository, "second.txt"), "second\n", "utf8");
     fake.complete(secondTurn);
@@ -1324,7 +1457,7 @@ describe("SessionManager", () => {
     const child = await manager.createSession(manager.addProject(nestedRoot).id, "claude", { mode: "current" });
     const sibling = await manager.createSession(manager.addProject(siblingRoot).id, "claude", { mode: "current" });
     const runTurn = async (sessionId: string, file: string) => {
-      const turnId = await manager.startTurn(sessionId, "go");
+      const turnId = await manager.startTurn(sessionId, "go", { acceptFolderHead: folderHead(repository) });
       writeFileSync(file, "turn\n", "utf8");
       fake.complete(turnId);
       await endSnapshotsSettled(manager);
@@ -1350,7 +1483,7 @@ describe("SessionManager", () => {
     const first = await manager.createSession(project.id, "claude", { mode: "current" });
     const second = await manager.createSession(project.id, "claude", { mode: "current" });
     const store = (manager as unknown as { store: SessionStore }).store;
-    const turnId = await manager.startTurn(first.id, "go");
+    const turnId = await manager.startTurn(first.id, "go", { acceptFolderHead: folderHead(repository) });
     writeFileSync(join(repository, "first.txt"), "first\n", "utf8");
     fake.complete(turnId);
     const endSha = (await manager.turnChanges(first.id))?.endSha;

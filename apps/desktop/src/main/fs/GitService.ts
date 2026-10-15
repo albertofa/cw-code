@@ -455,6 +455,7 @@ export interface PorcelainStatusFile {
 
 export interface PorcelainStatus {
   branch: string;
+  headSha: string | null;
   upstream: string | null;
   tracking: { ahead: number; behind: number } | null;
   files: PorcelainStatusFile[];
@@ -472,12 +473,15 @@ function fieldsAfter(record: string, count: number): string {
 }
 
 export function parsePorcelainV2Status(stdout: string): PorcelainStatus {
-  const status: PorcelainStatus = { branch: "HEAD", upstream: null, tracking: null, files: [] };
+  const status: PorcelainStatus = { branch: "HEAD", headSha: null, upstream: null, tracking: null, files: [] };
   const records = stdout.split("\0");
   for (let i = 0; i < records.length; i++) {
     const record = records[i];
     if (!record) continue;
-    if (record.startsWith("# branch.head ")) {
+    if (record.startsWith("# branch.oid ")) {
+      const oid = record.slice("# branch.oid ".length);
+      status.headSha = oid === "(initial)" ? null : oid;
+    } else if (record.startsWith("# branch.head ")) {
       const head = record.slice("# branch.head ".length);
       status.branch = head === "(detached)" ? "HEAD" : head;
     } else if (record.startsWith("# branch.upstream ")) {
@@ -679,6 +683,7 @@ const REMOTE_CACHE_TTL_MS = 5 * 60_000;
 const BASE_CANDIDATES = ["main", "master", "origin/main", "origin/master"];
 const DEFAULT_BASE_ORDER = ["origin/main", "origin/master", "main", "master"];
 const BASE_FETCH_TIMEOUT_MS = 20_000;
+const LS_REMOTE_NO_MATCHING_REF = 2;
 const BASE_FETCH_LOCK_RETRY_MS = 300;
 const ORIGIN_PREFIX = "origin/";
 
@@ -711,17 +716,34 @@ export function fetchArgsForRef(ref: string): string[] | null {
 export interface ResolveBaseOptions {
   exact?: boolean;
   fallbackToDefault?: boolean;
+  projectName?: string;
 }
 
-type RemoteNames = () => Promise<string[]>;
+export interface FolderHead {
+  value: string;
+  detached: boolean;
+}
+
+interface RemoteLookup {
+  names: string[];
+  failure: string | null;
+}
+
+type RemoteNames = () => Promise<RemoteLookup>;
+
+export interface OriginCheckFailure {
+  failure: string | null;
+}
 
 export class UnknownBaseBranchError extends Error {
   readonly fetchFailure?: string;
+  readonly originCheck?: OriginCheckFailure;
 
-  constructor(ref: string, fetchFailure?: string) {
+  constructor(ref: string, fetchFailure?: string, originCheck?: OriginCheckFailure) {
     super(`unknown base branch '${ref}'`);
     this.name = "UnknownBaseBranchError";
     this.fetchFailure = fetchFailure;
+    this.originCheck = originCheck;
   }
 }
 
@@ -893,6 +915,19 @@ export class GitService {
     }
   }
 
+  async folderHead(root: string): Promise<FolderHead | null> {
+    const binary = this.settings().gitBinaryPath;
+    try {
+      const abbreviated = (await execText(binary, ["rev-parse", "--abbrev-ref", "HEAD"], root)).trim();
+      if (!abbreviated) return null;
+      if (abbreviated !== "HEAD") return { value: abbreviated, detached: false };
+      const sha = (await execText(binary, ["rev-parse", "HEAD"], root)).trim();
+      return sha ? { value: sha, detached: true } : null;
+    } catch {
+      return null;
+    }
+  }
+
   async repositoryRoot(root: string): Promise<string> {
     const value = (await this.git(root).revparse(["--show-toplevel"])).trim();
     if (!value) throw new Error(`${root} is not a Git repository`);
@@ -992,18 +1027,18 @@ export class GitService {
   }
 
   private remoteNamesOnce(root: string): RemoteNames {
-    let pending: Promise<string[]> | null = null;
+    let pending: Promise<RemoteLookup> | null = null;
     return () => {
       pending ??= execText(this.settings().gitBinaryPath, ["remote"], root).then(
-        (output) => output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean),
-        () => []
+        (output): RemoteLookup => ({ names: output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean), failure: null }),
+        (error): RemoteLookup => ({ names: [], failure: fetchFailureReason(error) })
       );
       return pending;
     };
   }
 
   private async missingOriginNotice(remoteNames: RemoteNames, ref: string): Promise<string | null> {
-    const remotes = await remoteNames();
+    const remotes = (await remoteNames()).names;
     if (remotes.length === 0 || remotes.includes("origin")) return null;
     return `No 'origin' remote; started from local ${ref} without fetching`;
   }
@@ -1034,7 +1069,24 @@ export class GitService {
     }
   }
 
-  private async runBaseFetch(root: string, args: string[], attempt = 0): Promise<BaseFetchOutcome> {
+  private async originLacksBranch(root: string, branch: string): Promise<boolean> {
+    try {
+      const result = await execWithStatus(
+        this.settings().gitBinaryPath,
+        ["ls-remote", "--exit-code", "origin", `refs/heads/${branch}`],
+        root,
+        BASE_FETCH_TIMEOUT_MS,
+        cleanAuthEnvironment()
+      );
+      return result.code === LS_REMOTE_NO_MATCHING_REF;
+    } catch {
+      return false;
+    }
+  }
+
+  private async runBaseFetch(root: string, remoteRef: string, attempt = 0): Promise<BaseFetchOutcome> {
+    const args = fetchArgsForRef(remoteRef);
+    if (!args) throw new Error(`invalid base branch '${remoteRef}'`);
     let result: ExecStatusResult;
     try {
       result = await execWithStatus(this.settings().gitBinaryPath, args, root, BASE_FETCH_TIMEOUT_MS, cleanAuthEnvironment());
@@ -1042,11 +1094,11 @@ export class GitService {
       return { kind: "failed", reason: networkFailureReason(error) };
     }
     if (result.code === 0) return { kind: "fetched" };
-    if (/couldn't find remote ref/i.test(result.stderr)) return { kind: "missing" };
     if (attempt === 0 && /cannot lock ref/i.test(result.stderr)) {
       await delay(BASE_FETCH_LOCK_RETRY_MS);
-      return this.runBaseFetch(root, args, attempt + 1);
+      return this.runBaseFetch(root, remoteRef, attempt + 1);
     }
+    if (await this.originLacksBranch(root, remoteRef.slice(ORIGIN_PREFIX.length))) return { kind: "missing" };
     return { kind: "failed", reason: fetchFailureReason(new Error(result.stderr || `git fetch exited with code ${result.code}`)) };
   }
 
@@ -1063,9 +1115,8 @@ export class GitService {
   }
 
   async fetchBase(root: string, ref: string): Promise<ResolvedBase> {
-    const args = fetchArgsForRef(ref);
-    if (!args) return { ref, fetched: false, warning: null };
-    const outcome = await this.runBaseFetch(root, args);
+    if (!fetchArgsForRef(ref)) return { ref, fetched: false, warning: null };
+    const outcome = await this.runBaseFetch(root, ref);
     if (outcome.kind === "fetched") {
       this.invalidateBranches(root);
       return { ref, fetched: true, warning: null };
@@ -1093,10 +1144,11 @@ export class GitService {
     const explicitRemote = requested.startsWith(ORIGIN_PREFIX);
     const remoteRef = explicitRemote ? requested : `${ORIGIN_PREFIX}${requested}`;
     const localName = remoteRef.slice(ORIGIN_PREFIX.length);
-    const args = isValidBranchName(requested) && isValidBranchName(localName) ? fetchArgsForRef(remoteRef) : null;
-    if (!args) throw new Error(`invalid base branch '${requested}'`);
+    const valid = isValidBranchName(requested) && isValidBranchName(localName) && fetchArgsForRef(remoteRef) !== null;
+    if (!valid) throw new Error(`invalid base branch '${requested}'`);
     if (requested === "HEAD") return { ref: "HEAD", fetched: false, warning: null };
-    const outcome: BaseFetchOutcome = (await remoteNames()).includes("origin") ? await this.runBaseFetch(root, args) : { kind: "noRemote" };
+    const remotes = await remoteNames();
+    const outcome: BaseFetchOutcome = remotes.names.includes("origin") ? await this.runBaseFetch(root, remoteRef) : { kind: "noRemote" };
     if (outcome.kind === "fetched") {
       this.invalidateBranches(root);
       const unpushed =
@@ -1119,13 +1171,17 @@ export class GitService {
     if (explicitRemote && refs.has(localName)) {
       return { ref: localName, fetched: false, warning: `${prefix}; ${remoteRef} is not available locally, using ${localName}` };
     }
-    throw new UnknownBaseBranchError(requested, outcome.kind === "failed" ? outcome.reason : undefined);
+    throw new UnknownBaseBranchError(
+      requested,
+      outcome.kind === "failed" ? outcome.reason : undefined,
+      outcome.kind === "noRemote" ? { failure: remotes.failure } : undefined
+    );
   }
 
   private async resolveDefaultBase(root: string, remoteNames: RemoteNames): Promise<ResolvedBase> {
     let ref = await this.defaultBaseRef(root);
     let discoveryWarning: string | null = null;
-    if (!ref?.startsWith(ORIGIN_PREFIX) && (await remoteNames()).includes("origin")) {
+    if (!ref?.startsWith(ORIGIN_PREFIX) && (await remoteNames()).names.includes("origin")) {
       const discovered = await this.discoverOriginDefaultBranch(root);
       if ("ref" in discovered) {
         ref = discovered.ref;
@@ -1154,6 +1210,11 @@ export class GitService {
       if (!opts.fallbackToDefault || !(error instanceof UnknownBaseBranchError)) throw error;
       if (error.fetchFailure !== undefined) {
         throw new Error(`Could not fetch run branch '${requested}' (${error.fetchFailure}) and it isn't available locally`);
+      }
+      if (error.originCheck) {
+        const subject = opts.projectName ?? "this repository";
+        const detail = error.originCheck.failure === null ? `${subject} has no origin remote` : `could not list the remotes of ${subject} (${error.originCheck.failure})`;
+        throw new Error(`Can't check run branch '${requested}': ${detail}`);
       }
       const fallback = await this.resolveDefaultBase(root, remoteNames);
       const notice = `Run branch '${requested}' wasn't found on origin or locally; started from ${fallback.ref}`;
@@ -1433,7 +1494,7 @@ export class GitService {
     return result.sort((a, b) => Number(b.current) - Number(a.current) || Number(a.remote) - Number(b.remote) || a.label.localeCompare(b.label));
   }
 
-  async checkoutBranch(root: string, name: string): Promise<void> {
+  async checkoutBranch(root: string, name: string): Promise<string> {
     if (!name || name.startsWith("-")) throw new Error("invalid branch name");
     const branches = await this.branches(root);
     const target = branches.find((item) => item.name === name);
@@ -1447,6 +1508,7 @@ export class GitService {
     this.statusDone.delete(key);
     this.statusInFlight.delete(key);
     this.invalidateBranches(root);
+    return target.label;
   }
 
   async switchBranch(root: string, name: string, project?: Project): Promise<GitStatus> {
@@ -1911,6 +1973,7 @@ export class GitService {
     const fallback: GitStatus = {
       available: false,
       branch: "not a repository",
+      headSha: null,
       dirtyCount: 0,
       addedLines: 0,
       deletedLines: 0,
@@ -1954,6 +2017,7 @@ export class GitService {
       return {
         available: true,
         branch,
+        headSha: summary.headSha,
         dirtyCount,
         addedLines: lineCounts.addedLines,
         deletedLines: lineCounts.deletedLines,

@@ -531,6 +531,38 @@ describe("GitService worktrees", () => {
     await expect(service.resolveBase(repository, "gone/run")).rejects.toThrow("unknown base branch 'gone/run'");
   });
 
+  it("detects a missing origin branch from the ls-remote exit code, not from the fetch message", async () => {
+    const { sandbox, repository, service } = initSandbox();
+    withOrigin(repository, sandbox);
+    const original = { LC_ALL: process.env.LC_ALL, LANGUAGE: process.env.LANGUAGE };
+    process.env.LC_ALL = "de_DE.UTF-8";
+    process.env.LANGUAGE = "de";
+    try {
+      const missing = await service.resolveBase(repository, "gone/run", { fallbackToDefault: true });
+      expect(missing.warning).toBe("Run branch 'gone/run' wasn't found on origin or locally; started from origin/main");
+    } finally {
+      for (const [key, value] of Object.entries(original)) {
+        if (value === undefined) delete process.env[key];
+        else process.env[key] = value;
+      }
+    }
+  });
+
+  it("refuses the run branch fallback when there is no origin remote and no local copy", async () => {
+    const { repository, service } = initSandbox();
+
+    await expect(service.resolveBase(repository, "gone/run", { fallbackToDefault: true, projectName: "repo" })).rejects.toThrow(
+      "Can't check run branch 'gone/run': repo has no origin remote"
+    );
+    await expect(service.resolveBase(repository, "gone/run")).rejects.toThrow("unknown base branch 'gone/run'");
+    expect(await service.resolveBase(repository, "main", { fallbackToDefault: true })).toEqual({ ref: "main", fetched: false, warning: null });
+
+    execFileSync("git", ["-C", repository, "remote", "add", "upstream", "https://example.invalid/o/r.git"]);
+    await expect(service.resolveBase(repository, "gone/run", { fallbackToDefault: true, projectName: "repo" })).rejects.toThrow(
+      "Can't check run branch 'gone/run': repo has no origin remote"
+    );
+  });
+
   it("creates a worktree from the exact local branch even when origin has a newer branch of the same name", async () => {
     const { sandbox, repository, service } = initSandbox();
     const { pusher } = withOrigin(repository, sandbox);
@@ -1456,6 +1488,7 @@ describe("parsePorcelainV2Status", () => {
     ].join("\0");
     expect(parsePorcelainV2Status(stdout)).toEqual({
       branch: "feature/x",
+      headSha: "0123456789abcdef0123456789abcdef01234567",
       upstream: "origin/feature/x",
       tracking: { ahead: 2, behind: 1 },
       files: [
@@ -1470,6 +1503,22 @@ describe("parsePorcelainV2Status", () => {
 
   it("reports detached HEAD and missing tracking", () => {
     const stdout = ["# branch.oid 0123", "# branch.head (detached)", "# branch.upstream origin/gone", ""].join("\0");
-    expect(parsePorcelainV2Status(stdout)).toEqual({ branch: "HEAD", upstream: "origin/gone", tracking: null, files: [] });
+    expect(parsePorcelainV2Status(stdout)).toEqual({ branch: "HEAD", headSha: "0123", upstream: "origin/gone", tracking: null, files: [] });
+  });
+
+  it("reports a null sha for an unborn repository", () => {
+    const stdout = ["# branch.oid (initial)", "# branch.head main", ""].join("\0");
+    expect(parsePorcelainV2Status(stdout)).toEqual({ branch: "main", headSha: null, upstream: null, tracking: null, files: [] });
+  });
+
+  it("reports the full commit sha in the status of a detached checkout", async () => {
+    const { repository, service } = initSandbox();
+    execFileSync("git", ["-C", repository, "checkout", "--detach"]);
+    const sha = execFileSync("git", ["-C", repository, "rev-parse", "HEAD"], { encoding: "utf8" }).trim();
+
+    const status = await service.status(repository);
+
+    expect(status.branch).toBe("HEAD");
+    expect(status.headSha).toBe(sha);
   });
 });

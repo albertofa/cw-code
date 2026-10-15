@@ -900,15 +900,18 @@ function registerIpc(services: Services): void {
         attachments?: string[];
         command?: CommandInvocation;
         prRefs?: PrRef[];
+        acceptFolderHead?: string;
       }
     ) => {
       if (args.prRefs !== undefined && !Array.isArray(args.prRefs)) throw new Error("invalid prRefs");
+      if (args.acceptFolderHead !== undefined && typeof args.acceptFolderHead !== "string") throw new Error("invalid acceptFolderHead");
       for (const ref of args.prRefs ?? []) assertPrRef(ref);
       return sessions.startTurn(args.sessionId, args.prompt, {
         prefs: args.prefs,
         attachments: args.attachments,
         ...(args.command ? { command: args.command } : {}),
-        prRefs: args.prRefs
+        prRefs: args.prRefs,
+        ...(args.acceptFolderHead !== undefined ? { acceptFolderHead: args.acceptFolderHead } : {})
       });
     }
   );
@@ -989,12 +992,7 @@ function registerIpc(services: Services): void {
     git.branches(sessions.rootForProject(args.projectId))
   );
   ipcMain.handle("git.switchBranch", (_e, args: { sessionId: string; branch: string }) =>
-    sessions.withBranchSwitch(args.sessionId, async () => {
-      const root = await sessions.ensureWorktree(args.sessionId);
-      const status = await git.switchBranch(root, args.branch, sessions.projectForSession(args.sessionId));
-      sessions.updateSessionBranch(args.sessionId, status.branch);
-      return status;
-    })
+    sessions.switchBranch(args.sessionId, args.branch)
   );
   ipcMain.handle("git.diff", async (_e, args: { sessionId: string; mode: GitDiffMode; baseRef?: string }) => {
     const root = await sessions.ensureWorktree(args.sessionId);
