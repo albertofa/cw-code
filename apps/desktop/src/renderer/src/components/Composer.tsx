@@ -41,9 +41,8 @@ export function Composer({ sessionId, driver }: { sessionId: string; driver: Dri
       switchBranch: async () => {
         if (mismatch) await useBranchStore.getState().switchToSessionBranch(sessionId, mismatch.sessionBranch);
       },
-      keepFolderBranch: () => {
-        if (mismatch) useBranchStore.getState().keepFolderBranch(sessionId, mismatch.folderBranch);
-      }
+      acceptFolderHead: () => useBranchStore.getState().acceptFolderHead(sessionId),
+      refreshMismatch: () => useBranchStore.getState().refreshMismatch(sessionId)
     },
     loadModels: () => window.cw.listModels(sessionId),
     loadPermissions: () => window.cw.listPermissions(sessionId),
@@ -52,7 +51,11 @@ export function Composer({ sessionId, driver }: { sessionId: string; driver: Dri
     savePrefs: (p) => {
       void useAppStore.getState().setComposerPrefs(sessionId, p);
     },
-    send: (body, attachments, command) => useAppStore.getState().sendPrompt(body, attachments, command),
+    send: (body, attachments, command, acceptFolderHead) =>
+      useAppStore.getState().sendPromptTo(sessionId, body, attachments, {
+        ...(command ? { command } : {}),
+        ...(acceptFolderHead ? { acceptFolderHead } : {})
+      }),
     newSession: () => useAppStore.getState().startNewSession(driver),
     rename: (title) => useAppStore.getState().renameSession(sessionId, title),
     openTerminal: () => usePanelStore.getState().revealTab(sessionId, driver),

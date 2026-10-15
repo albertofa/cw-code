@@ -35,7 +35,7 @@ import { useConfirm } from "./ConfirmDialog.js";
 import { useNotifs } from "./Notifications.js";
 import { SlashMenu, slashOptionId, type SlashMenuItem } from "./SlashMenu.js";
 import { commandDisplay, filterCommands, mergeCommands, parseSlashInput, rankByQuery } from "./slashCommands.js";
-import type { BranchMismatch } from "./sessionBranch.js";
+import { parseBranchMismatchError, type BranchMismatch } from "./sessionBranch.js";
 import { harnessLabel } from "./toolTabs.js";
 import { ipcErrorMessage } from "./ipcError.js";
 import { useThreadVisible } from "./threadVisibility.js";
@@ -43,8 +43,11 @@ import { useThreadVisible } from "./threadVisibility.js";
 export interface BranchGuard {
   mismatch: BranchMismatch | null;
   switchBranch(): Promise<void>;
-  keepFolderBranch(): void;
+  acceptFolderHead(): Promise<string | null>;
+  refreshMismatch(): Promise<BranchMismatch | null>;
 }
+
+type HeldSend = (acceptFolderHead?: string) => void;
 
 export interface ComposerBackend {
   imageTarget: ImageTarget;
@@ -57,7 +60,7 @@ export interface ComposerBackend {
   loadFiles(): Promise<string[]>;
   loadCommands(): Promise<CommandOption[]>;
   savePrefs(prefs: ComposerPrefs): void;
-  send(body: string, attachments: string[], command?: CommandInvocation): Promise<void>;
+  send(body: string, attachments: string[], command?: CommandInvocation, acceptFolderHead?: string): Promise<void>;
   newSession?(): void;
   rename?(title: string): Promise<void>;
   openTerminal?(): void;
@@ -139,7 +142,8 @@ export function ComposerView({
   const [choiceOpen, setChoiceOpen] = useState(false);
   const [choiceBusy, setChoiceBusy] = useState(false);
   const [choiceError, setChoiceError] = useState<string | null>(null);
-  const pendingSendRef = useRef<(() => void) | null>(null);
+  const pendingSendRef = useRef<HeldSend | null>(null);
+  const choiceGenerationRef = useRef(0);
   const homeDir = useAppStore((s) => s.homeDir);
   const defaultModelId = useAppStore((s) => s.defaultModelByDriver[driver]);
   const saveDefaultModel = useAppStore((s) => s.saveDefaultModel);
@@ -213,9 +217,7 @@ export function ComposerView({
     setCustomModel("");
     setAddOpen(false);
     setPickerOpen(false);
-    pendingSendRef.current = null;
-    setChoiceOpen(false);
-    setChoiceError(null);
+    invalidateBranchChoice();
   }, [resetKey]);
 
   useEffect(() => {
@@ -554,35 +556,35 @@ export function ComposerView({
       setDraft("");
       return;
     }
-    if (holdForBranchChoice(() => void dispatchCommand(command, args, key))) return;
+    if (holdForBranchChoice((accept) => void dispatchCommand(command, args, key, accept))) return;
     await dispatchCommand(command, args, key);
   };
 
-  const dispatchCommand = async (command: CommandOption, args: string, key: string): Promise<void> => {
+  const dispatchCommand = async (command: CommandOption, args: string, key: string, accept?: string): Promise<void> => {
     setSending(true);
     try {
-      await backendRef.current.send(commandDisplay(command.name, args), [], { name: command.name, args });
+      await backendRef.current.send(commandDisplay(command.name, args), [], { name: command.name, args }, accept);
       if (isCurrent(key)) clearComposer();
     } catch (err) {
-      notifySendError(err);
+      await handleSendFailure(err, key, (next) => void dispatchCommand(command, args, key, next));
     } finally {
       setSending(false);
     }
   };
 
   const sendPlain = (body: string, key: string = commandsKey) => {
-    if (holdForBranchChoice(() => dispatchPlain(body, key))) return;
+    if (holdForBranchChoice((accept) => dispatchPlain(body, key, accept))) return;
     dispatchPlain(body, key);
   };
 
-  const dispatchPlain = (body: string, key: string) => {
+  const dispatchPlain = (body: string, key: string, accept?: string) => {
     setSending(true);
     void backendRef.current
-      .send(tagAttachments(body), attachments)
+      .send(tagAttachments(body), attachments, undefined, accept)
       .then(() => {
         if (isCurrent(key)) clearComposer();
       })
-      .catch(notifySendError)
+      .catch((err: unknown) => handleSendFailure(err, key, (next) => dispatchPlain(body, key, next)))
       .finally(() => setSending(false));
   };
 
@@ -617,41 +619,78 @@ export function ComposerView({
     sendPlain(body);
   };
 
-  const holdForBranchChoice = (action: () => void): boolean => {
-    if (!backendRef.current.branchGuard?.mismatch) return false;
+  const openBranchChoice = (action: HeldSend) => {
     pendingSendRef.current = action;
     setChoiceError(null);
     setChoiceOpen(true);
+  };
+
+  const holdForBranchChoice = (action: HeldSend): boolean => {
+    if (!backendRef.current.branchGuard?.mismatch) return false;
+    openBranchChoice(action);
     return true;
   };
 
-  const closeBranchChoice = () => {
+  const hideBranchChoice = () => {
     pendingSendRef.current = null;
     setChoiceOpen(false);
     setChoiceError(null);
   };
 
+  const invalidateBranchChoice = () => {
+    choiceGenerationRef.current += 1;
+    pendingSendRef.current = null;
+    setChoiceOpen(false);
+    setChoiceError(null);
+  };
+
+  const handleSendFailure = async (err: unknown, key: string, retry: HeldSend): Promise<void> => {
+    const guard = backendRef.current.branchGuard;
+    if (guard && isCurrent(key) && parseBranchMismatchError(ipcErrorMessage(err))) {
+      const fresh = await guard.refreshMismatch().catch(() => null);
+      if (fresh && isCurrent(key)) {
+        openBranchChoice(retry);
+        return;
+      }
+    }
+    notifySendError(err);
+  };
+
   const resolveBranchChoice = async (choice: "switch" | "here"): Promise<void> => {
     const guard = backendRef.current.branchGuard;
     if (!guard) return;
+    const action = pendingSendRef.current;
+    const generation = choiceGenerationRef.current;
+    const switchTarget = guard.mismatch?.sessionBranch;
     setChoiceBusy(true);
     setChoiceError(null);
+    let accept: string | undefined;
     try {
-      if (choice === "switch") await guard.switchBranch();
-      else guard.keepFolderBranch();
+      if (choice === "switch") {
+        await guard.switchBranch();
+      } else {
+        const head = await guard.acceptFolderHead();
+        if (head === null) throw new Error("Could not read the project's current git state.");
+        accept = head;
+      }
     } catch (err) {
-      setChoiceError(ipcErrorMessage(err));
+      const message = ipcErrorMessage(err);
+      setChoiceError(choice === "switch" && switchTarget ? `Could not switch to ${switchTarget}: ${message}` : message);
       setChoiceBusy(false);
       return;
     }
     setChoiceBusy(false);
-    const action = pendingSendRef.current;
-    closeBranchChoice();
-    action?.();
+    if (!action || choiceGenerationRef.current !== generation) return;
+    hideBranchChoice();
+    if (backendRef.current.busy) {
+      warn("A turn is still running", "Your message was not sent. Send it again when the turn finishes.");
+      return;
+    }
+    action(accept);
   };
 
   const cancelBranchChoice = () => {
-    closeBranchChoice();
+    invalidateBranchChoice();
     focusComposer();
   };
 
@@ -659,11 +698,11 @@ export function ComposerView({
   const hasBranchMismatch = branchMismatch !== null;
 
   useEffect(() => {
-    if (!hasBranchMismatch) closeBranchChoice();
+    if (!hasBranchMismatch) hideBranchChoice();
   }, [hasBranchMismatch]);
 
   useEffect(() => {
-    closeBranchChoice();
+    invalidateBranchChoice();
   }, [draft, attachments]);
 
   const slashName = SLASH_NAME.exec(draft);

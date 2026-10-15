@@ -49,7 +49,7 @@ export function BranchMismatchDock({ sessionId }: { sessionId: string }) {
         </button>
         <button
           className="pr-detail-btn ghost sm"
-          onClick={() => useBranchStore.getState().keepFolderBranch(sessionId, mismatch.folderBranch)}
+          onClick={() => useBranchStore.getState().keepFolderHead(sessionId, mismatch.folderHead)}
           disabled={switching}
         >
           {keepLabel(mismatch)}
@@ -99,7 +99,7 @@ export function BranchSendChoice({
       </div>
       {error && (
         <div className="branch-choice-error" role="alert">
-          Could not switch to {mismatch.sessionBranch}: {error}
+          {error}
         </div>
       )}
     </div>

@@ -10,6 +10,7 @@ import { formatRelativeAge } from "./prInboxModel.js";
 import { defaultFollowUpWorkflowId, followUpWorkflow, whyLinkedText } from "./prSessionModel.js";
 import { updatesSince } from "./prUpdates.js";
 import { PrUpdateIcon } from "./PrUpdateIcon.js";
+import { branchMismatch } from "./sessionBranch.js";
 import { canLinkItem, sessionPrItemLabel, sessionPrItemsTitle, type SessionPrItem } from "./sessionPrItems.js";
 import { displayChip, mostUrgentLink, prRefLabel } from "./sessionPrLinks.js";
 import { useLinkedPrs, usePrSettings, useSessionPrItems } from "./useLinkedPr.js";
@@ -58,7 +59,8 @@ function ThreadRow({ thread, onSend }: { thread: PrReviewThread; onSend: () => v
 function useSelectedLinkedPr(sessionId: string) {
   const linked = useLinkedPrs(sessionId);
   const selectedKey = usePrStore((s) => s.selectedPrKeyBySession[sessionId] ?? null);
-  const gitPr = useAppStore((s) => s.gitStatusBySession[sessionId]?.pullRequest ?? null);
+  const gitStatus = useAppStore((s) => s.gitStatusBySession[sessionId]);
+  const gitPr = branchMismatch(linked.session, gitStatus) ? null : (gitStatus?.pullRequest ?? null);
   const links = useMemo(() => linked.items.map((item) => item.link), [linked.items]);
   const urgent = useMemo(() => mostUrgentLink(links, linked.summaryByKey, gitPr), [links, linked.summaryByKey, gitPr]);
   const urgentKey = urgent ? prKey(urgent.ref) : null;

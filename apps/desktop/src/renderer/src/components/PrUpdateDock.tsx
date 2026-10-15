@@ -11,6 +11,7 @@ import { prRefLabel } from "./sessionPrLinks.js";
 import { harnessLabel } from "./toolTabs.js";
 import { useLinkedPrs, usePrSettings, type LinkedPr } from "./useLinkedPr.js";
 import { errorMessage } from "./errorMessage.js";
+import { ipcErrorMessage } from "./ipcError.js";
 
 const EMPTY_UPDATES: PrUpdate[] = [];
 
@@ -172,7 +173,7 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
     try {
       await sendPromptTo(sessionId, prompt, undefined, { prRefs: covered.map((entry) => entry.item.link.ref) });
     } catch (err) {
-      setActionError(`Could not send the update: ${errorMessage(err)}`);
+      setActionError(`Could not send the update: ${ipcErrorMessage(err)}`);
       setWorking(null);
       return;
     }

@@ -439,6 +439,7 @@ export interface PermissionOption {
 export interface GitStatus {
   available: boolean;
   branch: string;
+  headSha?: string | null;
   dirtyCount: number;
   addedLines: number;
   deletedLines: number;
@@ -650,7 +651,7 @@ export interface CwApi {
   getSubagentTools(sessionId: string, agentId: string): Promise<SubagentToolsResult>;
   activeTurns(): Promise<ActiveTurn[]>;
   retryConnection(sessionId: string): Promise<RetryConnectionResult>;
-  startTurn(sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[]; command?: CommandInvocation; prRefs?: PrRef[] }): Promise<string>;
+  startTurn(sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[]; command?: CommandInvocation; prRefs?: PrRef[]; acceptFolderHead?: string }): Promise<string>;
   interrupt(turnId: string): Promise<void>;
   respondApproval(requestId: string, decision: ApprovalDecision): Promise<void>;
   respondQuestion(requestId: string, answers: Record<string, string>): Promise<void>;
