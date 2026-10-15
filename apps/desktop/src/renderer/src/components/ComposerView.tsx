@@ -1,12 +1,13 @@
 import { useEffect, useId, useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent as ReactKeyboardEvent, type ReactNode } from "react";
+import { createPortal } from "react-dom";
 import {
   ArrowUp,
   AtSign,
   Image,
   Lock,
   LockOpen,
-  Paperclip,
   Pencil,
+  Plus,
   Slash,
   Square,
   Terminal,
@@ -107,7 +108,7 @@ export function ComposerView({
   resetStaleModel = false,
   recipePrefix,
   usageSlot,
-  footer,
+  top,
   blockedReason
 }: {
   backend: ComposerBackend;
@@ -117,7 +118,7 @@ export function ComposerView({
   resetStaleModel?: boolean;
   recipePrefix?: ReactNode;
   usageSlot?: ReactNode;
-  footer?: ReactNode;
+  top?: ReactNode;
   blockedReason?: string;
 }) {
   const { prefs, busy } = backend;
@@ -824,6 +825,7 @@ export function ComposerView({
           onPick={(index) => slashEntries[index]?.accept()}
         />
       )}
+      {top && <div className="composer-top">{top}</div>}
       {choiceOpen && branchMismatch && backend.branchGuard && (
         <BranchSendChoice
           mismatch={branchMismatch}
@@ -835,80 +837,178 @@ export function ComposerView({
           onCancel={cancelBranchChoice}
         />
       )}
-      {attachments.length > 0 && (
-        <div className="attach-chips">
-          {attachments.map((a) => (
-            <span key={a} className="chip" title={displayImagePath(a, home)}>
-              {isImage(a) ? (
-                <ImageThumb target={imageTarget} path={a} className="chip-thumb" />
-              ) : (
-                <>
-                  <span aria-hidden>@</span>
-                  <span className="chip-name">{displayImagePath(a, home)}</span>
-                </>
-              )}
-              <button
-                className="chip-x"
-                aria-label={`Remove ${a}`}
-                onClick={() => setAttachments((prev) => prev.filter((x) => x !== a))}
-              >
-                <X aria-hidden="true" size={14} />
-              </button>
-            </span>
-          ))}
+      <div className="composer-card">
+        {attachments.length > 0 && (
+          <div className="attach-chips">
+            {attachments.map((a) => (
+              <span key={a} className="chip" title={displayImagePath(a, home)}>
+                {isImage(a) ? (
+                  <ImageThumb target={imageTarget} path={a} className="chip-thumb" />
+                ) : (
+                  <>
+                    <span aria-hidden>@</span>
+                    <span className="chip-name">{displayImagePath(a, home)}</span>
+                  </>
+                )}
+                <button
+                  className="chip-x"
+                  aria-label={`Remove ${a}`}
+                  onClick={() => setAttachments((prev) => prev.filter((x) => x !== a))}
+                >
+                  <X aria-hidden="true" size={14} />
+                </button>
+              </span>
+            ))}
+          </div>
+        )}
+        <div className="composer-writing">
+          <div className="composer-input-wrap">
+            <textarea
+              ref={composerRef}
+              value={draft}
+              onChange={(e) => {
+                const next = e.target.value;
+                setDraft(next);
+                if (!next.startsWith("/")) setSlashDismissed(null);
+              }}
+              onFocus={() => setInputFocused(true)}
+              onBlur={() => setInputFocused(false)}
+              onKeyDown={(e) => {
+                if (handleSlashKey(e)) return;
+                if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "u") {
+                  e.preventDefault();
+                  setPickerOpen(false);
+                  setAddOpen((v) => !v);
+                  return;
+                }
+                if (e.key === "Enter" && !e.shiftKey) {
+                  e.preventDefault();
+                  send();
+                }
+              }}
+              onPaste={(e) => {
+                void pasteFiles(e.clipboardData);
+              }}
+              placeholder={blockedReason ?? (busy ? "Working… stop the turn to send a new message" : "Ask cw-code — @ files, / commands, $ skills")}
+              className="composer-input"
+              rows={3}
+              disabled={busy || sending || blockedReason !== undefined}
+              role="combobox"
+              aria-expanded={slashOpen}
+              aria-autocomplete="list"
+              aria-controls={slashOpen ? slashListId : undefined}
+              aria-activedescendant={slashOpen && slashActive >= 0 ? slashOptionId(slashListId, slashActive) : undefined}
+            />
+            {argHint && (
+              <div className="composer-arg-hint" aria-hidden="true">
+                <span className="composer-arg-hint-pad">{draft}</span>
+                {argHint}
+              </div>
+            )}
+          </div>
         </div>
-      )}
-      <div className="composer-writing">
-        <div className="composer-input-wrap">
-          <textarea
-            ref={composerRef}
-            value={draft}
-            onChange={(e) => {
-              const next = e.target.value;
-              setDraft(next);
-              if (!next.startsWith("/")) setSlashDismissed(null);
-            }}
-            onFocus={() => setInputFocused(true)}
-            onBlur={() => setInputFocused(false)}
-            onKeyDown={(e) => {
-              if (handleSlashKey(e)) return;
-              if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "u") {
-                e.preventDefault();
+        {pasteError && (
+          <div className="composer-paste-error" role="alert">
+            {pasteError}
+          </div>
+        )}
+        <div className="composer-card-foot">
+          <div className="menu composer-add">
+            <button
+              className="icon-btn composer-attach"
+              title="Add attachment (Ctrl+U)"
+              aria-label="Add attachment"
+              aria-haspopup="menu"
+              aria-expanded={addOpen}
+              onClick={() => {
                 setPickerOpen(false);
                 setAddOpen((v) => !v);
-                return;
-              }
-              if (e.key === "Enter" && !e.shiftKey) {
-                e.preventDefault();
-                send();
-              }
-            }}
-            onPaste={(e) => {
-              void pasteFiles(e.clipboardData);
-            }}
-            placeholder={blockedReason ?? (busy ? "Working… stop the turn to send a new message" : "Ask cw-code — @ files, / commands, $ skills")}
-            className="composer-input"
-            rows={3}
-            disabled={busy || sending || blockedReason !== undefined}
-            role="combobox"
-            aria-expanded={slashOpen}
-            aria-autocomplete="list"
-            aria-controls={slashOpen ? slashListId : undefined}
-            aria-activedescendant={slashOpen && slashActive >= 0 ? slashOptionId(slashListId, slashActive) : undefined}
-          />
-          {argHint && (
-            <div className="composer-arg-hint" aria-hidden="true">
-              <span className="composer-arg-hint-pad">{draft}</span>
-              {argHint}
-            </div>
+              }}
+            >
+              <Plus size={16} />
+            </button>
+            {addOpen && (
+              <>
+                <div className="menu-backdrop" onClick={() => setAddOpen(false)} />
+                <div
+                  className="menu-panel"
+                  role="menu"
+                  aria-label="Add attachment"
+                  onKeyDown={(e) => {
+                    if (e.key === "Escape") setAddOpen(false);
+                  }}
+                >
+                  <div className="menu-row" role="menuitem" title="Attach project files or images as @mentions" onClick={openFilePicker}>
+                    <span className="menu-icon">
+                      <Image size={14} />
+                    </span>
+                    <span className="menu-text">
+                      <span className="name">Images and files</span>
+                    </span>
+                    <span className="menu-hint">Ctrl+U</span>
+                  </div>
+                  <div className="menu-row" role="menuitem" title="Attach project files as @mentions" onClick={openFilePicker}>
+                    <span className="menu-icon">
+                      <AtSign size={14} />
+                    </span>
+                    <span className="menu-text">
+                      <span className="name">Context</span>
+                    </span>
+                    <span className="menu-hint">@</span>
+                  </div>
+                  <div
+                    className={`menu-row${commandsRowDisabled ? " disabled" : ""}`}
+                    role="menuitem"
+                    aria-disabled={commandsRowDisabled || undefined}
+                    title={commandsRowDisabled ? "Clear the draft to pick a command" : "Run a slash command"}
+                    onClick={openCommands}
+                  >
+                    <span className="menu-icon">
+                      <Slash size={14} />
+                    </span>
+                    <span className="menu-text">
+                      <span className="name">Commands</span>
+                    </span>
+                    <span className="menu-hint">/</span>
+                  </div>
+                  <div className="menu-row disabled" role="menuitem" aria-disabled="true" title="Shell commands are not supported yet">
+                    <span className="menu-icon">
+                      <Terminal size={14} />
+                    </span>
+                    <span className="menu-text">
+                      <span className="name">Shell command</span>
+                    </span>
+                    <span className="menu-hint">!</span>
+                  </div>
+                </div>
+              </>
+            )}
+          </div>
+          {!busy && blockedReason === undefined && <span className="composer-hint">Shift+Enter for a new line</span>}
+          {busy ? (
+            <button
+              type="button"
+              className="composer-action composer-stop"
+              onClick={() => backend.interrupt()}
+              title="Stop response"
+              aria-label="Stop response"
+            >
+              <Square size={13} fill="currentColor" />
+            </button>
+          ) : (
+            <button
+              type="button"
+              className="composer-action composer-send"
+              onClick={send}
+              disabled={sending || blockedReason !== undefined || (!draft.trim() && attachments.length === 0)}
+              title={blockedReason ?? "Send"}
+              aria-label="Send"
+            >
+              <ArrowUp size={16} strokeWidth={2.25} />
+            </button>
           )}
         </div>
       </div>
-      {pasteError && (
-        <div className="composer-paste-error" role="alert">
-          {pasteError}
-        </div>
-      )}
       {pickerOpen && (
         <div className="attach-picker">
           <input
@@ -1006,104 +1106,11 @@ export function ComposerView({
             onPick={(v) => backend.savePrefs({ permissionMode: v as PermissionMode })}
           />
         </div>
-        <div className="menu composer-add">
-          <button
-            className="icon-btn composer-attach"
-            title="Add attachment (Ctrl+U)"
-            aria-label="Add attachment"
-            aria-haspopup="menu"
-            aria-expanded={addOpen}
-            onClick={() => {
-              setPickerOpen(false);
-              setAddOpen((v) => !v);
-            }}
-          >
-            <Paperclip size={17} />
-          </button>
-          {addOpen && (
-            <>
-              <div className="menu-backdrop" onClick={() => setAddOpen(false)} />
-              <div
-                className="menu-panel"
-                role="menu"
-                aria-label="Add attachment"
-                onKeyDown={(e) => {
-                  if (e.key === "Escape") setAddOpen(false);
-                }}
-              >
-                <div className="menu-row" role="menuitem" title="Attach project files or images as @mentions" onClick={openFilePicker}>
-                  <span className="menu-icon">
-                    <Image size={14} />
-                  </span>
-                  <span className="menu-text">
-                    <span className="name">Images and files</span>
-                  </span>
-                  <span className="menu-hint">Ctrl+U</span>
-                </div>
-                <div className="menu-row" role="menuitem" title="Attach project files as @mentions" onClick={openFilePicker}>
-                  <span className="menu-icon">
-                    <AtSign size={14} />
-                  </span>
-                  <span className="menu-text">
-                    <span className="name">Context</span>
-                  </span>
-                  <span className="menu-hint">@</span>
-                </div>
-                <div
-                  className={`menu-row${commandsRowDisabled ? " disabled" : ""}`}
-                  role="menuitem"
-                  aria-disabled={commandsRowDisabled || undefined}
-                  title={commandsRowDisabled ? "Clear the draft to pick a command" : "Run a slash command"}
-                  onClick={openCommands}
-                >
-                  <span className="menu-icon">
-                    <Slash size={14} />
-                  </span>
-                  <span className="menu-text">
-                    <span className="name">Commands</span>
-                  </span>
-                  <span className="menu-hint">/</span>
-                </div>
-                <div className="menu-row disabled" role="menuitem" aria-disabled="true" title="Shell commands are not supported yet">
-                  <span className="menu-icon">
-                    <Terminal size={14} />
-                  </span>
-                  <span className="menu-text">
-                    <span className="name">Shell command</span>
-                  </span>
-                  <span className="menu-hint">!</span>
-                </div>
-              </div>
-            </>
-          )}
-        </div>
+        <span className="composer-recipe-spacer" />
         {usageSlot}
-        {busy ? (
-          <button
-            type="button"
-            className="composer-action composer-stop"
-            onClick={() => backend.interrupt()}
-            title="Stop response"
-            aria-label="Stop response"
-          >
-            <Square size={14} fill="currentColor" />
-          </button>
-        ) : (
-          <button
-            type="button"
-            className="composer-action composer-send"
-            onClick={send}
-            disabled={sending || blockedReason !== undefined || (!draft.trim() && attachments.length === 0)}
-            title={blockedReason ?? "Send"}
-            aria-label="Send"
-          >
-            <ArrowUp size={18} />
-          </button>
-        )}
       </div>
     </div>
-    {footer}
-    {confirmDialog}
+    {confirmDialog && createPortal(confirmDialog, document.body)}
     </>
   );
 }

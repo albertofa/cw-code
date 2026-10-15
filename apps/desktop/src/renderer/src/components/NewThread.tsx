@@ -7,7 +7,7 @@ import { shortenHome } from "./pathDisplay.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { ComposerView, type ComposerBackend } from "./ComposerView.js";
 import { MenuSelect } from "./MenuSelect.js";
-import { NewSessionAddProject, NewSessionProjectPicker } from "./NewSessionProjectPicker.js";
+import { NewSessionProjectPicker } from "./NewSessionProjectPicker.js";
 
 const NO_PROJECT_HINT = "Choose a project to start a session";
 const NO_SESSIONS: Session[] = [];
@@ -136,6 +136,7 @@ export function NewThread({
     <MenuSelect
       label="Workspace"
       title="Choose where this session works"
+      direction="down"
       value={mode}
       display={modeOptions.find((o) => o.id === mode)?.label ?? "Workspace"}
       icon={modeOptions.find((o) => o.id === mode)?.icon}
@@ -149,6 +150,7 @@ export function NewThread({
       <MenuSelect
         label="Base branch"
         title="Choose the branch this session starts from"
+        direction="down"
         value={workspace.baseBranch ?? DEFAULT_BASE_ID}
         display={workspace.baseBranch ? (branches.find((item) => item.name === workspace.baseBranch)?.label ?? workspace.baseBranch) : DEFAULT_BASE_LABEL}
         icon={<GitBranch size={13} aria-hidden="true" />}
@@ -181,6 +183,7 @@ export function NewThread({
     <MenuSelect
       label="Reuse worktree"
       title="Pick which earlier session worktree to continue in"
+      direction="down"
       value={selectedCandidate.sessionId}
       display={selectedCandidate.title}
       icon={<History size={13} aria-hidden="true" />}
@@ -199,13 +202,30 @@ export function NewThread({
 
   const currentBranch = branches.find((item) => item.current) ?? branches[0];
 
+  const where = (
+    <div className="composer-where">
+      <NewSessionProjectPicker project={project} />
+      {project && <span className="composer-dot" aria-hidden="true" />}
+      {project && branchError && (
+        <span className="workspace-hint" title={branchError}>Not a Git repository</span>
+      )}
+      {project && !branchError && (
+        <>
+          {modeSelect}
+          {baseBranchSelect ?? reuseSelect ?? (currentBranch && (
+            <span className="ws-current" title={`Working in the project on ${currentBranch.name}`}>
+              <GitBranch size={13} aria-hidden="true" />
+              <span className="ws-current-label">{currentBranch.label}</span>
+            </span>
+          ))}
+        </>
+      )}
+    </div>
+  );
+
   return (
     <div className="newthread">
       <h1 className="newthread-title">What should we build?</h1>
-      <div className="newthread-context">
-        <NewSessionProjectPicker project={project} />
-        <NewSessionAddProject />
-      </div>
       <div className="newthread-composer">
         <ComposerView
           backend={backend}
@@ -215,42 +235,25 @@ export function NewThread({
           resetStaleModel
           modelsRefreshKey={modelsRefreshKey}
           recipePrefix={
-            <div className="recipe-control" title="Agentic harness">
-              <MenuSelect
-                label="Harness"
-                title="Choose the agentic harness"
-                direction="down"
-                value={driver}
-                display={HARNESS.find((h) => h.id === driver)?.label ?? driver}
-                icon={<DriverIcon driver={driver} size={16} />}
-                options={HARNESS.map((h) => ({
-                  id: h.id, label: h.label, hint: h.blurb, description: h.blurb, icon: <DriverIcon driver={h.id} size={13} />
-                }))}
-                onPick={(id) => handleDriverChange(id as DriverName)}
-              />
-            </div>
+            <>
+              <div className="recipe-control recipe-harness" title="Agentic harness">
+                <MenuSelect
+                  label="Harness"
+                  title="Choose the agentic harness"
+                  direction="down"
+                  value={driver}
+                  display={HARNESS.find((h) => h.id === driver)?.label ?? driver}
+                  icon={<DriverIcon driver={driver} size={14} />}
+                  options={HARNESS.map((h) => ({
+                    id: h.id, label: h.label, hint: h.blurb, description: h.blurb, icon: <DriverIcon driver={h.id} size={13} />
+                  }))}
+                  onPick={(id) => handleDriverChange(id as DriverName)}
+                />
+              </div>
+              <span className="composer-dot" aria-hidden="true" />
+            </>
           }
-          footer={
-            <div className="composer-footer">
-              {!project ? (
-                <span className="workspace-hint">{NO_PROJECT_HINT}</span>
-              ) : branchError ? (
-                <span className="workspace-hint" title={branchError}>Not a Git repository</span>
-              ) : (
-                <>
-                  <div className="ws-side">{modeSelect}</div>
-                  <div className="ws-side">
-                    {baseBranchSelect ?? reuseSelect ?? (currentBranch && (
-                      <span className="ws-current" title={`Working in the project on ${currentBranch.name}`}>
-                        <GitBranch size={13} aria-hidden="true" />
-                        {currentBranch.label}
-                      </span>
-                    ))}
-                  </div>
-                </>
-              )}
-            </div>
-          }
+          top={where}
         />
         {newSessionError && (
           <div className="wf-run-error newthread-error" role="alert">

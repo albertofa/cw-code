@@ -1,24 +1,32 @@
-import { useRef, useState } from "react";
-import { Check, ChevronDown, ChevronUp, Folder, FolderPlus, Search } from "lucide-react";
+import { useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
+import { Check, ChevronDown, ChevronUp, Folder, Plus, Search } from "lucide-react";
 import type { Project } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
-import { projectAvatarStyle, projectInitials } from "./avatar.js";
+import { ProjectMonogram } from "./ProjectMonogram.js";
 import { shortenHome } from "./pathDisplay.js";
 import { projectsByRecentActivity } from "./projectRecency.js";
 import { useNotifs } from "./Notifications.js";
+import "./modelPicker.css";
 
 export function NewSessionProjectPicker({ project }: { project: Project | undefined }) {
   const projects = useAppStore((s) => s.projects);
   const sessionsByProject = useAppStore((s) => s.sessionsByProject);
   const homeDir = useAppStore((s) => s.homeDir);
   const setPendingProject = useAppStore((s) => s.setPendingProject);
+  const addProjectForNewSession = useAppStore((s) => s.addProjectForNewSession);
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
+  const [highlight, setHighlight] = useState(0);
+  const [navigated, setNavigated] = useState(false);
+  const [adding, setAdding] = useState(false);
+  const listId = useId();
   const triggerRef = useRef<HTMLButtonElement>(null);
 
   const close = () => {
     setOpen(false);
     setQuery("");
+    setHighlight(0);
+    setNavigated(false);
   };
 
   const q = query.trim().toLowerCase();
@@ -26,6 +34,15 @@ export function NewSessionProjectPicker({ project }: { project: Project | undefi
   const visible = q
     ? ordered.filter((p) => p.name.toLowerCase().includes(q) || p.rootPath.toLowerCase().includes(q))
     : ordered;
+  const addIndex = visible.length;
+  const active = Math.min(highlight, addIndex);
+  const hasTarget = visible.length > 0 || navigated;
+  const optionId = (index: number) => `${listId}-opt-${index}`;
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    document.getElementById(optionId(active))?.scrollIntoView({ block: "nearest" });
+  }, [open, active, query, visible.length]);
 
   const pick = (id: string) => {
     close();
@@ -35,95 +52,9 @@ export function NewSessionProjectPicker({ project }: { project: Project | undefi
     });
   };
 
-  return (
-    <span className="picker newthread-picker">
-      <button
-        ref={triggerRef}
-        type="button"
-        className={`newthread-project-btn${project ? "" : " unset"}${open ? " open" : ""}`}
-        onClick={() => {
-          setQuery("");
-          setOpen((o) => !o);
-        }}
-        aria-haspopup="listbox"
-        aria-expanded={open}
-        title={project ? shortenHome(project.rootPath, homeDir ?? undefined) : "Choose the project for this session"}
-      >
-        {project ? (
-          <span className="avatar" style={projectAvatarStyle(project.name)} aria-hidden="true">
-            {projectInitials(project.name)}
-          </span>
-        ) : (
-          <Folder size={18} aria-hidden="true" />
-        )}
-        <span className="newthread-project-name">{project?.name ?? "Choose a project"}</span>
-        <span className="newthread-project-chevron" aria-hidden="true">
-          {open ? <ChevronUp size={16} /> : <ChevronDown size={16} />}
-        </span>
-      </button>
-      {open && (
-        <>
-          <span className="picker-backdrop" onClick={close} />
-          <span
-            className="picker-panel newthread-picker-panel"
-            onKeyDown={(e) => {
-              if (e.key === "Escape") {
-                e.stopPropagation();
-                close();
-                triggerRef.current?.focus();
-                return;
-              }
-              if (e.key === "Enter" && visible.length > 0 && document.activeElement?.tagName === "INPUT") {
-                pick(visible[0].id);
-              }
-            }}
-          >
-            <span className="search-row">
-              <Search className="search-icon" aria-hidden="true" size={15} />
-              <input
-                autoFocus
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-                placeholder="Search projects"
-                aria-label="Search projects"
-              />
-            </span>
-            <span className="picker-list" role="listbox" aria-label="Projects">
-              {visible.map((p) => (
-                <span
-                  key={p.id}
-                  className={`picker-row${p.id === project?.id ? " active" : ""}`}
-                  onClick={() => pick(p.id)}
-                  role="option"
-                  aria-selected={p.id === project?.id}
-                  title={p.rootPath}
-                >
-                  <span className="avatar sm" style={projectAvatarStyle(p.name)} aria-hidden="true">
-                    {projectInitials(p.name)}
-                  </span>
-                  <span className="name newthread-picker-name">{p.name}</span>
-                  <span className="newthread-picker-path">{shortenHome(p.rootPath, homeDir ?? undefined)}</span>
-                  <span className="newthread-picker-check" aria-hidden="true">
-                    {p.id === project?.id ? <Check size={14} /> : null}
-                  </span>
-                </span>
-              ))}
-              {visible.length === 0 && (
-                <span className="side-empty">{projects.length === 0 ? "No projects yet." : "No matches."}</span>
-              )}
-            </span>
-          </span>
-        </>
-      )}
-    </span>
-  );
-}
-
-export function NewSessionAddProject() {
-  const addProjectForNewSession = useAppStore((s) => s.addProjectForNewSession);
-  const [adding, setAdding] = useState(false);
-
   const addFolder = () => {
+    if (adding) return;
+    close();
     setAdding(true);
     void window.cw
       .pickProjectDir()
@@ -134,9 +65,137 @@ export function NewSessionAddProject() {
       .finally(() => setAdding(false));
   };
 
+  const activate = (index: number) => {
+    if (index === addIndex) addFolder();
+    else pick(visible[index].id);
+  };
+
+  const onSearchKeyDown = (e: KeyboardEvent<HTMLInputElement>) => {
+    if (e.key === "ArrowDown" || e.key === "ArrowUp") {
+      e.preventDefault();
+      const step = e.key === "ArrowDown" ? 1 : -1;
+      const count = addIndex + 1;
+      setHighlight((active + step + count) % count);
+      setNavigated(true);
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      e.stopPropagation();
+      if (hasTarget) activate(active);
+    }
+  };
+
+  const onPopKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
+    if (e.key !== "Escape" && e.key !== "Tab") return;
+    e.preventDefault();
+    e.stopPropagation();
+    close();
+    triggerRef.current?.focus();
+  };
+
+  const keepSearchFocus = (e: ReactMouseEvent) => e.preventDefault();
+
   return (
-    <button type="button" className="newthread-add-project" onClick={addFolder} disabled={adding} title="Add project" aria-label="Add project">
-      <FolderPlus size={16} aria-hidden="true" />
-    </button>
+    <div className="menu">
+      <button
+        ref={triggerRef}
+        type="button"
+        className={`project-picker-btn${project ? "" : " unset"}${open ? " open" : ""}`}
+        onClick={() => (open ? close() : setOpen(true))}
+        aria-haspopup="dialog"
+        aria-expanded={open}
+        title={project ? shortenHome(project.rootPath, homeDir ?? undefined) : "Choose the project for this session"}
+      >
+        {project ? <ProjectMonogram name={project.name} size={15} /> : <Folder size={15} aria-hidden="true" />}
+        <span className="project-picker-name">{project?.name ?? "Choose a project"}</span>
+        <span className="project-picker-chevron" aria-hidden="true">
+          {open ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
+        </span>
+      </button>
+      {open && (
+        <>
+          <div className="menu-backdrop" onClick={close} />
+          <div className="project-picker-pop" role="dialog" aria-label="Choose project" onKeyDown={onPopKeyDown}>
+            <div className="mp">
+              <div className="mp-search">
+                <Search size={14} aria-hidden="true" />
+                <input
+                  autoFocus
+                  role="combobox"
+                  aria-label="Find a project"
+                  aria-expanded="true"
+                  aria-autocomplete="list"
+                  aria-controls={listId}
+                  aria-activedescendant={hasTarget ? optionId(active) : undefined}
+                  placeholder="Find a project"
+                  autoComplete="off"
+                  spellCheck={false}
+                  value={query}
+                  onChange={(e) => {
+                    setQuery(e.target.value);
+                    setHighlight(0);
+                    setNavigated(false);
+                  }}
+                  onKeyDown={onSearchKeyDown}
+                />
+              </div>
+              <div className="mp-body">
+                {visible.length === 0 && <div className="mp-empty">{projects.length === 0 ? "No projects yet." : "No matches."}</div>}
+                <div id={listId} className="project-picker-listbox" role="listbox" aria-label="Projects">
+                  {visible.length > 0 && (
+                    <div className="mp-list">
+                      {visible.map((p, index) => {
+                        const selected = p.id === project?.id;
+                        return (
+                          <div
+                            key={p.id}
+                            id={optionId(index)}
+                            className={`mp-row${selected ? " sel" : ""}${index === active ? " hi" : ""}`}
+                            role="option"
+                            aria-selected={selected}
+                            title={p.rootPath}
+                            onMouseDown={keepSearchFocus}
+                            onMouseMove={() => setHighlight(index)}
+                            onClick={() => activate(index)}
+                          >
+                            <ProjectMonogram name={p.name} size={15} />
+                            <span className="mp-n">{p.name}</span>
+                            <span className="project-path">{shortenHome(p.rootPath, homeDir ?? undefined)}</span>
+                            <span className="mp-end">{selected && <Check className="mp-check" size={14} aria-hidden="true" />}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                  <div
+                    id={optionId(addIndex)}
+                    className={`mp-act${hasTarget && active === addIndex && !adding ? " hi" : ""}`}
+                    role="option"
+                    aria-selected={false}
+                    aria-disabled={adding}
+                    onMouseDown={keepSearchFocus}
+                    onMouseMove={() => setHighlight(addIndex)}
+                    onClick={addFolder}
+                  >
+                    <Plus size={14} aria-hidden="true" />
+                    Add project folder…
+                  </div>
+                </div>
+              </div>
+              <div className="mp-foot">
+                <span>
+                  <span className="mp-kbd">↑↓</span>navigate
+                </span>
+                <span>
+                  <span className="mp-kbd">Enter</span>select
+                </span>
+                <span className="mp-foot-end">
+                  <span className="mp-kbd">Esc</span>
+                </span>
+              </div>
+            </div>
+          </div>
+        </>
+      )}
+    </div>
   );
 }
