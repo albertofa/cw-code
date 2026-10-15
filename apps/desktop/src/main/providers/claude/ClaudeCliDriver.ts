@@ -155,6 +155,7 @@ interface ClaudeProcessState {
   modelUsage: ClaudeModelUsageSnapshot;
   mainModel?: string;
   compactedPostTokens?: number;
+  apiErrorMessage?: string;
   lastWindowTokens?: number;
 }
 
@@ -481,6 +482,20 @@ export class ClaudeCliDriver implements CliDriver {
 
   private handleProcessLine(state: ClaudeProcessState, line: string): void {
     this.noteProcessActivity(state, line);
+    try {
+      const message = JSON.parse(line);
+      if (message?.type === "assistant" && message.isApiErrorMessage === true && !message.parent_tool_use_id) {
+        const content = message.message?.content;
+        const text = Array.isArray(content)
+          ? content.filter((block) => block?.type === "text" && typeof block.text === "string")
+            .map((block) => block.text).join("\n\n")
+          : "";
+        state.apiErrorMessage = text || "Claude reported an API error with no output.";
+        return;
+      }
+    } catch {
+      // Non-JSON output is handled by the stream parser below.
+    }
     const compactBoundary = parseClaudeCompactBoundary(line);
     if (compactBoundary) {
       state.compactedPostTokens = compactBoundary.postTokens;
@@ -634,6 +649,9 @@ export class ClaudeCliDriver implements CliDriver {
   }
 
   private handleTurnDone(state: ClaudeProcessState, info: TurnDoneInfo): void {
+    if (state.apiErrorMessage) {
+      info = { ...info, isError: true, resultText: state.apiErrorMessage };
+    }
     const turnId = state.activeTurnId;
     const interrupted = this.interruptedTurns.delete(turnId);
     if (state.completedTurn) {
@@ -820,6 +838,7 @@ export class ClaudeCliDriver implements CliDriver {
       existing.heldByBackgroundWork = this.liveTaskCount(existing) > 0;
       existing.permissionMode = request.permissionMode ?? "auto";
       existing.compactedPostTokens = undefined;
+      existing.apiErrorMessage = undefined;
       this.clearIdleTimer(existing);
       this.turnToSession.set(turnId, request.sessionId);
       this.writeUserMessage(existing, request);
