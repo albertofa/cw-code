@@ -3112,7 +3112,20 @@ body.session-dragging * {
   width: 100%;
 }
 
-.project-picker-pop .mp-act[aria-disabled="true"] {
+.project-picker-listbox {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+
+.project-picker-pop .mp-act {
+  margin-bottom: 4px;
+}
+
+.project-picker-pop .mp-act[aria-disabled="true"],
+.project-picker-pop .mp-act[aria-disabled="true"]:hover {
+  background: none;
+  color: var(--dim);
   opacity: 0.5;
   cursor: default;
 }

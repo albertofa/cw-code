@@ -1,4 +1,4 @@
-import { useRef, useState, type KeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
+import { useId, useLayoutEffect, useRef, useState, type KeyboardEvent, type MouseEvent as ReactMouseEvent } from "react";
 import { Check, ChevronDown, ChevronUp, Folder, Plus, Search } from "lucide-react";
 import type { Project } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
@@ -18,6 +18,7 @@ export function NewSessionProjectPicker({ project }: { project: Project | undefi
   const [query, setQuery] = useState("");
   const [highlight, setHighlight] = useState(0);
   const [adding, setAdding] = useState(false);
+  const listId = useId();
   const triggerRef = useRef<HTMLButtonElement>(null);
 
   const close = () => {
@@ -33,6 +34,12 @@ export function NewSessionProjectPicker({ project }: { project: Project | undefi
     : ordered;
   const addIndex = visible.length;
   const active = Math.min(highlight, addIndex);
+  const optionId = (index: number) => `${listId}-opt-${index}`;
+
+  useLayoutEffect(() => {
+    if (!open) return;
+    document.getElementById(optionId(active))?.scrollIntoView({ block: "nearest" });
+  }, [open, active, visible.length]);
 
   const pick = (id: string) => {
     close();
@@ -74,7 +81,7 @@ export function NewSessionProjectPicker({ project }: { project: Project | undefi
   };
 
   const onPopKeyDown = (e: KeyboardEvent<HTMLDivElement>) => {
-    if (e.key !== "Escape") return;
+    if (e.key !== "Escape" && e.key !== "Tab") return;
     e.preventDefault();
     e.stopPropagation();
     close();
@@ -113,6 +120,8 @@ export function NewSessionProjectPicker({ project }: { project: Project | undefi
                   aria-label="Find a project"
                   aria-expanded="true"
                   aria-autocomplete="list"
+                  aria-controls={listId}
+                  aria-activedescendant={optionId(active)}
                   placeholder="Find a project"
                   autoComplete="off"
                   spellCheck={false}
@@ -125,39 +134,46 @@ export function NewSessionProjectPicker({ project }: { project: Project | undefi
                 />
               </div>
               <div className="mp-body">
-                <div className="mp-list" role="listbox" aria-label="Projects">
-                  {visible.map((p, index) => {
-                    const selected = p.id === project?.id;
-                    return (
-                      <div
-                        key={p.id}
-                        className={`mp-row${selected ? " sel" : ""}${index === active ? " hi" : ""}`}
-                        role="option"
-                        aria-selected={selected}
-                        title={p.rootPath}
-                        onMouseDown={keepSearchFocus}
-                        onMouseMove={() => setHighlight(index)}
-                        onClick={() => activate(index)}
-                      >
-                        <ProjectMonogram name={p.name} size={15} />
-                        <span className="mp-n">{p.name}</span>
-                        <span className="project-path">{shortenHome(p.rootPath, homeDir ?? undefined)}</span>
-                        <span className="mp-end">{selected && <Check className="mp-check" size={14} aria-hidden="true" />}</span>
-                      </div>
-                    );
-                  })}
-                  {visible.length === 0 && <div className="mp-empty">{projects.length === 0 ? "No projects yet." : "No matches."}</div>}
-                </div>
-                <div
-                  className={`mp-act${active === addIndex ? " hi" : ""}`}
-                  role="button"
-                  aria-disabled={adding}
-                  onMouseDown={keepSearchFocus}
-                  onMouseMove={() => setHighlight(addIndex)}
-                  onClick={addFolder}
-                >
-                  <Plus size={14} aria-hidden="true" />
-                  Add project folder…
+                {visible.length === 0 && <div className="mp-empty">{projects.length === 0 ? "No projects yet." : "No matches."}</div>}
+                <div id={listId} className="project-picker-listbox" role="listbox" aria-label="Projects">
+                  {visible.length > 0 && (
+                    <div className="mp-list">
+                      {visible.map((p, index) => {
+                        const selected = p.id === project?.id;
+                        return (
+                          <div
+                            key={p.id}
+                            id={optionId(index)}
+                            className={`mp-row${selected ? " sel" : ""}${index === active ? " hi" : ""}`}
+                            role="option"
+                            aria-selected={selected}
+                            title={p.rootPath}
+                            onMouseDown={keepSearchFocus}
+                            onMouseMove={() => setHighlight(index)}
+                            onClick={() => activate(index)}
+                          >
+                            <ProjectMonogram name={p.name} size={15} />
+                            <span className="mp-n">{p.name}</span>
+                            <span className="project-path">{shortenHome(p.rootPath, homeDir ?? undefined)}</span>
+                            <span className="mp-end">{selected && <Check className="mp-check" size={14} aria-hidden="true" />}</span>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  )}
+                  <div
+                    id={optionId(addIndex)}
+                    className={`mp-act${active === addIndex && !adding ? " hi" : ""}`}
+                    role="option"
+                    aria-selected={false}
+                    aria-disabled={adding}
+                    onMouseDown={keepSearchFocus}
+                    onMouseMove={() => setHighlight(addIndex)}
+                    onClick={addFolder}
+                  >
+                    <Plus size={14} aria-hidden="true" />
+                    Add project folder…
+                  </div>
                 </div>
               </div>
               <div className="mp-foot">
