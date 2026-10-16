@@ -57,6 +57,10 @@ tag (`vX.Y.Z-alpha.N`) or its resolved commit SHA. `plan --channel stable --cand
 4. Rejects the base if a `vX.Y.Z` git tag already exists (for example after a withdrawn
    stable release): a version is never reused, so bump the base with `set-base`.
 5. Builds a stable plan for the candidate's base, at the candidate's exact resolved SHA.
+   The release workflow then rebuilds that commit for Windows and Linux, so an alpha
+   built before Linux support (a commit without `dist:linux`) cannot be promoted: publish
+   a fresh alpha and promote that one (see
+   [releases.md](releases.md#upgrade-gate)).
 
 The GitHub API's own `prerelease` flag on existing releases is not used to classify a
 release's channel (the alphas published for this project are all marked non-prerelease in

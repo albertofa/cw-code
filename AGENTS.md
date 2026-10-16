@@ -29,7 +29,7 @@ Core behaviors:
 - Session metadata persists as atomic JSON under `~/.cw-code/userdata`.
   Logs live in `~/.cw-code/logs`, paste/preview attachments in
   `~/.cw-code/userdata/attachments`, worktrees in `~/.cw-code/worktrees`.
-- Tests run on vitest; builds via electron-vite and electron-builder (Windows NSIS).
+- Tests run on vitest; builds via electron-vite and electron-builder (Windows NSIS; Linux AppImage and deb).
 
 ## Guidelines
 
@@ -43,8 +43,9 @@ Core behaviors:
   platform conventions before spawning; never auto-mutate user-visible state.
 - Surface failures where the user can see them (in-tab/in-thread messages, dev
   log warnings). Silent empty results are bugs.
-- Respect the native-module constraint: no dependency requiring C++ compilation,
-  and native-backed features must load lazily with a clear degraded message.
+- Respect the native-module constraint: no dependency requiring C++ compilation
+  (`node-pty`, compiled on Linux installs, is the one exception), and native-backed
+  features must load lazily with a clear degraded message.
 - Tests cover stable contracts only: parsers and mappers, session routing and
   isolation, filesystem sandboxing, path and binary resolution helpers.
   UI components and wiring are verified by typecheck and build, not unit tests.

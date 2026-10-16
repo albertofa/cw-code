@@ -159,7 +159,9 @@ service, whether it came from IPC or from a timer.
   download keep the library defaults (`verifyUpdateCodeSignature` is not
   touched).
 
-How the GitHub provider resolves releases (from the 6.8.9 source):
+How the GitHub provider resolves releases (from the 6.8.9 source). The channel
+files below are the Windows names; on Linux the provider appends `-linux`, so it
+reads `latest-linux.yml` and `alpha-linux.yml` from the same release:
 
 - Stable (`allowPrerelease` false): `https://github.com/albertofa/cw-code/releases/latest`,
   that is, the newest non-prerelease, non-draft release. That release's
@@ -183,9 +185,9 @@ only if `releaseName == null`, and `releaseNotes` from the feed only if
 matches `/releases/latest`; when that tag is no longer in the feed (it lists recent
 releases only), the entry falls back to the feed's first one, which is usually the
 newest alpha. A stable client would then show an alpha's title and notes for a stable
-update. electron-builder's `latest.yml` has neither field, so `stage-release-set` in
-the release pipeline writes both into `latest.yml` (and its byte copy `alpha.yml`)
-before upload: `releaseName` is the tag and `releaseNotes` is the plan's notes as a
+update. electron-builder's `latest.yml` and `latest-linux.yml` have neither field, so
+`stage-release-set` in the release pipeline writes both into each of them (and their
+byte copies `alpha.yml` and `alpha-linux.yml`) before upload: `releaseName` is the tag and `releaseNotes` is the plan's notes as a
 `|2-` block scalar (line endings normalized to LF, control characters removed,
 trailing spaces trimmed). The feed then never supplies the text. The installer bytes,
 `sha512`, `size` and the blockmap are unchanged, and `signing.json` does not hash the
@@ -254,6 +256,41 @@ unrelated file. The adapter builds `NsisUpdater`, `AppImageUpdater` or
 `DebUpdater` for that kind; only `NsisUpdater` gets `disableWebInstaller`.
 
 Every action then returns code `disabled` with that message.
+
+### Linux updates
+
+A Linux build updates only in one of two forms; anything else (a `linux-unpacked`
+folder, a tarball, a copy moved out of the AppImage mount) is disabled with
+"Updates on Linux need the AppImage or the .deb package".
+
+- **.deb.** Chosen first, whenever `resources/package-type` says `deb`. electron-builder
+  writes that file into the deb only. The updater downloads `cw-code-<version>-amd64.deb`
+  into `${XDG_CACHE_HOME:-~/.cache}/@cw-codedesktop-updater/pending` and, on Update and
+  restart, installs it with `dpkg -i` (falling back to `apt-get install -f -y` when
+  `dpkg` fails on dependencies; `apt` directly only when `dpkg` is missing). That needs
+  root, so cw-code asks for a password through `pkexec` (or `gksudo`, `kdesudo`,
+  `beesu`, with plain `sudo` as the last fallback); it never installs silently. If the
+  user cancels the prompt or the command fails, the install reports the error in the
+  indicator and cw-code keeps running. The deb is
+  unsigned, so the only integrity check is the sha512 from `latest-linux.yml`. After a
+  successful install the app relaunches.
+- **AppImage.** Used only when `APPIMAGE` is set and `process.execPath` is inside
+  `APPDIR` (see `appImage.ts`). A child process that inherited `APPIMAGE` from a parent
+  AppImage therefore never counts, so the updater never replaces an unrelated file. The updater
+  downloads `cw-code-<version>-x86_64.AppImage` (differentially against the running file when
+  it can, otherwise in full), makes it executable and, on install, deletes the
+  running AppImage and moves the new file into its place. If the running file's name
+  contains a version (`x.y.z`), as the downloaded files do
+  (`cw-code-0.0.1-alpha.23-x86_64.AppImage`), the new file keeps the new name and sits
+  next to the old path, so the file changes name with every update: shortcuts, `PATH`
+  entries and launchers that point at the old name stop working. A file without a
+  version in its name (renamed to `cw-code.AppImage`, for example) is overwritten in
+  place and keeps its name. The new AppImage is started with
+  `APPIMAGE_SILENT_INSTALL` set, so the first-launch license dialog is skipped, and
+  cw-code quits.
+
+Only the deb needs an elevation prompt; the AppImage is replaced with the user's own
+permissions, so its directory has to be writable by the user.
 
 ## Logging and redaction
 
@@ -333,8 +370,8 @@ publish:
 generateUpdatesFilesForAllChannels: true
 ```
 
-No token is in the config. `dist` and `dist:dir` keep `--publish never`, so
-local builds never upload anything.
+No token is in the config. `dist`, `dist:dir` and `dist:linux` keep `--publish never`,
+so local builds never upload anything.
 
 Verified with `pnpm --filter @cw-code/desktop dist` on electron-builder 26.15.3
 (version `0.0.1-alpha.21`, 2026-09-24):
@@ -381,6 +418,14 @@ updaterCacheDirName: '@cw-codedesktop-updater'
   apply to the generic provider (the update-test builds for the loopback feed).
   The release pipeline (`release.yml`) uploads a byte copy of `latest.yml` as
   `alpha.yml` on every release, so alpha clients never hit that 404.
+
+Linux builds (`dist:linux`, see [linux-packaging.md](linux-packaging.md)) need
+`resources/app-update.yml` like the Windows one, and the deb also carries
+`resources/package-type` (checked by `verify-linux-package.mjs`). electron-builder emits `latest-linux.yml`, which lists the
+AppImage first (its `path` and top-level `sha512`) and the deb second; the updater picks
+the entry that matches its kind. As on Windows, the GitHub provider writes no
+`alpha-linux.yml`, so `stage-release-set` adds the byte copy. The updater cache on Linux
+is `${XDG_CACHE_HOME:-~/.cache}/@cw-codedesktop-updater/pending`.
 
 ## Settings
 
@@ -467,6 +512,8 @@ is disabled is visible text that the buttons reference with
    committing, so there is no second dialog.
 
 ### What the silent NSIS upgrade does
+
+Windows only. The Linux install steps are under [Linux updates](#linux-updates).
 
 Checked against the app-builder-lib 26.15.3 templates
 (`templates/nsis/assistedInstaller.nsh`, `multiUser.nsh`, `installer.nsi`,

@@ -7,9 +7,13 @@ or an installer exit code is never accepted as success. A scenario passes only
 when the relaunched app reports the new version, the registry shows it, and the
 seeded projects, sessions, settings and worktree references are still there.
 
+This document is about Windows unless a section says otherwise; Linux has its own
+gate, [Linux production bytes](#linux-production-bytes).
+
 `release.yml` runs the signed N -> N+1 upgrade with the final candidate bytes
-before any publication (see [Production bytes](#production-bytes) and
-[releases.md](releases.md#upgrade-gate)). Nothing in this document publishes a
+before any publication, on Windows and on Linux (see
+[Production bytes](#production-bytes), [Linux production bytes](#linux-production-bytes)
+and [releases.md](releases.md#upgrade-gate)). Nothing in this document publishes a
 release, reads a token or touches a real account.
 
 ## Safety rules
@@ -384,6 +388,27 @@ production renderer bridge instead:
 Trade-off: the production binary is unchanged, but the test edits one file in
 the disposable install and opens a loopback DevTools port for the test's
 duration.
+
+## Linux production bytes
+
+```sh
+node scripts/verify-linux-upgrade.mjs --production-bytes --appimage <cw-code-N-x86_64.AppImage> --deb <cw-code-N-amd64.deb> --candidate-dir <N+1 release set> --work-dir <dir> --evidence <file> --disposable-environment
+```
+
+The Linux counterpart of the gate above, run by `verify-linux-candidate` in
+`release.yml` on `ubuntu-22.04` with `xvfb` and `xauth` installed. `--appimage` and
+`--deb` are the published N packages (downloaded from N's release together with its
+Linux feeds), and `--candidate-dir` is the staged and validated N+1 release set (nine
+files). The harness runs an AppImage scenario and a .deb scenario against a loopback
+feed serving the candidate, and writes one evidence file, which the workflow uploads
+as `cw-code-<version>-linux-evidence-attempt<n>`. Like the Windows harness it
+installs software and touches default data folders, so it refuses to run without
+`--disposable-environment`: run it only on a throwaway machine or runner.
+
+The script is the reference for its other flags, its per-scenario assertions and the
+evidence schema. `scripts/verify-linux-package.mjs` (see
+[linux-packaging.md](linux-packaging.md#how-ci-verifies-the-packages)) is the
+install-and-start check for a single build and does not test upgrades.
 
 ## Evidence
 

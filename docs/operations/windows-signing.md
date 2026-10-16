@@ -15,6 +15,11 @@ The pipeline code is in place, but nothing has been signed yet: every item under
 `signing: unsigned` dispatch of `release.yml`; see
 [releases.md](releases.md#validation-only-and-publish).
 
+Signing covers the Windows files only. The Linux AppImage, .deb and `latest-linux.yml`
+are built unsigned by `release.yml`'s `build-linux` job and joined to the signed
+Windows files when the nine-file release set is staged (see
+[releases.md](releases.md#the-release-set)); `signing.json` never lists them.
+
 ## Signing scope: first-party only
 
 SignPath Foundation's terms forbid signing upstream libraries. Unsigned upstream OSS
@@ -148,7 +153,7 @@ without the owner's explicit approval.
      sha512 and size), and `check-signing-manifest --release-dir release
      --expected-version --expected-source-sha --expected-run-id` (plus
      `--require-production` for production).
-   - Uploads the release set: installer, blockmap, update info, `signing.json`,
+   - Uploads the Windows part of the release set: installer, blockmap, update info, `signing.json`,
      `verify-signatures.json`, `rehash.json`, `package-info.json`, and the verified
      `win-unpacked/`, which `release.yml` needs to re-hash every listed file.
 

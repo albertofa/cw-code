@@ -11,19 +11,53 @@ Run sessions across projects, inspect files and Git diffs, and open real CLI
 terminals. cw-code uses your installed CLIs and their authentication. Each CLI
 handles inference, model access, and session continuation.
 
-**Windows · Open source · Alpha**
+**Windows · Linux · Open source · Alpha**
 
 [Releases](https://github.com/albertofa/cw-code/releases) ·
 [Report an issue](https://github.com/albertofa/cw-code/issues) ·
 [Contributing](CONTRIBUTING.md)
 
-Alpha installers are on the [releases page](https://github.com/albertofa/cw-code/releases).
+Alpha builds are on the [releases page](https://github.com/albertofa/cw-code/releases).
 You can also build from source using the instructions below.
+
+## Installing
+
+**Windows.** Run `cw-code-Setup-<version>-x64.exe`.
+
+**Linux (x64).** Two packages, both on the releases page:
+
+- **AppImage**, `cw-code-<version>-x86_64.AppImage`. Make it executable and run it:
+
+  ```sh
+  chmod +x cw-code-<version>-x86_64.AppImage
+  ./cw-code-<version>-x86_64.AppImage
+  ```
+
+  It needs no `libfuse2`. On a system without a usable FUSE (a container, for
+  example), start it with `APPIMAGE_EXTRACT_AND_RUN=1`. The first launch shows a
+  license dialog. Updates replace the file in place and, when its name has a
+  version in it, rename it to the new version's name, so point shortcuts at a
+  copy named `cw-code.AppImage` if you want a stable path.
+- **.deb**, `cw-code-<version>-amd64.deb`, for Debian and Ubuntu:
+
+  ```sh
+  sudo apt install ./cw-code-<version>-amd64.deb
+  ```
+
+  It installs to `/opt/cw-code` and adds a `cw-code` command and a launcher
+  entry. Updating from inside the app asks for your password.
+
+Both need glibc 2.35 or newer (Ubuntu 22.04, Debian 12 or later). The Linux
+packages are not signed; check the sha512 in `latest-linux.yml` on the release
+if you want to verify a download. Details are in
+[linux-packaging.md](docs/operations/linux-packaging.md).
 
 ## Updating cw-code
 
 In-app updates start with the first updater-enabled release, which is not
-published yet. This section describes how it will work once it is.
+published yet. This section describes how it will work once it is. On Linux,
+the AppImage and the .deb both update from inside the app (see
+[Installing](#installing)).
 
 - **Coming from v0.0.1-alpha.21 or older.** Those builds cannot update
   themselves. Download `cw-code-Setup-<version>-x64.exe` of the first
@@ -57,7 +91,7 @@ configuration.
 
 ## Requirements
 
-- Windows for the packaged application.
+- Windows or Linux (x64) for the packaged application.
 - Node.js 24.x and pnpm 11.5.3 for development.
 - At least one supported CLI installed and authenticated:
   - Claude Code `2.1.260` or newer (`claude`)
@@ -78,7 +112,11 @@ pnpm build
 pnpm dist
 ```
 
-`pnpm dist` creates the Windows installer. Native PTY support is loaded lazily;
+`pnpm dist` creates the Windows installer; on Linux,
+`pnpm --filter @cw-code/desktop dist:linux` creates the AppImage and the .deb.
+On Linux, `pnpm install` compiles `node-pty` from source, so install a C++
+toolchain and Python 3 first (`sudo apt-get install build-essential python3` on
+Debian and Ubuntu). Native PTY support is loaded lazily;
 if its binary does not match the Electron runtime, the app continues without
 PTY tabs and shows a degraded-state message. To rebuild `node-pty` locally:
 
@@ -125,7 +163,8 @@ Their names and products remain the property of their respective owners.
   revert.
 - History rendering is best-effort and may omit thinking blocks or provider
   bookkeeping when provider formats change.
-- The packaged target is Windows; other platforms may require adjustments.
+- The packaged targets are Windows x64 and Linux x64 (AppImage and .deb); macOS
+  and arm64 builds are not packaged.
 
 ## Branding and website
 

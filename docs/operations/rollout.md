@@ -7,7 +7,8 @@ reports, retention and budgets, and the support cases that still need a human.
 
 Every production action in this document is the owner's. Nothing here runs by
 itself. The pipeline details live in [releases.md](releases.md), signing in
-[windows-signing.md](windows-signing.md), installed upgrade tests in
+[windows-signing.md](windows-signing.md), Linux packaging in
+[linux-packaging.md](linux-packaging.md), installed upgrade tests in
 [update-testing.md](update-testing.md) and the client in [updater.md](updater.md).
 
 ## Where things stand
@@ -23,6 +24,10 @@ itself. The pipeline details live in [releases.md](releases.md), signing in
   `d6e18d04-bf35-5bfe-9145-b95301660833`, a custom install folder, per-machine
   scope, and `~/.cw-code` untouched (see
   [windows-packaging.md](windows-packaging.md#installer-identity)).
+- Linux (x64 AppImage and .deb) ships in every release from the first one built after
+  Linux support landed. Releases before that carry no Linux assets, and the Linux
+  upgrade gate reports "bootstrap" until one with Linux assets is published; Linux
+  has no VM check of its own yet. Linux packages are unsigned.
 - SignPath Foundation enrollment is not done. On 2026-09-28 the owner turned on
   unsigned automatic alpha publishing ahead of this checklist:
   `CW_RELEASE_PUBLISHING_ENABLED=true`, and `release-publish` has no required
@@ -267,9 +272,14 @@ Record:
    gh workflow run release.yml --repo albertofa/cw-code --ref main -f channel=stable -f candidate=v<X.Y.Z-alpha.N> -f expected_sha=<40-hex SHA> -f mode=publish
    ```
 
-   Leave force off; the planner rejects it for stable.
-4. The stable upgrade gate installs the highest pipeline release below the
-   candidate and updates it with the new bytes. Approve as in D.
+   Leave force off; the planner rejects it for stable. The candidate must be an
+   alpha built after Linux support landed: stable rebuilds the candidate's exact
+   commit, and `build-linux` fails on a commit without `dist:linux`. If the best
+   tested alpha predates Linux support, publish a fresh alpha from current `main`,
+   test that one and promote it.
+4. The stable upgrade gates (Windows in `verify-candidate`, Linux in
+   `verify-linux-candidate`) install the highest pipeline release below the
+   candidate and update it with the new bytes. Approve as in D.
 5. After publication, `/releases/latest` resolves to `vX.Y.Z`, and the feed
    monitor reports `stable vX.Y.Z (<sha>) ok; alpha vX.Y.Z (<sha>) ok`. Alpha
    clients take the stable too, because it is newer than their alpha.
@@ -317,7 +327,8 @@ Record: final state of the variable and the date: `<fill>`
   alone for a soak period the owner sets: `<owner to set, for example 3 days>`.
   Promote the highest alpha of the base. Promoting an older alpha while a
   newer one exists would give alpha users an older build under a higher
-  version number.
+  version number. It must also carry Linux support (see F.3); an alpha built
+  before that cannot be promoted.
 - Always pin `expected_sha`. It stops a moved tag from swapping in another
   commit.
 - Never reuse a version. A withdrawn number stays withdrawn; the planner skips
@@ -460,12 +471,20 @@ What it checks, the way installed clients read the feed:
   (valid semver, prerelease id empty, `alpha` or `beta`) must be the highest
   pipeline-built release of either channel, and its `alpha.yml` must advertise
   it. Before any pipeline release exists, a notice says so.
-- For each target release: exactly the five assets, all uploaded;
-  `alpha.yml` byte-identical to `latest.yml`; the installer answers a
-  one-byte range request with the size from the manifest and the listing;
-  `signing.json` is production `signpath` for that version and the marker's
-  SHA and records the manifest's installer sha512; the blockmap matches the
-  digest in `signing.json`.
+- For each target release: exactly the Windows assets (installer, blockmap, `latest.yml`, `alpha.yml`, `signing.json`), all uploaded, plus
+  either no Linux assets (a release from before Linux support) or all four
+  (AppImage, .deb, `latest-linux.yml`, `alpha-linux.yml`); a partial Linux set
+  fails the `assets` check. `alpha.yml` byte-identical to `latest.yml`; the
+  installer answers a one-byte range request with the size from the manifest
+  and the listing; `signing.json` is production `signpath` for that version
+  and the marker's SHA and records the manifest's installer sha512; the
+  blockmap matches the digest in `signing.json`.
+- When the release carries the Linux set: the Linux channel file clients
+  download (`latest-linux.yml` for stable, `alpha-linux.yml` for alpha)
+  advertises that version with the AppImage as `path` and lists the AppImage
+  and the .deb; `alpha-linux.yml` and `latest-linux.yml` are byte-identical;
+  the AppImage and the .deb answer a one-byte range request with the size
+  from the Linux manifest and the listing.
 - The full installer sha512 only with the dispatch input
   `verify_installer_digest` (about 100 MB per channel), so scheduled runs stay
   cheap.
@@ -497,8 +516,11 @@ tab.
 | `stable latest-release` | Someone set another release as latest, or the bad-release step 2 is in effect | If unintended, set the highest good stable as latest again. |
 | `alpha atom-feed` | Feed lag right after a publish, or a release created by hand after the pipeline's | Lag clears within minutes; rerun. A hand-made release on top hides pipeline releases from alpha clients: fix its notes/flags or publish a higher pipeline release. |
 | `channel-manifest` | Feed file missing, unreadable or pointing at another version | Treat the release as bad: [Bad-release response](#bad-release-response). Never re-upload a feed file on a published release. |
-| `assets` | An asset was deleted, added or never finished uploading | Never delete release assets. Restore by publishing a higher version; note it in the incident log. |
+| `assets` | An asset was deleted, added or never finished uploading (a release with some but not all of the four Linux assets fails here) | Never delete release assets. Restore by publishing a higher version; note it in the incident log. |
 | `feed-copy` | `alpha.yml` and `latest.yml` differ | Bad release; roll forward. |
+| `linux-manifest` | `latest-linux.yml` or `alpha-linux.yml` missing, unreadable, pointing at another version or not listing both packages | Bad release; roll forward. Never re-upload a feed file on a published release. |
+| `linux-feed-copy` | `alpha-linux.yml` and `latest-linux.yml` differ | Bad release; roll forward. |
+| `appimage`, `deb` | Package missing, or served with a size that differs from the Linux manifest or the listing | Bad release; roll forward. Clients reject wrong bytes by sha512, so Linux users see download errors, not a bad install. |
 | `installer`, `installer-digest` | Installer missing, wrong size or wrong bytes | Bad release; roll forward. Clients reject wrong bytes by sha512, so users see download errors, not a bad install. |
 | `signing`, `blockmap` | `signing.json` not production, wrong SHA, or blockmap changed | Check who changed the release. Roll forward. |
 
@@ -514,15 +536,17 @@ tab.
 - **Workflow artifacts** (full table in
   [releases.md](releases.md#artifacts-and-retention)): release plans, release
   sets and release evidence 30 days; `sign-windows.yml` intermediates 3 days
-  and its final set 14 days; CI and upgrade-test artifacts 7 days. The feed
+  and its final set 14 days; the Linux build and evidence artifacts 30 days;
+  CI and upgrade-test artifacts 7 days. The feed
   monitor uploads nothing. Evidence worth keeping past 30 days goes into the
   commissioning PR, not into artifacts.
 - **CI minutes.** Every job has a timeout: CI `windows` 45 min,
   `upgrade-test.yml` 150 min (nightly at 03:17 UTC and on PRs touching the
-  update path), release jobs 15 to 120 min, feed monitor 20 min (usually a
+  update path), release jobs 15 to 120 min (`build-linux` and `verify-linux-candidate` 60 min each, on
+  ubuntu-22.04), CI `linux` 45 min per matrix entry, feed monitor 20 min (usually a
   few minutes, 4 runs a day). With publishing on, automatic runs publish, so
-  the 6-hour window caps them at one full release run (two Windows jobs plus
-  the unsigned signing jobs) per 6 hours; pushes inside the window end at
+  the 6-hour window caps them at one full release run (the Windows jobs, the
+  unsigned signing jobs and the two Linux jobs) per 6 hours; pushes inside the window end at
   `plan`. With publishing off, automatic runs never publish, so every
   successful CI push to `main` starts a full validation run (see
   [releases.md](releases.md#triggers)). To cut minutes: disable
