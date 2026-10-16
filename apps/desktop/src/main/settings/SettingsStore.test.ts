@@ -434,6 +434,29 @@ describe("SettingsStore", () => {
     expect(DEFAULT_SETTINGS.prWorkflows.every((w) => JSON.stringify(w.harness) === JSON.stringify(inherited))).toBe(true);
   });
 
+  it("repairs workflows saved before the harness config once, keeping a before-repair backup", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const filePath = tempFilePath();
+    const { harness: _harness, ...legacy } = { ...DEFAULT_SETTINGS.prWorkflows[0]!, id: "legacy", builtIn: false };
+    const original = JSON.stringify({ schemaVersion: 1, prWorkflows: [legacy] });
+    writeFileSync(filePath, original, "utf8");
+    const backup = `${filePath}.before-repair.bak`;
+
+    expect(new SettingsStore(filePath).get().prWorkflows.find((w) => w.id === "legacy")?.harness).toEqual({
+      driver: null,
+      model: "",
+      effort: null,
+      permissionMode: null
+    });
+    expect(readFileSync(backup, "utf8")).toBe(original);
+    expect(warn).toHaveBeenCalledTimes(1);
+
+    new SettingsStore(filePath);
+    expect(readFileSync(backup, "utf8")).toBe(original);
+    expect(warn).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
+  });
+
   it("sanitizes saved GitHub views", () => {
     const store = new SettingsStore(tempFilePath());
     const view = { id: "v1", kind: "pr", name: "  Mine  ", query: "  is:open author:@me  ", group: "none" };
