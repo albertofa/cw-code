@@ -36,7 +36,7 @@ export function Bone({
 
 export function SkeletonRegion({ label, className, children }: { label: string; className?: string; children: ReactNode }) {
   return (
-    <div className={`skel-region${className ? ` ${className}` : ""}`} role="status" aria-busy="true">
+    <div className={`skel-region${className ? ` ${className}` : ""}`} role="status">
       <span className="skel-label">{label}…</span>
       {children}
     </div>

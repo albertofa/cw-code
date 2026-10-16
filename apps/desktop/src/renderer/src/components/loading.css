@@ -46,15 +46,21 @@ button .cw-spinner {
 }
 
 .skel-bone {
+  position: relative;
   display: block;
   flex: none;
+  overflow: hidden;
   max-width: 100%;
   border-radius: 4px;
   background-color: color-mix(in srgb, var(--text) 6%, transparent);
+}
+
+.skel-bone::after {
+  content: "";
+  position: absolute;
+  inset: 0;
   background-image: linear-gradient(105deg, transparent 38%, color-mix(in srgb, var(--text) 7%, transparent) 50%, transparent 62%);
-  background-attachment: fixed;
-  background-repeat: no-repeat;
-  background-size: 100vw 100vh;
+  transform: translateX(-100%);
   animation: skel-sweep 2.2s linear infinite;
 }
 
@@ -164,12 +170,8 @@ button .cw-spinner {
 }
 
 @keyframes skel-sweep {
-  from {
-    background-position: -100vw 0;
-  }
-
   to {
-    background-position: 100vw 0;
+    transform: translateX(100%);
   }
 }
 
@@ -184,12 +186,11 @@ button .cw-spinner {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .cw-spinner,
-  .skel-bone {
+  .cw-spinner {
     animation: none;
   }
 
-  .skel-bone {
-    background-image: none;
+  .skel-bone::after {
+    display: none;
   }
 }
