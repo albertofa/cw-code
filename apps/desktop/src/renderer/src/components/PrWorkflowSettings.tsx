@@ -546,10 +546,10 @@ function useHarnessOptions<T>(driver: DriverName | null, load: (driver: DriverNa
 }
 
 function WorkflowHarnessFields({ workflow, onChange }: { workflow: PrWorkflow; onChange: (patch: Partial<PrWorkflow>) => void }) {
-  const lastDriver = useAppStore((s) => s.lastDriver);
+  const composerDriver = useAppStore((s) => s.pendingDriver ?? s.lastDriver);
   const checks = useSettingsDraftStore((s) => s.harnessChecks);
   const config = workflow.harness;
-  const driver = workflowDriver(config, lastDriver);
+  const driver = workflowDriver(config, composerDriver);
   const models = useHarnessOptions(config.driver, (d) => window.cw.listModelsForHarness(d));
   const permissions = useHarnessOptions(driver, (d) => window.cw.listPermissionsForHarness(d));
   const modelList = models.list ?? [];
@@ -575,10 +575,10 @@ function WorkflowHarnessFields({ workflow, onChange }: { workflow: PrWorkflow; o
             label="Workflow harness"
             direction="down"
             value={config.driver ?? ""}
-            display={config.driver ? HARNESS_NAMES[config.driver] : `Last used (${HARNESS_NAMES[lastDriver]})`}
+            display={config.driver ? HARNESS_NAMES[config.driver] : `Composer default (${HARNESS_NAMES[composerDriver]})`}
             icon={<DriverIcon driver={driver} size={13} />}
             options={[
-              { id: "", label: "Last used", hint: "Last used", description: `Currently ${HARNESS_NAMES[lastDriver]}` },
+              { id: "", label: "Composer default", hint: "Composer default", description: `Currently ${HARNESS_NAMES[composerDriver]}` },
               ...HARNESS_IDS.map((id) => {
                 const unavailable = checks?.find((check) => check.binary === id)?.available === false;
                 return {

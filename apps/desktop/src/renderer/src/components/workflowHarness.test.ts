@@ -16,7 +16,7 @@ const PERMISSIONS: PermissionOption[] = [
 
 function context(overrides: Partial<WorkflowHarnessContext> = {}): WorkflowHarnessContext {
   return {
-    lastDriver: "claude",
+    composerDriver: "claude",
     pendingPrefs: { effort: "low", permissionMode: "manual" },
     defaultModel: "claude-sonnet-5",
     recentModels: [],
@@ -48,7 +48,12 @@ describe("resolveWorkflowHarness", () => {
     expect(resolved).toEqual({ driver: "codex", model: "gpt-5", effort: "xhigh", permissionMode: "bypassPermissions" });
   });
 
-  it("ignores a model when the workflow follows the last used harness", () => {
+  it("follows the composer's staged harness when the workflow sets none", () => {
+    expect(resolveWorkflowHarness(INHERITED_HARNESS, context({ composerDriver: "codex" })).driver).toBe("codex");
+    expect(resolveWorkflowHarness(config({ driver: "claude" }), context({ composerDriver: "codex" })).driver).toBe("claude");
+  });
+
+  it("ignores a model when the workflow follows the composer harness", () => {
     expect(resolveWorkflowHarness(config({ model: "claude-opus-5" }), context()).model).toBe("claude-sonnet-5");
   });
 

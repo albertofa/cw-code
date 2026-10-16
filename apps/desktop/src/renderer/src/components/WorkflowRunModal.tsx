@@ -162,7 +162,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
   const sessionsByProject = useAppStore((s) => s.sessionsByProject);
   const projects = useAppStore((s) => s.projects);
   const pendingPrefs = useAppStore((s) => s.pendingPrefs);
-  const lastDriver = useAppStore((s) => s.lastDriver);
+  const composerDriver = useAppStore((s) => s.pendingDriver ?? s.lastDriver);
   const defaultModelByDriver = useAppStore((s) => s.defaultModelByDriver);
   const composerBySession = useAppStore((s) => s.composerBySession);
   const busyTurns = useAppStore((s) => s.busyTurns);
@@ -226,11 +226,11 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
     : "Other sessions";
   const needsClone = !continueSession && reposReady && projectId === null;
   const harnessConfig = workflow?.harness ?? INHERITED_HARNESS;
-  const driver = workflowDriver(harnessConfig, lastDriver);
+  const driver = workflowDriver(harnessConfig, composerDriver);
   const optionsReady = options !== null && options.driver === driver && options.projectId === projectId;
   const resolvedHarness = optionsReady
     ? resolveWorkflowHarness(harnessConfig, {
-        lastDriver,
+        composerDriver,
         pendingPrefs,
         defaultModel: defaultModelByDriver[driver],
         recentModels: getRecentModels(driver),

@@ -15,7 +15,7 @@ export const PERMISSION_LABELS: Record<PermissionMode, string> = {
 export const PERMISSION_MODES = Object.keys(PERMISSION_LABELS) as PermissionMode[];
 
 export interface WorkflowHarnessContext {
-  lastDriver: DriverName;
+  composerDriver: DriverName;
   pendingPrefs: ComposerPrefs;
   defaultModel: string;
   recentModels: string[];
@@ -30,8 +30,8 @@ export interface ResolvedWorkflowHarness {
   permissionMode: PermissionMode;
 }
 
-export function workflowDriver(config: PrWorkflowHarness, lastDriver: DriverName): DriverName {
-  return config.driver ?? lastDriver;
+export function workflowDriver(config: PrWorkflowHarness, composerDriver: DriverName): DriverName {
+  return config.driver ?? composerDriver;
 }
 
 export interface HarnessSummaryPart {
@@ -65,7 +65,7 @@ export function harnessSummary(
 }
 
 export function resolveWorkflowHarness(config: PrWorkflowHarness, ctx: WorkflowHarnessContext): ResolvedWorkflowHarness {
-  const driver = workflowDriver(config, ctx.lastDriver);
+  const driver = workflowDriver(config, ctx.composerDriver);
   const model = (config.driver && config.model) || (pickInitialModel(ctx.models, ctx.defaultModel, ctx.recentModels) ?? undefined);
   const effort = fallbackEffort(config.effort ?? ctx.pendingPrefs.effort ?? DEFAULT_EFFORT, effortOptionsFor(driver, ctx.models, model));
   const wanted = config.permissionMode ?? ctx.pendingPrefs.permissionMode ?? "auto";
