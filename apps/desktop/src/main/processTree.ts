@@ -1,18 +1,38 @@
 import { execFileSync, type ChildProcess } from "node:child_process";
 
+export const KILL_ESCALATION_MS = 3000;
+
+export const detachProcessGroup = process.platform !== "win32";
+
+function signal(target: number, sig: NodeJS.Signals | 0): boolean {
+  try {
+    process.kill(target, sig);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function terminatePosix(pid: number): void {
+  const target = signal(-pid, "SIGTERM") ? -pid : signal(pid, "SIGTERM") ? pid : null;
+  if (target === null) return;
+  const timer = setTimeout(() => {
+    if (signal(target, 0)) signal(target, "SIGKILL");
+  }, KILL_ESCALATION_MS);
+  timer.unref();
+}
+
 export function killProcessTreeByPid(pid: number | undefined): void {
   if (pid === undefined || !Number.isFinite(pid) || pid <= 0) return;
   if (process.platform === "win32") {
     try {
       execFileSync("taskkill", ["/PID", String(pid), "/T", "/F"], { stdio: "ignore" });
-      return;
     } catch {
+      signal(pid, "SIGTERM");
     }
+    return;
   }
-  try {
-    process.kill(pid, "SIGTERM");
-  } catch {
-  }
+  terminatePosix(pid);
 }
 
 export function hasExited(proc: Pick<ChildProcess, "exitCode" | "signalCode">): boolean {
@@ -44,9 +64,11 @@ export function killProcessTree(proc: ChildProcess | undefined): void {
       return;
     } catch {
     }
+    try {
+      proc.kill("SIGTERM");
+    } catch {
+    }
+    return;
   }
-  try {
-    proc.kill("SIGTERM");
-  } catch {
-  }
+  terminatePosix(proc.pid);
 }

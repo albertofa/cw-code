@@ -8,6 +8,7 @@ import {
   type StdioPipe
 } from "node:child_process";
 import type { Readable, Writable } from "node:stream";
+import { detachProcessGroup } from "../processTree.js";
 import { sanitizedChildEnv } from "../shellEnvironment.js";
 
 export interface CliSpawnTarget {
@@ -52,7 +53,7 @@ export function spawnCli(
 export function spawnCli(binary: string, args: string[], opts?: SpawnOptions): ChildProcess;
 export function spawnCli(binary: string, args: string[], opts: SpawnOptions = {}): ChildProcess {
   const target = cliSpawnTarget(binary, args);
-  return spawn(target.file, target.args, { ...opts, env: childEnv(opts.env) });
+  return spawn(target.file, target.args, { detached: detachProcessGroup, ...opts, env: childEnv(opts.env) });
 }
 
 export function execCliFile(

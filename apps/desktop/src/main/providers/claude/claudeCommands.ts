@@ -4,7 +4,7 @@ import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { dirname, normalize, win32 } from "node:path";
 import type { CommandOption } from "@cw-code/contracts";
-import { killProcessTree } from "../../processTree.js";
+import { detachProcessGroup, killProcessTree } from "../../processTree.js";
 import { sanitizedChildEnv } from "../../shellEnvironment.js";
 import { describeClaudeExit } from "./claudeExit.js";
 import { traceHarnessCall, truncateError } from "../../debug/harnessTrace.js";
@@ -193,7 +193,7 @@ export function probeClaudeCommands(
 ): Promise<unknown[]> {
   return new Promise((resolve, reject) => {
     const requestId = randomUUID();
-    const child = spawnFn(binary, args, { cwd, windowsHide: true, env: sanitizedChildEnv(process.env, process.platform) }) as ChildProcessWithoutNullStreams;
+    const child = spawnFn(binary, args, { cwd, windowsHide: true, detached: detachProcessGroup, env: sanitizedChildEnv(process.env, process.platform) }) as ChildProcessWithoutNullStreams;
     let settled = false;
     let stderr = "";
     const timer = setTimeout(() => {

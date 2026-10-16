@@ -3,7 +3,7 @@ import { createInterface } from "node:readline";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import type { AccountUsageState, UsageBalance, UsageSeverity, UsageWindow } from "@cw-code/contracts";
-import { killProcessTree } from "../../processTree.js";
+import { detachProcessGroup, killProcessTree } from "../../processTree.js";
 import { sanitizedChildEnv } from "../../shellEnvironment.js";
 
 export const CLAUDE_ACCOUNT_USAGE_PROBE_ARGS = [
@@ -225,7 +225,7 @@ export function probeClaudeAccountUsage(
     const requestId = randomUUID();
     let child: ChildProcessWithoutNullStreams;
     try {
-      child = spawnFn(binary, args, { cwd: homedir(), windowsHide: true, env: sanitizedChildEnv(process.env, process.platform) }) as ChildProcessWithoutNullStreams;
+      child = spawnFn(binary, args, { cwd: homedir(), windowsHide: true, detached: detachProcessGroup, env: sanitizedChildEnv(process.env, process.platform) }) as ChildProcessWithoutNullStreams;
     } catch (err) {
       resolve(spawnErrorState(binary, err as NodeJS.ErrnoException));
       return;
