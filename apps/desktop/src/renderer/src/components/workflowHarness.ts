@@ -34,10 +34,16 @@ export function workflowDriver(config: PrWorkflowHarness, composerDriver: Driver
   return config.driver ?? composerDriver;
 }
 
+export type HarnessValueSource = "workflow" | "composer" | "fallback";
+
 export interface HarnessSummaryPart {
   key: "driver" | "model" | "effort" | "permission";
   label: string;
-  inherited: boolean;
+  source: HarnessValueSource;
+}
+
+function sourceOf<T>(configured: T | null, resolved: T): HarnessValueSource {
+  return configured === null ? "composer" : configured === resolved ? "workflow" : "fallback";
 }
 
 export function harnessSummary(
@@ -47,21 +53,23 @@ export function harnessSummary(
 ): { parts: HarnessSummaryPart[]; title: string } {
   const modelLabel = resolved.model ? (lists.models.find((m) => m.id === resolved.model)?.label ?? resolved.model) : "default model";
   const parts: HarnessSummaryPart[] = [
-    { key: "driver", label: harnessLabel(resolved.driver), inherited: config.driver === null },
-    { key: "model", label: modelLabel, inherited: !(config.driver && config.model) },
-    { key: "effort", label: `${effortLabel(resolved.effort)} effort`, inherited: config.effort === null },
+    { key: "driver", label: harnessLabel(resolved.driver), source: sourceOf(config.driver, resolved.driver) },
+    { key: "model", label: modelLabel, source: config.driver && config.model ? "workflow" : "composer" },
+    { key: "effort", label: `${effortLabel(resolved.effort)} effort`, source: sourceOf(config.effort, resolved.effort) },
     {
       key: "permission",
       label: lists.permissions.find((p) => p.id === resolved.permissionMode)?.label ?? PERMISSION_LABELS[resolved.permissionMode],
-      inherited: config.permissionMode === null
+      source: sourceOf(config.permissionMode, resolved.permissionMode)
     }
   ];
-  const inherited = parts.filter((part) => part.inherited).map((part) => part.label);
-  const title =
-    inherited.length === 0
-      ? "All set by this workflow"
-      : `Not set by this workflow, taken from your current composer choice: ${inherited.join(", ")}`;
-  return { parts, title };
+  const labelsFrom = (source: HarnessValueSource) => parts.filter((part) => part.source === source).map((part) => part.label);
+  const composer = labelsFrom("composer");
+  const fallback = labelsFrom("fallback");
+  const notes = [
+    ...(composer.length > 0 ? [`Not set by this workflow, taken from your current composer choice: ${composer.join(", ")}`] : []),
+    ...(fallback.length > 0 ? [`The workflow's choice isn't supported here, falling back to: ${fallback.join(", ")}`] : [])
+  ];
+  return { parts, title: notes.length === 0 ? "All set by this workflow" : notes.join(". ") };
 }
 
 export function resolveWorkflowHarness(config: PrWorkflowHarness, ctx: WorkflowHarnessContext): ResolvedWorkflowHarness {

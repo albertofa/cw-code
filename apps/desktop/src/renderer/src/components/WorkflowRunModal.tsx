@@ -640,7 +640,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
                   <span className="wf-run-locked-text">
                     {summary
                       ? summary.parts.map((part, index) => (
-                          <span key={part.key} className={part.inherited ? "wf-run-inherited" : undefined}>
+                          <span key={part.key} className={part.source === "workflow" ? undefined : "wf-run-inherited"}>
                             {index > 0 && " · "}
                             {part.label}
                           </span>

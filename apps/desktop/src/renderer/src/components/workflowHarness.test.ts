@@ -74,10 +74,10 @@ describe("harnessSummary", () => {
     const harness = config({ driver: "claude", model: "claude-opus-5" });
     const summary = harnessSummary(harness, resolveWorkflowHarness(harness, context()), { models: MODELS, permissions: PERMISSIONS });
     expect(summary.parts).toEqual([
-      { key: "driver", label: "Claude", inherited: false },
-      { key: "model", label: "Opus 5", inherited: false },
-      { key: "effort", label: "Low effort", inherited: true },
-      { key: "permission", label: "Supervised", inherited: true }
+      { key: "driver", label: "Claude", source: "workflow" },
+      { key: "model", label: "Opus 5", source: "workflow" },
+      { key: "effort", label: "Low effort", source: "composer" },
+      { key: "permission", label: "Supervised", source: "composer" }
     ]);
     expect(summary.title).toContain("Low effort, Supervised");
   });
@@ -85,7 +85,14 @@ describe("harnessSummary", () => {
   it("says so when the workflow sets everything", () => {
     const harness = config({ driver: "claude", model: "claude-opus-5", effort: "high", permissionMode: "auto" });
     const summary = harnessSummary(harness, resolveWorkflowHarness(harness, context()), { models: MODELS, permissions: PERMISSIONS });
-    expect(summary.parts.every((part) => !part.inherited)).toBe(true);
+    expect(summary.parts.every((part) => part.source === "workflow")).toBe(true);
     expect(summary.title).toBe("All set by this workflow");
+  });
+
+  it("marks a workflow value the harness does not support as a fallback", () => {
+    const harness = config({ driver: "claude", model: "claude-opus-5", effort: "high", permissionMode: "acceptEdits" });
+    const summary = harnessSummary(harness, resolveWorkflowHarness(harness, context()), { models: MODELS, permissions: PERMISSIONS });
+    expect(summary.parts.find((part) => part.key === "permission")).toEqual({ key: "permission", label: "Supervised", source: "fallback" });
+    expect(summary.title).toBe("The workflow's choice isn't supported here, falling back to: Supervised");
   });
 });
