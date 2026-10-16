@@ -4,13 +4,15 @@
   "private": true,
   "type": "module",
   "main": "out/main/index.js",
+  "desktopName": "cw-code.desktop",
   "scripts": {
     "dev": "electron-vite dev",
     "build": "electron-vite build",
     "typecheck": "tsc --noEmit -p tsconfig.json",
     "test": "vitest run",
     "dist": "electron-vite build && electron-builder --win nsis --x64 --publish never",
-    "dist:dir": "electron-vite build && electron-builder --win nsis --x64 --dir --publish never"
+    "dist:dir": "electron-vite build && electron-builder --win nsis --x64 --dir --publish never",
+    "dist:linux": "electron-vite build && electron-builder --linux AppImage deb --x64 --publish never"
   },
   "author": "cw-code",
   "dependencies": {
