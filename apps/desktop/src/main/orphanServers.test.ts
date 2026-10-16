@@ -80,6 +80,20 @@ describe("selectOrphanServerPids on linux", () => {
     expect(selectOrphanServerPids(processes, "linux")).toEqual([]);
   });
 
+  it("terminates on a parent cycle that never reaches the owner", () => {
+    const processes = [proc(100, 200, server, OWNER), proc(200, 100, "sh -c wrapper")];
+    expect(selectOrphanServerPids(processes, "linux")).toEqual([100]);
+  });
+
+  it("selects servers whose intermediate parent is missing from the snapshot", () => {
+    expect(selectOrphanServerPids([proc(100, 999, server, OWNER), proc(OWNER, 1, "cw-code")], "linux")).toEqual([100]);
+  });
+
+  it("selects servers when the owner is alive but not an ancestor", () => {
+    const processes = [proc(100, 700, server, OWNER), proc(700, 1, "systemd --user"), proc(OWNER, 1, "cw-code")];
+    expect(selectOrphanServerPids(processes, "linux")).toEqual([100]);
+  });
+
   it("spares servers without an owner marker", () => {
     expect(selectOrphanServerPids([proc(100, 1, server, null)], "linux")).toEqual([]);
     expect(selectOrphanServerPids([proc(100, 1, server, null)], "darwin")).toEqual([]);

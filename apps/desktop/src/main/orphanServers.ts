@@ -100,7 +100,7 @@ async function readOwnerPid(pid: number): Promise<number | null> {
   }
 }
 
-async function listProcessesPosix(): Promise<ProcessSnapshot[]> {
+async function listProcessesPosix(platform: NodeJS.Platform): Promise<ProcessSnapshot[]> {
   const stdout = await execFileAsync("ps", ["-eo", "pid=,ppid=,args="], 20000);
   const out: ProcessSnapshot[] = [];
   for (const line of stdout.split("\n")) {
@@ -108,7 +108,7 @@ async function listProcessesPosix(): Promise<ProcessSnapshot[]> {
     if (!match) continue;
     const pid = Number(match[1]);
     const command = match[3] ?? "";
-    const ownerPid = process.platform === "linux" && isManagedServerCommand(command) ? await readOwnerPid(pid) : null;
+    const ownerPid = platform === "linux" && isManagedServerCommand(command) ? await readOwnerPid(pid) : null;
     out.push({ pid, ppid: Number(match[2]), command, ownerPid });
   }
   return out;
@@ -122,7 +122,7 @@ export interface ReapDeps {
 
 export async function reapOrphanedServers(deps: ReapDeps = {}): Promise<number[]> {
   const platform = deps.platform ?? process.platform;
-  const list = deps.listProcesses ?? (platform === "win32" ? listProcessesWindows : listProcessesPosix);
+  const list = deps.listProcesses ?? (platform === "win32" ? listProcessesWindows : () => listProcessesPosix(platform));
   const kill = deps.killPid ?? killProcessTreeByPid;
   const processes = await list();
   const orphans = selectOrphanServerPids(processes, platform);

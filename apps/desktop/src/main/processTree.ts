@@ -13,13 +13,38 @@ function signal(target: number, sig: NodeJS.Signals | 0): boolean {
   }
 }
 
+function escalate(kill: () => void): void {
+  setTimeout(kill, KILL_ESCALATION_MS).unref();
+}
+
 function terminatePosix(pid: number): void {
   const target = signal(-pid, "SIGTERM") ? -pid : signal(pid, "SIGTERM") ? pid : null;
   if (target === null) return;
-  const timer = setTimeout(() => {
+  escalate(() => {
     if (signal(target, 0)) signal(target, "SIGKILL");
-  }, KILL_ESCALATION_MS);
-  timer.unref();
+  });
+}
+
+function terminatePosixChild(proc: ChildProcess, pid: number): void {
+  if (hasExited(proc)) return;
+  if (signal(-pid, "SIGTERM")) {
+    escalate(() => {
+      if (signal(-pid, 0)) signal(-pid, "SIGKILL");
+    });
+    return;
+  }
+  try {
+    proc.kill("SIGTERM");
+  } catch {
+    return;
+  }
+  escalate(() => {
+    if (hasExited(proc)) return;
+    try {
+      proc.kill("SIGKILL");
+    } catch {
+    }
+  });
 }
 
 export function killProcessTreeByPid(pid: number | undefined): void {
@@ -70,5 +95,5 @@ export function killProcessTree(proc: ChildProcess | undefined): void {
     }
     return;
   }
-  terminatePosix(proc.pid);
+  terminatePosixChild(proc, proc.pid);
 }
