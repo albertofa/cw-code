@@ -191,6 +191,7 @@ ${PR_SUMMARY_FIELDS}
             body
             createdAt
             author {
+              __typename
               login
             }
           }

@@ -8925,6 +8925,47 @@ button.gitbar-checkout:hover {
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--update) 30%, transparent);
 }
 
+.babysit-bar {
+  background: color-mix(in srgb, var(--accent) 7%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 28%, transparent);
+}
+
+.babysit-bar.paused {
+  background: color-mix(in srgb, var(--warning) 8%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--warning) 32%, transparent);
+}
+
+.babysit-bar .pr-dock-head {
+  border-bottom: 0;
+}
+
+.babysit-icon {
+  flex: none;
+  color: var(--accent);
+}
+
+.babysit-icon.paused {
+  color: var(--warning);
+}
+
+.babysit-status {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--dim);
+  font-size: var(--t-xs);
+}
+
+.babysit-badge {
+  flex: none;
+  color: var(--accent);
+}
+
+.babysit-badge.paused {
+  color: var(--warning);
+}
+
 .pr-dock-failed {
   background: linear-gradient(180deg, color-mix(in srgb, var(--danger) 9%, transparent), color-mix(in srgb, var(--danger) 3%, transparent));
   box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--danger) 35%, transparent);

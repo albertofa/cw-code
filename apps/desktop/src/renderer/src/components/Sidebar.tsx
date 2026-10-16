@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
-import { Bell, ChartColumn, Check, ChevronDown, ChevronRight, ChevronUp, CircleHelp, Clock, GitBranch, GitPullRequest, Hash, LoaderCircle, Plus, Search, Settings, ShieldAlert, X, type LucideIcon } from "lucide-react";
+import { Activity, Bell, ChartColumn, Check, ChevronDown, ChevronRight, ChevronUp, CircleHelp, Clock, GitBranch, GitPullRequest, Hash, LoaderCircle, Plus, Search, Settings, ShieldAlert, X, type LucideIcon } from "lucide-react";
 import type { DriverName, PrSummary, Session, SessionStatus } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import { usePrStore } from "../stores/prStore.js";
@@ -12,6 +12,8 @@ import { mergeAwayIds } from "./sidebarOrder.js";
 import { compareWorkingSet, isWorkingSetStatus } from "./workingSet.js";
 import { shortenHome } from "./pathDisplay.js";
 import { PrChipBadge } from "./PrChipBadge.js";
+import { babysitStatusText } from "./prSessionModel.js";
+import { useBabysitStates } from "./useBabysit.js";
 import { needsAttentionCount } from "./prInbox.js";
 import { anyLinkUnseen, displayChip, linksTitle, mostUrgentLink, sessionLinks } from "./sessionPrLinks.js";
 import { matchesQuickFilter, matchesSessionQuery, quickFilterCounts, toggleQuickFilter, type QuickFilter, type QuickFilterFacts } from "./sidebarQuickFilters.js";
@@ -275,6 +277,7 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
   const shortPath = (value: string): string => shortenHome(value, homeDir ?? undefined);
   const inbox = usePrStore((s) => s.inbox);
   const { attentionOf, summaryByKey } = useNeedsYou();
+  const babysitOf = useBabysitStates();
   const mainView = usePrStore((s) => s.mainView);
   const openGitHub = usePrStore((s) => s.openGitHub);
   const openSessionView = usePrStore((s) => s.openSessionView);
@@ -480,6 +483,7 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
     selectStoreSession(sessionId);
   };
   const hoverSession = hover ? (source.find((s) => s.id === hover.id) ?? null) : null;
+  const hoverBabysit = hoverSession ? babysitOf(hoverSession) : null;
   const hoverStatus = hoverSession?.status ?? "idle";
   const hoverProject = hoverSession ? (projectNameById[hoverSession.projectId] ?? "") : "";
   const hoverBranch = hoverSession ? branchOf(hoverSession) : undefined;
@@ -638,6 +642,17 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
     return { links, chip, chipTitle };
   };
 
+  const renderBabysitBadge = (s: Session) => {
+    const state = babysitOf(s);
+    if (!state) return null;
+    const label = `${state.workflow.label}: ${babysitStatusText(state)}`;
+    return (
+      <span className={`babysit-badge${state.phase.kind === "paused" ? " paused" : ""}`} title={label} aria-label={label} role="img">
+        <Activity size={13} aria-hidden="true" />
+      </span>
+    );
+  };
+
   const renderPrChip = (s: Session) => {
     const { links, chip, chipTitle } = prBadge(s);
     return chip ? <PrChipBadge chip={chip} extra={links.length - 1} title={chipTitle ?? undefined} /> : null;
@@ -757,7 +772,10 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
           </div>
         </div>
         <div className="ws-side">
-          {renderWorkingState(s)}
+          <span className="ws-side-row">
+            {renderBabysitBadge(s)}
+            {renderWorkingState(s)}
+          </span>
           <span className="ws-side-row">
             {renderPrChip(s)}
             <DriverIcon driver={s.driver} size={14} />
@@ -876,6 +894,7 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
             <span className="flat-project">{projectName}</span>
           </span>
         )}
+        {renderBabysitBadge(s)}
         {renderPrChip(s)}
         <span className="flat-age">
           {section === "resolved" && <Check size={12} aria-hidden="true" />}
@@ -1153,6 +1172,14 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
             )}
             <span className="hovercard-text">{stateLabel(hoverStatus)}</span>
           </div>
+          {hoverBabysit && (
+            <div className="session-hovercard-row">
+              <Activity size={13} className={`babysit-badge${hoverBabysit.phase.kind === "paused" ? " paused" : ""}`} aria-hidden="true" />
+              <span className="hovercard-text">
+                {hoverBabysit.workflow.label} #{hoverBabysit.link.ref.number} · {babysitStatusText(hoverBabysit)}
+              </span>
+            </div>
+          )}
           <div className="session-hovercard-row">
             <Clock size={13} aria-hidden="true" />
             <span className="hovercard-text">

@@ -634,6 +634,17 @@ function WorkflowEditor({ workflow, settings, onChange, onDuplicate, onDelete, o
           </div>
         </fieldset>
       </div>
+      {workflow.target === "pr" && (
+        <fieldset className="sp-fieldset">
+          <legend className="sp-h6">
+            Follow-ups <small>Applies to sessions started from this workflow.</small>
+          </legend>
+          <label className={`sp-cbl sp-cbl-row${workflow.autoFollowUp ? " on" : ""}`}>
+            <input type="checkbox" checked={workflow.autoFollowUp === true} onChange={(e) => onChange({ autoFollowUp: e.target.checked })} />
+            Send the follow-up prompt automatically for failed checks, change requests and comments, until the PR is merged or closed
+          </label>
+        </fieldset>
+      )}
       <div className="sp-prompts">
         <PromptBox
           key={`${workflow.id}:start`}

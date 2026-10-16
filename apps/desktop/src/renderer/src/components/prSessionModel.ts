@@ -1,5 +1,17 @@
-import type { AppSettings, PrDetail, PrSummary, PrUpdate, PrWorkflow, SessionPrLink } from "@cw-code/contracts";
+import type { AppSettings, PrDetail, PrRef, PrSummary, PrUpdate, PrWorkflow, SessionMeta, SessionPrLink } from "@cw-code/contracts";
+import { autoFollowUpWorkflow } from "../../../shared/autoFollowUp.js";
+import { prKey } from "./prInbox.js";
+import { detailNeedsRefresh, seenThrough, updatesSince } from "./prUpdates.js";
+
+export { autoFollowUpWorkflow };
 import { attributionText, resolveTemplate, templateVars } from "./prWorkflows.js";
+import { sessionLinks, type PrSummaryLookup } from "./sessionPrLinks.js";
+
+export const AUTO_FOLLOW_UP_LIMIT = 8;
+
+const AUTO_FOLLOW_UP_STATUSES: ReadonlySet<SessionMeta["status"]> = new Set(["done", "idle", "holding"]);
+
+export type AutoFollowUpPause = "user" | "interrupted" | "error";
 
 const FAILED_LOGS_PATTERN = /\{\{\s*checks\.failedLogs\s*\}\}/;
 
@@ -36,10 +48,133 @@ export function followUpPrompt(
   workflow: PrWorkflow,
   updates: PrUpdate[],
   settings: Pick<AppSettings, "prAttributionEnabled" | "prAttributionText">,
-  harness: string
+  harness: string,
+  failedLogs?: string
 ): string {
-  const vars = templateVars(detail, { link, updates, attribution: attributionText(settings, harness), harness });
+  const vars = templateVars(detail, { link, updates, failedLogs, attribution: attributionText(settings, harness), harness });
   return resolveTemplate(workflow.updatePrompt, vars);
+}
+
+export interface AutoFollowUpSession {
+  session: Pick<SessionMeta, "id" | "status" | "prs">;
+  busy: boolean;
+  waitingOnUser: boolean;
+  paused: boolean;
+  autoTurns: number;
+}
+
+export type BabysitPhase = { kind: "working" } | { kind: "watching" } | { kind: "paused"; reason: AutoFollowUpPause | "limit" };
+
+export interface BabysitState {
+  link: SessionPrLink;
+  workflow: PrWorkflow;
+  phase: BabysitPhase;
+}
+
+export interface BabysitControl {
+  busy: boolean;
+  paused: AutoFollowUpPause | undefined;
+  autoTurns: number;
+}
+
+function babysitPhase({ busy, paused, autoTurns }: BabysitControl): BabysitPhase {
+  if (paused) return { kind: "paused", reason: paused };
+  if (busy) return { kind: "working" };
+  if (autoTurns >= AUTO_FOLLOW_UP_LIMIT) return { kind: "paused", reason: "limit" };
+  return { kind: "watching" };
+}
+
+export function babysitState(
+  session: Pick<SessionMeta, "status" | "prs">,
+  summaryByKey: PrSummaryLookup,
+  workflows: PrWorkflow[],
+  control: BabysitControl
+): BabysitState | null {
+  if (!isWatchable(session)) return null;
+  for (const link of sessionLinks(session)) {
+    const workflow = autoFollowUpWorkflow(link, workflows);
+    const summary = summaryByKey.get(prKey(link.ref));
+    if (!workflow || (summary && summary.state !== "OPEN")) continue;
+    return { link, workflow, phase: babysitPhase(control) };
+  }
+  return null;
+}
+
+export function babysitStatusText(state: BabysitState): string {
+  switch (state.phase.kind) {
+    case "working":
+      return "Working on the PR";
+    case "watching":
+      return "Watching for failed checks, change requests and comments";
+    case "paused":
+      switch (state.phase.reason) {
+        case "user":
+          return "Paused";
+        case "interrupted":
+          return "Paused because the turn was stopped";
+        case "error":
+          return "Paused because the last turn failed";
+        case "limit":
+          return `Paused after ${AUTO_FOLLOW_UP_LIMIT} automatic turns in a row`;
+      }
+  }
+}
+
+export interface AutoFollowUp {
+  sessionId: string;
+  link: SessionPrLink;
+  workflow: PrWorkflow;
+  detail: PrDetail;
+  updates: PrUpdate[];
+  signature: string;
+}
+
+function isWatchable(session: Pick<SessionMeta, "status">): boolean {
+  return session.status !== "resolved" && session.status !== "archived";
+}
+
+export function autoFollowUpRefs(sessions: Pick<SessionMeta, "status" | "prs">[], summaryByKey: PrSummaryLookup, workflows: PrWorkflow[]): PrRef[] {
+  const byKey = new Map<string, PrRef>();
+  for (const session of sessions) {
+    if (!isWatchable(session)) continue;
+    for (const link of sessionLinks(session)) {
+      const key = prKey(link.ref);
+      const summary = summaryByKey.get(key);
+      if (summary && summary.state !== "OPEN") continue;
+      if (autoFollowUpWorkflow(link, workflows)) byKey.set(key, link.ref);
+    }
+  }
+  return [...byKey.values()];
+}
+
+export function autoFollowUps(
+  sessions: AutoFollowUpSession[],
+  summaryByKey: PrSummaryLookup,
+  detailByKey: Record<string, PrDetail>,
+  workflows: PrWorkflow[]
+): AutoFollowUp[] {
+  const result: AutoFollowUp[] = [];
+  for (const { session, busy, waitingOnUser, paused, autoTurns } of sessions) {
+    if (busy || waitingOnUser || paused || autoTurns >= AUTO_FOLLOW_UP_LIMIT || !AUTO_FOLLOW_UP_STATUSES.has(session.status)) continue;
+    for (const link of sessionLinks(session)) {
+      const workflow = autoFollowUpWorkflow(link, workflows);
+      const key = prKey(link.ref);
+      const detail = detailByKey[key];
+      if (!workflow || !detail || detail.state !== "OPEN" || detailNeedsRefresh(detail, summaryByKey.get(key))) continue;
+      const updates = updatesSince(detail, link);
+      if (!updates.some((update) => update.actionable)) continue;
+      result.push({
+        sessionId: session.id,
+        link,
+        workflow,
+        detail,
+        updates,
+        signature: `${session.id}:${key}@${detail.headRefOid}:${seenThrough(detail, updates) ?? ""}`
+      });
+      break;
+    }
+  }
+  return result;
 }
 
 export function whyLinkedText(

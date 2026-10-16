@@ -40,6 +40,7 @@ import type {
 } from "@cw-code/contracts";
 import { type SessionStatusReason } from "../debug/sessionStatusTrace.js";
 import { isWorkingSetStatus } from "../../shared/workingSet.js";
+import { autoFollowUpWorkflow } from "../../shared/autoFollowUp.js";
 import { SessionStore } from "./SessionStore.js";
 import {
   addUnlinkedKey,
@@ -412,6 +413,7 @@ export class SessionManager {
         );
       } else {
         const wasActive = this.activeTurns.has(event.turnId);
+        const turnStartedAt = this.activeTurns.get(event.turnId)?.startedAt;
         this.settleTurn(event.turnId, event.sessionId);
         const stillActive = [...this.activeTurns.values()].some((entry) => entry.sessionId === event.sessionId);
         if (stillActive) {
@@ -423,7 +425,7 @@ export class SessionManager {
         if (wasActive && !event.isError) void this.renameBranchForTitle(event.sessionId, event.turnId);
         const covered = this.turnPrRefs.get(event.turnId) ?? [];
         this.turnPrRefs.delete(event.turnId);
-        this.syncPrSeenAfterTurn(event.sessionId, covered);
+        this.syncPrSeenAfterTurn(event.sessionId, covered, turnStartedAt);
       }
     }
     if (event.type === "turn.error") {
@@ -815,13 +817,18 @@ export class SessionManager {
     return session;
   }
 
-  private syncPrSeenAfterTurn(sessionId: string, coveredRefs: PrRef[]): void {
+  private syncPrSeenAfterTurn(sessionId: string, coveredRefs: PrRef[], turnStartedAt: number | undefined): void {
     const session = this.store.getSession(sessionId);
     const links = session?.prs ?? [];
     if (links.length === 0) return;
     const coveredKeys = new Set(coveredRefs.map((ref) => prKey(ref)));
     const soleLinkCovered = coveredKeys.size === 0 && links.length === 1;
-    const targets = links.map((link) => ({ ref: link.ref, covered: soleLinkCovered || coveredKeys.has(prKey(link.ref)) }));
+    const workflows = this.settings.get().prWorkflows;
+    const targets = links.map((link) => ({
+      ref: link.ref,
+      covered: soleLinkCovered || coveredKeys.has(prKey(link.ref)),
+      ...(turnStartedAt !== undefined && autoFollowUpWorkflow(link, workflows) ? { seenUntil: turnStartedAt } : {})
+    }));
     const worktreePath = session?.worktreePath;
     const now = Date.now();
     void (async () => {

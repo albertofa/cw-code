@@ -38,6 +38,7 @@ import { MenuSelect } from "./MenuSelect.js";
 import { errorMessage } from "./errorMessage.js";
 import { ipcErrorMessage } from "./ipcError.js";
 import { usePrSettings } from "./useLinkedPr.js";
+import { linkWithWorkflow } from "./sessionPrLinks.js";
 import { IssueCard, PrCard, RunCard } from "./WorkflowSubjectCards.js";
 import { useWorkflowSubjectData } from "./useWorkflowSubjectData.js";
 import {
@@ -205,7 +206,11 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
   const projectId = useMemo(() => projectIdForRef(repo), [projectIdForRef, projectRepos, key]);
   const continueAlreadyLinked = continueSession ? isLinkedTo(continueSession, subject) : false;
   const continueLinkKey = continueSession ? `${continueSession.id}\n${key}` : null;
-  const updateMode = continueSession !== undefined && continueAlreadyLinked && linkedHere !== continueLinkKey;
+  const adoptedLink =
+    continueSession !== undefined && subject.kind === "pr" && !request.promptOverride?.trim()
+      ? linkWithWorkflow(continueSession, subject.ref, workflowId)
+      : null;
+  const updateMode = continueSession !== undefined && continueAlreadyLinked && adoptedLink === null && linkedHere !== continueLinkKey;
   const linkedOptions: Session[] =
     continueSession && continueAlreadyLinked && !linkedSessions.includes(continueSession)
       ? [continueSession, ...linkedSessions]
@@ -411,6 +416,11 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
           current = "link";
           setStage(current);
           app.applySession(await linkSession(continueSession.id, workflow.id, true));
+          setLinkedHere(continueLinkKey);
+        } else if (adoptedLink) {
+          current = "link";
+          setStage(current);
+          app.applySession(await window.cw.linkSessionPr(continueSession.id, adoptedLink));
           setLinkedHere(continueLinkKey);
         }
         current = "send";

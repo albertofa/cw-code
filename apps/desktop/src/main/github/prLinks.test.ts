@@ -275,6 +275,11 @@ describe("applyTurnSeen", () => {
     expect(next).toEqual([{ ...covered, lastSeenSha: "new-42", lastSeenAt: 100 }, other]);
   });
 
+  it("stops at the turn start for automatic follow-ups so activity during the turn stays new", () => {
+    const next = applyTurnSeen([covered], [{ ref: covered.ref, covered: true, head: "new-42", seenAt: 900, seenUntil: 50 }], null, 1_000);
+    expect(next).toEqual([{ ...covered, lastSeenSha: "new-42", lastSeenAt: 50 }]);
+  });
+
   it("absorbs the session's own push on an uncovered link without touching lastSeenAt", () => {
     const next = applyTurnSeen([covered, other], [{ ref: other.ref, covered: false, head: "own", seenAt: 500 }], "own", 100);
     expect(next).toEqual([covered, { ...other, lastSeenSha: "own" }]);
