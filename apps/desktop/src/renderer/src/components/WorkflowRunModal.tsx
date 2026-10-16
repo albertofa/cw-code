@@ -413,6 +413,10 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
     let current: Stage = "send";
     try {
       if (continueSession) {
+        current = "send";
+        setStage(current);
+        await app.ensureComposer(continueSession.id);
+        await app.sendPromptTo(continueSession.id, prompt, undefined, sendOptions);
         if (!continueAlreadyLinked) {
           current = "link";
           setStage(current);
@@ -424,10 +428,6 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
           app.applySession(await window.cw.linkSessionPr(continueSession.id, adoptedLink));
           setLinkedHere(continueLinkKey);
         }
-        current = "send";
-        setStage(current);
-        await app.ensureComposer(continueSession.id);
-        await app.sendPromptTo(continueSession.id, prompt, undefined, sendOptions);
         current = "seen";
         setStage(current);
         const updated = await markSeen(continueSession.id);

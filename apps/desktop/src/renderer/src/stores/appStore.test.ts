@@ -1,5 +1,5 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { UpdateActionResult, UpdateState } from "@cw-code/contracts";
 import { DEFAULT_COMPOSER, useAppStore } from "./appStore.js";
 import { getLastModel, setLastModel } from "../components/lastModel.js";
@@ -320,6 +320,26 @@ describe("appStore applySession", () => {
     useAppStore.setState({ busyTurns: {} });
     useAppStore.getState().applySession({ ...base, status: "idle", updatedAt: 3 });
     expect(useAppStore.getState().sessionsByProject.proj_busy[0].status).toBe("idle");
+  });
+});
+
+describe("appStore sendPromptTo", () => {
+  it("rejects a second send while the first is still starting, without superseding it", async () => {
+    let resolveStart: (turnId: string) => void = () => {};
+    const startTurn = vi.fn(() => new Promise<string>((resolve) => (resolveStart = resolve)));
+    const interrupt = vi.fn(async () => {});
+    const activeTurns = async () => [{ sessionId: "sess_race", turnId: "turn_1", startedAt: 1 }];
+    (window as unknown as { cw: unknown }).cw = { startTurn, interrupt, activeTurns };
+    useAppStore.setState({ busyTurns: {}, messagesBySession: {}, sessionsByProject: {} });
+
+    const first = useAppStore.getState().sendPromptTo("sess_race", "auto follow-up");
+    await expect(useAppStore.getState().sendPromptTo("sess_race", "workflow prompt")).rejects.toThrow("session busy (turn pending)");
+    resolveStart("turn_1");
+    await first;
+
+    expect(startTurn).toHaveBeenCalledTimes(1);
+    expect(interrupt).not.toHaveBeenCalled();
+    expect(useAppStore.getState().busyTurns.sess_race).toBe("turn_1");
   });
 });
 
