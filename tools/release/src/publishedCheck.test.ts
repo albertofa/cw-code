@@ -54,7 +54,7 @@ function published(plan: ReleasePlan, latestTag: string | null): Responses {
   const debName = debNameFor(plan.version);
   const linuxFeed = `version: ${plan.version}\nfiles:\n  - url: ${appImageName}\n    sha512: ${digest(appImage)}\n    size: ${appImage.length}\n    blockMapSize: 99\n  - url: ${debName}\n    sha512: ${digest(deb)}\n    size: ${deb.length}\npath: ${appImageName}\nsha512: ${digest(appImage)}\nreleaseName: ${plan.tag}\nreleaseNotes: notes\n`;
   const download = `${BASE}/releases/download/${plan.tag}`;
-  const json =(value: unknown) => ({ status: 200, body: Buffer.from(JSON.stringify(value)) });
+  const json = (value: unknown) => ({ status: 200, body: Buffer.from(JSON.stringify(value)) });
   const responses: Responses = new Map([
     [`https://api.github.com/repos/albertofa/cw-code/releases/tags/${plan.tag}`, json({ draft: false, prerelease: plan.prerelease, assets: publishableAssetNames(plan).map((asset) => ({ name: asset })) })],
     [`${BASE}/releases/latest`, latestTag ? json({ tag_name: latestTag }) : { status: 404, body: Buffer.from("Not Found") }],
