@@ -36,7 +36,8 @@ import { DriverIcon } from "./DriverIcon.js";
 import { MenuSelect } from "./MenuSelect.js";
 import { errorMessage } from "./errorMessage.js";
 import { ipcErrorMessage } from "./ipcError.js";
-import { usePrSettings } from "./useLinkedPr.js";
+import { findSession, usePrSettings } from "./useLinkedPr.js";
+import { prKey } from "./prInbox.js";
 import { linkWithWorkflow } from "./sessionPrLinks.js";
 import { IssueCard, PrCard, RunCard } from "./WorkflowSubjectCards.js";
 import { SubjectCardSkeleton } from "./GitHubSkeletons.js";
@@ -188,11 +189,16 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
     () => workflowsForSubject(settings?.prWorkflows ?? [], baseSubject, cachedRun),
     [settings, baseSubject, cachedRun]
   );
+  const basePrState = usePrStore((s) => {
+    if (baseSubject.kind !== "pr") return undefined;
+    const refKey = prKey(baseSubject.ref);
+    return (s.detailByKey[refKey] ?? s.inbox?.items.find((item) => prKey(item.ref) === refKey))?.state;
+  });
   const babysitWorkflow = useMemo(() => {
-    if (!target || baseSubject.kind !== "pr") return null;
-    const session = Object.values(sessionsByProject).flat().find((s) => s.id === target);
+    if (!target || baseSubject.kind !== "pr" || (basePrState !== undefined && basePrState !== "OPEN")) return null;
+    const session = findSession(sessionsByProject, target);
     return session ? (babysittingSession([session], baseSubject.ref, workflows)?.workflow ?? null) : null;
-  }, [target, baseSubject, sessionsByProject, workflows]);
+  }, [target, baseSubject, basePrState, sessionsByProject, workflows]);
   const activeWorkflowId = babysitWorkflow?.id ?? workflowId;
   const pickable = babysitWorkflow ? [babysitWorkflow] : workflows.filter((w) => w.enabled || w.id === workflowId);
   const workflow: PrWorkflow | undefined = workflows.find((w) => w.id === activeWorkflowId);
@@ -423,15 +429,17 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
         setStage(current);
         await app.ensureComposer(continueSession.id);
         await app.sendPromptTo(continueSession.id, prompt, undefined, sendOptions);
-        if (!continueAlreadyLinked) {
+        const sent = findSession(useAppStore.getState().sessionsByProject, continueSession.id) ?? continueSession;
+        const adopt = adoptedLink && subject.kind === "pr" ? linkWithWorkflow(sent, subject.ref, activeWorkflowId) : null;
+        if (!isLinkedTo(sent, subject)) {
           current = "link";
           setStage(current);
           app.applySession(await linkSession(continueSession.id, workflow.id, true));
           setLinkedHere(continueLinkKey);
-        } else if (adoptedLink) {
+        } else if (adopt) {
           current = "link";
           setStage(current);
-          app.applySession(await window.cw.linkSessionPr(continueSession.id, adoptedLink));
+          app.applySession(await window.cw.linkSessionPr(continueSession.id, adopt));
           setLinkedHere(continueLinkKey);
         }
         current = "seen";
