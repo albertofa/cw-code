@@ -774,7 +774,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const projectId =
       currentProjectId ??
       defaultNewSessionProjectId(get().projects, get().sessionsByProject, get().activeSessionId);
-    const target = driver ?? get().lastDriver;
+    const target = fallbackHarness(driver ?? get().lastDriver, get().installedHarnesses);
     const previous = get().pendingDriver ?? get().lastDriver;
     const currentModel = get().pendingPrefs.model;
     if (currentModel && previous !== target) {
