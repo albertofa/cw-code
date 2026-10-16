@@ -80,7 +80,7 @@ export interface LinuxFeedReport {
   errors: string[];
 }
 
-export async function validateLinuxReleaseFeed(dir: string): Promise<LinuxFeedReport> {
+export async function validateLinuxReleaseFeed(dir: string, expectations: Pick<FeedExpectations, "version"> = {}): Promise<LinuxFeedReport> {
   const report: LinuxFeedReport = { dir, version: null, channelFiles: [], appImage: null, deb: null, errors: [] };
   const latestPath = join(dir, LINUX_STABLE_FEED_NAME);
   if (!(await exists(latestPath))) {
@@ -99,6 +99,9 @@ export async function validateLinuxReleaseFeed(dir: string): Promise<LinuxFeedRe
   report.channelFiles.push(LINUX_STABLE_FEED_NAME);
   const parsed = tryParseVersion(info.version);
   if (!parsed) report.errors.push(`version ${info.version} is neither X.Y.Z nor X.Y.Z-alpha.N, so cw-code would ignore it`);
+  if (expectations.version !== undefined && info.version !== expectations.version) {
+    report.errors.push(`${LINUX_STABLE_FEED_NAME} version is ${info.version}, expected ${expectations.version}`);
+  }
   if (await exists(join(dir, LINUX_ALPHA_FEED_NAME))) {
     report.channelFiles.push(LINUX_ALPHA_FEED_NAME);
     if (!latest.equals(await readFile(join(dir, LINUX_ALPHA_FEED_NAME)))) {

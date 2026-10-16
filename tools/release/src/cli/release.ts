@@ -31,7 +31,7 @@ import {
 import { selectLinuxUpgradeBase, selectUpgradeBase } from "../upgradeBase.ts";
 import { readPublisherNames } from "../updateInfoYaml.ts";
 import { parseFaults } from "../feedFaults.ts";
-import { validateReleaseFeed } from "../feedManifest.ts";
+import { validateLinuxReleaseFeed, validateReleaseFeed } from "../feedManifest.ts";
 import { startFeedServer } from "../feedServer.ts";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -368,7 +368,16 @@ async function cmdFeedServe(options: Map<string, string>): Promise<void> {
 
 async function cmdValidateFeed(options: Map<string, string>): Promise<void> {
   const dir = resolve(requireOption(options, "dir"));
+  const platform = options.get("platform") ?? "windows";
+  if (platform !== "windows" && platform !== "linux") fail(`--platform must be "windows" or "linux", got "${platform}"`);
   const channels = options.get("channels");
+  if (platform === "linux") {
+    if (channels !== undefined || options.has("require-blockmap")) fail("validate-feed --platform linux takes only --dir and --version");
+    const linuxReport = await validateLinuxReleaseFeed(dir, { version: options.get("version") });
+    printJson(linuxReport);
+    if (linuxReport.errors.length > 0) process.exitCode = 1;
+    return;
+  }
   const report = await validateReleaseFeed(dir, {
     version: options.get("version"),
     channelFiles: channels ? channels.split(",").map((name) => name.trim()).filter(Boolean) : undefined,

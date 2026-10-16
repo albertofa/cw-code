@@ -131,6 +131,14 @@ describe("validateLinuxReleaseFeed", () => {
     expect((await validateLinuxReleaseFeed(dir)).errors[0]).toBe("alpha-linux.yml must be a byte copy of latest-linux.yml");
   });
 
+  it("reports a feed for another version than the expected one", async () => {
+    for (const name of ["latest-linux.yml", "alpha-linux.yml"]) await writeFile(join(dir, name), linuxManifest());
+    expect((await validateLinuxReleaseFeed(dir, { version: VERSION })).errors).toEqual([]);
+    expect((await validateLinuxReleaseFeed(dir, { version: "0.0.1-alpha.21" })).errors).toEqual([
+      `latest-linux.yml version is ${VERSION}, expected 0.0.1-alpha.21`
+    ]);
+  });
+
   it("reports a missing feed or package instead of throwing", async () => {
     expect((await validateLinuxReleaseFeed(dir)).errors).toEqual([`latest-linux.yml is missing from ${dir}`]);
     await rm(join(dir, DEB));

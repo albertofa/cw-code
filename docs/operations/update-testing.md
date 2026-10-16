@@ -56,6 +56,7 @@ from one root directory. CLI:
 ```sh
 node tools/release/src/cli/release.ts feed-serve --root <dir> [--port 47613] [--faults '<json>' | --faults-file <file>] [--log requests.jsonl]
 node tools/release/src/cli/release.ts validate-feed --dir <dir> [--version X] [--channels alpha.yml,latest.yml] [--require-blockmap]
+node tools/release/src/cli/release.ts validate-feed --platform linux --dir <dir> [--version X]
 ```
 
 - Paths: only `[A-Za-z0-9._-]` segments. `..`, `.`, empty segments, absolute

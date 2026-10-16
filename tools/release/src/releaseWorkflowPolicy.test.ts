@@ -143,18 +143,31 @@ describe("release.yml policy", () => {
     }
     expect(job("verify-source")).toMatch(/pnpm typecheck[\s\S]*pnpm test[\s\S]*pnpm build/);
     expect(job("build-linux")).toMatch(
-      /release\.ts apply --plan plan\/plan\.json[\s\S]*pnpm typecheck[\s\S]*pnpm test[\s\S]*pnpm build[\s\S]*dist:linux[\s\S]*--asar apps\/desktop\/dist\/linux-unpacked\/resources\/app\.asar[\s\S]*verify-linux-package\.mjs --desktop-dir apps\/desktop --dist apps\/desktop\/dist --install-deb --disposable-environment[\s\S]*if-no-files-found: error/
+      /release\.ts apply --plan plan\/plan\.json[\s\S]*pnpm typecheck[\s\S]*pnpm test[\s\S]*pnpm build[\s\S]*dist:linux[\s\S]*--asar apps\/desktop\/dist\/linux-unpacked\/resources\/app\.asar[\s\S]*node tooling\/scripts\/verify-linux-package\.mjs --desktop-dir apps\/desktop --dist apps\/desktop\/dist --install-deb --disposable-environment[\s\S]*if-no-files-found: error/
     );
+    expect(job("build-linux")).not.toMatch(/run: node scripts\//);
+    expect(job("build-linux")).toMatch(/- name: Upload the Linux packages\n\s+if: always\(\)[\s\S]*apps\/desktop\/dist\/latest-linux\.yml\n\s+apps\/desktop\/dist\/alpha-linux\.yml/);
     expect(job("build-linux")).toContain("linux-artifact: ${{ steps.names.outputs.linux-artifact }}");
     const linuxCandidate = job("verify-linux-candidate");
     for (const gate of [
       "name: ${{ needs.verify-candidate.outputs.release-set }}",
       "select-upgrade-base --plan plan/plan.json --platform linux",
-      "verify-linux-upgrade.mjs --production-bytes",
+      "verify-linux-upgrade.mjs --production-bytes --desktop-dir apps/desktop",
       "--candidate-dir release-set"
     ]) {
       expect(linuxCandidate).toContain(gate);
     }
+    expect(linuxCandidate).toMatch(
+      /gh release download [^\n]+--dir upgrade-base\n\s+node tools\/release\/src\/cli\/release\.ts validate-feed --platform linux --dir upgrade-base --version "\$BASE_VERSION"\n\s+chmod \+x "upgrade-base\/\$APPIMAGE"[\s\S]*verify-linux-upgrade\.mjs/
+    );
+    expect(job("verify-candidate")).toContain('validate-feed --dir upgrade-base --version "$BASE_VERSION"');
+  });
+
+  it("refuses in plan a source commit that cannot build the Linux packages, so an old alpha is never promoted without them", () => {
+    const plan = job("plan");
+    expect(plan).toMatch(
+      /- name: Require Linux packaging in the source commit\n\s+if: steps\.plan\.outputs\.skip == 'false'\n\s+env:\n\s+SOURCE_SHA: \$\{\{ steps\.plan\.outputs\.sha \}\}[\s\S]*git show "\$SOURCE_SHA:apps\/desktop\/package\.json"[\s\S]*\["dist:linux"\][\s\S]*an alpha built before Linux support cannot be promoted to stable; publish a fresh alpha and promote that[\s\S]*exit 1[\s\S]*- name: Upload the plan/
+    );
   });
 
   it("fails a publish run when no compatible N exists, on Windows and on Linux", () => {

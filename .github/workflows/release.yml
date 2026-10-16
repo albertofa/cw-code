@@ -175,6 +175,21 @@ jobs:
           if [ "$FORCE" = "true" ]; then args+=(--force); fi
           node tools/release/src/cli/release.ts "${args[@]}"
 
+      - name: Require Linux packaging in the source commit
+        if: steps.plan.outputs.skip == 'false'
+        env:
+          SOURCE_SHA: ${{ steps.plan.outputs.sha }}
+          CHANNEL: ${{ steps.plan.outputs.channel }}
+        run: |
+          if ! git show "$SOURCE_SHA:apps/desktop/package.json" | node -e 'process.exit(JSON.parse(require("fs").readFileSync(0, "utf8")).scripts?.["dist:linux"] ? 0 : 1)'; then
+            if [ "$CHANNEL" = "stable" ]; then
+              echo "::error::source commit $SOURCE_SHA has no dist:linux script: an alpha built before Linux support cannot be promoted to stable; publish a fresh alpha and promote that (docs/operations/releases.md)"
+            else
+              echo "::error::source commit $SOURCE_SHA has no dist:linux script, so it cannot build the Linux AppImage and deb every release carries"
+            fi
+            exit 1
+          fi
+
       - name: Upload the plan
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
@@ -325,8 +340,9 @@ jobs:
       - name: Reject any update autotest path in the packaged app
         run: node tooling/scripts/verify-installed-upgrade.mjs --assert-production-bundle apps/desktop/out/main --asar apps/desktop/dist/linux-unpacked/resources/app.asar --desktop-dir apps/desktop
       - name: Native-load probe on the packages (AppImage start, deb install, start, node-pty, remove)
-        run: node scripts/verify-linux-package.mjs --desktop-dir apps/desktop --dist apps/desktop/dist --install-deb --disposable-environment
+        run: node tooling/scripts/verify-linux-package.mjs --desktop-dir apps/desktop --dist apps/desktop/dist --install-deb --disposable-environment
       - name: Upload the Linux packages
+        if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
           name: ${{ steps.names.outputs.linux-artifact }}
@@ -334,6 +350,7 @@ jobs:
             apps/desktop/dist/*.AppImage
             apps/desktop/dist/*.deb
             apps/desktop/dist/latest-linux.yml
+            apps/desktop/dist/alpha-linux.yml
             apps/desktop/dist/verify-linux-package.json
           if-no-files-found: error
           retention-days: 30
@@ -552,15 +569,18 @@ jobs:
           TAG: ${{ steps.base.outputs.tag }}
           APPIMAGE: ${{ steps.base.outputs.appimage }}
           DEB: ${{ steps.base.outputs.deb }}
+          BASE_VERSION: ${{ steps.base.outputs.version }}
         run: |
           gh release download "$TAG" --repo "$REPO" --pattern "$APPIMAGE" --pattern "$DEB" --pattern latest-linux.yml --pattern alpha-linux.yml --dir upgrade-base
+          node tools/release/src/cli/release.ts validate-feed --platform linux --dir upgrade-base --version "$BASE_VERSION"
+          chmod +x "upgrade-base/$APPIMAGE"
       - name: Linux N -> N+1 upgrade with the production bytes through the loopback feed
         if: steps.base.outputs.status == 'found'
         env:
           APPIMAGE: ${{ steps.base.outputs.appimage }}
           DEB: ${{ steps.base.outputs.deb }}
         run: |
-          node scripts/verify-linux-upgrade.mjs --production-bytes --appimage "upgrade-base/$APPIMAGE" --deb "upgrade-base/$DEB" --candidate-dir release-set \
+          node scripts/verify-linux-upgrade.mjs --production-bytes --desktop-dir apps/desktop --appimage "upgrade-base/$APPIMAGE" --deb "upgrade-base/$DEB" --candidate-dir release-set \
             --work-dir "$RUNNER_TEMP/linux-production-bytes" --evidence "$RUNNER_TEMP/linux-evidence/linux-production-bytes.json" --disposable-environment
       - name: Require the Linux upgrade gate before publication
         env:
