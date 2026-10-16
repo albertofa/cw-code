@@ -364,7 +364,8 @@ Windows, in `verify-candidate`:
 Linux, in `verify-linux-candidate` (ubuntu-22.04, after `verify-candidate`, from the
 staged and validated release set):
 
-- `found`: downloads N's AppImage, .deb and Linux feeds with `gh release download` and runs
+- `found`: downloads N's AppImage, .deb and Linux feeds with `gh release download`,
+  checks them with `validate-feed --platform linux --version <N>`, and runs
   `scripts/verify-linux-upgrade.mjs --production-bytes` with the candidate set, which
   upgrades both the AppImage and the .deb through a loopback feed (see
   [update-testing.md](update-testing.md#linux-production-bytes)). The evidence file is
@@ -378,8 +379,9 @@ gate blocks the Windows release too.
 
 An alpha built before Linux support cannot be promoted to stable. A stable promotion
 rebuilds the candidate's exact commit, and `build-linux` needs the `dist:linux` script
-and Linux packaging that commit does not have, so the run fails. Publish a fresh
-alpha from current `main` and promote that one.
+and Linux packaging that commit does not have. `plan` checks the source commit's
+`apps/desktop/package.json` for `dist:linux` and fails before anything is built.
+Publish a fresh alpha from current `main` and promote that one.
 
 ## Artifacts and retention
 
