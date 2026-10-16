@@ -7965,10 +7965,6 @@ button.gitbar-checkout:hover {
   gap: 6px;
 }
 
-.wf-run-spin {
-  animation: cw-spin 1s linear infinite;
-}
-
 .wf-run-note {
   font-size: var(--t-xs);
   line-height: 1.45;

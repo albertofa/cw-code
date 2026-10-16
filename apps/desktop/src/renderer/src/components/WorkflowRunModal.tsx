@@ -5,7 +5,6 @@ import {
   GitBranch,
   GitFork,
   History,
-  Loader2,
   Lock,
   Play,
   Plus,
@@ -40,6 +39,8 @@ import { ipcErrorMessage } from "./ipcError.js";
 import { usePrSettings } from "./useLinkedPr.js";
 import { linkWithWorkflow } from "./sessionPrLinks.js";
 import { IssueCard, PrCard, RunCard } from "./WorkflowSubjectCards.js";
+import { SubjectCardSkeleton } from "./GitHubSkeletons.js";
+import { Spinner } from "./Loading.js";
 import { useWorkflowSubjectData } from "./useWorkflowSubjectData.js";
 import {
   baseWorkspaceHint,
@@ -537,7 +538,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
         </div>
 
         <div className="wf-run-body">
-          {card || (!data.error && <div className="wf-run-status">Loading {noun}…</div>)}
+          {card || (!data.error && <SubjectCardSkeleton label={`Loading ${noun}`} />)}
           {data.error && (
             <div className="wf-run-error" role="alert">
               Could not load the {noun}: {data.error}
@@ -571,7 +572,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
                 )}
                 {stage === "clone" && (
                   <span className="wf-run-status">
-                    <Loader2 size={12} className="wf-run-spin" aria-hidden="true" /> Cloning…
+                    <Spinner size={12} /> Cloning…
                   </span>
                 )}
               </div>
@@ -759,7 +760,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
           </label>
           {data.logsNeeded && !data.logsReady && !data.logsError && (
             <div className="wf-run-status">
-              <Loader2 size={12} className="wf-run-spin" aria-hidden="true" /> Fetching failed {subject.kind === "pr" ? "check" : "run"} logs…
+              <Spinner size={12} /> Fetching failed {subject.kind === "pr" ? "check" : "run"} logs…
             </div>
           )}
           {data.logsError && (
@@ -784,7 +785,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
             Cancel
           </button>
           <button className="btn btn-primary wf-run-go" onClick={() => void run()} disabled={blocked || working}>
-            {working ? <Loader2 size={13} className="wf-run-spin" aria-hidden="true" /> : <Play size={13} aria-hidden="true" />}
+            {working ? <Spinner size={13} /> : <Play size={13} aria-hidden="true" />}
             {working && stage ? stageLabel(stage, noun) : actionLabel}
           </button>
         </div>
