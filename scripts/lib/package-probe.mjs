@@ -2,9 +2,11 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync } from "node:f
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
+import { setTimeout as sleep } from "node:timers/promises";
 
 export const PROBE_TIMEOUT_MS = 30_000;
 const OUTPUT_TAIL_BYTES = 8 * 1024;
+const PROCESS_GROUP_EXIT_GRACE_MS = 5_000;
 
 export function requireDisposableEnvironment(modeName, disposableEnvironment, platformName = "Windows") {
   if (disposableEnvironment) return;
@@ -35,16 +37,31 @@ export function safePathWithoutClis() {
   ].join(";");
 }
 
+function signalQuietly(target, signal) {
+  try {
+    process.kill(target, signal);
+    return true;
+  } catch (err) {
+    return err.code === "EPERM";
+  }
+}
+
 export function killProcessTree(pid) {
   if (process.platform !== "win32") {
-    try {
-      process.kill(-pid, "SIGKILL");
-    } catch {
-      process.kill(pid, "SIGKILL");
-    }
+    if (!signalQuietly(-pid, "SIGKILL")) signalQuietly(pid, "SIGKILL");
     return;
   }
   spawnSync("taskkill", ["/PID", String(pid), "/T", "/F"]);
+}
+
+async function reapProcessGroup(pgid) {
+  signalQuietly(-pgid, "SIGKILL");
+  const deadline = Date.now() + PROCESS_GROUP_EXIT_GRACE_MS;
+  while (signalQuietly(-pgid, 0)) {
+    if (Date.now() >= deadline) return false;
+    await sleep(100);
+  }
+  return true;
 }
 
 function collectOutputTail(child) {
@@ -85,8 +102,12 @@ export async function runPackageProbe(exePath, opts = {}) {
       return output === "" ? message : `${message}\napp output (tail):\n${output}`;
     };
 
+    const ownProcessGroup = process.platform !== "win32";
+    let processGroupId = null;
+    let processGroupExited;
     const result = await new Promise((resolvePromise, rejectPromise) => {
-      const child = spawn(command, [...launcherArgs, ...appArgs], { env, detached: process.platform !== "win32" });
+      const child = spawn(command, [...launcherArgs, ...appArgs], { env, detached: ownProcessGroup });
+      if (ownProcessGroup) processGroupId = child.pid ?? null;
       if (opts.captureOutput) outputTail = collectOutputTail(child);
       opts.onSpawn?.(child);
       const timer = setTimeout(() => {
@@ -101,13 +122,15 @@ export async function runPackageProbe(exePath, opts = {}) {
         clearTimeout(timer);
         rejectPromise(err);
       });
+    }).finally(async () => {
+      if (processGroupId !== null) processGroupExited = await reapProcessGroup(processGroupId);
     });
 
     if (!existsSync(probeOutPath)) {
       throw new Error(withOutput(`packaged app exited (code ${result.exitCode}) without writing a probe result to ${probeOutPath}`));
     }
     const probe = JSON.parse(readFileSync(probeOutPath, "utf8"));
-    return { exitCode: result.exitCode, probe };
+    return { exitCode: result.exitCode, probe, processGroupExited };
   } finally {
     rmSync(workDir, { recursive: true, force: true });
   }

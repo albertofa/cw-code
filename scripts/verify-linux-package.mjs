@@ -1,11 +1,11 @@
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
-import { dirname, join, resolve } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join, resolve } from "node:path";
 import { requireDisposableEnvironment } from "./lib/package-probe.mjs";
 import {
   DEB_INSTALL_DIR,
   DEB_LAUNCHER,
   DEB_PACKAGE_NAME,
+  DEB_SANDBOX_HELPER,
   commandExists,
   debInstallState,
   debianVersion,
@@ -19,31 +19,42 @@ import {
   unprivilegedUsernsUsable
 } from "./lib/linux-install.mjs";
 
-const defaultDesktopDir = resolve(dirname(fileURLToPath(import.meta.url)), "..", "apps", "desktop");
+const USAGE = [
+  "usage: node verify-linux-package.mjs --desktop-dir <dir> --dist <dir> [--install-deb] --disposable-environment",
+  "  --desktop-dir <dir>       apps/desktop of the build; its package.json gives the expected version",
+  "  --dist <dir>              electron-builder output holding the AppImage, deb and latest-linux.yml",
+  "  --install-deb             also install, start and remove the deb with sudo apt-get",
+  "  --disposable-environment  required: the AppImage runs and the deb installs on this machine"
+].join("\n");
+
+class UsageError extends Error {}
 
 function optionValue(argv, index, name) {
   const value = argv[index];
-  if (value === undefined || value.startsWith("--")) throw new Error(`${name} requires a directory`);
+  if (value === undefined || value.startsWith("--")) throw new UsageError(`${name} requires a directory`);
   return resolve(value);
 }
 
 function parseArgs(argv) {
-  const args = { desktopDir: defaultDesktopDir, dist: null, installDeb: false, disposableEnvironment: false };
+  const args = { desktopDir: null, dist: null, installDeb: false, disposableEnvironment: false, help: false };
   for (let i = 0; i < argv.length; i++) {
     const arg = argv[i];
     if (arg === "--desktop-dir") args.desktopDir = optionValue(argv, ++i, arg);
     else if (arg === "--dist") args.dist = optionValue(argv, ++i, arg);
     else if (arg === "--install-deb") args.installDeb = true;
     else if (arg === "--disposable-environment") args.disposableEnvironment = true;
-    else throw new Error(`unknown argument: ${arg}`);
+    else if (arg === "--help") args.help = true;
+    else throw new UsageError(`unknown argument: ${arg}`);
   }
-  args.dist ??= join(args.desktopDir, "dist");
+  if (args.help) return args;
+  if (!args.desktopDir) throw new UsageError("--desktop-dir is required");
+  if (!args.dist) throw new UsageError("--dist is required");
   return args;
 }
 
 function readDesktopVersion(desktopDir) {
   const packageJsonPath = join(desktopDir, "package.json");
-  if (!existsSync(packageJsonPath)) throw new Error(`desktop package.json not found: ${packageJsonPath} (pass --desktop-dir <apps/desktop of the build>)`);
+  if (!existsSync(packageJsonPath)) throw new Error(`desktop package.json not found: ${packageJsonPath}; --desktop-dir must point at apps/desktop of the build`);
   const version = JSON.parse(readFileSync(packageJsonPath, "utf8")).version;
   if (typeof version !== "string" || version === "") throw new Error(`${packageJsonPath} has no version`);
   return version;
@@ -81,16 +92,16 @@ function checkArtifacts(distDir, version) {
 }
 
 async function appImageMode(appImagePath, version) {
-  const fuse = fuseAvailability();
-  const launch = fuse.available
-    ? { mode: "fuse-mount", reason: fuse.reason, env: { APPIMAGE_SILENT_INSTALL: "1" } }
-    : { mode: "extract-and-run", reason: fuse.reason, env: { APPIMAGE_SILENT_INSTALL: "1", APPIMAGE_EXTRACT_AND_RUN: "1" } };
-  const madeExecutable = ensureExecutable(appImagePath);
-  const report = { path: appImagePath, madeExecutable, launch, probe: null, sandbox: null };
+  const report = { path: appImagePath, madeExecutable: null, launch: null, probe: null, sandbox: null };
   const problems = [];
   try {
-    const result = await runLinuxProbe(appImagePath, { env: launch.env, appImage: true });
-    report.probe = { exitCode: result.exitCode, ...result.probe };
+    const fuse = fuseAvailability();
+    report.launch = fuse.available
+      ? { mode: "fuse-mount", reason: fuse.reason, env: { APPIMAGE_SILENT_INSTALL: "1" } }
+      : { mode: "extract-and-run", reason: fuse.reason, env: { APPIMAGE_SILENT_INSTALL: "1", APPIMAGE_EXTRACT_AND_RUN: "1" } };
+    report.madeExecutable = ensureExecutable(appImagePath);
+    const result = await runLinuxProbe(appImagePath, { env: report.launch.env, appImage: true });
+    report.probe = { exitCode: result.exitCode, processGroupExited: result.processGroupExited, ...result.probe };
     report.sandbox = result.sandbox;
     problems.push(...linuxProbeProblems("AppImage probe", result, version));
   } catch (err) {
@@ -103,7 +114,10 @@ async function debMode(debPath, version) {
   const report = { path: debPath, installedVersion: null, install: null, probe: null, sandbox: null, remove: null, purge: null };
   const problems = [];
   const preinstalled = installedDebVersion();
-  if (preinstalled !== null) throw new Error(`${DEB_PACKAGE_NAME} ${preinstalled} is already installed; refusing to replace it`);
+  if (preinstalled !== null) {
+    problems.push(`${DEB_PACKAGE_NAME} ${preinstalled} is already installed; refusing to replace it`);
+    return { report, problems };
+  }
   try {
     runSudo(["apt-get", "install", "-y", debPath]);
     report.installedVersion = installedDebVersion();
@@ -114,8 +128,8 @@ async function debMode(debPath, version) {
     if (report.install.packageType !== "deb") problems.push(`${DEB_INSTALL_DIR}/resources/package-type is '${report.install.packageType}', expected 'deb'`);
     if (report.install.launcherTarget === null) problems.push(`${DEB_LAUNCHER} is missing after install`);
     try {
-      const result = await runLinuxProbe(DEB_LAUNCHER);
-      report.probe = { exitCode: result.exitCode, ...result.probe };
+      const result = await runLinuxProbe(DEB_LAUNCHER, { sandboxHelperPath: DEB_SANDBOX_HELPER });
+      report.probe = { exitCode: result.exitCode, processGroupExited: result.processGroupExited, ...result.probe };
       report.sandbox = result.sandbox;
       problems.push(...linuxProbeProblems("deb probe", result, version));
     } catch (err) {
@@ -146,8 +160,11 @@ async function debMode(debPath, version) {
 }
 
 function describeSandbox(sandbox) {
-  if (!sandbox) return "not observed";
-  return `${sandbox.decision.verdict}; label=${sandbox.decision.label ?? "none"}; chrome-sandbox ${sandbox.sandboxHelper.uid ?? "?"}:${sandbox.sandboxHelper.mode ?? sandbox.sandboxHelper.error}`;
+  if (!sandbox) return "not run";
+  if (!sandbox.decision) return "the app reported no sandbox evidence";
+  const helper = sandbox.host.sandboxHelper;
+  const helperText = helper.path === null ? "inside AppImage" : `${helper.uid ?? "?"}:${helper.mode ?? helper.error}`;
+  return `${sandbox.decision.verdict}; noSandboxSwitch=${sandbox.app.noSandboxSwitch}; label=${sandbox.app.apparmorLabel ?? "none"}; chrome-sandbox ${helperText}`;
 }
 
 function describeProbe(probe) {
@@ -155,47 +172,42 @@ function describeProbe(probe) {
   return `platform=${probe.platform} startupMode=${probe.startupMode} rendererLoaded=${probe.rendererLoaded} nodePty.spawned=${probe.nodePty?.spawned} nodePty.exitCode=${probe.nodePty?.exitCode} durationMs=${probe.durationMs}`;
 }
 
-async function main() {
-  const args = parseArgs(process.argv.slice(2));
-  requireDisposableEnvironment("verify-linux-package", args.disposableEnvironment, "Linux");
+async function verify(args, summary) {
   requireLinuxHost();
   const version = readDesktopVersion(args.desktopDir);
-  const summary = {
-    version,
-    desktopDir: args.desktopDir,
-    dist: args.dist,
-    apparmorRestrictUnprivilegedUserns: readUsernsRestriction(),
-    unprivilegedUsernsUsable: unprivilegedUsernsUsable()
-  };
+  summary.version = version;
+  summary.apparmorRestrictUnprivilegedUserns = readUsernsRestriction();
+  summary.unprivilegedUsernsUsable = unprivilegedUsernsUsable();
 
   const { artifacts, problems } = checkArtifacts(args.dist, version);
   summary.artifacts = artifacts;
-  summary.problems = problems;
+  summary.problems.push(...problems);
 
   if (artifacts.appImage.exists) {
     const appImage = await appImageMode(artifacts.appImage.path, version);
     summary.appImage = appImage.report;
-    problems.push(...appImage.problems);
+    summary.problems.push(...appImage.problems);
   }
   if (args.installDeb && artifacts.deb.exists) {
     const deb = await debMode(artifacts.deb.path, version);
     summary.deb = deb.report;
-    problems.push(...deb.problems);
+    summary.problems.push(...deb.problems);
   }
+}
 
-  const jsonText = JSON.stringify(summary, null, 2);
-  if (existsSync(args.dist)) writeFileSync(join(args.dist, "verify-linux-package.json"), jsonText, "utf8");
-
-  console.log(jsonText);
+function printSummary(summary, args) {
+  console.log(JSON.stringify(summary, null, 2));
   console.log("");
-  console.log(`cw-code Linux package verification (${version})`);
-  console.log(`  AppImage: ${artifacts.appImage.exists ? "OK" : "MISSING"}`);
-  console.log(`  deb: ${artifacts.deb.exists ? "OK" : "MISSING"}`);
-  console.log(`  latest-linux.yml: ${artifacts.latestLinuxYml.matchesVersion ? "OK" : "MISSING OR STALE"}`);
-  console.log(`  apparmor_restrict_unprivileged_userns: ${summary.apparmorRestrictUnprivilegedUserns ?? "absent"}`);
-  console.log(`  unprivileged user namespaces usable: ${summary.unprivilegedUsernsUsable}`);
+  console.log(`cw-code Linux package verification (${summary.version ?? "unknown version"})`);
+  if (summary.artifacts) {
+    console.log(`  AppImage: ${summary.artifacts.appImage.exists ? "OK" : "MISSING"}`);
+    console.log(`  deb: ${summary.artifacts.deb.exists ? "OK" : "MISSING"}`);
+    console.log(`  latest-linux.yml: ${summary.artifacts.latestLinuxYml.matchesVersion ? "OK" : "MISSING OR STALE"}`);
+    console.log(`  apparmor_restrict_unprivileged_userns: ${summary.apparmorRestrictUnprivilegedUserns ?? "absent"}`);
+    console.log(`  unprivileged user namespaces usable: ${summary.unprivilegedUsernsUsable}`);
+  }
   if (summary.appImage) {
-    console.log(`  AppImage launch: ${summary.appImage.launch.mode} (${summary.appImage.launch.reason})`);
+    console.log(`  AppImage launch: ${summary.appImage.launch ? `${summary.appImage.launch.mode} (${summary.appImage.launch.reason})` : "not started"}`);
     console.log(`  AppImage probe: ${describeProbe(summary.appImage.probe)}`);
     console.log(`  AppImage sandbox: ${describeSandbox(summary.appImage.sandbox)}`);
   }
@@ -206,11 +218,39 @@ async function main() {
   } else if (!args.installDeb) {
     console.log("  deb install: skipped (pass --install-deb)");
   }
+}
 
-  if (problems.length > 0) {
+async function main() {
+  let args;
+  try {
+    args = parseArgs(process.argv.slice(2));
+    if (args.help) {
+      console.log(USAGE);
+      return;
+    }
+    requireDisposableEnvironment("verify-linux-package", args.disposableEnvironment, "Linux");
+  } catch (err) {
+    console.error(err instanceof UsageError ? `${err.message}\n${USAGE}` : err.message);
+    process.exitCode = 1;
+    return;
+  }
+
+  const summary = { version: null, desktopDir: args.desktopDir, dist: args.dist, error: null, problems: [] };
+  try {
+    await verify(args, summary);
+  } catch (err) {
+    summary.error = err.stack ?? err.message;
+    summary.problems.push(`verification aborted: ${err.message}`);
+  } finally {
+    if (existsSync(args.dist)) writeFileSync(join(args.dist, "verify-linux-package.json"), JSON.stringify(summary, null, 2), "utf8");
+    else summary.problems.push(`--dist ${args.dist} does not exist; no evidence file was written`);
+  }
+
+  printSummary(summary, args);
+  if (summary.problems.length > 0) {
     console.error("");
     console.error("FAILED:");
-    for (const problem of problems) console.error(`  - ${problem}`);
+    for (const problem of summary.problems) console.error(`  - ${problem}`);
     process.exitCode = 1;
   }
 }

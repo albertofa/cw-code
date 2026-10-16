@@ -143,7 +143,7 @@ describe("release.yml policy", () => {
     }
     expect(job("verify-source")).toMatch(/pnpm typecheck[\s\S]*pnpm test[\s\S]*pnpm build/);
     expect(job("build-linux")).toMatch(
-      /release\.ts apply --plan plan\/plan\.json[\s\S]*pnpm typecheck[\s\S]*pnpm test[\s\S]*pnpm build[\s\S]*dist:linux[\s\S]*--asar apps\/desktop\/dist\/linux-unpacked\/resources\/app\.asar[\s\S]*verify-linux-package\.mjs --dist apps\/desktop\/dist --install-deb --disposable-environment[\s\S]*if-no-files-found: error/
+      /release\.ts apply --plan plan\/plan\.json[\s\S]*pnpm typecheck[\s\S]*pnpm test[\s\S]*pnpm build[\s\S]*dist:linux[\s\S]*--asar apps\/desktop\/dist\/linux-unpacked\/resources\/app\.asar[\s\S]*verify-linux-package\.mjs --desktop-dir apps\/desktop --dist apps\/desktop\/dist --install-deb --disposable-environment[\s\S]*if-no-files-found: error/
     );
     expect(job("build-linux")).toContain("linux-artifact: ${{ steps.names.outputs.linux-artifact }}");
     const linuxCandidate = job("verify-linux-candidate");

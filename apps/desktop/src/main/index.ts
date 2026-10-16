@@ -477,6 +477,7 @@ async function startPackageProbe(window: BrowserWindow, outPath: string): Promis
       appVersion: app.getVersion(),
       startupMode: startupState.mode,
       electronVersion: process.versions.electron,
+      noSandboxSwitch: app.commandLine.hasSwitch("no-sandbox"),
       renderer
     }).then(
       (result) => app.exit(result.rendererLoaded ? 0 : 1),

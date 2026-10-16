@@ -325,7 +325,7 @@ jobs:
       - name: Reject any update autotest path in the packaged app
         run: node tooling/scripts/verify-installed-upgrade.mjs --assert-production-bundle apps/desktop/out/main --asar apps/desktop/dist/linux-unpacked/resources/app.asar --desktop-dir apps/desktop
       - name: Native-load probe on the packages (AppImage start, deb install, start, node-pty, remove)
-        run: node scripts/verify-linux-package.mjs --dist apps/desktop/dist --install-deb --disposable-environment
+        run: node scripts/verify-linux-package.mjs --desktop-dir apps/desktop --dist apps/desktop/dist --install-deb --disposable-environment
       - name: Upload the Linux packages
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:
