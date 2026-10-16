@@ -66,6 +66,8 @@ export interface CwApi {
     binaryPath: string;
     minimum: string;
     actual: string | null;
+    configured: boolean;
+    found: boolean;
     available: boolean;
     error: string | null;
     ok: boolean;

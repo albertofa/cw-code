@@ -3,6 +3,7 @@ import { useShallow } from "zustand/react/shallow";
 import type { DriverName } from "./cw.js";
 import { applyAppearance } from "./appearanceFonts.js";
 import { collectSubagents } from "./components/subagents.js";
+import { installedHarnesses, isHarnessSkipped } from "./components/harnessAvailability.js";
 import { isWorkingSetStatus } from "./components/workingSet.js";
 import { Sidebar } from "./components/Sidebar.js";
 import { WindowControls } from "./components/WindowControls.js";
@@ -283,17 +284,34 @@ export function App() {
   useEffect(() => {
     if (!window.cw) return;
     let active = true;
+    let latestRun = 0;
     const recheckVersions = () => {
+      const run = ++latestRun;
+      const isLatest = () => active && run === latestRun;
       window.cw
         .checkVersions()
         .then((checks) => {
-          if (!active) return;
-          const missing = checks.filter((c) => !c.available);
+          if (!isLatest()) return;
+          const installed = installedHarnesses(checks);
+          useAppStore.getState().setInstalledHarnesses(installed);
+          const missing = checks.filter((c) => !c.available && !isHarnessSkipped(c));
           const failed = checks.filter((c) => c.available && c.actual === null);
           const outdated = checks.filter((c) => c.actual !== null && !c.ok);
           const notifs = useNotifs.getState();
 
-          if (missing.length === 0) {
+          if (installed.length === 0) {
+            notifs.upsert({
+              id: BINARY_NOTIF_ID,
+              kind: "error",
+              title: "No harness installed",
+              message: "Install Claude Code, OpenCode or Codex, or point cw-code at its executable in Settings.",
+              sticky: true,
+              actions: [
+                { label: "Configure Claude", primary: true, onClick: () => openSettings("claude") },
+                { label: "Recheck", onClick: recheckVersions }
+              ]
+            });
+          } else if (missing.length === 0) {
             notifs.dismiss(BINARY_NOTIF_ID);
           } else {
             notifs.upsert({
@@ -334,12 +352,12 @@ export function App() {
             });
           }
 
-          if (missing.length === 0 && failed.length === 0 && outdated.length === 0 && settingsVersion > 0) {
+          if (installed.length > 0 && missing.length === 0 && failed.length === 0 && outdated.length === 0 && settingsVersion > 0) {
             notifs.push({ kind: "success", title: "CLI settings verified" });
           }
         })
         .catch((err) => {
-          if (!active) return;
+          if (!isLatest()) return;
           const notifs = useNotifs.getState();
           notifs.upsert({
             id: BINARY_NOTIF_ID,

@@ -28,6 +28,7 @@ import { useGitHubStore } from "../stores/githubStore.js";
 import { usePrStore, type RunModalState } from "../stores/prStore.js";
 import { resolveTemplate } from "./prWorkflows.js";
 import { harnessLabel } from "./toolTabs.js";
+import { pickableHarnesses } from "./harnessAvailability.js";
 import { getRecentModels } from "./lastModel.js";
 import { pickInitialModel } from "./modelMenus.js";
 import { workflowIcon } from "./workflowIcons.js";
@@ -62,8 +63,6 @@ import {
 
 const READ_ONLY_NOTICE =
   "cw-code only reads from GitHub. Anything the session commits, pushes, or posts goes through the CLI's own permissions.";
-
-const HARNESSES: DriverName[] = ["claude", "opencode", "codex"];
 
 const ORIGIN_LABEL: Record<PrLinkOrigin, string> = {
   opened: "opened here",
@@ -161,6 +160,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
   const busyTurns = useAppStore((s) => s.busyTurns);
   const homeDir = useAppStore((s) => s.homeDir);
   const settingsVersion = useAppStore((s) => s.settingsVersion);
+  const harnesses = pickableHarnesses(useAppStore((s) => s.installedHarnesses));
 
   const { settings, error: settingsError } = usePrSettings();
   const [reposReady, setReposReady] = useState(false);
@@ -613,20 +613,22 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
                 </div>
               ) : (
                 <div className="wf-run-pickers">
-                  <MenuSelect
-                    label="Harness"
-                    direction="down"
-                    value={driver}
-                    display={harnessLabel(driver)}
-                    icon={<DriverIcon driver={driver} size={14} />}
-                    options={HARNESSES.map((id) => ({
-                      id,
-                      label: harnessLabel(id),
-                      icon: <DriverIcon driver={id} size={13} />,
-                      disabled: working
-                    }))}
-                    onPick={(id) => setDriver(id as DriverName)}
-                  />
+                  {harnesses.length > 1 && (
+                    <MenuSelect
+                      label="Harness"
+                      direction="down"
+                      value={driver}
+                      display={harnessLabel(driver)}
+                      icon={<DriverIcon driver={driver} size={14} />}
+                      options={harnesses.map((id) => ({
+                        id,
+                        label: harnessLabel(id),
+                        icon: <DriverIcon driver={id} size={13} />,
+                        disabled: working
+                      }))}
+                      onPick={(id) => setDriver(id as DriverName)}
+                    />
+                  )}
                   <MenuSelect
                     label="Model"
                     direction="down"

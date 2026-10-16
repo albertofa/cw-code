@@ -1,5 +1,6 @@
 import { execCliFile } from "./cli/spawnCli.js";
 import { traceHarnessCall } from "./debug/harnessTrace.js";
+import { isDefaultCliBinaryPath } from "./settings/settingsUtils.js";
 
 export const MINIMUM_VERSIONS = {
   claude: "2.1.260",
@@ -12,6 +13,8 @@ export interface CliVersionCheck {
   binaryPath: string;
   minimum: string;
   actual: string | null;
+  configured: boolean;
+  found: boolean;
   available: boolean;
   error: string | null;
   ok: boolean;
@@ -35,13 +38,16 @@ export function isBinaryUnavailableError(error: { code?: string | number | null 
   return error.code === "ENOENT" || error.code === "EACCES" || error.code === "EINVAL" || error.code === "EPERM";
 }
 
-async function queryVersion(binaryPath: string): Promise<{ actual: string | null; available: boolean; error: string | null }> {
-  const fail = (error: unknown): { actual: string | null; available: boolean; error: string | null } => {
+type VersionProbe = Pick<CliVersionCheck, "actual" | "found" | "available" | "error">;
+
+async function queryVersion(binaryPath: string): Promise<VersionProbe> {
+  const fail = (error: unknown): VersionProbe => {
     const code = typeof error === "object" && error !== null && "code" in error
       ? (error as { code?: string | number | null }).code
       : undefined;
     return {
       actual: null,
+      found: code !== "ENOENT",
       available: !isBinaryUnavailableError({ code }),
       error: error instanceof Error ? error.message : String(error)
     };
@@ -49,7 +55,7 @@ async function queryVersion(binaryPath: string): Promise<{ actual: string | null
   try {
     const { stdout } = await execCliFile(binaryPath, ["--version"], { timeout: 15000 });
     const match = stdout.match(/(\d+\.\d+\.\d+)/);
-    return { actual: match ? match[1] : stdout.trim().slice(0, 32), available: true, error: null };
+    return { actual: match ? match[1] : stdout.trim().slice(0, 32), found: true, available: true, error: null };
   } catch (error) {
     return fail(error);
   }
@@ -76,7 +82,7 @@ export async function checkCliVersion(
   binaryPath: string
 ): Promise<CliVersionCheck> {
   const start = Date.now();
-  const { actual, available, error } = await queryVersion(binaryPath);
+  const { actual, found, available, error } = await queryVersion(binaryPath);
   const minimum = MINIMUM_VERSIONS[binary];
   const ok = meetsMinimum(actual, minimum);
   traceHarnessCall({
@@ -88,5 +94,5 @@ export async function checkCliVersion(
     ok,
     extra: { actual, minimum }
   });
-  return { binary, binaryPath, minimum, actual, available, error, ok };
+  return { binary, binaryPath, minimum, actual, configured: !isDefaultCliBinaryPath(binary, binaryPath), found, available, error, ok };
 }

@@ -246,6 +246,7 @@ describe("appStore pending model per harness", () => {
       activeProjectId: "proj_1",
       pendingDriver: "opencode",
       lastDriver: "opencode",
+      installedHarnesses: null,
       pendingPrefs: { ...DEFAULT_COMPOSER }
     });
   });
@@ -277,6 +278,18 @@ describe("appStore pending model per harness", () => {
     expect(useAppStore.getState().pendingDriver).toBe("opencode");
     expect(useAppStore.getState().pendingPrefs.model).toBeUndefined();
     expect(getLastModel("claude")).toBe("sonnet");
+  });
+
+  it("opens a new session on an installed harness when the requested one is not installed", () => {
+    useAppStore.setState({ installedHarnesses: ["claude"] });
+    useAppStore.getState().startNewSession("codex");
+    expect(useAppStore.getState().pendingDriver).toBe("claude");
+  });
+
+  it("moves the pending harness when availability drops it", () => {
+    useAppStore.getState().setInstalledHarnesses(["claude", "codex"]);
+    expect(useAppStore.getState().pendingDriver).toBe("claude");
+    expect(useAppStore.getState().lastDriver).toBe("claude");
   });
 });
 
