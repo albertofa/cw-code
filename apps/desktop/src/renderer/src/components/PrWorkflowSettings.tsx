@@ -561,6 +561,9 @@ function WorkflowHarnessFields({ workflow, onChange }: { workflow: PrWorkflow; o
   const efforts = effortOptionsFor(driver, driverModels, effectiveModel);
   const permissionList = permissions.list && permissions.list.length > 0 ? permissions.list : null;
   const permissionsLoading = permissions.list === null;
+  const effortUnsupported = config.effort !== null && !efforts.some((e) => e.id === config.effort);
+  const permissionUnsupported = config.permissionMode !== null && permissionList !== null && !permissionList.some((p) => p.id === config.permissionMode);
+  const unsupported = (label: string) => `${label} (unsupported, falls back)`;
   const savedModelMissing = config.model !== "" && models.list !== null && !modelList.some((m) => m.id === config.model);
   const setHarness = (patch: Partial<PrWorkflowHarness>) => onChange({ harness: { ...config, ...patch } });
   const status = models.error
@@ -632,13 +635,13 @@ function WorkflowHarnessFields({ workflow, onChange }: { workflow: PrWorkflow; o
             label="Workflow effort"
             direction="down"
             value={config.effort ?? ""}
-            display={config.effort ? effortLabel(config.effort) : "Composer default"}
+            display={config.effort ? (effortUnsupported ? unsupported(effortLabel(config.effort)) : effortLabel(config.effort)) : "Composer default"}
             icon={<Gauge size={13} aria-hidden="true" />}
             options={[
               { id: "", label: "Composer default", hint: "Composer default" },
               ...efforts.map((e) => ({ id: e.id, label: e.label, hint: e.label })),
-              ...(config.effort && !efforts.some((e) => e.id === config.effort)
-                ? [{ id: config.effort, label: `${effortLabel(config.effort)} (unsupported, falls back)`, hint: config.effort }]
+              ...(config.effort && effortUnsupported
+                ? [{ id: config.effort, label: unsupported(effortLabel(config.effort)), hint: config.effort }]
                 : [])
             ]}
             onPick={(id) => setHarness({ effort: EFFORTS.find((e) => e.id === id)?.id ?? null })}
@@ -650,7 +653,13 @@ function WorkflowHarnessFields({ workflow, onChange }: { workflow: PrWorkflow; o
             label="Workflow permissions"
             direction="down"
             value={config.permissionMode ?? ""}
-            display={config.permissionMode ? (permissionList?.find((p) => p.id === config.permissionMode)?.label ?? PERMISSION_LABELS[config.permissionMode]) : "Composer default"}
+            display={
+              config.permissionMode
+                ? permissionUnsupported
+                  ? unsupported(PERMISSION_LABELS[config.permissionMode])
+                  : (permissionList?.find((p) => p.id === config.permissionMode)?.label ?? PERMISSION_LABELS[config.permissionMode])
+                : "Composer default"
+            }
             icon={<ShieldCheck size={13} aria-hidden="true" />}
             options={[
               { id: "", label: "Composer default", hint: "Composer default" },
@@ -661,8 +670,8 @@ function WorkflowHarnessFields({ workflow, onChange }: { workflow: PrWorkflow; o
                 description: permissionsLoading ? "Checking what this harness supports…" : p.description || undefined,
                 disabled: permissionsLoading
               })),
-              ...(config.permissionMode && permissionList && !permissionList.some((p) => p.id === config.permissionMode)
-                ? [{ id: config.permissionMode, label: `${PERMISSION_LABELS[config.permissionMode]} (unsupported, falls back)`, hint: config.permissionMode }]
+              ...(config.permissionMode && permissionUnsupported
+                ? [{ id: config.permissionMode, label: unsupported(PERMISSION_LABELS[config.permissionMode]), hint: config.permissionMode }]
                 : [])
             ]}
             onPick={(id) => setHarness({ permissionMode: PERMISSION_MODES.find((m) => m === id) ?? null })}
