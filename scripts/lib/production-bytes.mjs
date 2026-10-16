@@ -2,11 +2,9 @@ import { spawn, spawnSync } from "node:child_process";
 import { existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { setTimeout as sleep } from "node:timers/promises";
 import { validateReleaseFeed } from "../../tools/release/src/feedManifest.ts";
 import { startFeedServer, summarizeTransfers } from "../../tools/release/src/feedServer.ts";
-import { formatScalar, readPublisherNames } from "../../tools/release/src/updateInfoYaml.ts";
-import { parseAppUpdateYaml } from "./upgrade-builds.mjs";
+import { RENDERER_DRIVER, devToolsPage, evaluateInPage, rewriteAppUpdateForLoopback, waitFor } from "./renderer-driver.mjs";
 import { assertDataPreservedSemantically, cleanupSeededFixtures, createSeedPlan, cwCodeHomeDir, seedRealUserData } from "./real-user-data.mjs";
 import {
   cleanupInstallation,
@@ -24,89 +22,13 @@ const PRODUCTION_APP_ID = "com.cwcode.app";
 const PRODUCTION_PRODUCT_NAME = "cw-code";
 const PRODUCTION_EXECUTABLE = "cw-code.exe";
 const PRODUCTION_UNINSTALLER = "Uninstall cw-code.exe";
-const DEVTOOLS_TIMEOUT_MS = 90_000;
 const DRIVE_TIMEOUT_MS = 15 * 60_000;
 const RELAUNCH_TIMEOUT_MS = 6 * 60_000;
 const CLOSE_TIMEOUT_MS = 30_000;
-const POLL_MS = 1_000;
-
-const RENDERER_DRIVER = `(async () => {
-  const steps = [];
-  const cw = window.cw;
-  if (!cw || !cw.updates || !cw.shutdown) return { steps, error: "window.cw bridge is not available" };
-  const summary = (result) => ({ ok: result.ok, code: result.code ?? null, message: result.message ?? null, phase: result.state.phase, availableVersion: result.state.availableVersion, downloadedVersion: result.state.downloadedVersion, error: result.state.error });
-  const check = await cw.updates.check();
-  steps.push({ step: "check", ...summary(check) });
-  if (check.state.phase !== "available" && check.state.phase !== "ready") return { steps };
-  const download = await cw.updates.download();
-  steps.push({ step: "download", ...summary(download) });
-  const state = await cw.updates.getState();
-  if (state.phase !== "ready" || !state.downloadedVersion) return { steps };
-  const prepared = await cw.shutdown.prepare({ reason: "update", stopActiveTurns: true, timeoutMs: 15000 });
-  steps.push({ step: "prepare", ok: prepared.ok, code: prepared.code ?? null });
-  if (!prepared.ok) return { steps };
-  void cw.updates.install({ version: state.downloadedVersion, channel: state.channel, token: prepared.token });
-  steps.push({ step: "install-requested", version: state.downloadedVersion, channel: state.channel });
-  return { steps };
-})()`;
 
 function productionIdentity(cacheDirName) {
   const localAppData = process.env.LOCALAPPDATA ?? join(homedir(), "AppData", "Local");
   return { cacheDir: join(localAppData, cacheDirName) };
-}
-
-export function rewriteAppUpdateForLoopback(original, feedUrl) {
-  const parsed = parseAppUpdateYaml(original);
-  const publisherNames = readPublisherNames(original);
-  const lines = ["provider: generic", `url: ${feedUrl}`];
-  if (parsed.updaterCacheDirName) lines.push(`updaterCacheDirName: ${formatScalar(parsed.updaterCacheDirName)}`);
-  if (publisherNames.length > 0) lines.push("publisherName:", ...publisherNames.map((name) => `  - ${formatScalar(name)}`));
-  return { text: `${lines.join("\n")}\n`, publisherNames, cacheDirName: parsed.updaterCacheDirName ?? null, originalProvider: parsed.provider ?? null };
-}
-
-async function devToolsPage(port) {
-  const deadline = Date.now() + DEVTOOLS_TIMEOUT_MS;
-  while (Date.now() < deadline) {
-    try {
-      const response = await fetch(`http://127.0.0.1:${port}/json/list`);
-      const targets = await response.json();
-      const page = targets.find((target) => target.type === "page" && String(target.url).startsWith("file:"));
-      if (page?.webSocketDebuggerUrl) return page.webSocketDebuggerUrl;
-    } catch {
-      await sleep(POLL_MS);
-      continue;
-    }
-    await sleep(POLL_MS);
-  }
-  throw new Error(`the production app did not expose its renderer on DevTools port ${port} within ${DEVTOOLS_TIMEOUT_MS / 1000}s`);
-}
-
-function evaluateInPage(webSocketUrl, expression, timeoutMs) {
-  return new Promise((resolvePromise, rejectPromise) => {
-    const socket = new WebSocket(webSocketUrl);
-    const timer = setTimeout(() => {
-      socket.close();
-      rejectPromise(new Error(`renderer evaluation did not finish within ${timeoutMs / 1000}s`));
-    }, timeoutMs);
-    socket.addEventListener("open", () => {
-      socket.send(JSON.stringify({ id: 1, method: "Runtime.evaluate", params: { expression, awaitPromise: true, returnByValue: true } }));
-    });
-    socket.addEventListener("message", (message) => {
-      const payload = JSON.parse(String(message.data));
-      if (payload.id !== 1) return;
-      clearTimeout(timer);
-      socket.close();
-      if (payload.error || payload.result?.exceptionDetails) {
-        rejectPromise(new Error(JSON.stringify(payload.error ?? payload.result.exceptionDetails).slice(0, 500)));
-        return;
-      }
-      resolvePromise(payload.result.result.value);
-    });
-    socket.addEventListener("error", () => {
-      clearTimeout(timer);
-      rejectPromise(new Error("could not talk to the renderer over DevTools"));
-    });
-  });
 }
 
 function mainProcessOf(exePath) {
@@ -126,17 +48,6 @@ function authenticode(path) {
   } catch {
     return { status: "unknown", subject: null, error: result.stderr.trim() };
   }
-}
-
-
-async function waitFor(predicate, timeoutMs) {
-  const deadline = Date.now() + timeoutMs;
-  while (Date.now() < deadline) {
-    const value = predicate();
-    if (value) return value;
-    await sleep(POLL_MS);
-  }
-  return null;
 }
 
 export async function runProductionBytes(options) {

@@ -13,7 +13,7 @@ import {
   provenanceMismatches,
   validateSigningManifest
 } from "./signingManifest.ts";
-import { normalizeReleaseNotes, parseSingleInstallerUpdateInfo, parseUpdateInfo, readReleaseText, withReleaseText } from "./updateInfoYaml.ts";
+import { type UpdateInfo, normalizeReleaseNotes, parseSingleInstallerUpdateInfo, parseUpdateInfo, readReleaseText, withReleaseText } from "./updateInfoYaml.ts";
 
 export const SIGNING_MANIFEST_NAME = "signing.json";
 export const STABLE_FEED_NAME = "latest.yml";
@@ -85,7 +85,7 @@ function message(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-async function describeFile(dir: string, name: string): Promise<ReleaseAssetFile> {
+export async function describeFile(dir: string, name: string): Promise<ReleaseAssetFile> {
   const path = join(dir, name);
   const [info, sha512] = await Promise.all([stat(path), sha512Base64(path)]);
   return { name, size: info.size, sha512 };
@@ -127,11 +127,19 @@ function linuxFeedErrors(text: string, plan: ReleasePlan, appImage: ReleaseAsset
     return [`${feedName}: ${message(error)}`];
   }
   const errors: string[] = [];
-  const expected = [
-    { name: appImageNameFor(plan.version), bytes: appImage },
-    { name: debNameFor(plan.version), bytes: deb }
-  ];
   if (info.version !== plan.version) errors.push(`${feedName} version ${info.version} differs from the plan version ${plan.version}`);
+  errors.push(...linuxFeedFileErrors(info, plan.version, appImage, deb));
+  errors.push(...releaseTextErrors(feedName, text, plan));
+  return errors;
+}
+
+export function linuxFeedFileErrors(info: UpdateInfo, version: string, appImage: ReleaseAssetFile | undefined, deb: ReleaseAssetFile | undefined): string[] {
+  const feedName = LINUX_STABLE_FEED_NAME;
+  const errors: string[] = [];
+  const expected = [
+    { name: appImageNameFor(version), bytes: appImage },
+    { name: debNameFor(version), bytes: deb }
+  ];
   if (info.path !== expected[0].name) errors.push(`${feedName} path ${info.path} must be ${expected[0].name}`);
   if (info.files.length !== expected.length || info.files.some((file, index) => file.url !== expected[index].name)) {
     errors.push(`${feedName} files must be exactly ${expected.map((entry) => entry.name).join(", ")}, got ${info.files.map((file) => file.url).join(", ")}`);
@@ -144,7 +152,6 @@ function linuxFeedErrors(text: string, plan: ReleasePlan, appImage: ReleaseAsset
     });
   }
   if (appImage && info.sha512 !== appImage.sha512) errors.push(`${feedName} top-level sha512 does not match the AppImage bytes`);
-  errors.push(...releaseTextErrors(feedName, text, plan));
   return errors;
 }
 

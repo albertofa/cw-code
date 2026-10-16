@@ -13,6 +13,7 @@ export function cwCodeHomeDir() {
 }
 
 export function electronUserDataDir() {
+  if (process.platform === "linux") return join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "@cw-code", "desktop");
   return join(process.env.APPDATA ?? join(homedir(), "AppData", "Roaming"), "@cw-code", "desktop");
 }
 
