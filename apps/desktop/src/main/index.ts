@@ -1322,7 +1322,6 @@ async function startApp(): Promise<void> {
 }
 
 if (process.platform === "linux") {
-  (app as typeof app & { setDesktopName?: (desktopName: string) => void }).setDesktopName?.("cw-code.desktop");
   app.commandLine.appendSwitch("class", "cw-code");
 }
 

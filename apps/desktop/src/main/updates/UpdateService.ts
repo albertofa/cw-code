@@ -9,6 +9,7 @@ import type {
   UpdateProgress,
   UpdateState
 } from "@cw-code/contracts";
+import { isInsideAppDir } from "../appImage.js";
 import type { UpdaterAdapter, UpdaterCheckOutcome, UpdaterDownloadedInfo, UpdaterDownloadHandle } from "./ElectronUpdaterAdapter.js";
 import { describeUpdateError, formatLogValue, isMissingReleaseError, redactUpdateText, updateErrorCode, type UpdateLogSink } from "./updateLog.js";
 import {
@@ -152,9 +153,7 @@ function isDebPackage(environment: UpdateEnvironment, files: UpdateFileChecks): 
 
 function runsFromOwnAppImage(environment: UpdateEnvironment): boolean {
   if (!environment.appImagePath || !environment.appDir) return false;
-  const flavor = pathFlavor(environment.platform);
-  const relative = flavor.relative(environment.appDir, environment.execPath);
-  return relative !== "" && !relative.startsWith("..") && !flavor.isAbsolute(relative);
+  return isInsideAppDir(environment.appDir, environment.execPath, pathFlavor(environment.platform));
 }
 
 export function detectUpdaterKind(environment: UpdateEnvironment, files: UpdateFileChecks): UpdaterKind | null {

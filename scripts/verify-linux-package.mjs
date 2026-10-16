@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { join, resolve } from "node:path";
+import { sha512Base64 } from "../tools/release/src/rehash.ts";
 import { requireDisposableEnvironment } from "./lib/package-probe.mjs";
 import {
   DEB_INSTALL_DIR,
@@ -73,14 +74,19 @@ function requireLinuxHost() {
   if (missing.length > 0) throw new Error(`missing required commands: ${missing.join(", ")} (install the xvfb and xauth packages)`);
 }
 
-function checkArtifacts(distDir, version) {
+async function describeArtifact(path) {
+  const exists = existsSync(path);
+  return { path, exists, sizeBytes: fileSize(path), sha512: exists ? await sha512Base64(path) : null };
+}
+
+async function checkArtifacts(distDir, version) {
   const appImagePath = join(distDir, `cw-code-${version}-x86_64.AppImage`);
   const debPath = join(distDir, `cw-code-${version}-amd64.deb`);
   const latestPath = join(distDir, "latest-linux.yml");
   const latestText = existsSync(latestPath) ? readFileSync(latestPath, "utf8") : null;
   const artifacts = {
-    appImage: { path: appImagePath, exists: existsSync(appImagePath), sizeBytes: fileSize(appImagePath) },
-    deb: { path: debPath, exists: existsSync(debPath), sizeBytes: fileSize(debPath) },
+    appImage: await describeArtifact(appImagePath),
+    deb: await describeArtifact(debPath),
     latestLinuxYml: { path: latestPath, exists: latestText !== null, matchesVersion: latestText?.includes(`version: ${version}\n`) ?? false }
   };
   const problems = [];
@@ -179,7 +185,7 @@ async function verify(args, summary) {
   summary.apparmorRestrictUnprivilegedUserns = readUsernsRestriction();
   summary.unprivilegedUsernsUsable = unprivilegedUsernsUsable();
 
-  const { artifacts, problems } = checkArtifacts(args.dist, version);
+  const { artifacts, problems } = await checkArtifacts(args.dist, version);
   summary.artifacts = artifacts;
   summary.problems.push(...problems);
 

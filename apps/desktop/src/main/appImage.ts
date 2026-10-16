@@ -1,8 +1,13 @@
-import { posix } from "node:path";
+import { type PlatformPath, posix } from "node:path";
 
 export interface AppImageRelaunch {
   execPath: string;
   args: string[];
+}
+
+export function isInsideAppDir(appDir: string, execPath: string, flavor: PlatformPath = posix): boolean {
+  const rel = flavor.relative(flavor.resolve(appDir), flavor.resolve(execPath));
+  return rel !== "" && rel !== ".." && !rel.startsWith(`..${flavor.sep}`) && !flavor.isAbsolute(rel);
 }
 
 export function resolveAppImageRelaunch(
@@ -13,7 +18,6 @@ export function resolveAppImageRelaunch(
   const appImage = env["APPIMAGE"];
   const appDir = env["APPDIR"];
   if (!appImage || !appDir) return null;
-  const rel = posix.relative(posix.resolve(appDir), posix.resolve(execPath));
-  if (rel === "" || rel === ".." || rel.startsWith("../") || posix.isAbsolute(rel)) return null;
+  if (!isInsideAppDir(appDir, execPath)) return null;
   return { execPath: appImage, args: argv.slice(1) };
 }

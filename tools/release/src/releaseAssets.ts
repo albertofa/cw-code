@@ -13,7 +13,7 @@ import {
   provenanceMismatches,
   validateSigningManifest
 } from "./signingManifest.ts";
-import { type UpdateInfo, normalizeReleaseNotes, parseSingleInstallerUpdateInfo, parseUpdateInfo, readReleaseText, withReleaseText } from "./updateInfoYaml.ts";
+import { type UpdateInfo, normalizeReleaseNotes, parseSingleInstallerUpdateInfo, parseUpdateInfo, readReleaseText, withFilesOrder, withReleaseText } from "./updateInfoYaml.ts";
 
 export const SIGNING_MANIFEST_NAME = "signing.json";
 export const STABLE_FEED_NAME = "latest.yml";
@@ -312,7 +312,7 @@ interface StagedFeed {
   text: string;
 }
 
-async function stagedFeed(dir: string, stableName: string, copyName: string, plan: ReleasePlan): Promise<StagedFeed> {
+async function stagedFeed(dir: string, stableName: string, copyName: string, plan: ReleasePlan, prepare: (text: string) => string = (text) => text): Promise<StagedFeed> {
   const stablePath = join(dir, stableName);
   if (!(await exists(stablePath))) throw new Error(`${stableName} is missing from ${dir}`);
   const stable = await readFile(stablePath);
@@ -320,7 +320,7 @@ async function stagedFeed(dir: string, stableName: string, copyName: string, pla
   if ((await exists(copyPath)) && !stable.equals(await readFile(copyPath))) {
     throw new Error(`${copyName} in ${dir} differs from ${stableName}; the channel files must describe the same installer`);
   }
-  return { stableName, text: withReleaseText(stable.toString("utf8"), { releaseName: plan.tag, releaseNotes: plan.notes }) };
+  return { stableName, text: withReleaseText(prepare(stable.toString("utf8")), { releaseName: plan.tag, releaseNotes: plan.notes }) };
 }
 
 export async function stageReleaseSet(from: string, to: string, plan: unknown, linuxFrom: string): Promise<string[]> {
@@ -331,7 +331,9 @@ export async function stageReleaseSet(from: string, to: string, plan: unknown, l
   }
   const { plan: validPlan } = shape;
   const windowsFeed = await stagedFeed(from, STABLE_FEED_NAME, ALPHA_FEED_NAME, validPlan);
-  const linuxFeed = await stagedFeed(linuxFrom, LINUX_STABLE_FEED_NAME, LINUX_ALPHA_FEED_NAME, validPlan);
+  const linuxFeed = await stagedFeed(linuxFrom, LINUX_STABLE_FEED_NAME, LINUX_ALPHA_FEED_NAME, validPlan, (text) =>
+    withFilesOrder(text, [appImageNameFor(validPlan.version), debNameFor(validPlan.version)])
+  );
   const feeds = new Map([
     [STABLE_FEED_NAME, windowsFeed],
     [ALPHA_FEED_NAME, windowsFeed],

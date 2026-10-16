@@ -142,6 +142,26 @@ describe("validateReleaseAssets", () => {
     expect(report.assets[0]).toEqual({ name: INSTALLER, size: installer.length, sha512: digest(installer) });
   });
 
+  it("accepts a set staged from a deb-first Linux feed", async () => {
+    const linuxDir = join(root, "linux-build");
+    const windowsDir = join(root, "windows-build");
+    const staged = join(root, "staged");
+    await mkdir(linuxDir);
+    await mkdir(windowsDir);
+    await writeFile(join(linuxDir, APPIMAGE), appImage);
+    await writeFile(join(linuxDir, DEB), deb);
+    const entry = (url: string, bytes: Buffer): string => `  - url: ${url}\n    sha512: ${digest(bytes)}\n    size: ${bytes.length}`;
+    await writeFile(
+      join(linuxDir, "latest-linux.yml"),
+      `version: ${VERSION}\nfiles:\n${entry(DEB, deb)}\n${entry(APPIMAGE, appImage)}\npath: ${DEB}\nsha512: ${digest(deb)}\nreleaseDate: '2026-09-25T06:00:00.000Z'\n`
+    );
+    for (const name of [INSTALLER, `${INSTALLER}.blockmap`, "signing.json", "latest.yml"]) {
+      await writeFile(join(windowsDir, name), await readFile(join(dir, name)));
+    }
+    await stageReleaseSet(windowsDir, staged, PLAN, linuxDir);
+    expect((await validate({ dir: staged })).errors).toEqual([]);
+  });
+
   it("orders uploads so the channel's own feed file comes last", () => {
     expect(publishableAssetNames(PLAN)).toEqual([
       INSTALLER,
@@ -314,9 +334,10 @@ describe("stageReleaseSet", () => {
     }
     const linuxFrom = join(root, "linux");
     await mkdir(linuxFrom, { recursive: true });
-    for (const name of [APPIMAGE, DEB, "latest-linux.yml", "builder-debug.yml"]) {
+    for (const name of [APPIMAGE, DEB, "builder-debug.yml"]) {
       await writeFile(join(linuxFrom, name), name);
     }
+    await writeFile(join(linuxFrom, "latest-linux.yml"), bareLinuxFeed(VERSION, Buffer.from(APPIMAGE), Buffer.from(DEB)));
   });
 
   afterEach(async () => {
@@ -351,6 +372,44 @@ describe("stageReleaseSet", () => {
     expect(latest.toString("utf8").startsWith(bare)).toBe(true);
   });
 
+  it("stages a deb-first Linux feed in canonical order with the AppImage as the top-level file and keeps the other fields", async () => {
+    const appImageBytes = randomBytes(2048);
+    const debBytes = randomBytes(1024);
+    await writeFile(join(root, "linux", APPIMAGE), appImageBytes);
+    await writeFile(join(root, "linux", DEB), debBytes);
+    const debFirst = [
+      `version: ${VERSION}`,
+      "files:",
+      `  - url: ${DEB}`,
+      `    sha512: ${digest(debBytes)}`,
+      `    size: ${debBytes.length}`,
+      `  - url: ${APPIMAGE}`,
+      `    sha512: ${digest(appImageBytes)}`,
+      `    size: ${appImageBytes.length}`,
+      "    blockMapSize: 99",
+      `path: ${DEB}`,
+      `sha512: ${digest(debBytes)}`,
+      "releaseDate: '2026-09-25T06:00:00.000Z'",
+      ""
+    ].join("\n");
+    await writeFile(join(root, "linux", "latest-linux.yml"), debFirst);
+    await writeFile(join(root, "from", "latest.yml"), feed(VERSION, digest(Buffer.from(INSTALLER)), INSTALLER.length));
+    await stage();
+
+    const staged = await readFile(join(root, "to", "latest-linux.yml"), "utf8");
+    expect(staged.startsWith(bareLinuxFeed(VERSION, appImageBytes, debBytes))).toBe(true);
+    expect(await readFile(join(root, "to", "alpha-linux.yml"), "utf8")).toBe(staged);
+  });
+
+  it("refuses a Linux feed that misses the AppImage or the deb or lists an extra file", async () => {
+    const withEntries = (urls: string[]): string =>
+      `version: ${VERSION}\nfiles:\n${urls.map((url) => `  - url: ${url}\n    sha512: x\n    size: 1`).join("\n")}\npath: ${urls[0]}\nsha512: x\n`;
+    for (const urls of [[APPIMAGE], [DEB], [DEB, APPIMAGE, "other.zip"], [APPIMAGE, APPIMAGE]]) {
+      await writeFile(join(root, "linux", "latest-linux.yml"), withEntries(urls));
+      await expect(stage(`bad-${urls.length}-${urls[0]}`)).rejects.toThrow(/files must be exactly/);
+    }
+  });
+
   it("accepts an identical alpha.yml, refuses a different one, a non-empty target or a missing input", async () => {
     await writeFile(join(root, "from", "alpha.yml"), "own alpha");
     await expect(stage()).rejects.toThrow(/alpha.yml .* differs from latest.yml/);
@@ -364,7 +423,7 @@ describe("stageReleaseSet", () => {
   it("accepts an identical alpha-linux.yml, refuses a different one, a missing Linux feed or a missing Linux asset", async () => {
     await writeFile(join(root, "linux", "alpha-linux.yml"), "own alpha");
     await expect(stage()).rejects.toThrow(/alpha-linux.yml .* differs from latest-linux.yml/);
-    await writeFile(join(root, "linux", "alpha-linux.yml"), "latest-linux.yml");
+    await writeFile(join(root, "linux", "alpha-linux.yml"), await readFile(join(root, "linux", "latest-linux.yml")));
     await stage();
     await rm(join(root, "linux", DEB));
     await expect(stage("fresh")).rejects.toThrow(/amd64.deb is missing/);

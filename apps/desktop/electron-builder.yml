@@ -61,6 +61,8 @@ nsis:
   differentialPackage: true
   artifactName: "${productName}-Setup-${version}-${arch}.${ext}"
 linux:
+  files:
+    - "!node_modules/node-pty/prebuilds/win32-x64/**"
   executableName: cw-code
   category: Development
   icon: resources/icons
