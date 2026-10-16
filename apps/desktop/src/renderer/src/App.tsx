@@ -284,11 +284,14 @@ export function App() {
   useEffect(() => {
     if (!window.cw) return;
     let active = true;
+    let latestRun = 0;
     const recheckVersions = () => {
+      const run = ++latestRun;
+      const isLatest = () => active && run === latestRun;
       window.cw
         .checkVersions()
         .then((checks) => {
-          if (!active) return;
+          if (!isLatest()) return;
           const installed = installedHarnesses(checks);
           useAppStore.getState().setInstalledHarnesses(installed);
           const missing = checks.filter((c) => !c.available && !isHarnessSkipped(c));
@@ -354,7 +357,7 @@ export function App() {
           }
         })
         .catch((err) => {
-          if (!active) return;
+          if (!isLatest()) return;
           const notifs = useNotifs.getState();
           notifs.upsert({
             id: BINARY_NOTIF_ID,
