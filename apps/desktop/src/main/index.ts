@@ -360,12 +360,6 @@ function endOfSession(): void {
   disposeServices();
 }
 
-function quitFromSignal(): void {
-  if (isQuitApproved()) return;
-  endOfSession();
-  app.quit();
-}
-
 async function commitShutdown(token: string, action: () => Promise<void> | void): Promise<ShutdownCommitResult> {
   if (!services) return { ok: false, message: "cw-code services are not running" };
   const result = await services.shutdown.commit(token, action);
@@ -1311,9 +1305,8 @@ async function startApp(): Promise<void> {
   }
   registerWindowIpc();
   registerStartupIpc();
-  const onSignal = process.platform === "win32" ? quitWithoutDialog : quitFromSignal;
-  process.on("SIGINT", onSignal);
-  process.on("SIGTERM", onSignal);
+  process.once("SIGINT", quitWithoutDialog);
+  process.once("SIGTERM", quitWithoutDialog);
   powerMonitor.on("shutdown", endOfSession);
   app.on("child-process-gone", (_e, details) => {
     appendCrashLog(
