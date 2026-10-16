@@ -39,6 +39,9 @@ generateUpdatesFilesForAllChannels: true
 extraResources:
   - from: resources
     to: branding
+    filter:
+      - "**/*"
+      - "!icons/**"
 win:
   icon: resources/icon.ico
   executableName: cw-code
