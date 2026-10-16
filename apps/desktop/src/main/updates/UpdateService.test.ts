@@ -147,7 +147,8 @@ const INSTALLED: UpdateEnvironment = {
   resourcesPath: "C:\\Programs\\cw-code\\resources",
   execPath: "C:\\Programs\\cw-code\\cw-code.exe",
   platform: "win32",
-  appImagePath: null
+  appImagePath: null,
+  appDir: null
 };
 
 const LINUX: UpdateEnvironment = {
@@ -155,7 +156,16 @@ const LINUX: UpdateEnvironment = {
   resourcesPath: "/opt/cw-code/resources",
   execPath: "/opt/cw-code/cw-code",
   platform: "linux",
-  appImagePath: null
+  appImagePath: null,
+  appDir: null
+};
+
+const APPIMAGE: UpdateEnvironment = {
+  ...LINUX,
+  resourcesPath: "/tmp/.mount_cw123/resources",
+  execPath: "/tmp/.mount_cw123/cw-code",
+  appImagePath: "/home/jane/cw-code.AppImage",
+  appDir: "/tmp/.mount_cw123"
 };
 
 const HOME = "C:\\Users\\Jane";
@@ -242,7 +252,7 @@ describe("detectDisabledReason", () => {
 
   it("enables an AppImage run and a deb install on Linux, and explains an unpacked copy", () => {
     const files = { ...installedFiles, listDirectory: () => [] };
-    expect(detectDisabledReason({ ...LINUX, appImagePath: "/home/jane/cw-code.AppImage" }, files)).toBeNull();
+    expect(detectDisabledReason(APPIMAGE, files)).toBeNull();
     expect(detectDisabledReason(LINUX, { ...files, readText: () => "deb\n" })).toBeNull();
     expect(detectDisabledReason(LINUX, files)).toBe(DISABLED_WITHOUT_LINUX_PACKAGE);
     expect(detectDisabledReason(LINUX, { ...files, readText: () => "rpm" })).toBe(DISABLED_WITHOUT_LINUX_PACKAGE);
@@ -281,9 +291,20 @@ describe("detectUpdaterKind", () => {
     expect(detectUpdaterKind(INSTALLED, files)).toBeNull();
   });
 
-  it("picks appimage when APPIMAGE is set, preferring it over a deb marker", () => {
-    expect(detectUpdaterKind({ ...LINUX, appImagePath: "/home/jane/cw-code.AppImage" }, files)).toBe("appimage");
-    expect(detectUpdaterKind({ ...LINUX, appImagePath: "/home/jane/cw-code.AppImage" }, { ...files, readText: () => "deb" })).toBe("appimage");
+  it("picks appimage when APPIMAGE is set and the executable runs inside APPDIR", () => {
+    expect(detectUpdaterKind(APPIMAGE, files)).toBe("appimage");
+  });
+
+  it("prefers the deb marker over an inherited APPIMAGE", () => {
+    expect(detectUpdaterKind(APPIMAGE, { ...files, readText: () => "deb" })).toBe("deb");
+  });
+
+  it("ignores an APPIMAGE inherited from a parent process", () => {
+    const inherited = { ...LINUX, appImagePath: "/home/jane/cw-code.AppImage", appDir: "/tmp/.mount_parent" };
+    expect(detectUpdaterKind(inherited, files)).toBeNull();
+    expect(detectUpdaterKind({ ...inherited, appDir: null }, files)).toBeNull();
+    expect(detectUpdaterKind({ ...inherited, appDir: "/opt/cw" }, files)).toBeNull();
+    expect(detectDisabledReason(inherited, files)).toBe(DISABLED_WITHOUT_LINUX_PACKAGE);
   });
 
   it("picks deb when the package-type file says deb and nothing else on Linux", () => {

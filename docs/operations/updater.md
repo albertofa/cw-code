@@ -238,7 +238,7 @@ Checked once at construction, in this order:
 | `!app.isPackaged` (dev, `electron-vite dev`) | Updates are disabled in development builds |
 | `process.resourcesPath/app-update.yml` missing | No update feed is configured for this build |
 | Windows: no `Uninstall *.exe` next to `process.execPath` (portable copy, `win-unpacked`) | This copy of cw-code was not installed with the Windows installer |
-| Linux: `APPIMAGE` unset and `process.resourcesPath/package-type` not `deb` after trim (unpacked build) | Updates on Linux need the AppImage or the .deb package |
+| Linux: `process.resourcesPath/package-type` not `deb` after trim, and `APPIMAGE` unset or `process.execPath` not inside `APPDIR` (unpacked build, or an `APPIMAGE` inherited from a parent AppImage) | Updates on Linux need the AppImage or the .deb package |
 | Any other platform | Updates are not supported on this platform |
 
 Any NSIS uninstaller name counts, so the update-test build
@@ -246,9 +246,11 @@ Any NSIS uninstaller name counts, so the update-test build
 directory counts as "not installed".
 
 `detectUpdaterKind` picks the updater class from the same inputs: `nsis` on
-Windows with an uninstaller, `appimage` on Linux when `APPIMAGE` is set, `deb`
-on Linux when `package-type` (written by electron-builder for deb packages)
-reads `deb`. The adapter builds `NsisUpdater`, `AppImageUpdater` or
+Windows with an uninstaller, `deb` on Linux when `package-type` (written by
+electron-builder for deb packages) reads `deb`, and otherwise `appimage` on
+Linux when `APPIMAGE` is set and `process.execPath` is inside `APPDIR`, so an
+`APPIMAGE` inherited from a parent AppImage never makes the updater replace an
+unrelated file. The adapter builds `NsisUpdater`, `AppImageUpdater` or
 `DebUpdater` for that kind; only `NsisUpdater` gets `disableWebInstaller`.
 
 Every action then returns code `disabled` with that message.

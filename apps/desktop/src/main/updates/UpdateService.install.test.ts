@@ -142,7 +142,7 @@ function setup(overrides: Partial<UpdateServiceOptions> = {}) {
   });
   const service = new UpdateService({
     runningVersion: "1.0.0",
-    environment: { isPackaged: true, resourcesPath: "C:\\cw\\resources", execPath: "C:\\cw\\cw-code.exe", platform: "win32", appImagePath: null },
+    environment: { isPackaged: true, resourcesPath: "C:\\cw\\resources", execPath: "C:\\cw\\cw-code.exe", platform: "win32", appImagePath: null, appDir: null },
     files: { fileExists: () => true, listDirectory: () => ["Uninstall cw-code.exe"], readText: () => null },
     createAdapter: () => adapter,
     logger: { info: () => {}, warn: () => {} },
@@ -417,7 +417,7 @@ describe("UpdateService.install", () => {
   });
 
   it("refuses to install in a disabled build", async () => {
-    const h = setup({ environment: { isPackaged: false, resourcesPath: "", execPath: "", platform: "win32", appImagePath: null } });
+    const h = setup({ environment: { isPackaged: false, resourcesPath: "", execPath: "", platform: "win32", appImagePath: null, appDir: null } });
     const token = await h.prepare();
     expect(await h.service.install({ version: "1.1.0", channel: "stable" }, h.sessionFor(token))).toMatchObject({
       ok: false,

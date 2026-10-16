@@ -192,7 +192,8 @@ function createUpdateService(settings: AppSettings): UpdateService {
       resourcesPath: process.resourcesPath,
       execPath: process.execPath,
       platform: process.platform,
-      appImagePath: process.env.APPIMAGE ?? null
+      appImagePath: process.env.APPIMAGE ?? null,
+      appDir: process.env.APPDIR ?? null
     },
     files: { fileExists: existsSync, listDirectory: (path) => readdirSync(path), readText: readTextOrNull },
     createAdapter: (kind) => new ElectronUpdaterAdapter({ kind, homeDir: homedir(), sink: logger }),

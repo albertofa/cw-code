@@ -57,6 +57,7 @@ export interface UpdateEnvironment {
   execPath: string;
   platform: NodeJS.Platform;
   appImagePath: string | null;
+  appDir: string | null;
 }
 
 export interface UpdateScheduler {
@@ -143,10 +144,17 @@ function pathFlavor(platform: NodeJS.Platform): typeof win32 {
 
 function isDebPackage(environment: UpdateEnvironment, files: UpdateFileChecks): boolean {
   try {
-    return files.readText(posix.join(environment.resourcesPath, PACKAGE_TYPE_FILE_NAME))?.trim() === "deb";
+    return files.readText(pathFlavor(environment.platform).join(environment.resourcesPath, PACKAGE_TYPE_FILE_NAME))?.trim() === "deb";
   } catch {
     return false;
   }
+}
+
+function runsFromOwnAppImage(environment: UpdateEnvironment): boolean {
+  if (!environment.appImagePath || !environment.appDir) return false;
+  const flavor = pathFlavor(environment.platform);
+  const relative = flavor.relative(environment.appDir, environment.execPath);
+  return relative !== "" && !relative.startsWith("..") && !flavor.isAbsolute(relative);
 }
 
 export function detectUpdaterKind(environment: UpdateEnvironment, files: UpdateFileChecks): UpdaterKind | null {
@@ -154,16 +162,16 @@ export function detectUpdaterKind(environment: UpdateEnvironment, files: UpdateF
     return hasUninstaller(files, win32.dirname(environment.execPath)) ? "nsis" : null;
   }
   if (environment.platform === "linux") {
-    if (environment.appImagePath) return "appimage";
-    return isDebPackage(environment, files) ? "deb" : null;
+    if (isDebPackage(environment, files)) return "deb";
+    return runsFromOwnAppImage(environment) ? "appimage" : null;
   }
   return null;
 }
 
-export function detectDisabledReason(environment: UpdateEnvironment, files: UpdateFileChecks): string | null {
+function disabledReasonFor(environment: UpdateEnvironment, files: UpdateFileChecks, kind: UpdaterKind | null): string | null {
   if (!environment.isPackaged) return DISABLED_IN_DEVELOPMENT;
   if (!files.fileExists(pathFlavor(environment.platform).join(environment.resourcesPath, UPDATE_CONFIG_FILE_NAME))) return DISABLED_WITHOUT_FEED;
-  if (detectUpdaterKind(environment, files)) return null;
+  if (kind) return null;
   switch (environment.platform) {
     case "win32":
       return DISABLED_WITHOUT_INSTALLER;
@@ -172,6 +180,10 @@ export function detectDisabledReason(environment: UpdateEnvironment, files: Upda
     default:
       return DISABLED_UNSUPPORTED_PLATFORM;
   }
+}
+
+export function detectDisabledReason(environment: UpdateEnvironment, files: UpdateFileChecks): string | null {
+  return disabledReasonFor(environment, files, detectUpdaterKind(environment, files));
 }
 
 export const timerScheduler: UpdateScheduler = {
@@ -184,6 +196,7 @@ export const timerScheduler: UpdateScheduler = {
 
 export class UpdateService {
   private state: UpdateState;
+  private readonly kind: UpdaterKind | null;
   private readonly listeners = new Set<(state: UpdateState) => void>();
   private readonly inflight = new Map<string, Promise<UpdateActionResult>>();
   private pendingChannel: { channel: UpdateChannel; promise: Promise<UpdateActionResult> } | null = null;
@@ -206,7 +219,9 @@ export class UpdateService {
     this.scheduler = options.scheduler ?? timerScheduler;
     this.now = options.now ?? Date.now;
     this.random = options.random ?? Math.random;
-    const disabledReason = detectDisabledReason(options.environment, options.files);
+    const detected = detectUpdaterKind(options.environment, options.files);
+    const disabledReason = disabledReasonFor(options.environment, options.files, detected);
+    this.kind = disabledReason ? null : detected;
     this.state = initialUpdateState({
       runningVersion: options.runningVersion,
       channel: options.channel ?? channelOfVersion(options.runningVersion),
@@ -528,9 +543,8 @@ export class UpdateService {
 
   private ensureAdapter(): UpdaterAdapter {
     if (this.adapter) return this.adapter;
-    const kind = detectUpdaterKind(this.options.environment, this.options.files);
-    if (!kind) throw new Error(this.state.disabledReason ?? DISABLED_UNSUPPORTED_PLATFORM);
-    const adapter = this.options.createAdapter(kind);
+    if (!this.kind) throw new Error(this.state.disabledReason ?? DISABLED_UNSUPPORTED_PLATFORM);
+    const adapter = this.options.createAdapter(this.kind);
     adapter.configure({ channel: this.state.channel });
     this.adapterDetachers = [
       adapter.onProgress((progress) => this.handleProgress(progress)),
