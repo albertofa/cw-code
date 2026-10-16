@@ -1236,8 +1236,10 @@ function startUpdateAutotest(pending: PendingUpdateAutotest | null): void {
   }
 }
 
+let loginShellEnvironment: Promise<string[]> = Promise.resolve([]);
+
 async function startApp(): Promise<void> {
-  await loadLoginShellEnvironment(process.platform);
+  const loginShellWarnings = await loginShellEnvironment;
   const updateAutotest = await prepareUpdateAutotest();
   ensureAppDirs();
   migrateFromUserData(app.getPath("userData"));
@@ -1254,6 +1256,10 @@ async function startApp(): Promise<void> {
     console.warn(`session status trace init failed: ${(err as Error).message}`);
   }
   initCrashLog(logsDir());
+  for (const warning of loginShellWarnings) {
+    console.warn(`[shell-env] ${warning}`);
+    appendCrashLog(`[shell-env] ${warning}`);
+  }
   process.on("uncaughtException", (err) => {
     appendCrashLog(`uncaughtException: ${err.stack ?? err.message}`);
   });
@@ -1316,6 +1322,9 @@ if (!app.requestSingleInstanceLock()) {
 } else {
   app.on("second-instance", focusMainWindow);
 
+  loginShellEnvironment = loadLoginShellEnvironment(process.platform).catch((err) => [
+    `login shell capture failed: ${(err as Error).message}`
+  ]);
   app.whenReady().then(startApp).catch(reportFatalStartupError);
 
   app.on("window-all-closed", () => {

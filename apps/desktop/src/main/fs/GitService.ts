@@ -793,7 +793,7 @@ const INHERITED_ENV_UNSAFE = {
   allowUnsafeConfigPaths: true,
   allowUnsafeConfigEnvCount: true
 } as const;
-const HOOKLESS_ARGS =["-c", `core.hooksPath=${join(tmpdir(), `cw-no-hooks-${randomUUID()}`)}`, "-c", "core.fsmonitor=false"];
+const HOOKLESS_ARGS = ["-c", `core.hooksPath=${join(tmpdir(), `cw-no-hooks-${randomUUID()}`)}`, "-c", "core.fsmonitor=false"];
 const SNAPSHOT_ADD_ARGS = [
   ...HOOKLESS_ARGS,
   "-c", "core.safecrlf=false",

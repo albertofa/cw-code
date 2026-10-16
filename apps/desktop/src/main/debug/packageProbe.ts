@@ -104,7 +104,13 @@ async function probeNodePty(): Promise<NodePtyProbeOutcome> {
   }
   try {
     const [file, args] = process.platform === "win32" ? ["cmd.exe", ["/c", "exit 0"]] : ["/bin/sh", ["-c", "exit 0"]];
-    const proc = pty.spawn(file, args, { name: "xterm-color", cols: 80, rows: 24, cwd: process.cwd(), env: sanitizedChildEnv(process.env, process.platform) });
+    const proc = pty.spawn(file, args, {
+      name: "xterm-color",
+      cols: 80,
+      rows: 24,
+      cwd: process.cwd(),
+      env: sanitizedChildEnv(process.env, process.platform)
+    });
     return await new Promise<NodePtyProbeOutcome>((resolvePromise) => {
       const timer = setTimeout(() => {
         proc.kill();

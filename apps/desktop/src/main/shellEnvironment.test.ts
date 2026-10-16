@@ -79,6 +79,26 @@ describe("mergeLoginEnv", () => {
     });
   });
 
+  it("copies proxy variables in both cases only when missing", () => {
+    const merged = mergeLoginEnv(
+      { https_proxy: "http://current:3128" },
+      {
+        HTTP_PROXY: "http://login:3128",
+        https_proxy: "http://login:3128",
+        NO_PROXY: "localhost",
+        no_proxy: "localhost",
+        ALL_PROXY: "socks5://login:1080"
+      }
+    );
+    expect(merged).toMatchObject({
+      HTTP_PROXY: "http://login:3128",
+      https_proxy: "http://current:3128",
+      NO_PROXY: "localhost",
+      no_proxy: "localhost",
+      ALL_PROXY: "socks5://login:1080"
+    });
+  });
+
   it("ignores other login variables and does not mutate the input", () => {
     const current = { PATH: "/usr/bin", HOME: "/home/me" };
     const merged = mergeLoginEnv(current, { PATH: "/a", HOME: "/other", EDITOR: "vim" });
@@ -112,12 +132,22 @@ describe("sanitizedChildEnv", () => {
   });
 
   it("does not treat sibling directories sharing the prefix as mount entries", () => {
-    const env = sanitizedChildEnv({ APPDIR: "/tmp/.mount_cw", PATH: "/tmp/.mount_cw2/bin:/tmp/.mount_cw/bin" }, "linux");
+    const env = sanitizedChildEnv(
+      { APPIMAGE: "/x.AppImage", APPDIR: "/tmp/.mount_cw", PATH: "/tmp/.mount_cw2/bin:/tmp/.mount_cw/bin" },
+      "linux"
+    );
     expect(env.PATH).toBe("/tmp/.mount_cw2/bin");
   });
 
   it("tolerates a trailing slash on APPDIR", () => {
-    expect(sanitizedChildEnv({ APPDIR: "/tmp/.mount_cw/", PATH: "/tmp/.mount_cw/bin:/usr/bin" }, "linux").PATH).toBe("/usr/bin");
+    const env = { APPIMAGE: "/x.AppImage", APPDIR: "/tmp/.mount_cw/", PATH: "/tmp/.mount_cw/bin:/usr/bin" };
+    expect(sanitizedChildEnv(env, "linux").PATH).toBe("/usr/bin");
+  });
+
+  it("keeps path entries under APPDIR when APPIMAGE is not set", () => {
+    const env = sanitizedChildEnv({ APPDIR: "/opt/app", PATH: "/opt/app/bin:/usr/bin" }, "linux");
+    expect(env.PATH).toBe("/opt/app/bin:/usr/bin");
+    expect(env.APPDIR).toBeUndefined();
   });
 
   it("leaves linux environments without AppImage markers unchanged", () => {
