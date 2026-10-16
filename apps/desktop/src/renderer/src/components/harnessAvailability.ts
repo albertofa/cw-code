@@ -4,11 +4,11 @@ import { HARNESS_IDS } from "./settingsSections.js";
 export interface HarnessPresence {
   binary: DriverName;
   configured: boolean;
-  available: boolean;
+  found: boolean;
 }
 
 export function isHarnessSkipped(check: HarnessPresence): boolean {
-  return !check.available && !check.configured;
+  return !check.found && !check.configured;
 }
 
 export function installedHarnesses(checks: HarnessPresence[]): DriverName[] {

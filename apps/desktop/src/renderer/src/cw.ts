@@ -629,6 +629,7 @@ export interface CwApi {
     minimum: string;
     actual: string | null;
     configured: boolean;
+    found: boolean;
     available: boolean;
     error: string | null;
     ok: boolean;

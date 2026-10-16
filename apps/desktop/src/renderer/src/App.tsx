@@ -3,7 +3,7 @@ import { useShallow } from "zustand/react/shallow";
 import type { DriverName } from "./cw.js";
 import { applyAppearance } from "./appearanceFonts.js";
 import { collectSubagents } from "./components/subagents.js";
-import { installedHarnesses } from "./components/harnessAvailability.js";
+import { installedHarnesses, isHarnessSkipped } from "./components/harnessAvailability.js";
 import { isWorkingSetStatus } from "./components/workingSet.js";
 import { Sidebar } from "./components/Sidebar.js";
 import { WindowControls } from "./components/WindowControls.js";
@@ -291,7 +291,7 @@ export function App() {
           if (!active) return;
           const installed = installedHarnesses(checks);
           useAppStore.getState().setInstalledHarnesses(installed);
-          const missing = checks.filter((c) => !c.available && c.configured);
+          const missing = checks.filter((c) => !c.available && !isHarnessSkipped(c));
           const failed = checks.filter((c) => c.available && c.actual === null);
           const outdated = checks.filter((c) => c.actual !== null && !c.ok);
           const notifs = useNotifs.getState();

@@ -307,7 +307,7 @@ function StatusCard({ driver, check, onOpenUsage }: { driver: DriverName; check:
         {status.text}
       </div>
       {checksError && <p className="sp-aside-error">{checksError}</p>}
-      {check && !check.available && check.configured && check.error && <p className="sp-aside-error">{check.error}</p>}
+      {check && !check.available && !isHarnessSkipped(check) && check.error && <p className="sp-aside-error">{check.error}</p>}
       {check && check.available && check.actual === null && check.error && (
         <p className="sp-aside-faint" title={check.error}>
           {check.error}

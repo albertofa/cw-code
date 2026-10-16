@@ -2,12 +2,12 @@ import { describe, expect, it } from "vitest";
 import type { DriverName } from "../cw.js";
 import { fallbackHarness, installedHarnesses, isHarnessSkipped, pickableHarnesses } from "./harnessAvailability.js";
 
-function check(binary: DriverName, available: boolean, configured = false) {
-  return { binary, available, configured };
+function check(binary: DriverName, found: boolean, configured = false) {
+  return { binary, found, configured };
 }
 
 describe("isHarnessSkipped", () => {
-  it("skips only a missing harness left on its default path", () => {
+  it("skips only a harness that was not found on its default path", () => {
     expect(isHarnessSkipped(check("codex", false))).toBe(true);
     expect(isHarnessSkipped(check("codex", false, true))).toBe(false);
     expect(isHarnessSkipped(check("codex", true))).toBe(false);

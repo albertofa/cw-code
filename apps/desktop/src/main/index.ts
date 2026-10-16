@@ -822,7 +822,7 @@ function registerIpc(services: Services): void {
       }
     }
     const failed = (await Promise.all(checks)).find(
-      (check) => (check.configured || check.available) && (check.error !== null || !check.ok)
+      (check) => (check.configured || check.found) && (check.error !== null || !check.ok)
     );
     if (failed) {
       const name = failed.binary === "claude" ? "Claude" : failed.binary === "codex" ? "Codex" : "OpenCode";
