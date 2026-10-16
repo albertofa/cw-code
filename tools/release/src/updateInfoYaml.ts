@@ -120,9 +120,6 @@ function toUpdateInfo(document: ParsedDocument): UpdateInfo {
   const sha512 = requireField(document.topLevel, "sha512", "at top level");
   assertBareFileName(path);
   if (document.files.length === 0) throw new Error(`Update info has no "files" entries`);
-  if (document.files.length !== 1) {
-    throw new Error(`Update info lists ${document.files.length} files; only a single installer per update info file is supported`);
-  }
   const files = document.files.map((entry, index) => {
     const where = `in files[${index}]`;
     return { url: requireField(entry, "url", where), sha512: requireField(entry, "sha512", where), size: requireSize(entry, where) };
@@ -133,14 +130,25 @@ function toUpdateInfo(document: ParsedDocument): UpdateInfo {
   return { version, path, sha512, files };
 }
 
+function requireSingleInstaller(info: UpdateInfo): UpdateInfo {
+  if (info.files.length !== 1) {
+    throw new Error(`Update info lists ${info.files.length} files; only a single installer per update info file is supported`);
+  }
+  return info;
+}
+
 export function parseUpdateInfo(text: string): UpdateInfo {
   return toUpdateInfo(parseDocument(text));
+}
+
+export function parseSingleInstallerUpdateInfo(text: string): UpdateInfo {
+  return requireSingleInstaller(parseUpdateInfo(text));
 }
 
 export function rewriteUpdateInfo(text: string, digest: InstallerDigest): UpdateInfoRewrite {
   if (!Number.isSafeInteger(digest.size) || digest.size < 0) throw new Error(`Invalid installer size ${digest.size}`);
   const document = parseDocument(text);
-  const info = toUpdateInfo(document);
+  const info = requireSingleInstaller(toUpdateInfo(document));
   const lines = [...document.lines];
   let changed = false;
 

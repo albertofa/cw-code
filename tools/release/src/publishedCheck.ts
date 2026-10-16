@@ -1,7 +1,17 @@
 import type { ReleasePlan } from "./planValidation.ts";
-import { ALPHA_FEED_NAME, SIGNING_MANIFEST_NAME, STABLE_FEED_NAME, installerNameFor, publishableAssetNames } from "./releaseAssets.ts";
+import {
+  ALPHA_FEED_NAME,
+  LINUX_ALPHA_FEED_NAME,
+  LINUX_STABLE_FEED_NAME,
+  SIGNING_MANIFEST_NAME,
+  STABLE_FEED_NAME,
+  appImageNameFor,
+  debNameFor,
+  installerNameFor,
+  publishableAssetNames
+} from "./releaseAssets.ts";
 import { blockMapNameOf, signingSummary, validateSigningManifest } from "./signingManifest.ts";
-import { parseUpdateInfo, readReleaseText } from "./updateInfoYaml.ts";
+import { parseSingleInstallerUpdateInfo, parseUpdateInfo, readReleaseText } from "./updateInfoYaml.ts";
 
 export interface AnonymousHttp {
   text(url: string, accept: string): Promise<{ status: number; body: string }>;
@@ -111,7 +121,7 @@ async function channelManifestCheck(input: PublishedCheckInput): Promise<{ resul
   const response = await http.text(url, TEXT_ACCEPT);
   if (response.status !== 200) return { result: check("channel-manifest", url, [`HTTP ${response.status}`], ""), sha512: null, size: null };
   try {
-    const info = parseUpdateInfo(response.body);
+    const info = parseSingleInstallerUpdateInfo(response.body);
     const problems: string[] = [];
     if (info.version !== plan.version) problems.push(`advertises ${info.version}, expected ${plan.version}`);
     if (info.path !== installerNameFor(plan.version)) problems.push(`points at ${info.path}`);
@@ -123,7 +133,46 @@ async function channelManifestCheck(input: PublishedCheckInput): Promise<{ resul
   }
 }
 
-async function digestCheck(http: AnonymousHttp, name: string, url: string, expected: { sha512: string | null; size: number | null }): Promise<PublishedCheck> {
+interface ExpectedDigest {
+  sha512: string | null;
+  size: number | null;
+}
+
+const NO_DIGEST: ExpectedDigest = { sha512: null, size: null };
+
+async function linuxManifestCheck(input: PublishedCheckInput): Promise<{ result: PublishedCheck; appImage: ExpectedDigest; deb: ExpectedDigest }> {
+  const { plan, owner, repo, http } = input;
+  const url =
+    plan.channel === "stable"
+      ? `https://github.com/${owner}/${repo}/releases/latest/download/${LINUX_STABLE_FEED_NAME}`
+      : `https://github.com/${owner}/${repo}/releases/download/${plan.tag}/${LINUX_ALPHA_FEED_NAME}`;
+  const failed = (problems: string[]) => ({ result: check("linux-manifest", url, problems, ""), appImage: NO_DIGEST, deb: NO_DIGEST });
+  const response = await http.text(url, TEXT_ACCEPT);
+  if (response.status !== 200) return failed([`HTTP ${response.status}`]);
+  try {
+    const info = parseUpdateInfo(response.body);
+    const appImageName = appImageNameFor(plan.version);
+    const debName = debNameFor(plan.version);
+    const appImage = info.files.find((file) => file.url === appImageName);
+    const deb = info.files.find((file) => file.url === debName);
+    const problems: string[] = [];
+    if (info.version !== plan.version) problems.push(`advertises ${info.version}, expected ${plan.version}`);
+    if (info.path !== appImageName) problems.push(`points at ${info.path}, expected ${appImageName}`);
+    if (!appImage) problems.push(`does not list ${appImageName}`);
+    if (!deb) problems.push(`does not list ${debName}`);
+    const { releaseName } = readReleaseText(response.body);
+    if (releaseName !== plan.tag) problems.push(`releaseName is ${JSON.stringify(releaseName)}, so clients would show another release's title`);
+    return {
+      result: check("linux-manifest", url, problems, `advertises ${plan.version}`),
+      appImage: appImage ?? NO_DIGEST,
+      deb: deb ?? NO_DIGEST
+    };
+  } catch (error: unknown) {
+    return failed([error instanceof Error ? error.message : String(error)]);
+  }
+}
+
+async function digestCheck(http: AnonymousHttp, name: string, url: string, expected: ExpectedDigest): Promise<PublishedCheck> {
   const response = await http.digest(url);
   if (response.status !== 200) return check(name, url, [`HTTP ${response.status}`], "");
   const problems: string[] = [];
@@ -160,6 +209,7 @@ export async function checkPublishedRelease(input: PublishedCheckInput): Promise
   const base = `https://github.com/${owner}/${repo}/releases/download/${plan.tag}`;
   const manifest = await channelManifestCheck(input);
   const signing = await signingCheck(input);
+  const linux = await linuxManifestCheck(input);
   return [
     await releaseApiCheck(input),
     await latestReleaseCheck(input),
@@ -167,7 +217,10 @@ export async function checkPublishedRelease(input: PublishedCheckInput): Promise
     manifest.result,
     await digestCheck(http, "installer", `${base}/${installer}`, { sha512: manifest.sha512, size: manifest.size }),
     signing.result,
-    await digestCheck(http, "blockmap", `${base}/${blockMapNameOf(installer)}`, { sha512: signing.blockMap?.sha512 ?? null, size: signing.blockMap?.size ?? null })
+    await digestCheck(http, "blockmap", `${base}/${blockMapNameOf(installer)}`, { sha512: signing.blockMap?.sha512 ?? null, size: signing.blockMap?.size ?? null }),
+    linux.result,
+    await digestCheck(http, "appimage", `${base}/${appImageNameFor(plan.version)}`, linux.appImage),
+    await digestCheck(http, "deb", `${base}/${debNameFor(plan.version)}`, linux.deb)
   ];
 }
 

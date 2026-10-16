@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { formatScalar, parseScalar, parseUpdateInfo, readPublisherNames, rewriteUpdateInfo } from "./updateInfoYaml.ts";
+import { formatScalar, parseScalar, parseSingleInstallerUpdateInfo, parseUpdateInfo, readPublisherNames, rewriteUpdateInfo } from "./updateInfoYaml.ts";
 
 const OLD_SHA = "OHXwimalg4cncuhddJevvTcG2qq5N6+/fJad/b+Z7hY6FxTYZizn+Mllv3jtU+Esx/CwnOI9H7DQgtS/emIGQQ==";
 const NEW_SHA = "+new/Signed0000000000000000000000000000000000000000000000000000000000000000000000000==";
@@ -76,12 +76,14 @@ describe("parseUpdateInfo", () => {
     expect(() => parseUpdateInfo(LATEST.replace("path: cw-code", "path: other"))).toThrow(/does not match top-level path/);
   });
 
-  it("rejects multiple installers in one update info file", () => {
+  it("parses every files entry, and the single-installer parser rejects more than one", () => {
     const twoFiles = LATEST.replace(
       "path:",
       `  - url: second.exe\n    sha512: ${OLD_SHA}\n    size: 1\npath:`
     );
-    expect(() => parseUpdateInfo(twoFiles)).toThrow(/only a single installer/);
+    expect(parseUpdateInfo(twoFiles).files.map((file) => file.url)).toEqual(["cw-code-Setup-0.0.1-alpha.21-x64.exe", "second.exe"]);
+    expect(() => parseSingleInstallerUpdateInfo(twoFiles)).toThrow(/only a single installer/);
+    expect(() => rewriteUpdateInfo(twoFiles, { sha512: NEW_SHA, size: 1 })).toThrow(/only a single installer/);
   });
 });
 

@@ -13,11 +13,13 @@ import {
   provenanceMismatches,
   validateSigningManifest
 } from "./signingManifest.ts";
-import { normalizeReleaseNotes, parseUpdateInfo, readReleaseText, withReleaseText } from "./updateInfoYaml.ts";
+import { normalizeReleaseNotes, parseSingleInstallerUpdateInfo, parseUpdateInfo, readReleaseText, withReleaseText } from "./updateInfoYaml.ts";
 
 export const SIGNING_MANIFEST_NAME = "signing.json";
 export const STABLE_FEED_NAME = "latest.yml";
 export const ALPHA_FEED_NAME = "alpha.yml";
+export const LINUX_STABLE_FEED_NAME = "latest-linux.yml";
+export const LINUX_ALPHA_FEED_NAME = "alpha-linux.yml";
 
 export interface ReleaseAssetFile {
   name: string;
@@ -55,14 +57,28 @@ export function installerNameFor(version: string): string {
   return `cw-code-Setup-${version}-x64.exe`;
 }
 
+export function appImageNameFor(version: string): string {
+  return `cw-code-${version}-x86_64.AppImage`;
+}
+
+export function debNameFor(version: string): string {
+  return `cw-code-${version}-amd64.deb`;
+}
+
+export function linuxAssetNames(version: string): string[] {
+  return [appImageNameFor(version), debNameFor(version), LINUX_STABLE_FEED_NAME, LINUX_ALPHA_FEED_NAME];
+}
+
 export function publishableAssetNames(plan: Pick<ReleasePlan, "version" | "channel">): string[] {
   const installer = installerNameFor(plan.version);
-  const feeds = plan.channel === "alpha" ? [STABLE_FEED_NAME, ALPHA_FEED_NAME] : [ALPHA_FEED_NAME, STABLE_FEED_NAME];
-  return [installer, blockMapNameOf(installer), SIGNING_MANIFEST_NAME, ...feeds];
+  const alpha = plan.channel === "alpha";
+  const otherFeeds = alpha ? [STABLE_FEED_NAME, LINUX_STABLE_FEED_NAME] : [ALPHA_FEED_NAME, LINUX_ALPHA_FEED_NAME];
+  const ownFeeds = alpha ? [ALPHA_FEED_NAME, LINUX_ALPHA_FEED_NAME] : [STABLE_FEED_NAME, LINUX_STABLE_FEED_NAME];
+  return [installer, blockMapNameOf(installer), SIGNING_MANIFEST_NAME, appImageNameFor(plan.version), debNameFor(plan.version), ...otherFeeds, ...ownFeeds];
 }
 
 export function isFeedManifest(name: string): boolean {
-  return name === STABLE_FEED_NAME || name === ALPHA_FEED_NAME;
+  return name === STABLE_FEED_NAME || name === ALPHA_FEED_NAME || name === LINUX_STABLE_FEED_NAME || name === LINUX_ALPHA_FEED_NAME;
 }
 
 function message(error: unknown): string {
@@ -90,10 +106,52 @@ async function listingErrors(dir: string, expected: string[]): Promise<string[]>
   return errors;
 }
 
-function feedErrors(text: string, plan: ReleasePlan, installer: ReleaseAssetFile | undefined): string[] {
+function releaseTextErrors(feedName: string, text: string, plan: ReleasePlan): string[] {
+  const errors: string[] = [];
+  const release = readReleaseText(text);
+  if (release.releaseName !== plan.tag) {
+    errors.push(`${feedName} releaseName ${JSON.stringify(release.releaseName)} must be ${plan.tag}, or clients fall back to another release's title`);
+  }
+  if (release.releaseNotes !== normalizeReleaseNotes(plan.notes)) {
+    errors.push(`${feedName} releaseNotes differ from the plan notes, or clients fall back to another release's notes`);
+  }
+  return errors;
+}
+
+function linuxFeedErrors(text: string, plan: ReleasePlan, appImage: ReleaseAssetFile | undefined, deb: ReleaseAssetFile | undefined): string[] {
+  const feedName = LINUX_STABLE_FEED_NAME;
   let info: ReturnType<typeof parseUpdateInfo>;
   try {
     info = parseUpdateInfo(text);
+  } catch (error: unknown) {
+    return [`${feedName}: ${message(error)}`];
+  }
+  const errors: string[] = [];
+  const expected = [
+    { name: appImageNameFor(plan.version), bytes: appImage },
+    { name: debNameFor(plan.version), bytes: deb }
+  ];
+  if (info.version !== plan.version) errors.push(`${feedName} version ${info.version} differs from the plan version ${plan.version}`);
+  if (info.path !== expected[0].name) errors.push(`${feedName} path ${info.path} must be ${expected[0].name}`);
+  if (info.files.length !== expected.length || info.files.some((file, index) => file.url !== expected[index].name)) {
+    errors.push(`${feedName} files must be exactly ${expected.map((entry) => entry.name).join(", ")}, got ${info.files.map((file) => file.url).join(", ")}`);
+  } else {
+    expected.forEach(({ name, bytes }, index) => {
+      const file = info.files[index];
+      if (!bytes) return;
+      if (file.sha512 !== bytes.sha512) errors.push(`${feedName} sha512 for ${name} does not match its bytes`);
+      if (file.size !== bytes.size) errors.push(`${feedName} size ${file.size} for ${name} does not match its bytes (${bytes.size})`);
+    });
+  }
+  if (appImage && info.sha512 !== appImage.sha512) errors.push(`${feedName} top-level sha512 does not match the AppImage bytes`);
+  errors.push(...releaseTextErrors(feedName, text, plan));
+  return errors;
+}
+
+function feedErrors(text: string, plan: ReleasePlan, installer: ReleaseAssetFile | undefined): string[] {
+  let info: ReturnType<typeof parseUpdateInfo>;
+  try {
+    info = parseSingleInstallerUpdateInfo(text);
   } catch (error: unknown) {
     return [`${STABLE_FEED_NAME}: ${message(error)}`];
   }
@@ -108,13 +166,7 @@ function feedErrors(text: string, plan: ReleasePlan, installer: ReleaseAssetFile
     if (file.sha512 !== installer.sha512) errors.push(`${STABLE_FEED_NAME} sha512 does not match the installer bytes`);
     if (file.size !== installer.size) errors.push(`${STABLE_FEED_NAME} size ${file.size} does not match the installer (${installer.size} bytes)`);
   }
-  const release = readReleaseText(text);
-  if (release.releaseName !== plan.tag) {
-    errors.push(`${STABLE_FEED_NAME} releaseName ${JSON.stringify(release.releaseName)} must be ${plan.tag}, or clients fall back to another release's title`);
-  }
-  if (release.releaseNotes !== normalizeReleaseNotes(plan.notes)) {
-    errors.push(`${STABLE_FEED_NAME} releaseNotes differ from the plan notes, or clients fall back to another release's notes`);
-  }
+  errors.push(...releaseTextErrors(STABLE_FEED_NAME, text, plan));
   return errors;
 }
 
@@ -202,6 +254,13 @@ export async function validateReleaseAssets(options: ValidateReleaseAssetsOption
       errors.push(`${ALPHA_FEED_NAME} must be a byte copy of ${STABLE_FEED_NAME}`);
     }
   }
+  if (assets.has(LINUX_STABLE_FEED_NAME)) {
+    const latestLinux = await readFile(join(options.dir, LINUX_STABLE_FEED_NAME));
+    errors.push(...linuxFeedErrors(latestLinux.toString("utf8"), plan, assets.get(appImageNameFor(plan.version)), assets.get(debNameFor(plan.version))));
+    if (assets.has(LINUX_ALPHA_FEED_NAME) && !latestLinux.equals(await readFile(join(options.dir, LINUX_ALPHA_FEED_NAME)))) {
+      errors.push(`${LINUX_ALPHA_FEED_NAME} must be a byte copy of ${LINUX_STABLE_FEED_NAME}`);
+    }
+  }
   const blockMapName = blockMapNameOf(installerName);
   if (assets.has(blockMapName)) {
     errors.push(...blockMapShapeErrors(await readFile(join(options.dir, blockMapName)), installer?.size ?? null));
@@ -241,32 +300,51 @@ export async function validateReleaseAssets(options: ValidateReleaseAssetsOption
   return report;
 }
 
-export async function stageReleaseSet(from: string, to: string, plan: unknown): Promise<string[]> {
+interface StagedFeed {
+  stableName: string;
+  text: string;
+}
+
+async function stagedFeed(dir: string, stableName: string, copyName: string, plan: ReleasePlan): Promise<StagedFeed> {
+  const stablePath = join(dir, stableName);
+  if (!(await exists(stablePath))) throw new Error(`${stableName} is missing from ${dir}`);
+  const stable = await readFile(stablePath);
+  const copyPath = join(dir, copyName);
+  if ((await exists(copyPath)) && !stable.equals(await readFile(copyPath))) {
+    throw new Error(`${copyName} in ${dir} differs from ${stableName}; the channel files must describe the same installer`);
+  }
+  return { stableName, text: withReleaseText(stable.toString("utf8"), { releaseName: plan.tag, releaseNotes: plan.notes }) };
+}
+
+export async function stageReleaseSet(from: string, to: string, plan: unknown, linuxFrom: string): Promise<string[]> {
   const shape = validatePlanShape(plan);
   if (!shape.ok) throw new Error(`Invalid plan: ${shape.errors.join("; ")}`);
   if (await exists(to)) {
     if ((await readdir(to)).length > 0) throw new Error(`${to} already exists and is not empty; stage into a fresh directory`);
   }
   const { plan: validPlan } = shape;
-  const latestPath = join(from, STABLE_FEED_NAME);
-  if (!(await exists(latestPath))) throw new Error(`${STABLE_FEED_NAME} is missing from ${from}`);
-  const latest = await readFile(latestPath);
-  const alphaPath = join(from, ALPHA_FEED_NAME);
-  if ((await exists(alphaPath)) && !latest.equals(await readFile(alphaPath))) {
-    throw new Error(`${ALPHA_FEED_NAME} in ${from} differs from ${STABLE_FEED_NAME}; the channel files must describe the same installer`);
-  }
-  const feed = withReleaseText(latest.toString("utf8"), { releaseName: validPlan.tag, releaseNotes: validPlan.notes });
+  const windowsFeed = await stagedFeed(from, STABLE_FEED_NAME, ALPHA_FEED_NAME, validPlan);
+  const linuxFeed = await stagedFeed(linuxFrom, LINUX_STABLE_FEED_NAME, LINUX_ALPHA_FEED_NAME, validPlan);
+  const feeds = new Map([
+    [STABLE_FEED_NAME, windowsFeed],
+    [ALPHA_FEED_NAME, windowsFeed],
+    [LINUX_STABLE_FEED_NAME, linuxFeed],
+    [LINUX_ALPHA_FEED_NAME, linuxFeed]
+  ]);
+  const linuxPayload = new Set([appImageNameFor(validPlan.version), debNameFor(validPlan.version)]);
 
   await mkdir(to, { recursive: true });
   const staged: string[] = [];
   for (const name of publishableAssetNames(validPlan)) {
-    if (name === STABLE_FEED_NAME || name === ALPHA_FEED_NAME) {
-      await writeFile(join(to, name), feed, "utf8");
-      staged.push(`${name} (${STABLE_FEED_NAME} with releaseName and releaseNotes from the plan)`);
+    const feed = feeds.get(name);
+    if (feed) {
+      await writeFile(join(to, name), feed.text, "utf8");
+      staged.push(`${name} (${feed.stableName} with releaseName and releaseNotes from the plan)`);
       continue;
     }
-    const source = join(from, name);
-    if (!(await exists(source))) throw new Error(`${name} is missing from ${from}`);
+    const sourceDir = linuxPayload.has(name) ? linuxFrom : from;
+    const source = join(sourceDir, name);
+    if (!(await exists(source))) throw new Error(`${name} is missing from ${sourceDir}`);
     await copyFile(source, join(to, name));
     staged.push(name);
   }

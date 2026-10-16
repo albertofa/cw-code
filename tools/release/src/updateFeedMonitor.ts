@@ -1,10 +1,21 @@
 import type { FeedMonitorHttp } from "./clientHttp.ts";
 import { markedSourceSha } from "./planMarker.ts";
 import { type PublishedCheck, check, parseJsonObject } from "./publishedCheck.ts";
-import { ALPHA_FEED_NAME, SIGNING_MANIFEST_NAME, STABLE_FEED_NAME, installerNameFor, publishableAssetNames } from "./releaseAssets.ts";
+import {
+  ALPHA_FEED_NAME,
+  LINUX_ALPHA_FEED_NAME,
+  LINUX_STABLE_FEED_NAME,
+  SIGNING_MANIFEST_NAME,
+  STABLE_FEED_NAME,
+  appImageNameFor,
+  debNameFor,
+  installerNameFor,
+  linuxAssetNames,
+  publishableAssetNames
+} from "./releaseAssets.ts";
 import { type ParsedVersion, compareVersions, formatVersion, parseTag } from "./semver.ts";
 import { blockMapNameOf, signingSummary, validateSigningManifest } from "./signingManifest.ts";
-import { type UpdateInfo, parseUpdateInfo } from "./updateInfoYaml.ts";
+import { type UpdateInfo, parseSingleInstallerUpdateInfo, parseUpdateInfo } from "./updateInfoYaml.ts";
 
 export const FEED_MONITOR_RUNBOOK = "docs/operations/rollout.md#feed-monitor-failures";
 
@@ -114,7 +125,7 @@ async function manifestCheck(http: FeedMonitorHttp, url: string, release: Pipeli
   const response = await http.text(url, "*/*");
   if (response.status !== 200) return { result: check("channel-manifest", url, [statusText(response.status, response.body)], ""), info: null, text: null };
   try {
-    const info = parseUpdateInfo(response.body);
+    const info = parseSingleInstallerUpdateInfo(response.body);
     const version = formatVersion(release.version);
     const problems: string[] = [];
     if (info.version !== version) problems.push(`advertises ${info.version}, expected ${version}`);
@@ -125,9 +136,49 @@ async function manifestCheck(http: FeedMonitorHttp, url: string, release: Pipeli
   }
 }
 
+function hasLinuxAssets(release: PipelineRelease): boolean {
+  const linux = linuxAssetNames(formatVersion(release.version));
+  return release.assets.some((asset) => linux.includes(asset.name));
+}
+
+function hasFullLinuxSet(release: PipelineRelease): boolean {
+  const names = release.assets.map((asset) => asset.name);
+  return linuxAssetNames(formatVersion(release.version)).every((name) => names.includes(name));
+}
+
+interface LinuxManifest {
+  text: string;
+  appImageSize: number;
+  debSize: number;
+}
+
+async function linuxManifestCheck(http: FeedMonitorHttp, url: string, release: PipelineRelease): Promise<{ result: PublishedCheck; manifest: LinuxManifest | null }> {
+  const failed = (problems: string[]) => ({ result: check("linux-manifest", url, problems, ""), manifest: null });
+  const response = await http.text(url, "*/*");
+  if (response.status !== 200) return failed([statusText(response.status, response.body)]);
+  try {
+    const info = parseUpdateInfo(response.body);
+    const version = formatVersion(release.version);
+    const appImageName = appImageNameFor(version);
+    const debName = debNameFor(version);
+    const appImage = info.files.find((file) => file.url === appImageName);
+    const deb = info.files.find((file) => file.url === debName);
+    const problems: string[] = [];
+    if (info.version !== version) problems.push(`advertises ${info.version}, expected ${version}`);
+    if (info.path !== appImageName) problems.push(`points at ${info.path}, expected ${appImageName}`);
+    if (!appImage) problems.push(`does not list ${appImageName}`);
+    if (!deb) problems.push(`does not list ${debName}`);
+    const result = check("linux-manifest", url, problems, `advertises ${version}`);
+    return { result, manifest: appImage && deb ? { text: response.body, appImageSize: appImage.size, debSize: deb.size } : null };
+  } catch (error: unknown) {
+    return failed([error instanceof Error ? error.message : String(error)]);
+  }
+}
+
 function assetListCheck(base: string, release: PipelineRelease): PublishedCheck {
   const version = formatVersion(release.version);
-  const expected = publishableAssetNames({ version, channel: release.version.channel });
+  const linux = linuxAssetNames(version);
+  const expected = publishableAssetNames({ version, channel: release.version.channel }).filter((name) => hasLinuxAssets(release) || !linux.includes(name));
   const names = release.assets.map((asset) => asset.name);
   const problems: string[] = [];
   const missing = expected.filter((name) => !names.includes(name));
@@ -137,6 +188,37 @@ function assetListCheck(base: string, release: PipelineRelease): PublishedCheck 
   const incomplete = release.assets.filter((asset) => asset.state !== "uploaded").map((asset) => `${asset.name} (${asset.state})`);
   if (incomplete.length > 0) problems.push(`not fully uploaded: ${incomplete.join(", ")}`);
   return check("assets", `${base}/releases/tag/${release.tag}`, problems, `${names.length} assets`);
+}
+
+async function downloadableSizeCheck(http: FeedMonitorHttp, name: string, url: string, listedSize: number | null, expectedSize: number): Promise<PublishedCheck> {
+  const reachable = await http.size(url);
+  const problems: string[] = [];
+  if (reachable.status !== 200 && reachable.status !== 206) problems.push(statusText(reachable.status));
+  else if (reachable.size !== expectedSize) problems.push(`served ${reachable.size ?? "an unknown number of"} bytes, the manifest says ${expectedSize}`);
+  if (listedSize !== null && listedSize !== expectedSize) problems.push(`release asset is ${listedSize} bytes, the manifest says ${expectedSize}`);
+  return check(name, url, problems, `downloadable, ${expectedSize} bytes`);
+}
+
+async function linuxReleaseChecks(input: FeedMonitorInput, release: PipelineRelease, feedName: string, linux: LinuxManifest): Promise<PublishedCheck[]> {
+  const { owner, repo, http } = input;
+  const download = `https://github.com/${owner}/${repo}/releases/download/${release.tag}`;
+  const version = formatVersion(release.version);
+  const otherFeed = feedName === LINUX_ALPHA_FEED_NAME ? LINUX_STABLE_FEED_NAME : LINUX_ALPHA_FEED_NAME;
+  const copyUrl = `${download}/${otherFeed}`;
+  const copy = await http.text(copyUrl, "*/*");
+  const listedSize = (name: string): number | null => release.assets.find((asset) => asset.name === name)?.size ?? null;
+  const appImage = appImageNameFor(version);
+  const deb = debNameFor(version);
+  return [
+    check(
+      "linux-feed-copy",
+      copyUrl,
+      copy.status !== 200 ? [statusText(copy.status, copy.body)] : copy.body === linux.text ? [] : [`${otherFeed} differs from ${feedName}`],
+      `${otherFeed} is byte-identical to ${feedName}`
+    ),
+    await downloadableSizeCheck(http, "appimage", `${download}/${appImage}`, listedSize(appImage), linux.appImageSize),
+    await downloadableSizeCheck(http, "deb", `${download}/${deb}`, listedSize(deb), linux.debSize)
+  ];
 }
 
 async function releaseChecks(input: FeedMonitorInput, release: PipelineRelease, feedName: string, manifest: { info: UpdateInfo; text: string }): Promise<PublishedCheck[]> {
@@ -162,12 +244,7 @@ async function releaseChecks(input: FeedMonitorInput, release: PipelineRelease, 
 
   const installerUrl = `${download}/${installer}`;
   const listedSize = release.assets.find((asset) => asset.name === installer)?.size ?? null;
-  const reachable = await http.size(installerUrl);
-  const sizeProblems: string[] = [];
-  if (reachable.status !== 200 && reachable.status !== 206) sizeProblems.push(statusText(reachable.status));
-  else if (reachable.size !== expectedSize) sizeProblems.push(`served ${reachable.size ?? "an unknown number of"} bytes, the manifest says ${expectedSize}`);
-  if (listedSize !== null && listedSize !== expectedSize) sizeProblems.push(`release asset is ${listedSize} bytes, the manifest says ${expectedSize}`);
-  checks.push(check("installer", installerUrl, sizeProblems, `downloadable, ${expectedSize} bytes`));
+  checks.push(await downloadableSizeCheck(http, "installer", installerUrl, listedSize, expectedSize));
 
   const signingUrl = `${download}/${SIGNING_MANIFEST_NAME}`;
   const signingResponse = await http.text(signingUrl, "*/*");
@@ -222,6 +299,12 @@ async function releaseChecks(input: FeedMonitorInput, release: PipelineRelease, 
   return checks;
 }
 
+async function linuxChecks(input: FeedMonitorInput, release: PipelineRelease, feedName: string, url: string): Promise<PublishedCheck[]> {
+  if (!hasFullLinuxSet(release)) return [];
+  const { result, manifest } = await linuxManifestCheck(input.http, url, release);
+  return [result, ...(result.ok && manifest ? await linuxReleaseChecks(input, release, feedName, manifest) : [])];
+}
+
 function channelReport(channel: FeedChannel, release: PipelineRelease, checks: PublishedCheck[]): ChannelReport {
   return {
     channel,
@@ -257,6 +340,7 @@ async function stableChannel(input: FeedMonitorInput, pipeline: PipelineRelease[
   const manifest = await manifestCheck(http, `${base}/releases/latest/download/${STABLE_FEED_NAME}`, target);
   checks.push(manifest.result);
   if (manifest.result.ok && manifest.info && manifest.text) checks.push(...(await releaseChecks(input, target, STABLE_FEED_NAME, { info: manifest.info, text: manifest.text })));
+  checks.push(...(await linuxChecks(input, target, LINUX_STABLE_FEED_NAME, `${base}/releases/latest/download/${LINUX_STABLE_FEED_NAME}`)));
   return channelReport("stable", target, checks);
 }
 
@@ -287,6 +371,7 @@ async function alphaChannel(input: FeedMonitorInput, pipeline: PipelineRelease[]
   const manifest = await manifestCheck(http, `${base}/releases/download/${target.tag}/${ALPHA_FEED_NAME}`, target);
   checks.push(manifest.result);
   if (manifest.result.ok && manifest.info && manifest.text) checks.push(...(await releaseChecks(input, target, ALPHA_FEED_NAME, { info: manifest.info, text: manifest.text })));
+  checks.push(...(await linuxChecks(input, target, LINUX_ALPHA_FEED_NAME, `${base}/releases/download/${target.tag}/${LINUX_ALPHA_FEED_NAME}`)));
   return channelReport("alpha", target, checks);
 }
 

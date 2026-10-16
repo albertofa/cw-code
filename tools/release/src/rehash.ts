@@ -2,7 +2,7 @@ import { createHash } from "node:crypto";
 import { createReadStream } from "node:fs";
 import { readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import { basename, join } from "node:path";
-import { type InstallerDigest, parseUpdateInfo, rewriteUpdateInfo } from "./updateInfoYaml.ts";
+import { type InstallerDigest, parseSingleInstallerUpdateInfo, rewriteUpdateInfo } from "./updateInfoYaml.ts";
 
 export const UPDATE_INFO_FILE_NAMES = ["latest.yml", "alpha.yml"] as const;
 export const BLOCK_MAP_SUFFIX = ".blockmap";
@@ -73,7 +73,7 @@ async function presentUpdateInfoFiles(dir: string): Promise<string[]> {
 
 export async function readReleaseUpdateInfo(dir: string): Promise<ReleaseUpdateInfo> {
   const files = await presentUpdateInfoFiles(dir);
-  const infos = await Promise.all(files.map(async (name) => ({ name, info: parseUpdateInfo(await readFile(join(dir, name), "utf8")) })));
+  const infos = await Promise.all(files.map(async (name) => ({ name, info: parseSingleInstallerUpdateInfo(await readFile(join(dir, name), "utf8")) })));
   const [first] = infos;
   for (const { name, info } of infos) {
     if (info.version !== first.info.version || info.path !== first.info.path || info.sha512 !== first.info.sha512 || info.files[0].size !== first.info.files[0].size) {
@@ -89,7 +89,7 @@ export async function readReleaseUpdateInfo(dir: string): Promise<ReleaseUpdateI
 export async function rehashRelease(dir: string, buildBlockMap: BlockMapBuilder): Promise<RehashResult> {
   const files = await presentUpdateInfoFiles(dir);
   const entries = await Promise.all(files.map(async (name) => ({ name, text: await readFile(join(dir, name), "utf8") })));
-  const installerNames = new Set(entries.map(({ text }) => parseUpdateInfo(text).path));
+  const installerNames = new Set(entries.map(({ text }) => parseSingleInstallerUpdateInfo(text).path));
   if (installerNames.size !== 1) {
     throw new Error(`Update info files reference different installers: ${[...installerNames].join(", ")}`);
   }

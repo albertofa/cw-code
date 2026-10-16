@@ -264,11 +264,11 @@ describe("publishRelease", () => {
     expect(github.tags.get(ALPHA_PLAN.tag)).toBe(SOURCE_SHA);
   });
 
-  it("publishes a stable release as latest and not prerelease, with latest.yml uploaded last", async () => {
+  it("publishes a stable release as latest and not prerelease, with latest.yml and latest-linux.yml uploaded last", async () => {
     github.tags.set("v1.2.0-alpha.2", SOURCE_SHA);
     const set = await writeSet(STABLE_PLAN, "set");
     await run(STABLE_PLAN, set);
-    expect(github.calls.filter((call) => call.startsWith("upload")).at(-1)).toBe("upload latest.yml");
+    expect(github.calls.filter((call) => call.startsWith("upload")).slice(-4)).toEqual(["upload alpha.yml", "upload alpha-linux.yml", "upload latest.yml", "upload latest-linux.yml"]);
     expect(github.calls.at(-1)).toBe("publish v1.2.0 prerelease=false latest=true");
     expect(draftOf("v1.2.0")).toMatchObject({ draft: false, prerelease: false, makeLatest: true });
   });
@@ -286,7 +286,30 @@ describe("publishRelease", () => {
     const result = await run(ALPHA_PLAN, set);
     expect(result).toMatchObject({ status: "published", resumed: true });
     expect(result.reused).toEqual(publishableAssetNames(ALPHA_PLAN).slice(0, 2));
-    expect(github.calls).toEqual(["delete signing.json", "upload signing.json", "upload latest.yml", "upload alpha.yml", "publish v1.2.0-alpha.3 prerelease=true latest=false"]);
+    expect(github.calls).toEqual([
+      "delete signing.json",
+      ...publishableAssetNames(ALPHA_PLAN).slice(2).map((name) => `upload ${name}`),
+      "publish v1.2.0-alpha.3 prerelease=true latest=false"
+    ]);
+  });
+
+  it("pulls every feed, Linux ones included, before replacing a changed AppImage in a resumed draft", async () => {
+    const set = await writeSet(ALPHA_PLAN, "set");
+    const appImage = publishableAssetNames(ALPHA_PLAN).find((name) => name.endsWith(".AppImage")) ?? "";
+    github.release({
+      tagName: ALPHA_PLAN.tag,
+      targetCommitish: SOURCE_SHA,
+      draft: true,
+      prerelease: true,
+      body: releaseBody(ALPHA_PLAN.notes, SOURCE_SHA),
+      assets: await Promise.all(
+        set.assets.map(async (asset) => ({ name: asset.name, bytes: asset.name === appImage ? randomBytes(128) : await readFile(join(set.dir, asset.name)) }))
+      )
+    });
+    const result = await run(ALPHA_PLAN, set);
+    expect(result).toMatchObject({ status: "published", resumed: true, replaced: ["latest.yml", "latest-linux.yml", "alpha.yml", "alpha-linux.yml", appImage] });
+    expect(github.calls.filter((call) => call.startsWith("delete"))).toEqual(["latest.yml", "latest-linux.yml", "alpha.yml", "alpha-linux.yml", appImage].map((name) => `delete ${name}`));
+    expect(github.calls.filter((call) => call.startsWith("upload")).slice(-4)).toEqual(["upload latest.yml", "upload latest-linux.yml", "upload alpha.yml", "upload alpha-linux.yml"]);
   });
 
   it("resumes a draft from a full rerun with re-signed bytes, pulling feed files before replacing the payload", async () => {
@@ -303,7 +326,7 @@ describe("publishRelease", () => {
     const result = await run(ALPHA_PLAN, second);
     expect(result).toMatchObject({ status: "published", resumed: true, reused: [] });
     const deletes = github.calls.filter((call) => call.startsWith("delete"));
-    expect(deletes.slice(0, 2)).toEqual(["delete latest.yml", "delete alpha.yml"]);
+    expect(deletes.slice(0, 4)).toEqual(["delete latest.yml", "delete latest-linux.yml", "delete alpha.yml", "delete alpha-linux.yml"]);
     const release = draftOf(ALPHA_PLAN.tag);
     for (const asset of second.assets) expect(digest(release?.assets.find((entry) => entry.name === asset.name)?.bytes ?? Buffer.alloc(0))).toBe(asset.sha512);
   });
