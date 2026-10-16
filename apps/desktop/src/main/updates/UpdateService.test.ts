@@ -7,11 +7,14 @@ import {
   CHECK_INTERVAL_MS,
   DISABLED_IN_DEVELOPMENT,
   DISABLED_WITHOUT_FEED,
+  DISABLED_UNSUPPORTED_PLATFORM,
   DISABLED_WITHOUT_INSTALLER,
+  DISABLED_WITHOUT_LINUX_PACKAGE,
   FIRST_CHECK_DELAY_MS,
   FIRST_CHECK_JITTER_MS,
   UpdateService,
   detectDisabledReason,
+  detectUpdaterKind,
   type UpdateEnvironment,
   type UpdateScheduler,
   type UpdateServiceOptions
@@ -142,7 +145,17 @@ class FakeScheduler implements UpdateScheduler {
 const INSTALLED: UpdateEnvironment = {
   isPackaged: true,
   resourcesPath: "C:\\Programs\\cw-code\\resources",
-  execPath: "C:\\Programs\\cw-code\\cw-code.exe"
+  execPath: "C:\\Programs\\cw-code\\cw-code.exe",
+  platform: "win32",
+  appImagePath: null
+};
+
+const LINUX: UpdateEnvironment = {
+  isPackaged: true,
+  resourcesPath: "/opt/cw-code/resources",
+  execPath: "/opt/cw-code/cw-code",
+  platform: "linux",
+  appImagePath: null
 };
 
 const HOME = "C:\\Users\\Jane";
@@ -167,7 +180,7 @@ function harness(overrides: Partial<UpdateServiceOptions> = {}): Harness {
   const service = new UpdateService({
     runningVersion: "1.0.0",
     environment: INSTALLED,
-    files: { fileExists: () => true, listDirectory: () => ["cw-code.exe", "Uninstall cw-code.exe"] },
+    files: { fileExists: () => true, listDirectory: () => ["cw-code.exe", "Uninstall cw-code.exe"], readText: () => null },
     createAdapter: () => {
       created += 1;
       return adapter;
@@ -189,7 +202,7 @@ async function settle(): Promise<void> {
 }
 
 describe("detectDisabledReason", () => {
-  const installedFiles = { fileExists: () => true, listDirectory: () => ["cw-code.exe", "Uninstall cw-code.exe"] };
+  const installedFiles = { fileExists: () => true, listDirectory: () => ["cw-code.exe", "Uninstall cw-code.exe"], readText: () => null };
 
   it("explains development, missing feed, and non-installer copies in that order", () => {
     expect(detectDisabledReason({ ...INSTALLED, isPackaged: false }, installedFiles)).toBe(DISABLED_IN_DEVELOPMENT);
@@ -200,6 +213,7 @@ describe("detectDisabledReason", () => {
     expect(
       detectDisabledReason(INSTALLED, {
         fileExists: () => true,
+        readText: () => null,
         listDirectory: (path) => {
           listed.push(path);
           return ["cw-code.exe", "resources", "Uninstall.txt"];
@@ -212,18 +226,82 @@ describe("detectDisabledReason", () => {
   });
 
   it("accepts any NSIS uninstaller name, such as the update-test build", () => {
-    const files = { fileExists: () => true, listDirectory: () => ["Uninstall cw-code-updatetest.exe"] };
+    const files = { ...installedFiles, listDirectory: () => ["Uninstall cw-code-updatetest.exe"] };
     expect(detectDisabledReason(INSTALLED, files)).toBeNull();
   });
 
   it("treats an unreadable install directory as not installed", () => {
     const files = {
-      fileExists: () => true,
+      ...installedFiles,
       listDirectory: (): string[] => {
         throw new Error("EACCES");
       }
     };
     expect(detectDisabledReason(INSTALLED, files)).toBe(DISABLED_WITHOUT_INSTALLER);
+  });
+
+  it("enables an AppImage run and a deb install on Linux, and explains an unpacked copy", () => {
+    const files = { ...installedFiles, listDirectory: () => [] };
+    expect(detectDisabledReason({ ...LINUX, appImagePath: "/home/jane/cw-code.AppImage" }, files)).toBeNull();
+    expect(detectDisabledReason(LINUX, { ...files, readText: () => "deb\n" })).toBeNull();
+    expect(detectDisabledReason(LINUX, files)).toBe(DISABLED_WITHOUT_LINUX_PACKAGE);
+    expect(detectDisabledReason(LINUX, { ...files, readText: () => "rpm" })).toBe(DISABLED_WITHOUT_LINUX_PACKAGE);
+    expect(detectDisabledReason({ ...LINUX, isPackaged: false }, files)).toBe(DISABLED_IN_DEVELOPMENT);
+    expect(detectDisabledReason(LINUX, { ...files, fileExists: () => false })).toBe(DISABLED_WITHOUT_FEED);
+  });
+
+  it("looks for the Linux feed and package type with POSIX paths", () => {
+    const read: string[] = [];
+    const checked: string[] = [];
+    detectDisabledReason(LINUX, {
+      fileExists: (path) => {
+        checked.push(path);
+        return true;
+      },
+      listDirectory: () => [],
+      readText: (path) => {
+        read.push(path);
+        return "deb";
+      }
+    });
+    expect(checked).toEqual(["/opt/cw-code/resources/app-update.yml"]);
+    expect(read).toEqual(["/opt/cw-code/resources/package-type"]);
+  });
+
+  it("does not support updates on other platforms", () => {
+    expect(detectDisabledReason({ ...LINUX, platform: "darwin" }, installedFiles)).toBe(DISABLED_UNSUPPORTED_PLATFORM);
+  });
+});
+
+describe("detectUpdaterKind", () => {
+  const files = { fileExists: () => true, listDirectory: () => [] as string[], readText: () => null };
+
+  it("picks nsis on Windows only when an uninstaller sits next to the executable", () => {
+    expect(detectUpdaterKind(INSTALLED, { ...files, listDirectory: () => ["Uninstall cw-code.exe"] })).toBe("nsis");
+    expect(detectUpdaterKind(INSTALLED, files)).toBeNull();
+  });
+
+  it("picks appimage when APPIMAGE is set, preferring it over a deb marker", () => {
+    expect(detectUpdaterKind({ ...LINUX, appImagePath: "/home/jane/cw-code.AppImage" }, files)).toBe("appimage");
+    expect(detectUpdaterKind({ ...LINUX, appImagePath: "/home/jane/cw-code.AppImage" }, { ...files, readText: () => "deb" })).toBe("appimage");
+  });
+
+  it("picks deb when the package-type file says deb and nothing else on Linux", () => {
+    expect(detectUpdaterKind(LINUX, { ...files, readText: () => " deb \n" })).toBe("deb");
+    expect(detectUpdaterKind(LINUX, { ...files, readText: () => "debian" })).toBeNull();
+    expect(detectUpdaterKind(LINUX, files)).toBeNull();
+    expect(
+      detectUpdaterKind(LINUX, {
+        ...files,
+        readText: () => {
+          throw new Error("EACCES");
+        }
+      })
+    ).toBeNull();
+  });
+
+  it("has no kind on darwin", () => {
+    expect(detectUpdaterKind({ ...LINUX, platform: "darwin" }, { ...files, readText: () => "deb" })).toBeNull();
   });
 });
 

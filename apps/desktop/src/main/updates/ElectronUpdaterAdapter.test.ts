@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 
 const updaterMock = vi.hoisted(() => ({
   instances: [] as Array<{
+    className: string;
     writes: string[];
     target: Record<string, unknown>;
     emit(event: string, ...args: unknown[]): boolean;
@@ -27,7 +28,7 @@ vi.mock("electron-updater", async () => {
     }
   }
 
-  class NsisUpdater extends EventEmitter {
+  class FakeUpdater extends EventEmitter {
     writes: string[] = [];
     allowDowngrade = false;
     private channelValue: string | null = null;
@@ -44,6 +45,7 @@ vi.mock("electron-updater", async () => {
         }
       });
       updaterMock.instances.push({
+        className: new.target.name,
         writes,
         target: this as unknown as Record<string, unknown>,
         emit: (event, ...args) => this.emit(event, ...args),
@@ -76,14 +78,20 @@ vi.mock("electron-updater", async () => {
     }
   }
 
-  return { CancellationToken, NsisUpdater };
+  class NsisUpdater extends FakeUpdater {}
+  class AppImageUpdater extends FakeUpdater {}
+  class DebUpdater extends FakeUpdater {}
+
+  return { CancellationToken, NsisUpdater, AppImageUpdater, DebUpdater };
 });
 
 import { downloadedInfo, ElectronUpdaterAdapter, STAGING_ID_PLACEHOLDER } from "./ElectronUpdaterAdapter.js";
+import type { UpdaterKind } from "./UpdateService.js";
 
-function create(): { adapter: ElectronUpdaterAdapter; logs: string[]; instance: (typeof updaterMock.instances)[number] } {
+function create(kind: UpdaterKind = "nsis"): { adapter: ElectronUpdaterAdapter; logs: string[]; instance: (typeof updaterMock.instances)[number] } {
   const logs: string[] = [];
   const adapter = new ElectronUpdaterAdapter({
+    kind,
     homeDir: "C:\\Users\\Jane",
     sink: { info: (message) => logs.push(`info ${message}`), warn: (message) => logs.push(`warn ${message}`) }
   });
@@ -142,6 +150,31 @@ describe("ElectronUpdaterAdapter", () => {
         "requestHeaders"
       ].sort()
     );
+  });
+
+  it("builds the updater class that matches the package kind", () => {
+    expect(create("nsis").instance.className).toBe("NsisUpdater");
+    expect(create("appimage").instance.className).toBe("AppImageUpdater");
+    expect(create("deb").instance.className).toBe("DebUpdater");
+  });
+
+  it("disables the web installer only for nsis and applies the same policy to every kind", () => {
+    const nsis = create("nsis");
+    nsis.adapter.configure({ channel: "alpha" });
+    expect(nsis.instance.target.disableWebInstaller).toBe(true);
+    for (const kind of ["appimage", "deb"] as const) {
+      const { adapter, instance } = create(kind);
+      adapter.configure({ channel: "alpha" });
+      expect(instance.writes).not.toContain("disableWebInstaller=true");
+      expect(instance.target).toMatchObject({
+        autoDownload: false,
+        autoInstallOnAppQuit: false,
+        allowPrerelease: true,
+        channel: "alpha",
+        allowDowngrade: false,
+        requestHeaders: { "x-user-staging-id": STAGING_ID_PLACEHOLDER }
+      });
+    }
   });
 
   it("routes library logs through the redactor", () => {
@@ -213,6 +246,19 @@ describe("ElectronUpdaterAdapter", () => {
       version: "1.1.0",
       file: null,
       size: null
+    });
+  });
+
+  it("matches the size of the downloaded feed file for a POSIX cache path", () => {
+    const file = "/home/jane/.cache/@cw-codedesktop-updater/pending/cw-code-1.1.0-x86_64.AppImage";
+    const files = [
+      { url: "cw-code-1.1.0-x86_64.AppImage.blockmap", size: 9, sha512: "b" },
+      { url: "cw-code-1.1.0-x86_64.AppImage", size: 5678, sha512: "a" }
+    ];
+    expect(downloadedInfo({ version: "1.1.0", downloadedFile: file, files, path: "", sha512: "", releaseDate: "" })).toEqual({
+      version: "1.1.0",
+      file,
+      size: 5678
     });
   });
 

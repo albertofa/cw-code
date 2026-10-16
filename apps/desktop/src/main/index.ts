@@ -168,6 +168,14 @@ let shutdownAckTimer: NodeJS.Timeout | null = null;
 let sessionSettleTimer: NodeJS.Timeout | null = null;
 let sessionSettleInitialTimer: NodeJS.Timeout | null = null;
 
+function readTextOrNull(path: string): string | null {
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return null;
+  }
+}
+
 function createUpdateService(settings: AppSettings): UpdateService {
   const logger = createUpdateLogFile({
     filePath: join(logsDir(), "updater.log"),
@@ -178,9 +186,15 @@ function createUpdateService(settings: AppSettings): UpdateService {
     runningVersion: app.getVersion(),
     channel: preferences.channel,
     autoDownload: preferences.autoDownload,
-    environment: { isPackaged: app.isPackaged, resourcesPath: process.resourcesPath, execPath: process.execPath },
-    files: { fileExists: existsSync, listDirectory: (path) => readdirSync(path) },
-    createAdapter: () => new ElectronUpdaterAdapter({ homeDir: homedir(), sink: logger }),
+    environment: {
+      isPackaged: app.isPackaged,
+      resourcesPath: process.resourcesPath,
+      execPath: process.execPath,
+      platform: process.platform,
+      appImagePath: process.env.APPIMAGE ?? null
+    },
+    files: { fileExists: existsSync, listDirectory: (path) => readdirSync(path), readText: readTextOrNull },
+    createAdapter: (kind) => new ElectronUpdaterAdapter({ kind, homeDir: homedir(), sink: logger }),
     logger,
     homeDir: homedir(),
     canRunScheduledCheck: () => services?.shutdown.isIdle() !== false

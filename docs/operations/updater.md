@@ -1,7 +1,7 @@
 # Auto-updater
 
-cw-code checks GitHub Releases of `albertofa/cw-code` for newer Windows builds
-and downloads them with `electron-updater` 6.8.9. The main process runs the
+cw-code checks GitHub Releases of `albertofa/cw-code` for newer Windows and Linux
+(AppImage and .deb) builds and downloads them with `electron-updater` 6.8.9. The main process runs the
 updater. The renderer can only read state and ask for actions through the
 preload bridge. It never passes a feed URL, a file path, or an executable.
 
@@ -154,8 +154,8 @@ service, whether it came from IPC or from a timer.
   treated as "no update". An alpha user who switches to stable therefore waits
   until a stable release newer than the running alpha exists.
 - `autoDownload`, `autoInstallOnAppQuit`, `forceDevUpdateConfig` and
-  `fullChangelog` are all false. `disableWebInstaller` is true (we ship only the
-  full NSIS installer). Signature and checksum verification and differential
+  `fullChangelog` are all false. `disableWebInstaller` is true for the NSIS
+  updater (we ship only the full NSIS installer). Signature and checksum verification and differential
   download keep the library defaults (`verifyUpdateCodeSignature` is not
   touched).
 
@@ -237,11 +237,19 @@ Checked once at construction, in this order:
 | --- | --- |
 | `!app.isPackaged` (dev, `electron-vite dev`) | Updates are disabled in development builds |
 | `process.resourcesPath/app-update.yml` missing | No update feed is configured for this build |
-| No `Uninstall *.exe` next to `process.execPath` (portable copy, `win-unpacked`) | This copy of cw-code was not installed with the Windows installer |
+| Windows: no `Uninstall *.exe` next to `process.execPath` (portable copy, `win-unpacked`) | This copy of cw-code was not installed with the Windows installer |
+| Linux: `APPIMAGE` unset and `process.resourcesPath/package-type` not `deb` after trim (unpacked build) | Updates on Linux need the AppImage or the .deb package |
+| Any other platform | Updates are not supported on this platform |
 
 Any NSIS uninstaller name counts, so the update-test build
 (`Uninstall cw-code-updatetest.exe`) is detected too. An unreadable install
 directory counts as "not installed".
+
+`detectUpdaterKind` picks the updater class from the same inputs: `nsis` on
+Windows with an uninstaller, `appimage` on Linux when `APPIMAGE` is set, `deb`
+on Linux when `package-type` (written by electron-builder for deb packages)
+reads `deb`. The adapter builds `NsisUpdater`, `AppImageUpdater` or
+`DebUpdater` for that kind; only `NsisUpdater` gets `disableWebInstaller`.
 
 Every action then returns code `disabled` with that message.
 
