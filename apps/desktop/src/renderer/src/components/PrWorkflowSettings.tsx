@@ -560,6 +560,7 @@ function WorkflowHarnessFields({ workflow, onChange }: { workflow: PrWorkflow; o
   const effectiveModel = workflowModel(config, { defaultModel, recentModels: getRecentModels(driver), models: driverModels });
   const efforts = effortOptionsFor(driver, driverModels, effectiveModel);
   const permissionList = permissions.list && permissions.list.length > 0 ? permissions.list : null;
+  const permissionsLoading = permissions.list === null;
   const savedModelMissing = config.model !== "" && models.list !== null && !modelList.some((m) => m.id === config.model);
   const setHarness = (patch: Partial<PrWorkflowHarness>) => onChange({ harness: { ...config, ...patch } });
   const status = models.error
@@ -657,7 +658,8 @@ function WorkflowHarnessFields({ workflow, onChange }: { workflow: PrWorkflow; o
                 id: p.id,
                 label: p.label,
                 hint: p.label,
-                description: p.description || undefined
+                description: permissionsLoading ? "Checking what this harness supports…" : p.description || undefined,
+                disabled: permissionsLoading
               })),
               ...(config.permissionMode && permissionList && !permissionList.some((p) => p.id === config.permissionMode)
                 ? [{ id: config.permissionMode, label: `${PERMISSION_LABELS[config.permissionMode]} (unsupported, falls back)`, hint: config.permissionMode }]
