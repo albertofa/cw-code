@@ -3,6 +3,7 @@ import type { StartupState } from "@cw-code/contracts";
 import { checkCliVersions, type CliVersionCheck } from "../cliVersions.js";
 import { defaultCliBinaryPath } from "../settings/settingsUtils.js";
 import type { PtyModule } from "../pty/PtyPool.js";
+import { sanitizedChildEnv } from "../shellEnvironment.js";
 
 export interface PackageProbeNodePtyResult {
   loaded: boolean;
@@ -103,7 +104,7 @@ async function probeNodePty(): Promise<NodePtyProbeOutcome> {
   }
   try {
     const [file, args] = process.platform === "win32" ? ["cmd.exe", ["/c", "exit 0"]] : ["/bin/sh", ["-c", "exit 0"]];
-    const proc = pty.spawn(file, args, { name: "xterm-color", cols: 80, rows: 24, cwd: process.cwd() });
+    const proc = pty.spawn(file, args, { name: "xterm-color", cols: 80, rows: 24, cwd: process.cwd(), env: sanitizedChildEnv(process.env, process.platform) });
     return await new Promise<NodePtyProbeOutcome>((resolvePromise) => {
       const timer = setTimeout(() => {
         proc.kill();

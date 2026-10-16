@@ -20,7 +20,16 @@ export interface CandidatePathsOptions {
 
 const KNOWN_BINARIES: ReadonlySet<CliBinary> = new Set(["claude", "opencode", "codex", "git", "gh"]);
 
-const POSIX_SYSTEM_DIRS = ["/usr/local/bin", "/opt/homebrew/bin", "/usr/bin"];
+const POSIX_SYSTEM_DIRS: Partial<Record<NodeJS.Platform, readonly string[]>> = {
+  darwin: ["/usr/local/bin", "/opt/homebrew/bin", "/usr/bin"],
+  linux: ["/usr/local/bin", "/usr/bin", "/home/linuxbrew/.linuxbrew/bin", "/snap/bin"]
+};
+
+const POSIX_HOME_DIRS: Partial<Record<NodeJS.Platform, readonly string[]>> = {
+  linux: [".local/share/pnpm", ".bun/bin", ".volta/bin"]
+};
+
+const DEFAULT_POSIX_SYSTEM_DIRS = ["/usr/local/bin", "/usr/bin"];
 
 const WIN32_EXECUTABLE_FORMS = [".exe", ".cmd", ".ps1"];
 
@@ -65,11 +74,12 @@ function posixCandidates(binary: CliBinary, opts: CandidatePathsOptions): string
   const seen = new Set<string>();
   const push = (value: string): void => pushCandidate(list, seen, posix.normalize, false, value);
   push(binary);
-  for (const dir of POSIX_SYSTEM_DIRS) push(posix.join(dir, binary));
+  for (const dir of POSIX_SYSTEM_DIRS[opts.platform] ?? DEFAULT_POSIX_SYSTEM_DIRS) push(posix.join(dir, binary));
   if (opts.homeDir) {
     push(posix.join(opts.homeDir, ".local/bin", binary));
     push(posix.join(opts.homeDir, "bin", binary));
     push(posix.join(opts.homeDir, ".npm-global/bin", binary));
+    for (const dir of POSIX_HOME_DIRS[opts.platform] ?? []) push(posix.join(opts.homeDir, dir, binary));
     if (binary === "opencode") push(posix.join(opts.homeDir, ".opencode/bin", binary));
     if (binary === "claude") push(posix.join(opts.homeDir, ".claude/local", binary));
   }

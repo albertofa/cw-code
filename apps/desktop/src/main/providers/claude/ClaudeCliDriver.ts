@@ -1,5 +1,6 @@
 import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
 import { createInterface } from "node:readline";
+import { sanitizedChildEnv } from "../../shellEnvironment.js";
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname, join, normalize } from "node:path";
@@ -866,7 +867,7 @@ export class ClaudeCliDriver implements CliDriver {
     const child = this.spawnFn(binary, args, {
       cwd: request.cwd,
       windowsHide: true,
-      ...(request.env ? { env: request.env } : {})
+      env: sanitizedChildEnv(request.env ?? process.env, process.platform)
     });
     const state: ClaudeProcessState = {
       sessionId: request.sessionId,

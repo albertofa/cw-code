@@ -23,6 +23,7 @@ import { appendCrashLog, initCrashLog } from "./debug/crashLog.js";
 import { RendererProbeTracker, runPackageProbe } from "./debug/packageProbe.js";
 import { claudeCommandsCachePath, cwCodeHome, ensureAppDirs, attachmentsDir, logsDir, migrateFromUserData, opencodeModelsCachePath, sessionDbPath, settingsFilePath, userdataDir } from "./paths/appPaths.js";
 import { reapOrphanedServers } from "./orphanServers.js";
+import { loadLoginShellEnvironment } from "./shellEnvironment.js";
 import type { AppSettings, ApprovalDecision, CliBinary, CommandInvocation, CreateSessionOptions, GitDiffMode, ProjectGitHubRepo, PrRef, RepoRef, RunRef, RunSources, SessionPrLink, MetadataIssue, SessionStatus, SettingsPatch, ShutdownCommitResult, ShutdownExpiredEvent, ShutdownPrepareRequest, ShutdownReason, ShutdownRequestedEvent, StartupState, UpdateActionResult, UpdateState, UsageLedgerQuery } from "@cw-code/contracts";
 import type { DriverKind, HarnessId, SkillSaveInput } from "@cw-code/contracts";
 import type { PtyKind } from "./pty/PtyPool.js";
@@ -1235,6 +1236,7 @@ function startUpdateAutotest(pending: PendingUpdateAutotest | null): void {
 }
 
 async function startApp(): Promise<void> {
+  await loadLoginShellEnvironment(process.platform);
   const updateAutotest = await prepareUpdateAutotest();
   ensureAppDirs();
   migrateFromUserData(app.getPath("userData"));

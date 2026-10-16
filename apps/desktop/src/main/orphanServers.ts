@@ -1,5 +1,6 @@
 import { execFile } from "node:child_process";
 import { killProcessTreeByPid } from "./processTree.js";
+import { sanitizedChildEnv } from "./shellEnvironment.js";
 
 export interface ProcessSnapshot {
   pid: number;
@@ -27,7 +28,7 @@ export function selectOrphanServerPids(processes: ProcessSnapshot[]): number[] {
 
 function execFileAsync(file: string, args: string[], timeoutMs: number): Promise<string> {
   return new Promise((resolve, reject) => {
-    execFile(file, args, { timeout: timeoutMs, maxBuffer: 32 * 1024 * 1024 }, (error, stdout) => {
+    execFile(file, args, { timeout: timeoutMs, maxBuffer: 32 * 1024 * 1024, env: sanitizedChildEnv(process.env, process.platform) }, (error, stdout) => {
       if (error) {
         reject(error);
         return;
