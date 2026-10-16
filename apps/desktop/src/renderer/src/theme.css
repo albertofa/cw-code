@@ -7824,6 +7824,39 @@ button.gitbar-checkout:hover {
   text-overflow: ellipsis;
 }
 
+.wf-run-summary {
+  color: var(--text);
+  padding-block: 3px;
+}
+
+.wf-run-inherited {
+  color: var(--muted);
+}
+
+.wf-run-config {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+  padding: 3px 6px;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: transparent;
+  color: var(--accent);
+  font: inherit;
+  font-size: var(--t-xs);
+  cursor: pointer;
+}
+
+.wf-run-config:hover:not(:disabled) {
+  background: var(--raised);
+}
+
+.wf-run-config:disabled {
+  color: var(--faint);
+  cursor: default;
+}
+
 .wf-run-seg {
   display: flex;
   flex-wrap: wrap;

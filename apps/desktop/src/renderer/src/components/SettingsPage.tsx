@@ -671,11 +671,13 @@ function filledTextField(target: EventTarget | null): HTMLInputElement | HTMLTex
 export function SettingsPage({
   section,
   harness,
+  workflowId,
   onBack,
   onOpenUsage
 }: {
   section: SettingsSection;
   harness?: DriverName;
+  workflowId?: string;
   onBack: () => void;
   onOpenUsage: () => void;
 }) {
@@ -756,7 +758,7 @@ export function SettingsPage({
       case "sourceControl":
         return <SourceControlSettings onPickBinary={pickBinary} />;
       case "prWorkflows":
-        return <PrWorkflowSettings />;
+        return <PrWorkflowSettings focusWorkflowId={workflowId} />;
       case "harness":
         return <HarnessSettings key={harness ?? "claude"} driver={harness ?? "claude"} onPickBinary={pickBinary} onOpenUsage={onOpenUsage} />;
     }

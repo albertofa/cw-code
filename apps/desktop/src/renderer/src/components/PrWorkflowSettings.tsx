@@ -1,12 +1,14 @@
 import { Fragment, useCallback, useEffect, useLayoutEffect, useRef, useState, type DragEvent, type KeyboardEvent as ReactKeyboardEvent, type ReactNode, type RefObject } from "react";
-import { AlertTriangle, Copy, Folder, FolderGit2, GitFork, GitPullRequest, GripVertical, History, Pencil, Plus, RefreshCw, RotateCcw, Trash2, type LucideIcon } from "lucide-react";
-import type { PrSuggestCondition, PrWorkflow, PrWorkflowIcon, PrWorkspaceChoice } from "@cw-code/contracts";
-import type { AppSettings, PrDetail, PrSummary } from "../cw.js";
+import { AlertTriangle, Bot, Copy, Folder, FolderGit2, Gauge, GitFork, GitPullRequest, GripVertical, History, Pencil, Plus, RefreshCw, RotateCcw, ShieldCheck, Trash2, type LucideIcon } from "lucide-react";
+import type { PrSuggestCondition, PrWorkflow, PrWorkflowHarness, PrWorkflowIcon, PrWorkspaceChoice } from "@cw-code/contracts";
+import type { AppSettings, DriverName, PrDetail, PrSummary } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import { usePrStore } from "../stores/prStore.js";
 import { useSettingsDraftStore } from "../stores/settingsDraftStore.js";
+import { DriverIcon } from "./DriverIcon.js";
 import { errorMessage } from "./errorMessage.js";
 import { MenuSelect } from "./MenuSelect.js";
+import { EFFORTS, effortLabel, effortOptionsFor } from "./modelMenus.js";
 import { useNotifs } from "./Notifications.js";
 import { prKey } from "./prInbox.js";
 import { needsFailedLogs } from "./prSessionModel.js";
@@ -31,7 +33,9 @@ import {
 } from "./prWorkflowEditor.js";
 import { attributionText, loadFailedLogs, resolveTemplate, TEMPLATE_VARS_BY_TARGET, templateVars } from "./prWorkflows.js";
 import { SettingsPageHead, SettingsSwitch } from "./SettingsLayout.js";
+import { HARNESS_IDS, HARNESS_NAMES } from "./settingsSections.js";
 import { harnessLabel } from "./toolTabs.js";
+import { PERMISSION_LABELS, PERMISSION_MODES, workflowDriver } from "./workflowHarness.js";
 import { WORKFLOW_ICONS, workflowIcon } from "./workflowIcons.js";
 
 const CONDITION_LABELS: Record<PrSuggestCondition, string> = {
@@ -518,6 +522,155 @@ function PromptBox({
   );
 }
 
+function useHarnessOptions<T>(driver: DriverName | null, load: (driver: DriverName) => Promise<T[]>) {
+  const [state, setState] = useState<{ driver: DriverName | null; list: T[] | null; error: string | null }>({ driver, list: null, error: null });
+
+  useEffect(() => {
+    if (!driver) return;
+    let cancelled = false;
+    setState({ driver, list: null, error: null });
+    load(driver).then(
+      (list) => {
+        if (!cancelled) setState({ driver, list, error: null });
+      },
+      (err: unknown) => {
+        if (!cancelled) setState({ driver, list: [], error: errorMessage(err) || "Could not load options" });
+      }
+    );
+    return () => {
+      cancelled = true;
+    };
+  }, [driver]);
+
+  return state.driver === driver ? state : { driver, list: null, error: null };
+}
+
+function WorkflowHarnessFields({ workflow, onChange }: { workflow: PrWorkflow; onChange: (patch: Partial<PrWorkflow>) => void }) {
+  const lastDriver = useAppStore((s) => s.lastDriver);
+  const checks = useSettingsDraftStore((s) => s.harnessChecks);
+  const config = workflow.harness;
+  const driver = workflowDriver(config, lastDriver);
+  const models = useHarnessOptions(config.driver, (d) => window.cw.listModelsForHarness(d));
+  const permissions = useHarnessOptions(driver, (d) => window.cw.listPermissionsForHarness(d));
+  const modelList = models.list ?? [];
+  const efforts = effortOptionsFor(driver, modelList, config.model || undefined);
+  const permissionList = permissions.list && permissions.list.length > 0 ? permissions.list : null;
+  const savedModelMissing = config.model !== "" && models.list !== null && !modelList.some((m) => m.id === config.model);
+  const setHarness = (patch: Partial<PrWorkflowHarness>) => onChange({ harness: { ...config, ...patch } });
+  const status = models.error
+    ? `Could not load models: ${models.error}`
+    : permissions.error
+      ? `Could not load permission modes: ${permissions.error}`
+      : null;
+
+  return (
+    <fieldset className="sp-fieldset" id={`sp-wf-harness-${workflow.id}`}>
+      <legend className="sp-h6">
+        Harness <small>Used when the workflow starts a new session. Unset values follow your current composer choice.</small>
+      </legend>
+      <div className="sp-wf-harness">
+        <div className="sp-field">
+          <span>Harness</span>
+          <MenuSelect
+            label="Workflow harness"
+            direction="down"
+            value={config.driver ?? ""}
+            display={config.driver ? HARNESS_NAMES[config.driver] : `Last used (${HARNESS_NAMES[lastDriver]})`}
+            icon={<DriverIcon driver={driver} size={13} />}
+            options={[
+              { id: "", label: "Last used", hint: "Last used", description: `Currently ${HARNESS_NAMES[lastDriver]}` },
+              ...HARNESS_IDS.map((id) => {
+                const unavailable = checks?.find((check) => check.binary === id)?.available === false;
+                return {
+                  id,
+                  label: HARNESS_NAMES[id],
+                  hint: HARNESS_NAMES[id],
+                  description: unavailable ? "Not installed" : undefined,
+                  disabled: unavailable,
+                  icon: <DriverIcon driver={id} size={13} />
+                };
+              })
+            ]}
+            onPick={(id) => {
+              const next = HARNESS_IDS.find((h) => h === id) ?? null;
+              if (next !== config.driver) setHarness({ driver: next, model: "" });
+            }}
+          />
+        </div>
+        <div className="sp-field">
+          <span>Model</span>
+          <MenuSelect
+            label="Workflow model"
+            direction="down"
+            value={config.model}
+            display={modelList.find((m) => m.id === config.model)?.label ?? (config.model || "Default")}
+            icon={<Bot size={13} aria-hidden="true" />}
+            options={[
+              {
+                id: "",
+                label: "Default",
+                hint: "Default",
+                description: config.driver ? "The harness default, or your most recent model" : "Pick a harness to choose a specific model"
+              },
+              ...modelList.map((m) => ({ id: m.id, label: m.label, hint: m.id })),
+              ...(savedModelMissing ? [{ id: config.model, label: `${config.model} (saved)`, hint: config.model }] : [])
+            ]}
+            onPick={(id) => setHarness({ model: id })}
+            searchable={modelList.length > 5}
+            searchPlaceholder="Filter models…"
+          />
+        </div>
+        <div className="sp-field">
+          <span>Effort</span>
+          <MenuSelect
+            label="Workflow effort"
+            direction="down"
+            value={config.effort ?? ""}
+            display={config.effort ? effortLabel(config.effort) : "Composer default"}
+            icon={<Gauge size={13} aria-hidden="true" />}
+            options={[
+              { id: "", label: "Composer default", hint: "Composer default" },
+              ...efforts.map((e) => ({ id: e.id, label: e.label, hint: e.label })),
+              ...(config.effort && !efforts.some((e) => e.id === config.effort)
+                ? [{ id: config.effort, label: `${effortLabel(config.effort)} (unsupported, falls back)`, hint: config.effort }]
+                : [])
+            ]}
+            onPick={(id) => setHarness({ effort: EFFORTS.find((e) => e.id === id)?.id ?? null })}
+          />
+        </div>
+        <div className="sp-field">
+          <span>Permissions</span>
+          <MenuSelect
+            label="Workflow permissions"
+            direction="down"
+            value={config.permissionMode ?? ""}
+            display={config.permissionMode ? (permissionList?.find((p) => p.id === config.permissionMode)?.label ?? PERMISSION_LABELS[config.permissionMode]) : "Composer default"}
+            icon={<ShieldCheck size={13} aria-hidden="true" />}
+            options={[
+              { id: "", label: "Composer default", hint: "Composer default" },
+              ...(permissionList ?? PERMISSION_MODES.map((id) => ({ id, label: PERMISSION_LABELS[id], description: "" }))).map((p) => ({
+                id: p.id,
+                label: p.label,
+                hint: p.label,
+                description: p.description || undefined
+              })),
+              ...(config.permissionMode && permissionList && !permissionList.some((p) => p.id === config.permissionMode)
+                ? [{ id: config.permissionMode, label: `${PERMISSION_LABELS[config.permissionMode]} (unsupported, falls back)`, hint: config.permissionMode }]
+                : [])
+            ]}
+            onPick={(id) => setHarness({ permissionMode: PERMISSION_MODES.find((m) => m === id) ?? null })}
+          />
+        </div>
+      </div>
+      {status && (
+        <div className="sp-issue error" role="alert">
+          <AlertTriangle size={13} aria-hidden="true" /> {status}
+        </div>
+      )}
+    </fieldset>
+  );
+}
+
 function WorkflowEditor({ workflow, settings, onChange, onDuplicate, onDelete, onReset, resetBusy, resetError }: {
   workflow: PrWorkflow;
   settings: AppSettings;
@@ -634,6 +787,7 @@ function WorkflowEditor({ workflow, settings, onChange, onDuplicate, onDelete, o
           </div>
         </fieldset>
       </div>
+      <WorkflowHarnessFields workflow={workflow} onChange={onChange} />
       <div className="sp-prompts">
         <PromptBox
           key={`${workflow.id}:start`}
@@ -660,13 +814,13 @@ function WorkflowEditor({ workflow, settings, onChange, onDuplicate, onDelete, o
   );
 }
 
-export function PrWorkflowSettings() {
+export function PrWorkflowSettings({ focusWorkflowId }: { focusWorkflowId?: string }) {
   const draft = useSettingsDraftStore((s) => s.draft);
   const lastDriver = useAppStore((s) => s.lastDriver);
   const set = useSettingsDraftStore((s) => s.set);
   const invalidWorkflowId = useSettingsDraftStore((s) => s.invalidWorkflowId);
   const clearInvalidWorkflow = useSettingsDraftStore((s) => s.clearInvalidWorkflow);
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  const [selectedId, setSelectedId] = useState<string | null>(focusWorkflowId ?? null);
   const [resetBusyId, setResetBusyId] = useState<string | null>(null);
   const [resetError, setResetError] = useState<string | null>(null);
 
@@ -683,6 +837,15 @@ export function PrWorkflowSettings() {
       document.querySelector(`[data-workflow-id="${CSS.escape(invalidWorkflowId)}"]`)?.scrollIntoView({ block: "nearest" });
     });
   }, [invalidWorkflowId, clearInvalidWorkflow]);
+
+  useEffect(() => {
+    if (!focusWorkflowId) return;
+    setSelectedId(focusWorkflowId);
+    requestAnimationFrame(() => {
+      document.querySelector(`[data-workflow-id="${CSS.escape(focusWorkflowId)}"]`)?.scrollIntoView({ block: "nearest" });
+      document.getElementById(`sp-wf-harness-${focusWorkflowId}`)?.scrollIntoView({ block: "center" });
+    });
+  }, [focusWorkflowId]);
 
   if (!draft) return null;
   const workflows = draft.prWorkflows;
