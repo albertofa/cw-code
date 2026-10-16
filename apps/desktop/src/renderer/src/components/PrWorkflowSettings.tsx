@@ -345,7 +345,8 @@ function PromptPreview({
   prKeyValue,
   onPickPr,
   settings,
-  failedLogs
+  failedLogs,
+  driver
 }: {
   template: string;
   prs: PrSummary[];
@@ -353,12 +354,12 @@ function PromptPreview({
   onPickPr: (key: string) => void;
   settings: AppSettings;
   failedLogs: FailedLogsCache;
+  driver: DriverName;
 }) {
   const inboxError = usePrStore((s) => s.inboxError);
   const inboxLoading = usePrStore((s) => s.inboxLoading);
   const refreshInbox = usePrStore((s) => s.refreshInbox);
   const loadDetail = usePrStore((s) => s.loadDetail);
-  const lastDriver = useAppStore((s) => s.lastDriver);
   const selected = prs.find((pr) => prKey(pr.ref) === prKeyValue) ?? prs[0];
   const key = selected ? prKey(selected.ref) : null;
   const detail: PrDetail | undefined = usePrStore((s) => (key ? s.detailByKey[key] : undefined));
@@ -390,7 +391,7 @@ function PromptPreview({
     );
   }
 
-  const harness = harnessLabel(lastDriver);
+  const harness = harnessLabel(driver);
   const logsReady = !needsLogs || logs !== undefined;
   const text = detail && logsReady ? resolveTemplate(template, templateVars(detail, { attribution: attributionText(settings, harness), harness, failedLogs: needsLogs ? logs?.text : undefined })) : null;
 
@@ -684,10 +685,11 @@ function WorkflowEditor({ workflow, settings, onChange, onDuplicate, onDelete, o
   const prs = usePrStore((s) => s.inbox?.items ?? NO_PRS);
   const [previewPr, setPreviewPr] = useState<string | null>(null);
   const failedLogs = useFailedLogsCache();
+  const driver = useAppStore((s) => workflowDriver(workflow.harness, s.pendingDriver ?? s.lastDriver));
   const issues = templateVarIssues(workflow);
   const preview = (template: string) =>
     workflow.target === "pr" ? (
-      <PromptPreview template={template} prs={prs} prKeyValue={previewPr} onPickPr={setPreviewPr} settings={settings} failedLogs={failedLogs} />
+      <PromptPreview template={template} prs={prs} prKeyValue={previewPr} onPickPr={setPreviewPr} settings={settings} failedLogs={failedLogs} driver={driver} />
     ) : (
       <div className="sp-code sp-preview-empty">Preview is available for pull request workflows.</div>
     );
