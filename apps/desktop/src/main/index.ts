@@ -14,6 +14,7 @@ function resolvePreload(): string {
   if (!found) console.warn(`preload not found (tried ${candidates.join(", ")})`);
   return found ?? candidates[0];
 }
+import { resolveAppImageRelaunch } from "./appImage.js";
 import { attentionDescription, parseAttentionState, resetsAttention, shouldFlash } from "./attention.js";
 import { checkCliVersion, checkCliVersions, type CliVersionCheck } from "./cliVersions.js";
 import { discoverBinaries, verifyBinaryPath } from "./cli/binaryDiscovery.js";
@@ -359,6 +360,12 @@ function endOfSession(): void {
   disposeServices();
 }
 
+function quitFromSignal(): void {
+  if (isQuitApproved()) return;
+  endOfSession();
+  app.quit();
+}
+
 async function commitShutdown(token: string, action: () => Promise<void> | void): Promise<ShutdownCommitResult> {
   if (!services) return { ok: false, message: "cw-code services are not running" };
   const result = await services.shutdown.commit(token, action);
@@ -381,6 +388,10 @@ function focusMainWindow(): void {
   mainWindow.focus();
 }
 
+function windowIconFile(): string {
+  return process.platform === "linux" ? "icon.png" : "icon.ico";
+}
+
 async function createWindow(): Promise<void> {
   mainWindow = new BrowserWindow({
     width: 1440,
@@ -388,8 +399,8 @@ async function createWindow(): Promise<void> {
     frame: false,
     title: "cw-code",
     icon: app.isPackaged
-      ? join(process.resourcesPath, "branding", "icon.ico")
-      : join(app.getAppPath(), "resources", "icon.ico"),
+      ? join(process.resourcesPath, "branding", windowIconFile())
+      : join(app.getAppPath(), "resources", windowIconFile()),
     backgroundColor: "#141518",
     autoHideMenuBar: true,
     webPreferences: {
@@ -534,7 +545,9 @@ function isInsideAttachmentsDir(target: string): boolean {
 }
 
 function relaunch(): void {
-  app.relaunch();
+  const appImage = resolveAppImageRelaunch(process.env, process.execPath, process.argv);
+  if (appImage) app.relaunch(appImage);
+  else app.relaunch();
   app.exit(0);
 }
 
@@ -1298,8 +1311,9 @@ async function startApp(): Promise<void> {
   }
   registerWindowIpc();
   registerStartupIpc();
-  process.once("SIGINT", quitWithoutDialog);
-  process.once("SIGTERM", quitWithoutDialog);
+  const onSignal = process.platform === "win32" ? quitWithoutDialog : quitFromSignal;
+  process.on("SIGINT", onSignal);
+  process.on("SIGTERM", onSignal);
   powerMonitor.on("shutdown", endOfSession);
   app.on("child-process-gone", (_e, details) => {
     appendCrashLog(
@@ -1311,6 +1325,11 @@ async function startApp(): Promise<void> {
     if (BrowserWindow.getAllWindows().length === 0) void createWindow();
   });
   startUpdateAutotest(updateAutotest);
+}
+
+if (process.platform === "linux") {
+  (app as typeof app & { setDesktopName?: (desktopName: string) => void }).setDesktopName?.("cw-code.desktop");
+  app.commandLine.appendSwitch("class", "cw-code");
 }
 
 if (!app.isPackaged && !app.commandLine.hasSwitch("user-data-dir")) {
