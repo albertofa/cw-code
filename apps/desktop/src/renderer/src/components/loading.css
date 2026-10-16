@@ -1,0 +1,195 @@
+.cw-spinner {
+  flex: none;
+  color: var(--accent-ink);
+  animation: cw-spin 0.8s linear infinite;
+}
+
+button .cw-spinner {
+  color: inherit;
+}
+
+.cw-spinner circle {
+  fill: none;
+  stroke-width: 2;
+}
+
+.cw-spinner-track {
+  stroke: color-mix(in srgb, currentColor 22%, transparent);
+}
+
+.cw-spinner-arc {
+  stroke: currentColor;
+  stroke-linecap: round;
+  stroke-dasharray: 28 72;
+}
+
+.cw-inline-loading {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+}
+
+.skel-region {
+  pointer-events: none;
+  user-select: none;
+  animation: skel-in 240ms var(--ease-out) 120ms both;
+}
+
+.skel-label {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
+.skel-bone {
+  display: block;
+  flex: none;
+  max-width: 100%;
+  border-radius: 4px;
+  background-color: color-mix(in srgb, var(--text) 6%, transparent);
+  background-image: linear-gradient(105deg, transparent 38%, color-mix(in srgb, var(--text) 7%, transparent) 50%, transparent 62%);
+  background-attachment: fixed;
+  background-repeat: no-repeat;
+  background-size: 100vw 100vh;
+  animation: skel-sweep 2.2s linear infinite;
+}
+
+.skel-bone.round {
+  border-radius: 999px;
+}
+
+.skel-line {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.skel-fill {
+  flex: 1;
+  min-width: 0;
+}
+
+.skel-code {
+  padding: 10px 14px;
+}
+
+.skel-region.sp-code .skel-code {
+  padding: 0;
+}
+
+.skel-code-line {
+  display: flex;
+  align-items: center;
+  height: calc(var(--fs-code) * 1.6);
+}
+
+/* github */
+
+.skel-region .hub-row {
+  opacity: calc(1 - var(--i, 0) * 0.14);
+}
+
+.skel-region .pr-inbox-title-col .skel-line {
+  height: 20px;
+}
+
+.skel-region .pr-inbox-title-col .skel-line + .skel-line {
+  height: 18px;
+  margin-top: 2px;
+}
+
+.skel-region .hub-gate .skel-line {
+  height: 16px;
+}
+
+.skel-region .hub-action {
+  justify-content: flex-end;
+}
+
+.skel-detail-title {
+  margin-top: 14px;
+  height: 26px;
+}
+
+.skel-detail-tab {
+  display: flex;
+  align-items: center;
+  height: 38px;
+  padding: 0 14px;
+}
+
+.skel-detail-tab.active {
+  border-bottom: 2px solid color-mix(in srgb, var(--text) 14%, transparent);
+  margin-bottom: -1px;
+}
+
+.skel-comment-head {
+  height: 38px;
+  padding: 0 12px;
+  border-bottom: 1px solid var(--border-soft);
+  background: var(--bg-deep);
+}
+
+.skel-comment-body {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  padding: 14px 12px 16px;
+}
+
+.skel-side-block {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+}
+
+.skel-files-row {
+  height: 28px;
+  padding: 0 6px;
+}
+
+.skel-files-code {
+  border: 1px solid var(--border);
+  border-radius: 0 0 var(--r-md) var(--r-md);
+  background: var(--editor);
+}
+
+.skel-panel-row {
+  height: 22px;
+}
+
+@keyframes skel-sweep {
+  from {
+    background-position: -100vw 0;
+  }
+
+  to {
+    background-position: 100vw 0;
+  }
+}
+
+@keyframes skel-in {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cw-spinner,
+  .skel-bone {
+    animation: none;
+  }
+
+  .skel-bone {
+    background-image: none;
+  }
+}

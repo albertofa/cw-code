@@ -26,6 +26,7 @@ import { DriverIcon } from "./DriverIcon.js";
 import { Md } from "./Markdown.js";
 import { openExternalLink } from "./externalLink.js";
 import { PrFilesPanel } from "./PrFilesPanel.js";
+import { CheckLogSkeleton, PrDetailSkeleton } from "./GitHubSkeletons.js";
 import { prKey } from "./prInbox.js";
 import { firstUnseenIndex } from "./prUpdates.js";
 import { usePrSettings } from "./useLinkedPr.js";
@@ -295,7 +296,7 @@ export function PrDetailView({ prRef }: { prRef: PrRef }) {
             Could not load workflows: {settingsError}
           </div>
         )}
-        {loading && !detail && <div className="pr-view-empty">Loading pull request…</div>}
+        {loading && !detail && <PrDetailSkeleton />}
         {detail && (
           <div className="pr-detail-wrap">
             <div className="pr-detail-title-row">
@@ -734,7 +735,7 @@ function ChecksTab({
             </div>
             {failingRunId !== null && (
               <div className="pr-detail-check-log">
-                {logLoading && <div className="pr-detail-check-empty">Loading log…</div>}
+                {logLoading && <CheckLogSkeleton />}
                 {logError && (
                   <div className="pr-detail-check-empty">
                     {logError}
