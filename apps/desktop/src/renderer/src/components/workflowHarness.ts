@@ -36,6 +36,13 @@ export function workflowDriver(config: PrWorkflowHarness, composerDriver: Driver
 
 export type HarnessValueSource = "workflow" | "composer" | "fallback";
 
+export function workflowModel(
+  config: PrWorkflowHarness,
+  ctx: Pick<WorkflowHarnessContext, "defaultModel" | "recentModels" | "models">
+): string | undefined {
+  return (config.driver && config.model) || (pickInitialModel(ctx.models, ctx.defaultModel, ctx.recentModels) ?? undefined);
+}
+
 export interface HarnessSummaryPart {
   key: "driver" | "model" | "effort" | "permission";
   label: string;
@@ -74,7 +81,7 @@ export function harnessSummary(
 
 export function resolveWorkflowHarness(config: PrWorkflowHarness, ctx: WorkflowHarnessContext): ResolvedWorkflowHarness {
   const driver = workflowDriver(config, ctx.composerDriver);
-  const model = (config.driver && config.model) || (pickInitialModel(ctx.models, ctx.defaultModel, ctx.recentModels) ?? undefined);
+  const model = workflowModel(config, ctx);
   const effort = fallbackEffort(config.effort ?? ctx.pendingPrefs.effort ?? DEFAULT_EFFORT, effortOptionsFor(driver, ctx.models, model));
   const wanted = config.permissionMode ?? ctx.pendingPrefs.permissionMode ?? "auto";
   const permissionMode = ctx.permissions.length === 0 || ctx.permissions.some((p) => p.id === wanted) ? wanted : ctx.permissions[0].id;

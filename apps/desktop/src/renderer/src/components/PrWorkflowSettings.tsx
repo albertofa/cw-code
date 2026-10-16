@@ -34,8 +34,9 @@ import {
 import { attributionText, loadFailedLogs, resolveTemplate, TEMPLATE_VARS_BY_TARGET, templateVars } from "./prWorkflows.js";
 import { SettingsPageHead, SettingsSwitch } from "./SettingsLayout.js";
 import { HARNESS_IDS, HARNESS_NAMES } from "./settingsSections.js";
+import { getRecentModels } from "./lastModel.js";
 import { harnessLabel } from "./toolTabs.js";
-import { PERMISSION_LABELS, PERMISSION_MODES, workflowDriver } from "./workflowHarness.js";
+import { PERMISSION_LABELS, PERMISSION_MODES, workflowDriver, workflowModel } from "./workflowHarness.js";
 import { WORKFLOW_ICONS, workflowIcon } from "./workflowIcons.js";
 
 const CONDITION_LABELS: Record<PrSuggestCondition, string> = {
@@ -551,10 +552,13 @@ function WorkflowHarnessFields({ workflow, onChange }: { workflow: PrWorkflow; o
   const checks = useSettingsDraftStore((s) => s.harnessChecks);
   const config = workflow.harness;
   const driver = workflowDriver(config, composerDriver);
-  const models = useHarnessOptions(config.driver, (d) => window.cw.listModelsForHarness(d));
+  const defaultModel = useAppStore((s) => s.defaultModelByDriver[driver]);
+  const models = useHarnessOptions(driver, (d) => window.cw.listModelsForHarness(d));
   const permissions = useHarnessOptions(driver, (d) => window.cw.listPermissionsForHarness(d));
-  const modelList = models.list ?? [];
-  const efforts = effortOptionsFor(driver, modelList, config.model || undefined);
+  const driverModels = models.list ?? [];
+  const modelList = config.driver ? driverModels : [];
+  const effectiveModel = workflowModel(config, { defaultModel, recentModels: getRecentModels(driver), models: driverModels });
+  const efforts = effortOptionsFor(driver, driverModels, effectiveModel);
   const permissionList = permissions.list && permissions.list.length > 0 ? permissions.list : null;
   const savedModelMissing = config.model !== "" && models.list !== null && !modelList.some((m) => m.id === config.model);
   const setHarness = (patch: Partial<PrWorkflowHarness>) => onChange({ harness: { ...config, ...patch } });
