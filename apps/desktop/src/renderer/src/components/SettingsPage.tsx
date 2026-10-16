@@ -703,7 +703,8 @@ export function SettingsPage({
 
   useEffect(() => {
     void load();
-  }, [load]);
+    if (useSettingsDraftStore.getState().harnessChecks === null) void recheckHarnesses();
+  }, [load, recheckHarnesses]);
 
   useEffect(() => {
     if (invalidWorkflowId && section !== "prWorkflows") openSettings("prWorkflows");
