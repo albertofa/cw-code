@@ -31,9 +31,9 @@ import {
   nsisGuid,
   readRegistryValue,
   registryPaths,
-  runSilent,
-  safePathWithoutClis
+  runSilent
 } from "./windows-install.mjs";
+import { safePathWithoutClis } from "./package-probe.mjs";
 
 const libDir = dirname(fileURLToPath(import.meta.url));
 const scriptsDir = resolve(libDir, "..");

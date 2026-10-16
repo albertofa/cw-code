@@ -15,17 +15,14 @@ import {
   isSafeRemovalTarget,
   defaultInstallDir,
   isElevated,
-  nodePtyProblem,
   resolveAsarLib,
   readRegistryValue,
   registryPaths,
-  requireDisposableEnvironment,
-  runPackageProbe,
-  startupModeProblem,
   runSilent,
   runSilentWithRetry,
   withCleanupErrors
 } from "./lib/windows-install.mjs";
+import { nodePtyProblem, requireDisposableEnvironment, runPackageProbe, startupModeProblem } from "./lib/package-probe.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, "..");

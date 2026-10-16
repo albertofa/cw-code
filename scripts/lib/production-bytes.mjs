@@ -13,16 +13,12 @@ import {
   defaultInstallDir,
   isProcessAlive,
   killProcessTreeIfImage,
-  nodePtyProblem,
   nsisGuid,
   readRegistryValue,
   registryPaths,
-  requireDisposableEnvironment,
-  runPackageProbe,
-  runSilent,
-  safePathWithoutClis,
-  startupModeProblem
+  runSilent
 } from "./windows-install.mjs";
+import { nodePtyProblem, requireDisposableEnvironment, runPackageProbe, safePathWithoutClis, startupModeProblem } from "./package-probe.mjs";
 
 const PRODUCTION_APP_ID = "com.cwcode.app";
 const PRODUCTION_PRODUCT_NAME = "cw-code";

@@ -15,7 +15,8 @@ import { assertProductionBundle } from "./lib/production-bundle.mjs";
 import { buildMainBundle, describeUpdateTestBuild, packageUpdateTestBuild } from "./lib/upgrade-builds.mjs";
 import { dryRunFeed, runScenario, runUnpackedAutotestSmoke, stageFeed, updateTestIdentity } from "./lib/upgrade-run.mjs";
 import { runProductionBytes } from "./lib/production-bytes.mjs";
-import { isElevated, requireDisposableEnvironment } from "./lib/windows-install.mjs";
+import { requireDisposableEnvironment } from "./lib/package-probe.mjs";
+import { isElevated } from "./lib/windows-install.mjs";
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const repoRoot = resolve(__dirname, "..");
