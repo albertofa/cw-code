@@ -1,6 +1,7 @@
 import { type ChildProcess } from "node:child_process";
 import { createInterface } from "node:readline";
 import { spawnCli } from "../../cli/spawnCli.js";
+import { withOwnerPid } from "../../orphanServers.js";
 import { hasExited, killProcessTree, waitForExit } from "../../processTree.js";
 
 export class CodexAppServerError extends Error {
@@ -162,7 +163,7 @@ export class CodexAppServer implements CodexAppServerLike {
     const proc = spawnCli(this.opts.binary, args, {
       stdio: ["pipe", "pipe", "pipe"],
       windowsHide: true,
-      ...(this.opts.env ? { env: this.opts.env } : {})
+      env: withOwnerPid(this.opts.env ?? process.env)
     });
     this.child = proc;
     this.latest = proc;
