@@ -6,6 +6,7 @@ import {
   displayChip,
   linkFor,
   linksTitle,
+  linkWithWorkflow,
   mostUrgentLink,
   pickMainSession,
   prRefFromUrl,
@@ -55,6 +56,18 @@ function summary(number: number, overrides: Partial<PrSummary> = {}): PrSummary 
 function lookup(...items: PrSummary[]): Map<string, PrSummary> {
   return new Map(items.map((item) => [prKey(item.ref), item]));
 }
+
+describe("linkWithWorkflow", () => {
+  it("adopts the workflow on a link the session opened, keeping its origin and seen state", () => {
+    const opened = link(7, { origin: "opened" });
+    expect(linkWithWorkflow({ prs: [opened] }, ref(7), "babysit")).toEqual({ ...opened, workflowId: "babysit" });
+  });
+
+  it("returns null when the link already runs that workflow or the PR is not linked", () => {
+    expect(linkWithWorkflow({ prs: [link(7, { workflowId: "babysit" })] }, ref(7), "babysit")).toBeNull();
+    expect(linkWithWorkflow({ prs: [link(7)] }, ref(8), "babysit")).toBeNull();
+  });
+});
 
 function gitPr(overrides: Partial<GitPullRequest> = {}): GitPullRequest {
   return {

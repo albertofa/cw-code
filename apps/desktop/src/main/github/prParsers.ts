@@ -406,7 +406,8 @@ function parseTimeline(value: unknown, threadIndex: Map<string, string[]>): PrTi
         threadIds: threadIndex.get(asString(node.id)) ?? []
       });
     } else if (typename === "IssueComment") {
-      items.push({ kind: "comment", at: asEpochMs(node.createdAt), actor: asString(asRecord(node.author).login), body: asString(node.body) });
+      const author = actorLoginOf(node.author);
+      items.push({ kind: "comment", at: asEpochMs(node.createdAt), actor: author.login, body: asString(node.body), isBot: author.isBot });
     } else if (typename === "ReviewRequestedEvent") {
       items.push({ kind: "review_requested", at: asEpochMs(node.createdAt), actor: actorLogin(node), reviewer: asString(asRecord(node.requestedReviewer).login) });
     } else if (typename in TIMELINE_EVENT_KINDS) {

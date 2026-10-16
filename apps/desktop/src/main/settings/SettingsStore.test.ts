@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from "vitest";
 import type { AppSettings, DriverKind, EffortLevel, PrFinishedSessionStatus, PrWorkflow, SavedGitHubView } from "@cw-code/contracts";
 import { MetadataError } from "../storage/metadataDocument.js";
 import { DEFAULT_SETTINGS, SETTINGS_SCHEMA_VERSION, SettingsStore } from "./SettingsStore.js";
+import { defaultPrWorkflows, RETIRED_BUILT_IN_PROMPTS } from "./prWorkflowDefaults.js";
 
 const FIXTURE = readFileSync(fileURLToPath(new URL("../storage/__fixtures__/settings-v0.json", import.meta.url)));
 
@@ -392,6 +393,36 @@ describe("SettingsStore", () => {
     expect(workflows.slice(0, legacy.length).every((w) => w.target === "pr")).toBe(true);
     expect(workflows.find((w) => w.id === "babysit")?.enabled).toBe(false);
     expect(workflows.find((w) => w.id === "implement")).toMatchObject({ builtIn: true, enabled: true, target: "issue" });
+  });
+
+  it("upgrades a saved built-in prompt that still matches a retired default, and keeps edited ones", () => {
+    const filePath = tempFilePath();
+    const retired = RETIRED_BUILT_IN_PROMPTS.find((prompt) => prompt.id === "review")!;
+    const saved = DEFAULT_SETTINGS.prWorkflows.map((w) =>
+      w.id === "review" ? { ...w, startPrompt: retired.text } : w.id === "fix-ci" ? { ...w, startPrompt: "my own prompt" } : w
+    );
+    writeFileSync(filePath, JSON.stringify({ schemaVersion: SETTINGS_SCHEMA_VERSION, prWorkflows: saved }), "utf8");
+
+    const byId = new Map(new SettingsStore(filePath).get().prWorkflows.map((w) => [w.id, w]));
+
+    expect(byId.get("review")?.startPrompt).toBe(defaultPrWorkflows().find((w) => w.id === "review")?.startPrompt);
+    expect(byId.get("review")?.startPrompt).toContain("Architecture and design");
+    expect(byId.get("fix-ci")?.startPrompt).toBe("my own prompt");
+  });
+
+  it("turns on automatic follow-ups for babysit only, and keeps a saved opt-out", () => {
+    const filePath = tempFilePath();
+    const saved = DEFAULT_SETTINGS.prWorkflows.map(({ autoFollowUp: _auto, ...w }) => w);
+    writeFileSync(filePath, JSON.stringify({ schemaVersion: SETTINGS_SCHEMA_VERSION, prWorkflows: saved }), "utf8");
+    const store = new SettingsStore(filePath);
+
+    const workflows = store.get().prWorkflows;
+    expect(workflows.filter((w) => w.autoFollowUp).map((w) => w.id)).toEqual(["babysit"]);
+
+    const babysit = workflows.find((w) => w.id === "babysit")!;
+    const updated = store.set({ prWorkflows: workflows.map((w) => (w.id === "babysit" ? { ...babysit, autoFollowUp: false } : w)) });
+    expect(updated.prWorkflows.find((w) => w.id === "babysit")?.autoFollowUp).toBe(false);
+    expect(new SettingsStore(filePath).get().prWorkflows.find((w) => w.id === "babysit")?.autoFollowUp).toBe(false);
   });
 
   it("fills a missing workflow target with pr and keeps valid ones", () => {

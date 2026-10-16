@@ -506,6 +506,18 @@ describe("parseDetail", () => {
     expect(detail.unresolvedThreads).toBe(1);
   });
 
+  it("flags comments posted by bots", () => {
+    const detail = parseDetail(detailJson([
+      { __typename: "IssueComment", body: "CI gate passed", createdAt: "2024-01-04T00:00:00Z", author: { login: "github-actions", __typename: "Bot" } },
+      { __typename: "IssueComment", body: "Thanks!", createdAt: "2024-01-05T00:00:00Z", author: { login: "carol", __typename: "User" } }
+    ], []), "octocat")!;
+
+    expect(detail.timeline).toEqual([
+      { kind: "comment", at: Date.parse("2024-01-04T00:00:00Z"), actor: "github-actions[bot]", body: "CI gate passed", isBot: true },
+      { kind: "comment", at: Date.parse("2024-01-05T00:00:00Z"), actor: "carol", body: "Thanks!", isBot: false }
+    ]);
+  });
+
   it("takes reviewers from the summary, merging latest reviews with pending requests", () => {
     const json = JSON.stringify({
       data: {

@@ -5,7 +5,14 @@ import { useAppStore } from "../stores/appStore.js";
 import { usePrStore } from "../stores/prStore.js";
 import { formatRelativeAge } from "./prInboxModel.js";
 import { PrUpdateIcon } from "./PrUpdateIcon.js";
-import { defaultFollowUpWorkflowId, followUpPrompt, followUpWorkflow, needsFailedLogs } from "./prSessionModel.js";
+import {
+  AUTO_FOLLOW_UP_LIMIT,
+  autoFollowUpWorkflow,
+  defaultFollowUpWorkflowId,
+  followUpPrompt,
+  followUpWorkflow,
+  needsFailedLogs
+} from "./prSessionModel.js";
 import { seenThrough, updatesSince } from "./prUpdates.js";
 import { prRefLabel } from "./sessionPrLinks.js";
 import { harnessLabel } from "./toolTabs.js";
@@ -22,6 +29,7 @@ interface DockEntry {
   workflow: PrWorkflow | null;
   workflowId: string;
   isReview: boolean;
+  isAuto: boolean;
   logsNeeded: boolean;
   prompt: string | null;
 }
@@ -40,6 +48,7 @@ function dockEntry(item: LinkedPr, settings: AppSettings | null, harness: string
     workflow,
     workflowId,
     isReview: workflowId === "review",
+    isAuto: settings !== null && autoFollowUpWorkflow(link, settings.prWorkflows) !== null,
     logsNeeded: workflow !== null && needsFailedLogs(workflow.updatePrompt),
     prompt
   };
@@ -80,6 +89,9 @@ function ViewButton({ entry }: { entry: DockEntry }) {
 export function PrUpdateDock({ sessionId }: { sessionId: string }) {
   const { session, items } = useLinkedPrs(sessionId);
   const busy = useAppStore((s) => s.busyTurns[sessionId] !== undefined);
+  const autoPaused = useAppStore(
+    (s) => s.autoFollowUpPaused[sessionId] !== undefined || (s.autoFollowUpTurns[sessionId] ?? 0) >= AUTO_FOLLOW_UP_LIMIT
+  );
   const sendPromptTo = useAppStore((s) => s.sendPromptTo);
   const applySession = useAppStore((s) => s.applySession);
   const openRunModal = usePrStore((s) => s.openRunModal);
@@ -214,9 +226,15 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
           : "Resolving prompt…"));
   const hint = single ? (
     single.workflow ? (
-      <>
-        uses the <b>{single.workflow.label}</b> workflow's follow-up prompt
-      </>
+      single.isAuto && !autoPaused ? (
+        <>
+          <b>{single.workflow.label}</b> starts a turn on its own for failed checks, change requests and comments
+        </>
+      ) : (
+        <>
+          uses the <b>{single.workflow.label}</b> workflow's follow-up prompt
+        </>
+      )
     ) : (
       "follow-up prompt unavailable"
     )

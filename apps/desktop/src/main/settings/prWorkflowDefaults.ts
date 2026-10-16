@@ -1,5 +1,26 @@
 import type { PrWorkflow } from "@cw-code/contracts";
 
+export interface RetiredPrompt {
+  id: string;
+  field: "startPrompt" | "updatePrompt";
+  text: string;
+}
+
+export const RETIRED_BUILT_IN_PROMPTS: readonly RetiredPrompt[] = [
+  {
+    id: "review",
+    field: "startPrompt",
+    text: `Review pull request #{{pr.number}} "{{pr.title}}" in {{pr.repo}}.
+Base {{pr.base}} ← head {{pr.head}} @ {{pr.sha}}
+
+{{pr.body}}
+{{pr.threads}}
+
+Read the diff with \`gh pr diff {{pr.number}}\`. Report findings as Critical / Important / Minor with file:line.
+{{attribution}}`
+  }
+];
+
 export function defaultPrWorkflows(): PrWorkflow[] {
   return [
     {
@@ -66,7 +87,13 @@ Base {{pr.base}} ← head {{pr.head}} @ {{pr.sha}}
 {{pr.body}}
 {{pr.threads}}
 
-Read the diff with \`gh pr diff {{pr.number}}\`. Report findings as Critical / Important / Minor with file:line.
+Pull the latest changes of this PR so your checkout is at {{pr.sha}}, then read the full diff (\`gh pr diff {{pr.number}}\`) and the code around it. Come back to me with your findings on:
+- Scope and purpose: does the change do what it sets out to do, and nothing unrelated?
+- Architecture and design: does it fit the existing structure, or does it add coupling, duplication or a new pattern without need?
+- Quality: readability, naming, error handling and test coverage.
+- Problems and regressions: bugs, unhandled edge cases, and behavior that changes for existing callers or users.
+
+Cite file:line for each finding and rank it Critical, Important or Minor. Report here only; do not change code.
 {{attribution}}`,
       updatePrompt: `PR #{{pr.number}} changed since your last look at {{session.lastSeenSha}}:
 {{pr.delta}}
@@ -91,7 +118,8 @@ Push after each green local run. Never force-push without asking.
       updatePrompt: `PR #{{pr.number}} update since your last turn:
 {{pr.delta}}
 
-Handle it with the same rules as before.`
+Handle it with the same rules as before.`,
+      autoFollowUp: true
     },
     {
       id: "implement",
