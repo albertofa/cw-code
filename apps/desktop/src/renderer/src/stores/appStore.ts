@@ -34,6 +34,7 @@ import { appendAssistantText, appendReasoningText, closeReasoning, upsertToolCal
 import { DEFAULT_APPEARANCE, appearanceOf, type AppearancePrefs } from "../appearanceFonts.js";
 import { getLastModel, setLastModel } from "../components/lastModel.js";
 import { defaultModelPatch } from "../components/modelMenus.js";
+import { fallbackHarness } from "../components/harnessAvailability.js";
 import { formatDuration, mergeToolPairs } from "../components/toolSummaries.js";
 import { expiredHoldingIds } from "../components/workingSet.js";
 import { defaultNewSessionProjectId } from "../components/projectRecency.js";
@@ -199,6 +200,8 @@ interface AppState {
   composerBySession: Record<string, ComposerPrefs>;
   pendingDriver: DriverName | null;
   lastDriver: DriverName;
+  installedHarnesses: DriverName[] | null;
+  setInstalledHarnesses(installed: DriverName[]): void;
   pendingApprovals: Record<string, ApprovalRequest[]>;
   pendingQuestions: Record<string, QuestionRequest[]>;
   pendingPrefs: ComposerPrefs;
@@ -381,6 +384,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   settingsVersion: 0,
   pendingDriver: null,
   lastDriver: "claude",
+  installedHarnesses: null,
   pendingApprovals: {},
   pendingQuestions: {},
   pendingPrefs: { ...DEFAULT_COMPOSER },
@@ -787,6 +791,12 @@ export const useAppStore = create<AppState>((set, get) => ({
       pendingPrefs: { ...get().pendingPrefs, model: undefined }
     });
     if (projectId && projectId !== currentProjectId) void get().setPendingProject(projectId);
+  },
+
+  setInstalledHarnesses(installed: DriverName[]) {
+    const pending = get().pendingDriver;
+    set({ installedHarnesses: installed, lastDriver: fallbackHarness(get().lastDriver, installed) });
+    if (pending !== null) get().setPendingDriver(fallbackHarness(pending, installed));
   },
 
   setPendingDriver(driver: DriverName) {

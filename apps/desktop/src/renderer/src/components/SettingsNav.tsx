@@ -3,6 +3,7 @@ import { ArrowLeft, Download, Eye, GitBranch, GitPullRequest, Search, Settings, 
 import { usePrStore } from "../stores/prStore.js";
 import { useSettingsDraftStore, type HarnessCheck } from "../stores/settingsDraftStore.js";
 import { DriverIcon } from "./DriverIcon.js";
+import { isHarnessSkipped } from "./harnessAvailability.js";
 import { SETTINGS_NAV, filterSettingsNav, viewOfNavId, type SettingsNavId, type SettingsNavItem } from "./settingsSections.js";
 import { version as appVersion } from "../../../../package.json";
 import "./settingsPage.css";
@@ -17,6 +18,7 @@ const APP_ICONS: Partial<Record<SettingsNavId, ReactNode>> = {
 
 function versionTag(check: HarnessCheck | undefined): { text: string; warn: boolean; title: string } | null {
   if (!check) return null;
+  if (isHarnessSkipped(check)) return { text: "not installed", warn: false, title: `'${check.binaryPath}' was not found` };
   if (!check.available) return { text: "missing", warn: true, title: check.error ?? `Could not run '${check.binaryPath}'` };
   if (check.actual === null) return { text: "unknown", warn: true, title: check.error ?? "Could not read the version" };
   if (!check.ok) return { text: check.actual, warn: true, title: `Below the minimum ${check.minimum}` };

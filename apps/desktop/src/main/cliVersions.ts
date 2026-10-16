@@ -1,5 +1,6 @@
 import { execCliFile } from "./cli/spawnCli.js";
 import { traceHarnessCall } from "./debug/harnessTrace.js";
+import { isDefaultCliBinaryPath } from "./settings/settingsUtils.js";
 
 export const MINIMUM_VERSIONS = {
   claude: "2.1.260",
@@ -12,6 +13,7 @@ export interface CliVersionCheck {
   binaryPath: string;
   minimum: string;
   actual: string | null;
+  configured: boolean;
   available: boolean;
   error: string | null;
   ok: boolean;
@@ -88,5 +90,5 @@ export async function checkCliVersion(
     ok,
     extra: { actual, minimum }
   });
-  return { binary, binaryPath, minimum, actual, available, error, ok };
+  return { binary, binaryPath, minimum, actual, configured: !isDefaultCliBinaryPath(binary, binaryPath), available, error, ok };
 }

@@ -8,6 +8,7 @@ import { DriverIcon } from "./DriverIcon.js";
 import { errorMessage } from "./errorMessage.js";
 import { CLAUDE_CURATED_MODELS, defaultModelPatch, filterModels } from "./modelMenus.js";
 import { HARNESS_NAMES } from "./settingsSections.js";
+import { isHarnessSkipped } from "./harnessAvailability.js";
 import { SettingsGroup, SettingsRow, SettingsSwitch, type BinaryPickHandler } from "./SettingsLayout.js";
 import { unavailableTitle } from "./UsagePlanCard.js";
 
@@ -288,13 +289,15 @@ function StatusCard({ driver, check, onOpenUsage }: { driver: DriverName; check:
     ? { tone: "bad", icon: <XCircle size={14} aria-hidden="true" />, text: "Version check failed" }
     : !check
       ? { tone: "muted", icon: <RefreshCw size={14} aria-hidden="true" />, text: "Checking…" }
-      : !check.available
-        ? { tone: "bad", icon: <XCircle size={14} aria-hidden="true" />, text: "Not installed" }
-        : check.actual === null
-          ? { tone: "warn", icon: <AlertTriangle size={14} aria-hidden="true" />, text: "Version unknown" }
-          : !check.ok
-            ? { tone: "warn", icon: <AlertTriangle size={14} aria-hidden="true" />, text: "Update required" }
-            : { tone: "ok", icon: <CheckCircle2 size={14} aria-hidden="true" />, text: "Ready" };
+      : isHarnessSkipped(check)
+        ? { tone: "muted", icon: <XCircle size={14} aria-hidden="true" />, text: "Not installed" }
+        : !check.available
+          ? { tone: "bad", icon: <XCircle size={14} aria-hidden="true" />, text: "Executable not found" }
+          : check.actual === null
+            ? { tone: "warn", icon: <AlertTriangle size={14} aria-hidden="true" />, text: "Version unknown" }
+            : !check.ok
+              ? { tone: "warn", icon: <AlertTriangle size={14} aria-hidden="true" />, text: "Update required" }
+              : { tone: "ok", icon: <CheckCircle2 size={14} aria-hidden="true" />, text: "Ready" };
   const account = accountText(snapshot, accountLoading, accountError);
 
   return (
@@ -304,7 +307,7 @@ function StatusCard({ driver, check, onOpenUsage }: { driver: DriverName; check:
         {status.text}
       </div>
       {checksError && <p className="sp-aside-error">{checksError}</p>}
-      {check && !check.available && check.error && <p className="sp-aside-error">{check.error}</p>}
+      {check && !check.available && check.configured && check.error && <p className="sp-aside-error">{check.error}</p>}
       {check && check.available && check.actual === null && check.error && (
         <p className="sp-aside-faint" title={check.error}>
           {check.error}

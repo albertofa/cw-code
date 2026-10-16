@@ -821,7 +821,9 @@ function registerIpc(services: Services): void {
         checks.push(checkCliVersion("codex", normalized.codexBinaryPath));
       }
     }
-    const failed = (await Promise.all(checks)).find((check) => check.error !== null || !check.ok);
+    const failed = (await Promise.all(checks)).find(
+      (check) => (check.configured || check.available) && (check.error !== null || !check.ok)
+    );
     if (failed) {
       const name = failed.binary === "claude" ? "Claude" : failed.binary === "codex" ? "Codex" : "OpenCode";
       const reason = !failed.available

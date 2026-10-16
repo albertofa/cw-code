@@ -5,6 +5,7 @@ import { DEFAULT_SETTINGS } from "./SettingsStore.js";
 import {
   configuredCliBinaryPath,
   defaultCliBinaryPath,
+  isDefaultCliBinaryPath,
   normalizeBinaryPath,
   parseExtraArgs,
   resolveClaudeModels
@@ -157,5 +158,19 @@ describe("configuredCliBinaryPath", () => {
   it("resets blank values to the OS default", () => {
     expect(configuredCliBinaryPath("claude", "  ", "win32")).toBe("claude.exe");
     expect(configuredCliBinaryPath("opencode", "", "linux")).toBe("opencode");
+  });
+});
+
+describe("isDefaultCliBinaryPath", () => {
+  it("treats blank and bare harness names as the default lookup", () => {
+    expect(isDefaultCliBinaryPath("codex", "")).toBe(true);
+    expect(isDefaultCliBinaryPath("codex", " codex ")).toBe(true);
+    expect(isDefaultCliBinaryPath("codex", "Codex.EXE")).toBe(true);
+  });
+
+  it("treats paths and other names as explicitly configured", () => {
+    expect(isDefaultCliBinaryPath("codex", "C:\\tools\\codex.exe")).toBe(false);
+    expect(isDefaultCliBinaryPath("codex", "/usr/local/bin/codex")).toBe(false);
+    expect(isDefaultCliBinaryPath("codex", "codex-nightly")).toBe(false);
   });
 });
