@@ -12,6 +12,7 @@ import {
   followUpWorkflow,
   needsFailedLogs,
   needsRunFailedLogs,
+  startsAutoFollowUp,
   whyLinkedText,
   type AutoFollowUpSession,
   type BabysitControl,
@@ -145,6 +146,23 @@ describe("autoFollowUpWorkflow", () => {
 
   it("does not fall back to babysit for links without a workflow", () => {
     expect(autoFollowUpWorkflow(link({ origin: "opened" }), [auto])).toBeNull();
+  });
+});
+
+describe("startsAutoFollowUp", () => {
+  const auto = workflow("babysit", { autoFollowUp: true });
+
+  it("is true for an automatic workflow on an open PR in a live session", () => {
+    expect(startsAutoFollowUp({ status: "idle" }, auto, { state: "OPEN" })).toBe(true);
+    expect(startsAutoFollowUp({ status: "idle" }, auto, null)).toBe(true);
+  });
+
+  it("is false for one-shot workflows, closed PRs and finished sessions", () => {
+    expect(startsAutoFollowUp({ status: "idle" }, workflow("custom"), { state: "OPEN" })).toBe(false);
+    expect(startsAutoFollowUp({ status: "idle" }, { ...auto, enabled: false }, { state: "OPEN" })).toBe(false);
+    expect(startsAutoFollowUp({ status: "idle" }, auto, { state: "MERGED" })).toBe(false);
+    expect(startsAutoFollowUp({ status: "resolved" }, auto, { state: "OPEN" })).toBe(false);
+    expect(startsAutoFollowUp({ status: "idle" }, null, { state: "OPEN" })).toBe(false);
   });
 });
 

@@ -1,9 +1,9 @@
 import type { AppSettings, PrDetail, PrRef, PrSummary, PrUpdate, PrWorkflow, SessionMeta, SessionPrLink } from "@cw-code/contracts";
-import { autoFollowUpWorkflow } from "../../../shared/autoFollowUp.js";
+import { autoFollowUpWorkflow, runsContinuously } from "../../../shared/autoFollowUp.js";
 import { prKey } from "./prInbox.js";
 import { detailNeedsRefresh, seenThrough, updatesSince } from "./prUpdates.js";
 
-export { autoFollowUpWorkflow };
+export { autoFollowUpWorkflow, runsContinuously };
 import { attributionText, resolveTemplate, templateVars } from "./prWorkflows.js";
 import { sessionLinks, type PrSummaryLookup } from "./sessionPrLinks.js";
 
@@ -131,6 +131,14 @@ export interface AutoFollowUp {
 
 function isWatchable(session: Pick<SessionMeta, "status">): boolean {
   return session.status !== "resolved" && session.status !== "archived";
+}
+
+export function startsAutoFollowUp(
+  session: Pick<SessionMeta, "status">,
+  workflow: PrWorkflow | null | undefined,
+  pr: Pick<PrSummary, "state"> | null | undefined
+): workflow is PrWorkflow {
+  return !!workflow && runsContinuously(workflow) && isWatchable(session) && (!pr || pr.state === "OPEN");
 }
 
 export function autoFollowUpRefs(sessions: Pick<SessionMeta, "status" | "prs">[], summaryByKey: PrSummaryLookup, workflows: PrWorkflow[]): PrRef[] {
