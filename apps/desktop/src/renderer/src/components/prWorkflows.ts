@@ -16,6 +16,7 @@ import type {
   SessionPrLink,
   WorkflowRunSummary
 } from "@cw-code/contracts";
+import { autoFollowUpWorkflow } from "../../../shared/autoFollowUp.js";
 import { linkFor, pickMainSession } from "./sessionPrLinks.js";
 
 export const TEMPLATE_VARS = [
@@ -273,6 +274,20 @@ export function matchesCondition(pr: PrSummary, c: PrSuggestCondition): boolean 
 
 export function suggestedWorkflow(pr: PrSummary, workflows: PrWorkflow[]): PrWorkflow | null {
   return workflows.find((w) => w.enabled && w.suggestWhen.some((c) => matchesCondition(pr, c))) ?? null;
+}
+
+export function babysittingSession<S extends Pick<SessionMeta, "status" | "prs">>(
+  sessions: S[],
+  ref: PrRef,
+  workflows: PrWorkflow[]
+): { session: S; workflow: PrWorkflow } | null {
+  for (const session of sessions) {
+    if (session.status === "resolved" || session.status === "archived") continue;
+    const link = linkFor(session, ref);
+    const workflow = link ? autoFollowUpWorkflow(link, workflows) : null;
+    if (workflow) return { session, workflow };
+  }
+  return null;
 }
 
 export type PrPrimaryAction =

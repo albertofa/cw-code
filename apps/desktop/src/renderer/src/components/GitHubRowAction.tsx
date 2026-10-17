@@ -6,6 +6,7 @@ import { usePrStore } from "../stores/prStore.js";
 import { AnchoredPopover, anchorRectOf, type AnchorRect } from "./AnchoredPopover.js";
 import { DriverIcon } from "./DriverIcon.js";
 import {
+  babysitterFor,
   continueSessionFor,
   enabledWorkflowsFor,
   externalLinkOf,
@@ -102,6 +103,7 @@ function ActionMenu({
   const prRef = subject.kind === "run" ? runPrRef(subject.run) : null;
   const suggested = suggestedWorkflowFor(suggestionSubject(subject, viewer), workflows);
   const finishedPr = subject.kind === "pr" && isFinished(subject);
+  const babysitter = babysitterFor(subject, sessions, workflows);
   const ownWorkflows = finishedPr ? [] : enabledWorkflowsFor(subject.kind, workflows);
   const prWorkflows = prRef ? enabledWorkflowsFor("pr", workflows) : [];
 
@@ -181,7 +183,15 @@ function ActionMenu({
           <div className="pr-inbox-popover-sep" />
         </>
       )}
-      {!finishedPr && (
+      {babysitter && (
+        <>
+          <div className="pr-inbox-popover-head">Run workflow</div>
+          <div className="pr-inbox-popover-empty">
+            {babysitter.workflow.label} is running in “{babysitter.session.title}”. Follow up in that session.
+          </div>
+        </>
+      )}
+      {!finishedPr && !babysitter && (
         <>
           <div className="pr-inbox-popover-head">
             Run workflow

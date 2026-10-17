@@ -1051,6 +1051,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   async sendPromptTo(sessionId: string, prompt: string, attachments?: string[], opts?: SendPromptOptions) {
     if (!prompt.trim()) return;
+    if (isPendingTurn(get().busyTurns[sessionId])) throw new Error("session busy (turn pending)");
     const prefs = get().composerBySession[sessionId] ?? DEFAULT_COMPOSER;
     const previous = Object.values(get().sessionsByProject)
       .flat()

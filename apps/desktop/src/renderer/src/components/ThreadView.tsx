@@ -22,7 +22,6 @@ import { QuestionDock } from "./QuestionDock.js";
 import { TodoDock } from "./TodoDock.js";
 import { BranchMismatchDock } from "./BranchMismatchNotice.js";
 import { PrUpdateDock } from "./PrUpdateDock.js";
-import { BabysitBar } from "./BabysitBar.js";
 import { WorkingDock } from "./WorkingDock.js";
 import { PrSessionChip } from "./PrSessionPanel.js";
 import { useLinkedPrLoader } from "./useLinkedPr.js";
@@ -611,7 +610,6 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
             <>
               <TodoDock sessionId={session.id} />
               <BranchMismatchDock key={`branch-dock:${session.id}`} sessionId={session.id} />
-              <BabysitBar key={`babysit:${session.id}`} sessionId={session.id} />
               <PrUpdateDock key={`pr-dock:${session.id}`} sessionId={session.id} />
               <ApprovalDock sessionId={session.id} />
               <QuestionDock sessionId={session.id} />

@@ -1,22 +1,24 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { Bell, ExternalLink, RefreshCw, Send, TriangleAlert, X } from "lucide-react";
 import type { AppSettings, PrSummary, PrUpdate, PrWorkflow } from "@cw-code/contracts";
 import { useAppStore } from "../stores/appStore.js";
 import { usePrStore } from "../stores/prStore.js";
+import { prKey } from "./prInbox.js";
 import { formatRelativeAge } from "./prInboxModel.js";
 import { PrUpdateIcon } from "./PrUpdateIcon.js";
 import {
-  AUTO_FOLLOW_UP_LIMIT,
-  autoFollowUpWorkflow,
   defaultFollowUpWorkflowId,
   followUpPrompt,
   followUpWorkflow,
-  needsFailedLogs
+  needsFailedLogs,
+  type BabysitState
 } from "./prSessionModel.js";
 import { seenThrough, updatesSince } from "./prUpdates.js";
 import { prRefLabel } from "./sessionPrLinks.js";
 import { harnessLabel } from "./toolTabs.js";
 import { useLinkedPrs, usePrSettings, type LinkedPr } from "./useLinkedPr.js";
+import { useBabysitStates } from "./useBabysit.js";
+import { BabysitHead } from "./BabysitHead.js";
 import { errorMessage } from "./errorMessage.js";
 import { ipcErrorMessage } from "./ipcError.js";
 
@@ -29,7 +31,6 @@ interface DockEntry {
   workflow: PrWorkflow | null;
   workflowId: string;
   isReview: boolean;
-  isAuto: boolean;
   logsNeeded: boolean;
   prompt: string | null;
 }
@@ -48,7 +49,6 @@ function dockEntry(item: LinkedPr, settings: AppSettings | null, harness: string
     workflow,
     workflowId,
     isReview: workflowId === "review",
-    isAuto: settings !== null && autoFollowUpWorkflow(link, settings.prWorkflows) !== null,
     logsNeeded: workflow !== null && needsFailedLogs(workflow.updatePrompt),
     prompt
   };
@@ -75,6 +75,14 @@ function seenHead(entry: DockEntry): string | null {
   return entry.item.detail?.headRefOid ?? entry.item.summary?.headRefOid ?? null;
 }
 
+function babysitHint(entry: DockEntry, babysit: BabysitState): ReactNode {
+  const label = <b>{babysit.workflow.label}</b>;
+  if (babysit.phase.kind === "paused") return <>{label} is paused, so this update waits for you</>;
+  if (!entry.updates.some((update) => update.actionable)) return <>{label} doesn't act on this kind of update</>;
+  if (babysit.phase.kind === "working") return <>{label} sends this after the current turn</>;
+  return <>{label} is sending this</>;
+}
+
 function ViewButton({ entry }: { entry: DockEntry }) {
   const openPr = usePrStore((s) => s.openPr);
   const ref = entry.item.link.ref;
@@ -89,9 +97,7 @@ function ViewButton({ entry }: { entry: DockEntry }) {
 export function PrUpdateDock({ sessionId }: { sessionId: string }) {
   const { session, items } = useLinkedPrs(sessionId);
   const busy = useAppStore((s) => s.busyTurns[sessionId] !== undefined);
-  const autoPaused = useAppStore(
-    (s) => s.autoFollowUpPaused[sessionId] !== undefined || (s.autoFollowUpTurns[sessionId] ?? 0) >= AUTO_FOLLOW_UP_LIMIT
-  );
+  const babysitOf = useBabysitStates();
   const sendPromptTo = useAppStore((s) => s.sendPromptTo);
   const applySession = useAppStore((s) => s.applySession);
   const openRunModal = usePrStore((s) => s.openRunModal);
@@ -119,7 +125,12 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
   const covered = useMemo(() => (single ? [single] : sendable), [single, sendable]);
   const alreadySent = sentSignature !== null && sentSignature === sendSignature(covered);
 
-  if (!session || (changed.length === 0 && failed.length === 0)) return null;
+  const babysit = session ? babysitOf(session) : null;
+  if (!session || (!babysit && changed.length === 0 && failed.length === 0)) return null;
+
+  const babysat = (entry: DockEntry) => babysit !== null && prKey(entry.item.link.ref) === prKey(babysit.link.ref);
+  const dockClass = babysit ? `pr-dock babysit-dock${babysit.phase.kind === "paused" ? " paused" : ""}` : "pr-dock";
+  const babysitHead = babysit && <BabysitHead sessionId={sessionId} state={babysit} />;
 
   const markSeen = async (targets: DockEntry[]) => {
     for (const entry of targets) {
@@ -160,16 +171,21 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
 
   if (changed.length === 0) {
     return (
-      <section className="pr-dock pr-dock-failed" aria-label="Pull request update">
-        <div className="pr-dock-head">
-          <TriangleAlert size={14} className="pr-dock-head-icon bad" aria-hidden="true" />
-          <span className="pr-dock-title">
-            {failed.length === 1
-              ? `PR #${failed[0].item.link.ref.number} changed, but its details could not be loaded`
-              : `${failed.length} pull requests changed, but their details could not be loaded`}
-          </span>
-        </div>
-        {failedRows}
+      <section className={babysit ? dockClass : "pr-dock pr-dock-failed"} aria-label="Pull request update">
+        {babysitHead}
+        {failed.length > 0 && (
+          <>
+            <div className="pr-dock-head">
+              <TriangleAlert size={14} className="pr-dock-head-icon bad" aria-hidden="true" />
+              <span className="pr-dock-title">
+                {failed.length === 1
+                  ? `PR #${failed[0].item.link.ref.number} changed, but its details could not be loaded`
+                  : `${failed.length} pull requests changed, but their details could not be loaded`}
+              </span>
+            </div>
+            {failedRows}
+          </>
+        )}
       </section>
     );
   }
@@ -201,9 +217,12 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
 
   const allReview = changed.every((entry) => entry.isReview);
   const since = allReview ? "your review" : "your last turn";
-  const title = single
-    ? `PR #${single.item.link.ref.number} changed since ${since}`
-    : `${changed.length} pull requests changed since ${since}`;
+  const singleBabysat = single !== null && babysat(single);
+  const title = singleBabysat
+    ? `Changed since ${since}`
+    : single
+      ? `PR #${single.item.link.ref.number} changed since ${since}`
+      : `${changed.length} pull requests changed since ${since}`;
   const totalUpdates = changed.reduce((sum, entry) => sum + entry.updates.length, 0);
   const singleLogs = single !== null && single.logsNeeded;
   const primaryLabel = singleLogs
@@ -226,10 +245,8 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
           : "Resolving prompt…"));
   const hint = single ? (
     single.workflow ? (
-      single.isAuto && !autoPaused ? (
-        <>
-          <b>{single.workflow.label}</b> starts a turn on its own for failed checks, change requests and comments
-        </>
+      babysit && singleBabysat ? (
+        babysitHint(single, babysit)
       ) : (
         <>
           uses the <b>{single.workflow.label}</b> workflow's follow-up prompt
@@ -243,13 +260,14 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
   );
 
   return (
-    <section className="pr-dock" aria-label="Pull request update">
+    <section className={dockClass} aria-label="Pull request update">
+      {babysitHead}
       <div className="pr-dock-head">
         <Bell size={14} className="pr-dock-head-icon" aria-hidden="true" />
         <span className="pr-dock-title">{title}</span>
         <span className="pr-dock-badge">{totalUpdates}</span>
         <span className="pr-dock-spacer" />
-        {single && <ViewButton entry={single} />}
+        {single && !singleBabysat && <ViewButton entry={single} />}
         <button
           className="icon-btn pr-dock-dismiss"
           onClick={() => void dismiss(changed)}
@@ -274,9 +292,11 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
                   <span className="pr-dock-badge">{entry.updates.length}</span>
                   <span className="pr-dock-spacer" />
                   <ViewButton entry={entry} />
-                  <button className="pr-detail-btn ghost sm" onClick={() => openInModal(entry)}>
-                    {entry.logsNeeded ? "Review and send…" : "Other workflow"}
-                  </button>
+                  {(entry.logsNeeded || !babysat(entry)) && (
+                    <button className="pr-detail-btn ghost sm" onClick={() => openInModal(entry)}>
+                      {entry.logsNeeded ? "Review and send…" : "Other workflow"}
+                    </button>
+                  )}
                   <button
                     className="icon-btn pr-dock-dismiss"
                     onClick={() => void dismiss([entry])}
@@ -330,7 +350,7 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
           {previewOpen ? "Hide preview" : "Preview"}
         </button>
         <span className="pr-dock-spacer" />
-        {single && (
+        {single && !singleBabysat && (
           <button className="pr-detail-btn sm" onClick={() => openInModal(single)}>
             Other workflow
           </button>
