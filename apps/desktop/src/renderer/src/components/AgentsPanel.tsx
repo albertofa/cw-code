@@ -75,31 +75,20 @@ function metaLine(item: SubagentInfo, fallbackModel?: string): string {
   return parts.join(" · ");
 }
 
-function RunningElapsed({ startedAt }: { startedAt: number }) {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, []);
-  return <span>{formatDuration(Math.max(0, now - startedAt))}</span>;
+function useAgentDuration(item: SubagentInfo, live: boolean): string | undefined {
+  const ticking = item.status === "running" && live && item.startedAt !== undefined;
+  const elapsed = useElapsed(item.startedAt, ticking);
+  if (ticking) return formatDuration(elapsed);
+  return item.durationMs !== undefined ? formatDuration(item.durationMs) : undefined;
 }
 
 function AgentDuration({ item, live }: { item: SubagentInfo; live: boolean }) {
-  if (item.status === "running" && live && item.startedAt !== undefined) {
-    return <RunningElapsed startedAt={item.startedAt} />;
-  }
-  return item.durationMs !== undefined ? <span>{formatDuration(item.durationMs)}</span> : null;
+  const duration = useAgentDuration(item, live);
+  return duration !== undefined ? <span>{duration}</span> : null;
 }
 
 function AgentStateText({ item, live }: { item: SubagentInfo; live: boolean }) {
-  const ticking = item.status === "running" && live && item.startedAt !== undefined;
-  const elapsed = useElapsed(item.startedAt, ticking);
-  const duration = ticking
-    ? formatDuration(elapsed)
-    : item.durationMs !== undefined
-      ? formatDuration(item.durationMs)
-      : undefined;
-  return <>{subagentStateLabel(item.status, duration)}</>;
+  return <>{subagentStateLabel(item.status, useAgentDuration(item, live))}</>;
 }
 
 function ClampedText({ text, label }: { text: string; label: string }) {

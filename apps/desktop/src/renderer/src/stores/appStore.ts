@@ -274,10 +274,16 @@ interface AppState {
 }
 
 const bufferedTasks = new Map<string, Map<string, TaskSnapshot>>();
+const BUFFERED_TASKS_PER_SESSION = 200;
 
 function bufferTask(sessionId: string, task: TaskSnapshot): void {
   const forSession = bufferedTasks.get(sessionId) ?? new Map<string, TaskSnapshot>();
+  forSession.delete(task.id);
   forSession.set(task.id, task);
+  if (forSession.size > BUFFERED_TASKS_PER_SESSION) {
+    const oldest = forSession.keys().next().value;
+    if (oldest !== undefined) forSession.delete(oldest);
+  }
   bufferedTasks.set(sessionId, forSession);
 }
 
@@ -291,10 +297,12 @@ function takeBufferedTask(sessionId: string, taskId: string): TaskSnapshot | und
 }
 
 function withBufferedTasks(sessionId: string, messages: ChatMessage[]): ChatMessage[] {
-  if (!bufferedTasks.has(sessionId)) return messages;
+  const forSession = bufferedTasks.get(sessionId);
+  if (!forSession) return messages;
+  bufferedTasks.delete(sessionId);
   let changed = false;
   const out = messages.map((m) => {
-    const task = m.role === "tool" ? takeBufferedTask(sessionId, m.id) : undefined;
+    const task = m.role === "tool" ? forSession.get(m.id) : undefined;
     if (!task) return m;
     changed = true;
     return { ...m, task };

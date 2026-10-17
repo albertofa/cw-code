@@ -391,6 +391,35 @@ describe("appStore task snapshots", () => {
     expect(useAppStore.getState().messagesBySession[session][0].task).toEqual(running);
   });
 
+  it("drops buffered snapshots the merged history did not claim", async () => {
+    (window as unknown as { cw: unknown }).cw = { getHistory: async () => [historyCall(snapshot())] };
+    updateTask(snapshot({ id: "outside_window", state: "failed" }));
+
+    await useAppStore.getState().ensureHistory(session);
+    useAppStore.getState().applyEvent(session, {
+      type: "tool.call",
+      turnId: "turn-2",
+      toolCallId: "outside_window",
+      name: "Agent",
+      input: { description: "Later" }
+    });
+
+    expect(useAppStore.getState().messagesBySession[session].find((m) => m.id === "outside_window")?.task).toBeUndefined();
+  });
+
+  it("keeps at most 200 buffered snapshots per session, dropping the oldest", () => {
+    for (let i = 0; i <= 200; i += 1) updateTask(snapshot({ id: `call_${i}`, state: "completed" }));
+    const call = (id: string) =>
+      useAppStore.getState().applyEvent(session, { type: "tool.call", turnId: "turn-1", toolCallId: id, name: "Agent", input: {} });
+
+    call("call_0");
+    call("call_200");
+
+    const messages = useAppStore.getState().messagesBySession[session];
+    expect(messages.find((m) => m.id === "call_0")?.task).toBeUndefined();
+    expect(messages.find((m) => m.id === "call_200")?.task?.state).toBe("completed");
+  });
+
   it("finalizes unanswered subagent calls on turn.done even with background tasks", () => {
     callSubagent(snapshot());
     useAppStore.getState().applyEvent(session, {
