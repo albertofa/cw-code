@@ -252,11 +252,12 @@ export class TaskTable {
     return count - Math.min(unmapped, unlinked);
   }
 
-  latestOutput(): string {
+  latestOutput(since = Number.NEGATIVE_INFINITY): string {
     let latest: TaskRun | undefined;
     for (const record of this.records.values()) {
       const run = currentRun(record);
-      if (run.output === undefined) continue;
+      const lastSeen = Math.max(run.endedAt ?? Number.NEGATIVE_INFINITY, run.startedAt ?? Number.NEGATIVE_INFINITY);
+      if (run.output === undefined || lastSeen < since) continue;
       if (!latest || (run.startedAt ?? Number.NEGATIVE_INFINITY) >= (latest.startedAt ?? Number.NEGATIVE_INFINITY)) latest = run;
     }
     return latest?.output ?? "";

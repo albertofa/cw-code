@@ -6,6 +6,7 @@ const REPORTED_END_RANK = stateRank("completed");
 function preferReplayed(replayed: TaskSnapshot | undefined, live: TaskSnapshot): boolean {
   return (
     replayed !== undefined &&
+    (replayed.endReason === "cli" || replayed.endReason === "tool-result") &&
     replayed.runCount >= live.runCount &&
     stateRank(replayed.state) === REPORTED_END_RANK &&
     stateRank(live.state) < REPORTED_END_RANK

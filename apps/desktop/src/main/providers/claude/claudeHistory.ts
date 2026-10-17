@@ -484,7 +484,9 @@ class ClaudeHistoryTasks {
     const to = this.sendTargets.get(id);
     if (to !== undefined) {
       this.apply(claudeResumeObservation(id, to, text, structured, at));
-    } else if (this.table.get(id)?.kind === "agent") {
+    } else {
+      const kind = this.table.get(id)?.kind;
+      if (kind !== "agent" && !(kind === "shell" && result.is_error === true)) return;
       this.apply(claudeToolResultObservation(id, text, result.is_error === true, structured, at));
     }
   }

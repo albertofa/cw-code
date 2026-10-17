@@ -503,6 +503,15 @@ describe("TaskTable latestOutput", () => {
     expect(table.latestOutput()).toBe("two");
   });
 
+  it("ignores outputs of runs that ended before the given time", () => {
+    const table = tableWith(agentCall("tu_old", 100), agentCall("tu_new", 300));
+    table.apply({ kind: "ended", ref: { originId: "tu_old" }, state: "completed", reason: "tool-result", output: "old", at: 150 });
+    expect(table.latestOutput(200)).toBe("");
+    table.apply({ kind: "ended", ref: { originId: "tu_new" }, state: "completed", reason: "tool-result", output: "new", at: 350 });
+    expect(table.latestOutput(200)).toBe("new");
+    expect(table.latestOutput()).toBe("new");
+  });
+
   it("breaks startedAt ties by insertion order", () => {
     const table = tableWith(agentCall("tu_1", 100), agentCall("tu_2", 100));
     table.apply({ kind: "ended", ref: { originId: "tu_2" }, state: "completed", reason: "cli", output: "two", at: 500 });

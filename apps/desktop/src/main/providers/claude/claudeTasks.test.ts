@@ -318,6 +318,13 @@ describe("claudeToolResultObservation", () => {
     });
   });
 
+  it("caps a long result at 8000 characters", () => {
+    const observation = claudeToolResultObservation("toolu_1", "x".repeat(9000), false, undefined, AT);
+    expect(observation.kind === "ended" ? observation.output?.length : undefined).toBe(8000);
+    const notification = claudeNotificationObservation({ taskId: "t1", status: "completed", result: "y".repeat(9000) }, AT);
+    expect(notification?.kind === "ended" ? notification.output?.length : undefined).toBe(8000);
+  });
+
   it("ends an error result as failed", () => {
     expect(claudeToolResultObservation("toolu_1", "boom", true, undefined, AT)).toStrictEqual({
       kind: "ended",

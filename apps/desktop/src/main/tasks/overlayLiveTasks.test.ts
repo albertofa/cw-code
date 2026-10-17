@@ -49,6 +49,12 @@ describe("overlayLiveTasks", () => {
     expect(overlayLiveTasks(messages, [closedLive])).toBe(messages);
   });
 
+  it("does not let a sidecar finished flag beat a live run", () => {
+    const sidecar: TaskSnapshot = { id: "call-1", kind: "agent", background: true, state: "completed", runCount: 2, endReason: "sidecar" };
+
+    expect(overlayLiveTasks([toolMessage("call-1", sidecar)], [live])).toEqual([toolMessage("call-1", live)]);
+  });
+
   it("prefers a live resumed run over a replayed earlier run that completed", () => {
     const completed: TaskSnapshot = { id: "call-1", kind: "agent", background: true, state: "completed", runCount: 1, endReason: "cli" };
 

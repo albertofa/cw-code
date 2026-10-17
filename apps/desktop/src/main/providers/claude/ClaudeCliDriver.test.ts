@@ -1218,6 +1218,88 @@ describe("ClaudeCliDriver persistent process", () => {
     }
   });
 
+  it("ends a background shell whose launch was denied instead of holding the session", async () => {
+    const { driver, events, children } = makeDriver();
+    driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
+    await settle();
+    children[0].stdout.write(
+      `${JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", id: "bash-1", name: "Bash", input: { command: "sleep 100", run_in_background: true } }] } })}\n`
+    );
+    children[0].stdout.write(
+      `${JSON.stringify({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "bash-1", is_error: true, content: "The user doesn't want to proceed with this tool use." }] } })}\n`
+    );
+    children[0].stdout.write(`${resultLine()}\n`);
+    await settle();
+
+    expect(finalTask(events, "bash-1")).toMatchObject({ kind: "shell", state: "failed", endReason: "tool-result" });
+    expect(turnDones(events).map((event) => event.backgroundTasks)).toEqual([0]);
+    expect(driver.activity().busySessionIds).toEqual([]);
+    driver.dispose();
+  });
+
+  it("closes agents nested in a background agent once that agent is stopped", async () => {
+    const { driver, events, children } = makeDriver();
+    driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
+    await settle();
+    const write = (line: unknown) => children[0].stdout.write(`${JSON.stringify(line)}\n`);
+    write({ type: "assistant", message: { content: [{ type: "tool_use", id: "call-bg", name: "Agent", input: { run_in_background: true } }] } });
+    write({ type: "system", subtype: "task_started", task_id: "t-bg", tool_use_id: "call-bg", task_type: "local_agent", is_backgrounded: true });
+    write({ type: "system", subtype: "background_tasks_changed", tasks: [{ task_id: "t-bg" }] });
+    write({ type: "assistant", parent_tool_use_id: "call-bg", message: { content: [{ type: "tool_use", id: "call-nested", name: "Agent", input: { prompt: "x" } }] } });
+    write(JSON.parse(resultLine()));
+    await settle();
+    write({ type: "system", subtype: "task_updated", task_id: "t-bg", patch: { status: "killed" } });
+    write({ type: "system", subtype: "task_notification", task_id: "t-bg", tool_use_id: "call-bg", status: "stopped" });
+    write({ type: "system", subtype: "background_tasks_changed", tasks: [] });
+    write(JSON.parse(resultLine({ origin: { kind: "task-notification" } })));
+    await settle();
+
+    expect(finalTask(events, "call-bg")).toMatchObject({ state: "stopped" });
+    expect(finalTask(events, "call-nested")).toMatchObject({ state: "unknown", endReason: "no-record" });
+    expect(turnDones(events).map((event) => event.backgroundTasks)).toEqual([1, 0]);
+    expect(driver.liveTasks("s1").filter((task) => task.state === "running")).toEqual([]);
+    driver.dispose();
+  });
+
+  it("does not answer a later turn with an earlier turn's subagent report", async () => {
+    const { driver, events, children } = makeDriver();
+    driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "one" });
+    await settle();
+    children[0].stdout.write(
+      `${JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", id: "call-fg", name: "Agent", input: { run_in_background: false } }] } })}\n`
+    );
+    children[0].stdout.write(
+      `${JSON.stringify({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "call-fg", content: "REPORT FROM TURN ONE" }] } })}\n`
+    );
+    children[0].stdout.write(`${resultLine({ result: "turn one answer" })}\n`);
+    await settle();
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "two" });
+    await settle();
+    children[0].stdout.write(`${resultLine({ subtype: "error_during_execution", is_error: true, result: undefined })}\n`);
+    await settle();
+
+    expect(children).toHaveLength(1);
+    expect(turnDones(events).at(-1)).toMatchObject({ isError: true, resultText: "" });
+    driver.dispose();
+  });
+
+  it("labels a foreground agent cut off by an interrupt as interrupted", async () => {
+    const { driver, events, children } = makeDriver();
+    const handle = driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
+    await settle();
+    children[0].stdout.write(
+      `${JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", id: "call-fg", name: "Agent", input: { run_in_background: false } }] } })}\n`
+    );
+    await settle();
+    driver.interrupt(handle.turnId);
+    children[0].stdout.write(`${resultLine({ subtype: "error_during_execution", is_error: true })}\n`);
+    await settle();
+
+    expect(finalTask(events, "call-fg")).toMatchObject({ state: "interrupted", endReason: "interrupt" });
+    driver.dispose();
+  });
+
   it("closes a top-level foreground agent with its turn but not one nested in a running background agent", async () => {
     const { driver, events, children } = makeDriver();
     driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });

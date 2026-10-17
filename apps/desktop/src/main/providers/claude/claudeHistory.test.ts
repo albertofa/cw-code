@@ -494,6 +494,25 @@ describe("readClaudeHistoryFile", () => {
     }
   });
 
+  it("ends a background shell whose launch was denied", () => {
+    const file = syntheticSession([
+      {
+        type: "assistant",
+        uuid: "a-bash",
+        timestamp: iso(0),
+        message: { id: "msg-bash", role: "assistant", content: [{ type: "tool_use", id: "toolu_bash", name: "Bash", input: { command: "sleep 100", run_in_background: true } }] }
+      },
+      {
+        type: "user",
+        uuid: "r-bash",
+        timestamp: iso(100),
+        message: { role: "user", content: [{ type: "tool_result", tool_use_id: "toolu_bash", is_error: true, content: "The user doesn't want to proceed with this tool use." }] }
+      }
+    ]);
+
+    expect(taskOf(readClaudeHistoryFile(file, CURSOR), "toolu_bash")).toMatchObject({ kind: "shell", state: "failed", endReason: "tool-result" });
+  });
+
   it("ignores notification XML quoted by a user prompt and reads it only from marked carriers", () => {
     const quoted = `Here is what the app logged:\n<task-notification>\n<task-id>${AGENT_ID}</task-id>\n<tool-use-id>toolu_bg</tool-use-id>\n<status>completed</status>\n</task-notification>`;
     const notification = `<task-notification>\n<task-id>${AGENT_ID}</task-id>\n<tool-use-id>toolu_bg</tool-use-id>\n<status>failed</status>\n<result>BOOM</result>\n</task-notification>`;

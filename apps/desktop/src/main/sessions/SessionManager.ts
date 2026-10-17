@@ -299,7 +299,7 @@ export class SessionManager {
     }
     this.flushDelta(event.turnId);
     if (event.type === "task.updated") {
-      this.handleDriverEvent(event.sessionId, event);
+      if (this.store.getSession(event.sessionId)) this.handleDriverEvent(event.sessionId, event);
       return;
     }
     const sessionId = this.activeTurns.get(event.turnId)?.sessionId ?? this.settledTurns.get(event.turnId) ?? "";

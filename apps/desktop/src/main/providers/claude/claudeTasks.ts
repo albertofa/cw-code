@@ -37,6 +37,11 @@ const NOTIFICATION_TAG_RE = {
 const LAUNCH_STATUSES = new Set(["async_launched", "remote_launched"]);
 const ASYNC_ACK_PREFIX = "Async agent launched";
 const RESUME_TEXT_RE = /resuming agent/i;
+const TASK_OUTPUT_LIMIT = 8000;
+
+function capped(text: string): string {
+  return text.slice(0, TASK_OUTPUT_LIMIT);
+}
 
 function str(value: unknown): string | undefined {
   return typeof value === "string" && value.trim() ? value : undefined;
@@ -78,8 +83,8 @@ function launchedAgentId(output: string, structured: Record<string, unknown> | u
 }
 
 function notificationOutput(n: ClaudeNotificationXml): { output?: string; outputSource?: TaskOutputSource } {
-  if (hasText(n.result)) return { output: n.result, outputSource: "result" };
-  if (hasText(n.summary)) return { output: n.summary, outputSource: "summary" };
+  if (hasText(n.result)) return { output: capped(n.result), outputSource: "result" };
+  if (hasText(n.summary)) return { output: capped(n.summary), outputSource: "summary" };
   return {};
 }
 
@@ -159,7 +164,7 @@ export function claudeToolResultObservation(
     ref: refOf(toolUseId, isError ? undefined : launchedAgentId(output, structured), undefined),
     state: isError ? "failed" : "completed",
     reason: "tool-result",
-    ...(hasText(output) ? { output } : {}),
+    ...(hasText(output) ? { output: capped(output) } : {}),
     outputSource: "result",
     at
   };
@@ -242,7 +247,7 @@ export function claudeHandbackObservation(originId: string, message: string, at:
     ref: { originId },
     state: "completed",
     reason: "cli",
-    output: message,
+    output: capped(message),
     outputSource: "report",
     at
   };
