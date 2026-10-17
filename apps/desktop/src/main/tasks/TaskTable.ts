@@ -111,16 +111,21 @@ function isOtherRun(run: TaskRun, ref: TaskRef): boolean {
   return differs(run.toolUseId, ref.toolUseId) || differs(run.runId, ref.runId);
 }
 
+function latestRun(record: TaskRecord, matches: (run: TaskRun) => boolean): TaskRun | undefined {
+  for (let i = record.runs.length - 1; i >= 0; i--) {
+    if (matches(record.runs[i])) return record.runs[i];
+  }
+  return undefined;
+}
+
 function targetRun(record: TaskRecord, ref: TaskRef): TaskRun | undefined {
-  const runs = record.runs;
-  if (ref.runId !== undefined) {
-    const byRunId = runs.findLast((run) => run.runId === ref.runId);
-    if (byRunId) return byRunId;
-  }
-  if (ref.toolUseId !== undefined) {
-    const byToolUseId = runs.findLast((run) => run.toolUseId === ref.toolUseId && !differs(run.runId, ref.runId));
-    if (byToolUseId) return byToolUseId;
-  }
+  const byRunId = ref.runId !== undefined ? latestRun(record, (run) => run.runId === ref.runId) : undefined;
+  if (byRunId) return byRunId;
+  const byToolUseId =
+    ref.toolUseId !== undefined
+      ? latestRun(record, (run) => run.toolUseId === ref.toolUseId && !differs(run.runId, ref.runId))
+      : undefined;
+  if (byToolUseId) return byToolUseId;
   const run = currentRun(record);
   return isOtherRun(run, ref) ? undefined : run;
 }
