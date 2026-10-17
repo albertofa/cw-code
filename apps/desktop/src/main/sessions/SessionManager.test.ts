@@ -3698,6 +3698,27 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
+  it("still returns history when the driver's live tasks throw", async () => {
+    const { manager, fake } = makeManager();
+    const project = manager.addProject("C:\\proj-history-live-tasks-throw");
+    const a = await manager.createSession(project.id, "claude");
+    (manager as unknown as { store: { updateSession(id: string, patch: unknown): void } }).store.updateSession(a.id, {
+      resumeCursor: "cursor-1"
+    });
+    fake.history = [replayedAgentCall];
+    Object.assign(fake, {
+      liveTasks: () => {
+        throw new Error("registry gone");
+      }
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await expect(manager.getHistory(a.id)).resolves.toEqual([replayedAgentCall]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("registry gone"));
+    warn.mockRestore();
+    manager.dispose();
+  });
+
   it("overlays live tasks on healed and re-verified history too", async () => {
     const { manager } = makeManager();
     const project = manager.addProject("C:\\proj-history-live-tasks-heal");

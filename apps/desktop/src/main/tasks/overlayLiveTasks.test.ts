@@ -41,6 +41,20 @@ describe("overlayLiveTasks", () => {
     expect(overlayLiveTasks(messages, [live])).toBe(messages);
   });
 
+  it("keeps a replayed run that ended more definitively than the live snapshot of the same run", () => {
+    const completed: TaskSnapshot = { id: "call-1", kind: "agent", background: true, state: "completed", runCount: 2, endReason: "cli" };
+    const closedLive: TaskSnapshot = { id: "call-1", kind: "agent", background: true, state: "unknown", runCount: 2, endReason: "no-record" };
+    const messages = [toolMessage("call-1", completed)];
+
+    expect(overlayLiveTasks(messages, [closedLive])).toBe(messages);
+  });
+
+  it("prefers a live resumed run over a replayed earlier run that completed", () => {
+    const completed: TaskSnapshot = { id: "call-1", kind: "agent", background: true, state: "completed", runCount: 1, endReason: "cli" };
+
+    expect(overlayLiveTasks([toolMessage("call-1", completed)], [live])).toEqual([toolMessage("call-1", live)]);
+  });
+
   it("returns the same array when there are no live tasks", () => {
     const messages = [toolMessage("call-1", replayed)];
 

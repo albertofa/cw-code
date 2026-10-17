@@ -30,6 +30,7 @@ import type {
   SettingsPatch,
   ShutdownActiveTurn,
   SubagentToolsResult,
+  TaskSnapshot,
   ThreadEvent,
   TurnChanges,
   TurnHandle,
@@ -174,6 +175,15 @@ function driverBusy(driver: CliDriver, sessionId: string): boolean {
   } catch (err) {
     console.warn(`driver activity check failed for ${sessionId}: ${(err as Error).message}`);
     return false;
+  }
+}
+
+function driverLiveTasks(driver: CliDriver, sessionId: string): TaskSnapshot[] {
+  try {
+    return driver.liveTasks?.(sessionId) ?? [];
+  } catch (err) {
+    console.warn(`driver live tasks failed for ${sessionId}: ${(err as Error).message}`);
+    return [];
   }
 }
 
@@ -1294,8 +1304,7 @@ export class SessionManager {
     const project = this.store.getProject(session.projectId);
     if (!project) throw new Error(`unknown project ${session.projectId}`);
     const messages = await this.loadHistory(session, project);
-    const driver = this.drivers[session.driver];
-    return overlayLiveTasks(messages, driver.liveTasks?.(sessionId) ?? []);
+    return overlayLiveTasks(messages, driverLiveTasks(this.drivers[session.driver], sessionId));
   }
 
   private async loadHistory(session: SessionMeta, project: Project): Promise<HistoryMessage[]> {
@@ -1977,7 +1986,7 @@ export class SessionManager {
     } else {
       this.store.updateSession(sessionId, { status: "idle" }, "retry-idle");
     }
-    return result;
+    return { ...result, history: overlayLiveTasks(result.history, driverLiveTasks(driver, sessionId)) };
   }
 
   async respondApproval(requestId: string, decision: ApprovalDecision): Promise<void> {
