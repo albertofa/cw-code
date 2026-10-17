@@ -192,7 +192,11 @@ describe("SettingsStore", () => {
       expect(settings[key]).toEqual(original[key]);
     }
     const workflows = original.prWorkflows as PrWorkflow[];
-    expect(settings.prWorkflows[0]).toEqual({ ...workflows[0], target: "pr" });
+    expect(settings.prWorkflows[0]).toEqual({
+      ...workflows[0],
+      target: "pr",
+      harness: { driver: null, model: "", effort: null, permissionMode: null }
+    });
     expect(settings.prWorkflows.find((w) => w.id === "review")).toMatchObject({ builtIn: true, enabled: false });
     const persisted = JSON.parse(readFileSync(filePath, "utf8")) as Record<string, unknown>;
     expect(persisted.schemaVersion).toBe(SETTINGS_SCHEMA_VERSION);
@@ -439,6 +443,49 @@ describe("SettingsStore", () => {
     expect(target("no-target")).toBe("pr");
     expect(target("bad-target")).toBe("pr");
     expect(target("for-issue")).toBe("issue");
+  });
+
+  it("sanitizes the workflow harness config and inherits everything when it is missing", () => {
+    const store = new SettingsStore(tempFilePath());
+    const base = { ...DEFAULT_SETTINGS.prWorkflows[0]!, builtIn: false };
+    const updated = store.set({
+      prWorkflows: [
+        { ...base, id: "legacy", harness: undefined },
+        { ...base, id: "set", harness: { driver: "codex", model: "  gpt-5  ", effort: "high", permissionMode: "acceptEdits" } },
+        { ...base, id: "bad", harness: { driver: "gemini", model: "x", effort: "extreme", permissionMode: "yolo" } },
+        { ...base, id: "model-only", harness: { driver: null, model: "claude-opus-5", effort: null, permissionMode: null } }
+      ] as unknown as PrWorkflow[]
+    });
+    const harness = (id: string) => updated.prWorkflows.find((w) => w.id === id)?.harness;
+    const inherited = { driver: null, model: "", effort: null, permissionMode: null };
+    expect(harness("legacy")).toEqual(inherited);
+    expect(harness("set")).toEqual({ driver: "codex", model: "gpt-5", effort: "high", permissionMode: "acceptEdits" });
+    expect(harness("bad")).toEqual(inherited);
+    expect(harness("model-only")).toEqual(inherited);
+    expect(DEFAULT_SETTINGS.prWorkflows.every((w) => JSON.stringify(w.harness) === JSON.stringify(inherited))).toBe(true);
+  });
+
+  it("repairs workflows saved before the harness config once, keeping a before-repair backup", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const filePath = tempFilePath();
+    const { harness: _harness, ...legacy } = { ...DEFAULT_SETTINGS.prWorkflows[0]!, id: "legacy", builtIn: false };
+    const original = JSON.stringify({ schemaVersion: 1, prWorkflows: [legacy] });
+    writeFileSync(filePath, original, "utf8");
+    const backup = `${filePath}.before-repair.bak`;
+
+    expect(new SettingsStore(filePath).get().prWorkflows.find((w) => w.id === "legacy")?.harness).toEqual({
+      driver: null,
+      model: "",
+      effort: null,
+      permissionMode: null
+    });
+    expect(readFileSync(backup, "utf8")).toBe(original);
+    expect(warn).toHaveBeenCalledTimes(1);
+
+    new SettingsStore(filePath);
+    expect(readFileSync(backup, "utf8")).toBe(original);
+    expect(warn).toHaveBeenCalledTimes(1);
+    warn.mockRestore();
   });
 
   it("sanitizes saved GitHub views", () => {

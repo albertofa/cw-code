@@ -53,6 +53,7 @@ function workflow(id: string, target: PrWorkflow["target"]): PrWorkflow {
     target,
     suggestWhen: [],
     workspace: "checkout",
+    harness: { driver: null, model: "", effort: null, permissionMode: null },
     startPrompt: "",
     updatePrompt: ""
   };

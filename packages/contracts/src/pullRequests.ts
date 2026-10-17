@@ -1,4 +1,4 @@
-import type { GitPullRequestChecks } from "./session.js";
+import type { DriverKind, EffortLevel, GitPullRequestChecks, PermissionMode } from "./session.js";
 
 export interface PrRef {
   host: string;
@@ -149,6 +149,15 @@ export type PrWorkspaceChoice = "checkout" | "worktree" | "linked";
 
 export type PrWorkflowIcon = "eye" | "activity" | "message" | "wrench" | "merge" | "bot" | "sparkle";
 
+/** Harness settings for sessions a workflow starts. Null and empty values fall back to the composer's current choice. */
+export interface PrWorkflowHarness {
+  driver: DriverKind | null;
+  /** Only applies when driver is set; empty picks the harness default. */
+  model: string;
+  effort: EffortLevel | null;
+  permissionMode: PermissionMode | null;
+}
+
 export interface PrWorkflow {
   id: string;
   label: string;
@@ -159,6 +168,7 @@ export interface PrWorkflow {
   target: "pr" | "issue" | "run";
   suggestWhen: PrSuggestCondition[];
   workspace: PrWorkspaceChoice;
+  harness: PrWorkflowHarness;
   startPrompt: string;
   updatePrompt: string;
   /** Sends the follow-up prompt on its own when a linked PR gets actionable updates, until the PR closes. */

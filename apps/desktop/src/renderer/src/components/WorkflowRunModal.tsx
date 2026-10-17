@@ -8,6 +8,7 @@ import {
   Lock,
   Play,
   Plus,
+  Settings2,
   X
 } from "lucide-react";
 import type {
@@ -15,6 +16,7 @@ import type {
   CreateSessionOptions,
   DriverName,
   ModelOption,
+  PermissionOption,
   PrLinkOrigin,
   PrRef,
   PrWorkflow,
@@ -30,7 +32,7 @@ import { babysittingSession, resolveTemplate } from "./prWorkflows.js";
 import { harnessLabel } from "./toolTabs.js";
 import { pickableHarnesses } from "./harnessAvailability.js";
 import { getRecentModels } from "./lastModel.js";
-import { pickInitialModel } from "./modelMenus.js";
+import { harnessSummary, INHERITED_HARNESS, resolveWorkflowHarness, workflowDriver } from "./workflowHarness.js";
 import { workflowIcon } from "./workflowIcons.js";
 import { shortenHome } from "./pathDisplay.js";
 import { DriverIcon } from "./DriverIcon.js";
@@ -64,6 +66,14 @@ import {
 
 const READ_ONLY_NOTICE =
   "cw-code only reads from GitHub. Anything the session commits, pushes, or posts goes through the CLI's own permissions.";
+
+interface HarnessOptions {
+  driver: DriverName;
+  projectId: string | null;
+  models: ModelOption[];
+  permissions: PermissionOption[];
+  error: string | null;
+}
 
 const ORIGIN_LABEL: Record<PrLinkOrigin, string> = {
   opened: "opened here",
@@ -156,21 +166,19 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
   const sessionsByProject = useAppStore((s) => s.sessionsByProject);
   const projects = useAppStore((s) => s.projects);
   const pendingPrefs = useAppStore((s) => s.pendingPrefs);
-  const lastDriver = useAppStore((s) => s.lastDriver);
+  const composerDriver = useAppStore((s) => s.pendingDriver ?? s.lastDriver);
+  const defaultModelByDriver = useAppStore((s) => s.defaultModelByDriver);
   const composerBySession = useAppStore((s) => s.composerBySession);
   const busyTurns = useAppStore((s) => s.busyTurns);
   const homeDir = useAppStore((s) => s.homeDir);
   const settingsVersion = useAppStore((s) => s.settingsVersion);
-  const harnesses = pickableHarnesses(useAppStore((s) => s.installedHarnesses));
+  const installedHarnesses = useAppStore((s) => s.installedHarnesses);
 
   const { settings, error: settingsError } = usePrSettings();
   const [reposReady, setReposReady] = useState(false);
   const [workflowId, setWorkflowId] = useState(request.workflowId);
   const [target, setTarget] = useState(request.continueSessionId ?? "");
-  const [driver, setDriver] = useState<DriverName>(lastDriver);
-  const [models, setModels] = useState<ModelOption[]>([]);
-  const [modelsError, setModelsError] = useState<string | null>(null);
-  const [model, setModel] = useState<string | undefined>(undefined);
+  const [options, setOptions] = useState<HarnessOptions | null>(null);
   const [workspaceChoice, setWorkspaceChoice] = useState<PrWorkspaceChoice | null>(null);
   const [prompt, setPrompt] = useState("");
   const [stage, setStage] = useState<Stage | null>(null);
@@ -237,6 +245,20 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
     ? `Other sessions in ${projectNameOf(projectId ?? "")}`
     : "Other sessions";
   const needsClone = !continueSession && reposReady && projectId === null;
+  const harnessConfig = workflow?.harness ?? INHERITED_HARNESS;
+  const driver = workflowDriver(harnessConfig, composerDriver);
+  const driverMissing = !continueSession && !created && !pickableHarnesses(installedHarnesses).includes(driver);
+  const resolveHarness = (lists: { models: ModelOption[]; permissions: PermissionOption[] }) =>
+    resolveWorkflowHarness(harnessConfig, {
+      composerDriver,
+      pendingPrefs,
+      defaultModel: defaultModelByDriver[driver],
+      recentModels: getRecentModels(driver),
+      models: lists.models,
+      permissions: lists.permissions
+    });
+  const optionsReady = !driverMissing && options !== null && options.driver === driver && options.projectId === projectId;
+  const resolvedHarness = optionsReady ? resolveHarness(options) : null;
   const effectiveDriver = continueSession?.driver ?? driver;
   const harness = harnessLabel(effectiveDriver);
   const linkedWorktree =
@@ -271,26 +293,25 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
   }, [continueSession?.id]);
 
   useEffect(() => {
-    if (continueSession) return;
+    if (continueSession || driverMissing) return;
     let active = true;
-    setModelsError(null);
-    const load = projectId ? window.cw.listModelsFor(projectId, driver) : window.cw.listModelsForHarness(driver);
-    load
-      .then((list) => {
-        if (!active) return;
-        setModels(list);
-        setModel(pickInitialModel(list, useAppStore.getState().defaultModelByDriver[driver], getRecentModels(driver)) ?? undefined);
-      })
-      .catch((err: unknown) => {
-        if (!active) return;
-        setModels([]);
-        setModel(undefined);
-        setModelsError(errorMessage(err));
-      });
+    const errors: string[] = [];
+    const failed = (what: string) => (err: unknown) => {
+      errors.push(`${what}: ${errorMessage(err)}`);
+      return [];
+    };
+    void Promise.all([
+      (projectId ? window.cw.listModelsFor(projectId, driver) : window.cw.listModelsForHarness(driver)).catch(failed("models")),
+      (projectId ? window.cw.listPermissionsFor(projectId, driver) : window.cw.listPermissionsForHarness(driver)).catch(
+        failed("permission modes")
+      )
+    ]).then(([models, permissions]) => {
+      if (active) setOptions({ driver, projectId, models, permissions, error: errors.length > 0 ? errors.join("; ") : null });
+    });
     return () => {
       active = false;
     };
-  }, [driver, projectId, continueSession?.id, settingsVersion]);
+  }, [driver, driverMissing, projectId, continueSession?.id, settingsVersion]);
 
   const resolved = useMemo(() => {
     if (!data.vars || !workflow) return null;
@@ -417,7 +438,14 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
     closeRunModal();
   };
 
+  const configure = () => {
+    if (!workflow || working) return;
+    closeRunModal();
+    usePrStore.getState().openWorkflowSettings(workflow.id);
+  };
+
   const run = async () => {
+    let harnessChoice = resolvedHarness;
     if (!data.loaded || !workflow || runningRef.current || !prompt.trim()) return;
     runningRef.current = true;
     const app = useAppStore.getState();
@@ -452,6 +480,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
       let sessionId = created?.sessionId ?? null;
       let note = created?.note ?? null;
       if (!sessionId) {
+        if (!harnessChoice) throw new Error("the harness options are still loading");
         let targetProjectId = projectId;
         if (!targetProjectId) {
           current = "clone";
@@ -459,12 +488,22 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
           const project = await window.cw.cloneGitHubRepo(subject.ref);
           await Promise.all([refreshProjectRepos(), app.loadProjects()]);
           targetProjectId = project.id;
+          const [models, permissions] = await Promise.all([
+            window.cw.listModelsFor(targetProjectId, driver),
+            window.cw.listPermissionsFor(targetProjectId, driver)
+          ]);
+          harnessChoice = resolveHarness({ models, permissions });
         }
         current = "create";
         setStage(current);
-        const prefs: ComposerPrefs = { ...DEFAULT_COMPOSER, ...pendingPrefs, model };
-        const options = workspaceOptions(targetProjectId);
-        const session = await app.createSessionIn(targetProjectId, driver, prefs, options);
+        const prefs: ComposerPrefs = {
+          ...DEFAULT_COMPOSER,
+          ...pendingPrefs,
+          model: harnessChoice.model,
+          effort: harnessChoice.effort,
+          permissionMode: harnessChoice.permissionMode
+        };
+        const session = await app.createSessionIn(targetProjectId, harnessChoice.driver, prefs, workspaceOptions(targetProjectId));
         sessionId = session.id;
         const detail = data.prDetail;
         note =
@@ -505,10 +544,10 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
       ? `Run workflow · ${workflow.label}`
       : "Run workflow";
   const continueModel = continueSession ? composerBySession[continueSession.id]?.model : undefined;
-  const lockedDriver = continueSession?.driver ?? (created ? driver : null);
-  const lockedModel = continueSession
-    ? (continueModel ?? "same as session")
-    : (models.find((m) => m.id === model)?.label ?? model ?? "default model");
+  const summary =
+    resolvedHarness && options
+      ? harnessSummary(harnessConfig, resolvedHarness, { models: options.models, permissions: options.permissions, pendingPrefs })
+      : null;
   const hasOverride = Boolean(request.promptOverride?.trim());
   const promptLabel = !continueSession
     ? "Prompt"
@@ -518,7 +557,14 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
         ? "Follow-up prompt"
         : "Follow-up prompt (the workflow's “on update” template)";
   const showPushNote = subject.kind === "pr" && !continueSession && data.pr?.viewerIsAuthor === true;
-  const blocked = !data.loaded || !workflow || !prompt.trim() || !data.logsReady || sessionBusy || (!continueSession && !reposReady);
+  const blocked =
+    !data.loaded ||
+    !workflow ||
+    !prompt.trim() ||
+    !data.logsReady ||
+    sessionBusy ||
+    driverMissing ||
+    (!continueSession && (!reposReady || (!created && !resolvedHarness)));
   const actionLabel = continueSession ? "Send" : created ? "Retry" : "Start session";
   const projectName = projectId ? projectNameOf(projectId) : repo.repo;
   const workspaceHint = (mode: "worktree" | "checkout"): string =>
@@ -616,51 +662,46 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
               />
             </div>
             <div className="wf-run-field">
-              <span className="wf-run-label">Harness · model</span>
-              {lockedDriver ? (
+              <span className="wf-run-label">Harness</span>
+              {continueSession ? (
                 <div className="wf-run-locked" title="The session's harness and model are fixed">
-                  <DriverIcon driver={lockedDriver} size={14} />
+                  <DriverIcon driver={continueSession.driver} size={14} />
                   <span className="wf-run-locked-text">
-                    {harnessLabel(lockedDriver)} · {lockedModel}
+                    {harnessLabel(continueSession.driver)} · {continueModel ?? "same as session"}
                   </span>
                   <Lock size={12} aria-hidden="true" />
                 </div>
               ) : (
-                <div className="wf-run-pickers">
-                  {harnesses.length > 1 && (
-                    <MenuSelect
-                      label="Harness"
-                      direction="down"
-                      value={driver}
-                      display={harnessLabel(driver)}
-                      icon={<DriverIcon driver={driver} size={14} />}
-                      options={harnesses.map((id) => ({
-                        id,
-                        label: harnessLabel(id),
-                        icon: <DriverIcon driver={id} size={13} />,
-                        disabled: working
-                      }))}
-                      onPick={(id) => setDriver(id as DriverName)}
-                    />
-                  )}
-                  <MenuSelect
-                    label="Model"
-                    direction="down"
-                    value={model ?? ""}
-                    display={models.find((m) => m.id === model)?.label ?? model ?? "Default model"}
-                    options={models.map((m) => ({ id: m.id, label: m.label, hint: m.id, disabled: working }))}
-                    onPick={setModel}
-                    searchable
-                    searchPlaceholder="Filter models…"
-                  />
+                <div className="wf-run-locked wf-run-summary" title={summary?.title}>
+                  <DriverIcon driver={driver} size={14} />
+                  <span className="wf-run-locked-text">
+                    {summary
+                      ? summary.parts.map((part, index) => (
+                          <span key={part.key} className={part.source === "workflow" ? undefined : "wf-run-inherited"}>
+                            {index > 0 && " · "}
+                            {part.label}
+                          </span>
+                        ))
+                      : driverMissing
+                        ? `${harnessLabel(driver)} · not installed`
+                        : "Loading…"}
+                  </span>
+                  <button type="button" className="wf-run-config" onClick={configure} disabled={working || !workflow || created !== null}>
+                    <Settings2 size={12} aria-hidden="true" /> Configure
+                  </button>
                 </div>
               )}
             </div>
           </div>
           {workflow && <div className="wf-run-muted wf-run-desc">{workflow.description}</div>}
-          {modelsError && !continueSession && (
+          {options?.error && !continueSession && (
             <div className="wf-run-error" role="alert">
-              Could not list models: {modelsError}
+              Could not list harness options: {options.error}
+            </div>
+          )}
+          {driverMissing && (
+            <div className="wf-run-error" role="alert">
+              {harnessLabel(driver)} isn't installed. Configure this workflow to use an installed harness.
             </div>
           )}
 

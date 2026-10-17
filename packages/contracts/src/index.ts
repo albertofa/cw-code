@@ -55,6 +55,7 @@ export type {
   PrSuggestCondition,
   PrWorkspaceChoice,
   PrWorkflowIcon,
+  PrWorkflowHarness,
   PrWorkflow
 } from "./pullRequests.js";
 export type {

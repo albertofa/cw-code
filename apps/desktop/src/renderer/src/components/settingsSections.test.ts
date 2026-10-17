@@ -59,6 +59,7 @@ function settingsFixture(overrides: Partial<AppSettings> = {}): AppSettings {
         target: "pr",
         suggestWhen: ["review-requested"],
         workspace: "checkout",
+        harness: { driver: null, model: "", effort: null, permissionMode: null },
         startPrompt: "start",
         updatePrompt: "update"
       }

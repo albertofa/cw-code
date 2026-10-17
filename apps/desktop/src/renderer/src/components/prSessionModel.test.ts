@@ -39,6 +39,7 @@ function workflow(id: string, overrides: Partial<PrWorkflow> = {}): PrWorkflow {
     target: "pr",
     suggestWhen: [],
     workspace: "linked",
+    harness: { driver: null, model: "", effort: null, permissionMode: null },
     startPrompt: "start",
     updatePrompt: `update ${id}`,
     ...overrides
