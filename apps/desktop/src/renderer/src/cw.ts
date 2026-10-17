@@ -66,6 +66,10 @@ import type {
   SkillSaveInput,
   SkillsListResult,
   StartupState,
+  TaskEndReason,
+  TaskKind,
+  TaskSnapshot,
+  TaskState,
   TokenCounts,
   TurnModelUsage,
   UpdateActionCode,
@@ -136,6 +140,10 @@ export type {
   SessionRunLink,
   WorkflowRunSummary,
   WorkflowSubject,
+  TaskEndReason,
+  TaskKind,
+  TaskSnapshot,
+  TaskState,
   TokenCounts,
   TurnModelUsage,
   UpdateActionCode,
@@ -262,6 +270,7 @@ export interface HistoryMessage {
   reasoningMs?: number;
   compaction?: ContextCompactionInfo;
   toolOutputEmpty?: boolean;
+  task?: TaskSnapshot;
 }
 
 export interface SubagentToolActivity {
@@ -348,7 +357,9 @@ export type TurnEvent =
       input: unknown;
       parentToolCallId?: string;
       model?: string;
+      task?: TaskSnapshot;
     }
+  | { type: "task.updated"; turnId: string; sessionId: string; task: TaskSnapshot }
   | {
       type: "tool.result";
       turnId: string;

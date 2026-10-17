@@ -1,3 +1,4 @@
+import type { TaskSnapshot } from "./tasks.js";
 import type { ContextCompactionInfo, ContextUsage, TurnModelUsage } from "./usage.js";
 
 export interface TodoItem {
@@ -29,6 +30,7 @@ export interface HistoryMessage {
   reasoningMs?: number;
   compaction?: ContextCompactionInfo;
   toolOutputEmpty?: boolean;
+  task?: TaskSnapshot;
 }
 
 export interface SubagentToolActivity {
@@ -96,7 +98,9 @@ export type ThreadEvent =
       input: unknown;
       parentToolCallId?: string;
       model?: string;
+      task?: TaskSnapshot;
     }
+  | { type: "task.updated"; turnId: string; sessionId: string; task: TaskSnapshot }
   | {
       type: "tool.result";
       turnId: string;
