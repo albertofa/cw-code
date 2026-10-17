@@ -238,7 +238,7 @@ node tools/release/src/cli/release.ts feed-serve --root apps/desktop/dist-update
 `.github/workflows/upgrade-test.yml` runs on `workflow_dispatch` (optional
 `scenarios` input, every scenario when empty), nightly at 03:17 UTC (every
 scenario) and on pull requests that touch the lockfile, `apps/desktop/package.json`,
-`main/{updates,shutdown}/**`, the builder configs, `electron.vite.config.ts`,
+`main/{updates,shutdown}/**`, `main/index.ts`, the builder configs, `electron.vite.config.ts`,
 the `updates`/`shutdown` contracts, the harness, the feed code or the
 release-tools modules it uses (`rehash`, `updateInfoYaml`, `semver`,
 `upgradeScenarios`). Pull requests run only the `core` group, so only the N,
@@ -246,8 +246,8 @@ N+1 and N+2 installers are built. Every test installer is built from the
 same checkout, so the run tests the updater, not data compatibility with an
 older release; storage, session and settings shapes are covered by their
 `*-v0.json` fixture tests, and changes there are caught by the nightly run.
-The nightly run is skipped when the same commit already passed a nightly
-run. The `nightly-gate` job (`ubuntu-latest`, `actions: read`) checks this
+The nightly run is skipped only when the latest completed nightly run passed
+on the same commit, so a failed or cancelled nightly run is retried. The `nightly-gate` job (`ubuntu-latest`, `actions: read`) checks this
 and fails open. The `installed-upgrade` job runs on `windows-latest` with a
 150-minute timeout, `contents: read`, no secrets, no dependency cache,
 actions pinned by SHA, `persist-credentials: false`. Steps: release-tools tests,

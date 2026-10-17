@@ -16,6 +16,7 @@ describe("upgrade-test.yml policy", () => {
       "apps/desktop/package.json",
       "apps/desktop/src/main/updates/**",
       "apps/desktop/src/main/shutdown/**",
+      "apps/desktop/src/main/index.ts",
       "apps/desktop/electron-builder*.yml",
       "apps/desktop/electron.vite.config.ts",
       "packages/contracts/src/updates.ts",
@@ -38,10 +39,12 @@ describe("upgrade-test.yml policy", () => {
     expect(text).toContain("SCENARIOS: ${{ inputs.scenarios || (github.event_name == 'pull_request' && 'core' || '') }}");
   });
 
-  it("skips the nightly run when the same commit already passed a nightly run", () => {
+  it("skips the nightly run only when the latest completed nightly run passed on the same commit", () => {
     const gate = jobBlocks(lines).get("nightly-gate");
     expect(gate).toBeDefined();
     expect(gate).toContain("    if: github.event_name == 'schedule'");
+    expect(text).toContain("event=schedule&status=completed&per_page=1");
+    expect(text).toContain('if [ "$latest" = "$GITHUB_SHA success" ]');
     expect(jobBlocks(lines).get("installed-upgrade")).toContain("    if: ${{ !cancelled() && needs.nightly-gate.outputs.already-tested != 'true' }}");
   });
 
