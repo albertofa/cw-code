@@ -4,10 +4,10 @@ import type { ContextCompactionInfo, HistoryMessage, TaskSnapshot } from "@cw-co
 import { TaskTable, type TaskObservation } from "../../tasks/TaskTable.js";
 import { todosFromToolCall } from "../todos.js";
 import { claudeCommandText } from "./claudeCommands.js";
-import { parseClaudeTaskNotification } from "./claudeStreamParser.js";
 import { claudeTranscriptProjectDir } from "./claudeSessions.js";
 import {
   claudeCallObservation,
+  claudeHandbackObservation,
   claudeNotificationObservation,
   claudeResumeObservation,
   claudeToolResultObservation,
@@ -293,7 +293,9 @@ export function parseClaudeTranscriptLine(line: TranscriptLine): HistoryMessage[
       const block = content[i];
       if (block.type === "text") {
         const text = (block as { text?: string }).text ?? "";
-        if (text.trim()) out.push({ id: `${baseId}-u${i}`, role: "user", text, turnId: baseId, ...stamp });
+        if (text.trim() && !text.trimStart().startsWith("<task-notification>")) {
+          out.push({ id: `${baseId}-u${i}`, role: "user", text, turnId: baseId, ...stamp });
+        }
       } else if (block.type === "tool_result") {
         const result = block as { tool_use_id?: string; content?: unknown; is_error?: boolean };
         const raw = blockText(result.content);
@@ -399,6 +401,23 @@ function readSidecarMetas(transcriptDir: string, resumeCursor: string): SidecarM
 
 type ToolResultBlock = { tool_use_id?: string; content?: unknown; is_error?: boolean };
 
+const TASK_NOTIFICATION_KIND = "task-notification";
+
+function isNotificationOrigin(origin: Record<string, unknown> | undefined): boolean {
+  return stringField(origin, "kind") === TASK_NOTIFICATION_KIND;
+}
+
+function isBareNotification(content: string): boolean {
+  return content.trimStart().startsWith("<task-notification>");
+}
+
+function queuedNotificationPrompt(attachment: Record<string, unknown> | undefined): string | undefined {
+  if (attachment?.["type"] !== "queued_command") return undefined;
+  const marked =
+    stringField(attachment, "commandMode") === TASK_NOTIFICATION_KIND || isNotificationOrigin(plainObject(attachment["origin"]));
+  return marked ? stringField(attachment, "prompt") : undefined;
+}
+
 class ClaudeHistoryTasks {
   private readonly table = new TaskTable();
   private readonly sendTargets = new Map<string, string>();
@@ -443,14 +462,17 @@ class ClaudeHistoryTasks {
   }
 
   private observeUser(line: TranscriptLine, content: string | ContentBlock[], at: number): void {
-    const runId = stringField(plainObject(line.origin), "runId");
+    const origin = plainObject(line.origin);
+    this.observeHandback(origin, at);
+    const runId = stringField(origin, "runId");
+    const marked = isNotificationOrigin(origin);
     if (typeof content === "string") {
-      this.observeNotification(content, at, runId);
+      if (marked || isBareNotification(content)) this.observeNotification(content, at, runId);
       return;
     }
     const structured = plainObject(line.toolUseResult);
     for (const block of content) {
-      if (block.type === "text") this.observeNotification((block as { text?: string }).text ?? "", at, runId);
+      if (block.type === "text" && marked) this.observeNotification((block as { text?: string }).text ?? "", at, runId);
       else if (block.type === "tool_result") this.observeToolResult(block as ToolResultBlock, structured, at);
     }
   }
@@ -469,8 +491,8 @@ class ClaudeHistoryTasks {
 
   private observeQueuedCommand(line: TranscriptLine, at: number): void {
     const attachment = plainObject(line.attachment);
-    const prompt = stringField(attachment, "prompt");
-    if (attachment?.["type"] !== "queued_command" || prompt === undefined) return;
+    const prompt = queuedNotificationPrompt(attachment);
+    if (prompt === undefined) return;
     const runId = stringField(plainObject(line.origin), "runId") ?? stringField(attachment, "runId");
     this.observeNotification(prompt, at, runId);
   }
@@ -478,6 +500,14 @@ class ClaudeHistoryTasks {
   private observeNotification(text: string, at: number, runId: string | undefined): void {
     const notification = findClaudeTaskNotification(text);
     if (notification) this.apply(claudeNotificationObservation(notification, at, runId));
+  }
+
+  private observeHandback(origin: Record<string, unknown> | undefined, at: number): void {
+    if (origin?.["handback"] !== true) return;
+    const from = stringField(origin, "from");
+    const report = stringField(origin, "handbackReportText");
+    const task = from && report?.trim() ? this.table.resolve({ cliTaskId: from }) : undefined;
+    if (task && report) this.apply(claudeHandbackObservation(task.id, report, at));
   }
 }
 
@@ -594,21 +624,35 @@ export function readClaudeTaskResult(
     const line = lines[i];
     if (!line.includes("<task-notification>") || !line.includes(toolUseId)) continue;
     scanned++;
-    let content: unknown;
+    let parsed: TranscriptLine;
     try {
-      content = (JSON.parse(line) as TranscriptLine).message?.content;
+      parsed = JSON.parse(line) as TranscriptLine;
     } catch {
       continue;
     }
-    if (typeof content !== "string") continue;
-    const notification = parseClaudeTaskNotification(content);
-    if (!notification || notification.toolUseId !== toolUseId) continue;
-    return {
-      result: notification.result,
-      ...(notification.status ? { status: notification.status } : {})
-    };
+    for (const text of notificationCarriers(parsed)) {
+      const notification = findClaudeTaskNotification(text);
+      if (!notification || notification.toolUseId !== toolUseId || notification.result === undefined) continue;
+      return {
+        result: notification.result,
+        ...(notification.status ? { status: notification.status } : {})
+      };
+    }
   }
   return undefined;
+}
+
+function notificationCarriers(line: TranscriptLine): string[] {
+  if (line.type === "attachment") {
+    const prompt = queuedNotificationPrompt(plainObject(line.attachment));
+    return prompt !== undefined ? [prompt] : [];
+  }
+  if (line.type !== "user") return [];
+  const marked = isNotificationOrigin(plainObject(line.origin));
+  const content = line.message?.content;
+  if (typeof content === "string") return marked || isBareNotification(content) ? [content] : [];
+  if (!marked || !Array.isArray(content)) return [];
+  return content.flatMap((block) => (block.type === "text" ? [(block as { text?: string }).text ?? ""] : []));
 }
 
 function attachSidecarInfo(

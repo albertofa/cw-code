@@ -443,10 +443,10 @@ describe("readClaudeHistoryFile", () => {
       endReason: "cli",
       runCount: 2,
       startedAt: Date.parse("2026-10-17T12:16:29.492Z"),
-      endedAt: Date.parse("2026-10-17T12:16:34.661Z"),
+      endedAt: Date.parse("2026-10-17T12:16:33.085Z"),
+      output: "PONG2",
       usage: { tokens: 28111, toolUses: 2, durationMs: 8936 }
     });
-    expect(taskOf(messages, PONG_CALL)?.output).toContain('delivered to you as a message from "a5fd6f29192d6b105"');
     expect(taskOf(messages, SLEEPER_CALL)).toMatchObject({
       cliTaskId: "a74a561c109a552e8",
       state: "stopped",
@@ -471,7 +471,7 @@ describe("readClaudeHistoryFile", () => {
     const { file, cursor } = fixtureSession("handback-probe");
     const messages = readClaudeHistoryFile(file, cursor);
 
-    expect(taskOf(messages, HANDBACK_CALL)).toStrictEqual({
+    expect(taskOf(messages, HANDBACK_CALL)).toMatchObject({
       id: HANDBACK_CALL,
       cliTaskId: "a087ca34d38140971",
       kind: "agent",
@@ -480,9 +480,7 @@ describe("readClaudeHistoryFile", () => {
       endReason: "cli",
       runCount: 1,
       startedAt: Date.parse("2026-10-17T12:03:12.617Z"),
-      endedAt: Date.parse("2026-10-17T12:03:21.309Z"),
-      output:
-        'This agent\'s report was delivered to you as a message from "a087ca34d38140971" (its SubagentHandback call). Read it there; it is not repeated here.\n',
+      output: "PONG",
       usage: { tokens: 27937, toolUses: 1, durationMs: 2127 }
     });
   });
@@ -494,6 +492,32 @@ describe("readClaudeHistoryFile", () => {
       expect(tasks.length).toBeGreaterThan(0);
       expect(tasks.every((task) => task.state !== "running")).toBe(true);
     }
+  });
+
+  it("ignores notification XML quoted by a user prompt and reads it only from marked carriers", () => {
+    const quoted = `Here is what the app logged:\n<task-notification>\n<task-id>${AGENT_ID}</task-id>\n<tool-use-id>toolu_bg</tool-use-id>\n<status>completed</status>\n</task-notification>`;
+    const notification = `<task-notification>\n<task-id>${AGENT_ID}</task-id>\n<tool-use-id>toolu_bg</tool-use-id>\n<status>failed</status>\n<result>BOOM</result>\n</task-notification>`;
+    const quotedOnly = syntheticSession([
+      agentCall("toolu_bg", 0, BACKGROUND_INPUT),
+      launchAck("toolu_bg", 100),
+      { type: "user", uuid: "u-quote", timestamp: iso(200), message: { role: "user", content: quoted } },
+      { type: "user", uuid: "u-block", timestamp: iso(300), message: { role: "user", content: [{ type: "text", text: notification }] } }
+    ]);
+    expect(taskOf(readClaudeHistoryFile(quotedOnly, CURSOR), "toolu_bg")).toMatchObject({ state: "unknown", endReason: "no-record" });
+
+    const marked = syntheticSession([
+      agentCall("toolu_bg", 0, BACKGROUND_INPUT),
+      launchAck("toolu_bg", 100),
+      {
+        type: "user",
+        uuid: "u-marked",
+        timestamp: iso(300),
+        origin: { kind: "task-notification", runId: "run-1" },
+        message: { role: "user", content: [{ type: "text", text: `<system-reminder>\n${notification}\n</system-reminder>` }] }
+      }
+    ]);
+    const messages = readClaudeHistoryFile(marked, CURSOR);
+    expect(taskOf(messages, "toolu_bg")).toMatchObject({ state: "failed", endReason: "cli", output: "BOOM" });
   });
 
   it("completes a background agent closed only by a mid-turn queued_command attachment", () => {

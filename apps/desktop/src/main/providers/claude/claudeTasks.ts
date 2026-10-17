@@ -19,6 +19,8 @@ export interface ClaudeNotificationXml {
 
 const NOTIFICATION_OPEN = "<task-notification>";
 const NOTIFICATION_CLOSE = "</task-notification>";
+const RESULT_OPEN = "<result>";
+const RESULT_CLOSE = "</result>";
 
 function tagPattern(tag: string): RegExp {
   return new RegExp(`<${tag}>([\\s\\S]*?)</${tag}>`);
@@ -29,7 +31,6 @@ const NOTIFICATION_TAG_RE = {
   taskId: tagPattern("task-id"),
   status: tagPattern("status"),
   summary: tagPattern("summary"),
-  result: tagPattern("result"),
   usage: tagPattern("usage")
 };
 
@@ -87,19 +88,28 @@ export function isClaudeSubagentTool(name: string): boolean {
   return lower === "agent" || lower === "task";
 }
 
+function splitResult(body: string): { head: string; result?: string; tail: string } {
+  const open = body.indexOf(RESULT_OPEN);
+  if (open < 0) return { head: body, tail: "" };
+  const start = open + RESULT_OPEN.length;
+  const close = body.lastIndexOf(RESULT_CLOSE);
+  if (close < start) return { head: body.slice(0, open), result: body.slice(start), tail: "" };
+  return { head: body.slice(0, open), result: body.slice(start, close), tail: body.slice(close + RESULT_CLOSE.length) };
+}
+
 export function findClaudeTaskNotification(text: string): ClaudeNotificationXml | null {
   const start = text.indexOf(NOTIFICATION_OPEN);
   if (start < 0) return null;
   const bodyStart = start + NOTIFICATION_OPEN.length;
-  const end = text.indexOf(NOTIFICATION_CLOSE, bodyStart);
-  const body = text.slice(bodyStart, end < 0 ? undefined : end);
-  const toolUseId = trimmedTag(body, NOTIFICATION_TAG_RE.toolUseId);
-  const taskId = trimmedTag(body, NOTIFICATION_TAG_RE.taskId);
+  const end = text.lastIndexOf(NOTIFICATION_CLOSE);
+  const body = text.slice(bodyStart, end < bodyStart ? undefined : end);
+  const { head, result, tail } = splitResult(body);
+  const toolUseId = trimmedTag(head, NOTIFICATION_TAG_RE.toolUseId);
+  const taskId = trimmedTag(head, NOTIFICATION_TAG_RE.taskId);
   if (!toolUseId && !taskId) return null;
-  const status = trimmedTag(body, NOTIFICATION_TAG_RE.status);
-  const summary = trimmedTag(body, NOTIFICATION_TAG_RE.summary);
-  const result = NOTIFICATION_TAG_RE.result.exec(body)?.[1];
-  const usageBody = NOTIFICATION_TAG_RE.usage.exec(body)?.[1];
+  const status = trimmedTag(head, NOTIFICATION_TAG_RE.status);
+  const summary = trimmedTag(head, NOTIFICATION_TAG_RE.summary);
+  const usageBody = NOTIFICATION_TAG_RE.usage.exec(tail)?.[1] ?? (result === undefined ? NOTIFICATION_TAG_RE.usage.exec(head)?.[1] : undefined);
   const usage = usageBody !== undefined ? parseTaskNotificationUsage(usageBody) : undefined;
   return {
     ...(toolUseId ? { toolUseId } : {}),
@@ -139,7 +149,7 @@ export function claudeToolResultObservation(
   }
   return {
     kind: "ended",
-    ref: { toolUseId },
+    ref: refOf(toolUseId, isError ? undefined : launchedAgentId(output, structured), undefined),
     state: isError ? "failed" : "completed",
     reason: "tool-result",
     ...(hasText(output) ? { output } : {}),
@@ -153,7 +163,7 @@ export function claudeNotificationObservation(
   at: number,
   runId?: string
 ): TaskObservation | null {
-  const state = mapCliTaskStatus(n.status) ?? "completed";
+  const state = n.status === undefined ? "completed" : (mapCliTaskStatus(n.status) ?? "unknown");
   if (state === "running") return null;
   return {
     kind: "ended",

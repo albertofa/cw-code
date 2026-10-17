@@ -97,6 +97,21 @@ describe("isClaudeSubagentTool", () => {
   });
 });
 
+describe("findClaudeTaskNotification nested content", () => {
+  it("keeps a result that quotes result and usage tags and reads the real usage after it", () => {
+    const text =
+      "<task-notification>\n<task-id>t1</task-id>\n<status>completed</status>\n" +
+      "<result>see <result>inner</result> and <usage><tool_uses>99</tool_uses></usage></result>\n" +
+      "<usage><subagent_tokens>10</subagent_tokens><tool_uses>2</tool_uses><duration_ms>30</duration_ms></usage>\n</task-notification>";
+    expect(findClaudeTaskNotification(text)).toStrictEqual({
+      taskId: "t1",
+      status: "completed",
+      result: "see <result>inner</result> and <usage><tool_uses>99</tool_uses></usage>",
+      usage: { tokens: 10, toolUses: 2, durationMs: 30 }
+    });
+  });
+});
+
 describe("findClaudeTaskNotification", () => {
   it("parses a queued_command attachment prompt from a real transcript", () => {
     expect(findClaudeTaskNotification(COMPLETED_PROMPT)).toStrictEqual({
@@ -291,10 +306,10 @@ describe("claudeToolResultObservation", () => {
     });
   });
 
-  it("ends a foreground result as completed with its output", () => {
+  it("ends a foreground result as completed with its output and links its agent id", () => {
     expect(claudeToolResultObservation("toolu_1", "PONG", false, { status: "completed", agentId: "a1" }, AT)).toStrictEqual({
       kind: "ended",
-      ref: { toolUseId: "toolu_1" },
+      ref: { toolUseId: "toolu_1", cliTaskId: "a1" },
       state: "completed",
       reason: "tool-result",
       output: "PONG",
@@ -344,6 +359,11 @@ describe("claudeNotificationObservation", () => {
     });
   });
 
+  it("ends with an unknown outcome when the status is not one the CLI documents", () => {
+    expect(claudeNotificationObservation({ taskId: "t1", status: "exploded" }, AT)).toMatchObject({ kind: "ended", state: "unknown" });
+    expect(claudeNotificationObservation({ taskId: "t1" }, AT)).toMatchObject({ kind: "ended", state: "completed" });
+  });
+
   it("maps a killed notification to stopped and falls back to the summary", () => {
     const notification = findClaudeTaskNotification(KILLED_PROMPT);
     expect(notification).not.toBeNull();
@@ -373,11 +393,6 @@ describe("claudeNotificationObservation", () => {
       reason: "cli",
       at: AT
     });
-  });
-
-  it("defaults a missing or unknown status to completed", () => {
-    expect(claudeNotificationObservation({ taskId: "t1" }, AT)).toMatchObject({ state: "completed" });
-    expect(claudeNotificationObservation({ taskId: "t1", status: "weird" }, AT)).toMatchObject({ state: "completed" });
   });
 
   it("returns null for a non-terminal status", () => {
