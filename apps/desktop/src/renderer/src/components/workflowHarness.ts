@@ -12,7 +12,7 @@ export const PERMISSION_LABELS: Record<PermissionMode, string> = {
   bypassPermissions: "Full Access"
 };
 
-export const PERMISSION_MODES = Object.keys(PERMISSION_LABELS) as PermissionMode[];
+export const PERMISSION_MODES: PermissionMode[] = ["manual", "acceptEdits", "auto", "bypassPermissions"];
 
 export interface WorkflowHarnessContext {
   composerDriver: DriverName;
@@ -79,11 +79,17 @@ export function harnessSummary(
   return { parts, title: notes.length === 0 ? "All set by this workflow" : notes.join(". ") };
 }
 
+export function fallbackPermission(wanted: PermissionMode, offered: PermissionOption[]): PermissionMode {
+  if (offered.length === 0 || offered.some((p) => p.id === wanted)) return wanted;
+  const offeredModes = PERMISSION_MODES.filter((mode) => offered.some((p) => p.id === mode));
+  const rank = PERMISSION_MODES.indexOf(wanted);
+  return offeredModes.filter((mode) => PERMISSION_MODES.indexOf(mode) < rank).at(-1) ?? offeredModes[0] ?? offered[0].id;
+}
+
 export function resolveWorkflowHarness(config: PrWorkflowHarness, ctx: WorkflowHarnessContext): ResolvedWorkflowHarness {
   const driver = workflowDriver(config, ctx.composerDriver);
   const model = workflowModel(config, ctx);
   const effort = fallbackEffort(config.effort ?? ctx.pendingPrefs.effort ?? DEFAULT_EFFORT, effortOptionsFor(driver, ctx.models, model));
-  const wanted = config.permissionMode ?? ctx.pendingPrefs.permissionMode ?? "auto";
-  const permissionMode = ctx.permissions.length === 0 || ctx.permissions.some((p) => p.id === wanted) ? wanted : ctx.permissions[0].id;
+  const permissionMode = fallbackPermission(config.permissionMode ?? ctx.pendingPrefs.permissionMode ?? "auto", ctx.permissions);
   return { driver, model, effort, permissionMode };
 }

@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { PrWorkflowHarness } from "@cw-code/contracts";
 import type { ModelOption, PermissionOption } from "../cw.js";
-import { harnessSummary, INHERITED_HARNESS, resolveWorkflowHarness, type WorkflowHarnessContext } from "./workflowHarness.js";
+import { fallbackPermission, harnessSummary, INHERITED_HARNESS, resolveWorkflowHarness, type WorkflowHarnessContext } from "./workflowHarness.js";
 
 const MODELS: ModelOption[] = [
   { id: "claude-opus-5", label: "Opus 5", source: "curated" },
@@ -13,6 +13,10 @@ const PERMISSIONS: PermissionOption[] = [
   { id: "auto", label: "Auto", description: "", native: true },
   { id: "bypassPermissions", label: "Full Access", description: "", native: false }
 ];
+
+function offered(...ids: PermissionOption["id"][]): PermissionOption[] {
+  return ids.map((id) => ({ id, label: id, description: "", native: true }));
+}
 
 function context(overrides: Partial<WorkflowHarnessContext> = {}): WorkflowHarnessContext {
   return {
@@ -60,6 +64,16 @@ describe("resolveWorkflowHarness", () => {
   it("falls back from a permission mode the harness does not offer", () => {
     expect(resolveWorkflowHarness(config({ permissionMode: "acceptEdits" }), context()).permissionMode).toBe("manual");
     expect(resolveWorkflowHarness(config({ permissionMode: "acceptEdits" }), context({ permissions: [] })).permissionMode).toBe("acceptEdits");
+  });
+
+  it("never falls back to a more permissive mode than the one asked for", () => {
+    expect(fallbackPermission("auto", offered("bypassPermissions", "manual", "acceptEdits"))).toBe("acceptEdits");
+    expect(fallbackPermission("acceptEdits", offered("bypassPermissions", "auto", "manual"))).toBe("manual");
+    expect(fallbackPermission("bypassPermissions", offered("auto", "manual"))).toBe("auto");
+  });
+
+  it("takes the least permissive mode offered when none is below the one asked for", () => {
+    expect(fallbackPermission("manual", offered("bypassPermissions", "auto"))).toBe("auto");
   });
 
   it("lowers an effort the opencode model cannot run", () => {
