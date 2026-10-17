@@ -2195,6 +2195,25 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
+  it("marks a babysat link seen only up to the turn start", async () => {
+    const widgets = { host: "github.com", owner: "acme", repo: "widgets", number: 42 };
+    const { manager, fake, project } = makePrManager({ prHeadRefresh: async () => "fresh-42" });
+    const session = await manager.createSession(project.id, "claude", { mode: "current" });
+    manager.linkPr(session.id, { ref: widgets, origin: "opened", workflowId: "babysit", lastSeenSha: "old-42", lastSeenAt: 0 });
+
+    const before = Date.now();
+    const turnId = await manager.startTurn(session.id, "hello", { prRefs: [widgets] });
+    const started = Date.now();
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    fake.complete(turnId);
+
+    const updated = await waitForSessionPrSeen(manager, project.id, session.id, "fresh-42");
+    const seenAt = updated?.prs?.[0]?.lastSeenAt ?? 0;
+    expect(seenAt).toBeGreaterThanOrEqual(before);
+    expect(seenAt).toBeLessThanOrEqual(started);
+    manager.dispose();
+  });
+
   it("does not mark the only link seen when the turn names a different pull request", async () => {
     const widgets = { host: "github.com", owner: "acme", repo: "widgets", number: 42 };
     const gadgets = { host: "github.com", owner: "acme", repo: "gadgets", number: 7 };

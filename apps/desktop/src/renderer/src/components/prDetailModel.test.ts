@@ -177,6 +177,16 @@ describe("linkedSessionsBarState", () => {
     const pr = prSummary({ state: "MERGED" });
     expect(linkedSessionsBarState(pr, [session()], [])).toEqual({ kind: "none" });
   });
+
+  it("points at the babysitting session instead of offering workflows", () => {
+    const pr = prSummary({ headRefOid: "sha2", viewerIsAuthor: true });
+    const review = session({ id: "review", updatedAt: 9, prs: [{ ref: pr.ref, origin: "workflow", workflowId: "review", lastSeenSha: "sha1", lastSeenAt: 0 }] });
+    const babysat = session({ id: "babysat", prs: [{ ref: pr.ref, origin: "opened", workflowId: "babysit", lastSeenSha: "sha2", lastSeenAt: 0 }] });
+    const babysit = workflow({ id: "babysit", label: "Babysit", suggestWhen: ["author"], autoFollowUp: true });
+    expect(linkedSessionsBarState(pr, [review, babysat], [babysit])).toEqual({ kind: "babysit", session: babysat, workflow: babysit });
+    expect(linkedSessionsBarState(pr, [babysat], [{ ...babysit, autoFollowUp: false }])).toMatchObject({ kind: "open" });
+    expect(linkedSessionsBarState(pr, [{ ...babysat, status: "archived" }], [babysit])).toMatchObject({ kind: "open" });
+  });
 });
 
 describe("threadSendTarget", () => {

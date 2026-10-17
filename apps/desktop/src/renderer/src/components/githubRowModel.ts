@@ -15,7 +15,7 @@ import type {
   WorkflowRunSummary
 } from "@cw-code/contracts";
 import { hasUnseen } from "./prUpdates.js";
-import { primaryAction, suggestedWorkflow } from "./prWorkflows.js";
+import { babysittingSession, primaryAction, suggestedWorkflow } from "./prWorkflows.js";
 import { prBucket } from "./prInbox.js";
 import { formatRelativeAge } from "./prInboxModel.js";
 import { linkFor, pickMainSession, sessionsLinkedTo } from "./sessionPrLinks.js";
@@ -445,8 +445,20 @@ function sessionAction<S extends ActionSession>(
   return { kind: "session", session, label, mode, workflowId, meta, count: sessions.length };
 }
 
+export function babysitterFor<S extends ActionSession>(
+  subject: RowSubject,
+  sessions: S[],
+  workflows: PrWorkflow[]
+): { session: S; workflow: PrWorkflow } | null {
+  if (subject.kind === "issue" || isFinished(subject)) return null;
+  const ref = subject.kind === "pr" ? subject.pr.ref : runPrRef(subject.run);
+  return ref ? babysittingSession(sessions, ref, workflows) : null;
+}
+
 export function rowAction<S extends ActionSession>(input: RowActionInput<S>): RowActionModel<S> {
   const { subject, viewer, sessions, workflows } = input;
+  const babysitter = babysitterFor(subject, sessions, workflows);
+  if (babysitter) return sessionAction(input, babysitter.session, "open");
   const targetWorkflows = workflows.filter((workflow) => workflow.target === subject.kind);
   if (subject.kind === "pr" && subject.pr.state !== "MERGED") {
     const action = primaryAction(subject.pr, sessions, targetWorkflows);

@@ -91,7 +91,7 @@ function summary(number: number, overrides: Partial<PrSummary> = {}): PrSummary 
 }
 
 function update(kind: PrUpdate["kind"]): PrUpdate {
-  return { kind, at: 1, actor: null, summary: kind };
+  return { kind, at: 1, actor: null, summary: kind, actionable: false };
 }
 
 const noAttention = { approvals: undefined, questions: undefined, unseenPr: null };

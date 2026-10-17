@@ -11,7 +11,7 @@ import type {
   PrWorkflow,
   SessionMeta
 } from "@cw-code/contracts";
-import { primaryAction, suggestedWorkflow } from "./prWorkflows.js";
+import { babysittingSession, primaryAction, suggestedWorkflow } from "./prWorkflows.js";
 import { linkFor } from "./sessionPrLinks.js";
 
 export interface MergeRow {
@@ -88,12 +88,15 @@ export function threadQuoteText(thread: PrReviewThread, ref: PrRef): string {
 }
 
 export type LinkedBarState =
+  | { kind: "babysit"; session: SessionMeta; workflow: PrWorkflow }
   | { kind: "continue"; session: SessionMeta; workflowId: string }
   | { kind: "open"; session: SessionMeta; suggested: PrWorkflow | null }
   | { kind: "run"; workflowId: string }
   | { kind: "none" };
 
 export function linkedSessionsBarState(pr: PrSummary, linkedSessions: SessionMeta[], workflows: PrWorkflow[]): LinkedBarState {
+  const babysitter = pr.state === "OPEN" ? babysittingSession(linkedSessions, pr.ref, workflows) : null;
+  if (babysitter) return { kind: "babysit", ...babysitter };
   const action = primaryAction(pr, linkedSessions, workflows);
   if (action.kind === "continue" || action.kind === "open") {
     const session = linkedSessions.find((s) => s.id === action.sessionId);

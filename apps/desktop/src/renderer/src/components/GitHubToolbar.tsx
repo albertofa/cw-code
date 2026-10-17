@@ -1,9 +1,10 @@
 import { useState } from "react";
-import { ArrowDownWideNarrow, Check, ChevronDown, CircleDot, GitPullRequest, Loader, TriangleAlert } from "lucide-react";
+import { ArrowDownWideNarrow, Check, ChevronDown, CircleDot, GitPullRequest, TriangleAlert } from "lucide-react";
 import type { GitHubKind, GitHubViewGroup } from "../cw.js";
 import { AnchoredPopover, anchorRectOf, type AnchorRect } from "./AnchoredPopover.js";
 import { SORT_LABELS, sortKeysFor, stateOf, withQualifier, withState } from "./githubQuery.js";
 import { GROUP_LABELS, sortOf } from "./githubViewModel.js";
+import { Spinner } from "./Loading.js";
 
 const GROUP_MODES: GitHubViewGroup[] = ["triage", "repo", "none"];
 const COUNTS_UNAVAILABLE_TITLE = "Counts unavailable with cw-only filters";
@@ -90,7 +91,7 @@ export function GitHubToolbar({
         )}
         {refreshing && (
           <span className="hub-updating" role="status">
-            <Loader size={12} aria-hidden="true" className="pr-inbox-spin" />
+            <Spinner size={12} />
             Updating…
           </span>
         )}

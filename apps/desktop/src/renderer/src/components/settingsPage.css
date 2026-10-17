@@ -1432,6 +1432,10 @@
   color: var(--text);
 }
 
+.sp-cbl-row {
+  margin-left: -8px;
+}
+
 .sp-wsopts {
   display: flex;
   flex-direction: column;

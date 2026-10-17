@@ -21,7 +21,7 @@ import { writeFileAtomic } from "../storage/atomicFile.js";
 import { backupBeforeRepair } from "../storage/backups.js";
 import { isMetadataDocument, type MetadataDocument, type MetadataMigration, type MetadataSchema } from "../storage/metadataDocument.js";
 import { LastGoodRefresher, loadVersionedJson } from "../storage/versionedJson.js";
-import { defaultPrWorkflows } from "./prWorkflowDefaults.js";
+import { defaultPrWorkflows, RETIRED_BUILT_IN_PROMPTS } from "./prWorkflowDefaults.js";
 import {
   configuredCliBinaryPath,
   defaultCliBinaryPath,
@@ -90,12 +90,25 @@ function sanitizeWorkflowEntry(entry: unknown): PrWorkflow | null {
     workspace: o.workspace as PrWorkspaceChoice,
     harness: sanitizeWorkflowHarness(o.harness),
     startPrompt: o.startPrompt,
-    updatePrompt: o.updatePrompt
+    updatePrompt: o.updatePrompt,
+    ...(typeof o.autoFollowUp === "boolean" ? { autoFollowUp: o.autoFollowUp } : {})
   };
+}
+
+function upgradeBuiltIn(workflow: PrWorkflow, builtIn: PrWorkflow | undefined): PrWorkflow {
+  if (!workflow.builtIn || !builtIn) return workflow;
+  const next = { ...workflow };
+  if (next.autoFollowUp === undefined && builtIn.autoFollowUp !== undefined) next.autoFollowUp = builtIn.autoFollowUp;
+  for (const retired of RETIRED_BUILT_IN_PROMPTS) {
+    if (retired.id === workflow.id && next[retired.field] === retired.text) next[retired.field] = builtIn[retired.field];
+  }
+  return next;
 }
 
 function sanitizePrWorkflows(raw: unknown): PrWorkflow[] {
   const list = Array.isArray(raw) ? raw : [];
+  const defaults = defaultPrWorkflows();
+  const defaultsById = new Map(defaults.map((workflow) => [workflow.id, workflow]));
   const seenIds = new Set<string>();
   const enabledById = new Map<string, boolean>();
   const sanitized: PrWorkflow[] = [];
@@ -107,9 +120,9 @@ function sanitizePrWorkflows(raw: unknown): PrWorkflow[] {
     const workflow = sanitizeWorkflowEntry(entry);
     if (!workflow || seenIds.has(workflow.id)) continue;
     seenIds.add(workflow.id);
-    sanitized.push(workflow);
+    sanitized.push(upgradeBuiltIn(workflow, defaultsById.get(workflow.id)));
   }
-  for (const builtIn of defaultPrWorkflows()) {
+  for (const builtIn of defaults) {
     if (!seenIds.has(builtIn.id)) sanitized.push({ ...builtIn, enabled: enabledById.get(builtIn.id) ?? builtIn.enabled });
   }
   return sanitized;

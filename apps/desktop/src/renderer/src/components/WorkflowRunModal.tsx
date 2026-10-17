@@ -5,7 +5,6 @@ import {
   GitBranch,
   GitFork,
   History,
-  Loader2,
   Lock,
   Play,
   Plus,
@@ -29,7 +28,7 @@ import type { PrWorkspaceChoice } from "@cw-code/contracts";
 import { useAppStore, DEFAULT_COMPOSER } from "../stores/appStore.js";
 import { useGitHubStore } from "../stores/githubStore.js";
 import { usePrStore, type RunModalState } from "../stores/prStore.js";
-import { resolveTemplate } from "./prWorkflows.js";
+import { babysittingSession, resolveTemplate } from "./prWorkflows.js";
 import { harnessLabel } from "./toolTabs.js";
 import { getRecentModels } from "./lastModel.js";
 import { harnessSummary, INHERITED_HARNESS, resolveWorkflowHarness, workflowDriver } from "./workflowHarness.js";
@@ -39,8 +38,12 @@ import { DriverIcon } from "./DriverIcon.js";
 import { MenuSelect } from "./MenuSelect.js";
 import { errorMessage } from "./errorMessage.js";
 import { ipcErrorMessage } from "./ipcError.js";
-import { usePrSettings } from "./useLinkedPr.js";
+import { findSession, usePrSettings } from "./useLinkedPr.js";
+import { prKey } from "./prInbox.js";
+import { linkWithWorkflow } from "./sessionPrLinks.js";
 import { IssueCard, PrCard, RunCard } from "./WorkflowSubjectCards.js";
+import { SubjectCardSkeleton } from "./GitHubSkeletons.js";
+import { Spinner } from "./Loading.js";
 import { useWorkflowSubjectData } from "./useWorkflowSubjectData.js";
 import {
   baseWorkspaceHint,
@@ -192,8 +195,19 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
     () => workflowsForSubject(settings?.prWorkflows ?? [], baseSubject, cachedRun),
     [settings, baseSubject, cachedRun]
   );
-  const pickable = workflows.filter((w) => w.enabled || w.id === workflowId);
-  const workflow: PrWorkflow | undefined = workflows.find((w) => w.id === workflowId);
+  const basePrState = usePrStore((s) => {
+    if (baseSubject.kind !== "pr") return undefined;
+    const refKey = prKey(baseSubject.ref);
+    return (s.detailByKey[refKey] ?? s.inbox?.items.find((item) => prKey(item.ref) === refKey))?.state;
+  });
+  const babysitWorkflow = useMemo(() => {
+    if (!target || baseSubject.kind !== "pr" || (basePrState !== undefined && basePrState !== "OPEN")) return null;
+    const session = findSession(sessionsByProject, target);
+    return session ? (babysittingSession([session], baseSubject.ref, workflows)?.workflow ?? null) : null;
+  }, [target, baseSubject, basePrState, sessionsByProject, workflows]);
+  const activeWorkflowId = babysitWorkflow?.id ?? workflowId;
+  const pickable = babysitWorkflow ? [babysitWorkflow] : workflows.filter((w) => w.enabled || w.id === workflowId);
+  const workflow: PrWorkflow | undefined = workflows.find((w) => w.id === activeWorkflowId);
   const subject = useMemo(() => effectiveSubject(baseSubject, workflow, cachedRun), [baseSubject, workflow, cachedRun]);
   const key = subjectKey(subject);
   const noun = SUBJECT_NOUN[subject.kind];
@@ -211,7 +225,11 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
   const projectId = useMemo(() => projectIdForRef(repo), [projectIdForRef, projectRepos, key]);
   const continueAlreadyLinked = continueSession ? isLinkedTo(continueSession, subject) : false;
   const continueLinkKey = continueSession ? `${continueSession.id}\n${key}` : null;
-  const updateMode = continueSession !== undefined && continueAlreadyLinked && linkedHere !== continueLinkKey;
+  const adoptedLink =
+    continueSession !== undefined && subject.kind === "pr" && !request.promptOverride?.trim()
+      ? linkWithWorkflow(continueSession, subject.ref, activeWorkflowId)
+      : null;
+  const updateMode = continueSession !== undefined && continueAlreadyLinked && adoptedLink === null && linkedHere !== continueLinkKey;
   const linkedOptions: Session[] =
     continueSession && continueAlreadyLinked && !linkedSessions.includes(continueSession)
       ? [continueSession, ...linkedSessions]
@@ -265,7 +283,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
 
   useEffect(() => {
     setWorkspaceChoice(null);
-  }, [workflowId]);
+  }, [activeWorkflowId]);
 
   useEffect(() => {
     if (continueSession) void useAppStore.getState().ensureComposer(continueSession.id);
@@ -300,7 +318,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
     return updateMode ? override : `${text}\n\n${override}`;
   }, [data.vars, workflow, updateMode, template, request.promptOverride]);
 
-  const prefillKey = resolved === null ? null : [workflowId, target, data.revision, effectiveDriver].join("\n");
+  const prefillKey = resolved === null ? null : [activeWorkflowId, target, data.revision, effectiveDriver].join("\n");
   useEffect(() => {
     if (prefillKey === null || resolved === null || dirty) return;
     setPrompt(resolved);
@@ -432,16 +450,23 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
     let current: Stage = "send";
     try {
       if (continueSession) {
-        if (!continueAlreadyLinked) {
-          current = "link";
-          setStage(current);
-          app.applySession(await linkSession(continueSession.id, workflow.id, true));
-          setLinkedHere(continueLinkKey);
-        }
         current = "send";
         setStage(current);
         await app.ensureComposer(continueSession.id);
         await app.sendPromptTo(continueSession.id, prompt, undefined, sendOptions);
+        const sent = findSession(useAppStore.getState().sessionsByProject, continueSession.id) ?? continueSession;
+        const adopt = adoptedLink && subject.kind === "pr" ? linkWithWorkflow(sent, subject.ref, activeWorkflowId) : null;
+        if (!isLinkedTo(sent, subject)) {
+          current = "link";
+          setStage(current);
+          app.applySession(await linkSession(continueSession.id, workflow.id, true));
+          setLinkedHere(continueLinkKey);
+        } else if (adopt) {
+          current = "link";
+          setStage(current);
+          app.applySession(await window.cw.linkSessionPr(continueSession.id, adopt));
+          setLinkedHere(continueLinkKey);
+        }
         current = "seen";
         setStage(current);
         const updated = await markSeen(continueSession.id);
@@ -561,7 +586,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
         </div>
 
         <div className="wf-run-body">
-          {card || (!data.error && <div className="wf-run-status">Loading {noun}…</div>)}
+          {card || (!data.error && <SubjectCardSkeleton label={`Loading ${noun}`} />)}
           {data.error && (
             <div className="wf-run-error" role="alert">
               Could not load the {noun}: {data.error}
@@ -595,7 +620,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
                 )}
                 {stage === "clone" && (
                   <span className="wf-run-status">
-                    <Loader2 size={12} className="wf-run-spin" aria-hidden="true" /> Cloning…
+                    <Spinner size={12} /> Cloning…
                   </span>
                 )}
               </div>
@@ -608,7 +633,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
               <MenuSelect
                 label="Workflow"
                 direction="down"
-                value={workflowId}
+                value={activeWorkflowId}
                 display={workflow?.label ?? "Choose workflow"}
                 icon={<WorkflowIcon size={14} />}
                 options={pickable.map((w) => {
@@ -667,7 +692,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
               <Segment
                 label="Session"
                 value={target}
-                disabled={working || created !== null}
+                disabled={working || created !== null || babysitWorkflow !== null}
                 onPick={pickTarget}
                 options={[
                   {
@@ -704,7 +729,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
                   label: s.title,
                   hint: `will be linked to ${subjectLabel(subject, data.run?.runNumber)}${s.projectId === projectId ? "" : ` · ${projectNameOf(s.projectId)}`}`,
                   icon: <DriverIcon driver={s.driver} size={13} />,
-                  disabled: working || created !== null
+                  disabled: working || created !== null || babysitWorkflow !== null
                 }))}
                 onPick={pickTarget}
                 searchable={otherSessions.length > 5}
@@ -773,7 +798,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
           </label>
           {data.logsNeeded && !data.logsReady && !data.logsError && (
             <div className="wf-run-status">
-              <Loader2 size={12} className="wf-run-spin" aria-hidden="true" /> Fetching failed {subject.kind === "pr" ? "check" : "run"} logs…
+              <Spinner size={12} /> Fetching failed {subject.kind === "pr" ? "check" : "run"} logs…
             </div>
           )}
           {data.logsError && (
@@ -798,7 +823,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
             Cancel
           </button>
           <button className="btn btn-primary wf-run-go" onClick={() => void run()} disabled={blocked || working}>
-            {working ? <Loader2 size={13} className="wf-run-spin" aria-hidden="true" /> : <Play size={13} aria-hidden="true" />}
+            {working ? <Spinner size={13} /> : <Play size={13} aria-hidden="true" />}
             {working && stage ? stageLabel(stage, noun) : actionLabel}
           </button>
         </div>

@@ -98,7 +98,7 @@ describe("updatesSince", () => {
       }
     ];
     const detail = basePr({ timeline });
-    expect(updatesSince(detail, baseLink())).toEqual([{ kind: "commits", at: 1_500, actor: "mbarros", summary: "mbarros pushed 3 commits" }]);
+    expect(updatesSince(detail, baseLink())).toEqual([{ kind: "commits", at: 1_500, actor: "mbarros", summary: "mbarros pushed 3 commits", actionable: false }]);
   });
 
   it("drops a commits item ending at the last-seen sha because it is the session's own push", () => {
@@ -116,7 +116,7 @@ describe("updatesSince", () => {
     ];
     const detail = basePr({ timeline, headRefOid: "own", updatedAt: 1_600 });
     expect(updatesSince(detail, baseLink({ lastSeenSha: "own" }))).toEqual([
-      { kind: "comment", at: 1_600, actor: "rcosta", summary: "rcosta commented" }
+      { kind: "comment", at: 1_600, actor: "rcosta", summary: "rcosta commented", actionable: true }
     ]);
   });
 
@@ -141,14 +141,14 @@ describe("updatesSince", () => {
       ]
     });
     expect(updatesSince(detail, baseLink())).toEqual([
-      { kind: "review", at: 1_500, actor: "rcosta", summary: "rcosta requested changes · 3 unresolved threads" }
+      { kind: "review", at: 1_500, actor: "rcosta", summary: "rcosta requested changes · 3 unresolved threads", actionable: true }
     ]);
   });
 
   it("returns an approval without a thread count", () => {
     const timeline: PrTimelineItem[] = [{ kind: "review", at: 1_500, actor: "rcosta", state: "APPROVED", body: "", threadIds: [] }];
     const detail = basePr({ timeline });
-    expect(updatesSince(detail, baseLink())).toEqual([{ kind: "review", at: 1_500, actor: "rcosta", summary: "rcosta approved" }]);
+    expect(updatesSince(detail, baseLink())).toEqual([{ kind: "review", at: 1_500, actor: "rcosta", summary: "rcosta approved", actionable: false }]);
   });
 
   it("returns a comment update when only updatedAt advanced past lastSeenAt", () => {
@@ -156,13 +156,22 @@ describe("updatesSince", () => {
     const detail = basePr({ timeline, headRefOid: "sha-1", updatedAt: 1_500 });
     const link = baseLink({ lastSeenSha: "sha-1", lastSeenAt: 1_000 });
     expect(hasUnseen(detail, link)).toBe(true);
-    expect(updatesSince(detail, link)).toEqual([{ kind: "comment", at: 1_500, actor: "rcosta", summary: "rcosta commented" }]);
+    expect(updatesSince(detail, link)).toEqual([{ kind: "comment", at: 1_500, actor: "rcosta", summary: "rcosta commented", actionable: true }]);
   });
 
   it("returns checks_failed with the single failing check's workflow and name", () => {
     const checkRuns: PrCheck[] = [{ name: "lint", workflow: "ci", status: "failure", url: null, runId: 1, completedAt: 1_500 }];
     const detail = basePr({ ci: "failing", checkRuns });
-    expect(updatesSince(detail, baseLink())).toEqual([{ kind: "checks_failed", at: 1_500, actor: null, summary: "ci / lint failed" }]);
+    expect(updatesSince(detail, baseLink())).toEqual([{ kind: "checks_failed", at: 1_500, actor: null, summary: "ci / lint failed", actionable: true }]);
+  });
+
+  it("keeps checks_failed informational while other checks are still running", () => {
+    const checkRuns: PrCheck[] = [
+      { name: "gate", workflow: "ci", status: "failure", url: null, runId: 1, completedAt: 1_500 },
+      { name: "test", workflow: "ci", status: "pending", url: null, runId: 2, completedAt: null }
+    ];
+    const detail = basePr({ ci: "failing", checkRuns, checks: { total: 2, passed: 0, failed: 1, pending: 1 } });
+    expect(updatesSince(detail, baseLink())).toEqual([{ kind: "checks_failed", at: 1_500, actor: null, summary: "ci / gate failed", actionable: false }]);
   });
 
   it("returns checks_failed naming every failing check when there is more than one", () => {
@@ -171,13 +180,13 @@ describe("updatesSince", () => {
       { name: "test", workflow: "ci", status: "failure", url: null, runId: 2, completedAt: 1_600 }
     ];
     const detail = basePr({ ci: "failing", checkRuns });
-    expect(updatesSince(detail, baseLink())).toEqual([{ kind: "checks_failed", at: 1_600, actor: null, summary: "2 checks failed: lint, test" }]);
+    expect(updatesSince(detail, baseLink())).toEqual([{ kind: "checks_failed", at: 1_600, actor: null, summary: "2 checks failed: lint, test", actionable: true }]);
   });
 
   it("returns checks_passed with the pass count once all checks are green", () => {
     const checkRuns: PrCheck[] = [{ name: "build", workflow: "ci", status: "success", url: null, runId: 1, completedAt: 1_500 }];
     const detail = basePr({ ci: "passing", checkRuns, checks: { total: 12, passed: 12, failed: 0, pending: 0 } });
-    expect(updatesSince(detail, baseLink())).toEqual([{ kind: "checks_passed", at: 1_500, actor: null, summary: "Checks passed (12/12)" }]);
+    expect(updatesSince(detail, baseLink())).toEqual([{ kind: "checks_passed", at: 1_500, actor: null, summary: "Checks passed (12/12)", actionable: false }]);
   });
 
   it("returns nothing when ci is failing but only a passing check completed since lastSeenAt", () => {
@@ -195,7 +204,7 @@ describe("updatesSince", () => {
       { name: "test", workflow: "ci", status: "failure", url: null, runId: 2, completedAt: 1_500 }
     ];
     const detail = basePr({ ci: "failing", checkRuns });
-    expect(updatesSince(detail, baseLink())).toEqual([{ kind: "checks_failed", at: 1_500, actor: null, summary: "ci / test failed" }]);
+    expect(updatesSince(detail, baseLink())).toEqual([{ kind: "checks_failed", at: 1_500, actor: null, summary: "ci / test failed", actionable: true }]);
   });
 
   it("re-requests your review when the requested reviewer already reviewed", () => {
@@ -206,7 +215,7 @@ describe("updatesSince", () => {
       reviewers: [{ login: "rcosta", state: "CHANGES_REQUESTED" }]
     });
     expect(updatesSince(detail, baseLink())).toEqual([
-      { kind: "review_requested", at: 1_500, actor: "mbarros", summary: "mbarros re-requested your review" }
+      { kind: "review_requested", at: 1_500, actor: "mbarros", summary: "mbarros re-requested your review", actionable: false }
     ]);
   });
 
@@ -218,7 +227,7 @@ describe("updatesSince", () => {
       reviewers: [{ login: "rcosta", state: "PENDING" }]
     });
     expect(updatesSince(detail, baseLink())).toEqual([
-      { kind: "review_requested", at: 1_500, actor: "mbarros", summary: "mbarros requested your review" }
+      { kind: "review_requested", at: 1_500, actor: "mbarros", summary: "mbarros requested your review", actionable: false }
     ]);
   });
 
@@ -230,7 +239,7 @@ describe("updatesSince", () => {
       reviewers: [{ login: "dcosta", state: "PENDING" }]
     });
     expect(updatesSince(detail, baseLink())).toEqual([
-      { kind: "review_requested", at: 1_500, actor: "mbarros", summary: "mbarros requested review from dcosta" }
+      { kind: "review_requested", at: 1_500, actor: "mbarros", summary: "mbarros requested review from dcosta", actionable: false }
     ]);
   });
 
@@ -242,7 +251,7 @@ describe("updatesSince", () => {
       reviewers: [{ login: "dcosta", state: "APPROVED" }]
     });
     expect(updatesSince(detail, baseLink())).toEqual([
-      { kind: "review_requested", at: 1_500, actor: "mbarros", summary: "mbarros re-requested review from dcosta" }
+      { kind: "review_requested", at: 1_500, actor: "mbarros", summary: "mbarros re-requested review from dcosta", actionable: false }
     ]);
   });
 
@@ -270,7 +279,7 @@ describe("updatesSince", () => {
     const link = baseLink({ lastSeenSha: "sha-1", lastSeenAt: 1_000 });
     expect(hasUnseen(detail, link)).toBe(true);
     expect(updatesSince(detail, link)).toEqual([
-      { kind: "commits", at: 1_200, actor: null, summary: "New commits since the session last ran" }
+      { kind: "commits", at: 1_200, actor: null, summary: "New commits since the session last ran", actionable: false }
     ]);
   });
 
@@ -286,7 +295,7 @@ describe("updatesSince", () => {
     const detail = basePr({ updatedAt: 2_000 });
     const link = baseLink();
     expect(hasUnseen(detail, link)).toBe(true);
-    expect(updatesSince(detail, link)).toEqual([{ kind: "comment", at: 2_000, actor: null, summary: "PR updated" }]);
+    expect(updatesSince(detail, link)).toEqual([{ kind: "comment", at: 2_000, actor: null, summary: "PR updated", actionable: false }]);
   });
 
   it("ignores reviews and comments posted by the viewer", () => {
@@ -312,6 +321,22 @@ describe("updatesSince", () => {
     const timeline: PrTimelineItem[] = [{ kind: "commits", at: 900, actor: "albertofa", commits: [commit] }];
     const detail = basePr({ timeline, commits: [{ ...commit, oid: "sha-1" }, commit], headRefOid: "sha-2", updatedAt: 1_200, viewerLogin: "albertofa" });
     expect(updatesSince(detail, baseLink({ lastSeenSha: "sha-1", lastSeenAt: 1_000 }))).toEqual([]);
+  });
+
+  it("marks only reviews that ask for work and human comments as actionable", () => {
+    const timeline: PrTimelineItem[] = [
+      { kind: "review", at: 1_100, actor: "copilot[bot]", state: "COMMENTED", body: "", threadIds: [] },
+      { kind: "review", at: 1_200, actor: "rcosta", state: "DISMISSED", body: "", threadIds: [] },
+      { kind: "comment", at: 1_300, actor: "github-actions[bot]", body: "CI gate passed", isBot: true },
+      { kind: "comment", at: 1_400, actor: "rcosta", body: "rename this", isBot: false }
+    ];
+    const detail = basePr({ timeline, updatedAt: 1_400 });
+    expect(updatesSince(detail, baseLink()).map((update) => [update.at, update.actionable])).toEqual([
+      [1_400, true],
+      [1_300, false],
+      [1_200, false],
+      [1_100, true]
+    ]);
   });
 
   it("reports a mixed commit group that includes someone else's commits", () => {
@@ -358,6 +383,12 @@ describe("detailNeedsRefresh", () => {
     expect(detailNeedsRefresh(detail, summary)).toBe(true);
   });
 
+  it("refreshes when pending checks finished while ci stayed failing", () => {
+    const detail = basePr({ ci: "failing", checks: { total: 3, passed: 1, failed: 1, pending: 1 }, updatedAt: 1_000 });
+    const summary = basePr({ ci: "failing", checks: { total: 3, passed: 1, failed: 2, pending: 0 }, updatedAt: 1_000 });
+    expect(detailNeedsRefresh(detail, summary)).toBe(true);
+  });
+
   it("refreshes when the state changed", () => {
     const detail = basePr({ state: "OPEN", updatedAt: 1_000 });
     const summary = basePr({ state: "MERGED", updatedAt: 1_000 });
@@ -386,7 +417,7 @@ describe("detailRefreshKey", () => {
 
 describe("seenThrough", () => {
   it("takes the newest of the PR's updatedAt and the shown updates", () => {
-    expect(seenThrough(basePr({ updatedAt: 1_000 }), [{ kind: "comment", at: 1_500, actor: "x", summary: "" }])).toBe(1_500);
+    expect(seenThrough(basePr({ updatedAt: 1_000 }), [{ kind: "comment", at: 1_500, actor: "x", summary: "", actionable: true }])).toBe(1_500);
     expect(seenThrough(basePr({ updatedAt: 2_000 }), [])).toBe(2_000);
     expect(seenThrough(null, [])).toBeNull();
   });

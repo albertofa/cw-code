@@ -53,8 +53,13 @@ describe("isBinaryUnavailableError", () => {
 describe("checkCliVersions", () => {
   it("accepts an executable that responds to --version even when it is below the CLI minimum", async () => {
     const check = await checkCliVersion("claude", process.execPath);
-    expect(check).toMatchObject({ binaryPath: process.execPath, available: true, error: null });
+    expect(check).toMatchObject({ binaryPath: process.execPath, configured: true, found: true, available: true, error: null });
     expect(check.actual).toMatch(/^\d+\.\d+\.\d+$/);
+  });
+
+  it("reports a binary missing from PATH as not found", async () => {
+    const check = await checkCliVersion("codex", "cw-code-missing-harness");
+    expect(check).toMatchObject({ found: false, available: false, ok: false });
   });
 
   it.skipIf(process.platform !== "win32")("probes a Windows .cmd shim through cmd.exe", async () => {

@@ -24,11 +24,11 @@ export function updatesSince(detail: PrDetail, link: SessionPrLink): PrUpdate[] 
     if (onlyViewerCommits(detail, link)) {
       ownActivity = true;
     } else {
-      updates.push({ kind: "commits", at: detail.updatedAt, actor: null, summary: "New commits since the session last ran" });
+      updates.push({ kind: "commits", at: detail.updatedAt, actor: null, summary: "New commits since the session last ran", actionable: false });
     }
   }
   if (updates.length === 0 && !ownActivity && hasUnseen(detail, link)) {
-    updates.push({ kind: "comment", at: detail.updatedAt, actor: null, summary: "PR updated" });
+    updates.push({ kind: "comment", at: detail.updatedAt, actor: null, summary: "PR updated", actionable: false });
   }
   return updates.sort((a, b) => b.at - a.at);
 }
@@ -41,12 +41,13 @@ export function detailNeedsRefresh(detail: PrDetail | undefined, summary: PrSumm
     detail.updatedAt < summary.updatedAt ||
     detail.headRefOid !== summary.headRefOid ||
     detail.ci !== summary.ci ||
+    detail.checks.pending !== summary.checks.pending ||
     detail.state !== summary.state
   );
 }
 
 export function detailRefreshKey(key: string, summary: PrSummary | undefined): string {
-  return summary ? `${key}@${summary.headRefOid}:${summary.updatedAt}:${summary.ci}:${summary.state}` : "";
+  return summary ? `${key}@${summary.headRefOid}:${summary.updatedAt}:${summary.ci}:${summary.checks.pending}:${summary.state}` : "";
 }
 
 export function seenThrough(pr: PrSummary | null | undefined, updates: PrUpdate[]): number | null {
@@ -83,13 +84,19 @@ export function firstUnseenIndex(timeline: PrTimelineItem[], lastSeenAt: number)
 function toUpdate(item: PrTimelineItem, detail: PrDetail): PrUpdate | null {
   switch (item.kind) {
     case "commits":
-      return { kind: "commits", at: item.at, actor: item.actor, summary: commitsSummary(item.actor, item.commits.length) };
+      return { kind: "commits", at: item.at, actor: item.actor, summary: commitsSummary(item.actor, item.commits.length), actionable: false };
     case "review":
-      return { kind: "review", at: item.at, actor: item.actor, summary: reviewSummary(item, detail.threads) };
+      return {
+        kind: "review",
+        at: item.at,
+        actor: item.actor,
+        summary: reviewSummary(item, detail.threads),
+        actionable: item.state === "CHANGES_REQUESTED" || item.state === "COMMENTED"
+      };
     case "comment":
-      return { kind: "comment", at: item.at, actor: item.actor, summary: `${item.actor} commented` };
+      return { kind: "comment", at: item.at, actor: item.actor, summary: `${item.actor} commented`, actionable: item.isBot !== true };
     case "review_requested":
-      return { kind: "review_requested", at: item.at, actor: item.actor, summary: reviewRequestedSummary(item, detail) };
+      return { kind: "review_requested", at: item.at, actor: item.actor, summary: reviewRequestedSummary(item, detail), actionable: false };
     default:
       return null;
   }
@@ -134,13 +141,13 @@ function checksUpdate(detail: PrDetail, lastSeenAt: number): PrUpdate | null {
     );
     if (newlyFailing.length === 0) return null;
     const at = Math.max(...newlyFailing.map((check) => check.completedAt as number));
-    return { kind: "checks_failed", at, actor: null, summary: failedChecksSummary(newlyFailing) };
+    return { kind: "checks_failed", at, actor: null, summary: failedChecksSummary(newlyFailing), actionable: detail.checks.pending === 0 };
   }
   if (detail.ci === "passing") {
     const recentlyCompleted = detail.checkRuns.filter((check) => check.completedAt !== null && check.completedAt > lastSeenAt);
     if (recentlyCompleted.length === 0) return null;
     const at = Math.max(...recentlyCompleted.map((check) => check.completedAt as number));
-    return { kind: "checks_passed", at, actor: null, summary: `Checks passed (${detail.checks.passed}/${detail.checks.total})` };
+    return { kind: "checks_passed", at, actor: null, summary: `Checks passed (${detail.checks.passed}/${detail.checks.total})`, actionable: false };
   }
   return null;
 }

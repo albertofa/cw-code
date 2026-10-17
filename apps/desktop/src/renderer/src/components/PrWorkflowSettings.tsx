@@ -8,6 +8,9 @@ import { useSettingsDraftStore } from "../stores/settingsDraftStore.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { errorMessage } from "./errorMessage.js";
 import { MenuSelect } from "./MenuSelect.js";
+import { PromptPreviewSkeleton } from "./GitHubSkeletons.js";
+import { isHarnessSkipped } from "./harnessAvailability.js";
+import { InlineLoading } from "./Loading.js";
 import { EFFORTS, effortLabel, effortOptionsFor } from "./modelMenus.js";
 import { useNotifs } from "./Notifications.js";
 import { prKey } from "./prInbox.js";
@@ -382,7 +385,7 @@ function PromptPreview({
   if (prs.length === 0) {
     return (
       <div className="sp-code sp-preview-empty" role={inboxError ? "alert" : undefined}>
-        {inboxLoading ? "Loading pull requests…" : inboxError ? `Could not load pull requests: ${inboxError}` : "No pull requests to preview with"}
+        {inboxLoading ? <InlineLoading label="Loading pull requests" /> : inboxError ? `Could not load pull requests: ${inboxError}` : "No pull requests to preview with"}
         {inboxError && !inboxLoading && (
           <button type="button" className="btn sp-btn-sm" onClick={() => void refreshInbox(true)}>
             <RefreshCw size={12} aria-hidden="true" /> Retry
@@ -433,9 +436,13 @@ function PromptPreview({
           </button>
         </div>
       )}
-      <pre className="sp-code sp-preview" aria-label="Resolved prompt" tabIndex={0}>
-        {text ?? (detailError ? "" : !detail ? "Loading pull request…" : "Loading failed check logs…")}
-      </pre>
+      {text === null && !detailError ? (
+        <PromptPreviewSkeleton label={!detail ? "Loading pull request" : "Loading failed check logs"} />
+      ) : (
+        <pre className="sp-code sp-preview" aria-label="Resolved prompt" tabIndex={0}>
+          {text ?? ""}
+        </pre>
+      )}
     </>
   );
 }
@@ -589,7 +596,8 @@ function WorkflowHarnessFields({ workflow, onChange }: { workflow: PrWorkflow; o
             options={[
               { id: "", label: "Composer default", hint: "Composer default", description: `Currently ${HARNESS_NAMES[composerDriver]}` },
               ...HARNESS_IDS.map((id) => {
-                const unavailable = checks?.find((check) => check.binary === id)?.available === false;
+                const check = checks?.find((item) => item.binary === id);
+                const unavailable = check !== undefined && isHarnessSkipped(check);
                 return {
                   id,
                   label: HARNESS_NAMES[id],
@@ -805,6 +813,17 @@ function WorkflowEditor({ workflow, settings, onChange, onDuplicate, onDelete, o
         </fieldset>
       </div>
       <WorkflowHarnessFields workflow={workflow} onChange={onChange} />
+      {workflow.target === "pr" && (
+        <fieldset className="sp-fieldset">
+          <legend className="sp-h6">
+            Follow-ups <small>Applies to sessions started from this workflow.</small>
+          </legend>
+          <label className={`sp-cbl sp-cbl-row${workflow.autoFollowUp ? " on" : ""}`}>
+            <input type="checkbox" checked={workflow.autoFollowUp === true} onChange={(e) => onChange({ autoFollowUp: e.target.checked })} />
+            Send the follow-up prompt automatically for failed checks, change requests and comments, until the PR is merged or closed
+          </label>
+        </fieldset>
+      )}
       <div className="sp-prompts">
         <PromptBox
           key={`${workflow.id}:start`}

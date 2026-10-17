@@ -34,10 +34,12 @@ import { appendAssistantText, appendReasoningText, closeReasoning, upsertToolCal
 import { DEFAULT_APPEARANCE, appearanceOf, type AppearancePrefs } from "../appearanceFonts.js";
 import { getLastModel, setLastModel } from "../components/lastModel.js";
 import { defaultModelPatch } from "../components/modelMenus.js";
+import { fallbackHarness } from "../components/harnessAvailability.js";
 import { formatDuration, mergeToolPairs } from "../components/toolSummaries.js";
 import { expiredHoldingIds } from "../components/workingSet.js";
 import { defaultNewSessionProjectId } from "../components/projectRecency.js";
 import { useNotifs } from "../components/Notifications.js";
+import type { AutoFollowUpPause } from "../components/prSessionModel.js";
 import { ipcErrorMessage } from "../components/ipcError.js";
 import { currentCheckoutSessionIds } from "../components/sessionBranch.js";
 import { useBranchStore } from "./branchStore.js";
@@ -170,6 +172,13 @@ export interface ShutdownUiState {
   pending: string[];
 }
 
+export interface SendPromptOptions {
+  prRefs?: PrRef[];
+  command?: CommandInvocation;
+  acceptFolderHead?: string;
+  auto?: boolean;
+}
+
 interface AppState {
   shutdown: ShutdownUiState | null;
   projects: Project[];
@@ -180,6 +189,10 @@ interface AppState {
   todosBySession: Record<string, TodoItem[]>;
   turnUsageBySession: Record<string, TurnUsage>;
   busyTurns: Record<string, string>;
+  autoFollowUpTurns: Record<string, number>;
+  autoFollowUpPaused: Record<string, AutoFollowUpPause>;
+  pauseAutoFollowUp(sessionId: string): void;
+  resumeAutoFollowUp(sessionId: string): void;
   loadingHistory: Record<string, boolean>;
   historyErrorBySession: Record<string, string>;
   turnStartedAt: Record<string, number>;
@@ -187,6 +200,8 @@ interface AppState {
   composerBySession: Record<string, ComposerPrefs>;
   pendingDriver: DriverName | null;
   lastDriver: DriverName;
+  installedHarnesses: DriverName[] | null;
+  setInstalledHarnesses(installed: DriverName[]): void;
   pendingApprovals: Record<string, ApprovalRequest[]>;
   pendingQuestions: Record<string, QuestionRequest[]>;
   pendingPrefs: ComposerPrefs;
@@ -239,7 +254,7 @@ interface AppState {
   createSessionIn(projectId: string, driver: DriverName, prefs?: ComposerPrefs, workspace?: CreateSessionOptions): Promise<Session>;
   applySession(session: Session): void;
   sendPrompt(prompt: string, attachments?: string[], command?: CommandInvocation): Promise<void>;
-  sendPromptTo(sessionId: string, prompt: string, attachments?: string[], opts?: { prRefs?: PrRef[]; command?: CommandInvocation; acceptFolderHead?: string }): Promise<void>;
+  sendPromptTo(sessionId: string, prompt: string, attachments?: string[], opts?: SendPromptOptions): Promise<void>;
   interrupt(): Promise<void>;
   markTurnsInterrupted(sessionIds: string[]): void;
   retryConnection(sessionId: string): Promise<void>;
@@ -276,6 +291,21 @@ function finalizeTurnTools(messages: ChatMessage[], turnId: string, backgroundTa
 function withoutRetryNotice(messages: ChatMessage[], turnId: string): ChatMessage[] {
   const id = `${turnId}-retry`;
   return messages.some((m) => m.id === id) ? messages.filter((m) => m.id !== id) : messages;
+}
+
+function without<T>(record: Record<string, T>, key: string): Record<string, T> {
+  if (!(key in record)) return record;
+  const next = { ...record };
+  delete next[key];
+  return next;
+}
+
+function withAutoPause(
+  paused: Record<string, AutoFollowUpPause>,
+  sessionId: string,
+  reason: AutoFollowUpPause
+): Record<string, AutoFollowUpPause> {
+  return paused[sessionId] === "user" ? paused : { ...paused, [sessionId]: reason };
 }
 
 function withSessionStatus(
@@ -342,6 +372,8 @@ export const useAppStore = create<AppState>((set, get) => ({
   todosBySession: {},
   turnUsageBySession: {},
   busyTurns: {},
+  autoFollowUpTurns: {},
+  autoFollowUpPaused: {},
   loadingHistory: {},
   historyErrorBySession: {},
   subagentToolsByKey: {},
@@ -352,6 +384,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   settingsVersion: 0,
   pendingDriver: null,
   lastDriver: "claude",
+  installedHarnesses: null,
   pendingApprovals: {},
   pendingQuestions: {},
   pendingPrefs: { ...DEFAULT_COMPOSER },
@@ -741,7 +774,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     const projectId =
       currentProjectId ??
       defaultNewSessionProjectId(get().projects, get().sessionsByProject, get().activeSessionId);
-    const target = driver ?? get().lastDriver;
+    const target = fallbackHarness(driver ?? get().lastDriver, get().installedHarnesses);
     const previous = get().pendingDriver ?? get().lastDriver;
     const currentModel = get().pendingPrefs.model;
     if (currentModel && previous !== target) {
@@ -758,6 +791,12 @@ export const useAppStore = create<AppState>((set, get) => ({
       pendingPrefs: { ...get().pendingPrefs, model: undefined }
     });
     if (projectId && projectId !== currentProjectId) void get().setPendingProject(projectId);
+  },
+
+  setInstalledHarnesses(installed: DriverName[]) {
+    const pending = get().pendingDriver;
+    set({ installedHarnesses: installed, lastDriver: fallbackHarness(get().lastDriver, installed) });
+    if (pending !== null) get().setPendingDriver(fallbackHarness(pending, installed));
   },
 
   setPendingDriver(driver: DriverName) {
@@ -993,14 +1032,26 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ sessionsByProject: replaceSession(sessionsByProject, next) });
   },
 
+  pauseAutoFollowUp(sessionId: string) {
+    set({ autoFollowUpPaused: { ...get().autoFollowUpPaused, [sessionId]: "user" } });
+  },
+
+  resumeAutoFollowUp(sessionId: string) {
+    set({
+      autoFollowUpPaused: without(get().autoFollowUpPaused, sessionId),
+      autoFollowUpTurns: without(get().autoFollowUpTurns, sessionId)
+    });
+  },
+
   async sendPrompt(prompt: string, attachments?: string[], command?: CommandInvocation) {
     const sessionId = get().activeSessionId;
     if (!sessionId) return;
     await get().sendPromptTo(sessionId, prompt, attachments, command ? { command } : undefined);
   },
 
-  async sendPromptTo(sessionId: string, prompt: string, attachments?: string[], opts?: { prRefs?: PrRef[]; command?: CommandInvocation; acceptFolderHead?: string }) {
+  async sendPromptTo(sessionId: string, prompt: string, attachments?: string[], opts?: SendPromptOptions) {
     if (!prompt.trim()) return;
+    if (isPendingTurn(get().busyTurns[sessionId])) throw new Error("session busy (turn pending)");
     const prefs = get().composerBySession[sessionId] ?? DEFAULT_COMPOSER;
     const previous = Object.values(get().sessionsByProject)
       .flat()
@@ -1010,6 +1061,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     const pending = nextPendingTurnId();
     set({
       busyTurns: { ...get().busyTurns, [sessionId]: pending },
+      autoFollowUpTurns: { ...get().autoFollowUpTurns, [sessionId]: opts?.auto ? (get().autoFollowUpTurns[sessionId] ?? 0) + 1 : 0 },
+      ...(opts?.auto || get().autoFollowUpPaused[sessionId] === "user"
+        ? {}
+        : { autoFollowUpPaused: without(get().autoFollowUpPaused, sessionId) }),
       turnStartedAt: { ...get().turnStartedAt, [sessionId]: Date.now() },
       todosBySession: { ...get().todosBySession, [sessionId]: [] },
       sessionsByProject: withSessionStatus(get().sessionsByProject, sessionId, "working")
@@ -1081,7 +1136,10 @@ export const useAppStore = create<AppState>((set, get) => ({
       turnStartedAt: book.turnStartedAt,
       turnDurations: book.turnDurations,
       ...(sessionId
-        ? { sessionsByProject: patchSession(get().sessionsByProject, sessionId, { status: "holding", updatedAt: Date.now() }) }
+        ? {
+            sessionsByProject: patchSession(get().sessionsByProject, sessionId, { status: "holding", updatedAt: Date.now() }),
+            autoFollowUpPaused: withAutoPause(get().autoFollowUpPaused, sessionId, "interrupted")
+          }
         : {})
     });
   },
@@ -1425,6 +1483,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         turnDurations: book.turnDurations,
         pendingApprovals: approvals,
         pendingQuestions: questions,
+        ...(event.isError ? { autoFollowUpPaused: withAutoPause(get().autoFollowUpPaused, sessionId, "error") } : {}),
         sessionsByProject: isFinal
           ? withSessionStatus(get().sessionsByProject, sessionId, "done")
           : busyMatch
@@ -1475,6 +1534,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         turnDurations: book.turnDurations,
         pendingApprovals: approvals,
         pendingQuestions: questions,
+        autoFollowUpPaused: withAutoPause(get().autoFollowUpPaused, sessionId, "error"),
         sessionsByProject: patchSession(get().sessionsByProject, sessionId, { status: "holding", updatedAt: Date.now() }),
         messagesBySession: {
           ...get().messagesBySession,

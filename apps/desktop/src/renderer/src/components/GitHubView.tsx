@@ -15,6 +15,7 @@ import { usePrStore } from "../stores/prStore.js";
 import { anchorRectOf, type AnchorRect } from "./AnchoredPopover.js";
 import { GitHubHeader } from "./GitHubHeader.js";
 import { GitHubResults, type Listing } from "./GitHubResults.js";
+import { GitHubListSkeleton } from "./GitHubSkeletons.js";
 import { GitHubToolbar } from "./GitHubToolbar.js";
 import { GitHubViewMenu } from "./GitHubViewMenu.js";
 import { useRetainedEntry } from "./useRetainedEntry.js";
@@ -245,7 +246,7 @@ export function GitHubView() {
           onGroupChange={onGroupChange}
         />
         {remoteEmpty && <div className="pr-view-empty">Type a query or pick a view</div>}
-        {showLoading && <div className="pr-view-empty">Loading {KIND_NOUNS[kind]}…</div>}
+        {showLoading && <GitHubListSkeleton label={`Loading ${KIND_NOUNS[kind]}`} />}
         {showEmpty && (
           <div className="pr-view-empty">
             No {KIND_NOUNS[kind]} match <code>{normalizeQuery(tab.query)}</code>.

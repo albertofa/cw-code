@@ -174,6 +174,8 @@ export interface TurnSeenResult {
   covered: boolean;
   head: string | null;
   seenAt: number | null;
+  /** Caps the seen time at the turn start so activity during the turn still counts as new. */
+  seenUntil?: number;
 }
 
 export function applyTurnSeen(
@@ -187,7 +189,7 @@ export function applyTurnSeen(
     const link = findLink(next, result.ref);
     if (!link) continue;
     if (result.covered) {
-      next = upsertLink(next, markSeen(link, result.head, Math.max(now, result.seenAt ?? 0)));
+      next = upsertLink(next, markSeen(link, result.head, result.seenUntil ?? Math.max(now, result.seenAt ?? 0)));
     } else if (result.head !== null && result.head === worktreeHead && link.lastSeenSha !== result.head) {
       next = upsertLink(next, { ...link, lastSeenSha: result.head });
     }

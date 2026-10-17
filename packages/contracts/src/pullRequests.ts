@@ -103,7 +103,7 @@ export interface PrReviewThread {
 export type PrTimelineItem =
   | { kind: "commits"; at: number; actor: string; commits: PrCommit[] }
   | { kind: "review"; at: number; actor: string; state: "APPROVED" | "CHANGES_REQUESTED" | "COMMENTED" | "DISMISSED"; body: string; threadIds: string[] }
-  | { kind: "comment"; at: number; actor: string; body: string }
+  | { kind: "comment"; at: number; actor: string; body: string; isBot?: boolean }
   | { kind: "review_requested"; at: number; actor: string; reviewer: string }
   | { kind: "merged" | "closed" | "reopened" | "ready_for_review"; at: number; actor: string };
 
@@ -139,6 +139,8 @@ export interface PrUpdate {
   at: number;
   actor: string | null;
   summary: string;
+  /** True when the update asks the session to act (failed checks, change requests, human comments). */
+  actionable: boolean;
 }
 
 export type PrSuggestCondition = "review-requested" | "author" | "checks-failing" | "changes-requested" | "conflicts" | "bot-author" | "draft" | "issue-assigned" | "issue-bug" | "run-failed";
@@ -169,4 +171,6 @@ export interface PrWorkflow {
   harness: PrWorkflowHarness;
   startPrompt: string;
   updatePrompt: string;
+  /** Sends the follow-up prompt on its own when a linked PR gets actionable updates, until the PR closes. */
+  autoFollowUp?: boolean;
 }
