@@ -10,6 +10,11 @@ export interface TaskRef {
   runId?: string;
 }
 
+export interface RosterEntry {
+  cliTaskId: string;
+  runId?: string;
+}
+
 export type TaskObservation =
   | { kind: "call"; toolUseId: string; taskKind: TaskKind; background?: boolean; at: number }
   | { kind: "started"; ref: TaskRef; taskKind?: TaskKind; background?: boolean; at: number }
@@ -24,7 +29,7 @@ export type TaskObservation =
       usage?: ToolUsage;
       at: number;
     }
-  | { kind: "roster"; cliTaskIds: string[] };
+  | { kind: "roster"; tasks: RosterEntry[] };
 
 type StartedObservation = Extract<TaskObservation, { kind: "started" }>;
 type EndedObservation = Extract<TaskObservation, { kind: "ended" }>;
@@ -102,13 +107,22 @@ function differs(own: string | undefined, other: string | undefined): boolean {
   return own !== undefined && other !== undefined && own !== other;
 }
 
-function opensNewRun(run: TaskRun, ref: TaskRef): boolean {
-  if (run.state === "running") return false;
-  return differs(run.toolUseId, ref.toolUseId) || (ref.runId !== undefined && ref.runId !== run.runId);
+function isOtherRun(run: TaskRun, ref: TaskRef): boolean {
+  return differs(run.toolUseId, ref.toolUseId) || differs(run.runId, ref.runId);
 }
 
-function isStale(run: TaskRun, ref: TaskRef): boolean {
-  return differs(run.toolUseId, ref.toolUseId) || differs(run.runId, ref.runId);
+function targetRun(record: TaskRecord, ref: TaskRef): TaskRun | undefined {
+  const runs = record.runs;
+  if (ref.runId !== undefined) {
+    const byRunId = runs.findLast((run) => run.runId === ref.runId);
+    if (byRunId) return byRunId;
+  }
+  if (ref.toolUseId !== undefined) {
+    const byToolUseId = runs.findLast((run) => run.toolUseId === ref.toolUseId && !differs(run.runId, ref.runId));
+    if (byToolUseId) return byToolUseId;
+  }
+  const run = currentRun(record);
+  return isOtherRun(run, ref) ? undefined : run;
 }
 
 function endRun(run: TaskRun, state: TaskState, reason: TaskEndReason, at: number | undefined): void {
@@ -163,7 +177,7 @@ export class TaskTable {
   private readonly records = new Map<string, TaskRecord>();
   private readonly byToolUseId = new Map<string, TaskRecord>();
   private readonly byCliTaskId = new Map<string, TaskRecord>();
-  private roster = new Set<string>();
+  private roster = new Map<string, string | undefined>();
   private readonly everRostered = new Set<string>();
 
   apply(obs: TaskObservation): TaskSnapshot[] {
@@ -177,7 +191,7 @@ export class TaskTable {
       case "ended":
         return this.applyEndedObservation(obs);
       case "roster":
-        return this.applyRoster(obs.cliTaskIds);
+        return this.applyRoster(obs.tasks);
     }
   }
 
@@ -213,14 +227,24 @@ export class TaskTable {
 
   liveCount(): number {
     let count = 0;
-    for (const cliTaskId of this.roster) {
+    let unmapped = 0;
+    for (const [cliTaskId, runId] of this.roster) {
       const record = this.byCliTaskId.get(cliTaskId);
-      if (!record || isLive(record)) count += 1;
+      if (!record) {
+        unmapped += 1;
+        count += 1;
+        continue;
+      }
+      const run = currentRun(record);
+      if (run.state === "running" || differs(run.runId, runId)) count += 1;
     }
+    let unlinked = 0;
     for (const record of this.records.values()) {
-      if (isLive(record) && (record.cliTaskId === undefined || !this.roster.has(record.cliTaskId))) count += 1;
+      if (!isLive(record)) continue;
+      if (record.cliTaskId === undefined) unlinked += 1;
+      if (record.cliTaskId === undefined || !this.roster.has(record.cliTaskId)) count += 1;
     }
-    return count;
+    return count - Math.min(unmapped, unlinked);
   }
 
   latestOutput(): string {
@@ -252,9 +276,11 @@ export class TaskTable {
     }
     return this.change(record, () => {
       this.link(record, obs.ref);
-      const run = currentRun(record);
-      if (opensNewRun(run, obs.ref)) {
-        const toolUseId = obs.ref.toolUseId ?? run.toolUseId;
+      const known = targetRun(record, obs.ref);
+      if (known) {
+        this.linkRun(record, known, obs.ref);
+      } else {
+        const toolUseId = obs.ref.toolUseId ?? currentRun(record).toolUseId;
         record.runs.push({
           ...(toolUseId !== undefined ? { toolUseId } : {}),
           ...(obs.ref.runId !== undefined ? { runId: obs.ref.runId } : {}),
@@ -262,8 +288,6 @@ export class TaskTable {
           startedAt: obs.at
         });
         if (toolUseId !== undefined) this.byToolUseId.set(toolUseId, record);
-      } else {
-        this.linkRun(record, run, obs.ref);
       }
       if (obs.taskKind !== undefined) record.kind = obs.taskKind;
       if (obs.background !== undefined) record.background = obs.background;
@@ -282,8 +306,8 @@ export class TaskTable {
   private applyEndedObservation(obs: EndedObservation): TaskSnapshot[] {
     const record = this.find(obs.ref);
     if (!record) return this.createOrphan(obs.ref, undefined, undefined, (run) => applyEnded(run, obs));
-    const run = currentRun(record);
-    if (isStale(run, obs.ref)) return [];
+    const run = targetRun(record, obs.ref);
+    if (!run) return [];
     return this.change(record, () => {
       this.link(record, obs.ref);
       this.linkRun(record, run, obs.ref);
@@ -291,17 +315,21 @@ export class TaskTable {
     });
   }
 
-  private applyRoster(cliTaskIds: string[]): TaskSnapshot[] {
-    this.roster = new Set(cliTaskIds);
+  private applyRoster(tasks: RosterEntry[]): TaskSnapshot[] {
+    this.roster = new Map(tasks.map((task) => [task.cliTaskId, task.runId]));
     const changed: TaskSnapshot[] = [];
     for (const record of this.records.values()) {
-      const run = currentRun(record);
       const cliTaskId = record.cliTaskId;
-      if (run.state !== "running" || record.background !== true || cliTaskId === undefined) continue;
-      if (!this.everRostered.has(cliTaskId) || this.roster.has(cliTaskId)) continue;
+      if (cliTaskId === undefined) continue;
+      if (this.roster.has(cliTaskId)) {
+        if (record.background !== true) changed.push(...this.change(record, () => (record.background = true)));
+        continue;
+      }
+      const run = currentRun(record);
+      if (run.state !== "running" || record.background !== true || !this.everRostered.has(cliTaskId)) continue;
       changed.push(...this.change(record, () => endRun(run, "unknown", "roster", undefined)));
     }
-    for (const cliTaskId of this.roster) this.everRostered.add(cliTaskId);
+    for (const cliTaskId of this.roster.keys()) this.everRostered.add(cliTaskId);
     return changed;
   }
 

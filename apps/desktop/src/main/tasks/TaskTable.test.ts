@@ -348,8 +348,8 @@ describe("TaskTable roster", () => {
     const table = tableWith(agentCall("tu_1", 100, true));
     table.apply({ kind: "started", ref: { toolUseId: "tu_1", cliTaskId: "task_a" }, at: 100 });
 
-    expect(table.apply({ kind: "roster", cliTaskIds: ["task_a"] })).toEqual([]);
-    expect(table.apply({ kind: "roster", cliTaskIds: [] })).toStrictEqual([
+    expect(table.apply({ kind: "roster", tasks: [{ cliTaskId: "task_a" }] })).toEqual([]);
+    expect(table.apply({ kind: "roster", tasks: [] })).toStrictEqual([
       { id: "tu_1", cliTaskId: "task_a", kind: "agent", background: true, state: "unknown", endReason: "roster", runCount: 1, startedAt: 100 }
     ]);
 
@@ -361,19 +361,86 @@ describe("TaskTable roster", () => {
     const table = tableWith(agentCall("tu_1", 100, true));
     table.apply({ kind: "started", ref: { toolUseId: "tu_1", cliTaskId: "task_a" }, at: 100 });
 
-    expect(table.apply({ kind: "roster", cliTaskIds: ["task_b"] })).toEqual([]);
-    expect(table.apply({ kind: "roster", cliTaskIds: [] })).toEqual([]);
+    expect(table.apply({ kind: "roster", tasks: [{ cliTaskId: "task_b" }] })).toEqual([]);
+    expect(table.apply({ kind: "roster", tasks: [] })).toEqual([]);
     expect(table.get("tu_1")?.state).toBe("running");
   });
 
-  it("does not close provisional or foreground tasks", () => {
-    const table = tableWith(agentCall("tu_1", 100), agentCall("tu_2", 100, false));
+  it("treats a rostered provisional task as background and closes it when it leaves the roster", () => {
+    const table = tableWith(agentCall("tu_1", 100));
     table.apply({ kind: "started", ref: { toolUseId: "tu_1", cliTaskId: "task_a" }, at: 100 });
-    table.apply({ kind: "started", ref: { toolUseId: "tu_2", cliTaskId: "task_b" }, at: 100 });
 
-    table.apply({ kind: "roster", cliTaskIds: ["task_a", "task_b"] });
-    expect(table.apply({ kind: "roster", cliTaskIds: [] })).toEqual([]);
-    expect(table.snapshots().map((task) => task.state)).toEqual(["running", "running"]);
+    expect(table.apply({ kind: "roster", tasks: [{ cliTaskId: "task_a" }] })).toMatchObject([{ id: "tu_1", background: true, state: "running" }]);
+    expect(table.apply({ kind: "roster", tasks: [] })).toMatchObject([{ id: "tu_1", state: "unknown", endReason: "roster" }]);
+    expect(table.liveCount()).toBe(0);
+  });
+
+  it("does not close a foreground task the roster never listed", () => {
+    const table = tableWith(agentCall("tu_1", 100, false));
+    table.apply({ kind: "started", ref: { toolUseId: "tu_1", cliTaskId: "task_a" }, background: false, at: 100 });
+
+    table.apply({ kind: "roster", tasks: [{ cliTaskId: "task_b" }] });
+    expect(table.apply({ kind: "roster", tasks: [] })).toEqual([]);
+    expect(table.get("tu_1")).toMatchObject({ state: "running", background: false });
+  });
+});
+
+describe("TaskTable resume ordering", () => {
+  it("opens the resumed run while the first run is still open and keeps each run's end apart", () => {
+    const table = tableWith(agentCall("tu_1", 100, true));
+    table.apply({ kind: "started", ref: { toolUseId: "tu_1", cliTaskId: "task_a", runId: "run_1" }, at: 100 });
+
+    expect(table.apply({ kind: "started", ref: { toolUseId: "tu_s", cliTaskId: "task_a", runId: "run_2" }, at: 200 })).toMatchObject([
+      { id: "tu_1", state: "running", runCount: 2, startedAt: 200 }
+    ]);
+    expect(
+      table.apply({ kind: "ended", ref: { toolUseId: "tu_1", cliTaskId: "task_a", runId: "run_1" }, state: "completed", reason: "cli", output: "run1", at: 210 })
+    ).toEqual([]);
+    expect(table.get("tu_1")).toMatchObject({ state: "running", runCount: 2 });
+    expect(table.liveCount()).toBe(1);
+
+    table.apply({ kind: "ended", ref: { toolUseId: "tu_s", cliTaskId: "task_a", runId: "run_2" }, state: "failed", reason: "cli", output: "run2", at: 300 });
+    expect(table.get("tu_1")).toMatchObject({ state: "failed", runCount: 2, output: "run2", endedAt: 300 });
+  });
+
+  it("keeps a late end for the first run off a history resume without run ids", () => {
+    const table = tableWith(agentCall("tu_1", 100));
+    table.apply({ kind: "background", ref: { toolUseId: "tu_1", cliTaskId: "task_a" }, background: true });
+    table.apply({ kind: "started", ref: { toolUseId: "tu_s", cliTaskId: "task_a" }, taskKind: "agent", background: true, at: 200 });
+
+    expect(table.apply({ kind: "ended", ref: { toolUseId: "tu_1", cliTaskId: "task_a" }, state: "completed", reason: "cli", at: 210 })).toEqual([]);
+    table.apply({ kind: "ended", ref: { toolUseId: "tu_s", cliTaskId: "task_a" }, state: "stopped", reason: "cli", at: 300 });
+    expect(table.get("tu_1")).toMatchObject({ state: "stopped", runCount: 2 });
+  });
+
+  it("does not reopen a finished foreground agent on a late started that only adds a run id", () => {
+    const table = tableWith(agentCall("tu_1", 100, false));
+    table.apply({ kind: "ended", ref: { toolUseId: "tu_1" }, state: "completed", reason: "tool-result", at: 150 });
+    table.apply({ kind: "started", ref: { toolUseId: "tu_1", cliTaskId: "task_a", runId: "run_1" }, background: false, at: 160 });
+
+    expect(table.get("tu_1")).toMatchObject({ state: "completed", runCount: 1, cliTaskId: "task_a" });
+  });
+
+  it("counts a resumed run the roster lists before its started arrives", () => {
+    const table = tableWith(agentCall("tu_1", 100, true));
+    table.apply({ kind: "started", ref: { toolUseId: "tu_1", cliTaskId: "task_a", runId: "run_1" }, at: 100 });
+    table.apply({ kind: "roster", tasks: [{ cliTaskId: "task_a", runId: "run_1" }] });
+    table.apply({ kind: "ended", ref: { cliTaskId: "task_a", runId: "run_1" }, state: "completed", reason: "cli", at: 150 });
+    table.apply({ kind: "roster", tasks: [] });
+    expect(table.liveCount()).toBe(0);
+
+    table.apply({ kind: "roster", tasks: [{ cliTaskId: "task_a", runId: "run_2" }] });
+    expect(table.liveCount()).toBe(1);
+    table.apply({ kind: "started", ref: { toolUseId: "tu_s", cliTaskId: "task_a", runId: "run_2" }, at: 200 });
+    expect(table.liveCount()).toBe(1);
+  });
+
+  it("counts a first launch once while the roster lists it before its started arrives", () => {
+    const table = tableWith(agentCall("tu_1", 100, true));
+    table.apply({ kind: "roster", tasks: [{ cliTaskId: "task_a", runId: "run_1" }] });
+    expect(table.liveCount()).toBe(1);
+    table.apply({ kind: "started", ref: { toolUseId: "tu_1", cliTaskId: "task_a", runId: "run_1" }, at: 101 });
+    expect(table.liveCount()).toBe(1);
   });
 });
 
@@ -392,7 +459,7 @@ describe("TaskTable liveCount", () => {
     table.apply({ kind: "started", ref: { toolUseId: "tu_outside", cliTaskId: "task_outside" }, at: 100 });
     table.apply({ kind: "started", ref: { toolUseId: "tu_fg_rostered", cliTaskId: "task_fg" }, at: 100 });
     table.apply({ kind: "ended", ref: { originId: "tu_done" }, state: "completed", reason: "cli", at: 150 });
-    table.apply({ kind: "roster", cliTaskIds: ["task_bg", "task_done", "task_unmapped", "task_fg", "task_unmapped"] });
+    table.apply({ kind: "roster", tasks: [{ cliTaskId: "task_bg" }, { cliTaskId: "task_done" }, { cliTaskId: "task_unmapped" }, { cliTaskId: "task_fg" }, { cliTaskId: "task_unmapped" }] });
 
     expect(table.liveCount()).toBe(4);
   });
@@ -479,6 +546,6 @@ describe("TaskTable snapshots", () => {
     expect(table.apply({ kind: "started", ref: { toolUseId: "tu_1", cliTaskId: "task_a" }, at: 100 })).toEqual([]);
     expect(table.apply(agentCall("tu_1", 100, true))).toEqual([]);
     expect(table.apply({ kind: "background", ref: { cliTaskId: "task_a" }, background: true })).toEqual([]);
-    expect(table.apply({ kind: "roster", cliTaskIds: ["task_a"] })).toEqual([]);
+    expect(table.apply({ kind: "roster", tasks: [{ cliTaskId: "task_a" }] })).toEqual([]);
   });
 });
