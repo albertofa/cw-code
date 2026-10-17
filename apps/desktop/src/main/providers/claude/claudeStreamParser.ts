@@ -286,24 +286,18 @@ export interface ClaudeLiveTask {
 }
 
 export interface ClaudeTaskSystemInfo {
-  kind: "tasks" | "started" | "progress" | "updated" | "notification";
-  liveTasks?: number;
-  liveTaskIds?: string[];
+  kind: "tasks" | "started" | "updated" | "notification";
   liveTaskEntries?: ClaudeLiveTask[];
   taskId?: string;
   runId?: string;
   toolUseId?: string;
   taskType?: string;
-  description?: string;
-  subagentType?: string;
   background?: boolean;
   ambient?: boolean;
-  prompt?: string;
   status?: string;
   summary?: string;
   handbackReport?: string;
   endTime?: number;
-  lastToolName?: string;
   usage?: ToolUsage;
 }
 
@@ -326,13 +320,9 @@ interface SystemTaskMsg {
   run_id?: unknown;
   tool_use_id?: unknown;
   task_type?: unknown;
-  description?: unknown;
-  subagent_type?: unknown;
   is_backgrounded?: unknown;
-  prompt?: unknown;
   status?: unknown;
   summary?: unknown;
-  last_tool_name?: unknown;
   usage?: unknown;
   patch?: unknown;
   ambient?: unknown;
@@ -398,7 +388,6 @@ export function parseClaudeTaskSystemLine(line: string): ClaudeTaskSystemInfo | 
   const runId = str(msg.run_id);
   const toolUseId = str(msg.tool_use_id);
   const taskType = str(msg.task_type);
-  const description = str(msg.description);
   const usage = taskUsage(msg.usage);
   switch (msg.subtype) {
     case "background_tasks_changed": {
@@ -414,37 +403,18 @@ export function parseClaudeTaskSystemLine(line: string): ClaudeTaskSystemInfo | 
         const entryTaskId = str(task);
         return entryTaskId ? [{ taskId: entryTaskId }] : [];
       });
-      const liveTaskIds = liveTaskEntries.map((entry) => entry.taskId);
-      return { kind: "tasks", liveTasks: msg.tasks.length, liveTaskIds, liveTaskEntries };
+      return { kind: "tasks", liveTaskEntries };
     }
     case "task_started": {
       if (!taskId && !toolUseId) return null;
-      const prompt = str(msg.prompt);
-      const subagentType = str(msg.subagent_type);
       return {
         kind: "started",
         ...(taskId ? { taskId } : {}),
         ...(runId ? { runId } : {}),
         ...(toolUseId ? { toolUseId } : {}),
         ...(taskType ? { taskType } : {}),
-        ...(description ? { description } : {}),
-        ...(subagentType ? { subagentType } : {}),
         ...(typeof msg.is_backgrounded === "boolean" ? { background: msg.is_backgrounded } : {}),
-        ...(msg.ambient === true ? { ambient: true } : {}),
-        ...(prompt ? { prompt } : {})
-      };
-    }
-    case "task_progress": {
-      if (!taskId) return null;
-      const lastToolName = str(msg.last_tool_name);
-      return {
-        kind: "progress",
-        taskId,
-        ...(runId ? { runId } : {}),
-        ...(toolUseId ? { toolUseId } : {}),
-        ...(description ? { description } : {}),
-        ...(lastToolName ? { lastToolName } : {}),
-        ...(usage ? { usage } : {})
+        ...(msg.ambient === true ? { ambient: true } : {})
       };
     }
     case "task_updated": {

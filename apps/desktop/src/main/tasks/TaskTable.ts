@@ -95,6 +95,15 @@ function currentRun(record: TaskRecord): TaskRun {
   return record.runs[record.runs.length - 1];
 }
 
+function lastSeen(run: TaskRun): number {
+  return Math.max(run.endedAt ?? Number.NEGATIVE_INFINITY, run.startedAt ?? Number.NEGATIVE_INFINITY);
+}
+
+function dropOutput(run: TaskRun): void {
+  delete run.output;
+  delete run.outputSource;
+}
+
 function lookup(index: Map<string, TaskRecord>, key: string | undefined): TaskRecord | undefined {
   return key === undefined ? undefined : index.get(key);
 }
@@ -256,11 +265,22 @@ export class TaskTable {
     let latest: TaskRun | undefined;
     for (const record of this.records.values()) {
       const run = currentRun(record);
-      const lastSeen = Math.max(run.endedAt ?? Number.NEGATIVE_INFINITY, run.startedAt ?? Number.NEGATIVE_INFINITY);
-      if (run.output === undefined || lastSeen < since) continue;
+      if (run.output === undefined || lastSeen(run) < since) continue;
       if (!latest || (run.startedAt ?? Number.NEGATIVE_INFINITY) >= (latest.startedAt ?? Number.NEGATIVE_INFINITY)) latest = run;
     }
     return latest?.output ?? "";
+  }
+
+  compact(before: number): string[] {
+    const compacted: string[] = [];
+    for (const record of this.records.values()) {
+      const current = currentRun(record);
+      for (const run of record.runs) if (run !== current) dropOutput(run);
+      if (current.state === "running" || lastSeen(current) >= before) continue;
+      dropOutput(current);
+      compacted.push(record.id);
+    }
+    return compacted;
   }
 
   private applyCall(toolUseId: string, kind: TaskKind, background: boolean | undefined, at: number): TaskSnapshot[] {

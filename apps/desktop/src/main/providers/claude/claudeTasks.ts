@@ -236,8 +236,6 @@ export function claudeSystemTaskObservation(info: ClaudeTaskSystemInfo, at: numb
         ? { ...observation, output: info.handbackReport, outputSource: "report" }
         : observation;
     }
-    case "progress":
-      return null;
   }
 }
 

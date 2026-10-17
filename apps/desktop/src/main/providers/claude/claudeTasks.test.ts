@@ -505,11 +505,6 @@ describe("claudeSystemTaskObservation", () => {
     });
   });
 
-  it("ignores task_progress", () => {
-    const info = systemInfo((msg) => msg.subtype === "task_progress" && msg.task_id === PONG.taskId);
-    expect(claudeSystemTaskObservation(info, AT)).toBeNull();
-  });
-
   it("ends the run on a terminal task_updated using its end time", () => {
     const completed = systemInfo(
       (msg) => msg.subtype === "task_updated" && msg.task_id === PONG.taskId && msg.patch?.status === "completed"

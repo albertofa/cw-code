@@ -1284,6 +1284,33 @@ describe("ClaudeCliDriver persistent process", () => {
     driver.dispose();
   });
 
+  it("lists only running or current-turn tasks live once a reused process starts a new turn", async () => {
+    const { driver, children } = makeDriver();
+    driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "one" });
+    await settle();
+    children[0].stdout.write(
+      `${JSON.stringify({ type: "assistant", message: { content: [
+        { type: "tool_use", id: "call-fg", name: "Agent", input: { run_in_background: false } },
+        { type: "tool_use", id: "call-bg", name: "Agent", input: { run_in_background: true } }
+      ] } })}\n`
+    );
+    children[0].stdout.write(`${taskStartedLine("task-bg", "call-bg")}\n`);
+    children[0].stdout.write(`${taskChangeLineWithIds(["task-bg"])}\n`);
+    children[0].stdout.write(
+      `${JSON.stringify({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "call-fg", content: "first report" }] } })}\n`
+    );
+    children[0].stdout.write(`${resultLine({ result: "turn one" })}\n`);
+    await settle();
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "two" });
+    await settle();
+
+    expect(children).toHaveLength(1);
+    expect(driver.liveTasks("s1").map((task) => [task.id, task.state])).toEqual([["call-bg", "running"]]);
+    driver.dispose();
+  });
+
   it("labels a foreground agent cut off by an interrupt as interrupted", async () => {
     const { driver, events, children } = makeDriver();
     const handle = driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });

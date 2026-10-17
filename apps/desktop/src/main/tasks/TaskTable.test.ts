@@ -520,6 +520,24 @@ describe("TaskTable latestOutput", () => {
   });
 });
 
+describe("TaskTable compact", () => {
+  it("drops the output of runs that ended before the cutoff but keeps the task resumable", () => {
+    const table = tableWith(agentCall("tu_old", 100, true), agentCall("tu_live", 150, true), agentCall("tu_recent", 400, false));
+    table.apply({ kind: "started", ref: { toolUseId: "tu_old", cliTaskId: "task_old", runId: "run_1" }, at: 100 });
+    table.apply({ kind: "ended", ref: { originId: "tu_old" }, state: "completed", reason: "cli", output: "old report", at: 200 });
+    table.apply({ kind: "ended", ref: { originId: "tu_recent" }, state: "completed", reason: "tool-result", output: "recent report", at: 450 });
+
+    expect(table.compact(300)).toEqual(["tu_old"]);
+    expect(table.get("tu_old")).not.toHaveProperty("output");
+    expect(table.get("tu_old")).toMatchObject({ state: "completed", endedAt: 200 });
+    expect(table.get("tu_recent")?.output).toBe("recent report");
+    expect(table.get("tu_live")?.state).toBe("running");
+
+    table.apply({ kind: "started", ref: { toolUseId: "tu_send", cliTaskId: "task_old", runId: "run_2" }, at: 500 });
+    expect(table.get("tu_old")).toMatchObject({ state: "running", runCount: 2 });
+  });
+});
+
 describe("TaskTable snapshots", () => {
   it("lists records in insertion order", () => {
     const table = tableWith(agentCall("tu_b", 100), agentCall("tu_a", 50));

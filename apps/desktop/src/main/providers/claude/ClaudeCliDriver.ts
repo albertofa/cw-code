@@ -758,6 +758,7 @@ export class ClaudeCliDriver implements CliDriver {
       existing.completedTurn = false;
       existing.postCompletionOutputPending = false;
       existing.lastActivityAt = Date.now();
+      this.compactTasks(existing);
       existing.turnStartedAt = existing.lastActivityAt;
       existing.heldByBackgroundWork = existing.tasks.liveCount() > 0;
       existing.permissionMode = request.permissionMode ?? "auto";
@@ -902,7 +903,19 @@ export class ClaudeCliDriver implements CliDriver {
   }
 
   liveTasks(sessionId: string): TaskSnapshot[] {
-    return this.processes.get(sessionId)?.tasks.snapshots() ?? [];
+    const state = this.processes.get(sessionId);
+    if (!state) return [];
+    return state.tasks.snapshots().filter(
+      (task) => task.state === "running" || Math.max(task.endedAt ?? 0, task.startedAt ?? 0) >= state.turnStartedAt
+    );
+  }
+
+  private compactTasks(state: ClaudeProcessState): void {
+    for (const id of state.tasks.compact(state.turnStartedAt)) {
+      state.shellResults.delete(id);
+      state.childCalls.delete(id);
+      state.topLevelAgentCalls.delete(id);
+    }
   }
 
   async getAccountUsage(): Promise<AccountUsageState> {

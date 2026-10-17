@@ -456,7 +456,7 @@ describe("parseStreamLine", () => {
 });
 
 describe("parseClaudeTaskSystemLine", () => {
-  it("reports live task count for background_tasks_changed", () => {
+  it("lists the live roster entries of background_tasks_changed", () => {
     const line = JSON.stringify({
       type: "system",
       subtype: "background_tasks_changed",
@@ -468,13 +468,11 @@ describe("parseClaudeTaskSystemLine", () => {
     });
     expect(parseClaudeTaskSystemLine(line)).toStrictEqual({
       kind: "tasks",
-      liveTasks: 3,
-      liveTaskIds: ["a202cd0fd545a319e", "t-2", "t-3"],
       liveTaskEntries: [{ taskId: "a202cd0fd545a319e" }, { taskId: "t-2", runId: "run-2" }, { taskId: "t-3" }]
     });
   });
 
-  it("counts roster entries without an id but leaves them out of the id lists", () => {
+  it("leaves roster entries without an id out of the live entries", () => {
     const line = JSON.stringify({
       type: "system",
       subtype: "background_tasks_changed",
@@ -482,8 +480,6 @@ describe("parseClaudeTaskSystemLine", () => {
     });
     expect(parseClaudeTaskSystemLine(line)).toStrictEqual({
       kind: "tasks",
-      liveTasks: 3,
-      liveTaskIds: ["t-1"],
       liveTaskEntries: [{ taskId: "t-1" }]
     });
   });
@@ -500,13 +496,11 @@ describe("parseClaudeTaskSystemLine", () => {
     });
     expect(parseClaudeTaskSystemLine(line)).toEqual({
       kind: "tasks",
-      liveTasks: 3,
-      liveTaskIds: ["agent-1", "bb3lof10o", "b-1"],
       liveTaskEntries: [{ taskId: "agent-1" }, { taskId: "bb3lof10o" }, { taskId: "b-1" }]
     });
   });
 
-  it("parses task_started with prompt and background flag", () => {
+  it("parses task_started ids, type and background flag", () => {
     const line = JSON.stringify({
       type: "system",
       subtype: "task_started",
@@ -523,29 +517,13 @@ describe("parseClaudeTaskSystemLine", () => {
       taskId: "a202cd0fd545a319e",
       toolUseId: "toolu_1",
       taskType: "local_agent",
-      description: "Review the diff",
-      subagentType: "general-purpose",
-      background: true,
-      prompt: "Review PR #15"
+      background: true
     });
   });
 
-  it("parses task_progress usage and last tool", () => {
-    const line = JSON.stringify({
-      type: "system",
-      subtype: "task_progress",
-      task_id: "a202cd0fd545a319e",
-      tool_use_id: "toolu_1",
-      last_tool_name: "Grep",
-      usage: { total_tokens: 24206, tool_uses: 1, duration_ms: 1925 }
-    });
-    expect(parseClaudeTaskSystemLine(line)).toEqual({
-      kind: "progress",
-      taskId: "a202cd0fd545a319e",
-      toolUseId: "toolu_1",
-      lastToolName: "Grep",
-      usage: { tokens: 24206, toolUses: 1, durationMs: 1925 }
-    });
+  it("ignores task_progress, which carries nothing the task state needs", () => {
+    const line = JSON.stringify({ type: "system", subtype: "task_progress", task_id: "t1", usage: { total_tokens: 1 } });
+    expect(parseClaudeTaskSystemLine(line)).toBeNull();
   });
 
   it("parses task_updated status and end time", () => {
@@ -583,7 +561,7 @@ describe("parseClaudeTaskSystemLine", () => {
     });
   });
 
-  it("carries the run id of real started, progress, updated and notification lines", () => {
+  it("carries the run id of real started, updated and notification lines", () => {
     const taskId = "a5fd6f29192d6b105";
     const runId = "0mvcd1zga-1ef0f9de";
     expect(parseClaudeTaskSystemLine(hooksProbeSystemLine("task_started", taskId))).toMatchObject({
@@ -591,11 +569,6 @@ describe("parseClaudeTaskSystemLine", () => {
       taskId,
       runId,
       background: true
-    });
-    expect(parseClaudeTaskSystemLine(hooksProbeSystemLine("task_progress", taskId))).toMatchObject({
-      kind: "progress",
-      taskId,
-      runId
     });
     expect(parseClaudeTaskSystemLine(hooksProbeSystemLine("task_updated", taskId))).toMatchObject({
       kind: "updated",
@@ -624,8 +597,6 @@ describe("parseClaudeTaskSystemLine", () => {
     expect(line).toBeDefined();
     expect(parseClaudeTaskSystemLine(compactJson(line!))).toStrictEqual({
       kind: "tasks",
-      liveTasks: 2,
-      liveTaskIds: ["a5fd6f29192d6b105", "a74a561c109a552e8"],
       liveTaskEntries: [
         { taskId: "a5fd6f29192d6b105", runId: "0mvcd1zga-1ef0f9de" },
         { taskId: "a74a561c109a552e8", runId: "0mvcd1zgk-b45a6052" }
