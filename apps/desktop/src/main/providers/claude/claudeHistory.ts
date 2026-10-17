@@ -1,10 +1,18 @@
-import { readFileSync } from "node:fs";
+import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { ContextCompactionInfo, HistoryMessage } from "@cw-code/contracts";
+import type { ContextCompactionInfo, HistoryMessage, TaskSnapshot } from "@cw-code/contracts";
+import { TaskTable, type TaskObservation } from "../../tasks/TaskTable.js";
 import { todosFromToolCall } from "../todos.js";
 import { claudeCommandText } from "./claudeCommands.js";
-import { parseClaudeTaskNotification, parseTaskNotificationUsage } from "./claudeStreamParser.js";
+import { parseClaudeTaskNotification } from "./claudeStreamParser.js";
 import { claudeTranscriptProjectDir } from "./claudeSessions.js";
+import {
+  claudeCallObservation,
+  claudeNotificationObservation,
+  claudeResumeObservation,
+  claudeToolResultObservation,
+  findClaudeTaskNotification
+} from "./claudeTasks.js";
 
 type ContentBlock =
   | { type: "text"; text?: string }
@@ -25,6 +33,9 @@ interface TranscriptLine {
   timestamp?: unknown;
   perTurnEffort?: unknown;
   effort?: unknown;
+  toolUseResult?: unknown;
+  origin?: unknown;
+  attachment?: unknown;
   message?: {
     id?: unknown;
     role?: string;
@@ -274,23 +285,8 @@ export function parseClaudeTranscriptLine(line: TranscriptLine): HistoryMessage[
 
   if (line.type === "user") {
     if (typeof content === "string") {
-      if (!content.trim()) return out;
-      const commandText = claudeCommandText(content);
-      if (commandText !== null) {
-        out.push({ id: baseId, role: "user", text: commandText, turnId: baseId, ...stamp });
-      } else if (content.trimStart().startsWith("<task-notification>")) {
-        out.push({
-          id: `${baseId}-n`,
-          role: "tool",
-          text: content,
-          turnId: baseId,
-          toolName: "task-notification",
-          toolOutputEmpty: true,
-          ...stamp
-        });
-      } else {
-        out.push({ id: baseId, role: "user", text: content, turnId: baseId, ...stamp });
-      }
+      if (!content.trim() || content.trimStart().startsWith("<task-notification>")) return out;
+      out.push({ id: baseId, role: "user", text: claudeCommandText(content) ?? content, turnId: baseId, ...stamp });
       return out;
     }
     for (let i = 0; i < content.length; i++) {
@@ -359,8 +355,138 @@ export function assignReasoningDurations(
   }
 }
 
+function plainObject(value: unknown): Record<string, unknown> | undefined {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? (value as Record<string, unknown>)
+    : undefined;
+}
+
+function stringField(record: Record<string, unknown> | undefined, key: string): string | undefined {
+  const value = record?.[key];
+  return typeof value === "string" ? value : undefined;
+}
+
+interface SidecarMeta {
+  toolUseId: string;
+  finished: boolean;
+}
+
+const SIDECAR_META_RE = /^agent-.+\.meta\.json$/;
+
+function readSidecarMetas(transcriptDir: string, resumeCursor: string): SidecarMeta[] {
+  const metas: SidecarMeta[] = [];
+  for (const dir of [join(transcriptDir, resumeCursor, "subagents"), join(transcriptDir, "subagents")]) {
+    let names: string[];
+    try {
+      names = readdirSync(dir);
+    } catch {
+      continue;
+    }
+    for (const name of names) {
+      if (!SIDECAR_META_RE.test(name)) continue;
+      let meta: Record<string, unknown> | undefined;
+      try {
+        meta = plainObject(JSON.parse(readFileSync(join(dir, name), "utf8")));
+      } catch {
+        continue;
+      }
+      const toolUseId = stringField(meta, "toolUseId");
+      if (toolUseId) metas.push({ toolUseId, finished: meta?.["finished"] === true });
+    }
+  }
+  return metas;
+}
+
+type ToolResultBlock = { tool_use_id?: string; content?: unknown; is_error?: boolean };
+
+class ClaudeHistoryTasks {
+  private readonly table = new TaskTable();
+  private readonly sendTargets = new Map<string, string>();
+
+  get(id: string): TaskSnapshot | undefined {
+    return this.table.get(id);
+  }
+
+  observe(line: TranscriptLine, at: number): void {
+    if (line.isSidechain) return;
+    if (line.type === "attachment") {
+      this.observeQueuedCommand(line, at);
+      return;
+    }
+    const content = line.message?.content;
+    if (content === undefined) return;
+    if (line.type === "assistant" && Array.isArray(content)) this.observeCalls(content, at);
+    else if (line.type === "user") this.observeUser(line, content, at);
+  }
+
+  finish(transcriptDir: string, resumeCursor: string, at: number): void {
+    for (const meta of readSidecarMetas(transcriptDir, resumeCursor)) {
+      if (!meta.finished || this.table.get(meta.toolUseId)?.state !== "running") continue;
+      this.table.apply({ kind: "ended", ref: { originId: meta.toolUseId }, state: "completed", reason: "sidecar", at });
+    }
+    this.table.closeOpen("unknown", "no-record", at);
+  }
+
+  private apply(observation: TaskObservation | null): void {
+    if (observation) this.table.apply(observation);
+  }
+
+  private observeCalls(content: ContentBlock[], at: number): void {
+    for (const block of content) {
+      if (block.type !== "tool_use") continue;
+      const { id, name, input } = block as { id?: string; name?: string; input?: unknown };
+      if (!id || !name) continue;
+      this.apply(claudeCallObservation(name, id, input, at));
+      const to = name.toLowerCase() === "sendmessage" ? stringField(plainObject(input), "to") : undefined;
+      if (to) this.sendTargets.set(id, to);
+    }
+  }
+
+  private observeUser(line: TranscriptLine, content: string | ContentBlock[], at: number): void {
+    const runId = stringField(plainObject(line.origin), "runId");
+    if (typeof content === "string") {
+      this.observeNotification(content, at, runId);
+      return;
+    }
+    const structured = plainObject(line.toolUseResult);
+    for (const block of content) {
+      if (block.type === "text") this.observeNotification((block as { text?: string }).text ?? "", at, runId);
+      else if (block.type === "tool_result") this.observeToolResult(block as ToolResultBlock, structured, at);
+    }
+  }
+
+  private observeToolResult(result: ToolResultBlock, structured: Record<string, unknown> | undefined, at: number): void {
+    const id = result.tool_use_id;
+    if (!id) return;
+    const text = blockText(result.content);
+    const to = this.sendTargets.get(id);
+    if (to !== undefined) {
+      this.apply(claudeResumeObservation(id, to, text, structured, at));
+    } else if (this.table.get(id)?.kind === "agent") {
+      this.apply(claudeToolResultObservation(id, text, result.is_error === true, structured, at));
+    }
+  }
+
+  private observeQueuedCommand(line: TranscriptLine, at: number): void {
+    const attachment = plainObject(line.attachment);
+    const prompt = stringField(attachment, "prompt");
+    if (attachment?.["type"] !== "queued_command" || prompt === undefined) return;
+    const runId = stringField(plainObject(line.origin), "runId") ?? stringField(attachment, "runId");
+    this.observeNotification(prompt, at, runId);
+  }
+
+  private observeNotification(text: string, at: number, runId: string | undefined): void {
+    const notification = findClaudeTaskNotification(text);
+    if (notification) this.apply(claudeNotificationObservation(notification, at, runId));
+  }
+}
+
 export function readClaudeHistory(rootPath: string, resumeCursor: string, limit = 300): HistoryMessage[] {
   const file = join(claudeTranscriptProjectDir(rootPath, resumeCursor), `${resumeCursor}.jsonl`);
+  return readClaudeHistoryFile(file, resumeCursor, limit);
+}
+
+export function readClaudeHistoryFile(file: string, resumeCursor: string, limit = 300): HistoryMessage[] {
   let raw: string;
   try {
     raw = readFileSync(file, "utf8");
@@ -372,12 +498,19 @@ export function readClaudeHistory(rootPath: string, resumeCursor: string, limit 
   const reasoningByMsgId = new Map<string, HistoryMessage[]>();
   const thinkingStart = new Map<string, number>();
   const lastStamp = new Map<string, number>();
+  const tasks = new ClaudeHistoryTasks();
+  let at = 0;
+  let lastAt = 0;
   for (const line of raw.split("\n")) {
     if (!line.trim()) continue;
     try {
       const parsed = JSON.parse(line) as TranscriptLine;
       const msgId = typeof parsed.message?.id === "string" ? parsed.message.id : "";
       const stamp = toEpochMs(parsed.timestamp);
+      if (stamp !== undefined) {
+        at = stamp;
+        lastAt = Math.max(lastAt, stamp);
+      }
       if (msgId && stamp !== undefined) {
         const blocks = Array.isArray(parsed.message?.content) ? parsed.message.content : [];
         if (blocks.some((block) => block.type === "thinking") && !thinkingStart.has(msgId)) {
@@ -394,16 +527,23 @@ export function readClaudeHistory(rootPath: string, resumeCursor: string, limit 
         out.push(msg);
         if (out.length > limit * 2) out.splice(0, out.length - limit * 2);
       }
+      tasks.observe(parsed, at);
     } catch {
       continue;
     }
   }
   assignReasoningDurations(reasoningByMsgId, thinkingStart, lastStamp);
+  tasks.finish(dirname(file), resumeCursor, lastAt);
   const trimmed = out.slice(-limit);
   const agentByCall = mapAgentCalls(trimmed);
   attachSidecarInfo(file, resumeCursor, trimmed, agentByCall);
   attributeSendMessages(trimmed, agentByCall);
-  return foldTaskNotifications(trimmed);
+  for (const message of trimmed) {
+    if (message.role !== "tool") continue;
+    const task = tasks.get(message.id);
+    if (task) message.task = task;
+  }
+  return trimmed;
 }
 
 export function mapAgentCalls(messages: HistoryMessage[]): Map<string, string> {
@@ -469,44 +609,6 @@ export function readClaudeTaskResult(
     };
   }
   return undefined;
-}
-
-export function foldTaskNotifications(messages: HistoryMessage[]): HistoryMessage[] {
-  const byId = new Map(messages.map((m) => [m.id, m]));
-  const drop = new Set<string>();
-  for (const m of messages) {
-    if (m.role !== "tool" || m.toolName !== "task-notification") continue;
-    const notification = parseClaudeTaskNotification(m.text);
-    const toolUseId = notification?.toolUseId;
-    const result = notification?.result;
-    const target = toolUseId ? byId.get(`${toolUseId}-r`) : undefined;
-    const isError = notification?.status ? notification.status.toLowerCase() !== "completed" : undefined;
-    const usage = parseTaskNotificationUsage(m.text);
-    if (target && result !== undefined) {
-      target.text = result.slice(0, 8000);
-      target.toolOutputEmpty = false;
-      if (m.timestamp !== undefined) target.timestamp = m.timestamp;
-      if (isError !== undefined) target.isError = isError;
-      if (usage) target.toolUsage = usage;
-      drop.add(m.id);
-      continue;
-    }
-    const call = toolUseId ? byId.get(toolUseId) : undefined;
-    if (call?.role === "tool" && result !== undefined) {
-      m.id = `${toolUseId}-r`;
-      m.text = result.slice(0, 8000);
-      m.turnId = call.turnId;
-      m.toolName = "result";
-      m.toolOutputEmpty = false;
-      if (isError !== undefined) m.isError = isError;
-      if (usage) m.toolUsage = usage;
-      byId.set(m.id, m);
-      continue;
-    }
-    drop.add(m.id);
-  }
-  if (drop.size === 0) return messages;
-  return messages.filter((m) => !drop.has(m.id));
 }
 
 function attachSidecarInfo(

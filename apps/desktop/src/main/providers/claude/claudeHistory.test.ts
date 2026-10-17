@@ -1,9 +1,10 @@
-import { describe, expect, it } from "vitest";
-import { mkdtempSync, mkdirSync, writeFileSync } from "node:fs";
+import { describe, expect, it, vi } from "vitest";
+import { cpSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { assignReasoningDurations, attributeSendMessages, extractAgentId, findSidecarModel, foldTaskNotifications, parseClaudeTranscriptLine, readClaudeTaskResult, readSidecarAgent, toEpochMs } from "./claudeHistory.js";
-import type { HistoryMessage } from "@cw-code/contracts";
+import { fileURLToPath } from "node:url";
+import { assignReasoningDurations, attributeSendMessages, extractAgentId, findSidecarModel, parseClaudeTranscriptLine, readClaudeHistoryFile, readClaudeTaskResult, readSidecarAgent, toEpochMs } from "./claudeHistory.js";
+import type { HistoryMessage, TaskSnapshot } from "@cw-code/contracts";
 
 function toolMessage(partial: Partial<HistoryMessage> & { id: string }): HistoryMessage {
   return { role: "tool", text: "", turnId: "t1", ...partial };
@@ -278,7 +279,7 @@ describe("parseClaudeTranscriptLine", () => {
     expect(out).toEqual([{ id: "a1-a0", role: "assistant", text: "hi", turnId: "a1" }]);
   });
 
-  it("emits task notifications as tool messages", () => {
+  it("yields no message for a task notification user string", () => {
     const out = parseClaudeTranscriptLine({
       type: "user",
       uuid: "u9",
@@ -288,17 +289,7 @@ describe("parseClaudeTranscriptLine", () => {
         content: "<task-notification>\n<task-id>abc</task-id>\n<tool-use-id>tu1</tool-use-id>\n</task-notification>"
       }
     });
-    expect(out).toEqual([
-      {
-        id: "u9-n",
-        role: "tool",
-        text: "<task-notification>\n<task-id>abc</task-id>\n<tool-use-id>tu1</tool-use-id>\n</task-notification>",
-        turnId: "u9",
-        toolName: "task-notification",
-        toolOutputEmpty: true,
-        timestamp: Date.parse("2026-09-10T15:19:01.272Z")
-      }
-    ]);
+    expect(out).toEqual([]);
   });
 
   it("keeps ordinary user text that mentions task notifications", () => {
@@ -351,95 +342,265 @@ describe("assignReasoningDurations", () => {
   });
 });
 
-describe("foldTaskNotifications", () => {
-  const notif = (result: string, status = "completed", ts = 9000) =>
-    toolMessage({
-      id: "n1",
-      toolName: "task-notification",
-      timestamp: ts,
-      text: `<task-notification>\n<task-id>aa11</task-id>\n<tool-use-id>tu1</tool-use-id>\n<status>${status}</status>\n<result>${result}</result>`
+const FIXTURES = fileURLToPath(new URL("./__fixtures__/tasks/", import.meta.url));
+
+function fixtureSession(name: string): { file: string; cursor: string } {
+  const source = join(FIXTURES, name);
+  const transcript = readFileSync(join(source, "transcript.jsonl"), "utf8");
+  const cursor = (JSON.parse(transcript.slice(0, transcript.indexOf("\n"))) as { sessionId: string }).sessionId;
+  const dir = mkdtempSync(join(tmpdir(), "cw-claude-history-"));
+  const file = join(dir, `${cursor}.jsonl`);
+  writeFileSync(file, transcript);
+  cpSync(join(source, "subagents"), join(dir, cursor, "subagents"), { recursive: true });
+  return { file, cursor };
+}
+
+const CURSOR = "11111111-2222-3333-4444-555555555555";
+const AGENT_ID = "abcdef0123456789";
+const T0 = Date.parse("2026-10-17T12:00:00.000Z");
+
+function iso(offsetMs: number): string {
+  return new Date(T0 + offsetMs).toISOString();
+}
+
+function syntheticSession(lines: object[], metas: Record<string, string> = {}): string {
+  const dir = mkdtempSync(join(tmpdir(), "cw-claude-history-"));
+  const file = join(dir, `${CURSOR}.jsonl`);
+  writeFileSync(file, lines.map((line) => JSON.stringify(line)).join("\n"));
+  const names = Object.keys(metas);
+  if (names.length > 0) {
+    mkdirSync(join(dir, CURSOR, "subagents"), { recursive: true });
+    for (const name of names) writeFileSync(join(dir, CURSOR, "subagents", name), metas[name]);
+  }
+  return file;
+}
+
+function agentCall(id: string, offset: number, input: Record<string, unknown>): object {
+  return {
+    type: "assistant",
+    uuid: `a-${id}`,
+    timestamp: iso(offset),
+    message: { id: `msg-${id}`, role: "assistant", content: [{ type: "tool_use", id, name: "Agent", input }] }
+  };
+}
+
+function toolResult(id: string, offset: number, text: string, toolUseResult: Record<string, unknown>): object {
+  return {
+    type: "user",
+    uuid: `r-${id}`,
+    timestamp: iso(offset),
+    toolUseResult,
+    message: { role: "user", content: [{ type: "tool_result", tool_use_id: id, content: [{ type: "text", text }] }] }
+  };
+}
+
+function launchAck(id: string, offset: number): object {
+  return toolResult(id, offset, `Async agent launched successfully.\nagentId: ${AGENT_ID} (internal ID)`, {
+    isAsync: true,
+    status: "async_launched",
+    agentId: AGENT_ID
+  });
+}
+
+function assistantText(uuid: string, offset: number, text: string): object {
+  return { type: "assistant", uuid, timestamp: iso(offset), message: { role: "assistant", content: [{ type: "text", text }] } };
+}
+
+function queuedNotification(toolUseId: string, offset: number, body: string, taskId = AGENT_ID): object {
+  return {
+    type: "attachment",
+    uuid: `q-${toolUseId}`,
+    timestamp: iso(offset),
+    isSidechain: false,
+    attachment: {
+      type: "queued_command",
+      prompt: `<task-notification>\n<task-id>${taskId}</task-id>\n<tool-use-id>${toolUseId}</tool-use-id>\n${body}\n</task-notification>`,
+      commandMode: "task-notification",
+      runId: "run-1"
+    }
+  };
+}
+
+function taskOf(messages: HistoryMessage[], id: string): TaskSnapshot | undefined {
+  return messages.find((m) => m.id === id)?.task;
+}
+
+describe("readClaudeHistoryFile", () => {
+  const PONG_CALL = "toolu_01DaQjvfNQDvgKAiv1WcJNYS";
+  const SLEEPER_CALL = "toolu_01RDYCbJfdYE4q12sgc97ETw";
+  const HANDBACK_CALL = "toolu_019cYvRiA4JYiUUSq18cKuos";
+  const BACKGROUND_INPUT = { description: "bg", prompt: "work", run_in_background: true };
+
+  it("closes the resumed pong agent on its second run and the stopped sleeper from a real transcript", () => {
+    const { file, cursor } = fixtureSession("hooks-probe");
+    const messages = readClaudeHistoryFile(file, cursor);
+
+    expect(taskOf(messages, PONG_CALL)).toMatchObject({
+      cliTaskId: "a5fd6f29192d6b105",
+      kind: "agent",
+      background: true,
+      state: "completed",
+      endReason: "cli",
+      runCount: 2,
+      startedAt: Date.parse("2026-10-17T12:16:29.492Z"),
+      endedAt: Date.parse("2026-10-17T12:16:34.661Z"),
+      usage: { tokens: 28111, toolUses: 2, durationMs: 8936 }
     });
-
-  it("folds the result into the parent call and drops the notification", () => {
-    const out = foldTaskNotifications([
-      toolMessage({ id: "tu1", toolName: "Task", text: "Task call" }),
-      toolMessage({ id: "tu1-r", toolName: "result", text: "Async agent launched", timestamp: 2000, isError: true }),
-      notif("Real report here")
-    ]);
-    expect(out.map((m) => m.id)).toEqual(["tu1", "tu1-r"]);
-    expect(out[1].text).toBe("Real report here");
-    expect(out[1].timestamp).toBe(9000);
-    expect(out[1].isError).toBe(false);
-  });
-
-  it("drops an orphaned notification", () => {
-    const out = foldTaskNotifications([notif("Real report here")]);
-    expect(out).toEqual([]);
-  });
-
-  it("turns the notification into a result when the acknowledgement is missing", () => {
-    const out = foldTaskNotifications([
-      toolMessage({ id: "tu1", toolName: "Task", text: "Task call", turnId: "turn-1" }),
-      notif("Real report here")
-    ]);
-    expect(out).toEqual([
-      toolMessage({ id: "tu1", toolName: "Task", text: "Task call", turnId: "turn-1" }),
-      toolMessage({
-        id: "tu1-r",
-        toolName: "result",
-        text: "Real report here",
-        turnId: "turn-1",
-        timestamp: 9000,
-        isError: false,
-        toolOutputEmpty: false
-      })
-    ]);
-  });
-
-  it("clears the empty flag when a result is folded into an existing result message", () => {
-    const out = foldTaskNotifications([
-      toolMessage({ id: "tu1-r", toolName: "result", text: "ack", toolOutputEmpty: true }),
-      notif("Real report here")
-    ]);
-    expect(out).toHaveLength(1);
-    expect(out[0].text).toBe("Real report here");
-    expect(out[0].toolOutputEmpty).toBe(false);
-  });
-
-  it("clears the empty flag when the notification itself becomes the result", () => {
-    const out = foldTaskNotifications([
-      toolMessage({ id: "tu1", toolName: "Task", text: "Task call" }),
-      toolMessage({ ...notif("Real report here"), toolOutputEmpty: true })
-    ]);
-    const folded = out.find((m) => m.id === "tu1-r");
-    expect(folded?.text).toBe("Real report here");
-    expect(folded?.toolOutputEmpty).toBe(false);
-  });
-
-  it("last notification wins and non-completed status flags errors", () => {
-    const out = foldTaskNotifications([
-      toolMessage({ id: "tu1-r", toolName: "result", text: "ack" }),
-      notif("first", "completed", 9000),
-      toolMessage({ id: "n2", toolName: "task-notification", timestamp: 9500, text: notif("second", "failed", 9500).text })
-    ]);
-    expect(out.map((m) => m.id)).toEqual(["tu1-r"]);
-    expect(out[0].text).toBe("second");
-    expect(out[0].timestamp).toBe(9500);
-    expect(out[0].isError).toBe(true);
-  });
-
-  it("carries the usage block onto the folded result", () => {
-    const withUsage = toolMessage({
-      id: "n1",
-      toolName: "task-notification",
-      timestamp: 9000,
-      text: `<task-notification>\n<tool-use-id>tu1</tool-use-id>\n<status>completed</status>\n<result>done</result>\n<usage><subagent_tokens>136099</subagent_tokens><tool_uses>12</tool_uses><duration_ms>287602</duration_ms></usage>`
+    expect(taskOf(messages, PONG_CALL)?.output).toContain('delivered to you as a message from "a5fd6f29192d6b105"');
+    expect(taskOf(messages, SLEEPER_CALL)).toMatchObject({
+      cliTaskId: "a74a561c109a552e8",
+      state: "stopped",
+      endReason: "cli",
+      runCount: 1,
+      output: 'Agent "sleeper" was stopped by Claude'
     });
-    const out = foldTaskNotifications([
-      toolMessage({ id: "tu1-r", toolName: "result", text: "Async agent launched" }),
-      withUsage
+  });
+
+  it("keeps the launch acknowledgement on the result message and emits no notification messages", () => {
+    const { file, cursor } = fixtureSession("hooks-probe");
+    const messages = readClaudeHistoryFile(file, cursor);
+
+    expect(messages.find((m) => m.id === `${PONG_CALL}-r`)?.text.startsWith("Async agent launched")).toBe(true);
+    expect(messages.find((m) => m.id === `${PONG_CALL}-r`)?.task).toBeUndefined();
+    expect(messages.some((m) => m.toolName === "task-notification" || m.text.startsWith("<task-notification>"))).toBe(false);
+    expect(messages.find((m) => m.toolName === "SendMessage")).toMatchObject({ parentToolCallId: PONG_CALL });
+    expect(messages.find((m) => m.toolName === "SendMessage")?.task).toBeUndefined();
+  });
+
+  it("completes the handback agent with the notification report", () => {
+    const { file, cursor } = fixtureSession("handback-probe");
+    const messages = readClaudeHistoryFile(file, cursor);
+
+    expect(taskOf(messages, HANDBACK_CALL)).toStrictEqual({
+      id: HANDBACK_CALL,
+      cliTaskId: "a087ca34d38140971",
+      kind: "agent",
+      background: true,
+      state: "completed",
+      endReason: "cli",
+      runCount: 1,
+      startedAt: Date.parse("2026-10-17T12:03:12.617Z"),
+      endedAt: Date.parse("2026-10-17T12:03:21.309Z"),
+      output:
+        'This agent\'s report was delivered to you as a message from "a087ca34d38140971" (its SubagentHandback call). Read it there; it is not repeated here.\n',
+      usage: { tokens: 27937, toolUses: 1, durationMs: 2127 }
+    });
+  });
+
+  it("never returns a running task", () => {
+    for (const name of ["hooks-probe", "handback-probe"]) {
+      const { file, cursor } = fixtureSession(name);
+      const tasks = readClaudeHistoryFile(file, cursor).flatMap((m) => (m.task ? [m.task] : []));
+      expect(tasks.length).toBeGreaterThan(0);
+      expect(tasks.every((task) => task.state !== "running")).toBe(true);
+    }
+  });
+
+  it("completes a background agent closed only by a mid-turn queued_command attachment", () => {
+    const file = syntheticSession([
+      agentCall("toolu_bg", 0, BACKGROUND_INPUT),
+      launchAck("toolu_bg", 100),
+      queuedNotification(
+        "toolu_bg",
+        5000,
+        "<status>completed</status>\n<summary>Agent \"bg\" finished</summary>\n<result>REPORT</result>\n<usage><subagent_tokens>100</subagent_tokens><tool_uses>3</tool_uses><duration_ms>500</duration_ms></usage>"
+      )
     ]);
-    expect(out[0].toolUsage).toEqual({ tokens: 136099, toolUses: 12, durationMs: 287602 });
+
+    expect(taskOf(readClaudeHistoryFile(file, CURSOR), "toolu_bg")).toStrictEqual({
+      id: "toolu_bg",
+      cliTaskId: AGENT_ID,
+      kind: "agent",
+      background: true,
+      state: "completed",
+      endReason: "cli",
+      runCount: 1,
+      startedAt: T0,
+      endedAt: T0 + 5000,
+      output: "REPORT",
+      usage: { tokens: 100, toolUses: 3, durationMs: 500 }
+    });
+  });
+
+  it("completes a background agent from a finished sidecar meta and tolerates bad metas", () => {
+    const file = syntheticSession(
+      [agentCall("toolu_bg", 0, BACKGROUND_INPUT), launchAck("toolu_bg", 100), assistantText("a-last", 9000, "waiting")],
+      {
+        [`agent-${AGENT_ID}.meta.json`]: JSON.stringify({ toolUseId: "toolu_bg", finished: true }),
+        "agent-bad.meta.json": "{not json",
+        "agent-anon.meta.json": JSON.stringify({ finished: true })
+      }
+    );
+
+    expect(taskOf(readClaudeHistoryFile(file, CURSOR), "toolu_bg")).toMatchObject({
+      state: "completed",
+      endReason: "sidecar",
+      endedAt: T0 + 9000
+    });
+  });
+
+  it("marks a background agent with neither notification nor finished meta as unknown", () => {
+    const file = syntheticSession(
+      [agentCall("toolu_bg", 0, BACKGROUND_INPUT), launchAck("toolu_bg", 100), assistantText("a-last", 9000, "waiting")],
+      { [`agent-${AGENT_ID}.meta.json`]: JSON.stringify({ toolUseId: "toolu_bg" }) }
+    );
+
+    expect(taskOf(readClaudeHistoryFile(file, CURSOR), "toolu_bg")).toMatchObject({
+      state: "unknown",
+      endReason: "no-record",
+      endedAt: T0 + 9000
+    });
+  });
+
+  it("marks an agent unknown when no sidecar directory exists", () => {
+    const file = syntheticSession([agentCall("toolu_bg", 0, BACKGROUND_INPUT), launchAck("toolu_bg", 100)]);
+
+    expect(taskOf(readClaudeHistoryFile(file, CURSOR), "toolu_bg")).toMatchObject({
+      state: "unknown",
+      endReason: "no-record"
+    });
+  });
+
+  it("completes a foreground agent from its tool result", () => {
+    const file = syntheticSession([
+      agentCall("toolu_fg", 0, { description: "fg", prompt: "work" }),
+      toolResult("toolu_fg", 3000, "FOREGROUND REPORT", { status: "completed", agentId: AGENT_ID, totalTokens: 10 })
+    ]);
+    const messages = readClaudeHistoryFile(file, CURSOR);
+
+    expect(taskOf(messages, "toolu_fg")).toMatchObject({
+      background: false,
+      state: "completed",
+      endReason: "tool-result",
+      endedAt: T0 + 3000,
+      output: "FOREGROUND REPORT"
+    });
+    expect(messages.find((m) => m.id === "toolu_fg-r")?.text).toBe("FOREGROUND REPORT");
+  });
+
+  it("ignores notifications for calls outside the returned window", () => {
+    const fillers = Array.from({ length: 300 }, (_, i) => assistantText(`f${i}`, 1000 + i, `filler ${i}`));
+    const file = syntheticSession([
+      agentCall("toolu_old", 0, BACKGROUND_INPUT),
+      launchAck("toolu_old", 100),
+      ...fillers,
+      queuedNotification("toolu_old", 5000, "<status>completed</status>\n<result>late</result>"),
+      queuedNotification("toolu_missing", 5100, "<status>failed</status>", "0123456789abcdef")
+    ]);
+
+    const messages = readClaudeHistoryFile(file, CURSOR);
+    expect(messages).toHaveLength(300);
+    expect(messages.some((m) => m.id === "toolu_old")).toBe(false);
+    expect(messages.every((m) => m.task === undefined)).toBe(true);
+  });
+
+  it("warns and returns nothing when the transcript is missing", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    const missing = join(mkdtempSync(join(tmpdir(), "cw-claude-history-")), `${CURSOR}.jsonl`);
+
+    expect(readClaudeHistoryFile(missing, CURSOR)).toEqual([]);
+    expect(warn).toHaveBeenCalledWith(`claude history not found: ${missing}`);
+    warn.mockRestore();
   });
 });
 
