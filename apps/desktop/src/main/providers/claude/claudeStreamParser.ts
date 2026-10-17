@@ -388,7 +388,6 @@ export function parseClaudeTaskSystemLine(line: string): ClaudeTaskSystemInfo | 
   const runId = str(msg.run_id);
   const toolUseId = str(msg.tool_use_id);
   const taskType = str(msg.task_type);
-  const usage = taskUsage(msg.usage);
   switch (msg.subtype) {
     case "background_tasks_changed": {
       if (!Array.isArray(msg.tasks)) return null;
@@ -438,6 +437,7 @@ export function parseClaudeTaskSystemLine(line: string): ClaudeTaskSystemInfo | 
       if (!taskId) return null;
       const status = str(msg.status);
       const summary = str(msg.summary);
+      const usage = taskUsage(msg.usage);
       const report = msg.handback_report;
       const handbackReport =
         report !== null && typeof report === "object" && !Array.isArray(report)

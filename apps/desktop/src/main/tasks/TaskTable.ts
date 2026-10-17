@@ -95,8 +95,12 @@ function currentRun(record: TaskRecord): TaskRun {
   return record.runs[record.runs.length - 1];
 }
 
-function lastSeen(run: TaskRun): number {
+function lastSeen(run: Pick<TaskRun, "startedAt" | "endedAt">): number {
   return Math.max(run.endedAt ?? Number.NEGATIVE_INFINITY, run.startedAt ?? Number.NEGATIVE_INFINITY);
+}
+
+export function taskLastSeen(task: TaskSnapshot): number {
+  return lastSeen(task);
 }
 
 function dropOutput(run: TaskRun): void {

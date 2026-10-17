@@ -330,13 +330,19 @@ describe("appStore task snapshots", () => {
     expect(useAppStore.getState().messagesBySession).toBe(before);
   });
 
-  it("applies a task.updated that arrived before its tool call, over the call's own snapshot", () => {
+  it("applies a task.updated that arrived before its tool call unless the call carries a newer snapshot", () => {
     const completed = snapshot({ state: "completed", endedAt: 5000 });
     updateTask(completed);
     expect(useAppStore.getState().messagesBySession[session]).toBeUndefined();
 
-    callSubagent(snapshot());
+    callSubagent();
     expect(useAppStore.getState().messagesBySession[session][0].task).toEqual(completed);
+
+    const later = snapshot({ state: "running", runCount: 2 });
+    updateTask(snapshot({ state: "completed", runCount: 1 }));
+    useAppStore.setState({ messagesBySession: {} });
+    callSubagent(later);
+    expect(useAppStore.getState().messagesBySession[session][0].task).toEqual(later);
 
     const failed = snapshot({ state: "failed" });
     callSubagent(failed);

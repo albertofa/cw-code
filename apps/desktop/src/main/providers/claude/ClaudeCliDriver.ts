@@ -24,7 +24,7 @@ import type {
 } from "@cw-code/contracts";
 import { parseExtraArgs } from "../../settings/settingsUtils.js";
 import { hasExited, killProcessTree, waitForExit } from "../../processTree.js";
-import { TaskTable, type TaskObservation } from "../../tasks/TaskTable.js";
+import { TaskTable, taskLastSeen, type TaskObservation } from "../../tasks/TaskTable.js";
 import { SYNTHETIC_FULL_ACCESS_DESCRIPTION } from "../permissions.js";
 import { attributeClaudeSubagentEvent, buildClaudeAllowRule, claudeAllowResponse, claudeApprovalRequest, claudeQuestionRequest, claudeDenyResponse, claudeControlResponse, parseClaudeCompactBoundary, parseClaudeControlRequest, parseClaudeSubagentHandback, parseClaudeSystemInit, parseClaudeTaskNotificationLine, parseClaudeTaskSystemLine, parseClaudeToolUseResult, parseStreamLine, type ClaudeControlRequest, type ClaudeTaskNotificationLine, type ClaudeTaskSystemInfo, type TurnDoneInfo } from "./claudeStreamParser.js";
 import { claudeCallObservation, claudeHandbackObservation, claudeNotificationObservation, claudeSystemTaskObservation, claudeToolResultObservation, findClaudeTaskNotification } from "./claudeTasks.js";
@@ -906,7 +906,7 @@ export class ClaudeCliDriver implements CliDriver {
     const state = this.processes.get(sessionId);
     if (!state) return [];
     return state.tasks.snapshots().filter(
-      (task) => task.state === "running" || Math.max(task.endedAt ?? 0, task.startedAt ?? 0) >= state.turnStartedAt
+      (task) => task.state === "running" || taskLastSeen(task) >= state.turnStartedAt
     );
   }
 

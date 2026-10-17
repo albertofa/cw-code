@@ -1397,7 +1397,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       set({
         messagesBySession: {
           ...get().messagesBySession,
-          [sessionId]: upsertToolCall(messages, buffered ? { ...event, task: buffered } : event, Date.now())
+          [sessionId]: upsertToolCall(messages, buffered && !event.task ? { ...event, task: buffered } : event, Date.now())
         }
       });
     } else if (event.type === "tool.result") {
