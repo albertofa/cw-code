@@ -11,7 +11,7 @@ import { PrChipBadge } from "./PrChipBadge.js";
 import { PlanMeters } from "./PlanMeters.js";
 import { unavailableTitle } from "./UsagePlanCard.js";
 import { formatRelativeAge } from "./prInboxModel.js";
-import { collectSubagents, formatTokensShort, isSubagentMessage } from "./subagents.js";
+import { collectSubagents, formatTokensShort, isSubagentMessage, type SubagentStatus } from "./subagents.js";
 import { formatDuration } from "./toolSummaries.js";
 import { harnessLabel } from "./toolTabs.js";
 import { findSession, useSessionPrItems } from "./useLinkedPr.js";
@@ -315,9 +315,12 @@ function TodosSection({ sessionId }: { sessionId: string }) {
   );
 }
 
-function subagentStatusLabel(status: "running" | "completed" | "error", durationMs: number | undefined): string {
+function subagentStatusLabel(status: SubagentStatus, durationMs: number | undefined): string {
   if (status === "running") return "Running";
-  if (status === "error") return "Failed";
+  if (status === "failed") return "Failed";
+  if (status === "stopped") return "Stopped";
+  if (status === "interrupted") return "Interrupted";
+  if (status === "unknown") return "Ended";
   return durationMs !== undefined ? `Done · ${formatDuration(durationMs)}` : "Done";
 }
 

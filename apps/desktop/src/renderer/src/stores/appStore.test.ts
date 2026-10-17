@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { UpdateActionResult, UpdateState } from "@cw-code/contracts";
+import type { TaskSnapshot, UpdateActionResult, UpdateState } from "@cw-code/contracts";
 import { DEFAULT_COMPOSER, useAppStore } from "./appStore.js";
 import { getLastModel, setLastModel } from "../components/lastModel.js";
 
@@ -236,6 +236,92 @@ describe("appStore tool.result", () => {
       retryAt: 0
     });
     expect(useAppStore.getState().messagesBySession[session].some((m) => m.id === "turn-1-retry")).toBe(true);
+  });
+});
+
+describe("appStore task snapshots", () => {
+  const session = "sess_tasks";
+
+  function snapshot(partial: Partial<TaskSnapshot> = {}): TaskSnapshot {
+    return { id: "call_1", kind: "agent", background: true, state: "running", runCount: 1, ...partial };
+  }
+
+  function callSubagent(task?: TaskSnapshot): void {
+    useAppStore.getState().applyEvent(session, {
+      type: "tool.call",
+      turnId: "turn-1",
+      toolCallId: "call_1",
+      name: "Agent",
+      input: { description: "Review" },
+      ...(task ? { task } : {})
+    });
+  }
+
+  beforeEach(() => {
+    useAppStore.setState({ messagesBySession: {}, busyTurns: {}, pendingApprovals: {}, pendingQuestions: {} });
+  });
+
+  it("stores the snapshot carried by a tool call and replaces it on a replayed call", () => {
+    callSubagent(snapshot());
+    expect(useAppStore.getState().messagesBySession[session][0].task).toEqual(snapshot());
+
+    const completed = snapshot({ state: "completed", endedAt: 5000 });
+    callSubagent(completed);
+    const messages = useAppStore.getState().messagesBySession[session];
+    expect(messages).toHaveLength(1);
+    expect(messages[0].task).toEqual(completed);
+  });
+
+  it("keeps the stored snapshot when a replayed call carries none", () => {
+    callSubagent(snapshot());
+    callSubagent();
+    expect(useAppStore.getState().messagesBySession[session][0].task).toEqual(snapshot());
+  });
+
+  it("patches the matching tool message on task.updated", () => {
+    callSubagent(snapshot());
+    const completed = snapshot({ state: "completed", endedAt: 5000, output: "Approve." });
+    useAppStore.getState().applyEvent(session, { type: "task.updated", turnId: "turn-1", sessionId: session, task: completed });
+    const messages = useAppStore.getState().messagesBySession[session];
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({ id: "call_1", toolName: "Agent", task: completed });
+  });
+
+  it("ignores task.updated for an unknown tool call without writing state", () => {
+    callSubagent(snapshot());
+    const before = useAppStore.getState().messagesBySession;
+    useAppStore.getState().applyEvent(session, {
+      type: "task.updated",
+      turnId: "turn-1",
+      sessionId: session,
+      task: snapshot({ id: "other", state: "failed" })
+    });
+    expect(useAppStore.getState().messagesBySession).toBe(before);
+    expect(useAppStore.getState().messagesBySession[session][0].task?.state).toBe("running");
+  });
+
+  it("ignores task.updated for a session without messages", () => {
+    const before = useAppStore.getState().messagesBySession;
+    useAppStore.getState().applyEvent("sess_empty", { type: "task.updated", turnId: "turn-1", sessionId: "sess_empty", task: snapshot() });
+    expect(useAppStore.getState().messagesBySession).toBe(before);
+  });
+
+  it("finalizes unanswered subagent calls on turn.done even with background tasks", () => {
+    callSubagent(snapshot());
+    useAppStore.getState().applyEvent(session, {
+      type: "turn.done",
+      turnId: "turn-1",
+      sessionId: session,
+      resumeCursor: "cursor-1",
+      resultText: "",
+      usage: [],
+      numTurns: 1,
+      isError: false,
+      backgroundTasks: 1
+    });
+    const message = useAppStore.getState().messagesBySession[session][0];
+    expect(message.toolDone).toBe(true);
+    expect(message.task?.state).toBe("running");
   });
 });
 

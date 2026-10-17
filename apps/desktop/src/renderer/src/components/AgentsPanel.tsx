@@ -75,9 +75,7 @@ function metaLine(item: SubagentInfo, fallbackModel?: string): string {
 }
 
 function statusLabel(status: SubagentInfo["status"]): string {
-  if (status === "completed") return "completed";
-  if (status === "running") return "running";
-  return "error";
+  return status;
 }
 
 function RunningElapsed({ startedAt }: { startedAt: number }) {

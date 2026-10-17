@@ -272,16 +272,11 @@ interface AppState {
   updateRestartPending: boolean;
 }
 
-function isSubagentToolName(name?: string): boolean {
-  return !!name && (name.toLowerCase() === "task" || name.toLowerCase() === "agent");
-}
-
-function finalizeTurnTools(messages: ChatMessage[], turnId: string, backgroundTasks = 0): ChatMessage[] {
+function finalizeTurnTools(messages: ChatMessage[], turnId: string): ChatMessage[] {
   let changed = false;
   const out = messages.map((m) => {
     if (m.role !== "tool" || m.turnId !== turnId) return m;
     if (m.toolInput === undefined || m.toolDone === true || m.toolOutput !== undefined) return m;
-    if (backgroundTasks > 0 && isSubagentToolName(m.toolName)) return m;
     changed = true;
     return { ...m, toolDone: true, toolCompletedAt: Date.now() };
   });
@@ -1217,6 +1212,17 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   applyEvent(sessionId: string, event: TurnEvent) {
     let messages = get().messagesBySession[sessionId] ?? [];
+    if (event.type === "task.updated") {
+      const idx = messages.findIndex((m) => m.role === "tool" && m.id === event.task.id);
+      if (idx < 0) return;
+      set({
+        messagesBySession: {
+          ...get().messagesBySession,
+          [sessionId]: [...messages.slice(0, idx), { ...messages[idx], task: event.task }, ...messages.slice(idx + 1)]
+        }
+      });
+      return;
+    }
     if (event.type !== "turn.retry" && event.type !== "turn.done" && event.type !== "turn.error" && "turnId" in event) {
       const stripped = withoutRetryNotice(messages, event.turnId);
       if (stripped !== messages) {
@@ -1435,7 +1441,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       if (busyMatch) delete approvals[sessionId];
       const questions = { ...get().pendingQuestions };
       if (busyMatch) delete questions[sessionId];
-      let turnMessages = finalizeTurnTools(messages, event.turnId, backgroundTasks).filter(
+      let turnMessages = finalizeTurnTools(messages, event.turnId).filter(
         (m) => m.id !== `${event.turnId}-retry`
       );
       if (!event.isError) {

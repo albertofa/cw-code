@@ -20,10 +20,17 @@ import {
 } from "./subagents.js";
 import { mergeToolPairs } from "./toolSummaries.js";
 import type { ChatMessage } from "../stores/appStore.js";
+import type { TaskSnapshot, TaskState } from "../cw.js";
+
+const TASK_STATES: TaskState[] = ["running", "completed", "failed", "stopped", "interrupted", "unknown"];
 
 let nextId = 0;
 function msg(partial: Partial<SubagentMessage> & { id?: string }): SubagentMessage {
   return { role: "tool", text: "", turnId: "t1", id: `test-${nextId++}`, ...partial };
+}
+
+function snapshot(partial: Partial<TaskSnapshot> = {}): TaskSnapshot {
+  return { id: "toolu_1", kind: "agent", background: false, state: "running", runCount: 1, ...partial };
 }
 
 describe("isSubagentTool", () => {
@@ -43,7 +50,7 @@ describe("isSubagentTool", () => {
 });
 
 describe("describeSubagent", () => {
-  it("extracts Agent description, model, background flag and prompt", () => {
+  it("extracts Agent description, model and prompt", () => {
     const info = describeSubagent(
       msg({
         toolName: "Agent",
@@ -51,7 +58,6 @@ describe("describeSubagent", () => {
         toolInput: {
           description: "Implement Task 1: agent factory",
           model: "opus",
-          run_in_background: false,
           prompt: "You are implementing Task 1 of the plan"
         },
         toolOutput: "All done. Final report follows."
@@ -59,7 +65,6 @@ describe("describeSubagent", () => {
     );
     expect(info.name).toBe("Implement Task 1: agent factory");
     expect(info.model).toBe("opus");
-    expect(info.runInBackground).toBe(false);
     expect(info.prompt).toBe("You are implementing Task 1 of the plan");
     expect(info.status).toBe("completed");
     expect(info.summary).toBe("All done. Final report follows.");
@@ -75,7 +80,7 @@ describe("describeSubagent", () => {
     );
     expect(info.name).toBe("Review diff");
     expect(info.agentType).toBe("general-purpose");
-    expect(info.status).toBe("running");
+    expect(info.status).toBe("unknown");
     expect(info.summary).toBe("Review it");
   });
 
@@ -95,8 +100,8 @@ describe("describeSubagent", () => {
     const info = describeSubagent(
       msg({
         toolName: "Agent",
-        text: 'Agent {"description":"Implement Task 1: agent factory","model":"opus","run_in_background":false,"prompt":"You are implementing Task 1 of the plan in the repo `C:\\\\Projects\\\\nuria',
-        toolOutput: "Async agent launched successfully."
+        text: 'Agent {"description":"Implement Task 1: agent factory","model":"opus","prompt":"You are implementing Task 1 of the plan in the repo `C:\\\\Projects\\\\nuria',
+        toolOutput: "ok"
       })
     );
     expect(info.name).toBe("Implement Task 1: agent factory");
@@ -135,13 +140,62 @@ describe("describeSubagent", () => {
     expect(info.counts).toEqual({ tokens: 136099, tools: 12 });
   });
 
-  it("hides the launch acknowledgement from output and summary while still running", () => {
+  it.each(TASK_STATES)("takes the %s status from the task snapshot", (state) => {
     const info = describeSubagent(
       msg({
         toolName: "Agent",
-        toolInput: { description: "Review PR #15", prompt: "Review the PR", run_in_background: true },
+        toolInput: { description: "Review PR #15" },
+        toolOutput: "launched",
+        toolDone: true,
+        task: snapshot({ state })
+      })
+    );
+    expect(info.status).toBe(state);
+  });
+
+  it("trusts the task state over a failed tool result", () => {
+    const info = describeSubagent(
+      msg({
+        toolName: "Agent",
+        toolInput: { description: "x" },
+        toolOutput: "boom",
+        isError: true,
+        task: snapshot({ state: "completed" })
+      })
+    );
+    expect(info.status).toBe("completed");
+  });
+
+  it("never reports running without a task snapshot", () => {
+    const pending = describeSubagent(msg({ toolName: "Agent", toolInput: { description: "x" } }));
+    expect(pending.status).toBe("unknown");
+    const launched = describeSubagent(
+      msg({
+        toolName: "Agent",
+        toolInput: { description: "x" },
+        toolOutput: "Async agent launched successfully.\nagentId: a36e7282329ba6455"
+      })
+    );
+    expect(launched.status).toBe("completed");
+  });
+
+  it("marks a result-less tool with a done flag as completed and an error as failed", () => {
+    expect(describeSubagent(msg({ toolName: "Agent", toolInput: { description: "x" }, toolDone: true })).status).toBe(
+      "completed"
+    );
+    expect(describeSubagent(msg({ toolName: "Agent", toolInput: { description: "x" }, isError: true })).status).toBe(
+      "failed"
+    );
+  });
+
+  it("leaves the body empty for a background task without output", () => {
+    const info = describeSubagent(
+      msg({
+        toolName: "Agent",
+        toolInput: { description: "Review PR #15", prompt: "Review the PR" },
         toolOutput: "Async agent launched successfully. (This tool result is internal metadata.)\nagentId: a36e7282329ba6455",
-        toolDone: true
+        toolDone: true,
+        task: snapshot({ background: true })
       })
     );
     expect(info.status).toBe("running");
@@ -149,58 +203,103 @@ describe("describeSubagent", () => {
     expect(info.summary).toBe("Review the PR");
   });
 
-  it("completes a history-loaded foreground agent whose result carries an agentId", () => {
+  it("uses the task output as the body and unwraps task wrappers", () => {
     const info = describeSubagent(
       msg({
         toolName: "Agent",
-        text: 'Agent {"subagent_type":"ndk:deep-reviewer","description":"Review issue 15 cache fix","run_in_background":false,"prompt":"Review the uncommitted diff at C:/Users',
-        toolOutput:
-          "  This agent's report was delivered to you as a message from \"ad28a053bc237172e\" (its SubagentHandback call).\nagentId: ad28a053bc237172e (use SendMessage with to: 'ad28a053bc237172e' to continue this agent)\n<usage>subagent_tokens: 119569\ntool_uses: 19\nduration_ms: 543327</usage>",
-        toolDone: true
+        toolInput: { description: "Review PR #15" },
+        toolOutput: "Async agent launched successfully.",
+        task: snapshot({
+          background: true,
+          state: "completed",
+          output: `<task id="ses_1" state="completed">\n<task_result>\nApprove with nits.\n</task_result>\n</task>`
+        })
       })
     );
-    expect(info.status).toBe("completed");
-    expect(info.runInBackground).toBe(false);
+    expect(info.output).toBe("Approve with nits.");
+    expect(info.summary).toBe("Approve with nits.");
   });
 
-  it("completes a history-loaded foreground agent when the truncated text lost the background flag", () => {
+  it("falls back to the tool output for a foreground task without output", () => {
     const info = describeSubagent(
       msg({
         toolName: "Agent",
-        text: 'Agent {"description":"Review issue 15 cache fix","prompt":"Review the uncommitted diff at C:/Users',
-        toolOutput:
-          "Report delivered.\nagentId: ad28a053bc237172e\n<usage>subagent_tokens: 119569\ntool_uses: 19\nduration_ms: 543327</usage>",
-        toolDone: true
+        toolInput: { description: "Review PR #15" },
+        toolOutput: "Report delivered.",
+        task: snapshot({ state: "completed" })
       })
     );
-    expect(info.status).toBe("completed");
+    expect(info.output).toBe("Report delivered.");
   });
 
-  it("keeps a history-loaded background launch running", () => {
-    const info = describeSubagent(
+  it("falls back to the task's cli id for the agent id only for agent tasks", () => {
+    const agent = describeSubagent(
+      msg({ toolName: "Agent", toolInput: { description: "x" }, task: snapshot({ cliTaskId: "a36e7282329ba6455" }) })
+    );
+    expect(agent.agentId).toBe("a36e7282329ba6455");
+    const shell = describeSubagent(
       msg({
         toolName: "Agent",
-        text: 'Agent {"description":"Review PR #15","run_in_background":true,"prompt":"Review the PR',
-        toolOutput: "agentId: a36e7282329ba6455",
-        toolDone: true
+        toolInput: { description: "x" },
+        task: snapshot({ kind: "shell", cliTaskId: "b1234567" })
       })
     );
-    expect(info.status).toBe("running");
-    expect(info.runInBackground).toBe(true);
+    expect(shell.agentId).toBeUndefined();
+    const reported = describeSubagent(
+      msg({
+        toolName: "Agent",
+        toolInput: { description: "x" },
+        subagentAgentId: "from-result",
+        task: snapshot({ cliTaskId: "from-task" })
+      })
+    );
+    expect(reported.agentId).toBe("from-result");
   });
 
-  it("completes a background agent once the notification result replaces the launch ack", () => {
+  it("reads timing and usage from the task snapshot", () => {
     const info = describeSubagent(
       msg({
         toolName: "Agent",
-        toolInput: { description: "Review PR #15", run_in_background: true },
-        toolOutput: "Approve with nits; two blockers.",
-        toolDone: true,
-        toolCompletedAt: 5000
+        toolInput: { description: "x" },
+        toolStartedAt: 100,
+        toolCompletedAt: 200,
+        toolUsage: { tokens: 10, toolUses: 1, durationMs: 50 },
+        task: snapshot({
+          state: "completed",
+          startedAt: 1000,
+          endedAt: 9000,
+          usage: { tokens: 136099, toolUses: 12, durationMs: 287602 }
+        })
       })
     );
-    expect(info.status).toBe("completed");
-    expect(info.output).toBe("Approve with nits; two blockers.");
+    expect(info.startedAt).toBe(1000);
+    expect(info.completedAt).toBe(9000);
+    expect(info.durationMs).toBe(287602);
+    expect(info.counts).toEqual({ tokens: 136099, tools: 12 });
+    expect(info.toolCount).toBe(12);
+  });
+
+  it("has no completion time while the task runs and derives duration from the snapshot times", () => {
+    const running = describeSubagent(
+      msg({
+        toolName: "Agent",
+        toolInput: { description: "x" },
+        toolStartedAt: 100,
+        toolCompletedAt: 200,
+        task: snapshot({ startedAt: 1000 })
+      })
+    );
+    expect(running.startedAt).toBe(1000);
+    expect(running.completedAt).toBeUndefined();
+    expect(running.durationMs).toBeUndefined();
+    const ended = describeSubagent(
+      msg({
+        toolName: "Agent",
+        toolInput: { description: "x" },
+        task: snapshot({ state: "stopped", startedAt: 1000, endedAt: 4000 })
+      })
+    );
+    expect(ended.durationMs).toBe(3000);
   });
 
   it("falls back to the sidecar model when the call omits it", () => {
@@ -273,7 +372,7 @@ describe("describeSubagent", () => {
     expect(info.toolCount).toBe(0);
   });
 
-  it("maps error status and duration from timestamps", () => {
+  it("maps failed status and duration from timestamps", () => {
     const info = describeSubagent(
       msg({
         toolName: "Task",
@@ -284,7 +383,7 @@ describe("describeSubagent", () => {
         toolCompletedAt: 46000
       })
     );
-    expect(info.status).toBe("error");
+    expect(info.status).toBe("failed");
     expect(info.durationMs).toBe(45000);
   });
 
@@ -466,7 +565,7 @@ describe("unwrapTaskOutput", () => {
 });
 
 describe("helpers", () => {
-  it("collects, counts and rolls up status", () => {
+  it("collects subagents and formats counts", () => {
     const infos = collectSubagents([
       msg({ id: "a1", toolName: "Task", toolInput: { description: "one" } }),
       msg({ id: "b1", toolName: "Bash", text: "ls" })
@@ -479,9 +578,16 @@ describe("helpers", () => {
     expect(formatTokensShort(999)).toBe("999");
     expect(formatTokensShort(1000)).toBe("1k");
     expect(formatTokensShort(1500000)).toBe("1.5M");
-    expect(groupStatus([{ status: "completed" }, { status: "running" }])).toBe("running");
-    expect(groupStatus([{ status: "completed" }, { status: "error" }])).toBe("error");
-    expect(groupStatus([{ status: "running" }, { status: "error" }])).toBe("running");
+  });
+
+  it("rolls group status up by precedence", () => {
+    expect(groupStatus([])).toBe("completed");
+    expect(groupStatus([{ status: "completed" }, { status: "completed" }])).toBe("completed");
+    expect(groupStatus([{ status: "completed" }, { status: "unknown" }])).toBe("unknown");
+    expect(groupStatus([{ status: "unknown" }, { status: "interrupted" }])).toBe("interrupted");
+    expect(groupStatus([{ status: "interrupted" }, { status: "stopped" }])).toBe("stopped");
+    expect(groupStatus([{ status: "stopped" }, { status: "failed" }])).toBe("failed");
+    expect(groupStatus([{ status: "failed" }, { status: "running" }, { status: "completed" }])).toBe("running");
   });
 
   it("aggregates group metrics and reports mixed known efforts", () => {

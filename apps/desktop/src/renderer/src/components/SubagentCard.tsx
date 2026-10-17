@@ -76,8 +76,9 @@ export function SubagentToolList({
 }
 
 function rowStatus(status: SubagentInfo["status"]): ToolStatus {
-  if (status === "completed") return "complete";
-  return status;
+  if (status === "running") return "running";
+  if (status === "failed") return "error";
+  return "complete";
 }
 
 function metricText(item: SubagentInfo, toolCount: number): string | undefined {
@@ -133,7 +134,7 @@ function SubagentRow({ groupId, item }: { groupId: string; item: SubagentInfo })
       ? duration !== undefined
         ? `Running for ${duration}`
         : "Running"
-      : item.status === "error"
+      : item.status === "failed"
         ? "Failed"
         : duration !== undefined
           ? `Completed in ${duration}`
@@ -191,8 +192,8 @@ function SubagentRow({ groupId, item }: { groupId: string; item: SubagentInfo })
           )}
           {excerpt !== undefined && (
             <div className="suba-excerpt">
-              <div className={`tool-output-label${item.status === "error" ? " error" : ""}`}>
-                {item.output ? (item.status === "error" ? "error" : "result") : "task"}
+              <div className={`tool-output-label${item.status === "failed" ? " error" : ""}`}>
+                {item.output ? (item.status === "failed" ? "error" : "result") : "task"}
               </div>
               <p className="suba-excerpt-text">{excerpt}</p>
             </div>
