@@ -84,9 +84,12 @@ describe("resolveWorkflowHarness", () => {
 });
 
 describe("harnessSummary", () => {
+  function summarize(harness: PrWorkflowHarness, ctx = context()) {
+    return harnessSummary(harness, resolveWorkflowHarness(harness, ctx), ctx);
+  }
+
   it("labels each part and marks the inherited ones", () => {
-    const harness = config({ driver: "claude", model: "claude-opus-5" });
-    const summary = harnessSummary(harness, resolveWorkflowHarness(harness, context()), { models: MODELS, permissions: PERMISSIONS });
+    const summary = summarize(config({ driver: "claude", model: "claude-opus-5" }));
     expect(summary.parts).toEqual([
       { key: "driver", label: "Claude", source: "workflow" },
       { key: "model", label: "Opus 5", source: "workflow" },
@@ -97,16 +100,20 @@ describe("harnessSummary", () => {
   });
 
   it("says so when the workflow sets everything", () => {
-    const harness = config({ driver: "claude", model: "claude-opus-5", effort: "high", permissionMode: "auto" });
-    const summary = harnessSummary(harness, resolveWorkflowHarness(harness, context()), { models: MODELS, permissions: PERMISSIONS });
+    const summary = summarize(config({ driver: "claude", model: "claude-opus-5", effort: "high", permissionMode: "auto" }));
     expect(summary.parts.every((part) => part.source === "workflow")).toBe(true);
     expect(summary.title).toBe("All set by this workflow");
   });
 
   it("marks a workflow value the harness does not support as a fallback", () => {
-    const harness = config({ driver: "claude", model: "claude-opus-5", effort: "high", permissionMode: "acceptEdits" });
-    const summary = harnessSummary(harness, resolveWorkflowHarness(harness, context()), { models: MODELS, permissions: PERMISSIONS });
+    const summary = summarize(config({ driver: "claude", model: "claude-opus-5", effort: "high", permissionMode: "acceptEdits" }));
     expect(summary.parts.find((part) => part.key === "permission")).toEqual({ key: "permission", label: "Supervised", source: "fallback" });
-    expect(summary.title).toBe("The workflow's choice isn't supported here, falling back to: Supervised");
+    expect(summary.title).toBe("Not supported here, falling back to: Supervised");
+  });
+
+  it("marks an inherited composer value the harness does not support as a fallback", () => {
+    const summary = summarize(config({ driver: "claude", model: "claude-opus-5", effort: "high" }), context({ pendingPrefs: { permissionMode: "acceptEdits" } }));
+    expect(summary.parts.find((part) => part.key === "permission")).toEqual({ key: "permission", label: "Supervised", source: "fallback" });
+    expect(summary.title).toBe("Not supported here, falling back to: Supervised");
   });
 });

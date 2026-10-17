@@ -49,24 +49,33 @@ export interface HarnessSummaryPart {
   source: HarnessValueSource;
 }
 
-function sourceOf<T>(configured: T | null, resolved: T): HarnessValueSource {
-  return configured === null ? "composer" : configured === resolved ? "workflow" : "fallback";
+function requestedValues(config: PrWorkflowHarness, pendingPrefs: ComposerPrefs): { effort: EffortLevel; permissionMode: PermissionMode } {
+  return {
+    effort: config.effort ?? pendingPrefs.effort ?? DEFAULT_EFFORT,
+    permissionMode: config.permissionMode ?? pendingPrefs.permissionMode ?? "auto"
+  };
+}
+
+function sourceOf<T>(configured: T | null, requested: T, resolved: T): HarnessValueSource {
+  if (requested !== resolved) return "fallback";
+  return configured === null ? "composer" : "workflow";
 }
 
 export function harnessSummary(
   config: PrWorkflowHarness,
   resolved: ResolvedWorkflowHarness,
-  lists: { models: ModelOption[]; permissions: PermissionOption[] }
+  ctx: Pick<WorkflowHarnessContext, "models" | "permissions" | "pendingPrefs">
 ): { parts: HarnessSummaryPart[]; title: string } {
-  const modelLabel = resolved.model ? (lists.models.find((m) => m.id === resolved.model)?.label ?? resolved.model) : "default model";
+  const requested = requestedValues(config, ctx.pendingPrefs);
+  const modelLabel = resolved.model ? (ctx.models.find((m) => m.id === resolved.model)?.label ?? resolved.model) : "default model";
   const parts: HarnessSummaryPart[] = [
-    { key: "driver", label: harnessLabel(resolved.driver), source: sourceOf(config.driver, resolved.driver) },
+    { key: "driver", label: harnessLabel(resolved.driver), source: sourceOf(config.driver, resolved.driver, resolved.driver) },
     { key: "model", label: modelLabel, source: config.driver && config.model ? "workflow" : "composer" },
-    { key: "effort", label: `${effortLabel(resolved.effort)} effort`, source: sourceOf(config.effort, resolved.effort) },
+    { key: "effort", label: `${effortLabel(resolved.effort)} effort`, source: sourceOf(config.effort, requested.effort, resolved.effort) },
     {
       key: "permission",
-      label: lists.permissions.find((p) => p.id === resolved.permissionMode)?.label ?? PERMISSION_LABELS[resolved.permissionMode],
-      source: sourceOf(config.permissionMode, resolved.permissionMode)
+      label: ctx.permissions.find((p) => p.id === resolved.permissionMode)?.label ?? PERMISSION_LABELS[resolved.permissionMode],
+      source: sourceOf(config.permissionMode, requested.permissionMode, resolved.permissionMode)
     }
   ];
   const labelsFrom = (source: HarnessValueSource) => parts.filter((part) => part.source === source).map((part) => part.label);
@@ -74,7 +83,7 @@ export function harnessSummary(
   const fallback = labelsFrom("fallback");
   const notes = [
     ...(composer.length > 0 ? [`Not set by this workflow, taken from your current composer choice: ${composer.join(", ")}`] : []),
-    ...(fallback.length > 0 ? [`The workflow's choice isn't supported here, falling back to: ${fallback.join(", ")}`] : [])
+    ...(fallback.length > 0 ? [`Not supported here, falling back to: ${fallback.join(", ")}`] : [])
   ];
   return { parts, title: notes.length === 0 ? "All set by this workflow" : notes.join(". ") };
 }
@@ -89,7 +98,8 @@ export function fallbackPermission(wanted: PermissionMode, offered: PermissionOp
 export function resolveWorkflowHarness(config: PrWorkflowHarness, ctx: WorkflowHarnessContext): ResolvedWorkflowHarness {
   const driver = workflowDriver(config, ctx.composerDriver);
   const model = workflowModel(config, ctx);
-  const effort = fallbackEffort(config.effort ?? ctx.pendingPrefs.effort ?? DEFAULT_EFFORT, effortOptionsFor(driver, ctx.models, model));
-  const permissionMode = fallbackPermission(config.permissionMode ?? ctx.pendingPrefs.permissionMode ?? "auto", ctx.permissions);
+  const requested = requestedValues(config, ctx.pendingPrefs);
+  const effort = fallbackEffort(requested.effort, effortOptionsFor(driver, ctx.models, model));
+  const permissionMode = fallbackPermission(requested.permissionMode, ctx.permissions);
   return { driver, model, effort, permissionMode };
 }

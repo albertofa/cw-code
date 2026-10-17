@@ -257,7 +257,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
       models: lists.models,
       permissions: lists.permissions
     });
-  const optionsReady = options !== null && options.driver === driver && options.projectId === projectId;
+  const optionsReady = !driverMissing && options !== null && options.driver === driver && options.projectId === projectId;
   const resolvedHarness = optionsReady ? resolveHarness(options) : null;
   const effectiveDriver = continueSession?.driver ?? driver;
   const harness = harnessLabel(effectiveDriver);
@@ -544,7 +544,10 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
       ? `Run workflow · ${workflow.label}`
       : "Run workflow";
   const continueModel = continueSession ? composerBySession[continueSession.id]?.model : undefined;
-  const summary = resolvedHarness && options ? harnessSummary(harnessConfig, resolvedHarness, options) : null;
+  const summary =
+    resolvedHarness && options
+      ? harnessSummary(harnessConfig, resolvedHarness, { models: options.models, permissions: options.permissions, pendingPrefs })
+      : null;
   const hasOverride = Boolean(request.promptOverride?.trim());
   const promptLabel = !continueSession
     ? "Prompt"
