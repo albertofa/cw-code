@@ -32,7 +32,7 @@ import { FileIcon } from "./fileIcons.js";
 import { isPreviewablePath } from "./Markdown.js";
 import { useElapsed } from "./useElapsed.js";
 
-export type ToolStatus = "complete" | "error" | "running" | "waiting" | "pending" | "stopped" | "unknown";
+export type ToolStatus = "complete" | "error" | "running" | "waiting" | "pending" | "stopped" | "interrupted" | "unknown";
 
 const STATUS_LABEL: Record<ToolStatus, string> = {
   complete: "Done",
@@ -41,6 +41,7 @@ const STATUS_LABEL: Record<ToolStatus, string> = {
   waiting: "Waiting for approval",
   pending: "Pending",
   stopped: "Stopped",
+  interrupted: "Interrupted",
   unknown: "Ended · no completion recorded"
 };
 
@@ -50,6 +51,7 @@ const STATUS_ICON: Record<Exclude<ToolStatus, "complete">, LucideIcon> = {
   waiting: ShieldAlert,
   pending: CircleDashed,
   stopped: Square,
+  interrupted: Square,
   unknown: CircleHelp
 };
 

@@ -13,8 +13,10 @@ import {
   isSubagentTool,
   mergeSubagentTools,
   parseResultCounts,
+  SUBAGENT_STATE_ORDER,
   shortModelName,
   subagentActivity,
+  subagentStateLabel,
   unwrapTaskOutput,
   type SubagentMessage
 } from "./subagents.js";
@@ -23,6 +25,24 @@ import type { ChatMessage } from "../stores/appStore.js";
 import type { TaskSnapshot, TaskState } from "../cw.js";
 
 const TASK_STATES: TaskState[] = ["running", "completed", "failed", "stopped", "interrupted", "unknown"];
+
+describe("subagentStateLabel", () => {
+  it("labels every state, with durations only for running and done", () => {
+    expect(SUBAGENT_STATE_ORDER).toEqual(TASK_STATES);
+    expect(TASK_STATES.map((state) => subagentStateLabel(state))).toEqual([
+      "Running",
+      "Done",
+      "Failed",
+      "Stopped",
+      "Interrupted",
+      "Ended · no completion recorded"
+    ]);
+    expect(subagentStateLabel("running", "12s")).toBe("Running · 12s");
+    expect(subagentStateLabel("completed", "4m")).toBe("Done in 4m");
+    expect(subagentStateLabel("failed", "4m")).toBe("Failed");
+    expect(subagentStateLabel("unknown", undefined, "compact")).toBe("Ended");
+  });
+});
 
 let nextId = 0;
 function msg(partial: Partial<SubagentMessage> & { id?: string }): SubagentMessage {

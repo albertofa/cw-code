@@ -1,14 +1,14 @@
 import { useEffect, useRef, useState } from "react";
 import { Bot, Check, ChevronLeft, ChevronRight, Copy } from "lucide-react";
-import type { SubagentGroup, SubagentInfo, SubagentStatus } from "./subagents.js";
-import { formatSubagentCount, formatTokensShort, groupSubagents, subagentActivity } from "./subagents.js";
+import type { SubagentGroup, SubagentInfo } from "./subagents.js";
+import { SUBAGENT_STATE_ORDER, formatSubagentCount, formatTokensShort, groupSubagents, subagentActivity, subagentStateLabel } from "./subagents.js";
 import type { SubagentToolActivity } from "../cw.js";
 import { formatDuration, orderToolsForDisplay } from "./toolSummaries.js";
 import { Md } from "./Markdown.js";
 import { ToolCard } from "./ToolCard.js";
 import { useAppStore, type ChatMessage } from "../stores/appStore.js";
 import { usePanelStore } from "../stores/panelStore.js";
-import { SubagentToolList, subagentAnchorId, subagentStateLabel } from "./SubagentCard.js";
+import { SubagentToolList, subagentAnchorId } from "./SubagentCard.js";
 import { useElapsed } from "./useElapsed.js";
 
 export interface AgentsTarget {
@@ -74,8 +74,6 @@ function metaLine(item: SubagentInfo, fallbackModel?: string): string {
   if (item.counts?.tools !== undefined) parts.push(`${item.counts.tools} tools`);
   return parts.join(" · ");
 }
-
-const STATE_ORDER: readonly SubagentStatus[] = ["running", "completed", "failed", "stopped", "interrupted", "unknown"];
 
 function RunningElapsed({ startedAt }: { startedAt: number }) {
   const [now, setNow] = useState(() => Date.now());
@@ -279,7 +277,7 @@ export function AgentsPanel({ sessionId }: { sessionId: string }) {
   const groups: SubagentGroup[] = groupSubagents(ordered);
   const entries = groups.flatMap((group) => group.items.map((item) => ({ groupId: group.id, item })));
   const total = entries.length;
-  const stateCounts = STATE_ORDER.map((state) => ({
+  const stateCounts = SUBAGENT_STATE_ORDER.map((state) => ({
     state,
     count: entries.filter(({ item }) => item.status === state).length
   })).filter(({ count }) => count > 0);

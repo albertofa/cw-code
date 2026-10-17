@@ -24,6 +24,23 @@ export interface SubagentMessage {
 
 export type SubagentStatus = TaskState;
 
+const STATE_LABEL: Record<SubagentStatus, string> = {
+  running: "Running",
+  completed: "Done",
+  failed: "Failed",
+  stopped: "Stopped",
+  interrupted: "Interrupted",
+  unknown: "Ended · no completion recorded"
+};
+
+export const SUBAGENT_STATE_ORDER = Object.keys(STATE_LABEL) as SubagentStatus[];
+
+export function subagentStateLabel(status: SubagentStatus, duration?: string, form: "full" | "compact" = "full"): string {
+  if (duration !== undefined && status === "running") return `Running · ${duration}`;
+  if (duration !== undefined && status === "completed") return `Done in ${duration}`;
+  return form === "compact" && status === "unknown" ? "Ended" : (STATE_LABEL[status] ?? STATE_LABEL.unknown);
+}
+
 export interface SubagentCounts {
   tokens?: number;
   tokensRaw?: string;

@@ -2577,7 +2577,7 @@ body.session-dragging * {
   color: var(--danger);
 }
 
-.tool-state:is(.waiting, .stopped) {
+.tool-state:is(.waiting, .stopped, .interrupted) {
   color: var(--warning);
 }
 

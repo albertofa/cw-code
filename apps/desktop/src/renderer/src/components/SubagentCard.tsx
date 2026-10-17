@@ -2,7 +2,7 @@ import { memo, useEffect, useId, useState } from "react";
 import { Bot, ChevronRight, PanelRight } from "lucide-react";
 import type { SubagentToolActivity } from "../cw.js";
 import type { SubagentGroup, SubagentInfo, SubagentStatus } from "./subagents.js";
-import { formatTokensShort, subagentActivity } from "./subagents.js";
+import { formatTokensShort, subagentActivity, subagentStateLabel } from "./subagents.js";
 import { openAgentsPanel, useSessionWorkspace } from "./AgentsPanel.js";
 import { ToolCard, ToolRow, type ToolStatus } from "./ToolCard.js";
 import { formatDuration, formatToolDuration } from "./toolSummaries.js";
@@ -80,28 +80,9 @@ const ROW_STATUS: Record<SubagentStatus, ToolStatus> = {
   completed: "complete",
   failed: "error",
   stopped: "stopped",
-  interrupted: "stopped",
+  interrupted: "interrupted",
   unknown: "unknown"
 };
-
-const STATE_LABEL: Record<SubagentStatus, string> = {
-  running: "Running",
-  completed: "Done",
-  failed: "Failed",
-  stopped: "Stopped",
-  interrupted: "Interrupted",
-  unknown: "Ended · no completion recorded"
-};
-
-export function subagentStateLabel(
-  status: SubagentStatus,
-  duration?: string,
-  form: "full" | "compact" = "full"
-): string {
-  if (duration !== undefined && status === "running") return `Running · ${duration}`;
-  if (duration !== undefined && status === "completed") return `Done in ${duration}`;
-  return form === "compact" && status === "unknown" ? "Ended" : STATE_LABEL[status];
-}
 
 function metricText(item: SubagentInfo, toolCount: number): string | undefined {
   const parts: string[] = [];
@@ -151,7 +132,7 @@ function SubagentRow({ groupId, item }: { groupId: string; item: SubagentInfo })
       : item.durationMs !== undefined
         ? formatToolDuration(item.durationMs)
         : undefined;
-  const rowStatus = ROW_STATUS[item.status];
+  const rowStatus = ROW_STATUS[item.status] ?? "unknown";
   const stateText = subagentStateLabel(item.status, duration);
   const excerpt = item.output ? excerptOf(item.output) : item.prompt ? excerptOf(item.prompt) : undefined;
 
