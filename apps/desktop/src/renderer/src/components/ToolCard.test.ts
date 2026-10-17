@@ -20,6 +20,7 @@ import {
   toolSpanMs
 } from "./toolSummaries.js";
 import type { ChatMessage } from "../stores/appStore.js";
+import type { TaskSnapshot } from "../cw.js";
 
 function msg(partial: Partial<ChatMessage> & { id: string }): ChatMessage {
   return { role: "tool", text: "", turnId: "t1", ...partial };
@@ -211,6 +212,17 @@ describe("mergeToolPairs", () => {
     ]);
     expect(merged[0].toolStartedAt).toBe(5000);
     expect(merged[0].toolCompletedAt).toBe(46000);
+  });
+
+  it("keeps the task snapshot on the merged call", () => {
+    const task: TaskSnapshot = { id: "c1", kind: "agent", background: true, state: "completed", runCount: 1 };
+    const merged = mergeToolPairs([
+      msg({ id: "c1", toolName: "Agent", text: "call", task }),
+      msg({ id: "c1-r", toolName: "Agent", text: "done" })
+    ]);
+    expect(merged).toHaveLength(1);
+    expect(merged[0].task).toEqual(task);
+    expect(merged[0].toolOutput).toBe("done");
   });
 
   it("keeps orphan results", () => {

@@ -170,8 +170,12 @@ function resolveBody(m: SubagentMessage): string {
   return unwrapTaskOutput(m.toolOutput) ?? "";
 }
 
+function resolveUsage(m: SubagentMessage): ToolUsage | undefined {
+  return m.task ? m.task.usage : m.toolUsage;
+}
+
 function resolveDuration(m: SubagentMessage, startedAt?: number, completedAt?: number): number | undefined {
-  const reported = m.task?.usage?.durationMs ?? m.toolUsage?.durationMs;
+  const reported = resolveUsage(m)?.durationMs;
   if (reported !== undefined) return reported;
   if (startedAt !== undefined && completedAt !== undefined && completedAt >= startedAt) {
     return completedAt - startedAt;
@@ -180,7 +184,10 @@ function resolveDuration(m: SubagentMessage, startedAt?: number, completedAt?: n
 }
 
 function resolveCounts(m: SubagentMessage, body: string): SubagentCounts | undefined {
+  const usage = resolveUsage(m);
   const counts: SubagentCounts = { ...parseResultCounts(body || undefined) };
+  if (usage?.tokens !== undefined) counts.tokens = usage.tokens;
+  if (usage?.toolUses !== undefined) counts.tools = usage.toolUses;
   if (m.subagentTools) {
     counts.tools = m.subagentTools.total;
     if (m.subagentTools.effort !== undefined) counts.effort = m.subagentTools.effort;
@@ -189,10 +196,6 @@ function resolveCounts(m: SubagentMessage, body: string): SubagentCounts | undef
       delete counts.tokensRaw;
     }
   }
-  const tokens = m.task?.usage?.tokens ?? m.toolUsage?.tokens;
-  if (tokens !== undefined) counts.tokens = tokens;
-  const toolUses = m.task?.usage?.toolUses ?? m.toolUsage?.toolUses;
-  if (toolUses !== undefined) counts.tools = toolUses;
   return Object.keys(counts).length > 0 ? counts : undefined;
 }
 
@@ -257,7 +260,7 @@ export function describeSubagent(m: SubagentMessage): SubagentInfo {
     durationMs: resolveDuration(m, startedAt, completedAt),
     counts,
     tools: m.subagentTools?.items ?? [],
-    toolCount: m.subagentTools?.total ?? m.task?.usage?.toolUses ?? m.toolUsage?.toolUses ?? 0
+    toolCount: m.subagentTools?.total ?? resolveUsage(m)?.toolUses ?? 0
   };
 }
 

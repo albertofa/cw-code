@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { beforeEach, describe, expect, it, vi } from "vitest";
-import type { TaskSnapshot, UpdateActionResult, UpdateState } from "@cw-code/contracts";
+import type { HistoryMessage, TaskSnapshot, UpdateActionResult, UpdateState } from "@cw-code/contracts";
 import { DEFAULT_COMPOSER, useAppStore } from "./appStore.js";
 import { getLastModel, setLastModel } from "../components/lastModel.js";
 
@@ -240,10 +240,26 @@ describe("appStore tool.result", () => {
 });
 
 describe("appStore task snapshots", () => {
-  const session = "sess_tasks";
+  let session = "";
+  let sessionSeq = 0;
 
   function snapshot(partial: Partial<TaskSnapshot> = {}): TaskSnapshot {
     return { id: "call_1", kind: "agent", background: true, state: "running", runCount: 1, ...partial };
+  }
+
+  function historyCall(task: TaskSnapshot): HistoryMessage {
+    return {
+      id: "call_1",
+      role: "tool",
+      text: 'Agent {"description":"Review"}',
+      turnId: "turn-1",
+      toolName: "Agent",
+      task
+    };
+  }
+
+  function updateTask(task: TaskSnapshot): void {
+    useAppStore.getState().applyEvent(session, { type: "task.updated", turnId: "turn-1", sessionId: session, task });
   }
 
   function callSubagent(task?: TaskSnapshot): void {
@@ -258,7 +274,15 @@ describe("appStore task snapshots", () => {
   }
 
   beforeEach(() => {
-    useAppStore.setState({ messagesBySession: {}, busyTurns: {}, pendingApprovals: {}, pendingQuestions: {} });
+    sessionSeq += 1;
+    session = `sess_tasks_${sessionSeq}`;
+    useAppStore.setState({
+      messagesBySession: {},
+      loadingHistory: {},
+      busyTurns: {},
+      pendingApprovals: {},
+      pendingQuestions: {}
+    });
   });
 
   it("stores the snapshot carried by a tool call and replaces it on a replayed call", () => {
@@ -304,6 +328,67 @@ describe("appStore task snapshots", () => {
     const before = useAppStore.getState().messagesBySession;
     useAppStore.getState().applyEvent("sess_empty", { type: "task.updated", turnId: "turn-1", sessionId: "sess_empty", task: snapshot() });
     expect(useAppStore.getState().messagesBySession).toBe(before);
+  });
+
+  it("applies a task.updated that arrived before its tool call, over the call's own snapshot", () => {
+    const completed = snapshot({ state: "completed", endedAt: 5000 });
+    updateTask(completed);
+    expect(useAppStore.getState().messagesBySession[session]).toBeUndefined();
+
+    callSubagent(snapshot());
+    expect(useAppStore.getState().messagesBySession[session][0].task).toEqual(completed);
+
+    const failed = snapshot({ state: "failed" });
+    callSubagent(failed);
+    expect(useAppStore.getState().messagesBySession[session][0].task).toEqual(failed);
+  });
+
+  it("keeps only the latest buffered snapshot per task", () => {
+    updateTask(snapshot({ state: "running", runCount: 1 }));
+    updateTask(snapshot({ state: "completed", runCount: 1, endedAt: 5000 }));
+    callSubagent();
+    expect(useAppStore.getState().messagesBySession[session][0].task).toEqual(
+      snapshot({ state: "completed", runCount: 1, endedAt: 5000 })
+    );
+  });
+
+  it("lets a task.updated that arrived while history was loading win over the stale history snapshot", async () => {
+    let resolveHistory: (history: HistoryMessage[]) => void = () => {};
+    const getHistory = vi.fn(() => new Promise<HistoryMessage[]>((resolve) => (resolveHistory = resolve)));
+    (window as unknown as { cw: unknown }).cw = { getHistory };
+
+    const loading = useAppStore.getState().ensureHistory(session);
+    const completed = snapshot({ state: "completed", endedAt: 5000 });
+    updateTask(completed);
+    resolveHistory([historyCall(snapshot())]);
+    await loading;
+
+    const messages = useAppStore.getState().messagesBySession[session];
+    expect(messages).toHaveLength(1);
+    expect(messages[0].task).toEqual(completed);
+  });
+
+  it("applies a buffered snapshot to the history returned by retryConnection", async () => {
+    const retryConnection = vi.fn(async () => ({ status: "done" as const, history: [historyCall(snapshot())] }));
+    (window as unknown as { cw: unknown }).cw = { retryConnection, activeTurns: async () => [] };
+
+    const failed = snapshot({ state: "failed", endedAt: 5000 });
+    updateTask(failed);
+    await useAppStore.getState().retryConnection(session);
+
+    const messages = useAppStore.getState().messagesBySession[session];
+    expect(messages).toHaveLength(1);
+    expect(messages[0].task).toEqual(failed);
+  });
+
+  it("leaves history snapshots untouched when nothing was buffered for them", async () => {
+    const running = snapshot();
+    (window as unknown as { cw: unknown }).cw = { getHistory: async () => [historyCall(running)] };
+    updateTask(snapshot({ id: "other", state: "failed" }));
+
+    await useAppStore.getState().ensureHistory(session);
+
+    expect(useAppStore.getState().messagesBySession[session][0].task).toEqual(running);
   });
 
   it("finalizes unanswered subagent calls on turn.done even with background tasks", () => {

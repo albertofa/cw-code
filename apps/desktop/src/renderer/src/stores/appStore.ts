@@ -20,6 +20,7 @@ import type {
   ShutdownAssessment,
   ShutdownReason,
   SubagentToolsResult,
+  TaskSnapshot,
   TodoItem,
   TokenCounts,
   TurnEvent,
@@ -270,6 +271,35 @@ interface AppState {
   setUpdateChannel(channel: UpdateChannel): Promise<UpdateActionResult>;
   setUpdateBackgroundDownload(enabled: boolean): Promise<AppSettings>;
   updateRestartPending: boolean;
+}
+
+const bufferedTasks = new Map<string, Map<string, TaskSnapshot>>();
+
+function bufferTask(sessionId: string, task: TaskSnapshot): void {
+  const forSession = bufferedTasks.get(sessionId) ?? new Map<string, TaskSnapshot>();
+  forSession.set(task.id, task);
+  bufferedTasks.set(sessionId, forSession);
+}
+
+function takeBufferedTask(sessionId: string, taskId: string): TaskSnapshot | undefined {
+  const forSession = bufferedTasks.get(sessionId);
+  const task = forSession?.get(taskId);
+  if (!forSession || !task) return undefined;
+  forSession.delete(taskId);
+  if (forSession.size === 0) bufferedTasks.delete(sessionId);
+  return task;
+}
+
+function withBufferedTasks(sessionId: string, messages: ChatMessage[]): ChatMessage[] {
+  if (!bufferedTasks.has(sessionId)) return messages;
+  let changed = false;
+  const out = messages.map((m) => {
+    const task = m.role === "tool" ? takeBufferedTask(sessionId, m.id) : undefined;
+    if (!task) return m;
+    changed = true;
+    return { ...m, task };
+  });
+  return changed ? out : messages;
 }
 
 function finalizeTurnTools(messages: ChatMessage[], turnId: string): ChatMessage[] {
@@ -848,7 +878,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       const history = await window.cw.getHistory(sessionId);
       const current = get().messagesBySession[sessionId] ?? [];
       if (!hasLoadedMessages(current) && history.length > 0) {
-        const merged = mergeToolPairs(history);
+        const merged = withBufferedTasks(sessionId, mergeToolPairs(history));
         set({
           messagesBySession: { ...get().messagesBySession, [sessionId]: [...merged, ...current] }
         });
@@ -1173,7 +1203,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         ),
         messagesBySession: {
           ...get().messagesBySession,
-          [sessionId]: mergeToolPairs(result.history)
+          [sessionId]: withBufferedTasks(sessionId, mergeToolPairs(result.history))
         }
       });
       void get().hydrateActiveTurns();
@@ -1214,7 +1244,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     let messages = get().messagesBySession[sessionId] ?? [];
     if (event.type === "task.updated") {
       const idx = messages.findIndex((m) => m.role === "tool" && m.id === event.task.id);
-      if (idx < 0) return;
+      if (idx < 0) {
+        bufferTask(sessionId, event.task);
+        return;
+      }
       set({
         messagesBySession: {
           ...get().messagesBySession,
@@ -1352,10 +1385,11 @@ export const useAppStore = create<AppState>((set, get) => ({
             : {})
       });
     } else if (event.type === "tool.call") {
+      const buffered = takeBufferedTask(sessionId, event.toolCallId);
       set({
         messagesBySession: {
           ...get().messagesBySession,
-          [sessionId]: upsertToolCall(messages, event, Date.now())
+          [sessionId]: upsertToolCall(messages, buffered ? { ...event, task: buffered } : event, Date.now())
         }
       });
     } else if (event.type === "tool.result") {

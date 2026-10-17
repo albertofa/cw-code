@@ -126,7 +126,7 @@ describe("describeSubagent", () => {
     const info = describeSubagent(
       msg({
         toolName: "Agent",
-        toolInput: { description: "Review diff", run_in_background: true },
+        toolInput: { description: "Review diff" },
         toolOutput: "Approve with nits.",
         toolDone: true,
         toolStartedAt: 1000,
@@ -277,6 +277,61 @@ describe("describeSubagent", () => {
     expect(info.durationMs).toBe(287602);
     expect(info.counts).toEqual({ tokens: 136099, tools: 12 });
     expect(info.toolCount).toBe(12);
+  });
+
+  it("prefers sidecar numbers over task usage, which beats the result text", () => {
+    const info = describeSubagent(
+      msg({
+        toolName: "Agent",
+        toolInput: { description: "x" },
+        toolOutput: "456 tokens · 7 tools",
+        subagentTools: { total: 4, items: [], totalTokens: 900 },
+        task: snapshot({ state: "completed", usage: { tokens: 136099, toolUses: 12, durationMs: 287602 } })
+      })
+    );
+    expect(info.counts).toEqual({ tokens: 900, tools: 4 });
+    expect(info.toolCount).toBe(4);
+    expect(info.durationMs).toBe(287602);
+
+    const withoutSidecar = describeSubagent(
+      msg({
+        toolName: "Agent",
+        toolInput: { description: "x" },
+        toolOutput: "456 tokens · 7 tools",
+        task: snapshot({ state: "completed", usage: { tokens: 136099, toolUses: 12 } })
+      })
+    );
+    expect(withoutSidecar.counts).toEqual(expect.objectContaining({ tokens: 136099, tools: 12 }));
+    expect(withoutSidecar.toolCount).toBe(12);
+  });
+
+  it("keeps a sidecar tool total ahead of tool usage without a task", () => {
+    const info = describeSubagent(
+      msg({
+        toolName: "Agent",
+        toolInput: { description: "x" },
+        subagentTools: { total: 4, items: [], totalTokens: 900 },
+        toolUsage: { tokens: 136099, toolUses: 12 }
+      })
+    );
+    expect(info.counts).toEqual({ tokens: 900, tools: 4 });
+    expect(info.toolCount).toBe(4);
+  });
+
+  it("does not carry the previous run's tool usage into a running task", () => {
+    const info = describeSubagent(
+      msg({
+        toolName: "Agent",
+        toolInput: { description: "x" },
+        toolStartedAt: 100,
+        toolCompletedAt: 200,
+        toolUsage: { tokens: 136099, toolUses: 12, durationMs: 287602 },
+        task: snapshot({ state: "running", runCount: 2, startedAt: 1000 })
+      })
+    );
+    expect(info.counts).toBeUndefined();
+    expect(info.toolCount).toBe(0);
+    expect(info.durationMs).toBeUndefined();
   });
 
   it("has no completion time while the task runs and derives duration from the snapshot times", () => {
