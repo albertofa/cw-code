@@ -106,6 +106,12 @@ describe("parseClaudeTaskNotificationLine", () => {
     ).toStrictEqual({ text: notification });
   });
 
+  it("accepts a notification the CLI wrapped in a system reminder when the origin marks it", () => {
+    const wrapped = `<system-reminder>\n${notification}\n</system-reminder>`;
+    const line = JSON.stringify({ type: "user", origin: { kind: "task-notification" }, message: { content: wrapped } });
+    expect(parseClaudeTaskNotificationLine(line)).toStrictEqual({ text: wrapped });
+  });
+
   it("ignores other lines", () => {
     expect(parseClaudeTaskNotificationLine(JSON.stringify({ type: "user", message: { content: `prose ${notification}` } }))).toBeNull();
     expect(parseClaudeTaskNotificationLine(JSON.stringify({ type: "user", message: { content: [{ type: "text", text: notification }] } }))).toBeNull();

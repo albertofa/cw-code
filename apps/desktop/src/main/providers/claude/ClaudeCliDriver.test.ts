@@ -1,11 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
-import { readFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { PassThrough } from "node:stream";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import type { AppSettings, TaskSnapshot, ThreadEvent } from "@cw-code/contracts";
+import type { AppSettings, HistoryMessage, TaskSnapshot, ThreadEvent } from "@cw-code/contracts";
 import { buildClaudeArgs, CLAUDE_IDLE_EVICT_MS, ClaudeCliDriver, claudeSettingsPath, mapClaudeEffort, mapClaudePermission, mergeClaudeAllowRule, subagentToolsResult } from "./ClaudeCliDriver.js";
+import { readClaudeHistoryFile } from "./claudeHistory.js";
 import { SYNTHETIC_FULL_ACCESS_DESCRIPTION } from "../permissions.js";
 
 const SETTINGS: AppSettings = {
@@ -317,6 +319,19 @@ function finalTask(events: ThreadEvent[], id: string): TaskSnapshot | undefined 
 function streamFixture(name: string): string[] {
   const path = fileURLToPath(new URL(`./__fixtures__/tasks/${name}/stream.jsonl`, import.meta.url));
   return readFileSync(path, "utf8").split("\n").filter(Boolean);
+}
+
+function replayFixture(name: string): HistoryMessage[] {
+  const source = fileURLToPath(new URL(`./__fixtures__/tasks/${name}`, import.meta.url));
+  const transcript = readFileSync(join(source, "transcript.jsonl"), "utf8");
+  const cursor = (JSON.parse(transcript.split("\n").find((line) => line.includes('"sessionId"')) ?? "{}") as { sessionId?: string }).sessionId ?? name;
+  const dir = mkdtempSync(join(tmpdir(), "cw-claude-parity-"));
+  writeFileSync(join(dir, `${cursor}.jsonl`), transcript);
+  mkdirSync(join(dir, cursor, "subagents"), { recursive: true });
+  for (const meta of readdirSync(join(source, "subagents"))) {
+    writeFileSync(join(dir, cursor, "subagents", meta), readFileSync(join(source, "subagents", meta)));
+  }
+  return readClaudeHistoryFile(join(dir, `${cursor}.jsonl`), cursor);
 }
 
 async function feedLines(child: FakeChild, lines: string[]): Promise<void> {
@@ -1182,6 +1197,49 @@ describe("ClaudeCliDriver persistent process", () => {
     });
     expect(toolResults(events).filter((event) => event.toolCallId === "toolu_013xAq8DwJuD54JEueDV4y3d")).toEqual([]);
     expect(turnDones(events).map((event) => event.backgroundTasks)).toEqual([0, 0]);
+    driver.dispose();
+  });
+
+  it.each(["hooks-probe", "handback-probe"])("ends every %s task in the same state live and replayed from its transcript", async (probe) => {
+    const { driver, events, children } = makeDriver();
+    driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
+    await settle();
+    await feedLines(children[0], streamFixture(probe));
+    driver.dispose();
+
+    const replayed = replayFixture(probe).flatMap((message) => (message.task ? [message.task] : []));
+    const agents = replayed.filter((task) => task.kind === "agent");
+    expect(agents.length).toBeGreaterThan(0);
+    const comparable = (task: TaskSnapshot | undefined) =>
+      task && { state: task.state, runCount: task.runCount, kind: task.kind, background: task.background, cliTaskId: task.cliTaskId };
+    for (const task of agents) {
+      expect(comparable(finalTask(events, task.id)), task.id).toEqual(comparable(task));
+      if (task.output === "PONG" || task.output === "PONG2") expect(finalTask(events, task.id)?.output).toBe(task.output);
+    }
+  });
+
+  it("closes a top-level foreground agent with its turn but not one nested in a running background agent", async () => {
+    const { driver, events, children } = makeDriver();
+    driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
+    await settle();
+    children[0].stdout.write(
+      `${JSON.stringify({ type: "assistant", message: { content: [
+        { type: "tool_use", id: "call-bg", name: "Agent", input: { run_in_background: true } },
+        { type: "tool_use", id: "call-fg", name: "Agent", input: { run_in_background: false } }
+      ] } })}\n`
+    );
+    children[0].stdout.write(`${taskStartedLine("task-bg", "call-bg")}\n`);
+    children[0].stdout.write(`${taskChangeLineWithIds(["task-bg"])}\n`);
+    children[0].stdout.write(
+      `${JSON.stringify({ type: "assistant", parent_tool_use_id: "call-bg", message: { content: [{ type: "tool_use", id: "call-nested", name: "Agent", input: { run_in_background: false } }] } })}\n`
+    );
+    children[0].stdout.write(`${resultLine({ result: "waiting" })}\n`);
+    await settle();
+
+    expect(finalTask(events, "call-fg")).toMatchObject({ state: "unknown", endReason: "no-record" });
+    expect(finalTask(events, "call-nested")?.state ?? "running").toBe("running");
+    expect(finalTask(events, "call-bg")).toMatchObject({ state: "running" });
+    expect(turnDones(events).map((event) => event.backgroundTasks)).toEqual([1]);
     driver.dispose();
   });
 

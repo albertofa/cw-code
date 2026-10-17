@@ -1,4 +1,4 @@
-import type { ToolUsage } from "@cw-code/contracts";
+import type { TaskKind, ToolUsage } from "@cw-code/contracts";
 import { mapCliTaskStatus, type TaskObservation, type TaskOutputSource, type TaskRef } from "../../tasks/TaskTable.js";
 import {
   AGENT_ID_RE,
@@ -81,6 +81,13 @@ function notificationOutput(n: ClaudeNotificationXml): { output?: string; output
   if (hasText(n.result)) return { output: n.result, outputSource: "result" };
   if (hasText(n.summary)) return { output: n.summary, outputSource: "summary" };
   return {};
+}
+
+const AGENT_TASK_TYPES = new Set(["local_agent", "remote_agent", "local_workflow"]);
+
+function taskKindOf(taskType: string | undefined): TaskKind | undefined {
+  if (taskType === CLAUDE_SHELL_TASK_TYPE) return "shell";
+  return taskType !== undefined && AGENT_TASK_TYPES.has(taskType) ? "agent" : undefined;
 }
 
 export function isClaudeSubagentTool(name: string): boolean {
@@ -186,14 +193,17 @@ export function claudeSystemTaskObservation(info: ClaudeTaskSystemInfo, at: numb
           ...(runId ? { runId } : {})
         }))
       };
-    case "started":
+    case "started": {
+      if (info.ambient === true) return null;
+      const taskKind = taskKindOf(info.taskType);
       return {
         kind: "started",
         ref: refOf(info.toolUseId, info.taskId, info.runId),
-        taskKind: info.taskType === CLAUDE_SHELL_TASK_TYPE ? "shell" : "agent",
+        ...(taskKind !== undefined ? { taskKind } : {}),
         ...(info.background !== undefined ? { background: info.background } : {}),
         at
       };
+    }
     case "updated": {
       const state = mapCliTaskStatus(info.status);
       if (state === undefined || state === "running") return null;
@@ -205,8 +215,8 @@ export function claudeSystemTaskObservation(info: ClaudeTaskSystemInfo, at: numb
         at: info.endTime ?? at
       };
     }
-    case "notification":
-      return claudeNotificationObservation(
+    case "notification": {
+      const observation = claudeNotificationObservation(
         {
           toolUseId: info.toolUseId,
           taskId: info.taskId,
@@ -217,6 +227,10 @@ export function claudeSystemTaskObservation(info: ClaudeTaskSystemInfo, at: numb
         at,
         info.runId
       );
+      return observation?.kind === "ended" && info.handbackReport
+        ? { ...observation, output: info.handbackReport, outputSource: "report" }
+        : observation;
+    }
     case "progress":
       return null;
   }

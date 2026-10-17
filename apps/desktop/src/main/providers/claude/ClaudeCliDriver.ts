@@ -155,6 +155,7 @@ interface ClaudeProcessState {
   postCompletionOutputPending: boolean;
   agentByCall: Map<string, string>;
   suppressedCallIds: Set<string>;
+  topLevelAgentCalls: Set<string>;
   shellResults: Map<string, string>;
   permissionMode: PermissionMode;
   reportedPermissionMode?: string;
@@ -393,6 +394,7 @@ export class ClaudeCliDriver implements CliDriver {
     const obs = claudeCallObservation(event.name, event.toolCallId, event.input, Date.now());
     if (obs) {
       state.tasks.apply(obs);
+      if (obs.kind === "call" && obs.taskKind === "agent" && !event.parentToolCallId) state.topLevelAgentCalls.add(event.toolCallId);
       this.noteBackgroundWork(state);
     }
     const task = obs ? state.tasks.get(event.toolCallId) : undefined;
@@ -549,7 +551,7 @@ export class ClaudeCliDriver implements CliDriver {
     if (state.apiErrorMessage) {
       info = { ...info, isError: true, resultText: state.apiErrorMessage };
     }
-    this.closeTasks(state, "unknown", "no-record", (task) => task.kind === "agent" && !task.background);
+    this.closeTasks(state, "unknown", "no-record", (task) => !task.background && state.topLevelAgentCalls.has(task.id));
     const turnId = state.activeTurnId;
     const interrupted = this.interruptedTurns.delete(turnId);
     if (state.completedTurn) {
@@ -785,6 +787,7 @@ export class ClaudeCliDriver implements CliDriver {
       postCompletionOutputPending: false,
       agentByCall: new Map(),
       suppressedCallIds: new Set(),
+      topLevelAgentCalls: new Set(),
       shellResults: new Map(),
       permissionMode: request.permissionMode ?? "auto",
       modelUsage: {}

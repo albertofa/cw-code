@@ -139,7 +139,7 @@ const CLAUDE_APPROVAL_DECISIONS: ApprovalDecision[] = [
   "cancel"
 ];
 
-export const CLAUDE_COMMAND_TOOLS = new Set(["bash", "powershell"]);
+export const CLAUDE_COMMAND_TOOLS: ReadonlySet<string> = new Set(["bash", "powershell"]);
 const CLAUDE_FILE_TOOLS = new Set(["edit", "write", "multiedit"]);
 
 const CLAUDE_DETAIL_MAX = 2000;
@@ -238,28 +238,7 @@ interface UserMsg {
   };
 }
 
-export interface ClaudeTaskNotification {
-  toolUseId: string;
-  status?: string;
-  result: string;
-}
-
 const TASK_NOTIFICATION_OPEN = "<task-notification>";
-
-const TASK_NOTIFY_RE = {
-  toolUseId: /<tool-use-id>([\s\S]*?)<\/tool-use-id>/,
-  status: /<status>([\s\S]*?)<\/status>/,
-  result: /<result>([\s\S]*?)<\/result>/
-};
-
-export function parseClaudeTaskNotification(text: string): ClaudeTaskNotification | null {
-  if (!text.trimStart().startsWith(TASK_NOTIFICATION_OPEN)) return null;
-  const toolUseId = TASK_NOTIFY_RE.toolUseId.exec(text)?.[1]?.trim();
-  const result = TASK_NOTIFY_RE.result.exec(text)?.[1];
-  if (!toolUseId || result === undefined) return null;
-  const status = TASK_NOTIFY_RE.status.exec(text)?.[1]?.trim();
-  return { toolUseId, ...(status ? { status } : {}), result };
-}
 
 export interface ClaudeTaskNotificationLine {
   text: string;
@@ -269,7 +248,7 @@ export interface ClaudeTaskNotificationLine {
 interface UserNotificationMsg {
   type?: unknown;
   message?: { content?: unknown };
-  origin?: { runId?: unknown } | null;
+  origin?: { kind?: unknown; runId?: unknown } | null;
 }
 
 export function parseClaudeTaskNotificationLine(line: string): ClaudeTaskNotificationLine | null {
@@ -281,7 +260,8 @@ export function parseClaudeTaskNotificationLine(line: string): ClaudeTaskNotific
     return null;
   }
   const text = msg.message?.content;
-  if (msg.type !== "user" || typeof text !== "string" || !text.trimStart().startsWith(TASK_NOTIFICATION_OPEN)) return null;
+  if (msg.type !== "user" || typeof text !== "string") return null;
+  if (msg.origin?.kind !== "task-notification" && !text.trimStart().startsWith(TASK_NOTIFICATION_OPEN)) return null;
   const runId = str(msg.origin?.runId);
   return { text, ...(runId ? { runId } : {}) };
 }
@@ -317,9 +297,11 @@ export interface ClaudeTaskSystemInfo {
   description?: string;
   subagentType?: string;
   background?: boolean;
+  ambient?: boolean;
   prompt?: string;
   status?: string;
   summary?: string;
+  handbackReport?: string;
   endTime?: number;
   lastToolName?: string;
   usage?: ToolUsage;
@@ -353,6 +335,8 @@ interface SystemTaskMsg {
   last_tool_name?: unknown;
   usage?: unknown;
   patch?: unknown;
+  ambient?: unknown;
+  handback_report?: unknown;
 }
 
 function str(value: unknown): string | undefined {
@@ -424,7 +408,7 @@ export function parseClaudeTaskSystemLine(line: string): ClaudeTaskSystemInfo | 
           const record = task as Record<string, unknown>;
           const entryTaskId = str(record["id"]) ?? str(record["task_id"]);
           const entryRunId = str(record["run_id"]);
-          if (!entryTaskId) return [];
+          if (!entryTaskId || record["ambient"] === true) return [];
           return [{ taskId: entryTaskId, ...(entryRunId ? { runId: entryRunId } : {}) }];
         }
         const entryTaskId = str(task);
@@ -446,6 +430,7 @@ export function parseClaudeTaskSystemLine(line: string): ClaudeTaskSystemInfo | 
         ...(description ? { description } : {}),
         ...(subagentType ? { subagentType } : {}),
         ...(typeof msg.is_backgrounded === "boolean" ? { background: msg.is_backgrounded } : {}),
+        ...(msg.ambient === true ? { ambient: true } : {}),
         ...(prompt ? { prompt } : {})
       };
     }
@@ -483,6 +468,11 @@ export function parseClaudeTaskSystemLine(line: string): ClaudeTaskSystemInfo | 
       if (!taskId) return null;
       const status = str(msg.status);
       const summary = str(msg.summary);
+      const report = msg.handback_report;
+      const handbackReport =
+        report !== null && typeof report === "object" && !Array.isArray(report)
+          ? str((report as Record<string, unknown>)["text"])
+          : undefined;
       return {
         kind: "notification",
         taskId,
@@ -490,6 +480,7 @@ export function parseClaudeTaskSystemLine(line: string): ClaudeTaskSystemInfo | 
         ...(toolUseId ? { toolUseId } : {}),
         ...(status ? { status } : {}),
         ...(summary ? { summary } : {}),
+        ...(handbackReport ? { handbackReport } : {}),
         ...(usage ? { usage } : {})
       };
     }

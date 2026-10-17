@@ -401,6 +401,49 @@ describe("claudeNotificationObservation", () => {
   });
 });
 
+describe("claudeSystemTaskObservation edge signals", () => {
+  const line = (msg: Record<string, unknown>): ClaudeTaskSystemInfo => {
+    const info = parseClaudeTaskSystemLine(JSON.stringify({ type: "system", ...msg }));
+    if (!info) throw new Error("not a task line");
+    return info;
+  };
+
+  it("leaves ambient watcher tasks out of the roster and ignores their start", () => {
+    const roster = line({ subtype: "background_tasks_changed", tasks: [{ task_id: "w1", ambient: true }, { task_id: "a1", run_id: "r1" }] });
+    expect(claudeSystemTaskObservation(roster, AT)).toStrictEqual({ kind: "roster", tasks: [{ cliTaskId: "a1", runId: "r1" }] });
+    const started = line({ subtype: "task_started", task_id: "w1", tool_use_id: "tu_w", ambient: true });
+    expect(claudeSystemTaskObservation(started, AT)).toBeNull();
+  });
+
+  it("does not guess a task kind when task_type is missing", () => {
+    const started = line({ subtype: "task_started", task_id: "t1", tool_use_id: "tu_1", is_backgrounded: true });
+    expect(claudeSystemTaskObservation(started, AT)).toStrictEqual({
+      kind: "started",
+      ref: { toolUseId: "tu_1", cliTaskId: "t1" },
+      background: true,
+      at: AT
+    });
+  });
+
+  it("uses the handback report a notification carries as the task's report", () => {
+    const notification = line({
+      subtype: "task_notification",
+      task_id: "t1",
+      tool_use_id: "tu_1",
+      status: "completed",
+      summary: "This agent's report was delivered to you as a message",
+      handback: "send",
+      handback_report: { text: "PONG" }
+    });
+    expect(claudeSystemTaskObservation(notification, AT)).toMatchObject({
+      kind: "ended",
+      state: "completed",
+      output: "PONG",
+      outputSource: "report"
+    });
+  });
+});
+
 describe("claudeSystemTaskObservation", () => {
   it("maps background_tasks_changed to a roster", () => {
     const live = systemInfo((msg) => msg.subtype === "background_tasks_changed" && msg.tasks?.length === 1);
@@ -450,7 +493,6 @@ describe("claudeSystemTaskObservation", () => {
     expect(claudeSystemTaskObservation({ kind: "started", toolUseId: "toolu_c", background: false }, AT)).toStrictEqual({
       kind: "started",
       ref: { toolUseId: "toolu_c" },
-      taskKind: "agent",
       background: false,
       at: AT
     });
@@ -498,15 +540,15 @@ describe("claudeSystemTaskObservation", () => {
     expect(claudeSystemTaskObservation({ kind: "updated", taskId: "t1", endTime: 5 }, AT)).toBeNull();
   });
 
-  it("ends the run on a real task_notification with the summary as output", () => {
+  it("ends the run on a real task_notification with the handback report it carries as output", () => {
     const info = systemInfo((msg) => msg.subtype === "task_notification" && msg.task_id === PONG.taskId && msg.status === "completed");
     expect(claudeSystemTaskObservation(info, AT)).toStrictEqual({
       kind: "ended",
       ref: { toolUseId: PONG.toolUseId, cliTaskId: PONG.taskId, runId: PONG.runId },
       state: "completed",
       reason: "cli",
-      output: info.summary,
-      outputSource: "summary",
+      output: "PONG",
+      outputSource: "report",
       usage: { tokens: 27933, toolUses: 1, durationMs: 2135 },
       at: AT
     });
