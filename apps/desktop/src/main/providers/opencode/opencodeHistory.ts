@@ -58,7 +58,13 @@ function stamp(value: unknown): { timestamp?: number } {
   return timestamp !== undefined ? { timestamp } : {};
 }
 
-function subagentTaskOf(part: ServerPart, id: string, output: string | undefined, errorText: string | undefined): TaskSnapshot {
+function subagentTaskOf(
+  part: ServerPart,
+  id: string,
+  output: string | undefined,
+  errorText: string | undefined,
+  aborted: boolean
+): TaskSnapshot {
   const startedAt = finiteNumber(part.state?.time?.start);
   const endedAt = finiteNumber(part.state?.time?.end);
   const base = {
@@ -73,7 +79,12 @@ function subagentTaskOf(part: ServerPart, id: string, output: string | undefined
     case "completed":
       return { ...base, state: "completed", endReason: "tool-result", ...(output !== undefined ? { output } : {}) };
     case "error":
-      return { ...base, state: "failed", endReason: "tool-result", ...(errorText !== undefined ? { output: errorText } : {}) };
+      return {
+        ...base,
+        state: aborted ? "interrupted" : "failed",
+        endReason: aborted ? "interrupt" : "tool-result",
+        ...(errorText !== undefined ? { output: errorText } : {})
+      };
     default:
       return { ...base, state: "unknown", endReason: "no-record" };
   }
@@ -86,6 +97,7 @@ export function mapOpencodeMessages(messages: ServerMessage[], limit = 300): His
     const turnId = msg.info?.id ?? `msg-${out.length}`;
     const created = msg.info?.time?.created;
     const completed = msg.info?.time?.completed;
+    const aborted = isAbortedError(msg.info?.error);
     if (msg.info?.summary === true || msg.info?.mode === "compaction") {
       out.push({
         id: `${turnId}-compact`,
@@ -137,7 +149,7 @@ export function mapOpencodeMessages(messages: ServerMessage[], limit = 300): His
           toolName: part.tool ?? "tool",
           ...(todos !== null ? { todos } : {}),
           ...(subagentModel ? { subagentModel } : {}),
-          ...(isSubagentToolName(part.tool ?? "") ? { task: subagentTaskOf(part, callId, output, errorText) } : {}),
+          ...(isSubagentToolName(part.tool ?? "") ? { task: subagentTaskOf(part, callId, output, errorText, aborted) } : {}),
           ...partStamp
         });
         if (resultText) {
@@ -161,7 +173,7 @@ export function mapOpencodeMessages(messages: ServerMessage[], limit = 300): His
         });
       }
     }
-    const errorText = role === "assistant" && !isAbortedError(msg.info?.error) ? errorMessageOf(msg.info?.error) : "";
+    const errorText = role === "assistant" && !aborted ? errorMessageOf(msg.info?.error) : "";
     if (errorText) {
       out.push({
         id: `${turnId}-e`,

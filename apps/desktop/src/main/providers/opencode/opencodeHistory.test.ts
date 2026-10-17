@@ -109,9 +109,9 @@ describe("mapOpencodeMessages", () => {
   });
 
   describe("subagent task snapshots", () => {
-    const taskMessage = (tool: string, state: Record<string, unknown>, callID = "call_t") => [
+    const taskMessage = (tool: string, state: Record<string, unknown>, callID = "call_t", error?: unknown) => [
       {
-        info: { id: "mt", role: "assistant" },
+        info: { id: "mt", role: "assistant", ...(error !== undefined ? { error } : {}) },
         parts: [{ type: "tool", tool, callID, state: { input: { description: "Review" }, ...state } }]
       }
     ];
@@ -160,6 +160,48 @@ describe("mapOpencodeMessages", () => {
         endedAt: 2000,
         output: "usage limit reached"
       });
+    });
+
+    it.each(["AbortedError", "MessageAbortedError"])(
+      "marks an errored task of a message aborted with %s as interrupted",
+      (name) => {
+        const out = mapOpencodeMessages(
+          taskMessage(
+            "task",
+            { status: "error", error: "Tool execution aborted", time: { start: 1000, end: 2000 } },
+            "call_t",
+            { name, data: { message: "Aborted" } }
+          )
+        );
+        expect(out[0].task).toEqual({
+          id: "call_t",
+          kind: "agent",
+          background: false,
+          state: "interrupted",
+          endReason: "interrupt",
+          runCount: 1,
+          startedAt: 1000,
+          endedAt: 2000,
+          output: "Tool execution aborted"
+        });
+      }
+    );
+
+    it("keeps an errored task failed when the message carries another error", () => {
+      const out = mapOpencodeMessages(
+        taskMessage("task", { status: "error", error: "usage limit reached" }, "call_t", {
+          name: "APIError",
+          data: { message: "boom" }
+        })
+      );
+      expect(out[0].task).toMatchObject({ state: "failed", endReason: "tool-result", output: "usage limit reached" });
+    });
+
+    it("does not reinterpret a completed task of an aborted message", () => {
+      const out = mapOpencodeMessages(
+        taskMessage("task", { status: "completed", output: "ok" }, "call_t", { name: "MessageAbortedError", data: {} })
+      );
+      expect(out[0].task).toMatchObject({ state: "completed", endReason: "tool-result", output: "ok" });
     });
 
     it.each(["running", "pending", undefined])("marks a %s task as unknown", (status) => {

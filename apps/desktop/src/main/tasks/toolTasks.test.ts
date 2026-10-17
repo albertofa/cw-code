@@ -228,6 +228,55 @@ describe("ToolTaskTracker turn end", () => {
     expect(tracker.observe(turnDone(), SESSION)).toEqual([turnDone()]);
   });
 
+  it("stops listing a turn's tasks once the turn is done", () => {
+    const tracker = trackerAt(100, 250, 400);
+    tracker.observe(call("c1"), SESSION);
+    tracker.observe(result("c1"), SESSION);
+    tracker.observe(call("c2"), SESSION);
+    expect(tracker.liveTasks(SESSION).map((task) => task.state)).toEqual(["completed", "running"]);
+
+    tracker.observe(turnDone(), SESSION);
+
+    expect(tracker.liveTasks(SESSION)).toEqual([]);
+  });
+
+  it("stops listing a turn's tasks once the turn errors", () => {
+    const tracker = trackerAt(100, 250, 400);
+    tracker.observe(call("c1"), SESSION);
+    tracker.observe(result("c1"), SESSION);
+
+    tracker.observe(turnError(), SESSION);
+
+    expect(tracker.liveTasks(SESSION)).toEqual([]);
+  });
+
+  it("keeps listing tasks that are still running in another turn", () => {
+    const tracker = trackerAt(100, 200, 250, 400);
+    tracker.observe(call("c1", "turn_1"), SESSION);
+    tracker.observe(call("c2", "turn_2"), SESSION);
+    tracker.observe(result("c1"), SESSION);
+
+    tracker.observe(turnDone("turn_1"), SESSION);
+
+    expect(tracker.liveTasks(SESSION)).toEqual([running("c2", 200)]);
+    expect(tracker.observe(result("c2", "late", false, "turn_2"), SESSION)[1]).toMatchObject({
+      type: "task.updated",
+      turnId: "turn_2",
+      task: { id: "c2", state: "completed" }
+    });
+  });
+
+  it("does not resurrect a dropped task when its result arrives late", () => {
+    const tracker = trackerAt(100, 250);
+    tracker.observe(call("c1"), SESSION);
+    tracker.observe(turnDone(), SESSION);
+
+    const late = result("c1");
+
+    expect(tracker.observe(late, SESSION)).toEqual([late]);
+    expect(tracker.liveTasks(SESSION)).toEqual([]);
+  });
+
   it("uses the session id of the turn.done event", () => {
     const tracker = trackerAt(100, 400);
     tracker.observe(call("c1"), SESSION);
@@ -243,7 +292,7 @@ describe("ToolTaskTracker turn end", () => {
 
     tracker.observe(turnError(), "sess_a");
 
-    expect(tracker.liveTasks("sess_a").map((task) => task.state)).toEqual(["interrupted"]);
+    expect(tracker.liveTasks("sess_a")).toEqual([]);
     expect(tracker.liveTasks("sess_b").map((task) => task.state)).toEqual(["running"]);
   });
 });
@@ -257,7 +306,7 @@ describe("ToolTaskTracker closeOpen", () => {
     const out = tracker.closeOpen(SESSION, "interrupted", "process-exit");
 
     expect(out.map((event) => event.type)).toEqual(["task.updated", "task.updated"]);
-    expect(tracker.liveTasks(SESSION).map((task) => task.state)).toEqual(["interrupted", "interrupted"]);
+    expect(tracker.liveTasks(SESSION)).toEqual([]);
   });
 
   it("closes only the given turn when one is passed", () => {
@@ -275,6 +324,7 @@ describe("ToolTaskTracker closeOpen", () => {
         task: { ...running("c2", 200), state: "interrupted", endReason: "interrupt", endedAt: 400 }
       }
     ]);
+    expect(tracker.liveTasks(SESSION)).toEqual([running("c1", 100)]);
   });
 
   it("returns nothing for an unknown session", () => {

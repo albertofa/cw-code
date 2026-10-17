@@ -46,7 +46,9 @@ export class ToolTaskTracker {
       this.now(),
       (task) => turnId === undefined || tasks.turnByTask.get(task.id) === turnId
     );
-    return updatesOf(sessionId, tasks, closed);
+    const updates = updatesOf(sessionId, tasks, closed);
+    this.dropEnded(sessionId, tasks);
+    return updates;
   }
 
   liveTasks(sessionId: string): TaskSnapshot[] {
@@ -79,6 +81,21 @@ export class ToolTaskTracker {
       at: this.now()
     });
     return updatesOf(sessionId, tasks, changed);
+  }
+
+  private dropEnded(sessionId: string, tasks: SessionTasks): void {
+    const running = tasks.table.snapshots().filter((task) => task.state === "running");
+    if (running.length === 0) {
+      this.sessions.delete(sessionId);
+      return;
+    }
+    const kept: SessionTasks = { table: new TaskTable(), turnByTask: new Map() };
+    for (const task of running) {
+      kept.table.apply({ kind: "call", toolUseId: task.id, taskKind: "agent", background: false, at: task.startedAt ?? this.now() });
+      const turnId = tasks.turnByTask.get(task.id);
+      if (turnId !== undefined) kept.turnByTask.set(task.id, turnId);
+    }
+    this.sessions.set(sessionId, kept);
   }
 
   private tasksOf(sessionId: string): SessionTasks {
