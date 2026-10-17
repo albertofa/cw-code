@@ -236,13 +236,20 @@ node tools/release/src/cli/release.ts feed-serve --root apps/desktop/dist-update
 ## CI
 
 `.github/workflows/upgrade-test.yml` runs on `workflow_dispatch` (optional
-`scenarios` input), nightly at 03:17 UTC and on pull requests that touch
-the lockfile, `apps/desktop/package.json`, `main/{updates,shutdown,storage,sessions,settings,paths}/**`
-(fixtures included), `main/index.ts`, the builder configs, `electron.vite.config.ts`,
-the `updates`/`shutdown`/`settings`/`startup` contracts, the harness, the feed
-code or the release-tools modules it uses (`rehash`, `updateInfoYaml`, `semver`,
-`upgradeScenarios`). One `windows-latest`
-job, 150-minute timeout, `contents: read`, no secrets, no dependency cache,
+`scenarios` input, every scenario when empty), nightly at 03:17 UTC (every
+scenario) and on pull requests that touch the lockfile, `apps/desktop/package.json`,
+`main/{updates,shutdown}/**`, the builder configs, `electron.vite.config.ts`,
+the `updates`/`shutdown` contracts, the harness, the feed code or the
+release-tools modules it uses (`rehash`, `updateInfoYaml`, `semver`,
+`upgradeScenarios`). Pull requests run only the `core` group, so only the N,
+N+1 and N+2 installers are built. Every test installer is built from the
+same checkout, so the run tests the updater, not data compatibility with an
+older release; storage, session and settings shapes are covered by their
+`*-v0.json` fixture tests, and changes there are caught by the nightly run.
+The nightly run is skipped when the same commit already passed a nightly
+run. The `nightly-gate` job (`ubuntu-latest`, `actions: read`) checks this
+and fails open. The `installed-upgrade` job runs on `windows-latest` with a
+150-minute timeout, `contents: read`, no secrets, no dependency cache,
 actions pinned by SHA, `persist-credentials: false`. Steps: release-tools tests,
 production bundle assertion, dry run (builds and validates), installed
 scenarios, and the redacted evidence folder uploaded with `retention-days: 7`
