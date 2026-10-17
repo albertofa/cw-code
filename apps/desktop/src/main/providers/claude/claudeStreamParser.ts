@@ -244,6 +244,8 @@ export interface ClaudeTaskNotification {
   result: string;
 }
 
+const TASK_NOTIFICATION_OPEN = "<task-notification>";
+
 const TASK_NOTIFY_RE = {
   toolUseId: /<tool-use-id>([\s\S]*?)<\/tool-use-id>/,
   status: /<status>([\s\S]*?)<\/status>/,
@@ -251,12 +253,37 @@ const TASK_NOTIFY_RE = {
 };
 
 export function parseClaudeTaskNotification(text: string): ClaudeTaskNotification | null {
-  if (!text.trimStart().startsWith("<task-notification>")) return null;
+  if (!text.trimStart().startsWith(TASK_NOTIFICATION_OPEN)) return null;
   const toolUseId = TASK_NOTIFY_RE.toolUseId.exec(text)?.[1]?.trim();
   const result = TASK_NOTIFY_RE.result.exec(text)?.[1];
   if (!toolUseId || result === undefined) return null;
   const status = TASK_NOTIFY_RE.status.exec(text)?.[1]?.trim();
   return { toolUseId, ...(status ? { status } : {}), result };
+}
+
+export interface ClaudeTaskNotificationLine {
+  text: string;
+  runId?: string;
+}
+
+interface UserNotificationMsg {
+  type?: unknown;
+  message?: { content?: unknown };
+  origin?: { runId?: unknown } | null;
+}
+
+export function parseClaudeTaskNotificationLine(line: string): ClaudeTaskNotificationLine | null {
+  if (!line.trim().startsWith("{") || !line.includes(TASK_NOTIFICATION_OPEN)) return null;
+  let msg: UserNotificationMsg;
+  try {
+    msg = JSON.parse(line) as UserNotificationMsg;
+  } catch {
+    return null;
+  }
+  const text = msg.message?.content;
+  if (msg.type !== "user" || typeof text !== "string" || !text.trimStart().startsWith(TASK_NOTIFICATION_OPEN)) return null;
+  const runId = str(msg.origin?.runId);
+  return { text, ...(runId ? { runId } : {}) };
 }
 
 interface ResultMsg {
@@ -709,19 +736,7 @@ export function parseStreamLine(
 
   if (msg.type === "user") {
     const raw = (msg as UserMsg).message?.content;
-    if (typeof raw === "string") {
-      const notif = parseClaudeTaskNotification(raw);
-      if (!notif) return [];
-      return [
-        {
-          type: "tool.result",
-          turnId,
-          toolCallId: notif.toolUseId,
-          output: notif.result.slice(0, 8000),
-          isError: notif.status ? notif.status.toLowerCase() !== "completed" : false
-        }
-      ];
-    }
+    if (typeof raw === "string") return [];
     const out: ThreadEvent[] = [];
     const blocks = Array.isArray(raw) ? raw : [];
     for (const block of blocks as Array<{ tool_use_id?: string; content?: unknown; is_error?: boolean }>) {

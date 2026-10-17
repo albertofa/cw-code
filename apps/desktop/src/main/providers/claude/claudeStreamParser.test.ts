@@ -13,6 +13,7 @@ import {
   parseClaudeControlRequest,
   parseClaudeSubagentHandback,
   parseClaudeSystemInit,
+  parseClaudeTaskNotificationLine,
   parseClaudeTaskSystemLine,
   parseClaudeToolUseResult,
   parseTaskNotificationUsage,
@@ -81,6 +82,36 @@ describe("parseClaudeSubagentHandback", () => {
         parentToolCallId: "agent-1"
       })
     ).toBeNull();
+  });
+});
+
+describe("parseClaudeTaskNotificationLine", () => {
+  const notification = "<task-notification>\n<task-id>t1</task-id>\n<status>completed</status>\n</task-notification>";
+
+  it("returns the notification text and the origin run id of a user message", () => {
+    const line = JSON.stringify({
+      type: "user",
+      origin: { kind: "task-notification", runId: "run-1" },
+      message: { content: `\n${notification}` }
+    });
+    expect(parseClaudeTaskNotificationLine(line)).toStrictEqual({ text: `\n${notification}`, runId: "run-1" });
+  });
+
+  it("omits a missing or blank run id", () => {
+    expect(parseClaudeTaskNotificationLine(JSON.stringify({ type: "user", message: { content: notification } }))).toStrictEqual({
+      text: notification
+    });
+    expect(
+      parseClaudeTaskNotificationLine(JSON.stringify({ type: "user", origin: { runId: " " }, message: { content: notification } }))
+    ).toStrictEqual({ text: notification });
+  });
+
+  it("ignores other lines", () => {
+    expect(parseClaudeTaskNotificationLine(JSON.stringify({ type: "user", message: { content: `prose ${notification}` } }))).toBeNull();
+    expect(parseClaudeTaskNotificationLine(JSON.stringify({ type: "user", message: { content: [{ type: "text", text: notification }] } }))).toBeNull();
+    expect(parseClaudeTaskNotificationLine(JSON.stringify({ type: "assistant", message: { content: notification } }))).toBeNull();
+    expect(parseClaudeTaskNotificationLine(JSON.stringify({ type: "user", message: { content: "hello" } }))).toBeNull();
+    expect(parseClaudeTaskNotificationLine('{"type":"user","message":{"content":"<task-notification>')).toBeNull();
   });
 });
 
@@ -194,6 +225,16 @@ describe("parseStreamLine", () => {
     expect(parseStreamLine(line, "t1", "s1", () => {})).toEqual([
       { type: "tool.result", turnId: "t1", toolCallId: "tu1", output: "file contents", isError: false }
     ]);
+  });
+
+  it("leaves a replayed task-notification user message to the task table instead of a tool.result", () => {
+    const line = JSON.stringify({
+      type: "user",
+      message: {
+        content: "<task-notification>\n<task-id>t1</task-id>\n<tool-use-id>tu1</tool-use-id>\n<status>completed</status>\n<result>report</result>\n</task-notification>"
+      }
+    });
+    expect(parseStreamLine(line, "t1", "s1", () => {})).toEqual([]);
   });
 
   it("normalizes text-block arrays in user tool results", () => {
