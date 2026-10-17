@@ -11,7 +11,8 @@ import { PrChipBadge } from "./PrChipBadge.js";
 import { PlanMeters } from "./PlanMeters.js";
 import { unavailableTitle } from "./UsagePlanCard.js";
 import { formatRelativeAge } from "./prInboxModel.js";
-import { collectSubagents, formatTokensShort, isSubagentMessage, type SubagentStatus } from "./subagents.js";
+import { collectSubagents, formatTokensShort, isSubagentMessage } from "./subagents.js";
+import { subagentStateLabel } from "./SubagentCard.js";
 import { formatDuration } from "./toolSummaries.js";
 import { harnessLabel } from "./toolTabs.js";
 import { findSession, useSessionPrItems } from "./useLinkedPr.js";
@@ -315,15 +316,6 @@ function TodosSection({ sessionId }: { sessionId: string }) {
   );
 }
 
-function subagentStatusLabel(status: SubagentStatus, durationMs: number | undefined): string {
-  if (status === "running") return "Running";
-  if (status === "failed") return "Failed";
-  if (status === "stopped") return "Stopped";
-  if (status === "interrupted") return "Interrupted";
-  if (status === "unknown") return "Ended";
-  return durationMs !== undefined ? `Done · ${formatDuration(durationMs)}` : "Done";
-}
-
 function SubagentsSection({ sessionId }: { sessionId: string }) {
   const subagentMessages = useAppStore(useShallow((s) => (s.messagesBySession[sessionId] ?? []).filter(isSubagentMessage)));
   const agents = useMemo(() => collectSubagents(subagentMessages), [subagentMessages]);
@@ -332,12 +324,18 @@ function SubagentsSection({ sessionId }: { sessionId: string }) {
       {agents.length === 0 ? (
         <Note>No subagents in this session.</Note>
       ) : (
-        agents.map((agent) => (
-          <div className="ov-kv" key={agent.id}>
-            <span title={agent.name}>{agent.name}</span>
-            <b className={`ov-agent ${agent.status}`}>{subagentStatusLabel(agent.status, agent.durationMs)}</b>
-          </div>
-        ))
+        agents.map((agent) => {
+          const duration = agent.durationMs === undefined ? undefined : formatDuration(agent.durationMs);
+          return (
+            <div className="ov-kv" key={agent.id}>
+              <span title={agent.name}>{agent.name}</span>
+              <b className={`ov-agent ${agent.status}`} title={subagentStateLabel(agent.status)}>
+                <span className={`suba-dot ${agent.status}`} aria-hidden="true" />
+                {subagentStateLabel(agent.status, duration, "compact")}
+              </b>
+            </div>
+          );
+        })
       )}
     </Section>
   );

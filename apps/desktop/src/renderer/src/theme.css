@@ -2096,6 +2096,10 @@ body.session-dragging * {
   color: color-mix(in srgb, var(--warning) 55%, var(--muted));
 }
 
+.tool-card.running .tool-pending .pulse {
+  background: var(--violet-ink);
+}
+
 .tool-card.waiting .tool-pending .pulse {
   background: var(--warning);
 }
@@ -2562,19 +2566,29 @@ body.session-dragging * {
 }
 
 .tool-state.running {
-  color: var(--success);
+  color: var(--violet-ink);
 }
 
 .tool-state.running > svg {
-  animation: cw-status-pulse 2s infinite;
+  animation: cw-spin 0.9s linear infinite;
 }
 
 .tool-state.error {
   color: var(--danger);
 }
 
-.tool-state.waiting {
+.tool-state:is(.waiting, .stopped) {
   color: var(--warning);
+}
+
+.tool-state.unknown {
+  color: var(--faint);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .tool-state.running > svg {
+    animation: none;
+  }
 }
 
 .tool-subject {
@@ -4610,11 +4624,19 @@ body.resizing .side-resizer:active::after,
 }
 
 .suba-panel-state.running {
-  color: var(--success);
+  color: var(--violet-ink);
 }
 
-.suba-panel-state.error {
+.suba-panel-state.failed {
   color: var(--danger);
+}
+
+.suba-panel-state:is(.stopped, .interrupted) {
+  color: var(--warning);
+}
+
+.suba-panel-state.unknown {
+  color: var(--faint);
 }
 
 .suba-view {
@@ -4663,25 +4685,43 @@ body.resizing .side-resizer:active::after,
 }
 
 .suba-dot {
-  width: 7px;
-  height: 7px;
+  box-sizing: border-box;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   flex: none;
 }
 
+.suba-dot.running {
+  border: 1.5px solid var(--violet-ink);
+  border-top-color: transparent;
+  animation: cw-spin 0.9s linear infinite;
+}
+
 .suba-dot.completed {
   background: var(--success);
-  box-shadow: 0 0 8px rgba(48, 209, 88, 0.8);
 }
 
-.suba-dot.running {
-  background: var(--success);
-  animation: cw-status-pulse 2s infinite;
-}
-
-.suba-dot.error {
+.suba-dot.failed {
   background: var(--danger);
-  box-shadow: 0 0 8px rgba(255, 107, 97, 0.8);
+}
+
+.suba-dot:is(.stopped, .interrupted) {
+  width: 7px;
+  height: 7px;
+  margin: 0 0.5px;
+  border-radius: 2px;
+  background: var(--warning);
+}
+
+.suba-dot.unknown {
+  border: 1.5px dashed var(--faint);
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .suba-dot.running {
+    animation: none;
+  }
 }
 
 .suba-badge {
@@ -4737,17 +4777,51 @@ body.resizing .side-resizer:active::after,
 }
 
 .agents-head-count {
+  flex: none;
   color: var(--faint);
   font-size: var(--t-xs);
+  white-space: nowrap;
 }
 
-.agents-running {
+.agents-counts {
   margin-left: auto;
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  min-width: 0;
+  row-gap: 2px;
   color: var(--muted);
   font-size: var(--t-2xs);
+}
+
+.agents-count {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  white-space: nowrap;
+}
+
+.agents-count:not(:last-child)::after {
+  content: "·";
+  margin: 0 6px 0 1px;
+  color: var(--faint);
+}
+
+.agents-count.running {
+  color: var(--violet-ink);
+  font-weight: 600;
+}
+
+.agents-count.failed {
+  color: var(--danger);
+}
+
+.agents-count:is(.stopped, .interrupted) {
+  color: var(--warning);
+}
+
+.agents-count.unknown {
+  color: var(--faint);
 }
 
 .agents-row {
@@ -4947,8 +5021,20 @@ body.resizing .side-resizer:active::after,
   font-size: var(--t-xs);
 }
 
-.agents-hero-state.error {
+.agents-hero-state.running {
+  color: var(--violet-ink);
+}
+
+.agents-hero-state.failed {
   color: var(--danger);
+}
+
+.agents-hero-state:is(.stopped, .interrupted) {
+  color: var(--warning);
+}
+
+.agents-hero-state.unknown {
+  color: var(--faint);
 }
 
 .agents-actions {

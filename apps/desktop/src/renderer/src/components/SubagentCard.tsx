@@ -1,7 +1,7 @@
 import { memo, useEffect, useId, useState } from "react";
 import { Bot, ChevronRight, PanelRight } from "lucide-react";
 import type { SubagentToolActivity } from "../cw.js";
-import type { SubagentGroup, SubagentInfo } from "./subagents.js";
+import type { SubagentGroup, SubagentInfo, SubagentStatus } from "./subagents.js";
 import { formatTokensShort, subagentActivity } from "./subagents.js";
 import { openAgentsPanel, useSessionWorkspace } from "./AgentsPanel.js";
 import { ToolCard, ToolRow, type ToolStatus } from "./ToolCard.js";
@@ -75,10 +75,32 @@ export function SubagentToolList({
   );
 }
 
-function rowStatus(status: SubagentInfo["status"]): ToolStatus {
-  if (status === "running") return "running";
-  if (status === "failed") return "error";
-  return "complete";
+const ROW_STATUS: Record<SubagentStatus, ToolStatus> = {
+  running: "running",
+  completed: "complete",
+  failed: "error",
+  stopped: "stopped",
+  interrupted: "stopped",
+  unknown: "unknown"
+};
+
+const STATE_LABEL: Record<SubagentStatus, string> = {
+  running: "Running",
+  completed: "Done",
+  failed: "Failed",
+  stopped: "Stopped",
+  interrupted: "Interrupted",
+  unknown: "Ended · no completion recorded"
+};
+
+export function subagentStateLabel(
+  status: SubagentStatus,
+  duration?: string,
+  form: "full" | "compact" = "full"
+): string {
+  if (duration !== undefined && status === "running") return `Running · ${duration}`;
+  if (duration !== undefined && status === "completed") return `Done in ${duration}`;
+  return form === "compact" && status === "unknown" ? "Ended" : STATE_LABEL[status];
 }
 
 function metricText(item: SubagentInfo, toolCount: number): string | undefined {
@@ -129,22 +151,14 @@ function SubagentRow({ groupId, item }: { groupId: string; item: SubagentInfo })
       : item.durationMs !== undefined
         ? formatToolDuration(item.durationMs)
         : undefined;
-  const stateText =
-    item.status === "running"
-      ? duration !== undefined
-        ? `Running for ${duration}`
-        : "Running"
-      : item.status === "failed"
-        ? "Failed"
-        : duration !== undefined
-          ? `Completed in ${duration}`
-          : "Completed";
+  const rowStatus = ROW_STATUS[item.status];
+  const stateText = subagentStateLabel(item.status, duration);
   const excerpt = item.output ? excerptOf(item.output) : item.prompt ? excerptOf(item.prompt) : undefined;
 
   return (
-    <div id={subagentRowId(item.id)} className={`tool-card suba-row ${rowStatus(item.status)}${open ? " open" : ""}`}>
+    <div id={subagentRowId(item.id)} className={`tool-card suba-row ${rowStatus}${open ? " open" : ""}`}>
       <ToolRow
-        status={rowStatus(item.status)}
+        status={rowStatus}
         Icon={Bot}
         verb={item.agentType ?? "Agent"}
         open={open}

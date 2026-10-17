@@ -1,5 +1,17 @@
 import { memo, useEffect, useId, useRef, useState, type ReactNode } from "react";
-import { Check, ChevronRight, CircleDashed, CircleDot, Monitor, ShieldAlert, Wrench, X, type LucideIcon } from "lucide-react";
+import {
+  Check,
+  ChevronRight,
+  CircleDashed,
+  CircleHelp,
+  LoaderCircle,
+  Monitor,
+  ShieldAlert,
+  Square,
+  Wrench,
+  X,
+  type LucideIcon
+} from "lucide-react";
 import type { ChatMessage } from "../stores/appStore.js";
 import { useAppStore } from "../stores/appStore.js";
 import {
@@ -20,21 +32,25 @@ import { FileIcon } from "./fileIcons.js";
 import { isPreviewablePath } from "./Markdown.js";
 import { useElapsed } from "./useElapsed.js";
 
-export type ToolStatus = "complete" | "error" | "running" | "waiting" | "pending";
+export type ToolStatus = "complete" | "error" | "running" | "waiting" | "pending" | "stopped" | "unknown";
 
 const STATUS_LABEL: Record<ToolStatus, string> = {
   complete: "Done",
   error: "Failed",
   running: "Running",
   waiting: "Waiting for approval",
-  pending: "Pending"
+  pending: "Pending",
+  stopped: "Stopped",
+  unknown: "Ended · no completion recorded"
 };
 
 const STATUS_ICON: Record<Exclude<ToolStatus, "complete">, LucideIcon> = {
   error: X,
-  running: CircleDot,
+  running: LoaderCircle,
   waiting: ShieldAlert,
-  pending: CircleDashed
+  pending: CircleDashed,
+  stopped: Square,
+  unknown: CircleHelp
 };
 
 function baseName(path: string): string {

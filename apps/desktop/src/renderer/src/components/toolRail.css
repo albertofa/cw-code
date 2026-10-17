@@ -103,8 +103,8 @@
 }
 
 .rail-badge.run {
-  background: var(--success);
-  color: var(--on-success);
+  background: var(--violet);
+  color: var(--on-accent);
 }
 
 .rail-dot {
