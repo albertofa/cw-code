@@ -12,6 +12,7 @@ import type {
   RetryConnectionResult,
   SessionEvent,
   SessionMeta,
+  TaskSnapshot,
   TurnHandle,
   TurnRequest
 } from "@cw-code/contracts";
@@ -323,6 +324,12 @@ export class TracingCliDriver implements CliDriver {
     const inner = this.inner;
     if (typeof inner.activity !== "function") return undefined;
     return () => inner.activity!();
+  }
+
+  get liveTasks(): ((sessionId: string) => TaskSnapshot[]) | undefined {
+    const inner = this.inner;
+    if (typeof inner.liveTasks !== "function") return undefined;
+    return (sessionId) => inner.liveTasks!(sessionId);
   }
 
   get shutdown(): ((opts: { timeoutMs: number }) => Promise<{ timedOut: boolean }>) | undefined {

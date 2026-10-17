@@ -82,6 +82,7 @@ import { NEW_SESSION_TITLE, pickRestoreCandidate } from "./sessionRestore.js";
 import { opencodeServerDir, sessionDbPath, settingsFilePath, titleGenDir, usageDir, worktreesDir } from "../paths/appPaths.js";
 import { UsageLedger } from "../usage/UsageLedger.js";
 import { shutdownReservedError } from "../shutdown/shutdownReservation.js";
+import { overlayLiveTasks } from "../tasks/overlayLiveTasks.js";
 
 export interface SessionManagerOptions {
   dbPath?: string;
@@ -287,6 +288,10 @@ export class SessionManager {
       return;
     }
     this.flushDelta(event.turnId);
+    if (event.type === "task.updated") {
+      this.handleDriverEvent(event.sessionId, event);
+      return;
+    }
     const sessionId = this.activeTurns.get(event.turnId)?.sessionId ?? this.settledTurns.get(event.turnId) ?? "";
     this.handleDriverEvent(sessionId, event);
   }
@@ -1288,6 +1293,12 @@ export class SessionManager {
     if (!session) throw new Error(`unknown session ${sessionId}`);
     const project = this.store.getProject(session.projectId);
     if (!project) throw new Error(`unknown project ${session.projectId}`);
+    const messages = await this.loadHistory(session, project);
+    const driver = this.drivers[session.driver];
+    return overlayLiveTasks(messages, driver.liveTasks?.(sessionId) ?? []);
+  }
+
+  private async loadHistory(session: SessionMeta, project: Project): Promise<HistoryMessage[]> {
     if (!session.resumeCursor) {
       const healed = await this.healMissingCursor(session, project);
       if (!healed) return [];
@@ -1295,10 +1306,10 @@ export class SessionManager {
     }
     let messages: HistoryMessage[];
     try {
-      messages = await this.drivers[session.driver].getHistory(await this.ensureWorktree(sessionId), session.resumeCursor);
+      messages = await this.drivers[session.driver].getHistory(await this.ensureWorktree(session.id), session.resumeCursor);
     } catch (err) {
       const message = (err as Error).message;
-      console.warn(`history failed for ${sessionId}: ${message}`);
+      console.warn(`history failed for ${session.id}: ${message}`);
       throw new Error(`Could not load history for this session: ${message}. Retry to reconnect.`);
     }
     if (messages.length > 0) return messages;
