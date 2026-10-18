@@ -850,20 +850,21 @@ export class SessionManager {
       ]);
       const current = this.store.getSession(sessionId);
       if (!current?.prs) return;
-      const results = targets.map((target, index) => ({ ...target, head: heads[index], seenAt: this.prUpdatedAt(target.ref) }));
+      const results = targets.map((target, index) => ({ ...target, head: heads[index].head, seenAt: this.prUpdatedAt(target.ref) }));
       const seen = applyTurnSeen(current.prs, results, worktreeHead, now);
-      const prs = finalReview
-        ? applyFinalReview(seen, finalReview, results.find((result) => prKey(result.ref) === prKey(finalReview.ref))?.head ?? null)
-        : seen;
+      const reviewedIndex = finalReview ? targets.findIndex((target) => prKey(target.ref) === prKey(finalReview.ref)) : -1;
+      const reviewedHead = reviewedIndex >= 0 ? heads[reviewedIndex].refreshed : null;
+      const prs = finalReview ? applyFinalReview(seen, finalReview, reviewedHead) : seen;
       if (prs === current.prs) return;
       this.store.updateSession(sessionId, { prs });
       this.emitSession(sessionId);
     })();
   }
 
-  private async turnEndHead(ref: PrRef): Promise<string | null> {
-    if (isFinishedPrState(this.prState(ref))) return this.prHead(ref);
-    return (await this.prHeadRefresh?.(ref).catch(() => null)) ?? this.prHead(ref);
+  private async turnEndHead(ref: PrRef): Promise<{ head: string | null; refreshed: string | null }> {
+    if (isFinishedPrState(this.prState(ref))) return { head: this.prHead(ref), refreshed: null };
+    const refreshed = (await this.prHeadRefresh?.(ref).catch(() => null)) ?? null;
+    return { head: refreshed ?? this.prHead(ref), refreshed };
   }
 
   expireHoldingSessions(sessionIds: string[]): SessionMeta[] {

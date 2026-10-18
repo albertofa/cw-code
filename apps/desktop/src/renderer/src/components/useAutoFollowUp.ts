@@ -63,6 +63,7 @@ export function useAutoFollowUp(): void {
   const { settings } = usePrSettings();
   const attempts = useRef(new Map<string, DetailAttempt>());
   const started = useRef(new Set<string>());
+  const inFlight = useRef(new Set<string>());
 
   const workflows = settings?.prWorkflows ?? NO_WORKFLOWS;
   const sessions = useMemo(() => Object.values(sessionsByProject).flat(), [sessionsByProject]);
@@ -118,7 +119,7 @@ export function useAutoFollowUp(): void {
     for (const sessionId of Object.keys(pausedBefore.current)) {
       if (autoPaused[sessionId] !== undefined) continue;
       for (const signature of started.current) {
-        if (signature.startsWith(`${sessionId}:`)) started.current.delete(signature);
+        if (signature.startsWith(`${sessionId}:`) && !inFlight.current.has(signature)) started.current.delete(signature);
       }
     }
     pausedBefore.current = autoPaused;
@@ -131,7 +132,9 @@ export function useAutoFollowUp(): void {
       const session: Session | undefined = sessions.find((item) => item.id === followUp.sessionId);
       if (!session) continue;
       started.current.add(followUp.signature);
+      inFlight.current.add(followUp.signature);
       void sendAutoFollowUp(followUp, settings, harnessLabel(session.driver)).then((handled) => {
+        inFlight.current.delete(followUp.signature);
         if (!handled) started.current.delete(followUp.signature);
       });
     }

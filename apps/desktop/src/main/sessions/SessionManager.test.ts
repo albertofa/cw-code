@@ -2238,6 +2238,26 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
+  it("does not record a final review from a cached head when the head refresh fails", async () => {
+    const widgets = { host: "github.com", owner: "acme", repo: "widgets", number: 42 };
+    const { manager, fake, project } = makePrManager({
+      prHead: () => "head-1",
+      prHeadRefresh: async () => {
+        throw new Error("network down");
+      }
+    });
+    const session = await manager.createSession(project.id, "claude", { mode: "current" });
+    manager.linkPr(session.id, { ref: widgets, origin: "workflow", workflowId: "babysit", lastSeenSha: "head-0", lastSeenAt: 0 });
+
+    const turnId = await manager.startTurn(session.id, "final", { prRefs: [widgets], finalReview: { ref: widgets, sha: "head-1" } });
+    fake.complete(turnId);
+
+    const updated = await waitForSessionPrSeen(manager, project.id, session.id, "head-1");
+    expect(updated?.prs?.[0]?.lastSeenSha).toBe("head-1");
+    expect(updated?.prs?.[0]?.finalReviewSha).toBeUndefined();
+    manager.dispose();
+  });
+
   it("does not mark the only link seen when the turn names a different pull request", async () => {
     const widgets = { host: "github.com", owner: "acme", repo: "widgets", number: 42 };
     const gadgets = { host: "github.com", owner: "acme", repo: "gadgets", number: 7 };
