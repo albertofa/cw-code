@@ -1,6 +1,7 @@
 import type { CommandOption } from "./commands.js";
 import type { AccountUsageState } from "./usage.js";
 import type { ModelOption, PermissionMode, PermissionOption, SessionMeta, TurnRequest } from "./session.js";
+import type { TaskSnapshot } from "./tasks.js";
 import type {
   ApprovalDecision,
   HistoryMessage,
@@ -45,6 +46,8 @@ export interface CliDriver {
   getHistory(projectRoot: string, resumeCursor: string): Promise<HistoryMessage[]>;
   /** Tool activity and metrics recorded for a subagent spawned by a session, when the provider exposes it. */
   getSubagentTools?(projectRoot: string, resumeCursor: string, agentId: string): Promise<SubagentToolsResult>;
+  /** Tasks the driver's live CLI processes are tracking for a session; empty when the session has no live process. */
+  liveTasks?(sessionId: string): TaskSnapshot[];
   startTurn(request: TurnRequest): TurnHandle;
   interrupt(turnId: string): void;
   /** Force-stop all work for a local session (kill the underlying process). Callers await the result before deleting session resources. */

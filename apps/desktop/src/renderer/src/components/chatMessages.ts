@@ -27,7 +27,8 @@ export function upsertToolCall(messages: ChatMessage[], event: ToolCallEvent, st
       ...(event.parentToolCallId && !existing.parentToolCallId
         ? { parentToolCallId: event.parentToolCallId }
         : {}),
-      ...(event.model ? { subagentModel: event.model } : {})
+      ...(event.model ? { subagentModel: event.model } : {}),
+      ...(event.task ? { task: event.task } : {})
     };
     return [...messages.slice(0, idx), updated, ...messages.slice(idx + 1)];
   }
@@ -42,7 +43,8 @@ export function upsertToolCall(messages: ChatMessage[], event: ToolCallEvent, st
       toolInput: event.input,
       toolStartedAt: startedAt,
       ...(event.parentToolCallId ? { parentToolCallId: event.parentToolCallId } : {}),
-      ...(event.model ? { subagentModel: event.model } : {})
+      ...(event.model ? { subagentModel: event.model } : {}),
+      ...(event.task ? { task: event.task } : {})
     }
   ];
 }

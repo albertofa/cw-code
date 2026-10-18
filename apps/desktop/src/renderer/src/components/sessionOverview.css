@@ -253,15 +253,23 @@
 }
 
 .ov-agent.running {
-  color: var(--success);
+  color: var(--violet-ink);
 }
 
 .ov-agent.completed {
   color: var(--muted);
 }
 
-.ov-agent.error {
+.ov-agent.failed {
   color: var(--danger);
+}
+
+.ov-agent:is(.stopped, .interrupted) {
+  color: var(--warning);
+}
+
+.ov-agent.unknown {
+  color: var(--faint);
 }
 
 .ov-chev svg {

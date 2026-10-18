@@ -1,5 +1,5 @@
 import { recoverToolInput } from "./toolSummaries.js";
-import type { SubagentToolActivity, SubagentToolSummary, ToolUsage } from "../cw.js";
+import type { SubagentToolActivity, SubagentToolSummary, TaskSnapshot, TaskState, ToolUsage } from "../cw.js";
 
 export interface SubagentMessage {
   id: string;
@@ -19,9 +19,27 @@ export interface SubagentMessage {
   parentToolCallId?: string;
   toolStartedAt?: number;
   toolCompletedAt?: number;
+  task?: TaskSnapshot;
 }
 
-export type SubagentStatus = "running" | "completed" | "error";
+export type SubagentStatus = TaskState;
+
+const STATE_LABEL: Record<SubagentStatus, string> = {
+  running: "Running",
+  completed: "Done",
+  failed: "Failed",
+  stopped: "Stopped",
+  interrupted: "Interrupted",
+  unknown: "Ended · no completion recorded"
+};
+
+export const SUBAGENT_STATE_ORDER = Object.keys(STATE_LABEL) as SubagentStatus[];
+
+export function subagentStateLabel(status: SubagentStatus, duration?: string, form: "full" | "compact" = "full"): string {
+  if (duration !== undefined && status === "running") return `Running · ${duration}`;
+  if (duration !== undefined && status === "completed") return `Done in ${duration}`;
+  return form === "compact" && status === "unknown" ? "Ended" : (STATE_LABEL[status] ?? STATE_LABEL.unknown);
+}
 
 export interface SubagentCounts {
   tokens?: number;
@@ -39,7 +57,6 @@ export interface SubagentInfo {
   prompt?: string;
   model?: string;
   agentId?: string;
-  runInBackground?: boolean;
   status: SubagentStatus;
   summary: string;
   output?: string;
@@ -114,24 +131,6 @@ export function extractJsonStringFragment(text: string, keys: string[]): string 
   return undefined;
 }
 
-const BACKGROUND_KEYS = ["run_in_background", "runInBackground"];
-
-function extractJsonBooleanFragment(text: string, keys: string[]): boolean | undefined {
-  for (const key of keys) {
-    const match = new RegExp(`"${key}"\\s*:\\s*(true|false)\\b`).exec(text);
-    if (match) return match[1] === "true";
-  }
-  return undefined;
-}
-
-function backgroundFlag(args: Record<string, unknown>): boolean | undefined {
-  for (const key of BACKGROUND_KEYS) {
-    const value = args[key];
-    if (typeof value === "boolean") return value;
-  }
-  return undefined;
-}
-
 function resolveInput(m: SubagentMessage): Record<string, unknown> {
   let base: Record<string, unknown> = {};
   if (m.toolInput && typeof m.toolInput === "object" && !Array.isArray(m.toolInput)) {
@@ -147,10 +146,6 @@ function resolveInput(m: SubagentMessage): Record<string, unknown> {
     if (pick(merged, ...keys) !== undefined) continue;
     const fragment = extractJsonStringFragment(m.text, keys);
     if (fragment !== undefined) merged[field] = fragment;
-  }
-  if (backgroundFlag(merged) === undefined) {
-    const flag = extractJsonBooleanFragment(m.text, BACKGROUND_KEYS);
-    if (flag !== undefined) merged["run_in_background"] = flag;
   }
   return merged;
 }
@@ -180,26 +175,49 @@ function isDone(m: SubagentMessage): boolean {
   return m.toolDone === true || m.toolOutput !== undefined;
 }
 
-const BACKGROUND_LAUNCH_PHRASE_RE = /async agent launched/i;
-const BACKGROUND_AGENT_ID_RE = /\bagentId:\s*[0-9a-f]{8,64}\b/;
-const FOREGROUND_USAGE_RE = /<usage>[\s\S]*?<\/usage>/;
-
-export function isBackgroundLaunchOutput(output: string | undefined): boolean {
-  return typeof output === "string" && BACKGROUND_LAUNCH_PHRASE_RE.test(output);
+function resolveStatus(m: SubagentMessage): SubagentStatus {
+  if (m.task) return m.task.state;
+  if (m.isError === true) return "failed";
+  return isDone(m) ? "completed" : "unknown";
 }
 
-function isBackgroundLaunch(m: SubagentMessage, args: Record<string, unknown>): boolean {
-  const output = m.toolOutput;
-  if (!output) return false;
-  if (BACKGROUND_LAUNCH_PHRASE_RE.test(output)) return true;
-  if (!BACKGROUND_AGENT_ID_RE.test(output)) return false;
-  return backgroundFlag(args) ?? !FOREGROUND_USAGE_RE.test(output);
+function resolveBody(m: SubagentMessage): string {
+  if (m.task?.output !== undefined) return unwrapTaskOutput(m.task.output) ?? "";
+  if (m.task?.background) return "";
+  return unwrapTaskOutput(m.toolOutput) ?? "";
 }
 
-function describeSubagentStatus(m: SubagentMessage, args: Record<string, unknown>): SubagentStatus {
-  if (m.isError === true) return "error";
-  if (isBackgroundLaunch(m, args)) return "running";
-  return isDone(m) ? "completed" : "running";
+function resolveUsage(m: SubagentMessage): ToolUsage | undefined {
+  return m.task ? m.task.usage : m.toolUsage;
+}
+
+function resolveDuration(m: SubagentMessage, startedAt?: number, completedAt?: number): number | undefined {
+  const reported = resolveUsage(m)?.durationMs;
+  if (reported !== undefined) return reported;
+  if (startedAt !== undefined && completedAt !== undefined && completedAt >= startedAt) {
+    return completedAt - startedAt;
+  }
+  return undefined;
+}
+
+function resolveCounts(m: SubagentMessage, body: string): SubagentCounts | undefined {
+  const usage = resolveUsage(m);
+  const counts: SubagentCounts = { ...parseResultCounts(body || undefined) };
+  if (usage?.tokens !== undefined) counts.tokens = usage.tokens;
+  if (usage?.toolUses !== undefined) counts.tools = usage.toolUses;
+  if (m.subagentTools) {
+    counts.tools = m.subagentTools.total;
+    if (m.subagentTools.effort !== undefined) counts.effort = m.subagentTools.effort;
+    if (m.subagentTools.totalTokens !== undefined) {
+      counts.tokens = m.subagentTools.totalTokens;
+      delete counts.tokensRaw;
+    }
+  }
+  return Object.keys(counts).length > 0 ? counts : undefined;
+}
+
+function resolveAgentId(m: SubagentMessage): string | undefined {
+  return m.subagentAgentId ?? (m.task?.kind === "agent" ? m.task.cliTaskId : undefined);
 }
 
 export function shortModelName(model: string | undefined): string | undefined {
@@ -236,32 +254,13 @@ export function describeSubagent(m: SubagentMessage): SubagentInfo {
   const prompt = pick(args, "prompt");
   const name = pick(args, "description") || firstLine(prompt ?? "", 80) || "Subagent";
   const agentType = pick(args, "subagent_type", "subagentType", "subagent", "agent", "mode");
-  const runInBackground = backgroundFlag(args);
-  const status = describeSubagentStatus(m, args);
-  const launchAck = isBackgroundLaunch(m, args);
-  const body = launchAck ? "" : (unwrapTaskOutput(m.toolOutput) ?? "");
+  const body = resolveBody(m);
   const summary = firstLine(body, 140) || firstLine(prompt ?? "", 140) || name;
-  const startedAt = typeof m.toolStartedAt === "number" ? m.toolStartedAt : undefined;
-  const completedAt = typeof m.toolCompletedAt === "number" ? m.toolCompletedAt : undefined;
-  const durationMs =
-    m.toolUsage?.durationMs !== undefined
-      ? m.toolUsage.durationMs
-      : startedAt !== undefined && completedAt !== undefined && completedAt >= startedAt
-        ? completedAt - startedAt
-        : undefined;
-  const resultCounts = parseResultCounts(body || undefined);
-  const counts: SubagentCounts = { ...resultCounts };
-  if (m.toolUsage?.tokens !== undefined) counts.tokens = m.toolUsage.tokens;
-  if (m.toolUsage?.toolUses !== undefined) counts.tools = m.toolUsage.toolUses;
-  if (m.subagentTools) {
-    counts.tools = m.subagentTools.total;
-    if (m.subagentTools.effort !== undefined) counts.effort = m.subagentTools.effort;
-    if (m.subagentTools.totalTokens !== undefined) {
-      counts.tokens = m.subagentTools.totalTokens;
-      delete counts.tokensRaw;
-    }
-  }
-  const model = pick(args, "model") ?? shortModelName(m.subagentModel) ?? shortModelName(counts.model);
+  const startedAt = m.task?.startedAt ?? m.toolStartedAt;
+  const completedAt = m.task ? m.task.endedAt : m.toolCompletedAt;
+  const counts = resolveCounts(m, body);
+  const agentId = resolveAgentId(m);
+  const model = pick(args, "model") ?? shortModelName(m.subagentModel) ?? shortModelName(counts?.model);
   return {
     id: m.id,
     turnId: m.turnId,
@@ -269,17 +268,16 @@ export function describeSubagent(m: SubagentMessage): SubagentInfo {
     agentType,
     prompt,
     model,
-    ...(m.subagentAgentId ? { agentId: m.subagentAgentId } : {}),
-    runInBackground,
-    status,
+    ...(agentId ? { agentId } : {}),
+    status: resolveStatus(m),
     summary,
     output: body || undefined,
     startedAt,
     completedAt,
-    durationMs,
-    counts: Object.keys(counts).length > 0 ? counts : undefined,
+    durationMs: resolveDuration(m, startedAt, completedAt),
+    counts,
     tools: m.subagentTools?.items ?? [],
-    toolCount: m.subagentTools?.total ?? (m.toolUsage?.toolUses ?? 0)
+    toolCount: m.subagentTools?.total ?? resolveUsage(m)?.toolUses ?? 0
   };
 }
 
@@ -355,10 +353,10 @@ export function subagentActivity<T extends SubagentMessage>(
   return { nested, tools, toolCount: Math.max(item.toolCount, tools.length) };
 }
 
+const GROUP_STATUS_PRECEDENCE: readonly SubagentStatus[] = ["running", "failed", "stopped", "interrupted", "unknown"];
+
 export function groupStatus(items: Pick<SubagentInfo, "status">[]): SubagentStatus {
-  if (items.some((i) => i.status === "running")) return "running";
-  if (items.some((i) => i.status === "error")) return "error";
-  return "completed";
+  return GROUP_STATUS_PRECEDENCE.find((status) => items.some((i) => i.status === status)) ?? "completed";
 }
 
 export function groupSubagentMetrics(items: Pick<SubagentInfo, "counts">[]): SubagentGroupMetrics {

@@ -1,6 +1,6 @@
 ﻿import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
-import type { AccountUsageState, AppSettings, ApprovalDecision, CliDriver, CommandOption, ContextUsage, DriverActivity, HistoryMessage, PermissionMode, PermissionOption, QuestionInfo, QuestionRequest, RetryConnectionRequest, RetryConnectionResult, SessionMeta, ThreadEvent, TurnHandle, TurnModelUsage, TurnRequest } from "@cw-code/contracts";
+import type { AccountUsageState, AppSettings, ApprovalDecision, CliDriver, CommandOption, ContextUsage, DriverActivity, HistoryMessage, PermissionMode, PermissionOption, QuestionInfo, QuestionRequest, RetryConnectionRequest, RetryConnectionResult, SessionMeta, TaskEndReason, TaskSnapshot, ThreadEvent, TurnHandle, TurnModelUsage, TurnRequest } from "@cw-code/contracts";
 import { isAbsolute, join } from "node:path";
 import { opencodeConfigDir } from "../../paths/appPaths.js";
 import {
@@ -39,6 +39,7 @@ import {
   turnMessagesOf
 } from "./opencodeMessage.js";
 import { mapOpencodeMessages } from "./opencodeHistory.js";
+import { ToolTaskTracker } from "../../tasks/toolTasks.js";
 import {
   buildOpencodeCommandBody,
   lastOpencodeUserMessageId,
@@ -111,17 +112,35 @@ export class OpencodeDriver implements CliDriver {
   private bridgeEndpoint = "";
   private bridgeNeed = new Map<string, boolean>();
   private pendingAborts = new Set<Promise<void>>();
+  private readonly toolTasks = new ToolTaskTracker();
+  private readonly emitRaw: (event: ThreadEvent) => void;
+  private readonly emit: (event: ThreadEvent) => void;
 
   constructor(
-    private emit: (event: ThreadEvent) => void,
+    emit: (event: ThreadEvent) => void,
     private getSettings: () => AppSettings,
     pool?: OpencodeServerPool,
     opts?: { sharedRoot?: string }
   ) {
+    this.emitRaw = emit;
+    this.emit = (event) => this.emitTracked(this.sessionFor(event), event);
     this.pool = pool ?? new OpencodeServerPool(() => this.configuredBinary(), {
       ...(opts?.sharedRoot ? { sharedRoot: opts.sharedRoot } : {}),
       onServerGone: (rootPath, port) => this.handleServerGone(rootPath, port)
     });
+  }
+
+  private sessionFor(event: ThreadEvent): string | undefined {
+    if (event.type === "turn.done") return event.sessionId;
+    return this.turnMeta.get(event.turnId)?.localSessionId || undefined;
+  }
+
+  private emitTracked(sessionId: string | undefined, event: ThreadEvent): void {
+    for (const tracked of this.toolTasks.observe(event, sessionId)) this.emitRaw(tracked);
+  }
+
+  private closeTasks(sessionId: string, reason: TaskEndReason, turnId?: string): void {
+    for (const update of this.toolTasks.closeOpen(sessionId, "interrupted", reason, turnId)) this.emitRaw(update);
   }
 
   private handleServerGone(_rootPath: string, port: number): void {
@@ -1363,7 +1382,7 @@ export class OpencodeDriver implements CliDriver {
         undefined,
         (callId) => taken.childModels.get(callId)
       )) {
-        this.emit(event);
+        this.emitTracked(taken.localSessionId || undefined, event);
       }
       const summary = summarizeOpencodeTurn(turnMessagesOf(messages), taken.beforeIds);
       text = summary.text;
@@ -1453,6 +1472,8 @@ export class OpencodeDriver implements CliDriver {
       this.pendingAborts.add(abort);
       void abort.finally(() => this.pendingAborts.delete(abort));
     }
+    const localSessionId = this.turnMeta.get(turnId)?.localSessionId;
+    if (localSessionId) this.closeTasks(localSessionId, "interrupt", turnId);
     this.discardTurn(turnId);
   }
 
@@ -1948,7 +1969,13 @@ export class OpencodeDriver implements CliDriver {
     });
   }
 
+  liveTasks(sessionId: string): TaskSnapshot[] {
+    return this.toolTasks.liveTasks(sessionId);
+  }
+
   stopSession(sessionId: string): void {
+    this.closeTasks(sessionId, "process-exit");
+    this.toolTasks.forget(sessionId);
     const cwd = this.sessionCwds.get(sessionId);
     this.sessionCwds.delete(sessionId);
     if (!cwd) return;

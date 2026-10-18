@@ -1,4 +1,5 @@
-import type { HistoryMessage } from "@cw-code/contracts";
+import type { HistoryMessage, TaskSnapshot } from "@cw-code/contracts";
+import { isSubagentToolName } from "../../tasks/toolTasks.js";
 import { todosFromToolCall } from "../todos.js";
 import { errorMessageOf } from "./opencodeMessage.js";
 
@@ -15,6 +16,7 @@ interface ServerPart {
     output?: string;
     error?: unknown;
     metadata?: { model?: { modelID?: unknown; providerID?: unknown } };
+    time?: { start?: number; end?: number };
   };
   filename?: string;
   mime?: string;
@@ -47,8 +49,45 @@ function taskModelOf(part: ServerPart): string | undefined {
   return typeof modelID === "string" && modelID ? modelID : undefined;
 }
 
+function finiteNumber(value: unknown): number | undefined {
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+}
+
 function stamp(value: unknown): { timestamp?: number } {
-  return typeof value === "number" && Number.isFinite(value) ? { timestamp: value } : {};
+  const timestamp = finiteNumber(value);
+  return timestamp !== undefined ? { timestamp } : {};
+}
+
+function subagentTaskOf(
+  part: ServerPart,
+  id: string,
+  output: string | undefined,
+  errorText: string | undefined,
+  aborted: boolean
+): TaskSnapshot {
+  const startedAt = finiteNumber(part.state?.time?.start);
+  const endedAt = finiteNumber(part.state?.time?.end);
+  const base = {
+    id,
+    kind: "agent" as const,
+    background: false,
+    runCount: 1,
+    ...(startedAt !== undefined ? { startedAt } : {}),
+    ...(endedAt !== undefined ? { endedAt } : {})
+  };
+  switch (part.state?.status) {
+    case "completed":
+      return { ...base, state: "completed", endReason: "tool-result", ...(output !== undefined ? { output } : {}) };
+    case "error":
+      return {
+        ...base,
+        state: aborted ? "interrupted" : "failed",
+        endReason: aborted ? "interrupt" : "tool-result",
+        ...(errorText !== undefined ? { output: errorText } : {})
+      };
+    default:
+      return { ...base, state: "unknown", endReason: "no-record" };
+  }
 }
 
 export function mapOpencodeMessages(messages: ServerMessage[], limit = 300): HistoryMessage[] {
@@ -58,6 +97,7 @@ export function mapOpencodeMessages(messages: ServerMessage[], limit = 300): His
     const turnId = msg.info?.id ?? `msg-${out.length}`;
     const created = msg.info?.time?.created;
     const completed = msg.info?.time?.completed;
+    const aborted = isAbortedError(msg.info?.error);
     if (msg.info?.summary === true || msg.info?.mode === "compaction") {
       out.push({
         id: `${turnId}-compact`,
@@ -94,6 +134,13 @@ export function mapOpencodeMessages(messages: ServerMessage[], limit = 300): His
         const callId = part.callID ?? part.id ?? `${turnId}-tool`;
         const todos = todosFromToolCall(part.tool ?? "tool", part.state?.input);
         const subagentModel = taskModelOf(part);
+        const rawOutput = part.state?.output;
+        const output = typeof rawOutput === "string" && rawOutput.trim() ? rawOutput.slice(0, 4000) : undefined;
+        const errorText =
+          typeof part.state?.error === "string" && part.state.error.trim()
+            ? part.state.error.slice(0, 4000)
+            : undefined;
+        const resultText = output ?? errorText ?? "";
         out.push({
           id: callId,
           role: "tool",
@@ -102,17 +149,9 @@ export function mapOpencodeMessages(messages: ServerMessage[], limit = 300): His
           toolName: part.tool ?? "tool",
           ...(todos !== null ? { todos } : {}),
           ...(subagentModel ? { subagentModel } : {}),
+          ...(isSubagentToolName(part.tool ?? "") ? { task: subagentTaskOf(part, callId, output, errorText, aborted) } : {}),
           ...partStamp
         });
-        const output = part.state?.output;
-        const errorText =
-          typeof part.state?.error === "string" && part.state.error.trim()
-            ? part.state.error
-            : undefined;
-        const resultText =
-          typeof output === "string" && output.trim()
-            ? output.slice(0, 4000)
-            : (errorText?.slice(0, 4000) ?? "");
         if (resultText) {
           out.push({
             id: `${callId}-r`,
@@ -134,7 +173,7 @@ export function mapOpencodeMessages(messages: ServerMessage[], limit = 300): His
         });
       }
     }
-    const errorText = role === "assistant" && !isAbortedError(msg.info?.error) ? errorMessageOf(msg.info?.error) : "";
+    const errorText = role === "assistant" && !aborted ? errorMessageOf(msg.info?.error) : "";
     if (errorText) {
       out.push({
         id: `${turnId}-e`,

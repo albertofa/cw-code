@@ -304,4 +304,58 @@ describe("OpencodeDriver detached send", () => {
       driver.dispose();
     }
   });
+
+  it("tracks a task first seen in the final load and stops listing it after turn.done", async () => {
+    const events: ThreadEvent[] = [];
+    const info = { id: "msg_a1", role: "assistant", finish: "stop", time: { created: 1, completed: 2 } };
+    const polled = [{ info, parts: [{ type: "text", text: "done" }] }];
+    const finalLoad = [
+      {
+        info,
+        parts: [
+          { type: "text", text: "done" },
+          {
+            type: "tool",
+            tool: "task",
+            callID: "call_task",
+            state: { status: "completed", input: { description: "Review" }, output: "all good" }
+          }
+        ]
+      }
+    ];
+    let plainGets = 0;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((url: string, init?: RequestInit) => {
+        if (url.endsWith("/event")) return Promise.resolve({ ok: false, status: 500, body: null });
+        if (init?.method === "POST" && url.includes("/message")) return new Promise<Response>(() => {});
+        if (url.includes("limit=50")) return Promise.resolve(json(polled));
+        if (url.includes("/message")) {
+          plainGets += 1;
+          return Promise.resolve(json(plainGets === 1 ? appendText() : finalLoad));
+        }
+        return Promise.resolve(json({ id: "ses_1" }));
+      })
+    );
+    const driver = startDriver(events);
+    try {
+      driver.startTurn({ sessionId: "sess_1", cwd: "C:\\proj", prompt: "hello", resumeCursor: "ses_1" });
+      await waitFor(() => events.some((e) => e.type === "turn.done"), 7000);
+      const types = events.map((e) => e.type);
+      expect(types).toEqual(["tool.call", "tool.result", "task.updated", "turn.done"]);
+      expect(events[0]).toMatchObject({
+        type: "tool.call",
+        toolCallId: "call_task",
+        task: { id: "call_task", state: "running", background: false }
+      });
+      expect(events[2]).toMatchObject({
+        type: "task.updated",
+        sessionId: "sess_1",
+        task: { id: "call_task", state: "completed", endReason: "tool-result", output: "all good" }
+      });
+      expect(driver.liveTasks("sess_1")).toEqual([]);
+    } finally {
+      driver.dispose();
+    }
+  });
 });
