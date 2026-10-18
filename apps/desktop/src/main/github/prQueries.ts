@@ -159,6 +159,7 @@ ${PR_SUMMARY_FIELDS}
               committedDate
               author {
                 name
+                avatarUrl(size: 48)
                 user {
                   login
                 }
@@ -262,6 +263,7 @@ ${PR_SUMMARY_FIELDS}
             committedDate
             author {
               name
+              avatarUrl(size: 48)
               user {
                 login
               }

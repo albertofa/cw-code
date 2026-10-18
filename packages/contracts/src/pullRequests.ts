@@ -84,6 +84,7 @@ export interface PrCommit {
   oid: string;
   headline: string;
   author: string;
+  authorAvatarUrl?: string;
   committedAt: number;
   ci: PrCiState;
 }

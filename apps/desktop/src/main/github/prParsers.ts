@@ -303,10 +303,12 @@ function commentAuthor(commit: Record<string, unknown>): string {
 function parseCommitNode(node: Record<string, unknown>): PrCommit {
   const commit = asRecord(node.commit);
   const { ci } = ciFromRollup(rollupStates(commit.statusCheckRollup));
+  const authorAvatarUrl = asString(asRecord(commit.author).avatarUrl);
   return {
     oid: asString(commit.oid),
     headline: asString(commit.messageHeadline),
     author: commentAuthor(commit),
+    ...(authorAvatarUrl.startsWith("https://") ? { authorAvatarUrl } : {}),
     committedAt: asEpochMs(commit.committedDate),
     ci
   };

@@ -122,3 +122,58 @@ describe("Md images", () => {
     expect(rendered.querySelector("a")?.getAttribute("href")).toBe("https://example.com/page");
   });
 });
+
+describe("Md raw html", () => {
+  let root: Root | null = null;
+  let host: HTMLDivElement | null = null;
+
+  afterEach(async () => {
+    await act(async () => {
+      root?.unmount();
+    });
+    root = null;
+    host?.remove();
+    host = null;
+  });
+
+  async function renderMd(text: string, allowHtml: boolean): Promise<HTMLDivElement> {
+    host = document.createElement("div");
+    document.body.appendChild(host);
+    root = createRoot(host);
+    await act(async () => {
+      root!.render(<Md text={text} allowImages={false} allowHtml={allowHtml} />);
+    });
+    return host;
+  }
+
+  const footer = [
+    "Body text",
+    "",
+    "<!-- codesmith:footer -->",
+    '<a href="https://example.com/pr"><picture><source media="(prefers-color-scheme: dark)" srcset="https://example.com/dark.svg"><img alt="View PR" src="https://example.com/light.svg"></picture></a> <sup>Need help? Tag <code>@bot</code>.</sup>'
+  ].join("\n");
+
+  it("escapes raw html by default", async () => {
+    const rendered = await renderMd(footer, false);
+    expect(rendered.textContent).toContain("<a href=");
+    expect(rendered.querySelector("sup")).toBeNull();
+  });
+
+  it("renders sanitized html, hides comments and keeps images as text", async () => {
+    const rendered = await renderMd(footer, true);
+    expect(rendered.textContent).not.toContain("codesmith:footer");
+    expect(rendered.textContent).not.toContain("<a href=");
+    expect(rendered.querySelector("a")?.getAttribute("href")).toBe("https://example.com/pr");
+    expect(rendered.querySelector("a")?.textContent).toBe("View PR");
+    expect(rendered.querySelector("img")).toBeNull();
+    expect(rendered.querySelector("source")).toBeNull();
+    expect(rendered.querySelector("sup code")?.textContent).toBe("@bot");
+  });
+
+  it("strips scripts and event handlers", async () => {
+    const rendered = await renderMd('<div onclick="alert(1)">hi</div><script>alert(2)</script><a href="javascript:alert(3)">x</a>', true);
+    expect(rendered.querySelector("script")).toBeNull();
+    expect(rendered.innerHTML).not.toContain("onclick");
+    expect(rendered.innerHTML).not.toContain("javascript:");
+  });
+});

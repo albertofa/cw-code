@@ -17,7 +17,7 @@ import {
   X
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import type { PrCheck, PrDetail, PrRef, PrReviewThread, PrTimelineItem, PrWorkflow, Session } from "../cw.js";
+import type { PrCheck, PrCiState, PrDetail, PrRef, PrReviewThread, PrTimelineItem, PrWorkflow, Session } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import { usePrStore, type PrDetailTab } from "../stores/prStore.js";
 import { PrAvatar } from "./PrAvatar.js";
@@ -32,7 +32,7 @@ import { prKey } from "./prInbox.js";
 import { firstUnseenIndex } from "./prUpdates.js";
 import { usePrSettings } from "./useLinkedPr.js";
 import { suggestedWorkflow } from "./prWorkflows.js";
-import { linkedSessionsBarState, mergeBoxState, threadQuoteText, threadSendTarget, type LinkedBarState } from "./prDetailModel.js";
+import { groupCommitsByDay, linkedSessionsBarState, mergeBoxState, relativeTime, threadQuoteText, threadSendTarget, type LinkedBarState } from "./prDetailModel.js";
 import { linkFor, pickMainSession, sessionsLinkedTo } from "./sessionPrLinks.js";
 
 const MAX_LOG_LINES = 2000;
@@ -55,6 +55,10 @@ function ageLabel(ts: number): string {
 
 function shortSha(sha: string): string {
   return sha.slice(0, 7);
+}
+
+function commitUrl(detail: PrDetail, oid: string): string {
+  return `${detail.url.replace(/\/+$/, "")}/commits/${oid}`;
 }
 
 function without<T>(record: Record<number, T>, key: number): Record<number, T> {
@@ -132,7 +136,7 @@ function ThreadCard({
       {thread.comments.map((comment, index) => (
         <div className="pr-detail-thread-comment" key={index}>
           <div className="pr-detail-thread-comment-who"><strong>{comment.author}</strong></div>
-          <Md text={comment.body} allowImages={false} />
+          <Md text={comment.body} allowImages={false} allowHtml />
         </div>
       ))}
       <div className="pr-detail-thread-footer">
@@ -503,7 +507,7 @@ function ConversationTab({
             <PrAvatar login={detail.author.login} name={detail.author.name} avatarUrl={detail.author.avatarUrl} size={20} />
             <strong>{detail.viewerIsAuthor ? "you" : detail.author.login}</strong> opened this
           </div>
-          <Md text={detail.body} allowImages={false} />
+          <Md text={detail.body} allowImages={false} allowHtml />
         </div>
       )}
       <div className="pr-detail-timeline">
@@ -596,12 +600,20 @@ function TimelineEvent({
         </div>
         <div className="pr-detail-commits">
           {item.commits.map((commit) => (
-            <div className="pr-detail-commit-row" key={commit.oid}>
-              {commit.ci === "failing" ? <X size={12} className="bad" aria-hidden="true" /> : commit.ci === "passing" ? <Check size={12} className="ok" aria-hidden="true" /> : null}
-              <span>{commit.headline}</span>
-              <span className="grow" />
+            <button
+              type="button"
+              className="pr-detail-commit-row"
+              key={commit.oid}
+              title={commit.headline}
+              onClick={() => openExternalLink(commitUrl(detail, commit.oid))}
+            >
+              <span className="pr-detail-commit-node" aria-hidden="true" />
+              <PrAvatar login={commit.author} avatarUrl={commit.authorAvatarUrl} size={18} />
+              <span className="pr-detail-commit-headline">{commit.headline}</span>
+              <CommitTime at={commit.committedAt} />
+              <CommitCiIcon ci={commit.ci} />
               <span className="pr-detail-commit-sha">{shortSha(commit.oid)}</span>
-            </div>
+            </button>
           ))}
         </div>
         {failedSinceThis.length > 0 && (
@@ -624,7 +636,7 @@ function TimelineEvent({
           <strong>{item.actor}</strong> {reviewVerb(item.state)} · {ageLabel(item.at)} ago
           <span className={`pr-detail-pill sm ${tone}`}>{item.state.replace("_", " ").toLowerCase()}</span>
         </div>
-        {item.body && <Md text={item.body} allowImages={false} />}
+        {item.body && <Md text={item.body} allowImages={false} allowHtml />}
         {threads.map((thread) => (
           <ThreadCard key={thread.id} thread={thread} onSendToSession={onSendThread} />
         ))}
@@ -638,7 +650,7 @@ function TimelineEvent({
           <ActorAvatar actor={item.actor} detail={detail} />
           <strong>{item.actor}</strong> commented · {ageLabel(item.at)} ago
         </div>
-        <Md text={item.body} allowImages={false} />
+        <Md text={item.body} allowImages={false} allowHtml />
       </div>
     );
   }
@@ -660,19 +672,57 @@ function TimelineEvent({
   );
 }
 
+function CommitCiIcon({ ci }: { ci: PrCiState }) {
+  if (ci === "failing") return <X size={13} className="pr-detail-commit-ci bad" aria-label="Checks failing" />;
+  if (ci === "passing") return <Check size={13} className="pr-detail-commit-ci ok" aria-label="Checks passing" />;
+  return null;
+}
+
+function CommitTime({ at }: { at: number }) {
+  return (
+    <time className="pr-detail-commit-time" dateTime={new Date(at).toISOString()} title={new Date(at).toLocaleString()}>
+      {relativeTime(at, Date.now())}
+    </time>
+  );
+}
+
+function commitDay(ts: number): string {
+  return new Date(ts).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+}
+
 function CommitsTab({ detail }: { detail: PrDetail }) {
+  const groups = useMemo(() => groupCommitsByDay(detail.commits, commitDay), [detail.commits]);
   if (detail.commits.length === 0) return <div className="pr-view-empty">No commits.</div>;
   return (
-    <div className="pr-detail-commit-list">
-      {detail.commits.map((commit) => (
-        <div className="pr-detail-commit-list-row" key={commit.oid}>
-          {commit.ci === "failing" ? <X size={13} className="bad" aria-hidden="true" /> : commit.ci === "passing" ? <Check size={13} className="ok" aria-hidden="true" /> : <span />}
-          <div className="pr-detail-commit-list-copy">
-            <div>{commit.headline}</div>
-            <div className="pr-detail-commit-list-meta">{commit.author} · {ageLabel(commit.committedAt)} ago</div>
+    <div className="pr-detail-commit-days">
+      {groups.map((group) => (
+        <section className="pr-detail-commit-day" key={group.day}>
+          <div className="pr-detail-commit-day-head">
+            <span className="pr-detail-commit-day-node"><GitCommitHorizontal size={14} aria-hidden="true" /></span>
+            Commits on {group.day}
           </div>
-          <span className="pr-detail-commit-sha">{shortSha(commit.oid)}</span>
-        </div>
+          <div className="pr-detail-commit-list">
+            {group.commits.map((commit) => (
+              <button
+                type="button"
+                className="pr-detail-commit-list-row"
+                key={commit.oid}
+                title={commit.headline}
+                onClick={() => openExternalLink(commitUrl(detail, commit.oid))}
+              >
+                <div className="pr-detail-commit-list-copy">
+                  <div className="pr-detail-commit-headline">{commit.headline}</div>
+                  <div className="pr-detail-commit-list-meta">
+                    <PrAvatar login={commit.author} avatarUrl={commit.authorAvatarUrl} size={16} />
+                    <strong>{commit.author}</strong> committed <CommitTime at={commit.committedAt} />
+                  </div>
+                </div>
+                <CommitCiIcon ci={commit.ci} />
+                <span className="pr-detail-commit-sha">{shortSha(commit.oid)}</span>
+              </button>
+            ))}
+          </div>
+        </section>
       ))}
     </div>
   );
