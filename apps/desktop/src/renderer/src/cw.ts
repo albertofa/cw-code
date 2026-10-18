@@ -17,6 +17,10 @@ import type {
   PrCiState,
   PrCommit,
   PrDetail,
+  NotificationSoundEvent,
+  NotificationSoundId,
+  NotificationSoundPreference,
+  NotificationSoundSettings,
   PrFinishedSessionStatus,
   PrInboxResult,
   ProjectGitHubRepo,
@@ -87,6 +91,10 @@ import type {
 } from "@cw-code/contracts";
 
 export type {
+  NotificationSoundEvent,
+  NotificationSoundId,
+  NotificationSoundPreference,
+  NotificationSoundSettings,
   ShutdownActiveTurn,
   ShutdownAssessment,
   ShutdownCommitResult,
@@ -599,6 +607,7 @@ export interface AppSettings {
   fontSizeTerminal: number;
   typographyAdvanced: boolean;
   panelAnimationMs: number;
+  notificationSounds: NotificationSoundSettings;
 }
 
 export type SettingsPatch = Partial<AppSettings>;

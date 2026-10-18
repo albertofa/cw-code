@@ -78,6 +78,11 @@ function settingsFixture(overrides: Partial<AppSettings> = {}): AppSettings {
     fontSizeTerminal: 14,
     typographyAdvanced: false,
     panelAnimationMs: 180,
+    notificationSounds: {
+      done: { enabled: true, sound: "felt-chord", volume: 60 },
+      question: { enabled: true, sound: "triple-tap", volume: 60 },
+      prUpdate: { enabled: true, sound: "tock-down", volume: 60 }
+    },
     ...overrides
   };
 }

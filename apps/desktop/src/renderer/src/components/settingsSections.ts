@@ -1,6 +1,6 @@
 import type { AppSettings, DriverName } from "../cw.js";
 
-export type SettingsSection = "general" | "appearance" | "updates" | "sourceControl" | "prWorkflows" | "harness";
+export type SettingsSection = "general" | "appearance" | "notifications" | "updates" | "sourceControl" | "prWorkflows" | "harness";
 
 export type SettingsNavId = Exclude<SettingsSection, "harness"> | DriverName;
 
@@ -21,6 +21,7 @@ export const HARNESS_IDS: DriverName[] = ["claude", "opencode", "codex"];
 export const SETTINGS_NAV: SettingsNavItem[] = [
   { id: "general", label: "General", group: "app" },
   { id: "appearance", label: "Appearance", group: "app" },
+  { id: "notifications", label: "Notifications", group: "app" },
   { id: "updates", label: "Updates", group: "app" },
   { id: "sourceControl", label: "Source control", group: "app" },
   { id: "prWorkflows", label: "Workflows", group: "app" },
@@ -74,7 +75,8 @@ const SETTING_OWNER: Record<DraftSettingKey, SettingsNavId> = {
   fontSizePrompt: "appearance",
   fontSizeTerminal: "appearance",
   typographyAdvanced: "appearance",
-  panelAnimationMs: "appearance"
+  panelAnimationMs: "appearance",
+  notificationSounds: "notifications"
 };
 
 export function navIdOf(section: SettingsSection, harness: DriverName | undefined): SettingsNavId {

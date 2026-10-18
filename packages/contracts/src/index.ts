@@ -31,7 +31,16 @@ export type {
 export type { ThreadEvent, SessionEvent, HistoryMessage, TodoItem, SubagentToolActivity, SubagentToolSummary, ToolUsage, ApprovalDecision, ApprovalKind, ApprovalRequest, QuestionInfo, QuestionOption, QuestionRequest } from "./events.js";
 export type { CliDriver, DriverActivity, TurnHandle, RetryConnectionRequest, RetryConnectionResult, SubagentToolsResult } from "./provider.js";
 export type { TaskEndReason, TaskKind, TaskSnapshot, TaskState } from "./tasks.js";
-export type { AppSettings, CustomModel, PrFinishedSessionStatus, SettingsPatch } from "./settings.js";
+export type {
+  AppSettings,
+  CustomModel,
+  NotificationSoundEvent,
+  NotificationSoundId,
+  NotificationSoundPreference,
+  NotificationSoundSettings,
+  PrFinishedSessionStatus,
+  SettingsPatch
+} from "./settings.js";
 export type {
   PrRef,
   PrCiState,

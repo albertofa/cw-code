@@ -13,6 +13,7 @@ import { DriverIcon } from "./DriverIcon.js";
 import { HarnessSettings } from "./HarnessSettings.js";
 import { MenuSelect } from "./MenuSelect.js";
 import { EFFORTS } from "./modelMenus.js";
+import { NotificationSettings } from "./NotificationSettings.js";
 import { useNotifs } from "./Notifications.js";
 import { shortenHome } from "./pathDisplay.js";
 import { PrWorkflowSettings } from "./PrWorkflowSettings.js";
@@ -747,6 +748,13 @@ export function SettingsPage({
           <>
             <SettingsPageHead title="Appearance" description="Typography and motion. Previews update as you edit; the app changes when you save." />
             <AppearanceSettings draft={current} onDraftChange={set} />
+          </>
+        );
+      case "notifications":
+        return (
+          <>
+            <SettingsPageHead title="Notifications" description="Sounds that play when a session needs you. Previews play right away; the app changes when you save." />
+            <NotificationSettings draft={current} onDraftChange={set} />
           </>
         );
       case "updates":

@@ -6,6 +6,9 @@ import type {
   EffortLevel,
   GitHubKind,
   GitHubViewGroup,
+  NotificationSoundId,
+  NotificationSoundPreference,
+  NotificationSoundSettings,
   PermissionMode,
   PrFinishedSessionStatus,
   PrSuggestCondition,
@@ -52,6 +55,26 @@ const MAX_SAVED_VIEWS = 50;
 const MAX_VIEW_NAME_LENGTH = 80;
 const MAX_VIEW_QUERY_LENGTH = 512;
 const VALID_PR_FINISHED_STATUSES: readonly PrFinishedSessionStatus[] = ["idle", "resolved", "archived", "none"];
+const VALID_NOTIFICATION_SOUNDS: readonly NotificationSoundId[] = [
+  "tock-up",
+  "wood-steps",
+  "felt-resolve",
+  "felt-chord",
+  "thump-tock",
+  "pop-up",
+  "knock-knock",
+  "ask",
+  "triple-tap",
+  "felt-question",
+  "hollow-knock",
+  "pop-pop",
+  "tock",
+  "soft-tap",
+  "tock-down",
+  "felt-tap",
+  "muted-pluck",
+  "pop"
+];
 
 function oneOf<T extends string>(value: unknown, allowed: readonly T[]): T | null {
   return allowed.includes(value as T) ? (value as T) : null;
@@ -202,7 +225,12 @@ export const DEFAULT_SETTINGS: AppSettings = {
   fontSizePrompt: 14,
   fontSizeTerminal: 14,
   typographyAdvanced: false,
-  panelAnimationMs: 0
+  panelAnimationMs: 0,
+  notificationSounds: {
+    done: { enabled: true, sound: "felt-chord", volume: 60 },
+    question: { enabled: true, sound: "triple-tap", volume: 60 },
+    prUpdate: { enabled: true, sound: "tock-down", volume: 60 }
+  }
 };
 
 const FONT_FAMILY_MAX_LENGTH = 200;
@@ -229,6 +257,29 @@ function trimmedOr(value: unknown, fallback: string): string {
 
 function binaryPathOr(value: unknown, fallback: string): string {
   return (typeof value === "string" && normalizeBinaryPath(value)) || fallback;
+}
+
+function sanitizeSoundPreference(raw: unknown, fallback: NotificationSoundPreference): NotificationSoundPreference {
+  const o = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  return {
+    enabled: typeof o.enabled === "boolean" ? o.enabled : fallback.enabled,
+    sound: oneOf(o.sound, VALID_NOTIFICATION_SOUNDS) ?? fallback.sound,
+    volume: clampedIntegerOr(o.volume, fallback.volume, 0, 100)
+  };
+}
+
+function sanitizeNotificationSounds(raw: unknown): NotificationSoundSettings {
+  const o = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  const defaults = DEFAULT_SETTINGS.notificationSounds;
+  return {
+    done: sanitizeSoundPreference(o.done, defaults.done),
+    question: sanitizeSoundPreference(o.question, defaults.question),
+    prUpdate: sanitizeSoundPreference(o.prUpdate, defaults.prUpdate)
+  };
+}
+
+function cloneNotificationSounds(sounds: NotificationSoundSettings): NotificationSoundSettings {
+  return { done: { ...sounds.done }, question: { ...sounds.question }, prUpdate: { ...sounds.prUpdate } };
 }
 
 function sanitize(patch: SettingsPatch): SettingsPatch {
@@ -338,6 +389,7 @@ function sanitize(patch: SettingsPatch): SettingsPatch {
   if (patch.fontSizeTerminal !== undefined) out.fontSizeTerminal = clampedIntegerOr(patch.fontSizeTerminal, DEFAULT_SETTINGS.fontSizeTerminal, 8, 20);
   if (patch.typographyAdvanced !== undefined) out.typographyAdvanced = patch.typographyAdvanced === true;
   if (patch.panelAnimationMs !== undefined) out.panelAnimationMs = steppedIntegerOr(patch.panelAnimationMs, DEFAULT_SETTINGS.panelAnimationMs, 0, 400, 25);
+  if (patch.notificationSounds !== undefined) out.notificationSounds = sanitizeNotificationSounds(patch.notificationSounds);
   return out;
 }
 
@@ -351,7 +403,8 @@ function defaults(): AppSettings {
     claudeEnabledModels: [...DEFAULT_SETTINGS.claudeEnabledModels],
     claudeCustomModel: { ...DEFAULT_SETTINGS.claudeCustomModel },
     prWorkflows: cloneWorkflows(DEFAULT_SETTINGS.prWorkflows),
-    githubSavedViews: [...DEFAULT_SETTINGS.githubSavedViews]
+    githubSavedViews: [...DEFAULT_SETTINGS.githubSavedViews],
+    notificationSounds: cloneNotificationSounds(DEFAULT_SETTINGS.notificationSounds)
   };
 }
 
@@ -415,7 +468,8 @@ export class SettingsStore {
       ...this.data,
       claudeEnabledModels: [...this.data.claudeEnabledModels],
       prWorkflows: cloneWorkflows(this.data.prWorkflows),
-      githubSavedViews: this.data.githubSavedViews.map((view) => ({ ...view }))
+      githubSavedViews: this.data.githubSavedViews.map((view) => ({ ...view })),
+      notificationSounds: cloneNotificationSounds(this.data.notificationSounds)
     };
   }
 

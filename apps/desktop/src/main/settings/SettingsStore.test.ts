@@ -766,4 +766,34 @@ describe("SettingsStore", () => {
     expect(store.set({ panelAnimationMs: Number.NaN }).panelAnimationMs).toBe(0);
     expect(store.set({ panelAnimationMs: "slow" as unknown as number }).panelAnimationMs).toBe(0);
   });
+
+  it("defaults notification sounds to felt chord, triple tap and tock down", () => {
+    expect(new SettingsStore(tempFilePath()).get().notificationSounds).toEqual({
+      done: { enabled: true, sound: "felt-chord", volume: 60 },
+      question: { enabled: true, sound: "triple-tap", volume: 60 },
+      prUpdate: { enabled: true, sound: "tock-down", volume: 60 }
+    });
+  });
+
+  it("repairs each notification sound preference field by field", () => {
+    const store = new SettingsStore(tempFilePath());
+    const sounds = store.set({
+      notificationSounds: {
+        done: { enabled: false, sound: "pop", volume: 140 },
+        question: { enabled: "yes", sound: "siren", volume: -3 },
+        prUpdate: null
+      } as unknown as AppSettings["notificationSounds"]
+    }).notificationSounds;
+    expect(sounds).toEqual({
+      done: { enabled: false, sound: "pop", volume: 100 },
+      question: { enabled: true, sound: "triple-tap", volume: 0 },
+      prUpdate: { enabled: true, sound: "tock-down", volume: 60 }
+    });
+  });
+
+  it("does not share notification sound objects between reads", () => {
+    const store = new SettingsStore(tempFilePath());
+    store.get().notificationSounds.done.volume = 5;
+    expect(store.get().notificationSounds.done.volume).toBe(60);
+  });
 });
