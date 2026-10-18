@@ -7,6 +7,7 @@ import type {
   EffortLevel,
   HistoryMessage,
   ModelOption,
+  NativeSession,
   PermissionMode,
   PermissionOption,
   QuestionInfo,
@@ -190,6 +191,30 @@ export interface CodexThread {
   updatedAt?: number;
   ephemeral?: boolean;
   turns?: CodexTurn[];
+  parentThreadId?: string | null;
+  originator?: string | null;
+  gitInfo?: { branch?: string | null; originUrl?: string | null } | null;
+}
+
+const CW_CODE_ORIGINATOR = "cw_code";
+
+export function mapCodexNativeThread(thread: CodexThread): NativeSession | null {
+  const cwd = (thread.cwd ?? "").trim();
+  if (!thread.id || !cwd || thread.ephemeral || thread.parentThreadId) return null;
+  const session = mapCodexThread(thread, "");
+  const branch = thread.gitInfo?.branch?.trim();
+  const remote = thread.gitInfo?.originUrl?.trim();
+  return {
+    driver: "codex",
+    resumeCursor: thread.id,
+    title: session.title,
+    cwd,
+    createdAt: session.createdAt,
+    updatedAt: session.updatedAt,
+    ...(branch ? { gitBranch: branch } : {}),
+    ...(remote ? { gitRemote: remote } : {}),
+    ...(thread.originator === CW_CODE_ORIGINATOR ? { createdByCwCode: true } : {})
+  };
 }
 
 export interface CodexModel {

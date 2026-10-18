@@ -13,8 +13,12 @@ import type {
   DriverKind,
   GitStatus,
   HistoryMessage,
+  ImportableSession,
+  ImportSessionRequest,
+  ImportSessionResult,
   IssueRef,
   ModelOption,
+  NativeSession,
   PermissionOption,
   PrRef,
   PrSummary,
@@ -77,12 +81,13 @@ import { TracingCliDriver } from "../debug/tracingDriver.js";
 import { CLAUDE_CURATED_MODELS, ClaudeCliDriver } from "../providers/claude/ClaudeCliDriver.js";
 import { OpencodeDriver } from "../providers/opencode/OpencodeDriver.js";
 import { CodexCliDriver } from "../providers/codex/CodexCliDriver.js";
-import { defaultBinary, execText, GitService, safeSegment, sessionBranchName, type CreatedWorktree, type RemoveWorktreeResult, type ResolveBaseOptions } from "../fs/GitService.js";
+import { claimedSessionKeys, importableSessions, nativeSessionKey, projectForCwd, withRepositories, type ImportContext } from "./sessionImport.js";
+import { defaultBinary, execText, GitService, mapLimit, safeSegment, sessionBranchName, type CreatedWorktree, type RemoveWorktreeResult, type ResolveBaseOptions } from "../fs/GitService.js";
 import { resolveAttachments } from "./attachments.js";
 import { AUTO_TITLE_TIMEOUT_MS, buildTitlePrompt, sanitizeGeneratedTitle } from "./autoTitle.js";
 import { branchNameForTitle, TEMP_BRANCH_PATTERN } from "./branchName.js";
 import { NEW_SESSION_TITLE, pickRestoreCandidate } from "./sessionRestore.js";
-import { opencodeServerDir, sessionDbPath, settingsFilePath, titleGenDir, usageDir, worktreesDir } from "../paths/appPaths.js";
+import { cwCodeHome, opencodeServerDir, sessionDbPath, settingsFilePath, titleGenDir, usageDir, worktreesDir } from "../paths/appPaths.js";
 import { UsageLedger } from "../usage/UsageLedger.js";
 import { shutdownReservedError } from "../shutdown/shutdownReservation.js";
 import { overlayLiveTasks } from "../tasks/overlayLiveTasks.js";
@@ -105,6 +110,8 @@ export interface SessionManagerOptions {
   prUpdatedAt?: (ref: PrRef) => number | null;
   usageLedger?: UsageLedger;
   driverFactory?: DriverFactory;
+  /** Earlier app data folders whose worktrees may still hold sessions cw-code started. */
+  legacyAppRoots?: string[];
 }
 
 export type DriverFactory = (
@@ -236,6 +243,9 @@ export class SessionManager {
   private turnFinalReviews = new Map<string, { ref: PrRef; sha: string }>();
   private usageLedger: UsageLedger;
   private titleGenPath: string;
+  private nativeSessions = new Map<string, NativeSession>();
+  private remoteSlugs = new Map<string, string | null>();
+  private legacyAppRoots: string[];
 
   constructor(opts: SessionManagerOptions = {}) {
     const dbPath = opts.dbPath ?? sessionDbPath();
@@ -254,6 +264,7 @@ export class SessionManager {
     this.prUpdatedAt = opts.prUpdatedAt ?? (() => null);
     this.usageLedger = opts.usageLedger ?? new UsageLedger(dataDir ? join(dataDir, "usage") : usageDir());
     this.titleGenPath = dataDir ? join(dataDir, "title-gen") : titleGenDir();
+    this.legacyAppRoots = opts.legacyAppRoots ?? [];
     this.driverFactory = opts.driverFactory ?? defaultDriverFactory(opts.drivers);
     this.drivers = this.buildDrivers();
   }
@@ -599,6 +610,57 @@ export class SessionManager {
       branch: worktree.branch
     });
     return withCreateNotice(session, worktree.baseWarning);
+  }
+
+  private importContext(): ImportContext {
+    return {
+      claimed: claimedSessionKeys(this.store.listAllSessions()),
+      projects: this.store.listProjects(),
+      appRoots: [cwCodeHome(), this.worktreesRoot, this.titleGenPath, ...this.legacyAppRoots]
+    };
+  }
+
+  async listImportableSessions(driver: DriverKind): Promise<ImportableSession[]> {
+    this.assertNotReserved();
+    const target = this.drivers[driver];
+    if (!target.listNativeSessions) throw new Error(`${driver} does not expose its session list`);
+    const native = await target.listNativeSessions();
+    for (const session of native) this.nativeSessions.set(nativeSessionKey(session.driver, session.resumeCursor), session);
+    const visible = importableSessions(native, this.importContext());
+    await this.lookupRemotes(visible.filter((session) => !session.repository).map((session) => session.cwd));
+    return withRepositories(visible, this.remoteSlugs);
+  }
+
+  private async lookupRemotes(cwds: string[]): Promise<void> {
+    const pending = [...new Set(cwds.map(comparableRoot))].filter((key) => !this.remoteSlugs.has(key));
+    const byKey = new Map(cwds.map((cwd) => [comparableRoot(cwd), cwd]));
+    await mapLimit(pending, 8, async (key) => {
+      const cwd = byKey.get(key) ?? key;
+      if (!existsSync(cwd)) {
+        this.remoteSlugs.set(key, null);
+        return;
+      }
+      try {
+        this.remoteSlugs.set(key, (await this.git.githubRemote(cwd))?.slug ?? null);
+      } catch (err) {
+        console.warn(`git remote lookup failed for ${cwd}: ${(err as Error).message}`);
+        this.remoteSlugs.set(key, null);
+      }
+    });
+  }
+
+  async importSession(request: ImportSessionRequest): Promise<ImportSessionResult> {
+    this.assertNotReserved();
+    const key = nativeSessionKey(request.driver, request.resumeCursor);
+    if (!this.nativeSessions.has(key)) await this.listImportableSessions(request.driver);
+    const native = this.nativeSessions.get(key);
+    if (!native) throw new Error(`The ${request.driver} session ${request.resumeCursor} was not found`);
+    const [importable] = importableSessions([native], this.importContext());
+    if (!importable) throw new Error(`The ${request.driver} session ${request.resumeCursor} is already managed by cw-code`);
+    if (!existsSync(native.cwd)) throw new Error(`The folder of this session no longer exists: ${native.cwd}`);
+    const project = projectForCwd(this.store.listProjects(), native.cwd) ?? this.store.addProject(native.cwd);
+    const session = this.store.createSession(project.id, native.driver, native.title, { resumeCursor: native.resumeCursor });
+    return { project, session };
   }
 
   private async createCurrentCheckoutSession(

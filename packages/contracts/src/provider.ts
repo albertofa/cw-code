@@ -1,4 +1,5 @@
 import type { CommandOption } from "./commands.js";
+import type { NativeSession } from "./importer.js";
 import type { AccountUsageState } from "./usage.js";
 import type { ModelOption, PermissionMode, PermissionOption, SessionMeta, TurnRequest } from "./session.js";
 import type { TaskSnapshot } from "./tasks.js";
@@ -52,6 +53,8 @@ export interface TerminalLaunch {
 export interface CliDriver {
   readonly kind: SessionMeta["driver"];
   listSessions(projectRoot: string, projectId?: string): Promise<SessionMeta[]>;
+  /** Every session the harness has recorded, across all working directories. */
+  listNativeSessions?(): Promise<NativeSession[]>;
   getHistory(projectRoot: string, resumeCursor: string): Promise<HistoryMessage[]>;
   /** Tool activity and metrics recorded for a subagent spawned by a session, when the provider exposes it. */
   getSubagentTools?(projectRoot: string, resumeCursor: string, agentId: string): Promise<SubagentToolsResult>;

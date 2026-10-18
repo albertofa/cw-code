@@ -12,6 +12,7 @@ import type {
   DriverActivity,
   EffortLevel,
   HistoryMessage,
+  NativeSession,
   PermissionMode,
   PermissionOption,
   SubagentToolsResult,
@@ -32,7 +33,7 @@ import { claudeCallObservation, claudeHandbackObservation, claudeNotificationObs
 import { CLAUDE_COMMANDS_PROBE_ARGS, listClaudeCommands, probeClaudeCommands, recordClaudeTerminalCommands } from "./claudeCommands.js";
 import { CLAUDE_ACCOUNT_USAGE_PROBE_ARGS, probeClaudeAccountUsage } from "./claudeAccountUsage.js";
 import { describeClaudeExit } from "./claudeExit.js";
-import { claudeTranscriptProjectDir, listClaudeSessions } from "./claudeSessions.js";
+import { claudeTranscriptProjectDir, listClaudeSessions, listNativeClaudeSessions } from "./claudeSessions.js";
 import { readClaudeHistory, readSidecarAgent, readClaudeTaskResult, findSidecarModel, type SidecarAgent } from "./claudeHistory.js";
 import { buildClaudeUserContent } from "./claudeUserContent.js";
 import { previewText, traceHarnessCall, truncateError } from "../../debug/harnessTrace.js";
@@ -698,6 +699,10 @@ export class ClaudeCliDriver implements CliDriver {
       });
       throw err;
     }
+  }
+
+  listNativeSessions(): Promise<NativeSession[]> {
+    return listNativeClaudeSessions();
   }
 
   async getHistory(projectRoot: string, resumeCursor: string): Promise<HistoryMessage[]> {

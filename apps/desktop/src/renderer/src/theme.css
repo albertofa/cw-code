@@ -6368,6 +6368,229 @@ select.field option {
   margin: 8px 14px 0;
 }
 
+.newthread-import-row {
+  display: flex;
+  justify-content: flex-start;
+  margin-top: 8px;
+}
+
+.newthread-import {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-sm);
+  padding: 4px 8px;
+  color: var(--faint);
+  font-family: var(--sans);
+  font-size: var(--t-xs);
+  cursor: pointer;
+}
+
+.newthread-import:hover {
+  color: var(--text);
+  background: var(--hover);
+}
+
+.import-modal {
+  width: min(880px, calc(100vw - 96px));
+  height: min(720px, calc(100vh - 96px));
+  overflow: hidden;
+}
+
+.import-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 12px 12px 12px 14px;
+  border-bottom: 1px solid var(--border-soft);
+}
+
+.import-close {
+  flex: none;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.import-harness {
+  flex: none;
+}
+
+.import-harness .menu-btn {
+  height: 36px;
+  box-sizing: border-box;
+  padding: 0 10px;
+  border-color: transparent;
+  background: var(--hover);
+  box-shadow: inset 0 0 0 1px var(--border);
+  color: var(--text);
+}
+
+.import-harness .menu-btn:hover {
+  background: var(--raised);
+}
+
+.import-search {
+  flex: 1;
+  height: 36px;
+}
+
+.import-error {
+  margin: 10px 14px 0;
+}
+
+.import-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  padding: 6px;
+  background: var(--bg);
+}
+
+.import-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.import-row {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 9px 10px;
+  border-radius: var(--r-md);
+}
+
+.import-row:hover,
+.import-row:focus-within {
+  background: var(--card);
+}
+
+.import-row-main {
+  flex: 1;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+}
+
+.import-row-title {
+  color: var(--text);
+  font-size: var(--t-sm);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.import-row-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  color: var(--faint);
+  font-size: var(--t-2xs);
+}
+
+.import-meta {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.import-meta svg {
+  flex: none;
+  opacity: 0.8;
+}
+
+.import-new-project {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  color: var(--muted);
+  background: var(--chip-fill);
+  box-shadow: inset 0 0 0 1px var(--border-soft);
+  border-radius: 999px;
+  padding: 1px 7px;
+}
+
+.import-row-btn {
+  flex: none;
+  min-width: 88px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  border-color: transparent;
+  background: var(--chip-fill);
+  color: var(--muted);
+}
+
+.import-row:hover .import-row-btn:not(:disabled),
+.import-row:focus-within .import-row-btn:not(:disabled) {
+  background: linear-gradient(135deg, var(--violet), var(--violet-strong));
+  color: var(--on-accent);
+}
+
+.import-row .import-row-btn:hover:not(:disabled) {
+  background: linear-gradient(135deg, var(--violet), var(--violet-strong));
+  color: var(--on-accent);
+  filter: brightness(1.12);
+}
+
+.import-row-btn:disabled {
+  opacity: 0.55;
+  cursor: default;
+}
+
+.import-foot {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 6px 10px 6px 14px;
+  border-top: 1px solid var(--border-soft);
+  color: var(--faint);
+  font-size: var(--t-2xs);
+}
+
+.import-foot-text {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.import-reload {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  background: transparent;
+  border: 0;
+  border-radius: var(--r-sm);
+  padding: 4px 8px;
+  color: var(--faint);
+  font-family: var(--sans);
+  font-size: var(--t-2xs);
+  cursor: pointer;
+}
+
+.import-reload:hover:not(:disabled) {
+  color: var(--text);
+  background: var(--hover);
+}
+
+.import-reload:disabled {
+  cursor: default;
+}
+
 .composer-where {
   display: flex;
   align-items: center;

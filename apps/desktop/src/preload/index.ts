@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { AccountUsageSnapshot, AppSettings, AttentionState, CliBinary, CliDiscoveredCandidate, CliDiscoverResult, CommandInvocation, CommandOption, CreateSessionOptions, GitBranchInfo, GitDiffMode, GitDiffResult, GitHubSearchResult, GitStatus, HarnessId, IssueDetail, IssueRef, IssueSummary, ModelMeta, PrDetail, PrInboxResult, Project, ProjectGitHubRepo, PrRef, PrSummary, PrWorkflow, RepoRef, RetryConnectionResult, RunRef, RunSources, RunsResult, SessionCleanupResult, SessionIssueLink, SessionMeta, SessionPrLink, SessionRunLink, SessionStatus, SessionStatusReason, ShutdownAssessment, ShutdownCommitResult, ShutdownExpiredEvent, ShutdownPrepareRequest, ShutdownPrepareResult, ShutdownRequestedEvent, SkillDetail, SkillMeta, SkillSaveInput, SkillsListResult, SourceControlHealth, StartupState, SubagentToolsResult, TurnChanges, UpdateActionResult, UpdateChannel, UpdateInstallRequest, UpdateState, UsageLedgerQuery, UsageLedgerRow, WorkflowRunSummary, WorktreePruneSummary } from "@cw-code/contracts";
+import type { AccountUsageSnapshot, AppSettings, AttentionState, CliBinary, CliDiscoveredCandidate, CliDiscoverResult, CommandInvocation, CommandOption, CreateSessionOptions, GitBranchInfo, GitDiffMode, GitDiffResult, GitHubSearchResult, GitStatus, HarnessId, ImportableSession, ImportSessionRequest, ImportSessionResult, IssueDetail, IssueRef, IssueSummary, ModelMeta, PrDetail, PrInboxResult, Project, ProjectGitHubRepo, PrRef, PrSummary, PrWorkflow, RepoRef, RetryConnectionResult, RunRef, RunSources, RunsResult, SessionCleanupResult, SessionIssueLink, SessionMeta, SessionPrLink, SessionRunLink, SessionStatus, SessionStatusReason, ShutdownAssessment, ShutdownCommitResult, ShutdownExpiredEvent, ShutdownPrepareRequest, ShutdownPrepareResult, ShutdownRequestedEvent, SkillDetail, SkillMeta, SkillSaveInput, SkillsListResult, SourceControlHealth, StartupState, SubagentToolsResult, TurnChanges, UpdateActionResult, UpdateChannel, UpdateInstallRequest, UpdateState, UsageLedgerQuery, UsageLedgerRow, WorkflowRunSummary, WorktreePruneSummary } from "@cw-code/contracts";
 
 export type PermissionMode = "auto" | "acceptEdits" | "bypassPermissions" | "manual";
 export type EffortLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
@@ -81,6 +81,8 @@ export interface CwApi {
   getHomeDir(): Promise<string>;
   listSessions(projectId: string): Promise<unknown[]>;
   createSession(projectId: string, driver: DriverName, options?: CreateSessionOptions): Promise<unknown>;
+  listImportableSessions(driver: DriverName): Promise<ImportableSession[]>;
+  importSession(request: ImportSessionRequest): Promise<ImportSessionResult>;
   renameSession(sessionId: string, title: string): Promise<void>;
   regenerateSessionTitle(sessionId: string): Promise<string>;
   setSessionStatus(sessionId: string, status: SessionStatus, reason?: SessionStatusReason): Promise<unknown>;
@@ -235,6 +237,8 @@ const api: CwApi = {
   listSessions: (projectId: string) => ipcRenderer.invoke("sessions.list", projectId),
   createSession: (projectId: string, driver: DriverName, options?: CreateSessionOptions) =>
     ipcRenderer.invoke("sessions.create", { projectId, driver, options }),
+  listImportableSessions: (driver: DriverName) => ipcRenderer.invoke("sessions.importable", driver),
+  importSession: (request: ImportSessionRequest) => ipcRenderer.invoke("sessions.import", request),
   renameSession: (sessionId: string, title: string) =>
     ipcRenderer.invoke("sessions.rename", { sessionId, title }),
   regenerateSessionTitle: (sessionId: string) =>

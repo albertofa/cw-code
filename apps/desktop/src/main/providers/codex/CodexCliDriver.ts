@@ -12,6 +12,7 @@ import type {
   DriverActivity,
   HistoryMessage,
   ModelOption,
+  NativeSession,
   PermissionMode,
   PermissionOption,
   SessionMeta,
@@ -43,6 +44,7 @@ import {
   mapCodexEffort,
   mapCodexHistory,
   mapCodexModel,
+  mapCodexNativeThread,
   mapCodexPlan,
   mapCodexSkillCommands,
   mapCodexSubagentTools,
@@ -119,6 +121,7 @@ interface ThreadReadResponse {
 
 const THREAD_LIST_PAGE = 50;
 const THREAD_LIST_MAX = 200;
+const NATIVE_THREAD_LIST_MAX = 1000;
 const MODEL_LIST_PAGE = 50;
 const MODEL_LIST_MAX = 500;
 
@@ -197,6 +200,27 @@ export class CodexCliDriver implements CliDriver {
       });
       throw err;
     }
+  }
+
+  async listNativeSessions(): Promise<NativeSession[]> {
+    const sessions: NativeSession[] = [];
+    const seen = new Set<string>();
+    let cursor: string | null = null;
+    for (let page = 0; page * THREAD_LIST_PAGE < NATIVE_THREAD_LIST_MAX; page++) {
+      const res: ThreadListResponse = await this.client.request<ThreadListResponse>("thread/list", {
+        limit: THREAD_LIST_PAGE,
+        ...(cursor ? { cursor } : {})
+      });
+      for (const thread of res.data ?? []) {
+        if (seen.has(thread.id)) continue;
+        seen.add(thread.id);
+        const session = mapCodexNativeThread(thread);
+        if (session) sessions.push(session);
+      }
+      cursor = res.nextCursor;
+      if (!cursor) break;
+    }
+    return sessions.sort((a, b) => b.updatedAt - a.updatedAt);
   }
 
   async getHistory(projectRoot: string, resumeCursor: string): Promise<HistoryMessage[]> {

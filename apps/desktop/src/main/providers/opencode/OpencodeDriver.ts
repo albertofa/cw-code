@@ -1,6 +1,6 @@
 ﻿import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
-import type { AccountUsageState, AppSettings, ApprovalDecision, CliDriver, CommandOption, ContextUsage, DriverActivity, HistoryMessage, ModelOption, PermissionMode, PermissionOption, QuestionInfo, QuestionRequest, RetryConnectionRequest, RetryConnectionResult, SessionMeta, TaskEndReason, TaskSnapshot, TerminalLaunch, ThreadEvent, TurnHandle, TurnModelUsage, TurnRequest } from "@cw-code/contracts";
+import type { AccountUsageState, AppSettings, ApprovalDecision, CliDriver, CommandOption, ContextUsage, DriverActivity, HistoryMessage, ModelOption, NativeSession, PermissionMode, PermissionOption, QuestionInfo, QuestionRequest, RetryConnectionRequest, RetryConnectionResult, SessionMeta, TaskEndReason, TaskSnapshot, TerminalLaunch, ThreadEvent, TurnHandle, TurnModelUsage, TurnRequest } from "@cw-code/contracts";
 import { isAbsolute, join } from "node:path";
 import { opencodeConfigDir, opencodePluginDir } from "../../paths/appPaths.js";
 import { questionRequestOf, opencodeSseEvent, type ParsedOpencodeQuestion } from "./opencodeQuestions.js";
@@ -512,6 +512,13 @@ export class OpencodeDriver implements CliDriver {
       });
       throw err;
     }
+  }
+
+  async listNativeSessions(): Promise<NativeSession[]> {
+    const home = homedir();
+    const protocol = await this.poolProtocol(home);
+    const sessions = await protocol.listNativeSessions(this.poolClient(home));
+    return sessions.sort((a, b) => b.updatedAt - a.updatedAt);
   }
 
   async getHistory(projectRoot: string, resumeCursor: string): Promise<HistoryMessage[]> {

@@ -12,6 +12,8 @@ import type {
   ContextCompactionInfo,
   ContextUsage,
   HarnessId,
+  ImportableSession,
+  ImportSessionRequest,
   PrBucket,
   PrCheck,
   PrCiState,
@@ -91,6 +93,8 @@ import type {
 } from "@cw-code/contracts";
 
 export type {
+  ImportableSession,
+  ImportSessionRequest,
   NotificationSoundEvent,
   NotificationSoundId,
   NotificationSoundPreference,
@@ -663,6 +667,8 @@ export interface CwApi {
   getHomeDir(): Promise<string>;
   listSessions(projectId: string): Promise<Session[]>;
   createSession(projectId: string, driver: DriverName, options?: CreateSessionOptions): Promise<Session>;
+  listImportableSessions(driver: DriverName): Promise<ImportableSession[]>;
+  importSession(request: ImportSessionRequest): Promise<{ project: Project; session: Session }>;
   renameSession(sessionId: string, title: string): Promise<void>;
   regenerateSessionTitle(sessionId: string): Promise<string>;
   setSessionStatus(sessionId: string, status: SessionStatus, reason?: SessionStatusReason): Promise<Session>;

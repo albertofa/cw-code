@@ -169,6 +169,25 @@ button .cw-spinner {
   height: 22px;
 }
 
+/* session import */
+
+.skel-region .import-row {
+  opacity: calc(1 - var(--i, 0) * 0.11);
+}
+
+.import-skel-title {
+  height: 18px;
+}
+
+.import-skel-meta {
+  gap: 12px;
+  height: 14px;
+}
+
+.import-skel-btn {
+  border-radius: var(--r-md);
+}
+
 @keyframes skel-sweep {
   to {
     transform: translateX(100%);

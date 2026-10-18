@@ -10,6 +10,7 @@ import {
   codexReviewTarget,
   codexUserInputResult,
   accumulateCodexTurnUsage,
+  mapCodexNativeThread,
   mapCodexHistory,
   mapCodexModel,
   mapCodexPlan,
@@ -593,5 +594,41 @@ describe("buildCodexSkillInput", () => {
       { type: "text", text: "$plan" },
       { type: "skill", name: "plan", path: "/skills/plan" }
     ]);
+  });
+});
+
+describe("mapCodexNativeThread", () => {
+  const thread = {
+    id: "t1",
+    preview: "Review pull request #43",
+    cwd: "C:\Projects\devkit",
+    createdAt: 1792105558,
+    updatedAt: 1792105600,
+    gitInfo: { branch: "feat/x", originUrl: "https://github.com/acme/devkit.git" },
+    originator: "codex-tui",
+    parentThreadId: null
+  };
+
+  it("maps a thread with its folder and Git context", () => {
+    expect(mapCodexNativeThread(thread)).toEqual({
+      driver: "codex",
+      resumeCursor: "t1",
+      title: "Review pull request #43",
+      cwd: "C:\Projects\devkit",
+      createdAt: 1792105558000,
+      updatedAt: 1792105600000,
+      gitBranch: "feat/x",
+      gitRemote: "https://github.com/acme/devkit.git"
+    });
+  });
+
+  it("flags threads cw-code started", () => {
+    expect(mapCodexNativeThread({ ...thread, originator: "cw_code" })?.createdByCwCode).toBe(true);
+  });
+
+  it("drops subagent, ephemeral and folderless threads", () => {
+    expect(mapCodexNativeThread({ ...thread, parentThreadId: "parent" })).toBeNull();
+    expect(mapCodexNativeThread({ ...thread, ephemeral: true })).toBeNull();
+    expect(mapCodexNativeThread({ ...thread, cwd: "" })).toBeNull();
   });
 });

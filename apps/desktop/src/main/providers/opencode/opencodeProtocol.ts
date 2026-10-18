@@ -1,4 +1,4 @@
-import type { CommandInvocation, CommandOption, ModelOption, TodoItem } from "@cw-code/contracts";
+import type { CommandInvocation, CommandOption, ModelOption, NativeSession, TodoItem } from "@cw-code/contracts";
 import type { ParsedOpencodePermission, OpencodePermissionReply } from "./opencodePermissions.js";
 import type { ParsedOpencodeQuestion } from "./opencodeQuestions.js";
 import type { OpencodeRetryStatus } from "./opencodeEvents.js";
@@ -136,6 +136,8 @@ export interface OpencodeProtocol {
   /** Tool events and poll diffs carry the todo list (v2 has no todo event). */
   readonly todosFromTools: boolean;
   listSessions(client: OpencodeClient): Promise<OpencodeSessionSummary[]>;
+  /** Root sessions across every directory the server has recorded. */
+  listNativeSessions(client: OpencodeClient): Promise<NativeSession[]>;
   createSession(client: OpencodeClient): Promise<string>;
   sessionExists(client: OpencodeClient, sessionId: string): Promise<boolean>;
   /** Resolves once a resumed session is readable (v2 copies v1 sessions in the background). */

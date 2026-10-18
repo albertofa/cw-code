@@ -15,8 +15,9 @@ Core behaviors:
 
 - One window multiplexes unlimited parallel sessions; one active turn per session.
 - The CLI is always the source of truth. The app stores only its own metadata
-  (projects, titles, resume cursors). The app manages only sessions it created; CLI-native
-  sessions are never imported.
+  (projects, titles, resume cursors). The app manages only sessions it created or the user
+  explicitly imported through the session importer; it never adopts CLI-native sessions on
+  its own, and the importer hides sessions cw-code already manages or started.
 - History display is best-effort (local transcripts / server API); continuing a
   session always resumes full CLI context, independent of what history shows.
 

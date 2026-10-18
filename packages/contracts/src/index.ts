@@ -134,3 +134,4 @@ export type {
   ShutdownExpiredEvent
 } from "./shutdown.js";
 export type { AttentionState } from "./attention.js";
+export type { NativeSession, ImportableSession, ImportSessionRequest, ImportSessionResult } from "./importer.js";

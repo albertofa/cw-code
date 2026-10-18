@@ -1,6 +1,6 @@
 import { basename } from "node:path";
 import { pathToFileURL } from "node:url";
-import type { CommandOption, ModelOption } from "@cw-code/contracts";
+import type { CommandOption, ModelOption, NativeSession } from "@cw-code/contracts";
 import { traceHarnessCall } from "../../../debug/harnessTrace.js";
 import { OPENCODE_LIST_TIMEOUT_MS, OPENCODE_REQUEST_TIMEOUT_MS } from "../opencodeFetch.js";
 import { sameDirectory } from "../opencodePaths.js";
@@ -30,6 +30,7 @@ const PAGE_LIMIT = 200;
 const RECENT_LIMIT = 50;
 const MAX_PAGES = 50;
 const SESSION_LIST_PAGES = 4;
+const NATIVE_SESSION_LIST_PAGES = 20;
 const MIGRATION_WAIT_MS = 60_000;
 const MIGRATION_POLL_MS = 1_000;
 
@@ -222,6 +223,36 @@ export const opencodeV2Protocol: OpencodeProtocol = {
           title: asString(session?.["title"]),
           created: typeof time?.["created"] === "number" ? time["created"] : 0,
           updated: typeof time?.["updated"] === "number" ? time["updated"] : 0
+        });
+      }
+      cursor = nextCursor(payload);
+      if (items.length === 0 || !cursor) break;
+    }
+    return out;
+  },
+
+  async listNativeSessions(client): Promise<NativeSession[]> {
+    const out: NativeSession[] = [];
+    let cursor = "";
+    for (let page = 0; page < NATIVE_SESSION_LIST_PAGES; page++) {
+      const res = await client.request(`/api/session${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`, { timeoutMs: OPENCODE_LIST_TIMEOUT_MS });
+      const payload = await readJson(res, "opencode session list failed");
+      const data = dataOf(payload);
+      const items = Array.isArray(data) ? data : [];
+      for (const entry of items) {
+        const session = asRecord(entry);
+        const id = asString(session?.["id"]);
+        const cwd = asString(asRecord(session?.["location"])?.["directory"]);
+        const time = asRecord(session?.["time"]);
+        if (!id || !cwd || asString(session?.["parentID"]) || time?.["archived"]) continue;
+        const created = typeof time?.["created"] === "number" ? time["created"] : 0;
+        out.push({
+          driver: "opencode",
+          resumeCursor: id,
+          title: asString(session?.["title"]) || id.slice(0, 8),
+          cwd,
+          createdAt: created,
+          updatedAt: typeof time?.["updated"] === "number" ? time["updated"] : created
         });
       }
       cursor = nextCursor(payload);

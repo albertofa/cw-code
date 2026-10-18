@@ -244,7 +244,7 @@ export class SessionStore {
     projectId: string,
     driver: DriverKind,
     title: string,
-    workspace: { id?: string; worktreePath?: string; branch?: string } = {}
+    workspace: { id?: string; worktreePath?: string; branch?: string; resumeCursor?: string } = {}
   ): SessionMeta {
     const now = Date.now();
     const session: SessionMeta = {
@@ -253,7 +253,7 @@ export class SessionStore {
       driver,
       title,
       status: "idle",
-      resumeCursor: "",
+      resumeCursor: workspace.resumeCursor ?? "",
       createdAt: now,
       updatedAt: now,
       idleSince: now,
