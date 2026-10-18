@@ -444,6 +444,7 @@ export function App() {
               <SettingsPage
                 section={mainView.section}
                 harness={mainView.harness}
+                workflowId={mainView.workflowId}
                 onBack={() => void leaveSettings(() => usePrStore.getState().openSessionView())}
                 onOpenUsage={() => void leaveSettings(() => usePrStore.getState().openUsage())}
               />

@@ -2,11 +2,15 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type {
   AppSettings,
+  DriverKind,
+  EffortLevel,
   GitHubKind,
   GitHubViewGroup,
+  PermissionMode,
   PrFinishedSessionStatus,
   PrSuggestCondition,
   PrWorkflow,
+  PrWorkflowHarness,
   PrWorkflowIcon,
   PrWorkspaceChoice,
   SavedGitHubView,
@@ -39,12 +43,30 @@ const VALID_PR_CONDITIONS: readonly PrSuggestCondition[] = [
 ];
 const VALID_WORKFLOW_TARGETS: readonly PrWorkflow["target"][] = ["pr", "issue", "run"];
 const VALID_PR_WORKSPACES: readonly PrWorkspaceChoice[] = ["checkout", "worktree", "linked"];
+const VALID_DRIVERS: readonly DriverKind[] = ["claude", "opencode", "codex"];
+const VALID_EFFORTS: readonly EffortLevel[] = ["minimal", "low", "medium", "high", "xhigh", "max"];
+const VALID_PERMISSION_MODES: readonly PermissionMode[] = ["auto", "acceptEdits", "bypassPermissions", "manual"];
 const VALID_VIEW_KINDS: readonly GitHubKind[] = ["pr", "issue", "run"];
 const VALID_VIEW_GROUPS: readonly GitHubViewGroup[] = ["triage", "repo", "none"];
 const MAX_SAVED_VIEWS = 50;
 const MAX_VIEW_NAME_LENGTH = 80;
 const MAX_VIEW_QUERY_LENGTH = 512;
 const VALID_PR_FINISHED_STATUSES: readonly PrFinishedSessionStatus[] = ["idle", "resolved", "archived", "none"];
+
+function oneOf<T extends string>(value: unknown, allowed: readonly T[]): T | null {
+  return allowed.includes(value as T) ? (value as T) : null;
+}
+
+function sanitizeWorkflowHarness(raw: unknown): PrWorkflowHarness {
+  const o = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  const driver = oneOf(o.driver, VALID_DRIVERS);
+  return {
+    driver,
+    model: driver && typeof o.model === "string" ? o.model.trim() : "",
+    effort: oneOf(o.effort, VALID_EFFORTS),
+    permissionMode: oneOf(o.permissionMode, VALID_PERMISSION_MODES)
+  };
+}
 
 function sanitizeWorkflowEntry(entry: unknown): PrWorkflow | null {
   if (!entry || typeof entry !== "object") return null;
@@ -66,6 +88,7 @@ function sanitizeWorkflowEntry(entry: unknown): PrWorkflow | null {
     target: VALID_WORKFLOW_TARGETS.includes(o.target as PrWorkflow["target"]) ? (o.target as PrWorkflow["target"]) : "pr",
     suggestWhen: o.suggestWhen.filter((c): c is PrSuggestCondition => VALID_PR_CONDITIONS.includes(c as PrSuggestCondition)),
     workspace: o.workspace as PrWorkspaceChoice,
+    harness: sanitizeWorkflowHarness(o.harness),
     startPrompt: o.startPrompt,
     updatePrompt: o.updatePrompt,
     ...(typeof o.autoFollowUp === "boolean" ? { autoFollowUp: o.autoFollowUp } : {})
@@ -319,7 +342,7 @@ function sanitize(patch: SettingsPatch): SettingsPatch {
 }
 
 function cloneWorkflows(workflows: PrWorkflow[]): PrWorkflow[] {
-  return workflows.map((w) => ({ ...w, suggestWhen: [...w.suggestWhen] }));
+  return workflows.map((w) => ({ ...w, suggestWhen: [...w.suggestWhen], harness: { ...w.harness } }));
 }
 
 function defaults(): AppSettings {

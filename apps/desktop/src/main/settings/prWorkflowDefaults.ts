@@ -33,6 +33,7 @@ export function defaultPrWorkflows(): PrWorkflow[] {
       target: "pr",
       suggestWhen: ["conflicts"],
       workspace: "worktree",
+      harness: { driver: null, model: "", effort: null, permissionMode: null },
       startPrompt: `#{{pr.number}} ({{pr.head}}) conflicts with {{pr.base}}.
 Merge {{pr.base}} into the head branch, keep both intents, run typecheck and tests, summarize each conflict.`,
       updatePrompt: `{{pr.base}} moved again. Re-check conflicts on #{{pr.number}}.`
@@ -47,6 +48,7 @@ Merge {{pr.base}} into the head branch, keep both intents, run typecheck and tes
       target: "pr",
       suggestWhen: ["checks-failing"],
       workspace: "linked",
+      harness: { driver: null, model: "", effort: null, permissionMode: null },
       startPrompt: `Checks failing on #{{pr.number}} at {{pr.sha}}: {{checks.summary}}
 {{checks.failedLogs}}
 
@@ -64,6 +66,7 @@ Reproduce locally, fix the root cause, commit on {{pr.head}}.`,
       target: "pr",
       suggestWhen: ["changes-requested"],
       workspace: "linked",
+      harness: { driver: null, model: "", effort: null, permissionMode: null },
       startPrompt: `PR #{{pr.number}} has unresolved threads:
 {{pr.unresolvedThreads}}
 
@@ -81,6 +84,7 @@ Apply each change or explain why not. One commit per thread on {{pr.head}}.`,
       target: "pr",
       suggestWhen: ["review-requested"],
       workspace: "checkout",
+      harness: { driver: null, model: "", effort: null, permissionMode: null },
       startPrompt: `Review pull request #{{pr.number}} "{{pr.title}}" in {{pr.repo}}.
 Base {{pr.base}} ← head {{pr.head}} @ {{pr.sha}}
 
@@ -110,6 +114,7 @@ Re-review only \`git diff {{session.lastSeenSha}}..{{pr.sha}}\` and say whether 
       target: "pr",
       suggestWhen: ["author"],
       workspace: "linked",
+      harness: { driver: null, model: "", effort: null, permissionMode: null },
       startPrompt: `You own PR #{{pr.number}} on {{pr.head}}. Take it to mergeable:
 - failing checks: read logs (\`gh run view --log-failed\`), fix, commit
 - review comments: apply or explain, one commit per thread
@@ -131,6 +136,7 @@ Handle it with the same rules as before.`,
       target: "issue",
       suggestWhen: ["issue-assigned"],
       workspace: "worktree",
+      harness: { driver: null, model: "", effort: null, permissionMode: null },
       startPrompt: `Implement {{issue.repo}}#{{issue.number}} "{{issue.title}}".
 
 {{issue.body}}
@@ -153,6 +159,7 @@ Plan first, then implement on this branch, run typecheck and tests, and open a p
       target: "issue",
       suggestWhen: ["issue-bug"],
       workspace: "checkout",
+      harness: { driver: null, model: "", effort: null, permissionMode: null },
       startPrompt: `Investigate {{issue.repo}}#{{issue.number}} "{{issue.title}}".
 
 {{issue.body}}
@@ -173,6 +180,7 @@ Find the root cause and report it with file:line evidence. Do not change code un
       target: "issue",
       suggestWhen: [],
       workspace: "checkout",
+      harness: { driver: null, model: "", effort: null, permissionMode: null },
       startPrompt: `Triage {{issue.repo}}#{{issue.number}} "{{issue.title}}" (labels: {{issue.labels}}).
 
 {{issue.body}}
@@ -191,6 +199,7 @@ Suggest labels, severity, likely duplicates and the next step. Report in chat on
       target: "run",
       suggestWhen: ["run-failed"],
       workspace: "worktree",
+      harness: { driver: null, model: "", effort: null, permissionMode: null },
       startPrompt: `{{run.workflow}} #{{run.number}} failed on {{run.branch}} at {{run.sha}} ({{run.event}}).
 Failed jobs: {{run.failedJobs}}
 {{run.failedLogs}}

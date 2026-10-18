@@ -71,6 +71,7 @@ function workflow(overrides: Partial<PrWorkflow> = {}): PrWorkflow {
     target: "pr",
     suggestWhen: ["review-requested"],
     workspace: "checkout",
+    harness: { driver: null, model: "", effort: null, permissionMode: null },
     startPrompt: "start",
     updatePrompt: "update",
     ...overrides
