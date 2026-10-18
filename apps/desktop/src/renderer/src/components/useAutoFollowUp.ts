@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef } from "react";
-import type { AppSettings, PrWorkflow, Session } from "../cw.js";
+import type { AppSettings, PrDetail, PrWorkflow, Session } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import { usePrStore } from "../stores/prStore.js";
 import { shouldRequestDetail, type DetailAttempt } from "./needsYou.js";
@@ -20,11 +20,20 @@ function isBusy(sessionId: string): boolean {
   return useAppStore.getState().busyTurns[sessionId] !== undefined;
 }
 
+async function failedLogsOrNotice(detail: PrDetail): Promise<string> {
+  try {
+    return await loadFailedLogs(detail);
+  } catch (err) {
+    console.warn(`[pr] failed CI logs for ${prRefLabel(detail.ref)} could not be loaded: ${errorMessage(err)}`);
+    return `(Failed CI logs could not be loaded: ${errorMessage(err)}. Read them with \`gh run view --log-failed\`.)`;
+  }
+}
+
 async function sendAutoFollowUp(followUp: AutoFollowUp, settings: AppSettings, harness: string): Promise<boolean> {
   const { sessionId, link, workflow, detail, updates, finalReview } = followUp;
   if (isBusy(sessionId)) return false;
   try {
-    const failedLogs = !finalReview && needsFailedLogs(workflow.updatePrompt) ? await loadFailedLogs(detail) : undefined;
+    const failedLogs = !finalReview && needsFailedLogs(workflow.updatePrompt) ? await failedLogsOrNotice(detail) : undefined;
     if (isBusy(sessionId)) return false;
     const prompt = finalReview ? finalReviewPrompt(detail) : followUpPrompt(detail, link, workflow, updates, settings, harness, failedLogs);
     await useAppStore.getState().sendPromptTo(sessionId, prompt, undefined, {
