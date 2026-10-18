@@ -7,7 +7,7 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import type { ReleasePlan } from "./planValidation.ts";
 import { appImageNameFor, blockMapShapeErrors, debNameFor, installerNameFor, publishableAssetNames, stageReleaseSet, validateReleaseAssets } from "./releaseAssets.ts";
 import type { SigningManifest } from "./signingManifest.ts";
-import { readReleaseText, withReleaseText } from "./updateInfoYaml.ts";
+import { parseUpdateInfo, readReleaseText, withReleaseText } from "./updateInfoYaml.ts";
 
 const VERSION = "1.2.0-alpha.3";
 const INSTALLER = installerNameFor(VERSION);
@@ -397,7 +397,15 @@ describe("stageReleaseSet", () => {
     await stage();
 
     const staged = await readFile(join(root, "to", "latest-linux.yml"), "utf8");
-    expect(staged.startsWith(bareLinuxFeed(VERSION, appImageBytes, debBytes))).toBe(true);
+    const info = parseUpdateInfo(staged);
+    expect(info.files.map((file) => [file.url, file.sha512, file.size])).toEqual([
+      [APPIMAGE, digest(appImageBytes), appImageBytes.length],
+      [DEB, digest(debBytes), debBytes.length]
+    ]);
+    expect(info.path).toBe(APPIMAGE);
+    expect(info.sha512).toBe(digest(appImageBytes));
+    expect(staged).toContain("    blockMapSize: 99\n");
+    expect(staged).toContain("releaseDate: '2026-09-25T06:00:00.000Z'\n");
     expect(await readFile(join(root, "to", "alpha-linux.yml"), "utf8")).toBe(staged);
   });
 
