@@ -18,7 +18,7 @@ export interface RosterEntry {
 export type TaskObservation =
   | { kind: "call"; toolUseId: string; taskKind: TaskKind; background?: boolean; at: number }
   | { kind: "started"; ref: TaskRef; taskKind?: TaskKind; background?: boolean; at: number }
-  | { kind: "background"; ref: TaskRef; background: boolean }
+  | { kind: "background"; ref: TaskRef; background: boolean; at: number }
   | {
       kind: "ended";
       ref: TaskRef;
@@ -43,6 +43,7 @@ interface TaskRun {
   endedAt?: number;
   output?: string;
   outputSource?: TaskOutputSource;
+  outputAt?: number;
   usage?: ToolUsage;
 }
 
@@ -103,6 +104,7 @@ function changedSince(record: TaskRecord, since: number): boolean {
 function dropOutput(run: TaskRun): void {
   delete run.output;
   delete run.outputSource;
+  delete run.outputAt;
 }
 
 function lookup(index: Map<string, TaskRecord>, key: string | undefined): TaskRecord | undefined {
@@ -151,9 +153,10 @@ function endRun(run: TaskRun, state: TaskState, reason: TaskEndReason, at: numbe
   run.endedAt = run.endedAt === undefined || confirmsGuess ? Math.max(at, run.startedAt ?? at) : run.endedAt;
 }
 
-function mergeOutput(run: TaskRun, output: string | undefined, source: TaskOutputSource = "summary"): void {
+function mergeOutput(run: TaskRun, output: string | undefined, source: TaskOutputSource, at: number): void {
   if (!output) return;
   if (run.output !== undefined && OUTPUT_SOURCE_RANK[source] < OUTPUT_SOURCE_RANK[run.outputSource ?? "summary"]) return;
+  if (run.output !== output) run.outputAt = at;
   run.output = output;
   run.outputSource = source;
 }
@@ -172,7 +175,7 @@ function mergeUsage(run: TaskRun, usage: ToolUsage | undefined): void {
 
 function applyEnded(run: TaskRun, obs: EndedObservation): void {
   endRun(run, obs.state, obs.reason, obs.at);
-  mergeOutput(run, obs.output, obs.outputSource);
+  mergeOutput(run, obs.output, obs.outputSource ?? "summary", obs.at);
   mergeUsage(run, obs.usage);
 }
 
@@ -207,7 +210,7 @@ export class TaskTable {
       case "started":
         return this.applyStarted(obs);
       case "background":
-        return this.applyBackground(obs.ref, obs.background);
+        return this.applyBackground(obs.ref, obs.background, obs.at);
       case "ended":
         return this.applyEndedObservation(obs);
       case "roster":
@@ -277,7 +280,7 @@ export class TaskTable {
     let latest: TaskRun | undefined;
     for (const record of this.records.values()) {
       const run = currentRun(record);
-      if (run.output === undefined || !changedSince(record, since)) continue;
+      if (run.output === undefined || (run.outputAt ?? Number.NEGATIVE_INFINITY) < since) continue;
       if (!latest || (run.startedAt ?? Number.NEGATIVE_INFINITY) >= (latest.startedAt ?? Number.NEGATIVE_INFINITY)) latest = run;
     }
     return latest?.output ?? "";
@@ -332,13 +335,13 @@ export class TaskTable {
     }, obs.at);
   }
 
-  private applyBackground(ref: TaskRef, background: boolean): TaskSnapshot[] {
+  private applyBackground(ref: TaskRef, background: boolean, at: number): TaskSnapshot[] {
     const record = this.find(ref);
     if (!record) return [];
     return this.change(record, () => {
       this.link(record, ref);
       record.background = background;
-    });
+    }, at);
   }
 
   private applyEndedObservation(obs: EndedObservation): TaskSnapshot[] {

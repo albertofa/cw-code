@@ -269,12 +269,13 @@ describe("claudeToolResultObservation", () => {
     expect(claudeToolResultObservation(SLEEPER.toolUseId, text, false, structured, AT)).toStrictEqual({
       kind: "background",
       ref: { toolUseId: SLEEPER.toolUseId, cliTaskId: SLEEPER.taskId },
-      background: true
+      background: true,
+      at: AT
     });
   });
 
   it("recognizes remote_launched and isAsync acknowledgements without an agent id", () => {
-    const ack = { kind: "background", ref: { toolUseId: "toolu_1" }, background: true };
+    const ack = { kind: "background", ref: { toolUseId: "toolu_1" }, background: true, at: AT };
     expect(claudeToolResultObservation("toolu_1", "", false, { status: "remote_launched" }, AT)).toStrictEqual(ack);
     expect(claudeToolResultObservation("toolu_1", "", false, { isAsync: true, agentId: "" }, AT)).toStrictEqual(ack);
   });
@@ -284,7 +285,8 @@ describe("claudeToolResultObservation", () => {
     expect(claudeToolResultObservation(PONG.toolUseId, text, false, undefined, AT)).toStrictEqual({
       kind: "background",
       ref: { toolUseId: PONG.toolUseId, cliTaskId: PONG.taskId },
-      background: true
+      background: true,
+      at: AT
     });
     expect(claudeToolResultObservation("toolu_1", "  \nAsync agent launched successfully.", false, undefined, AT)).toMatchObject({
       kind: "background"
@@ -302,7 +304,8 @@ describe("claudeToolResultObservation", () => {
     expect(observation).toStrictEqual({
       kind: "background",
       ref: { toolUseId: "toolu_1", cliTaskId: "aaaaaaaa1" },
-      background: true
+      background: true,
+      at: AT
     });
   });
 

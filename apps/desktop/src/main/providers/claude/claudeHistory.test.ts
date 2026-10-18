@@ -494,6 +494,19 @@ describe("readClaudeHistoryFile", () => {
     }
   });
 
+  it("prefers the per-session sidecar folder over the shared one for a safe cursor", () => {
+    const file = syntheticSession([agentCall("toolu_bg", 0, BACKGROUND_INPUT), launchAck("toolu_bg", 100)], {
+      [`agent-${AGENT_ID}.meta.json`]: JSON.stringify({ toolUseId: "toolu_bg", finished: true })
+    });
+    mkdirSync(join(dirname(file), "subagents"), { recursive: true });
+    writeFileSync(
+      join(dirname(file), "subagents", `agent-${AGENT_ID}.meta.json`),
+      JSON.stringify({ toolUseId: "toolu_bg", finished: false })
+    );
+
+    expect(taskOf(readClaudeHistoryFile(file, CURSOR), "toolu_bg")).toMatchObject({ state: "completed", endReason: "sidecar" });
+  });
+
   it("still reads the shared sidecar folder when the session cursor is not a safe path segment", () => {
     const file = syntheticSession([agentCall("toolu_bg", 0, BACKGROUND_INPUT), launchAck("toolu_bg", 100)]);
     mkdirSync(join(dirname(file), "subagents"), { recursive: true });

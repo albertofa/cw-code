@@ -293,7 +293,7 @@ describe("TaskTable resolution", () => {
 
   it("links a cli task id carried with a resolving tool use id", () => {
     const table = tableWith(agentCall("tu_1", 100, true));
-    table.apply({ kind: "background", ref: { toolUseId: "tu_1", cliTaskId: "task_a" }, background: true });
+    table.apply({ kind: "background", ref: { toolUseId: "tu_1", cliTaskId: "task_a" }, background: true, at: 900 });
     expect(table.get("tu_1")?.cliTaskId).toBe("task_a");
     expect(table.resolve({ cliTaskId: "task_a" })?.id).toBe("tu_1");
   });
@@ -328,7 +328,7 @@ describe("TaskTable orphans", () => {
     const table = new TaskTable();
     expect(table.apply({ kind: "started", ref: { originId: "tu_missing" }, at: 10 })).toEqual([]);
     expect(table.apply({ kind: "ended", ref: { runId: "run_1" }, state: "completed", reason: "cli", at: 10 })).toEqual([]);
-    expect(table.apply({ kind: "background", ref: { toolUseId: "tu_missing" }, background: true })).toEqual([]);
+    expect(table.apply({ kind: "background", ref: { toolUseId: "tu_missing" }, background: true, at: 900 })).toEqual([]);
     expect(table.snapshots()).toEqual([]);
   });
 });
@@ -336,9 +336,9 @@ describe("TaskTable orphans", () => {
 describe("TaskTable background", () => {
   it("sets background and reports only real changes", () => {
     const table = tableWith(agentCall("tu_1", 100));
-    expect(table.apply({ kind: "background", ref: { originId: "tu_1" }, background: false })).toEqual([]);
-    expect(table.apply({ kind: "background", ref: { originId: "tu_1" }, background: true })).toHaveLength(1);
-    expect(table.apply({ kind: "background", ref: { originId: "tu_1" }, background: true })).toEqual([]);
+    expect(table.apply({ kind: "background", ref: { originId: "tu_1" }, background: false, at: 900 })).toEqual([]);
+    expect(table.apply({ kind: "background", ref: { originId: "tu_1" }, background: true, at: 900 })).toHaveLength(1);
+    expect(table.apply({ kind: "background", ref: { originId: "tu_1" }, background: true, at: 900 })).toEqual([]);
     expect(table.get("tu_1")?.background).toBe(true);
   });
 });
@@ -369,6 +369,16 @@ describe("TaskTable roster", () => {
     expect(table.get("tu_1")).toMatchObject({ state: "completed", endReason: "tool-result", endedAt: 300, output: "late result" });
   });
 
+  it("does not offer an earlier report as a later answer when only usage or the background flag changed", () => {
+    const table = tableWith(agentCall("tu_1", 100));
+    table.apply({ kind: "ended", ref: { originId: "tu_1" }, state: "completed", reason: "tool-result", output: "turn one report", at: 150 });
+    table.apply({ kind: "ended", ref: { originId: "tu_1" }, state: "completed", reason: "cli", usage: { tokens: 5 }, at: 500 });
+    table.apply({ kind: "background", ref: { originId: "tu_1" }, background: true, at: 520 });
+
+    expect(table.latestOutput(400)).toBe("");
+    expect(table.recentSnapshots(510).map((task) => task.id)).toEqual(["tu_1"]);
+  });
+
   it("never puts an end before the run's start", () => {
     const table = tableWith(agentCall("tu_1", 100, true));
     table.apply({ kind: "ended", ref: { originId: "tu_1" }, state: "completed", reason: "cli", at: 50 });
@@ -380,7 +390,8 @@ describe("TaskTable roster", () => {
     table.apply({ kind: "started", ref: { toolUseId: "tu_1", cliTaskId: "task_a" }, at: 100 });
     table.apply({ kind: "roster", tasks: [{ cliTaskId: "task_a" }], at: 200 });
     table.apply({ kind: "roster", tasks: [], at: 400 });
-    table.apply({ kind: "ended", ref: { cliTaskId: "task_a" }, state: "completed", reason: "cli", output: "report", at: 150 });
+    table.apply({ kind: "ended", ref: { cliTaskId: "task_a" }, state: "completed", reason: "cli", at: 150 });
+    table.apply({ kind: "ended", ref: { cliTaskId: "task_a" }, state: "completed", reason: "cli", output: "report", at: 450 });
 
     expect(table.get("tu_1")).toMatchObject({ state: "completed", endedAt: 150 });
     expect(table.recentSnapshots(300).map((task) => task.id)).toEqual(["tu_1"]);
@@ -436,7 +447,7 @@ describe("TaskTable resume ordering", () => {
 
   it("keeps a late end for the first run off a history resume without run ids", () => {
     const table = tableWith(agentCall("tu_1", 100));
-    table.apply({ kind: "background", ref: { toolUseId: "tu_1", cliTaskId: "task_a" }, background: true });
+    table.apply({ kind: "background", ref: { toolUseId: "tu_1", cliTaskId: "task_a" }, background: true, at: 900 });
     table.apply({ kind: "started", ref: { toolUseId: "tu_s", cliTaskId: "task_a" }, taskKind: "agent", background: true, at: 200 });
 
     expect(table.apply({ kind: "ended", ref: { toolUseId: "tu_1", cliTaskId: "task_a" }, state: "completed", reason: "cli", at: 210 })).toEqual([]);
@@ -603,7 +614,7 @@ describe("TaskTable snapshots", () => {
 
     expect(table.apply({ kind: "started", ref: { toolUseId: "tu_1", cliTaskId: "task_a" }, at: 100 })).toEqual([]);
     expect(table.apply(agentCall("tu_1", 100, true))).toEqual([]);
-    expect(table.apply({ kind: "background", ref: { cliTaskId: "task_a" }, background: true })).toEqual([]);
+    expect(table.apply({ kind: "background", ref: { cliTaskId: "task_a" }, background: true, at: 900 })).toEqual([]);
     expect(table.apply({ kind: "roster", tasks: [{ cliTaskId: "task_a" }], at: 900 })).toEqual([]);
   });
 });

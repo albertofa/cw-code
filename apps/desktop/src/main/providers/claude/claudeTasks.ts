@@ -157,7 +157,7 @@ export function claudeToolResultObservation(
   at: number
 ): TaskObservation {
   if (isLaunchAck(output, structured)) {
-    return { kind: "background", ref: refOf(toolUseId, launchedAgentId(output, structured), undefined), background: true };
+    return { kind: "background", ref: refOf(toolUseId, launchedAgentId(output, structured), undefined), background: true, at };
   }
   return {
     kind: "ended",
