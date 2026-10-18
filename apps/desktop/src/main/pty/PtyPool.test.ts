@@ -170,3 +170,75 @@ describe("PtyPool shutdown support", () => {
     expect(pool.list()).toEqual([{ ptyId: "sess_a:shell", sessionId: "sess_a", kind: "shell" }]);
   });
 });
+
+describe("PtyPool terminal launch", () => {
+  function recordingPool(fail = false) {
+    const spawns: Array<{ args: string[]; env: NodeJS.ProcessEnv | undefined }> = [];
+    const ptys: FakePty[] = [];
+    const pool = new PtyPool(
+      () => SETTINGS,
+      async () => ({
+        spawn: (_file: string, args: string[], opts: { env?: NodeJS.ProcessEnv }) => {
+          if (fail) throw new Error("no pty");
+          spawns.push({ args, env: opts.env });
+          const pty = new FakePty();
+          ptys.push(pty);
+          return pty;
+        }
+      })
+    );
+    return { pool, spawns, ptys };
+  }
+
+  it("puts the driver's server arguments before the resume arguments and adds its env", async () => {
+    const { pool, spawns } = recordingPool();
+    let released = 0;
+    await pool.open("s1", process.cwd(), "opencode", "ses_1", { BASE: "1" }, () => {}, async () => ({
+      args: ["--server", "http://127.0.0.1:4100"],
+      env: { OPENCODE_PASSWORD: "pw" },
+      release: () => {
+        released += 1;
+      }
+    }));
+    expect(spawns[0].args.slice(-4)).toEqual(["--server", "http://127.0.0.1:4100", "--session", "ses_1"]);
+    expect(spawns[0].env).toMatchObject({ BASE: "1", OPENCODE_PASSWORD: "pw" });
+    expect(released).toBe(0);
+  });
+
+  it("releases the driver's lease once when the terminal exits or is killed", async () => {
+    const { pool, ptys } = recordingPool();
+    let released = 0;
+    const launch = async () => ({ args: [], env: {}, release: () => (released += 1) });
+    await pool.open("s1", process.cwd(), "opencode", "ses_1", undefined, () => {}, launch);
+    ptys[0].exit(0);
+    ptys[0].exit(0);
+    expect(released).toBe(1);
+    await pool.open("s2", process.cwd(), "opencode", "ses_2", undefined, () => {}, launch);
+    pool.kill("s2:opencode");
+    ptys[1].exit(1);
+    expect(released).toBe(2);
+  });
+
+  it("releases the lease when the terminal fails to spawn", async () => {
+    const { pool } = recordingPool(true);
+    let released = 0;
+    await expect(
+      pool.open("s1", process.cwd(), "opencode", "ses_1", undefined, () => {}, async () => ({
+        args: [],
+        env: {},
+        release: () => (released += 1)
+      }))
+    ).rejects.toThrow("PTY spawn failed");
+    expect(released).toBe(1);
+  });
+
+  it("never asks the driver for shell terminals", async () => {
+    const { pool } = recordingPool();
+    let asked = false;
+    await pool.open("s1", process.cwd(), "shell", "", undefined, () => {}, async () => {
+      asked = true;
+      return null;
+    });
+    expect(asked).toBe(false);
+  });
+});
