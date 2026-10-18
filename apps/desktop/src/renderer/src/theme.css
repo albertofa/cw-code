@@ -1552,9 +1552,7 @@ body.session-dragging * {
 }
 
 .reasoning-text {
-  margin: 2px 0 0 19px;
-  padding-left: 11px;
-  border-left: 2px solid var(--border-soft);
+  margin: 2px 0 0 22px;
   color: var(--muted);
   font-size: var(--t-sm);
   line-height: 1.6;
