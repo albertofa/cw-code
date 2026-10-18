@@ -192,7 +192,7 @@ interface AppState {
   busyTurns: Record<string, string>;
   autoFollowUpTurns: Record<string, number>;
   autoFollowUpPaused: Record<string, AutoFollowUpPause>;
-  pauseAutoFollowUp(sessionId: string): void;
+  pauseAutoFollowUp(sessionId: string, reason?: AutoFollowUpPause): void;
   resumeAutoFollowUp(sessionId: string): void;
   loadingHistory: Record<string, boolean>;
   historyErrorBySession: Record<string, string>;
@@ -1033,8 +1033,9 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ sessionsByProject: replaceSession(sessionsByProject, next) });
   },
 
-  pauseAutoFollowUp(sessionId: string) {
-    set({ autoFollowUpPaused: { ...get().autoFollowUpPaused, [sessionId]: "user" } });
+  pauseAutoFollowUp(sessionId: string, reason: AutoFollowUpPause = "user") {
+    const paused = get().autoFollowUpPaused;
+    set({ autoFollowUpPaused: reason === "user" ? { ...paused, [sessionId]: "user" } : withAutoPause(paused, sessionId, reason) });
   },
 
   resumeAutoFollowUp(sessionId: string) {

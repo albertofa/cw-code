@@ -33,10 +33,11 @@ async function sendAutoFollowUp(followUp: AutoFollowUp, settings: AppSettings, h
       ...(finalReview ? { finalReview: { ref: link.ref, sha: detail.headRefOid } } : {})
     });
   } catch (err) {
+    useAppStore.getState().pauseAutoFollowUp(sessionId, "error");
     useNotifs.getState().push({
       kind: "error",
-      title: `${workflow.label} could not send the ${prRefLabel(link.ref)} update`,
-      message: `${ipcErrorMessage(err)}. Send it from the session's update dock.`
+      title: `${workflow.label} could not send the ${prRefLabel(link.ref)} ${finalReview ? "final review" : "update"}`,
+      message: `${ipcErrorMessage(err)}. Resume ${workflow.label} in the session's dock to retry.`
     });
     return true;
   }
@@ -133,10 +134,11 @@ export function useAutoFollowUp(): void {
       if (!session) continue;
       started.current.add(followUp.signature);
       inFlight.current.add(followUp.signature);
-      void sendAutoFollowUp(followUp, settings, harnessLabel(session.driver)).then((handled) => {
-        inFlight.current.delete(followUp.signature);
-        if (!handled) started.current.delete(followUp.signature);
-      });
+      void sendAutoFollowUp(followUp, settings, harnessLabel(session.driver))
+        .then((handled) => {
+          if (!handled) started.current.delete(followUp.signature);
+        })
+        .finally(() => inFlight.current.delete(followUp.signature));
     }
   }, [followUpSignature, settings]);
 }
