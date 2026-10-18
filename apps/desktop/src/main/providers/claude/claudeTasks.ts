@@ -196,7 +196,8 @@ export function claudeSystemTaskObservation(info: ClaudeTaskSystemInfo, at: numb
         tasks: (info.liveTaskEntries ?? []).map(({ taskId, runId }) => ({
           cliTaskId: taskId,
           ...(runId ? { runId } : {})
-        }))
+        })),
+        at
       };
     case "started": {
       if (info.ambient === true) return null;

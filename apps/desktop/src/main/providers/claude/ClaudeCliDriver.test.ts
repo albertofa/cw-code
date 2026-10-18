@@ -1218,6 +1218,23 @@ describe("ClaudeCliDriver persistent process", () => {
     }
   });
 
+  it("emits no shell result for a shell task known only by its CLI task id", async () => {
+    const { driver, events, children } = makeDriver();
+    driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
+    await settle();
+    children[0].stdout.write(
+      `${JSON.stringify({ type: "system", subtype: "task_started", task_id: "bash-orphan", task_type: "local_bash", is_backgrounded: true })}\n`
+    );
+    children[0].stdout.write(
+      `${JSON.stringify({ type: "system", subtype: "task_updated", task_id: "bash-orphan", patch: { status: "failed", end_time: 1000 } })}\n`
+    );
+    await settle();
+
+    expect(finalTask(events, "bash-orphan")).toMatchObject({ kind: "shell", state: "failed" });
+    expect(toolResults(events)).toEqual([]);
+    driver.dispose();
+  });
+
   it("ends a background shell whose launch was denied instead of holding the session", async () => {
     const { driver, events, children } = makeDriver();
     driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });

@@ -1,4 +1,4 @@
-import { readdirSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import type { ContextCompactionInfo, HistoryMessage, TaskSnapshot } from "@cw-code/contracts";
 import { TaskTable, type TaskObservation } from "../../tasks/TaskTable.js";
@@ -368,35 +368,18 @@ function stringField(record: Record<string, unknown> | undefined, key: string): 
   return typeof value === "string" ? value : undefined;
 }
 
-interface SidecarMeta {
-  toolUseId: string;
-  finished: boolean;
-}
-
-const SIDECAR_META_RE = /^agent-.+\.meta\.json$/;
-
-function readSidecarMetas(transcriptDir: string, resumeCursor: string): SidecarMeta[] {
-  const metas: SidecarMeta[] = [];
+function sidecarFinished(transcriptDir: string, resumeCursor: string, agentId: string, toolUseId: string): boolean {
+  if (!/^[0-9a-f]{8,64}$/.test(agentId)) return false;
   for (const dir of [join(transcriptDir, resumeCursor, "subagents"), join(transcriptDir, "subagents")]) {
-    let names: string[];
+    let meta: Record<string, unknown> | undefined;
     try {
-      names = readdirSync(dir);
+      meta = plainObject(JSON.parse(readFileSync(join(dir, `agent-${agentId}.meta.json`), "utf8")));
     } catch {
       continue;
     }
-    for (const name of names) {
-      if (!SIDECAR_META_RE.test(name)) continue;
-      let meta: Record<string, unknown> | undefined;
-      try {
-        meta = plainObject(JSON.parse(readFileSync(join(dir, name), "utf8")));
-      } catch {
-        continue;
-      }
-      const toolUseId = stringField(meta, "toolUseId");
-      if (toolUseId) metas.push({ toolUseId, finished: meta?.["finished"] === true });
-    }
+    if (stringField(meta, "toolUseId") === toolUseId) return meta?.["finished"] === true;
   }
-  return metas;
+  return false;
 }
 
 type ToolResultBlock = { tool_use_id?: string; content?: unknown; is_error?: boolean };
@@ -439,9 +422,10 @@ class ClaudeHistoryTasks {
   }
 
   finish(transcriptDir: string, resumeCursor: string, at: number): void {
-    for (const meta of readSidecarMetas(transcriptDir, resumeCursor)) {
-      if (!meta.finished || this.table.get(meta.toolUseId)?.state !== "running") continue;
-      this.table.apply({ kind: "ended", ref: { originId: meta.toolUseId }, state: "completed", reason: "sidecar", at });
+    for (const task of this.table.snapshots()) {
+      if (task.state !== "running" || task.runCount !== 1 || !task.cliTaskId) continue;
+      if (!sidecarFinished(transcriptDir, resumeCursor, task.cliTaskId, task.id)) continue;
+      this.table.apply({ kind: "ended", ref: { originId: task.id }, state: "completed", reason: "sidecar", at });
     }
     this.table.closeOpen("unknown", "no-record", at);
   }

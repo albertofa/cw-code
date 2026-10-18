@@ -29,7 +29,7 @@ export type TaskObservation =
       usage?: ToolUsage;
       at: number;
     }
-  | { kind: "roster"; tasks: RosterEntry[] };
+  | { kind: "roster"; tasks: RosterEntry[]; at: number };
 
 type StartedObservation = Extract<TaskObservation, { kind: "started" }>;
 type EndedObservation = Extract<TaskObservation, { kind: "ended" }>;
@@ -143,12 +143,11 @@ function targetRun(record: TaskRecord, ref: TaskRef): TaskRun | undefined {
   return isOtherRun(run, ref) ? undefined : run;
 }
 
-function endRun(run: TaskRun, state: TaskState, reason: TaskEndReason, at: number | undefined): void {
+function endRun(run: TaskRun, state: TaskState, reason: TaskEndReason, at: number): void {
   if (stateRank(state) < stateRank(run.state)) return;
   run.state = state;
   run.endReason = reason;
-  const endedAt = run.endedAt ?? at;
-  if (endedAt !== undefined) run.endedAt = endedAt;
+  run.endedAt = run.endedAt ?? at;
 }
 
 function mergeOutput(run: TaskRun, output: string | undefined, source: TaskOutputSource = "summary"): void {
@@ -160,11 +159,12 @@ function mergeOutput(run: TaskRun, output: string | undefined, source: TaskOutpu
 
 function mergeUsage(run: TaskRun, usage: ToolUsage | undefined): void {
   if (usage === undefined) return;
-  const merged: ToolUsage = { ...run.usage };
-  for (const key of Object.keys(usage) as (keyof ToolUsage)[]) {
-    const value = usage[key];
-    if (value !== undefined) merged[key] = value;
-  }
+  const merged: ToolUsage = {
+    ...run.usage,
+    ...(usage.tokens !== undefined ? { tokens: usage.tokens } : {}),
+    ...(usage.toolUses !== undefined ? { toolUses: usage.toolUses } : {}),
+    ...(usage.durationMs !== undefined ? { durationMs: usage.durationMs } : {})
+  };
   if (Object.keys(merged).length > 0) run.usage = merged;
 }
 
@@ -209,7 +209,7 @@ export class TaskTable {
       case "ended":
         return this.applyEndedObservation(obs);
       case "roster":
-        return this.applyRoster(obs.tasks);
+        return this.applyRoster(obs.tasks, obs.at);
     }
   }
 
@@ -345,7 +345,7 @@ export class TaskTable {
     });
   }
 
-  private applyRoster(tasks: RosterEntry[]): TaskSnapshot[] {
+  private applyRoster(tasks: RosterEntry[], at: number): TaskSnapshot[] {
     this.roster = new Map(tasks.map((task) => [task.cliTaskId, task.runId]));
     const changed: TaskSnapshot[] = [];
     for (const record of this.records.values()) {
@@ -357,7 +357,7 @@ export class TaskTable {
       }
       const run = currentRun(record);
       if (run.state !== "running" || record.background !== true || !this.everRostered.has(cliTaskId)) continue;
-      changed.push(...this.change(record, () => endRun(run, "unknown", "roster", undefined)));
+      changed.push(...this.change(record, () => endRun(run, "unknown", "roster", at)));
     }
     for (const cliTaskId of this.roster.keys()) this.everRostered.add(cliTaskId);
     return changed;

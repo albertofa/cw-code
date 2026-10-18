@@ -417,7 +417,7 @@ describe("claudeSystemTaskObservation edge signals", () => {
 
   it("leaves ambient watcher tasks out of the roster and ignores their start", () => {
     const roster = line({ subtype: "background_tasks_changed", tasks: [{ task_id: "w1", ambient: true }, { task_id: "a1", run_id: "r1" }] });
-    expect(claudeSystemTaskObservation(roster, AT)).toStrictEqual({ kind: "roster", tasks: [{ cliTaskId: "a1", runId: "r1" }] });
+    expect(claudeSystemTaskObservation(roster, AT)).toStrictEqual({ kind: "roster", tasks: [{ cliTaskId: "a1", runId: "r1" }], at: AT });
     const started = line({ subtype: "task_started", task_id: "w1", tool_use_id: "tu_w", ambient: true });
     expect(claudeSystemTaskObservation(started, AT)).toBeNull();
   });
@@ -456,11 +456,12 @@ describe("claudeSystemTaskObservation", () => {
     const live = systemInfo((msg) => msg.subtype === "background_tasks_changed" && msg.tasks?.length === 1);
     expect(claudeSystemTaskObservation(live, AT)).toStrictEqual({
       kind: "roster",
-      tasks: [{ cliTaskId: PONG.taskId, runId: PONG.runId }]
+      tasks: [{ cliTaskId: PONG.taskId, runId: PONG.runId }],
+      at: AT
     });
     const empty = systemInfo((msg) => msg.subtype === "background_tasks_changed" && msg.tasks?.length === 0);
-    expect(claudeSystemTaskObservation(empty, AT)).toStrictEqual({ kind: "roster", tasks: [] });
-    expect(claudeSystemTaskObservation({ kind: "tasks" }, AT)).toStrictEqual({ kind: "roster", tasks: [] });
+    expect(claudeSystemTaskObservation(empty, AT)).toStrictEqual({ kind: "roster", tasks: [], at: AT });
+    expect(claudeSystemTaskObservation({ kind: "tasks" }, AT)).toStrictEqual({ kind: "roster", tasks: [], at: AT });
   });
 
   it("keeps every roster entry and omits a missing run id", () => {
@@ -470,11 +471,12 @@ describe("claudeSystemTaskObservation", () => {
       tasks: [
         { cliTaskId: PONG.taskId, runId: PONG.runId },
         { cliTaskId: SLEEPER.taskId, runId: SLEEPER.runId }
-      ]
+      ],
+      at: AT
     });
     expect(
       claudeSystemTaskObservation({ kind: "tasks", liveTaskEntries: [{ taskId: "a" }, { taskId: "b", runId: "r1" }] }, AT)
-    ).toStrictEqual({ kind: "roster", tasks: [{ cliTaskId: "a" }, { cliTaskId: "b", runId: "r1" }] });
+    ).toStrictEqual({ kind: "roster", tasks: [{ cliTaskId: "a" }, { cliTaskId: "b", runId: "r1" }], at: AT });
   });
 
   it("maps a real task_started line to a background agent start with run id", () => {

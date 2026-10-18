@@ -379,7 +379,7 @@ export class ClaudeCliDriver implements CliDriver {
   }
 
   private emitShellResult(state: ClaudeProcessState, task: TaskSnapshot): void {
-    if (task.kind !== "shell" || !CLI_TERMINAL_TASK_STATES.has(task.state)) return;
+    if (task.kind !== "shell" || task.id === task.cliTaskId || !CLI_TERMINAL_TASK_STATES.has(task.state)) return;
     const output = task.output ?? (task.state === "completed" ? undefined : `Background task ${task.state}`);
     if (output === undefined || state.shellResults.get(task.id) === output) return;
     state.shellResults.set(task.id, output);

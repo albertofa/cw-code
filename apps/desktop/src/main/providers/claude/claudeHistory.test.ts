@@ -494,6 +494,27 @@ describe("readClaudeHistoryFile", () => {
     }
   });
 
+  it("does not let a sidecar finished flag close a resumed run it cannot be tied to", () => {
+    const sendCall = {
+      type: "assistant",
+      uuid: "a-send",
+      timestamp: iso(6000),
+      message: { id: "msg-send", role: "assistant", content: [{ type: "tool_use", id: "toolu_send", name: "SendMessage", input: { to: AGENT_ID, message: "again" } }] }
+    };
+    const file = syntheticSession(
+      [
+        agentCall("toolu_bg", 0, BACKGROUND_INPUT),
+        launchAck("toolu_bg", 100),
+        queuedNotification("toolu_bg", 5000, "<status>completed</status>\n<result>FIRST</result>"),
+        sendCall,
+        toolResult("toolu_send", 6100, `{"success":true,"message":"Resuming agent ${AGENT_ID}"}`, { success: true, resumedAgentId: AGENT_ID })
+      ],
+      { [`agent-${AGENT_ID}.meta.json`]: JSON.stringify({ toolUseId: "toolu_bg", finished: true }) }
+    );
+
+    expect(taskOf(readClaudeHistoryFile(file, CURSOR), "toolu_bg")).toMatchObject({ state: "unknown", endReason: "no-record", runCount: 2 });
+  });
+
   it("ends a background shell whose launch was denied", () => {
     const file = syntheticSession([
       {

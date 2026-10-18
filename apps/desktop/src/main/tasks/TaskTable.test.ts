@@ -348,21 +348,21 @@ describe("TaskTable roster", () => {
     const table = tableWith(agentCall("tu_1", 100, true));
     table.apply({ kind: "started", ref: { toolUseId: "tu_1", cliTaskId: "task_a" }, at: 100 });
 
-    expect(table.apply({ kind: "roster", tasks: [{ cliTaskId: "task_a" }] })).toEqual([]);
-    expect(table.apply({ kind: "roster", tasks: [] })).toStrictEqual([
-      { id: "tu_1", cliTaskId: "task_a", kind: "agent", background: true, state: "unknown", endReason: "roster", runCount: 1, startedAt: 100 }
+    expect(table.apply({ kind: "roster", tasks: [{ cliTaskId: "task_a" }], at: 300 })).toEqual([]);
+    expect(table.apply({ kind: "roster", tasks: [], at: 400 })).toStrictEqual([
+      { id: "tu_1", cliTaskId: "task_a", kind: "agent", background: true, state: "unknown", endReason: "roster", runCount: 1, startedAt: 100, endedAt: 400 }
     ]);
 
     table.apply({ kind: "ended", ref: { cliTaskId: "task_a" }, state: "completed", reason: "cli", at: 500 });
-    expect(table.get("tu_1")).toMatchObject({ state: "completed", endReason: "cli", endedAt: 500 });
+    expect(table.get("tu_1")).toMatchObject({ state: "completed", endReason: "cli", endedAt: 400 });
   });
 
   it("does not close a task never seen in a roster", () => {
     const table = tableWith(agentCall("tu_1", 100, true));
     table.apply({ kind: "started", ref: { toolUseId: "tu_1", cliTaskId: "task_a" }, at: 100 });
 
-    expect(table.apply({ kind: "roster", tasks: [{ cliTaskId: "task_b" }] })).toEqual([]);
-    expect(table.apply({ kind: "roster", tasks: [] })).toEqual([]);
+    expect(table.apply({ kind: "roster", tasks: [{ cliTaskId: "task_b" }], at: 900 })).toEqual([]);
+    expect(table.apply({ kind: "roster", tasks: [], at: 900 })).toEqual([]);
     expect(table.get("tu_1")?.state).toBe("running");
   });
 
@@ -370,8 +370,8 @@ describe("TaskTable roster", () => {
     const table = tableWith(agentCall("tu_1", 100));
     table.apply({ kind: "started", ref: { toolUseId: "tu_1", cliTaskId: "task_a" }, at: 100 });
 
-    expect(table.apply({ kind: "roster", tasks: [{ cliTaskId: "task_a" }] })).toMatchObject([{ id: "tu_1", background: true, state: "running" }]);
-    expect(table.apply({ kind: "roster", tasks: [] })).toMatchObject([{ id: "tu_1", state: "unknown", endReason: "roster" }]);
+    expect(table.apply({ kind: "roster", tasks: [{ cliTaskId: "task_a" }], at: 900 })).toMatchObject([{ id: "tu_1", background: true, state: "running" }]);
+    expect(table.apply({ kind: "roster", tasks: [], at: 900 })).toMatchObject([{ id: "tu_1", state: "unknown", endReason: "roster" }]);
     expect(table.liveCount()).toBe(0);
   });
 
@@ -379,8 +379,8 @@ describe("TaskTable roster", () => {
     const table = tableWith(agentCall("tu_1", 100, false));
     table.apply({ kind: "started", ref: { toolUseId: "tu_1", cliTaskId: "task_a" }, background: false, at: 100 });
 
-    table.apply({ kind: "roster", tasks: [{ cliTaskId: "task_b" }] });
-    expect(table.apply({ kind: "roster", tasks: [] })).toEqual([]);
+    table.apply({ kind: "roster", tasks: [{ cliTaskId: "task_b" }], at: 900 });
+    expect(table.apply({ kind: "roster", tasks: [], at: 900 })).toEqual([]);
     expect(table.get("tu_1")).toMatchObject({ state: "running", background: false });
   });
 });
@@ -424,12 +424,12 @@ describe("TaskTable resume ordering", () => {
   it("counts a resumed run the roster lists before its started arrives", () => {
     const table = tableWith(agentCall("tu_1", 100, true));
     table.apply({ kind: "started", ref: { toolUseId: "tu_1", cliTaskId: "task_a", runId: "run_1" }, at: 100 });
-    table.apply({ kind: "roster", tasks: [{ cliTaskId: "task_a", runId: "run_1" }] });
+    table.apply({ kind: "roster", tasks: [{ cliTaskId: "task_a", runId: "run_1" }], at: 900 });
     table.apply({ kind: "ended", ref: { cliTaskId: "task_a", runId: "run_1" }, state: "completed", reason: "cli", at: 150 });
-    table.apply({ kind: "roster", tasks: [] });
+    table.apply({ kind: "roster", tasks: [], at: 900 });
     expect(table.liveCount()).toBe(0);
 
-    table.apply({ kind: "roster", tasks: [{ cliTaskId: "task_a", runId: "run_2" }] });
+    table.apply({ kind: "roster", tasks: [{ cliTaskId: "task_a", runId: "run_2" }], at: 900 });
     expect(table.liveCount()).toBe(1);
     table.apply({ kind: "started", ref: { toolUseId: "tu_s", cliTaskId: "task_a", runId: "run_2" }, at: 200 });
     expect(table.liveCount()).toBe(1);
@@ -437,7 +437,7 @@ describe("TaskTable resume ordering", () => {
 
   it("counts a first launch once while the roster lists it before its started arrives", () => {
     const table = tableWith(agentCall("tu_1", 100, true));
-    table.apply({ kind: "roster", tasks: [{ cliTaskId: "task_a", runId: "run_1" }] });
+    table.apply({ kind: "roster", tasks: [{ cliTaskId: "task_a", runId: "run_1" }], at: 900 });
     expect(table.liveCount()).toBe(1);
     table.apply({ kind: "started", ref: { toolUseId: "tu_1", cliTaskId: "task_a", runId: "run_1" }, at: 101 });
     expect(table.liveCount()).toBe(1);
@@ -459,7 +459,7 @@ describe("TaskTable liveCount", () => {
     table.apply({ kind: "started", ref: { toolUseId: "tu_outside", cliTaskId: "task_outside" }, at: 100 });
     table.apply({ kind: "started", ref: { toolUseId: "tu_fg_rostered", cliTaskId: "task_fg" }, at: 100 });
     table.apply({ kind: "ended", ref: { originId: "tu_done" }, state: "completed", reason: "cli", at: 150 });
-    table.apply({ kind: "roster", tasks: [{ cliTaskId: "task_bg" }, { cliTaskId: "task_done" }, { cliTaskId: "task_unmapped" }, { cliTaskId: "task_fg" }, { cliTaskId: "task_unmapped" }] });
+    table.apply({ kind: "roster", tasks: [{ cliTaskId: "task_bg" }, { cliTaskId: "task_done" }, { cliTaskId: "task_unmapped" }, { cliTaskId: "task_fg" }, { cliTaskId: "task_unmapped" }], at: 900 });
 
     expect(table.liveCount()).toBe(4);
   });
@@ -573,6 +573,6 @@ describe("TaskTable snapshots", () => {
     expect(table.apply({ kind: "started", ref: { toolUseId: "tu_1", cliTaskId: "task_a" }, at: 100 })).toEqual([]);
     expect(table.apply(agentCall("tu_1", 100, true))).toEqual([]);
     expect(table.apply({ kind: "background", ref: { cliTaskId: "task_a" }, background: true })).toEqual([]);
-    expect(table.apply({ kind: "roster", tasks: [{ cliTaskId: "task_a" }] })).toEqual([]);
+    expect(table.apply({ kind: "roster", tasks: [{ cliTaskId: "task_a" }], at: 900 })).toEqual([]);
   });
 });
