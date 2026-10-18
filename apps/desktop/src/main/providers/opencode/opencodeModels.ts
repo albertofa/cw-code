@@ -333,9 +333,10 @@ function persistCache(): void {
   }
 }
 
-async function fetchOpencodeModels(cwd: string, binary: string, query: OpencodeModelsQuery): Promise<ModelOption[]> {
-  const start = Date.now();
-  try {
+export type OpencodeModelsLoader = () => Promise<ModelOption[]>;
+
+function cliModelsLoader(binary: string, query: OpencodeModelsQuery): OpencodeModelsLoader {
+  return async () => {
     let parsed: ModelOption[] = [];
     try {
       parsed = parseOpencodeVerboseModels(await query(binary, ["models", "--verbose"]));
@@ -345,6 +346,14 @@ async function fetchOpencodeModels(cwd: string, binary: string, query: OpencodeM
     if (parsed.length === 0) {
       parsed = parseOpencodeModels(await query(binary, ["models"]));
     }
+    return parsed;
+  };
+}
+
+async function fetchOpencodeModels(cwd: string, binary: string, load: OpencodeModelsLoader): Promise<ModelOption[]> {
+  const start = Date.now();
+  try {
+    const parsed = await load();
     const models = parsed.length > 0 ? parsed : OPENCODE_CURATED_MODELS;
     cache.set(cacheKey(binary), { at: Date.now(), models });
     persistCache();
@@ -376,26 +385,30 @@ async function fetchOpencodeModels(cwd: string, binary: string, query: OpencodeM
   }
 }
 
-function refreshOpencodeModels(cwd: string, binary: string, query: OpencodeModelsQuery): Promise<ModelOption[]> {
+function refreshOpencodeModels(cwd: string, binary: string, load: OpencodeModelsLoader): Promise<ModelOption[]> {
   const key = cacheKey(binary);
   const pending = inflight.get(key);
   if (pending) return pending;
-  const promise = fetchOpencodeModels(cwd, binary, query).finally(() => {
+  const promise = fetchOpencodeModels(cwd, binary, load).finally(() => {
     if (inflight.get(key) === promise) inflight.delete(key);
   });
   inflight.set(key, promise);
   return promise;
 }
 
-export async function listOpencodeModels(
+export function listOpencodeModels(
   cwd: string,
   binary: string,
   query: OpencodeModelsQuery = queryModels
 ): Promise<ModelOption[]> {
+  return loadOpencodeModels(cwd, binary, cliModelsLoader(binary, query));
+}
+
+export async function loadOpencodeModels(cwd: string, binary: string, load: OpencodeModelsLoader): Promise<ModelOption[]> {
   const hit = cache.get(cacheKey(binary));
   if (hit) {
     const stale = Date.now() - hit.at >= OPENCODE_MODELS_CACHE_TTL_MS;
-    if (stale) void refreshOpencodeModels(cwd, binary, query);
+    if (stale) void refreshOpencodeModels(cwd, binary, load);
     traceHarnessCall({
       harness: "opencode",
       operation: "opencode.listModels",
@@ -406,7 +419,7 @@ export async function listOpencodeModels(
     });
     return hit.models;
   }
-  return refreshOpencodeModels(cwd, binary, query);
+  return refreshOpencodeModels(cwd, binary, load);
 }
 
 export function peekOpencodeModels(binary: string): ModelOption[] | undefined {

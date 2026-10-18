@@ -11,6 +11,7 @@ export interface LiveToolPart {
     input?: unknown;
     output?: unknown;
     error?: unknown;
+    metadata?: Record<string, unknown>;
   };
 }
 
@@ -125,13 +126,16 @@ export function diffLiveTools(
 export interface LiveTaskPart {
   callId: string;
   status?: string;
+  childSessionId?: string;
 }
+
+const CHILD_SESSION_TOOLS = new Set(["task", "subagent"]);
 
 export function collectTaskParts(messages: LiveMessage[]): LiveTaskPart[] {
   const out: LiveTaskPart[] = [];
   for (const msg of messages) {
     for (const part of msg.parts ?? []) {
-      if (part.type !== "tool" || (part.tool ?? "").toLowerCase() !== "task") continue;
+      if (part.type !== "tool" || !CHILD_SESSION_TOOLS.has((part.tool ?? "").toLowerCase())) continue;
       const id =
         typeof part.callID === "string" && part.callID
           ? part.callID
@@ -139,7 +143,12 @@ export function collectTaskParts(messages: LiveMessage[]): LiveTaskPart[] {
             ? part.id
             : "";
       if (!id) continue;
-      out.push({ callId: id, ...(part.state?.status ? { status: part.state.status } : {}) });
+      const child = part.state?.metadata?.["sessionID"];
+      out.push({
+        callId: id,
+        ...(part.state?.status ? { status: part.state.status } : {}),
+        ...(typeof child === "string" && child ? { childSessionId: child } : {})
+      });
     }
   }
   return out;
