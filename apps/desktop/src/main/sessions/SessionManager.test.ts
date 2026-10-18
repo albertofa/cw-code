@@ -2583,18 +2583,23 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
-  it("ends babysit when the PR is unlinked or the workflow stops running continuously", async () => {
+  it("ends babysit when the PR is unlinked, babysit is stopped, or the workflow stops running continuously", async () => {
     const widgets = { host: "github.com", owner: "acme", repo: "widgets", number: 42 };
     const { manager, project } = makePrManager({ prState: () => "OPEN" });
     const store = (manager as unknown as { store: SessionStore }).store;
     const unlinked = await manager.createSession(project.id, "claude", { mode: "current" });
+    const stopped = await manager.createSession(project.id, "claude", { mode: "current" });
     const disabled = await manager.createSession(project.id, "claude", { mode: "current" });
-    for (const session of [unlinked, disabled]) {
+    for (const session of [unlinked, stopped, disabled]) {
       manager.linkPr(session.id, { ref: widgets, origin: "workflow", workflowId: "babysit", lastSeenSha: "old", lastSeenAt: 0 });
       store.updateSession(session.id, { status: "babysit" });
     }
 
     expect(manager.unlinkPr(unlinked.id, widgets).status).toBe("holding");
+    expect(manager.linkPr(disabled.id, { ref: widgets, origin: "workflow", workflowId: "babysit", lastSeenSha: "new", lastSeenAt: 1 }).status).toBe(
+      "babysit"
+    );
+    expect(manager.linkPr(stopped.id, { ref: widgets, origin: "workflow", lastSeenSha: "old", lastSeenAt: 0 }).status).toBe("holding");
     expect(store.getSession(disabled.id)?.status).toBe("babysit");
 
     const workflows = manager.getSettings().prWorkflows.map((w) => (w.id === "babysit" ? { ...w, autoFollowUp: false } : w));

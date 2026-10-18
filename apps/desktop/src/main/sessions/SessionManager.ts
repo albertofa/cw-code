@@ -799,6 +799,7 @@ export class SessionManager {
     if (!session) throw new Error(`unknown session ${sessionId}`);
     const prUnlinked = removeUnlinkedKey(session.prUnlinked, prKey(link.ref));
     this.store.updateSession(sessionId, { prs: upsertLink(session.prs, link), prUnlinked });
+    this.endStaleBabysit(sessionId);
     return this.emitSession(sessionId);
   }
 
