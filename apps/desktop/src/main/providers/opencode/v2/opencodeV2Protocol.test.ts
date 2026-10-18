@@ -150,7 +150,7 @@ describe("opencodeV2Protocol requests", () => {
     const idle = fakeClient((s) => (s.path === "/api/session/active" ? json({ data: {} }) : undefined));
     await expect(opencodeV2Protocol.reattachState(idle.client, "ses_1", running)).resolves.toEqual({ running: false });
     const busy = fakeClient((s) => (s.path === "/api/session/active" ? json({ data: { ses_1: {} } }) : undefined));
-    await expect(opencodeV2Protocol.reattachState(busy.client, "ses_1", running)).resolves.toEqual({ running: true, latestId: null });
+    await expect(opencodeV2Protocol.reattachState(busy.client, "ses_1", running)).resolves.toEqual({ running: true, runIds: ["msg_1"] });
     const finished = [...running, { info: { id: "msg_2", role: "idle" }, parts: [] }];
     await expect(opencodeV2Protocol.reattachState(busy.client, "ses_1", finished)).resolves.toEqual({ running: false });
   });

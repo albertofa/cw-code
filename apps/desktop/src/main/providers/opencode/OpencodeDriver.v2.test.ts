@@ -82,7 +82,10 @@ function stubServer(sse: ReturnType<typeof controllableSse>, state: ServerState)
         state.formReplies.push({ path, body: JSON.parse(String(init?.body)) });
         return Promise.resolve(new Response(null, { status: 204 }));
       }
-      if (path.endsWith("/message")) return Promise.resolve(json({ data: state.messages, cursor: {} }));
+      if (path.endsWith("/message")) {
+        const desc = new URL(url).searchParams.get("order") === "desc";
+        return Promise.resolve(json({ data: desc ? [...state.messages].reverse() : state.messages, cursor: {} }));
+      }
       if (path.endsWith("/form") || path === "/api/permission/request") return Promise.resolve(json({ data: [] }));
       return Promise.resolve(json({ data: { id: SID } }));
     })
@@ -217,6 +220,41 @@ describe("OpencodeDriver on an opencode v2 server", () => {
       driver.dispose();
     }
   });
+
+  it("counts the in-flight run as the reattached turn's work after a reconnect", async () => {
+    const events: ThreadEvent[] = [];
+    const sse = controllableSse();
+    const state: ServerState = { messages: [], prompts: [], formReplies: [] };
+    const earlier = [
+      { ...USER, id: "msg_u0" },
+      { ...ANSWER, id: "msg_a0", content: [{ type: "text", text: "earlier" }] },
+      { ...IDLE, id: "msg_i0" }
+    ];
+    const inFlight = { ...ANSWER, id: "msg_a1", content: [{ type: "text", text: "partial" }], finish: "tool-calls" };
+    state.messages = [...earlier, USER, inFlight];
+    stubServer(sse, state);
+    const base = globalThis.fetch;
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockImplementation((url: string, init?: RequestInit) =>
+        new URL(url).pathname === "/api/session/active" ? Promise.resolve(json({ data: { [SID]: {} } })) : base(url, init)
+      )
+    );
+    const driver = startDriver(events);
+    try {
+      const result = await driver.retryConnection({ sessionId: "s1", cwd: CWD, resumeCursor: SID });
+      expect(result.status).toBe("running");
+      state.messages = [...earlier, USER, inFlight, { ...ANSWER, id: "msg_a2" }, { ...IDLE, id: "msg_i1" }];
+      await waitFor(() => events.some((e) => e.type === "turn.done"));
+      expect(events.find((e) => e.type === "turn.done")).toMatchObject({
+        turnId: result.turnId,
+        resultText: "partial\nDONE",
+        usage: [expect.objectContaining({ model: "opencode/big-pickle", inputTokens: 2 })]
+      });
+    } finally {
+      driver.dispose();
+    }
+  }, 10_000);
 
   it("fails the turn on execution.failed", async () => {
     const events: ThreadEvent[] = [];

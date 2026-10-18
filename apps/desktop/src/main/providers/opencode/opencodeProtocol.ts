@@ -128,7 +128,8 @@ export interface OpencodeEventDecoder {
   decode(event: unknown): OpencodeEvent[];
 }
 
-export type OpencodeReattachState = { running: false } | { running: true; latestId: string | null };
+/** `runIds` are the messages of the run still in flight; they count as new work for the reattached turn. */
+export type OpencodeReattachState = { running: false } | { running: true; runIds: string[] };
 
 export interface OpencodeProtocol {
   readonly version: OpencodeProtocolVersion;

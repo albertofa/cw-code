@@ -20,7 +20,7 @@ import {
   type OpencodeSessionSummary
 } from "../opencodeProtocol.js";
 import { OpencodeV2EventDecoder } from "./opencodeV2Events.js";
-import { mapV2Messages, v2PendingChildren, v2Running, v2TurnEnded } from "./opencodeV2Messages.js";
+import { mapV2Messages, v2PendingChildren, v2RunIds, v2Running, v2TurnEnded } from "./opencodeV2Messages.js";
 import { parseV2PendingForms, v2FormAnswer } from "./opencodeV2Forms.js";
 import { activeSessionIds } from "./opencodeV2Server.js";
 import { buildV2CommandOptions, directoryCommandTemplates, v2CommandEntries, v2ConfigCommandSources } from "./opencodeV2Commands.js";
@@ -393,6 +393,6 @@ export const opencodeV2Protocol: OpencodeProtocol = {
 
   async reattachState(client, sessionId, messages: OpencodeMessage[]) {
     if (!v2Running(messages) || !(await sessionActive(client, sessionId))) return { running: false };
-    return { running: true, latestId: null };
+    return { running: true, runIds: v2RunIds(messages) };
   }
 };

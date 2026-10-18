@@ -263,6 +263,6 @@ export const opencodeV1Protocol: OpencodeProtocol = {
   async reattachState(_client, _sessionId, messages: OpencodeMessage[]): Promise<OpencodeReattachState> {
     const latest = latestAssistantOf(messages);
     if (!latest || latest.terminal) return { running: false };
-    return { running: true, latestId: latest.id };
+    return { running: true, runIds: [latest.id] };
   }
 };

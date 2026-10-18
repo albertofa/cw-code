@@ -281,6 +281,14 @@ export function v2TurnEnded(messages: OpencodeMessage[], beforeIds: Set<string>)
   return worked && v2PendingChildren(messages, beforeIds).length === 0;
 }
 
+export function v2RunIds(messages: OpencodeMessage[]): string[] {
+  const lastIdle = messages.map((m) => m.info?.role).lastIndexOf("idle");
+  return messages
+    .slice(lastIdle + 1)
+    .map((m) => m.info?.id)
+    .filter((id): id is string => typeof id === "string" && id.length > 0);
+}
+
 export function v2Running(messages: OpencodeMessage[]): boolean {
   const last = lastMessage(messages);
   return last !== undefined && last.info?.role !== "idle";

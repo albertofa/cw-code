@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mapOpencodeMessages } from "../opencodeHistory.js";
 import { summarizeOpencodeTurn, turnMessagesOf } from "../opencodeMessage.js";
 import { collectTaskParts, diffLiveTools, type LiveMessage } from "../opencodeLivePoll.js";
-import { mapV2Messages, v2PendingChildren, v2Running, v2TurnEnded } from "./opencodeV2Messages.js";
+import { mapV2Messages, v2PendingChildren, v2RunIds, v2Running, v2TurnEnded } from "./opencodeV2Messages.js";
 
 const MODEL_SWITCH = { id: "msg_1", time: { created: 1 }, type: "model-switched", model: { id: "big-pickle", providerID: "opencode" } };
 const USER = { id: "msg_2", time: { created: 2 }, text: "Read README.md, then reply DONE", type: "user" };
@@ -176,6 +176,12 @@ describe("v2 turn state", () => {
     const failed = { ...completion, metadata: { ...completion.metadata, state: "error" }, text: '<subagent sessionID="ses_child" state="error">\nboom\n</subagent>' };
     const part = mapV2Messages([launch, failed])[0].parts?.[0];
     expect(part?.state).toMatchObject({ status: "error", error: "boom" });
+  });
+
+  it("lists the messages of the run after the last idle marker", () => {
+    expect(v2RunIds(mapV2Messages([USER, STEP_ONE, STEP_TWO, IDLE, { ...USER, id: "msg_6" }, { ...STEP_ONE, id: "msg_7" }]))).toEqual(["msg_6", "msg_7"]);
+    expect(v2RunIds(mapV2Messages([USER, STEP_ONE]))).toEqual(["msg_2", "msg_3"]);
+    expect(v2RunIds(mapV2Messages([USER, IDLE]))).toEqual([]);
   });
 
   it("treats a session whose newest message is not idle as running", () => {

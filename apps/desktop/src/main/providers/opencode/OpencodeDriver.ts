@@ -648,7 +648,7 @@ export class OpencodeDriver implements CliDriver {
     if (!state.running) return { status: "done", history };
     const turnId = `retry:${randomUUID()}`;
     const beforeIds = new Set(turnMessagesOf(raw).map((m) => m.id));
-    if (state.latestId) beforeIds.delete(state.latestId);
+    for (const id of state.runIds) beforeIds.delete(id);
     this.trackTurn({
       turnId,
       localSessionId: sessionId,
