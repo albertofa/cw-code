@@ -462,8 +462,17 @@ describe("parseDetail", () => {
           oid: "sha-1",
           messageHeadline: "Fix bug",
           committedDate: "2024-01-02T00:00:00Z",
-          author: { name: "Alice", user: { login: "alice" } },
+          author: { name: "Alice", avatarUrl: "https://avatars.githubusercontent.com/u/7?s=48", user: { login: "alice" } },
           statusCheckRollup: { contexts: { nodes: [rollupNode("SUCCESS")] } }
+        }
+      },
+      {
+        __typename: "PullRequestCommit",
+        commit: {
+          oid: "sha-2",
+          messageHeadline: "Tidy up",
+          committedDate: "2024-01-02T01:00:00Z",
+          author: { name: "Alice", avatarUrl: "http://example.test/a.png", user: { login: "alice" } }
         }
       },
       {
@@ -493,7 +502,10 @@ describe("parseDetail", () => {
 
     const commitsItem = detail.timeline[0];
     if (commitsItem.kind !== "commits") throw new Error("expected commits item");
-    expect(commitsItem.commits).toEqual([{ oid: "sha-1", headline: "Fix bug", author: "alice", committedAt: Date.parse("2024-01-02T00:00:00Z"), ci: "passing" }]);
+    expect(commitsItem.commits).toEqual([
+      { oid: "sha-1", headline: "Fix bug", author: "alice", authorAvatarUrl: "https://avatars.githubusercontent.com/u/7?s=48", committedAt: Date.parse("2024-01-02T00:00:00Z"), ci: "passing" },
+      { oid: "sha-2", headline: "Tidy up", author: "alice", committedAt: Date.parse("2024-01-02T01:00:00Z"), ci: "none" }
+    ]);
 
     const reviewItem = detail.timeline[1];
     if (reviewItem.kind !== "review") throw new Error("expected review item");

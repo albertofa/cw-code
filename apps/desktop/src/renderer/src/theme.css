@@ -8394,7 +8394,23 @@ button.gitbar-checkout:hover {
   margin-bottom: 20px;
 }
 
+.pr-detail-timeline::before,
+.pr-detail-commit-days::before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: 11px;
+  width: 2px;
+  background: var(--border);
+}
+
+.pr-detail-timeline > * {
+  position: relative;
+}
+
 .pr-detail-event {
+  position: relative;
   display: flex;
   align-items: center;
   gap: 10px;
@@ -8434,24 +8450,105 @@ button.gitbar-checkout:hover {
 }
 
 .pr-detail-commits {
-  margin: -4px 0 14px 34px;
+  margin: -6px 0 14px;
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
 }
 
 .pr-detail-commit-row {
   display: flex;
   align-items: center;
   gap: 8px;
+  width: 100%;
+  padding: 4px 8px 4px 0;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
   color: var(--dim);
+  font: inherit;
   font-size: var(--t-sm);
+  text-align: left;
+  cursor: pointer;
+}
+
+.pr-detail-commit-node {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  flex: none;
+}
+
+.pr-detail-commit-node::before {
+  content: "";
+  width: 8px;
+  height: 8px;
+  border: 2px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg);
+}
+
+.pr-detail-commit-row:hover .pr-detail-commit-node::before {
+  border-color: var(--accent);
+}
+
+.pr-detail-commit-time {
+  flex: none;
+  color: var(--muted);
+  font-size: var(--t-xs);
+  white-space: nowrap;
+}
+
+.pr-detail-commit-list-meta .pr-detail-commit-time {
+  font-size: inherit;
+}
+
+.pr-detail-commit-row:hover,
+.pr-detail-commit-list-row:hover {
+  background: var(--hover);
+}
+
+.pr-detail-commit-row:hover .pr-detail-commit-headline,
+.pr-detail-commit-list-row:hover .pr-detail-commit-headline {
+  color: var(--text);
+  text-decoration: underline;
+}
+
+.pr-detail-commit-ci {
+  flex: none;
+}
+
+.pr-detail-commit-ci.ok {
+  color: var(--success);
+}
+
+.pr-detail-commit-ci.bad {
+  color: var(--danger);
+}
+
+.pr-detail-commit-headline {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .pr-detail-commit-sha {
+  flex-shrink: 0;
   font-family: var(--mono);
   font-size: var(--t-xs);
   color: var(--muted);
+}
+
+.pr-detail-commit-row:hover .pr-detail-commit-sha,
+.pr-detail-commit-list-row:hover .pr-detail-commit-sha {
+  color: var(--accent);
+}
+
+.grow {
+  flex: 1;
+  min-width: 0;
 }
 
 .pr-detail-thread {
@@ -8662,18 +8759,61 @@ button.gitbar-checkout:hover {
   font-size: var(--t-sm);
 }
 
+.pr-detail-commit-days {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  gap: 18px;
+}
+
+.pr-detail-commit-day {
+  position: relative;
+}
+
+.pr-detail-commit-day-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 10px;
+  color: var(--muted);
+  font-size: var(--t-sm);
+}
+
+.pr-detail-commit-day-node {
+  display: grid;
+  place-items: center;
+  width: 24px;
+  height: 24px;
+  flex: none;
+  border-radius: 999px;
+  background: var(--raised);
+  color: var(--dim);
+}
+
 .pr-detail-commit-list {
   border: 1px solid var(--border);
   border-radius: var(--r-md);
+  background: var(--bg);
   overflow: hidden;
+}
+
+.pr-detail-commit-day .pr-detail-commit-list {
+  margin-left: 34px;
 }
 
 .pr-detail-commit-list-row {
   display: flex;
   align-items: center;
   gap: 10px;
+  width: 100%;
   padding: 10px 14px;
+  border: 0;
   border-top: 1px solid var(--border-soft);
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
 }
 
 .pr-detail-commit-list-row:first-child {
@@ -8683,14 +8823,24 @@ button.gitbar-checkout:hover {
 .pr-detail-commit-list-copy {
   flex: 1;
   min-width: 0;
-  color: var(--dim);
+  color: var(--text);
   font-size: var(--t-sm);
+  font-weight: 500;
 }
 
 .pr-detail-commit-list-meta {
-  margin-top: 2px;
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  margin-top: 4px;
   color: var(--muted);
   font-size: var(--t-xs);
+  font-weight: 400;
+}
+
+.pr-detail-commit-list-meta strong {
+  color: var(--dim);
+  font-weight: 600;
 }
 
 .pr-detail-checks {

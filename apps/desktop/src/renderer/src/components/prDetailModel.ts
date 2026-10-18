@@ -2,6 +2,7 @@ import type {
   GitPullRequestChecks,
   PrCheck,
   PrCiState,
+  PrCommit,
   PrDetail,
   PrMergeable,
   PrRef,
@@ -119,4 +120,38 @@ export function threadSendTarget(mainSession: SessionMeta | null, ref: PrRef, su
     return { workflowId: linkFor(mainSession, ref)?.workflowId ?? "babysit", continueSessionId: mainSession.id };
   }
   return { workflowId: suggested?.id ?? "review" };
+}
+
+const RELATIVE_UNITS: Array<[unit: string, ms: number]> = [
+  ["year", 365 * 24 * 60 * 60 * 1000],
+  ["month", 30 * 24 * 60 * 60 * 1000],
+  ["week", 7 * 24 * 60 * 60 * 1000],
+  ["day", 24 * 60 * 60 * 1000],
+  ["hour", 60 * 60 * 1000],
+  ["minute", 60 * 1000]
+];
+
+export function relativeTime(ts: number, now: number): string {
+  const elapsed = Math.max(0, now - ts);
+  for (const [unit, ms] of RELATIVE_UNITS) {
+    const count = Math.floor(elapsed / ms);
+    if (count >= 1) return `${count} ${unit}${count === 1 ? "" : "s"} ago`;
+  }
+  return "just now";
+}
+
+export interface CommitDayGroup {
+  day: string;
+  commits: PrCommit[];
+}
+
+export function groupCommitsByDay(commits: PrCommit[], formatDay: (ts: number) => string): CommitDayGroup[] {
+  const groups: CommitDayGroup[] = [];
+  for (const commit of commits) {
+    const day = formatDay(commit.committedAt);
+    const last = groups[groups.length - 1];
+    if (last?.day === day) last.commits.push(commit);
+    else groups.push({ day, commits: [commit] });
+  }
+  return groups;
 }
