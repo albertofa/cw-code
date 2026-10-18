@@ -143,11 +143,15 @@ function targetRun(record: TaskRecord, ref: TaskRef): TaskRun | undefined {
   return isOtherRun(run, ref) ? undefined : run;
 }
 
+const GUESSED_END_REASONS: ReadonlySet<TaskEndReason> = new Set(["roster", "no-record"]);
+const REPORTED_END_REASONS: ReadonlySet<TaskEndReason> = new Set(["cli", "tool-result"]);
+
 function endRun(run: TaskRun, state: TaskState, reason: TaskEndReason, at: number): void {
   if (stateRank(state) < stateRank(run.state)) return;
+  const confirmsGuess = run.endReason !== undefined && GUESSED_END_REASONS.has(run.endReason) && REPORTED_END_REASONS.has(reason);
   run.state = state;
   run.endReason = reason;
-  run.endedAt = run.endedAt ?? at;
+  run.endedAt = run.endedAt === undefined || confirmsGuess ? at : run.endedAt;
 }
 
 function mergeOutput(run: TaskRun, output: string | undefined, source: TaskOutputSource = "summary"): void {
@@ -157,14 +161,15 @@ function mergeOutput(run: TaskRun, output: string | undefined, source: TaskOutpu
   run.outputSource = source;
 }
 
+const USAGE_FIELDS: Record<keyof ToolUsage, true> = { tokens: true, toolUses: true, durationMs: true };
+
 function mergeUsage(run: TaskRun, usage: ToolUsage | undefined): void {
   if (usage === undefined) return;
-  const merged: ToolUsage = {
-    ...run.usage,
-    ...(usage.tokens !== undefined ? { tokens: usage.tokens } : {}),
-    ...(usage.toolUses !== undefined ? { toolUses: usage.toolUses } : {}),
-    ...(usage.durationMs !== undefined ? { durationMs: usage.durationMs } : {})
-  };
+  const merged: ToolUsage = { ...run.usage };
+  for (const field of Object.keys(USAGE_FIELDS) as (keyof ToolUsage)[]) {
+    const value = usage[field];
+    if (value !== undefined) merged[field] = value;
+  }
   if (Object.keys(merged).length > 0) run.usage = merged;
 }
 

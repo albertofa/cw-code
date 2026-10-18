@@ -120,6 +120,10 @@ export const CLAUDE_IDLE_EVICT_MS = 20 * 60_000;
 
 const CLI_TERMINAL_TASK_STATES = new Set<TaskState>(["completed", "failed", "stopped"]);
 
+function hasCallRow(task: TaskSnapshot): boolean {
+  return task.id !== task.cliTaskId;
+}
+
 export function subagentToolsResult(agent: SidecarAgent | undefined): SubagentToolsResult {
   if (!agent) return { items: [] };
   return {
@@ -379,7 +383,7 @@ export class ClaudeCliDriver implements CliDriver {
   }
 
   private emitShellResult(state: ClaudeProcessState, task: TaskSnapshot): void {
-    if (task.kind !== "shell" || task.id === task.cliTaskId || !CLI_TERMINAL_TASK_STATES.has(task.state)) return;
+    if (task.kind !== "shell" || !hasCallRow(task) || !CLI_TERMINAL_TASK_STATES.has(task.state)) return;
     const output = task.output ?? (task.state === "completed" ? undefined : `Background task ${task.state}`);
     if (output === undefined || state.shellResults.get(task.id) === output) return;
     state.shellResults.set(task.id, output);
@@ -429,7 +433,8 @@ export class ClaudeCliDriver implements CliDriver {
     if (state.suppressedCallIds.delete(event.toolCallId)) return;
     this.emit(this.attributeSubagentResult(state, attributeClaudeSubagentEvent(event, state.agentByCall)));
     const kind = state.tasks.get(event.toolCallId)?.kind;
-    if (kind !== "agent" && !(kind === "shell" && event.isError)) return;
+    const endsTaskStartedByThisCall = kind === "agent" || (kind === "shell" && event.isError);
+    if (!endsTaskStartedByThisCall) return;
     const structured = parseClaudeToolUseResult(line);
     this.observeTask(
       state,

@@ -353,8 +353,20 @@ describe("TaskTable roster", () => {
       { id: "tu_1", cliTaskId: "task_a", kind: "agent", background: true, state: "unknown", endReason: "roster", runCount: 1, startedAt: 100, endedAt: 400 }
     ]);
 
-    table.apply({ kind: "ended", ref: { cliTaskId: "task_a" }, state: "completed", reason: "cli", at: 500 });
-    expect(table.get("tu_1")).toMatchObject({ state: "completed", endReason: "cli", endedAt: 400 });
+    table.apply({ kind: "ended", ref: { cliTaskId: "task_a" }, state: "completed", reason: "cli", at: 380 });
+    expect(table.get("tu_1")).toMatchObject({ state: "completed", endReason: "cli", endedAt: 380 });
+    table.apply({ kind: "ended", ref: { cliTaskId: "task_a" }, state: "completed", reason: "cli", at: 600 });
+    expect(table.get("tu_1")?.endedAt).toBe(380);
+  });
+
+  it("replaces a guessed end time with the time the CLI reports but not with another guess", () => {
+    const table = tableWith(agentCall("tu_1", 100, false));
+    table.closeOpen("unknown", "no-record", 200);
+    table.closeOpen("interrupted", "process-exit", 250);
+    expect(table.get("tu_1")).toMatchObject({ state: "unknown", endedAt: 200 });
+
+    table.apply({ kind: "ended", ref: { originId: "tu_1" }, state: "completed", reason: "tool-result", output: "late result", at: 300 });
+    expect(table.get("tu_1")).toMatchObject({ state: "completed", endReason: "tool-result", endedAt: 300, output: "late result" });
   });
 
   it("does not close a task never seen in a roster", () => {

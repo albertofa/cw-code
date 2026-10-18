@@ -369,7 +369,7 @@ function stringField(record: Record<string, unknown> | undefined, key: string): 
 }
 
 function sidecarFinished(transcriptDir: string, resumeCursor: string, agentId: string, toolUseId: string): boolean {
-  if (!/^[0-9a-f]{8,64}$/.test(agentId)) return false;
+  if (!/^[0-9a-f]{8,64}$/.test(agentId) || !/^[\w-]+$/.test(resumeCursor)) return false;
   for (const dir of [join(transcriptDir, resumeCursor, "subagents"), join(transcriptDir, "subagents")]) {
     let meta: Record<string, unknown> | undefined;
     try {
