@@ -42,6 +42,7 @@ function pr(overrides: Partial<PrSummary> = {}): PrSummary {
     checks: { total: 1, passed: 1, failed: 0, pending: 0 },
     review: "none",
     mergeable: "MERGEABLE",
+    mergeStateStatus: "CLEAN",
     labels: [],
     reviewers: [],
     assignees: [],

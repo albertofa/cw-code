@@ -44,6 +44,7 @@ import { autoFollowUpWorkflow } from "../../shared/autoFollowUp.js";
 import { SessionStore } from "./SessionStore.js";
 import {
   addUnlinkedKey,
+  applyFinalReview,
   applyTurnSeen,
   authorLocalBranch,
   findIssueLink,
@@ -218,6 +219,7 @@ export class SessionManager {
   private prStateRefresh?: (ref: PrRef) => Promise<PrSummary["state"] | null>;
   private prUpdatedAt: (ref: PrRef) => number | null;
   private turnPrRefs = new Map<string, PrRef[]>();
+  private turnFinalReviews = new Map<string, { ref: PrRef; sha: string }>();
   private usageLedger: UsageLedger;
   private titleGenPath: string;
 
@@ -424,14 +426,17 @@ export class SessionManager {
         this.captureEndSnapshot(event.sessionId, event.turnId);
         if (wasActive && !event.isError) void this.renameBranchForTitle(event.sessionId, event.turnId);
         const covered = this.turnPrRefs.get(event.turnId) ?? [];
+        const finalReview = event.isError ? undefined : this.turnFinalReviews.get(event.turnId);
         this.turnPrRefs.delete(event.turnId);
-        this.syncPrSeenAfterTurn(event.sessionId, covered, turnStartedAt);
+        this.turnFinalReviews.delete(event.turnId);
+        this.syncPrSeenAfterTurn(event.sessionId, covered, turnStartedAt, finalReview);
       }
     }
     if (event.type === "turn.error") {
       if (sessionId) this.settleTurn(event.turnId, sessionId);
       else this.activeTurns.delete(event.turnId);
       this.turnPrRefs.delete(event.turnId);
+      this.turnFinalReviews.delete(event.turnId);
       if (sessionId) {
         this.captureEndSnapshot(sessionId, event.turnId);
         this.store.updateSession(
@@ -817,7 +822,12 @@ export class SessionManager {
     return session;
   }
 
-  private syncPrSeenAfterTurn(sessionId: string, coveredRefs: PrRef[], turnStartedAt: number | undefined): void {
+  private syncPrSeenAfterTurn(
+    sessionId: string,
+    coveredRefs: PrRef[],
+    turnStartedAt: number | undefined,
+    finalReview: { ref: PrRef; sha: string } | undefined
+  ): void {
     const session = this.store.getSession(sessionId);
     const links = session?.prs ?? [];
     if (links.length === 0) return;
@@ -841,7 +851,10 @@ export class SessionManager {
       const current = this.store.getSession(sessionId);
       if (!current?.prs) return;
       const results = targets.map((target, index) => ({ ...target, head: heads[index], seenAt: this.prUpdatedAt(target.ref) }));
-      const prs = applyTurnSeen(current.prs, results, worktreeHead, now);
+      const seen = applyTurnSeen(current.prs, results, worktreeHead, now);
+      const prs = finalReview
+        ? applyFinalReview(seen, finalReview, results.find((result) => prKey(result.ref) === prKey(finalReview.ref))?.head ?? null)
+        : seen;
       if (prs === current.prs) return;
       this.store.updateSession(sessionId, { prs });
       this.emitSession(sessionId);
@@ -1641,7 +1654,14 @@ export class SessionManager {
   async startTurn(
     sessionId: string,
     prompt: string,
-    opts?: { prefs?: ComposerPrefs; attachments?: string[]; command?: CommandInvocation; prRefs?: PrRef[]; acceptFolderHead?: string }
+    opts?: {
+      prefs?: ComposerPrefs;
+      attachments?: string[];
+      command?: CommandInvocation;
+      prRefs?: PrRef[];
+      finalReview?: { ref: PrRef; sha: string };
+      acceptFolderHead?: string;
+    }
   ): Promise<string> {
     this.assertNotReserved();
     const session = this.store.getSession(sessionId);
@@ -1689,6 +1709,7 @@ export class SessionManager {
       });
       this.activeTurns.set(handle.turnId, { sessionId, startedAt: Date.now() });
       if (opts?.prRefs && opts.prRefs.length > 0) this.turnPrRefs.set(handle.turnId, opts.prRefs);
+      if (opts?.finalReview) this.turnFinalReviews.set(handle.turnId, opts.finalReview);
       const lastTurnSnapshot = snapshot ? { turnId: handle.turnId, ...snapshot } : undefined;
       const snapshotChanged = lastTurnSnapshot !== undefined || session.lastTurnSnapshot !== undefined;
       this.store.updateSession(sessionId, { status: "working", lastTurnSnapshot }, "turn-start");
@@ -1934,6 +1955,7 @@ export class SessionManager {
     driver?.interrupt(turnId);
     this.settleTurn(turnId, sessionId);
     this.turnPrRefs.delete(turnId);
+    this.turnFinalReviews.delete(turnId);
     this.captureEndSnapshot(sessionId, turnId, driver ? () => this.driverSettled(driver, sessionId) : undefined);
     this.store.updateSession(sessionId, { status: "holding" }, "turn-interrupted");
     if (!session) return;

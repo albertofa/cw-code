@@ -67,6 +67,7 @@ function detail(overrides: Partial<PrDetail> = {}): PrDetail {
     checks: { total: 0, passed: 0, failed: 0, pending: 0 },
     review: "none",
     mergeable: "MERGEABLE",
+    mergeStateStatus: "CLEAN",
     labels: [],
     reviewers: [],
     assignees: [],
@@ -184,7 +185,27 @@ describe("autoFollowUps", () => {
   });
 
   it("skips updates that are only informational", () => {
-    expect(run(entry(), passing)).toEqual([]);
+    expect(run(entry(), { ...passing, mergeStateStatus: "BLOCKED" })).toEqual([]);
+    expect(run(entry({}, { finalReviewSha: "new-sha" }), passing)).toEqual([]);
+  });
+
+  it("sends one final review once the PR is mergeable", () => {
+    const [followUp] = run(entry(), passing);
+    expect(followUp).toMatchObject({ sessionId: "s1", finalReview: true, signature: `s1:${key}@new-sha:final` });
+    expect(run(entry({}, { finalReviewSha: "older-sha" }), passing)).toMatchObject([{ finalReview: true }]);
+  });
+
+  it("sends the final review only when GitHub reports the PR as mergeable", () => {
+    for (const status of ["BEHIND", "BLOCKED", "DIRTY", "DRAFT", "UNKNOWN", "UNSTABLE"] as const) {
+      expect(run(entry(), { ...passing, mergeStateStatus: status })).toEqual([]);
+    }
+    expect(run(entry(), { ...passing, mergeStateStatus: "HAS_HOOKS" })).toMatchObject([{ finalReview: true }]);
+  });
+
+  it("handles actionable updates before the final review", () => {
+    const comment = { kind: "comment" as const, at: 1_800, actor: "reviewer", body: "nit" };
+    const [followUp] = run(entry(), { ...passing, timeline: [comment] });
+    expect(followUp.finalReview).toBe(false);
   });
 
   it("sends once the user has looked at the finished turn", () => {
@@ -228,6 +249,21 @@ describe("babysitState", () => {
     expect(phase({ autoTurns: AUTO_FOLLOW_UP_LIMIT })).toEqual({ kind: "paused", reason: "limit" });
   });
 
+  it("is done once the final review passed on the current mergeable head", () => {
+    const pr = detail({ checks: { total: 1, passed: 1, failed: 0, pending: 0 } });
+    const reviewed = { ...session, prs: [link({ origin: "opened", workflowId: "babysit", finalReviewSha: "new-sha" })] };
+    const summaries = new Map([["github.com/acme/widgets#42", pr]]);
+    expect(babysitState(reviewed, summaries, workflows, idle)?.phase).toEqual({ kind: "done", pr });
+    expect(babysitState(reviewed, summaries, workflows, { ...idle, autoTurns: AUTO_FOLLOW_UP_LIMIT })?.phase.kind).toBe("done");
+    expect(babysitState(reviewed, summaries, workflows, { ...idle, busy: true })?.phase.kind).toBe("working");
+    expect(babysitState(reviewed, new Map([["github.com/acme/widgets#42", { ...pr, headRefOid: "pushed" }]]), workflows, idle)?.phase.kind).toBe(
+      "watching"
+    );
+    expect(babysitState(reviewed, new Map([["github.com/acme/widgets#42", { ...pr, mergeStateStatus: "DIRTY" }]]), workflows, idle)?.phase.kind).toBe(
+      "watching"
+    );
+  });
+
   it("is off for other workflows, finished PRs and resolved sessions", () => {
     expect(babysitState({ ...session, prs: [link({ workflowId: "review" })] }, new Map(), workflows, idle)).toBeNull();
     expect(babysitState(session, new Map([["github.com/acme/widgets#42", detail({ state: "MERGED" })]]), workflows, idle)).toBeNull();
@@ -239,6 +275,7 @@ describe("babysitState", () => {
     expect(text({ kind: "watching" })).toBe("Watching for failed checks, change requests and comments");
     expect(text({ kind: "paused", reason: "error" })).toBe("Paused because the last turn failed");
     expect(text({ kind: "paused", reason: "limit" })).toBe(`Paused after ${AUTO_FOLLOW_UP_LIMIT} automatic turns in a row`);
+    expect(text({ kind: "done", pr: detail() })).toBe("Final review done, ready to merge");
   });
 });
 

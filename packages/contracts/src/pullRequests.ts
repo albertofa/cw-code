@@ -13,6 +13,8 @@ export type PrReviewState = "approved" | "changes_requested" | "review_required"
 
 export type PrMergeable = "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
 
+export type PrMergeStateStatus = "BEHIND" | "BLOCKED" | "CLEAN" | "DIRTY" | "DRAFT" | "HAS_HOOKS" | "UNKNOWN" | "UNSTABLE";
+
 export type PrBucket = "review" | "action" | "ready" | "waiting" | "merged" | "closed";
 
 export interface PrAuthor {
@@ -43,6 +45,7 @@ export interface PrSummary {
   checks: GitPullRequestChecks;
   review: PrReviewState;
   mergeable: PrMergeable;
+  mergeStateStatus: PrMergeStateStatus;
   labels: string[];
   reviewers: PrReviewer[];
   assignees: string[];
@@ -130,6 +133,8 @@ export interface SessionPrLink {
   workflowId?: string;
   lastSeenSha: string;
   lastSeenAt: number;
+  /** PR head on which the session's final review turn ended without pushing changes. */
+  finalReviewSha?: string;
 }
 
 export type PrUpdateKind = "commits" | "review" | "comment" | "checks_failed" | "checks_passed" | "review_requested";

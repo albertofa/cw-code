@@ -5,7 +5,7 @@ import { usePrStore } from "../stores/prStore.js";
 import { shouldRequestDetail, type DetailAttempt } from "./needsYou.js";
 import { useNotifs } from "./Notifications.js";
 import { prKey } from "./prInbox.js";
-import { autoFollowUpRefs, autoFollowUps, followUpPrompt, needsFailedLogs, type AutoFollowUp } from "./prSessionModel.js";
+import { autoFollowUpRefs, autoFollowUps, finalReviewPrompt, followUpPrompt, needsFailedLogs, type AutoFollowUp } from "./prSessionModel.js";
 import { detailNeedsRefresh, detailRefreshKey, seenThrough } from "./prUpdates.js";
 import { loadFailedLogs } from "./prWorkflows.js";
 import { prRefLabel, prSummaryLookup } from "./sessionPrLinks.js";
@@ -21,13 +21,17 @@ function isBusy(sessionId: string): boolean {
 }
 
 async function sendAutoFollowUp(followUp: AutoFollowUp, settings: AppSettings, harness: string): Promise<boolean> {
-  const { sessionId, link, workflow, detail, updates } = followUp;
+  const { sessionId, link, workflow, detail, updates, finalReview } = followUp;
   if (isBusy(sessionId)) return false;
   try {
-    const failedLogs = needsFailedLogs(workflow.updatePrompt) ? await loadFailedLogs(detail) : undefined;
+    const failedLogs = !finalReview && needsFailedLogs(workflow.updatePrompt) ? await loadFailedLogs(detail) : undefined;
     if (isBusy(sessionId)) return false;
-    const prompt = followUpPrompt(detail, link, workflow, updates, settings, harness, failedLogs);
-    await useAppStore.getState().sendPromptTo(sessionId, prompt, undefined, { prRefs: [link.ref], auto: true });
+    const prompt = finalReview ? finalReviewPrompt(detail) : followUpPrompt(detail, link, workflow, updates, settings, harness, failedLogs);
+    await useAppStore.getState().sendPromptTo(sessionId, prompt, undefined, {
+      prRefs: [link.ref],
+      auto: true,
+      ...(finalReview ? { finalReview: { ref: link.ref, sha: detail.headRefOid } } : {})
+    });
   } catch (err) {
     useNotifs.getState().push({
       kind: "error",
@@ -108,6 +112,17 @@ export function useAutoFollowUp(): void {
     [sessions, busyTurns, pendingApprovals, pendingQuestions, autoPaused, autoTurns, summaryByKey, detailByKey, workflows]
   );
   const followUpSignature = followUps.map((followUp) => followUp.signature).join(" ");
+
+  const pausedBefore = useRef(autoPaused);
+  useEffect(() => {
+    for (const sessionId of Object.keys(pausedBefore.current)) {
+      if (autoPaused[sessionId] !== undefined) continue;
+      for (const signature of started.current) {
+        if (signature.startsWith(`${sessionId}:`)) started.current.delete(signature);
+      }
+    }
+    pausedBefore.current = autoPaused;
+  }, [autoPaused]);
 
   useEffect(() => {
     if (!settings) return;

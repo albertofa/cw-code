@@ -26,6 +26,7 @@ const PR_SUMMARY_FIELDS = `
   }
   reviewDecision
   mergeable
+  mergeStateStatus
   labels(first: 20) {
     nodes {
       name

@@ -42,12 +42,15 @@ export function detailNeedsRefresh(detail: PrDetail | undefined, summary: PrSumm
     detail.headRefOid !== summary.headRefOid ||
     detail.ci !== summary.ci ||
     detail.checks.pending !== summary.checks.pending ||
-    detail.state !== summary.state
+    detail.state !== summary.state ||
+    (summary.mergeStateStatus !== "UNKNOWN" && detail.mergeStateStatus !== summary.mergeStateStatus)
   );
 }
 
 export function detailRefreshKey(key: string, summary: PrSummary | undefined): string {
-  return summary ? `${key}@${summary.headRefOid}:${summary.updatedAt}:${summary.ci}:${summary.checks.pending}:${summary.state}` : "";
+  return summary
+    ? `${key}@${summary.headRefOid}:${summary.updatedAt}:${summary.ci}:${summary.checks.pending}:${summary.state}:${summary.mergeStateStatus}`
+    : "";
 }
 
 export function seenThrough(pr: PrSummary | null | undefined, updates: PrUpdate[]): number | null {

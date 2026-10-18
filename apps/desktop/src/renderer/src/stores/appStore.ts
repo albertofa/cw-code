@@ -174,6 +174,7 @@ export interface ShutdownUiState {
 
 export interface SendPromptOptions {
   prRefs?: PrRef[];
+  finalReview?: { ref: PrRef; sha: string };
   command?: CommandInvocation;
   acceptFolderHead?: string;
   auto?: boolean;
@@ -1076,6 +1077,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         attachments,
         ...(opts?.command ? { command: opts.command } : {}),
         ...(opts?.prRefs ? { prRefs: opts.prRefs } : {}),
+        ...(opts?.finalReview ? { finalReview: opts.finalReview } : {}),
         ...(acceptFolderHead ? { acceptFolderHead } : {})
       });
     } catch (err) {
