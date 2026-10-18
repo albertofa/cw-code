@@ -2,7 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import type { ReleasePlan } from "./planValidation.ts";
 import { type AnonymousHttp, checkPublishedRelease, checkPublishedReleaseWithRetries } from "./publishedCheck.ts";
-import { installerNameFor, publishableAssetNames } from "./releaseAssets.ts";
+import { appImageNameFor, debNameFor, installerNameFor, publishableAssetNames } from "./releaseAssets.ts";
 
 const SOURCE_SHA = "c".repeat(40);
 const BASE = "https://github.com/albertofa/cw-code";
@@ -48,6 +48,11 @@ function published(plan: ReleasePlan, latestTag: string | null): Responses {
     ],
     blockMap: { path: `${name}.blockmap`, sha512: digest(blockMap), size: blockMap.length }
   };
+  const appImage = randomBytes(3072);
+  const deb = randomBytes(1536);
+  const appImageName = appImageNameFor(plan.version);
+  const debName = debNameFor(plan.version);
+  const linuxFeed = `version: ${plan.version}\nfiles:\n  - url: ${appImageName}\n    sha512: ${digest(appImage)}\n    size: ${appImage.length}\n    blockMapSize: 99\n  - url: ${debName}\n    sha512: ${digest(deb)}\n    size: ${deb.length}\npath: ${appImageName}\nsha512: ${digest(appImage)}\nreleaseName: ${plan.tag}\nreleaseNotes: notes\n`;
   const download = `${BASE}/releases/download/${plan.tag}`;
   const json = (value: unknown) => ({ status: 200, body: Buffer.from(JSON.stringify(value)) });
   const responses: Responses = new Map([
@@ -58,9 +63,16 @@ function published(plan: ReleasePlan, latestTag: string | null): Responses {
     [`${download}/${name}.blockmap`, { status: 200, body: blockMap }],
     [`${download}/signing.json`, json(signing)],
     [`${download}/alpha.yml`, { status: 200, body: Buffer.from(feed) }],
-    [`${download}/latest.yml`, { status: 200, body: Buffer.from(feed) }]
+    [`${download}/latest.yml`, { status: 200, body: Buffer.from(feed) }],
+    [`${download}/${appImageName}`, { status: 200, body: appImage }],
+    [`${download}/${debName}`, { status: 200, body: deb }],
+    [`${download}/alpha-linux.yml`, { status: 200, body: Buffer.from(linuxFeed) }],
+    [`${download}/latest-linux.yml`, { status: 200, body: Buffer.from(linuxFeed) }]
   ]);
-  if (latestTag === plan.tag) responses.set(`${BASE}/releases/latest/download/latest.yml`, { status: 200, body: Buffer.from(feed) });
+  if (latestTag === plan.tag) {
+    responses.set(`${BASE}/releases/latest/download/latest.yml`, { status: 200, body: Buffer.from(feed) });
+    responses.set(`${BASE}/releases/latest/download/latest-linux.yml`, { status: 200, body: Buffer.from(linuxFeed) });
+  }
   return responses;
 }
 
@@ -91,6 +103,8 @@ describe("checkPublishedRelease", () => {
     const checks = await checkPublishedRelease({ plan: ALPHA, owner: "albertofa", repo: "cw-code", http: httpFor(published(ALPHA, "v1.1.0"), seen) });
     expect(failures(checks)).toEqual([]);
     expect(seen).toContain(`${BASE}/releases/download/${ALPHA.tag}/alpha.yml`);
+    expect(seen).toContain(`${BASE}/releases/download/${ALPHA.tag}/alpha-linux.yml`);
+    expect(checks.map((entry) => entry.name)).toEqual(expect.arrayContaining(["linux-manifest", "appimage", "deb"]));
   });
 
   it("passes a stable release through the /releases/latest/download/latest.yml URL clients use", async () => {
@@ -98,6 +112,40 @@ describe("checkPublishedRelease", () => {
     const checks = await checkPublishedRelease({ plan: STABLE, owner: "albertofa", repo: "cw-code", http: httpFor(published(STABLE, "v1.2.0"), seen) });
     expect(failures(checks)).toEqual([]);
     expect(seen).toContain(`${BASE}/releases/latest/download/latest.yml`);
+    expect(seen).toContain(`${BASE}/releases/latest/download/latest-linux.yml`);
+  });
+
+  it("fails on a Linux manifest for another version, another path or a missing deb entry, and on AppImage or deb bytes that differ from it", async () => {
+    const download = `${BASE}/releases/download/${ALPHA.tag}`;
+    const appImage = appImageNameFor(ALPHA.version);
+    const deb = debNameFor(ALPHA.version);
+    const run = async (responses: Responses) => failures(await checkPublishedRelease({ plan: ALPHA, owner: "albertofa", repo: "cw-code", http: httpFor(responses) })).join("\n");
+
+    const wrongBytes = published(ALPHA, null);
+    wrongBytes.set(`${download}/${appImage}`, { status: 200, body: randomBytes(3072) });
+    wrongBytes.set(`${download}/${deb}`, { status: 200, body: randomBytes(10) });
+    const bytes = await run(wrongBytes);
+    expect(bytes).toMatch(/appimage: sha512 differs from the published metadata/);
+    expect(bytes).toMatch(/deb: sha512 differs from the published metadata; 10 bytes, expected 1536/);
+
+    const wrongManifest = published(ALPHA, null);
+    const body = wrongManifest.get(`${download}/alpha-linux.yml`)?.body.toString("utf8") ?? "";
+    wrongManifest.set(`${download}/alpha-linux.yml`, { status: 200, body: Buffer.from(body.replaceAll("1.2.0-alpha.3", "1.2.0-alpha.2")) });
+    const manifest = await run(wrongManifest);
+    expect(manifest).toMatch(/linux-manifest: advertises 1.2.0-alpha.2/);
+    expect(manifest).toMatch(/linux-manifest: .*points at cw-code-1.2.0-alpha.2-x86_64.AppImage/);
+    expect(manifest).toMatch(/releaseName is "v1.2.0-alpha.2"/);
+
+    const noDeb = published(ALPHA, null);
+    noDeb.set(`${download}/alpha-linux.yml`, { status: 200, body: Buffer.from(body.replace(/ {2}- url: [^\n]*amd64\.deb\n {4}sha512: [^\n]*\n {4}size: \d+\n/, "")) });
+    expect(await run(noDeb)).toMatch(new RegExp(`linux-manifest: does not list ${deb.replaceAll(".", "\\.")}`));
+
+    const missing = published(ALPHA, null);
+    missing.delete(`${download}/alpha-linux.yml`);
+    missing.delete(`${download}/${appImage}`);
+    const gone = await run(missing);
+    expect(gone).toMatch(/linux-manifest: HTTP 404/);
+    expect(gone).toMatch(/appimage: HTTP 404/);
   });
 
   it("fails when an alpha became the latest release or a stable one did not", async () => {

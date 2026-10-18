@@ -3,6 +3,8 @@ import { toShellTarget } from "./resolve.js";
 import { parseExtraArgs } from "../settings/settingsUtils.js";
 import { traceHarnessCall, truncateError } from "../debug/harnessTrace.js";
 import { shutdownReservedError } from "../shutdown/shutdownReservation.js";
+import { sanitizedChildEnv } from "../shellEnvironment.js";
+import { detachProcessGroup, killProcessTreeByPid } from "../processTree.js";
 
 export type PtyKind = "claude" | "opencode" | "codex" | "shell";
 
@@ -17,11 +19,12 @@ export interface PtyInstance {
   onExit(cb: (e: { exitCode: number }) => void): void;
   write(data: string): void;
   resize(cols: number, rows: number): void;
+  readonly pid?: number;
   kill(): void;
 }
 
 export interface PtyModule {
-  spawn(file: string, args: string[], opts: { name: string; cols: number; rows: number; cwd: string; env?: Record<string, string> }): PtyInstance;
+  spawn(file: string, args: string[], opts: { name: string; cols: number; rows: number; cwd: string; env?: NodeJS.ProcessEnv }): PtyInstance;
 }
 
 export interface PtyListEntry {
@@ -195,7 +198,7 @@ export class PtyPool {
       file = s.codexBinaryPath;
       extra = parseExtraArgs(s.codexExtraArgs);
     } else {
-      file = process.platform === "win32" ? "powershell.exe" : "bash";
+      file = process.platform === "win32" ? "powershell.exe" : process.env["SHELL"] || "/bin/bash";
     }
     const args = [...buildResumeArgs(kind, resumeCursor), ...extra];
     let target: { file: string; args: string[] };
@@ -221,7 +224,7 @@ export class PtyPool {
         cols: 120,
         rows: 30,
         cwd,
-        ...(env ? { env } : {})
+        env: sanitizedChildEnv(env ?? process.env, process.platform)
       });
     } catch (err) {
       traceHarnessCall({
@@ -238,10 +241,7 @@ export class PtyPool {
       throw new Error(`PTY spawn failed for '${file}': ${(err as Error).message}`);
     }
     if (this.disposed || generation !== this.generation) {
-      try {
-        proc.kill();
-      } catch {
-      }
+      this.killPty(proc);
       throw new Error("pty pool disposed");
     }
     const entry: PtyEntry = { sessionId, kind, proc, replay: "", token: `pty-${this.nextToken++}`, attachedCount: 0 };
@@ -279,7 +279,15 @@ export class PtyPool {
     const entry = this.ptys.get(ptyId);
     if (!entry) return;
     this.ptys.delete(ptyId);
-    entry.proc.kill();
+    this.killPty(entry.proc);
+  }
+
+  private killPty(proc: PtyInstance): void {
+    try {
+      proc.kill();
+    } catch {
+    }
+    if (detachProcessGroup) killProcessTreeByPid(proc.pid);
   }
 
   killSession(sessionId: string): void {

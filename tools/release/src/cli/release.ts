@@ -28,10 +28,10 @@ import {
   type SigningMode,
   validateSigningManifest
 } from "../signingManifest.ts";
-import { selectUpgradeBase } from "../upgradeBase.ts";
+import { selectLinuxUpgradeBase, selectUpgradeBase } from "../upgradeBase.ts";
 import { readPublisherNames } from "../updateInfoYaml.ts";
 import { parseFaults } from "../feedFaults.ts";
-import { validateReleaseFeed } from "../feedManifest.ts";
+import { validateLinuxReleaseFeed, validateReleaseFeed } from "../feedManifest.ts";
 import { startFeedServer } from "../feedServer.ts";
 
 const __filename = fileURLToPath(import.meta.url);
@@ -368,7 +368,16 @@ async function cmdFeedServe(options: Map<string, string>): Promise<void> {
 
 async function cmdValidateFeed(options: Map<string, string>): Promise<void> {
   const dir = resolve(requireOption(options, "dir"));
+  const platform = options.get("platform") ?? "windows";
+  if (platform !== "windows" && platform !== "linux") fail(`--platform must be "windows" or "linux", got "${platform}"`);
   const channels = options.get("channels");
+  if (platform === "linux") {
+    if (channels !== undefined || options.has("require-blockmap")) fail("validate-feed --platform linux takes only --dir and --version");
+    const linuxReport = await validateLinuxReleaseFeed(dir, { version: options.get("version") });
+    printJson(linuxReport);
+    if (linuxReport.errors.length > 0) process.exitCode = 1;
+    return;
+  }
   const report = await validateReleaseFeed(dir, {
     version: options.get("version"),
     channelFiles: channels ? channels.split(",").map((name) => name.trim()).filter(Boolean) : undefined,
@@ -385,7 +394,12 @@ function readPlan(options: Map<string, string>): ReleasePlan {
 }
 
 async function cmdStageReleaseSet(options: Map<string, string>): Promise<void> {
-  const staged = await stageReleaseSet(resolve(requireOption(options, "from")), resolve(requireOption(options, "to")), readPlan(options));
+  const staged = await stageReleaseSet(
+    resolve(requireOption(options, "from")),
+    resolve(requireOption(options, "to")),
+    readPlan(options),
+    resolve(requireOption(options, "linux-from"))
+  );
   printJson({ staged });
 }
 
@@ -441,7 +455,20 @@ async function cmdValidateReleaseAssets(options: Map<string, string>): Promise<v
 async function cmdSelectUpgradeBase(options: Map<string, string>, repoRoot: string): Promise<void> {
   const plan = readPlan(options);
   const { owner, repo } = resolveRepo(repoRoot);
-  const base = selectUpgradeBase(plan, await createGitHubReleaseClient(owner, repo).listReleases());
+  const platform = options.get("platform") ?? "windows";
+  if (platform !== "windows" && platform !== "linux") fail(`--platform must be "windows" or "linux", got "${platform}"`);
+  const releases = await createGitHubReleaseClient(owner, repo).listReleases();
+  if (platform === "linux") {
+    const base = selectLinuxUpgradeBase(plan, releases);
+    printJson(base);
+    writeGithubOutput(
+      base.status === "found"
+        ? { status: base.status, reason: "", tag: base.tag, version: base.version, appimage: base.appImage, deb: base.deb }
+        : { status: base.status, reason: base.reason, tag: "", version: "", appimage: "", deb: "" }
+    );
+    return;
+  }
+  const base = selectUpgradeBase(plan, releases);
   printJson(base);
   writeGithubOutput(
     base.status === "found"

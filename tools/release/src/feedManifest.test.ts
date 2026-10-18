@@ -3,7 +3,7 @@ import { mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
-import { validateReleaseFeed } from "./feedManifest.ts";
+import { validateLinuxReleaseFeed, validateReleaseFeed } from "./feedManifest.ts";
 
 function manifest(version: string, installer: string, sha512: string, size: number): string {
   return [`version: ${version}`, "files:", `  - url: ${installer}`, `    sha512: ${sha512}`, `    size: ${size}`, `path: ${installer}`, `sha512: ${sha512}`, "releaseDate: '2026-09-25T00:00:00.000Z'", ""].join("\n");
@@ -69,5 +69,82 @@ describe("validateReleaseFeed", () => {
     expect((await validateReleaseFeed(dir)).errors[0]).toMatch(/No update info file/);
     await writeFile(join(dir, "alpha.yml"), "version: 1\n");
     expect((await validateReleaseFeed(dir)).errors[0]).toMatch(/missing "path"/);
+  });
+});
+
+describe("validateLinuxReleaseFeed", () => {
+  let dir: string;
+  const VERSION = "0.0.1-alpha.22";
+  const APPIMAGE = `cw-code-${VERSION}-x86_64.AppImage`;
+  const DEB = `cw-code-${VERSION}-amd64.deb`;
+  const appImage = randomBytes(4096);
+  const deb = randomBytes(2048);
+  const sha = (bytes: Buffer): string => createHash("sha512").update(bytes).digest("base64");
+
+  function linuxManifest(version = VERSION, debSha512 = sha(deb)): string {
+    return [
+      `version: ${version}`,
+      "files:",
+      `  - url: ${APPIMAGE}`,
+      `    sha512: ${sha(appImage)}`,
+      `    size: ${appImage.length}`,
+      "    blockMapSize: 99",
+      `  - url: ${DEB}`,
+      `    sha512: ${debSha512}`,
+      `    size: ${deb.length}`,
+      `path: ${APPIMAGE}`,
+      `sha512: ${sha(appImage)}`,
+      ""
+    ].join("\n");
+  }
+
+  beforeEach(async () => {
+    dir = await mkdtemp(join(tmpdir(), "cw-linux-feed-"));
+    await writeFile(join(dir, APPIMAGE), appImage);
+    await writeFile(join(dir, DEB), deb);
+  });
+
+  afterEach(async () => {
+    await rm(dir, { recursive: true, force: true });
+  });
+
+  it("accepts an alpha Linux feed whose two files match their bytes and describes both", async () => {
+    for (const name of ["latest-linux.yml", "alpha-linux.yml"]) await writeFile(join(dir, name), linuxManifest());
+    await writeFile(join(dir, "latest.yml"), "not a Linux feed");
+    const report = await validateLinuxReleaseFeed(dir);
+    expect(report).toMatchObject({
+      version: VERSION,
+      channelFiles: ["latest-linux.yml", "alpha-linux.yml"],
+      appImage: { name: APPIMAGE, size: 4096, sha512: sha(appImage) },
+      deb: { name: DEB, size: 2048, sha512: sha(deb) },
+      errors: []
+    });
+  });
+
+  it("reports a missing alpha feed, a feed that is not a byte copy and bytes that do not match", async () => {
+    await writeFile(join(dir, "latest-linux.yml"), linuxManifest(VERSION, sha(randomBytes(8))));
+    expect((await validateLinuxReleaseFeed(dir)).errors).toEqual([
+      `alpha version ${VERSION} has no alpha-linux.yml`,
+      `latest-linux.yml sha512 for ${DEB} does not match its bytes`
+    ]);
+    await writeFile(join(dir, "alpha-linux.yml"), `${linuxManifest()}\n`);
+    expect((await validateLinuxReleaseFeed(dir)).errors[0]).toBe("alpha-linux.yml must be a byte copy of latest-linux.yml");
+  });
+
+  it("reports a feed for another version than the expected one", async () => {
+    for (const name of ["latest-linux.yml", "alpha-linux.yml"]) await writeFile(join(dir, name), linuxManifest());
+    expect((await validateLinuxReleaseFeed(dir, { version: VERSION })).errors).toEqual([]);
+    expect((await validateLinuxReleaseFeed(dir, { version: "0.0.1-alpha.21" })).errors).toEqual([
+      `latest-linux.yml version is ${VERSION}, expected 0.0.1-alpha.21`
+    ]);
+  });
+
+  it("reports a missing feed or package instead of throwing", async () => {
+    expect((await validateLinuxReleaseFeed(dir)).errors).toEqual([`latest-linux.yml is missing from ${dir}`]);
+    await rm(join(dir, DEB));
+    for (const name of ["latest-linux.yml", "alpha-linux.yml"]) await writeFile(join(dir, name), linuxManifest());
+    const report = await validateLinuxReleaseFeed(dir);
+    expect(report.deb).toBeNull();
+    expect(report.errors).toEqual([`${DEB} referenced by latest-linux.yml does not exist`]);
   });
 });

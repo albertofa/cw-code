@@ -1,7 +1,18 @@
 import { win32 } from "node:path";
-import { CancellationToken, NsisUpdater, type Logger, type ProgressInfo, type UpdateDownloadedEvent, type UpdateInfo } from "electron-updater";
+import {
+  AppImageUpdater,
+  CancellationToken,
+  DebUpdater,
+  NsisUpdater,
+  type AppUpdater,
+  type Logger,
+  type ProgressInfo,
+  type UpdateDownloadedEvent,
+  type UpdateInfo
+} from "electron-updater";
 import type { UpdateChannel, UpdateProgress } from "@cw-code/contracts";
 import { formatLogValue, redactUpdateText, type UpdateLogSink } from "./updateLog.js";
+import type { UpdaterKind } from "./UpdateService.js";
 
 export const STAGING_ID_PLACEHOLDER = "00000000-0000-0000-0000-000000000000";
 
@@ -65,13 +76,27 @@ export function downloadedInfo(event: UpdateDownloadedEvent): UpdaterDownloadedI
   return { version: event.version, file, size };
 }
 
+function createUpdater(kind: UpdaterKind): AppUpdater {
+  switch (kind) {
+    case "nsis":
+      return new NsisUpdater();
+    case "appimage":
+      return new AppImageUpdater();
+    case "deb":
+      return new DebUpdater();
+  }
+}
+
 export class ElectronUpdaterAdapter implements UpdaterAdapter {
-  private readonly updater: NsisUpdater;
+  private readonly updater: AppUpdater;
   private readonly errorListeners = new Set<(error: Error) => void>();
   private readonly detachers: Array<() => void> = [];
   private readonly logger: Logger;
 
-  constructor(options: { homeDir: string; sink: UpdateLogSink }) {
+  private readonly kind: UpdaterKind;
+
+  constructor(options: { kind: UpdaterKind; homeDir: string; sink: UpdateLogSink }) {
+    this.kind = options.kind;
     const write = (level: "info" | "warn", message: unknown): void => {
       options.sink[level](`electron-updater: ${redactUpdateText(formatLogValue(message), options.homeDir)}`);
     };
@@ -80,7 +105,7 @@ export class ElectronUpdaterAdapter implements UpdaterAdapter {
       warn: (message?: unknown) => write("warn", message),
       error: (message?: unknown) => write("warn", message)
     };
-    this.updater = new NsisUpdater();
+    this.updater = createUpdater(options.kind);
     this.updater.on("error", (error: Error) => {
       for (const listener of this.errorListeners) listener(error);
     });
@@ -95,7 +120,7 @@ export class ElectronUpdaterAdapter implements UpdaterAdapter {
     this.updater.allowDowngrade = false;
     this.updater.forceDevUpdateConfig = false;
     this.updater.fullChangelog = false;
-    this.updater.disableWebInstaller = true;
+    if (this.kind === "nsis") this.updater.disableWebInstaller = true;
     this.updater.requestHeaders = { "x-user-staging-id": STAGING_ID_PLACEHOLDER };
     this.updater.logger = this.logger;
   }

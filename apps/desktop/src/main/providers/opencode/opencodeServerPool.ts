@@ -4,6 +4,7 @@ import { mkdirSync } from "node:fs";
 import { createServer } from "node:net";
 import { killProcessTree } from "../../processTree.js";
 import { spawnCli } from "../../cli/spawnCli.js";
+import { withOwnerPid } from "../../orphanServers.js";
 import { traceHarnessCall, truncateError } from "../../debug/harnessTrace.js";
 import { OPENCODE_HEALTH_TIMEOUT_MS, opencodeFetch } from "./opencodeFetch.js";
 
@@ -183,7 +184,7 @@ export class OpencodeServerPool {
     const proc = spawnCli(binary, args, {
       cwd: rootPath,
       windowsHide: true,
-      ...(env && Object.keys(env).length > 0 ? { env: { ...process.env, ...env } } : {})
+      env: withOwnerPid({ ...process.env, ...env })
     });
     const handle: ServerHandle = { port, authHeader };
     try {

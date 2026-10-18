@@ -1,9 +1,9 @@
 # Releases
 
 `.github/workflows/release.yml` builds, signs, verifies and (only when explicitly
-enabled) publishes a Windows release from one immutable commit. Nothing is uploaded
-by hand. While `CW_RELEASE_PUBLISHING_ENABLED` is unset or `false`, every run is
-validation-only.
+enabled) publishes a Windows and Linux (x64 AppImage and .deb) release from one
+immutable commit. Nothing is uploaded by hand. While `CW_RELEASE_PUBLISHING_ENABLED` is
+unset or `false`, every run is validation-only.
 
 ## Status
 
@@ -15,6 +15,10 @@ validation-only.
   release is unsigned.
 - The bootstrap VM check of commissioning step C was skipped; the owner tests the
   published installers in a VM instead.
+- Linux ships in the same release as Windows. Until a published release carries the
+  Linux assets, the Linux N -> N+1 gate reports "bootstrap" and is skipped; the first
+  release with Linux assets is that bootstrap. Packaging details are in
+  [linux-packaging.md](linux-packaging.md).
 - The first pipeline release, `v0.0.1-alpha.22` (unsigned, 2026-09-28), is published,
   so the N -> N+1 production-bytes test now runs against it instead of reporting
   "bootstrap".
@@ -37,18 +41,32 @@ plan (ubuntu, contents: read, tooling at the workflow commit)
 verify-source (windows)
   checkout plan.sourceSha, frozen install, apply version, typecheck, test, build;
   production-bundle check with the workflow commit's tooling
-  v
-sign (sign-windows.yml, reusable)
-  package app, SignPath app + installer (protected release-signing environment),
-  rehash, verify-signatures, signing.json
-  v
+  ├──────────────────────────────┐
+  v                              v
+sign (sign-windows.yml,        build-linux (ubuntu-22.04, own checkout of
+      reusable)                  plan.sourceSha)
+  package app, SignPath app +    frozen install (node-pty compiles here), apply
+  installer (protected           version, typecheck, test, build, dist:linux,
+  release-signing environment),  production-bundle check on the packaged asar,
+  rehash, verify-signatures,     native-load probe (AppImage start; deb install,
+  signing.json                   start, node-pty, remove), upload AppImage, deb,
+  │                              latest-linux.yml and probe evidence (30 days)
+  └──────────────┬───────────────┘
+                 v
 verify-candidate (windows)
-  check-signing-manifest (bound to plan + run), stage the five-file set,
+  check-signing-manifest (bound to plan + run), stage the nine-file set
+  (Windows files from the signed set, Linux files via --linux-from),
   validate-release-assets, native-load probe (install, start, node-pty, uninstall),
-  N -> N+1 production-bytes upgrade, upload release set (30 days)
+  Windows N -> N+1 production-bytes upgrade, upload release set (30 days)
+  v
+verify-linux-candidate (ubuntu-22.04)
+  Linux N -> N+1 production-bytes upgrade (AppImage and deb) from the staged
+  set, against the highest published release that carries the Linux assets;
+  "bootstrap" (skipped) while no published release carries them
   v
 publish (ubuntu, environment release-publish, contents: write,
          one publish job at a time across channels)
+  needs verify-candidate and verify-linux-candidate
   only if mode == publish and CW_RELEASE_PUBLISHING_ENABLED == 'true'
   (re-read after the environment approval)
   draft at sourceSha, upload (feeds last), re-download and compare, re-check
@@ -116,10 +134,12 @@ checks) always runs from the workflow's own commit, `github.workflow_sha`, which
 both triggers is the tip of `main` the workflow file was read from. The plan job checks
 out that commit with full history and plans for the source SHA with
 `plan --sha <workflow_run.head_sha | github.sha>`, reading the desktop version from the
-source commit with `git show`. Only `verify-source` checks out the source SHA, to run
-its own typecheck, tests and build; the production-bundle gate on that build comes from
-a second checkout of the workflow commit under `tooling/`. `sign-windows.yml` follows
-the same rule with `job.workflow_sha`. A stable promotion of an older commit is
+source commit with `git show`. Only `verify-source` and `build-linux` check out the source
+SHA, to run their own typecheck, tests and build; the production-bundle gate on those
+builds comes from a second checkout of the workflow commit under `tooling/`.
+`verify-linux-candidate` never builds source: it checks out the workflow commit and runs
+the Linux upgrade harness from there. `sign-windows.yml` follows the same rule with
+`job.workflow_sha`. A stable promotion of an older commit is
 therefore always judged by the current gates.
 
 A rerun (**Re-run failed jobs** or **Re-run all jobs**) keeps the original run's
@@ -166,24 +186,44 @@ rule, the gates before `publish`, and the variable.
 
 ## The release set
 
-Every release carries exactly these assets, validated by
+Every release carries exactly these nine assets, validated by
 `tools/release validate-release-assets` before upload and again from the uploaded
 bytes:
 
 - `cw-code-Setup-<version>-x64.exe`
 - `cw-code-Setup-<version>-x64.exe.blockmap`
+- `signing.json`
+- `cw-code-<version>-x86_64.AppImage`
+- `cw-code-<version>-amd64.deb`
 - `latest.yml`
 - `alpha.yml`, a byte copy of `latest.yml`
-- `signing.json`
+- `latest-linux.yml`
+- `alpha-linux.yml`, a byte copy of `latest-linux.yml`
 
-electron-builder 26's GitHub publisher writes only `latest.yml`, without a release
-name or notes. `stage-release-set` adds `releaseName` (the tag) and `releaseNotes` (the
-plan's notes) to it, then writes `alpha.yml` as its byte copy (an `alpha.yml` from the
-build must equal `latest.yml`). Alpha clients therefore never depend on electron-updater's
-404 fallback, and no client shows another release's title or notes (see
-[updater.md](updater.md)). Stable releases carry `alpha.yml` too: alpha clients also read
-stable releases from the Atom feed. The installer, its digest and the blockmap are not
-touched, and `signing.json` does not hash the channel files.
+`signing.json` covers the Windows files only. The AppImage and the .deb are not
+signed; their integrity is the sha512 and size in `latest-linux.yml`, which
+`electron-updater` checks on download.
+
+electron-builder 26's GitHub publisher writes only `latest.yml` (Windows) and
+`latest-linux.yml` (Linux), without a release name or notes. `stage-release-set`
+adds `releaseName` (the tag) and `releaseNotes` (the plan's notes) to each, then
+writes `alpha.yml` and `alpha-linux.yml` as their byte copies (an `alpha.yml` or
+`alpha-linux.yml` from the build must equal its stable twin). Alpha clients therefore
+never depend on electron-updater's 404 fallback, and no client shows another release's
+title or notes (see [updater.md](updater.md)). Stable releases carry the alpha files
+too: alpha clients also read stable releases from the Atom feed. The installer, the
+AppImage, the .deb, their digests and the blockmap are not touched, and `signing.json`
+does not hash the channel files.
+
+`stage-release-set` takes the Windows files from the signed set (`--from`) and the
+Linux files from the `build-linux` artifact (`--linux-from`); `--linux-from` is
+required.
+
+A release published before Linux support carries only the Windows files (installer,
+blockmap, `signing.json`, `latest.yml`, `alpha.yml`) and stays valid. The rule for Linux
+is all or nothing: a release has either no Linux assets or all four. `monitor-feed` accepts the first and fails the second (see
+[rollout.md](rollout.md#feed-monitor)); `validate-release-assets` and `publish`
+require all nine for every new release.
 
 `validate-release-assets --dir <set> --plan <plan.json> --run-id <id> [--signing
 <signing.json>] [--unpacked-root <full set>] [--require-production]
@@ -194,6 +234,11 @@ touched, and `signing.json` does not hash the channel files.
 - `latest.yml` whose version, path, url, sha512 or size disagrees with the plan or the
   installer bytes, a `releaseName`/`releaseNotes` that is missing or differs from the plan's
   tag and notes, or an `alpha.yml` that is not byte-identical;
+- `latest-linux.yml` whose version differs from the plan, whose `path` is not the
+  AppImage, whose `files` are not exactly the AppImage then the .deb, or whose sha512
+  or size (per file, and the top-level sha512 for the AppImage) disagrees with the
+  bytes; the same `releaseName`/`releaseNotes` rule; an `alpha-linux.yml` that is not
+  byte-identical;
 - a blockmap that is not an electron-builder v2 gzip blockmap covering exactly the
   installer size, or whose digest differs from `signing.json`;
 - a `signing.json` that is invalid, belongs to another version, source SHA or run,
@@ -227,8 +272,9 @@ version, channel matches the version shape).
    resolves to `sourceSha`.
 5. Creates the draft (`target_commitish = sourceSha`, notes plus the marker, alpha
    drafts are prereleases) or resumes the marked draft.
-6. Uploads the installer, the blockmap and `signing.json`, then the feed files, with
-   the channel's own feed (`alpha.yml` for alpha, `latest.yml` for stable) last. On a
+6. Uploads the installer, the blockmap, `signing.json`, the AppImage and the .deb, then
+   the feed files, with the channel's own feeds (`alpha.yml` and `alpha-linux.yml` for
+   alpha, `latest.yml` and `latest-linux.yml` for stable) last. On a
    resumed draft, assets whose bytes already match are kept; any other asset is
    deleted and uploaded again, and if the payload changes the feed files are removed
    first, so the draft never holds a feed that points at bytes not uploaded yet. A
@@ -256,7 +302,7 @@ if `GH_TOKEN` or `GITHUB_TOKEN` is set) and retries up to 6 times, 30 s apart, b
 GitHub's CDN lags. It checks:
 
 - `api.github.com/repos/albertofa/cw-code/releases/tags/<tag>`: published, prerelease
-  flag, exactly the five assets;
+  flag, exactly the nine assets;
 - `github.com/albertofa/cw-code/releases/latest` (what stable clients read): the new
   tag for stable, anything else for alpha;
 - `github.com/albertofa/cw-code/releases.atom` (what alpha clients read): the tag
@@ -271,7 +317,13 @@ GitHub's CDN lags. It checks:
   `https://github.com/albertofa/cw-code/releases/download/<tag>/alpha.yml` for alpha;
 - the installer, downloaded in full, matches the manifest sha512 and size;
 - `signing.json` is production signpath for the planned version and SHA, and the
-  blockmap matches its recorded digest.
+  blockmap matches its recorded digest;
+- the Linux channel manifest a client downloads (`latest-linux.yml` under
+  `releases/latest/download/` for stable, `alpha-linux.yml` under
+  `releases/download/<tag>/` for alpha): planned version, `path` is the AppImage,
+  both packages listed, `releaseName` is the tag;
+- the AppImage and the .deb, each downloaded in full, match the sha512 and size in
+  that manifest.
 
 Failures show up as error annotations and in the job summary, with a link to
 [Recovery](#recovery).
@@ -282,10 +334,21 @@ hours against whatever stable and alpha clients currently resolve (see
 
 ## Upgrade gate
 
-`select-upgrade-base` lists published releases and picks N: the highest release
-below the candidate that this pipeline produced (plan marker, installer, both feeds,
-`signing.json`). An alpha candidate only takes an alpha N, because a stable client
+`select-upgrade-base --plan <plan.json> [--platform windows|linux]` lists published
+releases and picks N: the highest release below the candidate that this pipeline
+produced. `--platform` defaults to `windows`, which requires the plan marker, the
+installer, both Windows feeds and `signing.json`; releases published before Linux
+support therefore stay valid Windows bases. `--platform linux` requires the plan
+marker plus all four Linux assets (AppImage, .deb, `latest-linux.yml`,
+`alpha-linux.yml`). An alpha candidate only takes an alpha N, because a stable client
 never accepts an alpha. A stable candidate takes the highest N of either channel.
+
+```sh
+node tools/release/src/cli/release.ts select-upgrade-base --plan plan.json
+node tools/release/src/cli/release.ts select-upgrade-base --plan plan.json --platform linux
+```
+
+Windows, in `verify-candidate`:
 
 - `found`, in either signing mode: `verify-installed-upgrade.mjs --production-bytes`
   installs N, points its `app-update.yml` at the loopback feed serving the candidate
@@ -298,16 +361,40 @@ never accepts an alpha. A stable candidate takes the highest N of either channel
   [rollout.md](rollout.md#where-things-stand).
 - `none-compatible`: a warning in validate mode, a failure in publish mode.
 
+Linux, in `verify-linux-candidate` (ubuntu-22.04, after `verify-candidate`, from the
+staged and validated release set):
+
+- `found`: downloads N's AppImage, .deb and Linux feeds with `gh release download`,
+  checks them with `validate-feed --platform linux --version <N>`, and runs
+  `scripts/verify-linux-upgrade.mjs --production-bytes` with the candidate set, which
+  upgrades both the AppImage and the .deb through a loopback feed (see
+  [update-testing.md](update-testing.md#linux-production-bytes)). The evidence file is
+  uploaded as `cw-code-<version>-linux-evidence-attempt<n>`.
+- `bootstrap` (no published release carries the Linux assets yet): skipped with a
+  notice. This is the state until the first release with Linux assets is published.
+- `none-compatible`: a warning in validate mode, a failure in publish mode.
+
+`publish` needs both `verify-candidate` and `verify-linux-candidate`, so a failed Linux
+gate blocks the Windows release too.
+
+An alpha built before Linux support cannot be promoted to stable. A stable promotion
+rebuilds the candidate's exact commit, and `build-linux` needs the `dist:linux` script
+and Linux packaging that commit does not have. `plan` checks the source commit's
+`apps/desktop/package.json` for `dist:linux` and fails before anything is built.
+Publish a fresh alpha from current `main` and promote that one.
+
 ## Artifacts and retention
 
 | Artifact | Retention |
 | --- | --- |
 | `release-plan-attempt<n>` | 30 days |
-| `cw-code-<version>-release-set-attempt<n>` (the five files) | 30 days |
-| `cw-code-<version>-release-evidence-attempt<n>` (verification reports) | 30 days |
+| `cw-code-<version>-linux-attempt<n>` (AppImage, .deb, `latest-linux.yml`, `verify-linux-package.json`) | 30 days |
+| `cw-code-<version>-release-set-attempt<n>` (the nine files) | 30 days |
+| `cw-code-<version>-release-evidence-attempt<n>` (verification reports, including `verify-linux-package.json`) | 30 days |
+| `cw-code-<version>-linux-evidence-attempt<n>` (Linux upgrade gate evidence) | 30 days |
 | `sign-windows.yml` intermediate artifacts | 3 days |
 | `sign-windows.yml` final set (with `win-unpacked/`) | 14 days |
-| CI and upgrade-test artifacts | 7 days |
+| CI and upgrade-test artifacts (including `linux-package-ubuntu-22.04` and `linux-package-ubuntu-24.04`) | 7 days |
 
 Summaries record the source SHA, the gate tooling commit, node, pnpm,
 electron-builder and app-builder-lib versions, the signing mode, publisher and the
@@ -317,10 +404,13 @@ installer's Authenticode status and signer, and every asset digest.
 
 - Artifact names carry the run attempt and are never overwritten. Jobs that passed
   keep their outputs across attempts, so a rerun reuses their artifacts by name.
-- Prefer **Re-run failed jobs** for failures in `verify-candidate`, `publish` and
-  `verify-publication`: they only download earlier artifacts, and the release set and
+- Prefer **Re-run failed jobs** for failures in `verify-candidate`,
+  `verify-linux-candidate`, `publish` and `verify-publication`: they only download
+  earlier artifacts, and the release set and
   evidence they upload get a new `attempt<n>` suffix. A rerun of `publish` resumes the
   same draft and keeps matching assets.
+- **Re-run failed jobs** also works for `build-linux`: the jobs that were skipped
+  behind it run again, and the new Linux artifact gets a new `attempt<n>` suffix.
 - Use **Re-run all jobs** when `sign` (any `sign-windows.yml` job) failed, because a
   partially failed signing job may already have uploaded an artifact under its
   attempt name, and when you want fresh signatures. Re-running everything after a
@@ -341,9 +431,9 @@ installer's Authenticode status and signer, and every asset digest.
 - Gate tooling runs from `github.workflow_sha` (see [Where code runs from](#where-code-runs-from)).
 - `plan`, `publish` and `verify-publication` install with `--ignore-scripts`: they only
   run the release tooling, so no dependency lifecycle script runs in the jobs that hold
-  the plan's read token or the publish job's `contents: write` token. `verify-source`
-  and `verify-candidate` need a full install (Electron, the packaged-app probes), so
-  lifecycle scripts do run there, with nothing but a read-only `GITHUB_TOKEN` in reach.
+  the plan's read token or the publish job's `contents: write` token. `verify-source`,
+  `build-linux`, `verify-candidate` and `verify-linux-candidate` need a full install
+  (Electron, node-pty, the packaged-app probes), so lifecycle scripts do run there, with nothing but a read-only `GITHUB_TOKEN` in reach.
 - No npm, web, Azure or backend deployment is part of this workflow.
 - Recommended for the owner: evaluate GitHub's immutable releases setting for the
   repository. Once a release is published its assets and tag can then no longer be
@@ -371,8 +461,9 @@ reported by the scheduled feed monitor are in
 version number is used once. Nothing is ever re-drafted, re-tagged or re-uploaded under a number that
 may have been public; problems are fixed by rolling forward to a higher version.
 
-- **Signing, verification or upgrade gate failed**: nothing was published. Fix the
-  cause and start a new run. Do not switch to `unsigned`.
+- **Signing, verification or upgrade gate failed** (`build-linux`, `verify-candidate` or
+  `verify-linux-candidate` included): nothing was published. Fix the cause and start a
+  new run. Do not switch to `unsigned`.
 - **Publish failed before step 9**: the release is still a draft. Re-run the failed
   `publish` job; it resumes the draft. If the draft holds an asset the set does not
   own, check it, delete that asset by hand, then rerun.
@@ -426,11 +517,13 @@ Safe on a developer machine (no install, no upload):
 ```sh
 node tools/release/src/cli/release.ts plan --channel alpha --force --sha <origin/main SHA> --out plan.json
 # build win-unpacked and the installer with electron-builder --publish never into a
-# gitignored or temp folder, then in that folder's release dir:
+# gitignored or temp folder, then in that folder's release dir. The Linux files come
+# from `pnpm --filter @cw-code/desktop dist:linux` on a Linux machine (see
+# linux-packaging.md); copy the AppImage, the deb and latest-linux.yml into release-linux.
 node tools/release/src/cli/release.ts rehash --dir release-full
 pwsh scripts/verify-signatures.ps1 -Root release-full -AllowUnsigned -OutFile release-full/verify-signatures.json
 node tools/release/src/cli/release.ts signing-manifest --mode unsigned --production false --version <v> --source-sha <sha> --run-id <id> --package-info release-full/package-info.json --report release-full/verify-signatures.json --release-dir release-full --out release-full/signing.json
-node tools/release/src/cli/release.ts stage-release-set --from release-full --to release-set --plan plan.json
+node tools/release/src/cli/release.ts stage-release-set --from release-full --to release-set --plan plan.json --linux-from release-linux
 node tools/release/src/cli/release.ts validate-release-assets --dir release-set --plan plan.json --run-id <id> --unpacked-root release-full
 ```
 

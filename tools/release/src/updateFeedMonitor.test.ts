@@ -2,7 +2,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { describe, expect, it } from "vitest";
 import type { FeedMonitorHttp } from "./clientHttp.ts";
 import { planMarker } from "./planMarker.ts";
-import { installerNameFor, publishableAssetNames } from "./releaseAssets.ts";
+import { appImageNameFor, debNameFor, installerNameFor } from "./releaseAssets.ts";
 import { parseVersion } from "./semver.ts";
 import { type FeedMonitorReport, alphaClientTag, monitorUpdateFeed, monitorUpdateFeedWithRetries, pipelineReleasesOf } from "./updateFeedMonitor.ts";
 
@@ -43,10 +43,17 @@ function legacyRepo(): Repo {
   };
 }
 
-function publish(repo: Repo, version: string, sourceSha: string): void {
+type LinuxSet = "none" | "partial" | "full";
+
+function publish(repo: Repo, version: string, sourceSha: string, linux: LinuxSet = "none"): void {
   const tag = `v${version}`;
   const channel = parseVersion(version).channel;
   const installerName = installerNameFor(version);
+  const appImageName = appImageNameFor(version);
+  const debName = debNameFor(version);
+  const appImage = randomBytes(6144);
+  const deb = randomBytes(2048);
+  const linuxFeed = `version: ${version}\nfiles:\n  - url: ${appImageName}\n    sha512: ${digest(appImage)}\n    size: ${appImage.length}\n    blockMapSize: 99\n  - url: ${debName}\n    sha512: ${digest(deb)}\n    size: ${deb.length}\npath: ${appImageName}\nsha512: ${digest(appImage)}\n`;
   const installer = randomBytes(4096);
   const blockMap = randomBytes(128);
   const feed = `version: ${version}\nfiles:\n  - url: ${installerName}\n    sha512: ${digest(installer)}\n    size: ${installer.length}\npath: ${installerName}\nsha512: ${digest(installer)}\n`;
@@ -73,13 +80,22 @@ function publish(repo: Repo, version: string, sourceSha: string): void {
     "latest.yml": Buffer.from(feed),
     "alpha.yml": Buffer.from(feed)
   };
+  if (linux === "full") {
+    Object.assign(files, {
+      [appImageName]: appImage,
+      [debName]: deb,
+      "latest-linux.yml": Buffer.from(linuxFeed),
+      "alpha-linux.yml": Buffer.from(linuxFeed)
+    });
+  }
+  if (linux === "partial") files[appImageName] = appImage;
   for (const [name, body] of Object.entries(files)) repo.urls.set(`${download}/${name}`, { status: 200, body });
   repo.listing.unshift({
     tag_name: tag,
     draft: false,
     prerelease: channel === "alpha",
     body: `## Fixes\n\n- something\n\n${planMarker(sourceSha)}\n`,
-    assets: publishableAssetNames({ version, channel }).map((name) => ({ name, size: files[name].length, state: "uploaded" }))
+    assets: Object.keys(files).map((name) => ({ name, size: files[name].length, state: "uploaded" }))
   });
   repo.feedOrder.unshift(tag);
   if (channel === "stable") repo.latestTag = tag;
@@ -94,6 +110,8 @@ function responsesOf(repo: Repo): Map<string, Stored> {
     urls.set(`${BASE}/releases/latest`, { status: 200, body: Buffer.from(JSON.stringify({ tag_name: repo.latestTag })) });
     const latestFeed = repo.urls.get(`${BASE}/releases/download/${repo.latestTag}/latest.yml`);
     if (latestFeed) urls.set(`${BASE}/releases/latest/download/latest.yml`, latestFeed);
+    const latestLinuxFeed = repo.urls.get(`${BASE}/releases/download/${repo.latestTag}/latest-linux.yml`);
+    if (latestLinuxFeed) urls.set(`${BASE}/releases/latest/download/latest-linux.yml`, latestLinuxFeed);
   }
   return urls;
 }
@@ -274,6 +292,75 @@ describe("monitorUpdateFeed", () => {
     repo.listing[0].assets = [...assets.filter((asset) => asset.name !== "signing.json"), { name: "notes.txt", size: 3, state: "starter" }];
     const [problem] = failures(await run(repo));
     expect(problem).toBe("alpha assets: missing assets: signing.json; unexpected assets: notes.txt; not fully uploaded: notes.txt (starter)");
+  });
+
+  it("fails a release that carries only some of the Linux assets and skips the Linux checks for it", async () => {
+    const repo = legacyRepo();
+    publish(repo, "0.0.1-alpha.22", SHA_A, "partial");
+    const report = await run(repo);
+    expect(failures(report)).toEqual([
+      "alpha assets: missing assets: cw-code-0.0.1-alpha.22-amd64.deb, latest-linux.yml, alpha-linux.yml"
+    ]);
+    expect(report.channels[1].checks.map((entry) => entry.name)).not.toContain("linux-manifest");
+  });
+
+  it("checks the Linux manifest, feed copy and downloadable AppImage and deb sizes of a release with the full set", async () => {
+    const repo = legacyRepo();
+    publish(repo, "0.0.1-alpha.22", SHA_A, "full");
+    const report = await run(repo);
+    expect(failures(report)).toEqual([]);
+    expect(report.channels[1].checks.map((entry) => entry.name)).toEqual([
+      "atom-feed",
+      "channel-manifest",
+      "assets",
+      "feed-copy",
+      "installer",
+      "signing",
+      "blockmap",
+      "linux-manifest",
+      "linux-feed-copy",
+      "appimage",
+      "deb"
+    ]);
+  });
+
+  it("reads the Linux manifest stable clients resolve through /releases/latest/download", async () => {
+    const repo = legacyRepo();
+    publish(repo, "0.0.1", SHA_A, "full");
+    const http = httpFor(responsesOf(repo));
+    const report = await monitorUpdateFeed({ owner: "albertofa", repo: "cw-code", http, verifyInstallerDigest: false });
+    expect(failures(report)).toEqual([]);
+    expect(http.seen).toContain(`text ${BASE}/releases/latest/download/latest-linux.yml`);
+  });
+
+  it("fails when alpha-linux.yml and latest-linux.yml differ, or the Linux assets are not what the manifest says", async () => {
+    const repo = legacyRepo();
+    publish(repo, "0.0.1-alpha.22", SHA_A, "full");
+    const download = `${BASE}/releases/download/v0.0.1-alpha.22`;
+    const latest = repo.urls.get(`${download}/latest-linux.yml`);
+    if (!latest) throw new Error("fixture has no latest-linux.yml");
+    repo.urls.set(`${download}/latest-linux.yml`, { status: 200, body: Buffer.concat([latest.body, Buffer.from("releaseDate: '2026-09-25'\n")]) });
+    repo.urls.set(`${download}/${appImageNameFor("0.0.1-alpha.22")}`, { status: 200, body: randomBytes(100) });
+    repo.urls.delete(`${download}/${debNameFor("0.0.1-alpha.22")}`);
+    expect(failures(await run(repo))).toEqual([
+      "alpha linux-feed-copy: latest-linux.yml differs from alpha-linux.yml",
+      "alpha appimage: served 100 bytes, the manifest says 6144",
+      "alpha deb: HTTP 404"
+    ]);
+  });
+
+  it("fails when the Linux manifest is missing or advertises another version", async () => {
+    const repo = legacyRepo();
+    publish(repo, "0.0.1-alpha.22", SHA_A, "full");
+    const url = `${BASE}/releases/download/v0.0.1-alpha.22/alpha-linux.yml`;
+    const stored = repo.urls.get(url);
+    if (!stored) throw new Error("fixture has no alpha-linux.yml");
+    repo.urls.set(url, { status: 200, body: Buffer.from(stored.body.toString("utf8").replaceAll("0.0.1-alpha.22", "0.0.1-alpha.21")) });
+    expect(failures(await run(repo))).toEqual([
+      "alpha linux-manifest: advertises 0.0.1-alpha.21, expected 0.0.1-alpha.22; points at cw-code-0.0.1-alpha.21-x86_64.AppImage, expected cw-code-0.0.1-alpha.22-x86_64.AppImage; does not list cw-code-0.0.1-alpha.22-x86_64.AppImage; does not list cw-code-0.0.1-alpha.22-amd64.deb"
+    ]);
+    repo.urls.delete(url);
+    expect(failures(await run(repo))).toEqual(["alpha linux-manifest: HTTP 404"]);
   });
 
   it("downloads the installer in full only when asked, and then compares its sha512", async () => {

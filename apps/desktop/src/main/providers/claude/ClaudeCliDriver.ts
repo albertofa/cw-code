@@ -23,7 +23,8 @@ import type {
   TurnRequest
 } from "@cw-code/contracts";
 import { parseExtraArgs } from "../../settings/settingsUtils.js";
-import { hasExited, killProcessTree, waitForExit } from "../../processTree.js";
+import { detachProcessGroup, hasExited, killProcessTree, waitForExit } from "../../processTree.js";
+import { sanitizedChildEnv } from "../../shellEnvironment.js";
 import { TaskTable, type TaskObservation } from "../../tasks/TaskTable.js";
 import { SYNTHETIC_FULL_ACCESS_DESCRIPTION } from "../permissions.js";
 import { attributeClaudeSubagentEvent, buildClaudeAllowRule, claudeAllowResponse, claudeApprovalRequest, claudeQuestionRequest, claudeDenyResponse, claudeControlResponse, parseClaudeCompactBoundary, parseClaudeControlRequest, parseClaudeSubagentHandback, parseClaudeSystemInit, parseClaudeTaskNotificationLine, parseClaudeTaskSystemLine, parseClaudeToolUseResult, parseStreamLine, type ClaudeControlRequest, type ClaudeTaskNotificationLine, type ClaudeTaskSystemInfo, type TurnDoneInfo } from "./claudeStreamParser.js";
@@ -795,7 +796,8 @@ export class ClaudeCliDriver implements CliDriver {
     const child = this.spawnFn(binary, args, {
       cwd: request.cwd,
       windowsHide: true,
-      ...(request.env ? { env: request.env } : {})
+      detached: detachProcessGroup,
+      env: sanitizedChildEnv(request.env ?? process.env, process.platform)
     });
     const state: ClaudeProcessState = {
       sessionId: request.sessionId,

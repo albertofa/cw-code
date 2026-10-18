@@ -1,8 +1,9 @@
-import { writeFileSync } from "node:fs";
+import { readFileSync, writeFileSync } from "node:fs";
 import type { StartupState } from "@cw-code/contracts";
 import { checkCliVersions, type CliVersionCheck } from "../cliVersions.js";
 import { defaultCliBinaryPath } from "../settings/settingsUtils.js";
 import type { PtyModule } from "../pty/PtyPool.js";
+import { sanitizedChildEnv } from "../shellEnvironment.js";
 
 export interface PackageProbeNodePtyResult {
   loaded: boolean;
@@ -19,6 +20,11 @@ export type NodePtyProbeOutcome =
 
 export type PackageProbeStartupMode = StartupState["mode"];
 
+export interface PackageProbeSandbox {
+  noSandboxSwitch: boolean;
+  apparmorLabel: string | null;
+}
+
 export interface PackageProbeResult {
   appVersion: string;
   startupMode: PackageProbeStartupMode;
@@ -29,7 +35,29 @@ export interface PackageProbeResult {
   rendererLoaded: boolean;
   rendererFailures: string[];
   cliChecks: CliVersionCheck[];
+  sandbox: PackageProbeSandbox | null;
   durationMs: number;
+}
+
+const APPARMOR_LABEL_PATHS = ["/proc/self/attr/apparmor/current", "/proc/self/attr/current"];
+
+export function readApparmorLabel(readFile: (path: string) => string): string | null {
+  for (const path of APPARMOR_LABEL_PATHS) {
+    let raw: string;
+    try {
+      raw = readFile(path);
+    } catch {
+      continue;
+    }
+    const label = raw.replace(/\0/g, "").trim();
+    return label === "" ? null : label;
+  }
+  return null;
+}
+
+export function probeSandbox(platform: string, noSandboxSwitch: boolean, readFile: (path: string) => string): PackageProbeSandbox | null {
+  if (platform !== "linux") return null;
+  return { noSandboxSwitch, apparmorLabel: readApparmorLabel(readFile) };
 }
 
 export interface RendererProbeState {
@@ -76,6 +104,7 @@ export function buildProbeResult(opts: {
   nodePty: NodePtyProbeOutcome;
   renderer: RendererProbeState;
   cliChecks: CliVersionCheck[];
+  sandbox: PackageProbeSandbox | null;
   durationMs: number;
 }): PackageProbeResult {
   return {
@@ -88,6 +117,7 @@ export function buildProbeResult(opts: {
     rendererLoaded: opts.renderer.loadCompleted && opts.renderer.failures.length === 0,
     rendererFailures: [...opts.renderer.failures],
     cliChecks: opts.cliChecks,
+    sandbox: opts.sandbox,
     durationMs: opts.durationMs
   };
 }
@@ -103,7 +133,13 @@ async function probeNodePty(): Promise<NodePtyProbeOutcome> {
   }
   try {
     const [file, args] = process.platform === "win32" ? ["cmd.exe", ["/c", "exit 0"]] : ["/bin/sh", ["-c", "exit 0"]];
-    const proc = pty.spawn(file, args, { name: "xterm-color", cols: 80, rows: 24, cwd: process.cwd() });
+    const proc = pty.spawn(file, args, {
+      name: "xterm-color",
+      cols: 80,
+      rows: 24,
+      cwd: process.cwd(),
+      env: sanitizedChildEnv(process.env, process.platform)
+    });
     return await new Promise<NodePtyProbeOutcome>((resolvePromise) => {
       const timer = setTimeout(() => {
         proc.kill();
@@ -124,6 +160,7 @@ export async function runPackageProbe(opts: {
   appVersion: string;
   startupMode: PackageProbeStartupMode;
   electronVersion: string;
+  noSandboxSwitch: boolean;
   renderer: RendererProbeTracker;
 }): Promise<PackageProbeResult> {
   const start = Date.now();
@@ -142,6 +179,7 @@ export async function runPackageProbe(opts: {
     nodePty,
     renderer: opts.renderer.snapshot(),
     cliChecks,
+    sandbox: probeSandbox(process.platform, opts.noSandboxSwitch, (path) => readFileSync(path, "utf8")),
     durationMs: Date.now() - start
   });
   writeFileSync(opts.outPath, JSON.stringify(result, null, 2), "utf8");

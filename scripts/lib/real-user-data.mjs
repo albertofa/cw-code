@@ -13,6 +13,7 @@ export function cwCodeHomeDir() {
 }
 
 export function electronUserDataDir() {
+  if (process.platform === "linux") return join(process.env.XDG_CONFIG_HOME || join(homedir(), ".config"), "@cw-code", "desktop");
   return join(process.env.APPDATA ?? join(homedir(), "AppData", "Roaming"), "@cw-code", "desktop");
 }
 
@@ -96,6 +97,7 @@ export function createSeedPlan() {
     holdingHours: 12,
     autoTitleEnabled: false,
     updateBackgroundDownload: false,
+    idleResolveAfterDays: 0,
     [FIXTURE_UNKNOWN_KEY]: "kept-across-updates"
   };
   return {

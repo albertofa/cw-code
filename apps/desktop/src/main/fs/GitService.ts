@@ -6,6 +6,7 @@ import { tmpdir } from "node:os";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { simpleGit } from "simple-git";
+import { sanitizedChildEnv } from "../shellEnvironment.js";
 import { ciFromRollup } from "../github/prParsers.js";
 import { sameWorktreePath } from "../sessions/worktreeCleanup.js";
 import type {
@@ -74,7 +75,7 @@ export function defaultBinary(name: "git" | "gh"): string {
 }
 
 export function cleanAuthEnvironment(): NodeJS.ProcessEnv {
-  const env = { ...process.env };
+  const env = sanitizedChildEnv(process.env, process.platform);
   delete env["GH_TOKEN"];
   delete env["GITHUB_TOKEN"];
   delete env["GH_ENTERPRISE_TOKEN"];
@@ -95,7 +96,7 @@ export function authenticatedEnvironment(host: string, token: string): NodeJS.Pr
 }
 
 function withNonInteractiveEnv(base?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const env = base ?? { ...process.env };
+  const env = sanitizedChildEnv(base ?? process.env, process.platform);
   env["GIT_TERMINAL_PROMPT"] = "0";
   env["GCM_INTERACTIVE"] = "never";
   env["GIT_ASKPASS"] = "";
@@ -781,6 +782,17 @@ const RESTORE_LOCK_ATTEMPTS = 3;
 const RESTORE_LOCK_RETRY_MS = 200;
 const SNAPSHOT_OBJECT_WRITE_ATTEMPTS = 3;
 const SNAPSHOT_OBJECT_WRITE_RETRY_MS = 100;
+const INHERITED_ENV_UNSAFE = {
+  allowUnsafeEditor: true,
+  allowUnsafePager: true,
+  allowUnsafeAskPass: true,
+  allowUnsafeSshCommand: true,
+  allowUnsafeGitProxy: true,
+  allowUnsafeTemplateDir: true,
+  allowUnsafeDiffExternal: true,
+  allowUnsafeConfigPaths: true,
+  allowUnsafeConfigEnvCount: true
+} as const;
 const HOOKLESS_ARGS = ["-c", `core.hooksPath=${join(tmpdir(), `cw-no-hooks-${randomUUID()}`)}`, "-c", "core.fsmonitor=false"];
 const SNAPSHOT_ADD_ARGS = [
   ...HOOKLESS_ARGS,
@@ -838,7 +850,9 @@ export class GitService {
   }
 
   private git(root: string) {
-    return simpleGit({ baseDir: root, binary: this.settings().gitBinaryPath });
+    return simpleGit({ baseDir: root, binary: this.settings().gitBinaryPath, unsafe: INHERITED_ENV_UNSAFE }).env(
+      sanitizedChildEnv(process.env, process.platform)
+    );
   }
 
   private async trackedLineCounts(root: string): Promise<{ addedLines: number; deletedLines: number }> {

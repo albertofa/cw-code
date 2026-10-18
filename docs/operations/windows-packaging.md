@@ -60,7 +60,8 @@ requires a C++ toolchain to produce the Windows package. This is specific to the
 still compiles `node-pty` from source via `node-gyp` when it runs `pnpm install`,
 since no Linux prebuild is bundled; that job is unaffected by `npmRebuild` (which
 only governs `electron-builder`'s packaging step) and needs a working native
-toolchain on the runner, which `ubuntu-latest` already provides.
+toolchain on the runner, which `ubuntu-latest` already provides. The Linux
+packages are documented in [linux-packaging.md](linux-packaging.md).
 
 ### electron-builder 25 → 26 notes
 

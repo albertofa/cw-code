@@ -14,6 +14,7 @@ function resolvePreload(): string {
   if (!found) console.warn(`preload not found (tried ${candidates.join(", ")})`);
   return found ?? candidates[0];
 }
+import { resolveAppImageRelaunch } from "./appImage.js";
 import { attentionDescription, parseAttentionState, resetsAttention, shouldFlash } from "./attention.js";
 import { checkCliVersion, checkCliVersions, type CliVersionCheck } from "./cliVersions.js";
 import { discoverBinaries, verifyBinaryPath } from "./cli/binaryDiscovery.js";
@@ -23,6 +24,7 @@ import { appendCrashLog, initCrashLog } from "./debug/crashLog.js";
 import { RendererProbeTracker, runPackageProbe } from "./debug/packageProbe.js";
 import { claudeCommandsCachePath, cwCodeHome, ensureAppDirs, attachmentsDir, logsDir, migrateFromUserData, opencodeModelsCachePath, sessionDbPath, settingsFilePath, userdataDir } from "./paths/appPaths.js";
 import { reapOrphanedServers } from "./orphanServers.js";
+import { loadLoginShellEnvironment } from "./shellEnvironment.js";
 import type { AppSettings, ApprovalDecision, CliBinary, CommandInvocation, CreateSessionOptions, GitDiffMode, ProjectGitHubRepo, PrRef, RepoRef, RunRef, RunSources, SessionPrLink, MetadataIssue, SessionStatus, SettingsPatch, ShutdownCommitResult, ShutdownExpiredEvent, ShutdownPrepareRequest, ShutdownReason, ShutdownRequestedEvent, StartupState, UpdateActionResult, UpdateState, UsageLedgerQuery } from "@cw-code/contracts";
 import type { DriverKind, HarnessId, SkillSaveInput } from "@cw-code/contracts";
 import type { PtyKind } from "./pty/PtyPool.js";
@@ -168,6 +170,14 @@ let shutdownAckTimer: NodeJS.Timeout | null = null;
 let sessionSettleTimer: NodeJS.Timeout | null = null;
 let sessionSettleInitialTimer: NodeJS.Timeout | null = null;
 
+function readTextOrNull(path: string): string | null {
+  try {
+    return readFileSync(path, "utf8");
+  } catch {
+    return null;
+  }
+}
+
 function createUpdateService(settings: AppSettings): UpdateService {
   const logger = createUpdateLogFile({
     filePath: join(logsDir(), "updater.log"),
@@ -178,9 +188,16 @@ function createUpdateService(settings: AppSettings): UpdateService {
     runningVersion: app.getVersion(),
     channel: preferences.channel,
     autoDownload: preferences.autoDownload,
-    environment: { isPackaged: app.isPackaged, resourcesPath: process.resourcesPath, execPath: process.execPath },
-    files: { fileExists: existsSync, listDirectory: (path) => readdirSync(path) },
-    createAdapter: () => new ElectronUpdaterAdapter({ homeDir: homedir(), sink: logger }),
+    environment: {
+      isPackaged: app.isPackaged,
+      resourcesPath: process.resourcesPath,
+      execPath: process.execPath,
+      platform: process.platform,
+      appImagePath: process.env.APPIMAGE ?? null,
+      appDir: process.env.APPDIR ?? null
+    },
+    files: { fileExists: existsSync, listDirectory: (path) => readdirSync(path), readText: readTextOrNull },
+    createAdapter: (kind) => new ElectronUpdaterAdapter({ kind, homeDir: homedir(), sink: logger }),
     logger,
     homeDir: homedir(),
     canRunScheduledCheck: () => services?.shutdown.isIdle() !== false
@@ -365,6 +382,10 @@ function focusMainWindow(): void {
   mainWindow.focus();
 }
 
+function windowIconFile(): string {
+  return process.platform === "linux" ? "icon.png" : "icon.ico";
+}
+
 async function createWindow(): Promise<void> {
   mainWindow = new BrowserWindow({
     width: 1440,
@@ -372,8 +393,8 @@ async function createWindow(): Promise<void> {
     frame: false,
     title: "cw-code",
     icon: app.isPackaged
-      ? join(process.resourcesPath, "branding", "icon.ico")
-      : join(app.getAppPath(), "resources", "icon.ico"),
+      ? join(process.resourcesPath, "branding", windowIconFile())
+      : join(app.getAppPath(), "resources", windowIconFile()),
     backgroundColor: "#141518",
     autoHideMenuBar: true,
     webPreferences: {
@@ -456,6 +477,7 @@ async function startPackageProbe(window: BrowserWindow, outPath: string): Promis
       appVersion: app.getVersion(),
       startupMode: startupState.mode,
       electronVersion: process.versions.electron,
+      noSandboxSwitch: app.commandLine.hasSwitch("no-sandbox"),
       renderer
     }).then(
       (result) => app.exit(result.rendererLoaded ? 0 : 1),
@@ -518,7 +540,9 @@ function isInsideAttachmentsDir(target: string): boolean {
 }
 
 function relaunch(): void {
-  app.relaunch();
+  const appImage = resolveAppImageRelaunch(process.env, process.execPath, process.argv);
+  if (appImage) app.relaunch(appImage);
+  else app.relaunch();
   app.exit(0);
 }
 
@@ -1228,7 +1252,10 @@ function startUpdateAutotest(pending: PendingUpdateAutotest | null): void {
   }
 }
 
+let loginShellEnvironment: Promise<string[]> = Promise.resolve([]);
+
 async function startApp(): Promise<void> {
+  const loginShellWarnings = await loginShellEnvironment;
   const updateAutotest = await prepareUpdateAutotest();
   ensureAppDirs();
   migrateFromUserData(app.getPath("userData"));
@@ -1245,6 +1272,10 @@ async function startApp(): Promise<void> {
     console.warn(`session status trace init failed: ${(err as Error).message}`);
   }
   initCrashLog(logsDir());
+  for (const warning of loginShellWarnings) {
+    console.warn(`[shell-env] ${warning}`);
+    appendCrashLog(`[shell-env] ${warning}`);
+  }
   process.on("uncaughtException", (err) => {
     appendCrashLog(`uncaughtException: ${err.stack ?? err.message}`);
   });
@@ -1298,6 +1329,10 @@ async function startApp(): Promise<void> {
   startUpdateAutotest(updateAutotest);
 }
 
+if (process.platform === "linux") {
+  app.commandLine.appendSwitch("class", "cw-code");
+}
+
 if (!app.isPackaged && !app.commandLine.hasSwitch("user-data-dir")) {
   app.setPath("userData", join(app.getPath("appData"), "@cw-code", "desktop-dev"));
 }
@@ -1307,6 +1342,9 @@ if (!app.requestSingleInstanceLock()) {
 } else {
   app.on("second-instance", focusMainWindow);
 
+  loginShellEnvironment = loadLoginShellEnvironment(process.platform).catch((err) => [
+    `login shell capture failed: ${(err as Error).message}`
+  ]);
   app.whenReady().then(startApp).catch(reportFatalStartupError);
 
   app.on("window-all-closed", () => {

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildProbeResult, RendererProbeTracker, shapeNodePtyResult } from "./packageProbe.js";
+import { buildProbeResult, probeSandbox, readApparmorLabel, RendererProbeTracker, shapeNodePtyResult } from "./packageProbe.js";
 
 describe("shapeNodePtyResult", () => {
   it("reports a successful load and spawn", () => {
@@ -52,6 +52,7 @@ describe("buildProbeResult", () => {
       cliChecks: [
         { binary: "claude", binaryPath: "claude.exe", minimum: "2.1.260", actual: null, configured: false, found: false, available: false, error: "ENOENT", ok: false }
       ],
+      sandbox: null,
       durationMs: 1234
     });
     expect(result).toEqual({
@@ -66,6 +67,7 @@ describe("buildProbeResult", () => {
       cliChecks: [
         { binary: "claude", binaryPath: "claude.exe", minimum: "2.1.260", actual: null, configured: false, found: false, available: false, error: "ENOENT", ok: false }
       ],
+      sandbox: null,
       durationMs: 1234
     });
   });
@@ -80,6 +82,7 @@ describe("buildProbeResult", () => {
       nodePty: { status: "load-failed", error: "boom" },
       renderer: { loadCompleted: false, failures: ["renderer failed to load: ERR_FILE_NOT_FOUND"] },
       cliChecks: [],
+      sandbox: null,
       durationMs: 5
     });
     expect(result.rendererLoaded).toBe(false);
@@ -97,6 +100,7 @@ describe("buildProbeResult", () => {
       nodePty: { status: "loaded-spawned", exitCode: 0 },
       renderer: { loadCompleted: true, failures: ["render-process-gone: reason=crashed exitCode=1"] },
       cliChecks: [],
+      sandbox: null,
       durationMs: 5
     });
     expect(result.rendererLoaded).toBe(false);
@@ -113,10 +117,68 @@ describe("buildProbeResult", () => {
       nodePty: { status: "loaded-spawned", exitCode: 0 },
       renderer: { loadCompleted: true, failures: [] },
       cliChecks: [],
+      sandbox: null,
       durationMs: 5
     });
     expect(result.startupMode).toBe("recovery");
     expect(result.rendererLoaded).toBe(true);
+  });
+
+  it("carries the Linux sandbox evidence through unchanged", () => {
+    const result = buildProbeResult({
+      appVersion: "0.0.1-alpha.22",
+      startupMode: "ready",
+      electronVersion: "36.9.5",
+      platform: "linux",
+      arch: "x64",
+      nodePty: { status: "loaded-spawned", exitCode: 0 },
+      renderer: { loadCompleted: true, failures: [] },
+      cliChecks: [],
+      sandbox: { noSandboxSwitch: false, apparmorLabel: "cw-code (unconfined)" },
+      durationMs: 5
+    });
+    expect(result.sandbox).toEqual({ noSandboxSwitch: false, apparmorLabel: "cw-code (unconfined)" });
+  });
+});
+
+function fakeProc(files: Record<string, string>): (path: string) => string {
+  return (path) => {
+    const content = files[path];
+    if (content === undefined) throw Object.assign(new Error(`ENOENT: ${path}`), { code: "ENOENT" });
+    return content;
+  };
+}
+
+describe("readApparmorLabel", () => {
+  it("prefers the AppArmor-specific attribute", () => {
+    const read = fakeProc({ "/proc/self/attr/apparmor/current": "cw-code (unconfined)\n", "/proc/self/attr/current": "unconfined\n" });
+    expect(readApparmorLabel(read)).toBe("cw-code (unconfined)");
+  });
+
+  it("falls back to the generic attribute when the AppArmor one cannot be read", () => {
+    expect(readApparmorLabel(fakeProc({ "/proc/self/attr/current": "unconfined\n" }))).toBe("unconfined");
+  });
+
+  it("strips the trailing NUL some kernels append", () => {
+    expect(readApparmorLabel(fakeProc({ "/proc/self/attr/current": "kernel\0" }))).toBe("kernel");
+  });
+
+  it("reports no label when neither attribute is readable or the label is empty", () => {
+    expect(readApparmorLabel(fakeProc({}))).toBeNull();
+    expect(readApparmorLabel(fakeProc({ "/proc/self/attr/apparmor/current": "\n" }))).toBeNull();
+  });
+});
+
+describe("probeSandbox", () => {
+  it("records the switch and label on Linux", () => {
+    expect(probeSandbox("linux", true, fakeProc({ "/proc/self/attr/current": "unconfined" }))).toEqual({
+      noSandboxSwitch: true,
+      apparmorLabel: "unconfined"
+    });
+  });
+
+  it("is null on other platforms", () => {
+    expect(probeSandbox("win32", false, fakeProc({}))).toBeNull();
   });
 });
 

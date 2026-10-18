@@ -79,11 +79,21 @@ describe("release.yml policy", () => {
     expect(job("publish")).toMatch(/concurrency:\n\s+group: release-publish\n\s+cancel-in-progress: false/);
   });
 
-  it("runs the gate tooling from the workflow's own commit; only verify-source checks out the source SHA", () => {
+  it("runs the gate tooling from the workflow's own commit; only verify-source and build-linux check out the source SHA", () => {
     const checkoutRefs = [...text.matchAll(/uses: actions\/checkout@[^\n]+\n(?:\s+#[^\n]*\n)?\s+with:\n\s+ref: ([^\n]+)/g)].map((match) => match[1].trim());
     expect(checkoutRefs).toHaveLength(lines.filter((line) => line.includes("uses: actions/checkout@")).length);
-    expect(checkoutRefs.filter((ref) => ref !== "${{ github.workflow_sha }}")).toEqual(["${{ needs.plan.outputs.sha }}"]);
-    expect(job("verify-source")).toContain("node tooling/scripts/verify-installed-upgrade.mjs --assert-production-bundle");
+    expect(checkoutRefs.filter((ref) => ref !== "${{ github.workflow_sha }}")).toEqual(["${{ needs.plan.outputs.sha }}", "${{ needs.plan.outputs.sha }}"]);
+    const sourceCheckouts = [...jobs].filter(([, body]) => body.some((line) => line.trim() === "ref: ${{ needs.plan.outputs.sha }}")).map(([name]) => name);
+    expect(sourceCheckouts).toEqual(["verify-source", "build-linux"]);
+    for (const name of sourceCheckouts) {
+      expect(job(name)).toContain('[ "$actual" = "$SOURCE_SHA" ] || { echo "::error::checked out $actual, the plan builds $SOURCE_SHA"; exit 1; }');
+      expect(job(name)).toMatch(/ref: \$\{\{ github\.workflow_sha \}\}\n\s+path: tooling/);
+      expect(job(name)).toContain("node tooling/scripts/verify-installed-upgrade.mjs --assert-production-bundle apps/desktop/out/main");
+    }
+    expect(job("build-linux")).toContain(
+      "node tooling/scripts/verify-installed-upgrade.mjs --assert-production-bundle apps/desktop/out/main --asar apps/desktop/dist/linux-unpacked/resources/app.asar"
+    );
+    expect(job("verify-linux-candidate")).toMatch(/uses: actions\/checkout@[^\n]+\n\s+with:\n\s+ref: \$\{\{ github\.workflow_sha \}\}/);
     expect(job("plan")).toContain('--sha "$SOURCE"');
   });
 
@@ -98,6 +108,9 @@ describe("release.yml policy", () => {
       expect({ name, writes }).toEqual({ name, writes: name === "publish" });
     }
     expect(job("publish")).toMatch(/environment: release-publish/);
+    for (const name of ["verify-source", "build-linux", "verify-candidate", "verify-linux-candidate"]) {
+      expect(job(name)).toMatch(/\n {4}permissions:\n {6}contents: read\n {4}\S/);
+    }
   });
 
   it("never touches secrets; signing secrets stay inside sign-windows.yml's protected jobs", () => {
@@ -109,14 +122,60 @@ describe("release.yml policy", () => {
   it("chains build, signing, verification and publication so nothing publishes without every gate", () => {
     expect(job("verify-source")).toMatch(/needs: plan/);
     expect(job("sign")).toMatch(/needs: \[plan, verify-source\]/);
-    expect(job("verify-candidate")).toMatch(/needs: \[plan, sign\]/);
-    expect(job("publish")).toMatch(/needs: \[plan, verify-candidate\]/);
+    expect(job("build-linux")).toMatch(/needs: \[plan, verify-source\]/);
+    expect(job("build-linux")).toContain("if: needs.plan.outputs.skip == 'false'");
+    expect(job("verify-candidate")).toMatch(/needs: \[plan, sign, build-linux\]/);
+    expect(job("verify-linux-candidate")).toMatch(/needs: \[plan, verify-candidate\]/);
+    expect(job("publish")).toMatch(/needs: \[plan, verify-candidate, verify-linux-candidate\]/);
     expect(job("verify-publication")).toMatch(/needs: \[plan, publish\]/);
     const candidate = job("verify-candidate");
-    for (const gate of ["check-signing-manifest", "stage-release-set", "validate-release-assets", "verify-windows-package.mjs --dist release-full --install", "--production-bytes"]) {
+    for (const gate of [
+      "check-signing-manifest",
+      "stage-release-set",
+      "--linux-from release-linux",
+      "name: ${{ needs.build-linux.outputs.linux-artifact }}",
+      "validate-release-assets",
+      "verify-windows-package.mjs --dist release-full --install",
+      "--production-bytes",
+      "release-linux/verify-linux-package.json"
+    ]) {
       expect(candidate).toContain(gate);
     }
     expect(job("verify-source")).toMatch(/pnpm typecheck[\s\S]*pnpm test[\s\S]*pnpm build/);
+    expect(job("build-linux")).toMatch(
+      /release\.ts apply --plan plan\/plan\.json[\s\S]*pnpm typecheck[\s\S]*pnpm test[\s\S]*pnpm build[\s\S]*dist:linux[\s\S]*--asar apps\/desktop\/dist\/linux-unpacked\/resources\/app\.asar[\s\S]*node tooling\/scripts\/verify-linux-package\.mjs --desktop-dir apps\/desktop --dist apps\/desktop\/dist --install-deb --disposable-environment[\s\S]*if-no-files-found: error/
+    );
+    expect(job("build-linux")).not.toMatch(/run: node scripts\//);
+    expect(job("build-linux")).toMatch(/- name: Upload the Linux packages\n\s+if: always\(\)[\s\S]*apps\/desktop\/dist\/latest-linux\.yml\n\s+apps\/desktop\/dist\/alpha-linux\.yml/);
+    expect(job("build-linux")).toContain("linux-artifact: ${{ steps.names.outputs.linux-artifact }}");
+    const linuxCandidate = job("verify-linux-candidate");
+    for (const gate of [
+      "name: ${{ needs.verify-candidate.outputs.release-set }}",
+      "select-upgrade-base --plan plan/plan.json --platform linux",
+      "verify-linux-upgrade.mjs --production-bytes --desktop-dir apps/desktop",
+      "--candidate-dir release-set"
+    ]) {
+      expect(linuxCandidate).toContain(gate);
+    }
+    expect(linuxCandidate).toMatch(
+      /gh release download [^\n]+--dir upgrade-base\n\s+node tools\/release\/src\/cli\/release\.ts validate-feed --platform linux --dir upgrade-base --version "\$BASE_VERSION"\n\s+chmod \+x "upgrade-base\/\$APPIMAGE"[\s\S]*verify-linux-upgrade\.mjs/
+    );
+    expect(job("verify-candidate")).toContain('validate-feed --dir upgrade-base --version "$BASE_VERSION"');
+  });
+
+  it("refuses in plan a source commit that cannot build the Linux packages, so an old alpha is never promoted without them", () => {
+    const plan = job("plan");
+    expect(plan).toMatch(
+      /- name: Require Linux packaging in the source commit\n\s+if: steps\.plan\.outputs\.skip == 'false'\n\s+env:\n\s+SOURCE_SHA: \$\{\{ steps\.plan\.outputs\.sha \}\}[\s\S]*git show "\$SOURCE_SHA:apps\/desktop\/package\.json"[\s\S]*\["dist:linux"\][\s\S]*an alpha built before Linux support cannot be promoted to stable; publish a fresh alpha and promote that[\s\S]*exit 1[\s\S]*- name: Upload the plan/
+    );
+  });
+
+  it("fails a publish run when no compatible N exists, on Windows and on Linux", () => {
+    for (const name of ["verify-candidate", "verify-linux-candidate"]) {
+      const body = job(name);
+      expect(body).toContain("MODE: ${{ needs.plan.outputs.mode }}");
+      expect(body).toMatch(/case "\$STATUS" in\n\s+found\)[\s\S]*bootstrap\)[\s\S]*\*\)\n\s+if \[ "\$MODE" = "publish" \]; then echo "::error::\$\{REASON\}"; exit 1; fi/);
+    }
   });
 
   it("checks the published release anonymously", () => {
@@ -141,7 +200,7 @@ describe("release.yml policy", () => {
   });
 
   it("keeps release artifacts for 30 days, separate from CI artifacts, and never caches or overwrites", () => {
-    expect(lines.filter((line) => /retention-days:/.test(line)).map((line) => line.trim())).toEqual(Array(3).fill("retention-days: 30"));
+    expect(lines.filter((line) => /retention-days:/.test(line)).map((line) => line.trim())).toEqual(Array(5).fill("retention-days: 30"));
     expect(lines.filter((line) => /^\s*(cache|overwrite):/.test(line))).toEqual([]);
   });
 

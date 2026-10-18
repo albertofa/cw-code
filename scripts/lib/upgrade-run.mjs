@@ -31,9 +31,9 @@ import {
   nsisGuid,
   readRegistryValue,
   registryPaths,
-  runSilent,
-  safePathWithoutClis
+  runSilent
 } from "./windows-install.mjs";
+import { safePathWithoutClis } from "./package-probe.mjs";
 
 const libDir = dirname(fileURLToPath(import.meta.url));
 const scriptsDir = resolve(libDir, "..");
@@ -205,6 +205,7 @@ export function seedIsolatedData(paths, identity) {
     claudeExtraArgs: `"${paths.fakeScript}"`,
     autoTitleEnabled: false,
     updateBackgroundDownload: false,
+    idleResolveAfterDays: 0,
     cwUpdateTestUnknownKey: "kept-across-updates"
   };
   const userdata = join(paths.cwCodeHome, "userdata");

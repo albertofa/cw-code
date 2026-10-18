@@ -14,7 +14,10 @@ files:
   - "!node_modules/node-pty/third_party/**"
   - "!node_modules/node-pty/scripts/**"
   - "!node_modules/node-pty/binding.gyp"
-  - "!node_modules/node-pty/build/**"
+  - "!node_modules/node-pty/build/!(Release)"
+  - "!node_modules/node-pty/build/!(Release)/**"
+  - "!node_modules/node-pty/build/Release/!(pty.node)"
+  - "!node_modules/node-pty/build/Release/!(pty.node)/**"
   - "!node_modules/node-pty/typings/**"
   - "!node_modules/node-pty/lib/**/*.test.js"
   - "!node_modules/node-pty/lib/**/*.js.map"
@@ -23,6 +26,10 @@ files:
   - "!node_modules/node-pty/prebuilds/win32-arm64/**"
 asarUnpack:
   - "node_modules/node-pty/prebuilds/win32-x64/**"
+  - "node_modules/node-pty/build/Release/pty.node"
+afterPack: build/afterPack.cjs
+toolsets:
+  appimage: "1.0.3"
 publish:
   - provider: github
     owner: albertofa
@@ -32,6 +39,9 @@ generateUpdatesFilesForAllChannels: true
 extraResources:
   - from: resources
     to: branding
+    filter:
+      - "**/*"
+      - "!icons/**"
 win:
   icon: resources/icon.ico
   executableName: cw-code
@@ -50,3 +60,33 @@ nsis:
   allowToChangeInstallationDirectory: true
   differentialPackage: true
   artifactName: "${productName}-Setup-${version}-${arch}.${ext}"
+linux:
+  files:
+    - "!node_modules/node-pty/prebuilds/win32-x64/**"
+  executableName: cw-code
+  category: Development
+  icon: resources/icons
+  maintainer: albertofa <albertofa@users.noreply.github.com>
+  desktop:
+    entry:
+      StartupWMClass: cw-code
+  target:
+    - target: AppImage
+      arch:
+        - x64
+    - target: deb
+      arch:
+        - x64
+appImage:
+  artifactName: "${productName}-${version}-x86_64.${ext}"
+deb:
+  artifactName: "${productName}-${version}-amd64.${ext}"
+  depends:
+    - libasound2t64 | libasound2
+    - libgtk-3-0t64 | libgtk-3-0
+    - libnss3
+    - libsecret-1-0
+    - xdg-utils
+    - libnotify4
+    - libxss1
+    - libxtst6

@@ -7,9 +7,13 @@ or an installer exit code is never accepted as success. A scenario passes only
 when the relaunched app reports the new version, the registry shows it, and the
 seeded projects, sessions, settings and worktree references are still there.
 
+This document is about Windows unless a section says otherwise; Linux has its own
+gate, [Linux production bytes](#linux-production-bytes).
+
 `release.yml` runs the signed N -> N+1 upgrade with the final candidate bytes
-before any publication (see [Production bytes](#production-bytes) and
-[releases.md](releases.md#upgrade-gate)). Nothing in this document publishes a
+before any publication, on Windows and on Linux (see
+[Production bytes](#production-bytes), [Linux production bytes](#linux-production-bytes)
+and [releases.md](releases.md#upgrade-gate)). Nothing in this document publishes a
 release, reads a token or touches a real account.
 
 ## Safety rules
@@ -35,7 +39,7 @@ release, reads a token or touches a real account.
 | Piece | Where | Role |
 | --- | --- | --- |
 | Feed server | `tools/release/src/feedServer.ts` (+ `feedSandbox.ts`, `feedRange.ts`, `feedFaults.ts`) | Loopback-only generic update feed with range support, a request log and fault injection |
-| Feed validation | `tools/release/src/feedManifest.ts` | Checks `latest.yml`/`alpha.yml` shape, the referenced installer, its size and sha512, and the blockmap |
+| Feed validation | `tools/release/src/feedManifest.ts` | Checks `latest.yml`/`alpha.yml` shape, the referenced installer, its size and sha512, and the blockmap; `validateLinuxReleaseFeed` does the same for `latest-linux.yml`/`alpha-linux.yml` and the AppImage and deb |
 | Update-test identity | `apps/desktop/electron-builder.updatetest.yml` | Separate app id, product name, userData, updater cache and loopback feed URL |
 | Autotest mode | `apps/desktop/src/main/updates/updateAutotest.ts` | Drives the real `UpdateService` and coordinator without UI; compiled only into update-test builds |
 | Scenario matrix and evaluation | `tools/release/src/upgradeScenarios.ts` | Versions, scenarios, expected outcomes, metadata comparison, evidence redaction |
@@ -52,6 +56,7 @@ from one root directory. CLI:
 ```sh
 node tools/release/src/cli/release.ts feed-serve --root <dir> [--port 47613] [--faults '<json>' | --faults-file <file>] [--log requests.jsonl]
 node tools/release/src/cli/release.ts validate-feed --dir <dir> [--version X] [--channels alpha.yml,latest.yml] [--require-blockmap]
+node tools/release/src/cli/release.ts validate-feed --platform linux --dir <dir> [--version X]
 ```
 
 - Paths: only `[A-Za-z0-9._-]` segments. `..`, `.`, empty segments, absolute
@@ -391,6 +396,77 @@ production renderer bridge instead:
 Trade-off: the production binary is unchanged, but the test edits one file in
 the disposable install and opens a loopback DevTools port for the test's
 duration.
+
+### Linux production bytes
+
+```sh
+node scripts/verify-linux-upgrade.mjs --production-bytes --appimage <cw-code-N-x86_64.AppImage> --deb <cw-code-N-amd64.deb> --candidate-dir <N+1 release set> --work-dir <dir> --evidence <file> --disposable-environment [--desktop-dir <apps/desktop>] [--feed-port 47613] [--devtools-port 9339] [--scenarios appimage,deb]
+```
+
+`verify-linux-candidate` in `release.yml` runs it on `ubuntu-22.04` against the
+same release set as the Windows gate. It runs as a non-root user with
+passwordless sudo, needs `Xvfb`, and refuses to run without
+`--disposable-environment`. Versions come from the files, never from the
+checkout that runs the script; `--desktop-dir` only locates `@electron/asar`
+and app-builder-lib.
+
+1. Validates the candidate's `latest-linux.yml` with
+   `validateLinuxReleaseFeed`: it lists the AppImage then the deb, sizes and
+   sha512 match the bytes, `alpha-linux.yml` is a byte copy (required for an
+   alpha). The Windows files in the set are not looked at.
+2. Starts one `Xvfb` for the whole run (`xvfb-run` would take the X server
+   down when N exits, before the relaunched app is up) and serves the
+   candidate folder from the loopback feed server for each scenario.
+3. Per scenario: seeds the real default data folders (`~/.cw-code`,
+   `~/.config/@cw-code/desktop`) with the guarded fixtures, starts N with
+   `--remote-debugging-port`, reads `runningVersion` over DevTools, runs the
+   same renderer calls as the Windows gate, waits for N to exit and for a new
+   `cw-code-bin` main process, reads the version of the `app.asar` that
+   process runs (and, when the relaunch kept the DevTools flag, the version it
+   reports), stops it, runs the packaged startup probe against the seeded data,
+   checks the data and cleans up (seeded fixtures, updater cache, work files).
+
+`appimage`: N is extracted with `--appimage-extract`, its
+`resources/app-update.yml` is rewritten to the loopback feed, and it is
+repacked with N's own runtime bytes, the `mksquashfs` of electron-builder's
+pinned `appimage@1.0.3` toolset (fetched and sha256-checked by app-builder-lib),
+the compression and block size read from N's squashfs superblock, and an
+embedded blockmap from app-builder-lib so the update can be differential. Only
+N is modified. The repacked N keeps its versioned file name, so
+`AppImageUpdater` deletes it and moves the download to
+`cw-code-<N+1>-x86_64.AppImage` next to it; the run requires that file to have
+the candidate's exact sha512, the old file to be gone, and the relaunched
+process's `APPIMAGE` to point at it. Without a usable `/dev/fuse` (containers)
+both N and the relaunch use `APPIMAGE_EXTRACT_AND_RUN=1`.
+
+`deb`: refuses to run if `cw-code` is already installed, installs N with
+`apt-get`, rewrites `/opt/cw-code/resources/app-update.yml` with `sudo install`,
+and requires `dpkg-query` to report N+1's Debian version (`-` becomes `~`)
+afterwards, and the relaunched app to report N+1 over DevTools
+(`app.relaunch()` keeps the original arguments). The package is purged at the
+end, on failure too.
+
+`DebUpdater` picks its privilege wrapper by probing `gksudo`, `kdesudo`,
+`pkexec` and `beesu` with `command -v`, then falls back to `sudo`. `pkexec`
+exists on the runner but needs a polkit agent, and the app prepends the
+login shell's `PATH`, so a shim named after a system binary would lose. The
+harness therefore puts a `gksudo` shim first on N's `PATH` (only in the test
+environment, never in the product). It logs its arguments, drops
+`--message <text>` and runs the remaining command string with `sudo -n`; the
+run requires a logged `dpkg -i`.
+
+The evidence (`schema: 1`, `mode: linux-production-bytes`) has the candidate
+and base files with sizes and sha512, the repack details, per scenario the
+renderer steps, N's and the relaunched version, the target AppImage hash or
+the installed Debian version, the probe result (with its sandbox fields when
+the probe reports them), the feed transfer summary (bytes served, ratio,
+whether range requests were used), the privilege-wrapper log, the updater log
+lines of the run and `passed`. Paths under the work folder, home and temp are
+redacted. N's own output goes to `<work>/logs/<scenario>-n.log`.
+
+`scripts/verify-linux-package.mjs` (see
+[linux-packaging.md](linux-packaging.md#how-ci-verifies-the-packages)) is the
+install-and-start check for a single build and does not test upgrades.
 
 ## Evidence
 

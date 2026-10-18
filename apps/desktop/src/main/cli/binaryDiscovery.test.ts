@@ -22,23 +22,39 @@ const WIN_OPTS: CandidatePathsOptions = {
 };
 
 describe("candidatePaths on posix", () => {
-  for (const platform of ["linux", "darwin"] as const) {
-    it(`lists well-known locations on ${platform}`, () => {
-      const paths = candidatePaths("claude", { ...POSIX_OPTS, platform });
-      expect(paths[0]).toBe("claude");
-      for (const dir of [
-        "/usr/local/bin",
-        "/opt/homebrew/bin",
-        "/usr/bin",
-        "/home/testuser/.local/bin",
-        "/home/testuser/bin",
-        "/home/testuser/.npm-global/bin"
-      ]) {
-        expect(paths).toContain(`${dir}/claude`);
-      }
-      expect(new Set(paths).size).toBe(paths.length);
-    });
-  }
+  const COMMON_DIRS = [
+    "/usr/local/bin",
+    "/usr/bin",
+    "/home/testuser/.local/bin",
+    "/home/testuser/bin",
+    "/home/testuser/.npm-global/bin"
+  ];
+
+  it("lists well-known locations on darwin including Homebrew", () => {
+    const paths = candidatePaths("claude", { ...POSIX_OPTS, platform: "darwin" });
+    expect(paths[0]).toBe("claude");
+    for (const dir of [...COMMON_DIRS, "/opt/homebrew/bin"]) expect(paths).toContain(`${dir}/claude`);
+    expect(paths).not.toContain("/snap/bin/claude");
+    expect(paths).not.toContain("/home/testuser/.bun/bin/claude");
+    expect(new Set(paths).size).toBe(paths.length);
+  });
+
+  it("lists well-known locations on linux without the macOS Homebrew prefix", () => {
+    const paths = candidatePaths("claude", POSIX_OPTS);
+    expect(paths[0]).toBe("claude");
+    for (const dir of [
+      ...COMMON_DIRS,
+      "/home/linuxbrew/.linuxbrew/bin",
+      "/snap/bin",
+      "/home/testuser/.local/share/pnpm",
+      "/home/testuser/.bun/bin",
+      "/home/testuser/.volta/bin"
+    ]) {
+      expect(paths).toContain(`${dir}/claude`);
+    }
+    expect(paths).not.toContain("/opt/homebrew/bin/claude");
+    expect(new Set(paths).size).toBe(paths.length);
+  });
 
   it("scopes home-only install dirs per binary", () => {
     expect(candidatePaths("opencode", POSIX_OPTS)).toContain("/home/testuser/.opencode/bin/opencode");

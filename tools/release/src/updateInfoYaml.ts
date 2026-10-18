@@ -120,9 +120,6 @@ function toUpdateInfo(document: ParsedDocument): UpdateInfo {
   const sha512 = requireField(document.topLevel, "sha512", "at top level");
   assertBareFileName(path);
   if (document.files.length === 0) throw new Error(`Update info has no "files" entries`);
-  if (document.files.length !== 1) {
-    throw new Error(`Update info lists ${document.files.length} files; only a single installer per update info file is supported`);
-  }
   const files = document.files.map((entry, index) => {
     const where = `in files[${index}]`;
     return { url: requireField(entry, "url", where), sha512: requireField(entry, "sha512", where), size: requireSize(entry, where) };
@@ -133,14 +130,25 @@ function toUpdateInfo(document: ParsedDocument): UpdateInfo {
   return { version, path, sha512, files };
 }
 
+function requireSingleInstaller(info: UpdateInfo): UpdateInfo {
+  if (info.files.length !== 1) {
+    throw new Error(`Update info lists ${info.files.length} files; only a single installer per update info file is supported`);
+  }
+  return info;
+}
+
 export function parseUpdateInfo(text: string): UpdateInfo {
   return toUpdateInfo(parseDocument(text));
+}
+
+export function parseSingleInstallerUpdateInfo(text: string): UpdateInfo {
+  return requireSingleInstaller(parseUpdateInfo(text));
 }
 
 export function rewriteUpdateInfo(text: string, digest: InstallerDigest): UpdateInfoRewrite {
   if (!Number.isSafeInteger(digest.size) || digest.size < 0) throw new Error(`Invalid installer size ${digest.size}`);
   const document = parseDocument(text);
-  const info = toUpdateInfo(document);
+  const info = requireSingleInstaller(toUpdateInfo(document));
   const lines = [...document.lines];
   let changed = false;
 
@@ -162,6 +170,32 @@ export function rewriteUpdateInfo(text: string, digest: InstallerDigest): Update
     changed,
     previous: { sha512: info.files[0].sha512, size: info.files[0].size }
   };
+}
+
+export function withFilesOrder(text: string, urls: string[]): string {
+  const document = parseDocument(text);
+  const info = toUpdateInfo(document);
+  const listed = info.files.map((file) => file.url);
+  if (listed.length !== urls.length || !urls.every((url) => listed.filter((candidate) => candidate === url).length === 1)) {
+    throw new Error(`Update info files must be exactly ${urls.join(", ")}, got ${listed.join(", ")}`);
+  }
+
+  const filesLine = document.topLevel.get("files")?.line ?? 0;
+  const nextTopLevel = [...document.topLevel.values()].map((field) => field.line).filter((line) => line > filesLine);
+  let end = Math.min(...nextTopLevel, document.lines.length);
+  while (end > filesLine + 1 && document.lines[end - 1].trim() === "") end -= 1;
+  const starts = document.files.map((entry) => Math.min(...[...entry.values()].map((field) => field.line)));
+  const blocks = new Map(info.files.map((file, index) => [file.url, document.lines.slice(starts[index], starts[index + 1] ?? end)]));
+
+  const lines = [...document.lines.slice(0, starts[0]), ...urls.flatMap((url) => blocks.get(url) ?? []), ...document.lines.slice(end)];
+  const primary = info.files[listed.indexOf(urls[0])];
+  const replaceTopLevel = (key: string, value: string): void => {
+    const field = document.topLevel.get(key);
+    if (field && parseScalar(field.value) !== value) lines[field.line] = `${key}: ${formatScalar(value)}`;
+  };
+  replaceTopLevel("path", primary.url);
+  replaceTopLevel("sha512", primary.sha512);
+  return lines.join(document.eol);
 }
 
 export interface ReleaseText {
