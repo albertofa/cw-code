@@ -7,6 +7,7 @@ import { prKey } from "./prInbox.js";
 import { formatRelativeAge } from "./prInboxModel.js";
 import { PrUpdateIcon } from "./PrUpdateIcon.js";
 import {
+  autoFollowUpWorkflow,
   defaultFollowUpWorkflowId,
   followUpPrompt,
   followUpWorkflow,
@@ -33,6 +34,7 @@ interface DockEntry {
   workflow: PrWorkflow | null;
   workflowId: string;
   isReview: boolean;
+  autoFollowing: boolean;
   logsNeeded: boolean;
   prompt: string | null;
 }
@@ -51,6 +53,7 @@ function dockEntry(item: LinkedPr, settings: AppSettings | null, harness: string
     workflow,
     workflowId,
     isReview: workflowId === "review",
+    autoFollowing: settings !== null && autoFollowUpWorkflow(link, settings.prWorkflows) !== null,
     logsNeeded: workflow !== null && needsFailedLogs(workflow.updatePrompt),
     prompt
   };
@@ -207,7 +210,8 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
   };
 
   const singleBabysat = single !== null && babysat(single);
-  const continuous = single && !babysit && startsAutoFollowUp(session, single.workflow, single.pr) ? single.workflow : null;
+  const continuous =
+    single && !singleBabysat && !single.autoFollowing && startsAutoFollowUp(session, single.workflow, single.pr) ? single.workflow : null;
 
   const startContinuous = async (workflow: PrWorkflow, ref: PrRef) => {
     const adopt = linkWithWorkflow(findSession(useAppStore.getState().sessionsByProject, sessionId), ref, workflow.id);
@@ -257,7 +261,7 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
       ? "Re-review changes"
       : continuous
         ? `Start ${continuous.label}`
-        : singleBabysat
+        : singleBabysat || single?.autoFollowing
           ? "Send now"
           : single
             ? `Send update to ${harness}`
@@ -271,7 +275,9 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
         ? `Send this update now, then let ${continuous.label} follow up on ${prRefLabel(single.item.link.ref)} by itself until it is merged or closed`
         : singleBabysat && babysit
           ? `Send this update without waiting for ${babysit.workflow.label}`
-          : undefined;
+          : single?.autoFollowing && single.workflow
+            ? `Send this update without waiting for ${single.workflow.label}`
+            : undefined;
   const primaryDisabled = singleLogs ? busy : busy || prompt === null || working !== null || alreadySent;
   const now = Date.now();
   const previewText = singleLogs
@@ -289,6 +295,8 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
         babysitHint(single, babysit)
       ) : continuous ? (
         "sends this now, then keeps following up by itself until the PR is merged or closed"
+      ) : single.autoFollowing ? (
+        "already follows up on this PR by itself"
       ) : (
         "sends its follow-up prompt once"
       )
