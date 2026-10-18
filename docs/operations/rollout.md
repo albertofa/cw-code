@@ -518,8 +518,8 @@ tab.
   monitor uploads nothing. Evidence worth keeping past 30 days goes into the
   commissioning PR, not into artifacts.
 - **CI minutes.** Every job has a timeout: CI `windows` 45 min,
-  `upgrade-test.yml` 150 min (nightly at 03:17 UTC and on PRs touching the
-  update path), release jobs 15 to 120 min, feed monitor 20 min (usually a
+  `upgrade-test.yml` 150 min (nightly at 03:17 UTC unless that commit
+  already passed, and the `core` scenarios on PRs touching the update path), release jobs 15 to 120 min, feed monitor 20 min (usually a
   few minutes, 4 runs a day). With publishing on, automatic runs publish, so
   the 6-hour window caps them at one full release run (two Windows jobs plus
   the unsigned signing jobs) per 6 hours; pushes inside the window end at
