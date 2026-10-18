@@ -7949,6 +7949,17 @@ button.gitbar-checkout:hover {
   font-size: var(--t-xs);
 }
 
+.wf-run-continuous {
+  align-items: flex-start;
+  line-height: 1.45;
+}
+
+.wf-run-continuous svg {
+  flex: none;
+  margin-top: 2px;
+  color: var(--accent);
+}
+
 .wf-run-error {
   display: flex;
   align-items: center;
@@ -9228,6 +9239,30 @@ button.gitbar-checkout:hover {
 .pr-dock-hint b {
   color: var(--dim);
   font-weight: 600;
+}
+
+.pr-dock-workflow {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  flex: none;
+  max-width: 40%;
+  height: 22px;
+  padding: 0 8px;
+  box-sizing: border-box;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  color: var(--text);
+  font-size: var(--t-xs);
+  font-weight: 600;
+  white-space: nowrap;
+  text-overflow: ellipsis;
+}
+
+.pr-dock-workflow svg {
+  flex: none;
+  color: var(--accent);
 }
 
 .pr-dock-foot .pr-detail-btn:disabled {

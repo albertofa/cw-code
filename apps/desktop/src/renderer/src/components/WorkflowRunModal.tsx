@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import {
+  Activity,
   AlertTriangle,
   FolderGit2,
   GitBranch,
@@ -42,6 +43,7 @@ import { ipcErrorMessage } from "./ipcError.js";
 import { findSession, usePrSettings } from "./useLinkedPr.js";
 import { prKey } from "./prInbox.js";
 import { linkWithWorkflow } from "./sessionPrLinks.js";
+import { startsAutoFollowUp } from "./prSessionModel.js";
 import { IssueCard, PrCard, RunCard } from "./WorkflowSubjectCards.js";
 import { SubjectCardSkeleton } from "./GitHubSkeletons.js";
 import { Spinner } from "./Loading.js";
@@ -565,7 +567,19 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
     sessionBusy ||
     driverMissing ||
     (!continueSession && (!reposReady || (!created && !resolvedHarness)));
-  const actionLabel = continueSession ? "Send" : created ? "Retry" : "Start session";
+  const startsContinuous =
+    subject.kind === "pr" &&
+    !babysitWorkflow &&
+    startsAutoFollowUp({ status: continueSession?.status ?? "idle" }, workflow, basePrState ? { state: basePrState } : null) &&
+    (!continueAlreadyLinked || adoptedLink !== null);
+  const actionLabel =
+    created && !continueSession
+      ? "Retry"
+      : startsContinuous && workflow
+        ? `Start ${workflow.label}`
+        : continueSession
+          ? "Send"
+          : "Start session";
   const projectName = projectId ? projectNameOf(projectId) : repo.repo;
   const workspaceHint = (mode: "worktree" | "checkout"): string =>
     base ? baseWorkspaceHint(base, mode, projectName) : prWorkspaceHint(data.pr?.headRefName ?? null, mode, projectName);
@@ -694,6 +708,13 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
             </div>
           </div>
           {workflow && <div className="wf-run-muted wf-run-desc">{workflow.description}</div>}
+          {startsContinuous && workflow && (
+            <div className="wf-run-status wf-run-continuous">
+              <Activity size={12} aria-hidden="true" />
+              Keeps running after this prompt: {workflow.label} sends its follow-up prompt by itself for failed checks,
+              change requests and comments until the PR is merged or closed. Pause or stop it from the session.
+            </div>
+          )}
           {options?.error && !continueSession && (
             <div className="wf-run-error" role="alert">
               Could not list harness options: {options.error}
