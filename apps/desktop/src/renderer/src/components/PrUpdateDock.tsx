@@ -7,13 +7,12 @@ import { prKey } from "./prInbox.js";
 import { formatRelativeAge } from "./prInboxModel.js";
 import { PrUpdateIcon } from "./PrUpdateIcon.js";
 import {
-  autoFollowUpWorkflow,
   defaultFollowUpWorkflowId,
+  followUpMode,
   followUpPrompt,
   followUpWorkflow,
   needsFailedLogs,
-  startsAutoFollowUp,
-  type BabysitState
+  type BabysitPhase
 } from "./prSessionModel.js";
 import { seenThrough, updatesSince } from "./prUpdates.js";
 import { linkWithWorkflow, prRefLabel } from "./sessionPrLinks.js";
@@ -34,7 +33,6 @@ interface DockEntry {
   workflow: PrWorkflow | null;
   workflowId: string;
   isReview: boolean;
-  autoFollowing: boolean;
   logsNeeded: boolean;
   prompt: string | null;
 }
@@ -53,7 +51,6 @@ function dockEntry(item: LinkedPr, settings: AppSettings | null, harness: string
     workflow,
     workflowId,
     isReview: workflowId === "review",
-    autoFollowing: settings !== null && autoFollowUpWorkflow(link, settings.prWorkflows) !== null,
     logsNeeded: workflow !== null && needsFailedLogs(workflow.updatePrompt),
     prompt
   };
@@ -80,11 +77,11 @@ function seenHead(entry: DockEntry): string | null {
   return entry.item.detail?.headRefOid ?? entry.item.summary?.headRefOid ?? null;
 }
 
-function babysitHint(entry: DockEntry, babysit: BabysitState): ReactNode {
-  const label = <b>{babysit.workflow.label}</b>;
-  if (babysit.phase.kind === "paused") return <>{label} is paused, so this update waits for you</>;
+function autoHint(entry: DockEntry, workflow: PrWorkflow, phase: BabysitPhase): ReactNode {
+  const label = <b>{workflow.label}</b>;
+  if (phase.kind === "paused") return <>{label} is paused, so this update waits for you</>;
   if (!entry.updates.some((update) => update.actionable)) return <>{label} doesn't act on this kind of update</>;
-  if (babysit.phase.kind === "working") return <>{label} sends this after the current turn</>;
+  if (phase.kind === "working") return <>{label} sends this after the current turn</>;
   return <>{label} is sending this</>;
 }
 
@@ -210,8 +207,9 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
   };
 
   const singleBabysat = single !== null && babysat(single);
-  const continuous =
-    single && !singleBabysat && !single.autoFollowing && startsAutoFollowUp(session, single.workflow, single.pr) ? single.workflow : null;
+  const mode = single ? followUpMode(session, single.item.link, single.pr, single.workflow, settings?.prWorkflows ?? [], babysit) : null;
+  const continuous = mode?.kind === "start" ? mode.workflow : null;
+  const auto = mode?.kind === "auto" ? mode : null;
 
   const startContinuous = async (workflow: PrWorkflow, ref: PrRef) => {
     const adopt = linkWithWorkflow(findSession(useAppStore.getState().sessionsByProject, sessionId), ref, workflow.id);
@@ -261,7 +259,7 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
       ? "Re-review changes"
       : continuous
         ? `Start ${continuous.label}`
-        : singleBabysat || single?.autoFollowing
+        : auto
           ? "Send now"
           : single
             ? `Send update to ${harness}`
@@ -273,11 +271,9 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
       ? "This update was already sent"
       : continuous && single
         ? `Send this update now, then let ${continuous.label} follow up on ${prRefLabel(single.item.link.ref)} by itself until it is merged or closed`
-        : singleBabysat && babysit
-          ? `Send this update without waiting for ${babysit.workflow.label}`
-          : single?.autoFollowing && single.workflow
-            ? `Send this update without waiting for ${single.workflow.label}`
-            : undefined;
+        : auto
+          ? `Send this update without waiting for ${auto.workflow.label}`
+          : undefined;
   const primaryDisabled = singleLogs ? busy : busy || prompt === null || working !== null || alreadySent;
   const now = Date.now();
   const previewText = singleLogs
@@ -288,18 +284,14 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
         : settings && sendable.length === 0
           ? "None of the changed pull requests has a prompt that can be sent together. Send each one from its section."
           : "Resolving prompt…"));
-  const footWorkflow = single && !singleBabysat ? single.workflow : null;
-  const hint = single ? (
-    single.workflow ? (
-      babysit && singleBabysat ? (
-        babysitHint(single, babysit)
-      ) : continuous ? (
-        "sends this now, then keeps following up by itself until the PR is merged or closed"
-      ) : single.autoFollowing ? (
-        "already follows up on this PR by itself"
-      ) : (
-        "sends its follow-up prompt once"
-      )
+  const footWorkflow = mode && (mode.kind === "start" || mode.kind === "once") ? mode.workflow : null;
+  const hint = single && mode ? (
+    mode.kind === "auto" ? (
+      autoHint(single, mode.workflow, mode.phase)
+    ) : mode.kind === "start" ? (
+      "sends this now, then keeps following up by itself until the PR is merged or closed"
+    ) : mode.kind === "once" ? (
+      "sends its follow-up prompt once"
     ) : (
       "follow-up prompt unavailable"
     )

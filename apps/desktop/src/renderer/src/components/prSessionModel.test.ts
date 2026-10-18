@@ -8,6 +8,7 @@ import {
   babysitState,
   babysitStatusText,
   defaultFollowUpWorkflowId,
+  followUpMode,
   followUpPrompt,
   followUpWorkflow,
   needsFailedLogs,
@@ -147,6 +148,47 @@ describe("autoFollowUpWorkflow", () => {
 
   it("does not fall back to babysit for links without a workflow", () => {
     expect(autoFollowUpWorkflow(link({ origin: "opened" }), [auto])).toBeNull();
+  });
+});
+
+describe("followUpMode", () => {
+  const auto = workflow("babysit", { autoFollowUp: true });
+  const custom = workflow("custom");
+  const workflows = [auto, custom];
+  const other = link({ ref: { host: "github.com", owner: "acme", repo: "widgets", number: 7 }, workflowId: "babysit" });
+  const watching: BabysitState = { link: other, workflow: auto, phase: { kind: "watching" } };
+  const paused: BabysitState = { ...watching, phase: { kind: "paused", reason: "user" } };
+
+  it("reports a PR already linked to an automatic workflow with the session's live phase", () => {
+    const own = link({ workflowId: "babysit" });
+    expect(followUpMode({ status: "idle" }, own, { state: "OPEN" }, auto, workflows, watching)).toEqual({
+      kind: "auto",
+      workflow: auto,
+      phase: { kind: "watching" }
+    });
+    expect(followUpMode({ status: "idle" }, own, { state: "OPEN" }, auto, workflows, paused)).toMatchObject({
+      kind: "auto",
+      phase: { kind: "paused", reason: "user" }
+    });
+  });
+
+  it("falls back to a one-off send when the automatic workflow cannot run", () => {
+    const own = link({ workflowId: "babysit" });
+    expect(followUpMode({ status: "idle" }, own, { state: "MERGED" }, auto, workflows, watching).kind).toBe("once");
+    expect(followUpMode({ status: "resolved" }, own, { state: "OPEN" }, auto, workflows, watching).kind).toBe("once");
+    expect(followUpMode({ status: "idle" }, own, { state: "OPEN" }, auto, workflows, null).kind).toBe("once");
+  });
+
+  it("offers to start an automatic fallback workflow even while another PR in the session is babysat", () => {
+    const unlinked = link({ origin: "opened" });
+    expect(followUpMode({ status: "idle" }, unlinked, { state: "OPEN" }, auto, workflows, null)).toEqual({ kind: "start", workflow: auto });
+    expect(followUpMode({ status: "idle" }, unlinked, { state: "OPEN" }, auto, workflows, watching)).toEqual({ kind: "start", workflow: auto });
+  });
+
+  it("sends one-shot workflows once and reports a missing workflow", () => {
+    const own = link({ workflowId: "custom" });
+    expect(followUpMode({ status: "idle" }, own, { state: "OPEN" }, custom, workflows, null)).toEqual({ kind: "once", workflow: custom });
+    expect(followUpMode({ status: "idle" }, own, { state: "OPEN" }, null, [], null)).toEqual({ kind: "none" });
   });
 });
 

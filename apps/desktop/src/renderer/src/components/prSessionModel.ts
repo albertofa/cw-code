@@ -141,6 +141,29 @@ export function startsAutoFollowUp(
   return !!workflow && runsContinuously(workflow) && isWatchable(session) && (!pr || pr.state === "OPEN");
 }
 
+export type FollowUpMode =
+  | { kind: "auto"; workflow: PrWorkflow; phase: BabysitPhase }
+  | { kind: "start"; workflow: PrWorkflow }
+  | { kind: "once"; workflow: PrWorkflow }
+  | { kind: "none" };
+
+export function followUpMode(
+  session: Pick<SessionMeta, "status">,
+  link: SessionPrLink,
+  pr: Pick<PrSummary, "state"> | null,
+  workflow: PrWorkflow | null,
+  workflows: PrWorkflow[],
+  babysit: BabysitState | null
+): FollowUpMode {
+  const auto = autoFollowUpWorkflow(link, workflows);
+  if (auto && babysit && isWatchable(session) && (!pr || pr.state === "OPEN")) {
+    return { kind: "auto", workflow: auto, phase: babysit.phase };
+  }
+  if (!workflow) return { kind: "none" };
+  if (!auto && startsAutoFollowUp(session, workflow, pr)) return { kind: "start", workflow };
+  return { kind: "once", workflow };
+}
+
 export function autoFollowUpRefs(sessions: Pick<SessionMeta, "status" | "prs">[], summaryByKey: PrSummaryLookup, workflows: PrWorkflow[]): PrRef[] {
   const byKey = new Map<string, PrRef>();
   for (const session of sessions) {
