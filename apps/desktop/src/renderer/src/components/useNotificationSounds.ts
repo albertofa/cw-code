@@ -35,7 +35,7 @@ export function useNotificationSounds(): void {
     const result = trackNotificationSounds(tracker.current, states, Date.now(), openSessionId());
     tracker.current = result.tracker;
     const settings = useAppStore.getState().notificationSounds;
-    const event = settings ? result.events.find((candidate) => settings[candidate].enabled) : undefined;
+    const event = settings ? result.events.find((candidate) => settings[candidate].enabled && settings[candidate].volume > 0) : undefined;
     if (settings && event) void playNotificationSound(settings[event].sound, settings[event].volume);
   }, [sessionsByProject, pendingQuestions, summaryByKey, detailByKey, babysitOf]);
 }
