@@ -2,15 +2,53 @@ import { type ChildProcess } from "node:child_process";
 import { createHash } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { createServer } from "node:net";
+import { createInterface } from "node:readline";
 import { killProcessTree } from "../../processTree.js";
-import { spawnCli } from "../../cli/spawnCli.js";
+import { execCliFile, spawnCli } from "../../cli/spawnCli.js";
 import { withOwnerPid } from "../../orphanServers.js";
 import { traceHarnessCall, truncateError } from "../../debug/harnessTrace.js";
-import { OPENCODE_HEALTH_TIMEOUT_MS, opencodeFetch } from "./opencodeFetch.js";
+import {
+  basicAuthHeader,
+  identifyServer,
+  newServerPassword,
+  parseStdioServerUrl,
+  protocolOfVersion,
+  serverAuthEnv,
+  waitForServerIdentity,
+  type OpencodeProtocolVersion
+} from "./opencodeServerProbe.js";
+import { interruptActiveV2Sessions } from "./v2/opencodeV2Server.js";
 
 export interface ServerHandle {
   port: number;
   authHeader: string;
+  protocol?: OpencodeProtocolVersion;
+  version?: string;
+  password?: string;
+}
+
+const STARTUP_TIMEOUT_MS = 90_000;
+const CLI_PROTOCOL_TTL_MS = 5 * 60_000;
+const cliProtocols = new Map<string, { at: number; protocol: OpencodeProtocolVersion }>();
+
+export async function opencodeCliProtocol(binary: string): Promise<OpencodeProtocolVersion> {
+  const cached = cliProtocols.get(binary);
+  if (cached && Date.now() - cached.at < CLI_PROTOCOL_TTL_MS) return cached.protocol;
+  try {
+    const { stdout } = await execCliFile(binary, ["--version"], { timeout: 15000 });
+    const protocol = protocolOfVersion(/(\d+\.\d+\.\d+)/.exec(stdout)?.[1]) ?? "v1";
+    cliProtocols.set(binary, { at: Date.now(), protocol });
+    return protocol;
+  } catch (err) {
+    traceHarnessCall({
+      harness: "opencode",
+      operation: "opencode.cliProtocol",
+      binary,
+      ok: false,
+      error: truncateError((err as Error).message)
+    });
+    return "v1";
+  }
 }
 
 const SESSION_UNIQUE_ENV_KEYS = new Set(["CW_SESSION_ID", "CW_WORKTREE_PATH", "CW_PROJECT_ROOT"]);
@@ -46,21 +84,27 @@ function findFreePort(): Promise<number> {
   });
 }
 
-async function waitHealthy(port: number, authHeader: string, timeoutMs: number): Promise<void> {
-  const start = Date.now();
-  for (;;) {
-    try {
-      const res = await opencodeFetch(`http://127.0.0.1:${port}/session`, {
-        headers: { Authorization: authHeader },
-        timeoutMs: OPENCODE_HEALTH_TIMEOUT_MS,
-        port
-      });
-      if (res.ok) return;
-    } catch {
+function stdioServerPort(proc: ChildProcess, timeoutMs: number): Promise<number> {
+  return new Promise((resolve, reject) => {
+    if (!proc.stdout) {
+      reject(new Error("opencode serve --stdio has no stdout"));
+      return;
     }
-    if (Date.now() - start > timeoutMs) throw new Error(`opencode serve on ${port} did not become healthy`);
-    await new Promise((r) => setTimeout(r, 1000));
-  }
+    const lines = createInterface({ input: proc.stdout });
+    const timer = setTimeout(() => {
+      lines.close();
+      reject(new Error(`opencode serve did not report its address within ${Math.round(timeoutMs / 1000)}s`));
+    }, timeoutMs);
+    timer.unref?.();
+    lines.on("line", (line) => {
+      const port = parseStdioServerUrl(line);
+      if (port === null) return;
+      clearTimeout(timer);
+      lines.close();
+      proc.stdout?.resume();
+      resolve(port);
+    });
+  });
 }
 
 interface StartedServer {
@@ -81,6 +125,8 @@ export interface OpencodeServerPoolDeps {
   idleTimeoutMs?: number;
   maxServers?: number;
   onServerGone?: (rootPath: string, port: number) => void;
+  /** Extra spawn env for a CLI protocol, kept out of the pool key (v2 plugin injection). */
+  spawnEnv?: (protocol: OpencodeProtocolVersion) => Promise<Record<string, string>>;
   /**
    * When set, every working directory shares a single server spawned at this
    * root. Callers must scope each request to its own directory (the opencode
@@ -92,6 +138,7 @@ export interface OpencodeServerPoolDeps {
 
 export class OpencodeServerPool {
   private servers = new Map<string, PoolEntry>();
+  private draining = 0;
   private pending = new Map<string, { envKey: string; promise: Promise<ServerHandle> }>();
   private inFlight = new Map<string, number>();
   private disposed = false;
@@ -130,11 +177,7 @@ export class OpencodeServerPool {
     if (!entry) return false;
     if (entry.proc.exitCode != null || entry.proc.killed) return false;
     try {
-      await opencodeFetch(`http://127.0.0.1:${entry.handle.port}/session`, {
-        headers: { Authorization: entry.handle.authHeader },
-        timeoutMs: OPENCODE_HEALTH_TIMEOUT_MS,
-        port: entry.handle.port
-      });
+      await identifyServer(entry.handle.port, entry.handle.authHeader);
       return true;
     } catch {
       return false;
@@ -166,6 +209,20 @@ export class OpencodeServerPool {
     return proc.exitCode != null || proc.killed === true;
   }
 
+  async lease(rootPath: string): Promise<{ handle: ServerHandle; release: () => void }> {
+    const handle = await this.ensure(rootPath);
+    this.beginTurn(rootPath);
+    let released = false;
+    return {
+      handle,
+      release: () => {
+        if (released) return;
+        released = true;
+        this.endTurn(rootPath);
+      }
+    };
+  }
+
   endTurn(rootPath: string): void {
     rootPath = this.keyOf(rootPath);
     const count = (this.inFlight.get(rootPath) ?? 0) - 1;
@@ -177,22 +234,35 @@ export class OpencodeServerPool {
   private async ensureProcess(rootPath: string, binary: string, env: Record<string, string> | undefined): Promise<{ proc: ChildProcess; handle: ServerHandle }> {
     const start = Date.now();
     if (this.deps?.sharedRoot) mkdirSync(rootPath, { recursive: true });
-    const port = await findFreePort();
-    const password = process.env["OPENCODE_SERVER_PASSWORD"] ?? "";
-    const authHeader = `Basic ${Buffer.from(`opencode:${password}`).toString("base64")}`;
-    const args = ["serve", "--port", String(port), "--hostname", "127.0.0.1"];
+    const cliProtocol = await opencodeCliProtocol(binary);
+    const protocolEnv = await this.protocolSpawnEnv(rootPath, cliProtocol);
+    const stdio = cliProtocol === "v2";
+    const fixedPort = stdio ? 0 : await findFreePort();
+    const password = newServerPassword();
+    const authHeader = basicAuthHeader(password);
+    const args = stdio
+      ? ["serve", "--stdio", "--port", "0", "--hostname", "127.0.0.1"]
+      : ["serve", "--port", String(fixedPort), "--hostname", "127.0.0.1"];
     const proc = spawnCli(binary, args, {
       cwd: rootPath,
       windowsHide: true,
-      env: withOwnerPid({ ...process.env, ...env })
+      stdio: ["pipe", "pipe", "pipe"],
+      env: withOwnerPid({ ...process.env, ...env, ...protocolEnv, ...serverAuthEnv(password, cliProtocol) })
     });
-    const handle: ServerHandle = { port, authHeader };
+    proc.stderr?.resume();
+    if (!stdio) proc.stdout?.resume();
+    let handle: ServerHandle = { port: fixedPort, authHeader, password };
     try {
       const processFailed = new Promise<never>((_, reject) => {
         proc.once("error", (err) => reject(new Error(`failed to spawn ${binary}: ${err.message}`)));
         proc.once("exit", (code) => reject(new Error(`${binary} serve exited before startup (code ${code ?? "unknown"})`)));
       });
-      await Promise.race([waitHealthy(port, authHeader, 90000), processFailed]);
+      const startup = (async () => {
+        const port = stdio ? await stdioServerPort(proc, STARTUP_TIMEOUT_MS) : fixedPort;
+        const identity = await waitForServerIdentity(port, authHeader, STARTUP_TIMEOUT_MS - (Date.now() - start));
+        handle = { ...handle, port, protocol: identity.protocol, version: identity.version };
+      })();
+      await Promise.race([startup, processFailed]);
     } catch (err) {
       traceHarnessCall({
         harness: "opencode",
@@ -215,9 +285,33 @@ export class OpencodeServerPool {
       args,
       durationMs: Date.now() - start,
       ok: true,
-      extra: { serverPort: port, envKeys: env ? Object.keys(env).join(",") : "" }
+      extra: {
+        serverPort: handle.port,
+        protocol: handle.protocol ?? null,
+        serverVersion: handle.version ?? null,
+        envKeys: env ? Object.keys(env).join(",") : ""
+      }
     });
     return { proc, handle };
+  }
+
+  private async protocolSpawnEnv(rootPath: string, protocol: OpencodeProtocolVersion): Promise<Record<string, string>> {
+    if (!this.deps?.spawnEnv) return {};
+    try {
+      return await this.deps.spawnEnv(protocol);
+    } catch (err) {
+      const message = truncateError((err as Error).message);
+      console.warn(`opencode ${protocol} extensions unavailable, starting without them: ${message}`);
+      traceHarnessCall({
+        harness: "opencode",
+        operation: "opencode.serve.spawnEnv",
+        cwd: rootPath,
+        ok: false,
+        error: message,
+        extra: { protocol }
+      });
+      return {};
+    }
   }
 
   async ensure(rootPath: string, env?: Record<string, string>): Promise<ServerHandle> {
@@ -319,11 +413,19 @@ export class OpencodeServerPool {
     if (!entry) return;
     this.servers.delete(rootPath);
     this.deps?.onServerGone?.(rootPath, entry.handle.port);
-    killProcessTree(entry.proc);
+    if (entry.handle.protocol !== "v2") {
+      killProcessTree(entry.proc);
+      return;
+    }
+    this.draining += 1;
+    void interruptActiveV2Sessions(entry.handle).finally(() => {
+      this.draining -= 1;
+      killProcessTree(entry.proc);
+    });
   }
 
   ownedProcessCount(): number {
-    return this.servers.size + this.pending.size;
+    return this.servers.size + this.pending.size + this.draining;
   }
 
   dispose(): void {
