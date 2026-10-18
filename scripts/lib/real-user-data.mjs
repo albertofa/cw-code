@@ -97,6 +97,7 @@ export function createSeedPlan() {
     holdingHours: 12,
     autoTitleEnabled: false,
     updateBackgroundDownload: false,
+    idleResolveAfterDays: 0,
     [FIXTURE_UNKNOWN_KEY]: "kept-across-updates"
   };
   return {
