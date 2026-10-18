@@ -5,7 +5,15 @@ import { usePrStore } from "../stores/prStore.js";
 import { shouldRequestDetail, type DetailAttempt } from "./needsYou.js";
 import { useNotifs } from "./Notifications.js";
 import { prKey } from "./prInbox.js";
-import { autoFollowUpRefs, autoFollowUps, finalReviewPrompt, followUpPrompt, needsFailedLogs, type AutoFollowUp } from "./prSessionModel.js";
+import {
+  autoFollowUpRefs,
+  autoFollowUps,
+  finalReviewPrompt,
+  followUpPrompt,
+  needsFailedLogs,
+  withAutomatedWorkflowNote,
+  type AutoFollowUp
+} from "./prSessionModel.js";
 import { detailNeedsRefresh, detailRefreshKey, seenThrough } from "./prUpdates.js";
 import { loadFailedLogs } from "./prWorkflows.js";
 import { prRefLabel, prSummaryLookup } from "./sessionPrLinks.js";
@@ -35,7 +43,9 @@ async function sendAutoFollowUp(followUp: AutoFollowUp, settings: AppSettings, h
   try {
     const failedLogs = !finalReview && needsFailedLogs(workflow.updatePrompt) ? await failedLogsOrNotice(detail) : undefined;
     if (isBusy(sessionId)) return false;
-    const prompt = finalReview ? finalReviewPrompt(detail) : followUpPrompt(detail, link, workflow, updates, settings, harness, failedLogs);
+    const prompt = finalReview
+      ? withAutomatedWorkflowNote(workflow, finalReviewPrompt(detail))
+      : followUpPrompt(detail, link, workflow, updates, settings, harness, failedLogs);
     await useAppStore.getState().sendPromptTo(sessionId, prompt, undefined, {
       prRefs: [link.ref],
       auto: true,

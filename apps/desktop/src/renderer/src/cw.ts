@@ -179,7 +179,7 @@ import type { SessionStatusReason } from "@cw-code/contracts";
 
 export type DriverName = "claude" | "opencode" | "codex";
 
-export type SessionStatus = "idle" | "working" | "input-required" | "done" | "holding" | "resolved" | "archived";
+export type SessionStatus = "idle" | "working" | "input-required" | "done" | "holding" | "babysit" | "resolved" | "archived";
 
 export type { SessionStatusReason };
 

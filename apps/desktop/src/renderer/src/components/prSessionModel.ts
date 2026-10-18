@@ -1,15 +1,15 @@
 import type { AppSettings, PrDetail, PrRef, PrSummary, PrUpdate, PrWorkflow, SessionMeta, SessionPrLink } from "@cw-code/contracts";
-import { autoFollowUpWorkflow, runsContinuously } from "../../../shared/autoFollowUp.js";
+import { autoFollowUpWorkflow, runsContinuously, withAutomatedWorkflowNote } from "../../../shared/autoFollowUp.js";
 import { prKey } from "./prInbox.js";
 import { detailNeedsRefresh, seenThrough, updatesSince } from "./prUpdates.js";
 
-export { autoFollowUpWorkflow, runsContinuously };
+export { autoFollowUpWorkflow, runsContinuously, withAutomatedWorkflowNote };
 import { attributionText, resolveTemplate, templateVars } from "./prWorkflows.js";
 import { sessionLinks, type PrSummaryLookup } from "./sessionPrLinks.js";
 
 export const AUTO_FOLLOW_UP_LIMIT = 8;
 
-const AUTO_FOLLOW_UP_STATUSES: ReadonlySet<SessionMeta["status"]> = new Set(["done", "idle", "holding"]);
+const AUTO_FOLLOW_UP_STATUSES: ReadonlySet<SessionMeta["status"]> = new Set(["done", "idle", "holding", "babysit"]);
 
 export type AutoFollowUpPause = "user" | "interrupted" | "error";
 
@@ -52,7 +52,7 @@ export function followUpPrompt(
   failedLogs?: string
 ): string {
   const vars = templateVars(detail, { link, updates, failedLogs, attribution: attributionText(settings, harness), harness });
-  return resolveTemplate(workflow.updatePrompt, vars);
+  return withAutomatedWorkflowNote(workflow, resolveTemplate(workflow.updatePrompt, vars));
 }
 
 export function isMergeReady(pr: PrSummary): boolean {
@@ -117,6 +117,19 @@ export function babysitState(
     return { link, workflow, phase: babysitPhase(link, summary, control) };
   }
   return null;
+}
+
+export function babysitPhaseLabel(phase: BabysitPhase["kind"]): string {
+  switch (phase) {
+    case "working":
+      return "Babysitting";
+    case "watching":
+      return "Watching";
+    case "done":
+      return "Ready to merge";
+    case "paused":
+      return "Paused";
+  }
 }
 
 export function babysitStatusText(state: BabysitState): string {

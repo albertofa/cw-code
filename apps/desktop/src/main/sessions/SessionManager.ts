@@ -42,7 +42,7 @@ import type {
 } from "@cw-code/contracts";
 import { type SessionStatusReason } from "../debug/sessionStatusTrace.js";
 import { isWorkingSetStatus } from "../../shared/workingSet.js";
-import { autoFollowUpWorkflow } from "../../shared/autoFollowUp.js";
+import { autoFollowUpWorkflow, babysitsOpenPr } from "../../shared/autoFollowUp.js";
 import { SessionStore } from "./SessionStore.js";
 import {
   addUnlinkedKey,
@@ -188,6 +188,8 @@ function driverLiveTasks(driver: CliDriver, sessionId: string): TaskSnapshot[] {
     return [];
   }
 }
+
+const SETTLEABLE_STATUSES: ReadonlySet<SessionStatus> = new Set(["holding", "done", "babysit"]);
 
 function autoFinishedTarget(value: AppSettings["prFinishedSessionStatus"]): value is "idle" | "resolved" | "archived" {
   return value !== "none";
@@ -413,7 +415,29 @@ export class SessionManager {
   }
 
   setSettings(patch: SettingsPatch): AppSettings {
-    return this.settings.set(patch);
+    const next = this.settings.set(patch);
+    if (patch.prWorkflows) {
+      for (const session of this.store.listAllSessions()) {
+        if (this.endStaleBabysit(session.id)) this.emitSession(session.id);
+      }
+    }
+    return next;
+  }
+
+  private babysits(session: SessionMeta): boolean {
+    return babysitsOpenPr(session.prs, this.settings.get().prWorkflows, (ref) => isFinishedPrState(this.prState(ref)));
+  }
+
+  private turnEndStatus(sessionId: string): SessionStatus {
+    const session = this.store.getSession(sessionId);
+    return session && this.babysits(session) ? "babysit" : "done";
+  }
+
+  private endStaleBabysit(sessionId: string): boolean {
+    const session = this.store.getSession(sessionId);
+    if (session?.status !== "babysit" || this.babysits(session)) return false;
+    this.store.updateSession(sessionId, { status: "holding" }, "babysit-ended");
+    return true;
   }
 
   private handleDriverEvent(sessionId: string, event: ThreadEvent, countUsageTurn = true): void {
@@ -437,7 +461,7 @@ export class SessionManager {
         if (stillActive) {
           this.store.updateSession(event.sessionId, { resumeCursor: event.resumeCursor });
         } else {
-          this.store.updateSession(event.sessionId, { resumeCursor: event.resumeCursor, status: "done" }, "turn-done");
+          this.store.updateSession(event.sessionId, { resumeCursor: event.resumeCursor, status: this.turnEndStatus(event.sessionId) }, "turn-done");
         }
         this.captureEndSnapshot(event.sessionId, event.turnId);
         if (wasActive && !event.isError) void this.renameBranchForTitle(event.sessionId, event.turnId);
@@ -775,6 +799,7 @@ export class SessionManager {
     if (!session) throw new Error(`unknown session ${sessionId}`);
     const prUnlinked = removeUnlinkedKey(session.prUnlinked, prKey(link.ref));
     this.store.updateSession(sessionId, { prs: upsertLink(session.prs, link), prUnlinked });
+    this.endStaleBabysit(sessionId);
     return this.emitSession(sessionId);
   }
 
@@ -783,6 +808,7 @@ export class SessionManager {
     if (!session) throw new Error(`unknown session ${sessionId}`);
     const prUnlinked = addUnlinkedKey(session.prUnlinked, prKey(ref));
     this.store.updateSession(sessionId, { prs: removeLink(session.prs, ref), prUnlinked });
+    this.endStaleBabysit(sessionId);
     return this.emitSession(sessionId);
   }
 
@@ -919,10 +945,10 @@ export class SessionManager {
   }
 
   private async runFinishedPrSweep(): Promise<string[]> {
-    if (!autoFinishedTarget(this.settings.get().prFinishedSessionStatus)) return [];
     const settled: string[] = [];
     for (const session of this.store.listAllSessions()) {
-      if (session.status !== "holding" && session.status !== "done") continue;
+      if (!SETTLEABLE_STATUSES.has(session.status)) continue;
+      if (session.status !== "babysit" && !autoFinishedTarget(this.settings.get().prFinishedSessionStatus)) continue;
       if (!session.prs?.length) continue;
       if (this.sessionBusy(session.id)) continue;
       try {
@@ -938,12 +964,14 @@ export class SessionManager {
         }
         if (finishedKeys.size !== session.prs.length) continue;
         const current = this.store.getSession(session.id);
-        if (!current || (current.status !== "holding" && current.status !== "done")) continue;
+        if (!current || !SETTLEABLE_STATUSES.has(current.status)) continue;
         if (!onlyFinishedLinks(current.prs, finishedKeys)) continue;
         if (this.sessionBusy(session.id)) continue;
         const target = this.settings.get().prFinishedSessionStatus;
-        if (!autoFinishedTarget(target)) continue;
-        if (target === "idle") {
+        if (!autoFinishedTarget(target)) {
+          if (current.status !== "babysit") continue;
+          this.setSessionStatus(session.id, "holding", "babysit-ended");
+        } else if (target === "idle") {
           this.setSessionStatus(session.id, "idle", "pr-finished");
         } else {
           const result = await this.resolveSession(session.id, target, {
@@ -952,7 +980,7 @@ export class SessionManager {
             auto: true,
             stillEligible: (candidate) =>
               this.settings.get().prFinishedSessionStatus === target &&
-              (candidate.status === "holding" || candidate.status === "done") &&
+              SETTLEABLE_STATUSES.has(candidate.status) &&
               onlyFinishedLinks(candidate.prs, finishedKeys)
           });
           if (this.store.getSession(session.id)?.status !== target) continue;

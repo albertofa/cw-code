@@ -15,10 +15,12 @@ import {
   needsRunFailedLogs,
   startsAutoFollowUp,
   whyLinkedText,
+  withAutomatedWorkflowNote,
   type AutoFollowUpSession,
   type BabysitControl,
   type BabysitState
 } from "./prSessionModel.js";
+import { AUTOMATED_WORKFLOW_NOTE, babysitsOpenPr } from "../../../shared/autoFollowUp.js";
 
 function link(overrides: Partial<SessionPrLink> = {}): SessionPrLink {
   return {
@@ -134,6 +136,41 @@ describe("followUpPrompt", () => {
     const wf = workflow("babysit", { updatePrompt: "logs:\n{{checks.failedLogs}}" });
     const text = followUpPrompt(detail(), link(), wf, [], { prAttributionEnabled: false, prAttributionText: "" }, "Claude", "boom");
     expect(text).toBe("logs:\nboom");
+  });
+
+  it("tells continuous workflows they run unattended", () => {
+    const wf = workflow("babysit", { updatePrompt: "update\n", autoFollowUp: true });
+    const text = followUpPrompt(detail(), link(), wf, [], { prAttributionEnabled: false, prAttributionText: "" }, "Claude");
+    expect(text).toBe(`update\n\n${AUTOMATED_WORKFLOW_NOTE}`);
+  });
+});
+
+describe("withAutomatedWorkflowNote", () => {
+  it("appends the note only to enabled continuous PR workflows", () => {
+    expect(withAutomatedWorkflowNote(workflow("babysit", { autoFollowUp: true }), "go")).toBe(`go\n\n${AUTOMATED_WORKFLOW_NOTE}`);
+    expect(withAutomatedWorkflowNote(workflow("babysit", { autoFollowUp: true, enabled: false }), "go")).toBe("go");
+    expect(withAutomatedWorkflowNote(workflow("review"), "go")).toBe("go");
+  });
+
+  it("asks for human input through the question tool, not the end-of-turn message", () => {
+    expect(AUTOMATED_WORKFLOW_NOTE).toMatch(/AskUserQuestion/);
+    expect(AUTOMATED_WORKFLOW_NOTE).toMatch(/Never end the turn with a question/);
+  });
+});
+
+describe("babysitsOpenPr", () => {
+  const auto = workflow("babysit", { autoFollowUp: true });
+  const open = () => false;
+
+  it("is true while an automatic workflow owns an open PR", () => {
+    expect(babysitsOpenPr([link({ workflowId: "babysit" })], [auto], open)).toBe(true);
+  });
+
+  it("is false without an automatic link, once the PR finished, or with no links", () => {
+    expect(babysitsOpenPr([link({ workflowId: "review" })], [auto, workflow("review")], open)).toBe(false);
+    expect(babysitsOpenPr([link({ workflowId: "babysit" })], [{ ...auto, enabled: false }], open)).toBe(false);
+    expect(babysitsOpenPr([link({ workflowId: "babysit" })], [auto], () => true)).toBe(false);
+    expect(babysitsOpenPr(undefined, [auto], open)).toBe(false);
   });
 });
 

@@ -2562,6 +2562,85 @@ describe("SessionManager", () => {
     }
   });
 
+  it("ends a turn as babysit while an automatic workflow owns an open linked PR", async () => {
+    const widgets = { host: "github.com", owner: "acme", repo: "widgets", number: 42 };
+    const gadgets = { host: "github.com", owner: "acme", repo: "gadgets", number: 7 };
+    const { manager, fake, project } = makePrManager({ prState: (ref) => (ref.number === 7 ? "MERGED" : "OPEN") });
+    const store = (manager as unknown as { store: SessionStore }).store;
+    const babysat = await manager.createSession(project.id, "claude", { mode: "current" });
+    manager.linkPr(babysat.id, { ref: widgets, origin: "workflow", workflowId: "babysit", lastSeenSha: "old", lastSeenAt: 0 });
+    const reviewed = await manager.createSession(project.id, "claude", { mode: "current" });
+    manager.linkPr(reviewed.id, { ref: widgets, origin: "workflow", workflowId: "review", lastSeenSha: "old", lastSeenAt: 0 });
+    const merged = await manager.createSession(project.id, "claude", { mode: "current" });
+    manager.linkPr(merged.id, { ref: gadgets, origin: "workflow", workflowId: "babysit", lastSeenSha: "old", lastSeenAt: 0 });
+
+    for (const session of [babysat, reviewed, merged]) await manager.startTurn(session.id, "go");
+    fake.completeAll();
+
+    expect(store.getSession(babysat.id)?.status).toBe("babysit");
+    expect(store.getSession(reviewed.id)?.status).toBe("done");
+    expect(store.getSession(merged.id)?.status).toBe("done");
+    manager.dispose();
+  });
+
+  it("ends babysit when the PR is unlinked, babysit is stopped, or the workflow stops running continuously", async () => {
+    const widgets = { host: "github.com", owner: "acme", repo: "widgets", number: 42 };
+    const { manager, project } = makePrManager({ prState: () => "OPEN" });
+    const store = (manager as unknown as { store: SessionStore }).store;
+    const unlinked = await manager.createSession(project.id, "claude", { mode: "current" });
+    const stopped = await manager.createSession(project.id, "claude", { mode: "current" });
+    const disabled = await manager.createSession(project.id, "claude", { mode: "current" });
+    for (const session of [unlinked, stopped, disabled]) {
+      manager.linkPr(session.id, { ref: widgets, origin: "workflow", workflowId: "babysit", lastSeenSha: "old", lastSeenAt: 0 });
+      store.updateSession(session.id, { status: "babysit" });
+    }
+
+    expect(manager.unlinkPr(unlinked.id, widgets).status).toBe("holding");
+    expect(manager.linkPr(disabled.id, { ref: widgets, origin: "workflow", workflowId: "babysit", lastSeenSha: "new", lastSeenAt: 1 }).status).toBe(
+      "babysit"
+    );
+    expect(manager.linkPr(stopped.id, { ref: widgets, origin: "workflow", lastSeenSha: "old", lastSeenAt: 0 }).status).toBe("holding");
+    expect(store.getSession(disabled.id)?.status).toBe("babysit");
+
+    const workflows = manager.getSettings().prWorkflows.map((w) => (w.id === "babysit" ? { ...w, autoFollowUp: false } : w));
+    manager.setSettings({ prWorkflows: workflows });
+
+    expect(store.getSession(disabled.id)?.status).toBe("holding");
+    manager.dispose();
+  });
+
+  it("settles a babysit session once its PR finishes, to holding when auto-settling is off", async () => {
+    const widgets = { host: "github.com", owner: "acme", repo: "widgets", number: 42 };
+    const { manager, project, dir } = makePrManager({ prState: () => "MERGED" });
+    const tracePath = join(dir, "session-status.jsonl");
+    initSessionStatusTrace({ filePath: tracePath });
+    try {
+      const store = (manager as unknown as { store: SessionStore }).store;
+      const idle = await manager.createSession(project.id, "claude", { mode: "current" });
+      manager.linkPr(idle.id, { ref: widgets, origin: "workflow", workflowId: "babysit", lastSeenSha: "old", lastSeenAt: 0 });
+      store.updateSession(idle.id, { status: "babysit" });
+      manager.setSettings({ prFinishedSessionStatus: "idle" });
+
+      expect(await manager.settleFinishedPrSessions()).toEqual([idle.id]);
+      expect(store.getSession(idle.id)?.status).toBe("idle");
+
+      const kept = await manager.createSession(project.id, "claude", { mode: "current" });
+      manager.linkPr(kept.id, { ref: widgets, origin: "workflow", workflowId: "babysit", lastSeenSha: "old", lastSeenAt: 0 });
+      store.updateSession(kept.id, { status: "babysit" });
+      store.updateSession(idle.id, { status: "done" });
+      manager.setSettings({ prFinishedSessionStatus: "none" });
+
+      expect(await manager.settleFinishedPrSessions()).toEqual([kept.id]);
+      expect(store.getSession(kept.id)?.status).toBe("holding");
+      expect(store.getSession(idle.id)?.status).toBe("done");
+      const transitions = readStatusTransitions(tracePath);
+      expect(transitions.some((entry) => entry.sessionId === kept.id && entry.to === "holding" && entry.reason === "babysit-ended")).toBe(true);
+    } finally {
+      resetSessionStatusTraceForTests();
+      manager.dispose();
+    }
+  });
+
   it("settles when the refreshed state is finished even though the known state is stale", async () => {
     const widgets = { host: "github.com", owner: "acme", repo: "widgets", number: 42 };
     const { manager, project } = makePrManager({ prState: () => "OPEN", prStateRefresh: async () => "MERGED" });

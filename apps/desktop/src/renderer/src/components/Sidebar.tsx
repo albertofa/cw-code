@@ -12,7 +12,7 @@ import { mergeAwayIds } from "./sidebarOrder.js";
 import { compareWorkingSet, isWorkingSetStatus } from "./workingSet.js";
 import { shortenHome } from "./pathDisplay.js";
 import { PrChipBadge } from "./PrChipBadge.js";
-import { babysitStatusText } from "./prSessionModel.js";
+import { babysitPhaseLabel, babysitStatusText, type BabysitState } from "./prSessionModel.js";
 import { useBabysitStates } from "./useBabysit.js";
 import { needsAttentionCount } from "./prInbox.js";
 import { anyLinkUnseen, displayChip, linksTitle, mostUrgentLink, sessionLinks } from "./sessionPrLinks.js";
@@ -53,6 +53,7 @@ function stateLabel(status: SessionStatus): string {
   if (status === "working") return "Running";
   if (status === "done") return "Done";
   if (status === "holding") return "Holding";
+  if (status === "babysit") return "Babysit";
   return status;
 }
 
@@ -276,7 +277,7 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
   const setSessionStatus = useAppStore((s) => s.setSessionStatus);
   const shortPath = (value: string): string => shortenHome(value, homeDir ?? undefined);
   const inbox = usePrStore((s) => s.inbox);
-  const { attentionOf, summaryByKey } = useNeedsYou();
+  const { attentionOf, babysitPhaseOf, summaryByKey } = useNeedsYou();
   const babysitOf = useBabysitStates();
   const mainView = usePrStore((s) => s.mainView);
   const openGitHub = usePrStore((s) => s.openGitHub);
@@ -371,7 +372,7 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
   const source = useMemo<Session[]>(() => Object.values(sessionsByProject).flat(), [sessionsByProject]);
   const inboxItems = inbox?.items;
   const branchOf = useCallback((s: Session): string | undefined => gitStatusBySession[s.id]?.branch ?? s.branch, [gitStatusBySession]);
-  const needsYouAll = useMemo(() => needsYouEntries(source, attentionOf), [source, attentionOf]);
+  const needsYouAll = useMemo(() => needsYouEntries(source, attentionOf, babysitPhaseOf), [source, attentionOf, babysitPhaseOf]);
   const attentionIds = useMemo(() => new Set(needsYouAll.map((entry) => entry.session.id)), [needsYouAll]);
   const matchesQuery = useCallback(
     (s: Session) => matchesSessionQuery(trimmedQuery, { title: s.title, project: projectNameById[s.projectId] ?? "", branch: branchOf(s) }),
@@ -726,7 +727,23 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
     );
   };
 
+  const renderBabysitState = (state: BabysitState) => {
+    const phase = state.phase.kind;
+    return (
+      <span className={`ws-state status-babysit ${phase}`} title={`${state.workflow.label}: ${babysitStatusText(state)}`}>
+        {phase === "done" ? (
+          <Check size={12} aria-hidden="true" />
+        ) : (
+          <Activity size={12} className={phase === "working" ? "ws-pulse" : undefined} aria-hidden="true" />
+        )}
+        {babysitPhaseLabel(phase)}
+      </span>
+    );
+  };
+
   const renderWorkingState = (s: Session) => {
+    const babysit = babysitOf(s);
+    if (babysit && s.status !== "input-required") return renderBabysitState(babysit);
     if (s.status === "working") {
       return (
         <span className="ws-state status-working">
@@ -735,6 +752,7 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
         </span>
       );
     }
+    if (s.status === "babysit") return <span className="ws-state status-babysit">{stateLabel(s.status)}</span>;
     if (s.status === "holding") return <span className="ws-state status-holding">{ageLabel(s.updatedAt)}</span>;
     if (s.status === "done") {
       return (
@@ -772,10 +790,7 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
           </div>
         </div>
         <div className="ws-side">
-          <span className="ws-side-row">
-            {renderBabysitBadge(s)}
-            {renderWorkingState(s)}
-          </span>
+          <span className="ws-side-row">{renderWorkingState(s)}</span>
           <span className="ws-side-row">
             {renderPrChip(s)}
             <DriverIcon driver={s.driver} size={14} />
