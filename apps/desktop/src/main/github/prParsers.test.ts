@@ -25,6 +25,7 @@ function summaryNode(overrides: Record<string, unknown> = {}) {
     reviewThreads: { nodes: [] },
     reviewDecision: null,
     mergeable: "MERGEABLE",
+    mergeStateStatus: "CLEAN",
     labels: { nodes: [] },
     updatedAt: "2024-01-01T00:00:00Z",
     reviewRequests: { nodes: [] },
@@ -57,6 +58,7 @@ describe("parseInbox", () => {
               url: "https://github.com/acme/widgets/pull/12",
               viewerDidAuthor: true,
               mergeable: "CONFLICTING",
+              mergeStateStatus: "SOMETHING_NEW",
               reviewDecision: "APPROVED",
               ciCommits: { nodes: [{ commit: { statusCheckRollup: { contexts: { nodes: [rollupNode("SUCCESS")] } } } }] }
             }),
@@ -86,6 +88,8 @@ describe("parseInbox", () => {
 
     const conflicting = result.items.find((item) => item.ref.number === 12)!;
     expect(conflicting.mergeable).toBe("CONFLICTING");
+    expect(conflicting.mergeStateStatus).toBe("UNKNOWN");
+    expect(result.items.find((item) => item.ref.number === 13)?.mergeStateStatus).toBe("CLEAN");
     expect(bucketFor(conflicting)).toBe("action");
 
     const failing = result.items.find((item) => item.ref.number === 13)!;
@@ -330,6 +334,7 @@ describe("bucketFor", () => {
     checks: { total: 0, passed: 0, failed: 0, pending: 0 },
     review: "none",
     mergeable: "MERGEABLE",
+    mergeStateStatus: "CLEAN",
     labels: [],
     reviewers: [],
     assignees: [],

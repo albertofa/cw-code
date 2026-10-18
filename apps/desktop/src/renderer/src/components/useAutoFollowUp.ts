@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useRef } from "react";
-import type { AppSettings, PrWorkflow, Session } from "../cw.js";
+import type { AppSettings, PrDetail, PrWorkflow, Session } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import { usePrStore } from "../stores/prStore.js";
 import { shouldRequestDetail, type DetailAttempt } from "./needsYou.js";
 import { useNotifs } from "./Notifications.js";
 import { prKey } from "./prInbox.js";
-import { autoFollowUpRefs, autoFollowUps, followUpPrompt, needsFailedLogs, type AutoFollowUp } from "./prSessionModel.js";
+import { autoFollowUpRefs, autoFollowUps, finalReviewPrompt, followUpPrompt, needsFailedLogs, type AutoFollowUp } from "./prSessionModel.js";
 import { detailNeedsRefresh, detailRefreshKey, seenThrough } from "./prUpdates.js";
 import { loadFailedLogs } from "./prWorkflows.js";
 import { prRefLabel, prSummaryLookup } from "./sessionPrLinks.js";
@@ -20,19 +20,33 @@ function isBusy(sessionId: string): boolean {
   return useAppStore.getState().busyTurns[sessionId] !== undefined;
 }
 
+async function failedLogsOrNotice(detail: PrDetail): Promise<string> {
+  try {
+    return await loadFailedLogs(detail);
+  } catch (err) {
+    console.warn(`[pr] failed CI logs for ${prRefLabel(detail.ref)} could not be loaded: ${errorMessage(err)}`);
+    return `(Failed CI logs could not be loaded: ${errorMessage(err)}. Read them with \`gh run view --log-failed\`.)`;
+  }
+}
+
 async function sendAutoFollowUp(followUp: AutoFollowUp, settings: AppSettings, harness: string): Promise<boolean> {
-  const { sessionId, link, workflow, detail, updates } = followUp;
+  const { sessionId, link, workflow, detail, updates, finalReview } = followUp;
   if (isBusy(sessionId)) return false;
   try {
-    const failedLogs = needsFailedLogs(workflow.updatePrompt) ? await loadFailedLogs(detail) : undefined;
+    const failedLogs = !finalReview && needsFailedLogs(workflow.updatePrompt) ? await failedLogsOrNotice(detail) : undefined;
     if (isBusy(sessionId)) return false;
-    const prompt = followUpPrompt(detail, link, workflow, updates, settings, harness, failedLogs);
-    await useAppStore.getState().sendPromptTo(sessionId, prompt, undefined, { prRefs: [link.ref], auto: true });
+    const prompt = finalReview ? finalReviewPrompt(detail) : followUpPrompt(detail, link, workflow, updates, settings, harness, failedLogs);
+    await useAppStore.getState().sendPromptTo(sessionId, prompt, undefined, {
+      prRefs: [link.ref],
+      auto: true,
+      ...(finalReview ? { finalReview: { ref: link.ref, sha: detail.headRefOid } } : {})
+    });
   } catch (err) {
+    useAppStore.getState().pauseAutoFollowUp(sessionId, "error");
     useNotifs.getState().push({
       kind: "error",
-      title: `${workflow.label} could not send the ${prRefLabel(link.ref)} update`,
-      message: `${ipcErrorMessage(err)}. Send it from the session's update dock.`
+      title: `${workflow.label} could not send the ${prRefLabel(link.ref)} ${finalReview ? "final review" : "update"}`,
+      message: `${ipcErrorMessage(err)}. Resume ${workflow.label} in the session's dock to retry.`
     });
     return true;
   }
@@ -59,6 +73,7 @@ export function useAutoFollowUp(): void {
   const { settings } = usePrSettings();
   const attempts = useRef(new Map<string, DetailAttempt>());
   const started = useRef(new Set<string>());
+  const inFlight = useRef(new Set<string>());
 
   const workflows = settings?.prWorkflows ?? NO_WORKFLOWS;
   const sessions = useMemo(() => Object.values(sessionsByProject).flat(), [sessionsByProject]);
@@ -109,6 +124,17 @@ export function useAutoFollowUp(): void {
   );
   const followUpSignature = followUps.map((followUp) => followUp.signature).join(" ");
 
+  const pausedBefore = useRef(autoPaused);
+  useEffect(() => {
+    for (const sessionId of Object.keys(pausedBefore.current)) {
+      if (autoPaused[sessionId] !== undefined) continue;
+      for (const signature of started.current) {
+        if (signature.startsWith(`${sessionId}:`) && !inFlight.current.has(signature)) started.current.delete(signature);
+      }
+    }
+    pausedBefore.current = autoPaused;
+  }, [autoPaused]);
+
   useEffect(() => {
     if (!settings) return;
     for (const followUp of followUps) {
@@ -116,9 +142,12 @@ export function useAutoFollowUp(): void {
       const session: Session | undefined = sessions.find((item) => item.id === followUp.sessionId);
       if (!session) continue;
       started.current.add(followUp.signature);
-      void sendAutoFollowUp(followUp, settings, harnessLabel(session.driver)).then((handled) => {
-        if (!handled) started.current.delete(followUp.signature);
-      });
+      inFlight.current.add(followUp.signature);
+      void sendAutoFollowUp(followUp, settings, harnessLabel(session.driver))
+        .then((handled) => {
+          if (!handled) started.current.delete(followUp.signature);
+        })
+        .finally(() => inFlight.current.delete(followUp.signature));
     }
   }, [followUpSignature, settings]);
 }

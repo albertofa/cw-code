@@ -7,6 +7,7 @@ import type {
   PrCommit,
   PrDetail,
   PrMergeable,
+  PrMergeStateStatus,
   PrRef,
   PrReviewState,
   PrReviewThread,
@@ -21,6 +22,16 @@ const PASSING_STATES = new Set(["SUCCESS", "NEUTRAL", "SKIPPED"]);
 const FAILING_STATES = new Set(["FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STALE"]);
 const REVIEW_TIMELINE_STATES = new Set(["APPROVED", "CHANGES_REQUESTED", "COMMENTED", "DISMISSED"]);
 const REVIEWER_STATES = new Set(["APPROVED", "CHANGES_REQUESTED", "COMMENTED", "PENDING"]);
+const MERGE_STATE_STATUSES: ReadonlySet<string> = new Set<PrMergeStateStatus>([
+  "BEHIND",
+  "BLOCKED",
+  "CLEAN",
+  "DIRTY",
+  "DRAFT",
+  "HAS_HOOKS",
+  "UNKNOWN",
+  "UNSTABLE"
+]);
 
 const PR_URL_RE = /^https?:\/\/([^/]+)\/([^/]+)\/([^/]+)\/pull\/(\d+)/i;
 
@@ -117,6 +128,11 @@ function mergeableFrom(value: unknown): PrMergeable {
   return state === "MERGEABLE" || state === "CONFLICTING" ? state : "UNKNOWN";
 }
 
+function mergeStateStatusFrom(value: unknown): PrMergeStateStatus {
+  const state = asString(value);
+  return MERGE_STATE_STATUSES.has(state) ? (state as PrMergeStateStatus) : "UNKNOWN";
+}
+
 function prStateFrom(value: unknown): PrSummary["state"] {
   const state = asString(value);
   return state === "CLOSED" || state === "MERGED" ? state : "OPEN";
@@ -188,6 +204,7 @@ function parseSummaryNode(node: Record<string, unknown>, viewer: string | null):
     checks,
     review: reviewStateFrom(node.reviewDecision),
     mergeable: mergeableFrom(node.mergeable),
+    mergeStateStatus: mergeStateStatusFrom(node.mergeStateStatus),
     labels: asNodes(node.labels).map((label) => asString(label.name)).filter(Boolean),
     reviewers: mergeReviewers(parseReviewers(node.latestReviews), reviewerLogins),
     assignees: asNodes(node.assignees).map((assignee) => asString(assignee.login)).filter(Boolean),

@@ -37,6 +37,7 @@ export type {
   PrCiState,
   PrReviewState,
   PrMergeable,
+  PrMergeStateStatus,
   PrBucket,
   PrAuthor,
   PrSummary,

@@ -141,7 +141,7 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
   if (!session || (!babysit && changed.length === 0 && failed.length === 0)) return null;
 
   const babysat = (entry: DockEntry) => babysit !== null && prKey(entry.item.link.ref) === prKey(babysit.link.ref);
-  const dockClass = babysit ? `pr-dock babysit-dock${babysit.phase.kind === "paused" ? " paused" : ""}` : "pr-dock";
+  const dockClass = babysit ? `pr-dock babysit-dock ${babysit.phase.kind}` : "pr-dock";
   const babysitHead = babysit && <BabysitHead sessionId={sessionId} state={babysit} />;
 
   const markSeen = async (targets: DockEntry[]) => {

@@ -2246,6 +2246,50 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
+  it("records a final review only when the PR head did not move during the turn", async () => {
+    const widgets = { host: "github.com", owner: "acme", repo: "widgets", number: 42 };
+    let head = "head-1";
+    const { manager, fake, project } = makePrManager({ prHeadRefresh: async () => head });
+    const session = await manager.createSession(project.id, "claude", { mode: "current" });
+    manager.linkPr(session.id, { ref: widgets, origin: "workflow", workflowId: "babysit", lastSeenSha: "head-1", lastSeenAt: 0 });
+
+    const clean = await manager.startTurn(session.id, "final", { prRefs: [widgets], finalReview: { ref: widgets, sha: "head-1" } });
+    fake.complete(clean);
+    let updated = await waitForSessionPrSeen(manager, project.id, session.id, "head-1");
+    for (let i = 0; i < 100 && updated?.prs?.[0]?.finalReviewSha === undefined; i += 1) {
+      await new Promise((r) => setTimeout(r, 10));
+      updated = (await manager.listSessions(project.id)).find((s) => s.id === session.id);
+    }
+    expect(updated?.prs?.[0]?.finalReviewSha).toBe("head-1");
+
+    head = "head-2";
+    const pushed = await manager.startTurn(session.id, "final", { prRefs: [widgets], finalReview: { ref: widgets, sha: "head-1b" } });
+    fake.complete(pushed);
+    updated = await waitForSessionPrSeen(manager, project.id, session.id, "head-2");
+    expect(updated?.prs?.[0]?.finalReviewSha).toBe("head-1");
+    manager.dispose();
+  });
+
+  it("does not record a final review from a cached head when the head refresh fails", async () => {
+    const widgets = { host: "github.com", owner: "acme", repo: "widgets", number: 42 };
+    const { manager, fake, project } = makePrManager({
+      prHead: () => "head-1",
+      prHeadRefresh: async () => {
+        throw new Error("network down");
+      }
+    });
+    const session = await manager.createSession(project.id, "claude", { mode: "current" });
+    manager.linkPr(session.id, { ref: widgets, origin: "workflow", workflowId: "babysit", lastSeenSha: "head-0", lastSeenAt: 0 });
+
+    const turnId = await manager.startTurn(session.id, "final", { prRefs: [widgets], finalReview: { ref: widgets, sha: "head-1" } });
+    fake.complete(turnId);
+
+    const updated = await waitForSessionPrSeen(manager, project.id, session.id, "head-1");
+    expect(updated?.prs?.[0]?.lastSeenSha).toBe("head-1");
+    expect(updated?.prs?.[0]?.finalReviewSha).toBeUndefined();
+    manager.dispose();
+  });
+
   it("does not mark the only link seen when the turn names a different pull request", async () => {
     const widgets = { host: "github.com", owner: "acme", repo: "widgets", number: 42 };
     const gadgets = { host: "github.com", owner: "acme", repo: "gadgets", number: 7 };

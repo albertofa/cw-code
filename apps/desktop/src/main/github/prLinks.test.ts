@@ -13,6 +13,7 @@ import {
   authorLocalBranch,
   canOwnAutoLink,
   findIssueLink,
+  applyFinalReview,
   findLink,
   findRunLink,
   isValidIssueLink,
@@ -315,6 +316,22 @@ describe("onlyFinishedLinks", () => {
   it("is false without links", () => {
     expect(onlyFinishedLinks(undefined, new Set())).toBe(false);
     expect(onlyFinishedLinks([], new Set())).toBe(false);
+  });
+});
+
+describe("applyFinalReview", () => {
+  const ref = { host: "github.com", owner: "acme", repo: "widgets", number: 42 };
+  const linked: SessionPrLink = { ref, origin: "workflow", workflowId: "babysit", lastSeenSha: "a1", lastSeenAt: 1 };
+
+  it("records the reviewed head when the PR head did not move during the turn", () => {
+    expect(applyFinalReview([linked], { ref, sha: "a1" }, "a1")).toEqual([{ ...linked, finalReviewSha: "a1" }]);
+  });
+
+  it("leaves the link alone when the turn pushed or the head is unknown", () => {
+    const prs = [linked];
+    expect(applyFinalReview(prs, { ref, sha: "a1" }, "b2")).toBe(prs);
+    expect(applyFinalReview(prs, { ref, sha: "a1" }, null)).toBe(prs);
+    expect(applyFinalReview(prs, { ref: { ...ref, number: 7 }, sha: "a1" }, "a1")).toBe(prs);
   });
 });
 
