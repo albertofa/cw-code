@@ -2,6 +2,7 @@ import type {
   GitPullRequestChecks,
   PrCheck,
   PrCiState,
+  PrCommit,
   PrDetail,
   PrMergeable,
   PrRef,
@@ -11,7 +12,7 @@ import type {
   PrWorkflow,
   SessionMeta
 } from "@cw-code/contracts";
-import { primaryAction, suggestedWorkflow } from "./prWorkflows.js";
+import { babysittingSession, primaryAction, suggestedWorkflow } from "./prWorkflows.js";
 import { linkFor } from "./sessionPrLinks.js";
 
 export interface MergeRow {
@@ -88,12 +89,15 @@ export function threadQuoteText(thread: PrReviewThread, ref: PrRef): string {
 }
 
 export type LinkedBarState =
+  | { kind: "babysit"; session: SessionMeta; workflow: PrWorkflow }
   | { kind: "continue"; session: SessionMeta; workflowId: string }
   | { kind: "open"; session: SessionMeta; suggested: PrWorkflow | null }
   | { kind: "run"; workflowId: string }
   | { kind: "none" };
 
 export function linkedSessionsBarState(pr: PrSummary, linkedSessions: SessionMeta[], workflows: PrWorkflow[]): LinkedBarState {
+  const babysitter = pr.state === "OPEN" ? babysittingSession(linkedSessions, pr.ref, workflows) : null;
+  if (babysitter) return { kind: "babysit", ...babysitter };
   const action = primaryAction(pr, linkedSessions, workflows);
   if (action.kind === "continue" || action.kind === "open") {
     const session = linkedSessions.find((s) => s.id === action.sessionId);
@@ -116,4 +120,38 @@ export function threadSendTarget(mainSession: SessionMeta | null, ref: PrRef, su
     return { workflowId: linkFor(mainSession, ref)?.workflowId ?? "babysit", continueSessionId: mainSession.id };
   }
   return { workflowId: suggested?.id ?? "review" };
+}
+
+const RELATIVE_UNITS: Array<[unit: string, ms: number]> = [
+  ["year", 365 * 24 * 60 * 60 * 1000],
+  ["month", 30 * 24 * 60 * 60 * 1000],
+  ["week", 7 * 24 * 60 * 60 * 1000],
+  ["day", 24 * 60 * 60 * 1000],
+  ["hour", 60 * 60 * 1000],
+  ["minute", 60 * 1000]
+];
+
+export function relativeTime(ts: number, now: number): string {
+  const elapsed = Math.max(0, now - ts);
+  for (const [unit, ms] of RELATIVE_UNITS) {
+    const count = Math.floor(elapsed / ms);
+    if (count >= 1) return `${count} ${unit}${count === 1 ? "" : "s"} ago`;
+  }
+  return "just now";
+}
+
+export interface CommitDayGroup {
+  day: string;
+  commits: PrCommit[];
+}
+
+export function groupCommitsByDay(commits: PrCommit[], formatDay: (ts: number) => string): CommitDayGroup[] {
+  const groups: CommitDayGroup[] = [];
+  for (const commit of commits) {
+    const day = formatDay(commit.committedAt);
+    const last = groups[groups.length - 1];
+    if (last?.day === day) last.commits.push(commit);
+    else groups.push({ day, commits: [commit] });
+  }
+  return groups;
 }

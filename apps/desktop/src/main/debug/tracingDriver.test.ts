@@ -1,5 +1,5 @@
 import { describe, expect, it, beforeEach, afterEach, vi } from "vitest";
-import { mkdtempSync, readFileSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -287,6 +287,16 @@ describe("TracingCliDriver lifecycle passthrough", () => {
     const tracing = new TracingCliDriver(new FakeDriver());
     expect(tracing.activity).toBeUndefined();
     expect(tracing.shutdown).toBeUndefined();
+    expect(tracing.liveTasks).toBeUndefined();
+  });
+
+  it("forwards liveTasks to the inner driver without tracing it", () => {
+    const task = { id: "call-1", kind: "agent" as const, background: true, state: "running" as const, runCount: 1 };
+    const liveTasks = vi.fn(() => [task]);
+    const tracing = new TracingCliDriver(Object.assign(new FakeDriver(), { liveTasks }));
+    expect(tracing.liveTasks?.("s1")).toEqual([task]);
+    expect(liveTasks).toHaveBeenCalledWith("s1");
+    expect(existsSync(filePath)).toBe(false);
   });
 
   it("delegates activity and traces the shutdown outcome", async () => {

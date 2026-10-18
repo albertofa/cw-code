@@ -24,6 +24,7 @@ function basePr(overrides: Partial<PrDetail> = {}): PrDetail {
     checks: { total: 0, passed: 0, failed: 0, pending: 0 },
     review: "none",
     mergeable: "MERGEABLE",
+    mergeStateStatus: "CLEAN",
     labels: [],
     reviewers: [],
     assignees: [],
@@ -393,6 +394,12 @@ describe("detailNeedsRefresh", () => {
     const detail = basePr({ state: "OPEN", updatedAt: 1_000 });
     const summary = basePr({ state: "MERGED", updatedAt: 1_000 });
     expect(detailNeedsRefresh(detail, summary)).toBe(true);
+  });
+
+  it("refreshes when GitHub's merge state changed, but not while the summary's is still being computed", () => {
+    const detail = basePr({ mergeStateStatus: "BLOCKED", updatedAt: 1_000 });
+    expect(detailNeedsRefresh(detail, basePr({ mergeStateStatus: "CLEAN", updatedAt: 1_000 }))).toBe(true);
+    expect(detailNeedsRefresh(detail, basePr({ mergeStateStatus: "UNKNOWN", updatedAt: 1_000 }))).toBe(false);
   });
 });
 

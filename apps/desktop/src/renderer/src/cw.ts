@@ -66,6 +66,10 @@ import type {
   SkillSaveInput,
   SkillsListResult,
   StartupState,
+  TaskEndReason,
+  TaskKind,
+  TaskSnapshot,
+  TaskState,
   TokenCounts,
   TurnModelUsage,
   UpdateActionCode,
@@ -136,6 +140,10 @@ export type {
   SessionRunLink,
   WorkflowRunSummary,
   WorkflowSubject,
+  TaskEndReason,
+  TaskKind,
+  TaskSnapshot,
+  TaskState,
   TokenCounts,
   TurnModelUsage,
   UpdateActionCode,
@@ -262,6 +270,7 @@ export interface HistoryMessage {
   reasoningMs?: number;
   compaction?: ContextCompactionInfo;
   toolOutputEmpty?: boolean;
+  task?: TaskSnapshot;
 }
 
 export interface SubagentToolActivity {
@@ -348,7 +357,9 @@ export type TurnEvent =
       input: unknown;
       parentToolCallId?: string;
       model?: string;
+      task?: TaskSnapshot;
     }
+  | { type: "task.updated"; turnId: string; sessionId: string; task: TaskSnapshot }
   | {
       type: "tool.result";
       turnId: string;
@@ -628,6 +639,8 @@ export interface CwApi {
     binaryPath: string;
     minimum: string;
     actual: string | null;
+    configured: boolean;
+    found: boolean;
     available: boolean;
     error: string | null;
     ok: boolean;
@@ -651,7 +664,7 @@ export interface CwApi {
   getSubagentTools(sessionId: string, agentId: string): Promise<SubagentToolsResult>;
   activeTurns(): Promise<ActiveTurn[]>;
   retryConnection(sessionId: string): Promise<RetryConnectionResult>;
-  startTurn(sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[]; command?: CommandInvocation; prRefs?: PrRef[]; acceptFolderHead?: string }): Promise<string>;
+  startTurn(sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[]; command?: CommandInvocation; prRefs?: PrRef[]; finalReview?: { ref: PrRef; sha: string }; acceptFolderHead?: string }): Promise<string>;
   interrupt(turnId: string): Promise<void>;
   respondApproval(requestId: string, decision: ApprovalDecision): Promise<void>;
   respondQuestion(requestId: string, answers: Record<string, string>): Promise<void>;

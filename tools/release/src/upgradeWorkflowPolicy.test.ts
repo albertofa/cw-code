@@ -1,7 +1,7 @@
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { readWorkflowText, runScriptLines, topLevelBlock } from "./workflowLines.ts";
+import { jobBlocks, readWorkflowText, runScriptLines, topLevelBlock } from "./workflowLines.ts";
 
 const WORKFLOW_PATH = resolve(dirname(fileURLToPath(import.meta.url)), "../../../.github/workflows/upgrade-test.yml");
 const text = readWorkflowText(WORKFLOW_PATH);
@@ -16,18 +16,11 @@ describe("upgrade-test.yml policy", () => {
       "apps/desktop/package.json",
       "apps/desktop/src/main/updates/**",
       "apps/desktop/src/main/shutdown/**",
-      "apps/desktop/src/main/storage/**",
-      "apps/desktop/src/main/storage/__fixtures__/**",
-      "apps/desktop/src/main/sessions/**",
-      "apps/desktop/src/main/settings/**",
-      "apps/desktop/src/main/paths/**",
       "apps/desktop/src/main/index.ts",
       "apps/desktop/electron-builder*.yml",
       "apps/desktop/electron.vite.config.ts",
       "packages/contracts/src/updates.ts",
       "packages/contracts/src/shutdown.ts",
-      "packages/contracts/src/settings.ts",
-      "packages/contracts/src/startup.ts",
       "scripts/verify-installed-upgrade.mjs",
       "scripts/lib/**",
       "scripts/fixtures/**",
@@ -42,8 +35,22 @@ describe("upgrade-test.yml policy", () => {
     }
   });
 
+  it("runs the core scenarios on pull requests and every scenario otherwise", () => {
+    expect(text).toContain("SCENARIOS: ${{ inputs.scenarios || (github.event_name == 'pull_request' && 'core' || '') }}");
+  });
+
+  it("skips the nightly run only when the latest completed nightly run passed on the same commit", () => {
+    const gate = jobBlocks(lines).get("nightly-gate");
+    expect(gate).toBeDefined();
+    expect(gate).toContain("    if: github.event_name == 'schedule'");
+    expect(text).toContain("event=schedule&status=completed&per_page=1");
+    expect(text).toContain('if [ "$latest" = "$GITHUB_SHA success" ]');
+    expect(jobBlocks(lines).get("installed-upgrade")).toContain("    if: ${{ !cancelled() && needs.nightly-gate.outputs.already-tested != 'true' }}");
+  });
+
   it("only reads the repository", () => {
     expect(topLevelBlock(lines, "permissions").map((line) => line.trim()).filter(Boolean)).toEqual(["contents: read"]);
+    expect(text).not.toMatch(/: write/);
   });
 
   it("uses no secrets and never interpolates expressions into scripts", () => {

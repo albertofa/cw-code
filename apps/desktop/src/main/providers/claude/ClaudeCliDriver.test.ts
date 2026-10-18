@@ -1,9 +1,13 @@
 import { describe, expect, it, vi } from "vitest";
 import { EventEmitter } from "node:events";
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { PassThrough } from "node:stream";
 import { join } from "node:path";
-import type { AppSettings, ThreadEvent } from "@cw-code/contracts";
+import { fileURLToPath } from "node:url";
+import type { AppSettings, HistoryMessage, TaskSnapshot, ThreadEvent } from "@cw-code/contracts";
 import { buildClaudeArgs, CLAUDE_IDLE_EVICT_MS, ClaudeCliDriver, claudeSettingsPath, mapClaudeEffort, mapClaudePermission, mergeClaudeAllowRule, subagentToolsResult } from "./ClaudeCliDriver.js";
+import { readClaudeHistoryFile } from "./claudeHistory.js";
 import { SYNTHETIC_FULL_ACCESS_DESCRIPTION } from "../permissions.js";
 
 const SETTINGS: AppSettings = {
@@ -247,6 +251,8 @@ async function settle(): Promise<void> {
   }
 }
 
+const END_TIME = Date.now() + 60_000;
+
 function resultLine(overrides: Record<string, unknown> = {}): string {
   return JSON.stringify({
     type: "result",
@@ -276,12 +282,13 @@ function taskChangeLineWithIds(ids: string[]): string {
   });
 }
 
-function taskStartedLine(taskId: string, toolUseId: string): string {
+function taskStartedLine(taskId: string, toolUseId: string, taskType?: string): string {
   return JSON.stringify({
     type: "system",
     subtype: "task_started",
     task_id: taskId,
     tool_use_id: toolUseId,
+    ...(taskType ? { task_type: taskType } : {}),
     is_backgrounded: true
   });
 }
@@ -303,6 +310,39 @@ function turnDones(events: ThreadEvent[]): Array<Extract<ThreadEvent, { type: "t
   return events.filter((event): event is Extract<ThreadEvent, { type: "turn.done" }> => event.type === "turn.done");
 }
 
+function taskUpdates(events: ThreadEvent[], id: string): TaskSnapshot[] {
+  return events.flatMap((event) => (event.type === "task.updated" && event.task.id === id ? [event.task] : []));
+}
+
+function finalTask(events: ThreadEvent[], id: string): TaskSnapshot | undefined {
+  return taskUpdates(events, id).at(-1);
+}
+
+function streamFixture(name: string): string[] {
+  const path = fileURLToPath(new URL(`./__fixtures__/tasks/${name}/stream.jsonl`, import.meta.url));
+  return readFileSync(path, "utf8").split("\n").filter(Boolean);
+}
+
+function replayFixture(name: string): HistoryMessage[] {
+  const source = fileURLToPath(new URL(`./__fixtures__/tasks/${name}`, import.meta.url));
+  const transcript = readFileSync(join(source, "transcript.jsonl"), "utf8");
+  const cursor = (JSON.parse(transcript.split("\n").find((line) => line.includes('"sessionId"')) ?? "{}") as { sessionId?: string }).sessionId ?? name;
+  const dir = mkdtempSync(join(tmpdir(), "cw-claude-parity-"));
+  writeFileSync(join(dir, `${cursor}.jsonl`), transcript);
+  mkdirSync(join(dir, cursor, "subagents"), { recursive: true });
+  for (const meta of readdirSync(join(source, "subagents"))) {
+    writeFileSync(join(dir, cursor, "subagents", meta), readFileSync(join(source, "subagents", meta)));
+  }
+  return readClaudeHistoryFile(join(dir, `${cursor}.jsonl`), cursor);
+}
+
+async function feedLines(child: FakeChild, lines: string[]): Promise<void> {
+  for (const line of lines) {
+    child.stdout.write(`${line}\n`);
+    await settle();
+  }
+}
+
 describe("ClaudeCliDriver persistent process", () => {
   it("keeps API limit errors separate from prose and later task reports", async () => {
     const { driver, events, children } = makeDriver();
@@ -318,6 +358,8 @@ describe("ClaudeCliDriver persistent process", () => {
     children[0].stdout.write(`${resultLine({ result: "" })}\n`);
     await settle();
     expect(events.filter((event) => event.type === "assistant.delta")).toEqual([]);
+    expect(toolResults(events)).toEqual([]);
+    expect(finalTask(events, "call-1")).toMatchObject({ state: "completed", output: "Run typecheck, log to scratchpad" });
     expect(turnDones(events)).toContainEqual(expect.objectContaining({ isError: true, resultText: limit }));
     driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "continue" });
     await settle();
@@ -447,7 +489,7 @@ describe("ClaudeCliDriver persistent process", () => {
     await settle();
     const agentCallId = "agent-call";
     const handbackCallId = "handback-call";
-    const taskId = "agent-1";
+    const taskId = "aa6598debd48b1c22";
     const report = "All paths absolute from repo root.\n\n## 1. Contracts\nThe report is the parent Agent result.\n\n## 2. Driver\nThe Handback is terminal.";
     const notificationText = "The report was delivered in the Handback and is not repeated here.";
     children[0].stdout.write(
@@ -471,13 +513,20 @@ describe("ClaudeCliDriver persistent process", () => {
     await settle();
 
     const results = toolResults(events);
-    const parentResults = results.filter((event) => event.toolCallId === agentCallId);
-    expect(parentResults).toEqual([
-      expect.objectContaining({ output: expect.stringContaining("Async agent launched successfully") }),
-      expect.objectContaining({ output: report }),
-      expect.objectContaining({ output: report, usage: { tokens: 1200, toolUses: 3, durationMs: 900 } })
+    expect(results.filter((event) => event.toolCallId === agentCallId).map((event) => event.output)).toEqual([
+      expect.stringContaining("Async agent launched successfully")
     ]);
     expect(results.some((event) => event.output === notificationText)).toBe(false);
+    expect(taskUpdates(events, agentCallId).some((task) => task.output === notificationText)).toBe(false);
+    expect(finalTask(events, agentCallId)).toMatchObject({
+      cliTaskId: taskId,
+      kind: "agent",
+      background: true,
+      state: "completed",
+      runCount: 1,
+      output: report,
+      usage: { tokens: 1200, toolUses: 3, durationMs: 900 }
+    });
     expect(events).not.toContainEqual(expect.objectContaining({ type: "tool.call", name: "SubagentHandback" }));
     expect(events).not.toContainEqual(expect.objectContaining({ type: "tool.result", toolCallId: handbackCallId }));
     const dones = turnDones(events);
@@ -498,7 +547,7 @@ describe("ClaudeCliDriver persistent process", () => {
       ] } })}\n`
     );
     children[0].stdout.write(`${taskStartedLine("task-agent", "call-agent")}\n`);
-    children[0].stdout.write(`${taskStartedLine("task-bash", "call-bash")}\n`);
+    children[0].stdout.write(`${taskStartedLine("task-bash", "call-bash", "local_bash")}\n`);
     children[0].stdout.write(
       `${JSON.stringify({ type: "user", message: { content: [{ tool_use_id: "call-agent", content: [{ type: "text", text: "Async agent launched successfully.\nagentId: aa6598debd48b1c22\nThe agent is working in the background." }] }] } })}\n`
     );
@@ -519,10 +568,13 @@ describe("ClaudeCliDriver persistent process", () => {
 
     const results = toolResults(events);
     expect(results.filter((event) => event.toolCallId === "call-agent").map((event) => event.output)).toEqual([
-      expect.stringContaining("Async agent launched successfully"),
-      "agent report"
+      expect.stringContaining("Async agent launched successfully")
     ]);
-    expect(results.some((event) => event.toolCallId === "call-bash" && event.output.includes("Command running in background"))).toBe(true);
+    expect(results.filter((event) => event.toolCallId === "call-bash").map((event) => event.output)).toEqual([
+      expect.stringContaining("Command running in background")
+    ]);
+    expect(finalTask(events, "call-agent")).toMatchObject({ kind: "agent", state: "completed", output: "agent report" });
+    expect(finalTask(events, "call-bash")).toMatchObject({ kind: "shell", state: "unknown", endReason: "roster" });
     expect(turnDones(events).map((event) => event.backgroundTasks)).toEqual([2, 0]);
     driver.dispose();
   });
@@ -563,6 +615,9 @@ describe("ClaudeCliDriver persistent process", () => {
     await settle();
 
     expect(turnDones(events).map((event) => event.backgroundTasks)).toEqual([1]);
+    expect(driver.liveTasks("s1")).toEqual([
+      expect.objectContaining({ id: "agent-call", cliTaskId: taskId, background: true, state: "running", runCount: 2 })
+    ]);
 
     children[0].stdout.write(
       `${JSON.stringify({ type: "assistant", parent_tool_use_id: "agent-call", message: { content: [{ type: "tool_use", id: "handback-2", name: "SubagentHandback", input: { message: "DONE" } }] } })}\n`
@@ -579,6 +634,8 @@ describe("ClaudeCliDriver persistent process", () => {
     const dones = turnDones(events);
     expect(dones.map((event) => event.backgroundTasks)).toEqual([1, 0]);
     expect(dones[1]).toMatchObject({ turnId: handle.turnId, resultText: "agent finished" });
+    expect(finalTask(events, "agent-call")).toMatchObject({ state: "completed", runCount: 2, output: "DONE" });
+    expect(events).toContainEqual(expect.objectContaining({ type: "tool.call", toolCallId: "send-call", parentToolCallId: "agent-call" }));
     driver.dispose();
   });
 
@@ -607,6 +664,7 @@ describe("ClaudeCliDriver persistent process", () => {
       ["initial result", 1, 1],
       ["final answer", 0, 2]
     ]);
+    expect(finalTask(events, "agent-call")).toMatchObject({ state: "completed", output: "final report" });
     driver.dispose();
   });
 
@@ -626,9 +684,14 @@ describe("ClaudeCliDriver persistent process", () => {
     );
     await settle();
 
-    const results = toolResults(events);
-    expect(results).toHaveLength(1);
-    expect(results[0]).toMatchObject({ toolCallId, output: "notification report", isError: false });
+    expect(toolResults(events)).toEqual([]);
+    expect(finalTask(events, toolCallId)).toMatchObject({
+      cliTaskId: taskId,
+      kind: "agent",
+      state: "completed",
+      endReason: "cli",
+      output: "notification report"
+    });
     expect(events.some((event) => event.type === "tool.call")).toBe(false);
     const dones = turnDones(events);
     expect(dones).toHaveLength(1);
@@ -658,6 +721,13 @@ describe("ClaudeCliDriver persistent process", () => {
       output: "foreground report",
       isError: false
     }));
+    expect(finalTask(events, "call-1")).toMatchObject({
+      cliTaskId: "foreground-task",
+      background: false,
+      state: "completed",
+      endReason: "tool-result",
+      output: "foreground report"
+    });
     expect(turnDones(events).map((event) => event.backgroundTasks)).toEqual([1]);
     driver.dispose();
   });
@@ -679,10 +749,13 @@ describe("ClaudeCliDriver persistent process", () => {
     );
     await settle();
 
-    expect(toolResults(events).filter((event) => event.toolCallId === "agent-call")).toEqual([
-      expect.objectContaining({ output: "short summary", usage: { tokens: 1200 } }),
-      expect.objectContaining({ output: "full Handback report" })
+    expect(toolResults(events).filter((event) => event.toolCallId === "agent-call")).toEqual([]);
+    expect(taskUpdates(events, "agent-call").map((task) => [task.state, task.output])).toEqual([
+      ["running", undefined],
+      ["completed", "short summary"],
+      ["completed", "full Handback report"]
     ]);
+    expect(finalTask(events, "agent-call")).toMatchObject({ usage: { tokens: 1200 } });
     driver.dispose();
   });
 
@@ -701,6 +774,8 @@ describe("ClaudeCliDriver persistent process", () => {
     await settle();
 
     expect(turnDones(events).map((event) => [event.resultText, event.backgroundTasks])).toEqual([["waiting", 1]]);
+    expect(finalTask(events, "foreground-call")).toMatchObject({ state: "completed", output: "foreground report" });
+    expect(events.some((event) => event.type === "task.updated" && event.task.id !== "foreground-call")).toBe(false);
 
     children[0].stdout.write(`${taskChangeLineWithIds([])}\n`);
     children[0].stdout.write(`${resultLine({ origin: { kind: "task-notification" }, result: "finished" })}\n`);
@@ -734,10 +809,10 @@ describe("ClaudeCliDriver persistent process", () => {
     );
     await settle();
 
-    const results = toolResults(events);
-    expect(results).toHaveLength(1);
-    expect(results[0]).toMatchObject({ toolCallId: "call-a", output: "mapped report" });
-    expect(results.some((event) => event.toolCallId === "call-b")).toBe(false);
+    expect(toolResults(events)).toEqual([]);
+    expect(finalTask(events, "call-a")).toMatchObject({ cliTaskId: "task-a", state: "completed", output: "mapped report" });
+    expect(finalTask(events, "call-b")).toMatchObject({ cliTaskId: "task-b", state: "unknown", endReason: "roster" });
+    expect(finalTask(events, "call-b")).not.toHaveProperty("output");
     const dones = turnDones(events);
     expect(dones).toHaveLength(1);
     expect(dones[0]).toMatchObject({ resultText: "final answer", backgroundTasks: 0 });
@@ -753,7 +828,7 @@ describe("ClaudeCliDriver persistent process", () => {
     children[0].stdout.write(`${taskStartedLine(taskId, toolCallId)}\n`);
     children[0].stdout.write(`${taskChangeLineWithIds([taskId])}\n`);
     children[0].stdout.write(
-      `${JSON.stringify({ type: "system", subtype: "task_updated", task_id: taskId, patch: { status: "completed", end_time: 1000 } })}\n`
+      `${JSON.stringify({ type: "system", subtype: "task_updated", task_id: taskId, patch: { status: "completed", end_time: END_TIME } })}\n`
     );
     children[0].stdout.write(
       `${JSON.stringify({ type: "system", subtype: "task_notification", task_id: taskId, status: "completed", summary: "DONE" })}\n`
@@ -763,9 +838,8 @@ describe("ClaudeCliDriver persistent process", () => {
     );
     await settle();
 
-    const results = toolResults(events);
-    expect(results).toHaveLength(1);
-    expect(results[0]).toMatchObject({ toolCallId, output: "DONE", isError: false });
+    expect(toolResults(events)).toEqual([]);
+    expect(finalTask(events, toolCallId)).toMatchObject({ cliTaskId: taskId, state: "completed", endedAt: END_TIME, output: "DONE" });
     const dones = turnDones(events);
     expect(dones).toHaveLength(1);
     expect(dones[0]).toMatchObject({ resultText: "DONE", backgroundTasks: 0 });
@@ -780,21 +854,27 @@ describe("ClaudeCliDriver persistent process", () => {
       `${JSON.stringify({ type: "system", subtype: "task_started", task_id: "agent-1", tool_use_id: "call-1", is_backgrounded: true, prompt: "review" })}\n`
     );
     children[0].stdout.write(
-      `${JSON.stringify({ type: "system", subtype: "task_updated", task_id: "agent-1", patch: { status: "completed", end_time: 1000 } })}\n`
+      `${JSON.stringify({ type: "system", subtype: "task_updated", task_id: "agent-1", patch: { status: "completed", end_time: END_TIME } })}\n`
     );
     children[0].stdout.write(
       `${JSON.stringify({ type: "system", subtype: "task_notification", task_id: "agent-1", tool_use_id: "call-1", status: "completed", summary: "DONE", usage: { total_tokens: 1200, tool_uses: 3, duration_ms: 900 } })}\n`
     );
     await settle();
-    expect(events).toContainEqual({
-      type: "tool.result",
-      turnId: expect.any(String),
-      toolCallId: "call-1",
+    expect(toolResults(events)).toEqual([]);
+    expect(finalTask(events, "call-1")).toEqual({
+      id: "call-1",
+      cliTaskId: "agent-1",
+      kind: "agent",
+      background: true,
+      state: "completed",
+      endReason: "cli",
+      runCount: 1,
+      startedAt: expect.any(Number),
+      endedAt: END_TIME,
       output: "DONE",
-      isError: false,
-      usage: { tokens: 1200, toolUses: 3, durationMs: 900 },
-      agentId: "agent-1"
+      usage: { tokens: 1200, toolUses: 3, durationMs: 900 }
     });
+    expect(events).toContainEqual(expect.objectContaining({ type: "task.updated", sessionId: "s1", task: expect.objectContaining({ id: "call-1" }) }));
     driver.dispose();
   });
 
@@ -806,16 +886,12 @@ describe("ClaudeCliDriver persistent process", () => {
       `${JSON.stringify({ type: "system", subtype: "task_started", task_id: "agent-2", tool_use_id: "call-2", task_type: "local_agent", is_backgrounded: true })}\n`
     );
     children[0].stdout.write(
-      `${JSON.stringify({ type: "system", subtype: "task_updated", task_id: "agent-2", patch: { status: "failed", end_time: 1000 } })}\n`
+      `${JSON.stringify({ type: "system", subtype: "task_updated", task_id: "agent-2", patch: { status: "failed", end_time: END_TIME } })}\n`
     );
     await settle();
-    expect(events).toContainEqual({
-      type: "tool.result",
-      turnId: expect.any(String),
-      toolCallId: "call-2",
-      output: "Subagent failed",
-      isError: true
-    });
+    expect(toolResults(events)).toEqual([]);
+    expect(finalTask(events, "call-2")).toMatchObject({ kind: "agent", state: "failed", endReason: "cli", endedAt: END_TIME });
+    expect(finalTask(events, "call-2")).not.toHaveProperty("output");
     driver.dispose();
   });
 
@@ -833,14 +909,13 @@ describe("ClaudeCliDriver persistent process", () => {
     );
     await settle();
 
-    expect(toolResults(events).filter((event) => event.toolCallId === "call-1")).toEqual([
-      expect.objectContaining({ output: "Subagent failed", isError: true }),
-      expect.objectContaining({
-        output: "Permission denied reading C:/secret.txt",
-        isError: true,
-        usage: { tokens: 1200, toolUses: 3, durationMs: 900 }
-      })
+    expect(toolResults(events)).toEqual([]);
+    expect(taskUpdates(events, "call-1").map((task) => [task.state, task.output])).toEqual([
+      ["running", undefined],
+      ["failed", undefined],
+      ["failed", "Permission denied reading C:/secret.txt"]
     ]);
+    expect(finalTask(events, "call-1")).toMatchObject({ usage: { tokens: 1200, toolUses: 3, durationMs: 900 } });
     driver.dispose();
   });
 
@@ -869,7 +944,7 @@ describe("ClaudeCliDriver persistent process", () => {
 
     children[0].stdout.write(`${JSON.stringify({ type: "system", subtype: "background_tasks_changed", tasks: [] })}\n`);
     children[0].stdout.write(
-      `${JSON.stringify({ type: "system", subtype: "task_updated", task_id: "bash-1", patch: { status: "completed", end_time: 1000 } })}\n`
+      `${JSON.stringify({ type: "system", subtype: "task_updated", task_id: "bash-1", patch: { status: "completed", end_time: END_TIME } })}\n`
     );
     children[0].stdout.write(
       `${JSON.stringify({ type: "system", subtype: "task_notification", task_id: "bash-1", tool_use_id: "call-bash", status: "completed", summary: "Background command \"sleep 20\" completed (exit code 0)" })}\n`
@@ -887,6 +962,12 @@ describe("ClaudeCliDriver persistent process", () => {
       "Command running in background with ID: bash-1.",
       "Background command \"sleep 20\" completed (exit code 0)"
     ]);
+    expect(finalTask(events, "call-bash")).toMatchObject({
+      cliTaskId: "bash-1",
+      kind: "shell",
+      state: "completed",
+      output: "Background command \"sleep 20\" completed (exit code 0)"
+    });
     expect(killed).toEqual([]);
     driver.dispose();
   });
@@ -924,6 +1005,7 @@ describe("ClaudeCliDriver persistent process", () => {
         [handle.turnId, "Waiting for CI", 1],
         [handle.turnId, "CI passed", 0]
       ]);
+      expect(finalTask(events, "call-bash")).toMatchObject({ kind: "shell", state: "completed", output: "CI passed" });
       await vi.advanceTimersByTimeAsync(CLAUDE_IDLE_EVICT_MS);
       expect(killed).toHaveLength(1);
       driver.dispose();
@@ -940,7 +1022,7 @@ describe("ClaudeCliDriver persistent process", () => {
       `${JSON.stringify({ type: "system", subtype: "task_started", task_id: "bash-1", tool_use_id: "call-bash", task_type: "local_bash", is_backgrounded: true })}\n`
     );
     children[0].stdout.write(
-      `${JSON.stringify({ type: "system", subtype: "task_updated", task_id: "bash-1", patch: { status: "failed", end_time: 1000 } })}\n`
+      `${JSON.stringify({ type: "system", subtype: "task_updated", task_id: "bash-1", patch: { status: "failed", end_time: END_TIME } })}\n`
     );
     await settle();
     expect(events).toContainEqual(expect.objectContaining({
@@ -949,6 +1031,343 @@ describe("ClaudeCliDriver persistent process", () => {
       output: "Background task failed",
       isError: true
     }));
+    expect(toolResults(events)[0]).not.toHaveProperty("agentId");
+    expect(finalTask(events, "call-bash")).toMatchObject({ kind: "shell", state: "failed", endReason: "cli" });
+    driver.dispose();
+  });
+
+  it("emits a shell result again only when its text changes", async () => {
+    const { driver, events, children } = makeDriver();
+    driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
+    await settle();
+    children[0].stdout.write(`${taskStartedLine("bash-1", "call-bash", "local_bash")}\n`);
+    children[0].stdout.write(
+      `${JSON.stringify({ type: "system", subtype: "task_updated", task_id: "bash-1", patch: { status: "killed" } })}\n`
+    );
+    children[0].stdout.write(
+      `${JSON.stringify({ type: "system", subtype: "task_updated", task_id: "bash-1", patch: { status: "killed", end_time: END_TIME } })}\n`
+    );
+    children[0].stdout.write(
+      `${JSON.stringify({ type: "system", subtype: "task_notification", task_id: "bash-1", tool_use_id: "call-bash", status: "killed", summary: "Background command was stopped" })}\n`
+    );
+    await settle();
+    expect(toolResults(events).map((event) => [event.output, event.isError])).toEqual([
+      ["Background task stopped", true],
+      ["Background command was stopped", true]
+    ]);
+    driver.dispose();
+  });
+
+  it("closes a foreground Agent with its turn while a background Agent keeps running", async () => {
+    const { driver, events, children } = makeDriver();
+    driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
+    await settle();
+    children[0].stdout.write(
+      `${JSON.stringify({ type: "assistant", message: { content: [
+        { type: "tool_use", id: "fg-call", name: "Agent", input: { run_in_background: false } },
+        { type: "tool_use", id: "bg-call", name: "Agent", input: { run_in_background: true } }
+      ] } })}\n`
+    );
+    children[0].stdout.write(`${resultLine({ result: "waiting" })}\n`);
+    await settle();
+
+    expect(finalTask(events, "fg-call")).toMatchObject({ state: "unknown", endReason: "no-record" });
+    expect(taskUpdates(events, "bg-call")).toEqual([]);
+    expect(driver.liveTasks("s1").find((task) => task.id === "bg-call")).toMatchObject({ state: "running" });
+    expect(turnDones(events).map((event) => event.backgroundTasks)).toEqual([1]);
+    driver.dispose();
+  });
+
+  it("carries the task snapshot on Agent calls and lists live tasks per session", async () => {
+    const { driver, events, children } = makeDriver();
+    driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
+    await settle();
+    children[0].stdout.write(
+      `${JSON.stringify({ type: "assistant", message: { content: [
+        { type: "tool_use", id: "call-1", name: "Agent", input: { run_in_background: true } },
+        { type: "tool_use", id: "call-read", name: "Read", input: { path: "a.ts" } }
+      ] } })}\n`
+    );
+    children[0].stdout.write(`${taskStartedLine("task-1", "call-1", "local_agent")}\n`);
+    await settle();
+
+    expect(events).toContainEqual(expect.objectContaining({
+      type: "tool.call",
+      toolCallId: "call-1",
+      task: expect.objectContaining({ id: "call-1", kind: "agent", background: true, state: "running", runCount: 1 })
+    }));
+    expect(events.find((event) => event.type === "tool.call" && event.toolCallId === "call-read")).not.toHaveProperty("task");
+    expect(driver.liveTasks("s1")).toEqual([
+      expect.objectContaining({ id: "call-1", cliTaskId: "task-1", kind: "agent", state: "running" })
+    ]);
+    expect(driver.liveTasks("other")).toEqual([]);
+    driver.dispose();
+  });
+
+  it("interrupts open tasks when the process exits mid-background-task", async () => {
+    const { driver, events, children } = makeDriver();
+    const handle = driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
+    await settle();
+    children[0].stdout.write(
+      `${JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", id: "call-1", name: "Agent", input: { run_in_background: true } }] } })}\n`
+    );
+    children[0].stdout.write(`${taskStartedLine("task-1", "call-1", "local_agent")}\n`);
+    children[0].stdout.write(`${taskChangeLineWithIds(["task-1"])}\n`);
+    children[0].stdout.write(`${resultLine({ result: "waiting" })}\n`);
+    await settle();
+    expect(turnDones(events).map((event) => event.backgroundTasks)).toEqual([1]);
+
+    children[0].emit("close", 1);
+    await settle();
+
+    expect(events.filter((event) => event.type === "task.updated").at(-1)).toMatchObject({
+      turnId: handle.turnId,
+      sessionId: "s1",
+      task: { id: "call-1", state: "interrupted", endReason: "process-exit" }
+    });
+    expect(driver.liveTasks("s1")).toEqual([]);
+    driver.dispose();
+  });
+
+  it("interrupts open tasks on stopSession without a synthetic shell result", async () => {
+    const { driver, events, children, killed } = makeDriver();
+    driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
+    await settle();
+    children[0].stdout.write(
+      `${JSON.stringify({ type: "assistant", message: { content: [
+        { type: "tool_use", id: "call-agent", name: "Agent", input: { run_in_background: true } },
+        { type: "tool_use", id: "call-bash", name: "Bash", input: { command: "sleep 20", run_in_background: true } }
+      ] } })}\n`
+    );
+    await settle();
+
+    driver.stopSession("s1");
+
+    expect(finalTask(events, "call-agent")).toMatchObject({ state: "interrupted", endReason: "process-exit" });
+    expect(finalTask(events, "call-bash")).toMatchObject({ kind: "shell", state: "interrupted", endReason: "process-exit" });
+    expect(toolResults(events)).toEqual([]);
+    expect(killed).toEqual([children[0]]);
+    const updates = events.filter((event) => event.type === "task.updated").length;
+    children[0].emit("close", null);
+    await settle();
+    expect(events.filter((event) => event.type === "task.updated")).toHaveLength(updates);
+  });
+
+  it("replays the recorded hooks-probe stream to final task states", async () => {
+    const { driver, events, children } = makeDriver();
+    driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
+    await settle();
+    await feedLines(children[0], streamFixture("hooks-probe"));
+
+    expect(finalTask(events, "toolu_01DaQjvfNQDvgKAiv1WcJNYS")).toMatchObject({
+      cliTaskId: "a5fd6f29192d6b105",
+      kind: "agent",
+      background: true,
+      state: "completed",
+      runCount: 2,
+      output: "PONG2"
+    });
+    expect(finalTask(events, "toolu_01RDYCbJfdYE4q12sgc97ETw")).toMatchObject({
+      cliTaskId: "a74a561c109a552e8",
+      kind: "agent",
+      state: "stopped",
+      runCount: 1,
+      output: "sleeper"
+    });
+    expect(events).not.toContainEqual(expect.objectContaining({ type: "tool.call", name: "SubagentHandback" }));
+    expect(toolResults(events).filter((event) => event.toolCallId === "toolu_01DaQjvfNQDvgKAiv1WcJNYS").map((event) => event.output)).toEqual([
+      expect.stringContaining("Async agent launched successfully")
+    ]);
+    expect(turnDones(events).map((event) => event.backgroundTasks)).toEqual([0]);
+    driver.dispose();
+  });
+
+  it("replays the recorded handback-probe stream with the Handback report as output", async () => {
+    const { driver, events, children } = makeDriver();
+    driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
+    await settle();
+    await feedLines(children[0], streamFixture("handback-probe"));
+
+    expect(finalTask(events, "toolu_019cYvRiA4JYiUUSq18cKuos")).toMatchObject({
+      cliTaskId: "a087ca34d38140971",
+      kind: "agent",
+      background: true,
+      state: "completed",
+      runCount: 1,
+      output: "PONG",
+      usage: expect.objectContaining({ tokens: expect.any(Number) })
+    });
+    expect(toolResults(events).filter((event) => event.toolCallId === "toolu_013xAq8DwJuD54JEueDV4y3d")).toEqual([]);
+    expect(turnDones(events).map((event) => event.backgroundTasks)).toEqual([0, 0]);
+    driver.dispose();
+  });
+
+  it.each(["hooks-probe", "handback-probe"])("ends every %s task in the same state live and replayed from its transcript", async (probe) => {
+    const { driver, events, children } = makeDriver();
+    driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
+    await settle();
+    await feedLines(children[0], streamFixture(probe));
+    driver.dispose();
+
+    const replayed = replayFixture(probe).flatMap((message) => (message.task ? [message.task] : []));
+    const agents = replayed.filter((task) => task.kind === "agent");
+    expect(agents.length).toBeGreaterThan(0);
+    const comparable = (task: TaskSnapshot | undefined) =>
+      task && { state: task.state, runCount: task.runCount, kind: task.kind, background: task.background, cliTaskId: task.cliTaskId };
+    for (const task of agents) {
+      expect(comparable(finalTask(events, task.id)), task.id).toEqual(comparable(task));
+      if (task.output === "PONG" || task.output === "PONG2") expect(finalTask(events, task.id)?.output).toBe(task.output);
+    }
+  });
+
+  it("emits no shell result for a shell task known only by its CLI task id", async () => {
+    const { driver, events, children } = makeDriver();
+    driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
+    await settle();
+    children[0].stdout.write(
+      `${JSON.stringify({ type: "system", subtype: "task_started", task_id: "bash-orphan", task_type: "local_bash", is_backgrounded: true })}\n`
+    );
+    children[0].stdout.write(
+      `${JSON.stringify({ type: "system", subtype: "task_updated", task_id: "bash-orphan", patch: { status: "failed", end_time: END_TIME } })}\n`
+    );
+    await settle();
+
+    expect(finalTask(events, "bash-orphan")).toMatchObject({ kind: "shell", state: "failed" });
+    expect(toolResults(events)).toEqual([]);
+    driver.dispose();
+  });
+
+  it("ends a background shell whose launch was denied instead of holding the session", async () => {
+    const { driver, events, children } = makeDriver();
+    driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
+    await settle();
+    children[0].stdout.write(
+      `${JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", id: "bash-1", name: "Bash", input: { command: "sleep 100", run_in_background: true } }] } })}\n`
+    );
+    children[0].stdout.write(
+      `${JSON.stringify({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "bash-1", is_error: true, content: "The user doesn't want to proceed with this tool use." }] } })}\n`
+    );
+    children[0].stdout.write(`${resultLine()}\n`);
+    await settle();
+
+    expect(finalTask(events, "bash-1")).toMatchObject({ kind: "shell", state: "failed", endReason: "tool-result" });
+    expect(turnDones(events).map((event) => event.backgroundTasks)).toEqual([0]);
+    expect(driver.activity().busySessionIds).toEqual([]);
+    driver.dispose();
+  });
+
+  it("closes agents nested in a background agent once that agent is stopped", async () => {
+    const { driver, events, children } = makeDriver();
+    driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
+    await settle();
+    const write = (line: unknown) => children[0].stdout.write(`${JSON.stringify(line)}\n`);
+    write({ type: "assistant", message: { content: [{ type: "tool_use", id: "call-bg", name: "Agent", input: { run_in_background: true } }] } });
+    write({ type: "system", subtype: "task_started", task_id: "t-bg", tool_use_id: "call-bg", task_type: "local_agent", is_backgrounded: true });
+    write({ type: "system", subtype: "background_tasks_changed", tasks: [{ task_id: "t-bg" }] });
+    write({ type: "assistant", parent_tool_use_id: "call-bg", message: { content: [{ type: "tool_use", id: "call-nested", name: "Agent", input: { prompt: "x" } }] } });
+    write(JSON.parse(resultLine()));
+    await settle();
+    write({ type: "system", subtype: "task_updated", task_id: "t-bg", patch: { status: "killed" } });
+    write({ type: "system", subtype: "task_notification", task_id: "t-bg", tool_use_id: "call-bg", status: "stopped" });
+    write({ type: "system", subtype: "background_tasks_changed", tasks: [] });
+    write(JSON.parse(resultLine({ origin: { kind: "task-notification" } })));
+    await settle();
+
+    expect(finalTask(events, "call-bg")).toMatchObject({ state: "stopped" });
+    expect(finalTask(events, "call-nested")).toMatchObject({ state: "unknown", endReason: "no-record" });
+    expect(turnDones(events).map((event) => event.backgroundTasks)).toEqual([1, 0]);
+    expect(driver.liveTasks("s1").filter((task) => task.state === "running")).toEqual([]);
+    driver.dispose();
+  });
+
+  it("does not answer a later turn with an earlier turn's subagent report", async () => {
+    const { driver, events, children } = makeDriver();
+    driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "one" });
+    await settle();
+    children[0].stdout.write(
+      `${JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", id: "call-fg", name: "Agent", input: { run_in_background: false } }] } })}\n`
+    );
+    children[0].stdout.write(
+      `${JSON.stringify({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "call-fg", content: "REPORT FROM TURN ONE" }] } })}\n`
+    );
+    children[0].stdout.write(`${resultLine({ result: "turn one answer" })}\n`);
+    await settle();
+    await new Promise((resolve) => setTimeout(resolve, 5));
+    driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "two" });
+    await settle();
+    children[0].stdout.write(`${resultLine({ subtype: "error_during_execution", is_error: true, result: undefined })}\n`);
+    await settle();
+
+    expect(children).toHaveLength(1);
+    expect(turnDones(events).at(-1)).toMatchObject({ isError: true, resultText: "" });
+    driver.dispose();
+  });
+
+  it("lists only running or current-turn tasks live once a reused process starts a new turn", async () => {
+    const { driver, children } = makeDriver();
+    driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "one" });
+    await settle();
+    children[0].stdout.write(
+      `${JSON.stringify({ type: "assistant", message: { content: [
+        { type: "tool_use", id: "call-fg", name: "Agent", input: { run_in_background: false } },
+        { type: "tool_use", id: "call-bg", name: "Agent", input: { run_in_background: true } }
+      ] } })}\n`
+    );
+    children[0].stdout.write(`${taskStartedLine("task-bg", "call-bg")}\n`);
+    children[0].stdout.write(`${taskChangeLineWithIds(["task-bg"])}\n`);
+    children[0].stdout.write(
+      `${JSON.stringify({ type: "user", message: { content: [{ type: "tool_result", tool_use_id: "call-fg", content: "first report" }] } })}\n`
+    );
+    children[0].stdout.write(`${resultLine({ result: "turn one" })}\n`);
+    await settle();
+    await new Promise((resolve) => setTimeout(resolve, 5));
+
+    driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "two" });
+    await settle();
+
+    expect(children).toHaveLength(1);
+    expect(driver.liveTasks("s1").map((task) => [task.id, task.state])).toEqual([["call-bg", "running"]]);
+    driver.dispose();
+  });
+
+  it("labels a foreground agent cut off by an interrupt as interrupted", async () => {
+    const { driver, events, children } = makeDriver();
+    const handle = driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
+    await settle();
+    children[0].stdout.write(
+      `${JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", id: "call-fg", name: "Agent", input: { run_in_background: false } }] } })}\n`
+    );
+    await settle();
+    driver.interrupt(handle.turnId);
+    children[0].stdout.write(`${resultLine({ subtype: "error_during_execution", is_error: true })}\n`);
+    await settle();
+
+    expect(finalTask(events, "call-fg")).toMatchObject({ state: "interrupted", endReason: "interrupt" });
+    driver.dispose();
+  });
+
+  it("closes a top-level foreground agent with its turn but not one nested in a running background agent", async () => {
+    const { driver, events, children } = makeDriver();
+    driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
+    await settle();
+    children[0].stdout.write(
+      `${JSON.stringify({ type: "assistant", message: { content: [
+        { type: "tool_use", id: "call-bg", name: "Agent", input: { run_in_background: true } },
+        { type: "tool_use", id: "call-fg", name: "Agent", input: { run_in_background: false } }
+      ] } })}\n`
+    );
+    children[0].stdout.write(`${taskStartedLine("task-bg", "call-bg")}\n`);
+    children[0].stdout.write(`${taskChangeLineWithIds(["task-bg"])}\n`);
+    children[0].stdout.write(
+      `${JSON.stringify({ type: "assistant", parent_tool_use_id: "call-bg", message: { content: [{ type: "tool_use", id: "call-nested", name: "Agent", input: { run_in_background: false } }] } })}\n`
+    );
+    children[0].stdout.write(`${resultLine({ result: "waiting" })}\n`);
+    await settle();
+
+    expect(finalTask(events, "call-fg")).toMatchObject({ state: "unknown", endReason: "no-record" });
+    expect(finalTask(events, "call-nested")?.state ?? "running").toBe("running");
+    expect(finalTask(events, "call-bg")).toMatchObject({ state: "running" });
+    expect(turnDones(events).map((event) => event.backgroundTasks)).toEqual([1]);
     driver.dispose();
   });
 

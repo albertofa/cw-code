@@ -1,6 +1,33 @@
 import { describe, expect, it } from "vitest";
 import type { PrDetail, PrReviewThread, PrSummary, PrWorkflow, SessionMeta } from "@cw-code/contracts";
-import { linkedSessionsBarState, mergeBoxState, threadQuoteText, threadSendTarget } from "./prDetailModel.js";
+import { groupCommitsByDay, linkedSessionsBarState, mergeBoxState, relativeTime, threadQuoteText, threadSendTarget } from "./prDetailModel.js";
+
+describe("relativeTime", () => {
+  const now = Date.parse("2026-10-18T12:00:00Z");
+  const ago = (ms: number) => relativeTime(now - ms, now);
+
+  it("formats elapsed time with the largest whole unit", () => {
+    expect(ago(20_000)).toBe("just now");
+    expect(ago(60_000)).toBe("1 minute ago");
+    expect(ago(2 * 3_600_000 + 59 * 60_000)).toBe("2 hours ago");
+    expect(ago(24 * 3_600_000)).toBe("1 day ago");
+    expect(ago(15 * 24 * 3_600_000)).toBe("2 weeks ago");
+    expect(ago(400 * 24 * 3_600_000)).toBe("1 year ago");
+  });
+
+  it("treats future timestamps as just now", () => {
+    expect(relativeTime(now + 60_000, now)).toBe("just now");
+  });
+});
+
+describe("groupCommitsByDay", () => {
+  const commit = (oid: string, committedAt: number) => ({ oid, headline: oid, author: "alice", committedAt, ci: "none" as const });
+
+  it("groups consecutive commits that share a day label, keeping order", () => {
+    const groups = groupCommitsByDay([commit("a", 1), commit("b", 2), commit("c", 3)], (ts) => (ts < 3 ? "Mon" : "Tue"));
+    expect(groups.map((g) => [g.day, g.commits.map((c) => c.oid)])).toEqual([["Mon", ["a", "b"]], ["Tue", ["c"]]]);
+  });
+});
 
 function prSummary(overrides: Partial<PrSummary> = {}): PrSummary {
   return {
@@ -24,6 +51,7 @@ function prSummary(overrides: Partial<PrSummary> = {}): PrSummary {
     checks: { total: 1, passed: 1, failed: 0, pending: 0 },
     review: "none",
     mergeable: "MERGEABLE",
+    mergeStateStatus: "CLEAN",
     labels: [],
     reviewers: [],
     assignees: [],
@@ -58,6 +86,7 @@ function workflow(overrides: Partial<PrWorkflow> = {}): PrWorkflow {
     target: "pr",
     suggestWhen: ["review-requested"],
     workspace: "checkout",
+    harness: { driver: null, model: "", effort: null, permissionMode: null },
     startPrompt: "start",
     updatePrompt: "update",
     ...overrides
@@ -175,6 +204,16 @@ describe("linkedSessionsBarState", () => {
   it("returns none for a merged PR", () => {
     const pr = prSummary({ state: "MERGED" });
     expect(linkedSessionsBarState(pr, [session()], [])).toEqual({ kind: "none" });
+  });
+
+  it("points at the babysitting session instead of offering workflows", () => {
+    const pr = prSummary({ headRefOid: "sha2", viewerIsAuthor: true });
+    const review = session({ id: "review", updatedAt: 9, prs: [{ ref: pr.ref, origin: "workflow", workflowId: "review", lastSeenSha: "sha1", lastSeenAt: 0 }] });
+    const babysat = session({ id: "babysat", prs: [{ ref: pr.ref, origin: "opened", workflowId: "babysit", lastSeenSha: "sha2", lastSeenAt: 0 }] });
+    const babysit = workflow({ id: "babysit", label: "Babysit", suggestWhen: ["author"], autoFollowUp: true });
+    expect(linkedSessionsBarState(pr, [review, babysat], [babysit])).toEqual({ kind: "babysit", session: babysat, workflow: babysit });
+    expect(linkedSessionsBarState(pr, [babysat], [{ ...babysit, autoFollowUp: false }])).toMatchObject({ kind: "open" });
+    expect(linkedSessionsBarState(pr, [{ ...babysat, status: "archived" }], [babysit])).toMatchObject({ kind: "open" });
   });
 });
 

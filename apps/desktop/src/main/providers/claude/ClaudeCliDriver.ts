@@ -15,6 +15,9 @@ import type {
   PermissionMode,
   PermissionOption,
   SubagentToolsResult,
+  TaskEndReason,
+  TaskSnapshot,
+  TaskState,
   ThreadEvent,
   TurnHandle,
   TurnRequest
@@ -22,8 +25,10 @@ import type {
 import { parseExtraArgs } from "../../settings/settingsUtils.js";
 import { detachProcessGroup, hasExited, killProcessTree, waitForExit } from "../../processTree.js";
 import { sanitizedChildEnv } from "../../shellEnvironment.js";
+import { TaskTable, type TaskObservation } from "../../tasks/TaskTable.js";
 import { SYNTHETIC_FULL_ACCESS_DESCRIPTION } from "../permissions.js";
-import { CLAUDE_SHELL_TASK_TYPE, attributeClaudeSubagentEvent, buildClaudeAllowRule, claudeAllowResponse, claudeApprovalRequest, claudeQuestionRequest, claudeDenyResponse, claudeControlResponse, parseClaudeCompactBoundary, parseClaudeControlRequest, parseClaudeSubagentHandback, parseClaudeSystemInit, parseClaudeTaskSystemLine, parseStreamLine, type ClaudeControlRequest, type ClaudeTaskSystemInfo, type TurnDoneInfo } from "./claudeStreamParser.js";
+import { attributeClaudeSubagentEvent, buildClaudeAllowRule, claudeAllowResponse, claudeApprovalRequest, claudeQuestionRequest, claudeDenyResponse, claudeControlResponse, parseClaudeCompactBoundary, parseClaudeControlRequest, parseClaudeSubagentHandback, parseClaudeSystemInit, parseClaudeTaskNotificationLine, parseClaudeTaskSystemLine, parseClaudeToolUseResult, parseStreamLine, type ClaudeControlRequest, type ClaudeTaskNotificationLine, type ClaudeTaskSystemInfo, type TurnDoneInfo } from "./claudeStreamParser.js";
+import { claudeCallObservation, claudeHandbackObservation, claudeNotificationObservation, claudeSystemTaskObservation, claudeToolResultObservation, findClaudeTaskNotification } from "./claudeTasks.js";
 import { CLAUDE_COMMANDS_PROBE_ARGS, listClaudeCommands, probeClaudeCommands, recordClaudeTerminalCommands } from "./claudeCommands.js";
 import { CLAUDE_ACCOUNT_USAGE_PROBE_ARGS, probeClaudeAccountUsage } from "./claudeAccountUsage.js";
 import { describeClaudeExit } from "./claudeExit.js";
@@ -113,6 +118,12 @@ export function mergeClaudeAllowRule(existing: unknown, rule: string): Record<st
 
 export const CLAUDE_IDLE_EVICT_MS = 20 * 60_000;
 
+const CLI_TERMINAL_TASK_STATES = new Set<TaskState>(["completed", "failed", "stopped"]);
+
+function hasCallRow(task: TaskSnapshot): boolean {
+  return task.id !== task.cliTaskId;
+}
+
 export function subagentToolsResult(agent: SidecarAgent | undefined): SubagentToolsResult {
   if (!agent) return { items: [] };
   return {
@@ -132,8 +143,7 @@ interface ClaudeProcessState {
   child: ChildProcessWithoutNullStreams;
   resumeCursor: string;
   activeTurnId: string;
-  liveTasks: number;
-  liveTaskIds: Set<string>;
+  tasks: TaskTable;
   completedTurn: boolean;
   heldByBackgroundWork: boolean;
   errored: boolean;
@@ -142,14 +152,11 @@ interface ClaudeProcessState {
   lastActivityAt: number;
   postCompletionOutputPending: boolean;
   agentByCall: Map<string, string>;
-  taskToolCalls: Map<string, string>;
-  taskReports: Map<string, string>;
-  backgroundCallIds: Set<string>;
-  backgroundAgentCallIds: Set<string>;
-  backgroundCallStartedAt: Map<string, number>;
-  reportedTaskCalls: Set<string>;
-  handbackCallIds: Set<string>;
-  agentMessageCallIds: Set<string>;
+  suppressedCallIds: Set<string>;
+  topLevelAgentCalls: Set<string>;
+  childCalls: Map<string, string[]>;
+  turnStartedAt: number;
+  shellResults: Map<string, string>;
   permissionMode: PermissionMode;
   reportedPermissionMode?: string;
   idleTimer?: NodeJS.Timeout;
@@ -219,6 +226,7 @@ export class ClaudeCliDriver implements CliDriver {
 
   private terminate(state: ClaudeProcessState): void {
     this.clearIdleTimer(state);
+    this.closeTasks(state, "interrupted", "process-exit");
     this.killChild(state);
     if (this.processes.get(state.sessionId) === state) this.processes.delete(state.sessionId);
   }
@@ -266,7 +274,7 @@ export class ClaudeCliDriver implements CliDriver {
         return;
       }
       if (
-        this.liveTaskCount(state) > 0 ||
+        state.tasks.liveCount() > 0 ||
         !state.completedTurn ||
         (state.postCompletionOutputPending && Date.now() - state.lastActivityAt < CLAUDE_IDLE_EVICT_MS) ||
         this.hasPendingForSession(state.sessionId) ||
@@ -331,154 +339,119 @@ export class ClaudeCliDriver implements CliDriver {
     }
   }
 
-  private liveTaskCount(state: ClaudeProcessState): number {
-    return Math.max(state.liveTasks, state.backgroundCallIds.size);
+  private observeTask(state: ClaudeProcessState, obs: TaskObservation | null): void {
+    if (!obs) return;
+    this.emitTaskUpdates(state, state.tasks.apply(obs));
+    this.noteBackgroundWork(state);
   }
 
-  private trackBackgroundCall(state: ClaudeProcessState, callId: string, background = true): void {
-    if (!background || state.reportedTaskCalls.has(callId) || state.taskReports.has(callId)) return;
-    state.backgroundCallIds.add(callId);
-    state.heldByBackgroundWork = true;
-    if (!state.backgroundCallStartedAt.has(callId)) state.backgroundCallStartedAt.set(callId, Date.now());
-  }
-
-  private reconcileBackgroundCalls(
+  private closeTasks(
     state: ClaudeProcessState,
-    liveTasks: number,
-    liveTaskIds?: string[]
+    taskState: "interrupted" | "unknown",
+    reason: TaskEndReason,
+    filter?: (task: TaskSnapshot) => boolean
   ): void {
-    state.liveTasks = liveTasks;
-    state.liveTaskIds = new Set(liveTaskIds ?? []);
-    if (liveTasks > 0) state.heldByBackgroundWork = true;
-    const trackedCallIds = [...state.backgroundCallIds];
-    const removeCall = (callId: string): void => {
-      state.backgroundCallIds.delete(callId);
-      state.backgroundAgentCallIds.delete(callId);
-      state.backgroundCallStartedAt.delete(callId);
-    };
-    if (liveTasks === 0) {
-      for (const callId of trackedCallIds) removeCall(callId);
-      return;
-    }
-    if (!liveTaskIds?.length) return;
-    const liveTaskIdSet = new Set(liveTaskIds);
-    for (const callId of trackedCallIds) {
-      let mapped = false;
-      let live = false;
-      for (const [taskId, toolUseId] of state.taskToolCalls) {
-        if (toolUseId !== callId) continue;
-        mapped = true;
-        if (liveTaskIdSet.has(taskId)) live = true;
-      }
-      if (mapped && !live) removeCall(callId);
-    }
+    this.emitTaskUpdates(state, state.tasks.closeOpen(taskState, reason, Date.now(), filter));
   }
 
-  private trackBackgroundToolCall(
-    state: ClaudeProcessState,
-    event: Extract<ThreadEvent, { type: "tool.call" }>
-  ): void {
-    const name = event.name.toLowerCase();
-    if (name === "bash") {
-      const input = event.input;
-      const background =
-        input !== null &&
-        typeof input === "object" &&
-        !Array.isArray(input) &&
-        (input as Record<string, unknown>)["run_in_background"] === true;
-      this.trackBackgroundCall(state, event.toolCallId, background);
-      return;
-    }
-    if (name === "sendmessage") {
-      state.agentMessageCallIds.add(event.toolCallId);
-      return;
-    }
-    if (name !== "agent" && name !== "task") return;
-    if (
-      event.input !== null &&
-      typeof event.input === "object" &&
-      !Array.isArray(event.input) &&
-      (event.input as Record<string, unknown>)["run_in_background"] === false
-    ) {
-      return;
-    }
-    this.trackBackgroundCall(state, event.toolCallId);
-    state.backgroundAgentCallIds.add(event.toolCallId);
+  private noteBackgroundWork(state: ClaudeProcessState): void {
+    if (state.tasks.liveCount() > 0) state.heldByBackgroundWork = true;
   }
 
-  private releaseBackgroundCall(state: ClaudeProcessState, callId: string): boolean {
-    const released = state.backgroundCallIds.delete(callId);
-    if (released) {
-      for (const [taskId, toolUseId] of state.taskToolCalls) {
-        if (toolUseId === callId && state.liveTaskIds.delete(taskId)) {
-          state.liveTasks = Math.max(0, state.liveTasks - 1);
-        }
+  private emitTaskUpdates(state: ClaudeProcessState, tasks: TaskSnapshot[]): void {
+    const ended = new Set<string>();
+    for (const task of tasks) {
+      this.emit({ type: "task.updated", turnId: state.activeTurnId, sessionId: state.sessionId, task });
+      this.emitShellResult(state, task);
+      if (task.state !== "running") ended.add(task.id);
+    }
+    const orphaned = this.descendantsOf(state, ended);
+    if (orphaned.size > 0) this.closeTasks(state, "unknown", "no-record", (task) => orphaned.has(task.id));
+  }
+
+  private descendantsOf(state: ClaudeProcessState, parents: Set<string>): Set<string> {
+    const found = new Set<string>();
+    const pending = [...parents];
+    while (pending.length > 0) {
+      for (const child of state.childCalls.get(pending.pop() ?? "") ?? []) {
+        if (found.has(child)) continue;
+        found.add(child);
+        pending.push(child);
       }
     }
-    return released;
+    return found;
   }
 
-  private isAsyncAgentLaunchAcknowledgement(output: string): boolean {
-    return output.trimStart().startsWith("Async agent launched successfully");
-  }
-
-  private completeTaskResult(
-    state: ClaudeProcessState,
-    event: Extract<ThreadEvent, { type: "tool.result" }>,
-    preferReport = false
-  ): void {
-    const callId = event.toolCallId;
-    if (!state.backgroundCallStartedAt.has(callId)) state.backgroundCallStartedAt.set(callId, Date.now());
-    const previousReport = state.taskReports.get(callId);
-    const output = (preferReport ? event.output : previousReport ?? event.output).slice(0, 8000);
-    state.taskReports.set(callId, output);
-    this.releaseBackgroundCall(state, callId);
-    this.emitTaskResultOnce(state, { ...event, output }, preferReport && previousReport !== undefined && previousReport !== output);
-  }
-
-  private latestTaskReport(state: ClaudeProcessState): string {
-    let latestCallId: string | undefined;
-    let latestStartedAt = -1;
-    for (const callId of state.taskReports.keys()) {
-      const startedAt = state.backgroundCallStartedAt.get(callId) ?? 0;
-      if (startedAt <= latestStartedAt) continue;
-      latestCallId = callId;
-      latestStartedAt = startedAt;
-    }
-    return latestCallId ? (state.taskReports.get(latestCallId) ?? "") : "";
+  private emitShellResult(state: ClaudeProcessState, task: TaskSnapshot): void {
+    if (task.kind !== "shell" || !hasCallRow(task) || !CLI_TERMINAL_TASK_STATES.has(task.state)) return;
+    const output = task.output ?? (task.state === "completed" ? undefined : `Background task ${task.state}`);
+    if (output === undefined || state.shellResults.get(task.id) === output) return;
+    state.shellResults.set(task.id, output);
+    this.emit({
+      type: "tool.result",
+      turnId: state.activeTurnId,
+      toolCallId: task.id,
+      output,
+      isError: task.state !== "completed",
+      ...(task.usage ? { usage: task.usage } : {})
+    });
   }
 
   private shouldIgnoreTaskNotification(state: ClaudeProcessState): boolean {
-    return this.liveTaskCount(state) > 0 || (!state.completedTurn && !state.heldByBackgroundWork);
+    return state.tasks.liveCount() > 0 || (!state.completedTurn && !state.heldByBackgroundWork);
   }
 
-  private emitTaskResultOnce(
+  private handleToolCall(state: ClaudeProcessState, event: Extract<ThreadEvent, { type: "tool.call" }>): void {
+    const handback = parseClaudeSubagentHandback(event);
+    if (handback) {
+      state.suppressedCallIds.add(event.toolCallId);
+      this.observeTask(state, claudeHandbackObservation(handback.toolCallId, handback.output, Date.now()));
+      return;
+    }
+    const call = claudeCallObservation(event.name, event.toolCallId, event.input, Date.now());
+    const obs =
+      call?.kind === "call" && event.parentToolCallId && call.taskKind === "agent" && call.background === undefined
+        ? { ...call, background: false }
+        : call;
+    if (obs && event.parentToolCallId) {
+      state.childCalls.set(event.parentToolCallId, [...(state.childCalls.get(event.parentToolCallId) ?? []), event.toolCallId]);
+    }
+    if (obs) {
+      state.tasks.apply(obs);
+      if (obs.kind === "call" && obs.taskKind === "agent" && !event.parentToolCallId) state.topLevelAgentCalls.add(event.toolCallId);
+      this.noteBackgroundWork(state);
+    }
+    const task = obs ? state.tasks.get(event.toolCallId) : undefined;
+    this.emit(attributeClaudeSubagentEvent(task ? { ...event, task } : event, state.agentByCall));
+  }
+
+  private handleToolResult(
     state: ClaudeProcessState,
     event: Extract<ThreadEvent, { type: "tool.result" }>,
-    reportChanged = false
+    line: string
   ): void {
-    if (state.reportedTaskCalls.has(event.toolCallId) && !event.usage && !reportChanged) return;
-    state.reportedTaskCalls.add(event.toolCallId);
+    if (state.suppressedCallIds.delete(event.toolCallId)) return;
     this.emit(this.attributeSubagentResult(state, attributeClaudeSubagentEvent(event, state.agentByCall)));
+    const kind = state.tasks.get(event.toolCallId)?.kind;
+    const endsTaskStartedByThisCall = kind === "agent" || (kind === "shell" && event.isError);
+    if (!endsTaskStartedByThisCall) return;
+    const structured = parseClaudeToolUseResult(line);
+    this.observeTask(
+      state,
+      claudeToolResultObservation(
+        event.toolCallId,
+        event.output,
+        event.isError,
+        structured?.toolUseId === event.toolCallId ? structured.result : undefined,
+        Date.now()
+      )
+    );
   }
 
-  private clearTaskTracking(state: ClaudeProcessState): void {
-    state.liveTaskIds.clear();
-    state.taskReports.clear();
-    state.backgroundCallIds.clear();
-    state.backgroundAgentCallIds.clear();
-    state.backgroundCallStartedAt.clear();
-    state.reportedTaskCalls.clear();
-    state.handbackCallIds.clear();
-    state.agentMessageCallIds.clear();
-    state.taskToolCalls.clear();
-  }
-
-  private handleSubagentHandback(
-    state: ClaudeProcessState,
-    event: Extract<ThreadEvent, { type: "tool.result" }>
-  ): void {
-    this.completeTaskResult(state, event, true);
+  private handleTaskNotificationLine(state: ClaudeProcessState, line: ClaudeTaskNotificationLine): void {
+    const notification = findClaudeTaskNotification(line.text);
+    if (!notification) return;
+    this.observeTask(state, claudeNotificationObservation(notification, Date.now(), line.runId));
   }
 
   private handleProcessLine(state: ClaudeProcessState, line: string): void {
@@ -531,6 +504,11 @@ export class ClaudeCliDriver implements CliDriver {
       this.handleControl(control, state);
       return;
     }
+    const notificationLine = parseClaudeTaskNotificationLine(line);
+    if (notificationLine) {
+      this.handleTaskNotificationLine(state, notificationLine);
+      return;
+    }
     const events = parseStreamLine(
       line,
       state.activeTurnId,
@@ -542,23 +520,9 @@ export class ClaudeCliDriver implements CliDriver {
       state.mainModel
     );
     for (const event of events) {
-      if (event.type === "tool.call") this.trackBackgroundToolCall(state, event);
-      const handback = parseClaudeSubagentHandback(event);
-      if (handback) {
-        if (event.type === "tool.call") state.handbackCallIds.add(event.toolCallId);
-        this.handleSubagentHandback(state, handback);
-        continue;
-      }
-      if (event.type === "tool.result") {
-        if (state.handbackCallIds.delete(event.toolCallId) || state.reportedTaskCalls.has(event.toolCallId)) continue;
-        const acknowledgement =
-          state.agentMessageCallIds.delete(event.toolCallId) || this.isAsyncAgentLaunchAcknowledgement(event.output);
-        if (state.backgroundAgentCallIds.has(event.toolCallId) && !acknowledgement) {
-          this.completeTaskResult(state, event);
-          continue;
-        }
-      }
-      this.emit(this.attributeSubagentResult(state, attributeClaudeSubagentEvent(event, state.agentByCall)));
+      if (event.type === "tool.call") this.handleToolCall(state, event);
+      else if (event.type === "tool.result") this.handleToolResult(state, event, line);
+      else this.emit(event);
     }
   }
 
@@ -577,76 +541,36 @@ export class ClaudeCliDriver implements CliDriver {
   }
 
   private handleTaskSystem(state: ClaudeProcessState, info: ClaudeTaskSystemInfo): void {
-    if (info.kind === "tasks") {
-      this.reconcileBackgroundCalls(state, info.liveTasks ?? 0, info.liveTaskIds);
+    const now = Date.now();
+    if (info.kind === "notification") {
+      this.observeTask(state, this.taskNotificationObservation(state, info, now));
       return;
     }
-    if (info.kind === "started") {
-      const shellTask = info.taskType === CLAUDE_SHELL_TASK_TYPE;
-      const agentTask = info.background !== false && !shellTask && (
-        info.taskType === "local_agent" ||
-        info.taskType === "agent" ||
-        info.subagentType !== undefined ||
-        info.prompt !== undefined ||
-        (info.toolUseId !== undefined && state.backgroundAgentCallIds.has(info.toolUseId))
-      );
-      if (info.taskId && info.toolUseId) {
-        state.taskToolCalls.set(info.taskId, info.toolUseId);
-        if (agentTask) state.agentByCall.set(info.toolUseId, info.taskId);
-      }
-      if (info.toolUseId) {
-        const background = info.background !== false && (
-          info.taskType !== CLAUDE_SHELL_TASK_TYPE ||
-          info.background === true ||
-          state.backgroundCallIds.has(info.toolUseId)
-        );
-        if (!background) {
-          state.backgroundCallIds.delete(info.toolUseId);
-          state.backgroundAgentCallIds.delete(info.toolUseId);
-          state.backgroundCallStartedAt.delete(info.toolUseId);
-          return;
-        }
-        this.trackBackgroundCall(state, info.toolUseId);
-        if (agentTask) state.backgroundAgentCallIds.add(info.toolUseId);
-      }
-      return;
+    this.observeTask(state, claudeSystemTaskObservation(info, now));
+    if (info.kind === "started" && info.taskId && info.toolUseId && state.tasks.get(info.toolUseId)?.kind === "agent") {
+      state.agentByCall.set(info.toolUseId, info.taskId);
     }
-    if (info.kind === "progress") return;
-    const toolUseId = info.toolUseId ?? (info.taskId ? state.taskToolCalls.get(info.taskId) : undefined);
-    if (!toolUseId) return;
-    if (info.kind === "updated") {
-      const status = (info.status ?? "").toLowerCase();
-      if (status === "" || status === "running" || status === "in_progress") return;
-      this.releaseBackgroundCall(state, toolUseId);
-      if (status !== "completed") {
-        if (state.reportedTaskCalls.has(toolUseId)) return;
-        const label = state.backgroundAgentCallIds.has(toolUseId) || state.agentByCall.has(toolUseId)
-          ? "Subagent"
-          : "Background task";
-        const output = `${label} ${status}`;
-        this.emit({
-          type: "tool.result",
-          turnId: state.activeTurnId,
-          toolCallId: toolUseId,
-          output,
-          isError: true
-        });
-      } else if (!state.backgroundCallStartedAt.has(toolUseId)) {
-        state.backgroundCallStartedAt.set(toolUseId, Date.now());
-      }
-      return;
-    }
-    const transcript = readClaudeTaskResult(state.cwd, state.resumeCursor, toolUseId);
-    const status = (transcript?.status ?? info.status ?? "completed").toLowerCase();
-    const output = (transcript?.result ?? info.summary ?? status).slice(0, 8000);
-    this.completeTaskResult(state, {
-      type: "tool.result",
-      turnId: state.activeTurnId,
-      toolCallId: toolUseId,
-      output,
-      isError: status !== "completed",
-      ...(info.usage ? { usage: info.usage } : {})
-    });
+  }
+
+  private taskNotificationObservation(
+    state: ClaudeProcessState,
+    info: ClaudeTaskSystemInfo,
+    now: number
+  ): TaskObservation | null {
+    const transcript = info.toolUseId ? readClaudeTaskResult(state.cwd, state.resumeCursor, info.toolUseId) : undefined;
+    if (!transcript) return claudeSystemTaskObservation(info, now);
+    return claudeNotificationObservation(
+      {
+        toolUseId: info.toolUseId,
+        taskId: info.taskId,
+        status: transcript.status ?? info.status,
+        result: transcript.result,
+        summary: info.summary,
+        usage: info.usage
+      },
+      now,
+      info.runId
+    );
   }
 
   private handleTurnDone(state: ClaudeProcessState, info: TurnDoneInfo): void {
@@ -655,6 +579,9 @@ export class ClaudeCliDriver implements CliDriver {
     }
     const turnId = state.activeTurnId;
     const interrupted = this.interruptedTurns.delete(turnId);
+    const isTurnForeground = (task: TaskSnapshot) => !task.background && state.topLevelAgentCalls.has(task.id);
+    if (interrupted) this.closeTasks(state, "interrupted", "interrupt", isTurnForeground);
+    else this.closeTasks(state, "unknown", "no-record", isTurnForeground);
     if (state.completedTurn) {
       state.resumeCursor = info.resumeCursor;
       state.modelUsage = info.modelUsage;
@@ -664,14 +591,14 @@ export class ClaudeCliDriver implements CliDriver {
         return;
       }
       if (state.postCompletionOutputPending) {
-        const backgroundTasks = this.liveTaskCount(state);
+        const backgroundTasks = state.tasks.liveCount();
         if (backgroundTasks === 0) {
           this.emit({
             type: "turn.done",
             turnId,
             sessionId: state.sessionId,
             resumeCursor: info.resumeCursor,
-            resultText: info.resultText || this.latestTaskReport(state),
+            resultText: info.resultText || state.tasks.latestOutput(state.turnStartedAt),
             usage: info.usage,
             ...(info.context ? { context: info.context } : {}),
             numTurns: info.numTurns,
@@ -684,7 +611,7 @@ export class ClaudeCliDriver implements CliDriver {
       this.armIdleTimer(state);
       return;
     }
-    const backgroundTasks = this.liveTaskCount(state);
+    const backgroundTasks = state.tasks.liveCount();
     state.modelUsage = info.modelUsage;
     if (info.windowTokens !== undefined) state.lastWindowTokens = info.windowTokens;
     const compactedPostTokens = state.compactedPostTokens;
@@ -700,7 +627,7 @@ export class ClaudeCliDriver implements CliDriver {
         turnId,
         sessionId: state.sessionId,
         resumeCursor: info.resumeCursor,
-        resultText: info.resultText || this.latestTaskReport(state),
+        resultText: info.resultText || state.tasks.latestOutput(state.turnStartedAt),
         usage: info.usage,
         ...(context ? { context } : {}),
         numTurns: info.numTurns,
@@ -726,6 +653,7 @@ export class ClaudeCliDriver implements CliDriver {
     if (this.processes.get(state.sessionId) === state) this.processes.delete(state.sessionId);
     this.clearIdleTimer(state);
     this.resolvePendingForSession(state.sessionId, null);
+    this.closeTasks(state, "interrupted", "process-exit");
     const turnId = state.activeTurnId;
     traceHarnessCall({
       harness: "claude",
@@ -831,12 +759,13 @@ export class ClaudeCliDriver implements CliDriver {
     }
 
     if (!request.maxTurns && existing && existing.argsKey === argsKey && this.isProcessAlive(existing)) {
-      if (this.liveTaskCount(existing) === 0) this.clearTaskTracking(existing);
       existing.activeTurnId = turnId;
       existing.completedTurn = false;
       existing.postCompletionOutputPending = false;
       existing.lastActivityAt = Date.now();
-      existing.heldByBackgroundWork = this.liveTaskCount(existing) > 0;
+      this.compactTasks(existing);
+      existing.turnStartedAt = existing.lastActivityAt;
+      existing.heldByBackgroundWork = existing.tasks.liveCount() > 0;
       existing.permissionMode = request.permissionMode ?? "auto";
       existing.compactedPostTokens = undefined;
       existing.apiErrorMessage = undefined;
@@ -879,8 +808,7 @@ export class ClaudeCliDriver implements CliDriver {
       child,
       resumeCursor: request.resumeCursor ?? "",
       activeTurnId: turnId,
-      liveTasks: 0,
-      liveTaskIds: new Set(),
+      tasks: new TaskTable(),
       completedTurn: false,
       heldByBackgroundWork: false,
       errored: false,
@@ -889,14 +817,11 @@ export class ClaudeCliDriver implements CliDriver {
       lastActivityAt: start,
       postCompletionOutputPending: false,
       agentByCall: new Map(),
-      taskToolCalls: new Map(),
-      taskReports: new Map(),
-      backgroundCallIds: new Set(),
-      backgroundAgentCallIds: new Set(),
-      backgroundCallStartedAt: new Map(),
-      reportedTaskCalls: new Set(),
-      handbackCallIds: new Set(),
-      agentMessageCallIds: new Set(),
+      suppressedCallIds: new Set(),
+      topLevelAgentCalls: new Set(),
+      childCalls: new Map(),
+      turnStartedAt: start,
+      shellResults: new Map(),
       permissionMode: request.permissionMode ?? "auto",
       modelUsage: {}
     };
@@ -979,7 +904,22 @@ export class ClaudeCliDriver implements CliDriver {
     traceHarnessCall({ harness: "claude", operation: "claude.stopSession", sessionId, ok: true });
     this.clearIdleTimer(state);
     this.processes.delete(sessionId);
+    this.closeTasks(state, "interrupted", "process-exit");
     this.killChild(state);
+  }
+
+  liveTasks(sessionId: string): TaskSnapshot[] {
+    const state = this.processes.get(sessionId);
+    if (!state) return [];
+    return state.tasks.recentSnapshots(state.turnStartedAt);
+  }
+
+  private compactTasks(state: ClaudeProcessState): void {
+    for (const id of state.tasks.compact(state.turnStartedAt)) {
+      state.shellResults.delete(id);
+      state.childCalls.delete(id);
+      state.topLevelAgentCalls.delete(id);
+    }
   }
 
   async getAccountUsage(): Promise<AccountUsageState> {
@@ -999,7 +939,7 @@ export class ClaudeCliDriver implements CliDriver {
     const busySessionIds = new Set<string>();
     for (const state of this.processes.values()) {
       const settled = state.completedTurn && !state.postCompletionOutputPending && !this.interruptedTurns.has(state.activeTurnId);
-      if (settled && this.liveTaskCount(state) === 0) continue;
+      if (settled && state.tasks.liveCount() === 0) continue;
       busySessionIds.add(state.sessionId);
     }
     return { busySessionIds: [...busySessionIds], ownedProcesses: this.processes.size };

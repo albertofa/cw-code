@@ -541,8 +541,8 @@ tab.
   monitor uploads nothing. Evidence worth keeping past 30 days goes into the
   commissioning PR, not into artifacts.
 - **CI minutes.** Every job has a timeout: CI `windows` 45 min,
-  `upgrade-test.yml` 150 min (nightly at 03:17 UTC and on PRs touching the
-  update path), release jobs 15 to 120 min (`build-linux` and `verify-linux-candidate` 60 min each, on
+  `upgrade-test.yml` 150 min (nightly at 03:17 UTC unless that commit
+  already passed, and the `core` scenarios on PRs touching the update path), release jobs 15 to 120 min (`build-linux` and `verify-linux-candidate` 60 min each, on
   ubuntu-22.04), CI `linux` 45 min per matrix entry, feed monitor 20 min (usually a
   few minutes, 4 runs a day). With publishing on, automatic runs publish, so
   the 6-hour window caps them at one full release run (the Windows jobs, the

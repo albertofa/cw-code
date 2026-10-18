@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { IssueSummary, PrSummary, PrWorkflow, SessionMeta, WorkflowRunSummary } from "@cw-code/contracts";
 import {
+  babysitterFor,
   diffBlocks,
   formatDuration,
   issueBucket,
@@ -42,6 +43,7 @@ function pr(overrides: Partial<PrSummary> = {}): PrSummary {
     checks: { total: 4, passed: 4, failed: 0, pending: 0 },
     review: "none",
     mergeable: "MERGEABLE",
+    mergeStateStatus: "CLEAN",
     labels: [],
     reviewers: [],
     assignees: [],
@@ -116,6 +118,7 @@ function workflow(overrides: Partial<PrWorkflow> = {}): PrWorkflow {
     target: "pr",
     suggestWhen: [],
     workspace: "checkout",
+    harness: { driver: null, model: "", effort: null, permissionMode: null },
     startPrompt: "",
     updatePrompt: "",
     ...overrides
@@ -360,6 +363,29 @@ describe("rowAction", () => {
   it("continues a review session when the head moved", () => {
     const action = act({ subject: { kind: "pr", pr: pr({ headRefOid: "def456" }) }, viewer: "me", sessions: [session()], workflows: prWorkflows });
     expect(action).toMatchObject({ kind: "session", mode: "continue", label: "Re-review", meta: "new", workflowId: "review" });
+  });
+
+  it("only opens the babysitting session for a PR or its run", () => {
+    const withBabysit = [...prWorkflows, workflow({ id: "babysit", label: "Babysit", autoFollowUp: true })];
+    const reviewer = session({ id: "reviewer", updatedAt: 9 });
+    const babysat = session({
+      id: "babysat",
+      prs: [{ ref: pr().ref, origin: "opened", workflowId: "babysit", lastSeenAt: 5000, lastSeenSha: "abc123" }]
+    });
+    const movedHead = { kind: "pr" as const, pr: pr({ headRefOid: "def456" }) };
+    expect(act({ subject: movedHead, viewer: "me", sessions: [reviewer, babysat], workflows: withBabysit })).toMatchObject({
+      kind: "session",
+      mode: "open",
+      label: "Babysit",
+      session: { id: "babysat" }
+    });
+    const failingRun = { kind: "run" as const, run: run({ prNumber: 42, conclusion: "failure" }) };
+    expect(act({ subject: failingRun, viewer: "dev", sessions: [babysat], workflows: withBabysit })).toMatchObject({
+      kind: "session",
+      mode: "open",
+      session: { id: "babysat" }
+    });
+    expect(babysitterFor({ kind: "pr", pr: pr({ state: "CLOSED" }) }, [babysat], withBabysit)).toBeNull();
   });
 
   it("marks a working session", () => {

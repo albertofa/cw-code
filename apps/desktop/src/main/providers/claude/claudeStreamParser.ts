@@ -139,7 +139,7 @@ const CLAUDE_APPROVAL_DECISIONS: ApprovalDecision[] = [
   "cancel"
 ];
 
-const CLAUDE_COMMAND_TOOLS = new Set(["bash", "powershell"]);
+export const CLAUDE_COMMAND_TOOLS: ReadonlySet<string> = new Set(["bash", "powershell"]);
 const CLAUDE_FILE_TOOLS = new Set(["edit", "write", "multiedit"]);
 
 const CLAUDE_DETAIL_MAX = 2000;
@@ -238,25 +238,32 @@ interface UserMsg {
   };
 }
 
-export interface ClaudeTaskNotification {
-  toolUseId: string;
-  status?: string;
-  result: string;
+const TASK_NOTIFICATION_OPEN = "<task-notification>";
+
+export interface ClaudeTaskNotificationLine {
+  text: string;
+  runId?: string;
 }
 
-const TASK_NOTIFY_RE = {
-  toolUseId: /<tool-use-id>([\s\S]*?)<\/tool-use-id>/,
-  status: /<status>([\s\S]*?)<\/status>/,
-  result: /<result>([\s\S]*?)<\/result>/
-};
+interface UserNotificationMsg {
+  type?: unknown;
+  message?: { content?: unknown };
+  origin?: { kind?: unknown; runId?: unknown } | null;
+}
 
-export function parseClaudeTaskNotification(text: string): ClaudeTaskNotification | null {
-  if (!text.trimStart().startsWith("<task-notification>")) return null;
-  const toolUseId = TASK_NOTIFY_RE.toolUseId.exec(text)?.[1]?.trim();
-  const result = TASK_NOTIFY_RE.result.exec(text)?.[1];
-  if (!toolUseId || result === undefined) return null;
-  const status = TASK_NOTIFY_RE.status.exec(text)?.[1]?.trim();
-  return { toolUseId, ...(status ? { status } : {}), result };
+export function parseClaudeTaskNotificationLine(line: string): ClaudeTaskNotificationLine | null {
+  if (!line.trim().startsWith("{") || !line.includes(TASK_NOTIFICATION_OPEN)) return null;
+  let msg: UserNotificationMsg;
+  try {
+    msg = JSON.parse(line) as UserNotificationMsg;
+  } catch {
+    return null;
+  }
+  const text = msg.message?.content;
+  if (msg.type !== "user" || typeof text !== "string") return null;
+  if (msg.origin?.kind !== "task-notification" && !text.trimStart().startsWith(TASK_NOTIFICATION_OPEN)) return null;
+  const runId = str(msg.origin?.runId);
+  return { text, ...(runId ? { runId } : {}) };
 }
 
 interface ResultMsg {
@@ -273,21 +280,24 @@ interface ResultMsg {
   is_error?: boolean;
 }
 
+export interface ClaudeLiveTask {
+  taskId: string;
+  runId?: string;
+}
+
 export interface ClaudeTaskSystemInfo {
-  kind: "tasks" | "started" | "progress" | "updated" | "notification";
-  liveTasks?: number;
-  liveTaskIds?: string[];
+  kind: "tasks" | "started" | "updated" | "notification";
+  liveTaskEntries?: ClaudeLiveTask[];
   taskId?: string;
+  runId?: string;
   toolUseId?: string;
   taskType?: string;
-  description?: string;
-  subagentType?: string;
   background?: boolean;
-  prompt?: string;
+  ambient?: boolean;
   status?: string;
   summary?: string;
+  handbackReport?: string;
   endTime?: number;
-  lastToolName?: string;
   usage?: ToolUsage;
 }
 
@@ -307,17 +317,16 @@ interface SystemTaskMsg {
   subtype?: unknown;
   tasks?: unknown;
   task_id?: unknown;
+  run_id?: unknown;
   tool_use_id?: unknown;
   task_type?: unknown;
-  description?: unknown;
-  subagent_type?: unknown;
   is_backgrounded?: unknown;
-  prompt?: unknown;
   status?: unknown;
   summary?: unknown;
-  last_tool_name?: unknown;
   usage?: unknown;
   patch?: unknown;
+  ambient?: unknown;
+  handback_report?: unknown;
 }
 
 function str(value: unknown): string | undefined {
@@ -376,49 +385,35 @@ export function parseClaudeTaskSystemLine(line: string): ClaudeTaskSystemInfo | 
   }
   if (msg === null || typeof msg !== "object" || msg.type !== "system") return null;
   const taskId = str(msg.task_id);
+  const runId = str(msg.run_id);
   const toolUseId = str(msg.tool_use_id);
   const taskType = str(msg.task_type);
-  const description = str(msg.description);
-  const usage = taskUsage(msg.usage);
   switch (msg.subtype) {
     case "background_tasks_changed": {
       if (!Array.isArray(msg.tasks)) return null;
-      const liveTaskIds = msg.tasks
-        .map((task) => {
-          if (task !== null && typeof task === "object" && !Array.isArray(task)) {
-            const record = task as Record<string, unknown>;
-            return str(record["id"]) ?? str(record["task_id"]);
-          }
-          return str(task);
-        })
-        .filter((id): id is string => id !== undefined);
-      return { kind: "tasks", liveTasks: msg.tasks.length, liveTaskIds };
+      const liveTaskEntries = msg.tasks.flatMap((task): ClaudeLiveTask[] => {
+        if (task !== null && typeof task === "object" && !Array.isArray(task)) {
+          const record = task as Record<string, unknown>;
+          const entryTaskId = str(record["id"]) ?? str(record["task_id"]);
+          const entryRunId = str(record["run_id"]);
+          if (!entryTaskId || record["ambient"] === true) return [];
+          return [{ taskId: entryTaskId, ...(entryRunId ? { runId: entryRunId } : {}) }];
+        }
+        const entryTaskId = str(task);
+        return entryTaskId ? [{ taskId: entryTaskId }] : [];
+      });
+      return { kind: "tasks", liveTaskEntries };
     }
     case "task_started": {
       if (!taskId && !toolUseId) return null;
-      const prompt = str(msg.prompt);
-      const subagentType = str(msg.subagent_type);
       return {
         kind: "started",
         ...(taskId ? { taskId } : {}),
+        ...(runId ? { runId } : {}),
         ...(toolUseId ? { toolUseId } : {}),
         ...(taskType ? { taskType } : {}),
-        ...(description ? { description } : {}),
-        ...(subagentType ? { subagentType } : {}),
         ...(typeof msg.is_backgrounded === "boolean" ? { background: msg.is_backgrounded } : {}),
-        ...(prompt ? { prompt } : {})
-      };
-    }
-    case "task_progress": {
-      if (!taskId) return null;
-      const lastToolName = str(msg.last_tool_name);
-      return {
-        kind: "progress",
-        taskId,
-        ...(toolUseId ? { toolUseId } : {}),
-        ...(description ? { description } : {}),
-        ...(lastToolName ? { lastToolName } : {}),
-        ...(usage ? { usage } : {})
+        ...(msg.ambient === true ? { ambient: true } : {})
       };
     }
     case "task_updated": {
@@ -433,6 +428,7 @@ export function parseClaudeTaskSystemLine(line: string): ClaudeTaskSystemInfo | 
       return {
         kind: "updated",
         taskId,
+        ...(runId ? { runId } : {}),
         ...(status ? { status } : {}),
         ...(endTime !== undefined ? { endTime } : {})
       };
@@ -441,18 +437,53 @@ export function parseClaudeTaskSystemLine(line: string): ClaudeTaskSystemInfo | 
       if (!taskId) return null;
       const status = str(msg.status);
       const summary = str(msg.summary);
+      const usage = taskUsage(msg.usage);
+      const report = msg.handback_report;
+      const handbackReport =
+        report !== null && typeof report === "object" && !Array.isArray(report)
+          ? str((report as Record<string, unknown>)["text"])
+          : undefined;
       return {
         kind: "notification",
         taskId,
+        ...(runId ? { runId } : {}),
         ...(toolUseId ? { toolUseId } : {}),
         ...(status ? { status } : {}),
         ...(summary ? { summary } : {}),
+        ...(handbackReport ? { handbackReport } : {}),
         ...(usage ? { usage } : {})
       };
     }
     default:
       return null;
   }
+}
+
+interface ToolUseResultMsg {
+  type?: unknown;
+  message?: { content?: unknown };
+  tool_use_result?: unknown;
+}
+
+export function parseClaudeToolUseResult(line: string): { toolUseId: string; result: Record<string, unknown> } | null {
+  if (!line.trim().startsWith("{") || !line.includes("tool_use_result")) return null;
+  let msg: ToolUseResultMsg;
+  try {
+    msg = JSON.parse(line) as ToolUseResultMsg;
+  } catch {
+    return null;
+  }
+  if (msg.type !== "user") return null;
+  const result = msg.tool_use_result;
+  if (result === null || typeof result !== "object" || Array.isArray(result)) return null;
+  const content = msg.message?.content;
+  if (!Array.isArray(content)) return null;
+  const block = content.find(
+    (entry): entry is Record<string, unknown> => entry !== null && typeof entry === "object" && entry.type === "tool_result"
+  );
+  const toolUseId = str(block?.["tool_use_id"]);
+  if (!toolUseId) return null;
+  return { toolUseId, result: result as Record<string, unknown> };
 }
 
 export interface ClaudeSystemInitInfo {
@@ -563,7 +594,7 @@ export interface TurnDoneInfo {
   isError: boolean;
 }
 
-const AGENT_ID_RE = /\bagentId:\s*([0-9a-f]{8,64})\b/;
+export const AGENT_ID_RE = /\bagentId:\s*([0-9a-f]{8,64})\b/;
 
 export function parseClaudeSubagentHandback(
   event: ThreadEvent
@@ -666,19 +697,7 @@ export function parseStreamLine(
 
   if (msg.type === "user") {
     const raw = (msg as UserMsg).message?.content;
-    if (typeof raw === "string") {
-      const notif = parseClaudeTaskNotification(raw);
-      if (!notif) return [];
-      return [
-        {
-          type: "tool.result",
-          turnId,
-          toolCallId: notif.toolUseId,
-          output: notif.result.slice(0, 8000),
-          isError: notif.status ? notif.status.toLowerCase() !== "completed" : false
-        }
-      ];
-    }
+    if (typeof raw === "string") return [];
     const out: ThreadEvent[] = [];
     const blocks = Array.isArray(raw) ? raw : [];
     for (const block of blocks as Array<{ tool_use_id?: string; content?: unknown; is_error?: boolean }>) {

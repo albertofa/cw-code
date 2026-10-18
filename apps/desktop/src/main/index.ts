@@ -845,7 +845,9 @@ function registerIpc(services: Services): void {
         checks.push(checkCliVersion("codex", normalized.codexBinaryPath));
       }
     }
-    const failed = (await Promise.all(checks)).find((check) => check.error !== null || !check.ok);
+    const failed = (await Promise.all(checks)).find(
+      (check) => (check.configured || check.found) && (check.error !== null || !check.ok)
+    );
     if (failed) {
       const name = failed.binary === "claude" ? "Claude" : failed.binary === "codex" ? "Codex" : "OpenCode";
       const reason = !failed.available
@@ -924,17 +926,23 @@ function registerIpc(services: Services): void {
         attachments?: string[];
         command?: CommandInvocation;
         prRefs?: PrRef[];
+        finalReview?: { ref: PrRef; sha: string };
         acceptFolderHead?: string;
       }
     ) => {
       if (args.prRefs !== undefined && !Array.isArray(args.prRefs)) throw new Error("invalid prRefs");
       if (args.acceptFolderHead !== undefined && typeof args.acceptFolderHead !== "string") throw new Error("invalid acceptFolderHead");
       for (const ref of args.prRefs ?? []) assertPrRef(ref);
+      if (args.finalReview !== undefined) {
+        assertPrRef(args.finalReview.ref);
+        if (typeof args.finalReview.sha !== "string" || args.finalReview.sha === "") throw new Error("invalid finalReview sha");
+      }
       return sessions.startTurn(args.sessionId, args.prompt, {
         prefs: args.prefs,
         attachments: args.attachments,
         ...(args.command ? { command: args.command } : {}),
         prRefs: args.prRefs,
+        ...(args.finalReview ? { finalReview: args.finalReview } : {}),
         ...(args.acceptFolderHead !== undefined ? { acceptFolderHead: args.acceptFolderHead } : {})
       });
     }

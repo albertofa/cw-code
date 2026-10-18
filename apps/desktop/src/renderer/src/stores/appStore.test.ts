@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
-import { beforeEach, describe, expect, it } from "vitest";
-import type { UpdateActionResult, UpdateState } from "@cw-code/contracts";
+import { beforeEach, describe, expect, it, vi } from "vitest";
+import type { HistoryMessage, TaskSnapshot, UpdateActionResult, UpdateState } from "@cw-code/contracts";
 import { DEFAULT_COMPOSER, useAppStore } from "./appStore.js";
 import { getLastModel, setLastModel } from "../components/lastModel.js";
 
@@ -239,6 +239,212 @@ describe("appStore tool.result", () => {
   });
 });
 
+describe("appStore task snapshots", () => {
+  let session = "";
+  let sessionSeq = 0;
+
+  function snapshot(partial: Partial<TaskSnapshot> = {}): TaskSnapshot {
+    return { id: "call_1", kind: "agent", background: true, state: "running", runCount: 1, ...partial };
+  }
+
+  function historyCall(task: TaskSnapshot): HistoryMessage {
+    return {
+      id: "call_1",
+      role: "tool",
+      text: 'Agent {"description":"Review"}',
+      turnId: "turn-1",
+      toolName: "Agent",
+      task
+    };
+  }
+
+  function updateTask(task: TaskSnapshot): void {
+    useAppStore.getState().applyEvent(session, { type: "task.updated", turnId: "turn-1", sessionId: session, task });
+  }
+
+  function callSubagent(task?: TaskSnapshot): void {
+    useAppStore.getState().applyEvent(session, {
+      type: "tool.call",
+      turnId: "turn-1",
+      toolCallId: "call_1",
+      name: "Agent",
+      input: { description: "Review" },
+      ...(task ? { task } : {})
+    });
+  }
+
+  beforeEach(() => {
+    sessionSeq += 1;
+    session = `sess_tasks_${sessionSeq}`;
+    useAppStore.setState({
+      messagesBySession: {},
+      loadingHistory: {},
+      busyTurns: {},
+      pendingApprovals: {},
+      pendingQuestions: {}
+    });
+  });
+
+  it("stores the snapshot carried by a tool call and replaces it on a replayed call", () => {
+    callSubagent(snapshot());
+    expect(useAppStore.getState().messagesBySession[session][0].task).toEqual(snapshot());
+
+    const completed = snapshot({ state: "completed", endedAt: 5000 });
+    callSubagent(completed);
+    const messages = useAppStore.getState().messagesBySession[session];
+    expect(messages).toHaveLength(1);
+    expect(messages[0].task).toEqual(completed);
+  });
+
+  it("keeps the stored snapshot when a replayed call carries none", () => {
+    callSubagent(snapshot());
+    callSubagent();
+    expect(useAppStore.getState().messagesBySession[session][0].task).toEqual(snapshot());
+  });
+
+  it("patches the matching tool message on task.updated", () => {
+    callSubagent(snapshot());
+    const completed = snapshot({ state: "completed", endedAt: 5000, output: "Approve." });
+    useAppStore.getState().applyEvent(session, { type: "task.updated", turnId: "turn-1", sessionId: session, task: completed });
+    const messages = useAppStore.getState().messagesBySession[session];
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toMatchObject({ id: "call_1", toolName: "Agent", task: completed });
+  });
+
+  it("ignores task.updated for an unknown tool call without writing state", () => {
+    callSubagent(snapshot());
+    const before = useAppStore.getState().messagesBySession;
+    useAppStore.getState().applyEvent(session, {
+      type: "task.updated",
+      turnId: "turn-1",
+      sessionId: session,
+      task: snapshot({ id: "other", state: "failed" })
+    });
+    expect(useAppStore.getState().messagesBySession).toBe(before);
+    expect(useAppStore.getState().messagesBySession[session][0].task?.state).toBe("running");
+  });
+
+  it("ignores task.updated for a session without messages", () => {
+    const before = useAppStore.getState().messagesBySession;
+    useAppStore.getState().applyEvent("sess_empty", { type: "task.updated", turnId: "turn-1", sessionId: "sess_empty", task: snapshot() });
+    expect(useAppStore.getState().messagesBySession).toBe(before);
+  });
+
+  it("applies a task.updated that arrived before its tool call unless the call carries a newer snapshot", () => {
+    const completed = snapshot({ state: "completed", endedAt: 5000 });
+    updateTask(completed);
+    expect(useAppStore.getState().messagesBySession[session]).toBeUndefined();
+
+    callSubagent();
+    expect(useAppStore.getState().messagesBySession[session][0].task).toEqual(completed);
+
+    const later = snapshot({ state: "running", runCount: 2 });
+    updateTask(snapshot({ state: "completed", runCount: 1 }));
+    useAppStore.setState({ messagesBySession: {} });
+    callSubagent(later);
+    expect(useAppStore.getState().messagesBySession[session][0].task).toEqual(later);
+
+    const failed = snapshot({ state: "failed" });
+    callSubagent(failed);
+    expect(useAppStore.getState().messagesBySession[session][0].task).toEqual(failed);
+  });
+
+  it("keeps only the latest buffered snapshot per task", () => {
+    updateTask(snapshot({ state: "running", runCount: 1 }));
+    updateTask(snapshot({ state: "completed", runCount: 1, endedAt: 5000 }));
+    callSubagent();
+    expect(useAppStore.getState().messagesBySession[session][0].task).toEqual(
+      snapshot({ state: "completed", runCount: 1, endedAt: 5000 })
+    );
+  });
+
+  it("lets a task.updated that arrived while history was loading win over the stale history snapshot", async () => {
+    let resolveHistory: (history: HistoryMessage[]) => void = () => {};
+    const getHistory = vi.fn(() => new Promise<HistoryMessage[]>((resolve) => (resolveHistory = resolve)));
+    (window as unknown as { cw: unknown }).cw = { getHistory };
+
+    const loading = useAppStore.getState().ensureHistory(session);
+    const completed = snapshot({ state: "completed", endedAt: 5000 });
+    updateTask(completed);
+    resolveHistory([historyCall(snapshot())]);
+    await loading;
+
+    const messages = useAppStore.getState().messagesBySession[session];
+    expect(messages).toHaveLength(1);
+    expect(messages[0].task).toEqual(completed);
+  });
+
+  it("applies a buffered snapshot to the history returned by retryConnection", async () => {
+    const retryConnection = vi.fn(async () => ({ status: "done" as const, history: [historyCall(snapshot())] }));
+    (window as unknown as { cw: unknown }).cw = { retryConnection, activeTurns: async () => [] };
+
+    const failed = snapshot({ state: "failed", endedAt: 5000 });
+    updateTask(failed);
+    await useAppStore.getState().retryConnection(session);
+
+    const messages = useAppStore.getState().messagesBySession[session];
+    expect(messages).toHaveLength(1);
+    expect(messages[0].task).toEqual(failed);
+  });
+
+  it("leaves history snapshots untouched when nothing was buffered for them", async () => {
+    const running = snapshot();
+    (window as unknown as { cw: unknown }).cw = { getHistory: async () => [historyCall(running)] };
+    updateTask(snapshot({ id: "other", state: "failed" }));
+
+    await useAppStore.getState().ensureHistory(session);
+
+    expect(useAppStore.getState().messagesBySession[session][0].task).toEqual(running);
+  });
+
+  it("drops buffered snapshots the merged history did not claim", async () => {
+    (window as unknown as { cw: unknown }).cw = { getHistory: async () => [historyCall(snapshot())] };
+    updateTask(snapshot({ id: "outside_window", state: "failed" }));
+
+    await useAppStore.getState().ensureHistory(session);
+    useAppStore.getState().applyEvent(session, {
+      type: "tool.call",
+      turnId: "turn-2",
+      toolCallId: "outside_window",
+      name: "Agent",
+      input: { description: "Later" }
+    });
+
+    expect(useAppStore.getState().messagesBySession[session].find((m) => m.id === "outside_window")?.task).toBeUndefined();
+  });
+
+  it("keeps at most 200 buffered snapshots per session, dropping the oldest", () => {
+    for (let i = 0; i <= 200; i += 1) updateTask(snapshot({ id: `call_${i}`, state: "completed" }));
+    const call = (id: string) =>
+      useAppStore.getState().applyEvent(session, { type: "tool.call", turnId: "turn-1", toolCallId: id, name: "Agent", input: {} });
+
+    call("call_0");
+    call("call_200");
+
+    const messages = useAppStore.getState().messagesBySession[session];
+    expect(messages.find((m) => m.id === "call_0")?.task).toBeUndefined();
+    expect(messages.find((m) => m.id === "call_200")?.task?.state).toBe("completed");
+  });
+
+  it("finalizes unanswered subagent calls on turn.done even with background tasks", () => {
+    callSubagent(snapshot());
+    useAppStore.getState().applyEvent(session, {
+      type: "turn.done",
+      turnId: "turn-1",
+      sessionId: session,
+      resumeCursor: "cursor-1",
+      resultText: "",
+      usage: [],
+      numTurns: 1,
+      isError: false,
+      backgroundTasks: 1
+    });
+    const message = useAppStore.getState().messagesBySession[session][0];
+    expect(message.toolDone).toBe(true);
+    expect(message.task?.state).toBe("running");
+  });
+});
+
 describe("appStore pending model per harness", () => {
   beforeEach(() => {
     window.localStorage.clear();
@@ -246,6 +452,7 @@ describe("appStore pending model per harness", () => {
       activeProjectId: "proj_1",
       pendingDriver: "opencode",
       lastDriver: "opencode",
+      installedHarnesses: null,
       pendingPrefs: { ...DEFAULT_COMPOSER }
     });
   });
@@ -277,6 +484,18 @@ describe("appStore pending model per harness", () => {
     expect(useAppStore.getState().pendingDriver).toBe("opencode");
     expect(useAppStore.getState().pendingPrefs.model).toBeUndefined();
     expect(getLastModel("claude")).toBe("sonnet");
+  });
+
+  it("opens a new session on an installed harness when the requested one is not installed", () => {
+    useAppStore.setState({ installedHarnesses: ["claude"] });
+    useAppStore.getState().startNewSession("codex");
+    expect(useAppStore.getState().pendingDriver).toBe("claude");
+  });
+
+  it("moves the pending harness when availability drops it", () => {
+    useAppStore.getState().setInstalledHarnesses(["claude", "codex"]);
+    expect(useAppStore.getState().pendingDriver).toBe("claude");
+    expect(useAppStore.getState().lastDriver).toBe("claude");
   });
 });
 
@@ -320,6 +539,26 @@ describe("appStore applySession", () => {
     useAppStore.setState({ busyTurns: {} });
     useAppStore.getState().applySession({ ...base, status: "idle", updatedAt: 3 });
     expect(useAppStore.getState().sessionsByProject.proj_busy[0].status).toBe("idle");
+  });
+});
+
+describe("appStore sendPromptTo", () => {
+  it("rejects a second send while the first is still starting, without superseding it", async () => {
+    let resolveStart: (turnId: string) => void = () => {};
+    const startTurn = vi.fn(() => new Promise<string>((resolve) => (resolveStart = resolve)));
+    const interrupt = vi.fn(async () => {});
+    const activeTurns = async () => [{ sessionId: "sess_race", turnId: "turn_1", startedAt: 1 }];
+    (window as unknown as { cw: unknown }).cw = { startTurn, interrupt, activeTurns };
+    useAppStore.setState({ busyTurns: {}, messagesBySession: {}, sessionsByProject: {} });
+
+    const first = useAppStore.getState().sendPromptTo("sess_race", "auto follow-up");
+    await expect(useAppStore.getState().sendPromptTo("sess_race", "workflow prompt")).rejects.toThrow("session busy (turn pending)");
+    resolveStart("turn_1");
+    await first;
+
+    expect(startTurn).toHaveBeenCalledTimes(1);
+    expect(interrupt).not.toHaveBeenCalled();
+    expect(useAppStore.getState().busyTurns.sess_race).toBe("turn_1");
   });
 });
 

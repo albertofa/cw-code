@@ -1,5 +1,6 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import {
+  Activity,
   AlertTriangle,
   Check,
   ChevronRight,
@@ -16,7 +17,7 @@ import {
   X
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
-import type { PrCheck, PrDetail, PrRef, PrReviewThread, PrTimelineItem, PrWorkflow, Session } from "../cw.js";
+import type { PrCheck, PrCiState, PrDetail, PrRef, PrReviewThread, PrTimelineItem, PrWorkflow, Session } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import { usePrStore, type PrDetailTab } from "../stores/prStore.js";
 import { PrAvatar } from "./PrAvatar.js";
@@ -26,14 +27,21 @@ import { DriverIcon } from "./DriverIcon.js";
 import { Md } from "./Markdown.js";
 import { openExternalLink } from "./externalLink.js";
 import { PrFilesPanel } from "./PrFilesPanel.js";
+import { CheckLogSkeleton, PrDetailSkeleton } from "./GitHubSkeletons.js";
 import { prKey } from "./prInbox.js";
 import { firstUnseenIndex } from "./prUpdates.js";
 import { usePrSettings } from "./useLinkedPr.js";
 import { suggestedWorkflow } from "./prWorkflows.js";
-import { linkedSessionsBarState, mergeBoxState, threadQuoteText, threadSendTarget, type LinkedBarState } from "./prDetailModel.js";
+import { groupCommitsByDay, linkedSessionsBarState, mergeBoxState, relativeTime, threadQuoteText, threadSendTarget, type LinkedBarState } from "./prDetailModel.js";
 import { linkFor, pickMainSession, sessionsLinkedTo } from "./sessionPrLinks.js";
 
 const MAX_LOG_LINES = 2000;
+
+interface FixCiAction {
+  label: string;
+  icon: LucideIcon;
+  run: () => void;
+}
 
 function ageLabel(ts: number): string {
   const mins = Math.max(1, Math.round((Date.now() - ts) / 60000));
@@ -47,6 +55,10 @@ function ageLabel(ts: number): string {
 
 function shortSha(sha: string): string {
   return sha.slice(0, 7);
+}
+
+function commitUrl(detail: PrDetail, oid: string): string {
+  return `${detail.url.replace(/\/+$/, "")}/commits/${oid}`;
 }
 
 function without<T>(record: Record<number, T>, key: number): Record<number, T> {
@@ -124,7 +136,7 @@ function ThreadCard({
       {thread.comments.map((comment, index) => (
         <div className="pr-detail-thread-comment" key={index}>
           <div className="pr-detail-thread-comment-who"><strong>{comment.author}</strong></div>
-          <Md text={comment.body} allowImages={false} />
+          <Md text={comment.body} allowImages={false} allowHtml />
         </div>
       ))}
       <div className="pr-detail-thread-footer">
@@ -166,6 +178,7 @@ export function PrDetailView({ prRef }: { prRef: PrRef }) {
   const barState: LinkedBarState = detail ? linkedSessionsBarState(detail, linkedSessions, workflows) : { kind: "none" };
   const mainSession = useMemo(() => pickMainSession(linkedSessions, prRef), [linkedSessions, key]);
   const mainLink = mainSession ? linkFor(mainSession, prRef) : undefined;
+  const babysitter = barState.kind === "babysit" ? barState : null;
   const suggested = detail ? suggestedWorkflow(detail, workflows) : null;
   const fixCiWorkflow = workflows.find((w) => w.id === "fix-ci" && w.enabled) ?? suggested;
 
@@ -192,11 +205,15 @@ export function PrDetailView({ prRef }: { prRef: PrRef }) {
   };
 
   const sendThreadToSession = (thread: PrReviewThread) => {
-    const target = threadSendTarget(mainSession, prRef, suggested);
+    const target = threadSendTarget(babysitter?.session ?? mainSession, prRef, suggested);
     openRunModal({ ...target, subject: { kind: "pr", ref: prRef }, promptOverride: threadQuoteText(thread, prRef) });
   };
 
-  const onFixCi = fixCiWorkflow ? () => openWorkflow(fixCiWorkflow.id, mainSession?.id) : null;
+  const fixCi: FixCiAction | null = babysitter
+    ? { label: `Open ${babysitter.workflow.label} session`, icon: Activity, run: () => openSession(babysitter.session.id) }
+    : fixCiWorkflow
+      ? { label: "Fix CI…", icon: Wrench, run: () => openWorkflow(fixCiWorkflow.id, mainSession?.id) }
+      : null;
 
   const checksActive = activeTab === "checks";
 
@@ -295,7 +312,7 @@ export function PrDetailView({ prRef }: { prRef: PrRef }) {
             Could not load workflows: {settingsError}
           </div>
         )}
-        {loading && !detail && <div className="pr-view-empty">Loading pull request…</div>}
+        {loading && !detail && <PrDetailSkeleton />}
         {detail && (
           <div className="pr-detail-wrap">
             <div className="pr-detail-title-row">
@@ -364,7 +381,7 @@ export function PrDetailView({ prRef }: { prRef: PrRef }) {
                     onRetryLog={onRetryLog}
                     expandedLogRunId={expandedLogRunId}
                     onExpandLog={setExpandedLogRunId}
-                    onFixCi={onFixCi}
+                    fixCi={fixCi}
                   />
                 )}
                 {activeTab === "files" && <PrFilesPanel prRef={prRef} />}
@@ -375,6 +392,7 @@ export function PrDetailView({ prRef }: { prRef: PrRef }) {
                 linkedSessions={linkedSessions}
                 workflows={workflows}
                 suggested={suggested}
+                babysitter={babysitter}
                 onOpenSession={openSession}
                 onRunWorkflow={openWorkflow}
               />
@@ -397,6 +415,17 @@ function LinkedSessionsBar({
   onOpenSession: (sessionId: string) => void;
   onRunWorkflow: (workflowId: string, continueSessionId?: string) => void;
 }) {
+  if (barState.kind === "babysit") {
+    return (
+      <div className="pr-detail-linkbar">
+        <Activity size={13} className="babysit-icon" aria-hidden="true" />
+        <span className="pr-detail-linkbar-text">
+          {barState.workflow.label} is running in <strong>{barState.session.title}</strong>. Follow up in that session.
+        </span>
+        <button className="pr-detail-btn primary" onClick={() => onOpenSession(barState.session.id)}>Open session</button>
+      </div>
+    );
+  }
   if (barState.kind === "continue") {
     return (
       <div className="pr-detail-linkbar">
@@ -478,7 +507,7 @@ function ConversationTab({
             <PrAvatar login={detail.author.login} name={detail.author.name} avatarUrl={detail.author.avatarUrl} size={20} />
             <strong>{detail.viewerIsAuthor ? "you" : detail.author.login}</strong> opened this
           </div>
-          <Md text={detail.body} allowImages={false} />
+          <Md text={detail.body} allowImages={false} allowHtml />
         </div>
       )}
       <div className="pr-detail-timeline">
@@ -571,12 +600,20 @@ function TimelineEvent({
         </div>
         <div className="pr-detail-commits">
           {item.commits.map((commit) => (
-            <div className="pr-detail-commit-row" key={commit.oid}>
-              {commit.ci === "failing" ? <X size={12} className="bad" aria-hidden="true" /> : commit.ci === "passing" ? <Check size={12} className="ok" aria-hidden="true" /> : null}
-              <span>{commit.headline}</span>
-              <span className="grow" />
+            <button
+              type="button"
+              className="pr-detail-commit-row"
+              key={commit.oid}
+              title={commit.headline}
+              onClick={() => openExternalLink(commitUrl(detail, commit.oid))}
+            >
+              <span className="pr-detail-commit-node" aria-hidden="true" />
+              <PrAvatar login={commit.author} avatarUrl={commit.authorAvatarUrl} size={18} />
+              <span className="pr-detail-commit-headline">{commit.headline}</span>
+              <CommitTime at={commit.committedAt} />
+              <CommitCiIcon ci={commit.ci} />
               <span className="pr-detail-commit-sha">{shortSha(commit.oid)}</span>
-            </div>
+            </button>
           ))}
         </div>
         {failedSinceThis.length > 0 && (
@@ -599,7 +636,7 @@ function TimelineEvent({
           <strong>{item.actor}</strong> {reviewVerb(item.state)} · {ageLabel(item.at)} ago
           <span className={`pr-detail-pill sm ${tone}`}>{item.state.replace("_", " ").toLowerCase()}</span>
         </div>
-        {item.body && <Md text={item.body} allowImages={false} />}
+        {item.body && <Md text={item.body} allowImages={false} allowHtml />}
         {threads.map((thread) => (
           <ThreadCard key={thread.id} thread={thread} onSendToSession={onSendThread} />
         ))}
@@ -613,7 +650,7 @@ function TimelineEvent({
           <ActorAvatar actor={item.actor} detail={detail} />
           <strong>{item.actor}</strong> commented · {ageLabel(item.at)} ago
         </div>
-        <Md text={item.body} allowImages={false} />
+        <Md text={item.body} allowImages={false} allowHtml />
       </div>
     );
   }
@@ -635,19 +672,57 @@ function TimelineEvent({
   );
 }
 
+function CommitCiIcon({ ci }: { ci: PrCiState }) {
+  if (ci === "failing") return <X size={13} className="pr-detail-commit-ci bad" aria-label="Checks failing" />;
+  if (ci === "passing") return <Check size={13} className="pr-detail-commit-ci ok" aria-label="Checks passing" />;
+  return null;
+}
+
+function CommitTime({ at }: { at: number }) {
+  return (
+    <time className="pr-detail-commit-time" dateTime={new Date(at).toISOString()} title={new Date(at).toLocaleString()}>
+      {relativeTime(at, Date.now())}
+    </time>
+  );
+}
+
+function commitDay(ts: number): string {
+  return new Date(ts).toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+}
+
 function CommitsTab({ detail }: { detail: PrDetail }) {
+  const groups = useMemo(() => groupCommitsByDay(detail.commits, commitDay), [detail.commits]);
   if (detail.commits.length === 0) return <div className="pr-view-empty">No commits.</div>;
   return (
-    <div className="pr-detail-commit-list">
-      {detail.commits.map((commit) => (
-        <div className="pr-detail-commit-list-row" key={commit.oid}>
-          {commit.ci === "failing" ? <X size={13} className="bad" aria-hidden="true" /> : commit.ci === "passing" ? <Check size={13} className="ok" aria-hidden="true" /> : <span />}
-          <div className="pr-detail-commit-list-copy">
-            <div>{commit.headline}</div>
-            <div className="pr-detail-commit-list-meta">{commit.author} · {ageLabel(commit.committedAt)} ago</div>
+    <div className="pr-detail-commit-days">
+      {groups.map((group) => (
+        <section className="pr-detail-commit-day" key={group.day}>
+          <div className="pr-detail-commit-day-head">
+            <span className="pr-detail-commit-day-node"><GitCommitHorizontal size={14} aria-hidden="true" /></span>
+            Commits on {group.day}
           </div>
-          <span className="pr-detail-commit-sha">{shortSha(commit.oid)}</span>
-        </div>
+          <div className="pr-detail-commit-list">
+            {group.commits.map((commit) => (
+              <button
+                type="button"
+                className="pr-detail-commit-list-row"
+                key={commit.oid}
+                title={commit.headline}
+                onClick={() => openExternalLink(commitUrl(detail, commit.oid))}
+              >
+                <div className="pr-detail-commit-list-copy">
+                  <div className="pr-detail-commit-headline">{commit.headline}</div>
+                  <div className="pr-detail-commit-list-meta">
+                    <PrAvatar login={commit.author} avatarUrl={commit.authorAvatarUrl} size={16} />
+                    <strong>{commit.author}</strong> committed <CommitTime at={commit.committedAt} />
+                  </div>
+                </div>
+                <CommitCiIcon ci={commit.ci} />
+                <span className="pr-detail-commit-sha">{shortSha(commit.oid)}</span>
+              </button>
+            ))}
+          </div>
+        </section>
       ))}
     </div>
   );
@@ -664,7 +739,7 @@ function ChecksTab({
   onRetryLog,
   expandedLogRunId,
   onExpandLog,
-  onFixCi
+  fixCi
 }: {
   checkGroups: Array<[string, Array<{ check: PrCheck; index: number }>]>;
   selectedIndex: number | null;
@@ -676,7 +751,7 @@ function ChecksTab({
   onRetryLog: () => void;
   expandedLogRunId: number | null;
   onExpandLog: (runId: number) => void;
-  onFixCi: (() => void) | null;
+  fixCi: FixCiAction | null;
 }) {
   if (checkGroups.length === 0) return <div className="pr-view-empty">No checks reported.</div>;
   const checkUrl = selectedCheck?.url ?? null;
@@ -720,10 +795,10 @@ function ChecksTab({
               <div className="grow">
                 <strong>{selectedCheck.name}</strong>
               </div>
-              {selectedCheck.status === "failure" && onFixCi && (
-                <button className="pr-detail-btn primary" onClick={onFixCi}>
-                  <Wrench size={13} aria-hidden="true" />
-                  Fix CI…
+              {selectedCheck.status === "failure" && fixCi && (
+                <button className="pr-detail-btn primary" onClick={fixCi.run}>
+                  <fixCi.icon size={13} aria-hidden="true" />
+                  {fixCi.label}
                 </button>
               )}
               {checkUrl && (
@@ -734,7 +809,7 @@ function ChecksTab({
             </div>
             {failingRunId !== null && (
               <div className="pr-detail-check-log">
-                {logLoading && <div className="pr-detail-check-empty">Loading log…</div>}
+                {logLoading && <CheckLogSkeleton />}
                 {logError && (
                   <div className="pr-detail-check-empty">
                     {logError}
@@ -777,6 +852,7 @@ function SideColumn({
   linkedSessions,
   workflows,
   suggested,
+  babysitter,
   onOpenSession,
   onRunWorkflow
 }: {
@@ -784,6 +860,7 @@ function SideColumn({
   linkedSessions: Session[];
   workflows: PrWorkflow[];
   suggested: PrWorkflow | null;
+  babysitter: { session: Session; workflow: PrWorkflow } | null;
   onOpenSession: (sessionId: string) => void;
   onRunWorkflow: (workflowId: string) => void;
 }) {
@@ -811,22 +888,28 @@ function SideColumn({
       </div>
       <div className="pr-detail-side-block">
         <div className="pr-detail-side-title">Run workflow</div>
-        <div className="pr-detail-side-workflows">
-          {orderedWorkflows.map((workflow) => {
-            const Icon = workflowIcon(workflow.icon);
-            return (
-              <button
-                key={workflow.id}
-                className={`pr-detail-btn workflow${workflow.id === suggested?.id ? " primary" : ""}`}
-                onClick={() => onRunWorkflow(workflow.id)}
-              >
-                <Icon size={13} aria-hidden="true" />
-                {workflow.label}
-                {workflow.id === suggested?.id && <span className="pr-detail-suggested-tag">suggested</span>}
-              </button>
-            );
-          })}
-        </div>
+        {babysitter ? (
+          <div className="pr-detail-side-empty">
+            {babysitter.workflow.label} is running in “{babysitter.session.title}”. Follow up in that session.
+          </div>
+        ) : (
+          <div className="pr-detail-side-workflows">
+            {orderedWorkflows.map((workflow) => {
+              const Icon = workflowIcon(workflow.icon);
+              return (
+                <button
+                  key={workflow.id}
+                  className={`pr-detail-btn workflow${workflow.id === suggested?.id ? " primary" : ""}`}
+                  onClick={() => onRunWorkflow(workflow.id)}
+                >
+                  <Icon size={13} aria-hidden="true" />
+                  {workflow.label}
+                  {workflow.id === suggested?.id && <span className="pr-detail-suggested-tag">suggested</span>}
+                </button>
+              );
+            })}
+          </div>
+        )}
       </div>
       <div className="pr-detail-side-block">
         <div className="pr-detail-side-title">Reviewers</div>

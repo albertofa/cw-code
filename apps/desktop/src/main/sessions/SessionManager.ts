@@ -30,6 +30,7 @@ import type {
   SettingsPatch,
   ShutdownActiveTurn,
   SubagentToolsResult,
+  TaskSnapshot,
   ThreadEvent,
   TurnChanges,
   TurnHandle,
@@ -44,6 +45,7 @@ import { autoFollowUpWorkflow } from "../../shared/autoFollowUp.js";
 import { SessionStore } from "./SessionStore.js";
 import {
   addUnlinkedKey,
+  applyFinalReview,
   applyTurnSeen,
   authorLocalBranch,
   findIssueLink,
@@ -82,6 +84,7 @@ import { NEW_SESSION_TITLE, pickRestoreCandidate } from "./sessionRestore.js";
 import { opencodeServerDir, sessionDbPath, settingsFilePath, titleGenDir, usageDir, worktreesDir } from "../paths/appPaths.js";
 import { UsageLedger } from "../usage/UsageLedger.js";
 import { shutdownReservedError } from "../shutdown/shutdownReservation.js";
+import { overlayLiveTasks } from "../tasks/overlayLiveTasks.js";
 
 export interface SessionManagerOptions {
   dbPath?: string;
@@ -176,6 +179,15 @@ function driverBusy(driver: CliDriver, sessionId: string): boolean {
   }
 }
 
+function driverLiveTasks(driver: CliDriver, sessionId: string): TaskSnapshot[] {
+  try {
+    return driver.liveTasks?.(sessionId) ?? [];
+  } catch (err) {
+    console.warn(`driver live tasks failed for ${sessionId}: ${(err as Error).message}`);
+    return [];
+  }
+}
+
 function autoFinishedTarget(value: AppSettings["prFinishedSessionStatus"]): value is "idle" | "resolved" | "archived" {
   return value !== "none";
 }
@@ -218,6 +230,7 @@ export class SessionManager {
   private prStateRefresh?: (ref: PrRef) => Promise<PrSummary["state"] | null>;
   private prUpdatedAt: (ref: PrRef) => number | null;
   private turnPrRefs = new Map<string, PrRef[]>();
+  private turnFinalReviews = new Map<string, { ref: PrRef; sha: string }>();
   private usageLedger: UsageLedger;
   private titleGenPath: string;
 
@@ -287,6 +300,10 @@ export class SessionManager {
       return;
     }
     this.flushDelta(event.turnId);
+    if (event.type === "task.updated") {
+      if (this.store.getSession(event.sessionId)) this.handleDriverEvent(event.sessionId, event);
+      return;
+    }
     const sessionId = this.activeTurns.get(event.turnId)?.sessionId ?? this.settledTurns.get(event.turnId) ?? "";
     this.handleDriverEvent(sessionId, event);
   }
@@ -424,14 +441,17 @@ export class SessionManager {
         this.captureEndSnapshot(event.sessionId, event.turnId);
         if (wasActive && !event.isError) void this.renameBranchForTitle(event.sessionId, event.turnId);
         const covered = this.turnPrRefs.get(event.turnId) ?? [];
+        const finalReview = event.isError ? undefined : this.turnFinalReviews.get(event.turnId);
         this.turnPrRefs.delete(event.turnId);
-        this.syncPrSeenAfterTurn(event.sessionId, covered, turnStartedAt);
+        this.turnFinalReviews.delete(event.turnId);
+        this.syncPrSeenAfterTurn(event.sessionId, covered, turnStartedAt, finalReview);
       }
     }
     if (event.type === "turn.error") {
       if (sessionId) this.settleTurn(event.turnId, sessionId);
       else this.activeTurns.delete(event.turnId);
       this.turnPrRefs.delete(event.turnId);
+      this.turnFinalReviews.delete(event.turnId);
       if (sessionId) {
         this.captureEndSnapshot(sessionId, event.turnId);
         this.store.updateSession(
@@ -817,7 +837,12 @@ export class SessionManager {
     return session;
   }
 
-  private syncPrSeenAfterTurn(sessionId: string, coveredRefs: PrRef[], turnStartedAt: number | undefined): void {
+  private syncPrSeenAfterTurn(
+    sessionId: string,
+    coveredRefs: PrRef[],
+    turnStartedAt: number | undefined,
+    finalReview: { ref: PrRef; sha: string } | undefined
+  ): void {
     const session = this.store.getSession(sessionId);
     const links = session?.prs ?? [];
     if (links.length === 0) return;
@@ -840,17 +865,21 @@ export class SessionManager {
       ]);
       const current = this.store.getSession(sessionId);
       if (!current?.prs) return;
-      const results = targets.map((target, index) => ({ ...target, head: heads[index], seenAt: this.prUpdatedAt(target.ref) }));
-      const prs = applyTurnSeen(current.prs, results, worktreeHead, now);
+      const results = targets.map((target, index) => ({ ...target, head: heads[index].head, seenAt: this.prUpdatedAt(target.ref) }));
+      const seen = applyTurnSeen(current.prs, results, worktreeHead, now);
+      const reviewedIndex = finalReview ? targets.findIndex((target) => prKey(target.ref) === prKey(finalReview.ref)) : -1;
+      const reviewedHead = reviewedIndex >= 0 ? heads[reviewedIndex].refreshed : null;
+      const prs = finalReview ? applyFinalReview(seen, finalReview, reviewedHead) : seen;
       if (prs === current.prs) return;
       this.store.updateSession(sessionId, { prs });
       this.emitSession(sessionId);
     })();
   }
 
-  private async turnEndHead(ref: PrRef): Promise<string | null> {
-    if (isFinishedPrState(this.prState(ref))) return this.prHead(ref);
-    return (await this.prHeadRefresh?.(ref).catch(() => null)) ?? this.prHead(ref);
+  private async turnEndHead(ref: PrRef): Promise<{ head: string | null; refreshed: string | null }> {
+    if (isFinishedPrState(this.prState(ref))) return { head: this.prHead(ref), refreshed: null };
+    const refreshed = (await this.prHeadRefresh?.(ref).catch(() => null)) ?? null;
+    return { head: refreshed ?? this.prHead(ref), refreshed };
   }
 
   expireHoldingSessions(sessionIds: string[]): SessionMeta[] {
@@ -1288,6 +1317,11 @@ export class SessionManager {
     if (!session) throw new Error(`unknown session ${sessionId}`);
     const project = this.store.getProject(session.projectId);
     if (!project) throw new Error(`unknown project ${session.projectId}`);
+    const messages = await this.loadHistory(session, project);
+    return overlayLiveTasks(messages, driverLiveTasks(this.drivers[session.driver], sessionId));
+  }
+
+  private async loadHistory(session: SessionMeta, project: Project): Promise<HistoryMessage[]> {
     if (!session.resumeCursor) {
       const healed = await this.healMissingCursor(session, project);
       if (!healed) return [];
@@ -1295,10 +1329,10 @@ export class SessionManager {
     }
     let messages: HistoryMessage[];
     try {
-      messages = await this.drivers[session.driver].getHistory(await this.ensureWorktree(sessionId), session.resumeCursor);
+      messages = await this.drivers[session.driver].getHistory(await this.ensureWorktree(session.id), session.resumeCursor);
     } catch (err) {
       const message = (err as Error).message;
-      console.warn(`history failed for ${sessionId}: ${message}`);
+      console.warn(`history failed for ${session.id}: ${message}`);
       throw new Error(`Could not load history for this session: ${message}. Retry to reconnect.`);
     }
     if (messages.length > 0) return messages;
@@ -1641,7 +1675,14 @@ export class SessionManager {
   async startTurn(
     sessionId: string,
     prompt: string,
-    opts?: { prefs?: ComposerPrefs; attachments?: string[]; command?: CommandInvocation; prRefs?: PrRef[]; acceptFolderHead?: string }
+    opts?: {
+      prefs?: ComposerPrefs;
+      attachments?: string[];
+      command?: CommandInvocation;
+      prRefs?: PrRef[];
+      finalReview?: { ref: PrRef; sha: string };
+      acceptFolderHead?: string;
+    }
   ): Promise<string> {
     this.assertNotReserved();
     const session = this.store.getSession(sessionId);
@@ -1689,6 +1730,7 @@ export class SessionManager {
       });
       this.activeTurns.set(handle.turnId, { sessionId, startedAt: Date.now() });
       if (opts?.prRefs && opts.prRefs.length > 0) this.turnPrRefs.set(handle.turnId, opts.prRefs);
+      if (opts?.finalReview) this.turnFinalReviews.set(handle.turnId, opts.finalReview);
       const lastTurnSnapshot = snapshot ? { turnId: handle.turnId, ...snapshot } : undefined;
       const snapshotChanged = lastTurnSnapshot !== undefined || session.lastTurnSnapshot !== undefined;
       this.store.updateSession(sessionId, { status: "working", lastTurnSnapshot }, "turn-start");
@@ -1934,6 +1976,7 @@ export class SessionManager {
     driver?.interrupt(turnId);
     this.settleTurn(turnId, sessionId);
     this.turnPrRefs.delete(turnId);
+    this.turnFinalReviews.delete(turnId);
     this.captureEndSnapshot(sessionId, turnId, driver ? () => this.driverSettled(driver, sessionId) : undefined);
     this.store.updateSession(sessionId, { status: "holding" }, "turn-interrupted");
     if (!session) return;
@@ -1966,7 +2009,7 @@ export class SessionManager {
     } else {
       this.store.updateSession(sessionId, { status: "idle" }, "retry-idle");
     }
-    return result;
+    return { ...result, history: overlayLiveTasks(result.history, driverLiveTasks(driver, sessionId)) };
   }
 
   async respondApproval(requestId: string, decision: ApprovalDecision): Promise<void> {

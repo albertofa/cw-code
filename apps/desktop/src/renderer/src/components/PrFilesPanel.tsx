@@ -5,6 +5,7 @@ import { usePrStore } from "../stores/prStore.js";
 import { prKey } from "./prInbox.js";
 import { FileIcon } from "./fileIcons.js";
 import { parseUnifiedDiff } from "./diffParser.js";
+import { PrFilesSkeleton } from "./GitHubSkeletons.js";
 
 const STATUS_BADGE: Record<string, string> = {
   added: "A",
@@ -46,7 +47,7 @@ export function PrFilesPanel({ prRef }: { prRef: PrRef }) {
       </div>
     );
   }
-  if (diff === undefined) return <div className="pr-files-empty">Loading changed files…</div>;
+  if (diff === undefined) return <PrFilesSkeleton />;
   if (files.length === 0) return <div className="pr-files-empty">No changed files.</div>;
 
   const expanded = selected !== null && expandedPath === selected.path;

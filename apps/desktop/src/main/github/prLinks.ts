@@ -197,6 +197,12 @@ export function applyTurnSeen(
   return next;
 }
 
+export function applyFinalReview(prs: SessionPrLink[], review: { ref: PrRef; sha: string }, head: string | null): SessionPrLink[] {
+  const link = findLink(prs, review.ref);
+  if (!link || head !== review.sha || link.finalReviewSha === head) return prs;
+  return upsertLink(prs, { ...link, finalReviewSha: head });
+}
+
 export function onlyFinishedLinks(prs: SessionPrLink[] | undefined, finishedKeys: ReadonlySet<string>): boolean {
   if (!prs?.length) return false;
   return prs.every((link) => finishedKeys.has(prKey(link.ref)));

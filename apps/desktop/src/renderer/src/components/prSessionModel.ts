@@ -1,9 +1,9 @@
 import type { AppSettings, PrDetail, PrRef, PrSummary, PrUpdate, PrWorkflow, SessionMeta, SessionPrLink } from "@cw-code/contracts";
-import { autoFollowUpWorkflow } from "../../../shared/autoFollowUp.js";
+import { autoFollowUpWorkflow, runsContinuously } from "../../../shared/autoFollowUp.js";
 import { prKey } from "./prInbox.js";
 import { detailNeedsRefresh, seenThrough, updatesSince } from "./prUpdates.js";
 
-export { autoFollowUpWorkflow };
+export { autoFollowUpWorkflow, runsContinuously };
 import { attributionText, resolveTemplate, templateVars } from "./prWorkflows.js";
 import { sessionLinks, type PrSummaryLookup } from "./sessionPrLinks.js";
 
@@ -55,6 +55,20 @@ export function followUpPrompt(
   return resolveTemplate(workflow.updatePrompt, vars);
 }
 
+export function isMergeReady(pr: PrSummary): boolean {
+  return pr.state === "OPEN" && (pr.mergeStateStatus === "CLEAN" || pr.mergeStateStatus === "HAS_HOOKS");
+}
+
+function finalReviewPassed(link: SessionPrLink, pr: PrSummary | undefined): pr is PrSummary {
+  return pr !== undefined && isMergeReady(pr) && link.finalReviewSha === pr.headRefOid;
+}
+
+export function finalReviewPrompt(pr: Pick<PrSummary, "ref" | "headRefOid">): string {
+  const number = pr.ref.number;
+  return `PR #${number} is mergeable at ${pr.headRefOid} according to GitHub.
+Do a final review pass of the full diff (\`gh pr diff ${number}\`) before it merges. If something would block the merge, fix it, commit and push. If it is ready, change nothing and say so.`;
+}
+
 export interface AutoFollowUpSession {
   session: Pick<SessionMeta, "id" | "status" | "prs">;
   busy: boolean;
@@ -63,7 +77,11 @@ export interface AutoFollowUpSession {
   autoTurns: number;
 }
 
-export type BabysitPhase = { kind: "working" } | { kind: "watching" } | { kind: "paused"; reason: AutoFollowUpPause | "limit" };
+export type BabysitPhase =
+  | { kind: "working" }
+  | { kind: "watching" }
+  | { kind: "done"; pr: PrSummary }
+  | { kind: "paused"; reason: AutoFollowUpPause | "limit" };
 
 export interface BabysitState {
   link: SessionPrLink;
@@ -77,9 +95,10 @@ export interface BabysitControl {
   autoTurns: number;
 }
 
-function babysitPhase({ busy, paused, autoTurns }: BabysitControl): BabysitPhase {
+function babysitPhase(link: SessionPrLink, pr: PrSummary | undefined, { busy, paused, autoTurns }: BabysitControl): BabysitPhase {
   if (paused) return { kind: "paused", reason: paused };
   if (busy) return { kind: "working" };
+  if (finalReviewPassed(link, pr)) return { kind: "done", pr };
   if (autoTurns >= AUTO_FOLLOW_UP_LIMIT) return { kind: "paused", reason: "limit" };
   return { kind: "watching" };
 }
@@ -95,7 +114,7 @@ export function babysitState(
     const workflow = autoFollowUpWorkflow(link, workflows);
     const summary = summaryByKey.get(prKey(link.ref));
     if (!workflow || (summary && summary.state !== "OPEN")) continue;
-    return { link, workflow, phase: babysitPhase(control) };
+    return { link, workflow, phase: babysitPhase(link, summary, control) };
   }
   return null;
 }
@@ -106,6 +125,8 @@ export function babysitStatusText(state: BabysitState): string {
       return "Working on the PR";
     case "watching":
       return "Watching for failed checks, change requests and comments";
+    case "done":
+      return "Final review done, ready to merge";
     case "paused":
       switch (state.phase.reason) {
         case "user":
@@ -126,11 +147,43 @@ export interface AutoFollowUp {
   workflow: PrWorkflow;
   detail: PrDetail;
   updates: PrUpdate[];
+  finalReview: boolean;
   signature: string;
 }
 
 function isWatchable(session: Pick<SessionMeta, "status">): boolean {
   return session.status !== "resolved" && session.status !== "archived";
+}
+
+export function startsAutoFollowUp(
+  session: Pick<SessionMeta, "status">,
+  workflow: PrWorkflow | null | undefined,
+  pr: Pick<PrSummary, "state"> | null | undefined
+): workflow is PrWorkflow {
+  return !!workflow && runsContinuously(workflow) && isWatchable(session) && (!pr || pr.state === "OPEN");
+}
+
+export type FollowUpMode =
+  | { kind: "auto"; workflow: PrWorkflow; phase: BabysitPhase }
+  | { kind: "start"; workflow: PrWorkflow }
+  | { kind: "once"; workflow: PrWorkflow }
+  | { kind: "none" };
+
+export function followUpMode(
+  session: Pick<SessionMeta, "status">,
+  link: SessionPrLink,
+  pr: Pick<PrSummary, "state"> | null,
+  workflow: PrWorkflow | null,
+  workflows: PrWorkflow[],
+  babysit: BabysitState | null
+): FollowUpMode {
+  const auto = autoFollowUpWorkflow(link, workflows);
+  if (auto && babysit && isWatchable(session) && (!pr || pr.state === "OPEN")) {
+    return { kind: "auto", workflow: auto, phase: babysit.phase };
+  }
+  if (!workflow) return { kind: "none" };
+  if (!auto && startsAutoFollowUp(session, workflow, pr)) return { kind: "start", workflow };
+  return { kind: "once", workflow };
 }
 
 export function autoFollowUpRefs(sessions: Pick<SessionMeta, "status" | "prs">[], summaryByKey: PrSummaryLookup, workflows: PrWorkflow[]): PrRef[] {
@@ -162,14 +215,19 @@ export function autoFollowUps(
       const detail = detailByKey[key];
       if (!workflow || !detail || detail.state !== "OPEN" || detailNeedsRefresh(detail, summaryByKey.get(key))) continue;
       const updates = updatesSince(detail, link);
-      if (!updates.some((update) => update.actionable)) continue;
+      const actionable = updates.some((update) => update.actionable);
+      const finalReview = !actionable && isMergeReady(detail) && link.finalReviewSha !== detail.headRefOid;
+      if (!actionable && !finalReview) continue;
       result.push({
         sessionId: session.id,
         link,
         workflow,
         detail,
         updates,
-        signature: `${session.id}:${key}@${detail.headRefOid}:${seenThrough(detail, updates) ?? ""}`
+        finalReview,
+        signature: finalReview
+          ? `${session.id}:${key}@${detail.headRefOid}:final`
+          : `${session.id}:${key}@${detail.headRefOid}:${seenThrough(detail, updates) ?? ""}`
       });
       break;
     }

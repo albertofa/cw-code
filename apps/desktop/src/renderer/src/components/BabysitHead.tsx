@@ -1,25 +1,49 @@
 import { useState } from "react";
-import { Activity, ExternalLink, Pause, Play, Square } from "lucide-react";
+import { Activity, Circle, CircleCheck, CircleX, ExternalLink, Pause, Play, Square } from "lucide-react";
+import type { PrDetail } from "@cw-code/contracts";
 import { useAppStore } from "../stores/appStore.js";
 import { usePrStore } from "../stores/prStore.js";
-import { babysitStatusText } from "./prSessionModel.js";
+import { mergeBoxState, type MergeRow } from "./prDetailModel.js";
+import { prKey } from "./prInbox.js";
+import { babysitStatusText, type BabysitState } from "./prSessionModel.js";
 import { prRefLabel } from "./sessionPrLinks.js";
-import { useBabysitStates } from "./useBabysit.js";
-import { findSession } from "./useLinkedPr.js";
 import { ipcErrorMessage } from "./ipcError.js";
 
-export function BabysitBar({ sessionId }: { sessionId: string }) {
-  const session = useAppStore((s) => findSession(s.sessionsByProject, sessionId));
+function MergeRowIcon({ row, neutral }: { row: MergeRow; neutral: boolean }) {
+  if (neutral) return <Circle size={13} className="pr-dock-update-icon tone-neutral" aria-hidden="true" />;
+  return row.ok ? (
+    <CircleCheck size={13} className="pr-dock-update-icon tone-ok" aria-hidden="true" />
+  ) : (
+    <CircleX size={13} className="pr-dock-update-icon tone-bad" aria-hidden="true" />
+  );
+}
+
+function MergeState({ pr }: { pr: PrDetail }) {
+  const box = mergeBoxState(pr);
+  const rows = [box.ci, box.conflicts, box.review];
+  return (
+    <ul className="pr-dock-list" aria-label="Merge state">
+      {rows.map((row) => (
+        <li key={row.label} className="pr-dock-item">
+          <MergeRowIcon row={row} neutral={row === box.review && pr.review === "none"} />
+          <span className="pr-dock-item-text">
+            {row.label}
+            {row.detail ? ` · ${row.detail}` : ""}
+          </span>
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+export function BabysitHead({ sessionId, state }: { sessionId: string; state: BabysitState }) {
   const pause = useAppStore((s) => s.pauseAutoFollowUp);
   const resume = useAppStore((s) => s.resumeAutoFollowUp);
   const applySession = useAppStore((s) => s.applySession);
   const openPr = usePrStore((s) => s.openPr);
-  const stateOf = useBabysitStates();
+  const detail = usePrStore((s) => s.detailByKey[prKey(state.link.ref)]);
   const [stopping, setStopping] = useState(false);
   const [error, setError] = useState<string | null>(null);
-
-  const state = session ? stateOf(session) : null;
-  if (!state) return null;
 
   const { link, workflow, phase } = state;
   const paused = phase.kind === "paused";
@@ -40,7 +64,7 @@ export function BabysitBar({ sessionId }: { sessionId: string }) {
   };
 
   return (
-    <section className={`pr-dock babysit-bar${paused ? " paused" : ""}`} aria-label={`${workflow.label} mode`}>
+    <>
       <div className="pr-dock-head">
         <Activity size={14} className={`babysit-icon ${phase.kind}`} aria-hidden="true" />
         <span className="pr-dock-title">
@@ -69,17 +93,18 @@ export function BabysitBar({ sessionId }: { sessionId: string }) {
           className="pr-detail-btn ghost sm"
           onClick={() => void stop()}
           disabled={stopping}
-          title={`Stop ${workflow.label} for this session. Updates will wait for you in the update dock.`}
+          title={`Stop ${workflow.label} for this session. Updates will wait for you here.`}
         >
           <Square size={12} aria-hidden="true" />
           Stop
         </button>
       </div>
+      {phase.kind === "done" && detail && <MergeState pr={detail} />}
       {error && (
         <div className="pr-dock-error" role="alert">
           {error}
         </div>
       )}
-    </section>
+    </>
   );
 }

@@ -50,7 +50,7 @@ describe("buildProbeResult", () => {
       nodePty: { status: "loaded-spawned", exitCode: 0 },
       renderer: { loadCompleted: true, failures: [] },
       cliChecks: [
-        { binary: "claude", binaryPath: "claude.exe", minimum: "2.1.260", actual: null, available: false, error: "ENOENT", ok: false }
+        { binary: "claude", binaryPath: "claude.exe", minimum: "2.1.260", actual: null, configured: false, found: false, available: false, error: "ENOENT", ok: false }
       ],
       sandbox: null,
       durationMs: 1234
@@ -65,7 +65,7 @@ describe("buildProbeResult", () => {
       rendererLoaded: true,
       rendererFailures: [],
       cliChecks: [
-        { binary: "claude", binaryPath: "claude.exe", minimum: "2.1.260", actual: null, available: false, error: "ENOENT", ok: false }
+        { binary: "claude", binaryPath: "claude.exe", minimum: "2.1.260", actual: null, configured: false, found: false, available: false, error: "ENOENT", ok: false }
       ],
       sandbox: null,
       durationMs: 1234

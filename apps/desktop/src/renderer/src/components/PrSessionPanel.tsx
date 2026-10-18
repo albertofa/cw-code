@@ -10,6 +10,7 @@ import { formatRelativeAge } from "./prInboxModel.js";
 import { defaultFollowUpWorkflowId, followUpWorkflow, whyLinkedText } from "./prSessionModel.js";
 import { updatesSince } from "./prUpdates.js";
 import { PrUpdateIcon } from "./PrUpdateIcon.js";
+import { PrPanelSkeleton } from "./GitHubSkeletons.js";
 import { branchMismatch } from "./sessionBranch.js";
 import { canLinkItem, sessionPrItemLabel, sessionPrItemsTitle, type SessionPrItem } from "./sessionPrItems.js";
 import { displayChip, mostUrgentLink, prRefLabel } from "./sessionPrLinks.js";
@@ -345,7 +346,7 @@ export function PrSessionPanel({ sessionId }: { sessionId: string }) {
             {actionError}
           </div>
         )}
-        {!detail && loading && <div className="pr-panel-empty">Loading pull request…</div>}
+        {!detail && loading && <PrPanelSkeleton />}
         {detail && (
           <>
             <section className="pr-panel-sec">

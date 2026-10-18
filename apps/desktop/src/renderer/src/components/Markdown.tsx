@@ -12,7 +12,9 @@ import {
 } from "react";
 import Markdown from "react-markdown";
 import remarkGfm from "remark-gfm";
-import type { Components } from "react-markdown";
+import rehypeRaw from "rehype-raw";
+import rehypeSanitize from "rehype-sanitize";
+import type { Components, Options } from "react-markdown";
 import { renderToStaticMarkup } from "react-dom/server";
 import { useNotifs } from "./Notifications.js";
 import {
@@ -446,12 +448,15 @@ const HTTPS_ONLY_COMPONENTS: Components = {
   img: ({ src, alt }) => <HttpsOnlyImage src={typeof src === "string" ? src : undefined} alt={alt} />
 };
 
+const HTML_REHYPE_PLUGINS: Options["rehypePlugins"] = [rehypeRaw, rehypeSanitize];
+
 export const Md = memo(function Md({
   text,
   onOpenFile,
   onOpenSource,
   onOpenExternal,
   allowImages = true,
+  allowHtml = false,
   linkPolicy = "default"
 }: {
   text: string;
@@ -459,6 +464,7 @@ export const Md = memo(function Md({
   onOpenSource?: (path: string, line?: number) => void;
   onOpenExternal?: (path: string) => void;
   allowImages?: boolean;
+  allowHtml?: boolean;
   linkPolicy?: "default" | "https-only";
 }) {
   const components = useMemo<Components>(
@@ -473,13 +479,22 @@ export const Md = memo(function Md({
             table: MdTable,
             blockquote: MdBlockquote,
             a: (props) => <MdLink {...props} onOpenFile={onOpenFile} onOpenExternal={onOpenExternal} />,
-            ...(allowImages ? {} : { img: ({ src, alt }) => <MdImageLink src={typeof src === "string" ? src : undefined} alt={alt} /> })
+            ...(allowImages
+              ? {}
+              : {
+                  img: ({ src, alt }) => <MdImageLink src={typeof src === "string" ? src : undefined} alt={alt} />,
+                  source: () => null
+                })
           },
     [onOpenFile, onOpenSource, onOpenExternal, allowImages, linkPolicy]
   );
   return (
     <div className="md">
-      <Markdown remarkPlugins={[remarkGfm]} components={components}>
+      <Markdown
+        remarkPlugins={[remarkGfm]}
+        rehypePlugins={allowHtml ? HTML_REHYPE_PLUGINS : undefined}
+        components={components}
+      >
         {text}
       </Markdown>
     </div>

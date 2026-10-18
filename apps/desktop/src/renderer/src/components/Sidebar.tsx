@@ -647,7 +647,7 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
     if (!state) return null;
     const label = `${state.workflow.label}: ${babysitStatusText(state)}`;
     return (
-      <span className={`babysit-badge${state.phase.kind === "paused" ? " paused" : ""}`} title={label} aria-label={label} role="img">
+      <span className={`babysit-badge ${state.phase.kind}`} title={label} aria-label={label} role="img">
         <Activity size={13} aria-hidden="true" />
       </span>
     );
@@ -1174,7 +1174,7 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
           </div>
           {hoverBabysit && (
             <div className="session-hovercard-row">
-              <Activity size={13} className={`babysit-badge${hoverBabysit.phase.kind === "paused" ? " paused" : ""}`} aria-hidden="true" />
+              <Activity size={13} className={`babysit-badge ${hoverBabysit.phase.kind}`} aria-hidden="true" />
               <span className="hovercard-text">
                 {hoverBabysit.workflow.label} #{hoverBabysit.link.ref.number} · {babysitStatusText(hoverBabysit)}
               </span>

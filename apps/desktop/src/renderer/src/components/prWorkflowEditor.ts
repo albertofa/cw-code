@@ -1,5 +1,6 @@
 import type { PrSuggestCondition, PrWorkflow } from "@cw-code/contracts";
 import { TEMPLATE_VARS_BY_TARGET } from "./prWorkflows.js";
+import { INHERITED_HARNESS } from "./workflowHarness.js";
 
 export type WorkflowTarget = PrWorkflow["target"];
 
@@ -41,6 +42,7 @@ export function createWorkflow(existing: PrWorkflow[], target: WorkflowTarget = 
     target,
     suggestWhen: [],
     workspace: "checkout",
+    harness: { ...INHERITED_HARNESS },
     startPrompt: "",
     updatePrompt: ""
   };

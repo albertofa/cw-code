@@ -15,6 +15,11 @@ export function configuredCliBinaryPath(
   return normalizeBinaryPath(value) || defaultCliBinaryPath(binary, platform);
 }
 
+export function isDefaultCliBinaryPath(binary: CliBinary, value: string): boolean {
+  const name = normalizeBinaryPath(value).toLowerCase();
+  return name === "" || name === binary || name === `${binary}.exe`;
+}
+
 export function normalizeBinaryPath(p: string): string {
   const trimmed = p.trim();
   if (!trimmed) return "";

@@ -4,7 +4,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
-import type { CliDriver, HistoryMessage, ModelOption, SessionMeta, ThreadEvent, TurnHandle, TurnSnapshot } from "@cw-code/contracts";
+import type { CliDriver, HistoryMessage, ModelOption, SessionMeta, TaskSnapshot, ThreadEvent, TurnHandle, TurnSnapshot } from "@cw-code/contracts";
 import { SessionManager, type SessionManagerOptions } from "./SessionManager.js";
 import { SYNTHETIC_FULL_ACCESS_DESCRIPTION } from "../providers/permissions.js";
 import type { SessionStore } from "./SessionStore.js";
@@ -415,6 +415,38 @@ describe("SessionManager", () => {
     expect(received).toContainEqual({
       sessionId: session.id,
       event: expect.objectContaining({ type: "tool.result", toolCallId: "call-bash" })
+    });
+    manager.dispose();
+  });
+
+  it("routes a task update for an older turn by its own session after a newer turn settled", async () => {
+    const { manager, received } = makeManager();
+    const project = manager.addProject("C:\\proj-late-task");
+    const session = await manager.createSession(project.id, "claude");
+    const route = (manager as unknown as { routeEvent(e: ThreadEvent): void }).routeEvent.bind(manager);
+    const settle = (turnId: string): void =>
+      route({
+        type: "turn.done",
+        turnId,
+        sessionId: session.id,
+        resumeCursor: "cursor-1",
+        resultText: "",
+        usage: [],
+        numTurns: 1,
+        isError: false,
+        backgroundTasks: 0
+      });
+    const olderTurn = await manager.startTurn(session.id, "spawn a subagent");
+    settle(olderTurn);
+    const newerTurn = await manager.startTurn(session.id, "next prompt");
+    settle(newerTurn);
+    const task: TaskSnapshot = { id: "call-agent", kind: "agent", background: true, state: "completed", runCount: 1 };
+
+    route({ type: "task.updated", turnId: olderTurn, sessionId: session.id, task });
+
+    expect(received).toContainEqual({
+      sessionId: session.id,
+      event: { type: "task.updated", turnId: olderTurn, sessionId: session.id, task }
     });
     manager.dispose();
   });
@@ -2214,6 +2246,50 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
+  it("records a final review only when the PR head did not move during the turn", async () => {
+    const widgets = { host: "github.com", owner: "acme", repo: "widgets", number: 42 };
+    let head = "head-1";
+    const { manager, fake, project } = makePrManager({ prHeadRefresh: async () => head });
+    const session = await manager.createSession(project.id, "claude", { mode: "current" });
+    manager.linkPr(session.id, { ref: widgets, origin: "workflow", workflowId: "babysit", lastSeenSha: "head-1", lastSeenAt: 0 });
+
+    const clean = await manager.startTurn(session.id, "final", { prRefs: [widgets], finalReview: { ref: widgets, sha: "head-1" } });
+    fake.complete(clean);
+    let updated = await waitForSessionPrSeen(manager, project.id, session.id, "head-1");
+    for (let i = 0; i < 100 && updated?.prs?.[0]?.finalReviewSha === undefined; i += 1) {
+      await new Promise((r) => setTimeout(r, 10));
+      updated = (await manager.listSessions(project.id)).find((s) => s.id === session.id);
+    }
+    expect(updated?.prs?.[0]?.finalReviewSha).toBe("head-1");
+
+    head = "head-2";
+    const pushed = await manager.startTurn(session.id, "final", { prRefs: [widgets], finalReview: { ref: widgets, sha: "head-1b" } });
+    fake.complete(pushed);
+    updated = await waitForSessionPrSeen(manager, project.id, session.id, "head-2");
+    expect(updated?.prs?.[0]?.finalReviewSha).toBe("head-1");
+    manager.dispose();
+  });
+
+  it("does not record a final review from a cached head when the head refresh fails", async () => {
+    const widgets = { host: "github.com", owner: "acme", repo: "widgets", number: 42 };
+    const { manager, fake, project } = makePrManager({
+      prHead: () => "head-1",
+      prHeadRefresh: async () => {
+        throw new Error("network down");
+      }
+    });
+    const session = await manager.createSession(project.id, "claude", { mode: "current" });
+    manager.linkPr(session.id, { ref: widgets, origin: "workflow", workflowId: "babysit", lastSeenSha: "head-0", lastSeenAt: 0 });
+
+    const turnId = await manager.startTurn(session.id, "final", { prRefs: [widgets], finalReview: { ref: widgets, sha: "head-1" } });
+    fake.complete(turnId);
+
+    const updated = await waitForSessionPrSeen(manager, project.id, session.id, "head-1");
+    expect(updated?.prs?.[0]?.lastSeenSha).toBe("head-1");
+    expect(updated?.prs?.[0]?.finalReviewSha).toBeUndefined();
+    manager.dispose();
+  });
+
   it("does not mark the only link seen when the turn names a different pull request", async () => {
     const widgets = { host: "github.com", owner: "acme", repo: "widgets", number: 42 };
     const gadgets = { host: "github.com", owner: "acme", repo: "gadgets", number: 7 };
@@ -3634,6 +3710,79 @@ describe("SessionManager", () => {
       throw new Error("fetch failed");
     };
     await expect(manager.getHistory(a.id)).rejects.toThrow(/Could not load history/);
+    manager.dispose();
+  });
+
+  const replayedAgentCall: HistoryMessage = {
+    id: "call-agent",
+    role: "tool",
+    text: "",
+    turnId: "t1",
+    toolName: "Agent",
+    task: { id: "call-agent", kind: "agent", background: true, state: "unknown", runCount: 1 }
+  };
+  const liveAgentTask: TaskSnapshot = { id: "call-agent", kind: "agent", background: true, state: "running", runCount: 1 };
+
+  it("overlays the driver's live tasks onto the history it returns", async () => {
+    const { manager, fake } = makeManager();
+    const project = manager.addProject("C:\\proj-history-live-tasks");
+    const a = await manager.createSession(project.id, "claude");
+    (manager as unknown as { store: { updateSession(id: string, patch: unknown): void } }).store.updateSession(a.id, {
+      resumeCursor: "cursor-1"
+    });
+    fake.history = [{ id: "m1", role: "user", text: "go", turnId: "t1" }, replayedAgentCall];
+    const liveTasks = vi.fn(() => [liveAgentTask]);
+    Object.assign(fake, { liveTasks });
+
+    const history = await manager.getHistory(a.id);
+
+    expect(liveTasks).toHaveBeenCalledWith(a.id);
+    expect(history[0]).toEqual(fake.history[0]);
+    expect(history[1]).toEqual({ ...replayedAgentCall, task: liveAgentTask });
+    manager.dispose();
+  });
+
+  it("still returns history when the driver's live tasks throw", async () => {
+    const { manager, fake } = makeManager();
+    const project = manager.addProject("C:\\proj-history-live-tasks-throw");
+    const a = await manager.createSession(project.id, "claude");
+    (manager as unknown as { store: { updateSession(id: string, patch: unknown): void } }).store.updateSession(a.id, {
+      resumeCursor: "cursor-1"
+    });
+    fake.history = [replayedAgentCall];
+    Object.assign(fake, {
+      liveTasks: () => {
+        throw new Error("registry gone");
+      }
+    });
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+
+    await expect(manager.getHistory(a.id)).resolves.toEqual([replayedAgentCall]);
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining("registry gone"));
+    warn.mockRestore();
+    manager.dispose();
+  });
+
+  it("overlays live tasks on healed and re-verified history too", async () => {
+    const { manager } = makeManager();
+    const project = manager.addProject("C:\\proj-history-live-tasks-heal");
+    const healed = await manager.createSession(project.id, "claude");
+    const relinked = await manager.createSession(project.id, "claude");
+    const store = (manager as unknown as { store: { updateSession(id: string, patch: unknown): void } }).store;
+    store.updateSession(healed.id, { title: "fix the login flow" });
+    store.updateSession(relinked.id, { title: "fix the checkout flow", resumeCursor: "stale-cursor" });
+    const { driver } = historyDriver(
+      [
+        { cursor: "native-login", title: "fix the login flow", createdAt: 1, updatedAt: 2 },
+        { cursor: "native-checkout", title: "fix the checkout flow", createdAt: 1, updatedAt: 2 }
+      ],
+      { "native-login": [replayedAgentCall], "native-checkout": [replayedAgentCall] }
+    );
+    Object.assign(driver, { liveTasks: () => [liveAgentTask] });
+    (manager as unknown as { drivers: Record<string, CliDriver> }).drivers.claude = driver;
+
+    await expect(manager.getHistory(healed.id)).resolves.toEqual([{ ...replayedAgentCall, task: liveAgentTask }]);
+    await expect(manager.getHistory(relinked.id)).resolves.toEqual([{ ...replayedAgentCall, task: liveAgentTask }]);
     manager.dispose();
   });
 

@@ -1,22 +1,26 @@
-import { useMemo, useState } from "react";
+import { useMemo, useState, type ReactNode } from "react";
 import { Bell, ExternalLink, RefreshCw, Send, TriangleAlert, X } from "lucide-react";
-import type { AppSettings, PrSummary, PrUpdate, PrWorkflow } from "@cw-code/contracts";
+import type { AppSettings, PrRef, PrSummary, PrUpdate, PrWorkflow } from "@cw-code/contracts";
 import { useAppStore } from "../stores/appStore.js";
 import { usePrStore } from "../stores/prStore.js";
+import { prKey } from "./prInbox.js";
 import { formatRelativeAge } from "./prInboxModel.js";
 import { PrUpdateIcon } from "./PrUpdateIcon.js";
 import {
-  AUTO_FOLLOW_UP_LIMIT,
-  autoFollowUpWorkflow,
   defaultFollowUpWorkflowId,
+  followUpMode,
   followUpPrompt,
   followUpWorkflow,
-  needsFailedLogs
+  needsFailedLogs,
+  type BabysitPhase
 } from "./prSessionModel.js";
 import { seenThrough, updatesSince } from "./prUpdates.js";
-import { prRefLabel } from "./sessionPrLinks.js";
+import { linkWithWorkflow, prRefLabel } from "./sessionPrLinks.js";
 import { harnessLabel } from "./toolTabs.js";
-import { useLinkedPrs, usePrSettings, type LinkedPr } from "./useLinkedPr.js";
+import { workflowIcon } from "./workflowIcons.js";
+import { findSession, useLinkedPrs, usePrSettings, type LinkedPr } from "./useLinkedPr.js";
+import { useBabysitStates } from "./useBabysit.js";
+import { BabysitHead } from "./BabysitHead.js";
 import { errorMessage } from "./errorMessage.js";
 import { ipcErrorMessage } from "./ipcError.js";
 
@@ -29,7 +33,6 @@ interface DockEntry {
   workflow: PrWorkflow | null;
   workflowId: string;
   isReview: boolean;
-  isAuto: boolean;
   logsNeeded: boolean;
   prompt: string | null;
 }
@@ -48,7 +51,6 @@ function dockEntry(item: LinkedPr, settings: AppSettings | null, harness: string
     workflow,
     workflowId,
     isReview: workflowId === "review",
-    isAuto: settings !== null && autoFollowUpWorkflow(link, settings.prWorkflows) !== null,
     logsNeeded: workflow !== null && needsFailedLogs(workflow.updatePrompt),
     prompt
   };
@@ -75,6 +77,24 @@ function seenHead(entry: DockEntry): string | null {
   return entry.item.detail?.headRefOid ?? entry.item.summary?.headRefOid ?? null;
 }
 
+function autoHint(entry: DockEntry, workflow: PrWorkflow, phase: BabysitPhase): ReactNode {
+  const label = <b>{workflow.label}</b>;
+  if (phase.kind === "paused") return <>{label} is paused, so this update waits for you</>;
+  if (!entry.updates.some((update) => update.actionable)) return <>{label} doesn't act on this kind of update</>;
+  if (phase.kind === "working") return <>{label} sends this after the current turn</>;
+  return <>{label} is sending this</>;
+}
+
+function WorkflowTag({ workflow }: { workflow: PrWorkflow }) {
+  const Icon = workflowIcon(workflow.icon);
+  return (
+    <span className="pr-dock-workflow" title={workflow.description}>
+      <Icon size={12} aria-hidden="true" />
+      {workflow.label}
+    </span>
+  );
+}
+
 function ViewButton({ entry }: { entry: DockEntry }) {
   const openPr = usePrStore((s) => s.openPr);
   const ref = entry.item.link.ref;
@@ -89,9 +109,7 @@ function ViewButton({ entry }: { entry: DockEntry }) {
 export function PrUpdateDock({ sessionId }: { sessionId: string }) {
   const { session, items } = useLinkedPrs(sessionId);
   const busy = useAppStore((s) => s.busyTurns[sessionId] !== undefined);
-  const autoPaused = useAppStore(
-    (s) => s.autoFollowUpPaused[sessionId] !== undefined || (s.autoFollowUpTurns[sessionId] ?? 0) >= AUTO_FOLLOW_UP_LIMIT
-  );
+  const babysitOf = useBabysitStates();
   const sendPromptTo = useAppStore((s) => s.sendPromptTo);
   const applySession = useAppStore((s) => s.applySession);
   const openRunModal = usePrStore((s) => s.openRunModal);
@@ -119,7 +137,12 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
   const covered = useMemo(() => (single ? [single] : sendable), [single, sendable]);
   const alreadySent = sentSignature !== null && sentSignature === sendSignature(covered);
 
-  if (!session || (changed.length === 0 && failed.length === 0)) return null;
+  const babysit = session ? babysitOf(session) : null;
+  if (!session || (!babysit && changed.length === 0 && failed.length === 0)) return null;
+
+  const babysat = (entry: DockEntry) => babysit !== null && prKey(entry.item.link.ref) === prKey(babysit.link.ref);
+  const dockClass = babysit ? `pr-dock babysit-dock ${babysit.phase.kind}` : "pr-dock";
+  const babysitHead = babysit && <BabysitHead sessionId={sessionId} state={babysit} />;
 
   const markSeen = async (targets: DockEntry[]) => {
     for (const entry of targets) {
@@ -160,22 +183,37 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
 
   if (changed.length === 0) {
     return (
-      <section className="pr-dock pr-dock-failed" aria-label="Pull request update">
-        <div className="pr-dock-head">
-          <TriangleAlert size={14} className="pr-dock-head-icon bad" aria-hidden="true" />
-          <span className="pr-dock-title">
-            {failed.length === 1
-              ? `PR #${failed[0].item.link.ref.number} changed, but its details could not be loaded`
-              : `${failed.length} pull requests changed, but their details could not be loaded`}
-          </span>
-        </div>
-        {failedRows}
+      <section className={babysit ? dockClass : "pr-dock pr-dock-failed"} aria-label="Pull request update">
+        {babysitHead}
+        {failed.length > 0 && (
+          <>
+            <div className="pr-dock-head">
+              <TriangleAlert size={14} className="pr-dock-head-icon bad" aria-hidden="true" />
+              <span className="pr-dock-title">
+                {failed.length === 1
+                  ? `PR #${failed[0].item.link.ref.number} changed, but its details could not be loaded`
+                  : `${failed.length} pull requests changed, but their details could not be loaded`}
+              </span>
+            </div>
+            {failedRows}
+          </>
+        )}
       </section>
     );
   }
 
   const openInModal = (entry: DockEntry) => {
     openRunModal({ workflowId: entry.workflowId, subject: { kind: "pr", ref: entry.item.link.ref }, continueSessionId: sessionId });
+  };
+
+  const singleBabysat = single !== null && babysat(single);
+  const mode = single ? followUpMode(session, single.item.link, single.pr, single.workflow, settings?.prWorkflows ?? [], babysit) : null;
+  const continuous = mode?.kind === "start" ? mode.workflow : null;
+  const auto = mode?.kind === "auto" ? mode : null;
+
+  const startContinuous = async (workflow: PrWorkflow, ref: PrRef) => {
+    const adopt = linkWithWorkflow(findSession(useAppStore.getState().sessionsByProject, sessionId), ref, workflow.id);
+    if (adopt) applySession(await window.cw.linkSessionPr(sessionId, adopt));
   };
 
   const send = async () => {
@@ -190,6 +228,13 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
       return;
     }
     setSentSignature(sendSignature(covered));
+    if (continuous && single) {
+      try {
+        await startContinuous(continuous, single.item.link.ref);
+      } catch (err) {
+        setActionError(`The update was sent, but ${continuous.label} could not be started: ${ipcErrorMessage(err)}`);
+      }
+    }
     try {
       await markSeen(covered);
     } catch (err) {
@@ -201,19 +246,34 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
 
   const allReview = changed.every((entry) => entry.isReview);
   const since = allReview ? "your review" : "your last turn";
-  const title = single
-    ? `PR #${single.item.link.ref.number} changed since ${since}`
-    : `${changed.length} pull requests changed since ${since}`;
+  const title = singleBabysat
+    ? `Changed since ${since}`
+    : single
+      ? `PR #${single.item.link.ref.number} changed since ${since}`
+      : `${changed.length} pull requests changed since ${since}`;
   const totalUpdates = changed.reduce((sum, entry) => sum + entry.updates.length, 0);
   const singleLogs = single !== null && single.logsNeeded;
   const primaryLabel = singleLogs
     ? "Review and send…"
     : allReview
       ? "Re-review changes"
-      : single
-        ? `Send update to ${harness}`
-        : `Send ${sendable.length} ${sendable.length === 1 ? "update" : "updates"} to ${harness}`;
-  const PrimaryIcon = allReview ? RefreshCw : Send;
+      : continuous
+        ? `Start ${continuous.label}`
+        : auto
+          ? "Send now"
+          : single
+            ? `Send update to ${harness}`
+            : `Send ${sendable.length} ${sendable.length === 1 ? "update" : "updates"} to ${harness}`;
+  const PrimaryIcon = allReview ? RefreshCw : continuous ? workflowIcon(continuous.icon) : Send;
+  const primaryTitle = busy
+    ? "Wait for the current turn to finish"
+    : alreadySent
+      ? "This update was already sent"
+      : continuous && single
+        ? `Send this update now, then let ${continuous.label} follow up on ${prRefLabel(single.item.link.ref)} by itself until it is merged or closed`
+        : auto
+          ? `Send this update without waiting for ${auto.workflow.label}`
+          : undefined;
   const primaryDisabled = singleLogs ? busy : busy || prompt === null || working !== null || alreadySent;
   const now = Date.now();
   const previewText = singleLogs
@@ -224,17 +284,14 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
         : settings && sendable.length === 0
           ? "None of the changed pull requests has a prompt that can be sent together. Send each one from its section."
           : "Resolving prompt…"));
-  const hint = single ? (
-    single.workflow ? (
-      single.isAuto && !autoPaused ? (
-        <>
-          <b>{single.workflow.label}</b> starts a turn on its own for failed checks, change requests and comments
-        </>
-      ) : (
-        <>
-          uses the <b>{single.workflow.label}</b> workflow's follow-up prompt
-        </>
-      )
+  const footWorkflow = mode && (mode.kind === "start" || mode.kind === "once") ? mode.workflow : null;
+  const hint = single && mode ? (
+    mode.kind === "auto" ? (
+      autoHint(single, mode.workflow, mode.phase)
+    ) : mode.kind === "start" ? (
+      "sends this now, then keeps following up by itself until the PR is merged or closed"
+    ) : mode.kind === "once" ? (
+      "sends its follow-up prompt once"
     ) : (
       "follow-up prompt unavailable"
     )
@@ -243,13 +300,14 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
   );
 
   return (
-    <section className="pr-dock" aria-label="Pull request update">
+    <section className={dockClass} aria-label="Pull request update">
+      {babysitHead}
       <div className="pr-dock-head">
         <Bell size={14} className="pr-dock-head-icon" aria-hidden="true" />
         <span className="pr-dock-title">{title}</span>
         <span className="pr-dock-badge">{totalUpdates}</span>
         <span className="pr-dock-spacer" />
-        {single && <ViewButton entry={single} />}
+        {single && !singleBabysat && <ViewButton entry={single} />}
         <button
           className="icon-btn pr-dock-dismiss"
           onClick={() => void dismiss(changed)}
@@ -273,10 +331,13 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
                 <>
                   <span className="pr-dock-badge">{entry.updates.length}</span>
                   <span className="pr-dock-spacer" />
+                  {entry.workflow && !babysat(entry) && <WorkflowTag workflow={entry.workflow} />}
                   <ViewButton entry={entry} />
-                  <button className="pr-detail-btn ghost sm" onClick={() => openInModal(entry)}>
-                    {entry.logsNeeded ? "Review and send…" : "Other workflow"}
-                  </button>
+                  {(entry.logsNeeded || !babysat(entry)) && (
+                    <button className="pr-detail-btn ghost sm" onClick={() => openInModal(entry)}>
+                      {entry.logsNeeded ? "Review and send…" : "Other workflow"}
+                    </button>
+                  )}
                   <button
                     className="icon-btn pr-dock-dismiss"
                     onClick={() => void dismiss([entry])}
@@ -325,12 +386,15 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
         </div>
       )}
       <div className="pr-dock-foot">
-        <span className="pr-dock-hint">{hint}</span>
+        {footWorkflow && <WorkflowTag workflow={footWorkflow} />}
+        <span className="pr-dock-hint" title={typeof hint === "string" ? hint : undefined}>
+          {hint}
+        </span>
         <button className="pr-detail-btn ghost sm" onClick={() => setPreviewOpen(!previewOpen)} aria-expanded={previewOpen}>
           {previewOpen ? "Hide preview" : "Preview"}
         </button>
         <span className="pr-dock-spacer" />
-        {single && (
+        {single && !singleBabysat && (
           <button className="pr-detail-btn sm" onClick={() => openInModal(single)}>
             Other workflow
           </button>
@@ -339,7 +403,7 @@ export function PrUpdateDock({ sessionId }: { sessionId: string }) {
           className="pr-detail-btn primary sm"
           onClick={single && singleLogs ? () => openInModal(single) : () => void send()}
           disabled={primaryDisabled}
-          title={busy ? "Wait for the current turn to finish" : alreadySent ? "This update was already sent" : undefined}
+          title={primaryTitle}
         >
           <PrimaryIcon size={12} aria-hidden="true" />
           {primaryLabel}

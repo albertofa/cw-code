@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import { Bot, Check, ChevronLeft, ChevronRight, Copy } from "lucide-react";
 import type { SubagentGroup, SubagentInfo } from "./subagents.js";
-import { formatSubagentCount, formatTokensShort, groupSubagents, subagentActivity } from "./subagents.js";
+import { SUBAGENT_STATE_ORDER, formatSubagentCount, formatTokensShort, groupSubagents, subagentActivity, subagentStateLabel } from "./subagents.js";
 import type { SubagentToolActivity } from "../cw.js";
 import { formatDuration, orderToolsForDisplay } from "./toolSummaries.js";
 import { Md } from "./Markdown.js";
@@ -9,6 +9,7 @@ import { ToolCard } from "./ToolCard.js";
 import { useAppStore, type ChatMessage } from "../stores/appStore.js";
 import { usePanelStore } from "../stores/panelStore.js";
 import { SubagentToolList, subagentAnchorId } from "./SubagentCard.js";
+import { useElapsed } from "./useElapsed.js";
 
 export interface AgentsTarget {
   groupId?: string;
@@ -74,26 +75,20 @@ function metaLine(item: SubagentInfo, fallbackModel?: string): string {
   return parts.join(" · ");
 }
 
-function statusLabel(status: SubagentInfo["status"]): string {
-  if (status === "completed") return "completed";
-  if (status === "running") return "running";
-  return "error";
-}
-
-function RunningElapsed({ startedAt }: { startedAt: number }) {
-  const [now, setNow] = useState(() => Date.now());
-  useEffect(() => {
-    const timer = window.setInterval(() => setNow(Date.now()), 1000);
-    return () => window.clearInterval(timer);
-  }, []);
-  return <span>{formatDuration(Math.max(0, now - startedAt))}</span>;
+function useAgentDuration(item: SubagentInfo, live: boolean): string | undefined {
+  const ticking = item.status === "running" && live && item.startedAt !== undefined;
+  const elapsed = useElapsed(item.startedAt, ticking);
+  if (ticking) return formatDuration(elapsed);
+  return item.durationMs !== undefined ? formatDuration(item.durationMs) : undefined;
 }
 
 function AgentDuration({ item, live }: { item: SubagentInfo; live: boolean }) {
-  if (item.status === "running" && live && item.startedAt !== undefined) {
-    return <RunningElapsed startedAt={item.startedAt} />;
-  }
-  return item.durationMs !== undefined ? <span>{formatDuration(item.durationMs)}</span> : null;
+  const duration = useAgentDuration(item, live);
+  return duration !== undefined ? <span>{duration}</span> : null;
+}
+
+function AgentStateText({ item, live }: { item: SubagentInfo; live: boolean }) {
+  return <>{subagentStateLabel(item.status, useAgentDuration(item, live))}</>;
 }
 
 function ClampedText({ text, label }: { text: string; label: string }) {
@@ -173,16 +168,8 @@ function AgentDetail({
           )}
           {toolCount > 0 && <span className="suba-badge">{toolCount} tools</span>}
           <span className={`agents-hero-state ${item.status}`}>
-            <span className={`suba-dot ${item.status}`} />
-            {statusLabel(item.status)}
-            {item.status === "running" && live && item.startedAt !== undefined ? (
-              <>
-                {" · "}
-                <RunningElapsed startedAt={item.startedAt} />
-              </>
-            ) : item.durationMs !== undefined ? (
-              <> · {formatDuration(item.durationMs)}</>
-            ) : null}
+            <span className={`suba-dot ${item.status}`} aria-hidden="true" />
+            <AgentStateText item={item} live={live} />
           </span>
         </div>
         <div className="agents-actions">
@@ -279,7 +266,10 @@ export function AgentsPanel({ sessionId }: { sessionId: string }) {
   const groups: SubagentGroup[] = groupSubagents(ordered);
   const entries = groups.flatMap((group) => group.items.map((item) => ({ groupId: group.id, item })));
   const total = entries.length;
-  const running = entries.filter(({ item }) => item.status === "running").length;
+  const stateCounts = SUBAGENT_STATE_ORDER.map((state) => ({
+    state,
+    count: entries.filter(({ item }) => item.status === state).length
+  })).filter(({ count }) => count > 0);
   const selectedIndex = entries.findIndex(({ item }) => item.id === selectedId);
   const selected = selectedIndex >= 0 ? entries[selectedIndex] : entries[0];
   const entriesRef = useRef(entries);
@@ -337,10 +327,14 @@ export function AgentsPanel({ sessionId }: { sessionId: string }) {
           <div className="agents-head">
             <span className="agents-head-title">Subagents</span>
             <span className="agents-head-count">{total === 0 ? "none" : formatSubagentCount(total)}</span>
-            {running > 0 && (
-              <span className="agents-running">
-                <span className="pulse" />
-                {running} running
+            {stateCounts.length > 0 && (
+              <span className="agents-counts">
+                {stateCounts.map(({ state, count }) => (
+                  <span key={state} className={`agents-count ${state}`} title={subagentStateLabel(state)}>
+                    {state === "running" && <span className="suba-dot running" aria-hidden="true" />}
+                    {count} {subagentStateLabel(state, undefined, "compact").toLowerCase()}
+                  </span>
+                ))}
               </span>
             )}
           </div>
@@ -366,7 +360,12 @@ export function AgentsPanel({ sessionId }: { sessionId: string }) {
                   setView("detail");
                 }}
               >
-                <span className={`suba-dot ${item.status}`} />
+                <span
+                  className={`suba-dot ${item.status}`}
+                  role="img"
+                  aria-label={subagentStateLabel(item.status)}
+                  title={subagentStateLabel(item.status)}
+                />
                 <span className="agents-row-main">
                   <span className="agents-row-nameline">
                     <span className="agents-row-name" title={item.name}>

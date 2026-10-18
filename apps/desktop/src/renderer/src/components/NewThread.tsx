@@ -5,6 +5,7 @@ import type { CreateSessionOptions, CreateWorkspaceMode, DriverName, GitBranchIn
 import { worktreeCandidates } from "./worktreeCandidates.js";
 import { shortenHome } from "./pathDisplay.js";
 import { DriverIcon } from "./DriverIcon.js";
+import { pickableHarnesses } from "./harnessAvailability.js";
 import { ComposerView, type ComposerBackend } from "./ComposerView.js";
 import { MenuSelect } from "./MenuSelect.js";
 import { NewSessionProjectPicker } from "./NewSessionProjectPicker.js";
@@ -33,6 +34,7 @@ export function NewThread({
   const modelsRefreshKey = useAppStore((s) => s.settingsVersion);
   const workspace = useAppStore((s) => s.pendingWorkspace);
   const newSessionError = useAppStore((s) => s.newSessionError);
+  const installed = useAppStore((s) => s.installedHarnesses);
   const homeDir = useAppStore((s) => s.homeDir);
   const project = useAppStore((s) => (projectId ? s.projects.find((p) => p.id === projectId) : undefined));
   const [branches, setBranches] = useState<GitBranchInfo[]>([]);
@@ -126,6 +128,9 @@ export function NewThread({
       projectKey ? window.cw.savePasteImage(projectKey, mime, data) : Promise.reject(new Error(NO_PROJECT_HINT)),
     interrupt: () => {}
   };
+
+  const pickable = pickableHarnesses(installed);
+  const harnessOptions = HARNESS.filter((h) => pickable.includes(h.id));
 
   const handleDriverChange = (next: DriverName) => {
     if (next === driver) return;
@@ -235,23 +240,25 @@ export function NewThread({
           resetStaleModel
           modelsRefreshKey={modelsRefreshKey}
           recipePrefix={
-            <>
-              <div className="recipe-control recipe-harness" title="Agentic harness">
-                <MenuSelect
-                  label="Harness"
-                  title="Choose the agentic harness"
-                  direction="down"
-                  value={driver}
-                  display={HARNESS.find((h) => h.id === driver)?.label ?? driver}
-                  icon={<DriverIcon driver={driver} size={14} />}
-                  options={HARNESS.map((h) => ({
-                    id: h.id, label: h.label, hint: h.blurb, description: h.blurb, icon: <DriverIcon driver={h.id} size={13} />
-                  }))}
-                  onPick={(id) => handleDriverChange(id as DriverName)}
-                />
-              </div>
-              <span className="composer-dot" aria-hidden="true" />
-            </>
+            harnessOptions.length > 1 && (
+              <>
+                <div className="recipe-control recipe-harness" title="Agentic harness">
+                  <MenuSelect
+                    label="Harness"
+                    title="Choose the agentic harness"
+                    direction="down"
+                    value={driver}
+                    display={HARNESS.find((h) => h.id === driver)?.label ?? driver}
+                    icon={<DriverIcon driver={driver} size={14} />}
+                    options={harnessOptions.map((h) => ({
+                      id: h.id, label: h.label, hint: h.blurb, description: h.blurb, icon: <DriverIcon driver={h.id} size={13} />
+                    }))}
+                    onPick={(id) => handleDriverChange(id as DriverName)}
+                  />
+                </div>
+                <span className="composer-dot" aria-hidden="true" />
+              </>
+            )
           }
           top={where}
         />

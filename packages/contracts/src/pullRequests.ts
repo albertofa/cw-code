@@ -1,4 +1,4 @@
-import type { GitPullRequestChecks } from "./session.js";
+import type { DriverKind, EffortLevel, GitPullRequestChecks, PermissionMode } from "./session.js";
 
 export interface PrRef {
   host: string;
@@ -12,6 +12,8 @@ export type PrCiState = "passing" | "failing" | "pending" | "none";
 export type PrReviewState = "approved" | "changes_requested" | "review_required" | "none";
 
 export type PrMergeable = "MERGEABLE" | "CONFLICTING" | "UNKNOWN";
+
+export type PrMergeStateStatus = "BEHIND" | "BLOCKED" | "CLEAN" | "DIRTY" | "DRAFT" | "HAS_HOOKS" | "UNKNOWN" | "UNSTABLE";
 
 export type PrBucket = "review" | "action" | "ready" | "waiting" | "merged" | "closed";
 
@@ -43,6 +45,7 @@ export interface PrSummary {
   checks: GitPullRequestChecks;
   review: PrReviewState;
   mergeable: PrMergeable;
+  mergeStateStatus: PrMergeStateStatus;
   labels: string[];
   reviewers: PrReviewer[];
   assignees: string[];
@@ -81,6 +84,7 @@ export interface PrCommit {
   oid: string;
   headline: string;
   author: string;
+  authorAvatarUrl?: string;
   committedAt: number;
   ci: PrCiState;
 }
@@ -130,6 +134,8 @@ export interface SessionPrLink {
   workflowId?: string;
   lastSeenSha: string;
   lastSeenAt: number;
+  /** PR head on which the session's final review turn ended without pushing changes. */
+  finalReviewSha?: string;
 }
 
 export type PrUpdateKind = "commits" | "review" | "comment" | "checks_failed" | "checks_passed" | "review_requested";
@@ -149,6 +155,15 @@ export type PrWorkspaceChoice = "checkout" | "worktree" | "linked";
 
 export type PrWorkflowIcon = "eye" | "activity" | "message" | "wrench" | "merge" | "bot" | "sparkle";
 
+/** Harness settings for sessions a workflow starts. Null and empty values fall back to the composer's current choice. */
+export interface PrWorkflowHarness {
+  driver: DriverKind | null;
+  /** Only applies when driver is set; empty picks the harness default. */
+  model: string;
+  effort: EffortLevel | null;
+  permissionMode: PermissionMode | null;
+}
+
 export interface PrWorkflow {
   id: string;
   label: string;
@@ -159,6 +174,7 @@ export interface PrWorkflow {
   target: "pr" | "issue" | "run";
   suggestWhen: PrSuggestCondition[];
   workspace: PrWorkspaceChoice;
+  harness: PrWorkflowHarness;
   startPrompt: string;
   updatePrompt: string;
   /** Sends the follow-up prompt on its own when a linked PR gets actionable updates, until the PR closes. */

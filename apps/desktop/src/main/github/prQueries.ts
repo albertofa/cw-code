@@ -26,6 +26,7 @@ const PR_SUMMARY_FIELDS = `
   }
   reviewDecision
   mergeable
+  mergeStateStatus
   labels(first: 20) {
     nodes {
       name
@@ -158,6 +159,7 @@ ${PR_SUMMARY_FIELDS}
               committedDate
               author {
                 name
+                avatarUrl(size: 48)
                 user {
                   login
                 }
@@ -261,6 +263,7 @@ ${PR_SUMMARY_FIELDS}
             committedDate
             author {
               name
+              avatarUrl(size: 48)
               user {
                 login
               }

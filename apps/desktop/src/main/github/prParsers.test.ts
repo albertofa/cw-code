@@ -25,6 +25,7 @@ function summaryNode(overrides: Record<string, unknown> = {}) {
     reviewThreads: { nodes: [] },
     reviewDecision: null,
     mergeable: "MERGEABLE",
+    mergeStateStatus: "CLEAN",
     labels: { nodes: [] },
     updatedAt: "2024-01-01T00:00:00Z",
     reviewRequests: { nodes: [] },
@@ -57,6 +58,7 @@ describe("parseInbox", () => {
               url: "https://github.com/acme/widgets/pull/12",
               viewerDidAuthor: true,
               mergeable: "CONFLICTING",
+              mergeStateStatus: "SOMETHING_NEW",
               reviewDecision: "APPROVED",
               ciCommits: { nodes: [{ commit: { statusCheckRollup: { contexts: { nodes: [rollupNode("SUCCESS")] } } } }] }
             }),
@@ -86,6 +88,8 @@ describe("parseInbox", () => {
 
     const conflicting = result.items.find((item) => item.ref.number === 12)!;
     expect(conflicting.mergeable).toBe("CONFLICTING");
+    expect(conflicting.mergeStateStatus).toBe("UNKNOWN");
+    expect(result.items.find((item) => item.ref.number === 13)?.mergeStateStatus).toBe("CLEAN");
     expect(bucketFor(conflicting)).toBe("action");
 
     const failing = result.items.find((item) => item.ref.number === 13)!;
@@ -330,6 +334,7 @@ describe("bucketFor", () => {
     checks: { total: 0, passed: 0, failed: 0, pending: 0 },
     review: "none",
     mergeable: "MERGEABLE",
+    mergeStateStatus: "CLEAN",
     labels: [],
     reviewers: [],
     assignees: [],
@@ -457,8 +462,17 @@ describe("parseDetail", () => {
           oid: "sha-1",
           messageHeadline: "Fix bug",
           committedDate: "2024-01-02T00:00:00Z",
-          author: { name: "Alice", user: { login: "alice" } },
+          author: { name: "Alice", avatarUrl: "https://avatars.githubusercontent.com/u/7?s=48", user: { login: "alice" } },
           statusCheckRollup: { contexts: { nodes: [rollupNode("SUCCESS")] } }
+        }
+      },
+      {
+        __typename: "PullRequestCommit",
+        commit: {
+          oid: "sha-2",
+          messageHeadline: "Tidy up",
+          committedDate: "2024-01-02T01:00:00Z",
+          author: { name: "Alice", avatarUrl: "http://example.test/a.png", user: { login: "alice" } }
         }
       },
       {
@@ -488,7 +502,10 @@ describe("parseDetail", () => {
 
     const commitsItem = detail.timeline[0];
     if (commitsItem.kind !== "commits") throw new Error("expected commits item");
-    expect(commitsItem.commits).toEqual([{ oid: "sha-1", headline: "Fix bug", author: "alice", committedAt: Date.parse("2024-01-02T00:00:00Z"), ci: "passing" }]);
+    expect(commitsItem.commits).toEqual([
+      { oid: "sha-1", headline: "Fix bug", author: "alice", authorAvatarUrl: "https://avatars.githubusercontent.com/u/7?s=48", committedAt: Date.parse("2024-01-02T00:00:00Z"), ci: "passing" },
+      { oid: "sha-2", headline: "Tidy up", author: "alice", committedAt: Date.parse("2024-01-02T01:00:00Z"), ci: "none" }
+    ]);
 
     const reviewItem = detail.timeline[1];
     if (reviewItem.kind !== "review") throw new Error("expected review item");
