@@ -7,6 +7,7 @@ const LOGIN_SHELL_KILL_GRACE_MS = 1_000;
 const FALLBACK_SHELL = "/bin/bash";
 const STDERR_TAIL_CHARS = 500;
 const STDERR_BUFFER_CHARS = 4_000;
+const STDOUT_BUFFER_CHARS = 1_000_000;
 
 const COPIED_WHEN_MISSING = new Set([
   "SSH_AUTH_SOCK",
@@ -151,7 +152,10 @@ function runLoginShell(shell: string, marker: string, env: NodeJS.ProcessEnv): P
       stdio: ["ignore", "pipe", "pipe"],
       windowsHide: true
     });
+    let settled = false;
     const finish = (exitCode: number | null, timedOut: boolean): void => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timeoutTimer);
       resolve({ stdout, stderrTail: stderr.trim().slice(-STDERR_TAIL_CHARS), exitCode, timedOut });
     };
@@ -165,12 +169,20 @@ function runLoginShell(shell: string, marker: string, env: NodeJS.ProcessEnv): P
     child.stdout.setEncoding("utf8");
     child.stderr.setEncoding("utf8");
     child.stdout.on("data", (chunk: string) => {
-      stdout += chunk;
+      stdout = (stdout + chunk).slice(0, STDOUT_BUFFER_CHARS);
+      const start = stdout.indexOf(startMarker(marker));
+      if (start !== -1 && stdout.includes(endMarker(marker), start)) {
+        child.stdout.destroy();
+        child.stderr.destroy();
+        finish(null, false);
+      }
     });
     child.stderr.on("data", (chunk: string) => {
       stderr = (stderr + chunk).slice(-STDERR_BUFFER_CHARS);
     });
     child.once("error", (error) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timeoutTimer);
       reject(error);
     });
@@ -187,19 +199,13 @@ function describeFailure(shell: string, run: LoginShellRun): string {
   return run.stderrTail ? `login shell ${shell} ${reason}: ${run.stderrTail}` : `login shell ${shell} ${reason}`;
 }
 
-function isSpawnUnavailable(error: unknown): boolean {
-  const code = (error as NodeJS.ErrnoException | undefined)?.code;
-  return code === "ENOENT" || code === "EACCES";
-}
-
 async function captureLoginEnv(shell: string, platform: NodeJS.Platform): Promise<CaptureOutcome> {
   const marker = `__CW_CODE_ENV_${randomUUID()}__`;
   let run: LoginShellRun;
   try {
     run = await runLoginShell(shell, marker, sanitizedChildEnv(process.env, platform));
   } catch (error) {
-    const warning = `login shell ${shell} could not start: ${(error as Error).message}`;
-    return { kind: isSpawnUnavailable(error) ? "unavailable" : "failed", warning };
+    return { kind: "unavailable", warning: `login shell ${shell} could not start: ${(error as Error).message}` };
   }
   const env = parseMarkedEnv(run.stdout, marker);
   return env ? { kind: "captured", env } : { kind: "failed", warning: describeFailure(shell, run) };
