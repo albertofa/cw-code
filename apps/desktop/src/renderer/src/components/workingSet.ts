@@ -5,7 +5,8 @@ const WORKING_SET_RANK: Partial<Record<SessionStatus, number>> = {
   "input-required": 0,
   working: 1,
   done: 2,
-  holding: 3
+  babysit: 3,
+  holding: 4
 };
 
 export { isWorkingSetStatus, WORKING_SET_STATUSES };

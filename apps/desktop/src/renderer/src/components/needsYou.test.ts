@@ -324,6 +324,23 @@ describe("needsYouEntry", () => {
       expect(needsYouEntry(session(status), null)).toBeNull();
     }
   });
+
+  it("keeps babysat sessions in the working set while they run, watch, or get PR updates", () => {
+    const update: Attention = { kind: "update", line: "#1 · 1 check failing" };
+    expect(needsYouEntry(session("working"), null, "working")).toBeNull();
+    expect(needsYouEntry(session("babysit"), null, "watching")).toBeNull();
+    expect(needsYouEntry(session("babysit"), update, "watching")).toBeNull();
+    expect(needsYouEntry(session("done"), null, "watching")).toBeNull();
+  });
+
+  it("surfaces babysat sessions when they ask the user, pause, or the PR is ready to merge", () => {
+    expect(needsYouEntry(session("holding"), { kind: "update", line: "" }, "paused")).toMatchObject({ attention: null, slot: "done" });
+    expect(needsYouEntry(session("babysit"), null, "paused")).toMatchObject({ attention: null, slot: "done" });
+    expect(needsYouEntry(session("input-required"), { kind: "question", line: "?" }, "working")?.slot).toBe("question");
+    expect(needsYouEntry(session("working"), { kind: "approval", line: "!" }, "working")?.slot).toBe("approval");
+    expect(needsYouEntry(session("babysit"), null, "done")).toMatchObject({ attention: null, slot: "done" });
+    expect(needsYouEntry(session("babysit"), { kind: "update", line: "" }, "done")).toMatchObject({ attention: null, slot: "done" });
+  });
 });
 
 describe("compareNeedsYou", () => {
@@ -366,5 +383,12 @@ describe("needsYouCount", () => {
     const attentionOf = (s: Session): Attention | null => (s.id === "a" || s.id === "b" ? { kind: "update", line: "" } : null);
     expect(needsYouCount(sessions, attentionOf)).toBe(3);
     expect(needsYouCount([], attentionOf)).toBe(0);
+  });
+
+  it("does not count babysat sessions that are only receiving PR updates", () => {
+    const sessions = [session("babysit", { id: "a" }), session("babysit", { id: "b" }), session("holding", { id: "c" })];
+    const attentionOf = (): Attention => ({ kind: "update", line: "" });
+    const phases: Record<string, "watching" | "done" | "paused"> = { a: "watching", b: "done", c: "paused" };
+    expect(needsYouCount(sessions, attentionOf, (s) => phases[s.id] ?? null)).toBe(2);
   });
 });

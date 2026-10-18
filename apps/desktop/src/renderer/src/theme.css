@@ -884,6 +884,31 @@ button.session-resolved-toggle:hover {
   font-weight: 600;
 }
 
+.ws-state.status-babysit {
+  color: var(--accent);
+}
+
+.ws-state.status-babysit.working {
+  padding: 1px 6px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--accent) 14%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 32%, transparent);
+  font-weight: 600;
+}
+
+.ws-pulse {
+  animation: pulse-op 1.4s ease-in-out infinite;
+}
+
+.ws-state.status-babysit.paused {
+  color: var(--warning);
+}
+
+.ws-state.status-babysit.done {
+  color: var(--success);
+  font-weight: 600;
+}
+
 .ws-spin {
   animation: cw-spin 1s linear infinite;
 }

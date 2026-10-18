@@ -10,13 +10,16 @@ import {
   shouldRequestDetail,
   unseenPrsNeedingDetail,
   type Attention,
+  type BabysitPhaseOf,
   type DetailAttempt
 } from "./needsYou.js";
 import { prKey } from "./prInbox.js";
 import { prSummaryLookup } from "./sessionPrLinks.js";
+import { useBabysitStates } from "./useBabysit.js";
 
 export interface NeedsYou {
   attentionOf: (session: Session) => Attention | null;
+  babysitPhaseOf: BabysitPhaseOf;
   summaryByKey: Map<string, PrSummary>;
 }
 
@@ -37,7 +40,9 @@ export function useNeedsYou(): NeedsYou {
       }),
     [pendingApprovals, pendingQuestions, summaryByKey, detailByKey]
   );
-  return useMemo(() => ({ attentionOf, summaryByKey }), [attentionOf, summaryByKey]);
+  const babysitOf = useBabysitStates();
+  const babysitPhaseOf = useCallback((session: Session) => babysitOf(session)?.phase.kind ?? null, [babysitOf]);
+  return useMemo(() => ({ attentionOf, babysitPhaseOf, summaryByKey }), [attentionOf, babysitPhaseOf, summaryByKey]);
 }
 
 export function useNeedsYouDetailLoader(): void {
@@ -68,6 +73,9 @@ export function useNeedsYouDetailLoader(): void {
 
 export function useNeedsYouCount(): number {
   const sessionsByProject = useAppStore((s) => s.sessionsByProject);
-  const { attentionOf } = useNeedsYou();
-  return useMemo(() => needsYouCount(Object.values(sessionsByProject).flat(), attentionOf), [sessionsByProject, attentionOf]);
+  const { attentionOf, babysitPhaseOf } = useNeedsYou();
+  return useMemo(
+    () => needsYouCount(Object.values(sessionsByProject).flat(), attentionOf, babysitPhaseOf),
+    [sessionsByProject, attentionOf, babysitPhaseOf]
+  );
 }

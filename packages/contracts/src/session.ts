@@ -4,7 +4,7 @@ import type { CommandInvocation } from "./commands.js";
 
 export type DriverKind = "claude" | "opencode" | "codex";
 
-export type SessionStatus = "idle" | "working" | "input-required" | "done" | "holding" | "resolved" | "archived";
+export type SessionStatus = "idle" | "working" | "input-required" | "done" | "holding" | "babysit" | "resolved" | "archived";
 
 export type SessionStatusReason =
   | "session-created"
@@ -24,6 +24,7 @@ export type SessionStatusReason =
   | "reopen-on-restore"
   | "turn-seen"
   | "pr-finished"
+  | "babysit-ended"
   | "app-restart-holding"
   | "app-restart-idle"
   | "holding-expired"

@@ -43,7 +43,7 @@ import { ipcErrorMessage } from "./ipcError.js";
 import { findSession, usePrSettings } from "./useLinkedPr.js";
 import { prKey } from "./prInbox.js";
 import { linkWithWorkflow } from "./sessionPrLinks.js";
-import { startsAutoFollowUp } from "./prSessionModel.js";
+import { startsAutoFollowUp, withAutomatedWorkflowNote } from "./prSessionModel.js";
 import { IssueCard, PrCard, RunCard } from "./WorkflowSubjectCards.js";
 import { SubjectCardSkeleton } from "./GitHubSkeletons.js";
 import { Spinner } from "./Loading.js";
@@ -317,7 +317,7 @@ export function WorkflowRunModal({ request }: { request: RunModalState }) {
 
   const resolved = useMemo(() => {
     if (!data.vars || !workflow) return null;
-    const text = resolveTemplate(template, data.vars);
+    const text = withAutomatedWorkflowNote(workflow, resolveTemplate(template, data.vars));
     const override = request.promptOverride?.trim();
     if (!override) return text;
     return updateMode ? override : `${text}\n\n${override}`;

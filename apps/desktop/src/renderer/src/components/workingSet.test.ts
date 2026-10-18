@@ -18,7 +18,7 @@ function session(overrides: Partial<Session>): Session {
 
 describe("isWorkingSetStatus", () => {
   it("accepts working set statuses", () => {
-    for (const status of ["working", "input-required", "done", "holding"] as SessionStatus[]) {
+    for (const status of ["working", "input-required", "done", "holding", "babysit"] as SessionStatus[]) {
       expect(isWorkingSetStatus(status)).toBe(true);
     }
   });
@@ -30,7 +30,7 @@ describe("isWorkingSetStatus", () => {
   });
 
   it("keeps the sidebar ranking in sync with the shared working set", () => {
-    const ranked = (["input-required", "working", "done", "holding"] as SessionStatus[]).filter(
+    const ranked = (["input-required", "working", "done", "holding", "babysit"] as SessionStatus[]).filter(
       (status) => compareWorkingSet({ ...session({ status }) }, { ...session({ status: "idle" }) }) < 0
     );
     expect([...ranked].sort()).toEqual([...WORKING_SET_STATUSES].sort());
@@ -40,6 +40,7 @@ describe("isWorkingSetStatus", () => {
 describe("compareWorkingSet", () => {
   it("orders by rank regardless of recency", () => {
     const sessions = [
+      session({ id: "babysit", status: "babysit", updatedAt: 200 }),
       session({ id: "holding", status: "holding", updatedAt: 100 }),
       session({ id: "done", status: "done", updatedAt: 100 }),
       session({ id: "working", status: "working", updatedAt: 100 }),
@@ -49,6 +50,7 @@ describe("compareWorkingSet", () => {
       "input-required",
       "working",
       "done",
+      "babysit",
       "holding"
     ]);
   });

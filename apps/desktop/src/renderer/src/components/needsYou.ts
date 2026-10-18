@@ -1,6 +1,7 @@
 import type { PrUpdate, PrUpdateKind } from "@cw-code/contracts";
 import type { ApprovalRequest, PrDetail, PrSummary, QuestionRequest, Session } from "../cw.js";
 import { prKey } from "./prInbox.js";
+import type { BabysitPhase } from "./prSessionModel.js";
 import { hasUnseen, updatesSince } from "./prUpdates.js";
 import { compareUrgency, prUrgency, sessionLinks, type PrSummaryLookup } from "./sessionPrLinks.js";
 
@@ -168,7 +169,15 @@ export function sessionAttention(input: {
   return null;
 }
 
-export function needsYouEntry(session: Session, attention: Attention | null): NeedsYouEntry | null {
+export type BabysitPhaseOf = (session: Session) => BabysitPhase["kind"] | null;
+
+function babysitEntry(session: Session, attention: Attention | null, phase: BabysitPhase["kind"]): NeedsYouEntry | null {
+  if (attention && attention.kind !== "update") return { session, attention, slot: attention.kind };
+  return phase === "done" || phase === "paused" ? { session, attention: null, slot: "done" } : null;
+}
+
+export function needsYouEntry(session: Session, attention: Attention | null, babysit: BabysitPhase["kind"] | null = null): NeedsYouEntry | null {
+  if (babysit !== null) return babysitEntry(session, attention, babysit);
   if (attention) return { session, attention, slot: attention.kind };
   if (session.status === "done") return { session, attention: null, slot: "done" };
   if (session.status === "working") return { session, attention: null, slot: "running" };
@@ -181,15 +190,23 @@ export function compareNeedsYou(a: NeedsYouEntry, b: NeedsYouEntry): number {
   return b.session.updatedAt - a.session.updatedAt;
 }
 
-export function needsYouEntries(sessions: Session[], attentionOf: (session: Session) => Attention | null): NeedsYouEntry[] {
+export function needsYouEntries(
+  sessions: Session[],
+  attentionOf: (session: Session) => Attention | null,
+  babysitOf: BabysitPhaseOf = () => null
+): NeedsYouEntry[] {
   return sessions
     .flatMap((session) => {
-      const entry = needsYouEntry(session, attentionOf(session));
+      const entry = needsYouEntry(session, attentionOf(session), babysitOf(session));
       return entry ? [entry] : [];
     })
     .sort(compareNeedsYou);
 }
 
-export function needsYouCount(sessions: Session[], attentionOf: (session: Session) => Attention | null): number {
-  return needsYouEntries(sessions, attentionOf).filter((entry) => entry.slot !== "running").length;
+export function needsYouCount(
+  sessions: Session[],
+  attentionOf: (session: Session) => Attention | null,
+  babysitOf: BabysitPhaseOf = () => null
+): number {
+  return needsYouEntries(sessions, attentionOf, babysitOf).filter((entry) => entry.slot !== "running").length;
 }
