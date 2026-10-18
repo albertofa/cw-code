@@ -369,6 +369,25 @@ describe("TaskTable roster", () => {
     expect(table.get("tu_1")).toMatchObject({ state: "completed", endReason: "tool-result", endedAt: 300, output: "late result" });
   });
 
+  it("never puts an end before the run's start", () => {
+    const table = tableWith(agentCall("tu_1", 100, true));
+    table.apply({ kind: "ended", ref: { originId: "tu_1" }, state: "completed", reason: "cli", at: 50 });
+    expect(table.get("tu_1")).toMatchObject({ startedAt: 100, endedAt: 100 });
+  });
+
+  it("keeps a task recent by when it last changed even when a confirmed end moves its end time back", () => {
+    const table = tableWith(agentCall("tu_1", 100, true));
+    table.apply({ kind: "started", ref: { toolUseId: "tu_1", cliTaskId: "task_a" }, at: 100 });
+    table.apply({ kind: "roster", tasks: [{ cliTaskId: "task_a" }], at: 200 });
+    table.apply({ kind: "roster", tasks: [], at: 400 });
+    table.apply({ kind: "ended", ref: { cliTaskId: "task_a" }, state: "completed", reason: "cli", output: "report", at: 150 });
+
+    expect(table.get("tu_1")).toMatchObject({ state: "completed", endedAt: 150 });
+    expect(table.recentSnapshots(300).map((task) => task.id)).toEqual(["tu_1"]);
+    expect(table.latestOutput(300)).toBe("report");
+    expect(table.compact(300)).toEqual([]);
+  });
+
   it("does not close a task never seen in a roster", () => {
     const table = tableWith(agentCall("tu_1", 100, true));
     table.apply({ kind: "started", ref: { toolUseId: "tu_1", cliTaskId: "task_a" }, at: 100 });

@@ -52,6 +52,7 @@ interface TaskRecord {
   background: boolean | undefined;
   cliTaskId?: string;
   runs: TaskRun[];
+  changedAt?: number;
 }
 
 const STATE_RANK: Record<TaskState, number> = {
@@ -95,12 +96,8 @@ function currentRun(record: TaskRecord): TaskRun {
   return record.runs[record.runs.length - 1];
 }
 
-function lastSeen(run: Pick<TaskRun, "startedAt" | "endedAt">): number {
-  return Math.max(run.endedAt ?? Number.NEGATIVE_INFINITY, run.startedAt ?? Number.NEGATIVE_INFINITY);
-}
-
-export function taskLastSeen(task: TaskSnapshot): number {
-  return lastSeen(task);
+function changedSince(record: TaskRecord, since: number): boolean {
+  return (record.changedAt ?? Number.NEGATIVE_INFINITY) >= since;
 }
 
 function dropOutput(run: TaskRun): void {
@@ -151,7 +148,7 @@ function endRun(run: TaskRun, state: TaskState, reason: TaskEndReason, at: numbe
   const confirmsGuess = run.endReason !== undefined && GUESSED_END_REASONS.has(run.endReason) && REPORTED_END_REASONS.has(reason);
   run.state = state;
   run.endReason = reason;
-  run.endedAt = run.endedAt === undefined || confirmsGuess ? at : run.endedAt;
+  run.endedAt = run.endedAt === undefined || confirmsGuess ? Math.max(at, run.startedAt ?? at) : run.endedAt;
 }
 
 function mergeOutput(run: TaskRun, output: string | undefined, source: TaskOutputSource = "summary"): void {
@@ -229,7 +226,7 @@ export class TaskTable {
       const run = currentRun(record);
       if (run.state !== "running") continue;
       if (filter && !filter(toSnapshot(record))) continue;
-      changed.push(...this.change(record, () => endRun(run, state, reason, at)));
+      changed.push(...this.change(record, () => endRun(run, state, reason, at), at));
     }
     return changed;
   }
@@ -246,6 +243,12 @@ export class TaskTable {
 
   snapshots(): TaskSnapshot[] {
     return [...this.records.values()].map(toSnapshot);
+  }
+
+  recentSnapshots(since: number): TaskSnapshot[] {
+    return [...this.records.values()]
+      .filter((record) => currentRun(record).state === "running" || changedSince(record, since))
+      .map(toSnapshot);
   }
 
   liveCount(): number {
@@ -274,7 +277,7 @@ export class TaskTable {
     let latest: TaskRun | undefined;
     for (const record of this.records.values()) {
       const run = currentRun(record);
-      if (run.output === undefined || lastSeen(run) < since) continue;
+      if (run.output === undefined || !changedSince(record, since)) continue;
       if (!latest || (run.startedAt ?? Number.NEGATIVE_INFINITY) >= (latest.startedAt ?? Number.NEGATIVE_INFINITY)) latest = run;
     }
     return latest?.output ?? "";
@@ -285,7 +288,7 @@ export class TaskTable {
     for (const record of this.records.values()) {
       const current = currentRun(record);
       for (const run of record.runs) if (run !== current) dropOutput(run);
-      if (current.state === "running" || lastSeen(current) >= before) continue;
+      if (current.state === "running" || changedSince(record, before)) continue;
       dropOutput(current);
       compacted.push(record.id);
     }
@@ -297,15 +300,15 @@ export class TaskTable {
     if (existing) {
       return this.change(existing, () => {
         if (existing.background === undefined && background !== undefined) existing.background = background;
-      });
+      }, at);
     }
-    return this.create(toolUseId, kind, background, { toolUseId, state: "running", startedAt: at });
+    return this.create(toolUseId, kind, background, { toolUseId, state: "running", startedAt: at }, at);
   }
 
   private applyStarted(obs: StartedObservation): TaskSnapshot[] {
     const record = this.find(obs.ref);
     if (!record) {
-      return this.createOrphan(obs.ref, obs.taskKind, obs.background, (run) => {
+      return this.createOrphan(obs.ref, obs.taskKind, obs.background, obs.at, (run) => {
         run.startedAt = obs.at;
       });
     }
@@ -326,7 +329,7 @@ export class TaskTable {
       }
       if (obs.taskKind !== undefined) record.kind = obs.taskKind;
       if (obs.background !== undefined) record.background = obs.background;
-    });
+    }, obs.at);
   }
 
   private applyBackground(ref: TaskRef, background: boolean): TaskSnapshot[] {
@@ -340,14 +343,14 @@ export class TaskTable {
 
   private applyEndedObservation(obs: EndedObservation): TaskSnapshot[] {
     const record = this.find(obs.ref);
-    if (!record) return this.createOrphan(obs.ref, undefined, undefined, (run) => applyEnded(run, obs));
+    if (!record) return this.createOrphan(obs.ref, undefined, undefined, obs.at, (run) => applyEnded(run, obs));
     const run = targetRun(record, obs.ref);
     if (!run) return [];
     return this.change(record, () => {
       this.link(record, obs.ref);
       this.linkRun(record, run, obs.ref);
       applyEnded(run, obs);
-    });
+    }, obs.at);
   }
 
   private applyRoster(tasks: RosterEntry[], at: number): TaskSnapshot[] {
@@ -357,12 +360,12 @@ export class TaskTable {
       const cliTaskId = record.cliTaskId;
       if (cliTaskId === undefined) continue;
       if (this.roster.has(cliTaskId)) {
-        if (record.background !== true) changed.push(...this.change(record, () => (record.background = true)));
+        if (record.background !== true) changed.push(...this.change(record, () => (record.background = true), at));
         continue;
       }
       const run = currentRun(record);
       if (run.state !== "running" || record.background !== true || !this.everRostered.has(cliTaskId)) continue;
-      changed.push(...this.change(record, () => endRun(run, "unknown", "roster", at)));
+      changed.push(...this.change(record, () => endRun(run, "unknown", "roster", at), at));
     }
     for (const cliTaskId of this.roster.keys()) this.everRostered.add(cliTaskId);
     return changed;
@@ -390,6 +393,7 @@ export class TaskTable {
     ref: TaskRef,
     kind: TaskKind | undefined,
     background: boolean | undefined,
+    at: number,
     observe: (run: TaskRun) => void
   ): TaskSnapshot[] {
     const id = ref.toolUseId ?? ref.cliTaskId;
@@ -400,21 +404,30 @@ export class TaskTable {
       state: "running"
     };
     observe(run);
-    return this.create(id, kind ?? "agent", background, run, ref.cliTaskId);
+    return this.create(id, kind ?? "agent", background, run, at, ref.cliTaskId);
   }
 
-  private create(id: string, kind: TaskKind, background: boolean | undefined, run: TaskRun, cliTaskId?: string): TaskSnapshot[] {
-    const record: TaskRecord = { id, kind, background, ...(cliTaskId !== undefined ? { cliTaskId } : {}), runs: [run] };
+  private create(
+    id: string,
+    kind: TaskKind,
+    background: boolean | undefined,
+    run: TaskRun,
+    at: number,
+    cliTaskId?: string
+  ): TaskSnapshot[] {
+    const record: TaskRecord = { id, kind, background, ...(cliTaskId !== undefined ? { cliTaskId } : {}), runs: [run], changedAt: at };
     this.records.set(id, record);
     if (run.toolUseId !== undefined) this.byToolUseId.set(run.toolUseId, record);
     if (cliTaskId !== undefined) this.byCliTaskId.set(cliTaskId, record);
     return [toSnapshot(record)];
   }
 
-  private change(record: TaskRecord, mutate: () => void): TaskSnapshot[] {
+  private change(record: TaskRecord, mutate: () => void, at?: number): TaskSnapshot[] {
     const before = toSnapshot(record);
     mutate();
     const after = toSnapshot(record);
-    return isDeepStrictEqual(before, after) ? [] : [after];
+    if (isDeepStrictEqual(before, after)) return [];
+    if (at !== undefined) record.changedAt = Math.max(record.changedAt ?? at, at);
+    return [after];
   }
 }

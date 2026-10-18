@@ -251,6 +251,8 @@ async function settle(): Promise<void> {
   }
 }
 
+const END_TIME = Date.now() + 60_000;
+
 function resultLine(overrides: Record<string, unknown> = {}): string {
   return JSON.stringify({
     type: "result",
@@ -826,7 +828,7 @@ describe("ClaudeCliDriver persistent process", () => {
     children[0].stdout.write(`${taskStartedLine(taskId, toolCallId)}\n`);
     children[0].stdout.write(`${taskChangeLineWithIds([taskId])}\n`);
     children[0].stdout.write(
-      `${JSON.stringify({ type: "system", subtype: "task_updated", task_id: taskId, patch: { status: "completed", end_time: 1000 } })}\n`
+      `${JSON.stringify({ type: "system", subtype: "task_updated", task_id: taskId, patch: { status: "completed", end_time: END_TIME } })}\n`
     );
     children[0].stdout.write(
       `${JSON.stringify({ type: "system", subtype: "task_notification", task_id: taskId, status: "completed", summary: "DONE" })}\n`
@@ -837,7 +839,7 @@ describe("ClaudeCliDriver persistent process", () => {
     await settle();
 
     expect(toolResults(events)).toEqual([]);
-    expect(finalTask(events, toolCallId)).toMatchObject({ cliTaskId: taskId, state: "completed", endedAt: 1000, output: "DONE" });
+    expect(finalTask(events, toolCallId)).toMatchObject({ cliTaskId: taskId, state: "completed", endedAt: END_TIME, output: "DONE" });
     const dones = turnDones(events);
     expect(dones).toHaveLength(1);
     expect(dones[0]).toMatchObject({ resultText: "DONE", backgroundTasks: 0 });
@@ -852,7 +854,7 @@ describe("ClaudeCliDriver persistent process", () => {
       `${JSON.stringify({ type: "system", subtype: "task_started", task_id: "agent-1", tool_use_id: "call-1", is_backgrounded: true, prompt: "review" })}\n`
     );
     children[0].stdout.write(
-      `${JSON.stringify({ type: "system", subtype: "task_updated", task_id: "agent-1", patch: { status: "completed", end_time: 1000 } })}\n`
+      `${JSON.stringify({ type: "system", subtype: "task_updated", task_id: "agent-1", patch: { status: "completed", end_time: END_TIME } })}\n`
     );
     children[0].stdout.write(
       `${JSON.stringify({ type: "system", subtype: "task_notification", task_id: "agent-1", tool_use_id: "call-1", status: "completed", summary: "DONE", usage: { total_tokens: 1200, tool_uses: 3, duration_ms: 900 } })}\n`
@@ -868,7 +870,7 @@ describe("ClaudeCliDriver persistent process", () => {
       endReason: "cli",
       runCount: 1,
       startedAt: expect.any(Number),
-      endedAt: 1000,
+      endedAt: END_TIME,
       output: "DONE",
       usage: { tokens: 1200, toolUses: 3, durationMs: 900 }
     });
@@ -884,11 +886,11 @@ describe("ClaudeCliDriver persistent process", () => {
       `${JSON.stringify({ type: "system", subtype: "task_started", task_id: "agent-2", tool_use_id: "call-2", task_type: "local_agent", is_backgrounded: true })}\n`
     );
     children[0].stdout.write(
-      `${JSON.stringify({ type: "system", subtype: "task_updated", task_id: "agent-2", patch: { status: "failed", end_time: 1000 } })}\n`
+      `${JSON.stringify({ type: "system", subtype: "task_updated", task_id: "agent-2", patch: { status: "failed", end_time: END_TIME } })}\n`
     );
     await settle();
     expect(toolResults(events)).toEqual([]);
-    expect(finalTask(events, "call-2")).toMatchObject({ kind: "agent", state: "failed", endReason: "cli", endedAt: 1000 });
+    expect(finalTask(events, "call-2")).toMatchObject({ kind: "agent", state: "failed", endReason: "cli", endedAt: END_TIME });
     expect(finalTask(events, "call-2")).not.toHaveProperty("output");
     driver.dispose();
   });
@@ -942,7 +944,7 @@ describe("ClaudeCliDriver persistent process", () => {
 
     children[0].stdout.write(`${JSON.stringify({ type: "system", subtype: "background_tasks_changed", tasks: [] })}\n`);
     children[0].stdout.write(
-      `${JSON.stringify({ type: "system", subtype: "task_updated", task_id: "bash-1", patch: { status: "completed", end_time: 1000 } })}\n`
+      `${JSON.stringify({ type: "system", subtype: "task_updated", task_id: "bash-1", patch: { status: "completed", end_time: END_TIME } })}\n`
     );
     children[0].stdout.write(
       `${JSON.stringify({ type: "system", subtype: "task_notification", task_id: "bash-1", tool_use_id: "call-bash", status: "completed", summary: "Background command \"sleep 20\" completed (exit code 0)" })}\n`
@@ -1020,7 +1022,7 @@ describe("ClaudeCliDriver persistent process", () => {
       `${JSON.stringify({ type: "system", subtype: "task_started", task_id: "bash-1", tool_use_id: "call-bash", task_type: "local_bash", is_backgrounded: true })}\n`
     );
     children[0].stdout.write(
-      `${JSON.stringify({ type: "system", subtype: "task_updated", task_id: "bash-1", patch: { status: "failed", end_time: 1000 } })}\n`
+      `${JSON.stringify({ type: "system", subtype: "task_updated", task_id: "bash-1", patch: { status: "failed", end_time: END_TIME } })}\n`
     );
     await settle();
     expect(events).toContainEqual(expect.objectContaining({
@@ -1043,7 +1045,7 @@ describe("ClaudeCliDriver persistent process", () => {
       `${JSON.stringify({ type: "system", subtype: "task_updated", task_id: "bash-1", patch: { status: "killed" } })}\n`
     );
     children[0].stdout.write(
-      `${JSON.stringify({ type: "system", subtype: "task_updated", task_id: "bash-1", patch: { status: "killed", end_time: 1000 } })}\n`
+      `${JSON.stringify({ type: "system", subtype: "task_updated", task_id: "bash-1", patch: { status: "killed", end_time: END_TIME } })}\n`
     );
     children[0].stdout.write(
       `${JSON.stringify({ type: "system", subtype: "task_notification", task_id: "bash-1", tool_use_id: "call-bash", status: "killed", summary: "Background command was stopped" })}\n`
@@ -1226,7 +1228,7 @@ describe("ClaudeCliDriver persistent process", () => {
       `${JSON.stringify({ type: "system", subtype: "task_started", task_id: "bash-orphan", task_type: "local_bash", is_backgrounded: true })}\n`
     );
     children[0].stdout.write(
-      `${JSON.stringify({ type: "system", subtype: "task_updated", task_id: "bash-orphan", patch: { status: "failed", end_time: 1000 } })}\n`
+      `${JSON.stringify({ type: "system", subtype: "task_updated", task_id: "bash-orphan", patch: { status: "failed", end_time: END_TIME } })}\n`
     );
     await settle();
 

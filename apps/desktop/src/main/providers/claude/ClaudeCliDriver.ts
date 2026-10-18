@@ -24,7 +24,7 @@ import type {
 } from "@cw-code/contracts";
 import { parseExtraArgs } from "../../settings/settingsUtils.js";
 import { hasExited, killProcessTree, waitForExit } from "../../processTree.js";
-import { TaskTable, taskLastSeen, type TaskObservation } from "../../tasks/TaskTable.js";
+import { TaskTable, type TaskObservation } from "../../tasks/TaskTable.js";
 import { SYNTHETIC_FULL_ACCESS_DESCRIPTION } from "../permissions.js";
 import { attributeClaudeSubagentEvent, buildClaudeAllowRule, claudeAllowResponse, claudeApprovalRequest, claudeQuestionRequest, claudeDenyResponse, claudeControlResponse, parseClaudeCompactBoundary, parseClaudeControlRequest, parseClaudeSubagentHandback, parseClaudeSystemInit, parseClaudeTaskNotificationLine, parseClaudeTaskSystemLine, parseClaudeToolUseResult, parseStreamLine, type ClaudeControlRequest, type ClaudeTaskNotificationLine, type ClaudeTaskSystemInfo, type TurnDoneInfo } from "./claudeStreamParser.js";
 import { claudeCallObservation, claudeHandbackObservation, claudeNotificationObservation, claudeSystemTaskObservation, claudeToolResultObservation, findClaudeTaskNotification } from "./claudeTasks.js";
@@ -116,7 +116,6 @@ export function mergeClaudeAllowRule(existing: unknown, rule: string): Record<st
 }
 
 export const CLAUDE_IDLE_EVICT_MS = 20 * 60_000;
-
 
 const CLI_TERMINAL_TASK_STATES = new Set<TaskState>(["completed", "failed", "stopped"]);
 
@@ -910,9 +909,7 @@ export class ClaudeCliDriver implements CliDriver {
   liveTasks(sessionId: string): TaskSnapshot[] {
     const state = this.processes.get(sessionId);
     if (!state) return [];
-    return state.tasks.snapshots().filter(
-      (task) => task.state === "running" || taskLastSeen(task) >= state.turnStartedAt
-    );
+    return state.tasks.recentSnapshots(state.turnStartedAt);
   }
 
   private compactTasks(state: ClaudeProcessState): void {

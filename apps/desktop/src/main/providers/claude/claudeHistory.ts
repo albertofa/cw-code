@@ -368,9 +368,20 @@ function stringField(record: Record<string, unknown> | undefined, key: string): 
   return typeof value === "string" ? value : undefined;
 }
 
+const SAFE_CURSOR_RE = /^[\w-]+$/;
+
+function isSafeCursor(resumeCursor: string): boolean {
+  return SAFE_CURSOR_RE.test(resumeCursor);
+}
+
+function sidecarDirs(transcriptDir: string, resumeCursor: string): string[] {
+  const shared = join(transcriptDir, "subagents");
+  return isSafeCursor(resumeCursor) ? [join(transcriptDir, resumeCursor, "subagents"), shared] : [shared];
+}
+
 function sidecarFinished(transcriptDir: string, resumeCursor: string, agentId: string, toolUseId: string): boolean {
-  if (!/^[0-9a-f]{8,64}$/.test(agentId) || !/^[\w-]+$/.test(resumeCursor)) return false;
-  for (const dir of [join(transcriptDir, resumeCursor, "subagents"), join(transcriptDir, "subagents")]) {
+  if (!/^[0-9a-f]{8,64}$/.test(agentId)) return false;
+  for (const dir of sidecarDirs(transcriptDir, resumeCursor)) {
     let meta: Record<string, unknown> | undefined;
     try {
       meta = plainObject(JSON.parse(readFileSync(join(dir, `agent-${agentId}.meta.json`), "utf8")));
@@ -597,7 +608,7 @@ export function readClaudeTaskResult(
   resumeCursor: string,
   toolUseId: string
 ): { result?: string; status?: string } | undefined {
-  if (!resumeCursor || !toolUseId || !/^[\w-]+$/.test(resumeCursor)) return undefined;
+  if (!resumeCursor || !toolUseId || !isSafeCursor(resumeCursor)) return undefined;
   const file = join(claudeTranscriptProjectDir(rootPath, resumeCursor), `${resumeCursor}.jsonl`);
   let raw: string;
   try {
@@ -656,7 +667,9 @@ function attachSidecarInfo(
     let info = infoByAgent.get(agentId);
     if (info === undefined) {
       info =
-        readSidecarAgent(join(base, resumeCursor), agentId) ?? readSidecarAgent(base, agentId) ?? null;
+        (isSafeCursor(resumeCursor) ? readSidecarAgent(join(base, resumeCursor), agentId) : undefined) ??
+        readSidecarAgent(base, agentId) ??
+        null;
       infoByAgent.set(agentId, info);
     }
     if (!info) continue;

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 import { cpSync, mkdtempSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { assignReasoningDurations, attributeSendMessages, extractAgentId, findSidecarModel, parseClaudeTranscriptLine, readClaudeHistoryFile, readClaudeTaskResult, readSidecarAgent, toEpochMs } from "./claudeHistory.js";
 import type { HistoryMessage, TaskSnapshot } from "@cw-code/contracts";
@@ -492,6 +492,17 @@ describe("readClaudeHistoryFile", () => {
       expect(tasks.length).toBeGreaterThan(0);
       expect(tasks.every((task) => task.state !== "running")).toBe(true);
     }
+  });
+
+  it("still reads the shared sidecar folder when the session cursor is not a safe path segment", () => {
+    const file = syntheticSession([agentCall("toolu_bg", 0, BACKGROUND_INPUT), launchAck("toolu_bg", 100)]);
+    mkdirSync(join(dirname(file), "subagents"), { recursive: true });
+    writeFileSync(
+      join(dirname(file), "subagents", `agent-${AGENT_ID}.meta.json`),
+      JSON.stringify({ toolUseId: "toolu_bg", finished: true })
+    );
+
+    expect(taskOf(readClaudeHistoryFile(file, "../escape"), "toolu_bg")).toMatchObject({ state: "completed", endReason: "sidecar" });
   });
 
   it("does not let a sidecar finished flag close a resumed run it cannot be tied to", () => {
