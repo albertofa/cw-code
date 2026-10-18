@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { checkCliVersion, checkCliVersions, isBinaryUnavailableError, meetsMinimum } from "./cliVersions.js";
+import { checkCliVersion, checkCliVersions, isBinaryUnavailableError, meetsMinimum, minimumVersionFor } from "./cliVersions.js";
 
 describe("meetsMinimum", () => {
   it("accepts the exact minimum version", () => {
@@ -69,5 +69,23 @@ describe("checkCliVersions", () => {
     expect(checks).toHaveLength(3);
     expect(checks.every((check) => check.available && check.error === null)).toBe(true);
     expect(checks.every((check) => check.actual === "1.2.3")).toBe(true);
+  });
+});
+
+describe("minimumVersionFor", () => {
+  it("gates opencode v1 and v2 by their own minimums", () => {
+    expect(minimumVersionFor("opencode", "1.19.3")).toBe("1.18.31");
+    expect(minimumVersionFor("opencode", "2.0.32")).toBe("2.0.32");
+    expect(minimumVersionFor("opencode", null)).toBe("1.18.31");
+  });
+
+  it("rejects a v2 build older than the v2 minimum even though it beats the v1 minimum", () => {
+    expect(meetsMinimum("2.0.20", minimumVersionFor("opencode", "2.0.20"))).toBe(false);
+    expect(meetsMinimum("2.0.32", minimumVersionFor("opencode", "2.0.32"))).toBe(true);
+  });
+
+  it("keeps a single minimum for the other CLIs", () => {
+    expect(minimumVersionFor("claude", "9.0.0")).toBe("2.1.260");
+    expect(minimumVersionFor("codex", "0.200.0")).toBe("0.153.4");
   });
 });

@@ -40,6 +40,15 @@ export interface DriverActivity {
   ownedProcesses: number;
 }
 
+/** How an interactive terminal joins a server the driver already runs instead of starting its own. */
+export interface TerminalLaunch {
+  /** Arguments placed before the resume arguments. */
+  args: string[];
+  env: Record<string, string>;
+  /** Lets the driver stop the server again once the terminal exits. */
+  release(): void;
+}
+
 export interface CliDriver {
   readonly kind: SessionMeta["driver"];
   listSessions(projectRoot: string, projectId?: string): Promise<SessionMeta[]>;
@@ -62,6 +71,7 @@ export interface CliDriver {
   respondToApproval?(requestId: string, decision: ApprovalDecision): Promise<void>;
   respondToQuestion?(requestId: string, answers: Record<string, string>): Promise<void>;
   getAccountUsage?(): Promise<AccountUsageState>;
+  terminalLaunch?(cwd: string): Promise<TerminalLaunch | null>;
   /** Snapshot of the sessions this driver is busy for (including internal ones) and the processes it currently owns. */
   activity?(): DriverActivity;
   /**

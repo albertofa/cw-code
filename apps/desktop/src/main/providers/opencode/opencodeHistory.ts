@@ -2,39 +2,7 @@ import type { HistoryMessage, TaskSnapshot } from "@cw-code/contracts";
 import { isSubagentToolName } from "../../tasks/toolTasks.js";
 import { todosFromToolCall } from "../todos.js";
 import { errorMessageOf } from "./opencodeMessage.js";
-
-interface ServerPart {
-  id?: string;
-  messageID?: string;
-  type?: string;
-  text?: string;
-  tool?: string;
-  callID?: string;
-  state?: {
-    status?: string;
-    input?: unknown;
-    output?: string;
-    error?: unknown;
-    metadata?: { model?: { modelID?: unknown; providerID?: unknown } };
-    time?: { start?: number; end?: number };
-  };
-  filename?: string;
-  mime?: string;
-  url?: string;
-  time?: { start?: number; end?: number };
-}
-
-interface ServerMessage {
-  info?: {
-    id?: string;
-    role?: string;
-    mode?: string;
-    summary?: boolean;
-    time?: { created?: number; completed?: number };
-    error?: unknown;
-  };
-  parts?: ServerPart[];
-}
+import type { OpencodeMessage, OpencodeMessagePart } from "./opencodeProtocol.js";
 
 const ABORTED_ERROR_NAMES = new Set(["AbortedError", "MessageAbortedError"]);
 
@@ -44,8 +12,9 @@ function isAbortedError(error: unknown): boolean {
   return typeof name === "string" && ABORTED_ERROR_NAMES.has(name);
 }
 
-function taskModelOf(part: ServerPart): string | undefined {
-  const modelID = part.state?.metadata?.model?.modelID;
+function taskModelOf(part: OpencodeMessagePart): string | undefined {
+  const model = part.state?.metadata?.["model"];
+  const modelID = model !== null && typeof model === "object" ? (model as { modelID?: unknown }).modelID : undefined;
   return typeof modelID === "string" && modelID ? modelID : undefined;
 }
 
@@ -59,7 +28,7 @@ function stamp(value: unknown): { timestamp?: number } {
 }
 
 function subagentTaskOf(
-  part: ServerPart,
+  part: OpencodeMessagePart,
   id: string,
   output: string | undefined,
   errorText: string | undefined,
@@ -70,7 +39,7 @@ function subagentTaskOf(
   const base = {
     id,
     kind: "agent" as const,
-    background: false,
+    background: part.state?.metadata?.["background"] === true,
     runCount: 1,
     ...(startedAt !== undefined ? { startedAt } : {}),
     ...(endedAt !== undefined ? { endedAt } : {})
@@ -90,7 +59,7 @@ function subagentTaskOf(
   }
 }
 
-export function mapOpencodeMessages(messages: ServerMessage[], limit = 300): HistoryMessage[] {
+export function mapOpencodeMessages(messages: OpencodeMessage[], limit = 300): HistoryMessage[] {
   const out: HistoryMessage[] = [];
   for (const msg of messages) {
     const role = msg.info?.role === "assistant" ? "assistant" : "user";
@@ -98,6 +67,14 @@ export function mapOpencodeMessages(messages: ServerMessage[], limit = 300): His
     const created = msg.info?.time?.created;
     const completed = msg.info?.time?.completed;
     const aborted = isAbortedError(msg.info?.error);
+    if (msg.info?.role === "idle") {
+      const idleError = errorMessageOf(msg.info.error);
+      const previous = out[out.length - 1];
+      if (idleError && !(previous?.isError && previous.role === "system" && previous.text === idleError)) {
+        out.push({ id: `${turnId}-e`, role: "system", text: idleError, turnId, isError: true, ...stamp(created) });
+      }
+      continue;
+    }
     if (msg.info?.summary === true || msg.info?.mode === "compaction") {
       out.push({
         id: `${turnId}-compact`,

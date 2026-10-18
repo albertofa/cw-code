@@ -5,7 +5,6 @@ import {
   isReasoningPartDelta,
   latestAssistantOf,
   mimeForOpencodeAttachment,
-  partDeltaOf,
   runEnded,
   splitOpencodeModel,
   summarizeOpencodeTurn,
@@ -403,31 +402,6 @@ describe("summarizeOpencodeTurn", () => {
     const result = summarizeOpencodeTurn(aborted, new Set());
     expect(result.lastModel).toBe("anthropic/claude-sonnet-4-5");
     expect(result.lastContextTokens).toBe(15);
-  });
-});
-
-describe("partDeltaOf", () => {
-  const base = {
-    id: "evt_1",
-    type: "message.part.delta",
-    properties: { sessionID: "ses_1", messageID: "msg_1", partID: "prt_1", field: "text", delta: "hel" }
-  };
-
-  it("extracts deltas for our session with their part and field", () => {
-    expect(partDeltaOf(base, "ses_1")).toEqual({ partID: "prt_1", field: "text", text: "hel" });
-  });
-
-  it("ignores other sessions, empty deltas, and shapes", () => {
-    expect(partDeltaOf(base, "ses_2")).toBeNull();
-    expect(partDeltaOf({ ...base, properties: { ...base.properties, delta: "" } }, "ses_1")).toBeNull();
-    expect(partDeltaOf({ ...base, properties: { ...base.properties, field: "" } }, "ses_1")).toBeNull();
-    expect(partDeltaOf({ id: "e", type: "message.part.delta", data: base.properties }, "ses_1")).toEqual({
-      partID: "prt_1",
-      field: "text",
-      text: "hel"
-    });
-    expect(partDeltaOf({ type: "session.idle" }, "ses_1")).toBeNull();
-    expect(partDeltaOf(null, "ses_1")).toBeNull();
   });
 });
 

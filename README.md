@@ -95,7 +95,9 @@ configuration.
 - Node.js 24.x and pnpm 11.5.3 for development.
 - At least one supported CLI installed and authenticated:
   - Claude Code `2.1.260` or newer (`claude`)
-  - OpenCode `1.18.31` or newer (`opencode`)
+  - OpenCode v1 `1.18.31` or newer, or v2 `2.0.32` or newer (`opencode`).
+    npm `opencode-ai` still ships v1; v2 comes from `npm i -g @opencode/cli` or
+    the installer at `https://opencode.ai/v2/install`.
   - Codex `0.153.4` or newer (`codex`)
 
 The providers are optional. The app reports missing or outdated CLIs in its
@@ -139,7 +141,10 @@ pnpm --filter @cw-code/desktop exec electron-rebuild -f -w node-pty
   CLI-native transcripts are read only for best-effort history.
 
 Claude turns use the CLI's stream JSON output. OpenCode runs a managed server
-per project root and attaches turns to it. Codex uses its app-server protocol.
+per project root and attaches turns to it; the server's health check tells the
+v1 and v2 wire protocols apart. On v2, cw-code loads a small plugin through
+`OPENCODE_CONFIG_CONTENT` that adds the `todo` tool and, only where the native
+question tool is denied, the `cw_ask` bridge. Codex uses its app-server protocol.
 Interactive PTY tabs launch the real installed binaries for permissions,
 commands, and features that headless output cannot represent.
 
@@ -148,9 +153,9 @@ commands, and features that headless output cannot represent.
 cw-code runs local commands with access to the project directory and can display
 their output in the application. Review CLI permissions and provider account
 settings before using it with sensitive repositories. Never commit credentials,
-transcripts, `.env` files, or generated output. OpenCode's optional
-`OPENCODE_SERVER_PASSWORD` is read from the local environment and is not stored
-by this project.
+transcripts, `.env` files, or generated output. Each managed OpenCode server
+gets a random password for its lifetime; it is passed to the server process and
+kept in memory, never written to disk.
 
 cw-code is not affiliated with Anthropic, OpenAI, or the OpenCode project.
 Their names and products remain the property of their respective owners.

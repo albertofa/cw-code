@@ -1,4 +1,4 @@
-import type { AppSettings } from "@cw-code/contracts";
+import type { AppSettings, TerminalLaunch } from "@cw-code/contracts";
 import { toShellTarget } from "./resolve.js";
 import { parseExtraArgs } from "../settings/settingsUtils.js";
 import { traceHarnessCall, truncateError } from "../debug/harnessTrace.js";
@@ -40,6 +40,7 @@ interface PtyEntry {
   replay: string;
   token: string;
   attachedCount: number;
+  release?: () => void;
 }
 
 const REPLAY_LIMIT_CHARS = 262_144;
@@ -120,7 +121,8 @@ export class PtyPool {
     kind: PtyKind,
     resumeCursor: string,
     env: Record<string, string> | undefined,
-    onData: (ptyId: string, data: string) => void
+    onData: (ptyId: string, data: string) => void,
+    launch: () => Promise<TerminalLaunch | null> = async () => null
   ): Promise<PtyAttachResult> {
     const ptyId = `${sessionId}:${kind}`;
     const existing = this.disposed ? undefined : this.ptys.get(ptyId);
@@ -129,7 +131,7 @@ export class PtyPool {
     const generation = this.generation;
     let task = this.openings.get(ptyId);
     if (!task) {
-      task = this.spawn(generation, ptyId, sessionId, cwd, kind, resumeCursor, env, onData);
+      task = this.spawn(generation, ptyId, sessionId, cwd, kind, resumeCursor, env, onData, launch);
       this.openings.set(ptyId, task);
       task.finally(() => {
         if (this.openings.get(ptyId) === task) this.openings.delete(ptyId);
@@ -163,7 +165,30 @@ export class PtyPool {
     kind: PtyKind,
     resumeCursor: string,
     env: Record<string, string> | undefined,
-    onData: (ptyId: string, data: string) => void
+    onData: (ptyId: string, data: string) => void,
+    launch: () => Promise<TerminalLaunch | null>
+  ): Promise<PtyEntry> {
+    const attached = kind === "shell" ? null : await launch();
+    try {
+      const entry = await this.spawnProcess(generation, ptyId, sessionId, cwd, kind, resumeCursor, env, onData, attached);
+      if (attached) entry.release = attached.release;
+      return entry;
+    } catch (err) {
+      attached?.release();
+      throw err;
+    }
+  }
+
+  private async spawnProcess(
+    generation: number,
+    ptyId: string,
+    sessionId: string,
+    cwd: string,
+    kind: PtyKind,
+    resumeCursor: string,
+    env: Record<string, string> | undefined,
+    onData: (ptyId: string, data: string) => void,
+    attached: TerminalLaunch | null
   ): Promise<PtyEntry> {
     const start = Date.now();
     const operation = "pty.open";
@@ -200,7 +225,7 @@ export class PtyPool {
     } else {
       file = process.platform === "win32" ? "powershell.exe" : process.env["SHELL"] || "/bin/bash";
     }
-    const args = [...buildResumeArgs(kind, resumeCursor), ...extra];
+    const args = [...(attached?.args ?? []), ...buildResumeArgs(kind, resumeCursor), ...extra];
     let target: { file: string; args: string[] };
     try {
       target = toShellTarget(file, args);
@@ -224,7 +249,7 @@ export class PtyPool {
         cols: 120,
         rows: 30,
         cwd,
-        env: sanitizedChildEnv(env ?? process.env, process.platform)
+        env: sanitizedChildEnv({ ...(env ?? process.env), ...(attached?.env ?? {}) }, process.platform)
       });
     } catch (err) {
       traceHarnessCall({
@@ -252,6 +277,7 @@ export class PtyPool {
     });
     proc.onExit(({ exitCode }) => {
       if (this.ptys.get(ptyId) === entry) this.ptys.delete(ptyId);
+      this.releaseEntry(entry);
       this.onExit(ptyId, entry.token, exitCode);
     });
     traceHarnessCall({
@@ -280,6 +306,13 @@ export class PtyPool {
     if (!entry) return;
     this.ptys.delete(ptyId);
     this.killPty(entry.proc);
+    this.releaseEntry(entry);
+  }
+
+  private releaseEntry(entry: PtyEntry): void {
+    const release = entry.release;
+    entry.release = undefined;
+    release?.();
   }
 
   private killPty(proc: PtyInstance): void {

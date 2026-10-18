@@ -31,6 +31,7 @@ import type {
   ShutdownActiveTurn,
   SubagentToolsResult,
   TaskSnapshot,
+  TerminalLaunch,
   ThreadEvent,
   TurnChanges,
   TurnHandle,
@@ -1284,6 +1285,12 @@ export class SessionManager {
 
   resumeCursorFor(sessionId: string): string {
     return this.store.getSession(sessionId)?.resumeCursor ?? "";
+  }
+
+  async terminalLaunch(sessionId: string, kind: string, cwd: string): Promise<TerminalLaunch | null> {
+    const session = this.store.getSession(sessionId);
+    if (!session || session.driver !== kind) return null;
+    return (await this.drivers[session.driver].terminalLaunch?.(cwd)) ?? null;
   }
 
   getComposer(sessionId: string): ComposerPrefs {

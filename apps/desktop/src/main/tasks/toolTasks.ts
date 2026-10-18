@@ -9,7 +9,7 @@ interface SessionTasks {
   turnByTask: Map<string, string>;
 }
 
-const SUBAGENT_TOOL_NAMES = new Set(["task", "agent"]);
+const SUBAGENT_TOOL_NAMES = new Set(["task", "agent", "subagent"]);
 
 export function isSubagentToolName(name: string): boolean {
   return SUBAGENT_TOOL_NAMES.has(name.toLowerCase());

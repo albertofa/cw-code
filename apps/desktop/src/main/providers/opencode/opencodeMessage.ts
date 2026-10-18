@@ -185,7 +185,7 @@ export function runEnded(rawMessages: unknown, scopeIds?: Set<string>): boolean 
 
 export function summarizeOpencodeTurn(messages: OpencodeTurnMessage[], beforeIds: Set<string> | null): OpencodeTurnSummary {
   const fresh = beforeIds === null ? [] : messages.filter((m) => !beforeIds.has(m.id));
-  const scoped = beforeIds === null ? [] : fresh.filter((m) => m.role === "assistant");
+  const scoped = beforeIds === null ? [] : fresh.filter((m) => m.role === "assistant" || m.role === "idle");
   const byModel = new Map<string, TurnModelUsage>();
   let text = "";
   let errorText = "";
@@ -193,6 +193,10 @@ export function summarizeOpencodeTurn(messages: OpencodeTurnMessage[], beforeIds
   let lastContextTokens: number | undefined;
   let compacted = false;
   for (const m of scoped) {
+    if (m.role === "idle") {
+      errorText = m.error ?? "";
+      continue;
+    }
     if (m.error) errorText = m.error;
     if (isOpencodeCompactionMessage(m)) {
       compacted = true;
@@ -243,19 +247,6 @@ export interface OpencodePartDelta {
   partID: string;
   field: string;
   text: string;
-}
-
-export function partDeltaOf(event: unknown, sessionID: string): OpencodePartDelta | null {
-  const envelope = asRecord(event);
-  if (!envelope || envelope["type"] !== "message.part.delta") return null;
-  const props = asRecord(envelope["properties"] ?? envelope["data"]);
-  if (!props || props["sessionID"] !== sessionID) return null;
-  const field = props["field"];
-  if (typeof field !== "string" || !field) return null;
-  const text = props["delta"];
-  if (typeof text !== "string" || !text) return null;
-  const partID = props["partID"];
-  return { partID: typeof partID === "string" ? partID : "", field, text };
 }
 
 export function isReasoningPartDelta(delta: OpencodePartDelta, partType: string | undefined): boolean {

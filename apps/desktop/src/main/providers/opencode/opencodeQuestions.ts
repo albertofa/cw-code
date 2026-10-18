@@ -33,10 +33,19 @@ function questionOf(entry: unknown): QuestionInfo | null {
   };
 }
 
+export interface OpencodeQuestionField {
+  key: string;
+  type: "string" | "multiselect" | "boolean";
+  /** Option value by label, when the form's values differ from what the user sees. */
+  values?: Record<string, string>;
+}
+
 export interface ParsedOpencodeQuestion {
   requestId: string;
   sessionID: string;
   questions: QuestionInfo[];
+  /** v2 form fields, parallel to `questions`. */
+  fields?: OpencodeQuestionField[];
 }
 
 export function parseOpencodeQuestionAsked(event: unknown): ParsedOpencodeQuestion | null {

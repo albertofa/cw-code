@@ -1154,7 +1154,8 @@ function registerIpc(services: Services): void {
         sessions.turnEnv(args.sessionId, root),
         (id, data) => {
           mainWindow?.webContents.send("pty.data", { ptyId: id, data });
-        }
+        },
+        () => sessions.terminalLaunch(args.sessionId, args.kind, root)
       )
     )
   );

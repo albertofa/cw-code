@@ -13,6 +13,7 @@ import type {
   SessionEvent,
   SessionMeta,
   TaskSnapshot,
+  TerminalLaunch,
   TurnHandle,
   TurnRequest
 } from "@cw-code/contracts";
@@ -324,6 +325,12 @@ export class TracingCliDriver implements CliDriver {
     const inner = this.inner;
     if (typeof inner.activity !== "function") return undefined;
     return () => inner.activity!();
+  }
+
+  get terminalLaunch(): ((cwd: string) => Promise<TerminalLaunch | null>) | undefined {
+    const inner = this.inner;
+    if (typeof inner.terminalLaunch !== "function") return undefined;
+    return (cwd) => inner.terminalLaunch!(cwd);
   }
 
   get liveTasks(): ((sessionId: string) => TaskSnapshot[]) | undefined {

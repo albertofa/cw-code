@@ -8,6 +8,14 @@ export const MINIMUM_VERSIONS = {
   codex: "0.153.4"
 } as const;
 
+const OPENCODE_V2_MINIMUM = "2.0.32";
+
+export function minimumVersionFor(binary: keyof typeof MINIMUM_VERSIONS, actual: string | null): string {
+  if (binary !== "opencode") return MINIMUM_VERSIONS[binary];
+  const major = Number(actual?.match(SEMVER_RE)?.[1] ?? 0);
+  return major >= 2 ? OPENCODE_V2_MINIMUM : MINIMUM_VERSIONS.opencode;
+}
+
 export interface CliVersionCheck {
   binary: "claude" | "opencode" | "codex";
   binaryPath: string;
@@ -83,7 +91,7 @@ export async function checkCliVersion(
 ): Promise<CliVersionCheck> {
   const start = Date.now();
   const { actual, found, available, error } = await queryVersion(binaryPath);
-  const minimum = MINIMUM_VERSIONS[binary];
+  const minimum = minimumVersionFor(binary, actual);
   const ok = meetsMinimum(actual, minimum);
   traceHarnessCall({
     harness: binary,
