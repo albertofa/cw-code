@@ -16,6 +16,7 @@ import type {
   QuestionRequest,
   Session,
   SessionStatus,
+  NotificationSoundSettings,
   SettingsPatch,
   ShutdownAssessment,
   ShutdownReason,
@@ -220,6 +221,7 @@ interface AppState {
   holdingHours: number;
   defaultUseWorktree: boolean;
   appearance: AppearancePrefs;
+  notificationSounds: NotificationSoundSettings | null;
   reasoningExpandedByDriver: Record<DriverName, boolean>;
   defaultModelByDriver: Record<DriverName, string>;
   previewBySession: Record<string, { sessionId: string; path: string; basePath: string }>;
@@ -431,6 +433,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   holdingHours: 6,
   defaultUseWorktree: true,
   appearance: DEFAULT_APPEARANCE,
+  notificationSounds: null,
   reasoningExpandedByDriver: { claude: false, opencode: false, codex: false },
   defaultModelByDriver: { claude: "", opencode: "", codex: "" },
   updates: null,
@@ -556,6 +559,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       holdingHours: settings.holdingHours,
       defaultUseWorktree: settings.defaultUseWorktree,
       appearance: appearanceOf(settings),
+      notificationSounds: settings.notificationSounds,
       reasoningExpandedByDriver: reasoningExpandedFrom(settings),
       defaultModelByDriver: defaultModelsFrom(settings),
       pendingWorkspace: { ...get().pendingWorkspace, ...defaultWorkspace(settings.defaultUseWorktree) }
@@ -996,6 +1000,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       holdingHours: saved.holdingHours,
       defaultUseWorktree: saved.defaultUseWorktree,
       appearance: appearanceOf(saved),
+      notificationSounds: saved.notificationSounds,
       reasoningExpandedByDriver: reasoningExpandedFrom(saved),
       defaultModelByDriver: defaultModelsFrom(saved)
     });

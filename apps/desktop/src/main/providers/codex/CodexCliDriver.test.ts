@@ -52,7 +52,12 @@ const SETTINGS: AppSettings = {
   fontSizePrompt: 14,
   fontSizeTerminal: 14,
   typographyAdvanced: false,
-  panelAnimationMs: 0
+  panelAnimationMs: 0,
+  notificationSounds: {
+    done: { enabled: true, sound: "felt-chord", volume: 60 },
+    question: { enabled: true, sound: "triple-tap", volume: 60 },
+    prUpdate: { enabled: true, sound: "tock-down", volume: 60 }
+  }
 };
 
 class FakeClient implements CodexAppServerLike {

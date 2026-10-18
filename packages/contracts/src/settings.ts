@@ -10,6 +10,37 @@ export interface CustomModel {
 
 export type PrFinishedSessionStatus = "idle" | "resolved" | "archived" | "none";
 
+export type NotificationSoundId =
+  | "tock-up"
+  | "wood-steps"
+  | "felt-resolve"
+  | "felt-chord"
+  | "thump-tock"
+  | "pop-up"
+  | "knock-knock"
+  | "ask"
+  | "triple-tap"
+  | "felt-question"
+  | "hollow-knock"
+  | "pop-pop"
+  | "tock"
+  | "soft-tap"
+  | "tock-down"
+  | "felt-tap"
+  | "muted-pluck"
+  | "pop";
+
+export type NotificationSoundEvent = "done" | "question" | "prUpdate";
+
+export interface NotificationSoundPreference {
+  enabled: boolean;
+  sound: NotificationSoundId;
+  /** 0 to 100. */
+  volume: number;
+}
+
+export type NotificationSoundSettings = Record<NotificationSoundEvent, NotificationSoundPreference>;
+
 export interface AppSettings {
   claudeBinaryPath: string;
   opencodeBinaryPath: string;
@@ -62,6 +93,7 @@ export interface AppSettings {
   fontSizeTerminal: number;
   typographyAdvanced: boolean;
   panelAnimationMs: number;
+  notificationSounds: NotificationSoundSettings;
 }
 
 export type SettingsPatch = Partial<AppSettings>;

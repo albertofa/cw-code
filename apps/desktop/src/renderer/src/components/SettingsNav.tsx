@@ -1,5 +1,5 @@
 import { useEffect, useState, type ReactNode } from "react";
-import { ArrowLeft, Download, Eye, GitBranch, GitPullRequest, Search, Settings, X } from "lucide-react";
+import { ArrowLeft, Bell, Download, Eye, GitBranch, GitPullRequest, Search, Settings, X } from "lucide-react";
 import { usePrStore } from "../stores/prStore.js";
 import { useSettingsDraftStore, type HarnessCheck } from "../stores/settingsDraftStore.js";
 import { DriverIcon } from "./DriverIcon.js";
@@ -11,6 +11,7 @@ import "./settingsPage.css";
 const APP_ICONS: Partial<Record<SettingsNavId, ReactNode>> = {
   general: <Settings size={14} aria-hidden="true" />,
   appearance: <Eye size={14} aria-hidden="true" />,
+  notifications: <Bell size={14} aria-hidden="true" />,
   updates: <Download size={14} aria-hidden="true" />,
   sourceControl: <GitBranch size={14} aria-hidden="true" />,
   prWorkflows: <GitPullRequest size={14} aria-hidden="true" />

@@ -432,6 +432,34 @@
   min-width: 0;
 }
 
+.sp-volume {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  height: 32px;
+}
+
+.sp-volume input[type="range"] {
+  flex: 1;
+  min-width: 0;
+  margin: 0;
+  accent-color: var(--accent);
+}
+
+.sp-volume output {
+  width: 3ch;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+  font-weight: 500;
+  color: var(--muted);
+}
+
+.sp-sound-preview {
+  height: 32px;
+  justify-content: center;
+  gap: 6px;
+}
+
 .sp-field .menu-btn,
 .sp-preview-bar .menu-btn {
   width: 100%;
