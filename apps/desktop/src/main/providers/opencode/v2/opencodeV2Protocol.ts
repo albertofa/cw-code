@@ -23,7 +23,13 @@ import { OpencodeV2EventDecoder } from "./opencodeV2Events.js";
 import { mapV2Messages, v2PendingChildren, v2RunIds, v2Running, v2TurnEnded } from "./opencodeV2Messages.js";
 import { parseV2PendingForms, v2FormAnswer } from "./opencodeV2Forms.js";
 import { activeSessionIds } from "./opencodeV2Server.js";
-import { buildV2CommandOptions, directoryCommandTemplates, v2CommandEntries, v2ConfigCommandSources } from "./opencodeV2Commands.js";
+import {
+  buildV2CommandOptions,
+  directoryCommandTemplates,
+  v2CommandEntries,
+  v2ConfigCommandSources,
+  v2SkillIds
+} from "./opencodeV2Commands.js";
 import { mapV2Models } from "./opencodeV2Models.js";
 
 const PAGE_LIMIT = 200;
@@ -142,6 +148,26 @@ async function skillIdFor(client: OpencodeClient, name: string): Promise<string 
   const skills = await client.request("/api/skill", { timeoutMs: OPENCODE_LIST_TIMEOUT_MS });
   if (!skills.ok || isHtmlResponse(skills)) return null;
   return v2CommandEntries([], (await skills.json()) as unknown).find((entry) => entry.name === name)?.skill ?? null;
+}
+
+async function mentionedSkillIds(client: OpencodeClient, names: readonly string[]): Promise<Array<{ id: string }>> {
+  try {
+    const res = await client.request("/api/skill", { timeoutMs: OPENCODE_LIST_TIMEOUT_MS });
+    if (!res.ok || isHtmlResponse(res)) throw new Error(`HTTP ${res.status}`);
+    const payload = (await res.json()) as unknown;
+    const ids = v2SkillIds(payload, names);
+    const missing = names.filter((name) => v2SkillIds(payload, [name]).length === 0);
+    if (missing.length > 0) console.warn(`opencode skills not listed, sent as text only: ${missing.join(", ")}`);
+    return ids;
+  } catch (err) {
+    console.warn(`opencode skill list failed; skills sent as text only: ${(err as Error).message}`);
+    return [];
+  }
+}
+
+async function rejectedSkills(response: Response): Promise<boolean> {
+  if (response.status !== 400) return false;
+  return /skill/i.test(await response.clone().text().catch(() => ""));
 }
 
 function fileAttachments(input: OpencodeSendInput): Array<{ uri: string; name: string }> {
@@ -329,7 +355,14 @@ export const opencodeV2Protocol: OpencodeProtocol = {
         signal: input.signal,
         timeoutMs: OPENCODE_REQUEST_TIMEOUT_MS
       });
-    if (!input.command) return admitted(await post("/prompt", { text: input.prompt }), notice);
+    if (!input.command) {
+      const skills = input.skills?.length ? await mentionedSkillIds(client, input.skills) : [];
+      if (skills.length === 0) return admitted(await post("/prompt", { text: input.prompt }), notice);
+      const withSkills = await post("/prompt", { text: input.prompt, skills });
+      if (!(await rejectedSkills(withSkills))) return admitted(withSkills, notice);
+      console.warn(`opencode rejected skills ${skills.map((s) => s.id).join(", ")}; resending as text only`);
+      return admitted(await post("/prompt", { text: input.prompt }), notice);
+    }
     const skill = await skillIdFor(client, input.command.name);
     if (skill) return admitted(await post("/prompt", { text: input.command.args, skills: [{ id: skill }] }), notice);
     return admitted(await post("/command", { name: input.command.name, text: input.command.args }), notice);

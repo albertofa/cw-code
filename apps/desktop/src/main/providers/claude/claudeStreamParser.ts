@@ -488,6 +488,7 @@ export function parseClaudeToolUseResult(line: string): { toolUseId: string; res
 
 export interface ClaudeSystemInitInfo {
   terminalSlashCommands: string[];
+  skills?: string[];
   model?: string;
   permissionMode?: string;
 }
@@ -496,6 +497,7 @@ interface SystemInitMsg {
   type?: unknown;
   subtype?: unknown;
   terminal_slash_commands?: unknown;
+  skills?: unknown;
   model?: unknown;
   permissionMode?: unknown;
 }
@@ -512,11 +514,13 @@ export function parseClaudeSystemInit(line: string): ClaudeSystemInitInfo | null
   const terminalSlashCommands = Array.isArray(msg.terminal_slash_commands)
     ? msg.terminal_slash_commands.filter((c): c is string => typeof c === "string")
     : [];
+  const skills = Array.isArray(msg.skills) ? msg.skills.filter((s): s is string => typeof s === "string") : undefined;
   const model = typeof msg.model === "string" && msg.model ? msg.model : undefined;
   const permissionMode =
     typeof msg.permissionMode === "string" && msg.permissionMode ? msg.permissionMode : undefined;
   return {
     terminalSlashCommands,
+    ...(skills ? { skills } : {}),
     ...(model ? { model } : {}),
     ...(permissionMode ? { permissionMode } : {})
   };

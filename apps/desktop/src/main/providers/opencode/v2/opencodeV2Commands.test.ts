@@ -9,7 +9,8 @@ import {
   stripFrontmatter,
   templateHints,
   v2CommandEntries,
-  v2ConfigCommandSources
+  v2ConfigCommandSources,
+  v2SkillIds
 } from "./opencodeV2Commands.js";
 
 const dirs: string[] = [];
@@ -48,6 +49,12 @@ describe("v2 command hints", () => {
     ]);
   });
 
+  it("resolves skill ids by id first, then by name, once each", () => {
+    const skills = { data: [{ id: "plan-dir", name: "plan" }, { id: "debug", name: "Debug" }, null] };
+    expect(v2SkillIds(skills, ["debug", "plan", "plan-dir", "missing"])).toEqual([{ id: "debug" }, { id: "plan-dir" }]);
+    expect(v2SkillIds("garbage", ["plan"])).toEqual([]);
+  });
+
   it("collects config templates and command directories from /api/config", () => {
     const sources = v2ConfigCommandSources([
       { type: "document", path: "C:\\cfg\\opencode.jsonc", info: { commands: { deploy: { template: "Deploy $1" }, broken: {} } } },
@@ -82,6 +89,7 @@ describe("v2 command hints", () => {
     expect(byName).toMatchObject({ init: "[arguments]", deploy: "<arg1>" });
     expect(byName["github:create-issue"]).toBeUndefined();
     expect(byName["opencode"]).toBeUndefined();
+    expect(options.filter((o) => o.kind === "skill").map((o) => o.name)).toEqual(["opencode"]);
     expect(options.slice(0, 3).map((o) => o.name)).toEqual(["compact", "undo", "redo"]);
   });
 });

@@ -1222,6 +1222,7 @@ export class OpencodeDriver implements CliDriver {
       protocol.send(client, serverSessionId, {
         prompt: request.prompt,
         ...(command ? { command } : {}),
+        ...(!command && request.skills?.length ? { skills: request.skills } : {}),
         model,
         ...(variant ? { variant } : {}),
         files: withFiles ? files : [],

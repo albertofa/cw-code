@@ -57,6 +57,7 @@ import { UpdateService } from "./updates/UpdateService.js";
 import { createUpdateLogFile } from "./updates/updateLog.js";
 import { firstRunChannelPatch, touchesUpdatePreferences, updatePreferences } from "./updates/updatePreferences.js";
 import { isUpdateChannel } from "./updates/updateState.js";
+import { isSkillMentionList } from "../shared/skillMentions.js";
 
 type DriverName = DriverKind;
 
@@ -928,11 +929,13 @@ function registerIpc(services: Services): void {
         prefs?: { model?: string; effort?: "minimal" | "low" | "medium" | "high" | "xhigh" | "max"; variant?: string; permissionMode?: "auto" | "acceptEdits" | "bypassPermissions" | "manual" };
         attachments?: string[];
         command?: CommandInvocation;
+        skills?: string[];
         prRefs?: PrRef[];
         finalReview?: { ref: PrRef; sha: string };
         acceptFolderHead?: string;
       }
     ) => {
+      if (args.skills !== undefined && !isSkillMentionList(args.skills)) throw new Error("invalid skills");
       if (args.prRefs !== undefined && !Array.isArray(args.prRefs)) throw new Error("invalid prRefs");
       if (args.acceptFolderHead !== undefined && typeof args.acceptFolderHead !== "string") throw new Error("invalid acceptFolderHead");
       for (const ref of args.prRefs ?? []) assertPrRef(ref);
@@ -944,6 +947,7 @@ function registerIpc(services: Services): void {
         prefs: args.prefs,
         attachments: args.attachments,
         ...(args.command ? { command: args.command } : {}),
+        ...(args.skills?.length ? { skills: args.skills } : {}),
         prRefs: args.prRefs,
         ...(args.finalReview ? { finalReview: args.finalReview } : {}),
         ...(args.acceptFolderHead !== undefined ? { acceptFolderHead: args.acceptFolderHead } : {})

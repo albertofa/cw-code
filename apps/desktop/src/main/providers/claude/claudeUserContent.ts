@@ -1,6 +1,15 @@
 import { readFileSync } from "node:fs";
 import { isAbsolute, join } from "node:path";
+import type { TurnRequest } from "@cw-code/contracts";
 import { imageExtMime } from "../../fs/FileService.js";
+import { skillInvocation } from "../../../shared/skillMentions.js";
+
+export function claudePromptText(request: Pick<TurnRequest, "prompt" | "command" | "skills">): string {
+  if (request.command || !request.skills?.length) return request.prompt;
+  const invocation = skillInvocation(request.prompt, request.skills);
+  if (!invocation) return request.prompt;
+  return invocation.args ? `/${invocation.name} ${invocation.args}` : `/${invocation.name}`;
+}
 
 export function buildClaudeUserContent(cwd: string, prompt: string, attachments: string[] | undefined): string | unknown[] {
   const blocks: unknown[] = [];

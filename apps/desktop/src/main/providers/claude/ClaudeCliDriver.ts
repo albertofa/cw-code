@@ -30,12 +30,18 @@ import { TaskTable, type TaskObservation } from "../../tasks/TaskTable.js";
 import { SYNTHETIC_FULL_ACCESS_DESCRIPTION } from "../permissions.js";
 import { attributeClaudeSubagentEvent, buildClaudeAllowRule, claudeAllowResponse, claudeApprovalRequest, claudeQuestionRequest, claudeDenyResponse, claudeControlResponse, parseClaudeCompactBoundary, parseClaudeControlRequest, parseClaudeSubagentHandback, parseClaudeSystemInit, parseClaudeTaskNotificationLine, parseClaudeTaskSystemLine, parseClaudeToolUseResult, parseStreamLine, type ClaudeControlRequest, type ClaudeTaskNotificationLine, type ClaudeTaskSystemInfo, type TurnDoneInfo } from "./claudeStreamParser.js";
 import { claudeCallObservation, claudeHandbackObservation, claudeNotificationObservation, claudeSystemTaskObservation, claudeToolResultObservation, findClaudeTaskNotification } from "./claudeTasks.js";
-import { CLAUDE_COMMANDS_PROBE_ARGS, listClaudeCommands, probeClaudeCommands, recordClaudeTerminalCommands } from "./claudeCommands.js";
+import {
+  CLAUDE_COMMANDS_PROBE_ARGS,
+  listClaudeCommands,
+  probeClaudeCommands,
+  recordClaudeSkills,
+  recordClaudeTerminalCommands
+} from "./claudeCommands.js";
 import { CLAUDE_ACCOUNT_USAGE_PROBE_ARGS, probeClaudeAccountUsage } from "./claudeAccountUsage.js";
 import { describeClaudeExit } from "./claudeExit.js";
 import { claudeTranscriptProjectDir, listClaudeSessions, listNativeClaudeSessions } from "./claudeSessions.js";
 import { readClaudeHistory, readSidecarAgent, readClaudeTaskResult, findSidecarModel, type SidecarAgent } from "./claudeHistory.js";
-import { buildClaudeUserContent } from "./claudeUserContent.js";
+import { buildClaudeUserContent, claudePromptText } from "./claudeUserContent.js";
 import { previewText, traceHarnessCall, truncateError } from "../../debug/harnessTrace.js";
 import type { ClaudeModelUsageSnapshot } from "./claudeUsage.js";
 
@@ -212,7 +218,7 @@ export class ClaudeCliDriver implements CliDriver {
 
   private writeUserMessage(state: ClaudeProcessState, request: TurnRequest): void {
     state.child.stdin.write(
-      `${JSON.stringify({ type: "user", message: { role: "user", content: buildClaudeUserContent(request.cwd, request.prompt, request.attachments) } })}\n`
+      `${JSON.stringify({ type: "user", message: { role: "user", content: buildClaudeUserContent(request.cwd, claudePromptText(request), request.attachments) } })}\n`
     );
   }
 
@@ -493,6 +499,7 @@ export class ClaudeCliDriver implements CliDriver {
     const systemInit = parseClaudeSystemInit(line);
     if (systemInit) {
       recordClaudeTerminalCommands(state.binary, state.cwd, systemInit.terminalSlashCommands);
+      if (systemInit.skills) recordClaudeSkills(state.binary, systemInit.skills);
       if (systemInit.model) state.mainModel = systemInit.model;
       if (state.reportedPermissionMode !== systemInit.permissionMode) {
         state.reportedPermissionMode = systemInit.permissionMode;

@@ -80,6 +80,7 @@ export interface OpencodeAttachment {
 export interface OpencodeSendInput {
   prompt: string;
   command?: CommandInvocation;
+  skills?: string[];
   model: OpencodeModelRef | null;
   variant?: string;
   files: OpencodeAttachment[];

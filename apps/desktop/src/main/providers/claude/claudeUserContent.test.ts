@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { buildClaudeUserContent } from "./claudeUserContent.js";
+import { buildClaudeUserContent, claudePromptText } from "./claudeUserContent.js";
 
 let dir: string;
 
@@ -75,5 +75,24 @@ describe("buildClaudeUserContent", () => {
     dir = mkdtempSync(join(tmpdir(), "cuc-"));
     vi.spyOn(console, "warn").mockImplementation(() => {});
     expect(buildClaudeUserContent(dir, "hello", ["nope.png"])).toBe("hello");
+  });
+});
+
+describe("claudePromptText", () => {
+  it("leaves prompts without skill mentions untouched", () => {
+    expect(claudePromptText({ prompt: "hello $plan" })).toBe("hello $plan");
+    expect(claudePromptText({ prompt: "hello", skills: ["plan"] })).toBe("hello");
+  });
+
+  it("invokes the first mentioned skill with the prompt as its arguments", () => {
+    expect(claudePromptText({ prompt: "$plan the release", skills: ["plan"] })).toBe("/plan the release");
+    expect(claudePromptText({ prompt: "fix login with $debug", skills: ["debug"] })).toBe("/debug fix login with /debug");
+    expect(claudePromptText({ prompt: "$ndk:plan", skills: ["ndk:plan"] })).toBe("/ndk:plan");
+  });
+
+  it("leaves command turns alone", () => {
+    expect(
+      claudePromptText({ prompt: "/compact $plan", command: { name: "compact", args: "$plan" }, skills: ["plan"] })
+    ).toBe("/compact $plan");
   });
 });

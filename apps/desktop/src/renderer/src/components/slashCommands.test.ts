@@ -1,6 +1,14 @@
 import { describe, expect, it } from "vitest";
 import type { CommandOption } from "@cw-code/contracts";
-import { commandDisplay, filterCommands, mergeCommands, parseSlashInput, rankByQuery } from "./slashCommands.js";
+import {
+  commandDisplay,
+  filterCommands,
+  filterSkills,
+  mergeCommands,
+  parseSlashInput,
+  rankByQuery,
+  skillCommands
+} from "./slashCommands.js";
 
 function cmd(name: string, description = "", extra: Partial<CommandOption> = {}): CommandOption {
   return { name, description, dispatch: "prompt", ...extra };
@@ -122,5 +130,31 @@ describe("commandDisplay", () => {
   it("joins name and args", () => {
     expect(commandDisplay("review", "")).toBe("/review");
     expect(commandDisplay("review", "tests")).toBe("/review tests");
+  });
+});
+
+describe("skillCommands", () => {
+  it("keeps only skills and ranks them by name", () => {
+    const list = [
+      cmd("compact"),
+      cmd("code-review", "Review code", { kind: "skill" }),
+      cmd("ndk:review", "Namespaced", { kind: "skill" }),
+      cmd("plan", "mentions review", { kind: "skill" })
+    ];
+    const skills = skillCommands(list);
+    expect(skills.map((s) => s.name)).toEqual(["code-review", "ndk:review", "plan"]);
+    expect(filterSkills(skills, "review").map((s) => s.name)).toEqual(["code-review", "ndk:review", "plan"]);
+    expect(filterSkills(skills, "").map((s) => s.name)).toEqual(["code-review", "ndk:review", "plan"]);
+  });
+
+  it("finds skills by words in their description, ignoring case and accents", () => {
+    const skills = [
+      cmd("debug", "Use ao encontrar bug, falha de teste ou comportamento inesperado", { kind: "skill" }),
+      cmd("plan", "Planeja a função antes de codar", { kind: "skill" })
+    ];
+    expect(filterSkills(skills, "test").map((s) => s.name)).toEqual(["debug"]);
+    expect(filterSkills(skills, "Teste").map((s) => s.name)).toEqual(["debug"]);
+    expect(filterSkills(skills, "funcao").map((s) => s.name)).toEqual(["plan"]);
+    expect(filterSkills(skills, "deb").map((s) => s.name)).toEqual(["debug"]);
   });
 });

@@ -17,6 +17,7 @@ export function SlashMenu({
   items,
   activeIndex,
   loading,
+  loadingText = "Loading commands…",
   error,
   emptyText,
   moreText,
@@ -28,6 +29,7 @@ export function SlashMenu({
   items: SlashMenuItem[];
   activeIndex: number;
   loading: boolean;
+  loadingText?: string;
   error: string | null;
   emptyText: string;
   moreText?: string;
@@ -65,7 +67,7 @@ export function SlashMenu({
         </div>
       ))}
       {moreText && <div className="side-empty">{moreText}</div>}
-      {loading && <div className="side-empty">Loading commands…</div>}
+      {loading && <div className="side-empty">{loadingText}</div>}
       {error && (
         <div className="side-empty slash-menu-error" role="alert">
           {error}

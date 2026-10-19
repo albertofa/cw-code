@@ -112,6 +112,8 @@ export interface TurnRequest {
   allowedTools?: string[];
   maxTurns?: number;
   command?: CommandInvocation;
+  /** Skills the prompt mentions as `$name`, in order of first mention. */
+  skills?: string[];
   /** Complete spawn environment (process env plus cw-code injections). When omitted, the child inherits the parent env. */
   env?: Record<string, string>;
 }

@@ -1,4 +1,5 @@
 import type { CommandInvocation, CommandOption } from "@cw-code/contracts";
+import { skillInvocation } from "../../../shared/skillMentions.js";
 
 export type OpencodeBuiltinCommand = "compact" | "undo" | "redo";
 
@@ -46,7 +47,8 @@ export function mapOpencodeCommands(raw: unknown): CommandOption[] {
       name,
       description,
       dispatch: "native",
-      ...(hints.length > 0 ? { argumentHint: hints.map(opencodeHintLabel).join(" ") } : {})
+      ...(hints.length > 0 ? { argumentHint: hints.map(opencodeHintLabel).join(" ") } : {}),
+      ...(record["source"] === "skill" ? { kind: "skill" as const } : {})
     });
   }
   return out;
@@ -57,6 +59,10 @@ function opencodeHintLabel(hint: string): string {
   if (trimmed === "$ARGUMENTS") return "[arguments]";
   const positional = /^\$(\d+)$/.exec(trimmed);
   return positional ? `<arg${positional[1]}>` : trimmed;
+}
+
+export function skillCommand(prompt: string, skills: readonly string[] | undefined): CommandInvocation | undefined {
+  return skills?.length ? (skillInvocation(prompt, skills) ?? undefined) : undefined;
 }
 
 export interface OpencodeCommandBody {

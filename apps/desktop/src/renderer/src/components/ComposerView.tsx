@@ -8,13 +8,14 @@ import {
   LockOpen,
   Pencil,
   Plus,
+  Package,
   Slash,
   Square,
   Terminal,
   X,
   Zap
 } from "lucide-react";
-import type { CommandInvocation, CommandOption } from "@cw-code/contracts";
+import type { CommandOption } from "@cw-code/contracts";
 import type { ComposerPrefs, DriverName, ModelOption, PermissionMode, PermissionOption } from "../cw.js";
 import { getRecentModels, pushRecentModel } from "./lastModel.js";
 import { EffortMenu } from "./EffortMenu.js";
@@ -31,11 +32,28 @@ import {
 import { BranchSendChoice } from "./BranchMismatchNotice.js";
 import { ImageThumb } from "./ImageThumb.js";
 import { displayImagePath, type ImageTarget } from "./imagePreview.js";
-import { NewSessionRefusedError, useAppStore } from "../stores/appStore.js";
+import { NewSessionRefusedError, useAppStore, type ComposerSendOptions } from "../stores/appStore.js";
 import { useConfirm } from "./ConfirmDialog.js";
 import { useNotifs } from "./Notifications.js";
 import { SlashMenu, slashOptionId, type SlashMenuItem } from "./SlashMenu.js";
-import { commandDisplay, filterCommands, mergeCommands, parseSlashInput, rankByQuery } from "./slashCommands.js";
+import {
+  commandDisplay,
+  filterCommands,
+  filterSkills,
+  mergeCommands,
+  parseSlashInput,
+  rankByQuery,
+  skillCommands
+} from "./slashCommands.js";
+import {
+  detectSkillTrigger,
+  findSkillMentions,
+  hasSkillCandidate,
+  insertSkillMention,
+  insertSkillTrigger,
+  skillMentionNames
+} from "../../../shared/skillMentions.js";
+import { skillSegments } from "./skillSegments.js";
 import { parseBranchMismatchError, type BranchMismatch } from "./sessionBranch.js";
 import { harnessLabel } from "./toolTabs.js";
 import { ipcErrorMessage } from "./ipcError.js";
@@ -61,7 +79,7 @@ export interface ComposerBackend {
   loadFiles(): Promise<string[]>;
   loadCommands(): Promise<CommandOption[]>;
   savePrefs(prefs: ComposerPrefs): void;
-  send(body: string, attachments: string[], command?: CommandInvocation, acceptFolderHead?: string): Promise<void>;
+  send(body: string, attachments: string[], opts?: ComposerSendOptions & { acceptFolderHead?: string }): Promise<void>;
   newSession?(): void;
   rename?(title: string): Promise<void>;
   openTerminal?(): void;
@@ -126,6 +144,7 @@ export function ComposerView({
   backendRef.current = backend;
   const imageTarget = backend.imageTarget;
   const [draft, setDraft] = useState("");
+  const [caret, setCaret] = useState<number | null>(0);
   const [attachments, setAttachments] = useState<string[]>([]);
   const [pasteError, setPasteError] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
@@ -151,6 +170,7 @@ export function ComposerView({
   const home = homeDir ?? undefined;
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
   const customInputRef = useRef<HTMLInputElement | null>(null);
+  const mirrorRef = useRef<HTMLDivElement | null>(null);
   const baseModelId = driver === "claude" ? stripContextSuffix(prefs.model ?? "") : (prefs.model ?? "");
   const oneMContext = driver === "claude" && hasContextSuffix(prefs.model ?? "");
   const slashListId = useId();
@@ -161,6 +181,7 @@ export function ComposerView({
   const [commandsError, setCommandsError] = useState<string | null>(null);
   const [slashDismissed, setSlashDismissed] = useState<string | null>(null);
   const [slashIndex, setSlashIndex] = useState(0);
+  const [skillDismissed, setSkillDismissed] = useState<number | null>(null);
   const commandsRef = useRef<{ key: string; promise: Promise<CommandsResult>; failed: boolean } | null>(null);
   const commandsKey = `${driver}\n${resetKey}`;
   const commandsKeyRef = useRef(commandsKey);
@@ -171,6 +192,14 @@ export function ComposerView({
     newSession: backend.newSession !== undefined,
     rename: backend.rename !== undefined,
     terminal: backend.openTerminal !== undefined
+  };
+
+  const syncMirror = () => {
+    const el = composerRef.current;
+    const mirror = mirrorRef.current;
+    if (!el || !mirror) return;
+    mirror.style.width = `${el.clientWidth}px`;
+    mirror.scrollTop = el.scrollTop;
   };
 
   const autosizeComposer = () => {
@@ -187,6 +216,7 @@ export function ComposerView({
     const next = Math.min(el.scrollHeight, max);
     el.style.height = `${next}px`;
     el.style.overflowY = el.scrollHeight > max ? "auto" : "hidden";
+    syncMirror();
   };
 
   useLayoutEffect(() => {
@@ -213,6 +243,7 @@ export function ComposerView({
   useEffect(() => {
     setAttachments([]);
     setDraft("");
+    setCaret(0);
     setPasteError(null);
     setShowCustom(false);
     setCustomModel("");
@@ -241,6 +272,7 @@ export function ComposerView({
     setCommandsLoading(false);
     setCommandsError(null);
     setSlashDismissed(null);
+    setSkillDismissed(null);
   }, [commandsKey]);
 
   const ensureCommands = (retryFailed = false): Promise<CommandsResult> => {
@@ -409,9 +441,20 @@ export function ComposerView({
     () => mergeCommands(driver, driverCommands ?? [], commandAvailability),
     [driver, driverCommands, commandAvailability.newSession, commandAvailability.rename, commandAvailability.terminal]
   );
+  const skillList = useMemo(() => skillCommands(commandList), [commandList]);
+  const draftMentions = useMemo(
+    () => findSkillMentions(draft, new Set(skillList.map((skill) => skill.name))),
+    [draft, skillList]
+  );
+  const highlightMentions = draftMentions.length > 0;
+
+  useLayoutEffect(() => {
+    syncMirror();
+  }, [highlightMentions]);
 
   const clearComposer = () => {
     setDraft("");
+    setCaret(0);
     setAttachments([]);
     setPasteError(null);
   };
@@ -564,7 +607,10 @@ export function ComposerView({
   const dispatchCommand = async (command: CommandOption, args: string, key: string, accept?: string): Promise<void> => {
     setSending(true);
     try {
-      await backendRef.current.send(commandDisplay(command.name, args), [], { name: command.name, args }, accept);
+      await backendRef.current.send(commandDisplay(command.name, args), [], {
+        command: { name: command.name, args },
+        ...(accept ? { acceptFolderHead: accept } : {})
+      });
       if (isCurrent(key)) clearComposer();
     } catch (err) {
       await handleSendFailure(err, key, (next) => void dispatchCommand(command, args, key, next));
@@ -573,51 +619,64 @@ export function ComposerView({
     }
   };
 
-  const sendPlain = (body: string, key: string = commandsKey) => {
-    if (holdForBranchChoice((accept) => dispatchPlain(body, key, accept))) return;
-    dispatchPlain(body, key);
+  const sendPlain = (body: string, key: string, skills: string[] = []) => {
+    if (holdForBranchChoice((accept) => dispatchPlain(body, key, skills, accept))) return;
+    dispatchPlain(body, key, skills);
   };
 
-  const dispatchPlain = (body: string, key: string, accept?: string) => {
+  const dispatchPlain = (body: string, key: string, skills: string[], accept?: string) => {
     setSending(true);
     void backendRef.current
-      .send(tagAttachments(body), attachments, undefined, accept)
+      .send(tagAttachments(body), attachments, {
+        ...(skills.length > 0 ? { skills } : {}),
+        ...(accept ? { acceptFolderHead: accept } : {})
+      })
       .then(() => {
         if (isCurrent(key)) clearComposer();
       })
-      .catch((err: unknown) => handleSendFailure(err, key, (next) => dispatchPlain(body, key, next)))
+      .catch((err: unknown) => handleSendFailure(err, key, (next) => dispatchPlain(body, key, skills, next)))
       .finally(() => setSending(false));
   };
 
-  const sendSlash = async (body: string): Promise<void> => {
+  const mentionedSkills = (body: string, list: CommandOption[]): string[] =>
+    skillMentionNames(body, new Set(skillCommands(list).map((skill) => skill.name)));
+
+  const sendMessage = async (body: string): Promise<void> => {
     const key = commandsKey;
-    const immediate = parseSlashInput(body, commandList);
-    if (immediate) return runCommand(immediate.command, immediate.args, key);
-    if (driverCommands !== null) {
-      sendPlain(body, key);
+    const slash = body.startsWith("/");
+    if (slash) {
+      const immediate = parseSlashInput(body, commandList);
+      if (immediate) return runCommand(immediate.command, immediate.args, key);
+    }
+    const needsList = driverCommands === null && (slash || hasSkillCandidate(body));
+    if (!needsList) {
+      sendPlain(body, key, slash ? [] : mentionedSkills(body, commandList));
       return;
     }
     setSending(true);
     const result = await ensureCommands().finally(() => setSending(false));
-    if (!isCurrent(key)) return;
+    if (!isCurrent(key)) {
+      warn("Message not sent", "The session changed while its command list was loading.");
+      return;
+    }
     if (!result.ok) {
-      warn("Command list unavailable", `Sent as a regular message: ${result.error}`);
+      warn(
+        slash ? "Command list unavailable" : "Skill list unavailable",
+        `${slash ? "Sent as a regular message" : "Sent without skill mentions"}: ${result.error}`
+      );
       sendPlain(body, key);
       return;
     }
-    const parsed = parseSlashInput(body, mergeCommands(driver, result.list, commandAvailability));
+    const list = mergeCommands(driver, result.list, commandAvailability);
+    const parsed = slash ? parseSlashInput(body, list) : null;
     if (parsed) return runCommand(parsed.command, parsed.args, key);
-    sendPlain(body, key);
+    sendPlain(body, key, slash ? [] : mentionedSkills(body, list));
   };
 
   const send = () => {
     const body = draft.trim();
     if ((!body && attachments.length === 0) || busy || sending || blockedReason) return;
-    if (body.startsWith("/")) {
-      void sendSlash(body);
-      return;
-    }
-    sendPlain(body);
+    void sendMessage(body);
   };
 
   const openBranchChoice = (action: HeldSend) => {
@@ -710,14 +769,57 @@ export function ComposerView({
   const slashArg = SLASH_ARG.exec(draft);
   const slashOpen = inputFocused && !busy && !sending && (slashName !== null || slashArg !== null) && slashDismissed !== draft;
   const slashNameOpen = slashOpen && slashName !== null;
+  const skillTrigger = caret === null || slashName !== null || slashArg !== null ? null : detectSkillTrigger(draft, caret);
+  const skillTriggerStart = skillTrigger?.start ?? null;
+  const skillMatches = skillTrigger ? filterSkills(skillList, skillTrigger.query) : [];
+  const skillsSettled = driverCommands !== null && !commandsLoading && !commandsError;
+  const skillOpen =
+    inputFocused &&
+    !busy &&
+    !sending &&
+    skillTrigger !== null &&
+    skillDismissed !== skillTrigger.start &&
+    !(skillsSettled && skillTrigger.query !== "" && skillMatches.length === 0);
+  const menuOpen = slashOpen || skillOpen;
+  const skillTypedOut = skillOpen && skillTrigger !== null && skillMatches.some((skill) => skill.name === skillTrigger.query);
+  const wantsCommands = slashNameOpen || (inputFocused && skillTriggerStart !== null);
 
   useEffect(() => {
-    if (slashNameOpen) void ensureCommands(true);
-  }, [slashNameOpen, commandsKey]);
+    if (wantsCommands) void ensureCommands(true);
+  }, [wantsCommands, commandsKey]);
+
+  useEffect(() => {
+    setSkillDismissed((dismissed) => (dismissed === skillTriggerStart ? dismissed : null));
+  }, [skillTriggerStart]);
 
   useEffect(() => {
     setSlashIndex(0);
-  }, [draft]);
+  }, [draft, skillTriggerStart]);
+
+  const syncCaret = (el: HTMLTextAreaElement) => {
+    setCaret(el.selectionStart === el.selectionEnd ? el.selectionStart : null);
+  };
+
+  const placeCaret = (next: { text: string; caret: number }) => {
+    setDraft(next.text);
+    setCaret(next.caret);
+    requestAnimationFrame(() => {
+      const el = composerRef.current;
+      if (!el) return;
+      el.focus({ preventScroll: true });
+      el.setSelectionRange(next.caret, next.caret);
+    });
+  };
+
+  const pickSkill = (name: string) => {
+    if (skillTrigger) placeCaret(insertSkillMention(draft, skillTrigger, name));
+  };
+
+  const openSkills = () => {
+    setAddOpen(false);
+    setSkillDismissed(null);
+    placeCaret(insertSkillTrigger(draft, caret ?? draft.length));
+  };
 
   const slashEntries: SlashEntry[] = [];
   const argCommand = slashArg ? commandList.find((c) => c.name === slashArg[1]) : undefined;
@@ -743,6 +845,16 @@ export function ComposerView({
         complete: () => setDraft(`/${argCommand.name} ${o.id}`)
       });
     }
+  } else if (skillOpen) {
+    for (const skill of skillMatches) {
+      slashEntries.push({
+        key: skill.name,
+        label: `$${skill.name}`,
+        description: skill.description || undefined,
+        accept: () => pickSkill(skill.name),
+        complete: () => pickSkill(skill.name)
+      });
+    }
   } else if (slashNameOpen && slashName) {
     for (const c of filterCommands(commandList, slashName[1])) {
       slashEntries.push({
@@ -759,26 +871,33 @@ export function ComposerView({
     }
   }
   const slashActive = slashEntries.length > 0 ? Math.min(slashIndex, slashEntries.length - 1) : -1;
-  const slashMenuLabel = slashArg ? (modelArgMode ? "Models" : "Effort levels") : "Commands";
-  const slashError = slashNameOpen
-    ? commandsError && `Commands failed to load: ${commandsError}`
-    : modelArgMode && modelsError
-      ? `Model list failed: ${modelsError}`
-      : null;
-  const slashEmpty = slashArg
-    ? modelArgMode && models.length === 0
-      ? "No models available."
-      : "No matches."
-    : "No matching commands.";
+  const slashMenuLabel = skillOpen ? "Skills" : slashArg ? (modelArgMode ? "Models" : "Effort levels") : "Commands";
+  const slashError = skillOpen
+    ? commandsError && `Skills failed to load: ${commandsError}`
+    : slashNameOpen
+      ? commandsError && `Commands failed to load: ${commandsError}`
+      : modelArgMode && modelsError
+        ? `Model list failed: ${modelsError}`
+        : null;
+  const slashEmpty = skillOpen
+    ? skillList.length === 0
+      ? `No skills available for ${harnessLabel(driver)}.`
+      : "No matching skills."
+    : slashArg
+      ? modelArgMode && models.length === 0
+        ? "No models available."
+        : "No matches."
+      : "No matching commands.";
   const pendingArgs = SLASH_PENDING_ARGS.exec(draft);
   const argHint = pendingArgs ? commandList.find((c) => c.name === pendingArgs[1])?.argumentHint : undefined;
 
   const handleSlashKey = (e: ReactKeyboardEvent<HTMLTextAreaElement>): boolean => {
-    if (!slashOpen) return false;
+    if (!menuOpen) return false;
     if (e.key === "Escape") {
       e.preventDefault();
       e.stopPropagation();
-      setSlashDismissed(draft);
+      if (skillOpen) setSkillDismissed(skillTriggerStart);
+      else setSlashDismissed(draft);
       return true;
     }
     if (slashActive < 0) return false;
@@ -789,6 +908,7 @@ export function ComposerView({
       return true;
     }
     if ((e.key === "Tab" || e.key === "Enter") && !e.shiftKey) {
+      if (e.key === "Enter" && skillTypedOut) return false;
       e.preventDefault();
       const entry = slashEntries[slashActive];
       const query = slashArg ? slashArg[2] : (slashName?.[1] ?? "");
@@ -811,13 +931,14 @@ export function ComposerView({
   return (
     <>
     <div className={`composer composer-recipe${busy ? " composer-busy" : ""}`}>
-      {slashOpen && (
+      {menuOpen && (
         <SlashMenu
           id={slashListId}
           label={slashMenuLabel}
           items={slashEntries}
           activeIndex={slashActive}
-          loading={slashNameOpen && commandsLoading}
+          loading={(slashNameOpen || skillOpen) && commandsLoading}
+          loadingText={skillOpen ? "Loading skills…" : "Loading commands…"}
           error={slashError || null}
           emptyText={slashEmpty}
           moreText={argOverflow ? "Keep typing to narrow down" : undefined}
@@ -863,14 +984,31 @@ export function ComposerView({
         )}
         <div className="composer-writing">
           <div className="composer-input-wrap">
+            {highlightMentions && (
+              <div ref={mirrorRef} className="composer-mirror" aria-hidden="true">
+                {skillSegments(draft, draftMentions).map((part, i) =>
+                  part.kind === "skill" ? (
+                    <span key={i} className="composer-mention">
+                      {part.raw}
+                    </span>
+                  ) : (
+                    part.value
+                  )
+                )}
+                {"​"}
+              </div>
+            )}
             <textarea
               ref={composerRef}
               value={draft}
               onChange={(e) => {
                 const next = e.target.value;
                 setDraft(next);
+                syncCaret(e.target);
                 if (!next.startsWith("/")) setSlashDismissed(null);
               }}
+              onSelect={(e) => syncCaret(e.currentTarget)}
+              onScroll={syncMirror}
               onFocus={() => setInputFocused(true)}
               onBlur={() => setInputFocused(false)}
               onKeyDown={(e) => {
@@ -890,14 +1028,14 @@ export function ComposerView({
                 void pasteFiles(e.clipboardData);
               }}
               placeholder={blockedReason ?? (busy ? "Working… stop the turn to send a new message" : "Ask cw-code — @ files, / commands, $ skills")}
-              className="composer-input"
+              className={`composer-input${highlightMentions ? " has-mentions" : ""}`}
               rows={3}
               disabled={busy || sending || blockedReason !== undefined}
               role="combobox"
-              aria-expanded={slashOpen}
+              aria-expanded={menuOpen}
               aria-autocomplete="list"
-              aria-controls={slashOpen ? slashListId : undefined}
-              aria-activedescendant={slashOpen && slashActive >= 0 ? slashOptionId(slashListId, slashActive) : undefined}
+              aria-controls={menuOpen ? slashListId : undefined}
+              aria-activedescendant={menuOpen && slashActive >= 0 ? slashOptionId(slashListId, slashActive) : undefined}
             />
             {argHint && (
               <div className="composer-arg-hint" aria-hidden="true">
@@ -970,6 +1108,15 @@ export function ComposerView({
                       <span className="name">Commands</span>
                     </span>
                     <span className="menu-hint">/</span>
+                  </div>
+                  <div className="menu-row" role="menuitem" title="Mention a skill anywhere in the message" onClick={openSkills}>
+                    <span className="menu-icon">
+                      <Package size={14} />
+                    </span>
+                    <span className="menu-text">
+                      <span className="name">Skills</span>
+                    </span>
+                    <span className="menu-hint">$</span>
                   </div>
                   <div className="menu-row disabled" role="menuitem" aria-disabled="true" title="Shell commands are not supported yet">
                     <span className="menu-icon">

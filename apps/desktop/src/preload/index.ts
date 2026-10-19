@@ -93,7 +93,7 @@ export interface CwApi {
   getSubagentTools(sessionId: string, agentId: string): Promise<SubagentToolsResult>;
   activeTurns(): Promise<Array<{ sessionId: string; turnId: string; startedAt: number }>>;
   retryConnection(sessionId: string): Promise<RetryConnectionResult>;
-  startTurn(sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[]; command?: CommandInvocation; prRefs?: PrRef[]; finalReview?: { ref: PrRef; sha: string }; acceptFolderHead?: string }): Promise<string>;
+  startTurn(sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[]; command?: CommandInvocation; skills?: string[]; prRefs?: PrRef[]; finalReview?: { ref: PrRef; sha: string }; acceptFolderHead?: string }): Promise<string>;
   interrupt(turnId: string): Promise<void>;
   respondApproval(requestId: string, decision: "accept" | "acceptForSession" | "acceptGlobal" | "decline" | "cancel"): Promise<void>;
   respondQuestion(requestId: string, answers: Record<string, string>): Promise<void>;
@@ -255,13 +255,14 @@ const api: CwApi = {
     ipcRenderer.invoke("sessions.subagentTools", { sessionId, agentId }),
   activeTurns: () => ipcRenderer.invoke("sessions.activeTurns"),
   retryConnection: (sessionId: string) => ipcRenderer.invoke("sessions.retryConnection", { sessionId }),
-  startTurn: (sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[]; command?: CommandInvocation; prRefs?: PrRef[]; finalReview?: { ref: PrRef; sha: string }; acceptFolderHead?: string }) =>
+  startTurn: (sessionId: string, prompt: string, opts?: { prefs?: ComposerPrefs; attachments?: string[]; command?: CommandInvocation; skills?: string[]; prRefs?: PrRef[]; finalReview?: { ref: PrRef; sha: string }; acceptFolderHead?: string }) =>
     ipcRenderer.invoke("turns.start", {
       sessionId,
       prompt,
       prefs: opts?.prefs,
       attachments: opts?.attachments,
       command: opts?.command,
+      skills: opts?.skills,
       prRefs: opts?.prRefs,
       finalReview: opts?.finalReview,
       acceptFolderHead: opts?.acceptFolderHead

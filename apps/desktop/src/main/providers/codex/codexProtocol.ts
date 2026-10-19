@@ -314,7 +314,12 @@ export function mapCodexPlan(plan: unknown): TodoItem[] | null {
   return todosFromPlan(plan);
 }
 
-export function buildCodexUserInput(prompt: string, cwd: string, attachments: string[] | undefined): CodexUserInput[] {
+export function buildCodexUserInput(
+  prompt: string,
+  cwd: string,
+  attachments: string[] | undefined,
+  skills: ReadonlyArray<{ name: string; path: string }> = []
+): CodexUserInput[] {
   const input: CodexUserInput[] = [];
   if (prompt.trim()) input.push({ type: "text", text: prompt });
   for (const rel of attachments ?? []) {
@@ -322,6 +327,7 @@ export function buildCodexUserInput(prompt: string, cwd: string, attachments: st
       input.push({ type: "localImage", path: joinImagePath(cwd, rel) });
     }
   }
+  for (const skill of skills) input.push({ type: "skill", name: skill.name, path: skill.path });
   return input;
 }
 
@@ -366,7 +372,8 @@ export function mapCodexSkillCommands(res: unknown): { commands: CommandOption[]
           (typeof ifaceShort === "string" && ifaceShort) ||
           (typeof shortDescription === "string" && shortDescription) ||
           (typeof description === "string" ? description : ""),
-        dispatch: "native"
+        dispatch: "native",
+        kind: "skill"
       });
       paths.set(name, path);
     }

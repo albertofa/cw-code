@@ -1798,6 +1798,7 @@ export class SessionManager {
       prefs?: ComposerPrefs;
       attachments?: string[];
       command?: CommandInvocation;
+      skills?: string[];
       prRefs?: PrRef[];
       finalReview?: { ref: PrRef; sha: string };
       acceptFolderHead?: string;
@@ -1845,6 +1846,7 @@ export class SessionManager {
         permissionMode: prefs.permissionMode,
         attachments: resolveAttachments(project.rootPath, cwd, opts?.attachments ?? []),
         ...(opts?.command ? { command: opts.command } : {}),
+        ...(!opts?.command && opts?.skills?.length ? { skills: opts.skills } : {}),
         env: buildTurnEnv(process.env, this.sessionEnvVars(session.id, session, project, cwd))
       });
       this.activeTurns.set(handle.turnId, { sessionId, startedAt: Date.now() });

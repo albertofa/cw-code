@@ -3,6 +3,7 @@ import type { DriverName } from "../cw.js";
 import { useAppStore, DEFAULT_COMPOSER } from "../stores/appStore.js";
 import { usePanelStore } from "../stores/panelStore.js";
 import { useBranchStore } from "../stores/branchStore.js";
+import { useSessionSkillsStore } from "../stores/sessionSkillsStore.js";
 import { ComposerView, type ComposerBackend } from "./ComposerView.js";
 import { useBranchMismatch } from "./useBranchMismatch.js";
 import { ContextRing } from "./ContextRing.js";
@@ -47,15 +48,15 @@ export function Composer({ sessionId, driver, top }: { sessionId: string; driver
     loadModels: () => window.cw.listModels(sessionId),
     loadPermissions: () => window.cw.listPermissions(sessionId),
     loadFiles: () => window.cw.listFiles(sessionId),
-    loadCommands: () => window.cw.listCommands(sessionId),
+    loadCommands: () =>
+      window.cw.listCommands(sessionId).then((list) => {
+        useSessionSkillsStore.getState().publish(sessionId, list);
+        return list;
+      }),
     savePrefs: (p) => {
       void useAppStore.getState().setComposerPrefs(sessionId, p);
     },
-    send: (body, attachments, command, acceptFolderHead) =>
-      useAppStore.getState().sendPromptTo(sessionId, body, attachments, {
-        ...(command ? { command } : {}),
-        ...(acceptFolderHead ? { acceptFolderHead } : {})
-      }),
+    send: (body, attachments, opts) => useAppStore.getState().sendPromptTo(sessionId, body, attachments, opts),
     newSession: () => useAppStore.getState().startNewSession(driver),
     rename: (title) => useAppStore.getState().renameSession(sessionId, title),
     openTerminal: () => usePanelStore.getState().revealTab(sessionId, driver),
