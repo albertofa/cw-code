@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties }
 import { useShallow } from "zustand/react/shallow";
 import type { DriverName } from "./cw.js";
 import { applyAppearance } from "./appearanceFonts.js";
-import { applyTheme, SYSTEM_LIGHT_QUERY } from "./theme.js";
+import { applyTheme, cacheTheme, SYSTEM_LIGHT_QUERY } from "./theme.js";
 import { collectSubagents } from "./components/subagents.js";
 import { installedHarnesses, isHarnessSkipped } from "./components/harnessAvailability.js";
 import { isWorkingSetStatus } from "./components/workingSet.js";
@@ -33,6 +33,7 @@ import { useNeedsYouDetailLoader } from "./components/useNeedsYou.js";
 import { useAutoFollowUp } from "./components/useAutoFollowUp.js";
 import { useNotificationSounds } from "./components/useNotificationSounds.js";
 import { visibleLayerOpen } from "./components/openLayer.js";
+import { ipcErrorMessage } from "./components/ipcError.js";
 import { useAppStore } from "./stores/appStore.js";
 import { rightOpenTabs } from "./stores/panelLayout.js";
 import { selectSessionPanel, usePanelStore } from "./stores/panelStore.js";
@@ -43,6 +44,7 @@ import type { TurnEvent } from "./cw.js";
 
 const VERSION_NOTIF_ID = "cli-versions";
 const BINARY_NOTIF_ID = "cli-binaries";
+const LOAD_NOTIF_ID = "workspace-load";
 
 const RIGHT_WIDTH_DEFAULT = 520;
 const SIDE_WIDTH_DEFAULT = 320;
@@ -115,7 +117,10 @@ export function App() {
   const loadProjects = useAppStore((s) => s.loadProjects);
   const appearance = useAppStore((s) => s.appearance);
   const settingsLoaded = useAppStore((s) => s.settingsLoaded);
+  const themePreview = useAppStore((s) => s.themePreview);
   const { themeId, customThemes } = appearance;
+  const shownThemeId = themePreview?.themeId ?? themeId;
+  const shownCustomThemes = themePreview?.customThemes ?? customThemes;
   const sessionPanel = usePanelStore((s) => selectSessionPanel(s, activeSessionId ?? undefined));
   const { dockByTab, rightVisible } = sessionPanel;
   const initializeSession = usePanelStore((s) => s.initializeSession);
@@ -128,15 +133,18 @@ export function App() {
   useEffect(() => applyAppearance(document.documentElement, appearance), [appearance]);
 
   useEffect(() => {
-    if (!settingsLoaded) return;
-    const media = window.matchMedia(SYSTEM_LIGHT_QUERY);
-    const apply = () => applyTheme(document.documentElement, themeId, customThemes, media.matches);
-    apply();
-    if (themeId !== "system") return;
-    media.addEventListener("change", apply);
-    return () => media.removeEventListener("change", apply);
+    if (settingsLoaded) cacheTheme(themeId, customThemes);
   }, [settingsLoaded, themeId, customThemes]);
 
+  useEffect(() => {
+    if (!settingsLoaded) return;
+    const media = window.matchMedia(SYSTEM_LIGHT_QUERY);
+    const apply = () => applyTheme(document.documentElement, shownThemeId, shownCustomThemes, media.matches);
+    apply();
+    if (shownThemeId !== "system") return;
+    media.addEventListener("change", apply);
+    return () => media.removeEventListener("change", apply);
+  }, [settingsLoaded, shownThemeId, shownCustomThemes]);
 
   const panelAnimationMs = usePanelAnimationMs();
   const rightResize = useResizableWidth({ storageKey: "cw-code:rightWidth", min: 320, max: 800, grow: "left" });
@@ -180,7 +188,21 @@ export function App() {
       setPreloadError("window.cw is missing — preload did not load. Restart the Electron app (plain browsers can't reach the backend).");
       return;
     }
-    void loadProjects();
+    const loadWorkspace = (): void => {
+      loadProjects().then(
+        () => useNotifs.getState().dismiss(LOAD_NOTIF_ID),
+        (err: unknown) =>
+          useNotifs.getState().upsert({
+            id: LOAD_NOTIF_ID,
+            kind: "error",
+            title: "Could not load projects and settings",
+            message: ipcErrorMessage(err),
+            sticky: true,
+            actions: [{ label: "Retry", primary: true, onClick: loadWorkspace }]
+          })
+      );
+    };
+    loadWorkspace();
     const off = window.cw.onTurnEvent(handleTurnEvent);
     const offTitle = window.cw.onSessionTitle(({ sessionId, title }) => useAppStore.getState().applySessionTitle(sessionId, title));
     const offSession = window.cw.onSessionUpdated((session) => useAppStore.getState().applySession(session));

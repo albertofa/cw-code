@@ -18,7 +18,9 @@ function clearThemeVars(root: HTMLElement): void {
   root.style.removeProperty("background-color");
 }
 
-function storeTheme(theme: StoredTheme): void {
+export function cacheTheme(themeId: string, customThemes: readonly CustomTheme[]): void {
+  const { base, tokens } = resolveActiveTheme(themeId, customThemes, false);
+  const theme: StoredTheme = { mode: themeId === "system" ? "system" : base, vars: tokens ?? {} };
   try {
     window.localStorage.setItem(THEME_STORAGE_KEY, JSON.stringify(theme));
   } catch (err) {
@@ -35,6 +37,5 @@ export function applyTheme(root: HTMLElement, themeId: string, customThemes: rea
   if (tokens?.["gutter"]) root.style.backgroundColor = tokens["gutter"];
   root.dataset["theme"] = base;
   root.style.colorScheme = base;
-  storeTheme({ mode: themeId === "system" ? "system" : base, vars });
   return base;
 }

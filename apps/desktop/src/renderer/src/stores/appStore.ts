@@ -8,6 +8,7 @@ import type {
   ComposerPrefs,
   ContextUsage,
   CreateSessionOptions,
+  CustomTheme,
   DriverName,
   HistoryMessage,
   GitStatus,
@@ -186,6 +187,11 @@ export interface SendPromptOptions {
 
 export type ComposerSendOptions = Pick<SendPromptOptions, "command" | "skills">;
 
+export interface ThemePreview {
+  themeId: string;
+  customThemes: CustomTheme[];
+}
+
 interface AppState {
   shutdown: ShutdownUiState | null;
   projects: Project[];
@@ -225,6 +231,8 @@ interface AppState {
   holdingHours: number;
   defaultUseWorktree: boolean;
   appearance: AppearancePrefs;
+  themePreview: ThemePreview | null;
+  setThemePreview(preview: ThemePreview | null): void;
   notificationSounds: NotificationSoundSettings | null;
   reasoningExpandedByDriver: Record<DriverName, boolean>;
   defaultModelByDriver: Record<DriverName, string>;
@@ -440,6 +448,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   holdingHours: 6,
   defaultUseWorktree: true,
   appearance: DEFAULT_APPEARANCE,
+  themePreview: null,
   notificationSounds: null,
   reasoningExpandedByDriver: { claude: false, opencode: false, codex: false },
   defaultModelByDriver: { claude: "", opencode: "", codex: "" },
@@ -544,6 +553,10 @@ export const useAppStore = create<AppState>((set, get) => ({
         [sessionId]: { sessionId, path, basePath }
       }
     }));
+  },
+
+  setThemePreview(preview: ThemePreview | null) {
+    set({ themePreview: preview });
   },
 
   closePreview(sessionId: string) {

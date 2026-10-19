@@ -2,7 +2,7 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { deriveThemeTokens } from "../../shared/themes.js";
 import type { CustomTheme } from "./cw.js";
-import { applyTheme, THEME_STORAGE_KEY, THEME_VARS_ATTRIBUTE, type StoredTheme } from "./theme.js";
+import { applyTheme, cacheTheme, THEME_STORAGE_KEY, THEME_VARS_ATTRIBUTE, type StoredTheme } from "./theme.js";
 
 const OCEAN: CustomTheme = { id: "custom-ocean", name: "Ocean", base: "light", colors: { bg: "#e0f0ff", gutter: "#c0d8f0" } };
 
@@ -49,13 +49,28 @@ describe("applyTheme", () => {
     expect(root.style.getPropertyValue("--sunken")).toBe("");
   });
 
-  it("caches the system choice, not the resolved base, for the next launch", () => {
+  it("never writes the first-paint cache, so a preview cannot leak into the next launch", () => {
+    applyTheme(document.createElement("html"), OCEAN.id, [OCEAN], false);
     applyTheme(document.createElement("html"), "system", [], true);
+    expect(storedTheme()).toBeNull();
+  });
+});
+
+describe("cacheTheme", () => {
+  afterEach(() => window.localStorage.removeItem(THEME_STORAGE_KEY));
+
+  it("caches the system choice, not the resolved base, for the next launch", () => {
+    cacheTheme("system", []);
     expect(storedTheme()).toEqual({ mode: "system", vars: {} });
   });
 
+  it("caches a built-in theme as its base without tokens", () => {
+    cacheTheme("light", [OCEAN]);
+    expect(storedTheme()).toEqual({ mode: "light", vars: {} });
+  });
+
   it("caches a custom theme as its base with its tokens", () => {
-    applyTheme(document.createElement("html"), OCEAN.id, [OCEAN], false);
+    cacheTheme(OCEAN.id, [OCEAN]);
     expect(storedTheme()).toEqual({ mode: "light", vars: deriveThemeTokens(OCEAN.base, OCEAN.colors) });
   });
 });
