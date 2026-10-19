@@ -51,6 +51,9 @@
   --dock-ink: color-mix(in srgb, var(--accent) 65%, var(--text));
   --surface-inset: rgba(0, 0, 0, 0.3);
   --update: #56c2d6;
+  --babysit: #b5d84b;
+  --on-babysit: #17200a;
+  --babysit-ink: color-mix(in srgb, var(--babysit) 85%, var(--text));
   --merged: #b49cff;
   --on-accent: #fff;
   --chip-fill: rgba(255, 255, 255, 0.045);
@@ -885,14 +888,14 @@ button.session-resolved-toggle:hover {
 }
 
 .ws-state.status-babysit {
-  color: var(--accent);
+  color: var(--babysit-ink);
 }
 
 .ws-state.status-babysit.working {
   padding: 1px 6px;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--accent) 14%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 32%, transparent);
+  background: var(--babysit);
+  color: var(--on-babysit);
   font-weight: 600;
 }
 
@@ -907,6 +910,10 @@ button.session-resolved-toggle:hover {
 .ws-state.status-babysit.done {
   color: var(--success);
   font-weight: 600;
+}
+
+.ws-state.status-babysit.done svg {
+  color: var(--babysit-ink);
 }
 
 .ws-spin {
@@ -9448,19 +9455,16 @@ button.gitbar-checkout:hover {
 }
 
 .babysit-dock {
-  --babysit-tone: var(--accent);
   background: var(--bg-deep);
   box-shadow:
-    inset 3px 0 0 var(--babysit-tone),
+    inset 3px 0 0 var(--babysit),
     inset 0 0 0 1px var(--border);
 }
 
 .babysit-dock.paused {
-  --babysit-tone: var(--warning);
-}
-
-.babysit-dock.done {
-  --babysit-tone: var(--success);
+  box-shadow:
+    inset 3px 0 0 color-mix(in srgb, var(--babysit) 40%, var(--border)),
+    inset 0 0 0 1px var(--border);
 }
 
 .babysit-dock > .pr-dock-head:last-child {
@@ -9469,7 +9473,7 @@ button.gitbar-checkout:hover {
 
 .pr-dock-head.babysit-head {
   padding-left: 14px;
-  background: color-mix(in srgb, var(--babysit-tone) 10%, transparent);
+  background: color-mix(in srgb, var(--babysit) 11%, transparent);
 }
 
 .babysit-head .pr-dock-title {
@@ -9485,9 +9489,8 @@ button.gitbar-checkout:hover {
   padding: 0 8px;
   box-sizing: border-box;
   border-radius: 999px;
-  background: color-mix(in srgb, var(--babysit-tone) 16%, transparent);
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--babysit-tone) 45%, transparent);
-  color: color-mix(in srgb, var(--babysit-tone) 70%, var(--text));
+  background: var(--babysit);
+  color: var(--on-babysit);
   font-size: var(--t-xs);
   font-weight: 650;
   white-space: nowrap;
@@ -9499,29 +9502,60 @@ button.gitbar-checkout:hover {
 
 .babysit-icon {
   flex: none;
-  color: var(--accent);
+  color: var(--babysit-ink);
 }
 
 .babysit-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
   min-width: 0;
-  overflow: hidden;
-  text-overflow: ellipsis;
   white-space: nowrap;
   color: var(--dim);
   font-size: var(--t-xs);
 }
 
-.babysit-badge {
+.babysit-status svg {
   flex: none;
-  color: var(--accent);
 }
 
-.babysit-badge.paused {
+.babysit-status-text {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.babysit-status.paused {
   color: var(--warning);
 }
 
-.babysit-badge.done {
+.babysit-status.done {
   color: var(--success);
+  font-weight: 600;
+}
+
+.babysit-mark {
+  flex: none;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  box-shadow: inset 0 0 0 1.5px var(--babysit);
+}
+
+.babysit-status.working .babysit-mark {
+  background: var(--babysit);
+  animation: pulse-op 1.4s ease-in-out infinite;
+}
+
+.babysit-badge,
+.session-hovercard-row > .babysit-badge {
+  flex: none;
+  color: var(--babysit-ink);
+}
+
+.babysit-badge.paused,
+.session-hovercard-row > .babysit-badge.paused {
+  color: var(--warning);
 }
 
 .pr-dock-failed {
