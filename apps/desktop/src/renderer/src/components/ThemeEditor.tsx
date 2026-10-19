@@ -1,8 +1,15 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { History, Trash2 } from "lucide-react";
-import { CURATED_THEME_TOKENS, THEME_COLOR_TOKENS, deriveThemeTokens, isHexColor } from "../../../shared/themes.js";
+import {
+  CURATED_THEME_TOKENS,
+  THEME_COLOR_TOKENS,
+  THEME_NAME_MAX_LENGTH,
+  UNTITLED_THEME_NAME,
+  deriveThemeTokens,
+  isHexColor
+} from "../../../shared/themes.js";
 import type { CustomTheme, ThemeBase } from "../cw.js";
-import { BUILTIN_THEME_NAMES, THEME_NAME_MAX_LENGTH, UNTITLED_THEME_NAME, tokenLabel, withoutColor } from "./themeChoices.js";
+import { BUILTIN_THEME_NAMES, tokenLabel, withoutColor } from "./themeChoices.js";
 
 const THEME_BASES: readonly ThemeBase[] = ["dark", "light"];
 const CURATED_TOKENS = new Set(CURATED_THEME_TOKENS.map((entry) => entry.token));
@@ -97,15 +104,22 @@ function ColorGrid({
 export function ThemeEditor({
   theme,
   autoFocusName,
+  onNameFocused,
   onChange,
   onDelete
 }: {
   theme: CustomTheme;
   autoFocusName: boolean;
+  onNameFocused: () => void;
   onChange: (next: CustomTheme) => void;
   onDelete: () => void;
 }) {
   const [advanced, setAdvanced] = useState(false);
+
+  useEffect(() => {
+    if (autoFocusName) onNameFocused();
+  }, [autoFocusName, onNameFocused]);
+
   const tokens = useMemo(() => deriveThemeTokens(theme.base, theme.colors), [theme.base, theme.colors]);
   const hasOverrides = Object.keys(theme.colors).length > 0;
   const pickColor = (token: string, value: string) => onChange({ ...theme, colors: { ...theme.colors, [token]: value.toLowerCase() } });

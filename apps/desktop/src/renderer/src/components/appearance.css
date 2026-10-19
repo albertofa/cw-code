@@ -408,6 +408,10 @@
   color: var(--violet-ink);
 }
 
+.appearance-section .theme-previewing:empty {
+  padding-bottom: 0;
+}
+
 .theme-picker {
   display: flex;
   flex-wrap: wrap;
@@ -493,18 +497,18 @@
   margin-top: 2px;
 }
 
-.theme-new:hover:not(:disabled) {
+.theme-new:hover:not([aria-disabled="true"]) {
   border-color: var(--violet-line);
   background: var(--hover);
   color: var(--text);
 }
 
-.theme-new:disabled {
+.theme-new[aria-disabled="true"] {
   cursor: default;
 }
 
-.theme-new:disabled svg,
-.theme-new:disabled .theme-choice-label {
+.theme-new[aria-disabled="true"] svg,
+.theme-new[aria-disabled="true"] .theme-choice-label {
   opacity: 0.45;
 }
 

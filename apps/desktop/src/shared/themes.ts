@@ -1,6 +1,9 @@
 import type { CustomTheme, ThemeBase } from "@cw-code/contracts";
 
 export const BUILTIN_THEME_IDS = ["dark", "light", "system"] as const;
+export const MAX_CUSTOM_THEMES = 50;
+export const THEME_NAME_MAX_LENGTH = 60;
+export const UNTITLED_THEME_NAME = "Untitled theme";
 
 type SeedToken =
   | "gutter"

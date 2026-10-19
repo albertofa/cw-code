@@ -26,7 +26,14 @@ import { writeFileAtomic } from "../storage/atomicFile.js";
 import { backupBeforeRepair } from "../storage/backups.js";
 import { isMetadataDocument, type MetadataDocument, type MetadataMigration, type MetadataSchema } from "../storage/metadataDocument.js";
 import { LastGoodRefresher, loadVersionedJson } from "../storage/versionedJson.js";
-import { BUILTIN_THEME_IDS, isHexColor, THEME_COLOR_TOKENS } from "../../shared/themes.js";
+import {
+  BUILTIN_THEME_IDS,
+  isHexColor,
+  MAX_CUSTOM_THEMES,
+  THEME_COLOR_TOKENS,
+  THEME_NAME_MAX_LENGTH,
+  UNTITLED_THEME_NAME
+} from "../../shared/themes.js";
 import { defaultPrWorkflows, RETIRED_BUILT_IN_PROMPTS } from "./prWorkflowDefaults.js";
 import {
   configuredCliBinaryPath,
@@ -56,9 +63,6 @@ const VALID_VIEW_KINDS: readonly GitHubKind[] = ["pr", "issue", "run"];
 const VALID_VIEW_GROUPS: readonly GitHubViewGroup[] = ["triage", "repo", "none"];
 const VALID_THEME_BASES: readonly ThemeBase[] = ["dark", "light"];
 const CUSTOM_THEME_ID_PATTERN = /^custom-[a-z0-9-]{1,64}$/;
-const MAX_CUSTOM_THEMES = 50;
-const MAX_THEME_NAME_LENGTH = 60;
-const DEFAULT_THEME_NAME = "Untitled theme";
 const MAX_SAVED_VIEWS = 50;
 const MAX_VIEW_NAME_LENGTH = 80;
 const MAX_VIEW_QUERY_LENGTH = 512;
@@ -206,10 +210,10 @@ function sanitizeCustomTheme(entry: unknown): CustomTheme | null {
   if (!entry || typeof entry !== "object") return null;
   const o = entry as Record<string, unknown>;
   if (typeof o.id !== "string" || !CUSTOM_THEME_ID_PATTERN.test(o.id)) return null;
-  const name = typeof o.name === "string" ? o.name.trim().slice(0, MAX_THEME_NAME_LENGTH).trim() : "";
+  const name = typeof o.name === "string" ? o.name.trim().slice(0, THEME_NAME_MAX_LENGTH).trim() : "";
   return {
     id: o.id,
-    name: name || DEFAULT_THEME_NAME,
+    name: name || UNTITLED_THEME_NAME,
     base: oneOf(o.base, VALID_THEME_BASES) ?? "dark",
     colors: sanitizeThemeColors(o.colors)
   };

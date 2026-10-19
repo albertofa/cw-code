@@ -1,6 +1,6 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
 import { History, Minus, Plus } from "lucide-react";
-import { THEME_PALETTES, deriveThemeTokens } from "../../../shared/themes.js";
+import { MAX_CUSTOM_THEMES, THEME_PALETTES, deriveThemeTokens } from "../../../shared/themes.js";
 import type { AppSettings, CustomTheme } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import { SYSTEM_LIGHT_QUERY } from "../theme.js";
@@ -19,7 +19,7 @@ import { DriverIcon } from "./DriverIcon.js";
 import { FontFamilyPicker } from "./FontFamilyPicker.js";
 import { sameValue } from "./settingsSections.js";
 import { ThemeEditor } from "./ThemeEditor.js";
-import { MAX_CUSTOM_THEMES, customThemeName, newCustomTheme } from "./themeChoices.js";
+import { customThemeName, newCustomTheme } from "./themeChoices.js";
 import "./appearance.css";
 
 type SwatchStyle = CSSProperties & Record<`--sw-${string}`, string>;
@@ -122,9 +122,17 @@ function ThemeSection({ draft, onDraftChange }: { draft: AppSettings; onDraftCha
   const saved = useAppStore((s) => s.appearance);
   const { confirm, dialog } = useConfirm();
   const radios = useRef(new Map<string, HTMLButtonElement>());
+  const focusAfterDelete = useRef<string | null>(null);
   const [createdId, setCreatedId] = useState<string | null>(null);
   const previewing = !sameValue(themeId, saved.themeId) || !sameValue(customThemes, saved.customThemes);
   useThemePreview(themeId, customThemes, previewing);
+
+  useEffect(() => {
+    const id = focusAfterDelete.current;
+    if (id === null) return;
+    focusAfterDelete.current = null;
+    radios.current.get(id)?.focus();
+  }, [themeId, customThemes]);
 
   const ids = [...BUILTIN_CHOICES.map((choice) => choice.id), ...customThemes.map((theme) => theme.id)];
   const focusableId = ids.includes(themeId) ? themeId : ids[0];
@@ -172,6 +180,7 @@ function ThemeSection({ draft, onDraftChange }: { draft: AppSettings; onDraftCha
       confirmLabel: "Delete theme"
     });
     if (!ok) return;
+    focusAfterDelete.current = theme.base;
     onDraftChange({ customThemes: customThemes.filter((entry) => entry.id !== theme.id), themeId: theme.base });
   };
 
@@ -180,11 +189,9 @@ function ThemeSection({ draft, onDraftChange }: { draft: AppSettings; onDraftCha
       <div className="tsec-h">
         <h3>Theme</h3>
       </div>
-      {previewing && (
-        <span className="settings-hint theme-previewing" role="status">
-          Previewing — save to keep these colors.
-        </span>
-      )}
+      <span className="settings-hint theme-previewing" role="status">
+        {previewing ? "Previewing — save to keep these colors." : ""}
+      </span>
       <div className="theme-picker">
         <div className="theme-choices" role="radiogroup" aria-label="Theme">
           {BUILTIN_CHOICES.map((choice, index) => (
@@ -194,18 +201,10 @@ function ThemeSection({ draft, onDraftChange }: { draft: AppSettings; onDraftCha
             <CustomThemeCard key={theme.id} theme={theme} {...cardProps(theme.id, BUILTIN_CHOICES.length + index)} />
           ))}
         </div>
-        <button
-          type="button"
-          className="theme-new"
-          disabled={atLimit}
-          aria-describedby="theme-new-note"
-          onClick={createTheme}
-        >
+        <button type="button" className="theme-new" aria-disabled={atLimit} onClick={createTheme}>
           <Plus size={16} aria-hidden="true" />
           <span className="theme-choice-label">New theme</span>
-          <small id="theme-new-note">
-            {atLimit ? `You've reached the limit of ${MAX_CUSTOM_THEMES} themes.` : "Starts as a copy of the selected theme."}
-          </small>
+          <small>{atLimit ? `You've reached the limit of ${MAX_CUSTOM_THEMES} themes.` : "Starts as a copy of the selected theme."}</small>
         </button>
       </div>
       {editing && (
@@ -213,6 +212,7 @@ function ThemeSection({ draft, onDraftChange }: { draft: AppSettings; onDraftCha
           key={editing.id}
           theme={editing}
           autoFocusName={editing.id === createdId}
+          onNameFocused={() => setCreatedId(null)}
           onChange={updateTheme}
           onDelete={() => void deleteTheme(editing)}
         />

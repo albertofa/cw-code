@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties }
 import { useShallow } from "zustand/react/shallow";
 import type { DriverName } from "./cw.js";
 import { applyAppearance } from "./appearanceFonts.js";
-import { applyTheme, cacheTheme, SYSTEM_LIGHT_QUERY } from "./theme.js";
+import { ThemeSync } from "./components/ThemeSync.js";
 import { collectSubagents } from "./components/subagents.js";
 import { installedHarnesses, isHarnessSkipped } from "./components/harnessAvailability.js";
 import { isWorkingSetStatus } from "./components/workingSet.js";
@@ -116,12 +116,6 @@ export function App() {
   const settingsVersion = useAppStore((s) => s.settingsVersion);
   const loadProjects = useAppStore((s) => s.loadProjects);
   const appearance = useAppStore((s) => s.appearance);
-  const settingsLoaded = useAppStore((s) => s.settingsLoaded);
-  const themePreview = useAppStore((s) => s.themePreview);
-  const { themeId, customThemes } = appearance;
-  const shownThemeId = themePreview?.themeId ?? themeId;
-  const shownCustomThemes = themePreview?.customThemes ?? customThemes;
-  const previewing = themePreview !== null;
   const sessionPanel = usePanelStore((s) => selectSessionPanel(s, activeSessionId ?? undefined));
   const { dockByTab, rightVisible } = sessionPanel;
   const initializeSession = usePanelStore((s) => s.initializeSession);
@@ -132,24 +126,6 @@ export function App() {
   const setRightVisible = usePanelStore((s) => s.setRightVisible);
 
   useEffect(() => applyAppearance(document.documentElement, appearance), [appearance]);
-
-  useEffect(() => {
-    if (settingsLoaded) cacheTheme(themeId, customThemes);
-  }, [settingsLoaded, themeId, customThemes]);
-
-  useEffect(() => {
-    if (!settingsLoaded) return;
-    const media = window.matchMedia(SYSTEM_LIGHT_QUERY);
-    const apply = () => applyTheme(document.documentElement, shownThemeId, shownCustomThemes, media.matches);
-    const frame = previewing ? requestAnimationFrame(apply) : 0;
-    if (!previewing) apply();
-    const followSystem = shownThemeId === "system";
-    if (followSystem) media.addEventListener("change", apply);
-    return () => {
-      if (frame !== 0) cancelAnimationFrame(frame);
-      if (followSystem) media.removeEventListener("change", apply);
-    };
-  }, [settingsLoaded, previewing, shownThemeId, shownCustomThemes]);
 
   const panelAnimationMs = usePanelAnimationMs();
   const rightResize = useResizableWidth({ storageKey: "cw-code:rightWidth", min: 320, max: 800, grow: "left" });
@@ -200,7 +176,7 @@ export function App() {
           useNotifs.getState().upsert({
             id: LOAD_NOTIF_ID,
             kind: "error",
-            title: "Could not load projects and settings",
+            title: useAppStore.getState().settingsLoaded ? "Could not load projects" : "Could not load projects and settings",
             message: ipcErrorMessage(err),
             sticky: true,
             actions: [{ label: "Retry", primary: true, onClick: loadWorkspace }]
@@ -453,6 +429,7 @@ export function App() {
       data-driver={driver ?? "none"}
       style={shellStyle}
     >
+      <ThemeSync />
       {preloadError && <div className="preload-error">{preloadError}</div>}
       {!preloadError && (
         <>

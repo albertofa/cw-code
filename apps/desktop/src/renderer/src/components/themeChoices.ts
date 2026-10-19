@@ -1,9 +1,6 @@
-import { resolveActiveTheme } from "../../../shared/themes.js";
+import { THEME_NAME_MAX_LENGTH, UNTITLED_THEME_NAME, resolveActiveTheme } from "../../../shared/themes.js";
 import type { CustomTheme, ThemeBase } from "../cw.js";
 
-export const MAX_CUSTOM_THEMES = 50;
-export const THEME_NAME_MAX_LENGTH = 60;
-export const UNTITLED_THEME_NAME = "Untitled theme";
 export const BUILTIN_THEME_NAMES: Readonly<Record<ThemeBase, string>> = { dark: "Dark", light: "Light" };
 
 const COPY_SUFFIX = " copy";
