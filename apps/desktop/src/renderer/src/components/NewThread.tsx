@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { GitBranch, GitFork, History } from "lucide-react";
+import { Download, GitBranch, GitFork, History } from "lucide-react";
 import { useAppStore } from "../stores/appStore.js";
 import type { CreateSessionOptions, CreateWorkspaceMode, DriverName, GitBranchInfo, Session } from "../cw.js";
 import { worktreeCandidates } from "./worktreeCandidates.js";
@@ -9,6 +9,7 @@ import { pickableHarnesses } from "./harnessAvailability.js";
 import { ComposerView, type ComposerBackend } from "./ComposerView.js";
 import { MenuSelect } from "./MenuSelect.js";
 import { NewSessionProjectPicker } from "./NewSessionProjectPicker.js";
+import { ImportSessionsModal } from "./ImportSessionsModal.js";
 
 const NO_PROJECT_HINT = "Choose a project to start a session";
 const NO_SESSIONS: Session[] = [];
@@ -39,6 +40,7 @@ export function NewThread({
   const project = useAppStore((s) => (projectId ? s.projects.find((p) => p.id === projectId) : undefined));
   const [branches, setBranches] = useState<GitBranchInfo[]>([]);
   const [branchError, setBranchError] = useState("");
+  const [importOpen, setImportOpen] = useState(false);
 
   const projectKey = project?.id ?? null;
   const sessions = useAppStore((s) => (projectKey ? (s.sessionsByProject[projectKey] ?? NO_SESSIONS) : NO_SESSIONS));
@@ -267,7 +269,19 @@ export function NewThread({
             {newSessionError}
           </div>
         )}
+        <div className="newthread-import-row">
+          <button
+            type="button"
+            className="newthread-import"
+            onClick={() => setImportOpen(true)}
+            title="Import a session started outside cw-code"
+          >
+            <Download size={13} aria-hidden="true" />
+            Import session
+          </button>
+        </div>
       </div>
+      {importOpen && <ImportSessionsModal initialDriver={driver} onClose={() => setImportOpen(false)} />}
     </div>
   );
 }

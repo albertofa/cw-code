@@ -11,6 +11,7 @@ import type {
   DriverName,
   HistoryMessage,
   GitStatus,
+  ImportSessionRequest,
   PrRef,
   Project,
   QuestionRequest,
@@ -256,6 +257,7 @@ interface AppState {
   clearSessionWorktrees(sessionIds: string[]): void;
   createSession(driver: DriverName, prefs?: ComposerPrefs, workspace?: CreateSessionOptions): Promise<void>;
   createSessionIn(projectId: string, driver: DriverName, prefs?: ComposerPrefs, workspace?: CreateSessionOptions): Promise<Session>;
+  importSession(request: ImportSessionRequest): Promise<Session>;
   applySession(session: Session): void;
   sendPrompt(prompt: string, attachments?: string[], command?: CommandInvocation): Promise<void>;
   sendPromptTo(sessionId: string, prompt: string, attachments?: string[], opts?: SendPromptOptions): Promise<void>;
@@ -1057,6 +1059,19 @@ export const useAppStore = create<AppState>((set, get) => ({
     await get().ensureComposer(session.id);
     if (prefs) await get().setComposerPrefs(session.id, { ...prefs });
     void get().refreshProjectCheckoutGitStatus(session.id);
+    return session;
+  },
+
+  async importSession(request: ImportSessionRequest) {
+    const { project, session } = await window.cw.importSession(request);
+    set({
+      projects: withProject(get().projects, project),
+      sessionsByProject: {
+        ...get().sessionsByProject,
+        [project.id]: [session, ...(get().sessionsByProject[project.id] ?? [])]
+      }
+    });
+    get().selectSession(session.id);
     return session;
   },
 

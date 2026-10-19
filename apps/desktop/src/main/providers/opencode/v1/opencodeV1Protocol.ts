@@ -29,9 +29,12 @@ import {
   type OpencodeSendResult,
   type OpencodeSessionSummary
 } from "../opencodeProtocol.js";
+import { mapOpencodeNativeSessions, opencodeProjectWorktrees } from "../opencodeNativeSessions.js";
 import { opencodeV1EventDecoder } from "./opencodeV1Events.js";
-import type { CommandOption } from "@cw-code/contracts";
+import type { CommandOption, NativeSession } from "@cw-code/contracts";
 import type { OpencodeBuiltinCommand } from "../opencodeCommands.js";
+
+const NATIVE_SESSION_LIMIT = 1000;
 
 interface ServerSession {
   id: string;
@@ -63,6 +66,20 @@ export const opencodeV1Protocol: OpencodeProtocol = {
     return sessions
       .filter((s) => s.directory.toLowerCase() === client.cwd.toLowerCase())
       .map((s) => ({ id: s.id, title: s.title, created: s.time.created, updated: s.time.updated }));
+  },
+
+  async listNativeSessions(client: OpencodeClient): Promise<NativeSession[]> {
+    const res = await client.request(`/experimental/session?roots=true&limit=${NATIVE_SESSION_LIMIT}`, { timeoutMs: OPENCODE_LIST_TIMEOUT_MS });
+    if (res.ok && !isHtmlResponse(res)) return mapOpencodeNativeSessions((await res.json()) as unknown);
+    const projects = await client.request("/project", { timeoutMs: OPENCODE_LIST_TIMEOUT_MS });
+    if (!projects.ok) throw new Error(`opencode project list failed: ${projects.status}`);
+    const byId = new Map<string, NativeSession>();
+    for (const worktree of opencodeProjectWorktrees((await projects.json()) as unknown)) {
+      const listed = await client.request(withDirectoryQuery("/session?roots=true", worktree), { timeoutMs: OPENCODE_LIST_TIMEOUT_MS });
+      if (!listed.ok) throw new Error(`opencode session list failed for ${worktree}: ${listed.status}`);
+      for (const session of mapOpencodeNativeSessions((await listed.json()) as unknown)) byId.set(session.resumeCursor, session);
+    }
+    return [...byId.values()];
   },
 
   async createSession(client: OpencodeClient): Promise<string> {

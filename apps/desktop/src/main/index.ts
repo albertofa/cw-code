@@ -25,7 +25,7 @@ import { RendererProbeTracker, runPackageProbe } from "./debug/packageProbe.js";
 import { claudeCommandsCachePath, cwCodeHome, ensureAppDirs, attachmentsDir, logsDir, migrateFromUserData, opencodeModelsCachePath, sessionDbPath, settingsFilePath, userdataDir } from "./paths/appPaths.js";
 import { reapOrphanedServers } from "./orphanServers.js";
 import { loadLoginShellEnvironment } from "./shellEnvironment.js";
-import type { AppSettings, ApprovalDecision, CliBinary, CommandInvocation, CreateSessionOptions, GitDiffMode, ProjectGitHubRepo, PrRef, RepoRef, RunRef, RunSources, SessionPrLink, MetadataIssue, SessionStatus, SettingsPatch, ShutdownCommitResult, ShutdownExpiredEvent, ShutdownPrepareRequest, ShutdownReason, ShutdownRequestedEvent, StartupState, UpdateActionResult, UpdateState, UsageLedgerQuery } from "@cw-code/contracts";
+import type { AppSettings, ApprovalDecision, CliBinary, CommandInvocation, CreateSessionOptions, GitDiffMode, ImportSessionRequest, ProjectGitHubRepo, PrRef, RepoRef, RunRef, RunSources, SessionPrLink, MetadataIssue, SessionStatus, SettingsPatch, ShutdownCommitResult, ShutdownExpiredEvent, ShutdownPrepareRequest, ShutdownReason, ShutdownRequestedEvent, StartupState, UpdateActionResult, UpdateState, UsageLedgerQuery } from "@cw-code/contracts";
 import type { DriverKind, HarnessId, SkillSaveInput } from "@cw-code/contracts";
 import type { PtyKind } from "./pty/PtyPool.js";
 import { SessionManager } from "./sessions/SessionManager.js";
@@ -216,7 +216,8 @@ function createServices(stores: { sessionStore: SessionStore; settingsStore: Set
     prState: (ref) => pullRequests.knownState(ref),
     prStateRefresh: (ref) => pullRequests.refreshState(ref),
     prUpdatedAt: (ref) => pullRequests.knownUpdatedAt(ref),
-    onResolved: (sessionId) => ptys.killSession(sessionId)
+    onResolved: (sessionId) => ptys.killSession(sessionId),
+    legacyAppRoots: [app.getPath("userData")]
   });
   pullRequests = new PullRequestService(git, () => sessions.getSettings(), (rootPath) => sessions.addProject(rootPath));
   const githubSearch = new GitHubSearchService(() => sessions.getSettings());
@@ -879,6 +880,8 @@ function registerIpc(services: Services): void {
   ipcMain.handle("sessions.create", (_e, args: { projectId: string; driver: DriverName; options?: CreateSessionOptions }) =>
     sessions.createSession(args.projectId, args.driver, args.options)
   );
+  ipcMain.handle("sessions.importable", (_e, driver: DriverName) => sessions.listImportableSessions(driver));
+  ipcMain.handle("sessions.import", (_e, request: ImportSessionRequest) => sessions.importSession(request));
   ipcMain.handle("sessions.rename", (_e, args: { sessionId: string; title: string }) =>
     sessions.renameSession(args.sessionId, args.title)
   );

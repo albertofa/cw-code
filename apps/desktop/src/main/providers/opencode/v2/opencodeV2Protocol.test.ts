@@ -181,4 +181,24 @@ describe("opencodeV2Protocol requests", () => {
     );
     await expect(opencodeV2Protocol.listSessions(client)).resolves.toEqual([{ id: "ses_a", title: "A", created: 1, updated: 2 }]);
   });
+
+  it("lists root sessions across directories, following the cursor", async () => {
+    const { client, seen } = fakeClient((s) =>
+      s.path.includes("cursor=")
+        ? json({ data: [{ id: "ses_c", title: "", location: { directory: "/other" }, time: { created: 5 } }], cursor: {} })
+        : json({
+            data: [
+              { id: "ses_a", title: "A", location: { directory: CWD }, time: { created: 1, updated: 2 } },
+              { id: "ses_b", parentID: "ses_a", location: { directory: CWD }, time: { created: 1, updated: 2 } },
+              { id: "ses_x", title: "Archived", location: { directory: CWD }, time: { created: 1, archived: 3 } }
+            ],
+            cursor: { next: "c1" }
+          })
+    );
+    await expect(opencodeV2Protocol.listNativeSessions(client)).resolves.toEqual([
+      { driver: "opencode", resumeCursor: "ses_a", title: "A", cwd: CWD, createdAt: 1, updatedAt: 2 },
+      { driver: "opencode", resumeCursor: "ses_c", title: "ses_c", cwd: "/other", createdAt: 5, updatedAt: 5 }
+    ]);
+    expect(seen.map((s) => s.path)).toEqual(["/api/session?parentID=null&limit=200", "/api/session?parentID=null&limit=200&cursor=c1"]);
+  });
 });

@@ -7,6 +7,7 @@ import type {
   DriverKind,
   HistoryMessage,
   ModelOption,
+  NativeSession,
   PermissionOption,
   RetryConnectionRequest,
   RetryConnectionResult,
@@ -51,6 +52,35 @@ export class TracingCliDriver implements CliDriver {
       });
       throw err;
     }
+  }
+
+  get listNativeSessions(): (() => Promise<NativeSession[]>) | undefined {
+    const inner = this.inner;
+    if (typeof inner.listNativeSessions !== "function") return undefined;
+    return async () => {
+      const start = Date.now();
+      const operation = `${this.kind}.listNativeSessions`;
+      try {
+        const sessions = await inner.listNativeSessions!();
+        traceHarnessCall({
+          harness: this.kind,
+          operation,
+          durationMs: Date.now() - start,
+          ok: true,
+          extra: { count: sessions.length }
+        });
+        return sessions;
+      } catch (err) {
+        traceHarnessCall({
+          harness: this.kind,
+          operation,
+          durationMs: Date.now() - start,
+          ok: false,
+          error: truncateError((err as Error).message)
+        });
+        throw err;
+      }
+    };
   }
 
   async getHistory(projectRoot: string, resumeCursor: string): Promise<HistoryMessage[]> {
