@@ -57,6 +57,8 @@ const SETTINGS: AppSettings = {
   fontSizeTerminal: 14,
   typographyAdvanced: false,
   panelAnimationMs: 0,
+  themeId: "dark",
+  customThemes: [],
   notificationSounds: {
     done: { enabled: true, sound: "felt-chord", volume: 60 },
     question: { enabled: true, sound: "triple-tap", volume: 60 },
