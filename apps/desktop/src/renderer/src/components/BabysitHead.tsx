@@ -5,7 +5,7 @@ import { useAppStore } from "../stores/appStore.js";
 import { usePrStore } from "../stores/prStore.js";
 import { mergeBoxState, type MergeRow } from "./prDetailModel.js";
 import { prKey } from "./prInbox.js";
-import { babysitStatusText, type BabysitState } from "./prSessionModel.js";
+import { babysitStatusText, type BabysitPhase, type BabysitState } from "./prSessionModel.js";
 import { prRefLabel } from "./sessionPrLinks.js";
 import { ipcErrorMessage } from "./ipcError.js";
 
@@ -34,6 +34,12 @@ function MergeState({ pr }: { pr: PrDetail }) {
       ))}
     </ul>
   );
+}
+
+function StatusMark({ phase }: { phase: BabysitPhase["kind"] }) {
+  if (phase === "paused") return <Pause size={11} aria-hidden="true" />;
+  if (phase === "done") return <CircleCheck size={12} aria-hidden="true" />;
+  return <span className="babysit-mark" aria-hidden="true" />;
 }
 
 export function BabysitHead({ sessionId, state }: { sessionId: string; state: BabysitState }) {
@@ -71,8 +77,9 @@ export function BabysitHead({ sessionId, state }: { sessionId: string; state: Ba
           {workflow.label}
         </span>
         <span className="pr-dock-title">{prRefLabel(link.ref)}</span>
-        <span className="babysit-status" role="status">
-          {babysitStatusText(state)}
+        <span className={`babysit-status ${phase.kind}`} role="status">
+          <StatusMark phase={phase.kind} />
+          <span className="babysit-status-text">{babysitStatusText(state)}</span>
         </span>
         <span className="pr-dock-spacer" />
         <button className="pr-detail-btn ghost sm" onClick={() => openPr(link.ref)}>
