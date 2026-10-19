@@ -17,6 +17,7 @@ import {
 } from "lucide-react";
 import type { CommandOption } from "@cw-code/contracts";
 import type { ComposerPrefs, DriverName, ModelOption, PermissionMode, PermissionOption } from "../cw.js";
+import { clearComposerDraft, loadComposerDraft, saveComposerDraft } from "./composerDrafts.js";
 import { getRecentModels, pushRecentModel } from "./lastModel.js";
 import { EffortMenu } from "./EffortMenu.js";
 import { MenuSelect } from "./MenuSelect.js";
@@ -143,9 +144,13 @@ export function ComposerView({
   const backendRef = useRef(backend);
   backendRef.current = backend;
   const imageTarget = backend.imageTarget;
-  const [draft, setDraft] = useState("");
-  const [caret, setCaret] = useState<number | null>(0);
-  const [attachments, setAttachments] = useState<string[]>([]);
+  const [draft, setDraft] = useState(() => loadComposerDraft(resetKey)?.text ?? "");
+  const [caret, setCaret] = useState<number | null>(() => loadComposerDraft(resetKey)?.text.length ?? 0);
+  const [attachments, setAttachments] = useState<string[]>(() => loadComposerDraft(resetKey)?.attachments ?? []);
+  const draftRef = useRef(draft);
+  draftRef.current = draft;
+  const attachmentsRef = useRef(attachments);
+  attachmentsRef.current = attachments;
   const [pasteError, setPasteError] = useState<string | null>(null);
   const [pickerOpen, setPickerOpen] = useState(false);
   const [addOpen, setAddOpen] = useState(false);
@@ -241,15 +246,18 @@ export function ComposerView({
   }, [resetKey, visible]);
 
   useEffect(() => {
-    setAttachments([]);
-    setDraft("");
-    setCaret(0);
+    const saved = loadComposerDraft(resetKey);
+    setAttachments(saved?.attachments ?? []);
+    setDraft(saved?.text ?? "");
+    setCaret(saved?.text.length ?? 0);
     setPasteError(null);
     setShowCustom(false);
     setCustomModel("");
     setAddOpen(false);
     setPickerOpen(false);
     invalidateBranchChoice();
+    // Leaving this composer (another session, or the view unmounting) keeps what was written for when you come back.
+    return () => saveComposerDraft(resetKey, draftRef.current, attachmentsRef.current);
   }, [resetKey]);
 
   useEffect(() => {
@@ -570,6 +578,7 @@ export function ComposerView({
       void b.rename(args).then(
         () => {
           if (isCurrent(key)) setDraft("");
+          else clearComposerDraft(resetKey);
         },
         (err: unknown) => notifyError("Rename failed", err)
       );
@@ -612,10 +621,12 @@ export function ComposerView({
         ...(accept ? { acceptFolderHead: accept } : {})
       });
       if (isCurrent(key)) clearComposer();
+      else clearComposerDraft(resetKey);
     } catch (err) {
       await handleSendFailure(err, key, (next) => void dispatchCommand(command, args, key, next));
     } finally {
       setSending(false);
+      if (isCurrent(key)) focusComposer();
     }
   };
 
@@ -633,9 +644,13 @@ export function ComposerView({
       })
       .then(() => {
         if (isCurrent(key)) clearComposer();
+        else clearComposerDraft(resetKey);
       })
       .catch((err: unknown) => handleSendFailure(err, key, (next) => dispatchPlain(body, key, skills, next)))
-      .finally(() => setSending(false));
+      .finally(() => {
+        setSending(false);
+        if (isCurrent(key)) focusComposer();
+      });
   };
 
   const mentionedSkills = (body: string, list: CommandOption[]): string[] =>
@@ -1027,10 +1042,10 @@ export function ComposerView({
               onPaste={(e) => {
                 void pasteFiles(e.clipboardData);
               }}
-              placeholder={blockedReason ?? (busy ? "Working… stop the turn to send a new message" : "Ask cw-code — @ files, / commands, $ skills")}
+              placeholder={blockedReason ?? (busy ? "Agent is working — keep writing, you can send when it finishes" : "Ask cw-code — @ files, / commands, $ skills")}
               className={`composer-input${highlightMentions ? " has-mentions" : ""}`}
               rows={3}
-              disabled={busy || sending || blockedReason !== undefined}
+              disabled={sending || blockedReason !== undefined}
               role="combobox"
               aria-expanded={menuOpen}
               aria-autocomplete="list"
@@ -1131,8 +1146,20 @@ export function ComposerView({
               </>
             )}
           </div>
-          {!busy && blockedReason === undefined && <span className="composer-hint">Shift+Enter for a new line</span>}
-          {busy ? (
+          {blockedReason === undefined && (
+            <span className="composer-hint">{busy ? "Send unlocks when the agent finishes" : "Shift+Enter for a new line"}</span>
+          )}
+          <button
+            type="button"
+            className="composer-action composer-send"
+            onClick={send}
+            disabled={busy || sending || blockedReason !== undefined || (!draft.trim() && attachments.length === 0)}
+            title={busy ? "Locked while the agent is working" : (blockedReason ?? "Send")}
+            aria-label="Send"
+          >
+            <ArrowUp size={16} strokeWidth={2.25} />
+          </button>
+          {busy && (
             <button
               type="button"
               className="composer-action composer-stop"
@@ -1141,17 +1168,6 @@ export function ComposerView({
               aria-label="Stop response"
             >
               <Square size={13} fill="currentColor" />
-            </button>
-          ) : (
-            <button
-              type="button"
-              className="composer-action composer-send"
-              onClick={send}
-              disabled={sending || blockedReason !== undefined || (!draft.trim() && attachments.length === 0)}
-              title={blockedReason ?? "Send"}
-              aria-label="Send"
-            >
-              <ArrowUp size={16} strokeWidth={2.25} />
             </button>
           )}
         </div>

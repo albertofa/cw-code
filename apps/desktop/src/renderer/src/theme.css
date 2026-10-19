@@ -2918,20 +2918,6 @@ body.session-dragging * {
   outline: none;
 }
 
-.composer-busy .composer-writing,
-.composer-busy .composer-input {
-  cursor: not-allowed;
-}
-
-.composer-busy .composer-input {
-  color: var(--faint);
-}
-
-.composer-busy .composer-input::placeholder {
-  color: var(--faint);
-  opacity: 1;
-}
-
 .composer-card-foot {
   display: flex;
   align-items: center;
@@ -3530,6 +3516,10 @@ body.session-dragging * {
 
 .composer-send:not(:disabled):active {
   transform: translateY(1px);
+}
+
+.composer-send + .composer-stop {
+  margin-left: 6px;
 }
 
 .composer-stop {
