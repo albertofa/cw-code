@@ -9547,12 +9547,14 @@ button.gitbar-checkout:hover {
   animation: pulse-op 1.4s ease-in-out infinite;
 }
 
-.babysit-badge {
+.babysit-badge,
+.session-hovercard-row > .babysit-badge {
   flex: none;
   color: var(--babysit-ink);
 }
 
-.babysit-badge.paused {
+.babysit-badge.paused,
+.session-hovercard-row > .babysit-badge.paused {
   color: var(--warning);
 }
 
