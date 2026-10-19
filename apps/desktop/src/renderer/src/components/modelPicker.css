@@ -21,7 +21,7 @@
   overflow: hidden;
   background: var(--overlay);
   border-radius: 14px;
-  box-shadow: var(--shadow-float), inset 0 0 0 1px rgba(255, 255, 255, 0.07);
+  box-shadow: var(--shadow-float), inset 0 0 0 1px color-mix(in srgb, var(--ring) 7%, transparent);
 }
 
 .mp-search {

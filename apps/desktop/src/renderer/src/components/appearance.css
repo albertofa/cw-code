@@ -294,7 +294,7 @@
   padding: 6px;
   border-radius: 12px;
   background: var(--overlay);
-  box-shadow: var(--shadow-float), inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+  box-shadow: var(--shadow-float), inset 0 0 0 1px color-mix(in srgb, var(--ring) 6%, transparent);
   --pop-shift: -4px;
   animation: cw-pop-in var(--dur-fast) var(--ease-out);
 }

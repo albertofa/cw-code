@@ -7,7 +7,7 @@
   color: var(--text);
   font-size: var(--t-3xs);
   font-weight: 700;
-  box-shadow: 0 0 0 1px rgba(255, 255, 255, 0.08);
+  box-shadow: 0 0 0 1px color-mix(in srgb, var(--ring) 8%, transparent);
 }
 
 .pr-avatar img {
