@@ -1,10 +1,11 @@
-import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
+import type { ChildProcess, ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { randomUUID } from "node:crypto";
 import { homedir } from "node:os";
 import type { AccountUsageState, UsageBalance, UsageSeverity, UsageWindow } from "@cw-code/contracts";
 import { detachProcessGroup, killProcessTree } from "../../processTree.js";
 import { sanitizedChildEnv } from "../../shellEnvironment.js";
+import { spawnCli } from "../../cli/spawnCli.js";
 
 export const CLAUDE_ACCOUNT_USAGE_PROBE_ARGS = [
   "-p",
@@ -218,7 +219,7 @@ function spawnErrorState(binary: string, err: NodeJS.ErrnoException): AccountUsa
 export function probeClaudeAccountUsage(
   binary: string,
   args: string[],
-  spawnFn: typeof spawn = spawn,
+  spawnFn: typeof spawn = spawnCli as typeof spawn,
   killFn: (proc: ChildProcess | undefined) => void = killProcessTree
 ): Promise<AccountUsageState> {
   return new Promise((resolve) => {
