@@ -1,4 +1,5 @@
 :root {
+  color-scheme: dark;
   --composer-max: 880px;
   --main-gutter: 20px;
   --gutter: #080a0f;
@@ -146,9 +147,28 @@
   --shadow-dialog: 0 28px 90px rgba(0, 0, 0, 0.62);
   --shadow-composer: 0 18px 40px -20px rgba(0, 0, 0, 0.7);
   --shadow-pill: 0 6px 18px -6px rgba(0, 0, 0, 0.6);
+  --project-gray: #99a1af;
+  --project-red: #ff6467;
+  --project-orange: #ff8904;
+  --project-amber: #ffb900;
+  --project-yellow: #fdc700;
+  --project-lime: #9ae600;
+  --project-green: #05df72;
+  --project-emerald: #00d492;
+  --project-teal: #00d5be;
+  --project-cyan: #00d3f2;
+  --project-sky: #00bcff;
+  --project-blue: #51a2ff;
+  --project-indigo: #7c86ff;
+  --project-violet: #a684ff;
+  --project-purple: #c27aff;
+  --project-fuchsia: #ed6aff;
+  --project-pink: #fb64b6;
+  --project-rose: #ff637e;
 }
 
 :root[data-theme="light"] {
+  color-scheme: light;
   --gutter: #e9ebf1;
   --line: #dcdfe7;
   --editor: #ffffff;
@@ -257,6 +277,24 @@
   --shadow-dialog: 0 24px 64px rgba(20, 24, 40, 0.2);
   --shadow-composer: 0 18px 40px -20px rgba(20, 24, 40, 0.22);
   --shadow-pill: 0 6px 18px -6px rgba(20, 24, 40, 0.2);
+  --project-gray: #364153;
+  --project-red: #c10007;
+  --project-orange: #ca3500;
+  --project-amber: #bb4d00;
+  --project-yellow: #a65f00;
+  --project-lime: #497d00;
+  --project-green: #008236;
+  --project-emerald: #007a55;
+  --project-teal: #00786f;
+  --project-cyan: #007595;
+  --project-sky: #0069a8;
+  --project-blue: #1447e6;
+  --project-indigo: #432dd7;
+  --project-violet: #7008e7;
+  --project-purple: #8200db;
+  --project-fuchsia: #a800b7;
+  --project-pink: #c6005c;
+  --project-rose: #c70036;
 }
 
 .app-shell[data-driver="claude"] {

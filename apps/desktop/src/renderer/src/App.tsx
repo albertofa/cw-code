@@ -121,6 +121,7 @@ export function App() {
   const { themeId, customThemes } = appearance;
   const shownThemeId = themePreview?.themeId ?? themeId;
   const shownCustomThemes = themePreview?.customThemes ?? customThemes;
+  const previewing = themePreview !== null;
   const sessionPanel = usePanelStore((s) => selectSessionPanel(s, activeSessionId ?? undefined));
   const { dockByTab, rightVisible } = sessionPanel;
   const initializeSession = usePanelStore((s) => s.initializeSession);
@@ -140,11 +141,15 @@ export function App() {
     if (!settingsLoaded) return;
     const media = window.matchMedia(SYSTEM_LIGHT_QUERY);
     const apply = () => applyTheme(document.documentElement, shownThemeId, shownCustomThemes, media.matches);
-    apply();
-    if (shownThemeId !== "system") return;
-    media.addEventListener("change", apply);
-    return () => media.removeEventListener("change", apply);
-  }, [settingsLoaded, shownThemeId, shownCustomThemes]);
+    const frame = previewing ? requestAnimationFrame(apply) : 0;
+    if (!previewing) apply();
+    const followSystem = shownThemeId === "system";
+    if (followSystem) media.addEventListener("change", apply);
+    return () => {
+      if (frame !== 0) cancelAnimationFrame(frame);
+      if (followSystem) media.removeEventListener("change", apply);
+    };
+  }, [settingsLoaded, previewing, shownThemeId, shownCustomThemes]);
 
   const panelAnimationMs = usePanelAnimationMs();
   const rightResize = useResizableWidth({ storageKey: "cw-code:rightWidth", min: 320, max: 800, grow: "left" });

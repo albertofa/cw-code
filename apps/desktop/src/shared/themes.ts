@@ -129,7 +129,25 @@ const DARK_PALETTE: Record<string, string> = {
   "shadow-card": "0 12px 32px rgba(0, 0, 0, 0.45)",
   "shadow-dialog": "0 28px 90px rgba(0, 0, 0, 0.62)",
   "shadow-composer": "0 18px 40px -20px rgba(0, 0, 0, 0.7)",
-  "shadow-pill": "0 6px 18px -6px rgba(0, 0, 0, 0.6)"
+  "shadow-pill": "0 6px 18px -6px rgba(0, 0, 0, 0.6)",
+  "project-gray": "#99a1af",
+  "project-red": "#ff6467",
+  "project-orange": "#ff8904",
+  "project-amber": "#ffb900",
+  "project-yellow": "#fdc700",
+  "project-lime": "#9ae600",
+  "project-green": "#05df72",
+  "project-emerald": "#00d492",
+  "project-teal": "#00d5be",
+  "project-cyan": "#00d3f2",
+  "project-sky": "#00bcff",
+  "project-blue": "#51a2ff",
+  "project-indigo": "#7c86ff",
+  "project-violet": "#a684ff",
+  "project-purple": "#c27aff",
+  "project-fuchsia": "#ed6aff",
+  "project-pink": "#fb64b6",
+  "project-rose": "#ff637e"
 };
 
 const LIGHT_PALETTE: Record<string, string> = {
@@ -240,7 +258,25 @@ const LIGHT_PALETTE: Record<string, string> = {
   "shadow-card": "0 10px 28px rgba(20, 24, 40, 0.12)",
   "shadow-dialog": "0 24px 64px rgba(20, 24, 40, 0.2)",
   "shadow-composer": "0 18px 40px -20px rgba(20, 24, 40, 0.22)",
-  "shadow-pill": "0 6px 18px -6px rgba(20, 24, 40, 0.2)"
+  "shadow-pill": "0 6px 18px -6px rgba(20, 24, 40, 0.2)",
+  "project-gray": "#364153",
+  "project-red": "#c10007",
+  "project-orange": "#ca3500",
+  "project-amber": "#bb4d00",
+  "project-yellow": "#a65f00",
+  "project-lime": "#497d00",
+  "project-green": "#008236",
+  "project-emerald": "#007a55",
+  "project-teal": "#00786f",
+  "project-cyan": "#007595",
+  "project-sky": "#0069a8",
+  "project-blue": "#1447e6",
+  "project-indigo": "#432dd7",
+  "project-violet": "#7008e7",
+  "project-purple": "#8200db",
+  "project-fuchsia": "#a800b7",
+  "project-pink": "#c6005c",
+  "project-rose": "#c70036"
 };
 
 export const THEME_PALETTES: Record<ThemeBase, Record<string, string>> = {
@@ -252,7 +288,28 @@ export function isHexColor(value: unknown): value is string {
   return typeof value === "string" && HEX_COLOR.test(value);
 }
 
-const NON_THEME_COLOR_TOKENS = new Set(["win-close", "preview-canvas", "on-avatar"]);
+export const PROJECT_HUES = [
+  "gray",
+  "red",
+  "orange",
+  "amber",
+  "yellow",
+  "lime",
+  "green",
+  "emerald",
+  "teal",
+  "cyan",
+  "sky",
+  "blue",
+  "indigo",
+  "violet",
+  "purple",
+  "fuchsia",
+  "pink",
+  "rose"
+] as const;
+
+const NON_THEME_COLOR_TOKENS = new Set(["win-close", "preview-canvas", "on-avatar", ...PROJECT_HUES.map((hue) => `project-${hue}`)]);
 
 export const THEME_COLOR_TOKENS: readonly string[] = Object.keys(DARK_PALETTE).filter(
   (token) =>

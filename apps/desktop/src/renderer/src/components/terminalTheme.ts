@@ -49,9 +49,18 @@ const LIGHT: ITheme = {
   brightWhite: "#3d3d3a"
 };
 
+function isBasePalette(base: ThemeBase, colors: TerminalColors): boolean {
+  const palette = THEME_PALETTES[base];
+  return (
+    colors.background.toLowerCase() === palette["terminal-bg"] && colors.foreground.toLowerCase() === palette["terminal-fg"]
+  );
+}
+
 export function terminalTheme(base: ThemeBase, colors: TerminalColors): ITheme {
+  const ansi = base === "light" ? LIGHT : DARK;
   return {
-    ...(base === "light" ? LIGHT : DARK),
+    ...ansi,
+    cursor: isBasePalette(base, colors) ? ansi.cursor : colors.foreground,
     background: colors.background,
     foreground: colors.foreground,
     cursorAccent: colors.background,

@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { CustomTheme, ThemeBase } from "@cw-code/contracts";
 import {
   CURATED_THEME_TOKENS,
+  PROJECT_HUES,
   THEME_COLOR_TOKENS,
   THEME_PALETTES,
   deriveThemeTokens,
@@ -283,7 +284,7 @@ describe("THEME_COLOR_TOKENS", () => {
   });
 
   it("excludes fixed non-theme colors", () => {
-    for (const token of ["win-close", "preview-canvas", "on-avatar"]) {
+    for (const token of ["win-close", "preview-canvas", "on-avatar", ...PROJECT_HUES.map((hue) => `project-${hue}`)]) {
       expect(THEME_COLOR_TOKENS).not.toContain(token);
       expect(THEME_PALETTES.dark[token]).toBeDefined();
       expect(THEME_PALETTES.light[token]).toBeDefined();
