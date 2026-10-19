@@ -73,7 +73,7 @@ const DARK_PALETTE: Record<string, string> = {
   babysit: "#b5d84b",
   "on-babysit": "#17200a",
   merged: "#b49cff",
-  "on-accent": "#fff",
+  "on-accent": "#ffffff",
   skill: "#d58ae6",
   "chip-fill": "rgba(255, 255, 255, 0.045)",
   "chip-fill-hover": "rgba(255, 255, 255, 0.08)",
@@ -87,7 +87,6 @@ const DARK_PALETTE: Record<string, string> = {
   "terminal-bg": "#1e1f22",
   "terminal-fg": "#bcbec4",
   "terminal-selection": "#214184",
-  sunken: "#151922",
   "win-close": "#e81123",
   "preview-canvas": "#ffffff",
   "on-avatar": "#fdfcfc",
@@ -154,7 +153,7 @@ const LIGHT_PALETTE: Record<string, string> = {
   text: "#1a1d26",
   dim: "#353946",
   muted: "#5c6170",
-  faint: "#7a7f8c",
+  faint: "#6b7080",
   claude: "#c8603a",
   "claude-soft": "rgba(200, 96, 58, 0.12)",
   opencode: "#1a7fd0",
@@ -166,26 +165,26 @@ const LIGHT_PALETTE: Record<string, string> = {
   "violet-ink": "#5a3fd0",
   "violet-soft": "rgba(97, 70, 214, 0.12)",
   "violet-line": "rgba(97, 70, 214, 0.35)",
-  success: "#2f8a3e",
-  warning: "#a86b00",
+  success: "#277a35",
+  warning: "#8f5b00",
   "on-success": "#ffffff",
   "on-warning": "#ffffff",
   danger: "#c8372b",
-  accent: "#2f6fe0",
+  accent: "#2a64cf",
   "accent-ink": "#2459c4",
   "danger-ink": "#b42d22",
-  "accent-fill": "#2f6fe0",
+  "accent-fill": "#2a64cf",
   "danger-fill": "#c8372b",
-  "success-fill": "#2f8a3e",
-  "neutral-fill": "#8a8f9c",
-  "draft-fill": "#8a8f9c",
+  "success-fill": "#277a35",
+  "neutral-fill": "#6b7080",
+  "draft-fill": "#6b7080",
   "merged-fill": "#7b5fd6",
   "surface-inset": "rgba(16, 20, 32, 0.04)",
   update: "#0f8aa3",
   babysit: "#5f8a12",
   "on-babysit": "#ffffff",
   merged: "#7b5fd6",
-  "on-accent": "#fff",
+  "on-accent": "#ffffff",
   skill: "#b04ec8",
   "chip-fill": "rgba(16, 20, 32, 0.04)",
   "chip-fill-hover": "rgba(16, 20, 32, 0.07)",
@@ -199,7 +198,6 @@ const LIGHT_PALETTE: Record<string, string> = {
   "terminal-bg": "#ffffff",
   "terminal-fg": "#1a1d26",
   "terminal-selection": "#d9d3f7",
-  sunken: "#eef0f4",
   "win-close": "#e81123",
   "preview-canvas": "#ffffff",
   "on-avatar": "#fdfcfc",
@@ -207,7 +205,7 @@ const LIGHT_PALETTE: Record<string, string> = {
   "control-ink": "#6b7080",
   "control-bg": "#eceef3",
   "control-bg-hover": "#e3e6ec",
-  "control-ring": "#a3a8b6",
+  "control-ring": "#8a8f9c",
   "switch-track": "#e3e5ec",
   "switch-ring": "#b9bdca",
   "menu-surface": "#ffffff",
@@ -254,8 +252,11 @@ export function isHexColor(value: unknown): value is string {
   return typeof value === "string" && HEX_COLOR.test(value);
 }
 
+const NON_THEME_COLOR_TOKENS = new Set(["win-close", "preview-canvas", "on-avatar"]);
+
 export const THEME_COLOR_TOKENS: readonly string[] = Object.keys(DARK_PALETTE).filter(
-  (token) => isHexColor(DARK_PALETTE[token]) && isHexColor(LIGHT_PALETTE[token])
+  (token) =>
+    !NON_THEME_COLOR_TOKENS.has(token) && isHexColor(DARK_PALETTE[token]) && isHexColor(LIGHT_PALETTE[token])
 );
 
 export const CURATED_THEME_TOKENS: readonly { token: string; label: string }[] = [
@@ -300,8 +301,6 @@ export function withAlpha(hex: string, alpha: number): string {
   return `rgba(${red}, ${green}, ${blue}, ${Number(alpha.toFixed(3))})`;
 }
 
-const INSET_ALPHA: Record<ThemeBase, number> = { dark: 0.3, light: 0.04 };
-
 function surface(seeds: Seeds, textWeight: number): string {
   return mixHex(seeds.text, seeds.bg, textWeight);
 }
@@ -314,84 +313,120 @@ function accentInk(seeds: Seeds): string {
   return mixHex(seeds.accent, seeds.text, 0.75);
 }
 
-interface DerivedRule {
-  token: string;
-  seeds: readonly SeedToken[];
-  compute: (seeds: Seeds, base: ThemeBase) => string;
+function violetBlend(seeds: Seeds): string {
+  return mixHex(seeds.violet, seeds.text, 0.65);
 }
 
-const DERIVED_RULES: readonly DerivedRule[] = [
-  { token: "panel", seeds: ["bg"], compute: (s) => s.bg },
-  { token: "editor", seeds: ["bg"], compute: (s) => surface(s, 0.02) },
-  { token: "panel-head", seeds: ["bg"], compute: (s) => surface(s, 0.03) },
-  { token: "bg-deep", seeds: ["bg"], compute: (s) => surface(s, 0.01) },
-  { token: "sunken", seeds: ["bg"], compute: (s) => surface(s, 0.01) },
-  { token: "tool", seeds: ["bg"], compute: (s) => surface(s, 0.025) },
-  { token: "overlay", seeds: ["bg"], compute: (s) => surface(s, 0.07) },
-  { token: "user-msg", seeds: ["bg"], compute: (s) => mixHex(s.violet, surface(s, 0.05), 0.08) },
-  { token: "hover", seeds: ["bg"], compute: (s) => surface(s, 0.04) },
-  { token: "raised", seeds: ["bg"], compute: (s) => surface(s, 0.08) },
-  { token: "terminal-bg", seeds: ["bg"], compute: (s) => surface(s, 0.03) },
-  { token: "menu-surface", seeds: ["bg"], compute: (s) => surface(s, 0.07) },
-  { token: "tooltip-bg", seeds: ["bg"], compute: (s) => surface(s, 0.1) },
-  { token: "table-row-hover", seeds: ["bg"], compute: (s) => surface(s, 0.06) },
-  { token: "bar-row-hover", seeds: ["bg"], compute: (s) => surface(s, 0.08) },
-  { token: "modal-bar", seeds: ["bg"], compute: (s) => surface(s, 0.08) },
-  { token: "control-bg", seeds: ["bg"], compute: (s) => surface(s, 0.08) },
-  { token: "control-bg-hover", seeds: ["bg"], compute: (s) => surface(s, 0.13) },
-  { token: "row-selected", seeds: ["bg"], compute: (s) => surface(s, 0.1) },
-  { token: "tag-fill", seeds: ["bg"], compute: (s) => surface(s, 0.1) },
-  { token: "switch-track", seeds: ["bg"], compute: (s) => surface(s, 0.1) },
-  { token: "chart-grid", seeds: ["bg"], compute: (s) => surface(s, 0.11) },
-  { token: "avatar-bot", seeds: ["bg"], compute: (s) => surface(s, 0.15) },
-  { token: "switch-ring", seeds: ["bg"], compute: (s) => surface(s, 0.22) },
-  { token: "control-ring", seeds: ["bg"], compute: (s) => surface(s, 0.33) },
-  { token: "scrim", seeds: ["bg"], compute: (s) => withAlpha(s.bg, 0.92) },
-  {
-    token: "surface-inset",
-    seeds: ["bg"],
-    compute: (s, base) => withAlpha(mixHex(s.bg, BLACK, 0.7), INSET_ALPHA[base])
-  },
-  { token: "border-soft", seeds: ["border"], compute: (s) => mixHex(s.border, s.bg, 0.6) },
-  { token: "border-strong", seeds: ["border"], compute: (s) => mixHex(s.text, s.border, 0.15) },
-  { token: "line", seeds: ["border"], compute: (s) => mixHex(s.border, s.bg, 0.7) },
-  { token: "dim", seeds: ["text", "muted"], compute: (s) => mixHex(s.text, s.muted, 0.5) },
-  { token: "faint", seeds: ["muted", "bg"], compute: (s) => mixHex(s.muted, s.bg, 0.75) },
-  {
-    token: "md-strong",
-    seeds: ["text"],
-    compute: (s, base) => mixHex(s.text, base === "dark" ? WHITE : BLACK, 0.5)
-  },
-  { token: "control-ink", seeds: ["muted"], compute: (s) => mixHex(s.muted, s.bg, 0.9) },
-  { token: "terminal-fg", seeds: ["text"], compute: (s) => mixHex(s.text, s.bg, 0.85) },
-  { token: "ring", seeds: ["text"], compute: (s) => s.text },
-  { token: "hair", seeds: ["text"], compute: (s) => withAlpha(s.text, 0.05) },
-  { token: "chip-fill", seeds: ["text"], compute: (s) => withAlpha(s.text, 0.045) },
-  { token: "chip-fill-hover", seeds: ["text"], compute: (s) => withAlpha(s.text, 0.075) },
-  { token: "scrollbar-thumb", seeds: ["text"], compute: (s) => withAlpha(s.text, 0.12) },
-  { token: "scrollbar-thumb-hover", seeds: ["text"], compute: (s) => withAlpha(s.text, 0.18) },
-  { token: "violet-strong", seeds: ["violet"], compute: (s) => mixHex(s.violet, BLACK, 0.85) },
-  { token: "violet-ink", seeds: ["violet"], compute: violetInk },
-  { token: "violet-soft", seeds: ["violet"], compute: (s) => withAlpha(s.violet, 0.16) },
-  { token: "violet-line", seeds: ["violet"], compute: (s) => withAlpha(violetInk(s), 0.4) },
-  { token: "terminal-selection", seeds: ["violet"], compute: (s) => mixHex(s.violet, s.bg, 0.3) },
-  { token: "merged", seeds: ["violet"], compute: (s) => mixHex(s.violet, s.text, 0.65) },
-  { token: "merged-fill", seeds: ["violet"], compute: (s) => mixHex(s.violet, s.text, 0.85) },
-  { token: "codex", seeds: ["violet"], compute: (s) => mixHex(s.violet, s.text, 0.65) },
-  { token: "accent-ink", seeds: ["accent"], compute: accentInk },
-  { token: "accent-fill", seeds: ["accent"], compute: (s) => mixHex(s.accent, BLACK, 0.8) },
-  { token: "md-link", seeds: ["accent"], compute: accentInk },
-  { token: "new-ink", seeds: ["accent"], compute: accentInk },
-  { token: "diff-hunk-bg", seeds: ["accent", "bg"], compute: (s) => mixHex(s.accent, s.bg, 0.2) },
-  { token: "diff-hunk-ink", seeds: ["accent"], compute: accentInk },
-  { token: "success-fill", seeds: ["success"], compute: (s) => mixHex(s.success, BLACK, 0.8) },
-  { token: "diff-add-bg", seeds: ["success", "bg"], compute: (s) => mixHex(s.success, s.bg, 0.2) },
-  { token: "diff-add-ink", seeds: ["success"], compute: (s) => mixHex(s.success, s.text, 0.6) },
-  { token: "danger-ink", seeds: ["danger"], compute: (s) => mixHex(s.danger, s.text, 0.75) },
-  { token: "danger-fill", seeds: ["danger"], compute: (s) => mixHex(s.danger, BLACK, 0.8) },
-  { token: "diff-del-bg", seeds: ["danger", "bg"], compute: (s) => mixHex(s.danger, s.bg, 0.2) },
-  { token: "diff-del-ink", seeds: ["danger"], compute: (s) => mixHex(s.danger, s.text, 0.75) }
-];
+type DeriveColor = (seeds: Seeds, base: ThemeBase) => string;
+
+const DERIVED_RULES: Readonly<Record<string, DeriveColor>> = {
+  panel: (s) => s.bg,
+  editor: (s) => surface(s, 0.02),
+  "panel-head": (s) => surface(s, 0.03),
+  "bg-deep": (s) => surface(s, 0.01),
+  tool: (s) => surface(s, 0.025),
+  overlay: (s) => surface(s, 0.07),
+  "user-msg": (s) => mixHex(s.violet, surface(s, 0.05), 0.08),
+  hover: (s) => surface(s, 0.04),
+  raised: (s) => surface(s, 0.08),
+  "terminal-bg": (s) => surface(s, 0.03),
+  "menu-surface": (s) => surface(s, 0.07),
+  "tooltip-bg": (s) => surface(s, 0.1),
+  "table-row-hover": (s) => surface(s, 0.06),
+  "bar-row-hover": (s) => surface(s, 0.08),
+  "modal-bar": (s) => surface(s, 0.08),
+  "control-bg": (s) => surface(s, 0.08),
+  "control-bg-hover": (s) => surface(s, 0.13),
+  "row-selected": (s) => surface(s, 0.1),
+  "tag-fill": (s) => surface(s, 0.1),
+  "switch-track": (s) => surface(s, 0.1),
+  "chart-grid": (s) => surface(s, 0.11),
+  "avatar-bot": (s) => surface(s, 0.15),
+  "switch-ring": (s) => surface(s, 0.22),
+  "control-ring": (s) => surface(s, 0.33),
+  scrim: (s) => s.bg,
+  "surface-inset": (s) => mixHex(s.bg, BLACK, 0.7),
+  "border-soft": (s) => mixHex(s.border, s.bg, 0.6),
+  "border-strong": (s) => mixHex(s.text, s.border, 0.15),
+  line: (s) => mixHex(s.border, s.bg, 0.7),
+  dim: (s) => mixHex(s.text, s.muted, 0.5),
+  faint: (s) => mixHex(s.muted, s.bg, 0.75),
+  "md-strong": (s, base) => mixHex(s.text, base === "dark" ? WHITE : BLACK, 0.5),
+  "control-ink": (s) => mixHex(s.muted, s.bg, 0.9),
+  "terminal-fg": (s) => mixHex(s.text, s.bg, 0.85),
+  ring: (s) => s.text,
+  hair: (s) => s.text,
+  "chip-fill": (s) => s.text,
+  "chip-fill-hover": (s) => s.text,
+  "scrollbar-thumb": (s) => s.text,
+  "scrollbar-thumb-hover": (s) => s.text,
+  "violet-strong": (s) => mixHex(s.violet, BLACK, 0.85),
+  "violet-ink": violetInk,
+  "violet-soft": (s) => s.violet,
+  "violet-line": violetInk,
+  "terminal-selection": (s) => mixHex(s.violet, s.bg, 0.3),
+  merged: violetBlend,
+  "merged-fill": (s) => mixHex(s.violet, s.text, 0.85),
+  codex: violetBlend,
+  "codex-soft": violetBlend,
+  "accent-ink": accentInk,
+  "accent-fill": (s) => mixHex(s.accent, BLACK, 0.8),
+  "md-link": accentInk,
+  "new-ink": accentInk,
+  "diff-hunk-bg": (s) => mixHex(s.accent, s.bg, 0.2),
+  "diff-hunk-ink": accentInk,
+  "success-fill": (s) => mixHex(s.success, BLACK, 0.8),
+  "diff-add-bg": (s) => mixHex(s.success, s.bg, 0.2),
+  "diff-add-ink": (s) => mixHex(s.success, s.text, 0.6),
+  "danger-ink": (s) => mixHex(s.danger, s.text, 0.75),
+  "danger-fill": (s) => mixHex(s.danger, BLACK, 0.8),
+  "diff-del-bg": (s) => mixHex(s.danger, s.bg, 0.2),
+  "diff-del-ink": (s) => mixHex(s.danger, s.text, 0.75),
+  "composer-card": (s) => s.card
+};
+
+const RGBA_COLOR = /^rgba\((\d{1,3}), (\d{1,3}), (\d{1,3}), ([\d.]+)\)$/;
+
+interface PaletteColor {
+  rgb: readonly number[];
+  alpha: string | null;
+}
+
+function parsePaletteColor(value: string): PaletteColor {
+  if (isHexColor(value)) {
+    return { rgb: channels(value), alpha: null };
+  }
+  const match = RGBA_COLOR.exec(value);
+  if (!match) {
+    throw new RangeError(`Unsupported palette color: ${value}`);
+  }
+  return { rgb: [Number(match[1]), Number(match[2]), Number(match[3])], alpha: match[4] };
+}
+
+function formatPaletteColor({ rgb, alpha }: PaletteColor): string {
+  return alpha === null ? `#${rgb.map(channelHex).join("")}` : `rgba(${rgb.join(", ")}, ${alpha})`;
+}
+
+function clampChannel(value: number): number {
+  return Math.min(255, Math.max(0, value));
+}
+
+function shiftColor(baseValue: string, from: string, to: string): string {
+  const baseColor = parsePaletteColor(baseValue);
+  const start = channels(from);
+  const end = channels(to);
+  const rgb = baseColor.rgb.map((channel, index) => clampChannel(channel + end[index] - start[index]));
+  return formatPaletteColor({ rgb, alpha: baseColor.alpha });
+}
+
+function seedsOf(tokens: Record<string, string>): Seeds {
+  return Object.fromEntries(CURATED_THEME_TOKENS.map(({ token }) => [token, tokens[token]])) as Seeds;
+}
+
+const BASE_SEEDS: Record<ThemeBase, Seeds> = {
+  dark: seedsOf(DARK_PALETTE),
+  light: seedsOf(LIGHT_PALETTE)
+};
 
 const CURATED_SEED_TOKENS = new Set<string>(CURATED_THEME_TOKENS.map((entry) => entry.token));
 const COLOR_TOKEN_SET = new Set<string>(THEME_COLOR_TOKENS);
@@ -410,23 +445,16 @@ export function deriveThemeTokens(base: ThemeBase, colors: Record<string, string
   const palette = THEME_PALETTES[base];
   const tokens: Record<string, string> = { ...palette };
   const overrides = validOverrides(colors);
-  const overriddenSeeds = new Set<string>();
 
   for (const [token, value] of overrides) {
     if (CURATED_SEED_TOKENS.has(token)) {
       tokens[token] = value;
-      overriddenSeeds.add(token);
     }
   }
 
-  const seeds = Object.fromEntries(
-    CURATED_THEME_TOKENS.map(({ token }) => [token, tokens[token]])
-  ) as Seeds;
-
-  for (const rule of DERIVED_RULES) {
-    if (rule.seeds.some((seed) => overriddenSeeds.has(seed))) {
-      tokens[rule.token] = rule.compute(seeds, base);
-    }
+  const seeds = seedsOf(tokens);
+  for (const [token, derive] of Object.entries(DERIVED_RULES)) {
+    tokens[token] = shiftColor(palette[token], derive(BASE_SEEDS[base], base), derive(seeds, base));
   }
 
   for (const [token, value] of overrides) {
@@ -456,7 +484,8 @@ export function resolveActiveTheme(
   }
   const custom = customThemes.find((theme) => theme.id === themeId);
   if (custom) {
-    return { base: custom.base, tokens: deriveThemeTokens(custom.base, custom.colors) };
+    const base: ThemeBase = custom.base === "light" ? "light" : "dark";
+    return { base, tokens: deriveThemeTokens(base, custom.colors) };
   }
   return { base: "dark", tokens: null };
 }

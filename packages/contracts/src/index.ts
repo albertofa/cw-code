@@ -35,13 +35,13 @@ export type {
   AppSettings,
   CustomModel,
   CustomTheme,
-  ThemeBase,
   NotificationSoundEvent,
   NotificationSoundId,
   NotificationSoundPreference,
   NotificationSoundSettings,
   PrFinishedSessionStatus,
-  SettingsPatch
+  SettingsPatch,
+  ThemeBase
 } from "./settings.js";
 export type {
   PrRef,

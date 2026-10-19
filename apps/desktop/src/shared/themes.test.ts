@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
-import type { CustomTheme } from "@cw-code/contracts";
+import type { CustomTheme, ThemeBase } from "@cw-code/contracts";
 import {
+  CURATED_THEME_TOKENS,
   THEME_COLOR_TOKENS,
   THEME_PALETTES,
   deriveThemeTokens,
@@ -12,6 +13,23 @@ import {
 
 function customTheme(overrides: Partial<CustomTheme> = {}): CustomTheme {
   return { id: "custom-sample", name: "Sample", base: "dark", colors: {}, ...overrides };
+}
+
+function baseSeeds(base: ThemeBase): Record<string, string> {
+  return Object.fromEntries(CURATED_THEME_TOKENS.map(({ token }) => [token, THEME_PALETTES[base][token]]));
+}
+
+function rgbOf(value: string): number[] | null {
+  const hex = /^#([0-9a-f]{2})([0-9a-f]{2})([0-9a-f]{2})$/.exec(value);
+  if (hex) {
+    return hex.slice(1).map((channel) => Number.parseInt(channel, 16));
+  }
+  const rgba = /^rgba\((\d+), (\d+), (\d+), [\d.]+\)$/.exec(value);
+  return rgba ? rgba.slice(1).map(Number) : null;
+}
+
+function brightness(hex: string): number {
+  return (rgbOf(hex) ?? []).reduce((sum, channel) => sum + channel, 0);
 }
 
 describe("mixHex", () => {
@@ -37,28 +55,178 @@ describe("withAlpha", () => {
   });
 });
 
+describe("THEME_PALETTES", () => {
+  it("has identical token keys in dark and light", () => {
+    expect(Object.keys(THEME_PALETTES.light).sort()).toEqual(Object.keys(THEME_PALETTES.dark).sort());
+  });
+});
+
 describe("deriveThemeTokens", () => {
   it("equals the base palette when no colors are set", () => {
     expect(deriveThemeTokens("dark", {})).toEqual(THEME_PALETTES.dark);
     expect(deriveThemeTokens("light", {})).toEqual(THEME_PALETTES.light);
   });
 
-  it("recomputes only the tokens that depend on an overridden seed", () => {
+  it("equals the base palette when every seed is set to its base value", () => {
+    expect(deriveThemeTokens("dark", baseSeeds("dark"))).toEqual(THEME_PALETTES.dark);
+    expect(deriveThemeTokens("light", baseSeeds("light"))).toEqual(THEME_PALETTES.light);
+  });
+
+  it("derives the full token set for a custom dark theme", () => {
+    expect(deriveThemeTokens("dark", { bg: "#1a1b26", violet: "#7c6af2" })).toEqual({
+      ...THEME_PALETTES.dark,
+      line: "#232732",
+      editor: "#15151f",
+      "panel-head": "#171722",
+      bg: "#1a1b26",
+      panel: "#1a1b26",
+      tool: "#1d1e2a",
+      "bg-deep": "#1a1c28",
+      overlay: "#232535",
+      "user-msg": "#272a3b",
+      hover: "#22232f",
+      raised: "#2b2d3b",
+      "border-soft": "#272b39",
+      faint: "#9194a0",
+      codex: "#b6a5ff",
+      "codex-soft": "rgba(182, 165, 255, 0.14)",
+      violet: "#7c6af2",
+      "violet-strong": "#6352db",
+      "violet-ink": "#a394ff",
+      "violet-soft": "rgba(124, 106, 242, 0.2)",
+      "violet-line": "rgba(163, 148, 255, 0.45)",
+      "merged-fill": "#7d77b4",
+      "surface-inset": "rgba(3, 2, 5, 0.3)",
+      merged: "#b6a5ff",
+      "terminal-bg": "#232228",
+      "terminal-fg": "#bdbec5",
+      "terminal-selection": "#25488a",
+      "control-ink": "#9da1a9",
+      "control-bg": "#2b2c36",
+      "control-bg-hover": "#35363d",
+      "control-ring": "#60657c",
+      "switch-track": "#2f3140",
+      "switch-ring": "#4e5266",
+      "menu-surface": "#282832",
+      "tooltip-bg": "#303038",
+      "modal-bar": "#2b2b33",
+      "row-selected": "#2e2f36",
+      "table-row-hover": "#26252d",
+      "bar-row-hover": "#2b2b32",
+      "tag-fill": "#2f2f36",
+      "chart-grid": "#323239",
+      "avatar-bot": "#3e3f49",
+      "diff-add-bg": "#303e33",
+      "diff-del-bg": "#412d32",
+      "diff-hunk-bg": "#2f3645",
+      scrim: "rgba(25, 24, 29, 0.92)"
+    });
+  });
+
+  it("derives the full token set for a custom light theme", () => {
+    expect(deriveThemeTokens("light", { bg: "#f4f4f0" })).toEqual({
+      ...THEME_PALETTES.light,
+      line: "#dbdee4",
+      editor: "#fdfcf5",
+      "panel-head": "#eff0ec",
+      bg: "#f4f4f0",
+      panel: "#f4f4f0",
+      tool: "#edeeeb",
+      "bg-deep": "#ecedea",
+      overlay: "#fdfcf6",
+      "user-msg": "#eae8f0",
+      hover: "#eaebe9",
+      raised: "#e5e5e5",
+      "border-soft": "#e2e4e8",
+      faint: "#6a6f7d",
+      "surface-inset": "rgba(15, 18, 25, 0.04)",
+      "terminal-bg": "#fdfdf5",
+      "terminal-fg": "#1a1c24",
+      "terminal-selection": "#d8d1f0",
+      "control-ink": "#6b707f",
+      "control-bg": "#ebebea",
+      "control-bg-hover": "#e2e3e4",
+      "control-ring": "#898d95",
+      "switch-track": "#e1e3e3",
+      "switch-ring": "#b7bbc3",
+      "menu-surface": "#fdfcf6",
+      "tooltip-bg": "#fdfdf6",
+      "modal-bar": "#f0efed",
+      "row-selected": "#e6e8e7",
+      "table-row-hover": "#efefed",
+      "bar-row-hover": "#ebebea",
+      "tag-fill": "#e7e9e7",
+      "chart-grid": "#e1e2e3",
+      "avatar-bot": "#dadddf",
+      "diff-add-bg": "#e1f1dd",
+      "diff-del-bg": "#f9e3db",
+      "diff-hunk-bg": "#e5eaf3",
+      scrim: "rgba(244, 244, 240, 0.92)"
+    });
+  });
+
+  it("moves every token by at most one step per channel after a one-step bg edit", () => {
+    const edits: Record<ThemeBase, string> = { dark: "#161921", light: "#f5f6f9" };
+    for (const base of ["dark", "light"] as const) {
+      const palette = THEME_PALETTES[base];
+      const tokens = deriveThemeTokens(base, { bg: edits[base] });
+      for (const [token, value] of Object.entries(tokens)) {
+        const before = rgbOf(palette[token]);
+        const after = rgbOf(value);
+        if (before === null || after === null) {
+          expect(value, token).toBe(palette[token]);
+          continue;
+        }
+        after.forEach((channel, index) => {
+          expect(Math.abs(channel - before[index]), `${base} ${token}`).toBeLessThanOrEqual(1);
+        });
+      }
+    }
+  });
+
+  it("keeps each palette's surface direction after a slight bg edit", () => {
+    const light = deriveThemeTokens("light", { bg: "#f2f3f6" });
+    for (const token of ["editor", "overlay", "menu-surface", "tooltip-bg", "terminal-bg", "composer-card"]) {
+      expect(brightness(light[token]), token).toBeGreaterThan(brightness(light.bg));
+    }
+    const dark = deriveThemeTokens("dark", { bg: "#191c24" });
+    expect(brightness(dark.editor)).toBeLessThan(brightness(dark.bg));
+    expect(brightness(dark.raised)).toBeGreaterThan(brightness(dark.bg));
+  });
+
+  it("clamps shifted channels to the valid range", () => {
+    expect(deriveThemeTokens("light", { bg: "#ffffff" }).editor).toBe("#ffffff");
+    expect(deriveThemeTokens("dark", { text: "#ffffff" }).hair).toBe("rgba(255, 255, 255, 0.05)");
+  });
+
+  it("leaves tokens that do not read the edited seed untouched", () => {
     const tokens = deriveThemeTokens("dark", { bg: "#ffffff" });
     expect(tokens.bg).toBe("#ffffff");
     expect(tokens.panel).toBe("#ffffff");
-    expect(tokens.hover).toBe("#fefefe");
     expect(tokens.hover).not.toBe(THEME_PALETTES.dark.hover);
-    expect(tokens.raised).not.toBe(THEME_PALETTES.dark.raised);
-    expect(tokens["terminal-bg"]).not.toBe(THEME_PALETTES.dark["terminal-bg"]);
     expect(tokens["violet-soft"]).toBe(THEME_PALETTES.dark["violet-soft"]);
+    expect(tokens["violet-ink"]).toBe(THEME_PALETTES.dark["violet-ink"]);
     expect(tokens.text).toBe(THEME_PALETTES.dark.text);
   });
 
-  it("derives alpha tokens from the overridden seed", () => {
+  it("propagates a violet edit to every token that reads violet, keeping base alphas", () => {
     const tokens = deriveThemeTokens("dark", { violet: "#ff0000" });
-    expect(tokens["violet-soft"]).toBe("rgba(255, 0, 0, 0.16)");
-    expect(tokens["user-msg"]).toBe(THEME_PALETTES.dark["user-msg"]);
+    expect(tokens["violet-soft"]).toBe("rgba(255, 0, 0, 0.2)");
+    expect(tokens["user-msg"]).toBe("#2e1f22");
+    expect(tokens.codex).toBe("#ff6066");
+    expect(tokens["codex-soft"]).toBe("rgba(255, 96, 102, 0.14)");
+  });
+
+  it("derives composer-card from card, keeping the dark base alpha", () => {
+    expect(deriveThemeTokens("dark", { card: "#20242f" })["composer-card"]).toBe("rgba(165, 174, 229, 0.06)");
+    expect(deriveThemeTokens("light", { card: "#fafafa" })["composer-card"]).toBe("#fafafa");
+  });
+
+  it("propagates a text edit to the inks that read text", () => {
+    const tokens = deriveThemeTokens("dark", { text: "#ffffff" });
+    expect(tokens["violet-ink"]).toBe("#aa94ff");
+    expect(tokens["accent-ink"]).toBe("#85acfd");
+    expect(tokens.dim).toBe("#c8cbd3");
   });
 
   it("ignores unknown keys, non-hex values and non-string values", () => {
@@ -107,9 +275,18 @@ describe("THEME_COLOR_TOKENS", () => {
     expect(THEME_COLOR_TOKENS).toContain("terminal-bg");
     expect(THEME_COLOR_TOKENS).not.toContain("hair");
     expect(THEME_COLOR_TOKENS).not.toContain("shadow-float");
+    expect(THEME_COLOR_TOKENS).toContain("on-accent");
     for (const token of THEME_COLOR_TOKENS) {
       expect(THEME_PALETTES.dark[token]).toMatch(/^#[0-9a-f]{6}$/);
       expect(THEME_PALETTES.light[token]).toMatch(/^#[0-9a-f]{6}$/);
+    }
+  });
+
+  it("excludes fixed non-theme colors", () => {
+    for (const token of ["win-close", "preview-canvas", "on-avatar"]) {
+      expect(THEME_COLOR_TOKENS).not.toContain(token);
+      expect(THEME_PALETTES.dark[token]).toBeDefined();
+      expect(THEME_PALETTES.light[token]).toBeDefined();
     }
   });
 });
@@ -130,6 +307,11 @@ describe("resolveActiveTheme", () => {
     const active = resolveActiveTheme(theme.id, [theme], false);
     expect(active.base).toBe("light");
     expect(active.tokens).toEqual(deriveThemeTokens("light", theme.colors));
+  });
+
+  it("treats a custom theme with an invalid base as dark", () => {
+    const theme = customTheme({ base: "sepia" as unknown as ThemeBase });
+    expect(resolveActiveTheme(theme.id, [theme], true)).toEqual({ base: "dark", tokens: THEME_PALETTES.dark });
   });
 
   it("falls back to dark for an unknown id", () => {
