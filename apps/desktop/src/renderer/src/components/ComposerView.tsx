@@ -461,6 +461,10 @@ export function ComposerView({
   }, [highlightMentions]);
 
   const clearComposer = () => {
+    // The refs feed the unmount save; a command that swaps this composer out (/new, /clear)
+    // never renders the cleared state, so drop them here instead of waiting for a commit.
+    draftRef.current = "";
+    attachmentsRef.current = [];
     setDraft("");
     setCaret(0);
     setAttachments([]);
@@ -562,7 +566,7 @@ export function ComposerView({
   const runAppCommand = (command: CommandOption, args: string, key: string) => {
     const b = backendRef.current;
     if (command.name === "new" || command.name === "clear") {
-      setDraft("");
+      clearComposer();
       b.newSession?.();
       return;
     }
