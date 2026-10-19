@@ -216,6 +216,15 @@ class ThrowingSkillsClient extends FakeClient {
   }
 }
 
+class ReloadFailingSkillsClient extends FakeClient {
+  override async request<T>(method: string, params?: unknown): Promise<T> {
+    if (method === "skills/list" && (params as { forceReload?: boolean } | undefined)?.forceReload) {
+      throw new Error("skills/list reload boom");
+    }
+    return super.request<T>(method, params);
+  }
+}
+
 class AccountUsageClient extends FakeClient {
   constructor(
     private accountRes: unknown,
@@ -981,6 +990,21 @@ describe("CodexCliDriver", () => {
         { type: "skill", name: "ship", path: "/skills/ship" }
       ]
     });
+    driver.dispose();
+  });
+
+  it("keeps the cached skill paths when a forced skills/list refresh fails", async () => {
+    const flaky = new ReloadFailingSkillsClient();
+    const { driver } = makeDriver(flaky);
+    await driver.listCommands("C:\\proj");
+    driver.startTurn({ sessionId: "local-1", prompt: "$ship and $gone", cwd: "C:\\proj", skills: ["ship", "gone"] });
+    await settle();
+    const turn = flaky.requests.find((r) => r.method === "turn/start");
+    expect((turn?.params as { input?: unknown[] } | undefined)?.input).toEqual([
+      { type: "text", text: "$ship and $gone" },
+      { type: "skill", name: "ship", path: "/skills/ship" }
+    ]);
+    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining("using the cached skill list"));
     driver.dispose();
   });
 

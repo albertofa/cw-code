@@ -650,7 +650,7 @@ export function ComposerView({
     }
     const needsList = driverCommands === null && (slash || hasSkillCandidate(body));
     if (!needsList) {
-      sendPlain(body, key, slash ? [] : mentionedSkills(body, commandList));
+      sendPlain(body, key, mentionedSkills(body, commandList));
       return;
     }
     setSending(true);
@@ -670,7 +670,7 @@ export function ComposerView({
     const list = mergeCommands(driver, result.list, commandAvailability);
     const parsed = slash ? parseSlashInput(body, list) : null;
     if (parsed) return runCommand(parsed.command, parsed.args, key);
-    sendPlain(body, key, slash ? [] : mentionedSkills(body, list));
+    sendPlain(body, key, mentionedSkills(body, list));
   };
 
   const send = () => {

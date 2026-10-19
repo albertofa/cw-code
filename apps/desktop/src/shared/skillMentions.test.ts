@@ -140,6 +140,11 @@ describe("skillInvocation", () => {
     });
   });
 
+  it("leaves a prompt that already starts with a slash command to the CLI", () => {
+    expect(skillInvocation("/foo use $plan", ["plan"])).toBeNull();
+    expect(skillInvocation("  /tmp/x is broken, $debug it", ["debug"])).toBeNull();
+  });
+
   it("returns null when no listed skill is mentioned", () => {
     expect(skillInvocation("plain text $plan", ["debug"])).toBeNull();
   });

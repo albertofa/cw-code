@@ -358,8 +358,12 @@ export class CodexCliDriver implements CliDriver {
         paths = mapCodexSkillCommands(await this.client.request<unknown>("skills/list", { cwds: [cwd], forceReload: true })).paths;
         this.skillPaths.set(cwd, paths);
       } catch (err) {
-        console.warn(`codex skills ${names.map((n) => `$${n}`).join(", ")} could not be resolved; sent as text only: ${truncateError((err as Error).message)}`);
-        return [];
+        const message = truncateError((err as Error).message);
+        if (!paths) {
+          console.warn(`codex skills ${names.map((n) => `$${n}`).join(", ")} could not be resolved; sent as text only: ${message}`);
+          return [];
+        }
+        console.warn(`codex skills/list refresh failed, using the cached skill list: ${message}`);
       }
     }
     const resolved = paths;

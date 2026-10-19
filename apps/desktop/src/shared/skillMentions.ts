@@ -102,6 +102,7 @@ export function insertSkillTrigger(text: string, caret: number): { text: string;
 
 /** For harnesses that only run a single leading `/name` per message. */
 export function skillInvocation(prompt: string, skills: readonly string[]): SkillInvocation | null {
+  if (prompt.trimStart().startsWith("/")) return null;
   const mentions = findSkillMentions(prompt, new Set(skills));
   const first = mentions[0];
   if (!first) return null;

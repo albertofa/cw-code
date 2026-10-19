@@ -94,5 +94,6 @@ describe("claudePromptText", () => {
     expect(
       claudePromptText({ prompt: "/compact $plan", command: { name: "compact", args: "$plan" }, skills: ["plan"] })
     ).toBe("/compact $plan");
+    expect(claudePromptText({ prompt: "/foo use $plan", skills: ["plan"] })).toBe("/foo use $plan");
   });
 });
