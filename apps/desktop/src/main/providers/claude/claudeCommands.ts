@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
+import type { ChildProcess, ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { randomUUID } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
@@ -6,6 +6,7 @@ import { dirname, normalize, win32 } from "node:path";
 import type { CommandOption } from "@cw-code/contracts";
 import { detachProcessGroup, killProcessTree } from "../../processTree.js";
 import { sanitizedChildEnv } from "../../shellEnvironment.js";
+import { spawnCli } from "../../cli/spawnCli.js";
 import { describeClaudeExit } from "./claudeExit.js";
 import { traceHarnessCall, truncateError } from "../../debug/harnessTrace.js";
 
@@ -244,7 +245,7 @@ export function probeClaudeCommands(
   binary: string,
   args: string[],
   cwd: string,
-  spawnFn: typeof spawn = spawn,
+  spawnFn: typeof spawn = spawnCli as typeof spawn,
   killFn: (proc: ChildProcess | undefined) => void = killProcessTree
 ): Promise<unknown[]> {
   return new Promise((resolve, reject) => {

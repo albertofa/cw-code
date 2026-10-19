@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess, type ChildProcessWithoutNullStreams } from "node:child_process";
+import type { ChildProcess, ChildProcessWithoutNullStreams, spawn } from "node:child_process";
 import { createInterface } from "node:readline";
 import { randomUUID } from "node:crypto";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
@@ -26,6 +26,7 @@ import type {
 import { parseExtraArgs } from "../../settings/settingsUtils.js";
 import { detachProcessGroup, hasExited, killProcessTree, waitForExit } from "../../processTree.js";
 import { sanitizedChildEnv } from "../../shellEnvironment.js";
+import { spawnCli } from "../../cli/spawnCli.js";
 import { TaskTable, type TaskObservation } from "../../tasks/TaskTable.js";
 import { SYNTHETIC_FULL_ACCESS_DESCRIPTION } from "../permissions.js";
 import { attributeClaudeSubagentEvent, buildClaudeAllowRule, claudeAllowResponse, claudeApprovalRequest, claudeQuestionRequest, claudeDenyResponse, claudeControlResponse, parseClaudeCompactBoundary, parseClaudeControlRequest, parseClaudeSubagentHandback, parseClaudeSystemInit, parseClaudeTaskNotificationLine, parseClaudeTaskSystemLine, parseClaudeToolUseResult, parseStreamLine, type ClaudeControlRequest, type ClaudeTaskNotificationLine, type ClaudeTaskSystemInfo, type TurnDoneInfo } from "./claudeStreamParser.js";
@@ -187,7 +188,7 @@ export class ClaudeCliDriver implements CliDriver {
   constructor(
     private emit: (event: ThreadEvent) => void,
     private getSettings: () => AppSettings,
-    private spawnFn: typeof spawn = spawn,
+    private spawnFn: typeof spawn = spawnCli as typeof spawn,
     private killFn: (proc: ChildProcess | undefined) => void = killProcessTree,
     private isInWorkingSet: (sessionId: string) => boolean = () => false
   ) {}
