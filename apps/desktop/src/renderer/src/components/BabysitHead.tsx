@@ -65,11 +65,12 @@ export function BabysitHead({ sessionId, state }: { sessionId: string; state: Ba
 
   return (
     <>
-      <div className="pr-dock-head">
-        <Activity size={14} className={`babysit-icon ${phase.kind}`} aria-hidden="true" />
-        <span className="pr-dock-title">
-          {workflow.label} · {prRefLabel(link.ref)}
+      <div className="pr-dock-head babysit-head">
+        <span className="babysit-tag">
+          <Activity size={12} aria-hidden="true" />
+          {workflow.label}
         </span>
+        <span className="pr-dock-title">{prRefLabel(link.ref)}</span>
         <span className="babysit-status" role="status">
           {babysitStatusText(state)}
         </span>

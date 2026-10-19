@@ -731,11 +731,7 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
     const phase = state.phase.kind;
     return (
       <span className={`ws-state status-babysit ${phase}`} title={`${state.workflow.label}: ${babysitStatusText(state)}`}>
-        {phase === "done" ? (
-          <Check size={12} aria-hidden="true" />
-        ) : (
-          <Activity size={12} className={phase === "working" ? "ws-pulse" : undefined} aria-hidden="true" />
-        )}
+        <Activity size={12} className={phase === "working" ? "ws-pulse" : undefined} aria-hidden="true" />
         {babysitPhaseLabel(phase)}
       </span>
     );
