@@ -26,6 +26,7 @@ export function TabMenu({
   onClose: () => void;
 }) {
   const moveTab = usePanelStore((s) => s.moveTab);
+  const setRightVisible = usePanelStore((s) => s.setRightVisible);
   const dockByTab = usePanelStore((s) => selectSessionPanel(s, sessionId).dockByTab);
   const setAutoLocation = usePanelStore((s) => s.setAutoLocation);
   const resetLayout = usePanelStore((s) => s.resetLayout);
@@ -62,6 +63,7 @@ export function TabMenu({
           title={dockByTab[tab] === panel ? "Already docked here" : `Dock this tab in the ${label.toLowerCase()} panel`}
           onClick={() => {
             moveTab(sessionId, tab, panel);
+            if (panel === "right") setRightVisible(sessionId, true);
             onClose();
           }}
         >

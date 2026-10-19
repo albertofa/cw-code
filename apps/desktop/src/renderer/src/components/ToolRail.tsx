@@ -2,7 +2,7 @@ import { Fragment, type MouseEvent as ReactMouseEvent } from "react";
 import type { DockableTabId } from "@cw-code/contracts";
 import type { DriverName } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
-import { resolveBottomActive } from "../stores/panelLayout.js";
+import { resolveBottomActive, rightOpenTabs } from "../stores/panelLayout.js";
 import { selectSessionPanel, usePanelStore } from "../stores/panelStore.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { PanelToggles } from "./PanelToggles.js";
@@ -76,12 +76,13 @@ export function ToolRail({
     }
   });
   const groups = railGroups(driver, hasPr, hasPreview);
-  const dropHint = !dragFromRail && (dropRail.over || (draggingTab !== null && !rightVisible));
+  const rightShown = rightVisible && rightOpenTabs(dockByTab, isToolAvailable).length > 0;
+  const dropHint = !dragFromRail && (dropRail.over || (draggingTab !== null && !rightShown));
   const bottomShown = bottomCollapsed ? null : resolveBottomActive(dockByTab, activeBottom, isToolAvailable);
 
-  const onToolClick = (id: DockableTabId, rightShown: boolean) => {
+  const onToolClick = (id: DockableTabId, active: boolean) => {
     if (!sessionId) return;
-    if (rightShown) setRightVisible(sessionId, false);
+    if (active) setRightVisible(sessionId, false);
     else if (id === bottomShown) setBottomCollapsed(sessionId, true);
     else revealTab(sessionId, id);
   };
