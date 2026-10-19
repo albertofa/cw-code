@@ -196,9 +196,8 @@ function sanitizeThemeId(raw: unknown): string {
 function sanitizeThemeColors(raw: unknown): Record<string, string> {
   const o = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
   const colors: Record<string, string> = {};
-  for (const token of THEME_COLOR_TOKENS) {
-    const value = Object.hasOwn(o, token) ? o[token] : undefined;
-    if (isHexColor(value)) colors[token] = value.toLowerCase();
+  for (const [token, value] of Object.entries(o)) {
+    if (THEME_COLOR_TOKENS.includes(token) && isHexColor(value)) colors[token] = value.toLowerCase();
   }
   return colors;
 }
