@@ -389,6 +389,16 @@ function windowIconFile(): string {
   return process.platform === "linux" ? "icon.png" : "icon.ico";
 }
 
+function currentWindowBackground(): string {
+  return windowBackgroundColor(services?.sessions.getSettings().themeMode ?? "dark", nativeTheme.shouldUseDarkColors);
+}
+
+/** Keeps the shell colour behind the renderer in step with the saved theme, so a live switch does not flash the old one. */
+function syncWindowBackground(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.setBackgroundColor(currentWindowBackground());
+}
+
 async function createWindow(): Promise<void> {
   mainWindow = new BrowserWindow({
     width: 1440,
@@ -398,7 +408,7 @@ async function createWindow(): Promise<void> {
     icon: app.isPackaged
       ? join(process.resourcesPath, "branding", windowIconFile())
       : join(app.getAppPath(), "resources", windowIconFile()),
-    backgroundColor: windowBackgroundColor(services?.sessions.getSettings().themeMode ?? "dark", nativeTheme.shouldUseDarkColors),
+    backgroundColor: currentWindowBackground(),
     autoHideMenuBar: true,
     webPreferences: {
       preload: resolvePreload(),
@@ -862,6 +872,7 @@ function registerIpc(services: Services): void {
     }
     if (patch.opencodeGoUsage !== undefined) accountUsage.invalidate("opencode");
     const saved = sessions.setSettings(normalized);
+    if (patch.themeMode !== undefined) syncWindowBackground();
     if (touchesUpdatePreferences(patch)) applyUpdatePreferences(updates, saved);
     return saved;
   });
@@ -1326,6 +1337,7 @@ async function startApp(): Promise<void> {
   process.once("SIGINT", quitWithoutDialog);
   process.once("SIGTERM", quitWithoutDialog);
   powerMonitor.on("shutdown", endOfSession);
+  nativeTheme.on("updated", syncWindowBackground);
   app.on("child-process-gone", (_e, details) => {
     appendCrashLog(
       `child-process-gone: type=${details.type} reason=${details.reason} exitCode=${details.exitCode}`

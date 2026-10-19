@@ -12760,6 +12760,7 @@ button.gitbar-checkout:hover {
   background: #efede4;
 }
 
+:root[data-theme="light"] .main-seg .gitbar .gitbar-location .menu-btn:hover,
 :root[data-theme="light"] .main-seg .gitbar .gitbar-location .menu-btn[aria-expanded="true"],
 :root[data-theme="light"] .main-seg .gitbar .gitbar-checkout:hover {
   background: #e6e3d8;
