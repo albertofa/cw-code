@@ -760,6 +760,30 @@ describe("GitService worktrees", () => {
     expect(existsSync(recreated.path)).toBe(true);
   });
 
+  it("clears the empty folder left behind once git has forgotten the worktree", async () => {
+    const { sandbox, repository, service } = initSandbox();
+    const worktreesRoot = join(sandbox, "worktrees");
+    const created = await service.createWorktree(repository, "project", "sess_leftover1", worktreesRoot, "main");
+    execFileSync("git", ["-C", repository, "worktree", "remove", "--force", created.path]);
+    mkdirSync(created.path, { recursive: true });
+
+    const result = await service.removeWorktree(repository, created.path);
+    expect(result).toEqual({ removed: false });
+    expect(existsSync(created.path)).toBe(false);
+  });
+
+  it("never deletes an unregistered folder that still holds files", async () => {
+    const { sandbox, repository, service } = initSandbox();
+    const worktreesRoot = join(sandbox, "worktrees");
+    const created = await service.createWorktree(repository, "project", "sess_keep1", worktreesRoot, "main");
+    execFileSync("git", ["-C", repository, "worktree", "remove", "--force", created.path]);
+    mkdirSync(created.path, { recursive: true });
+    writeFileSync(join(created.path, "notes.txt"), "mine\n", "utf8");
+
+    await expect(service.removeWorktree(repository, created.path)).rejects.toThrow(/could not remove worktree/);
+    expect(existsSync(join(created.path, "notes.txt"))).toBe(true);
+  });
+
   it("suffixed the session branch when the cw/<id> branch already exists", async () => {
     const { sandbox, repository, service } = initSandbox();
     execFileSync("git", ["-C", repository, "branch", "cw/1234abcd"]);
