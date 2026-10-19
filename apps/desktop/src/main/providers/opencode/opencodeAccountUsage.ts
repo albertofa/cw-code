@@ -164,7 +164,7 @@ export async function fetchOpencodeGoUsage(enabled: boolean, deps: OpencodeGoUsa
     return {
       status: "unavailable",
       reason: "consent-required",
-      message: "Allow cw-code to read your OpenCode Go key to show plan limits"
+      message: "Allow cw-code to read your OpenCode sign-in or Go key to show plan limits"
     };
   }
   const keyResult = readOpencodeGoKey(deps.env, deps.home);

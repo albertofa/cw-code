@@ -229,7 +229,7 @@ describe("fetchOpencodeGoUsage", () => {
     expect(result).toEqual({
       status: "unavailable",
       reason: "consent-required",
-      message: "Allow cw-code to read your OpenCode Go key to show plan limits"
+      message: "Allow cw-code to read your OpenCode sign-in or Go key to show plan limits"
     });
     expect(fetchCalled).toBe(false);
   });
