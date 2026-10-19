@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties }
 import { useShallow } from "zustand/react/shallow";
 import type { DriverName } from "./cw.js";
 import { applyAppearance } from "./appearanceFonts.js";
+import { applyTheme, SYSTEM_LIGHT_QUERY } from "./theme.js";
 import { collectSubagents } from "./components/subagents.js";
 import { installedHarnesses, isHarnessSkipped } from "./components/harnessAvailability.js";
 import { isWorkingSetStatus } from "./components/workingSet.js";
@@ -113,6 +114,8 @@ export function App() {
   const settingsVersion = useAppStore((s) => s.settingsVersion);
   const loadProjects = useAppStore((s) => s.loadProjects);
   const appearance = useAppStore((s) => s.appearance);
+  const settingsLoaded = useAppStore((s) => s.settingsLoaded);
+  const { themeId, customThemes } = appearance;
   const sessionPanel = usePanelStore((s) => selectSessionPanel(s, activeSessionId ?? undefined));
   const { dockByTab, rightVisible } = sessionPanel;
   const initializeSession = usePanelStore((s) => s.initializeSession);
@@ -123,6 +126,16 @@ export function App() {
   const setRightVisible = usePanelStore((s) => s.setRightVisible);
 
   useEffect(() => applyAppearance(document.documentElement, appearance), [appearance]);
+
+  useEffect(() => {
+    if (!settingsLoaded) return;
+    const media = window.matchMedia(SYSTEM_LIGHT_QUERY);
+    const apply = () => applyTheme(document.documentElement, themeId, customThemes, media.matches);
+    apply();
+    if (themeId !== "system") return;
+    media.addEventListener("change", apply);
+    return () => media.removeEventListener("change", apply);
+  }, [settingsLoaded, themeId, customThemes]);
 
 
   const panelAnimationMs = usePanelAnimationMs();

@@ -249,6 +249,7 @@ interface AppState {
   ensureComposer(sessionId: string): Promise<void>;
   setComposerPrefs(sessionId: string, prefs: ComposerPrefs): Promise<void>;
   settingsVersion: number;
+  settingsLoaded: boolean;
   saveSettings(patch: SettingsPatch): Promise<AppSettings>;
   saveDefaultModel(driver: DriverName, id: string): Promise<void>;
   setProjectGitHubAccount(projectId: string, account: { host: string; login: string } | null): Promise<void>;
@@ -423,6 +424,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   turnDurations: {},
   composerBySession: {},
   settingsVersion: 0,
+  settingsLoaded: false,
   pendingDriver: null,
   lastDriver: "claude",
   installedHarnesses: null,
@@ -563,6 +565,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       holdingAutoExpireEnabled: settings.holdingAutoExpireEnabled,
       holdingHours: settings.holdingHours,
       defaultUseWorktree: settings.defaultUseWorktree,
+      settingsLoaded: true,
       appearance: appearanceOf(settings),
       notificationSounds: settings.notificationSounds,
       reasoningExpandedByDriver: reasoningExpandedFrom(settings),
@@ -1004,6 +1007,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       holdingAutoExpireEnabled: saved.holdingAutoExpireEnabled,
       holdingHours: saved.holdingHours,
       defaultUseWorktree: saved.defaultUseWorktree,
+      settingsLoaded: true,
       appearance: appearanceOf(saved),
       notificationSounds: saved.notificationSounds,
       reasoningExpandedByDriver: reasoningExpandedFrom(saved),
