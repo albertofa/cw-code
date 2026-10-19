@@ -4,7 +4,8 @@ import {
   buildOpencodeCommandBody,
   lastOpencodeUserMessageId,
   mapOpencodeCommands,
-  opencodeRevertMessageId
+  opencodeRevertMessageId,
+  skillCommand
 } from "../opencodeCommands.js";
 import { buildOpencodeMessageBody, latestAssistantOf, runEnded } from "../opencodeMessage.js";
 import { opencodeSessionParentId } from "../opencodeEvents.js";
@@ -157,8 +158,9 @@ export const opencodeV1Protocol: OpencodeProtocol = {
 
   async send(client: OpencodeClient, sessionId: string, input: OpencodeSendInput): Promise<OpencodeSendResult> {
     const files = input.files.map((f) => ({ mime: f.mime, url: f.path }));
-    const body = input.command
-      ? buildOpencodeCommandBody(input.command, {
+    const command = input.command ?? skillCommand(input.prompt, input.skills);
+    const body = command
+      ? buildOpencodeCommandBody(command, {
           model: input.model,
           ...(input.variant ? { variant: input.variant } : {}),
           ...(files.length > 0 ? { files } : {})
@@ -168,7 +170,7 @@ export const opencodeV1Protocol: OpencodeProtocol = {
           ...(input.variant ? { variant: input.variant } : {}),
           ...(files.length > 0 ? { files } : {})
         });
-    const response = await client.request(sessionPath(sessionId, input.command ? "/command" : "/message"), {
+    const response = await client.request(sessionPath(sessionId, command ? "/command" : "/message"), {
       method: "POST",
       body,
       signal: input.signal,

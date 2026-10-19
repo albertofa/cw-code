@@ -40,8 +40,12 @@ export function mergeCommands(
   return out;
 }
 
+function fold(text: string): string {
+  return text.normalize("NFD").replace(/\p{M}/gu, "").toLowerCase();
+}
+
 function matchRank(text: string, query: string): number {
-  const value = text.toLowerCase();
+  const value = fold(text);
   if (value === query) return 0;
   if (value.startsWith(query)) return 1;
   if (value.includes(query)) return 2;
@@ -49,7 +53,7 @@ function matchRank(text: string, query: string): number {
 }
 
 export function rankByQuery<T>(items: readonly T[], query: string, texts: (item: T) => string[]): T[] {
-  const q = query.trim().toLowerCase();
+  const q = fold(query.trim());
   if (!q) return [...items];
   const ranked: Array<{ item: T; rank: number }> = [];
   for (const item of items) {
@@ -59,13 +63,25 @@ export function rankByQuery<T>(items: readonly T[], query: string, texts: (item:
   return ranked.sort((a, b) => a.rank - b.rank).map((entry) => entry.item);
 }
 
-export function filterCommands(list: CommandOption[], query: string): CommandOption[] {
-  const q = query.replace(/^\//, "").trim().toLowerCase();
-  if (!q) return list;
+function rankByNameThenDescription(list: readonly CommandOption[], query: string): CommandOption[] {
+  const q = fold(query.trim());
+  if (!q) return [...list];
   const byName = rankByQuery(list, q, (command) => [command.name]);
   const matched = new Set(byName);
-  const byDescription = list.filter((command) => !matched.has(command) && command.description.toLowerCase().includes(q));
+  const byDescription = list.filter((command) => !matched.has(command) && fold(command.description).includes(q));
   return [...byName, ...byDescription];
+}
+
+export function filterCommands(list: CommandOption[], query: string): CommandOption[] {
+  return rankByNameThenDescription(list, query.replace(/^\//, ""));
+}
+
+export function skillCommands(list: readonly CommandOption[]): CommandOption[] {
+  return list.filter((command) => command.kind === "skill");
+}
+
+export function filterSkills(list: readonly CommandOption[], query: string): CommandOption[] {
+  return rankByNameThenDescription(list, query);
 }
 
 export function parseSlashInput(draft: string, list: CommandOption[]): { command: CommandOption; args: string } | null {

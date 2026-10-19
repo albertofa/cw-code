@@ -22,23 +22,42 @@ export const CLAUDE_COMMANDS_CACHE_PRUNE_MS = 7 * 24 * 60 * 60_000;
 
 const OWNED_COMMAND_NAMES = new Set(["model", "effort", "rename", "clear"]);
 
-export function mapClaudeCommands(raw: unknown, terminal: ReadonlySet<string>): CommandOption[] {
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+/**
+ * The command list does not flag skills. `skills` comes from turn init events; non-builtin, non-MCP
+ * entries count too because the CLI runs custom commands exactly like skills.
+ */
+export function mapClaudeCommands(
+  raw: unknown,
+  terminal: ReadonlySet<string>,
+  skills: ReadonlySet<string> = new Set()
+): CommandOption[] {
   if (!Array.isArray(raw)) return [];
+  const flagsBuiltins = raw.some((entry) => isRecord(entry) && entry.builtin === true);
   const out: CommandOption[] = [];
   const seen = new Set<string>();
   for (const entry of raw) {
-    if (entry === null || typeof entry !== "object" || Array.isArray(entry)) continue;
-    const record = entry as Record<string, unknown>;
-    const name = typeof record.name === "string" ? record.name.trim() : "";
+    if (!isRecord(entry)) continue;
+    const name = typeof entry.name === "string" ? entry.name.trim() : "";
     if (!name || OWNED_COMMAND_NAMES.has(name) || seen.has(name)) continue;
     seen.add(name);
-    const description = typeof record.description === "string" ? record.description : "";
-    const argumentHint = typeof record.argumentHint === "string" && record.argumentHint ? record.argumentHint : undefined;
+    const description = typeof entry.description === "string" ? entry.description : "";
+    const argumentHint = typeof entry.argumentHint === "string" && entry.argumentHint ? entry.argumentHint : undefined;
+    const aliases = Array.isArray(entry.aliases) ? entry.aliases.filter((a): a is string => typeof a === "string") : [];
+    const dispatch = terminal.has(name) ? "terminal" : "prompt";
+    const skill =
+      dispatch === "prompt" &&
+      ((flagsBuiltins && entry.builtin !== true && !name.startsWith("mcp__")) ||
+        [name, ...aliases].some((alias) => skills.has(alias)));
     out.push({
       name,
       description,
       ...(argumentHint ? { argumentHint } : {}),
-      dispatch: terminal.has(name) ? "terminal" : "prompt"
+      dispatch,
+      ...(skill ? { kind: "skill" as const } : {})
     });
   }
   return out;
@@ -63,6 +82,7 @@ interface ClaudeCommandsCacheEntry {
 }
 
 const cache = new Map<string, ClaudeCommandsCacheEntry>();
+const skillsByBinary = new Map<string, string[]>();
 const inflight = new Map<string, Promise<ClaudeCommandsCacheEntry>>();
 let cacheFile: string | null = null;
 
@@ -74,6 +94,11 @@ export function claudeCommandsCacheKey(binary: string, cwd: string): string {
 
 function cacheKey(binary: string, cwd: string): string {
   return claudeCommandsCacheKey(binary, cwd);
+}
+
+function binaryKey(binary: string): string {
+  const windows = process.platform === "win32" || /^[a-zA-Z]:[\\/]/.test(binary) || binary.includes("\\");
+  return windows ? binary.toLowerCase() : binary;
 }
 
 export function decodeClaudeCommandsCache(
@@ -101,11 +126,29 @@ export function decodeClaudeCommandsCache(
   return out;
 }
 
+export function decodeClaudeSkillsCache(raw: string): Map<string, string[]> {
+  const out = new Map<string, string[]>();
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(raw);
+  } catch {
+    return out;
+  }
+  if (!isRecord(parsed) || !isRecord(parsed.skills)) return out;
+  for (const [key, value] of Object.entries(parsed.skills)) {
+    if (!key.trim() || !Array.isArray(value)) continue;
+    out.set(key, value.filter((name): name is string => typeof name === "string" && name !== ""));
+  }
+  return out;
+}
+
 export function initClaudeCommandsCache(filePath: string): void {
   cacheFile = filePath;
   try {
     if (!existsSync(filePath)) return;
-    const entries = decodeClaudeCommandsCache(readFileSync(filePath, "utf8"));
+    const text = readFileSync(filePath, "utf8");
+    for (const [key, skills] of decodeClaudeSkillsCache(text)) skillsByBinary.set(key, skills);
+    const entries = decodeClaudeCommandsCache(text);
     const now = Date.now();
     for (const entry of entries) {
       if (entry.at === 0) continue;
@@ -127,14 +170,14 @@ function persistCache(): void {
   try {
     mkdirSync(dirname(cacheFile), { recursive: true });
     const tmp = `${cacheFile}.${process.pid}.tmp`;
-    writeFileSync(tmp, JSON.stringify({ version: 1, entries }), "utf8");
+    writeFileSync(tmp, JSON.stringify({ version: 1, entries, skills: Object.fromEntries(skillsByBinary) }), "utf8");
     renameSync(tmp, cacheFile);
   } catch (err) {
     console.warn(`claude commands cache write failed: ${(err as Error).message}`);
   }
 }
 
-function sameTerminalSet(a: readonly string[], b: readonly string[]): boolean {
+function sameSet(a: readonly string[], b: readonly string[]): boolean {
   if (a.length !== b.length) return false;
   const sortedA = [...a].sort();
   const sortedB = [...b].sort();
@@ -145,9 +188,22 @@ export function recordClaudeTerminalCommands(binary: string, cwd: string, termin
   const key = cacheKey(binary, cwd);
   const existing = cache.get(key);
   const merged = [...new Set(terminal)];
-  if (sameTerminalSet(existing?.terminal ?? [], merged)) return;
+  if (sameSet(existing?.terminal ?? [], merged)) return;
   cache.set(key, { at: existing?.at ?? 0, raw: existing?.raw ?? [], terminal: merged });
   persistCache();
+}
+
+export function recordClaudeSkills(binary: string, skills: readonly string[]): void {
+  const key = binaryKey(binary);
+  const known = skillsByBinary.get(key) ?? [];
+  const merged = [...new Set([...known, ...skills])];
+  if (skillsByBinary.has(key) && merged.length === known.length) return;
+  skillsByBinary.set(key, merged);
+  persistCache();
+}
+
+function knownSkills(binary: string): ReadonlySet<string> {
+  return new Set(skillsByBinary.get(binaryKey(binary)) ?? []);
 }
 
 const CLAUDE_NO_COMMAND_LIST_MESSAGE = "claude returned no command list";
@@ -311,14 +367,15 @@ export async function listClaudeCommands(
         console.warn(`claude commands refresh failed: ${(err as Error).message}`);
       });
     }
-    return mapClaudeCommands(hit.raw, new Set(hit.terminal));
+    return mapClaudeCommands(hit.raw, new Set(hit.terminal), knownSkills(binary));
   }
   const fresh = await refreshClaudeCommands(key, cwd, binary, args, query);
-  return mapClaudeCommands(fresh.raw, new Set(fresh.terminal));
+  return mapClaudeCommands(fresh.raw, new Set(fresh.terminal), knownSkills(binary));
 }
 
 export function clearClaudeCommandsCache(): void {
   cache.clear();
+  skillsByBinary.clear();
   inflight.clear();
   cacheFile = null;
 }

@@ -15,6 +15,7 @@ import {
   listClaudeCommands,
   mapClaudeCommands,
   probeClaudeCommands,
+  recordClaudeSkills,
   recordClaudeTerminalCommands,
   type ClaudeCommandsQuery
 } from "./claudeCommands.js";
@@ -46,6 +47,30 @@ describe("mapClaudeCommands", () => {
       new Set()
     );
     expect(out.map((c) => c.name)).toEqual(["context"]);
+  });
+
+  it("marks non-builtin entries and init-reported skills (by name or alias) as skills", () => {
+    const out = mapClaudeCommands(
+      [
+        { name: "plan", description: "Plan it" },
+        { name: "simplify", description: "Bundled skill", builtin: true },
+        { name: "docs", description: "Plugin skill", aliases: ["anthropic-skills:docs"] },
+        { name: "compact", description: "Builtin command", builtin: true },
+        { name: "mcp__github__pr", description: "MCP prompt" },
+        { name: "doctor", description: "Terminal only" }
+      ],
+      new Set(["doctor"]),
+      new Set(["simplify", "anthropic-skills:docs"])
+    );
+    expect(out.filter((c) => c.kind === "skill").map((c) => c.name)).toEqual(["plan", "simplify", "docs"]);
+  });
+
+  it("does not guess skills from a list without builtin flags", () => {
+    const out = mapClaudeCommands([{ name: "plan" }, { name: "compact" }], new Set(), new Set(["plan"]));
+    expect(out).toEqual([
+      { name: "plan", description: "", dispatch: "prompt", kind: "skill" },
+      { name: "compact", description: "", dispatch: "prompt" }
+    ]);
   });
 
   it("tolerates missing or garbage fields", () => {
@@ -337,6 +362,23 @@ describe("claude commands disk cache", () => {
     const seeded = await listClaudeCommands("C:\\one", "claude", [], offline);
     expect(seeded).toEqual(live);
     expect(calls).toBe(0);
+  });
+
+  it("classifies skills from a recorded init list and keeps it across restarts", async () => {
+    const file = join(mkdtempSync(join(tmpdir(), "cw-claude-commands-")), "claude-commands.json");
+    initClaudeCommandsCache(file);
+    const query: ClaudeCommandsQuery = async () => [
+      { name: "simplify", description: "Bundled skill", builtin: true },
+      { name: "compact", description: "Builtin command", builtin: true }
+    ];
+    const before = await listClaudeCommands("C:\\one", "claude", [], query);
+    expect(before.some((c) => c.kind === "skill")).toBe(false);
+    recordClaudeSkills("claude", ["simplify"]);
+    recordClaudeSkills("claude", ["other-project-skill"]);
+    clearClaudeCommandsCache();
+    initClaudeCommandsCache(file);
+    const after = await listClaudeCommands("C:\\two", "claude", [], query);
+    expect(after.filter((c) => c.kind === "skill").map((c) => c.name)).toEqual(["simplify"]);
   });
 
   it("ignores malformed cache files and starts with an empty cache", async () => {

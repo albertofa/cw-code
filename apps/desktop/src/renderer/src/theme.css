@@ -56,6 +56,10 @@
   --babysit-ink: color-mix(in srgb, var(--babysit) 85%, var(--text));
   --merged: #b49cff;
   --on-accent: #fff;
+  --skill: #d58ae6;
+  --skill-ink: color-mix(in srgb, var(--skill) 60%, var(--text));
+  --skill-fill: color-mix(in srgb, var(--skill) 14%, transparent);
+  --skill-line: color-mix(in srgb, var(--skill) 38%, transparent);
   --chip-fill: rgba(255, 255, 255, 0.045);
   --chip-fill-hover: rgba(255, 255, 255, 0.08);
   --shadow-float: 0 16px 40px rgba(0, 0, 0, 0.55);
@@ -3355,6 +3359,73 @@ body.session-dragging * {
 
 .composer-arg-hint-pad {
   visibility: hidden;
+}
+
+.composer-mirror {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  pointer-events: none;
+  font-family: var(--prompt-font);
+  font-size: var(--fs-prompt);
+  line-height: 1.625;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  overflow: hidden;
+  color: var(--text);
+}
+
+.composer-input.has-mentions {
+  position: relative;
+  color: transparent;
+}
+
+.composer-input.has-mentions::selection {
+  background: color-mix(in srgb, var(--violet-ink) 32%, transparent);
+}
+
+.composer-busy .composer-mirror {
+  color: var(--faint);
+}
+
+.composer-mention {
+  color: var(--skill-ink);
+  background: var(--skill-fill);
+  border-radius: 4px;
+  box-shadow: 0 0 0 1px var(--skill-line);
+}
+
+.skill-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 100%;
+  vertical-align: middle;
+  box-sizing: border-box;
+  height: 1.5em;
+  padding: 0 6px;
+  border: 1px solid var(--skill-line);
+  border-radius: var(--r-sm);
+  background: var(--skill-fill);
+  color: var(--skill-ink);
+  font-size: 0.92em;
+  font-weight: 500;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.skill-chip svg {
+  flex: none;
+}
+
+.skill-chip-sigil {
+  font-size: 0;
+}
+
+.skill-chip-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
 }
 
 .composer-custom {

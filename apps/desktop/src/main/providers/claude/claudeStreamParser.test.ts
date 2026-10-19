@@ -713,6 +713,11 @@ describe("parseClaudeSystemInit", () => {
     });
   });
 
+  it("captures the skill names when the CLI reports them", () => {
+    const line = JSON.stringify({ type: "system", subtype: "init", skills: ["plan", 7, "ndk:debug"] });
+    expect(parseClaudeSystemInit(line)).toEqual({ terminalSlashCommands: [], skills: ["plan", "ndk:debug"] });
+  });
+
   it("captures the model when present", () => {
     const line = JSON.stringify({ type: "system", subtype: "init", model: "claude-haiku-4-5" });
     expect(parseClaudeSystemInit(line)).toEqual({ terminalSlashCommands: [], model: "claude-haiku-4-5" });

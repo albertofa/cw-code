@@ -89,6 +89,48 @@ describe("opencodeV2Protocol requests", () => {
     expect(skill.seen.at(-1)).toEqual({ path: "/api/session/ses_1/prompt", method: "POST", body: { text: "how do I x", skills: [{ id: "opencode" }] } });
   });
 
+  it("attaches mentioned skills by id and keeps the prompt text", async () => {
+    const { client, seen } = fakeClient((s) =>
+      s.path === "/api/skill" ? json({ data: [{ id: "plan-dir", name: "plan" }, { id: "debug" }] }) : undefined
+    );
+    await opencodeV2Protocol.send(client, "ses_1", { prompt: "do $plan then $debug", skills: ["plan", "debug", "gone"], model: null, files: [], signal });
+    expect(seen.at(-1)).toEqual({
+      path: "/api/session/ses_1/prompt",
+      method: "POST",
+      body: { text: "do $plan then $debug", skills: [{ id: "plan-dir" }, { id: "debug" }] }
+    });
+  });
+
+  it("resends as plain text when the server rejects the skill attachment", async () => {
+    const { client, seen } = fakeClient((s) => {
+      if (s.path === "/api/skill") return json({ data: [{ id: "plan" }] });
+      if (s.path.endsWith("/prompt") && (s.body as { skills?: unknown }).skills) return json({ message: "Skill not found" }, 400);
+      return undefined;
+    });
+    await opencodeV2Protocol.send(client, "ses_1", { prompt: "$plan", skills: ["plan"], model: null, files: [], signal });
+    expect(seen.filter((s) => s.path.endsWith("/prompt")).map((s) => s.body)).toEqual([
+      { text: "$plan", skills: [{ id: "plan" }] },
+      { text: "$plan" }
+    ]);
+  });
+
+  it("leaves other 400s to the caller instead of resending without skills", async () => {
+    const { client, seen } = fakeClient((s) => {
+      if (s.path === "/api/skill") return json({ data: [{ id: "plan" }] });
+      if (s.path.endsWith("/prompt")) return json({ message: "unsupported file" }, 400);
+      return undefined;
+    });
+    const result = await opencodeV2Protocol.send(client, "ses_1", { prompt: "$plan", skills: ["plan"], model: null, files: [], signal });
+    expect(result.response.status).toBe(400);
+    expect(seen.filter((s) => s.path.endsWith("/prompt"))).toHaveLength(1);
+  });
+
+  it("sends the prompt as text when the skill list is unavailable", async () => {
+    const { client, seen } = fakeClient((s) => (s.path === "/api/skill" ? json({ message: "boom" }, 500) : undefined));
+    await opencodeV2Protocol.send(client, "ses_1", { prompt: "$plan", skills: ["plan"], model: null, files: [], signal });
+    expect(seen.at(-1)).toEqual({ path: "/api/session/ses_1/prompt", method: "POST", body: { text: "$plan" } });
+  });
+
   it("replies to permissions with decision and to forms with field answers", async () => {
     const { client, seen } = fakeClient(() => undefined);
     await expect(opencodeV2Protocol.replyPermission(client, "ses_1", "per_1", "always")).resolves.toBe("replied");

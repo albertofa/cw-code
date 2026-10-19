@@ -179,9 +179,12 @@ export interface SendPromptOptions {
   prRefs?: PrRef[];
   finalReview?: { ref: PrRef; sha: string };
   command?: CommandInvocation;
+  skills?: string[];
   acceptFolderHead?: string;
   auto?: boolean;
 }
+
+export type ComposerSendOptions = Pick<SendPromptOptions, "command" | "skills">;
 
 interface AppState {
   shutdown: ShutdownUiState | null;
@@ -238,7 +241,7 @@ interface AppState {
   hydrateActiveTurns(): Promise<void>;
   startNewSession(driver?: DriverName): void;
   setPendingDriver(driver: DriverName): void;
-  sendPendingPrompt(prompt: string, attachments?: string[], command?: CommandInvocation): Promise<void>;
+  sendPendingPrompt(prompt: string, attachments?: string[], opts?: ComposerSendOptions): Promise<void>;
   ensureHistory(sessionId: string, opts?: { force?: boolean; isRetry?: boolean }): Promise<void>;
   subagentToolsByKey: Record<string, SubagentToolsResult>;
   subagentToolsLoading: Record<string, boolean>;
@@ -259,7 +262,7 @@ interface AppState {
   createSessionIn(projectId: string, driver: DriverName, prefs?: ComposerPrefs, workspace?: CreateSessionOptions): Promise<Session>;
   importSession(request: ImportSessionRequest): Promise<Session>;
   applySession(session: Session): void;
-  sendPrompt(prompt: string, attachments?: string[], command?: CommandInvocation): Promise<void>;
+  sendPrompt(prompt: string, attachments?: string[], opts?: ComposerSendOptions): Promise<void>;
   sendPromptTo(sessionId: string, prompt: string, attachments?: string[], opts?: SendPromptOptions): Promise<void>;
   interrupt(): Promise<void>;
   markTurnsInterrupted(sessionIds: string[]): void;
@@ -852,7 +855,7 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ pendingDriver: driver, pendingPrefs: { ...get().pendingPrefs, model: undefined } });
   },
 
-  async sendPendingPrompt(prompt: string, attachments: string[] = [], command?: CommandInvocation) {
+  async sendPendingPrompt(prompt: string, attachments: string[] = [], opts?: ComposerSendOptions) {
     const projectId = get().activeProjectId;
     const driver = get().pendingDriver ?? get().lastDriver;
     const pendingPrefs = get().pendingPrefs;
@@ -872,7 +875,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         set({ newSessionError: message });
         throw new NewSessionRefusedError(message);
       }
-      await get().sendPrompt(prompt, attachments, command);
+      await get().sendPrompt(prompt, attachments, opts);
     } finally {
       pendingPromptInFlight = false;
     }
@@ -1098,10 +1101,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     });
   },
 
-  async sendPrompt(prompt: string, attachments?: string[], command?: CommandInvocation) {
+  async sendPrompt(prompt: string, attachments?: string[], opts?: ComposerSendOptions) {
     const sessionId = get().activeSessionId;
     if (!sessionId) return;
-    await get().sendPromptTo(sessionId, prompt, attachments, command ? { command } : undefined);
+    await get().sendPromptTo(sessionId, prompt, attachments, opts);
   },
 
   async sendPromptTo(sessionId: string, prompt: string, attachments?: string[], opts?: SendPromptOptions) {
@@ -1130,6 +1133,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         prefs,
         attachments,
         ...(opts?.command ? { command: opts.command } : {}),
+        ...(opts?.skills?.length ? { skills: opts.skills } : {}),
         ...(opts?.prRefs ? { prRefs: opts.prRefs } : {}),
         ...(opts?.finalReview ? { finalReview: opts.finalReview } : {}),
         ...(acceptFolderHead ? { acceptFolderHead } : {})

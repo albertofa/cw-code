@@ -4,8 +4,21 @@ import {
   lastOpencodeUserMessageId,
   mapOpencodeCommands,
   opencodeBuiltinCommandOf,
-  opencodeRevertMessageId
+  opencodeRevertMessageId,
+  skillCommand
 } from "./opencodeCommands.js";
+
+describe("skillCommand", () => {
+  it("turns the first mentioned skill into a command carrying the prompt", () => {
+    expect(skillCommand("$plan ship it", ["plan"])).toEqual({ name: "plan", args: "ship it" });
+    expect(skillCommand("ship it with $plan", ["plan"])).toEqual({ name: "plan", args: "ship it with /plan" });
+  });
+
+  it("returns nothing without mentioned skills", () => {
+    expect(skillCommand("$plan", undefined)).toBeUndefined();
+    expect(skillCommand("no mention", ["plan"])).toBeUndefined();
+  });
+});
 
 describe("mapOpencodeCommands", () => {
   it("lists builtins first, then server commands with hints joined", () => {
@@ -26,6 +39,7 @@ describe("mapOpencodeCommands", () => {
     expect(mapped.find((c) => c.name === "review")?.argumentHint).toBe("<arg1> <arg2>");
     expect(mapped.find((c) => c.name === "tag")?.argumentHint).toBe("<arg2> [arguments] {file}");
     expect(mapped.find((c) => c.name === "plan")).not.toHaveProperty("argumentHint");
+    expect(mapped.filter((c) => c.kind === "skill").map((c) => c.name)).toEqual(["plan"]);
   });
 
   it("marks undo and redo as needing confirmation", () => {

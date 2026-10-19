@@ -125,7 +125,11 @@ export function NewThread({
     loadFiles: () => (projectKey ? window.cw.listProjectFiles(projectKey) : Promise.resolve([])),
     loadCommands: () => (projectKey ? window.cw.listCommandsFor(projectKey, driver) : Promise.resolve([])),
     savePrefs: (p) => store.setPendingPrefs(p),
-    send: (body, attachments, command) => store.sendPendingPrompt(body, attachments, command),
+    send: (body, attachments, opts) =>
+      store.sendPendingPrompt(body, attachments, {
+        ...(opts?.command ? { command: opts.command } : {}),
+        ...(opts?.skills ? { skills: opts.skills } : {})
+      }),
     savePasteImage: (mime, data) =>
       projectKey ? window.cw.savePasteImage(projectKey, mime, data) : Promise.reject(new Error(NO_PROJECT_HINT)),
     interrupt: () => {}

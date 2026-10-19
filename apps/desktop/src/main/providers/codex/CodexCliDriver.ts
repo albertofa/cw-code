@@ -350,6 +350,31 @@ export class CodexCliDriver implements CliDriver {
     return paths.get(name) ?? null;
   }
 
+  private async mentionedSkills(cwd: string, names: readonly string[]): Promise<Array<{ name: string; path: string }>> {
+    if (names.length === 0) return [];
+    let paths = this.skillPaths.get(cwd);
+    if (!paths || names.some((name) => !paths?.has(name))) {
+      try {
+        paths = mapCodexSkillCommands(await this.client.request<unknown>("skills/list", { cwds: [cwd], forceReload: true })).paths;
+        this.skillPaths.set(cwd, paths);
+      } catch (err) {
+        const message = truncateError((err as Error).message);
+        if (!paths) {
+          console.warn(`codex skills ${names.map((n) => `$${n}`).join(", ")} could not be resolved; sent as text only: ${message}`);
+          return [];
+        }
+        console.warn(`codex skills/list refresh failed, using the cached skill list: ${message}`);
+      }
+    }
+    const resolved = paths;
+    const missing = names.filter((name) => !resolved.has(name));
+    if (missing.length > 0) console.warn(`codex skills not listed, sent as text only: ${missing.map((n) => `$${n}`).join(", ")}`);
+    return names.flatMap((name) => {
+      const path = resolved.get(name);
+      return path ? [{ name, path }] : [];
+    });
+  }
+
   startTurn(request: TurnRequest): TurnHandle {
     const turnId = randomUUID();
     if (request.command?.name === "compact" && !request.resumeCursor) {
@@ -446,11 +471,12 @@ export class CodexCliDriver implements CliDriver {
           return false;
         }
       });
+      const skills = await this.mentionedSkills(request.cwd, request.skills ?? []);
       // turn/start only acks with the turn id; completion arrives via the
       // turn/completed notification, so approval waits never hit the request timeout.
       const res = await this.client.request<TurnStartResponse>("turn/start", {
         threadId,
-        input: buildCodexUserInput(request.prompt, request.cwd, attachments),
+        input: buildCodexUserInput(request.prompt, request.cwd, attachments, skills),
         ...(request.model ? { model: request.model } : {}),
         ...(effort ? { effort } : {}),
         ...(collaborationMode ? { collaborationMode } : {})

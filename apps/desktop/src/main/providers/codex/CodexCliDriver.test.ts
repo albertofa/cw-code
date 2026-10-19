@@ -216,6 +216,15 @@ class ThrowingSkillsClient extends FakeClient {
   }
 }
 
+class ReloadFailingSkillsClient extends FakeClient {
+  override async request<T>(method: string, params?: unknown): Promise<T> {
+    if (method === "skills/list" && (params as { forceReload?: boolean } | undefined)?.forceReload) {
+      throw new Error("skills/list reload boom");
+    }
+    return super.request<T>(method, params);
+  }
+}
+
 class AccountUsageClient extends FakeClient {
   constructor(
     private accountRes: unknown,
@@ -783,7 +792,7 @@ describe("CodexCliDriver", () => {
         argumentHint: "[instructions]",
         dispatch: "native"
       },
-      { name: "ship", description: "Ship it", dispatch: "native" }
+      { name: "ship", description: "Ship it", dispatch: "native", kind: "skill" }
     ]);
     driver.dispose();
   });
@@ -961,6 +970,53 @@ describe("CodexCliDriver", () => {
         { type: "skill", name: "ship", path: "/skills/ship" }
       ]
     });
+    driver.dispose();
+  });
+
+  it("sends $skill mentions as text plus resolved skill items", async () => {
+    const { driver } = makeDriver(client);
+    await driver.listCommands("C:\\proj");
+    driver.startTurn({
+      sessionId: "local-1",
+      prompt: "cut it with $ship now",
+      cwd: "C:\\proj",
+      skills: ["ship"]
+    });
+    await settle();
+    const turn = client.requests.find((r) => r.method === "turn/start");
+    expect(turn?.params).toMatchObject({
+      input: [
+        { type: "text", text: "cut it with $ship now" },
+        { type: "skill", name: "ship", path: "/skills/ship" }
+      ]
+    });
+    driver.dispose();
+  });
+
+  it("keeps the cached skill paths when a forced skills/list refresh fails", async () => {
+    const flaky = new ReloadFailingSkillsClient();
+    const { driver } = makeDriver(flaky);
+    await driver.listCommands("C:\\proj");
+    driver.startTurn({ sessionId: "local-1", prompt: "$ship and $gone", cwd: "C:\\proj", skills: ["ship", "gone"] });
+    await settle();
+    const turn = flaky.requests.find((r) => r.method === "turn/start");
+    expect((turn?.params as { input?: unknown[] } | undefined)?.input).toEqual([
+      { type: "text", text: "$ship and $gone" },
+      { type: "skill", name: "ship", path: "/skills/ship" }
+    ]);
+    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining("using the cached skill list"));
+    driver.dispose();
+  });
+
+  it("still sends the turn as text when a mentioned skill cannot be resolved", async () => {
+    const throwingClient = new ThrowingSkillsClient();
+    const { driver, events } = makeDriver(throwingClient);
+    const handle = driver.startTurn({ sessionId: "local-1", prompt: "go $ship", cwd: "C:\\proj", skills: ["ship"] });
+    await settle();
+    const turn = throwingClient.requests.find((r) => r.method === "turn/start");
+    expect((turn?.params as { input?: unknown[] } | undefined)?.input).toEqual([{ type: "text", text: "go $ship" }]);
+    expect(events.some((e) => e.type === "turn.error" && e.turnId === handle.turnId)).toBe(false);
+    expect(console.warn).toHaveBeenCalledWith(expect.stringContaining("$ship could not be resolved"));
     driver.dispose();
   });
 

@@ -117,6 +117,18 @@ describe("buildCodexUserInput", () => {
   it("returns an empty list for a bare prompt with no attachments", () => {
     expect(buildCodexUserInput("hi", "C:\\proj", [])).toEqual([{ type: "text", text: "hi" }]);
   });
+
+  it("keeps $mentions in the text and appends a skill item per mentioned skill", () => {
+    const input = buildCodexUserInput("use $plan then $ship", "C:\\proj", [], [
+      { name: "plan", path: "/skills/plan" },
+      { name: "ship", path: "/skills/ship" }
+    ]);
+    expect(input).toEqual([
+      { type: "text", text: "use $plan then $ship" },
+      { type: "skill", name: "plan", path: "/skills/plan" },
+      { type: "skill", name: "ship", path: "/skills/ship" }
+    ]);
+  });
 });
 
 describe("mapCodexPlan", () => {
@@ -483,7 +495,7 @@ describe("mapCodexSkillCommands", () => {
     };
     const { commands, paths } = mapCodexSkillCommands(res);
     expect(commands).toEqual([
-      { name: "plan", description: "Plan the work", dispatch: "native" }
+      { name: "plan", description: "Plan the work", dispatch: "native", kind: "skill" }
     ]);
     expect(paths.get("plan")).toBe("/skills/plan");
     expect(paths.has("disabled-skill")).toBe(false);

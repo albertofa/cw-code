@@ -73,6 +73,18 @@ export function v2CommandEntries(commands: unknown, skills: unknown): V2CatalogE
   return out;
 }
 
+export function v2SkillIds(skills: unknown, names: readonly string[]): Array<{ id: string }> {
+  const entries = dataList(skills).map(asRecord).filter((entry) => entry !== null);
+  const out: Array<{ id: string }> = [];
+  for (const name of names) {
+    const match =
+      entries.find((entry) => asString(entry["id"]) === name) ?? entries.find((entry) => asString(entry["name"]) === name);
+    const id = asString(match?.["id"]);
+    if (id && !out.some((skill) => skill.id === id)) out.push({ id });
+  }
+  return out;
+}
+
 export interface V2ConfigCommandSources {
   templates: Map<string, string>;
   directories: string[];
@@ -131,7 +143,7 @@ export function buildV2CommandOptions(entries: V2CatalogEntry[], templates: Map<
     entries.map((entry) => {
       const template = templates.get(entry.name);
       const hints = template !== undefined ? templateHints(template) : BUILTIN_HINTS[entry.name] ?? [];
-      return { name: entry.name, description: entry.description, hints };
+      return { name: entry.name, description: entry.description, hints, ...(entry.skill ? { source: "skill" } : {}) };
     })
   );
 }

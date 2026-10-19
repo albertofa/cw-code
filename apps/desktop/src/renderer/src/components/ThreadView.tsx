@@ -39,8 +39,13 @@ import { splitImageMentions } from "./imagePreview.js";
 import { ImageThumb } from "./ImageThumb.js";
 import { ThreadVisibleContext } from "./threadVisibility.js";
 import { toolAvailability } from "./toolTabs.js";
+import { SkillChip } from "./SkillChip.js";
+import { skillSegments } from "./skillSegments.js";
+import { findSkillReferences } from "../../../shared/skillMentions.js";
+import { useSessionSkillNames } from "../stores/sessionSkillsStore.js";
 
 const EMPTY_MESSAGES: ChatMessage[] = [];
+const SKILL_TOKEN_HINT = /(^|\s)[$/][A-Za-z0-9]/;
 const FOLLOW_BAND = 64;
 const SCROLL_UP_KEYS = new Set(["PageUp", "Home", "ArrowUp"]);
 
@@ -65,11 +70,13 @@ function nestedScrollerTakesUpward(target: EventTarget | null, root: HTMLElement
 function UserMessage({
   message,
   sessionId,
-  projectId
+  projectId,
+  skills
 }: {
   message: ChatMessage;
   sessionId: string;
   projectId: string | undefined;
+  skills: ReadonlySet<string>;
 }) {
   const [copied, setCopied] = useState(false);
 
@@ -105,7 +112,11 @@ function UserMessage({
               className="msg-image-thumb"
             />
           ) : (
-            <span key={i}>{seg.value}</span>
+            <span key={i}>
+              {skillSegments(seg.value, findSkillReferences(seg.value, skills)).map((part, j) =>
+                part.kind === "skill" ? <SkillChip key={j} name={part.name} raw={part.raw} /> : part.value
+              )}
+            </span>
           )
         )}
       </div>
@@ -154,6 +165,11 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
   const messages = useAppStore((s) =>
     activeSessionId ? (s.messagesBySession[activeSessionId] ?? EMPTY_MESSAGES) : EMPTY_MESSAGES
   );
+  const wantsSkills = useMemo(
+    () => messages.some((m) => m.role === "user" && SKILL_TOKEN_HINT.test(m.text)),
+    [messages]
+  );
+  const skillNames = useSessionSkillNames(activeSessionId ?? "", Boolean(activeSessionId) && wantsSkills);
   const busyTurn = useAppStore((s) => (activeSessionId ? s.busyTurns[activeSessionId] : undefined));
   const hasPreview = useAppStore((s) =>
     activeSessionId ? (s.previewBySession[activeSessionId] ?? null) !== null : false
@@ -447,7 +463,7 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
     }
     const m = n.msg;
     if (m.role === "user") {
-      return <UserMessage key={m.id} message={m} sessionId={session.id} projectId={project?.id} />;
+      return <UserMessage key={m.id} message={m} sessionId={session.id} projectId={project?.id} skills={skillNames} />;
     }
     if (m.role === "tool") {
       return (
