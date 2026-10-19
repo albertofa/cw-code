@@ -407,7 +407,7 @@ export function HarnessSettings({ driver, onPickBinary, onOpenUsage }: { driver:
             <SettingsRow
               label="Show OpenCode Go plan limits"
               htmlFor="sp-opencode-go"
-              hint="Reads your OpenCode Go key from opencode's auth file. The key stays on this device and is only sent to opencode.ai."
+              hint="Reads your OpenCode sign-in or Go key from opencode's local credentials. They stay on this device and are only sent to opencode.ai."
             >
               <SettingsSwitch id="sp-opencode-go" checked={draft.opencodeGoUsage} onChange={(next) => set({ opencodeGoUsage: next })} label="Show OpenCode Go plan limits" />
             </SettingsRow>

@@ -1,8 +1,16 @@
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { DatabaseSync } from "node:sqlite";
 import { afterEach, describe, expect, it } from "vitest";
-import { fetchOpencodeGoUsage, mapOpencodeGoUsage, readOpencodeGoKey, type OpencodeGoUsageDeps } from "./opencodeAccountUsage.js";
+import {
+  fetchOpencodeGoUsage,
+  mapOpencodeGoUsage,
+  opencodeV2Tokens,
+  readOpencodeGoKey,
+  readOpencodeV2Tokens,
+  type OpencodeGoUsageDeps
+} from "./opencodeAccountUsage.js";
 
 const FAKE_KEY = "fake-test-key";
 const tempDirs: string[] = [];
@@ -17,6 +25,36 @@ function writeAuthJson(home: string, contents: string): void {
   const dir = join(home, ".local", "share", "opencode");
   mkdirSync(dir, { recursive: true });
   writeFileSync(join(dir, "auth.json"), contents, "utf8");
+}
+
+interface CredentialFixture {
+  integration: string;
+  value: Record<string, unknown>;
+  active?: number;
+  updated?: number;
+}
+
+function writeCredentialDb(dbPath: string, credentials: CredentialFixture[]): void {
+  const db = new DatabaseSync(dbPath);
+  db.exec(
+    "CREATE TABLE credential (id text PRIMARY KEY, integration_id text, label text NOT NULL, value text NOT NULL, connector_id text, method_id text, active integer, time_created integer NOT NULL, time_updated integer NOT NULL)"
+  );
+  const insert = db.prepare("INSERT INTO credential (id, integration_id, label, value, active, time_created, time_updated) VALUES (?, ?, ?, ?, ?, ?, ?)");
+  credentials.forEach((c, i) => insert.run(`cred_${i}`, c.integration, "label", JSON.stringify(c.value), c.active ?? null, 1, c.updated ?? 1));
+  db.close();
+}
+
+function writeV2Credentials(home: string, credentials: CredentialFixture[]): void {
+  const dir = join(home, ".local", "share", "opencode");
+  mkdirSync(dir, { recursive: true });
+  writeCredentialDb(join(dir, "opencode.db"), credentials);
+}
+
+const NOW = Date.parse("2026-10-19T00:00:00.000Z");
+const FUTURE = NOW + 86_400_000;
+
+function oauth(access: string, expires = FUTURE): Record<string, unknown> {
+  return { type: "oauth", methodID: "device", refresh: "fake-refresh", access, expires, metadata: {} };
 }
 
 afterEach(() => {
@@ -114,6 +152,62 @@ describe("readOpencodeGoKey", () => {
   });
 });
 
+describe("opencodeV2Tokens", () => {
+  it("puts unexpired OAuth sign-ins first, active then newest, before Go API keys", () => {
+    const rows = [
+      { integration_id: "opencode-go", value: JSON.stringify({ type: "api", key: "fake-go-key" }), active: null, time_updated: 9 },
+      { integration_id: "opencode", value: JSON.stringify(oauth("fake-old")), active: null, time_updated: 5 },
+      { integration_id: "opencode", value: JSON.stringify(oauth("fake-active")), active: 1, time_updated: 1 },
+      { integration_id: "opencode", value: JSON.stringify(oauth("fake-new")), active: null, time_updated: 8 }
+    ];
+    expect(opencodeV2Tokens(rows, NOW)).toEqual(["fake-active", "fake-new", "fake-old", "fake-go-key"]);
+  });
+
+  it("skips expired OAuth tokens, other integrations and unparseable values", () => {
+    const rows = [
+      { integration_id: "opencode", value: JSON.stringify(oauth("fake-expired", NOW - 1)), active: 1, time_updated: 1 },
+      { integration_id: "openrouter", value: JSON.stringify({ type: "api", key: "fake-openrouter" }), active: null, time_updated: 1 },
+      { integration_id: "opencode-go", value: "{ not json", active: null, time_updated: 1 },
+      { integration_id: null, value: JSON.stringify(oauth("fake-orphan")), active: null, time_updated: 1 }
+    ];
+    expect(opencodeV2Tokens(rows, NOW)).toEqual([]);
+  });
+});
+
+describe("readOpencodeV2Tokens", () => {
+  it("returns nothing when there is no v2 database", async () => {
+    expect(await readOpencodeV2Tokens({}, tempHome(), NOW)).toEqual([]);
+  });
+
+  it("returns nothing when the database has no credential table", async () => {
+    const home = tempHome();
+    const dir = join(home, ".local", "share", "opencode");
+    mkdirSync(dir, { recursive: true });
+    const db = new DatabaseSync(join(dir, "opencode.db"));
+    db.exec("CREATE TABLE session (id text)");
+    db.close();
+    expect(await readOpencodeV2Tokens({}, home, NOW)).toEqual([]);
+  });
+
+  it("reads the credential table from the default data dir", async () => {
+    const home = tempHome();
+    writeV2Credentials(home, [{ integration: "opencode", value: oauth("fake-access"), active: 1 }]);
+    expect(await readOpencodeV2Tokens({}, home, NOW)).toEqual(["fake-access"]);
+  });
+
+  it("honours an absolute OPENCODE_DB and a relative one under the data dir", async () => {
+    const home = tempHome();
+    const elsewhere = join(tempHome(), "custom.db");
+    writeCredentialDb(elsewhere, [{ integration: "opencode", value: oauth("fake-absolute") }]);
+    expect(await readOpencodeV2Tokens({ OPENCODE_DB: elsewhere }, home, NOW)).toEqual(["fake-absolute"]);
+
+    const dir = join(home, ".local", "share", "opencode");
+    mkdirSync(dir, { recursive: true });
+    writeCredentialDb(join(dir, "opencode-beta.db"), [{ integration: "opencode", value: oauth("fake-relative") }]);
+    expect(await readOpencodeV2Tokens({ OPENCODE_DB: "opencode-beta.db" }, home, NOW)).toEqual(["fake-relative"]);
+  });
+});
+
 describe("fetchOpencodeGoUsage", () => {
   function deps(overrides: Partial<OpencodeGoUsageDeps> = {}): OpencodeGoUsageDeps {
     const home = tempHome();
@@ -135,7 +229,7 @@ describe("fetchOpencodeGoUsage", () => {
     expect(result).toEqual({
       status: "unavailable",
       reason: "consent-required",
-      message: "Allow cw-code to read your OpenCode Go key to show plan limits"
+      message: "Allow cw-code to read your OpenCode sign-in or Go key to show plan limits"
     });
     expect(fetchCalled).toBe(false);
   });
@@ -246,5 +340,105 @@ describe("fetchOpencodeGoUsage", () => {
     for (const outcome of outcomes) {
       expect(JSON.stringify(outcome)).not.toContain(FAKE_KEY);
     }
+  });
+
+  it("uses the v2 OAuth sign-in when auth.json still holds an expired Go key", async () => {
+    const home = tempHome();
+    writeAuthJson(home, JSON.stringify({ "opencode-go": { type: "api", key: FAKE_KEY } }));
+    writeV2Credentials(home, [
+      { integration: "opencode-go", value: { type: "api", key: FAKE_KEY } },
+      { integration: "opencode", value: oauth("fake-v2-access", Date.now() + 86_400_000), active: 1 }
+    ]);
+    const seen: string[] = [];
+    const result = await fetchOpencodeGoUsage(
+      true,
+      deps({
+        home,
+        fetchFn: async (_url, init) => {
+          const auth = new Headers(init?.headers).get("Authorization") ?? "";
+          seen.push(auth);
+          if (auth !== "Bearer fake-v2-access") return new Response(null, { status: 401 });
+          return Response.json({ usage: { weekly: { status: "ok", percent: 12 } } });
+        }
+      })
+    );
+    expect(seen).toEqual(["Bearer fake-v2-access"]);
+    expect(result.status).toBe("ok");
+  });
+
+  it("falls through to the next credential when one is rejected", async () => {
+    const home = tempHome();
+    writeAuthJson(home, JSON.stringify({ "opencode-go": { type: "api", key: FAKE_KEY } }));
+    writeV2Credentials(home, [{ integration: "opencode", value: oauth("fake-revoked", Date.now() + 86_400_000) }]);
+    const seen: string[] = [];
+    const result = await fetchOpencodeGoUsage(
+      true,
+      deps({
+        home,
+        fetchFn: async (_url, init) => {
+          const auth = new Headers(init?.headers).get("Authorization") ?? "";
+          seen.push(auth);
+          if (auth === "Bearer fake-revoked") return new Response(null, { status: 401 });
+          return Response.json({ usage: { weekly: { status: "ok", percent: 12 } } });
+        }
+      })
+    );
+    expect(seen).toEqual(["Bearer fake-revoked", `Bearer ${FAKE_KEY}`]);
+    expect(result.status).toBe("ok");
+  });
+
+  it("falls through past a signed-in account without a Go plan to a working Go key", async () => {
+    const home = tempHome();
+    writeAuthJson(home, JSON.stringify({ "opencode-go": { type: "api", key: FAKE_KEY } }));
+    writeV2Credentials(home, [{ integration: "opencode", value: oauth("fake-no-plan", Date.now() + 86_400_000), active: 1 }]);
+    const seen: string[] = [];
+    const result = await fetchOpencodeGoUsage(
+      true,
+      deps({
+        home,
+        fetchFn: async (_url, init) => {
+          const auth = new Headers(init?.headers).get("Authorization") ?? "";
+          seen.push(auth);
+          if (auth === "Bearer fake-no-plan") return new Response(null, { status: 403 });
+          return Response.json({ usage: { weekly: { status: "ok", percent: 12 } } });
+        }
+      })
+    );
+    expect(seen).toEqual(["Bearer fake-no-plan", `Bearer ${FAKE_KEY}`]);
+    expect(result.status).toBe("ok");
+  });
+
+  it("reports no-subscription over key-rejected when every credential fails", async () => {
+    const home = tempHome();
+    writeAuthJson(home, JSON.stringify({ "opencode-go": { type: "api", key: FAKE_KEY } }));
+    writeV2Credentials(home, [{ integration: "opencode", value: oauth("fake-no-plan", Date.now() + 86_400_000), active: 1 }]);
+    const result = await fetchOpencodeGoUsage(
+      true,
+      deps({
+        home,
+        fetchFn: async (_url, init) =>
+          new Response(null, { status: new Headers(init?.headers).get("Authorization") === "Bearer fake-no-plan" ? 403 : 401 })
+      })
+    );
+    expect(result).toEqual({ status: "unavailable", reason: "no-subscription", message: "No OpenCode Go subscription found" });
+  });
+
+  it("reports key-rejected only after every credential is rejected", async () => {
+    const home = tempHome();
+    writeAuthJson(home, JSON.stringify({ "opencode-go": { type: "api", key: FAKE_KEY } }));
+    writeV2Credentials(home, [{ integration: "opencode", value: oauth("fake-revoked", Date.now() + 86_400_000) }]);
+    let calls = 0;
+    const result = await fetchOpencodeGoUsage(
+      true,
+      deps({
+        home,
+        fetchFn: async () => {
+          calls++;
+          return new Response(null, { status: 401 });
+        }
+      })
+    );
+    expect(calls).toBe(2);
+    expect(result).toEqual({ status: "unavailable", reason: "key-rejected", message: "Run `opencode auth login` and pick OpenCode Go" });
   });
 });
