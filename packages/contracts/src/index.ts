@@ -34,6 +34,8 @@ export type { TaskEndReason, TaskKind, TaskSnapshot, TaskState } from "./tasks.j
 export type {
   AppSettings,
   CustomModel,
+  CustomTheme,
+  ThemeBase,
   NotificationSoundEvent,
   NotificationSoundId,
   NotificationSoundPreference,
