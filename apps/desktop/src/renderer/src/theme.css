@@ -117,6 +117,76 @@
   --driver-soft: var(--codex-soft);
 }
 
+/*
+ * Light theme. The palette follows the Claude app: ivory surfaces, near-black warm text and clay as the accent.
+ * Only tokens change here; component rules keep using the same variables. Anything that was a hard-coded dark
+ * colour is overridden in the "Light theme overrides" section at the end of this file.
+ */
+:root[data-theme="light"] {
+  --gutter: #e8e6dc;
+  --line: #e3e0d5;
+  --editor: #ffffff;
+  --panel-head: #f5f4ed;
+  --bg: #faf9f5;
+  --panel: #faf9f5;
+  --tool: #f5f4ed;
+  --bg-deep: #f0eee6;
+  --card: #ffffff;
+  --overlay: #ffffff;
+  --user-msg: #f0eee6;
+  --hover: #efede4;
+  --raised: #e9e6db;
+  --border: #ddd9ce;
+  --border-soft: #e8e5da;
+  --border-strong: #c4c0b3;
+  --hair: rgba(20, 20, 19, 0.07);
+  --text: #141413;
+  --dim: #3d3d3a;
+  --muted: #5e5d59;
+  --faint: #75746e;
+  --claude: #c6613f;
+  --claude-soft: rgba(198, 97, 63, 0.12);
+  --opencode: #1f6fb8;
+  --opencode-soft: rgba(31, 111, 184, 0.12);
+  --codex: #6f4fc9;
+  --codex-soft: rgba(111, 79, 201, 0.12);
+  --violet: #c6613f;
+  --violet-strong: #ae5230;
+  --violet-ink: #a9512f;
+  --violet-soft: rgba(217, 119, 87, 0.17);
+  --violet-line: rgba(198, 97, 63, 0.5);
+  --success: #2f7d32;
+  --warning: #a86a00;
+  --on-success: #ffffff;
+  --on-warning: #ffffff;
+  --danger: #c0392b;
+  --accent: #2f6fe0;
+  --accent-ink: #2459b8;
+  --danger-ink: #a8281c;
+  --accent-fill: #3a6fd0;
+  --danger-fill: #c0392b;
+  --success-fill: #3a8a3e;
+  --neutral-fill: #87867f;
+  --draft-fill: #87867f;
+  --merged-fill: #7a63c4;
+  --surface-inset: rgba(20, 20, 19, 0.06);
+  --update: #17859b;
+  --merged: #6f4fc9;
+  --babysit: #5f8a0f;
+  --on-babysit: #ffffff;
+  --skill: #9a3fb0;
+  --chip-fill: rgba(20, 20, 19, 0.045);
+  --chip-fill-hover: rgba(20, 20, 19, 0.08);
+  --shadow-float: 0 12px 32px rgba(20, 20, 19, 0.16), 0 0 0 1px rgba(20, 20, 19, 0.04);
+  --md-link: #2459b8;
+  --md-strong: #141413;
+  --driver: #87867f;
+  --driver-soft: rgba(94, 93, 89, 0.1);
+  --scrollbar-thumb: rgba(20, 20, 19, 0.18);
+  --scrollbar-thumb-hover: rgba(20, 20, 19, 0.3);
+  color-scheme: light;
+}
+
 html {
   font-size: 16px;
 }
@@ -12673,4 +12743,108 @@ button.gitbar-checkout:hover {
   .hub-updating {
     display: none;
   }
+}
+
+/* ---- Light theme overrides: surfaces that were hard-coded for the dark theme ---- */
+:root[data-theme="light"] ::selection {
+  background: #f0d3c6;
+}
+
+:root[data-theme="light"] .menu-btn-icon {
+  color: var(--muted);
+}
+
+:root[data-theme="light"] .main-seg .gitbar .gitbar-location .menu-btn,
+:root[data-theme="light"] .main-seg .gitbar .gitbar-checkout,
+:root[data-theme="light"] .git-stats {
+  background: #efede4;
+}
+
+:root[data-theme="light"] .main-seg .gitbar .gitbar-location .menu-btn[aria-expanded="true"],
+:root[data-theme="light"] .main-seg .gitbar .gitbar-checkout:hover {
+  background: #e6e3d8;
+}
+
+:root[data-theme="light"] .gh-menu {
+  background: #ffffff;
+}
+
+:root[data-theme="light"] .diff-line.add {
+  background: #e3f1e1;
+}
+
+:root[data-theme="light"] .diff-line.add .diff-gutter,
+:root[data-theme="light"] .diff-line.add .diff-text {
+  color: #1f6b2a;
+}
+
+:root[data-theme="light"] .diff-line.del {
+  background: #fbe3e0;
+}
+
+:root[data-theme="light"] .diff-line.hunk {
+  background: #e4ecf8;
+}
+
+:root[data-theme="light"] .diff-line.hunk .diff-gutter,
+:root[data-theme="light"] .diff-line.hunk .diff-text {
+  color: #2459b8;
+}
+
+:root[data-theme="light"] .agents-row.is-open {
+  background: #efede4;
+}
+
+:root[data-theme="light"] .settings-head,
+:root[data-theme="light"] .ed-foot {
+  background: #f0eee6;
+}
+
+:root[data-theme="light"] input[type="checkbox"]:not(.settings-switch input) {
+  box-shadow: inset 0 0 0 1.5px #a9a597;
+}
+
+:root[data-theme="light"] .settings-switch .track {
+  background: #e3e0d5;
+  box-shadow: inset 0 0 0 1.5px #b8b4a6;
+}
+
+:root[data-theme="light"] .settings-switch .track::after {
+  background: #87867f;
+}
+
+:root[data-theme="light"] .settings-switch input:checked + .track {
+  background: var(--violet);
+  box-shadow: none;
+}
+
+:root[data-theme="light"] .settings-switch input:checked + .track::after {
+  background: var(--on-accent);
+}
+
+:root[data-theme="light"] .usage-tag.info,
+:root[data-theme="light"] .usage-hb-dot {
+  background: #e9e7de;
+}
+
+:root[data-theme="light"] .usage-grid {
+  stroke: #e0ddd2;
+}
+
+:root[data-theme="light"] .usage-tip {
+  background: #ffffff;
+}
+
+:root[data-theme="light"] .usage-tbl tr:hover td,
+:root[data-theme="light"] .usage-hb:hover {
+  background: #f0eee6;
+}
+
+:root[data-theme="light"] .hub-av.bot {
+  background: #dcd9ce;
+}
+
+:root[data-theme="light"] .hub-action-meta.new,
+:root[data-theme="light"] .hub-card-you {
+  color: #2459b8;
 }

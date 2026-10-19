@@ -5,6 +5,8 @@ import "@xterm/xterm/css/xterm.css";
 import { resolveTerminalFont } from "../appearanceFonts.js";
 import type { DriverName } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
+import { useResolvedTheme } from "../theme.js";
+import { terminalTheme } from "./terminalTheme.js";
 
 function forceCellRemeasure(term: Terminal, font: { family: string; size: number }): void {
   term.options.fontFamily = "monospace";
@@ -24,7 +26,14 @@ export function PtyTab({ sessionId, kind }: { sessionId: string; kind: DriverNam
   const terminalFont = resolveTerminalFont(appearance);
   const terminalFontRef = useRef(terminalFont);
   terminalFontRef.current = terminalFont;
+  const resolvedTheme = useResolvedTheme();
+  const themeRef = useRef(resolvedTheme);
+  themeRef.current = resolvedTheme;
   const refitRef = useRef<() => void>(() => {});
+
+  useEffect(() => {
+    if (termRef.current) termRef.current.options.theme = terminalTheme(resolvedTheme);
+  }, [resolvedTheme]);
 
   useEffect(() => {
     let disposed = false;
@@ -94,29 +103,7 @@ export function PtyTab({ sessionId, kind }: { sessionId: string; kind: DriverNam
         fontFamily: terminalFontRef.current.family,
         scrollback: 5000,
         cursorBlink: true,
-        theme: {
-          background: "#1e1f22",
-          foreground: "#bcbec4",
-          cursor: "#dfe1e5",
-          cursorAccent: "#1e1f22",
-          selectionBackground: "#214184",
-          black: "#1e1f22",
-          red: "#e06c60",
-          green: "#59a659",
-          yellow: "#e8b44f",
-          blue: "#548af7",
-          magenta: "#9c7bad",
-          cyan: "#56b6c2",
-          white: "#bcbec4",
-          brightBlack: "#85888e",
-          brightRed: "#ff8a7e",
-          brightGreen: "#7fc97f",
-          brightYellow: "#f5c86e",
-          brightBlue: "#7aa5f8",
-          brightMagenta: "#b78fd1",
-          brightCyan: "#6fc3d8",
-          brightWhite: "#f2f3f5"
-        }
+        theme: terminalTheme(themeRef.current)
       });
       termRef.current = term;
       fitAddon = new FitAddon();

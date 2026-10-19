@@ -8,6 +8,8 @@ export interface CustomModel {
   name: string;
 }
 
+export type ThemeMode = "dark" | "light" | "system";
+
 export type PrFinishedSessionStatus = "idle" | "resolved" | "archived" | "none";
 
 export type NotificationSoundId =
@@ -94,6 +96,8 @@ export interface AppSettings {
   typographyAdvanced: boolean;
   panelAnimationMs: number;
   notificationSounds: NotificationSoundSettings;
+  /** "system" follows the operating system's light or dark preference. */
+  themeMode: ThemeMode;
 }
 
 export type SettingsPatch = Partial<AppSettings>;

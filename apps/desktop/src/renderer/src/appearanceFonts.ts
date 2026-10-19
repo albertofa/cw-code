@@ -1,4 +1,5 @@
 import type { AppSettings } from "./cw.js";
+import { applyTheme } from "./theme.js";
 
 export type AppearancePrefs = Pick<
   AppSettings,
@@ -12,6 +13,7 @@ export type AppearancePrefs = Pick<
   | "fontSizeTerminal"
   | "typographyAdvanced"
   | "panelAnimationMs"
+  | "themeMode"
 >;
 
 export const DEFAULT_SANS_STACK = '"Segoe UI", system-ui, sans-serif';
@@ -30,7 +32,8 @@ export const DEFAULT_APPEARANCE: AppearancePrefs = {
   fontSizePrompt: 14,
   fontSizeTerminal: 14,
   typographyAdvanced: false,
-  panelAnimationMs: 0
+  panelAnimationMs: 0,
+  themeMode: "dark"
 };
 
 export const FONT_SIZE_LIMITS = {
@@ -53,7 +56,8 @@ export function appearanceOf(settings: AppearancePrefs): AppearancePrefs {
     fontSizePrompt: settings.fontSizePrompt,
     fontSizeTerminal: settings.fontSizeTerminal,
     typographyAdvanced: settings.typographyAdvanced,
-    panelAnimationMs: settings.panelAnimationMs
+    panelAnimationMs: settings.panelAnimationMs,
+    themeMode: settings.themeMode
   };
 }
 
@@ -122,6 +126,7 @@ export function applyAppearance(root: HTMLElement, p: AppearancePrefs): void {
   root.style.setProperty("--font-size-prompt", `${advanced ? p.fontSizePrompt : DEFAULT_APPEARANCE.fontSizePrompt}px`);
   root.style.setProperty("--font-size-term", `${advanced ? p.fontSizeTerminal : p.fontSizeCode}px`);
   root.style.setProperty("--panel-anim-ms", `${p.panelAnimationMs}ms`);
+  applyTheme(root, p.themeMode);
 }
 
 const PROBE_TEXT = "mmmmmmmmmmlli";

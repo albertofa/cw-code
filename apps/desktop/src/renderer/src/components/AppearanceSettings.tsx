@@ -1,6 +1,6 @@
 import type { ReactNode } from "react";
 import { History, Minus, Plus } from "lucide-react";
-import type { AppSettings } from "../cw.js";
+import type { AppSettings, ThemeMode } from "../cw.js";
 import {
   DEFAULT_APPEARANCE,
   DEFAULT_MONO_STACK,
@@ -14,6 +14,12 @@ import {
 import { DriverIcon } from "./DriverIcon.js";
 import { FontFamilyPicker } from "./FontFamilyPicker.js";
 import "./appearance.css";
+
+const THEME_CHOICES: { id: ThemeMode; label: string; hint: string; bg: string; surface: string; ink: string; accent: string }[] = [
+  { id: "dark", label: "Dark", hint: "The current look.", bg: "#151820", surface: "#1b202b", ink: "#e9eaf0", accent: "#795cec" },
+  { id: "light", label: "Light", hint: "Warm ivory and clay, like the Claude app.", bg: "#faf9f5", surface: "#ffffff", ink: "#141413", accent: "#c6613f" },
+  { id: "system", label: "System", hint: "Switches with your operating system.", bg: "linear-gradient(135deg, #151820 50%, #faf9f5 50%)", surface: "transparent", ink: "#8f939f", accent: "#c6613f" }
+];
 
 type FamilyKey = "fontFamilySans" | "fontFamilyMono" | "fontFamilyPrompt" | "fontFamilyTerminal";
 type SizeKey = keyof typeof FONT_SIZE_LIMITS;
@@ -176,6 +182,36 @@ export function AppearanceSettings({
 
   return (
     <>
+    <section className="settings-section appearance-section" aria-label="Theme">
+      <div className="tsec-h">
+        <h3>Theme</h3>
+      </div>
+      <span className="settings-hint">Changes apply when you save settings.</span>
+      <div className="theme-choices" role="radiogroup" aria-label="Theme">
+        {THEME_CHOICES.map((choice) => {
+          const selected = draft.themeMode === choice.id;
+          return (
+            <button
+              key={choice.id}
+              type="button"
+              role="radio"
+              aria-checked={selected}
+              className={`theme-choice${selected ? " selected" : ""}`}
+              onClick={() => onDraftChange({ themeMode: choice.id })}
+            >
+              <span className="theme-swatch" style={{ background: choice.bg }} aria-hidden="true">
+                <span className="theme-swatch-card" style={{ background: choice.surface }}>
+                  <span className="theme-swatch-line" style={{ background: choice.ink }} />
+                  <span className="theme-swatch-dot" style={{ background: choice.accent }} />
+                </span>
+              </span>
+              <span className="theme-choice-label">{choice.label}</span>
+              <small>{choice.hint}</small>
+            </button>
+          );
+        })}
+      </div>
+    </section>
     <section className="settings-section appearance-section" aria-label="Typography">
       <div className="tsec-h">
         <h3>Typography</h3>

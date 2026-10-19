@@ -17,7 +17,8 @@ import type {
   PrWorkflowIcon,
   PrWorkspaceChoice,
   SavedGitHubView,
-  SettingsPatch
+  SettingsPatch,
+  ThemeMode
 } from "@cw-code/contracts";
 import { CLAUDE_CURATED_MODELS } from "../providers/claude/ClaudeCliDriver.js";
 import { writeFileAtomic } from "../storage/atomicFile.js";
@@ -75,6 +76,8 @@ const VALID_NOTIFICATION_SOUNDS: readonly NotificationSoundId[] = [
   "muted-pluck",
   "pop"
 ];
+
+const VALID_THEME_MODES: readonly ThemeMode[] = ["dark", "light", "system"];
 
 function oneOf<T extends string>(value: unknown, allowed: readonly T[]): T | null {
   return allowed.includes(value as T) ? (value as T) : null;
@@ -230,7 +233,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
     done: { enabled: true, sound: "felt-chord", volume: 60 },
     question: { enabled: true, sound: "triple-tap", volume: 60 },
     prUpdate: { enabled: true, sound: "tock-down", volume: 60 }
-  }
+  },
+  themeMode: "dark"
 };
 
 const FONT_FAMILY_MAX_LENGTH = 200;
@@ -390,6 +394,7 @@ function sanitize(patch: SettingsPatch): SettingsPatch {
   if (patch.typographyAdvanced !== undefined) out.typographyAdvanced = patch.typographyAdvanced === true;
   if (patch.panelAnimationMs !== undefined) out.panelAnimationMs = steppedIntegerOr(patch.panelAnimationMs, DEFAULT_SETTINGS.panelAnimationMs, 0, 400, 25);
   if (patch.notificationSounds !== undefined) out.notificationSounds = sanitizeNotificationSounds(patch.notificationSounds);
+  if (patch.themeMode !== undefined) out.themeMode = oneOf(patch.themeMode, VALID_THEME_MODES) ?? DEFAULT_SETTINGS.themeMode;
   return out;
 }
 

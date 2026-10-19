@@ -124,6 +124,14 @@ export function App() {
 
   useEffect(() => applyAppearance(document.documentElement, appearance), [appearance]);
 
+  useEffect(() => {
+    if (appearance.themeMode !== "system") return;
+    const query = window.matchMedia("(prefers-color-scheme: light)");
+    const onChange = () => applyAppearance(document.documentElement, appearance);
+    query.addEventListener("change", onChange);
+    return () => query.removeEventListener("change", onChange);
+  }, [appearance]);
+
 
   const panelAnimationMs = usePanelAnimationMs();
   const rightResize = useResizableWidth({ storageKey: "cw-code:rightWidth", min: 320, max: 800, grow: "left" });

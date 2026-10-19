@@ -83,6 +83,7 @@ function settingsFixture(overrides: Partial<AppSettings> = {}): AppSettings {
       question: { enabled: true, sound: "triple-tap", volume: 60 },
       prUpdate: { enabled: true, sound: "tock-down", volume: 60 }
     },
+    themeMode: "dark",
     ...overrides
   };
 }

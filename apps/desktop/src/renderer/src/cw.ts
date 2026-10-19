@@ -23,6 +23,7 @@ import type {
   NotificationSoundId,
   NotificationSoundPreference,
   NotificationSoundSettings,
+  ThemeMode,
   PrFinishedSessionStatus,
   PrInboxResult,
   ProjectGitHubRepo,
@@ -99,6 +100,7 @@ export type {
   NotificationSoundId,
   NotificationSoundPreference,
   NotificationSoundSettings,
+  ThemeMode,
   ShutdownActiveTurn,
   ShutdownAssessment,
   ShutdownCommitResult,
@@ -612,6 +614,7 @@ export interface AppSettings {
   typographyAdvanced: boolean;
   panelAnimationMs: number;
   notificationSounds: NotificationSoundSettings;
+  themeMode: ThemeMode;
 }
 
 export type SettingsPatch = Partial<AppSettings>;

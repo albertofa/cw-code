@@ -796,4 +796,17 @@ describe("SettingsStore", () => {
     store.get().notificationSounds.done.volume = 5;
     expect(store.get().notificationSounds.done.volume).toBe(60);
   });
+
+  it("defaults the theme to dark and accepts light and system", () => {
+    const store = new SettingsStore(tempFilePath());
+    expect(store.get().themeMode).toBe("dark");
+    expect(store.set({ themeMode: "light" }).themeMode).toBe("light");
+    expect(store.set({ themeMode: "system" }).themeMode).toBe("system");
+  });
+
+  it("falls back to dark for an unknown theme", () => {
+    const store = new SettingsStore(tempFilePath());
+    store.set({ themeMode: "light" });
+    expect(store.set({ themeMode: "sepia" as unknown as AppSettings["themeMode"] }).themeMode).toBe("dark");
+  });
 });

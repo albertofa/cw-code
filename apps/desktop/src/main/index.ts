@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, nativeImage, powerMonitor, shell, type WebContents } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, nativeTheme, powerMonitor, shell, type WebContents } from "electron";
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -58,6 +58,7 @@ import { createUpdateLogFile } from "./updates/updateLog.js";
 import { firstRunChannelPatch, touchesUpdatePreferences, updatePreferences } from "./updates/updatePreferences.js";
 import { isUpdateChannel } from "./updates/updateState.js";
 import { isSkillMentionList } from "../shared/skillMentions.js";
+import { windowBackgroundColor } from "./windowTheme.js";
 
 type DriverName = DriverKind;
 
@@ -397,7 +398,7 @@ async function createWindow(): Promise<void> {
     icon: app.isPackaged
       ? join(process.resourcesPath, "branding", windowIconFile())
       : join(app.getAppPath(), "resources", windowIconFile()),
-    backgroundColor: "#141518",
+    backgroundColor: windowBackgroundColor(services?.sessions.getSettings().themeMode ?? "dark", nativeTheme.shouldUseDarkColors),
     autoHideMenuBar: true,
     webPreferences: {
       preload: resolvePreload(),

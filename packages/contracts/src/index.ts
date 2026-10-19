@@ -39,7 +39,8 @@ export type {
   NotificationSoundPreference,
   NotificationSoundSettings,
   PrFinishedSessionStatus,
-  SettingsPatch
+  SettingsPatch,
+  ThemeMode
 } from "./settings.js";
 export type {
   PrRef,

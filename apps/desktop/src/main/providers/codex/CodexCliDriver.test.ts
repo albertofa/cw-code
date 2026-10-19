@@ -57,7 +57,8 @@ const SETTINGS: AppSettings = {
     done: { enabled: true, sound: "felt-chord", volume: 60 },
     question: { enabled: true, sound: "triple-tap", volume: 60 },
     prUpdate: { enabled: true, sound: "tock-down", volume: 60 }
-  }
+  },
+  themeMode: "dark"
 };
 
 class FakeClient implements CodexAppServerLike {

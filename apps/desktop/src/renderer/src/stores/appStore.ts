@@ -35,6 +35,7 @@ import type { DirtyBuffer } from "./editorBuffers.js";
 import { usePanelStore } from "./panelStore.js";
 import { appendAssistantText, appendReasoningText, closeReasoning, upsertToolCall } from "../components/chatMessages.js";
 import { DEFAULT_APPEARANCE, appearanceOf, type AppearancePrefs } from "../appearanceFonts.js";
+import { storedThemeMode } from "../theme.js";
 import { getLastModel, setLastModel } from "../components/lastModel.js";
 import { defaultModelPatch } from "../components/modelMenus.js";
 import { fallbackHarness } from "../components/harnessAvailability.js";
@@ -437,7 +438,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   holdingAutoExpireEnabled: false,
   holdingHours: 6,
   defaultUseWorktree: true,
-  appearance: DEFAULT_APPEARANCE,
+  appearance: { ...DEFAULT_APPEARANCE, themeMode: storedThemeMode() },
   notificationSounds: null,
   reasoningExpandedByDriver: { claude: false, opencode: false, codex: false },
   defaultModelByDriver: { claude: "", opencode: "", codex: "" },
