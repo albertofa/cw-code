@@ -191,6 +191,9 @@ jobs:
           ref: ${{ job.workflow_sha }}
           path: tooling
           persist-credentials: false
+      - name: Install the gate tooling
+        working-directory: tooling
+        run: pnpm install --frozen-lockfile --ignore-scripts --filter @cw-code/release-tools
       - name: Reject any update autotest path in the packaged app
         run: node tooling/scripts/verify-installed-upgrade.mjs --assert-production-bundle apps/desktop/out/main --asar apps/desktop/dist/win-unpacked/resources/app.asar --desktop-dir apps/desktop
       - name: Record package provenance

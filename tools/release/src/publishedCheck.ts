@@ -47,6 +47,7 @@ export interface PublishedCheckReport {
 const JSON_ACCEPT = "application/json";
 const API_ACCEPT = "application/vnd.github+json";
 const TEXT_ACCEPT = "*/*";
+const NO_LATEST_RELEASE_STATUSES = new Set([404, 406]);
 
 export function parseJsonObject(body: string): Record<string, unknown> | null {
   try {
@@ -86,7 +87,7 @@ async function latestReleaseCheck({ plan, owner, repo, http }: PublishedCheckInp
     return check("latest-release", url, problems, `stable clients resolve ${plan.tag}`);
   }
   const problems = tag === plan.tag ? [`alpha ${plan.tag} is marked as the latest release, so stable clients would see it`] : [];
-  if (response.status !== 200 && response.status !== 404) problems.push(`HTTP ${response.status}`);
+  if (response.status !== 200 && !NO_LATEST_RELEASE_STATUSES.has(response.status)) problems.push(`HTTP ${response.status}`);
   return check("latest-release", url, problems, `latest release stays ${String(tag ?? "unset")}`);
 }
 

@@ -273,6 +273,9 @@ jobs:
           ref: ${{ github.workflow_sha }}
           path: tooling
           persist-credentials: false
+      - name: Install the gate tooling
+        working-directory: tooling
+        run: pnpm install --frozen-lockfile --ignore-scripts --filter @cw-code/release-tools
       - name: Production main bundle carries no update autotest path
         run: node tooling/scripts/verify-installed-upgrade.mjs --assert-production-bundle apps/desktop/out/main --desktop-dir apps/desktop
 
@@ -333,6 +336,9 @@ jobs:
           ref: ${{ github.workflow_sha }}
           path: tooling
           persist-credentials: false
+      - name: Install the gate tooling
+        working-directory: tooling
+        run: pnpm install --frozen-lockfile --ignore-scripts --filter @cw-code/release-tools
       - name: Production main bundle carries no update autotest path
         run: node tooling/scripts/verify-installed-upgrade.mjs --assert-production-bundle apps/desktop/out/main --desktop-dir apps/desktop
       - name: Package the AppImage and deb with the canonical dist script

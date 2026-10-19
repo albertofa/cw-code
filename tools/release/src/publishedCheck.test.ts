@@ -148,6 +148,14 @@ describe("checkPublishedRelease", () => {
     expect(gone).toMatch(/appimage: HTTP 404/);
   });
 
+  it("passes an alpha when no stable release exists and /releases/latest redirects to the 406 listing page", async () => {
+    const responses = published(ALPHA, null);
+    responses.set(`${BASE}/releases/latest`, { status: 406, body: Buffer.from("") });
+    expect(failures(await checkPublishedRelease({ plan: ALPHA, owner: "albertofa", repo: "cw-code", http: httpFor(responses) }))).toEqual([]);
+    responses.set(`${BASE}/releases/latest`, { status: 503, body: Buffer.from("") });
+    expect(failures(await checkPublishedRelease({ plan: ALPHA, owner: "albertofa", repo: "cw-code", http: httpFor(responses) })).join()).toMatch(/latest-release: HTTP 503/);
+  });
+
   it("fails when an alpha became the latest release or a stable one did not", async () => {
     expect(failures(await checkPublishedRelease({ plan: ALPHA, owner: "albertofa", repo: "cw-code", http: httpFor(published(ALPHA, ALPHA.tag)) })).join()).toMatch(
       /latest-release: alpha v1.2.0-alpha.3 is marked as the latest release/
