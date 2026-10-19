@@ -96,7 +96,7 @@ export function defaultSessionPanel(): SessionPanelState {
     activeBottom: "shell",
     mainOrder: ["chat"],
     bottomHeight: BOTTOM_HEIGHT_DEFAULT,
-    rightVisible: true,
+    rightVisible: false,
     bottomCollapsed: false
   };
 }
@@ -143,19 +143,6 @@ export function resolveBottomActive(
 }
 
 const ALL_TOOLS = (): boolean => true;
-
-export const DEFAULT_RIGHT_TOOL: DockableTabId = "overview";
-
-export function needsDefaultRightTool(
-  state: SessionPanelState,
-  isAvailable: (tab: DockableTabId) => boolean = ALL_TOOLS
-): boolean {
-  return (
-    state.rightVisible &&
-    state.dockByTab[DEFAULT_RIGHT_TOOL] === "closed" &&
-    rightOpenTabs(state.dockByTab, isAvailable).length === 0
-  );
-}
 
 export function isBottomOpen(dockByTab: TabDockState, isAvailable: (tab: DockableTabId) => boolean = ALL_TOOLS): boolean {
   return tabsInPanel(dockByTab, "bottom").some(isAvailable);

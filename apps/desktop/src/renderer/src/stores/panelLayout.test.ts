@@ -33,6 +33,16 @@ describe("tabsInPanel", () => {
   });
 });
 
+describe("defaultSessionPanel", () => {
+  it("starts with every tool closed and no tool panel", () => {
+    const panel = defaultSessionPanel();
+    expect(panel.rightVisible).toBe(false);
+    expect(tabsInPanel(panel.dockByTab, "right")).toEqual([]);
+    expect(tabsInPanel(panel.dockByTab, "bottom")).toEqual([]);
+    expect(panel.activeMain).toBe("chat");
+  });
+});
+
 describe("isBottomOpen", () => {
   it("is open only while a tab is docked to the bottom", () => {
     const layout = defaultLayout();
@@ -284,7 +294,7 @@ describe("usePanelStore routing", () => {
     expect(selectSessionPanel(state, "sess_a").rightVisible).toBe(false);
     expect(selectSessionPanel(state, "sess_b").dockByTab.shell).toBe("closed");
     expect(selectSessionPanel(state, "sess_b").dockByTab.files).toBe("main");
-    expect(selectSessionPanel(state, "sess_b").rightVisible).toBe(true);
+    expect(selectSessionPanel(state, "sess_b").rightVisible).toBe(false);
   });
 
   it("restores independent active tabs, collapse state, and closed tools", () => {
@@ -351,35 +361,9 @@ describe("usePanelStore routing", () => {
     expect(first.dockByTab.files).toBe("closed");
     expect(first.dockByTab.shell).toBe("closed");
     expect(first.activeMain).toBe("chat");
-    expect(first.dockByTab.overview).toBe("right");
+    expect(first.dockByTab.overview).toBe("closed");
+    expect(first.rightVisible).toBe(false);
     expect(second.dockByTab.diff).toBe("right");
-  });
-
-  it("opens the session overview when the right panel is expanded with no tools", () => {
-    usePanelStore.getState().openDefaultRightTool("sess_a");
-    const state = selectSessionPanel(usePanelStore.getState(), "sess_a");
-    expect(state.dockByTab.overview).toBe("right");
-    expect(state.activeRight).toBe("overview");
-  });
-
-  it("treats unavailable right tools as empty when picking the default", () => {
-    usePanelStore.getState().moveTab("sess_a", "codex", "right");
-    usePanelStore.getState().openDefaultRightTool("sess_a", (tab) => tab !== "codex");
-    expect(selectSessionPanel(usePanelStore.getState(), "sess_a").dockByTab.overview).toBe("right");
-  });
-
-  it("leaves the right panel alone when collapsed, already populated, or overview is docked elsewhere", () => {
-    const store = usePanelStore.getState();
-    store.setRightVisible("sess_a", false);
-    store.openDefaultRightTool("sess_a");
-    store.moveTab("sess_b", "diff", "right");
-    store.openDefaultRightTool("sess_b");
-    store.moveTab("sess_c", "overview", "bottom");
-    store.openDefaultRightTool("sess_c");
-    const state = usePanelStore.getState();
-    expect(selectSessionPanel(state, "sess_a").dockByTab.overview).toBe("closed");
-    expect(selectSessionPanel(state, "sess_b").dockByTab.overview).toBe("closed");
-    expect(selectSessionPanel(state, "sess_c").dockByTab.overview).toBe("bottom");
   });
 
   it("persists an unclaimed legacy layout when global auto locations change", () => {

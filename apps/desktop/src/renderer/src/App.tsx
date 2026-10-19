@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties } from "react";
 import { useShallow } from "zustand/react/shallow";
 import type { DriverName } from "./cw.js";
 import { applyAppearance } from "./appearanceFonts.js";
@@ -33,7 +33,7 @@ import { useAutoFollowUp } from "./components/useAutoFollowUp.js";
 import { useNotificationSounds } from "./components/useNotificationSounds.js";
 import { visibleLayerOpen } from "./components/openLayer.js";
 import { useAppStore } from "./stores/appStore.js";
-import { rightOpenTabs, DOCKABLE_TABS } from "./stores/panelLayout.js";
+import { rightOpenTabs } from "./stores/panelLayout.js";
 import { selectSessionPanel, usePanelStore } from "./stores/panelStore.js";
 import { usePrStore } from "./stores/prStore.js";
 import { useSettingsDraftStore } from "./stores/settingsDraftStore.js";
@@ -116,7 +116,6 @@ export function App() {
   const sessionPanel = usePanelStore((s) => selectSessionPanel(s, activeSessionId ?? undefined));
   const { dockByTab, rightVisible } = sessionPanel;
   const initializeSession = usePanelStore((s) => s.initializeSession);
-  const openDefaultRightTool = usePanelStore((s) => s.openDefaultRightTool);
   const activateOrOpen = usePanelStore((s) => s.activateOrOpen);
   const dropRight = useDockDrop("right", activeSessionId ?? undefined);
   const tabMenu = useTabMenu(activeSessionId ?? undefined);
@@ -127,7 +126,6 @@ export function App() {
 
 
   const panelAnimationMs = usePanelAnimationMs();
-  const rightPresence = usePresence(rightVisible, panelAnimationMs);
   const rightResize = useResizableWidth({ storageKey: "cw-code:rightWidth", min: 320, max: 800, grow: "left" });
   const rightWidth = rightResize.width ?? RIGHT_WIDTH_DEFAULT;
   const sideResize = useResizableWidth({ storageKey: "cw-code:sidebarWidth", min: 220, max: 480, grow: "right" });
@@ -401,17 +399,17 @@ export function App() {
 
   const { driver, hasPr, hasPreview, isToolAvailable, rightTop: topTool } = useToolAvailability(activeSessionId ?? undefined);
 
-  useLayoutEffect(() => {
+  useEffect(() => {
     if (!activeSessionId) return;
     initializeSession(activeSessionId);
-    openDefaultRightTool(activeSessionId, isToolAvailable);
-  }, [activeSessionId, initializeSession, openDefaultRightTool]);
+  }, [activeSessionId, initializeSession]);
   const rightTabs = rightOpenTabs(dockByTab, isToolAvailable);
-  const allTabsClosed = DOCKABLE_TABS.every((id) => dockByTab[id] === "closed" || (id === "pr" && !hasPr));
+  const rightShown = rightVisible && topTool !== null;
+  const rightPresence = usePresence(rightShown, panelAnimationMs);
 
   return (
     <div
-      className={`app-shell${rightVisible && !settingsActive ? "" : " right-hidden"}${settingsActive ? " rail-hidden" : ""}`}
+      className={`app-shell${rightShown && !settingsActive ? "" : " right-hidden"}${settingsActive ? " rail-hidden" : ""}`}
       data-driver={driver ?? "none"}
       style={shellStyle}
     >
@@ -460,7 +458,7 @@ export function App() {
             <ThreadView hidden={mainView.kind !== "session"} />
             <Notifications />
           </div>
-          {rightPresence.mounted && (
+          {rightPresence.mounted && topTool !== null && activeSessionId !== null && (
             <aside
               className={`right${rightPresence.entered ? "" : " collapsed"}${dropRight.over || draggingTab !== null ? " drop-target-active" : ""}`}
               hidden={settingsActive}
@@ -474,25 +472,13 @@ export function App() {
                   onDoubleClick={() => rightResize.setWidth(null)}
                   title="Drag to resize · double-click to reset"
                 />
-                {activeSessionId && topTool !== null ? (
-                  <RightPanelBody
-                    sessionId={activeSessionId}
-                    tabs={rightTabs}
-                    top={topTool}
-                    onToolMenu={tabMenu.onTabMenuButton}
-                    onToolContextMenu={tabMenu.onTabContextMenu}
-                  />
-                ) : (
-                  <div className="right-body">
-                    <div className="right-empty">
-                      {!activeSessionId
-                        ? "No session selected."
-                        : allTabsClosed
-                          ? "Pick a tool from the rail to open it."
-                          : "All tools are docked in other panels."}
-                    </div>
-                  </div>
-                )}
+                <RightPanelBody
+                  sessionId={activeSessionId}
+                  tabs={rightTabs}
+                  top={topTool}
+                  onToolMenu={tabMenu.onTabMenuButton}
+                  onToolContextMenu={tabMenu.onTabContextMenu}
+                />
               </div>
             </aside>
           )}
