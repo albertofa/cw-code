@@ -175,12 +175,13 @@ export async function fetchOpencodeGoUsage(enabled: boolean, deps: OpencodeGoUsa
       ? { status: "error", message: AUTH_FILE_UNREADABLE_MESSAGE }
       : { status: "unavailable", reason: "no-subscription", message: NO_SUBSCRIPTION_MESSAGE };
   }
-  let result: AccountUsageState = { status: "unavailable", reason: "key-rejected", message: KEY_REJECTED_MESSAGE };
+  let rejected: AccountUsageState = { status: "unavailable", reason: "key-rejected", message: KEY_REJECTED_MESSAGE };
   for (const token of tokens) {
-    result = await requestOpencodeGoUsage(token, deps.fetchFn);
-    if (result.status !== "unavailable" || result.reason !== "key-rejected") return result;
+    const result = await requestOpencodeGoUsage(token, deps.fetchFn);
+    if (result.status !== "unavailable") return result;
+    if (result.reason === "no-subscription") rejected = result;
   }
-  return result;
+  return rejected;
 }
 
 async function requestOpencodeGoUsage(key: string, fetchFn: typeof fetch): Promise<AccountUsageState> {

@@ -387,6 +387,42 @@ describe("fetchOpencodeGoUsage", () => {
     expect(result.status).toBe("ok");
   });
 
+  it("falls through past a signed-in account without a Go plan to a working Go key", async () => {
+    const home = tempHome();
+    writeAuthJson(home, JSON.stringify({ "opencode-go": { type: "api", key: FAKE_KEY } }));
+    writeV2Credentials(home, [{ integration: "opencode", value: oauth("fake-no-plan", Date.now() + 86_400_000), active: 1 }]);
+    const seen: string[] = [];
+    const result = await fetchOpencodeGoUsage(
+      true,
+      deps({
+        home,
+        fetchFn: async (_url, init) => {
+          const auth = new Headers(init?.headers).get("Authorization") ?? "";
+          seen.push(auth);
+          if (auth === "Bearer fake-no-plan") return new Response(null, { status: 403 });
+          return Response.json({ usage: { weekly: { status: "ok", percent: 12 } } });
+        }
+      })
+    );
+    expect(seen).toEqual(["Bearer fake-no-plan", `Bearer ${FAKE_KEY}`]);
+    expect(result.status).toBe("ok");
+  });
+
+  it("reports no-subscription over key-rejected when every credential fails", async () => {
+    const home = tempHome();
+    writeAuthJson(home, JSON.stringify({ "opencode-go": { type: "api", key: FAKE_KEY } }));
+    writeV2Credentials(home, [{ integration: "opencode", value: oauth("fake-no-plan", Date.now() + 86_400_000), active: 1 }]);
+    const result = await fetchOpencodeGoUsage(
+      true,
+      deps({
+        home,
+        fetchFn: async (_url, init) =>
+          new Response(null, { status: new Headers(init?.headers).get("Authorization") === "Bearer fake-no-plan" ? 403 : 401 })
+      })
+    );
+    expect(result).toEqual({ status: "unavailable", reason: "no-subscription", message: "No OpenCode Go subscription found" });
+  });
+
   it("reports key-rejected only after every credential is rejected", async () => {
     const home = tempHome();
     writeAuthJson(home, JSON.stringify({ "opencode-go": { type: "api", key: FAKE_KEY } }));
