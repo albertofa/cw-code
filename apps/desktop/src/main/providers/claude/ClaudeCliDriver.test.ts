@@ -61,7 +61,10 @@ const SETTINGS: AppSettings = {
     done: { enabled: true, sound: "felt-chord", volume: 60 },
     question: { enabled: true, sound: "triple-tap", volume: 60 },
     prUpdate: { enabled: true, sound: "tock-down", volume: 60 }
-  }
+  },
+  voiceProvider: "off",
+  voiceLanguage: "pt",
+  voiceGroqModel: "whisper-large-v3-turbo"
 };
 
 describe("mapClaudePermission", () => {

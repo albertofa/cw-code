@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { AccountUsageSnapshot, AppSettings, AttentionState, CliBinary, CliDiscoveredCandidate, CliDiscoverResult, CommandInvocation, CommandOption, CreateSessionOptions, GitBranchInfo, GitDiffMode, GitDiffResult, GitHubSearchResult, GitStatus, HarnessId, ImportableSession, ImportSessionRequest, ImportSessionResult, IssueDetail, IssueRef, IssueSummary, ModelMeta, PrDetail, PrInboxResult, Project, ProjectGitHubRepo, PrRef, PrSummary, PrWorkflow, RepoRef, RetryConnectionResult, RunRef, RunSources, RunsResult, SessionCleanupResult, SessionIssueLink, SessionMeta, SessionPrLink, SessionRunLink, SessionStatus, SessionStatusReason, ShutdownAssessment, ShutdownCommitResult, ShutdownExpiredEvent, ShutdownPrepareRequest, ShutdownPrepareResult, ShutdownRequestedEvent, SkillDetail, SkillMeta, SkillSaveInput, SkillsListResult, SourceControlHealth, StartupState, SubagentToolsResult, TurnChanges, UpdateActionResult, UpdateChannel, UpdateInstallRequest, UpdateState, UsageLedgerQuery, UsageLedgerRow, WorkflowRunSummary, WorktreePruneSummary } from "@cw-code/contracts";
+import type { AccountUsageSnapshot, AppSettings, AttentionState, GroqKeyResult, GroqVoiceStatus, VoiceTranscribeResult, CliBinary, CliDiscoveredCandidate, CliDiscoverResult, CommandInvocation, CommandOption, CreateSessionOptions, GitBranchInfo, GitDiffMode, GitDiffResult, GitHubSearchResult, GitStatus, HarnessId, ImportableSession, ImportSessionRequest, ImportSessionResult, IssueDetail, IssueRef, IssueSummary, ModelMeta, PrDetail, PrInboxResult, Project, ProjectGitHubRepo, PrRef, PrSummary, PrWorkflow, RepoRef, RetryConnectionResult, RunRef, RunSources, RunsResult, SessionCleanupResult, SessionIssueLink, SessionMeta, SessionPrLink, SessionRunLink, SessionStatus, SessionStatusReason, ShutdownAssessment, ShutdownCommitResult, ShutdownExpiredEvent, ShutdownPrepareRequest, ShutdownPrepareResult, ShutdownRequestedEvent, SkillDetail, SkillMeta, SkillSaveInput, SkillsListResult, SourceControlHealth, StartupState, SubagentToolsResult, TurnChanges, UpdateActionResult, UpdateChannel, UpdateInstallRequest, UpdateState, UsageLedgerQuery, UsageLedgerRow, WorkflowRunSummary, WorktreePruneSummary } from "@cw-code/contracts";
 
 export type PermissionMode = "auto" | "acceptEdits" | "bypassPermissions" | "manual";
 export type EffortLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
@@ -110,6 +110,14 @@ export interface CwApi {
   getSettings(): Promise<AppSettings>;
   setSettings(patch: Partial<AppSettings>): Promise<AppSettings>;
   getDefaultPrWorkflows(): Promise<PrWorkflow[]>;
+  voice: {
+    groqStatus(): Promise<GroqVoiceStatus>;
+    acceptGroqNotice(): Promise<GroqVoiceStatus>;
+    revokeGroqNotice(): Promise<GroqVoiceStatus>;
+    setGroqKey(key: string): Promise<GroqKeyResult>;
+    clearGroqKey(): Promise<GroqVoiceStatus>;
+    transcribeGroq(audio: ArrayBuffer, mimeType: string): Promise<VoiceTranscribeResult>;
+  };
   skills: {
     list(): Promise<SkillsListResult>;
     get(name: string): Promise<SkillDetail>;
@@ -291,6 +299,14 @@ const api: CwApi = {
   getSettings: () => ipcRenderer.invoke("settings.get"),
   setSettings: (patch: Partial<AppSettings>) => ipcRenderer.invoke("settings.set", patch),
   getDefaultPrWorkflows: () => ipcRenderer.invoke("settings.prWorkflowDefaults"),
+  voice: {
+    groqStatus: () => ipcRenderer.invoke("voice.groqStatus"),
+    acceptGroqNotice: () => ipcRenderer.invoke("voice.acceptGroqNotice"),
+    revokeGroqNotice: () => ipcRenderer.invoke("voice.revokeGroqNotice"),
+    setGroqKey: (key: string) => ipcRenderer.invoke("voice.setGroqKey", key),
+    clearGroqKey: () => ipcRenderer.invoke("voice.clearGroqKey"),
+    transcribeGroq: (audio: ArrayBuffer, mimeType: string) => ipcRenderer.invoke("voice.transcribeGroq", { audio, mimeType })
+  },
   skills: {
     list: () => ipcRenderer.invoke("skills.list"),
     get: (name: string) => ipcRenderer.invoke("skills.get", name),

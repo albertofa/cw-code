@@ -134,4 +134,14 @@ export type {
   ShutdownExpiredEvent
 } from "./shutdown.js";
 export type { AttentionState } from "./attention.js";
+export type {
+  VoiceProvider,
+  VoiceLanguage,
+  GroqVoiceModel,
+  VoiceSettings,
+  GroqVoiceStatus,
+  GroqKeyResult,
+  VoiceErrorCode,
+  VoiceTranscribeResult
+} from "./voice.js";
 export type { NativeSession, ImportableSession, ImportSessionRequest, ImportSessionResult } from "./importer.js";

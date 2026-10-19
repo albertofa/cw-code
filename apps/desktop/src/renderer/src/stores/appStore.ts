@@ -18,6 +18,7 @@ import type {
   Session,
   SessionStatus,
   NotificationSoundSettings,
+  VoiceSettings,
   SettingsPatch,
   ShutdownAssessment,
   ShutdownReason,
@@ -113,6 +114,14 @@ function withProject(projects: Project[], project: Project): Project[] {
   return projects.some((p) => p.id === project.id)
     ? projects.map((p) => (p.id === project.id ? project : p))
     : [...projects, project];
+}
+
+export function voiceSettingsOf(settings: AppSettings): VoiceSettings {
+  return {
+    provider: settings.voiceProvider,
+    language: settings.voiceLanguage,
+    groqModel: settings.voiceGroqModel
+  };
 }
 
 function reasoningExpandedFrom(settings: AppSettings): Record<DriverName, boolean> {
@@ -226,6 +235,7 @@ interface AppState {
   defaultUseWorktree: boolean;
   appearance: AppearancePrefs;
   notificationSounds: NotificationSoundSettings | null;
+  voice: VoiceSettings | null;
   reasoningExpandedByDriver: Record<DriverName, boolean>;
   defaultModelByDriver: Record<DriverName, string>;
   previewBySession: Record<string, { sessionId: string; path: string; basePath: string }>;
@@ -439,6 +449,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   defaultUseWorktree: true,
   appearance: DEFAULT_APPEARANCE,
   notificationSounds: null,
+  voice: null,
   reasoningExpandedByDriver: { claude: false, opencode: false, codex: false },
   defaultModelByDriver: { claude: "", opencode: "", codex: "" },
   updates: null,
@@ -565,6 +576,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       defaultUseWorktree: settings.defaultUseWorktree,
       appearance: appearanceOf(settings),
       notificationSounds: settings.notificationSounds,
+      voice: voiceSettingsOf(settings),
       reasoningExpandedByDriver: reasoningExpandedFrom(settings),
       defaultModelByDriver: defaultModelsFrom(settings),
       pendingWorkspace: { ...get().pendingWorkspace, ...defaultWorkspace(settings.defaultUseWorktree) }
@@ -1006,6 +1018,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       defaultUseWorktree: saved.defaultUseWorktree,
       appearance: appearanceOf(saved),
       notificationSounds: saved.notificationSounds,
+      voice: voiceSettingsOf(saved),
       reasoningExpandedByDriver: reasoningExpandedFrom(saved),
       defaultModelByDriver: defaultModelsFrom(saved)
     });
