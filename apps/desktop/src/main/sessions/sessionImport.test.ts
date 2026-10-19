@@ -12,7 +12,7 @@ function native(resumeCursor: string, cwd: string, extra: Partial<NativeSession>
 }
 
 describe("importableSessions", () => {
-  const ctx = { claimed: new Set(["codex:claimed"]), projects: [project], appRoots: [join(root, ".cw-code")] };
+  const ctx = { claimed: new Set(["codex:claimed"]), pending: [], projects: [project], appRoots: [join(root, ".cw-code")] };
 
   it("hides claimed, cw-originated and app-folder sessions and dedupes", () => {
     const listed = importableSessions(
@@ -50,5 +50,20 @@ describe("importableSessions", () => {
       [comparableRoot(join(root, "app")), "acme/other"]
     ]);
     expect(withRepositories(listed, remotes).map((s) => s.repository).sort()).toEqual(["acme/app", "acme/lib"]);
+  });
+
+  it("hides sessions a pending cw-code turn may own in the same folder and harness", () => {
+    const pending = [{ driver: "codex" as const, root: join(root, "app"), since: 1_000_000 }];
+    const listed = importableSessions(
+      [
+        native("after", join(root, "app"), { createdAt: 1_000_500 }),
+        native("just-before", join(root, "app"), { createdAt: 990_000 }),
+        native("long-before", join(root, "app"), { createdAt: 100_000 }),
+        native("other-folder", join(root, "lib"), { createdAt: 1_000_500 }),
+        native("other-harness", join(root, "app"), { createdAt: 1_000_500, driver: "claude" })
+      ],
+      { ...ctx, pending }
+    );
+    expect(listed.map((s) => s.resumeCursor).sort()).toEqual(["long-before", "other-folder", "other-harness"]);
   });
 });

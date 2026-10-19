@@ -24,11 +24,28 @@ function insideAny(path: string, roots: string[]): boolean {
   });
 }
 
+/** A cw-code session whose harness cursor is not stored yet: a turn is running, or one ran without reporting a cursor. */
+export interface PendingClaim {
+  driver: DriverKind;
+  root: string;
+  since: number;
+}
+
+const PENDING_CLAIM_SLACK_MS = 60_000;
+
 export interface ImportContext {
   claimed: Set<string>;
+  pending: PendingClaim[];
   projects: Project[];
   /** Folders cw-code owns (worktrees, internal title turns); sessions there were started by cw-code. */
   appRoots: string[];
+}
+
+function pendingClaimOf(session: NativeSession, pending: PendingClaim[]): boolean {
+  const key = comparableRoot(session.cwd);
+  return pending.some(
+    (claim) => claim.driver === session.driver && comparableRoot(claim.root) === key && session.createdAt >= claim.since - PENDING_CLAIM_SLACK_MS
+  );
 }
 
 export function importableSessions(native: NativeSession[], ctx: ImportContext): ImportableSession[] {
@@ -37,7 +54,7 @@ export function importableSessions(native: NativeSession[], ctx: ImportContext):
   for (const session of native) {
     const key = nativeSessionKey(session.driver, session.resumeCursor);
     if (seen.has(key) || ctx.claimed.has(key) || session.createdByCwCode || !session.cwd) continue;
-    if (insideAny(session.cwd, ctx.appRoots)) continue;
+    if (insideAny(session.cwd, ctx.appRoots) || pendingClaimOf(session, ctx.pending)) continue;
     seen.add(key);
     const project = projectForCwd(ctx.projects, session.cwd);
     const repository = session.gitRemote ? parseGitHubRemote(session.gitRemote)?.slug : undefined;

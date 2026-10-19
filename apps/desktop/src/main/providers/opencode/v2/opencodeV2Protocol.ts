@@ -235,7 +235,8 @@ export const opencodeV2Protocol: OpencodeProtocol = {
     const out: NativeSession[] = [];
     let cursor = "";
     for (let page = 0; page < NATIVE_SESSION_LIST_PAGES; page++) {
-      const res = await client.request(`/api/session${cursor ? `?cursor=${encodeURIComponent(cursor)}` : ""}`, { timeoutMs: OPENCODE_LIST_TIMEOUT_MS });
+      const query = `parentID=null&limit=${PAGE_LIMIT}${cursor ? `&cursor=${encodeURIComponent(cursor)}` : ""}`;
+      const res = await client.request(`/api/session?${query}`, { timeoutMs: OPENCODE_LIST_TIMEOUT_MS });
       const payload = await readJson(res, "opencode session list failed");
       const data = dataOf(payload);
       const items = Array.isArray(data) ? data : [];

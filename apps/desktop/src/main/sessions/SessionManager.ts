@@ -81,7 +81,7 @@ import { TracingCliDriver } from "../debug/tracingDriver.js";
 import { CLAUDE_CURATED_MODELS, ClaudeCliDriver } from "../providers/claude/ClaudeCliDriver.js";
 import { OpencodeDriver } from "../providers/opencode/OpencodeDriver.js";
 import { CodexCliDriver } from "../providers/codex/CodexCliDriver.js";
-import { claimedSessionKeys, importableSessions, nativeSessionKey, projectForCwd, withRepositories, type ImportContext } from "./sessionImport.js";
+import { claimedSessionKeys, importableSessions, nativeSessionKey, projectForCwd, withRepositories, type ImportContext, type PendingClaim } from "./sessionImport.js";
 import { defaultBinary, execText, GitService, mapLimit, safeSegment, sessionBranchName, type CreatedWorktree, type RemoveWorktreeResult, type ResolveBaseOptions } from "../fs/GitService.js";
 import { resolveAttachments } from "./attachments.js";
 import { AUTO_TITLE_TIMEOUT_MS, buildTitlePrompt, sanitizeGeneratedTitle } from "./autoTitle.js";
@@ -612,9 +612,31 @@ export class SessionManager {
     return withCreateNotice(session, worktree.baseWarning);
   }
 
+  private pendingImportClaims(): PendingClaim[] {
+    const turnStarts = new Map<string, number>();
+    for (const { sessionId, startedAt } of this.activeTurns.values()) {
+      turnStarts.set(sessionId, Math.min(turnStarts.get(sessionId) ?? startedAt, startedAt));
+    }
+    const claims: PendingClaim[] = [];
+    for (const session of this.store.listAllSessions()) {
+      const root = this.sessionRoot(session);
+      if (!root) continue;
+      const ranWithoutCursor =
+        !session.resumeCursor &&
+        (session.lastTurnSnapshot !== undefined || session.title.trim().toLowerCase() !== NEW_SESSION_TITLE.toLowerCase());
+      const since =
+        turnStarts.get(session.id) ??
+        (this.pendingTurns.has(session.id) ? Date.now() : undefined) ??
+        (ranWithoutCursor ? (session.lastTurnSnapshot?.capturedAt ?? session.createdAt) : undefined);
+      if (since !== undefined) claims.push({ driver: session.driver, root, since });
+    }
+    return claims;
+  }
+
   private importContext(): ImportContext {
     return {
       claimed: claimedSessionKeys(this.store.listAllSessions()),
+      pending: this.pendingImportClaims(),
       projects: this.store.listProjects(),
       appRoots: [cwCodeHome(), this.worktreesRoot, this.titleGenPath, ...this.legacyAppRoots]
     };

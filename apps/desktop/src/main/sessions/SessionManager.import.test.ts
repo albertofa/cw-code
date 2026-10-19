@@ -44,6 +44,7 @@ function setup() {
   });
   const driver = new NativeListingDriver();
   (manager as unknown as { drivers: Record<string, CliDriver> }).drivers = { claude: driver, opencode: driver, codex: driver };
+  manager.setSettings({ autoTitleEnabled: false });
   const folder = (name: string) => {
     const path = join(dir, name);
     mkdirSync(path, { recursive: true });
@@ -115,5 +116,42 @@ describe("session import", () => {
     await expect(manager.importSession({ driver: "claude", resumeCursor: "gone" })).rejects.toThrow(/no longer exists/);
     await expect(manager.importSession({ driver: "claude", resumeCursor: "unknown" })).rejects.toThrow(/not found/);
     expect(manager.listProjects()).toEqual([]);
+  });
+
+  it("hides sessions a running cw-code turn may own before its cursor is stored", async () => {
+    const { manager, driver, folder } = setup();
+    const cwd = folder("busy");
+    const other = folder("other");
+    const project = manager.addProject(cwd);
+    const session = await manager.createSession(project.id, "claude", { useWorktree: false });
+    await manager.startTurn(session.id, "do the thing");
+    const now = Date.now();
+    driver.native = [
+      native({ resumeCursor: "in-flight", cwd, createdAt: now }),
+      native({ resumeCursor: "older", cwd, createdAt: now - 10 * 60_000 }),
+      native({ resumeCursor: "elsewhere", cwd: other, createdAt: now })
+    ];
+
+    const listed = await manager.listImportableSessions("claude");
+
+    expect(listed.map((s) => s.resumeCursor).sort()).toEqual(["elsewhere", "older"]);
+    await expect(manager.importSession({ driver: "claude", resumeCursor: "in-flight" })).rejects.toThrow(/already managed/);
+  });
+
+  it("hides sessions created after a cw-code turn that ended without a cursor", async () => {
+    const { manager, driver, folder } = setup();
+    const cwd = folder("errored");
+    const project = manager.addProject(cwd);
+    const session = await manager.createSession(project.id, "claude", { useWorktree: false });
+    (manager as unknown as { store: { updateSession(id: string, patch: { title: string }): void } }).store.updateSession(session.id, {
+      title: "Fix the login redirect"
+    });
+    driver.native = [
+      native({ resumeCursor: "orphan", cwd, createdAt: session.createdAt + 1_000 }),
+      native({ resumeCursor: "older", cwd, createdAt: session.createdAt - 10 * 60_000 }),
+      native({ resumeCursor: "other-harness", cwd, createdAt: session.createdAt + 1_000, driver: "codex" })
+    ];
+
+    expect((await manager.listImportableSessions("claude")).map((s) => s.resumeCursor).sort()).toEqual(["older", "other-harness"]);
   });
 });

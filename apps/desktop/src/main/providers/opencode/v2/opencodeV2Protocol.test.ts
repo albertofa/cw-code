@@ -199,6 +199,6 @@ describe("opencodeV2Protocol requests", () => {
       { driver: "opencode", resumeCursor: "ses_a", title: "A", cwd: CWD, createdAt: 1, updatedAt: 2 },
       { driver: "opencode", resumeCursor: "ses_c", title: "ses_c", cwd: "/other", createdAt: 5, updatedAt: 5 }
     ]);
-    expect(seen.map((s) => s.path)).toEqual(["/api/session", "/api/session?cursor=c1"]);
+    expect(seen.map((s) => s.path)).toEqual(["/api/session?parentID=null&limit=200", "/api/session?parentID=null&limit=200&cursor=c1"]);
   });
 });
