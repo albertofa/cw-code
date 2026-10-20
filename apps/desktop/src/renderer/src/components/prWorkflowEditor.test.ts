@@ -11,6 +11,7 @@ import {
   moveWorkflow,
   moveWorkflowTo,
   newWorkflowId,
+  resetWorkflowTemplateTo,
   resetWorkflowTo,
   templateVarIssues,
   workflowsValidationError,
@@ -161,6 +162,24 @@ describe("resetWorkflowTo", () => {
   it("is a no-op when no default exists for the id", () => {
     const existing = [workflow({ id: "review" })];
     expect(resetWorkflowTo(existing, "review", [])).toBe(existing);
+  });
+});
+
+describe("resetWorkflowTemplateTo", () => {
+  it("restores only the given template and keeps every other edit", () => {
+    const existing = [
+      workflow({ id: "review", label: "Renamed", workspace: "worktree", enabled: false, startPrompt: "edited start", updatePrompt: "edited update" })
+    ];
+    const defaults = [workflow({ id: "review" })];
+    expect(resetWorkflowTemplateTo(existing, "review", "startPrompt", defaults)[0]).toEqual({ ...existing[0], startPrompt: "start" });
+    expect(resetWorkflowTemplateTo(existing, "review", "updatePrompt", defaults)[0]).toEqual({ ...existing[0], updatePrompt: "update" });
+  });
+
+  it("is a no-op for a custom workflow or a missing default", () => {
+    const custom = [workflow({ id: "custom-1", builtIn: false, startPrompt: "x" })];
+    expect(resetWorkflowTemplateTo(custom, "custom-1", "startPrompt", [workflow({ id: "custom-1" })])).toBe(custom);
+    const builtIn = [workflow({ id: "review", startPrompt: "x" })];
+    expect(resetWorkflowTemplateTo(builtIn, "review", "startPrompt", [])).toBe(builtIn);
   });
 });
 

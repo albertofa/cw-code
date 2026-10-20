@@ -104,15 +104,23 @@ export function deleteWorkflow(existing: PrWorkflow[], id: string): PrWorkflow[]
   return existing.filter((w) => w.id !== id);
 }
 
-export function resetWorkflowTo(existing: PrWorkflow[], id: string, defaults: PrWorkflow[]): PrWorkflow[] {
+function resetBuiltIn(existing: PrWorkflow[], id: string, defaults: PrWorkflow[], merge: (entry: PrWorkflow, fallback: PrWorkflow) => PrWorkflow): PrWorkflow[] {
   const index = existing.findIndex((w) => w.id === id);
   const entry = existing[index];
   if (!entry || !entry.builtIn) return existing;
   const fallback = defaults.find((w) => w.id === id);
   if (!fallback) return existing;
   const next = [...existing];
-  next[index] = { ...fallback, enabled: entry.enabled };
+  next[index] = merge(entry, fallback);
   return next;
+}
+
+export function resetWorkflowTo(existing: PrWorkflow[], id: string, defaults: PrWorkflow[]): PrWorkflow[] {
+  return resetBuiltIn(existing, id, defaults, (entry, fallback) => ({ ...fallback, enabled: entry.enabled }));
+}
+
+export function resetWorkflowTemplateTo(existing: PrWorkflow[], id: string, field: "startPrompt" | "updatePrompt", defaults: PrWorkflow[]): PrWorkflow[] {
+  return resetBuiltIn(existing, id, defaults, (entry, fallback) => ({ ...entry, [field]: fallback[field] }));
 }
 
 export function insertAtCursor(value: string, insertText: string, start: number, end: number): { value: string; cursor: number } {
