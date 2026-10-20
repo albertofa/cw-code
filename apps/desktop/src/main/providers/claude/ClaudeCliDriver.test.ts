@@ -1380,6 +1380,7 @@ describe("ClaudeCliDriver persistent process", () => {
     const { driver, events, children } = makeDriver();
     const handle = driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });
     await settle();
+    children[0].stdout.write(`${JSON.stringify({ type: "system", subtype: "init", session_id: "cli-session-1" })}\n`);
     children[0].stderr.write("Sandbox disabled");
     await settle();
     children[0].emit("close", 1);
@@ -1388,7 +1389,8 @@ describe("ClaudeCliDriver persistent process", () => {
       expect.objectContaining({
         type: "turn.error",
         turnId: handle.turnId,
-        message: "claude exited before completing the turn (code 1)"
+        message: "claude exited before completing the turn (code 1)",
+        resumeCursor: "cli-session-1"
       })
     );
   });
