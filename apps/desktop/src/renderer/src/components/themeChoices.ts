@@ -1,4 +1,4 @@
-import { THEME_NAME_MAX_LENGTH, UNTITLED_THEME_NAME, resolveActiveTheme } from "../../../shared/themes.js";
+import { THEME_NAME_MAX_LENGTH, UNTITLED_THEME_NAME, bundledTheme, resolveActiveTheme } from "../../../shared/themes.js";
 import type { CustomTheme, ThemeBase } from "../cw.js";
 
 export const BUILTIN_THEME_NAMES: Readonly<Record<ThemeBase, string>> = { dark: "Dark", light: "Light" };
@@ -24,9 +24,13 @@ export function customThemeName(theme: CustomTheme): string {
   return theme.name.trim() || UNTITLED_THEME_NAME;
 }
 
+function namedTheme(themeId: string, customThemes: readonly CustomTheme[]): CustomTheme | undefined {
+  return bundledTheme(themeId) ?? customThemes.find((theme) => theme.id === themeId);
+}
+
 export function activeThemeName(themeId: string, customThemes: readonly CustomTheme[], prefersLight: boolean): string {
-  const custom = customThemes.find((theme) => theme.id === themeId);
-  if (custom) return customThemeName(custom);
+  const named = namedTheme(themeId, customThemes);
+  if (named) return customThemeName(named);
   return BUILTIN_THEME_NAMES[resolveActiveTheme(themeId, customThemes, prefersLight).base];
 }
 
@@ -37,7 +41,7 @@ export function newCustomTheme(
   uuid: string
 ): CustomTheme {
   const { base } = resolveActiveTheme(themeId, customThemes, prefersLight);
-  const source = customThemes.find((theme) => theme.id === themeId);
+  const source = namedTheme(themeId, customThemes);
   const sourceName = activeThemeName(themeId, customThemes, prefersLight)
     .slice(0, THEME_NAME_MAX_LENGTH - COPY_SUFFIX.length)
     .trimEnd();

@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
 import { History, Minus, Palette as PaletteIcon, Plus } from "lucide-react";
-import { MAX_CUSTOM_THEMES, THEME_PALETTES, deriveThemeTokens } from "../../../shared/themes.js";
-import type { AppSettings, CustomTheme } from "../cw.js";
+import { BUNDLED_THEMES, MAX_CUSTOM_THEMES, THEME_PALETTES, deriveThemeTokens } from "../../../shared/themes.js";
+import type { AppSettings, CustomTheme, ThemeBase } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import { SYSTEM_LIGHT_QUERY } from "../theme.js";
 import {
@@ -28,10 +28,22 @@ type Palette = Record<string, string>;
 const SWATCH_TOKENS = ["gutter", "bg", "card", "border", "text", "muted", "violet"] as const;
 const CUSTOM_SWATCH_BANDS = ["bg", "card", "muted", "text", "violet", "accent", "success", "warning", "danger"] as const;
 
+const BUNDLED_HINTS: Readonly<Record<string, string>> = { claude: "Warm ivory and clay, like the Claude app." };
+
+function baseHint(base: ThemeBase): string {
+  return base === "light" ? "Based on Light." : "Based on Dark.";
+}
+
 const BUILTIN_CHOICES: readonly { id: string; label: string; hint: string; scenes: readonly Palette[] }[] = [
   { id: "dark", label: "Dark", hint: "Deep slate with a violet accent.", scenes: [THEME_PALETTES.dark] },
   { id: "light", label: "Light", hint: "Cool neutrals with a violet accent.", scenes: [THEME_PALETTES.light] },
-  { id: "system", label: "System", hint: "Follows your operating system.", scenes: [THEME_PALETTES.dark, THEME_PALETTES.light] }
+  { id: "system", label: "System", hint: "Follows your operating system.", scenes: [THEME_PALETTES.dark, THEME_PALETTES.light] },
+  ...BUNDLED_THEMES.map((theme) => ({
+    id: theme.id,
+    label: theme.name,
+    hint: BUNDLED_HINTS[theme.id] ?? baseHint(theme.base),
+    scenes: [deriveThemeTokens(theme.base, theme.colors)]
+  }))
 ];
 
 function prefersLight(): boolean {
@@ -115,7 +127,7 @@ function CustomThemeCard({ theme, ...props }: { theme: CustomTheme } & Omit<Them
     <ThemeCard
       {...props}
       label={customThemeName(theme)}
-      hint={theme.base === "light" ? "Based on Light." : "Based on Dark."}
+      hint={baseHint(theme.base)}
       swatch={<CustomThemeSwatch tokens={tokens} />}
     />
   );
