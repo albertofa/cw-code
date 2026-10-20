@@ -121,6 +121,13 @@ describe("Claude theme", () => {
     }
   });
 
+  it("keeps its derived tints on the hue of their source colors", () => {
+    expect(rgbOf(tokens["violet-line"])).toEqual(rgbOf(tokens.violet));
+    expect(rgbOf(tokens["violet-soft"])).toEqual(rgbOf(tokens.violet));
+    expect(rgbOf(tokens["codex-soft"])).toEqual(rgbOf(tokens.codex));
+    expect(rgbOf(tokens["claude-soft"])).toEqual(rgbOf(tokens.claude));
+  });
+
   it("keeps status, link and ink colors at 4.5:1 or more on bg and on their own tint", () => {
     const inks = ["success", "warning", "danger", "accent", "accent-ink", "danger-ink", "violet-ink", "md-link", "new-ink", "update"];
     for (const ink of inks) {
@@ -309,6 +316,32 @@ describe("deriveThemeTokens", () => {
     expect(tokens["user-msg"]).toBe("#2e1f22");
     expect(tokens.codex).toBe("#ff6066");
     expect(tokens["codex-soft"]).toBe("rgba(255, 96, 102, 0.14)");
+  });
+
+  it("keeps violet tints on the new violet hue at the base alpha", () => {
+    const light = deriveThemeTokens("light", { violet: "#c6613f" });
+    expect(light["violet-soft"]).toBe("rgba(198, 97, 63, 0.12)");
+    expect(light["violet-line"]).toBe("rgba(198, 97, 63, 0.35)");
+    const dark = deriveThemeTokens("dark", { violet: "#c6613f" });
+    expect(dark["violet-soft"]).toBe("rgba(198, 97, 63, 0.2)");
+    expect(dark["violet-line"]).toBe(withAlpha(dark["violet-ink"], 0.45));
+  });
+
+  it("recolors a tint from an Advanced override of its source", () => {
+    expect(deriveThemeTokens("light", { codex: "#123456" })["codex-soft"]).toBe("rgba(18, 52, 86, 0.12)");
+    expect(deriveThemeTokens("dark", { codex: "#123456" })["codex-soft"]).toBe("rgba(18, 52, 86, 0.14)");
+    expect(deriveThemeTokens("light", { claude: "#c6613f", driver: "#87867f" })).toMatchObject({
+      "claude-soft": "rgba(198, 97, 63, 0.12)",
+      "driver-soft": "rgba(135, 134, 127, 0.12)"
+    });
+  });
+
+  it("keeps the base tint when its source is set to the base value", () => {
+    const light = THEME_PALETTES.light;
+    const tokens = deriveThemeTokens("light", { codex: light.codex, claude: light.claude, opencode: light.opencode });
+    expect(tokens["codex-soft"]).toBe(light["codex-soft"]);
+    expect(tokens["claude-soft"]).toBe(light["claude-soft"]);
+    expect(tokens["opencode-soft"]).toBe(light["opencode-soft"]);
   });
 
   it("derives composer-card from card, keeping the dark base alpha", () => {

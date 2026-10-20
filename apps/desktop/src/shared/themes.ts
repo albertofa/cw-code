@@ -422,13 +422,10 @@ const DERIVED_RULES: Readonly<Record<string, DeriveColor>> = {
   "scrollbar-thumb-hover": (s) => s.text,
   "violet-strong": (s) => mixHex(s.violet, BLACK, 0.85),
   "violet-ink": violetInk,
-  "violet-soft": (s) => s.violet,
-  "violet-line": violetInk,
   "terminal-selection": (s) => mixHex(s.violet, s.bg, 0.3),
   merged: violetBlend,
   "merged-fill": (s) => mixHex(s.violet, s.text, 0.85),
   codex: violetBlend,
-  "codex-soft": violetBlend,
   "accent-ink": accentInk,
   "accent-fill": (s) => mixHex(s.accent, BLACK, 0.8),
   "md-link": accentInk,
@@ -443,6 +440,19 @@ const DERIVED_RULES: Readonly<Record<string, DeriveColor>> = {
   "diff-del-bg": (s) => mixHex(s.danger, s.bg, 0.2),
   "diff-del-ink": (s) => mixHex(s.danger, s.text, 0.75),
   "composer-card": (s) => s.card
+};
+
+function sameSource(token: string): Readonly<Record<ThemeBase, string>> {
+  return { dark: token, light: token };
+}
+
+const TINT_SOURCES: Readonly<Record<string, Readonly<Record<ThemeBase, string>>>> = {
+  "violet-soft": sameSource("violet"),
+  "violet-line": { dark: "violet-ink", light: "violet" },
+  "claude-soft": sameSource("claude"),
+  "opencode-soft": sameSource("opencode"),
+  "codex-soft": sameSource("codex"),
+  "driver-soft": sameSource("driver")
 };
 
 const RGBA_COLOR = /^rgba\((\d{1,3}), (\d{1,3}), (\d{1,3}), ([\d.]+)\)$/;
@@ -523,6 +533,13 @@ export function deriveThemeTokens(base: ThemeBase, colors: Record<string, string
     }
   }
 
+  for (const [tint, sources] of Object.entries(TINT_SOURCES)) {
+    const source = sources[base];
+    if (tokens[source] !== palette[source]) {
+      tokens[tint] = formatPaletteColor({ rgb: channels(tokens[source]), alpha: parsePaletteColor(palette[tint]).alpha });
+    }
+  }
+
   return tokens;
 }
 
@@ -551,11 +568,11 @@ export const BUNDLED_THEMES: readonly CustomTheme[] = [
       dim: "#3d3d3a",
       muted: "#545350",
       faint: "#5f5e59",
-      claude: "#b75632",
+      claude: "#b25739",
       opencode: "#1a5e9c",
       codex: "#6f4fc9",
-      violet: "#a34d30",
-      "violet-strong": "#8c4229",
+      violet: "#b25739",
+      "violet-strong": "#9c4b31",
       "violet-ink": "#904528",
       success: "#286b2b",
       warning: "#7f5000",
