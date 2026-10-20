@@ -526,6 +526,89 @@ export function deriveThemeTokens(base: ThemeBase, colors: Record<string, string
   return tokens;
 }
 
+export const BUNDLED_THEMES: readonly CustomTheme[] = [
+  {
+    id: "claude",
+    name: "Claude",
+    base: "light",
+    colors: {
+      gutter: "#e8e6dc",
+      line: "#e3e0d5",
+      editor: "#ffffff",
+      "panel-head": "#f5f4ed",
+      bg: "#faf9f5",
+      tool: "#f5f4ed",
+      "bg-deep": "#f0eee6",
+      card: "#ffffff",
+      overlay: "#ffffff",
+      "user-msg": "#f0eee6",
+      hover: "#efede4",
+      raised: "#e9e6db",
+      border: "#ddd9ce",
+      "border-soft": "#e8e5da",
+      "border-strong": "#c4c0b3",
+      text: "#141413",
+      dim: "#3d3d3a",
+      muted: "#545350",
+      faint: "#5f5e59",
+      claude: "#b75632",
+      opencode: "#1a5e9c",
+      codex: "#6f4fc9",
+      violet: "#a34d30",
+      "violet-strong": "#8c4229",
+      "violet-ink": "#904528",
+      success: "#286b2b",
+      warning: "#7f5000",
+      danger: "#a43125",
+      accent: "#1f5ecf",
+      "accent-ink": "#2153ab",
+      "danger-ink": "#a8281c",
+      "accent-fill": "#3168ce",
+      "danger-fill": "#c0392b",
+      "success-fill": "#357e39",
+      "neutral-fill": "#706f69",
+      "draft-fill": "#706f69",
+      "merged-fill": "#7a63c4",
+      update: "#12697a",
+      babysit: "#547a0d",
+      merged: "#6f4fc9",
+      skill: "#9a3fb0",
+      "md-link": "#2153ab",
+      "md-strong": "#141413",
+      driver: "#6f6e68",
+      "terminal-bg": "#faf9f5",
+      "terminal-fg": "#141413",
+      "terminal-selection": "#f0d3c6",
+      "control-ink": "#7b7a73",
+      "control-bg": "#efede4",
+      "control-bg-hover": "#e6e3d8",
+      "control-ring": "#a9a597",
+      "switch-track": "#e3e0d5",
+      "switch-ring": "#b8b4a6",
+      "menu-surface": "#ffffff",
+      "tooltip-bg": "#ffffff",
+      "modal-bar": "#f0eee6",
+      "row-selected": "#efede4",
+      "table-row-hover": "#f0eee6",
+      "bar-row-hover": "#f0eee6",
+      "tag-fill": "#e9e7de",
+      "chart-grid": "#e0ddd2",
+      "avatar-bot": "#dcd9ce",
+      "new-ink": "#2153ab",
+      "diff-add-bg": "#e3f1e1",
+      "diff-add-ink": "#1f6b2a",
+      "diff-del-bg": "#fbe3e0",
+      "diff-del-ink": "#a43125",
+      "diff-hunk-bg": "#e4ecf8",
+      "diff-hunk-ink": "#2153ab"
+    }
+  }
+];
+
+export function bundledTheme(themeId: string): CustomTheme | undefined {
+  return BUNDLED_THEMES.find((theme) => theme.id === themeId);
+}
+
 export interface ActiveTheme {
   base: ThemeBase;
   tokens: Record<string, string> | null;
@@ -542,7 +625,7 @@ export function resolveActiveTheme(
   if (themeId === "system") {
     return { base: systemPrefersLight ? "light" : "dark", tokens: null };
   }
-  const custom = customThemes.find((theme) => theme.id === themeId);
+  const custom = bundledTheme(themeId) ?? customThemes.find((theme) => theme.id === themeId);
   if (custom) {
     const base: ThemeBase = custom.base === "light" ? "light" : "dark";
     return { base, tokens: deriveThemeTokens(base, custom.colors) };

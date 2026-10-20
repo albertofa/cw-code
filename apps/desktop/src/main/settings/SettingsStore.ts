@@ -28,6 +28,7 @@ import { isMetadataDocument, type MetadataDocument, type MetadataMigration, type
 import { LastGoodRefresher, loadVersionedJson } from "../storage/versionedJson.js";
 import {
   BUILTIN_THEME_IDS,
+  bundledTheme,
   isHexColor,
   MAX_CUSTOM_THEMES,
   THEME_COLOR_TOKENS,
@@ -193,7 +194,7 @@ function sanitizeSavedViews(raw: unknown): SavedGitHubView[] {
 
 function sanitizeThemeId(raw: unknown): string {
   if (typeof raw !== "string") return "dark";
-  const isBuiltIn = (BUILTIN_THEME_IDS as readonly string[]).includes(raw);
+  const isBuiltIn = (BUILTIN_THEME_IDS as readonly string[]).includes(raw) || bundledTheme(raw) !== undefined;
   return isBuiltIn || CUSTOM_THEME_ID_PATTERN.test(raw) ? raw : "dark";
 }
 
