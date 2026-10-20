@@ -502,6 +502,7 @@ export class ClaudeCliDriver implements CliDriver {
       recordClaudeTerminalCommands(state.binary, state.cwd, systemInit.terminalSlashCommands);
       if (systemInit.skills) recordClaudeSkills(state.binary, systemInit.skills);
       if (systemInit.model) state.mainModel = systemInit.model;
+      if (systemInit.sessionId) state.resumeCursor = systemInit.sessionId;
       if (state.reportedPermissionMode !== systemInit.permissionMode) {
         state.reportedPermissionMode = systemInit.permissionMode;
         this.emit({ type: "permission.mode.reported", turnId: state.activeTurnId, mode: systemInit.permissionMode ?? null });
@@ -677,7 +678,12 @@ export class ClaudeCliDriver implements CliDriver {
       stderrPreview: state.stderr ? truncateError(state.stderr) : undefined
     });
     if (!state.completedTurn && !state.errored) {
-      this.emit({ type: "turn.error", turnId, message: describeClaudeExit(state.stderr, code) });
+      this.emit({
+        type: "turn.error",
+        turnId,
+        message: describeClaudeExit(state.stderr, code),
+        ...(state.resumeCursor ? { resumeCursor: state.resumeCursor } : {})
+      });
     }
     this.turnToSession.delete(turnId);
     this.interruptedTurns.delete(turnId);

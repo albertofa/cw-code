@@ -491,11 +491,13 @@ export interface ClaudeSystemInitInfo {
   skills?: string[];
   model?: string;
   permissionMode?: string;
+  sessionId?: string;
 }
 
 interface SystemInitMsg {
   type?: unknown;
   subtype?: unknown;
+  session_id?: unknown;
   terminal_slash_commands?: unknown;
   skills?: unknown;
   model?: unknown;
@@ -518,11 +520,13 @@ export function parseClaudeSystemInit(line: string): ClaudeSystemInitInfo | null
   const model = typeof msg.model === "string" && msg.model ? msg.model : undefined;
   const permissionMode =
     typeof msg.permissionMode === "string" && msg.permissionMode ? msg.permissionMode : undefined;
+  const sessionId = typeof msg.session_id === "string" && msg.session_id ? msg.session_id : undefined;
   return {
     terminalSlashCommands,
     ...(skills ? { skills } : {}),
     ...(model ? { model } : {}),
-    ...(permissionMode ? { permissionMode } : {})
+    ...(permissionMode ? { permissionMode } : {}),
+    ...(sessionId ? { sessionId } : {})
   };
 }
 

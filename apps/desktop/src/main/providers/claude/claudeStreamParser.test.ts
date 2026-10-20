@@ -731,6 +731,14 @@ describe("parseClaudeSystemInit", () => {
     });
   });
 
+  it("captures the CLI session id so a crashed first turn stays resumable", () => {
+    const line = JSON.stringify({ type: "system", subtype: "init", session_id: "aacad053-f633-4332-813e-4c14128ef7fc" });
+    expect(parseClaudeSystemInit(line)).toEqual({ terminalSlashCommands: [], sessionId: "aacad053-f633-4332-813e-4c14128ef7fc" });
+    expect(parseClaudeSystemInit(JSON.stringify({ type: "system", subtype: "init", session_id: 7 }))).toEqual({
+      terminalSlashCommands: []
+    });
+  });
+
   it("tolerates a missing or garbage terminal_slash_commands field", () => {
     expect(parseClaudeSystemInit(JSON.stringify({ type: "system", subtype: "init" }))).toEqual({
       terminalSlashCommands: []
