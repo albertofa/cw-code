@@ -1527,11 +1527,6 @@
 .sp-pbox .sp-h6 {
   margin: 0;
 }
-
-.sp-pbox-reset {
-  margin-left: auto;
-}
-
 .sp-code {
   box-sizing: border-box;
   width: 100%;

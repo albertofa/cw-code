@@ -501,7 +501,7 @@ function PromptBox({
           </button>
         </span>
         {workflow.builtIn && (
-          <button type="button" className="btn sp-btn-sm sp-pbox-reset" disabled={resetBusy !== null} title={`Restore the default ${title.toLowerCase()}`} onClick={onReset}>
+          <button type="button" className="btn sp-btn-sm" disabled={resetBusy !== null} title={`Restore the default ${title.toLowerCase()}`} onClick={onReset}>
             <RotateCcw size={12} aria-hidden="true" /> {resetBusy === field ? "Resetting…" : "Reset"}
           </button>
         )}
