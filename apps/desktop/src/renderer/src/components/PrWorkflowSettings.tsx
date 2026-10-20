@@ -26,6 +26,7 @@ import {
   insertAtCursor,
   moveWorkflow,
   moveWorkflowTo,
+  resetWorkflowTemplateTo,
   resetWorkflowTo,
   TARGET_HEADINGS,
   templateVarIssues,
@@ -78,6 +79,8 @@ const TARGET_SUBJECTS: Record<WorkflowTarget, string> = {
 const ICON_IDS = Object.keys(WORKFLOW_ICONS) as PrWorkflowIcon[];
 
 const NO_PRS: PrSummary[] = [];
+
+type ResetScope = "workflow" | PromptField;
 
 type PromptField = "startPrompt" | "updatePrompt";
 
@@ -454,6 +457,8 @@ function PromptBox({
   workflow,
   issues,
   onChange,
+  onReset,
+  resetBusy,
   preview
 }: {
   title: string;
@@ -462,6 +467,8 @@ function PromptBox({
   workflow: PrWorkflow;
   issues: TemplateVarIssues;
   onChange: (patch: Partial<PrWorkflow>) => void;
+  onReset: () => void;
+  resetBusy: ResetScope | null;
   preview: (template: string) => ReactNode;
 }) {
   const [mode, setMode] = useState<"template" | "preview">("template");
@@ -493,6 +500,11 @@ function PromptBox({
             Preview
           </button>
         </span>
+        {workflow.builtIn && (
+          <button type="button" className="btn sp-btn-sm" disabled={resetBusy !== null} title={`Restore the default ${title.toLowerCase()}`} onClick={onReset}>
+            <RotateCcw size={12} aria-hidden="true" /> {resetBusy === field ? "Resetting…" : "Reset"}
+          </button>
+        )}
         <small>{hint}</small>
       </div>
       {mode === "template" ? (
@@ -701,8 +713,8 @@ function WorkflowEditor({ workflow, settings, onChange, onDuplicate, onDelete, o
   onChange: (patch: Partial<PrWorkflow>) => void;
   onDuplicate: () => void;
   onDelete: () => void;
-  onReset: () => void;
-  resetBusy: boolean;
+  onReset: (scope: ResetScope) => void;
+  resetBusy: ResetScope | null;
   resetError: string | null;
 }) {
   const prs = usePrStore((s) => s.inbox?.items ?? NO_PRS);
@@ -740,8 +752,14 @@ function WorkflowEditor({ workflow, settings, onChange, onDuplicate, onDelete, o
           <span className={`sp-tag${workflow.builtIn ? "" : " custom"}`}>{workflow.builtIn ? "built-in" : "custom"}</span>
           <span className="sp-actions">
             {workflow.builtIn && (
-              <button type="button" className="btn sp-btn-sm" disabled={resetBusy} onClick={onReset}>
-                <RotateCcw size={12} aria-hidden="true" /> {resetBusy ? "Resetting…" : "Reset to default"}
+              <button
+                type="button"
+                className="btn sp-btn-sm"
+                disabled={resetBusy !== null}
+                title={`Restore every setting of ${workflow.label}`}
+                onClick={() => onReset("workflow")}
+              >
+                <RotateCcw size={12} aria-hidden="true" /> {resetBusy === "workflow" ? "Resetting…" : "Reset workflow"}
               </button>
             )}
             <button type="button" className="btn sp-btn-sm" onClick={onDuplicate}>
@@ -833,6 +851,8 @@ function WorkflowEditor({ workflow, settings, onChange, onDuplicate, onDelete, o
           workflow={workflow}
           issues={issues.startPrompt}
           onChange={onChange}
+          onReset={() => onReset("startPrompt")}
+          resetBusy={resetBusy}
           preview={preview}
         />
         <PromptBox
@@ -843,6 +863,8 @@ function WorkflowEditor({ workflow, settings, onChange, onDuplicate, onDelete, o
           workflow={workflow}
           issues={issues.updatePrompt}
           onChange={onChange}
+          onReset={() => onReset("updatePrompt")}
+          resetBusy={resetBusy}
           preview={preview}
         />
       </div>
@@ -857,7 +879,7 @@ export function PrWorkflowSettings({ focusWorkflowId }: { focusWorkflowId?: stri
   const invalidWorkflowId = useSettingsDraftStore((s) => s.invalidWorkflowId);
   const clearInvalidWorkflow = useSettingsDraftStore((s) => s.clearInvalidWorkflow);
   const [selectedId, setSelectedId] = useState<string | null>(focusWorkflowId ?? null);
-  const [resetBusyId, setResetBusyId] = useState<string | null>(null);
+  const [resetBusy, setResetBusy] = useState<{ id: string; scope: ResetScope } | null>(null);
   const [resetError, setResetError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -916,21 +938,24 @@ export function PrWorkflowSettings({ focusWorkflowId }: { focusWorkflowId?: stri
     setSelectedId(next[Math.min(index, next.length - 1)]?.id ?? null);
   };
 
-  const reset = async () => {
+  const reset = async (scope: ResetScope) => {
     if (!selected) return;
     const id = selected.id;
-    setResetBusyId(id);
+    const apply = (current: PrWorkflow[], defaults: PrWorkflow[]) =>
+      scope === "workflow" ? resetWorkflowTo(current, id, defaults) : resetWorkflowTemplateTo(current, id, scope, defaults);
+    const failure = scope === "workflow" ? "Could not reset workflow" : "Could not reset template";
+    setResetBusy({ id, scope });
     setResetError(null);
     try {
       const defaults = await window.cw.getDefaultPrWorkflows();
       const current = useSettingsDraftStore.getState().draft;
-      if (current) set({ prWorkflows: resetWorkflowTo(current.prWorkflows, id, defaults) });
+      if (current) set({ prWorkflows: apply(current.prWorkflows, defaults) });
     } catch (err) {
-      const message = errorMessage(err) || "Could not reset workflow";
+      const message = errorMessage(err) || failure;
       setResetError(message);
-      useNotifs.getState().push({ kind: "error", title: "Could not reset workflow", message });
+      useNotifs.getState().push({ kind: "error", title: failure, message });
     } finally {
-      setResetBusyId(null);
+      setResetBusy(null);
     }
   };
 
@@ -1011,8 +1036,8 @@ export function PrWorkflowSettings({ focusWorkflowId }: { focusWorkflowId?: stri
             onChange={updateSelected}
             onDuplicate={duplicate}
             onDelete={remove}
-            onReset={() => void reset()}
-            resetBusy={resetBusyId === selected.id}
+            onReset={(scope) => void reset(scope)}
+            resetBusy={resetBusy?.id === selected.id ? resetBusy.scope : null}
             resetError={resetError}
           />
         ) : (
