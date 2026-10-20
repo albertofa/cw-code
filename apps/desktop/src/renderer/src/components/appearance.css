@@ -101,7 +101,7 @@
 }
 
 .step button:disabled {
-  opacity: 0.4;
+  opacity: calc(1 - 0.6 * var(--fade-strength));
   cursor: default;
 }
 
@@ -509,7 +509,7 @@
 
 .theme-new[aria-disabled="true"] svg,
 .theme-new[aria-disabled="true"] .theme-choice-label {
-  opacity: 0.45;
+  opacity: calc(1 - 0.55 * var(--fade-strength));
 }
 
 .theme-swatch {

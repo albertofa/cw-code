@@ -33,6 +33,19 @@ function brightness(hex: string): number {
   return (rgbOf(hex) ?? []).reduce((sum, channel) => sum + channel, 0);
 }
 
+function relativeLuminance(hex: string): number {
+  const [red, green, blue] = (rgbOf(hex) ?? []).map((channel) => {
+    const value = channel / 255;
+    return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+}
+
+function contrastRatio(first: string, second: string): number {
+  const [lighter, darker] = [relativeLuminance(first), relativeLuminance(second)].sort((a, b) => b - a);
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
 describe("mixHex", () => {
   it("interpolates sRGB channels and rounds half up", () => {
     expect(mixHex("#000000", "#ffffff", 0.5)).toBe("#808080");
@@ -59,6 +72,28 @@ describe("withAlpha", () => {
 describe("THEME_PALETTES", () => {
   it("has identical token keys in dark and light", () => {
     expect(Object.keys(THEME_PALETTES.light).sort()).toEqual(Object.keys(THEME_PALETTES.dark).sort());
+  });
+});
+
+describe("light text ramp contrast", () => {
+  const light = THEME_PALETTES.light;
+
+  it("matches the WCAG reference ratios", () => {
+    expect(contrastRatio("#000000", "#ffffff")).toBeCloseTo(21, 5);
+    expect(contrastRatio("#ffffff", "#ffffff")).toBe(1);
+    expect(contrastRatio("#767676", "#ffffff")).toBeCloseTo(4.54, 2);
+  });
+
+  it("keeps every ramp step at 4.5:1 or more on every light surface", () => {
+    for (const text of ["text", "dim", "muted", "faint"]) {
+      for (const surface of ["bg", "card", "hover", "raised", "gutter", "tool", "panel-head"]) {
+        expect(contrastRatio(light[text], light[surface]), `${text} on ${surface}`).toBeGreaterThanOrEqual(4.5);
+      }
+    }
+  });
+
+  it("keeps muted at 7:1 or more on bg", () => {
+    expect(contrastRatio(light.muted, light.bg)).toBeGreaterThanOrEqual(7);
   });
 });
 
@@ -139,12 +174,12 @@ describe("deriveThemeTokens", () => {
       hover: "#eaebe9",
       raised: "#e5e5e5",
       "border-soft": "#e2e4e8",
-      faint: "#6a6f7d",
+      faint: "#5a5f6c",
       "surface-inset": "rgba(15, 18, 25, 0.04)",
       "terminal-bg": "#fdfdf5",
       "terminal-fg": "#1a1c24",
       "terminal-selection": "#d8d1f0",
-      "control-ink": "#6b707f",
+      "control-ink": "#6b6f7f",
       "control-bg": "#ebebea",
       "control-bg-hover": "#e2e3e4",
       "control-ring": "#898d95",
@@ -160,7 +195,7 @@ describe("deriveThemeTokens", () => {
       "chart-grid": "#e1e2e3",
       "avatar-bot": "#dadddf",
       "diff-add-bg": "#e1f1dd",
-      "diff-del-bg": "#f9e3db",
+      "diff-del-bg": "#f9e4db",
       "diff-hunk-bg": "#e5eaf3",
       scrim: "rgba(244, 244, 240, 0.92)"
     });

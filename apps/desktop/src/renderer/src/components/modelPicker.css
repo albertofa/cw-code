@@ -145,7 +145,7 @@
 }
 
 .mp-row.sel.hi {
-  background: color-mix(in srgb, var(--violet) 30%, transparent);
+  background: var(--violet-soft-hi);
 }
 
 .mp-row.sel .mp-n {
@@ -401,7 +401,7 @@
 }
 
 .em-it.on.hi {
-  background: color-mix(in srgb, var(--violet) 30%, transparent);
+  background: var(--violet-soft-hi);
 }
 
 .em-l {
