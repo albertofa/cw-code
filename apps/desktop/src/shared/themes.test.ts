@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { CustomTheme, ThemeBase } from "@cw-code/contracts";
 import {
+  BUILTIN_THEME_IDS,
   BUNDLED_THEMES,
   CURATED_THEME_TOKENS,
   PROJECT_HUES,
@@ -106,6 +107,16 @@ describe.each([
 
   it("keeps muted at 7:1 or more on bg", () => {
     expect(contrastRatio(palette.muted, palette.bg)).toBeGreaterThanOrEqual(7);
+  });
+});
+
+describe("BUNDLED_THEMES", () => {
+  it("never collides with a built-in id or the user custom-theme namespace", () => {
+    for (const theme of BUNDLED_THEMES) {
+      expect(BUILTIN_THEME_IDS as readonly string[]).not.toContain(theme.id);
+      expect(theme.id.startsWith("custom-")).toBe(false);
+    }
+    expect(new Set(BUNDLED_THEMES.map((theme) => theme.id)).size).toBe(BUNDLED_THEMES.length);
   });
 });
 

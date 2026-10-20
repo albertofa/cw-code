@@ -543,7 +543,7 @@ export function deriveThemeTokens(base: ThemeBase, colors: Record<string, string
   return tokens;
 }
 
-export const BUNDLED_THEMES: readonly CustomTheme[] = [
+export const BUNDLED_THEMES: readonly Readonly<CustomTheme>[] = [
   {
     id: "claude",
     name: "Claude",

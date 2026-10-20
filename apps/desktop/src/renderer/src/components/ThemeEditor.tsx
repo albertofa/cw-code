@@ -121,6 +121,7 @@ export function ThemeEditor({
   }, [autoFocusName, onNameFocused]);
 
   const tokens = useMemo(() => deriveThemeTokens(theme.base, theme.colors), [theme.base, theme.colors]);
+  const pinsShades = Object.keys(theme.colors).some((token) => !CURATED_TOKENS.has(token));
   const hasOverrides = Object.keys(theme.colors).length > 0;
   const pickColor = (token: string, value: string) => onChange({ ...theme, colors: { ...theme.colors, [token]: value.toLowerCase() } });
   const resetColor = (token: string) => onChange({ ...theme, colors: withoutColor(theme.colors, token) });
@@ -174,7 +175,11 @@ export function ThemeEditor({
         <div className="fr-h">
           <div className="lab">
             Colors
-            <small>Lighter and darker shades follow each color you set. Advanced lists every color for exact control.</small>
+            <small>
+              {pinsShades
+                ? "Colors set in Advanced stay fixed when you change the ones above; reset them there to let them follow."
+                : "Lighter and darker shades follow each color you set. Advanced lists every color for exact control."}
+            </small>
           </div>
           <div className="fr-c">
             <label className="adv">
