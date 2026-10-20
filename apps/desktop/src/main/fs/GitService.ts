@@ -1329,9 +1329,17 @@ export class GitService {
       if (!opts.force && existsSync(target) && await this.isDirtyWorktree(target)) {
         return { removed: false, dirtyBlocked: true };
       }
-      const alreadyGone = !existsSync(target);
-      if (!alreadyGone || !/not a working tree|cannot remove/i.test(message)) {
+      const unregistered = /not a working tree|cannot remove/i.test(message);
+      const emptyLeftover = existsSync(target) && readdirSync(target).length === 0;
+      if (!unregistered || (existsSync(target) && !emptyLeftover)) {
         throw new Error(`could not remove worktree '${target}': ${message}`);
+      }
+      if (emptyLeftover) {
+        try {
+          rmdirSync(target);
+        } catch (rmError) {
+          throw new Error(`could not remove the leftover folder '${target}': ${(rmError as Error).message}`);
+        }
       }
       await git.raw(["worktree", "prune"]);
       this.invalidateStatus(repositoryRoot);
