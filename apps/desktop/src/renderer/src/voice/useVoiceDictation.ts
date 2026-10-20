@@ -56,7 +56,13 @@ export function useVoiceDictation({
 
   const finish = useCallback(async () => {
     const recording = recordingRef.current;
-    if (!recording) return;
+    if (!recording) {
+      // Stop arrived while startRecording() was still in flight: invalidate the pending start so
+      // its .then() discards the recorder instead of opening the microphone nobody is waiting for.
+      runRef.current += 1;
+      setPhase("idle");
+      return;
+    }
     recordingRef.current = null;
     const run = ++runRef.current;
     const current = voiceRef.current;

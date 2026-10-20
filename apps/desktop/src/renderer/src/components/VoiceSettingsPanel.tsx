@@ -214,7 +214,8 @@ export function VoiceSettingsPanel({
             </div>
             {status?.encryptionAvailable === false && (
               <div className="settings-error" role="alert">
-                This system cannot encrypt secrets, so cw-code will not store a key. Use the on-device option instead.
+                This system cannot encrypt secrets, so cw-code will not store a key. Set up an OS keyring (GNOME
+                Keyring or KWallet on Linux) and restart cw-code, or use cw-code on a machine that has one.
               </div>
             )}
             {keyError && (
