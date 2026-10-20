@@ -44,9 +44,13 @@ const ROOT_SELECTOR = ":root {";
 const LIGHT_SELECTOR = ':root[data-theme="light"] {';
 const SCANNED_STYLESHEETS = [
   "./components/appearance.css",
-  "./components/prInbox.css",
+  "./components/loading.css",
   "./components/modelPicker.css",
-  "./components/toolRail.css"
+  "./components/prInbox.css",
+  "./components/sessionOverview.css",
+  "./components/settingsPage.css",
+  "./components/toolRail.css",
+  "./components/turnChanges.css"
 ];
 
 function readStylesheet(path: string): string {
