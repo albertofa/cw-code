@@ -83,6 +83,8 @@ function settingsFixture(overrides: Partial<AppSettings> = {}): AppSettings {
       question: { enabled: true, sound: "triple-tap", volume: 60 },
       prUpdate: { enabled: true, sound: "tock-down", volume: 60 }
     },
+    themeId: "dark",
+    customThemes: [],
     ...overrides
   };
 }
@@ -121,6 +123,14 @@ describe("changedSections", () => {
     const saved = settingsFixture();
     const draft = settingsFixture({ prWorkflows: [{ ...saved.prWorkflows[0], startPrompt: "changed" }] });
     expect(changedSections(saved, draft)).toEqual(["prWorkflows"]);
+  });
+
+  it("attributes theme edits to the Appearance page", () => {
+    const saved = settingsFixture();
+    const customThemes = [{ id: "custom-a", name: "A", base: "light" as const, colors: { bg: "#ffffff" } }];
+    const draft = settingsFixture({ themeId: "custom-a", customThemes });
+    expect(changedSections(saved, draft)).toEqual(["appearance"]);
+    expect(settingsPatch(saved, draft)).toEqual({ themeId: "custom-a", customThemes });
   });
 });
 

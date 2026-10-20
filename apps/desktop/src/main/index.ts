@@ -1,4 +1,4 @@
-import { app, BrowserWindow, dialog, ipcMain, nativeImage, powerMonitor, shell, type WebContents } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, nativeImage, nativeTheme, powerMonitor, shell, type WebContents } from "electron";
 import { appendFileSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
@@ -58,6 +58,7 @@ import { createUpdateLogFile } from "./updates/updateLog.js";
 import { firstRunChannelPatch, touchesUpdatePreferences, updatePreferences } from "./updates/updatePreferences.js";
 import { isUpdateChannel } from "./updates/updateState.js";
 import { isSkillMentionList } from "../shared/skillMentions.js";
+import { windowBackgroundColor } from "../shared/themes.js";
 
 type DriverName = DriverKind;
 
@@ -388,6 +389,16 @@ function windowIconFile(): string {
   return process.platform === "linux" ? "icon.png" : "icon.ico";
 }
 
+function currentWindowBackground(): string {
+  const settings = services?.sessions.getSettings();
+  return windowBackgroundColor(settings?.themeId ?? "dark", settings?.customThemes ?? [], !nativeTheme.shouldUseDarkColors);
+}
+
+function syncWindowBackground(): void {
+  if (!mainWindow || mainWindow.isDestroyed()) return;
+  mainWindow.setBackgroundColor(currentWindowBackground());
+}
+
 async function createWindow(): Promise<void> {
   mainWindow = new BrowserWindow({
     width: 1440,
@@ -397,7 +408,7 @@ async function createWindow(): Promise<void> {
     icon: app.isPackaged
       ? join(process.resourcesPath, "branding", windowIconFile())
       : join(app.getAppPath(), "resources", windowIconFile()),
-    backgroundColor: "#141518",
+    backgroundColor: currentWindowBackground(),
     autoHideMenuBar: true,
     webPreferences: {
       preload: resolvePreload(),
@@ -861,6 +872,7 @@ function registerIpc(services: Services): void {
     }
     if (patch.opencodeGoUsage !== undefined) accountUsage.invalidate("opencode");
     const saved = sessions.setSettings(normalized);
+    if (patch.themeId !== undefined || patch.customThemes !== undefined) syncWindowBackground();
     if (touchesUpdatePreferences(patch)) applyUpdatePreferences(updates, saved);
     return saved;
   });
@@ -1325,6 +1337,7 @@ async function startApp(): Promise<void> {
   process.once("SIGINT", quitWithoutDialog);
   process.once("SIGTERM", quitWithoutDialog);
   powerMonitor.on("shutdown", endOfSession);
+  nativeTheme.on("updated", syncWindowBackground);
   app.on("child-process-gone", (_e, details) => {
     appendCrashLog(
       `child-process-gone: type=${details.type} reason=${details.reason} exitCode=${details.exitCode}`

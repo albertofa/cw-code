@@ -34,12 +34,14 @@ export type { TaskEndReason, TaskKind, TaskSnapshot, TaskState } from "./tasks.j
 export type {
   AppSettings,
   CustomModel,
+  CustomTheme,
   NotificationSoundEvent,
   NotificationSoundId,
   NotificationSoundPreference,
   NotificationSoundSettings,
   PrFinishedSessionStatus,
-  SettingsPatch
+  SettingsPatch,
+  ThemeBase
 } from "./settings.js";
 export type {
   PrRef,

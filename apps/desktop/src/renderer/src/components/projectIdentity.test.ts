@@ -13,9 +13,9 @@ describe("deriveProjectIdentity", () => {
   });
 
   it.each([
-    ["cmutil-nuget", "#00bcff"],
-    ["nuria-devkit", "#9ae600"],
-    ["connect-info", "#ff6467"],
+    ["cmutil-nuget", "var(--project-sky)"],
+    ["nuria-devkit", "var(--project-lime)"],
+    ["connect-info", "var(--project-red)"],
   ])("derives color for %j", (name, color) => {
     expect(deriveProjectIdentity(name).color).toBe(color);
   });

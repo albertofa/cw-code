@@ -1,6 +1,9 @@
-import type { ReactNode } from "react";
-import { History, Minus, Plus } from "lucide-react";
-import type { AppSettings } from "../cw.js";
+import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
+import { History, Minus, Palette as PaletteIcon, Plus } from "lucide-react";
+import { MAX_CUSTOM_THEMES, THEME_PALETTES, deriveThemeTokens } from "../../../shared/themes.js";
+import type { AppSettings, CustomTheme } from "../cw.js";
+import { useAppStore } from "../stores/appStore.js";
+import { SYSTEM_LIGHT_QUERY } from "../theme.js";
 import {
   DEFAULT_APPEARANCE,
   DEFAULT_MONO_STACK,
@@ -11,9 +14,236 @@ import {
   fontStack,
   resolveTerminalFont
 } from "../appearanceFonts.js";
+import { useConfirm } from "./ConfirmDialog.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { FontFamilyPicker } from "./FontFamilyPicker.js";
+import { sameValue } from "./settingsSections.js";
+import { ThemeEditor } from "./ThemeEditor.js";
+import { customThemeName, newCustomTheme } from "./themeChoices.js";
 import "./appearance.css";
+
+type SwatchStyle = CSSProperties & Record<`--sw-${string}`, string>;
+type Palette = Record<string, string>;
+
+const SWATCH_TOKENS = ["gutter", "bg", "card", "border", "text", "muted", "violet"] as const;
+const CUSTOM_SWATCH_BANDS = ["bg", "card", "muted", "text", "violet", "accent", "success", "warning", "danger"] as const;
+
+const BUILTIN_CHOICES: readonly { id: string; label: string; hint: string; scenes: readonly Palette[] }[] = [
+  { id: "dark", label: "Dark", hint: "Deep slate with a violet accent.", scenes: [THEME_PALETTES.dark] },
+  { id: "light", label: "Light", hint: "Cool neutrals with a violet accent.", scenes: [THEME_PALETTES.light] },
+  { id: "system", label: "System", hint: "Follows your operating system.", scenes: [THEME_PALETTES.dark, THEME_PALETTES.light] }
+];
+
+function prefersLight(): boolean {
+  return window.matchMedia(SYSTEM_LIGHT_QUERY).matches;
+}
+
+function swatchStyle(tokens: Palette): SwatchStyle {
+  const style: SwatchStyle = {};
+  for (const token of SWATCH_TOKENS) style[`--sw-${token}`] = tokens[token] ?? "";
+  return style;
+}
+
+function ThemeSwatch({ scenes }: { scenes: readonly Palette[] }) {
+  return (
+    <span className="theme-swatch" aria-hidden="true">
+      {scenes.map((tokens, index) => (
+        <span key={index} className={`tsw-scene${index > 0 ? " second" : ""}`} style={swatchStyle(tokens)}>
+          <span className="tsw-win">
+            <span className="tsw-card">
+              <span className="tsw-lines">
+                <span className="tsw-line" />
+                <span className="tsw-line short" />
+              </span>
+              <span className="tsw-dot" />
+            </span>
+          </span>
+        </span>
+      ))}
+    </span>
+  );
+}
+
+function CustomThemeSwatch({ tokens }: { tokens: Palette }) {
+  return (
+    <span className="theme-swatch custom" aria-hidden="true" style={swatchStyle(tokens)}>
+      <span className="tsw-bands">
+        {CUSTOM_SWATCH_BANDS.map((token) => (
+          <span key={token} className="tsw-band" style={{ background: tokens[token] }} />
+        ))}
+      </span>
+      <span className="tsw-badge">
+        <PaletteIcon size={12} />
+      </span>
+    </span>
+  );
+}
+
+interface ThemeCardProps {
+  label: string;
+  hint: string;
+  swatch: ReactNode;
+  selected: boolean;
+  focusable: boolean;
+  register: (element: HTMLButtonElement | null) => void;
+  onSelect: () => void;
+  onKeyDown: (event: KeyboardEvent<HTMLButtonElement>) => void;
+}
+
+function ThemeCard({ label, hint, swatch, selected, focusable, register, onSelect, onKeyDown }: ThemeCardProps) {
+  return (
+    <button
+      ref={register}
+      type="button"
+      role="radio"
+      aria-checked={selected}
+      tabIndex={focusable ? 0 : -1}
+      className="theme-choice"
+      onClick={onSelect}
+      onKeyDown={onKeyDown}
+    >
+      {swatch}
+      <span className="theme-choice-label">{label}</span>
+      <small>{hint}</small>
+    </button>
+  );
+}
+
+function CustomThemeCard({ theme, ...props }: { theme: CustomTheme } & Omit<ThemeCardProps, "label" | "hint" | "swatch">) {
+  const tokens = useMemo(() => deriveThemeTokens(theme.base, theme.colors), [theme.base, theme.colors]);
+  return (
+    <ThemeCard
+      {...props}
+      label={customThemeName(theme)}
+      hint={theme.base === "light" ? "Based on Light." : "Based on Dark."}
+      swatch={<CustomThemeSwatch tokens={tokens} />}
+    />
+  );
+}
+
+const NEXT_INDEX: Readonly<Record<string, (index: number, count: number) => number>> = {
+  ArrowRight: (index, count) => (index + 1) % count,
+  ArrowDown: (index, count) => (index + 1) % count,
+  ArrowLeft: (index, count) => (index - 1 + count) % count,
+  ArrowUp: (index, count) => (index - 1 + count) % count,
+  Home: () => 0,
+  End: (_index, count) => count - 1
+};
+
+function useThemePreview(themeId: string, customThemes: CustomTheme[], previewing: boolean): void {
+  const setThemePreview = useAppStore((s) => s.setThemePreview);
+
+  useEffect(() => {
+    setThemePreview(previewing ? { themeId, customThemes } : null);
+  }, [setThemePreview, previewing, themeId, customThemes]);
+
+  useEffect(() => () => setThemePreview(null), [setThemePreview]);
+}
+
+function ThemeSection({ draft, onDraftChange }: { draft: AppSettings; onDraftChange: (patch: Partial<AppSettings>) => void }) {
+  const { themeId, customThemes } = draft;
+  const saved = useAppStore((s) => s.appearance);
+  const { confirm, dialog } = useConfirm();
+  const radios = useRef(new Map<string, HTMLButtonElement>());
+  const focusAfterDelete = useRef<string | null>(null);
+  const [createdId, setCreatedId] = useState<string | null>(null);
+  const previewing = !sameValue(themeId, saved.themeId) || !sameValue(customThemes, saved.customThemes);
+  useThemePreview(themeId, customThemes, previewing);
+
+  useEffect(() => {
+    const id = focusAfterDelete.current;
+    if (id === null) return;
+    focusAfterDelete.current = null;
+    radios.current.get(id)?.focus();
+  }, [themeId, customThemes]);
+
+  const ids = [...BUILTIN_CHOICES.map((choice) => choice.id), ...customThemes.map((theme) => theme.id)];
+  const focusableId = ids.includes(themeId) ? themeId : ids[0];
+  const editing = customThemes.find((theme) => theme.id === themeId);
+  const atLimit = customThemes.length >= MAX_CUSTOM_THEMES;
+
+  const select = (id: string) => {
+    if (id !== themeId) onDraftChange({ themeId: id });
+  };
+
+  const cardProps = (id: string, index: number) => ({
+    selected: id === themeId,
+    focusable: id === focusableId,
+    register: (element: HTMLButtonElement | null) => {
+      if (element) radios.current.set(id, element);
+      else radios.current.delete(id);
+    },
+    onSelect: () => select(id),
+    onKeyDown: (event: KeyboardEvent<HTMLButtonElement>) => {
+      const next = NEXT_INDEX[event.key];
+      if (!next) return;
+      event.preventDefault();
+      const nextId = ids[next(index, ids.length)];
+      if (!nextId) return;
+      select(nextId);
+      radios.current.get(nextId)?.focus();
+    }
+  });
+
+  const createTheme = () => {
+    if (atLimit) return;
+    const theme = newCustomTheme(themeId, customThemes, prefersLight(), crypto.randomUUID());
+    setCreatedId(theme.id);
+    onDraftChange({ customThemes: [...customThemes, theme], themeId: theme.id });
+  };
+
+  const updateTheme = (next: CustomTheme) =>
+    onDraftChange({ customThemes: customThemes.map((theme) => (theme.id === next.id ? next : theme)) });
+
+  const deleteTheme = async (theme: CustomTheme) => {
+    const ok = await confirm({
+      title: `Delete ${customThemeName(theme)}?`,
+      message: "The theme and its colors are removed when you save settings.",
+      danger: true,
+      confirmLabel: "Delete theme"
+    });
+    if (!ok) return;
+    focusAfterDelete.current = theme.base;
+    onDraftChange({ customThemes: customThemes.filter((entry) => entry.id !== theme.id), themeId: theme.base });
+  };
+
+  return (
+    <section className="settings-section appearance-section" aria-label="Theme">
+      <div className="tsec-h">
+        <h3>Theme</h3>
+      </div>
+      <span className="settings-hint theme-previewing" role="status">
+        {previewing ? "Previewing — save to keep these colors." : ""}
+      </span>
+      <div className="theme-picker">
+        <div className="theme-choices" role="radiogroup" aria-label="Theme">
+          {BUILTIN_CHOICES.map((choice, index) => (
+            <ThemeCard key={choice.id} {...cardProps(choice.id, index)} label={choice.label} hint={choice.hint} swatch={<ThemeSwatch scenes={choice.scenes} />} />
+          ))}
+          {customThemes.map((theme, index) => (
+            <CustomThemeCard key={theme.id} theme={theme} {...cardProps(theme.id, BUILTIN_CHOICES.length + index)} />
+          ))}
+        </div>
+        <button type="button" className="theme-new" aria-disabled={atLimit} onClick={createTheme}>
+          <Plus size={16} aria-hidden="true" />
+          <span className="theme-choice-label">New theme</span>
+          <small>{atLimit ? `You've reached the limit of ${MAX_CUSTOM_THEMES} themes.` : "Starts as a copy of the selected theme."}</small>
+        </button>
+      </div>
+      {editing && (
+        <ThemeEditor
+          key={editing.id}
+          theme={editing}
+          autoFocusName={editing.id === createdId}
+          onNameFocused={() => setCreatedId(null)}
+          onChange={updateTheme}
+          onDelete={() => void deleteTheme(editing)}
+        />
+      )}
+      {dialog}
+    </section>
+  );
+}
 
 type FamilyKey = "fontFamilySans" | "fontFamilyMono" | "fontFamilyPrompt" | "fontFamilyTerminal";
 type SizeKey = keyof typeof FONT_SIZE_LIMITS;
@@ -176,6 +406,7 @@ export function AppearanceSettings({
 
   return (
     <>
+    <ThemeSection draft={draft} onDraftChange={onDraftChange} />
     <section className="settings-section appearance-section" aria-label="Typography">
       <div className="tsec-h">
         <h3>Typography</h3>

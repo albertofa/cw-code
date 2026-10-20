@@ -2,6 +2,7 @@ import { mkdirSync } from "node:fs";
 import { dirname } from "node:path";
 import type {
   AppSettings,
+  CustomTheme,
   DriverKind,
   EffortLevel,
   GitHubKind,
@@ -17,13 +18,22 @@ import type {
   PrWorkflowIcon,
   PrWorkspaceChoice,
   SavedGitHubView,
-  SettingsPatch
+  SettingsPatch,
+  ThemeBase
 } from "@cw-code/contracts";
 import { CLAUDE_CURATED_MODELS } from "../providers/claude/ClaudeCliDriver.js";
 import { writeFileAtomic } from "../storage/atomicFile.js";
 import { backupBeforeRepair } from "../storage/backups.js";
 import { isMetadataDocument, type MetadataDocument, type MetadataMigration, type MetadataSchema } from "../storage/metadataDocument.js";
 import { LastGoodRefresher, loadVersionedJson } from "../storage/versionedJson.js";
+import {
+  BUILTIN_THEME_IDS,
+  isHexColor,
+  MAX_CUSTOM_THEMES,
+  THEME_COLOR_TOKENS,
+  THEME_NAME_MAX_LENGTH,
+  UNTITLED_THEME_NAME
+} from "../../shared/themes.js";
 import { defaultPrWorkflows, RETIRED_BUILT_IN_PROMPTS } from "./prWorkflowDefaults.js";
 import {
   configuredCliBinaryPath,
@@ -51,6 +61,8 @@ const VALID_EFFORTS: readonly EffortLevel[] = ["minimal", "low", "medium", "high
 const VALID_PERMISSION_MODES: readonly PermissionMode[] = ["auto", "acceptEdits", "bypassPermissions", "manual"];
 const VALID_VIEW_KINDS: readonly GitHubKind[] = ["pr", "issue", "run"];
 const VALID_VIEW_GROUPS: readonly GitHubViewGroup[] = ["triage", "repo", "none"];
+const VALID_THEME_BASES: readonly ThemeBase[] = ["dark", "light"];
+const CUSTOM_THEME_ID_PATTERN = /^custom-[a-z0-9-]{1,64}$/;
 const MAX_SAVED_VIEWS = 50;
 const MAX_VIEW_NAME_LENGTH = 80;
 const MAX_VIEW_QUERY_LENGTH = 512;
@@ -179,6 +191,52 @@ function sanitizeSavedViews(raw: unknown): SavedGitHubView[] {
   return views;
 }
 
+function sanitizeThemeId(raw: unknown): string {
+  if (typeof raw !== "string") return "dark";
+  const isBuiltIn = (BUILTIN_THEME_IDS as readonly string[]).includes(raw);
+  return isBuiltIn || CUSTOM_THEME_ID_PATTERN.test(raw) ? raw : "dark";
+}
+
+function sanitizeThemeColors(raw: unknown): Record<string, string> {
+  const o = raw && typeof raw === "object" ? (raw as Record<string, unknown>) : {};
+  const colors: Record<string, string> = {};
+  for (const [token, value] of Object.entries(o)) {
+    if (THEME_COLOR_TOKENS.includes(token) && isHexColor(value)) colors[token] = value.toLowerCase();
+  }
+  return colors;
+}
+
+function sanitizeCustomTheme(entry: unknown): CustomTheme | null {
+  if (!entry || typeof entry !== "object") return null;
+  const o = entry as Record<string, unknown>;
+  if (typeof o.id !== "string" || !CUSTOM_THEME_ID_PATTERN.test(o.id)) return null;
+  const name = typeof o.name === "string" ? o.name.trim().slice(0, THEME_NAME_MAX_LENGTH).trim() : "";
+  return {
+    id: o.id,
+    name: name || UNTITLED_THEME_NAME,
+    base: oneOf(o.base, VALID_THEME_BASES) ?? "dark",
+    colors: sanitizeThemeColors(o.colors)
+  };
+}
+
+function sanitizeCustomThemes(raw: unknown): CustomTheme[] {
+  const list = Array.isArray(raw) ? raw : [];
+  const seenIds = new Set<string>();
+  const themes: CustomTheme[] = [];
+  for (const entry of list) {
+    const theme = sanitizeCustomTheme(entry);
+    if (!theme || seenIds.has(theme.id)) continue;
+    seenIds.add(theme.id);
+    themes.push(theme);
+    if (themes.length === MAX_CUSTOM_THEMES) break;
+  }
+  return themes;
+}
+
+function cloneCustomThemes(themes: CustomTheme[]): CustomTheme[] {
+  return themes.map((theme) => ({ ...theme, colors: { ...theme.colors } }));
+}
+
 export const DEFAULT_SETTINGS: AppSettings = {
   claudeBinaryPath: defaultCliBinaryPath("claude"),
   opencodeBinaryPath: defaultCliBinaryPath("opencode"),
@@ -226,6 +284,8 @@ export const DEFAULT_SETTINGS: AppSettings = {
   fontSizeTerminal: 14,
   typographyAdvanced: false,
   panelAnimationMs: 0,
+  themeId: "dark",
+  customThemes: [],
   notificationSounds: {
     done: { enabled: true, sound: "felt-chord", volume: 60 },
     question: { enabled: true, sound: "triple-tap", volume: 60 },
@@ -389,6 +449,8 @@ function sanitize(patch: SettingsPatch): SettingsPatch {
   if (patch.fontSizeTerminal !== undefined) out.fontSizeTerminal = clampedIntegerOr(patch.fontSizeTerminal, DEFAULT_SETTINGS.fontSizeTerminal, 8, 20);
   if (patch.typographyAdvanced !== undefined) out.typographyAdvanced = patch.typographyAdvanced === true;
   if (patch.panelAnimationMs !== undefined) out.panelAnimationMs = steppedIntegerOr(patch.panelAnimationMs, DEFAULT_SETTINGS.panelAnimationMs, 0, 400, 25);
+  if (patch.themeId !== undefined) out.themeId = sanitizeThemeId(patch.themeId);
+  if (patch.customThemes !== undefined) out.customThemes = sanitizeCustomThemes(patch.customThemes);
   if (patch.notificationSounds !== undefined) out.notificationSounds = sanitizeNotificationSounds(patch.notificationSounds);
   return out;
 }
@@ -404,6 +466,7 @@ function defaults(): AppSettings {
     claudeCustomModel: { ...DEFAULT_SETTINGS.claudeCustomModel },
     prWorkflows: cloneWorkflows(DEFAULT_SETTINGS.prWorkflows),
     githubSavedViews: [...DEFAULT_SETTINGS.githubSavedViews],
+    customThemes: cloneCustomThemes(DEFAULT_SETTINGS.customThemes),
     notificationSounds: cloneNotificationSounds(DEFAULT_SETTINGS.notificationSounds)
   };
 }
@@ -469,6 +532,7 @@ export class SettingsStore {
       claudeEnabledModels: [...this.data.claudeEnabledModels],
       prWorkflows: cloneWorkflows(this.data.prWorkflows),
       githubSavedViews: this.data.githubSavedViews.map((view) => ({ ...view })),
+      customThemes: cloneCustomThemes(this.data.customThemes),
       notificationSounds: cloneNotificationSounds(this.data.notificationSounds)
     };
   }

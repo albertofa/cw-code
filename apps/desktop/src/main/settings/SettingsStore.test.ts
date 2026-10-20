@@ -796,4 +796,120 @@ describe("SettingsStore", () => {
     store.get().notificationSounds.done.volume = 5;
     expect(store.get().notificationSounds.done.volume).toBe(60);
   });
+
+  describe("theme settings", () => {
+    it("defaults to the dark theme with no custom themes", () => {
+      expect(new SettingsStore(tempFilePath()).get()).toMatchObject({ themeId: "dark", customThemes: [] });
+    });
+
+    it("accepts built-in ids and well-formed custom ids, including one with no matching theme", () => {
+      const store = new SettingsStore(tempFilePath());
+      for (const themeId of ["dark", "light", "system", "custom-abc-123", `custom-${"a".repeat(64)}`]) {
+        expect(store.set({ themeId }).themeId).toBe(themeId);
+      }
+    });
+
+    it.each(["", "Light", "custom-", "custom-UPPER", "custom-has space", `custom-${"a".repeat(65)}`, "solarized"])(
+      "falls back to dark for the malformed id %j",
+      (themeId) => {
+        const store = new SettingsStore(tempFilePath());
+        store.set({ themeId: "light" });
+        expect(store.set({ themeId }).themeId).toBe("dark");
+      }
+    );
+
+    it("falls back to dark for a non-string id", () => {
+      expect(new SettingsStore(tempFilePath()).set({ themeId: 7 as unknown as string }).themeId).toBe("dark");
+    });
+
+    it("keeps only valid lowercase hex colors for known tokens", () => {
+      const store = new SettingsStore(tempFilePath());
+      const [theme] = store.set({
+        customThemes: [
+          {
+            id: "custom-a",
+            name: "A",
+            base: "light",
+            colors: { bg: "#ABCDEF", gutter: "red", text: "#12345", violet: "#1234567", "not-a-token": "#ffffff", border: 5 as unknown as string }
+          }
+        ]
+      }).customThemes;
+      expect(theme).toEqual({ id: "custom-a", name: "A", base: "light", colors: { bg: "#abcdef" } });
+    });
+
+    it("drops entries with a bad or duplicate id and keeps the first of a duplicate", () => {
+      const themes = new SettingsStore(tempFilePath()).set({
+        customThemes: [
+          { id: "custom-a", name: "First", base: "dark", colors: {} },
+          { id: "custom-a", name: "Second", base: "dark", colors: {} },
+          { id: "dark", name: "Built-in clash", base: "dark", colors: {} },
+          { id: "custom-BAD", name: "Uppercase", base: "dark", colors: {} },
+          { id: 3, name: "Number" },
+          null,
+          { id: "custom-b", name: "B", base: "dark", colors: {} }
+        ] as unknown as AppSettings["customThemes"]
+      }).customThemes;
+      expect(themes.map((t) => [t.id, t.name])).toEqual([
+        ["custom-a", "First"],
+        ["custom-b", "B"]
+      ]);
+    });
+
+    it("trims names, caps them at 60 characters and names empty ones Untitled theme", () => {
+      const themes = new SettingsStore(tempFilePath()).set({
+        customThemes: [
+          { id: "custom-a", name: `  ${"x".repeat(80)}  `, base: "dark", colors: {} },
+          { id: "custom-b", name: "   ", base: "dark", colors: {} },
+          { id: "custom-c", name: 9 as unknown as string, base: "dark", colors: {} }
+        ]
+      }).customThemes;
+      expect(themes[0].name).toBe("x".repeat(60));
+      expect(themes[1].name).toBe("Untitled theme");
+      expect(themes[2].name).toBe("Untitled theme");
+    });
+
+    it("falls back to the dark base and empty colors when they are invalid", () => {
+      const [theme] = new SettingsStore(tempFilePath()).set({
+        customThemes: [{ id: "custom-a", name: "A", base: "sepia", colors: "nope" } as unknown as AppSettings["customThemes"][number]]
+      }).customThemes;
+      expect(theme).toMatchObject({ base: "dark", colors: {} });
+    });
+
+    it("caps custom themes at 50 and treats a non-array as empty", () => {
+      const store = new SettingsStore(tempFilePath());
+      const many = Array.from({ length: 60 }, (_, i) => ({ id: `custom-${i}`, name: `T${i}`, base: "dark" as const, colors: {} }));
+      const capped = store.set({ customThemes: many }).customThemes;
+      expect(capped).toHaveLength(50);
+      expect(capped[49].id).toBe("custom-49");
+      expect(store.set({ customThemes: "nope" as unknown as AppSettings["customThemes"] }).customThemes).toEqual([]);
+    });
+
+    it("persists custom themes across restarts without sharing objects between reads", () => {
+      const filePath = tempFilePath();
+      new SettingsStore(filePath).set({ themeId: "custom-a", customThemes: [{ id: "custom-a", name: "A", base: "dark", colors: { bg: "#101010" } }] });
+      const store = new SettingsStore(filePath);
+      expect(store.get()).toMatchObject({ themeId: "custom-a", customThemes: [{ id: "custom-a", name: "A", base: "dark", colors: { bg: "#101010" } }] });
+      store.get().customThemes[0].colors.bg = "#ffffff";
+      expect(store.get().customThemes[0].colors.bg).toBe("#101010");
+    });
+
+    it("loads a schema-1 file without the theme keys with defaults and no repair backup", () => {
+      const filePath = tempFilePath();
+      writeFileSync(filePath, JSON.stringify({ schemaVersion: 1, holdingHours: 3 }), "utf8");
+
+      expect(new SettingsStore(filePath).get()).toMatchObject({ holdingHours: 3, themeId: "dark", customThemes: [] });
+      expect(JSON.parse(readFileSync(filePath, "utf8"))).toMatchObject({ themeId: "dark", customThemes: [] });
+      expect(existsSync(`${filePath}.before-repair.bak`)).toBe(false);
+    });
+
+    it("repairs a malformed theme id from disk and keeps a before-repair backup", () => {
+      const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+      const filePath = tempFilePath();
+      writeFileSync(filePath, JSON.stringify({ schemaVersion: 1, themeId: "Neon", holdingHours: 5 }), "utf8");
+
+      expect(new SettingsStore(filePath).get()).toMatchObject({ themeId: "dark", holdingHours: 5 });
+      expect(existsSync(`${filePath}.before-repair.bak`)).toBe(true);
+      warn.mockRestore();
+    });
+  });
 });

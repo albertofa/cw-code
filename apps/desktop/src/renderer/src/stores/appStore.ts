@@ -8,6 +8,7 @@ import type {
   ComposerPrefs,
   ContextUsage,
   CreateSessionOptions,
+  CustomTheme,
   DriverName,
   HistoryMessage,
   GitStatus,
@@ -186,6 +187,11 @@ export interface SendPromptOptions {
 
 export type ComposerSendOptions = Pick<SendPromptOptions, "command" | "skills">;
 
+export interface ThemePreview {
+  themeId: string;
+  customThemes: CustomTheme[];
+}
+
 interface AppState {
   shutdown: ShutdownUiState | null;
   projects: Project[];
@@ -225,6 +231,8 @@ interface AppState {
   holdingHours: number;
   defaultUseWorktree: boolean;
   appearance: AppearancePrefs;
+  themePreview: ThemePreview | null;
+  setThemePreview(preview: ThemePreview | null): void;
   notificationSounds: NotificationSoundSettings | null;
   reasoningExpandedByDriver: Record<DriverName, boolean>;
   defaultModelByDriver: Record<DriverName, string>;
@@ -249,6 +257,7 @@ interface AppState {
   ensureComposer(sessionId: string): Promise<void>;
   setComposerPrefs(sessionId: string, prefs: ComposerPrefs): Promise<void>;
   settingsVersion: number;
+  settingsLoaded: boolean;
   saveSettings(patch: SettingsPatch): Promise<AppSettings>;
   saveDefaultModel(driver: DriverName, id: string): Promise<void>;
   setProjectGitHubAccount(projectId: string, account: { host: string; login: string } | null): Promise<void>;
@@ -423,6 +432,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   turnDurations: {},
   composerBySession: {},
   settingsVersion: 0,
+  settingsLoaded: false,
   pendingDriver: null,
   lastDriver: "claude",
   installedHarnesses: null,
@@ -438,6 +448,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   holdingHours: 6,
   defaultUseWorktree: true,
   appearance: DEFAULT_APPEARANCE,
+  themePreview: null,
   notificationSounds: null,
   reasoningExpandedByDriver: { claude: false, opencode: false, codex: false },
   defaultModelByDriver: { claude: "", opencode: "", codex: "" },
@@ -544,6 +555,10 @@ export const useAppStore = create<AppState>((set, get) => ({
     }));
   },
 
+  setThemePreview(preview: ThemePreview | null) {
+    set({ themePreview: preview });
+  },
+
   closePreview(sessionId: string) {
     set((state) => {
       if (!state.previewBySession[sessionId]) return state;
@@ -563,6 +578,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       holdingAutoExpireEnabled: settings.holdingAutoExpireEnabled,
       holdingHours: settings.holdingHours,
       defaultUseWorktree: settings.defaultUseWorktree,
+      settingsLoaded: true,
       appearance: appearanceOf(settings),
       notificationSounds: settings.notificationSounds,
       reasoningExpandedByDriver: reasoningExpandedFrom(settings),
@@ -1004,6 +1020,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       holdingAutoExpireEnabled: saved.holdingAutoExpireEnabled,
       holdingHours: saved.holdingHours,
       defaultUseWorktree: saved.defaultUseWorktree,
+      settingsLoaded: true,
       appearance: appearanceOf(saved),
       notificationSounds: saved.notificationSounds,
       reasoningExpandedByDriver: reasoningExpandedFrom(saved),

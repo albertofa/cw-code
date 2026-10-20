@@ -76,6 +76,8 @@ const SETTING_OWNER: Record<DraftSettingKey, SettingsNavId> = {
   fontSizeTerminal: "appearance",
   typographyAdvanced: "appearance",
   panelAnimationMs: "appearance",
+  themeId: "appearance",
+  customThemes: "appearance",
   notificationSounds: "notifications"
 };
 

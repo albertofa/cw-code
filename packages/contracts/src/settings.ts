@@ -41,6 +41,15 @@ export interface NotificationSoundPreference {
 
 export type NotificationSoundSettings = Record<NotificationSoundEvent, NotificationSoundPreference>;
 
+export type ThemeBase = "dark" | "light";
+
+export interface CustomTheme {
+  id: string;
+  name: string;
+  base: ThemeBase;
+  colors: Record<string, string>;
+}
+
 export interface AppSettings {
   claudeBinaryPath: string;
   opencodeBinaryPath: string;
@@ -94,6 +103,8 @@ export interface AppSettings {
   typographyAdvanced: boolean;
   panelAnimationMs: number;
   notificationSounds: NotificationSoundSettings;
+  themeId: string;
+  customThemes: CustomTheme[];
 }
 
 export type SettingsPatch = Partial<AppSettings>;

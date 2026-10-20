@@ -3,14 +3,40 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <meta name="color-scheme" content="dark" />
+    <meta name="color-scheme" content="dark light" />
     <meta name="description" content="A desktop workspace for Claude Code, OpenCode, and Codex." />
     <link rel="icon" type="image/svg+xml" href="./src/assets/console-c.svg" />
+    <script>
+      (function () {
+        try {
+          var stored = JSON.parse(window.localStorage.getItem("cw-code:theme") || "null");
+          if (!stored || typeof stored !== "object") return;
+          var root = document.documentElement;
+          var light = stored.mode === "light" || (stored.mode === "system" && window.matchMedia("(prefers-color-scheme: light)").matches);
+          var base = light ? "light" : "dark";
+          root.dataset.theme = base;
+          root.style.colorScheme = base;
+          var vars = stored.vars && typeof stored.vars === "object" ? stored.vars : {};
+          var names = [];
+          for (var name in vars) {
+            if (Object.prototype.hasOwnProperty.call(vars, name) && /^[a-z0-9-]+$/.test(name) && typeof vars[name] === "string") {
+              root.style.setProperty("--" + name, vars[name]);
+              names.push(name);
+            }
+          }
+          if (names.length > 0) root.setAttribute("data-theme-vars", names.join(" "));
+          if (typeof vars.gutter === "string") root.style.backgroundColor = vars.gutter;
+        } catch (e) {}
+      })();
+    </script>
     <style>
       html,
       body {
         background: #080a0f;
         margin: 0;
+      }
+      html[data-theme="light"] {
+        background: #e9ebf1;
       }
     </style>
     <title>cw-code</title>

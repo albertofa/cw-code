@@ -12,6 +12,8 @@ export type AppearancePrefs = Pick<
   | "fontSizeTerminal"
   | "typographyAdvanced"
   | "panelAnimationMs"
+  | "themeId"
+  | "customThemes"
 >;
 
 export const DEFAULT_SANS_STACK = '"Segoe UI", system-ui, sans-serif';
@@ -30,7 +32,9 @@ export const DEFAULT_APPEARANCE: AppearancePrefs = {
   fontSizePrompt: 14,
   fontSizeTerminal: 14,
   typographyAdvanced: false,
-  panelAnimationMs: 0
+  panelAnimationMs: 0,
+  themeId: "dark",
+  customThemes: []
 };
 
 export const FONT_SIZE_LIMITS = {
@@ -53,7 +57,9 @@ export function appearanceOf(settings: AppearancePrefs): AppearancePrefs {
     fontSizePrompt: settings.fontSizePrompt,
     fontSizeTerminal: settings.fontSizeTerminal,
     typographyAdvanced: settings.typographyAdvanced,
-    panelAnimationMs: settings.panelAnimationMs
+    panelAnimationMs: settings.panelAnimationMs,
+    themeId: settings.themeId,
+    customThemes: settings.customThemes
   };
 }
 

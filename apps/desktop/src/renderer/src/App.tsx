@@ -2,6 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties }
 import { useShallow } from "zustand/react/shallow";
 import type { DriverName } from "./cw.js";
 import { applyAppearance } from "./appearanceFonts.js";
+import { ThemeSync } from "./components/ThemeSync.js";
 import { collectSubagents } from "./components/subagents.js";
 import { installedHarnesses, isHarnessSkipped } from "./components/harnessAvailability.js";
 import { isWorkingSetStatus } from "./components/workingSet.js";
@@ -32,6 +33,7 @@ import { useNeedsYouDetailLoader } from "./components/useNeedsYou.js";
 import { useAutoFollowUp } from "./components/useAutoFollowUp.js";
 import { useNotificationSounds } from "./components/useNotificationSounds.js";
 import { visibleLayerOpen } from "./components/openLayer.js";
+import { ipcErrorMessage } from "./components/ipcError.js";
 import { useAppStore } from "./stores/appStore.js";
 import { rightOpenTabs } from "./stores/panelLayout.js";
 import { selectSessionPanel, usePanelStore } from "./stores/panelStore.js";
@@ -42,6 +44,7 @@ import type { TurnEvent } from "./cw.js";
 
 const VERSION_NOTIF_ID = "cli-versions";
 const BINARY_NOTIF_ID = "cli-binaries";
+const LOAD_NOTIF_ID = "workspace-load";
 
 const RIGHT_WIDTH_DEFAULT = 520;
 const SIDE_WIDTH_DEFAULT = 320;
@@ -124,7 +127,6 @@ export function App() {
 
   useEffect(() => applyAppearance(document.documentElement, appearance), [appearance]);
 
-
   const panelAnimationMs = usePanelAnimationMs();
   const rightResize = useResizableWidth({ storageKey: "cw-code:rightWidth", min: 320, max: 800, grow: "left" });
   const rightWidth = rightResize.width ?? RIGHT_WIDTH_DEFAULT;
@@ -167,7 +169,21 @@ export function App() {
       setPreloadError("window.cw is missing — preload did not load. Restart the Electron app (plain browsers can't reach the backend).");
       return;
     }
-    void loadProjects();
+    const loadWorkspace = (): void => {
+      loadProjects().then(
+        () => useNotifs.getState().dismiss(LOAD_NOTIF_ID),
+        (err: unknown) =>
+          useNotifs.getState().upsert({
+            id: LOAD_NOTIF_ID,
+            kind: "error",
+            title: useAppStore.getState().settingsLoaded ? "Could not load projects" : "Could not load projects and settings",
+            message: ipcErrorMessage(err),
+            sticky: true,
+            actions: [{ label: "Retry", primary: true, onClick: loadWorkspace }]
+          })
+      );
+    };
+    loadWorkspace();
     const off = window.cw.onTurnEvent(handleTurnEvent);
     const offTitle = window.cw.onSessionTitle(({ sessionId, title }) => useAppStore.getState().applySessionTitle(sessionId, title));
     const offSession = window.cw.onSessionUpdated((session) => useAppStore.getState().applySession(session));
@@ -413,6 +429,7 @@ export function App() {
       data-driver={driver ?? "none"}
       style={shellStyle}
     >
+      <ThemeSync />
       {preloadError && <div className="preload-error">{preloadError}</div>}
       {!preloadError && (
         <>

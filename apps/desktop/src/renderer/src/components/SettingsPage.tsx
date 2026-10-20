@@ -746,7 +746,7 @@ export function SettingsPage({
       case "appearance":
         return (
           <>
-            <SettingsPageHead title="Appearance" description="Typography and motion. Previews update as you edit; the app changes when you save." />
+            <SettingsPageHead title="Appearance" description="Theme, typography and motion. Previews update as you edit; the app changes when you save." />
             <AppearanceSettings draft={current} onDraftChange={set} />
           </>
         );

@@ -1,28 +1,11 @@
+import { PROJECT_HUES } from "../../../shared/themes.js";
+
 export interface ProjectIdentity {
   monogram: string;
   color: string;
 }
 
-const PALETTE = [
-  "#99a1af",
-  "#ff6467",
-  "#ff8904",
-  "#ffb900",
-  "#fdc700",
-  "#9ae600",
-  "#05df72",
-  "#00d492",
-  "#00d5be",
-  "#00d3f2",
-  "#00bcff",
-  "#51a2ff",
-  "#7c86ff",
-  "#a684ff",
-  "#c27aff",
-  "#ed6aff",
-  "#fb64b6",
-  "#ff637e",
-] as const;
+const PALETTE = PROJECT_HUES.map((hue) => `var(--project-${hue})`);
 
 const FALLBACK_MONOGRAM = "PR";
 const FALLBACK_COLOR_SEED = "project";
