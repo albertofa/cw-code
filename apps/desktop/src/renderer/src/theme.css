@@ -1,6 +1,7 @@
 :root {
   color-scheme: dark;
   --composer-max: 880px;
+  --composer-glass: 68%;
   --main-gutter: 20px;
   --gutter: #080a0f;
   --line: #222630;
@@ -169,6 +170,7 @@
 
 :root[data-theme="light"] {
   color-scheme: light;
+  --composer-glass: 94%;
   --gutter: #e9ebf1;
   --line: #dcdfe7;
   --editor: #ffffff;
@@ -3044,7 +3046,7 @@ body.session-dragging * {
   z-index: -1;
   border-radius: inherit;
   pointer-events: none;
-  background: color-mix(in srgb, var(--panel) 68%, transparent);
+  background: color-mix(in srgb, var(--panel) var(--composer-glass), transparent);
   backdrop-filter: blur(7px) saturate(1.1);
 }
 

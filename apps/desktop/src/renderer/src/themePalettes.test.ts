@@ -106,7 +106,7 @@ describe("theme.css palettes", () => {
   });
 
   it("declares exactly the light palette in the light block", () => {
-    expect(readBlock(LIGHT_SELECTOR).tokens).toEqual(normalizedPalette(THEME_PALETTES.light));
+    expect(colorTokens(readBlock(LIGHT_SELECTOR).tokens)).toEqual(normalizedPalette(THEME_PALETTES.light));
   });
 
   it("keeps every palette in sync on token names", () => {
