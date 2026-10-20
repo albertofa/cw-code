@@ -588,6 +588,34 @@
   background: var(--sw-violet);
 }
 
+.theme-swatch.custom {
+  background: var(--sw-bg);
+}
+
+.tsw-bands {
+  position: absolute;
+  inset: 0;
+  display: flex;
+}
+
+.tsw-band {
+  flex: 1;
+}
+
+.tsw-badge {
+  position: absolute;
+  left: 7px;
+  bottom: 7px;
+  display: grid;
+  place-items: center;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: var(--sw-card);
+  box-shadow: 0 0 0 1px var(--sw-border);
+  color: var(--sw-text);
+}
+
 .theme-name {
   width: 230px;
   height: 32px;

@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type CSSProperties, type KeyboardEvent, type ReactNode } from "react";
-import { History, Minus, Plus } from "lucide-react";
+import { History, Minus, Palette as PaletteIcon, Plus } from "lucide-react";
 import { MAX_CUSTOM_THEMES, THEME_PALETTES, deriveThemeTokens } from "../../../shared/themes.js";
 import type { AppSettings, CustomTheme } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
@@ -26,6 +26,7 @@ type SwatchStyle = CSSProperties & Record<`--sw-${string}`, string>;
 type Palette = Record<string, string>;
 
 const SWATCH_TOKENS = ["gutter", "bg", "card", "border", "text", "muted", "violet"] as const;
+const CUSTOM_SWATCH_BANDS = ["bg", "card", "muted", "text", "violet", "accent", "success", "warning", "danger"] as const;
 
 const BUILTIN_CHOICES: readonly { id: string; label: string; hint: string; scenes: readonly Palette[] }[] = [
   { id: "dark", label: "Dark", hint: "Deep slate with a violet accent.", scenes: [THEME_PALETTES.dark] },
@@ -63,10 +64,25 @@ function ThemeSwatch({ scenes }: { scenes: readonly Palette[] }) {
   );
 }
 
+function CustomThemeSwatch({ tokens }: { tokens: Palette }) {
+  return (
+    <span className="theme-swatch custom" aria-hidden="true" style={swatchStyle(tokens)}>
+      <span className="tsw-bands">
+        {CUSTOM_SWATCH_BANDS.map((token) => (
+          <span key={token} className="tsw-band" style={{ background: tokens[token] }} />
+        ))}
+      </span>
+      <span className="tsw-badge">
+        <PaletteIcon size={12} />
+      </span>
+    </span>
+  );
+}
+
 interface ThemeCardProps {
   label: string;
   hint: string;
-  scenes: readonly Palette[];
+  swatch: ReactNode;
   selected: boolean;
   focusable: boolean;
   register: (element: HTMLButtonElement | null) => void;
@@ -74,7 +90,7 @@ interface ThemeCardProps {
   onKeyDown: (event: KeyboardEvent<HTMLButtonElement>) => void;
 }
 
-function ThemeCard({ label, hint, scenes, selected, focusable, register, onSelect, onKeyDown }: ThemeCardProps) {
+function ThemeCard({ label, hint, swatch, selected, focusable, register, onSelect, onKeyDown }: ThemeCardProps) {
   return (
     <button
       ref={register}
@@ -86,16 +102,23 @@ function ThemeCard({ label, hint, scenes, selected, focusable, register, onSelec
       onClick={onSelect}
       onKeyDown={onKeyDown}
     >
-      <ThemeSwatch scenes={scenes} />
+      {swatch}
       <span className="theme-choice-label">{label}</span>
       <small>{hint}</small>
     </button>
   );
 }
 
-function CustomThemeCard({ theme, ...props }: { theme: CustomTheme } & Omit<ThemeCardProps, "label" | "hint" | "scenes">) {
-  const scenes = useMemo(() => [deriveThemeTokens(theme.base, theme.colors)], [theme.base, theme.colors]);
-  return <ThemeCard {...props} label={customThemeName(theme)} hint={theme.base === "light" ? "Based on Light." : "Based on Dark."} scenes={scenes} />;
+function CustomThemeCard({ theme, ...props }: { theme: CustomTheme } & Omit<ThemeCardProps, "label" | "hint" | "swatch">) {
+  const tokens = useMemo(() => deriveThemeTokens(theme.base, theme.colors), [theme.base, theme.colors]);
+  return (
+    <ThemeCard
+      {...props}
+      label={customThemeName(theme)}
+      hint={theme.base === "light" ? "Based on Light." : "Based on Dark."}
+      swatch={<CustomThemeSwatch tokens={tokens} />}
+    />
+  );
 }
 
 const NEXT_INDEX: Readonly<Record<string, (index: number, count: number) => number>> = {
@@ -195,7 +218,7 @@ function ThemeSection({ draft, onDraftChange }: { draft: AppSettings; onDraftCha
       <div className="theme-picker">
         <div className="theme-choices" role="radiogroup" aria-label="Theme">
           {BUILTIN_CHOICES.map((choice, index) => (
-            <ThemeCard key={choice.id} {...cardProps(choice.id, index)} label={choice.label} hint={choice.hint} scenes={choice.scenes} />
+            <ThemeCard key={choice.id} {...cardProps(choice.id, index)} label={choice.label} hint={choice.hint} swatch={<ThemeSwatch scenes={choice.scenes} />} />
           ))}
           {customThemes.map((theme, index) => (
             <CustomThemeCard key={theme.id} theme={theme} {...cardProps(theme.id, BUILTIN_CHOICES.length + index)} />
