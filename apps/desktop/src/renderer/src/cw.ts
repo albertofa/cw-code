@@ -11,6 +11,9 @@ import type {
   CommandOption,
   ContextCompactionInfo,
   ContextUsage,
+  GroqKeyResult,
+  GroqVoiceModel,
+  GroqVoiceStatus,
   HarnessId,
   ImportableSession,
   ImportSessionRequest,
@@ -89,10 +92,21 @@ import type {
   UsageLedgerQuery,
   UsageLedgerRow,
   UsageSeverity,
-  UsageWindow
+  UsageWindow,
+  VoiceLanguage,
+  VoiceProvider,
+  VoiceSettings,
+  VoiceTranscribeResult
 } from "@cw-code/contracts";
 
 export type {
+  GroqKeyResult,
+  GroqVoiceModel,
+  GroqVoiceStatus,
+  VoiceLanguage,
+  VoiceProvider,
+  VoiceSettings,
+  VoiceTranscribeResult,
   ImportableSession,
   ImportSessionRequest,
   NotificationSoundEvent,
@@ -612,6 +626,9 @@ export interface AppSettings {
   typographyAdvanced: boolean;
   panelAnimationMs: number;
   notificationSounds: NotificationSoundSettings;
+  voiceProvider: VoiceProvider;
+  voiceLanguage: VoiceLanguage;
+  voiceGroqModel: GroqVoiceModel;
 }
 
 export type SettingsPatch = Partial<AppSettings>;
@@ -696,6 +713,14 @@ export interface CwApi {
   getSettings(): Promise<AppSettings>;
   setSettings(patch: SettingsPatch): Promise<AppSettings>;
   getDefaultPrWorkflows(): Promise<PrWorkflow[]>;
+  voice: {
+    groqStatus(): Promise<GroqVoiceStatus>;
+    acceptGroqNotice(): Promise<GroqVoiceStatus>;
+    revokeGroqNotice(): Promise<GroqVoiceStatus>;
+    setGroqKey(key: string): Promise<GroqKeyResult>;
+    clearGroqKey(): Promise<GroqVoiceStatus>;
+    transcribeGroq(audio: ArrayBuffer, mimeType: string): Promise<VoiceTranscribeResult>;
+  };
   skills: {
     list(): Promise<SkillsListResult>;
     get(name: string): Promise<SkillDetail>;

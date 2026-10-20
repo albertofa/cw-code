@@ -14,6 +14,7 @@ import { HarnessSettings } from "./HarnessSettings.js";
 import { MenuSelect } from "./MenuSelect.js";
 import { EFFORTS } from "./modelMenus.js";
 import { NotificationSettings } from "./NotificationSettings.js";
+import { VoiceSettingsPanel } from "./VoiceSettingsPanel.js";
 import { useNotifs } from "./Notifications.js";
 import { shortenHome } from "./pathDisplay.js";
 import { PrWorkflowSettings } from "./PrWorkflowSettings.js";
@@ -755,6 +756,13 @@ export function SettingsPage({
           <>
             <SettingsPageHead title="Notifications" description="Sounds that play when a session needs you. Previews play right away; the app changes when you save." />
             <NotificationSettings draft={current} onDraftChange={set} />
+          </>
+        );
+      case "voice":
+        return (
+          <>
+            <SettingsPageHead title="Voice" description="Dictate messages with your microphone. It is off until you pick a provider; changes apply when you save." />
+            <VoiceSettingsPanel draft={current} onDraftChange={set} />
           </>
         );
       case "updates":

@@ -6,6 +6,7 @@ import type {
   EffortLevel,
   GitHubKind,
   GitHubViewGroup,
+  GroqVoiceModel,
   NotificationSoundId,
   NotificationSoundPreference,
   NotificationSoundSettings,
@@ -17,7 +18,9 @@ import type {
   PrWorkflowIcon,
   PrWorkspaceChoice,
   SavedGitHubView,
-  SettingsPatch
+  SettingsPatch,
+  VoiceLanguage,
+  VoiceProvider
 } from "@cw-code/contracts";
 import { CLAUDE_CURATED_MODELS } from "../providers/claude/ClaudeCliDriver.js";
 import { writeFileAtomic } from "../storage/atomicFile.js";
@@ -75,6 +78,10 @@ const VALID_NOTIFICATION_SOUNDS: readonly NotificationSoundId[] = [
   "muted-pluck",
   "pop"
 ];
+
+const VALID_VOICE_PROVIDERS: readonly VoiceProvider[] = ["off", "groq"];
+const VALID_VOICE_LANGUAGES: readonly VoiceLanguage[] = ["pt", "en", "es", "auto"];
+const VALID_GROQ_VOICE_MODELS: readonly GroqVoiceModel[] = ["whisper-large-v3-turbo", "whisper-large-v3"];
 
 function oneOf<T extends string>(value: unknown, allowed: readonly T[]): T | null {
   return allowed.includes(value as T) ? (value as T) : null;
@@ -230,7 +237,10 @@ export const DEFAULT_SETTINGS: AppSettings = {
     done: { enabled: true, sound: "felt-chord", volume: 60 },
     question: { enabled: true, sound: "triple-tap", volume: 60 },
     prUpdate: { enabled: true, sound: "tock-down", volume: 60 }
-  }
+  },
+  voiceProvider: "off",
+  voiceLanguage: "pt",
+  voiceGroqModel: "whisper-large-v3-turbo"
 };
 
 const FONT_FAMILY_MAX_LENGTH = 200;
@@ -390,6 +400,9 @@ function sanitize(patch: SettingsPatch): SettingsPatch {
   if (patch.typographyAdvanced !== undefined) out.typographyAdvanced = patch.typographyAdvanced === true;
   if (patch.panelAnimationMs !== undefined) out.panelAnimationMs = steppedIntegerOr(patch.panelAnimationMs, DEFAULT_SETTINGS.panelAnimationMs, 0, 400, 25);
   if (patch.notificationSounds !== undefined) out.notificationSounds = sanitizeNotificationSounds(patch.notificationSounds);
+  if (patch.voiceProvider !== undefined) out.voiceProvider = oneOf(patch.voiceProvider, VALID_VOICE_PROVIDERS) ?? DEFAULT_SETTINGS.voiceProvider;
+  if (patch.voiceLanguage !== undefined) out.voiceLanguage = oneOf(patch.voiceLanguage, VALID_VOICE_LANGUAGES) ?? DEFAULT_SETTINGS.voiceLanguage;
+  if (patch.voiceGroqModel !== undefined) out.voiceGroqModel = oneOf(patch.voiceGroqModel, VALID_GROQ_VOICE_MODELS) ?? DEFAULT_SETTINGS.voiceGroqModel;
   return out;
 }
 

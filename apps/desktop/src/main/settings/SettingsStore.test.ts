@@ -796,4 +796,34 @@ describe("SettingsStore", () => {
     store.get().notificationSounds.done.volume = 5;
     expect(store.get().notificationSounds.done.volume).toBe(60);
   });
+
+  it("keeps dictation off by default", () => {
+    const settings = new SettingsStore(tempFilePath()).get();
+    expect(settings.voiceProvider).toBe("off");
+    expect(settings.voiceLanguage).toBe("pt");
+    expect(settings.voiceGroqModel).toBe("whisper-large-v3-turbo");
+  });
+
+  it("stores valid dictation choices", () => {
+    const store = new SettingsStore(tempFilePath());
+    const saved = store.set({ voiceProvider: "groq", voiceLanguage: "en", voiceGroqModel: "whisper-large-v3" });
+    expect(saved).toMatchObject({ voiceProvider: "groq", voiceLanguage: "en", voiceGroqModel: "whisper-large-v3" });
+  });
+
+  it("falls back to the defaults for unknown dictation values instead of enabling anything", () => {
+    const store = new SettingsStore(tempFilePath());
+    store.set({ voiceProvider: "groq" });
+    const saved = store.set({
+      voiceProvider: "openai" as unknown as AppSettings["voiceProvider"],
+      voiceLanguage: "klingon" as unknown as AppSettings["voiceLanguage"],
+      voiceGroqModel: "gpt-4o" as unknown as AppSettings["voiceGroqModel"]
+    });
+    expect(saved).toMatchObject({ voiceProvider: "off", voiceLanguage: "pt", voiceGroqModel: "whisper-large-v3-turbo" });
+  });
+
+  it("no longer accepts an on-device dictation provider from an older settings file", () => {
+    const store = new SettingsStore(tempFilePath());
+    const saved = store.set({ voiceProvider: "local" as unknown as AppSettings["voiceProvider"] });
+    expect(saved.voiceProvider).toBe("off");
+  });
 });

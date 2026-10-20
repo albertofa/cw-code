@@ -3496,6 +3496,75 @@ body.session-dragging * {
   color: var(--text);
 }
 
+.composer-mic {
+  min-width: 28px;
+  height: 28px;
+  padding: 0 6px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border: 0;
+  color: var(--muted);
+}
+
+.composer-mic:hover:not(:disabled) {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.composer-mic.recording {
+  background: color-mix(in srgb, var(--danger) 18%, transparent);
+  color: var(--danger-ink);
+}
+
+.composer-mic-time {
+  font-size: var(--t-2xs);
+  font-variant-numeric: tabular-nums;
+}
+
+.composer-voice-cloud {
+  padding: 1px 6px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  font-size: var(--t-2xs);
+  color: var(--muted);
+}
+
+.voice-spin {
+  animation: cw-spin 1s linear infinite;
+}
+
+.voice-key {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+}
+
+.voice-key .field {
+  flex: 1 1 220px;
+  min-width: 0;
+}
+
+.voice-notice {
+  display: grid;
+  gap: 8px;
+  max-width: 62ch;
+  line-height: 1.5;
+}
+
+.voice-notice p,
+.voice-notice ul {
+  margin: 0;
+}
+
+.voice-notice ul {
+  padding-left: 18px;
+  display: grid;
+  gap: 6px;
+}
+
 .composer-action {
   width: 32px;
   height: 32px;

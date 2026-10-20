@@ -58,6 +58,11 @@ import { createUpdateLogFile } from "./updates/updateLog.js";
 import { firstRunChannelPatch, touchesUpdatePreferences, updatePreferences } from "./updates/updatePreferences.js";
 import { isUpdateChannel } from "./updates/updateState.js";
 import { isSkillMentionList } from "../shared/skillMentions.js";
+import { electronSecretCipher } from "./voice/electronSecretCipher.js";
+import { GroqCredentialStore } from "./voice/groqCredentialStore.js";
+import { allowPermissionRequest } from "./voice/mediaPermission.js";
+import { parseGroqKeyArg, parseTranscribeArgs } from "./voice/parseVoiceArgs.js";
+import { VoiceService } from "./voice/VoiceService.js";
 
 type DriverName = DriverKind;
 
@@ -157,6 +162,7 @@ interface Services {
   runWatcher: RunWatcher;
   ptys: PtyPool;
   accountUsage: AccountUsageService;
+  voice: VoiceService;
   updates: UpdateService;
   shutdown: ShutdownCoordinator;
 }
@@ -246,6 +252,7 @@ function createServices(stores: { sessionStore: SessionStore; settingsStore: Set
     runWatcher,
     ptys,
     accountUsage: new AccountUsageService(() => sessions.driversForProbe()),
+    voice: new VoiceService(() => sessions.getSettings(), new GroqCredentialStore(join(userdataDir(), "voice-groq.json"), electronSecretCipher())),
     shutdown: new ShutdownCoordinator({ sessions, ptys, onRecovered: handleShutdownRecovered, onExpired: handleShutdownExpired }),
     updates
   };
@@ -419,6 +426,9 @@ async function createWindow(): Promise<void> {
   mainWindow.on("session-end", endOfSession);
 
   const webContents = mainWindow.webContents;
+  webContents.session.setPermissionRequestHandler((_contents, permission, callback, details) => {
+    callback(allowPermissionRequest(permission, details as { mediaTypes?: readonly string[] }));
+  });
   webContents.on("render-process-gone", (_e, details) => {
     appendCrashLog(
       `render-process-gone: reason=${details.reason} exitCode=${details.exitCode}`
@@ -782,8 +792,17 @@ function registerShutdownIpc({ shutdown }: Services): void {
 }
 
 function registerIpc(services: Services): void {
-  const { sessions, skills, files, git, pullRequests, ptys, accountUsage, updates } = services;
+  const { sessions, skills, files, git, pullRequests, ptys, accountUsage, updates, voice } = services;
   registerUpdateIpc(services);
+  ipcMain.handle("voice.groqStatus", () => voice.groqStatus());
+  ipcMain.handle("voice.acceptGroqNotice", () => voice.acceptGroqNotice());
+  ipcMain.handle("voice.revokeGroqNotice", () => voice.revokeGroqNotice());
+  ipcMain.handle("voice.setGroqKey", (_e, key: unknown) => voice.setGroqKey(parseGroqKeyArg(key)));
+  ipcMain.handle("voice.clearGroqKey", () => voice.clearGroqKey());
+  ipcMain.handle("voice.transcribeGroq", (_e, args: unknown) => {
+    const { audio, mimeType } = parseTranscribeArgs(args);
+    return voice.transcribeGroq(audio, mimeType);
+  });
   registerGitHubIpc(services);
   sessions.setEmitter((sessionId, event) => {
     mainWindow?.webContents.send("turn.event", { sessionId, event });

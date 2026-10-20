@@ -2,6 +2,7 @@ import type { DriverKind, EffortLevel } from "./session.js";
 import type { PrWorkflow } from "./pullRequests.js";
 import type { SavedGitHubView } from "./github.js";
 import type { UpdateChannel } from "./updates.js";
+import type { GroqVoiceModel, VoiceLanguage, VoiceProvider } from "./voice.js";
 
 export interface CustomModel {
   id: string;
@@ -94,6 +95,9 @@ export interface AppSettings {
   typographyAdvanced: boolean;
   panelAnimationMs: number;
   notificationSounds: NotificationSoundSettings;
+  voiceProvider: VoiceProvider;
+  voiceLanguage: VoiceLanguage;
+  voiceGroqModel: GroqVoiceModel;
 }
 
 export type SettingsPatch = Partial<AppSettings>;

@@ -4,8 +4,10 @@ import {
   ArrowUp,
   AtSign,
   Image,
+  Loader,
   Lock,
   LockOpen,
+  Mic,
   Pencil,
   Plus,
   Package,
@@ -58,6 +60,8 @@ import { parseBranchMismatchError, type BranchMismatch } from "./sessionBranch.j
 import { harnessLabel } from "./toolTabs.js";
 import { ipcErrorMessage } from "./ipcError.js";
 import { useThreadVisible } from "./threadVisibility.js";
+import { insertDictation } from "../voice/dictationText.js";
+import { useVoiceDictation } from "../voice/useVoiceDictation.js";
 
 export interface BranchGuard {
   mismatch: BranchMismatch | null;
@@ -169,6 +173,26 @@ export function ComposerView({
   const saveDefaultModel = useAppStore((s) => s.saveDefaultModel);
   const home = homeDir ?? undefined;
   const composerRef = useRef<HTMLTextAreaElement | null>(null);
+  const voiceSettings = useAppStore((s) => s.voice);
+  const pendingCaretRef = useRef<number | null>(null);
+  const dictation = useVoiceDictation({
+    voice: voiceSettings,
+    disabled: busy || sending || blockedReason !== undefined,
+    onText: (text) => {
+      const el = composerRef.current;
+      const inserted = insertDictation(draft, text, el?.selectionStart ?? draft.length, el?.selectionEnd ?? draft.length);
+      pendingCaretRef.current = inserted.caret;
+      setDraft(inserted.value);
+    }
+  });
+  useLayoutEffect(() => {
+    const caret = pendingCaretRef.current;
+    const el = composerRef.current;
+    if (caret === null || !el) return;
+    pendingCaretRef.current = null;
+    el.focus();
+    el.setSelectionRange(caret, caret);
+  }, [draft]);
   const customInputRef = useRef<HTMLInputElement | null>(null);
   const mirrorRef = useRef<HTMLDivElement | null>(null);
   const baseModelId = driver === "claude" ? stripContextSuffix(prefs.model ?? "") : (prefs.model ?? "");
@@ -1050,6 +1074,11 @@ export function ComposerView({
             {pasteError}
           </div>
         )}
+        {dictation.error && (
+          <div className="composer-paste-error" role="alert">
+            {dictation.error}
+          </div>
+        )}
         <div className="composer-card-foot">
           <div className="menu composer-add">
             <button
@@ -1132,6 +1161,43 @@ export function ComposerView({
             )}
           </div>
           {!busy && blockedReason === undefined && <span className="composer-hint">Shift+Enter for a new line</span>}
+          {!busy && voiceSettings !== null && voiceSettings.provider !== "off" && (
+            <>
+              {voiceSettings.provider === "groq" && (
+                <span className="composer-voice-cloud" title="Dictation audio is sent to Groq. Change this in Settings → Voice.">
+                  Groq
+                </span>
+              )}
+              <button
+                type="button"
+                className={`icon-btn composer-mic${dictation.phase === "recording" ? " recording" : ""}`}
+                onClick={dictation.toggle}
+                disabled={sending || blockedReason !== undefined || dictation.phase === "transcribing"}
+                aria-pressed={dictation.phase === "recording"}
+                aria-label={dictation.phase === "recording" ? "Stop dictation" : "Start dictation"}
+                title={
+                  dictation.phase === "recording"
+                    ? "Stop and transcribe (Esc cancels)"
+                    : dictation.phase === "transcribing"
+                      ? "Transcribing…"
+                      : "Dictate a message"
+                }
+              >
+                {dictation.phase === "transcribing" ? (
+                  <Loader size={16} className="voice-spin" aria-hidden="true" />
+                ) : dictation.phase === "recording" ? (
+                  <Square size={12} fill="currentColor" aria-hidden="true" />
+                ) : (
+                  <Mic size={16} aria-hidden="true" />
+                )}
+                {dictation.phase === "recording" && (
+                  <span className="composer-mic-time">
+                    {Math.floor(dictation.elapsedSeconds / 60)}:{String(dictation.elapsedSeconds % 60).padStart(2, "0")}
+                  </span>
+                )}
+              </button>
+            </>
+          )}
           {busy ? (
             <button
               type="button"
