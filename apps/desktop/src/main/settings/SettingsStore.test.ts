@@ -802,9 +802,9 @@ describe("SettingsStore", () => {
       expect(new SettingsStore(tempFilePath()).get()).toMatchObject({ themeId: "dark", customThemes: [] });
     });
 
-    it("accepts built-in ids and well-formed custom ids, including one with no matching theme", () => {
+    it("accepts built-in ids, bundled ids and well-formed custom ids, including one with no matching theme", () => {
       const store = new SettingsStore(tempFilePath());
-      for (const themeId of ["dark", "light", "system", "custom-abc-123", `custom-${"a".repeat(64)}`]) {
+      for (const themeId of ["dark", "light", "system", "claude", "custom-abc-123", `custom-${"a".repeat(64)}`]) {
         expect(store.set({ themeId }).themeId).toBe(themeId);
       }
     });
@@ -843,6 +843,7 @@ describe("SettingsStore", () => {
           { id: "custom-a", name: "First", base: "dark", colors: {} },
           { id: "custom-a", name: "Second", base: "dark", colors: {} },
           { id: "dark", name: "Built-in clash", base: "dark", colors: {} },
+          { id: "claude", name: "Bundled clash", base: "dark", colors: {} },
           { id: "custom-BAD", name: "Uppercase", base: "dark", colors: {} },
           { id: 3, name: "Number" },
           null,

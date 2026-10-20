@@ -10154,7 +10154,7 @@ button.gitbar-checkout:hover {
 }
 
 .pr-links-source.branch {
-  color: var(--violet);
+  color: var(--violet-ink);
 }
 
 .pr-links-action {

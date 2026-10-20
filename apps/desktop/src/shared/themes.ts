@@ -422,13 +422,10 @@ const DERIVED_RULES: Readonly<Record<string, DeriveColor>> = {
   "scrollbar-thumb-hover": (s) => s.text,
   "violet-strong": (s) => mixHex(s.violet, BLACK, 0.85),
   "violet-ink": violetInk,
-  "violet-soft": (s) => s.violet,
-  "violet-line": violetInk,
   "terminal-selection": (s) => mixHex(s.violet, s.bg, 0.3),
   merged: violetBlend,
   "merged-fill": (s) => mixHex(s.violet, s.text, 0.85),
   codex: violetBlend,
-  "codex-soft": violetBlend,
   "accent-ink": accentInk,
   "accent-fill": (s) => mixHex(s.accent, BLACK, 0.8),
   "md-link": accentInk,
@@ -443,6 +440,19 @@ const DERIVED_RULES: Readonly<Record<string, DeriveColor>> = {
   "diff-del-bg": (s) => mixHex(s.danger, s.bg, 0.2),
   "diff-del-ink": (s) => mixHex(s.danger, s.text, 0.75),
   "composer-card": (s) => s.card
+};
+
+function sameSource(token: string): Readonly<Record<ThemeBase, string>> {
+  return { dark: token, light: token };
+}
+
+const TINT_SOURCES: Readonly<Record<string, Readonly<Record<ThemeBase, string>>>> = {
+  "violet-soft": sameSource("violet"),
+  "violet-line": { dark: "violet-ink", light: "violet" },
+  "claude-soft": sameSource("claude"),
+  "opencode-soft": sameSource("opencode"),
+  "codex-soft": sameSource("codex"),
+  "driver-soft": sameSource("driver")
 };
 
 const RGBA_COLOR = /^rgba\((\d{1,3}), (\d{1,3}), (\d{1,3}), ([\d.]+)\)$/;
@@ -523,7 +533,97 @@ export function deriveThemeTokens(base: ThemeBase, colors: Record<string, string
     }
   }
 
+  for (const [tint, sources] of Object.entries(TINT_SOURCES)) {
+    const source = sources[base];
+    if (tokens[source] !== palette[source]) {
+      tokens[tint] = formatPaletteColor({ rgb: channels(tokens[source]), alpha: parsePaletteColor(palette[tint]).alpha });
+    }
+  }
+
   return tokens;
+}
+
+export const BUNDLED_THEMES: readonly Readonly<CustomTheme>[] = [
+  {
+    id: "claude",
+    name: "Claude",
+    base: "light",
+    colors: {
+      gutter: "#e8e6dc",
+      line: "#e3e0d5",
+      editor: "#ffffff",
+      "panel-head": "#f5f4ed",
+      bg: "#faf9f5",
+      tool: "#f5f4ed",
+      "bg-deep": "#f0eee6",
+      card: "#ffffff",
+      overlay: "#ffffff",
+      "user-msg": "#f0eee6",
+      hover: "#efede4",
+      raised: "#e9e6db",
+      border: "#ddd9ce",
+      "border-soft": "#e8e5da",
+      "border-strong": "#c4c0b3",
+      text: "#141413",
+      dim: "#3d3d3a",
+      muted: "#545350",
+      faint: "#5f5e59",
+      claude: "#b25739",
+      opencode: "#1a5e9c",
+      codex: "#6f4fc9",
+      violet: "#b25739",
+      "violet-strong": "#9c4b31",
+      "violet-ink": "#904528",
+      success: "#286b2b",
+      warning: "#7f5000",
+      danger: "#a43125",
+      accent: "#1f5ecf",
+      "accent-ink": "#2153ab",
+      "danger-ink": "#a8281c",
+      "accent-fill": "#3168ce",
+      "danger-fill": "#c0392b",
+      "success-fill": "#357e39",
+      "neutral-fill": "#706f69",
+      "draft-fill": "#706f69",
+      "merged-fill": "#7a63c4",
+      update: "#12697a",
+      babysit: "#547a0d",
+      merged: "#6f4fc9",
+      skill: "#9a3fb0",
+      "md-link": "#2153ab",
+      "md-strong": "#141413",
+      driver: "#6f6e68",
+      "terminal-bg": "#faf9f5",
+      "terminal-fg": "#141413",
+      "terminal-selection": "#f0d3c6",
+      "control-ink": "#7b7a73",
+      "control-bg": "#efede4",
+      "control-bg-hover": "#e6e3d8",
+      "control-ring": "#a9a597",
+      "switch-track": "#e3e0d5",
+      "switch-ring": "#b8b4a6",
+      "menu-surface": "#ffffff",
+      "tooltip-bg": "#ffffff",
+      "modal-bar": "#f0eee6",
+      "row-selected": "#efede4",
+      "table-row-hover": "#f0eee6",
+      "bar-row-hover": "#f0eee6",
+      "tag-fill": "#e9e7de",
+      "chart-grid": "#e0ddd2",
+      "avatar-bot": "#dcd9ce",
+      "new-ink": "#2153ab",
+      "diff-add-bg": "#e3f1e1",
+      "diff-add-ink": "#1f6b2a",
+      "diff-del-bg": "#fbe3e0",
+      "diff-del-ink": "#a43125",
+      "diff-hunk-bg": "#e4ecf8",
+      "diff-hunk-ink": "#2153ab"
+    }
+  }
+];
+
+export function bundledTheme(themeId: string): CustomTheme | undefined {
+  return BUNDLED_THEMES.find((theme) => theme.id === themeId);
 }
 
 export interface ActiveTheme {
@@ -542,7 +642,7 @@ export function resolveActiveTheme(
   if (themeId === "system") {
     return { base: systemPrefersLight ? "light" : "dark", tokens: null };
   }
-  const custom = customThemes.find((theme) => theme.id === themeId);
+  const custom = bundledTheme(themeId) ?? customThemes.find((theme) => theme.id === themeId);
   if (custom) {
     const base: ThemeBase = custom.base === "light" ? "light" : "dark";
     return { base, tokens: deriveThemeTokens(base, custom.colors) };

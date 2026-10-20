@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import type { CustomTheme, ThemeBase } from "@cw-code/contracts";
 import {
+  BUILTIN_THEME_IDS,
+  BUNDLED_THEMES,
   CURATED_THEME_TOKENS,
   PROJECT_HUES,
   THEME_COLOR_TOKENS,
@@ -75,25 +77,99 @@ describe("THEME_PALETTES", () => {
   });
 });
 
-describe("light text ramp contrast", () => {
-  const light = THEME_PALETTES.light;
+function claudeTheme(): CustomTheme {
+  const theme = BUNDLED_THEMES.find((entry) => entry.id === "claude");
+  if (!theme) {
+    throw new Error("The Claude theme is not bundled");
+  }
+  return theme;
+}
 
+describe("contrastRatio", () => {
   it("matches the WCAG reference ratios", () => {
     expect(contrastRatio("#000000", "#ffffff")).toBeCloseTo(21, 5);
     expect(contrastRatio("#ffffff", "#ffffff")).toBe(1);
     expect(contrastRatio("#767676", "#ffffff")).toBeCloseTo(4.54, 2);
   });
+});
 
-  it("keeps every ramp step at 4.5:1 or more on every light surface", () => {
+describe.each([
+  ["light", THEME_PALETTES.light],
+  ["Claude", deriveThemeTokens("light", claudeTheme().colors)]
+])("%s text ramp contrast", (_name, palette) => {
+  it("keeps every ramp step at 4.5:1 or more on every surface", () => {
     for (const text of ["text", "dim", "muted", "faint"]) {
       for (const surface of ["bg", "card", "hover", "raised", "gutter", "tool", "panel-head"]) {
-        expect(contrastRatio(light[text], light[surface]), `${text} on ${surface}`).toBeGreaterThanOrEqual(4.5);
+        expect(contrastRatio(palette[text], palette[surface]), `${text} on ${surface}`).toBeGreaterThanOrEqual(4.5);
       }
     }
   });
 
   it("keeps muted at 7:1 or more on bg", () => {
-    expect(contrastRatio(light.muted, light.bg)).toBeGreaterThanOrEqual(7);
+    expect(contrastRatio(palette.muted, palette.bg)).toBeGreaterThanOrEqual(7);
+  });
+});
+
+describe("BUNDLED_THEMES", () => {
+  it("never collides with a built-in id or the user custom-theme namespace", () => {
+    for (const theme of BUNDLED_THEMES) {
+      expect(BUILTIN_THEME_IDS as readonly string[]).not.toContain(theme.id);
+      expect(theme.id.startsWith("custom-")).toBe(false);
+    }
+    expect(new Set(BUNDLED_THEMES.map((theme) => theme.id)).size).toBe(BUNDLED_THEMES.length);
+  });
+});
+
+describe("Claude theme", () => {
+  const theme = claudeTheme();
+  const tokens = deriveThemeTokens("light", theme.colors);
+
+  it("is a light-based theme whose colors are editable tokens in lowercase hex", () => {
+    expect(theme).toMatchObject({ id: "claude", name: "Claude", base: "light" });
+    for (const [token, value] of Object.entries(theme.colors)) {
+      expect(THEME_COLOR_TOKENS, token).toContain(token);
+      expect(value, token).toMatch(/^#[0-9a-f]{6}$/);
+    }
+  });
+
+  it("keeps its derived tints on the hue of their source colors", () => {
+    expect(rgbOf(tokens["violet-line"])).toEqual(rgbOf(tokens.violet));
+    expect(rgbOf(tokens["violet-soft"])).toEqual(rgbOf(tokens.violet));
+    expect(rgbOf(tokens["codex-soft"])).toEqual(rgbOf(tokens.codex));
+    expect(rgbOf(tokens["claude-soft"])).toEqual(rgbOf(tokens.claude));
+  });
+
+  it("keeps status, link and ink colors at 4.5:1 or more on bg and on their own tint", () => {
+    const inks = ["success", "warning", "danger", "accent", "accent-ink", "danger-ink", "violet-ink", "md-link", "new-ink", "update"];
+    for (const ink of inks) {
+      expect(contrastRatio(tokens[ink], tokens.bg), `${ink} on bg`).toBeGreaterThanOrEqual(4.5);
+      expect(contrastRatio(tokens[ink], mixHex(tokens[ink], tokens.bg, 0.14)), `${ink} on its tint`).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
+  it("keeps diff inks at 4.5:1 or more on their diff backgrounds", () => {
+    for (const kind of ["add", "del", "hunk"]) {
+      expect(contrastRatio(tokens[`diff-${kind}-ink`], tokens[`diff-${kind}-bg`]), kind).toBeGreaterThanOrEqual(4.5);
+    }
+  });
+
+  it("keeps labels at 4.5:1 or more on filled backgrounds", () => {
+    const pairs: [string, string][] = [
+      ["on-accent", "violet"],
+      ["on-accent", "violet-strong"],
+      ["on-accent", "accent-fill"],
+      ["on-accent", "neutral-fill"],
+      ["on-accent", "draft-fill"],
+      ["on-accent", "success-fill"],
+      ["on-accent", "danger-fill"],
+      ["on-accent", "merged-fill"],
+      ["on-success", "success"],
+      ["on-warning", "warning"],
+      ["on-babysit", "babysit"]
+    ];
+    for (const [label, fill] of pairs) {
+      expect(contrastRatio(tokens[label], tokens[fill]), `${label} on ${fill}`).toBeGreaterThanOrEqual(4.5);
+    }
   });
 });
 
@@ -253,6 +329,32 @@ describe("deriveThemeTokens", () => {
     expect(tokens["codex-soft"]).toBe("rgba(255, 96, 102, 0.14)");
   });
 
+  it("keeps violet tints on the new violet hue at the base alpha", () => {
+    const light = deriveThemeTokens("light", { violet: "#c6613f" });
+    expect(light["violet-soft"]).toBe("rgba(198, 97, 63, 0.12)");
+    expect(light["violet-line"]).toBe("rgba(198, 97, 63, 0.35)");
+    const dark = deriveThemeTokens("dark", { violet: "#c6613f" });
+    expect(dark["violet-soft"]).toBe("rgba(198, 97, 63, 0.2)");
+    expect(dark["violet-line"]).toBe(withAlpha(dark["violet-ink"], 0.45));
+  });
+
+  it("recolors a tint from an Advanced override of its source", () => {
+    expect(deriveThemeTokens("light", { codex: "#123456" })["codex-soft"]).toBe("rgba(18, 52, 86, 0.12)");
+    expect(deriveThemeTokens("dark", { codex: "#123456" })["codex-soft"]).toBe("rgba(18, 52, 86, 0.14)");
+    expect(deriveThemeTokens("light", { claude: "#c6613f", driver: "#87867f" })).toMatchObject({
+      "claude-soft": "rgba(198, 97, 63, 0.12)",
+      "driver-soft": "rgba(135, 134, 127, 0.12)"
+    });
+  });
+
+  it("keeps the base tint when its source is set to the base value", () => {
+    const light = THEME_PALETTES.light;
+    const tokens = deriveThemeTokens("light", { codex: light.codex, claude: light.claude, opencode: light.opencode });
+    expect(tokens["codex-soft"]).toBe(light["codex-soft"]);
+    expect(tokens["claude-soft"]).toBe(light["claude-soft"]);
+    expect(tokens["opencode-soft"]).toBe(light["opencode-soft"]);
+  });
+
   it("derives composer-card from card, keeping the dark base alpha", () => {
     expect(deriveThemeTokens("dark", { card: "#20242f" })["composer-card"]).toBe("rgba(165, 174, 229, 0.06)");
     expect(deriveThemeTokens("light", { card: "#fafafa" })["composer-card"]).toBe("#fafafa");
@@ -350,6 +452,17 @@ describe("resolveActiveTheme", () => {
     expect(resolveActiveTheme(theme.id, [theme], true)).toEqual({ base: "dark", tokens: THEME_PALETTES.dark });
   });
 
+  it("resolves the bundled Claude theme on the light base with derived tokens", () => {
+    const expected = { base: "light", tokens: deriveThemeTokens("light", claudeTheme().colors) };
+    expect(resolveActiveTheme("claude", [], false)).toEqual(expected);
+    expect(resolveActiveTheme("claude", [], true)).toEqual(expected);
+  });
+
+  it("prefers a bundled theme over a stored theme with the same id", () => {
+    const clash = customTheme({ id: "claude", base: "dark", colors: { bg: "#000000" } });
+    expect(resolveActiveTheme("claude", [clash], false)).toEqual(resolveActiveTheme("claude", [], false));
+  });
+
   it("falls back to dark for an unknown id", () => {
     expect(resolveActiveTheme("custom-missing", [customTheme()], true)).toEqual({ base: "dark", tokens: null });
     expect(resolveActiveTheme("garbage", [], true)).toEqual({ base: "dark", tokens: null });
@@ -369,5 +482,10 @@ describe("windowBackgroundColor", () => {
     const plain = customTheme({ id: "custom-plain", base: "light" });
     expect(windowBackgroundColor(tinted.id, [tinted, plain], false)).toBe("#102030");
     expect(windowBackgroundColor(plain.id, [tinted, plain], false)).toBe(THEME_PALETTES.light.gutter);
+  });
+
+  it("returns the Claude gutter for the bundled Claude theme", () => {
+    expect(windowBackgroundColor("claude", [], false)).toBe(claudeTheme().colors.gutter);
+    expect(windowBackgroundColor("claude", [], true)).toBe("#e8e6dc");
   });
 });

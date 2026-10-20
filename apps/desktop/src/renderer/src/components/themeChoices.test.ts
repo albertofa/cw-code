@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { BUNDLED_THEMES } from "../../../shared/themes.js";
 import type { CustomTheme } from "../cw.js";
 import { activeThemeName, newCustomTheme, tokenLabel, withoutColor } from "./themeChoices.js";
 
@@ -24,6 +25,10 @@ describe("activeThemeName", () => {
     expect(activeThemeName("custom-ocean", [ocean], false)).toBe("Ocean");
     expect(activeThemeName("custom-ocean", [{ ...ocean, name: " " }], false)).toBe("Untitled theme");
   });
+
+  it("names a bundled theme by its own name", () => {
+    expect(activeThemeName("claude", [], false)).toBe("Claude");
+  });
 });
 
 describe("newCustomTheme", () => {
@@ -43,6 +48,18 @@ describe("newCustomTheme", () => {
     expect(copy.base).toBe("light");
     expect(copy.colors).toEqual(ocean.colors);
     expect(copy.colors).not.toBe(ocean.colors);
+  });
+
+  it("copies the bundled Claude theme into an editable light theme without sharing the colors", () => {
+    const claude = BUNDLED_THEMES.find((theme) => theme.id === "claude");
+    const copy = newCustomTheme("claude", [], false, UUID);
+    expect(copy).toEqual({
+      id: "custom-3f2504e0-4f89-11d3-9a0c-0305e82c3301",
+      name: "Claude copy",
+      base: "light",
+      colors: claude?.colors
+    });
+    expect(copy.colors).not.toBe(claude?.colors);
   });
 
   it("keeps the copy name within the name limit", () => {
