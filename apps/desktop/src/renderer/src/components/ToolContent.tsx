@@ -1,14 +1,17 @@
+import { lazy, Suspense } from "react";
 import type { DockableTabId, PanelId } from "@cw-code/contracts";
 import { AgentsPanel } from "./AgentsPanel.js";
-import { FilePanel } from "./FilePanel.js";
 import { GitInspectPanel } from "./GitInspectPanel.js";
 import { PreviewPanel } from "./PreviewPanel.js";
 import { PrSessionPanel } from "./PrSessionPanel.js";
 import { PtyTab } from "./PtyTab.js";
 import { SessionOverview } from "./SessionOverview.js";
+import { InlineLoading } from "./Loading.js";
 import { useAppStore } from "../stores/appStore.js";
 import { tabsInPanel } from "../stores/panelLayout.js";
 import { selectSessionPanel, usePanelStore } from "../stores/panelStore.js";
+
+const FilePanel = lazy(() => import("./FilePanel.js").then((module) => ({ default: module.FilePanel })));
 
 export function ToolContent({ tab, sessionId, panel }: { tab: DockableTabId; sessionId: string; panel: PanelId }) {
   const preview = useAppStore((s) => s.previewBySession[sessionId] ?? null);
@@ -18,7 +21,13 @@ export function ToolContent({ tab, sessionId, panel }: { tab: DockableTabId; ses
   const moveTab = usePanelStore((s) => s.moveTab);
 
   if (tab === "overview") return <SessionOverview key={sessionId} sessionId={sessionId} />;
-  if (tab === "files") return <FilePanel sessionId={sessionId} />;
+  if (tab === "files") {
+    return (
+      <Suspense fallback={<InlineLoading label="Loading editor" />}>
+        <FilePanel sessionId={sessionId} />
+      </Suspense>
+    );
+  }
   if (tab === "agents") return <AgentsPanel sessionId={sessionId} />;
   if (tab === "diff") return <GitInspectPanel sessionId={sessionId} />;
   if (tab === "pr") return <PrSessionPanel key={sessionId} sessionId={sessionId} />;

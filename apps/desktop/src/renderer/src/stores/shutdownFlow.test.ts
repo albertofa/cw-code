@@ -63,9 +63,10 @@ function installCw(): FakeShutdownApi {
       quit: async () => ({ ok: true }),
       onRequested: () => () => {}
     },
-    saveFile: async (sessionId: string, path: string, content: string) => {
+    writeFileGuarded: async (sessionId: string, path: string, content: string) => {
       if (api.failSave) throw new Error("disk is read-only");
       api.saveCalls.push({ sessionId, path, content });
+      return { mtimeMs: 1, size: content.length };
     }
   };
   (window as unknown as { cw: unknown }).cw = cw;

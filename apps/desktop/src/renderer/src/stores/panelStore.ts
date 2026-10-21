@@ -17,6 +17,7 @@ import {
 const DEFAULT_SESSION_PANEL = defaultSessionPanel();
 
 let revealNonce = 0;
+let filesCommandNonce = 0;
 let diffModeNonce = 0;
 
 function loadState(): LoadedPanelState {
@@ -76,6 +77,8 @@ export interface PanelActions {
   revealTab(sessionId: string, tab: DockableTabId): void;
   revealFile(sessionId: string, path: string, line?: number): void;
   clearRevealRequest(nonce: number): void;
+  requestFilesCommand(sessionId: string, kind: FilesCommandKind): void;
+  clearFilesCommand(nonce: number): void;
   requestDiffMode(sessionId: string, mode: GitDiffMode): void;
   clearDiffModeRequest(nonce: number): void;
   clearStaleDiffModeRequest(sessionId: string | null | undefined): void;
@@ -92,6 +95,14 @@ export interface RevealRequest {
   sessionId: string;
   path: string;
   line?: number;
+  nonce: number;
+}
+
+export type FilesCommandKind = "quickOpen" | "search";
+
+export interface FilesCommandRequest {
+  sessionId: string;
+  kind: FilesCommandKind;
   nonce: number;
 }
 
@@ -112,6 +123,7 @@ export type PanelStore = PersistedPanelState & PanelActions & {
   draggingTab: DockableTabId | null;
   dragFromRail: boolean;
   revealRequest: RevealRequest | null;
+  filesCommand: FilesCommandRequest | null;
   diffModeRequest: DiffModeRequest | null;
   turnDiffSummaryBySession: Record<string, TurnDiffSummary | null>;
 };
@@ -121,6 +133,7 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
   draggingTab: null,
   dragFromRail: false,
   revealRequest: null,
+  filesCommand: null,
   diffModeRequest: null,
   turnDiffSummaryBySession: {},
 
@@ -194,6 +207,16 @@ export const usePanelStore = create<PanelStore>((set, get) => ({
 
   clearRevealRequest: (nonce) => {
     if (get().revealRequest?.nonce === nonce) set({ revealRequest: null });
+  },
+
+  requestFilesCommand: (sessionId, kind) => {
+    filesCommandNonce += 1;
+    set({ filesCommand: { sessionId, kind, nonce: filesCommandNonce } });
+    get().revealTab(sessionId, "files");
+  },
+
+  clearFilesCommand: (nonce) => {
+    if (get().filesCommand?.nonce === nonce) set({ filesCommand: null });
   },
 
   requestDiffMode: (sessionId, mode) => {

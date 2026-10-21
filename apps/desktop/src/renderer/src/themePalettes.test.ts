@@ -44,6 +44,7 @@ const ROOT_SELECTOR = ":root {";
 const LIGHT_SELECTOR = ':root[data-theme="light"] {';
 const SCANNED_STYLESHEETS = [
   "./components/appearance.css",
+  "./components/files/files.css",
   "./components/loading.css",
   "./components/modelPicker.css",
   "./components/prInbox.css",
