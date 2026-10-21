@@ -3,16 +3,20 @@ import { useSyncExternalStore } from "react";
 type IconResolver = (name: string, isDir: boolean, expanded: boolean, light: boolean) => string | null;
 
 let resolver: IconResolver | null = null;
+let loading: Promise<void> | null = null;
 const listeners = new Set<() => void>();
 
-void import("./materialIcons.js")
-  .then((module) => {
-    resolver = module.iconUrl;
-    for (const listener of listeners) listener();
-  })
-  .catch((err: unknown) => console.warn(`[icons] file icons unavailable: ${err instanceof Error ? err.message : String(err)}`));
+function loadIcons(): void {
+  loading ??= import("./materialIcons.js")
+    .then((module) => {
+      resolver = module.iconUrl;
+      for (const listener of listeners) listener();
+    })
+    .catch((err: unknown) => console.warn(`[icons] file icons unavailable: ${err instanceof Error ? err.message : String(err)}`));
+}
 
 function subscribe(listener: () => void): () => void {
+  loadIcons();
   listeners.add(listener);
   return () => listeners.delete(listener);
 }

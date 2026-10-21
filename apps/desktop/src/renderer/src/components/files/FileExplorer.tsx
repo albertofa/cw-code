@@ -66,13 +66,13 @@ function InlineNameInput({
   isDir: boolean;
   depth: number;
   error: string | null;
-  onCommit: (name: string) => void;
+  onCommit: (name: string) => Promise<boolean>;
   onCancel: () => void;
 }) {
   const ref = useRef<HTMLInputElement>(null);
   const [value, setValue] = useState(initial);
   const done = useRef(false);
-  const submitted = useRef<string | null>(null);
+  const inFlight = useRef(false);
 
   useLayoutEffect(() => {
     const input = ref.current;
@@ -82,17 +82,19 @@ function InlineNameInput({
     input.setSelectionRange(0, dot > 0 ? dot : initial.length);
   }, [initial, isDir]);
 
-  const commit = () => {
-    if (done.current) return;
+  const commit = (fromBlur: boolean) => {
+    if (done.current || inFlight.current) return;
     const name = value.trim();
-    if (!name || name === initial) {
+    if (!name || name === initial || (fromBlur && error)) {
       done.current = true;
       onCancel();
       return;
     }
-    if (submitted.current === name) return;
-    submitted.current = name;
-    onCommit(name);
+    inFlight.current = true;
+    void onCommit(name).then((ok) => {
+      inFlight.current = false;
+      if (ok) done.current = true;
+    });
   };
 
   return (
@@ -106,19 +108,16 @@ function InlineNameInput({
           value={value}
           spellCheck={false}
           aria-label={isDir ? "Folder name" : "File name"}
-          onChange={(e) => {
-            submitted.current = null;
-            setValue(e.target.value);
-          }}
+          onChange={(e) => setValue(e.target.value)}
           onKeyDown={(e) => {
             e.stopPropagation();
-            if (e.key === "Enter") commit();
+            if (e.key === "Enter") commit(false);
             else if (e.key === "Escape") {
               done.current = true;
               onCancel();
             }
           }}
-          onBlur={commit}
+          onBlur={() => commit(true)}
         />
         {error && <div className="fx-edit-error">{error}</div>}
       </div>
@@ -160,7 +159,7 @@ export function FileExplorer({
   onOpen: (path: string, preview: boolean) => void;
   onRetryDir: (path: string) => void;
   onContextMenu: (e: ReactMouseEvent, row: TreeRow | null) => void;
-  onCommitEdit: (name: string) => void;
+  onCommitEdit: (name: string) => Promise<boolean>;
   onCancelEdit: () => void;
   onRename: (row: TreeRow) => void;
   onDelete: (row: TreeRow) => void;
@@ -344,8 +343,9 @@ export function FileExplorer({
                 title={state ? `${row.path} · ${GIT_TITLE[state]}` : row.path}
                 onClick={(e) => {
                   onFocusPath(row.path);
-                  if (row.isDir) onToggleDir(row.path);
-                  else onOpen(row.path, e.detail < 2);
+                  if (row.isDir) {
+                    if (e.detail === 1) onToggleDir(row.path);
+                  } else onOpen(row.path, e.detail < 2);
                 }}
                 onDoubleClick={() => {
                   if (!row.isDir) onOpen(row.path, false);

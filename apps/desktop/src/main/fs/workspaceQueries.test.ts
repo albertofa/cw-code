@@ -10,6 +10,8 @@ import {
   gitDecorations,
   listWorkspaceFiles,
   matchRanges,
+  MAX_MATCH_SCAN_CHARS,
+  toMatch,
   parseGitDecorations,
   parseGrepOutput,
   buildStatusArgs,
@@ -251,6 +253,16 @@ describe("matchRanges", () => {
   });
 });
 
+describe("toMatch", () => {
+  it("only scans a bounded prefix of very long lines", () => {
+    const long = `${"x".repeat(MAX_MATCH_SCAN_CHARS + 10)}needle`;
+    const match = toMatch({ path: "min.js", line: 1, text: long }, /needle/g);
+    expect(match.ranges).toEqual([]);
+    expect(match.preview.length).toBeLessThanOrEqual(400);
+    expect(toMatch({ path: "a.ts", line: 3, text: "find the needle" }, /needle/g).ranges).toEqual([[9, 15]]);
+  });
+});
+
 describe("trimPreview", () => {
   it("returns short lines untouched", () => {
     expect(trimPreview("hello foo", [[6, 9]])).toEqual({ preview: "hello foo", ranges: [[6, 9]] });
@@ -324,6 +336,13 @@ describe("against a real git repository", () => {
 
   afterAll(() => {
     rmSync(join(repo, ".."), { recursive: true, force: true });
+  });
+
+  it("strips a UTF-8 BOM from the HEAD version like the editor read does", async () => {
+    writeFileSync(join(repo, "bom.cs"), "\uFEFFclass A {}\n");
+    git(repo, "add", "bom.cs");
+    git(repo, "commit", "-qm", "bom");
+    expect(await gitBaseline("git", repo, "bom.cs")).toEqual({ kind: "tracked", content: "class A {}\n" });
   });
 
   it("returns the HEAD version of a tracked file", async () => {

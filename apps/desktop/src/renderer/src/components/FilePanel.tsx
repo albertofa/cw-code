@@ -622,13 +622,13 @@ function FileWorkspace({ sessionId }: { sessionId: string }) {
   }, []);
 
   const commitEdit = useCallback(
-    async (rawName: string) => {
-      if (!edit) return;
+    async (rawName: string): Promise<boolean> => {
+      if (!edit) return false;
       const name = rawName.trim().replace(/\\/g, "/");
       const invalid = validateName(name);
       if (invalid) {
         setEditError(invalid);
-        return;
+        return false;
       }
       try {
         if (edit.kind === "rename") {
@@ -636,13 +636,13 @@ function FileWorkspace({ sessionId }: { sessionId: string }) {
           const to = joinPath(parentDir(from), name);
           if (to === from) {
             setEdit(null);
-            return;
+            return true;
           }
           const store = useEditorBuffers.getState();
           const collides = Object.values(store.buffers).some((buffer) => buffer.sessionId === sessionId && isUnder(buffer.path, to) && !isUnder(buffer.path, from));
           if (collides) {
             setEditError("A file with unsaved changes is open at that path.");
-            return;
+            return false;
           }
           await window.cw.renamePath(sessionId, from, to);
           const moved = Array.from(registered).filter((key) => key.startsWith(`${sessionId}\n`) && isUnder(key.slice(sessionId.length + 1), from));
@@ -677,8 +677,10 @@ function FileWorkspace({ sessionId }: { sessionId: string }) {
         setEditError(null);
         invalidateQuickOpenCache(sessionId);
         refreshDecorations();
+        return true;
       } catch (err) {
         setEditError(ipcErrorMessage(err));
+        return false;
       }
     },
     [edit, sessionId, expanded, loadDir, openFile, refreshDecorations, setExpandedPaths]
@@ -998,7 +1000,7 @@ function FileWorkspace({ sessionId }: { sessionId: string }) {
                 onOpen={(path, preview) => openFile(path, { preview })}
                 onRetryDir={retryDir}
                 onContextMenu={entryMenu}
-                onCommitEdit={(name) => void commitEdit(name)}
+                onCommitEdit={commitEdit}
                 onCancelEdit={() => {
                   setEdit(null);
                   setEditError(null);

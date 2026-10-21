@@ -10,13 +10,14 @@ const SEARCH_TIMEOUT_MS = 20_000;
 const MAX_LISTED_FILES = 50_000;
 const DEFAULT_MAX_RESULTS = 2000;
 const DEFAULT_PREVIEW_MAX = 400;
+export const MAX_MATCH_SCAN_CHARS = 4096;
 const PREVIEW_LEAD_CHARS = 40;
 const MAX_STDERR_CHARS = 64 * 1024;
 const PCRE_UNSUPPORTED = /PCRE|-P\b/;
 const UNSAFE_GLOB_ERROR = "include/exclude patterns must be relative to the workspace";
 const SEARCH_TIMEOUT_ERROR = "search timed out";
 
-interface GrepLine {
+export interface GrepLine {
   path: string;
   line: number;
   text: string;
@@ -114,7 +115,7 @@ export async function gitDecorations(git: string, root: string): Promise<GitDeco
 export async function gitBaseline(git: string, root: string, path: string): Promise<GitBaseline> {
   const rel = path.replace(/\\/g, "/");
   const shown = await execWithStatus(git, readOnlyGit(["show", `HEAD:./${rel}`]), root, BASELINE_TIMEOUT_MS);
-  if (shown.code === 0) return { kind: "tracked", content: shown.stdout };
+  if (shown.code === 0) return { kind: "tracked", content: shown.stdout.replace(/^\uFEFF/, "") };
   if (!(await isInsideWorkTree(git, root))) return { kind: "none" };
   const ignored = await execWithStatus(git, readOnlyGit(["check-ignore", "-q", "--", rel]), root, BASELINE_TIMEOUT_MS);
   return ignored.code === 0 ? { kind: "none" } : { kind: "untracked" };
@@ -272,21 +273,28 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-export function matchRanges(text: string, q: TextSearchQuery): Array<[number, number]> {
-  if (!q.query) return [];
+function compileMatcher(q: TextSearchQuery): RegExp | null {
+  if (!q.query) return null;
   const source = q.isRegex ? q.query : escapeRegExp(q.query);
-  let pattern: RegExp;
   try {
-    pattern = new RegExp(q.wholeWord ? `\\b(?:${source})\\b` : source, q.matchCase ? "g" : "gi");
+    return new RegExp(q.wholeWord ? `\\b(?:${source})\\b` : source, q.matchCase ? "g" : "gi");
   } catch {
-    return [];
+    return null;
   }
+}
+
+function rangesFor(text: string, pattern: RegExp | null): Array<[number, number]> {
+  if (!pattern) return [];
   const ranges: Array<[number, number]> = [];
   for (const match of text.matchAll(pattern)) {
     if (match[0].length === 0) continue;
     ranges.push([match.index, match.index + match[0].length]);
   }
   return ranges;
+}
+
+export function matchRanges(text: string, q: TextSearchQuery): Array<[number, number]> {
+  return rangesFor(text, compileMatcher(q));
 }
 
 export function trimPreview(
@@ -315,13 +323,15 @@ async function isInsideWorkTree(git: string, root: string): Promise<boolean> {
   }
 }
 
-function toMatch(line: GrepLine, q: TextSearchQuery): TextSearchMatch {
-  const { preview, ranges } = trimPreview(line.text, matchRanges(line.text, q));
+export function toMatch(line: GrepLine, pattern: RegExp | null): TextSearchMatch {
+  const scanned = line.text.length > MAX_MATCH_SCAN_CHARS ? line.text.slice(0, MAX_MATCH_SCAN_CHARS) : line.text;
+  const { preview, ranges } = trimPreview(scanned, rangesFor(scanned, pattern));
   return { path: line.path, line: line.line, preview, ranges };
 }
 
 function toResult(run: GrepRun, q: TextSearchQuery): TextSearchResult {
-  const matches = run.lines.map((line) => toMatch(line, q));
+  const pattern = compileMatcher(q);
+  const matches = run.lines.map((line) => toMatch(line, pattern));
   if (run.truncated) return { matches, truncated: true, error: null };
   if (run.timedOut) {
     return matches.length > 0 ? { matches, truncated: true, error: null } : { matches, truncated: false, error: SEARCH_TIMEOUT_ERROR };
