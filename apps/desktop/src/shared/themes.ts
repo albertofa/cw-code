@@ -83,6 +83,7 @@ const DARK_PALETTE: Record<string, string> = {
   "shadow-float": "0 16px 40px rgba(0, 0, 0, 0.55)",
   "md-link": "#7fa8f8",
   "md-strong": "#f4f4f8",
+  "md-body": "#d7d8de",
   driver: "#9a9898",
   "driver-soft": "rgba(154, 152, 152, 0.12)",
   "scrollbar-thumb": "rgba(255, 255, 255, 0.08)",
@@ -212,6 +213,7 @@ const LIGHT_PALETTE: Record<string, string> = {
   "shadow-float": "0 16px 40px rgba(20, 24, 40, 0.14)",
   "md-link": "#2050b3",
   "md-strong": "#0f1219",
+  "md-body": "#51535a",
   driver: "#6b6f7b",
   "driver-soft": "rgba(107, 111, 123, 0.12)",
   "scrollbar-thumb": "rgba(16, 20, 32, 0.14)",
@@ -354,6 +356,38 @@ export function mixHex(a: string, b: string, weightOfA: number): string {
   const second = channels(b);
   const mixed = first.map((channel, index) => Math.round(channel * weight + second[index] * (1 - weight)));
   return `#${mixed.map(channelHex).join("")}`;
+}
+
+function relativeLuminance(hex: string): number {
+  const [red, green, blue] = channels(hex).map((channel) => {
+    const value = channel / 255;
+    return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
+  });
+  return 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+}
+
+export function contrastRatio(first: string, second: string): number {
+  const [lighter, darker] = [relativeLuminance(first), relativeLuminance(second)].sort((a, b) => b - a);
+  return (lighter + 0.05) / (darker + 0.05);
+}
+
+export const BODY_TEXT_CONTRAST: Readonly<Record<ThemeBase, number>> = { dark: 13.15, light: 7.6 };
+
+export function bodyTextColor(text: string, surface: string, target: number): string {
+  if (contrastRatio(text, surface) <= target) {
+    return text.toLowerCase();
+  }
+  let low = 0;
+  let high = 1;
+  for (let step = 0; step < 24; step += 1) {
+    const weight = (low + high) / 2;
+    if (contrastRatio(mixHex(text, surface, weight), surface) >= target) {
+      high = weight;
+    } else {
+      low = weight;
+    }
+  }
+  return mixHex(text, surface, high);
 }
 
 export function withAlpha(hex: string, alpha: number): string {
@@ -531,6 +565,10 @@ export function deriveThemeTokens(base: ThemeBase, colors: Record<string, string
     if (!CURATED_SEED_TOKENS.has(token)) {
       tokens[token] = value;
     }
+  }
+
+  if (!overrides.has("md-body")) {
+    tokens["md-body"] = bodyTextColor(tokens.text, tokens.editor, BODY_TEXT_CONTRAST[base]);
   }
 
   for (const [tint, sources] of Object.entries(TINT_SOURCES)) {
