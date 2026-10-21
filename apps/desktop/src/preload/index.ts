@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { AccountUsageSnapshot, AppSettings, AttentionState, CliBinary, CliDiscoveredCandidate, CliDiscoverResult, CommandInvocation, CommandOption, CreateSessionOptions, GitBranchInfo, GitDiffMode, GitDiffResult, GitHubSearchResult, GitStatus, HarnessId, ImportableSession, ImportSessionRequest, ImportSessionResult, IssueDetail, IssueRef, IssueSummary, ModelMeta, PrDetail, PrInboxResult, Project, ProjectGitHubRepo, PrRef, PrSummary, PrWorkflow, RepoRef, RetryConnectionResult, RunRef, RunSources, RunsResult, SessionCleanupResult, SessionIssueLink, SessionMeta, SessionPrLink, SessionRunLink, SessionStatus, SessionStatusReason, ShutdownAssessment, ShutdownCommitResult, ShutdownExpiredEvent, ShutdownPrepareRequest, ShutdownPrepareResult, ShutdownRequestedEvent, SkillDetail, SkillMeta, SkillSaveInput, SkillsListResult, SourceControlHealth, StartupState, SubagentToolsResult, TurnChanges, UpdateActionResult, UpdateChannel, UpdateInstallRequest, UpdateState, UsageLedgerQuery, UsageLedgerRow, WorkflowRunSummary, WorktreePruneSummary } from "@cw-code/contracts";
+import type { AccountUsageSnapshot, AppSettings, AttentionState, CliBinary, CliDiscoveredCandidate, CliDiscoverResult, CommandInvocation, CommandOption, CreateSessionOptions, DirEntry, FileReadResult, FileStatInfo, FsChangeEvent, GitBranchInfo, GitDecorations, GitBaseline, GitDiffMode, GitDiffResult, GitHubSearchResult, GitStatus, HarnessId, ImportableSession, ImportSessionRequest, ImportSessionResult, IssueDetail, IssueRef, IssueSummary, ModelMeta, PrDetail, PrInboxResult, Project, ProjectGitHubRepo, PrRef, PrSummary, PrWorkflow, RepoRef, RetryConnectionResult, RunRef, RunSources, RunsResult, SessionCleanupResult, SessionIssueLink, SessionMeta, SessionPrLink, SessionRunLink, SessionStatus, SessionStatusReason, ShutdownAssessment, ShutdownCommitResult, ShutdownExpiredEvent, ShutdownPrepareRequest, ShutdownPrepareResult, ShutdownRequestedEvent, SkillDetail, SkillMeta, SkillSaveInput, SkillsListResult, SourceControlHealth, StartupState, SubagentToolsResult, TextSearchQuery, TextSearchResult, TurnChanges, UpdateActionResult, UpdateChannel, UpdateInstallRequest, UpdateState, UsageLedgerQuery, UsageLedgerRow, WorkflowRunSummary, WorktreePruneSummary } from "@cw-code/contracts";
 
 export type PermissionMode = "auto" | "acceptEdits" | "bypassPermissions" | "manual";
 export type EffortLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
@@ -25,12 +25,6 @@ export interface PermissionOption {
   label: string;
   description: string;
   native: boolean;
-}
-
-export interface DirEntry {
-  name: string;
-  path: string;
-  isDir: boolean;
 }
 
 export type DriverName = "claude" | "opencode" | "codex";
@@ -160,10 +154,24 @@ export interface CwApi {
   onSessionUpdated(cb: (session: SessionMeta) => void): () => void;
   readFile(sessionId: string, path: string): Promise<string>;
   readOutsideFile(path: string): Promise<string>;
-  saveFile(sessionId: string, path: string, content: string): Promise<void>;
   listFiles(sessionId: string): Promise<string[]>;
   listProjectFiles(projectId: string): Promise<string[]>;
   listDir(sessionId: string, dir?: string): Promise<DirEntry[]>;
+  readFileInfo(sessionId: string, path: string): Promise<FileReadResult>;
+  writeFileGuarded(sessionId: string, path: string, content: string, expectedMtimeMs?: number): Promise<FileStatInfo>;
+  createFile(sessionId: string, path: string): Promise<void>;
+  createDir(sessionId: string, path: string): Promise<void>;
+  renamePath(sessionId: string, from: string, to: string): Promise<void>;
+  trashPath(sessionId: string, path: string): Promise<void>;
+  revealPath(sessionId: string, path: string): Promise<void>;
+  workspaceRoot(sessionId: string): Promise<string>;
+  listWorkspaceFiles(sessionId: string): Promise<string[]>;
+  gitDecorations(sessionId: string): Promise<GitDecorations>;
+  gitBaseline(sessionId: string, path: string): Promise<GitBaseline>;
+  searchText(sessionId: string, query: TextSearchQuery): Promise<TextSearchResult>;
+  setWatchedPaths(sessionId: string, paths: string[]): Promise<void>;
+  unwatchPaths(sessionId: string): Promise<void>;
+  onFsChanged(cb: (e: FsChangeEvent) => void): () => void;
   savePasteImage(projectId: string, mime: string, data: Uint8Array): Promise<string>;
   readImage(args: { sessionId?: string; projectId?: string; path: string }): Promise<{ mime: string; base64: string }>;
   openPty(sessionId: string, kind: PtyKindName): Promise<{ ptyId: string; token: string; replay: string }>;
@@ -369,11 +377,30 @@ const api: CwApi = {
   },
   readFile: (sessionId: string, path: string) => ipcRenderer.invoke("fs.readFile", { sessionId, path }),
   readOutsideFile: (path: string) => ipcRenderer.invoke("fs.readOutsideFile", { path }),
-  saveFile: (sessionId: string, path: string, content: string) =>
-    ipcRenderer.invoke("fs.saveFile", { sessionId, path, content }),
   listFiles: (sessionId: string) => ipcRenderer.invoke("fs.listFiles", { sessionId }),
   listProjectFiles: (projectId: string) => ipcRenderer.invoke("fs.listProjectFiles", { projectId }),
   listDir: (sessionId: string, dir?: string) => ipcRenderer.invoke("fs.listDir", { sessionId, dir }),
+  readFileInfo: (sessionId: string, path: string) => ipcRenderer.invoke("fs.readFileInfo", { sessionId, path }),
+  writeFileGuarded: (sessionId: string, path: string, content: string, expectedMtimeMs?: number) =>
+    ipcRenderer.invoke("fs.writeFileGuarded", { sessionId, path, content, expectedMtimeMs }),
+  createFile: (sessionId: string, path: string) => ipcRenderer.invoke("fs.createFile", { sessionId, path }),
+  createDir: (sessionId: string, path: string) => ipcRenderer.invoke("fs.createDir", { sessionId, path }),
+  renamePath: (sessionId: string, from: string, to: string) =>
+    ipcRenderer.invoke("fs.renamePath", { sessionId, from, to }),
+  trashPath: (sessionId: string, path: string) => ipcRenderer.invoke("fs.trashPath", { sessionId, path }),
+  revealPath: (sessionId: string, path: string) => ipcRenderer.invoke("fs.revealPath", { sessionId, path }),
+  workspaceRoot: (sessionId: string) => ipcRenderer.invoke("fs.workspaceRoot", { sessionId }),
+  listWorkspaceFiles: (sessionId: string) => ipcRenderer.invoke("fs.listWorkspaceFiles", { sessionId }),
+  gitDecorations: (sessionId: string) => ipcRenderer.invoke("fs.gitDecorations", { sessionId }),
+  gitBaseline: (sessionId: string, path: string) => ipcRenderer.invoke("fs.gitBaseline", { sessionId, path }),
+  searchText: (sessionId: string, query: TextSearchQuery) => ipcRenderer.invoke("fs.searchText", { sessionId, query }),
+  setWatchedPaths: (sessionId: string, paths: string[]) => ipcRenderer.invoke("fs.setWatchedPaths", { sessionId, paths }),
+  unwatchPaths: (sessionId: string) => ipcRenderer.invoke("fs.unwatchPaths", { sessionId }),
+  onFsChanged: (cb) => {
+    const listener = (_e: unknown, event: FsChangeEvent) => cb(event);
+    ipcRenderer.on("fs.changed", listener as never);
+    return () => ipcRenderer.removeListener("fs.changed", listener as never);
+  },
   savePasteImage: (projectId: string, mime: string, data: Uint8Array) =>
     ipcRenderer.invoke("fs.savePasteImage", { projectId, mime, data }),
   readImage: (args: { sessionId?: string; projectId?: string; path: string }) =>

@@ -1,6 +1,9 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, realpathSync, statSync, writeFileSync } from "node:fs";
-import { readdir, stat } from "node:fs/promises";
-import { extname, isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
+import type { Stats } from "node:fs";
+import { lstat, mkdir, open, readFile, readdir, rename, stat, writeFile } from "node:fs/promises";
+import type { FileHandle } from "node:fs/promises";
+import { dirname, extname, isAbsolute, join, normalize, relative, resolve, sep } from "node:path";
+import type { DirEntry, FileReadResult, FileStatInfo } from "@cw-code/contracts";
 import { attachmentsDir } from "../paths/appPaths.js";
 
 const UNC_OR_DEVICE_PREFIX = /^[\\/]{2}/;
@@ -57,10 +60,71 @@ export function pasteImageName(mime: string, now: Date = new Date()): string {
   return `cw-paste-${now.toISOString().replaceAll(":", "-").replace(".", "-")}.${pasteImageExt(mime)}`;
 }
 
-export interface DirEntry {
-  name: string;
-  path: string;
-  isDir: boolean;
+export const TEXT_EDIT_MAX_BYTES = 2 * 1024 * 1024;
+
+export const TEXT_VIEW_MAX_BYTES = 20 * 1024 * 1024;
+
+const BINARY_SNIFF_BYTES = 8000;
+
+function isMissing(error: unknown): boolean {
+  const code = (error as NodeJS.ErrnoException).code;
+  return code === "ENOENT" || code === "ENOTDIR";
+}
+
+async function lstatOrNull(abs: string): Promise<Stats | null> {
+  try {
+    return await lstat(abs);
+  } catch (error) {
+    if (isMissing(error)) return null;
+    throw error;
+  }
+}
+
+async function statOrNull(abs: string): Promise<Stats | null> {
+  try {
+    return await stat(abs);
+  } catch (error) {
+    if (isMissing(error)) return null;
+    throw error;
+  }
+}
+
+async function isSameEntry(a: string, b: string): Promise<boolean> {
+  const [first, second] = await Promise.all([lstat(a, { bigint: true }), lstat(b, { bigint: true })]);
+  return first.ino !== 0n && first.dev === second.dev && first.ino === second.ino;
+}
+
+const BOM = "\uFEFF";
+
+const UTF8_BOM_BYTES = Buffer.from([0xef, 0xbb, 0xbf]);
+
+async function startsWithUtf8Bom(abs: string): Promise<boolean> {
+  let handle: FileHandle;
+  try {
+    handle = await open(abs, "r");
+  } catch (error) {
+    if (isMissing(error)) return false;
+    throw error;
+  }
+  try {
+    const head = Buffer.alloc(UTF8_BOM_BYTES.length);
+    const { bytesRead } = await handle.read(head, 0, head.length, 0);
+    return bytesRead === head.length && head.equals(UTF8_BOM_BYTES);
+  } finally {
+    await handle.close();
+  }
+}
+
+function decodeUtf8(buffer: Uint8Array): { text: string; valid: boolean } {
+  try {
+    return { text: new TextDecoder("utf-8", { fatal: true }).decode(buffer), valid: true };
+  } catch {
+    return { text: new TextDecoder("utf-8").decode(buffer), valid: false };
+  }
+}
+
+function toStatInfo(stats: Stats): FileStatInfo {
+  return { mtimeMs: stats.mtimeMs, size: stats.size };
 }
 
 export const LIST_DIR_MAX_ENTRIES = 2000;
@@ -97,11 +161,6 @@ export class FileService {
     if (!stat.isFile()) throw new Error(`not a file: ${target}`);
     if (stat.size > PREVIEW_MAX_BYTES) throw new Error(`file too large to preview: ${target}`);
     return readFileSync(abs, "utf8");
-  }
-
-  saveFile(root: string, target: string, content: string): void {
-    const abs = assertInside(root, target);
-    writeFileSync(abs, content, "utf8");
   }
 
   savePasteImage(root: string, mime: string, data: Uint8Array): string {
@@ -153,6 +212,70 @@ export class FileService {
     }
     out.sort((a, b) => (a.isDir === b.isDir ? a.name.localeCompare(b.name) : a.isDir ? -1 : 1));
     return out;
+  }
+
+  async readFileInfo(root: string, target: string): Promise<FileReadResult> {
+    const abs = assertInside(root, target);
+    const stats = await statOrNull(abs);
+    if (!stats?.isFile()) return { kind: "missing" };
+    const { mtimeMs, size } = stats;
+    if (size > TEXT_VIEW_MAX_BYTES) return { kind: "tooLarge", mtimeMs, size };
+    const buffer = await readFile(abs);
+    if (buffer.subarray(0, BINARY_SNIFF_BYTES).includes(0)) return { kind: "binary", mtimeMs, size };
+    const { text: content, valid } = decodeUtf8(buffer);
+    if (!valid) return { kind: "text", content, mtimeMs, size, readOnly: true, readOnlyReason: "encoding" };
+    if (size > TEXT_EDIT_MAX_BYTES) return { kind: "text", content, mtimeMs, size, readOnly: true, readOnlyReason: "large" };
+    return { kind: "text", content, mtimeMs, size, readOnly: false };
+  }
+
+  async writeFileGuarded(root: string, target: string, content: string, expectedMtimeMs?: number): Promise<FileStatInfo> {
+    const abs = assertInside(root, target);
+    if (expectedMtimeMs !== undefined) {
+      const existing = await statOrNull(abs);
+      if (existing && Math.floor(existing.mtimeMs) !== Math.floor(expectedMtimeMs)) {
+        throw new Error(`file changed on disk: ${target}`);
+      }
+    }
+    const keepBom = !content.startsWith(BOM) && (await startsWithUtf8Bom(abs));
+    await writeFile(abs, keepBom ? BOM + content : content, "utf8");
+    return toStatInfo(await stat(abs));
+  }
+
+  async createFile(root: string, target: string): Promise<void> {
+    const abs = assertInside(root, target);
+    if (await lstatOrNull(abs)) throw new Error(`already exists: ${target}`);
+    await mkdir(dirname(abs), { recursive: true });
+    try {
+      await writeFile(abs, "", { flag: "wx" });
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "EEXIST") throw new Error(`already exists: ${target}`);
+      throw error;
+    }
+  }
+
+  async createDir(root: string, target: string): Promise<void> {
+    const abs = assertInside(root, target);
+    const existing = await lstatOrNull(abs);
+    if (existing && !existing.isDirectory()) throw new Error(`already exists: ${target}`);
+    await mkdir(abs, { recursive: true });
+  }
+
+  async renamePath(root: string, from: string, to: string): Promise<void> {
+    const absFrom = this.resolveEntry(root, from);
+    const absTo = this.resolveEntry(root, to);
+    if (!(await lstatOrNull(absFrom))) throw new Error(`file not found: ${from}`);
+    if (await lstatOrNull(absTo)) {
+      const sameEntry = from.toLowerCase() === to.toLowerCase() && (await isSameEntry(absFrom, absTo));
+      if (!sameEntry) throw new Error(`already exists: ${to}`);
+    }
+    await mkdir(dirname(absTo), { recursive: true });
+    await rename(absFrom, absTo);
+  }
+
+  resolveEntry(root: string, target: string): string {
+    const abs = assertInside(root, target);
+    if (relative(resolve(root), abs) === "") throw new Error("cannot modify the workspace root");
+    return abs;
   }
 }
 

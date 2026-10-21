@@ -227,8 +227,10 @@ export async function shutdownProceed(): Promise<void> {
 }
 
 async function saveBuffer(buffer: DirtyBuffer): Promise<void> {
-  await window.cw.saveFile(buffer.sessionId, buffer.path, buffer.content);
-  useEditorBuffers.getState().markSaved(buffer.key, buffer.content);
+  const current = useEditorBuffers.getState().buffers[buffer.key];
+  if (current?.conflict) throw new Error(`${buffer.path} changed on disk; reload it or keep your edits in the Files tab first`);
+  const stat = await window.cw.writeFileGuarded(buffer.sessionId, buffer.path, buffer.content, current?.mtimeMs);
+  useEditorBuffers.getState().markSaved(buffer.key, buffer.content, stat.mtimeMs);
 }
 
 async function saveBuffers(buffers: DirtyBuffer[]): Promise<void> {

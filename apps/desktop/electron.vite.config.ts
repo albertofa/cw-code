@@ -24,6 +24,22 @@ export default defineConfig({
     resolve: { alias: { "@": resolve(__dirname, "src/renderer/src") } },
     plugins: [react()],
     server: { port: 9369 },
+    worker: { format: "es" },
+    optimizeDeps: {
+      include: [
+        "shiki/core",
+        "shiki/engine/javascript",
+        "shiki/langs",
+        "@codemirror/autocomplete",
+        "@codemirror/commands",
+        "@codemirror/language",
+        "@codemirror/language-data",
+        "@codemirror/search",
+        "@codemirror/state",
+        "@codemirror/view",
+        "@lezer/highlight"
+      ]
+    },
     build: { outDir: resolve(__dirname, outRoot, "renderer"), emptyOutDir: true }
   }
 });

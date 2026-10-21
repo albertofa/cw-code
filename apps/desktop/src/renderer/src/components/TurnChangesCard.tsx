@@ -74,8 +74,9 @@ async function reloadRestoredBuffers(sessionIds: readonly string[], files: reado
   await Promise.all(
     clean.map(async ({ key, buffer }) => {
       try {
-        const text = await window.cw.readFile(buffer.sessionId, buffer.path);
-        useEditorBuffers.getState().reloadClean(key, text);
+        const info = await window.cw.readFileInfo(buffer.sessionId, buffer.path);
+        if (info.kind === "text") useEditorBuffers.getState().reloadClean(key, info.content, info.mtimeMs);
+        else if (info.kind === "missing") useEditorBuffers.getState().markMissing(key);
       } catch (err) {
         if (isFileNotFound(err)) useEditorBuffers.getState().markMissing(key);
         else failures.push(`${buffer.path}: ${ipcErrorMessage(err)}`);

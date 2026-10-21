@@ -11,6 +11,12 @@ import type {
   CommandOption,
   ContextCompactionInfo,
   ContextUsage,
+  DirEntry,
+  FileReadResult,
+  FileStatInfo,
+  FsChangeEvent,
+  GitDecorations,
+  GitBaseline,
   HarnessId,
   ImportableSession,
   ImportSessionRequest,
@@ -78,6 +84,8 @@ import type {
   TaskKind,
   TaskSnapshot,
   TaskState,
+  TextSearchQuery,
+  TextSearchResult,
   TokenCounts,
   TurnModelUsage,
   UpdateActionCode,
@@ -95,6 +103,7 @@ import type {
 } from "@cw-code/contracts";
 
 export type {
+  DirEntry,
   ImportableSession,
   ImportSessionRequest,
   NotificationSoundEvent,
@@ -622,12 +631,6 @@ export interface AppSettings {
 
 export type SettingsPatch = Partial<AppSettings>;
 
-export interface DirEntry {
-  name: string;
-  path: string;
-  isDir: boolean;
-}
-
 export interface CwApi {
   getStartupState(): Promise<StartupState>;
   recovery: {
@@ -752,10 +755,24 @@ export interface CwApi {
   onSessionUpdated(cb: (session: Session) => void): () => void;
   readFile(sessionId: string, path: string): Promise<string>;
   readOutsideFile(path: string): Promise<string>;
-  saveFile(sessionId: string, path: string, content: string): Promise<void>;
   listFiles(sessionId: string): Promise<string[]>;
   listProjectFiles(projectId: string): Promise<string[]>;
   listDir(sessionId: string, dir?: string): Promise<DirEntry[]>;
+  readFileInfo(sessionId: string, path: string): Promise<FileReadResult>;
+  writeFileGuarded(sessionId: string, path: string, content: string, expectedMtimeMs?: number): Promise<FileStatInfo>;
+  createFile(sessionId: string, path: string): Promise<void>;
+  createDir(sessionId: string, path: string): Promise<void>;
+  renamePath(sessionId: string, from: string, to: string): Promise<void>;
+  trashPath(sessionId: string, path: string): Promise<void>;
+  revealPath(sessionId: string, path: string): Promise<void>;
+  workspaceRoot(sessionId: string): Promise<string>;
+  listWorkspaceFiles(sessionId: string): Promise<string[]>;
+  gitDecorations(sessionId: string): Promise<GitDecorations>;
+  gitBaseline(sessionId: string, path: string): Promise<GitBaseline>;
+  searchText(sessionId: string, query: TextSearchQuery): Promise<TextSearchResult>;
+  setWatchedPaths(sessionId: string, paths: string[]): Promise<void>;
+  unwatchPaths(sessionId: string): Promise<void>;
+  onFsChanged(cb: (e: FsChangeEvent) => void): () => void;
   savePasteImage(projectId: string, mime: string, data: Uint8Array): Promise<string>;
   readImage(args: { sessionId?: string; projectId?: string; path: string }): Promise<{ mime: string; base64: string }>;
   openPty(sessionId: string, kind: DriverName | "shell"): Promise<{ ptyId: string; token: string; replay: string }>;

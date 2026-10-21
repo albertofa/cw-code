@@ -203,6 +203,11 @@ export function App() {
       } else if (e.key === "0") {
         e.preventDefault();
         window.cw.zoomReset();
+      } else if ((e.key.toLowerCase() === "p" && !e.shiftKey) || (e.key.toLowerCase() === "f" && e.shiftKey)) {
+        const sessionId = useAppStore.getState().activeSessionId;
+        if (!sessionId || visibleLayerOpen()) return;
+        e.preventDefault();
+        usePanelStore.getState().requestFilesCommand(sessionId, e.key.toLowerCase() === "p" ? "quickOpen" : "search");
       } else if (e.key.toLowerCase() === "t" && !e.shiftKey && !visibleLayerOpen()) {
         e.preventDefault();
         void leaveSettingsRef.current(() => {

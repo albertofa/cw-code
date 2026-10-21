@@ -26,13 +26,15 @@ import { claudeCommandsCachePath, cwCodeHome, ensureAppDirs, attachmentsDir, log
 import { reapOrphanedServers } from "./orphanServers.js";
 import { loadLoginShellEnvironment } from "./shellEnvironment.js";
 import type { AppSettings, ApprovalDecision, CliBinary, CommandInvocation, CreateSessionOptions, GitDiffMode, ImportSessionRequest, ProjectGitHubRepo, PrRef, RepoRef, RunRef, RunSources, SessionPrLink, MetadataIssue, SessionStatus, SettingsPatch, ShutdownCommitResult, ShutdownExpiredEvent, ShutdownPrepareRequest, ShutdownReason, ShutdownRequestedEvent, StartupState, UpdateActionResult, UpdateState, UsageLedgerQuery } from "@cw-code/contracts";
-import type { DriverKind, HarnessId, SkillSaveInput } from "@cw-code/contracts";
+import type { DriverKind, HarnessId, SkillSaveInput, TextSearchQuery } from "@cw-code/contracts";
 import type { PtyKind } from "./pty/PtyPool.js";
 import { SessionManager } from "./sessions/SessionManager.js";
 import { AccountUsageService } from "./usage/AccountUsageService.js";
 import { SkillsStore } from "./skills/SkillsStore.js";
 import { FileService, IMAGE_MAX_BYTES, imageExtMime } from "./fs/FileService.js";
-import { GitService, sweepStaleSnapshotIndexes } from "./fs/GitService.js";
+import { FileWatcher } from "./fs/FileWatcher.js";
+import { defaultBinary, GitService, sweepStaleSnapshotIndexes } from "./fs/GitService.js";
+import { gitBaseline, gitDecorations, listWorkspaceFiles, searchText } from "./fs/workspaceQueries.js";
 import { assertOpenablePath } from "./fs/openPathPolicy.js";
 import { assertPrRef, PullRequestService } from "./github/PullRequestService.js";
 import { assertCountBase, assertSearchKind, assertSearchQuery, GitHubSearchService } from "./github/GitHubSearchService.js";
@@ -69,6 +71,7 @@ const SHUTDOWN_TIMEOUT_MAX_MS = 120_000;
 const RENDERER_SHUTDOWN_ACK_MS = 5_000;
 const SESSION_SETTLE_INTERVAL_MS = 60_000;
 const SESSION_SETTLE_INITIAL_DELAY_MS = 5_000;
+const MAX_WATCHED_PATHS = 2_000;
 
 function parseShutdownPrepare(args: unknown): ShutdownPrepareRequest {
   const request = (args && typeof args === "object" ? args : {}) as Record<string, unknown>;
@@ -118,6 +121,45 @@ function parseOptionalBoolean(value: unknown, name: string): boolean | undefined
   return value;
 }
 
+function assertString(value: unknown): asserts value is string {
+  if (typeof value !== "string") throw new Error("expected a string");
+}
+
+function parseString(value: unknown, name: string): string {
+  if (typeof value !== "string") throw new Error(`${name} must be a string`);
+  return value;
+}
+
+function parseOptionalString(value: unknown, name: string): string | undefined {
+  return value === undefined ? undefined : parseString(value, name);
+}
+
+function parseOptionalNumber(value: unknown, name: string): number | undefined {
+  if (value !== undefined && (typeof value !== "number" || !Number.isFinite(value))) throw new Error(`${name} must be a finite number`);
+  return value;
+}
+
+function parseBoolean(value: unknown, name: string): boolean {
+  if (typeof value !== "boolean") throw new Error(`${name} must be a boolean`);
+  return value;
+}
+
+function parseTextSearchQuery(value: unknown): TextSearchQuery {
+  const query = parseArgs(value, "fs.searchText query");
+  const include = parseOptionalString(query.include, "include");
+  const exclude = parseOptionalString(query.exclude, "exclude");
+  const maxResults = parseOptionalNumber(query.maxResults, "maxResults");
+  return {
+    query: parseString(query.query, "query"),
+    isRegex: parseBoolean(query.isRegex, "isRegex"),
+    matchCase: parseBoolean(query.matchCase, "matchCase"),
+    wholeWord: parseBoolean(query.wholeWord, "wholeWord"),
+    ...(include !== undefined ? { include } : {}),
+    ...(exclude !== undefined ? { exclude } : {}),
+    ...(maxResults !== undefined ? { maxResults } : {})
+  };
+}
+
 function parseList<T>(value: unknown, max: number, name: string, assertItem: (item: unknown) => asserts item is T): T[] {
   if (!Array.isArray(value) || value.length > max) throw new Error(`${name} must be an array of at most ${max} items`);
   const items: T[] = [];
@@ -151,6 +193,7 @@ interface Services {
   sessions: SessionManager;
   skills: SkillsStore;
   files: FileService;
+  fileWatcher: FileWatcher;
   git: GitService;
   pullRequests: PullRequestService;
   githubSearch: GitHubSearchService;
@@ -208,6 +251,7 @@ function createUpdateService(settings: AppSettings): UpdateService {
 
 function createServices(stores: { sessionStore: SessionStore; settingsStore: SettingsStore }): Services {
   let pullRequests: PullRequestService;
+  const fileWatcher = new FileWatcher((event) => sendToMainWindow("fs.changed", event));
   const git: GitService = new GitService(() => sessions.getSettings());
   const sessions: SessionManager = new SessionManager({
     sessionStore: stores.sessionStore,
@@ -218,7 +262,10 @@ function createServices(stores: { sessionStore: SessionStore; settingsStore: Set
     prState: (ref) => pullRequests.knownState(ref),
     prStateRefresh: (ref) => pullRequests.refreshState(ref),
     prUpdatedAt: (ref) => pullRequests.knownUpdatedAt(ref),
-    onResolved: (sessionId) => ptys.killSession(sessionId),
+    onResolved: (sessionId) => {
+      ptys.killSession(sessionId);
+      void fileWatcher.unwatch(sessionId);
+    },
     legacyAppRoots: [app.getPath("userData")]
   });
   pullRequests = new PullRequestService(git, () => sessions.getSettings(), (rootPath) => sessions.addProject(rootPath));
@@ -240,6 +287,7 @@ function createServices(stores: { sessionStore: SessionStore; settingsStore: Set
     sessions,
     skills: new SkillsStore(),
     files: new FileService(),
+    fileWatcher,
     git,
     pullRequests,
     githubSearch,
@@ -328,6 +376,7 @@ function disposeServices(): void {
     console.warn(`flush before exit failed: ${(err as Error).message}`);
   }
   services.runWatcher.dispose();
+  void services.fileWatcher.dispose();
   services.updates.dispose();
   services.sessions.dispose();
   services.ptys.dispose();
@@ -793,7 +842,7 @@ function registerShutdownIpc({ shutdown }: Services): void {
 }
 
 function registerIpc(services: Services): void {
-  const { sessions, skills, files, git, pullRequests, ptys, accountUsage, updates } = services;
+  const { sessions, skills, files, fileWatcher, git, pullRequests, ptys, accountUsage, updates } = services;
   registerUpdateIpc(services);
   registerGitHubIpc(services);
   sessions.setEmitter((sessionId, event) => {
@@ -905,7 +954,10 @@ function registerIpc(services: Services): void {
     "sessions.setStatus",
     (_e, args: { sessionId: string; status: SessionStatus; reason?: SessionStatusReason }) => {
       const updated = sessions.setSessionStatus(args.sessionId, args.status, args.reason);
-      if (updated.status === "resolved" || updated.status === "archived") ptys.killSession(args.sessionId);
+      if (updated.status === "resolved" || updated.status === "archived") {
+        ptys.killSession(args.sessionId);
+        void fileWatcher.unwatch(args.sessionId);
+      }
       return updated;
     }
   );
@@ -915,12 +967,20 @@ function registerIpc(services: Services): void {
   ipcMain.handle(
     "sessions.resolve",
     async (_e, args: { sessionId: string; status: SessionStatus; removeWorktree?: boolean; forceBranch?: boolean }) => {
+      await fileWatcher.unwatch(args.sessionId);
       const result = await sessions.resolveSession(args.sessionId, args.status, { removeWorktree: args.removeWorktree, forceBranch: args.forceBranch });
       if (result.status === "resolved" || result.status === "archived") ptys.killSession(args.sessionId);
       return result;
     }
   );
-  ipcMain.handle("worktrees.prune", () => sessions.pruneStaleWorktrees());
+  ipcMain.handle("worktrees.prune", async () => {
+    const perProject = await Promise.all(sessions.listProjects().map((project) => sessions.listSessions(project.id)));
+    const unpinned = perProject
+      .flat()
+      .filter((session) => session.status === "resolved" || session.status === "archived");
+    await Promise.all(unpinned.map((session) => fileWatcher.unwatch(session.id)));
+    return sessions.pruneStaleWorktrees();
+  });
   ipcMain.handle("sessions.history", (_e, args: { sessionId: string }) =>
     sessions.getHistory(args.sessionId)
   );
@@ -1100,9 +1160,6 @@ function registerIpc(services: Services): void {
     sessions.ensureWorktree(args.sessionId).then((root) => files.readFile(root, args.path))
   );
   ipcMain.handle("fs.readOutsideFile", (_e, args: { path: string }) => files.readOutsideFile(args.path));
-  ipcMain.handle("fs.saveFile", (_e, args: { sessionId: string; path: string; content: string }) =>
-    sessions.ensureWorktree(args.sessionId).then((root) => files.saveFile(root, args.path, args.content))
-  );
   ipcMain.handle("fs.listFiles", (_e, args: { sessionId: string }) =>
     sessions.ensureWorktree(args.sessionId).then((root) => files.listFiles(root))
   );
@@ -1111,6 +1168,75 @@ function registerIpc(services: Services): void {
   );
   ipcMain.handle("fs.listDir", (_e, args: { sessionId: string; dir?: string }) =>
     sessions.ensureWorktree(args.sessionId).then((root) => files.listDir(root, args.dir ?? ""))
+  );
+  const gitBinary = (): string => sessions.getSettings().gitBinaryPath?.trim() || defaultBinary("git");
+  const fsRoot = (args: Record<string, unknown>): Promise<string> =>
+    sessions.ensureWorktree(parseString(args.sessionId, "sessionId"));
+  ipcMain.handle("fs.readFileInfo", async (_e, raw: unknown) => {
+    const args = parseArgs(raw, "fs.readFileInfo");
+    const path = parseString(args.path, "path");
+    return files.readFileInfo(await fsRoot(args), path);
+  });
+  ipcMain.handle("fs.writeFileGuarded", async (_e, raw: unknown) => {
+    const args = parseArgs(raw, "fs.writeFileGuarded");
+    const path = parseString(args.path, "path");
+    const content = parseString(args.content, "content");
+    const expectedMtimeMs = parseOptionalNumber(args.expectedMtimeMs, "expectedMtimeMs");
+    return files.writeFileGuarded(await fsRoot(args), path, content, expectedMtimeMs);
+  });
+  ipcMain.handle("fs.createFile", async (_e, raw: unknown) => {
+    const args = parseArgs(raw, "fs.createFile");
+    const path = parseString(args.path, "path");
+    await files.createFile(await fsRoot(args), path);
+  });
+  ipcMain.handle("fs.createDir", async (_e, raw: unknown) => {
+    const args = parseArgs(raw, "fs.createDir");
+    const path = parseString(args.path, "path");
+    await files.createDir(await fsRoot(args), path);
+  });
+  ipcMain.handle("fs.renamePath", async (_e, raw: unknown) => {
+    const args = parseArgs(raw, "fs.renamePath");
+    const from = parseString(args.from, "from");
+    const to = parseString(args.to, "to");
+    await files.renamePath(await fsRoot(args), from, to);
+  });
+  ipcMain.handle("fs.trashPath", async (_e, raw: unknown) => {
+    const args = parseArgs(raw, "fs.trashPath");
+    const path = parseString(args.path, "path");
+    await shell.trashItem(files.resolveEntry(await fsRoot(args), path));
+  });
+  ipcMain.handle("fs.revealPath", async (_e, raw: unknown) => {
+    const args = parseArgs(raw, "fs.revealPath");
+    const path = parseString(args.path, "path");
+    shell.showItemInFolder(files.resolveEntry(await fsRoot(args), path));
+  });
+  ipcMain.handle("fs.workspaceRoot", (_e, raw: unknown) => fsRoot(parseArgs(raw, "fs.workspaceRoot")));
+  ipcMain.handle("fs.listWorkspaceFiles", async (_e, raw: unknown) => {
+    const root = await fsRoot(parseArgs(raw, "fs.listWorkspaceFiles"));
+    return listWorkspaceFiles(gitBinary(), root, () => files.listFiles(root));
+  });
+  ipcMain.handle("fs.gitBaseline", async (_e, raw: unknown) => {
+    const args = parseArgs(raw, "fs.gitBaseline");
+    const root = await fsRoot(args);
+    const abs = files.resolveEntry(root, parseString(args.path, "path"));
+    return gitBaseline(gitBinary(), root, relative(root, abs).split(sep).join("/"));
+  });
+  ipcMain.handle("fs.gitDecorations", async (_e, raw: unknown) =>
+    gitDecorations(gitBinary(), await fsRoot(parseArgs(raw, "fs.gitDecorations")))
+  );
+  ipcMain.handle("fs.searchText", async (_e, raw: unknown) => {
+    const args = parseArgs(raw, "fs.searchText");
+    const query = parseTextSearchQuery(args.query);
+    return searchText(gitBinary(), await fsRoot(args), query);
+  });
+  ipcMain.handle("fs.setWatchedPaths", async (_e, raw: unknown) => {
+    const args = parseArgs(raw, "fs.setWatchedPaths");
+    const sessionId = parseString(args.sessionId, "sessionId");
+    const paths = parseList<string>(args.paths, MAX_WATCHED_PATHS, "paths", assertString);
+    fileWatcher.setWatched(sessionId, await sessions.ensureWorktree(sessionId), paths);
+  });
+  ipcMain.handle("fs.unwatchPaths", (_e, raw: unknown) =>
+    fileWatcher.unwatch(parseString(parseArgs(raw, "fs.unwatchPaths").sessionId, "sessionId"))
   );
   ipcMain.handle(
     "fs.savePasteImage",

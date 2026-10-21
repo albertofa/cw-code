@@ -136,4 +136,17 @@ export type {
   ShutdownExpiredEvent
 } from "./shutdown.js";
 export type { AttentionState } from "./attention.js";
+export type {
+  DirEntry,
+  FileStatInfo,
+  FileReadResult,
+  GitFileState,
+  GitFileDecoration,
+  GitDecorations,
+  TextSearchQuery,
+  TextSearchMatch,
+  TextSearchResult,
+  GitBaseline,
+  FsChangeEvent
+} from "./files.js";
 export type { NativeSession, ImportableSession, ImportSessionRequest, ImportSessionResult } from "./importer.js";
