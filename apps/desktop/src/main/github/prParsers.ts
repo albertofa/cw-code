@@ -173,14 +173,23 @@ function parseAuthor(author: Record<string, unknown>): PrAuthor {
   };
 }
 
+export function avatarUrlsOf(actors: unknown[]): Record<string, string> {
+  const urls: Record<string, string> = {};
+  for (const actor of actors) {
+    const { login } = actorLoginOf(actor);
+    const url = asString(asRecord(actor).avatarUrl);
+    if (login && url.startsWith("https://")) urls[login.toLowerCase()] = url;
+  }
+  return urls;
+}
+
 function parseSummaryNode(node: Record<string, unknown>, viewer: string | null): PrSummary | null {
   const url = asString(node.url);
   const ref = prRefFromUrl(url);
   const number = asNumber(node.number);
   if (!ref || number <= 0) return null;
-  const reviewerLogins = asNodes(node.reviewRequests)
-    .map((request) => asString(asRecord(request.requestedReviewer).login))
-    .filter(Boolean);
+  const requested = asNodes(node.reviewRequests).map((request) => request.requestedReviewer);
+  const reviewerLogins = requested.map((reviewer) => asString(asRecord(reviewer).login)).filter(Boolean);
   const ciCommit = asNodes(node.ciCommits)[0];
   const { ci, checks } = ciFromRollup(rollupStates(asRecord(ciCommit?.commit).statusCheckRollup));
   return {
@@ -208,6 +217,12 @@ function parseSummaryNode(node: Record<string, unknown>, viewer: string | null):
     labels: asNodes(node.labels).map((label) => asString(label.name)).filter(Boolean),
     reviewers: mergeReviewers(parseReviewers(node.latestReviews), reviewerLogins),
     assignees: asNodes(node.assignees).map((assignee) => asString(assignee.login)).filter(Boolean),
+    avatarUrls: avatarUrlsOf([
+      node.author,
+      ...requested,
+      ...asNodes(node.assignees),
+      ...asNodes(node.latestReviews).map((review) => review.author)
+    ]),
     updatedAt: asEpochMs(node.updatedAt)
   };
 }

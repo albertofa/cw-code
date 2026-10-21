@@ -224,6 +224,10 @@ export function reviewerBadge(state: PrReviewer["state"]): Tone {
   return "neutral";
 }
 
+export function avatarUrlOf(item: PrSummary | IssueSummary, login: string): string | undefined {
+  return item.avatarUrls?.[login.toLowerCase()];
+}
+
 export function peopleStack(item: PrSummary | IssueSummary, viewer: string | null): PeopleStack {
   const author = item.author.login;
   const reviewers: PrReviewer[] = "reviewers" in item ? item.reviewers : [];

@@ -25,6 +25,7 @@ import {
   sessionsForPr,
   sessionsForRun,
   stateGlyph,
+  avatarUrlOf,
   type RowSubject
 } from "./githubRowModel.js";
 import { formatRelativeAge } from "./prInboxModel.js";
@@ -178,7 +179,7 @@ function PeopleCell({ subject, viewer }: { subject: RowSubject; viewer: string |
   const noReviewers = subject.kind === "pr" && subject.pr.state === "OPEN" && !subject.pr.isDraft;
   return (
     <HoverCard className="hub-people" card={card}>
-      <GitHubAvatar login={stack.author} avatarUrl={subject.kind === "pr" ? subject.pr.author.avatarUrl : undefined} />
+      <GitHubAvatar login={stack.author} avatarUrl={avatarUrlOf(item, stack.author)} />
       {stack.others.length > 0 ? (
         <>
           <span className="hub-people-arrow">
@@ -186,7 +187,15 @@ function PeopleCell({ subject, viewer }: { subject: RowSubject; viewer: string |
           </span>
           <span className="hub-stack">
             {stack.others.map((person) => (
-              <GitHubAvatar key={person.login} login={person.login} small badge={person.badge} assignee={person.assignee} viewer={person.viewer} />
+              <GitHubAvatar
+                key={person.login}
+                login={person.login}
+                avatarUrl={avatarUrlOf(item, person.login)}
+                small
+                badge={person.badge}
+                assignee={person.assignee}
+                viewer={person.viewer}
+              />
             ))}
             {stack.overflow > 0 && <span className="hub-av sm more">+{stack.overflow}</span>}
           </span>

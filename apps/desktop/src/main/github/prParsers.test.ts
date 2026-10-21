@@ -114,6 +114,35 @@ describe("parseInbox", () => {
     });
   });
 
+  it("collects avatar urls for the author, reviewers and assignees by lowercased login", () => {
+    const json = JSON.stringify({
+      data: {
+        viewer: null,
+        search: {
+          nodes: [
+            summaryNode({
+              author: { login: "Octocat", __typename: "User", avatarUrl: "https://a.test/author" },
+              reviewRequests: { nodes: [{ requestedReviewer: { login: "Pending", avatarUrl: "https://a.test/pending" } }, { requestedReviewer: {} }] },
+              latestReviews: {
+                nodes: [
+                  { author: { login: "copilot", __typename: "Bot", avatarUrl: "https://a.test/bot" }, state: "COMMENTED" },
+                  { author: { login: "mallory", __typename: "User", avatarUrl: "http://a.test/insecure" }, state: "APPROVED" }
+                ]
+              },
+              assignees: { nodes: [{ login: "helper", avatarUrl: "https://a.test/helper" }] }
+            })
+          ]
+        }
+      }
+    });
+    expect(parseInbox(json).items[0].avatarUrls).toEqual({
+      octocat: "https://a.test/author",
+      pending: "https://a.test/pending",
+      "copilot[bot]": "https://a.test/bot",
+      helper: "https://a.test/helper"
+    });
+  });
+
   it("parses a bot author without a name", () => {
     const json = JSON.stringify({
       data: {

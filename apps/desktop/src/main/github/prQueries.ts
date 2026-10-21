@@ -38,6 +38,7 @@ const PR_SUMMARY_FIELDS = `
       requestedReviewer {
         ... on User {
           login
+          avatarUrl(size: 48)
         }
       }
     }
@@ -45,6 +46,7 @@ const PR_SUMMARY_FIELDS = `
   assignees(first: 10) {
     nodes {
       login
+      avatarUrl(size: 48)
     }
   }
   latestReviews(first: 20) {
@@ -52,6 +54,7 @@ const PR_SUMMARY_FIELDS = `
       author {
         login
         __typename
+        avatarUrl(size: 48)
       }
       state
     }

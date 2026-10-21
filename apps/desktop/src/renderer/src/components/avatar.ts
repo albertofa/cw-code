@@ -6,7 +6,7 @@ export function hashHue(s: string): number {
   return h % 360;
 }
 
-const BOT_LOGIN_SUFFIX = /[bot]$/;
+const BOT_LOGIN_SUFFIX = /\[bot\]$/;
 
 export function isBotLogin(login: string): boolean {
   return BOT_LOGIN_SUFFIX.test(login);

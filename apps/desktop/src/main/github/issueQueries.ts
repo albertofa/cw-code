@@ -11,10 +11,12 @@ const ISSUE_SUMMARY_FIELDS = `
   author {
     login
     __typename
+    avatarUrl(size: 48)
   }
   assignees(first: 10) {
     nodes {
       login
+      avatarUrl(size: 48)
     }
   }
   labels(first: 20) {
