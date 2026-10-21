@@ -11,6 +11,7 @@ import {
   queryProblems,
   runMatches,
   runSources,
+  sortedRemoteOf,
   sortRuns,
   splitQuery,
   stateOf,
@@ -199,6 +200,12 @@ describe("splitQuery", () => {
     expect(splitQuery("pr", "is:pr").sort).toBe("updated-desc");
     expect(splitQuery("pr", "is:pr sort:comments-desc").sort).toBe("comments-desc");
     expect(splitQuery("pr", "is:pr sort:bogus").sort).toBe("updated-desc");
+  });
+
+  it("sends the default sort to GitHub when the query has none", () => {
+    expect(sortedRemoteOf(splitQuery("pr", "is:pr state:open"))).toBe("is:pr state:open sort:updated-desc");
+    expect(sortedRemoteOf(splitQuery("pr", "is:pr sort:created-asc"))).toBe("is:pr sort:created-asc");
+    expect(sortedRemoteOf(splitQuery("issue", "is:issue sort:bogus"))).toBe("is:issue sort:updated-desc");
   });
 
   it("drops qualifiers still being typed", () => {

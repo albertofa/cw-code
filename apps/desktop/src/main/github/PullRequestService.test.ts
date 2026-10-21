@@ -55,6 +55,12 @@ describe("mergeInboxItems", () => {
     expect(result[0].title).toBe("Base PR");
   });
 
+  it("orders the merged list by last update, newest first", () => {
+    const open = [summary({ ref: ref({ number: 1 }), updatedAt: 100 }), summary({ ref: ref({ number: 2 }), updatedAt: 300 })];
+    const merged = [summary({ ref: ref({ number: 3 }), state: "MERGED", updatedAt: 200 })];
+    expect(mergeInboxItems([open, merged]).map((item) => item.ref.number)).toEqual([2, 3, 1]);
+  });
+
   it("returns an empty list when every input list is empty", () => {
     expect(mergeInboxItems([[], []])).toEqual([]);
   });

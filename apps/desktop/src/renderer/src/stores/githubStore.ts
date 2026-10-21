@@ -15,7 +15,7 @@ import type {
   WorkflowRunSummary
 } from "../cw.js";
 import { errorMessage } from "../components/errorMessage.js";
-import { normalizeQuery, kindFromQuery, runSources, splitQuery, tokenize, type SplitQuery } from "../components/githubQuery.js";
+import { normalizeQuery, kindFromQuery, runSources, sortedRemoteOf, splitQuery, tokenize, type SplitQuery } from "../components/githubQuery.js";
 import { useAppStore } from "./appStore.js";
 import { usePrStore } from "./prStore.js";
 
@@ -412,7 +412,7 @@ export const useGitHubStore = create<GitHubStore>((set, get) => {
         track,
         (state) => state.prResults,
         (prResults) => ({ prResults }),
-        () => window.cw.searchGitHub("pr", split.remote, split.countBase, force)
+        () => window.cw.searchGitHub("pr", sortedRemoteOf(split), split.countBase, force)
       );
       return;
     }
@@ -422,7 +422,7 @@ export const useGitHubStore = create<GitHubStore>((set, get) => {
       track,
       (state) => state.issueResults,
       (issueResults) => ({ issueResults }),
-      () => window.cw.searchGitHub("issue", split.remote, split.countBase, force)
+      () => window.cw.searchGitHub("issue", sortedRemoteOf(split), split.countBase, force)
     );
   }
 

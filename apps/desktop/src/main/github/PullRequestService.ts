@@ -36,7 +36,7 @@ export function mergeInboxItems(lists: PrSummary[][]): PrSummary[] {
       merged.push(item);
     }
   }
-  return merged;
+  return merged.sort((a, b) => b.updatedAt - a.updatedAt);
 }
 
 function repoIdentity(owner: string, repo: string): string {

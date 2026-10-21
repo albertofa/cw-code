@@ -329,5 +329,8 @@ query($owner: String!, $repo: String!, $number: Int!) {
 
 export function inboxSearchQueries(now: number): string[] {
   const since = new Date(now - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-  return ["is:pr is:open involves:@me archived:false", `is:pr is:merged author:@me merged:>=${since}`];
+  return [
+    "is:pr is:open involves:@me archived:false sort:updated-desc",
+    `is:pr is:merged author:@me merged:>=${since} sort:updated-desc`
+  ];
 }
