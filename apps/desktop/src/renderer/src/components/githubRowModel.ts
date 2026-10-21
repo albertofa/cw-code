@@ -238,7 +238,8 @@ export function peopleStack(item: PrSummary | IssueSummary, viewer: string | nul
     if (all.some((person) => sameLogin(person.login, login))) continue;
     all.push({ login, badge: null, assignee: true, viewer: sameLogin(login, viewer) });
   }
-  return { author, others: all.slice(0, MAX_STACK_PEOPLE), overflow: Math.max(0, all.length - MAX_STACK_PEOPLE) };
+  const shown = all.length > MAX_STACK_PEOPLE ? MAX_STACK_PEOPLE - 1 : all.length;
+  return { author, others: all.slice(0, shown), overflow: all.length - shown };
 }
 
 export function issueBucket(issue: IssueSummary, viewer: string | null, mentionsMode = false): IssueBucket {

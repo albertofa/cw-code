@@ -11687,6 +11687,9 @@ button.gitbar-checkout:hover {
 }
 
 .hub-av.more {
+  width: auto;
+  min-width: 18px;
+  padding: 0 3px;
   background: var(--raised);
   color: var(--muted);
   font-size: 9px;
