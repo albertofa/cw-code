@@ -2,11 +2,14 @@ import { describe, expect, it } from "vitest";
 import type { CustomTheme, ThemeBase } from "@cw-code/contracts";
 import {
   BUILTIN_THEME_IDS,
+  BODY_TEXT_CONTRAST,
   BUNDLED_THEMES,
   CURATED_THEME_TOKENS,
   PROJECT_HUES,
   THEME_COLOR_TOKENS,
   THEME_PALETTES,
+  bodyTextColor,
+  contrastRatio,
   deriveThemeTokens,
   mixHex,
   resolveActiveTheme,
@@ -33,19 +36,6 @@ function rgbOf(value: string): number[] | null {
 
 function brightness(hex: string): number {
   return (rgbOf(hex) ?? []).reduce((sum, channel) => sum + channel, 0);
-}
-
-function relativeLuminance(hex: string): number {
-  const [red, green, blue] = (rgbOf(hex) ?? []).map((channel) => {
-    const value = channel / 255;
-    return value <= 0.04045 ? value / 12.92 : ((value + 0.055) / 1.055) ** 2.4;
-  });
-  return 0.2126 * red + 0.7152 * green + 0.0722 * blue;
-}
-
-function contrastRatio(first: string, second: string): number {
-  const [lighter, darker] = [relativeLuminance(first), relativeLuminance(second)].sort((a, b) => b - a);
-  return (lighter + 0.05) / (darker + 0.05);
 }
 
 describe("mixHex", () => {
@@ -90,6 +80,53 @@ describe("contrastRatio", () => {
     expect(contrastRatio("#000000", "#ffffff")).toBeCloseTo(21, 5);
     expect(contrastRatio("#ffffff", "#ffffff")).toBe(1);
     expect(contrastRatio("#767676", "#ffffff")).toBeCloseTo(4.54, 2);
+  });
+});
+
+describe("bodyTextColor", () => {
+  it("dims text toward the surface until it reaches the base contrast target", () => {
+    expect(bodyTextColor("#e9eaf0", "#101219", BODY_TEXT_CONTRAST.dark)).toBe("#d7d8de");
+    expect(contrastRatio("#d7d8de", "#101219")).toBeGreaterThanOrEqual(13.15);
+    expect(contrastRatio("#d6d7dd", "#101219")).toBeLessThan(13.15);
+    expect(bodyTextColor("#1a1d26", "#ffffff", BODY_TEXT_CONTRAST.light)).toBe("#51535a");
+    expect(contrastRatio("#51535a", "#ffffff")).toBeGreaterThanOrEqual(7.6);
+    expect(contrastRatio("#52545b", "#ffffff")).toBeLessThan(7.6);
+  });
+
+  it("keeps the text color when it is already at or below the target", () => {
+    expect(bodyTextColor("#9a9aa0", "#101219", BODY_TEXT_CONTRAST.dark)).toBe("#9a9aa0");
+    expect(bodyTextColor("#5A5A5A", "#ffffff", BODY_TEXT_CONTRAST.light)).toBe("#5a5a5a");
+  });
+
+  it("matches the palette body color for the base text and editor", () => {
+    for (const base of ["dark", "light"] as const) {
+      const palette = THEME_PALETTES[base];
+      expect(bodyTextColor(palette.text, palette.editor, BODY_TEXT_CONTRAST[base]), base).toBe(palette["md-body"]);
+    }
+  });
+});
+
+describe("md-body derivation", () => {
+  it("follows text and editor edits", () => {
+    const tokens = deriveThemeTokens("dark", { text: "#ffffff", bg: "#000000" });
+    expect(tokens["md-body"]).toBe(bodyTextColor(tokens.text, tokens.editor, BODY_TEXT_CONTRAST.dark));
+    expect(tokens["md-body"]).not.toBe(THEME_PALETTES.dark["md-body"]);
+  });
+
+  it("reads an Advanced editor override", () => {
+    const tokens = deriveThemeTokens("light", { editor: "#f0f0f0" });
+    expect(tokens["md-body"]).toBe(bodyTextColor(THEME_PALETTES.light.text, "#f0f0f0", BODY_TEXT_CONTRAST.light));
+  });
+
+  it("lets an Advanced md-body override win", () => {
+    expect(deriveThemeTokens("dark", { bg: "#000000", "md-body": "#ABCDEF" })["md-body"]).toBe("#abcdef");
+  });
+
+  it("keeps the Claude theme body text at the light target", () => {
+    const tokens = deriveThemeTokens("light", claudeTheme().colors);
+    const ratio = contrastRatio(tokens["md-body"], tokens.editor);
+    expect(ratio).toBeGreaterThanOrEqual(7.6);
+    expect(ratio).toBeLessThan(7.8);
   });
 });
 
@@ -231,7 +268,8 @@ describe("deriveThemeTokens", () => {
       "diff-add-bg": "#303e33",
       "diff-del-bg": "#412d32",
       "diff-hunk-bg": "#2f3645",
-      scrim: "rgba(25, 24, 29, 0.92)"
+      scrim: "rgba(25, 24, 29, 0.92)",
+      "md-body": "#dbdbe2"
     });
   });
 
@@ -273,7 +311,8 @@ describe("deriveThemeTokens", () => {
       "diff-add-bg": "#e1f1dd",
       "diff-del-bg": "#f9e4db",
       "diff-hunk-bg": "#e5eaf3",
-      scrim: "rgba(244, 244, 240, 0.92)"
+      scrim: "rgba(244, 244, 240, 0.92)",
+      "md-body": "#505257"
     });
   });
 
