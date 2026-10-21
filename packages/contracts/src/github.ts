@@ -61,6 +61,8 @@ export interface IssueSummary {
   milestone: string | null;
   commentsCount: number;
   linkedPrs: IssueLinkedPr[];
+  /** Avatar image URLs keyed by lowercased login. */
+  avatarUrls?: Record<string, string>;
   /** Epoch milliseconds. */
   createdAt: number;
   /** Epoch milliseconds. */

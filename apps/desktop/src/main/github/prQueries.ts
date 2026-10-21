@@ -38,6 +38,7 @@ const PR_SUMMARY_FIELDS = `
       requestedReviewer {
         ... on User {
           login
+          avatarUrl(size: 48)
         }
       }
     }
@@ -45,6 +46,7 @@ const PR_SUMMARY_FIELDS = `
   assignees(first: 10) {
     nodes {
       login
+      avatarUrl(size: 48)
     }
   }
   latestReviews(first: 20) {
@@ -52,6 +54,7 @@ const PR_SUMMARY_FIELDS = `
       author {
         login
         __typename
+        avatarUrl(size: 48)
       }
       state
     }
@@ -329,5 +332,8 @@ query($owner: String!, $repo: String!, $number: Int!) {
 
 export function inboxSearchQueries(now: number): string[] {
   const since = new Date(now - 7 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10);
-  return ["is:pr is:open involves:@me archived:false", `is:pr is:merged author:@me merged:>=${since}`];
+  return [
+    "is:pr is:open involves:@me archived:false sort:updated-desc",
+    `is:pr is:merged author:@me merged:>=${since} sort:updated-desc`
+  ];
 }

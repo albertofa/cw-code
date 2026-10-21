@@ -49,6 +49,8 @@ export interface PrSummary {
   labels: string[];
   reviewers: PrReviewer[];
   assignees: string[];
+  /** Avatar image URLs keyed by lowercased login. */
+  avatarUrls?: Record<string, string>;
   /** Epoch milliseconds. */
   updatedAt: number;
 }

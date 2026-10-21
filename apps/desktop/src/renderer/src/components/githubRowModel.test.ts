@@ -258,8 +258,14 @@ describe("peopleStack", () => {
     });
     const stack = peopleStack(item, null);
     expect(stack.author).toBe("author");
-    expect(stack.others.map((o) => o.badge)).toEqual(["ok", "bad", "neutral"]);
-    expect(stack.overflow).toBe(1);
+    expect(stack.others.map((o) => o.badge)).toEqual(["ok", "bad"]);
+    expect(stack.overflow).toBe(2);
+  });
+
+  it("shows every person when they fit in the stack", () => {
+    const stack = peopleStack(issue({ assignees: ["a", "b", "c"] }), null);
+    expect(stack.others.map((o) => o.login)).toEqual(["a", "b", "c"]);
+    expect(stack.overflow).toBe(0);
   });
 
   it("dedupes assignees against the author and reviewers and flags the viewer", () => {
@@ -278,9 +284,9 @@ describe("peopleStack", () => {
 
   it("works for issues, which have assignees only", () => {
     const stack = peopleStack(issue({ assignees: ["a", "b", "c", "d", "e"] }), "b");
-    expect(stack.others.map((o) => o.login)).toEqual(["a", "b", "c"]);
+    expect(stack.others.map((o) => o.login)).toEqual(["a", "b"]);
     expect(stack.others[1]).toMatchObject({ assignee: true, viewer: true });
-    expect(stack.overflow).toBe(2);
+    expect(stack.overflow).toBe(3);
   });
 });
 

@@ -32,6 +32,7 @@ import {
   prVerdict,
   reviewerBadge,
   runDurationMs,
+  avatarUrlOf,
   sameLogin,
   stateGlyph,
   type Tone
@@ -161,10 +162,22 @@ export function HoverCard({ className, card, children }: { className: string; ca
   );
 }
 
-function PersonLine({ login, viewer, end, endTone }: { login: string; viewer: string | null; end?: string; endTone?: Tone }) {
+function PersonLine({
+  login,
+  avatarUrl,
+  viewer,
+  end,
+  endTone
+}: {
+  login: string;
+  avatarUrl?: string;
+  viewer: string | null;
+  end?: string;
+  endTone?: Tone;
+}) {
   return (
     <div className="hub-card-line">
-      <GitHubAvatar login={login} small />
+      <GitHubAvatar login={login} avatarUrl={avatarUrl} small />
       <span className="grow">{login}</span>
       {sameLogin(login, viewer) && <span className="hub-card-you">you</span>}
       {end && <span className={`end${endTone ? ` tone-${endTone}` : ""}`}>{end}</span>}
@@ -249,11 +262,11 @@ export function PeopleCard({ subject, viewer }: { subject: HoverSubject; viewer:
         </span>
       </div>
       <CardSection label="Author">
-        <PersonLine login={item.author.login} viewer={viewer} />
+        <PersonLine login={item.author.login} avatarUrl={avatarUrlOf(item, item.author.login)} viewer={viewer} />
       </CardSection>
       <CardSection label="Assignees">
         {item.assignees.length > 0 ? (
-          item.assignees.map((login) => <PersonLine key={login} login={login} viewer={viewer} />)
+          item.assignees.map((login) => <PersonLine key={login} login={login} avatarUrl={avatarUrlOf(item, login)} viewer={viewer} />)
         ) : (
           <span className="tone-neutral">None</span>
         )}
@@ -265,6 +278,7 @@ export function PeopleCard({ subject, viewer }: { subject: HoverSubject; viewer:
               <PersonLine
                 key={reviewer.login}
                 login={reviewer.login}
+                avatarUrl={avatarUrlOf(item, reviewer.login)}
                 viewer={viewer}
                 end={REVIEW_STATE_TEXT[reviewer.state]}
                 endTone={reviewerBadge(reviewer.state)}

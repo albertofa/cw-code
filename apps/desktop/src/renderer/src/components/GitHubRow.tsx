@@ -25,6 +25,7 @@ import {
   sessionsForPr,
   sessionsForRun,
   stateGlyph,
+  avatarUrlOf,
   type RowSubject
 } from "./githubRowModel.js";
 import { formatRelativeAge } from "./prInboxModel.js";
@@ -93,11 +94,11 @@ function MetaLine({ subject, delta, cloned, now, onAdd }: { subject: RowSubject;
     repo = repoOf(pr.ref);
     rest = (
       <>
-        <span>#{pr.ref.number}</span>
+        <span className="pr-inbox-num">#{pr.ref.number}</span>
         <Sep />
         <Branch name={pr.headRefName} />
         <Sep />
-        <span>
+        <span className="pr-inbox-age">
           {verb} {formatRelativeAge(pr.updatedAt, now)} ago
         </span>
       </>
@@ -107,7 +108,7 @@ function MetaLine({ subject, delta, cloned, now, onAdd }: { subject: RowSubject;
     repo = repoOf(issue.ref);
     rest = (
       <>
-        <span>#{issue.ref.number}</span>
+        <span className="pr-inbox-num">#{issue.ref.number}</span>
         {issue.milestone && (
           <>
             <Sep />
@@ -115,7 +116,7 @@ function MetaLine({ subject, delta, cloned, now, onAdd }: { subject: RowSubject;
           </>
         )}
         <Sep />
-        <span>updated {formatRelativeAge(issue.updatedAt, now)} ago</span>
+        <span className="pr-inbox-age">updated {formatRelativeAge(issue.updatedAt, now)} ago</span>
       </>
     );
   } else {
@@ -136,14 +137,16 @@ function MetaLine({ subject, delta, cloned, now, onAdd }: { subject: RowSubject;
         <Sep />
         <span>{event}</span>
         <Sep />
-        <span>started {formatRelativeAge(run.createdAt, now)} ago</span>
+        <span className="pr-inbox-age">started {formatRelativeAge(run.createdAt, now)} ago</span>
       </>
     );
   }
+  const slash = repo.indexOf("/") + 1;
   return (
     <div className="pr-inbox-meta-line">
       <QualifierButton className="pr-inbox-repo" qualifier="repo" value={repo} onAdd={onAdd}>
-        {repo}
+        <span className="pr-inbox-repo-owner">{repo.slice(0, slash)}</span>
+        <span className="pr-inbox-repo-name">{repo.slice(slash)}</span>
       </QualifierButton>
       <Sep />
       {rest}
@@ -178,7 +181,7 @@ function PeopleCell({ subject, viewer }: { subject: RowSubject; viewer: string |
   const noReviewers = subject.kind === "pr" && subject.pr.state === "OPEN" && !subject.pr.isDraft;
   return (
     <HoverCard className="hub-people" card={card}>
-      <GitHubAvatar login={stack.author} avatarUrl={subject.kind === "pr" ? subject.pr.author.avatarUrl : undefined} />
+      <GitHubAvatar login={stack.author} avatarUrl={avatarUrlOf(item, stack.author)} />
       {stack.others.length > 0 ? (
         <>
           <span className="hub-people-arrow">
@@ -186,7 +189,15 @@ function PeopleCell({ subject, viewer }: { subject: RowSubject; viewer: string |
           </span>
           <span className="hub-stack">
             {stack.others.map((person) => (
-              <GitHubAvatar key={person.login} login={person.login} small badge={person.badge} assignee={person.assignee} viewer={person.viewer} />
+              <GitHubAvatar
+                key={person.login}
+                login={person.login}
+                avatarUrl={avatarUrlOf(item, person.login)}
+                small
+                badge={person.badge}
+                assignee={person.assignee}
+                viewer={person.viewer}
+              />
             ))}
             {stack.overflow > 0 && <span className="hub-av sm more">+{stack.overflow}</span>}
           </span>

@@ -399,6 +399,11 @@ export function splitQuery(kind: "pr" | "issue", q: string): SplitQuery {
   };
 }
 
+export function sortedRemoteOf(split: SplitQuery): string {
+  const hasSort = tokenize(split.remote).some((t) => t.kind === "qual" && !t.neg && t.key === "sort");
+  return hasSort ? split.remote : `${split.remote} sort:${split.sort}`.trim();
+}
+
 export function stateOf(q: string): "open" | "closed" | null {
   let state: "open" | "closed" | null = null;
   for (const t of tokenize(q)) {

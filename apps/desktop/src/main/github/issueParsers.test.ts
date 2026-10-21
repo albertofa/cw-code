@@ -38,7 +38,8 @@ describe("parseIssueSearch", () => {
       searchJson([
         issueNode({
           labels: { nodes: [{ name: "bug" }, { name: "p1" }] },
-          assignees: { nodes: [{ login: "alice" }, { login: "bob" }] },
+          author: { login: "octocat", __typename: "User", avatarUrl: "https://a.test/octocat" },
+          assignees: { nodes: [{ login: "Alice", avatarUrl: "https://a.test/alice" }, { login: "bob" }] },
           milestone: { title: "v2" },
           commentCount: { totalCount: 3 }
         })
@@ -56,11 +57,12 @@ describe("parseIssueSearch", () => {
         state: "OPEN",
         stateReason: null,
         author: { login: "octocat", isBot: false },
-        assignees: ["alice", "bob"],
+        assignees: ["Alice", "bob"],
         labels: ["bug", "p1"],
         milestone: "v2",
         commentsCount: 3,
         linkedPrs: [],
+        avatarUrls: { octocat: "https://a.test/octocat", alice: "https://a.test/alice" },
         createdAt: Date.parse("2024-01-01T00:00:00Z"),
         updatedAt: Date.parse("2024-01-02T00:00:00Z")
       }

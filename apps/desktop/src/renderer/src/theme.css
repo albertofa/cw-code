@@ -11510,8 +11510,36 @@ button.gitbar-checkout:hover {
   color: var(--codex);
 }
 
-.hub-row .pr-inbox-title-line {
+.hub-view .hub-row .pr-inbox-title-line {
   font-size: var(--t-sm);
+  font-weight: 600;
+  letter-spacing: -0.005em;
+}
+
+.hub-view .hub-row .pr-inbox-meta-line {
+  margin-top: 3px;
+  color: var(--faint);
+}
+
+.hub-view .hub-row .pr-inbox-meta-sep {
+  color: color-mix(in srgb, var(--faint) 55%, transparent);
+}
+
+.hub-row .pr-inbox-repo-owner {
+  color: var(--faint);
+}
+
+.hub-row .pr-inbox-repo-name {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+.hub-row .pr-inbox-num {
+  font-variant-numeric: tabular-nums;
+}
+
+.hub-row .pr-inbox-age {
+  font-size: var(--t-2xs);
 }
 
 .hub-row:hover .pr-inbox-title-link {
@@ -11519,8 +11547,7 @@ button.gitbar-checkout:hover {
 }
 
 .hub-row.seen .pr-inbox-title-link {
-  color: var(--dim);
-  font-weight: 400;
+  font-weight: 500;
 }
 
 .hub-row button.pr-inbox-label {
@@ -11542,7 +11569,8 @@ button.gitbar-checkout:hover {
   cursor: pointer;
 }
 
-.hub-row button.pr-inbox-repo:hover {
+.hub-row button.pr-inbox-repo:hover,
+.hub-row button.pr-inbox-repo:hover > span {
   color: var(--text);
   text-decoration: underline;
 }
@@ -11677,6 +11705,9 @@ button.gitbar-checkout:hover {
 }
 
 .hub-av.more {
+  width: auto;
+  min-width: 18px;
+  padding: 0 3px;
   background: var(--raised);
   color: var(--muted);
   font-size: 9px;
