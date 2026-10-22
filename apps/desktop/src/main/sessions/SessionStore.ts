@@ -161,6 +161,7 @@ type SessionPatch = Partial<
     | "effectivePermissionMode"
     | "worktreePath"
     | "branch"
+    | "baseRef"
     | "prs"
     | "prUnlinked"
     | "issues"
@@ -244,7 +245,7 @@ export class SessionStore {
     projectId: string,
     driver: DriverKind,
     title: string,
-    workspace: { id?: string; worktreePath?: string; branch?: string; resumeCursor?: string } = {}
+    workspace: { id?: string; worktreePath?: string; branch?: string; baseRef?: string; resumeCursor?: string } = {}
   ): SessionMeta {
     const now = Date.now();
     const session: SessionMeta = {
@@ -258,7 +259,8 @@ export class SessionStore {
       updatedAt: now,
       idleSince: now,
       ...(workspace.worktreePath ? { worktreePath: normalizeRoot(workspace.worktreePath) } : {}),
-      ...(workspace.branch ? { branch: workspace.branch } : {})
+      ...(workspace.branch ? { branch: workspace.branch } : {}),
+      ...(workspace.baseRef ? { baseRef: workspace.baseRef } : {})
     };
     this.data.sessions.push(session);
     traceSessionStatus({
@@ -305,6 +307,8 @@ export class SessionStore {
     else if ("worktreePath" in patch) delete current.worktreePath;
     if (patch.branch !== undefined) current.branch = patch.branch;
     else if ("branch" in patch) delete current.branch;
+    if (patch.baseRef !== undefined) current.baseRef = patch.baseRef;
+    else if ("baseRef" in patch) delete current.baseRef;
     if (patch.prs !== undefined) {
       if (patch.prs.length === 0) delete current.prs;
       else current.prs = patch.prs;

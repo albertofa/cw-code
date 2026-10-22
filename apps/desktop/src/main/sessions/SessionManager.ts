@@ -20,6 +20,7 @@ import type {
   ModelOption,
   NativeSession,
   PermissionOption,
+  PrLinkSnapshot,
   PrRef,
   PrSummary,
   Project,
@@ -51,12 +52,15 @@ import { SessionStore } from "./SessionStore.js";
 import {
   addUnlinkedKey,
   applyFinalReview,
+  applyLinkSnapshots,
   applyTurnSeen,
   authorLocalBranch,
+  collectTrackedPrRefs,
   findIssueLink,
   findLink,
   findRunLink,
   isFinishedPrState,
+  latestLinkSnapshot,
   linkFromStatus,
   markLinkSeenAt,
   markSeen,
@@ -72,7 +76,8 @@ import {
   type PrHeadPlan
 } from "../github/prLinks.js";
 import { prKey, prRefFromUrl } from "../github/prParsers.js";
-import { buildTurnEnv } from "./env.js";
+import { buildTurnEnv, githubAccountEnv } from "./env.js";
+import { defaultGitHubAccounts } from "../github/GitHubAccounts.js";
 import { changedWorktreeBranch, comparableRoot, isWorktreeOrphaned, looksLikeWorktree, pinsWorktree, rootsOverlap, sameWorktreePath } from "./worktreeCleanup.js";
 import { SettingsStore } from "../settings/SettingsStore.js";
 import { resolveClaudeModels } from "../settings/settingsUtils.js";
@@ -85,7 +90,7 @@ import { claimedSessionKeys, importableSessions, nativeSessionKey, projectForCwd
 import { defaultBinary, execText, GitService, mapLimit, safeSegment, sessionBranchName, type CreatedWorktree, type RemoveWorktreeResult, type ResolveBaseOptions } from "../fs/GitService.js";
 import { resolveAttachments } from "./attachments.js";
 import { AUTO_TITLE_TIMEOUT_MS, buildTitlePrompt, sanitizeGeneratedTitle } from "./autoTitle.js";
-import { branchNameForTitle, TEMP_BRANCH_PATTERN } from "./branchName.js";
+import { branchNameForTitle, shouldRenameSessionBranch, TEMP_BRANCH_PATTERN } from "./branchName.js";
 import { NEW_SESSION_TITLE, pickRestoreCandidate } from "./sessionRestore.js";
 import { cwCodeHome, opencodeServerDir, sessionDbPath, settingsFilePath, titleGenDir, usageDir, worktreesDir } from "../paths/appPaths.js";
 import { UsageLedger } from "../usage/UsageLedger.js";
@@ -178,6 +183,12 @@ function withCreateNotice(session: SessionMeta, notice: string | null): SessionM
   return notice ? { ...session, createNotice: notice } : session;
 }
 
+function storableBaseRef(baseRef: string | undefined, branch: string, options: CreateSessionOptions): { baseRef?: string } {
+  const ref = baseRef?.trim();
+  if (!ref || options.prHead || ref === "HEAD" || ref === branch) return {};
+  return { baseRef: ref };
+}
+
 function driverBusy(driver: CliDriver, sessionId: string): boolean {
   try {
     return driver.activity?.().busySessionIds.includes(sessionId) ?? false;
@@ -257,11 +268,15 @@ export class SessionManager {
     this.onResolved = opts.onResolved ?? (() => {});
     this.git = opts.gitService ?? new GitService(() => this.settings.get());
     this.worktreesRoot = opts.worktreesRoot ?? worktreesDir();
-    this.prHead = opts.prHead ?? (() => null);
+    const prHead = opts.prHead ?? (() => null);
+    const prState = opts.prState ?? (() => null);
+    const prUpdatedAt = opts.prUpdatedAt ?? (() => null);
+    const stored = (ref: PrRef): PrLinkSnapshot | undefined => this.linkSnapshot(ref, prUpdatedAt(ref));
+    this.prHead = (ref) => stored(ref)?.headRefOid || prHead(ref);
     this.prHeadRefresh = opts.prHeadRefresh;
-    this.prState = opts.prState ?? (() => null);
+    this.prState = (ref) => stored(ref)?.state ?? prState(ref);
     this.prStateRefresh = opts.prStateRefresh;
-    this.prUpdatedAt = opts.prUpdatedAt ?? (() => null);
+    this.prUpdatedAt = (ref) => stored(ref)?.updatedAt || prUpdatedAt(ref);
     this.usageLedger = opts.usageLedger ?? new UsageLedger(dataDir ? join(dataDir, "usage") : usageDir());
     this.titleGenPath = dataDir ? join(dataDir, "title-gen") : titleGenDir();
     this.legacyAppRoots = opts.legacyAppRoots ?? [];
@@ -433,6 +448,32 @@ export class SessionManager {
       }
     }
     return next;
+  }
+
+  private linkSnapshot(ref: PrRef, liveUpdatedAt: number | null): PrLinkSnapshot | undefined {
+    const stored = latestLinkSnapshot(this.store.listAllSessions(), ref);
+    if (!stored || (liveUpdatedAt !== null && liveUpdatedAt > stored.updatedAt)) return undefined;
+    return stored;
+  }
+
+  applyPrSnapshots(snapshots: Map<string, PrLinkSnapshot>): string[] {
+    const changed: string[] = [];
+    for (const session of this.store.listAllSessions()) {
+      if (session.status === "resolved" || session.status === "archived") continue;
+      const prs = applyLinkSnapshots(session.prs, snapshots);
+      if (!prs) continue;
+      this.store.updateSession(session.id, { prs });
+      changed.push(session.id);
+    }
+    for (const sessionId of changed) {
+      this.endStaleBabysit(sessionId);
+      this.emitSession(sessionId);
+    }
+    return changed;
+  }
+
+  trackedPrRefs(): Array<{ ref: PrRef; snapshot?: PrLinkSnapshot }> {
+    return collectTrackedPrRefs(this.store.listAllSessions());
   }
 
   private babysits(session: SessionMeta): boolean {
@@ -607,7 +648,8 @@ export class SessionManager {
     const session = this.store.createSession(projectId, driver, "New session", {
       id,
       worktreePath: worktree.path,
-      branch: worktree.branch
+      branch: worktree.branch,
+      ...storableBaseRef(worktree.baseRef, worktree.branch, options)
     });
     return withCreateNotice(session, worktree.baseWarning);
   }
@@ -745,7 +787,7 @@ export class SessionManager {
       await this.git.initSubmodules(project.rootPath);
       return created;
     });
-    const session = this.store.createSession(project.id, driver, "New session", { id, branch });
+    const session = this.store.createSession(project.id, driver, "New session", { id, branch, ...storableBaseRef(resolved.ref, branch, options) });
     return withCreateNotice(session, resolved.warning);
   }
 
@@ -1565,10 +1607,12 @@ export class SessionManager {
     project: Project | undefined,
     cwd: string
   ): Record<string, string> {
+    const account = project?.githubAccount;
     return {
       CW_WORKTREE_PATH: cwd,
       CW_PROJECT_ROOT: project?.rootPath ?? cwd,
-      CW_SESSION_ID: session?.id ?? sessionId
+      CW_SESSION_ID: session?.id ?? sessionId,
+      ...githubAccountEnv(account, account ? defaultGitHubAccounts.cachedToken(account.host, account.login) : null)
     };
   }
 
@@ -2165,6 +2209,13 @@ export class SessionManager {
     return this.rootForProject(session.projectId);
   }
 
+  async sessionStatusContext(sessionId: string): Promise<{ root: string; project: Project; baseRef?: string }> {
+    const root = await this.ensureWorktree(sessionId);
+    const session = this.requireSession(sessionId);
+    const project = this.getProject(session.projectId);
+    return { root, project, ...(session.baseRef ? { baseRef: session.baseRef } : {}) };
+  }
+
   async ensureWorktree(sessionId: string): Promise<string> {
     const session = this.store.getSession(sessionId);
     if (!session) throw new Error(`unknown session ${sessionId}`);
@@ -2241,10 +2292,11 @@ export class SessionManager {
   private async renameBranchForTitle(sessionId: string, turnId: string): Promise<void> {
     if (this.branchRenamed.has(sessionId)) return;
     const session = this.store.getSession(sessionId);
-    if (!session?.worktreePath || !session.branch || !TEMP_BRANCH_PATTERN.test(session.branch)) return;
+    if (!session?.worktreePath || !session.branch) return;
     const { worktreePath, branch } = session;
+    const temporary = TEMP_BRANCH_PATTERN.test(branch);
     const title = session.title.trim();
-    if (!title || title === "New session") return;
+    if (!temporary || !title || title === "New session") return;
     const candidate = branchNameForTitle(title);
     if (!candidate || candidate === branch) return;
     const shared = this.store.listAllSessions().some(
@@ -2257,6 +2309,13 @@ export class SessionManager {
     this.branchRenamed.add(sessionId);
     try {
       const project = this.getProject(session.projectId);
+      const published = await this.git.branchPublished(project.rootPath, branch);
+      const current = this.store.getSession(sessionId);
+      if (current?.branch !== branch) {
+        this.branchRenamed.delete(sessionId);
+        return;
+      }
+      if (!shouldRenameSessionBranch({ temporary, hasLinks: (current.prs?.length ?? 0) > 0, published, shared })) return;
       const renamed = await this.git.renameBranch(project.rootPath, branch, candidate, { worktreePath });
       this.updateSessionBranch(sessionId, renamed);
       this.onEvent(sessionId, { type: "session.branch.updated", turnId, sessionId, branch: renamed });

@@ -3,15 +3,19 @@ import type {
   GitBranchInfo,
   GitPullRequest,
   GitStatus,
+  PrLinkSnapshot,
   SessionIssueLink,
   SessionMeta,
   SessionPrLink,
   SessionRunLink
 } from "@cw-code/contracts";
 import {
+  applyLinkSnapshots,
   applyTurnSeen,
   authorLocalBranch,
   canOwnAutoLink,
+  collectTrackedPrRefs,
+  latestLinkSnapshot,
   findIssueLink,
   applyFinalReview,
   findLink,
@@ -139,8 +143,45 @@ describe("linkFromStatus", () => {
       ref: { host: "github.com", owner: "acme", repo: "widgets", number: 42 },
       origin: "opened",
       lastSeenSha: "",
-      lastSeenAt: 100
+      lastSeenAt: 100,
+      snapshot: { state: "OPEN", headRefOid: "", updatedAt: 0, syncedAt: 100 }
     });
+  });
+
+  it("attaches a snapshot of the pull request read at link time", () => {
+    const open = status({ pullRequest: pullRequest({ headRefOid: "sha-pr", updatedAt: 55 }) });
+    expect(linkFromStatus(session(), open, 100)?.snapshot).toEqual({ state: "OPEN", headRefOid: "sha-pr", updatedAt: 55, syncedAt: 100 });
+  });
+
+  it("prefers the pull request head over the provided head sha", () => {
+    const open = status({ pullRequest: pullRequest({ headRefOid: "sha-pr" }) });
+    expect(linkFromStatus(session(), open, 100, "sha-cached")).toMatchObject({ lastSeenSha: "sha-pr" });
+  });
+
+  it("links a merged or closed pull request whose head is the checked-out commit", () => {
+    for (const state of ["MERGED", "CLOSED"] as const) {
+      const finished = status({ headSha: "sha-1", pullRequest: pullRequest({ state, headRefOid: "sha-1" }) });
+      expect(linkFromStatus(session(), finished, 100)).toMatchObject({
+        ref: { number: 42 },
+        lastSeenSha: "sha-1",
+        snapshot: { state, headRefOid: "sha-1" }
+      });
+    }
+  });
+
+  it("does not link a merged pull request whose head is another commit", () => {
+    const merged = status({ headSha: "sha-2", pullRequest: pullRequest({ state: "MERGED", headRefOid: "sha-1" }) });
+    expect(linkFromStatus(session(), merged, 100)).toBeNull();
+  });
+
+  it("does not link a merged pull request when either head is unknown", () => {
+    expect(linkFromStatus(session(), status({ headSha: null, pullRequest: pullRequest({ state: "MERGED", headRefOid: "sha-1" }) }), 100)).toBeNull();
+    expect(linkFromStatus(session(), status({ headSha: "", pullRequest: pullRequest({ state: "MERGED", headRefOid: "" }) }), 100)).toBeNull();
+  });
+
+  it("does not link a tombstoned merged pull request", () => {
+    const merged = status({ headSha: "sha-1", pullRequest: pullRequest({ state: "MERGED", headRefOid: "sha-1" }) });
+    expect(linkFromStatus(session({ prUnlinked: ["github.com/acme/widgets#42"] }), merged, 100)).toBeNull();
   });
 
   it("returns null when the candidate pull request key was previously unlinked", () => {
@@ -157,7 +198,7 @@ describe("linkFromStatus", () => {
 
   it("uses the provided head sha instead of an empty string", () => {
     const open = status({ pullRequest: pullRequest() });
-    expect(linkFromStatus(session(), open, 100, "sha-head")).toEqual({
+    expect(linkFromStatus(session(), open, 100, "sha-head")).toMatchObject({
       ref: { host: "github.com", owner: "acme", repo: "widgets", number: 42 },
       origin: "opened",
       lastSeenSha: "sha-head",
@@ -196,6 +237,65 @@ describe("linkFromStatus", () => {
   it("returns null when the pull request head is a different branch", () => {
     const open = status({ pullRequest: pullRequest({ headRefName: "someone-else" }) });
     expect(linkFromStatus(session(), open, 100)).toBeNull();
+  });
+});
+
+describe("link snapshots", () => {
+  const ref = { host: "github.com", owner: "acme", repo: "widgets", number: 42 };
+  const other = { ...ref, number: 7 };
+  const snapshot = (overrides: Partial<PrLinkSnapshot> = {}): PrLinkSnapshot => ({
+    state: "OPEN",
+    headRefOid: "sha-1",
+    updatedAt: 10,
+    syncedAt: 20,
+    ...overrides
+  });
+  const link = (overrides: Partial<SessionPrLink> = {}): SessionPrLink => ({ ref, origin: "opened", lastSeenSha: "sha-1", lastSeenAt: 1, ...overrides });
+
+  it("writes a changed snapshot onto the matching link only", () => {
+    const untouched = link({ ref: other });
+    const next = applyLinkSnapshots([link({ snapshot: snapshot() }), untouched], new Map([[prKey(ref), snapshot({ state: "MERGED", syncedAt: 30 })]]));
+    expect(next?.[0].snapshot).toMatchObject({ state: "MERGED", syncedAt: 30 });
+    expect(next?.[1]).toBe(untouched);
+  });
+
+  it("ignores a snapshot that only differs in sync time", () => {
+    expect(applyLinkSnapshots([link({ snapshot: snapshot() })], new Map([[prKey(ref), snapshot({ syncedAt: 99 })]]))).toBeNull();
+  });
+
+  it("treats a head or update time change as a change", () => {
+    const prs = [link({ snapshot: snapshot() })];
+    expect(applyLinkSnapshots(prs, new Map([[prKey(ref), snapshot({ headRefOid: "sha-2" })]]))).not.toBeNull();
+    expect(applyLinkSnapshots(prs, new Map([[prKey(ref), snapshot({ updatedAt: 11 })]]))).not.toBeNull();
+  });
+
+  it("writes a first snapshot onto a link without one and skips empty lists", () => {
+    expect(applyLinkSnapshots([link()], new Map([[prKey(ref), snapshot()]]))?.[0].snapshot).toEqual(snapshot());
+    expect(applyLinkSnapshots(undefined, new Map([[prKey(ref), snapshot()]]))).toBeNull();
+    expect(applyLinkSnapshots([link()], new Map())).toBeNull();
+  });
+
+  it("collects tracked refs from live sessions, deduped with the newest valid snapshot", () => {
+    const tracked = collectTrackedPrRefs([
+      session({ id: "a", prs: [link({ snapshot: snapshot({ syncedAt: 5 }) })] }),
+      session({ id: "b", prs: [link({ snapshot: snapshot({ state: "MERGED", syncedAt: 50 }) }), link({ ref: other })] }),
+      session({ id: "c", prs: [link({ snapshot: { state: "BOGUS" } as unknown as PrLinkSnapshot })] }),
+      session({ id: "d", status: "resolved", prs: [link({ ref: { ...ref, number: 9 } })] }),
+      session({ id: "e", status: "archived", prs: [link({ ref: { ...ref, number: 10 } })] })
+    ]);
+    expect(tracked).toEqual([
+      { ref, snapshot: snapshot({ state: "MERGED", syncedAt: 50 }) },
+      { ref: other }
+    ]);
+  });
+
+  it("finds the newest valid stored snapshot for a ref across sessions", () => {
+    const sessions = [
+      session({ id: "a", status: "resolved", prs: [link({ snapshot: snapshot({ state: "CLOSED", syncedAt: 40 }) })] }),
+      session({ id: "b", prs: [link({ snapshot: snapshot({ syncedAt: 10 }) })] })
+    ];
+    expect(latestLinkSnapshot(sessions, ref)?.state).toBe("CLOSED");
+    expect(latestLinkSnapshot(sessions, other)).toBeUndefined();
   });
 });
 

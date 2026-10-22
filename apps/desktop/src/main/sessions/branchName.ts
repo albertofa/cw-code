@@ -16,3 +16,7 @@ export function branchNameForTitle(title: string): string | null {
   const slug = slugForBranchTitle(title);
   return slug ? `cw/${slug}` : null;
 }
+
+export function shouldRenameSessionBranch(input: { temporary: boolean; hasLinks: boolean; published: boolean; shared: boolean }): boolean {
+  return input.temporary && !input.hasLinks && !input.published && !input.shared;
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { buildTurnEnv } from "./env.js";
+import { buildTurnEnv, githubAccountEnv } from "./env.js";
 
 describe("buildTurnEnv", () => {
   it("applies precedence: turn env over session vars over process env", () => {
@@ -37,5 +37,25 @@ describe("buildTurnEnv", () => {
     env["D"] = "4";
     expect(processEnv).toEqual({ A: "1" });
     expect(sessionVars).toEqual({ B: "2" });
+  });
+});
+
+describe("githubAccountEnv", () => {
+  it("uses GH_TOKEN for github.com", () => {
+    expect(githubAccountEnv({ host: "github.com", login: "octo" }, "tok")).toEqual({ GH_HOST: "github.com", GH_TOKEN: "tok" });
+  });
+
+  it("uses GH_TOKEN for ghe.com tenants", () => {
+    expect(githubAccountEnv({ host: "Acme.GHE.com", login: "octo" }, "tok")).toEqual({ GH_HOST: "acme.ghe.com", GH_TOKEN: "tok" });
+  });
+
+  it("uses GH_ENTERPRISE_TOKEN for enterprise server hosts", () => {
+    expect(githubAccountEnv({ host: "git.example.com", login: "octo" }, "tok")).toEqual({ GH_HOST: "git.example.com", GH_ENTERPRISE_TOKEN: "tok" });
+  });
+
+  it("returns nothing without an account or a token", () => {
+    expect(githubAccountEnv({ host: "github.com", login: "octo" }, null)).toEqual({});
+    expect(githubAccountEnv({ host: "github.com", login: "octo" }, "")).toEqual({});
+    expect(githubAccountEnv(undefined, "tok")).toEqual({});
   });
 });

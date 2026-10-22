@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { branchNameForTitle, slugForBranchTitle, TEMP_BRANCH_PATTERN } from "./branchName.js";
+import { branchNameForTitle, shouldRenameSessionBranch, slugForBranchTitle, TEMP_BRANCH_PATTERN } from "./branchName.js";
 
 describe("branchName", () => {
   it("slugs titles to lowercase hyphenated branch names", () => {
@@ -29,5 +29,20 @@ describe("branchName", () => {
     expect(TEMP_BRANCH_PATTERN.test("main")).toBe(false);
     expect(TEMP_BRANCH_PATTERN.test("cw/1234abcd-100")).toBe(true);
     expect(TEMP_BRANCH_PATTERN.test("cw/1234ab")).toBe(false);
+  });
+});
+
+describe("shouldRenameSessionBranch", () => {
+  const safe = { temporary: true, hasLinks: false, published: false, shared: false };
+
+  it("renames only an unpublished, unlinked, unshared temporary branch", () => {
+    expect(shouldRenameSessionBranch(safe)).toBe(true);
+  });
+
+  it("keeps the branch when any guard trips", () => {
+    expect(shouldRenameSessionBranch({ ...safe, temporary: false })).toBe(false);
+    expect(shouldRenameSessionBranch({ ...safe, hasLinks: true })).toBe(false);
+    expect(shouldRenameSessionBranch({ ...safe, published: true })).toBe(false);
+    expect(shouldRenameSessionBranch({ ...safe, shared: true })).toBe(false);
   });
 });

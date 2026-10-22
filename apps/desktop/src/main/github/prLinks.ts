@@ -1,8 +1,10 @@
 import type {
   CreateSessionOptions,
   GitBranchInfo,
+  GitPullRequest,
   GitStatus,
   IssueRef,
+  PrLinkSnapshot,
   PrRef,
   PrSummary,
   RepoRef,
@@ -13,6 +15,7 @@ import type {
   SessionRunLink
 } from "@cw-code/contracts";
 import { prKey, prRefFromUrl } from "./prParsers.js";
+import { isValidSnapshot } from "./prTracking.js";
 
 const MAX_UNLINKED_KEYS = 20;
 
@@ -21,15 +24,27 @@ export function canOwnAutoLink(session: SessionMeta): boolean {
   return session.status !== "resolved" && session.status !== "archived";
 }
 
+function belongsToCheckout(pullRequest: GitPullRequest, headSha: string | null | undefined): boolean {
+  if (pullRequest.state === "OPEN") return true;
+  return pullRequest.headRefOid !== "" && !!headSha && pullRequest.headRefOid === headSha;
+}
+
 export function linkFromStatus(session: SessionMeta, status: GitStatus, now: number, headSha?: string | null): SessionPrLink | null {
   if (!canOwnAutoLink(session) || session.branch !== status.branch) return null;
   const pullRequest = status.pullRequest;
-  if (pullRequest?.state !== "OPEN" || pullRequest.headRefName !== status.branch) return null;
+  if (!pullRequest || pullRequest.headRefName !== status.branch) return null;
+  if (!belongsToCheckout(pullRequest, status.headSha)) return null;
   const ref = prRefFromUrl(pullRequest.url);
   if (!ref) return null;
   if (session.prUnlinked?.includes(prKey(ref))) return null;
   if (findLink(session.prs, ref)) return null;
-  return { ref, origin: "opened", lastSeenSha: headSha ?? "", lastSeenAt: now };
+  return {
+    ref,
+    origin: "opened",
+    lastSeenSha: pullRequest.headRefOid || headSha || "",
+    lastSeenAt: now,
+    snapshot: { state: pullRequest.state, headRefOid: pullRequest.headRefOid, updatedAt: pullRequest.updatedAt, syncedAt: now }
+  };
 }
 
 function isNonEmptyString(value: unknown): value is string {
@@ -163,6 +178,53 @@ export function removeUnlinkedKey(existing: string[] | undefined, key: string): 
 
 export function markSeen(link: SessionPrLink, headSha: string | null, now: number): SessionPrLink {
   return { ...link, lastSeenSha: headSha ?? link.lastSeenSha, lastSeenAt: Math.max(link.lastSeenAt, now) };
+}
+
+function sameSnapshot(current: PrLinkSnapshot | undefined, next: PrLinkSnapshot): boolean {
+  return !!current && current.state === next.state && current.headRefOid === next.headRefOid && current.updatedAt === next.updatedAt;
+}
+
+export function applyLinkSnapshots(
+  prs: SessionPrLink[] | undefined,
+  snapshots: ReadonlyMap<string, PrLinkSnapshot>
+): SessionPrLink[] | null {
+  if (!prs?.length) return null;
+  let changed = false;
+  const next = prs.map((link) => {
+    const snapshot = snapshots.get(prKey(link.ref));
+    if (!snapshot || sameSnapshot(link.snapshot, snapshot)) return link;
+    changed = true;
+    return { ...link, snapshot };
+  });
+  return changed ? next : null;
+}
+
+function newerSnapshot(current: PrLinkSnapshot | undefined, candidate: unknown): PrLinkSnapshot | undefined {
+  if (!isValidSnapshot(candidate)) return current;
+  return !current || candidate.syncedAt > current.syncedAt ? candidate : current;
+}
+
+export function latestLinkSnapshot(sessions: SessionMeta[], ref: PrRef): PrLinkSnapshot | undefined {
+  let latest: PrLinkSnapshot | undefined;
+  for (const session of sessions) {
+    const link = findLink(session.prs, ref);
+    if (link) latest = newerSnapshot(latest, link.snapshot);
+  }
+  return latest;
+}
+
+export function collectTrackedPrRefs(sessions: SessionMeta[]): Array<{ ref: PrRef; snapshot?: PrLinkSnapshot }> {
+  const byKey = new Map<string, { ref: PrRef; snapshot?: PrLinkSnapshot }>();
+  for (const session of sessions) {
+    if (session.status === "resolved" || session.status === "archived") continue;
+    for (const link of session.prs ?? []) {
+      const key = prKey(link.ref);
+      const existing = byKey.get(key);
+      const snapshot = newerSnapshot(existing?.snapshot, link.snapshot);
+      byKey.set(key, { ref: existing?.ref ?? link.ref, ...(snapshot ? { snapshot } : {}) });
+    }
+  }
+  return [...byKey.values()];
 }
 
 export function isFinishedPrState(state: PrSummary["state"] | null): boolean {

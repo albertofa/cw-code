@@ -9,6 +9,7 @@ import { SessionManager, type SessionManagerOptions } from "./SessionManager.js"
 import { SYNTHETIC_FULL_ACCESS_DESCRIPTION } from "../providers/permissions.js";
 import type { SessionStore } from "./SessionStore.js";
 import { initSessionStatusTrace, resetSessionStatusTraceForTests } from "../debug/sessionStatusTrace.js";
+import { prKey } from "../github/prParsers.js";
 
 class FakeDriver implements CliDriver {
   readonly kind = "claude" as const;
@@ -707,6 +708,8 @@ describe("SessionManager", () => {
 
     expect(b.worktreePath).toBe(a.worktreePath);
     expect(b.branch).toBe(a.branch);
+    expect(a.baseRef).toBe("main");
+    expect(b.baseRef).toBeUndefined();
     expect(manager.rootFor(b.id)).toBe(a.worktreePath);
     expect(branchCount()).toBe(before);
     manager.dispose();
@@ -759,6 +762,8 @@ describe("SessionManager", () => {
     expect(gitOut(repository, "rev-parse", "origin/main")).toBe(remoteHead);
     expect(hasUpstream(repository, session.branch ?? "")).toBe(false);
     expect((await manager.listSessions(project.id))[0]?.branch).toBe(session.branch);
+    expect((await manager.listSessions(project.id))[0]?.baseRef).toBe("origin/main");
+    expect((await manager.sessionStatusContext(session.id)).baseRef).toBe("origin/main");
     expect(manager.rootFor(session.id)).toBe(project.rootPath);
     manager.dispose();
   });
@@ -777,6 +782,7 @@ describe("SessionManager", () => {
 
     expect(gitOut(repository, "branch", "--show-current")).toBe(session.branch);
     expect(gitOut(repository, "rev-parse", "HEAD")).toBe(releaseHead);
+    expect(session.baseRef).toBe("release");
     manager.dispose();
   });
 
@@ -1937,6 +1943,32 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
+  it("keeps the temporary branch once it is published or linked to a pull request", async () => {
+    const { manager, fake, project } = makeGitSandboxManager("cw-session-branch-published-");
+    const git = (manager as unknown as { git: { branchPublished(root: string, branch: string): Promise<boolean>; renameBranch: (...args: unknown[]) => Promise<string> } }).git;
+    const renameBranch = vi.spyOn(git, "renameBranch");
+    const published = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    const linked = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    manager.linkPr(linked.id, { ref: { host: "github.com", owner: "acme", repo: "widgets", number: 42 }, origin: "linked", lastSeenSha: "", lastSeenAt: 0 });
+    const checked: string[] = [];
+    git.branchPublished = async (_root, branch) => {
+      checked.push(branch);
+      return branch === published.branch;
+    };
+
+    await manager.startTurn(published.id, "fix the login flow");
+    await manager.startTurn(linked.id, "fix the signup flow");
+    fake.completeAll();
+    await vi.waitFor(() => expect(checked).toHaveLength(2));
+    await new Promise((r) => setTimeout(r, 50));
+
+    const stored = await manager.listSessions(project.id);
+    expect(renameBranch).not.toHaveBeenCalled();
+    expect(stored.find((s) => s.id === published.id)?.branch).toBe(published.branch);
+    expect(stored.find((s) => s.id === linked.id)?.branch).toBe(linked.branch);
+    manager.dispose();
+  });
+
   it("suffixes the renamed branch on collision", async () => {
     const { manager, fake, project, repository } = makeGitSandboxManager("cw-session-branch-collision-");
     const session = await manager.createSession(project.id, "claude", { baseBranch: "main" });
@@ -2606,6 +2638,33 @@ describe("SessionManager", () => {
     manager.setSettings({ prWorkflows: workflows });
 
     expect(store.getSession(disabled.id)?.status).toBe("holding");
+    manager.dispose();
+  });
+
+  it("applies tracked PR snapshots to live sessions, ends babysit on merge and ignores sync-only changes", async () => {
+    const widgets = { host: "github.com", owner: "acme", repo: "widgets", number: 42 };
+    const { manager, project } = makePrManager({ prState: () => "OPEN" });
+    const store = (manager as unknown as { store: SessionStore }).store;
+    const emitted: string[] = [];
+    manager.setSessionEmitter((session) => emitted.push(session.id));
+    const babysat = await manager.createSession(project.id, "claude", { mode: "current" });
+    const resolved = await manager.createSession(project.id, "claude", { mode: "current" });
+    for (const session of [babysat, resolved]) {
+      manager.linkPr(session.id, { ref: widgets, origin: "workflow", workflowId: "babysit", lastSeenSha: "old", lastSeenAt: 0 });
+    }
+    store.updateSession(babysat.id, { status: "babysit" });
+    store.updateSession(resolved.id, { status: "resolved" });
+    emitted.length = 0;
+
+    const merged = { state: "MERGED" as const, headRefOid: "sha-1", updatedAt: 10, syncedAt: 20 };
+    expect(manager.applyPrSnapshots(new Map([[prKey(widgets), merged]]))).toEqual([babysat.id]);
+    expect(emitted).toEqual([babysat.id]);
+    expect(store.getSession(babysat.id)?.prs?.[0].snapshot).toEqual(merged);
+    expect(store.getSession(babysat.id)?.status).toBe("holding");
+    expect(store.getSession(resolved.id)?.prs?.[0].snapshot).toBeUndefined();
+
+    expect(manager.applyPrSnapshots(new Map([[prKey(widgets), { ...merged, syncedAt: 99 }]]))).toEqual([]);
+    expect(manager.trackedPrRefs()).toEqual([{ ref: widgets, snapshot: merged }]);
     manager.dispose();
   });
 
