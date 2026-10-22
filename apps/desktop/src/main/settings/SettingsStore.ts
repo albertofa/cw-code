@@ -262,7 +262,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   holdingHours: 6,
   autoTitleEnabled: true,
   autoTitleDriver: "claude",
-  autoTitleModel: "claude-sonnet-5",
+  autoTitleModel: "claude-sonnet-5-5",
   autoTitleEffort: "low",
   prRefreshIntervalSeconds: 120,
   prCloneRoot: "~/.cw-code/repos",

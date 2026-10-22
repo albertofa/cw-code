@@ -328,7 +328,7 @@ describe("SettingsStore", () => {
     const settings = new SettingsStore(tempFilePath()).get();
     expect(settings.autoTitleEnabled).toBe(true);
     expect(settings.autoTitleDriver).toBe("claude");
-    expect(settings.autoTitleModel).toBe("claude-sonnet-5");
+    expect(settings.autoTitleModel).toBe("claude-sonnet-5-5");
     expect(settings.autoTitleEffort).toBe("low");
   });
 
