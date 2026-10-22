@@ -223,7 +223,7 @@ export function parseTrackedPrs(json: string, refs: PrRef[], viewer: string): Ma
     const node = asRecord(asRecord(data[`pr${index}`]).pullRequest);
     if (Object.keys(node).length === 0) return;
     const summary = parseSummaryNode(node, viewer || null);
-    if (summary) summaries.set(prKey(ref), summary);
+    if (summary) summaries.set(prKey(ref), { ...summary, ref });
   });
   return summaries;
 }

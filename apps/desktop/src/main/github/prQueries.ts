@@ -346,9 +346,9 @@ export function buildTrackedPrQuery(refs: PrRef[]): string {
     if (!isSafePositiveInt(ref.number)) throw new Error(`invalid pull request number '${String(ref.number)}'`);
     return `  pr${index}: repository(owner: ${JSON.stringify(ref.owner)}, name: ${JSON.stringify(ref.repo)}) {
     pullRequest(number: ${ref.number}) {
-${PR_SUMMARY_FIELDS}
+      ...PrSummaryFields
     }
   }`;
   });
-  return ["query {", ...aliases, "}", ""].join("\n");
+  return ["query {", ...aliases, "}", `fragment PrSummaryFields on PullRequest {${PR_SUMMARY_FIELDS}}`, ""].join("\n");
 }

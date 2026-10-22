@@ -110,6 +110,26 @@ describe("PrTracker", () => {
     expect(tracker.summary(ref(1))).not.toBeNull();
   });
 
+  it("does not notify after stop", async () => {
+    const onChanged = vi.fn();
+    const tracker = new PrTracker(settings, onChanged);
+    tracker.setTracked([{ ref: ref(1) }]);
+    mocks.execWithStatus.mockResolvedValue(respond({ pr0: { pullRequest: node(1) } }));
+
+    const pending = tracker.tick();
+    tracker.stop();
+    await pending;
+
+    expect(onChanged).not.toHaveBeenCalled();
+    expect(tracker.summary(ref(1))).not.toBeNull();
+  });
+
+  it("ignores a persisted snapshot synced in the future", () => {
+    const tracker = new PrTracker(settings, vi.fn());
+    tracker.setTracked([{ ref: ref(1), snapshot: { state: "MERGED", headRefOid: "x", updatedAt: 1, syncedAt: Date.now() + 3_600_000 } }]);
+    expect(tracker.snapshot(ref(1))).toBeNull();
+  });
+
   it("skips invalid refs, ignores malformed snapshots, and never refreshes a merged snapshot", async () => {
     const tracker = new PrTracker(settings, vi.fn());
     const merged = { state: "MERGED" as const, headRefOid: "x", updatedAt: 1, syncedAt: 1 };

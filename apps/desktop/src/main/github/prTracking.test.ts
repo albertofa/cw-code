@@ -66,6 +66,11 @@ describe("isValidSnapshot", () => {
     expect(isValidSnapshot(valid)).toBe(true);
   });
 
+  it("rejects a syncedAt in the future beyond clock skew but tolerates small skew", () => {
+    expect(isValidSnapshot({ ...valid, syncedAt: 1_000_000 + 60_001 }, 1_000_000)).toBe(false);
+    expect(isValidSnapshot({ ...valid, syncedAt: 1_000_000 + 60_000 }, 1_000_000)).toBe(true);
+  });
+
   it.each([
     ["unknown state", { ...valid, state: "DRAFT" }],
     ["non-finite updatedAt", { ...valid, updatedAt: Number.NaN }],
@@ -86,6 +91,8 @@ describe("summaryChanged", () => {
     ci: "passing",
     review: "none",
     mergeable: "MERGEABLE",
+    mergeStateStatus: "CLEAN",
+    checks: { total: 2, passed: 2, failed: 0, pending: 0 },
     isDraft: false,
     title: "t"
   } as unknown as PrSummary;
@@ -105,6 +112,10 @@ describe("summaryChanged", () => {
     ["ci", { ci: "failing" }],
     ["review", { review: "approved" }],
     ["mergeable", { mergeable: "CONFLICTING" }],
+    ["mergeStateStatus", { mergeStateStatus: "BLOCKED" }],
+    ["checks total", { checks: { total: 3, passed: 2, failed: 0, pending: 1 } }],
+    ["checks passed", { checks: { total: 2, passed: 1, failed: 1, pending: 0 } }],
+    ["checks pending", { checks: { total: 2, passed: 1, failed: 0, pending: 1 } }],
     ["isDraft", { isDraft: true }]
   ])("detects a %s change", (_name, patch) => {
     expect(summaryChanged(base, { ...base, ...patch } as PrSummary)).toBe(true);

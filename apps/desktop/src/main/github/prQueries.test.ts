@@ -13,10 +13,17 @@ describe("buildTrackedPrQuery", () => {
     expect(query).not.toContain("pr2:");
   });
 
-  it("inlines the shared summary fields for every alias", () => {
+  it("spreads one shared summary fragment into every alias", () => {
     const query = buildTrackedPrQuery([ref(1), ref(2)]);
-    expect(query.match(/headRefOid/g)).toHaveLength(2);
-    expect(query.match(/ciCommits: commits\(last: 1\)/g)).toHaveLength(2);
+    expect(query.match(/\.\.\.PrSummaryFields/g)).toHaveLength(2);
+    expect(query.match(/fragment PrSummaryFields on PullRequest/g)).toHaveLength(1);
+    expect(query.match(/headRefOid/g)).toHaveLength(1);
+    expect(query.match(/ciCommits: commits\(last: 1\)/g)).toHaveLength(1);
+  });
+
+  it("keeps a full batch of maximum-length names far below the Windows command-line limit", () => {
+    const refs = Array.from({ length: 25 }, (_, index) => ref(100_000 + index, "o".repeat(39), "r".repeat(100)));
+    expect(buildTrackedPrQuery(refs).length).toBeLessThan(12_000);
   });
 
   it("JSON-escapes owner and repo", () => {

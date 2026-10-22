@@ -629,6 +629,19 @@ describe("parseTrackedPrs", () => {
     expect(result.get("github.com/acme/gadgets#3")?.state).toBe("MERGED");
   });
 
+  it("returns summaries carrying the tracked ref, not the canonical URL ref", () => {
+    const tracked = [{ host: "github.com", owner: "ACME", repo: "Widgets", number: 1 }];
+    const json = JSON.stringify({ data: { pr0: { pullRequest: summaryNode() } } });
+    const summary = parseTrackedPrs(json, tracked, "octocat").get("github.com/ACME/Widgets#1");
+    expect(summary?.ref).toEqual(tracked[0]);
+  });
+
+  it("skips an alias that is absent from data", () => {
+    const json = JSON.stringify({ data: { pr0: { pullRequest: summaryNode() } } });
+    const result = parseTrackedPrs(json, refs, "octocat");
+    expect([...result.keys()]).toEqual(["github.com/acme/widgets#1"]);
+  });
+
   it("uses the viewer to flag review requests", () => {
     const node = summaryNode({ reviewRequests: { nodes: [{ requestedReviewer: { login: "octocat" } }] } });
     const result = parseTrackedPrs(JSON.stringify({ data: { pr0: { pullRequest: node } } }), refs.slice(0, 1), "octocat");

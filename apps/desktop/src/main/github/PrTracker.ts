@@ -43,6 +43,7 @@ export class PrTracker {
   private readonly hostBackoffUntil = new Map<string, number>();
   private readonly scheduler: RefreshScheduler;
   private timer: ReturnType<typeof setInterval> | null = null;
+  private stopped = false;
 
   constructor(
     private readonly settings: () => AppSettings,
@@ -101,6 +102,7 @@ export class PrTracker {
   }
 
   start(): void {
+    this.stopped = false;
     if (this.timer) return;
     this.timer = setInterval(() => void this.tick(), PR_TRACKER_TICK_MS);
     this.timer.unref();
@@ -108,6 +110,7 @@ export class PrTracker {
   }
 
   stop(): void {
+    this.stopped = true;
     if (!this.timer) return;
     clearInterval(this.timer);
     this.timer = null;
@@ -207,6 +210,7 @@ export class PrTracker {
   }
 
   private emitChanged(changed: PrSummary[]): void {
+    if (this.stopped) return;
     try {
       this.onChanged(changed);
     } catch (error) {

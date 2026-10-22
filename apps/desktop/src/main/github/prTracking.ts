@@ -5,6 +5,7 @@ export const PR_TRACKER_BATCH = 25;
 export const PR_IDLE_AFTER_MS = 30 * 60_000;
 export const PR_IDLE_INTERVAL_MS = 5 * 60_000;
 export const PR_CLOSED_INTERVAL_MS = 15 * 60_000;
+const MAX_SYNC_CLOCK_SKEW_MS = 60_000;
 
 export interface TrackedPrEntry {
   ref: PrRef;
@@ -26,7 +27,7 @@ export function snapshotOf(summary: PrSummary, syncedAt: number): PrLinkSnapshot
   return { state: summary.state, headRefOid: summary.headRefOid, updatedAt: summary.updatedAt, syncedAt };
 }
 
-export function isValidSnapshot(value: unknown): value is PrLinkSnapshot {
+export function isValidSnapshot(value: unknown, now = Date.now()): value is PrLinkSnapshot {
   if (!value || typeof value !== "object") return false;
   const snapshot = value as Record<string, unknown>;
   return (
@@ -35,7 +36,8 @@ export function isValidSnapshot(value: unknown): value is PrLinkSnapshot {
     typeof snapshot.updatedAt === "number" &&
     Number.isFinite(snapshot.updatedAt) &&
     typeof snapshot.syncedAt === "number" &&
-    Number.isFinite(snapshot.syncedAt)
+    Number.isFinite(snapshot.syncedAt) &&
+    snapshot.syncedAt <= now + MAX_SYNC_CLOCK_SKEW_MS
   );
 }
 
@@ -48,6 +50,11 @@ export function summaryChanged(previous: PrSummary | undefined, next: PrSummary)
     previous.ci !== next.ci ||
     previous.review !== next.review ||
     previous.mergeable !== next.mergeable ||
+    previous.mergeStateStatus !== next.mergeStateStatus ||
+    previous.checks.total !== next.checks.total ||
+    previous.checks.passed !== next.checks.passed ||
+    previous.checks.failed !== next.checks.failed ||
+    previous.checks.pending !== next.checks.pending ||
     previous.isDraft !== next.isDraft
   );
 }
