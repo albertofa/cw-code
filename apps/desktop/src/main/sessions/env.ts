@@ -15,3 +15,11 @@ export function buildTurnEnv(
   }
   return out;
 }
+
+export function githubAccountEnv(account: { host: string; login: string } | undefined, token: string | null): Record<string, string> {
+  if (!account || !token) return {};
+  const host = account.host.trim().toLowerCase();
+  if (!host) return {};
+  const tokenKey = host === "github.com" || host.endsWith(".ghe.com") ? "GH_TOKEN" : "GH_ENTERPRISE_TOKEN";
+  return { GH_HOST: host, [tokenKey]: token };
+}

@@ -224,6 +224,7 @@ interface AppState {
   setPendingWorkspace(options: CreateSessionOptions): void;
   gitStatusBySession: Record<string, GitStatus>;
   refreshGitStatus(sessionId: string): Promise<void>;
+  applyGitStatus(sessionId: string, status: GitStatus): void;
   refreshProjectCheckoutGitStatus(sessionId: string): Promise<void>;
   sourceControlRefreshIntervalSeconds: number;
   prRefreshIntervalSeconds: number;
@@ -499,6 +500,13 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   setPendingWorkspace(options: CreateSessionOptions) {
     set({ pendingWorkspace: { ...get().pendingWorkspace, ...options }, newSessionError: null });
+  },
+
+  applyGitStatus(sessionId: string, status: GitStatus) {
+    const tracker = gitStatusTrackers.get(sessionId);
+    if (tracker) tracker.applied = tracker.issued;
+    set({ gitStatusBySession: { ...get().gitStatusBySession, [sessionId]: status } });
+    useBranchStore.getState().reconcileKeptHead(sessionId, status);
   },
 
   async refreshGitStatus(sessionId: string) {
@@ -1598,7 +1606,6 @@ export const useAppStore = create<AppState>((set, get) => ({
               }
             }
       });
-      if (!superseded) void get().refreshGitStatus(sessionId);
     } else if (event.type === "session.branch.updated") {
       const byProject = get().sessionsByProject;
       const next: Record<string, Session[]> = {};
@@ -1606,7 +1613,6 @@ export const useAppStore = create<AppState>((set, get) => ({
         next[pid] = list.map((s) => (s.id === sessionId ? { ...s, branch: event.branch } : s));
       }
       set({ sessionsByProject: next });
-      void get().refreshGitStatus(sessionId);
     } else if (event.type === "turn.error") {
       const book =
         get().busyTurns[sessionId] === event.turnId

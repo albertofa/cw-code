@@ -41,6 +41,7 @@ function nonInteractiveEnv(): NodeJS.ProcessEnv {
   env["GCM_INTERACTIVE"] = "never";
   env["GIT_ASKPASS"] = "";
   env["SSH_ASKPASS"] = "";
+  env["GIT_OPTIONAL_LOCKS"] = "0";
   return env;
 }
 

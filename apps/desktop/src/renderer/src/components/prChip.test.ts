@@ -44,6 +44,8 @@ function gitPr(overrides: Partial<GitPullRequest> = {}): GitPullRequest {
     mergeStateStatus: null,
     headRefName: "fix/bug",
     baseRefName: "main",
+    headRefOid: "",
+    updatedAt: 0,
     checks: { total: 2, passed: 2, failed: 0, pending: 0 },
     ...overrides
   };

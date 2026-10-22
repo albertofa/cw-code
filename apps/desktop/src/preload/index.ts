@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { AccountUsageSnapshot, AppSettings, AttentionState, CliBinary, CliDiscoveredCandidate, CliDiscoverResult, CommandInvocation, CommandOption, CreateSessionOptions, DirEntry, FileReadResult, FileStatInfo, FsChangeEvent, GitBranchInfo, GitDecorations, GitBaseline, GitDiffMode, GitDiffResult, GitHubSearchResult, GitStatus, HarnessId, ImportableSession, ImportSessionRequest, ImportSessionResult, IssueDetail, IssueRef, IssueSummary, ModelMeta, PrDetail, PrInboxResult, Project, ProjectGitHubRepo, PrRef, PrSummary, PrWorkflow, RepoRef, RetryConnectionResult, RunRef, RunSources, RunsResult, SessionCleanupResult, SessionIssueLink, SessionMeta, SessionPrLink, SessionRunLink, SessionStatus, SessionStatusReason, ShutdownAssessment, ShutdownCommitResult, ShutdownExpiredEvent, ShutdownPrepareRequest, ShutdownPrepareResult, ShutdownRequestedEvent, SkillDetail, SkillMeta, SkillSaveInput, SkillsListResult, SourceControlHealth, StartupState, SubagentToolsResult, TextSearchQuery, TextSearchResult, TurnChanges, UpdateActionResult, UpdateChannel, UpdateInstallRequest, UpdateState, UsageLedgerQuery, UsageLedgerRow, WorkflowRunSummary, WorktreePruneSummary } from "@cw-code/contracts";
+import type { AccountUsageSnapshot, AppSettings, AttentionState, CliBinary, CliDiscoveredCandidate, CliDiscoverResult, CommandInvocation, CommandOption, CreateSessionOptions, DirEntry, FileReadResult, FileStatInfo, FsChangeEvent, GitBranchInfo, GitDecorations, GitBaseline, GitDiffMode, GitDiffResult, GitHubSearchResult, GitStatus, GitStatusUpdate, HarnessId, ImportableSession, ImportSessionRequest, ImportSessionResult, IssueDetail, IssueRef, IssueSummary, ModelMeta, PrDetail, PrInboxResult, Project, ProjectGitHubRepo, PrRef, PrSummary, PrWorkflow, RepoRef, RetryConnectionResult, RunRef, RunSources, RunsResult, SessionCleanupResult, SessionIssueLink, SessionMeta, SessionPrLink, SessionRunLink, SessionStatus, SessionStatusReason, ShutdownAssessment, ShutdownCommitResult, ShutdownExpiredEvent, ShutdownPrepareRequest, ShutdownPrepareResult, ShutdownRequestedEvent, SkillDetail, SkillMeta, SkillSaveInput, SkillsListResult, SourceControlHealth, StartupState, SubagentToolsResult, TextSearchQuery, TextSearchResult, TurnChanges, UpdateActionResult, UpdateChannel, UpdateInstallRequest, UpdateState, UsageLedgerQuery, UsageLedgerRow, WorkflowRunSummary, WorktreePruneSummary } from "@cw-code/contracts";
 
 export type PermissionMode = "auto" | "acceptEdits" | "bypassPermissions" | "manual";
 export type EffortLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
@@ -113,6 +113,9 @@ export interface CwApi {
     importAll(): Promise<SkillsListResult>;
   };
   getGitStatus(sessionId: string): Promise<GitStatus>;
+  watchGitStatus(sessionIds: string[]): Promise<void>;
+  setGitActive(active: boolean): Promise<void>;
+  onGitStatus(cb: (update: GitStatusUpdate) => void): () => void;
   listGitBranches(sessionId: string): Promise<GitBranchInfo[]>;
   listProjectBranches(projectId: string): Promise<GitBranchInfo[]>;
   switchGitBranch(sessionId: string, branch: string): Promise<GitStatus>;
@@ -125,6 +128,8 @@ export interface CwApi {
   getUsageLedger(query: UsageLedgerQuery): Promise<UsageLedgerRow[]>;
   getAccountUsage(drivers: DriverName[], force?: boolean): Promise<AccountUsageSnapshot[]>;
   getPrInbox(force?: boolean): Promise<PrInboxResult>;
+  getTrackedPrs(): Promise<PrSummary[]>;
+  onTrackedPrs(cb: (items: PrSummary[]) => void): () => void;
   getPrDetail(ref: PrRef): Promise<PrDetail>;
   getPrDiff(ref: PrRef): Promise<string>;
   getPrCheckLog(ref: PrRef, runId: number): Promise<string>;
@@ -309,6 +314,13 @@ const api: CwApi = {
     importAll: () => ipcRenderer.invoke("skills.importAll")
   },
   getGitStatus: (sessionId: string) => ipcRenderer.invoke("git.status", { sessionId }),
+  watchGitStatus: (sessionIds: string[]) => ipcRenderer.invoke("git.watch", { sessionIds }),
+  setGitActive: (active: boolean) => ipcRenderer.invoke("git.setActive", { active }),
+  onGitStatus: (cb) => {
+    const listener = (_e: unknown, update: GitStatusUpdate) => cb(update);
+    ipcRenderer.on("git.statusChanged", listener as never);
+    return () => ipcRenderer.removeListener("git.statusChanged", listener as never);
+  },
   listGitBranches: (sessionId: string) => ipcRenderer.invoke("git.branches", { sessionId }),
   listProjectBranches: (projectId: string) => ipcRenderer.invoke("git.projectBranches", { projectId }),
   switchGitBranch: (sessionId: string, branch: string) => ipcRenderer.invoke("git.switchBranch", { sessionId, branch }),
@@ -325,6 +337,12 @@ const api: CwApi = {
   getUsageLedger: (query: UsageLedgerQuery) => ipcRenderer.invoke("usage.ledger", query),
   getAccountUsage: (drivers: DriverName[], force?: boolean) => ipcRenderer.invoke("usage.account", { drivers, force }),
   getPrInbox: (force?: boolean) => ipcRenderer.invoke("prs.inbox", { force }),
+  getTrackedPrs: () => ipcRenderer.invoke("prs.tracked"),
+  onTrackedPrs: (cb) => {
+    const listener = (_e: unknown, items: PrSummary[]) => cb(items);
+    ipcRenderer.on("prs.tracked", listener as never);
+    return () => ipcRenderer.removeListener("prs.tracked", listener as never);
+  },
   getPrDetail: (ref: PrRef) => ipcRenderer.invoke("prs.detail", { ref }),
   getPrDiff: (ref: PrRef) => ipcRenderer.invoke("prs.diff", { ref }),
   getPrCheckLog: (ref: PrRef, runId: number) => ipcRenderer.invoke("prs.checkLog", { ref, runId }),

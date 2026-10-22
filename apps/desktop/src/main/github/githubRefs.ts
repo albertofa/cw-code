@@ -4,6 +4,13 @@ import { GH_HOST } from "./githubAccount.js";
 export const OWNER_RE = /^[A-Za-z0-9](?:[A-Za-z0-9-]*)$/;
 export const REPO_RE = /^[A-Za-z0-9._-]+$/;
 
+export const HOST_RE = /^[a-z0-9]([a-z0-9-]*[a-z0-9])?(\.[a-z0-9]([a-z0-9-]*[a-z0-9])?)+$/i;
+const MAX_HOST_LENGTH = 253;
+
+export function isValidHost(value: unknown): value is string {
+  return typeof value === "string" && value.length <= MAX_HOST_LENGTH && HOST_RE.test(value);
+}
+
 export function isSafePositiveInt(value: unknown): value is number {
   return typeof value === "number" && Number.isSafeInteger(value) && value > 0;
 }

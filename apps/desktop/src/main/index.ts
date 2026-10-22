@@ -37,6 +37,10 @@ import { defaultBinary, GitService, sweepStaleSnapshotIndexes } from "./fs/GitSe
 import { gitBaseline, gitDecorations, listWorkspaceFiles, searchText } from "./fs/workspaceQueries.js";
 import { assertOpenablePath } from "./fs/openPathPolicy.js";
 import { assertPrRef, PullRequestService } from "./github/PullRequestService.js";
+import { configureGitHubAccounts, defaultGitHubAccounts } from "./github/GitHubAccounts.js";
+import { PrTracker } from "./github/PrTracker.js";
+import { snapshotOf } from "./github/prTracking.js";
+import { githubCliBinary } from "./github/githubAccount.js";
 import { assertCountBase, assertSearchKind, assertSearchQuery, GitHubSearchService } from "./github/GitHubSearchService.js";
 import { assertIssueRef, assertOwnerLogin, assertRepoRef, assertRunRef } from "./github/githubRefs.js";
 import { MAX_COUNT_QUERIES } from "./github/issueQueries.js";
@@ -45,6 +49,7 @@ import { MAX_RUN_ORGS, MAX_RUN_REPOS } from "./github/runQueries.js";
 import { RunsService } from "./github/RunsService.js";
 import { MAX_WATCHED_RUNS, RunWatcher } from "./github/RunWatcher.js";
 import { PtyPool } from "./pty/PtyPool.js";
+import { SourceControlService } from "./sourceControl/SourceControlService.js";
 import { defaultPrWorkflows } from "./settings/prWorkflowDefaults.js";
 import { configuredCliBinaryPath } from "./settings/settingsUtils.js";
 import { initOpencodeModelsCache } from "./providers/opencode/opencodeModels.js";
@@ -59,6 +64,7 @@ import { UpdateService } from "./updates/UpdateService.js";
 import { createUpdateLogFile } from "./updates/updateLog.js";
 import { firstRunChannelPatch, touchesUpdatePreferences, updatePreferences } from "./updates/updatePreferences.js";
 import { isUpdateChannel } from "./updates/updateState.js";
+import { prKey } from "../shared/prRef.js";
 import { isSkillMentionList } from "../shared/skillMentions.js";
 import { windowBackgroundColor } from "../shared/themes.js";
 
@@ -72,6 +78,7 @@ const RENDERER_SHUTDOWN_ACK_MS = 5_000;
 const SESSION_SETTLE_INTERVAL_MS = 60_000;
 const SESSION_SETTLE_INITIAL_DELAY_MS = 5_000;
 const MAX_WATCHED_PATHS = 2_000;
+const MAX_WATCHED_GIT_SESSIONS = 500;
 
 function parseShutdownPrepare(args: unknown): ShutdownPrepareRequest {
   const request = (args && typeof args === "object" ? args : {}) as Record<string, unknown>;
@@ -184,6 +191,18 @@ function parseRunSources(value: unknown): RunSources {
   };
 }
 
+async function sessionDiffBase(sessions: SessionManager, git: GitService, sessionId: string): Promise<string | undefined> {
+  const { root, baseRef } = await sessions.sessionStatusContext(sessionId);
+  if (!baseRef) return undefined;
+  try {
+    const branches = await git.branches(root);
+    return branches.some((branch) => branch.name === baseRef) ? baseRef : undefined;
+  } catch (error) {
+    console.warn(`[source-control] could not list branches for ${root}: ${(error as Error).message}`);
+    return undefined;
+  }
+}
+
 function sendToMainWindow(channel: string, payload?: unknown): void {
   if (!mainWindow || mainWindow.isDestroyed()) return;
   mainWindow.webContents.send(channel, payload);
@@ -196,6 +215,8 @@ interface Services {
   fileWatcher: FileWatcher;
   git: GitService;
   pullRequests: PullRequestService;
+  prTracker: PrTracker;
+  sourceControl: SourceControlService;
   githubSearch: GitHubSearchService;
   runs: RunsService;
   runWatcher: RunWatcher;
@@ -249,19 +270,29 @@ function createUpdateService(settings: AppSettings): UpdateService {
   });
 }
 
+const PR_STATE_REUSE_MS = 60_000;
+
 function createServices(stores: { sessionStore: SessionStore; settingsStore: SettingsStore }): Services {
   let pullRequests: PullRequestService;
   const fileWatcher = new FileWatcher((event) => sendToMainWindow("fs.changed", event));
-  const git: GitService = new GitService(() => sessions.getSettings());
+  configureGitHubAccounts(() => githubCliBinary(() => sessions.getSettings()));
+  const git: GitService = new GitService(() => sessions.getSettings(), defaultGitHubAccounts);
   const sessions: SessionManager = new SessionManager({
     sessionStore: stores.sessionStore,
     settingsStore: stores.settingsStore,
     gitService: git,
-    prHead: (ref) => pullRequests.knownHead(ref),
-    prHeadRefresh: (ref) => pullRequests.refreshHead(ref),
-    prState: (ref) => pullRequests.knownState(ref),
-    prStateRefresh: (ref) => pullRequests.refreshState(ref),
-    prUpdatedAt: (ref) => pullRequests.knownUpdatedAt(ref),
+    prHead: (ref) => prTracker.snapshot(ref)?.headRefOid || pullRequests.knownHead(ref),
+    prHeadRefresh: async (ref) => {
+      await prTracker.refresh([ref]);
+      return prTracker.snapshot(ref)?.headRefOid || pullRequests.refreshHead(ref);
+    },
+    prState: (ref) => prTracker.snapshot(ref)?.state ?? pullRequests.knownState(ref),
+    prStateRefresh: async (ref) => {
+      const syncedAt = prTracker.snapshot(ref)?.syncedAt ?? 0;
+      if (Date.now() - syncedAt >= PR_STATE_REUSE_MS) await prTracker.refresh([ref]);
+      return prTracker.snapshot(ref)?.state ?? pullRequests.refreshState(ref);
+    },
+    prUpdatedAt: (ref) => prTracker.snapshot(ref)?.updatedAt ?? pullRequests.knownUpdatedAt(ref),
     onResolved: (sessionId) => {
       ptys.killSession(sessionId);
       void fileWatcher.unwatch(sessionId);
@@ -269,6 +300,22 @@ function createServices(stores: { sessionStore: SessionStore; settingsStore: Set
     legacyAppRoots: [app.getPath("userData")]
   });
   pullRequests = new PullRequestService(git, () => sessions.getSettings(), (rootPath) => sessions.addProject(rootPath));
+  const prTracker: PrTracker = new PrTracker(
+    () => sessions.getSettings(),
+    (changed) => {
+      const syncedAt = Date.now();
+      sessions.applyPrSnapshots(new Map(changed.map((summary) => [prKey(summary.ref), snapshotOf(summary, syncedAt)])));
+      sendToMainWindow("prs.tracked", prTracker.summaries());
+    }
+  );
+  prTracker.setTracked(sessions.trackedPrRefs());
+  const sourceControl = new SourceControlService({
+    git,
+    sessions,
+    tracker: prTracker,
+    settings: () => sessions.getSettings(),
+    emit: (update) => sendToMainWindow("git.statusChanged", update)
+  });
   const githubSearch = new GitHubSearchService(() => sessions.getSettings());
   const runs = new RunsService(() => sessions.getSettings());
   const runWatcher = new RunWatcher(() => sessions.getSettings());
@@ -290,6 +337,8 @@ function createServices(stores: { sessionStore: SessionStore; settingsStore: Set
     fileWatcher,
     git,
     pullRequests,
+    prTracker,
+    sourceControl,
     githubSearch,
     runs,
     runWatcher,
@@ -353,6 +402,8 @@ function startSessionSweeps(): void {
   sessionSettleInitialTimer.unref?.();
   sessionSettleTimer = setInterval(runSessionSweeps, SESSION_SETTLE_INTERVAL_MS);
   sessionSettleTimer.unref?.();
+  services?.prTracker.start();
+  services?.sourceControl.start();
 }
 
 function stopSessionSweeps(): void {
@@ -364,6 +415,7 @@ function stopSessionSweeps(): void {
     clearInterval(sessionSettleTimer);
     sessionSettleTimer = null;
   }
+  services?.prTracker.stop();
 }
 
 function disposeServices(): void {
@@ -375,6 +427,7 @@ function disposeServices(): void {
   } catch (err) {
     console.warn(`flush before exit failed: ${(err as Error).message}`);
   }
+  void services.sourceControl.dispose();
   services.runWatcher.dispose();
   void services.fileWatcher.dispose();
   services.updates.dispose();
@@ -842,17 +895,19 @@ function registerShutdownIpc({ shutdown }: Services): void {
 }
 
 function registerIpc(services: Services): void {
-  const { sessions, skills, files, fileWatcher, git, pullRequests, ptys, accountUsage, updates } = services;
+  const { sessions, skills, files, fileWatcher, git, pullRequests, prTracker, sourceControl, ptys, accountUsage, updates } = services;
   registerUpdateIpc(services);
   registerGitHubIpc(services);
   sessions.setEmitter((sessionId, event) => {
     mainWindow?.webContents.send("turn.event", { sessionId, event });
+    sourceControl.onThreadEvent(sessionId, event);
   });
   sessions.setTitleEmitter((sessionId, title) => {
     mainWindow?.webContents.send("session.title", { sessionId, title });
   });
   sessions.setSessionEmitter((session) => {
     mainWindow?.webContents.send("session.updated", session);
+    prTracker.setTracked(sessions.trackedPrRefs());
   });
   ptys.setExitEmitter((ptyId, token, exitCode) => {
     if (!mainWindow || mainWindow.isDestroyed()) return;
@@ -1057,16 +1112,21 @@ function registerIpc(services: Services): void {
     (_e, args: { sessionId: string; prefs: { model?: string; effort?: "minimal" | "low" | "medium" | "high" | "xhigh" | "max"; variant?: string; permissionMode?: "auto" | "acceptEdits" | "bypassPermissions" | "manual" } }) =>
       sessions.setComposer(args.sessionId, args.prefs)
   );
-  ipcMain.handle("git.status", async (_e, args: { sessionId: string }) => {
-    const root = await sessions.ensureWorktree(args.sessionId);
-    const status = await git.status(root, sessions.projectForSession(args.sessionId));
-    try {
-      sessions.syncFromStatus(args.sessionId, status);
-    } catch (error) {
-      console.warn(`syncFromStatus failed for ${args.sessionId}: ${(error as Error).message}`);
-    }
+  ipcMain.handle("git.status", async (_e, raw: unknown) => {
+    const sessionId = parseString(parseArgs(raw, "git.status").sessionId, "sessionId");
+    await sourceControl.refresh(sessionId, { forcePullRequest: false });
+    const status = sourceControl.status(sessionId);
+    if (!status) throw new Error(sourceControl.failure(sessionId) ?? `git status is not available for session ${sessionId}`);
     return status;
   });
+  ipcMain.handle("git.watch", (_e, raw: unknown) => {
+    const { sessionIds } = parseArgs(raw, "git.watch");
+    sourceControl.setWatched(parseList<string>(sessionIds, MAX_WATCHED_GIT_SESSIONS, "sessionIds", assertString));
+  });
+  ipcMain.handle("git.setActive", (_e, raw: unknown) => {
+    sourceControl.setActive(parseBoolean(parseArgs(raw, "git.setActive").active, "active"));
+  });
+  ipcMain.handle("prs.tracked", () => prTracker.summaries());
   ipcMain.handle("sessions.linkPr", (_e, args: { sessionId: string; link: SessionPrLink }) => {
     const link = args.link;
     assertPrRef(link.ref);
@@ -1107,6 +1167,7 @@ function registerIpc(services: Services): void {
   );
   ipcMain.handle("git.diff", async (_e, args: { sessionId: string; mode: GitDiffMode; baseRef?: string }) => {
     const root = await sessions.ensureWorktree(args.sessionId);
+    if (args.mode === "branch" && !args.baseRef) return git.diff(root, "branch", await sessionDiffBase(sessions, git, args.sessionId));
     if (args.mode !== "turn") return git.diff(root, args.mode, args.baseRef);
     const range = await sessions.turnDiffRange(args.sessionId);
     return git.diff(root, "turn", range.base, range.head);
@@ -1290,13 +1351,13 @@ function registerIpc(services: Services): void {
     }
   );
   ipcMain.handle("pty.open", (_e, args: { sessionId: string; kind: PtyKind }) =>
-    sessions.ensureWorktree(args.sessionId).then((root) =>
+    sessions.ensureWorktree(args.sessionId).then(async (root) =>
       ptys.open(
         args.sessionId,
         root,
         args.kind,
         sessions.resumeCursorFor(args.sessionId),
-        sessions.turnEnv(args.sessionId, root),
+        await sessions.terminalEnv(args.sessionId, root),
         (id, data) => {
           mainWindow?.webContents.send("pty.data", { ptyId: id, data });
         },

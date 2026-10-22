@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { ComposerPrefs, DriverKind, Project, SessionMeta, SessionStatus } from "@cw-code/contracts";
+import type { ComposerPrefs, DriverKind, Project, SessionMeta, SessionPrLink, SessionStatus } from "@cw-code/contracts";
 import { traceSessionStatus, type SessionStatusReason } from "../debug/sessionStatusTrace.js";
 import { isValidPrLink, upsertLink } from "../github/prLinks.js";
 import { expandHome } from "../skills/skillPaths.js";
@@ -161,6 +161,7 @@ type SessionPatch = Partial<
     | "effectivePermissionMode"
     | "worktreePath"
     | "branch"
+    | "baseRef"
     | "prs"
     | "prUnlinked"
     | "issues"
@@ -175,6 +176,8 @@ export class SessionStore {
   private data: StoreShape = { projects: [], sessions: [] };
   private extras: MetadataDocument = {};
   private lastGood: LastGoodRefresher;
+  /** Increments on every persisted write so callers can cache derived views. */
+  revision = 0;
 
   constructor(dbPath: string) {
     this.filePath = sessionStoreFile(dbPath);
@@ -195,6 +198,7 @@ export class SessionStore {
   }
 
   private persist(): void {
+    this.revision += 1;
     writeFileAtomic(
       this.filePath,
       JSON.stringify({ schemaVersion: SESSION_SCHEMA_VERSION, projects: this.data.projects, sessions: this.data.sessions.map(withoutTransientFields), ...this.extras })
@@ -244,7 +248,7 @@ export class SessionStore {
     projectId: string,
     driver: DriverKind,
     title: string,
-    workspace: { id?: string; worktreePath?: string; branch?: string; resumeCursor?: string } = {}
+    workspace: { id?: string; worktreePath?: string; branch?: string; baseRef?: string; resumeCursor?: string } = {}
   ): SessionMeta {
     const now = Date.now();
     const session: SessionMeta = {
@@ -258,7 +262,8 @@ export class SessionStore {
       updatedAt: now,
       idleSince: now,
       ...(workspace.worktreePath ? { worktreePath: normalizeRoot(workspace.worktreePath) } : {}),
-      ...(workspace.branch ? { branch: workspace.branch } : {})
+      ...(workspace.branch ? { branch: workspace.branch } : {}),
+      ...(workspace.baseRef ? { baseRef: workspace.baseRef } : {})
     };
     this.data.sessions.push(session);
     traceSessionStatus({
@@ -305,6 +310,8 @@ export class SessionStore {
     else if ("worktreePath" in patch) delete current.worktreePath;
     if (patch.branch !== undefined) current.branch = patch.branch;
     else if ("branch" in patch) delete current.branch;
+    if (patch.baseRef !== undefined) current.baseRef = patch.baseRef;
+    else if ("baseRef" in patch) delete current.baseRef;
     if (patch.prs !== undefined) {
       if (patch.prs.length === 0) delete current.prs;
       else current.prs = patch.prs;
@@ -337,6 +344,14 @@ export class SessionStore {
         reason: reason ?? "unknown"
       });
     }
+    this.persist();
+  }
+
+  replacePrLinksQuietly(id: string, prs: SessionPrLink[]): void {
+    const current = this.getSession(id);
+    if (!current) return;
+    if (prs.length === 0) delete current.prs;
+    else current.prs = prs;
     this.persist();
   }
 

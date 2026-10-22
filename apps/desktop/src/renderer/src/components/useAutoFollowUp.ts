@@ -76,9 +76,9 @@ export function useAutoFollowUp(): void {
   const pendingQuestions = useAppStore((s) => s.pendingQuestions);
   const autoTurns = useAppStore((s) => s.autoFollowUpTurns);
   const autoPaused = useAppStore((s) => s.autoFollowUpPaused);
-  const prRefreshIntervalSeconds = useAppStore((s) => s.prRefreshIntervalSeconds);
   const inbox = usePrStore((s) => s.inbox);
   const detailByKey = usePrStore((s) => s.detailByKey);
+  const trackedByKey = usePrStore((s) => s.trackedByKey);
   const loadingByKey = usePrStore((s) => s.detailLoadingByKey);
   const { settings } = usePrSettings();
   const attempts = useRef(new Map<string, DetailAttempt>());
@@ -87,7 +87,7 @@ export function useAutoFollowUp(): void {
 
   const workflows = settings?.prWorkflows ?? NO_WORKFLOWS;
   const sessions = useMemo(() => Object.values(sessionsByProject).flat(), [sessionsByProject]);
-  const summaryByKey = useMemo(() => prSummaryLookup(inbox?.items ?? [], detailByKey), [inbox, detailByKey]);
+  const summaryByKey = useMemo(() => prSummaryLookup(inbox?.items ?? [], detailByKey, trackedByKey), [inbox, detailByKey, trackedByKey]);
   const refs = useMemo(() => autoFollowUpRefs(sessions, summaryByKey, workflows), [sessions, summaryByKey, workflows]);
   const fetchedAt = inbox?.fetchedAt ?? 0;
   const refSignature = refs.map((ref) => `${prKey(ref)}@${detailRefreshKey(prKey(ref), summaryByKey.get(prKey(ref)))}`).join(" ");
@@ -106,15 +106,6 @@ export function useAutoFollowUp(): void {
       void store.loadDetail(ref);
     }
   }, [refSignature, loadingSignature, fetchedAt]);
-
-  const watching = refs.length > 0;
-  useEffect(() => {
-    if (!watching) return;
-    const timer = window.setInterval(() => {
-      if (document.hidden) void usePrStore.getState().refreshInbox();
-    }, Math.max(30, prRefreshIntervalSeconds || 120) * 1000);
-    return () => window.clearInterval(timer);
-  }, [watching, prRefreshIntervalSeconds]);
 
   const followUps = useMemo(
     () =>

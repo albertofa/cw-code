@@ -5,8 +5,9 @@ import { dirname, isAbsolute, relative, resolve } from "node:path";
 import type { AppSettings, PrDetail, PrInboxResult, PrRef, PrSummary, Project, RepoRef } from "@cw-code/contracts";
 import { authenticatedEnvironment, execText, type GitService } from "../fs/GitService.js";
 import { expandHome } from "../skills/skillPaths.js";
-import { OWNER_RE, REPO_RE, assertRepoRef, assertRunId, isSafePositiveInt } from "./githubRefs.js";
-import { GH_HOST, githubCliBinary, resolveGitHubAccount, type AccountResolution } from "./githubAccount.js";
+import { OWNER_RE, REPO_RE, assertRepoRef, assertRunId, isSafePositiveInt, isValidHost } from "./githubRefs.js";
+import { GH_HOST, githubCliBinary, resolveGitHubAccount, withGitHubAccount, type AccountResolution } from "./githubAccount.js";
+import { defaultGitHubAccounts } from "./GitHubAccounts.js";
 import { DETAIL_QUERY, HEAD_QUERY, INBOX_QUERY, INBOX_SEARCH_LIMIT, inboxSearchQueries } from "./prQueries.js";
 import { parseDetail, parseHead, parseInbox, prKey, type PrHeadInfo } from "./prParsers.js";
 
@@ -17,7 +18,7 @@ const CLONE_TIMEOUT_MS = 5 * 60_000;
 
 export function assertPrRef(ref: PrRef): void {
   if (!ref || typeof ref !== "object") throw new Error("invalid pull request reference");
-  if (ref.host !== GH_HOST) throw new Error(`unsupported GitHub host '${String(ref.host)}'`);
+  if (!isValidHost(ref.host)) throw new Error(`invalid GitHub host '${String(ref.host)}'`);
   if (typeof ref.owner !== "string" || !OWNER_RE.test(ref.owner)) throw new Error(`invalid repository owner '${String(ref.owner)}'`);
   if (typeof ref.repo !== "string" || !REPO_RE.test(ref.repo) || ref.repo === "." || ref.repo === "..") {
     throw new Error(`invalid repository name '${String(ref.repo)}'`);
@@ -37,6 +38,10 @@ export function mergeInboxItems(lists: PrSummary[][]): PrSummary[] {
     }
   }
   return merged.sort((a, b) => b.updatedAt - a.updatedAt);
+}
+
+function repoSelector(ref: PrRef): string {
+  return `${ref.host.toLowerCase()}/${ref.owner}/${ref.repo}`;
 }
 
 function repoIdentity(owner: string, repo: string): string {
@@ -92,9 +97,18 @@ export class PullRequestService {
     return resolveGitHubAccount(this.settings);
   }
 
+  private execForRef(ref: PrRef, args: string[]): Promise<{ stdout: string; login: string }> {
+    const binary = this.githubCliBinary();
+    return withGitHubAccount(this.settings, ref.host, ref.owner, async ({ account, token }) => ({
+      stdout: await execText(binary, args, homedir(), REQUEST_TIMEOUT_MS, authenticatedEnvironment(account.host, token)),
+      login: account.login
+    }));
+  }
+
   async inbox(force = false): Promise<PrInboxResult> {
     if (!force && this.inboxCache && this.inboxCache.expiresAt > Date.now()) return this.inboxCache.value;
     if (this.inboxInFlight) return this.inboxInFlight;
+    if (force) defaultGitHubAccounts.invalidate();
     const promise = this.computeInbox()
       .then((value) => {
         if (value.error === null) this.inboxCache = { expiresAt: Date.now() + INBOX_CACHE_TTL_MS, value };
@@ -136,17 +150,10 @@ export class PullRequestService {
 
   async detail(ref: PrRef): Promise<PrDetail> {
     assertPrRef(ref);
-    const resolution = await this.resolveAccount();
-    if ("error" in resolution) throw new Error(resolution.error);
-    const { account, token } = resolution;
-    const stdout = await execText(
-      this.githubCliBinary(),
-      ["api", "graphql", "-f", `query=${DETAIL_QUERY}`, "-f", `owner=${ref.owner}`, "-f", `repo=${ref.repo}`, "-F", `number=${ref.number}`],
-      homedir(),
-      REQUEST_TIMEOUT_MS,
-      authenticatedEnvironment(account.host, token)
-    );
-    const detail = parseDetail(stdout, account.login);
+    const { stdout, login } = await this.execForRef(ref, [
+      "api", "graphql", "-f", `query=${DETAIL_QUERY}`, "-f", `owner=${ref.owner}`, "-f", `repo=${ref.repo}`, "-F", `number=${ref.number}`
+    ]);
+    const detail = parseDetail(stdout, login);
     if (!detail) throw new Error(`Could not load pull request #${ref.number}`);
     this.remember(ref, detail.headRefOid, detail.state, detail.updatedAt);
     return detail;
@@ -154,31 +161,13 @@ export class PullRequestService {
 
   async diff(ref: PrRef): Promise<string> {
     assertPrRef(ref);
-    const resolution = await this.resolveAccount();
-    if ("error" in resolution) throw new Error(resolution.error);
-    const { account, token } = resolution;
-    return execText(
-      this.githubCliBinary(),
-      ["pr", "diff", String(ref.number), "-R", `${ref.owner}/${ref.repo}`],
-      homedir(),
-      REQUEST_TIMEOUT_MS,
-      authenticatedEnvironment(account.host, token)
-    );
+    return (await this.execForRef(ref, ["pr", "diff", String(ref.number), "-R", repoSelector(ref)])).stdout;
   }
 
   async failedCheckLog(ref: PrRef, runId: number): Promise<string> {
     assertPrRef(ref);
     assertRunId(runId);
-    const resolution = await this.resolveAccount();
-    if ("error" in resolution) throw new Error(resolution.error);
-    const { account, token } = resolution;
-    return execText(
-      this.githubCliBinary(),
-      ["run", "view", String(runId), "--log-failed", "-R", `${ref.owner}/${ref.repo}`],
-      homedir(),
-      REQUEST_TIMEOUT_MS,
-      authenticatedEnvironment(account.host, token)
-    );
+    return (await this.execForRef(ref, ["run", "view", String(runId), "--log-failed", "-R", repoSelector(ref)])).stdout;
   }
 
   async clone(ref: RepoRef): Promise<Project> {
@@ -256,16 +245,9 @@ export class PullRequestService {
   private async fetchHead(ref: PrRef): Promise<PrHeadInfo | null> {
     try {
       assertPrRef(ref);
-      const resolution = await this.resolveAccount();
-      if ("error" in resolution) return null;
-      const { account, token } = resolution;
-      const stdout = await execText(
-        this.githubCliBinary(),
-        ["api", "graphql", "-f", `query=${HEAD_QUERY}`, "-f", `owner=${ref.owner}`, "-f", `repo=${ref.repo}`, "-F", `number=${ref.number}`],
-        homedir(),
-        REQUEST_TIMEOUT_MS,
-        authenticatedEnvironment(account.host, token)
-      );
+      const { stdout } = await this.execForRef(ref, [
+        "api", "graphql", "-f", `query=${HEAD_QUERY}`, "-f", `owner=${ref.owner}`, "-f", `repo=${ref.repo}`, "-F", `number=${ref.number}`
+      ]);
       const parsed = parseHead(stdout);
       this.remember(ref, parsed.headRefOid, parsed.state, parsed.updatedAt);
       return parsed;

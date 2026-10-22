@@ -16,7 +16,10 @@ import type {
   PrThreadComment,
   PrTimelineItem
 } from "@cw-code/contracts";
+import { prKey, prRefFromUrl } from "../../shared/prRef.js";
 import { INBOX_SEARCH_LIMIT } from "./prQueries.js";
+
+export { prKey, prRefFromUrl };
 
 const PASSING_STATES = new Set(["SUCCESS", "NEUTRAL", "SKIPPED"]);
 const FAILING_STATES = new Set(["FAILURE", "ERROR", "CANCELLED", "TIMED_OUT", "ACTION_REQUIRED", "STALE"]);
@@ -32,8 +35,6 @@ const MERGE_STATE_STATUSES: ReadonlySet<string> = new Set<PrMergeStateStatus>([
   "UNKNOWN",
   "UNSTABLE"
 ]);
-
-const PR_URL_RE = /^https?:\/\/([^/]+)\/([^/]+)\/([^/]+)\/pull\/(\d+)/i;
 
 export function asRecord(value: unknown): Record<string, unknown> {
   return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
@@ -92,18 +93,6 @@ export function ciFromRollup(states: string[]): { ci: PrCiState; checks: GitPull
   const total = states.length;
   const ci: PrCiState = total === 0 ? "none" : failed > 0 ? "failing" : pending > 0 ? "pending" : "passing";
   return { ci, checks: { total, passed, failed, pending } };
-}
-
-export function prKey(ref: PrRef): string {
-  return `${ref.host}/${ref.owner}/${ref.repo}#${ref.number}`;
-}
-
-export function prRefFromUrl(url: string): PrRef | null {
-  const match = PR_URL_RE.exec(url.trim());
-  if (!match) return null;
-  const number = Number.parseInt(match[4], 10);
-  if (!Number.isFinite(number) || number <= 0) return null;
-  return { host: match[1].toLowerCase(), owner: match[2], repo: match[3], number };
 }
 
 export function bucketFor(pr: PrSummary): PrBucket {
@@ -183,7 +172,7 @@ export function avatarUrlsOf(actors: unknown[]): Record<string, string> {
   return urls;
 }
 
-function parseSummaryNode(node: Record<string, unknown>, viewer: string | null): PrSummary | null {
+export function parseSummaryNode(node: Record<string, unknown>, viewer: string | null): PrSummary | null {
   const url = asString(node.url);
   const ref = prRefFromUrl(url);
   const number = asNumber(node.number);
@@ -225,6 +214,18 @@ function parseSummaryNode(node: Record<string, unknown>, viewer: string | null):
     ]),
     updatedAt: asEpochMs(node.updatedAt)
   };
+}
+
+export function parseTrackedPrs(json: string, refs: PrRef[], viewer: string): Map<string, PrSummary> {
+  const summaries = new Map<string, PrSummary>();
+  const data = asRecord(asRecord(parseJsonObject(json)).data);
+  refs.forEach((ref, index) => {
+    const node = asRecord(asRecord(data[`pr${index}`]).pullRequest);
+    if (Object.keys(node).length === 0) return;
+    const summary = parseSummaryNode(node, viewer || null);
+    if (summary) summaries.set(prKey(ref), { ...summary, ref });
+  });
+  return summaries;
 }
 
 export function parseJsonObject(json: string): Record<string, unknown> | null {

@@ -9,6 +9,8 @@ import { SessionManager, type SessionManagerOptions } from "./SessionManager.js"
 import { SYNTHETIC_FULL_ACCESS_DESCRIPTION } from "../providers/permissions.js";
 import type { SessionStore } from "./SessionStore.js";
 import { initSessionStatusTrace, resetSessionStatusTraceForTests } from "../debug/sessionStatusTrace.js";
+import { prKey } from "../github/prParsers.js";
+import { defaultGitHubAccounts } from "../github/GitHubAccounts.js";
 
 class FakeDriver implements CliDriver {
   readonly kind = "claude" as const;
@@ -707,6 +709,8 @@ describe("SessionManager", () => {
 
     expect(b.worktreePath).toBe(a.worktreePath);
     expect(b.branch).toBe(a.branch);
+    expect(a.baseRef).toBe("main");
+    expect(b.baseRef).toBeUndefined();
     expect(manager.rootFor(b.id)).toBe(a.worktreePath);
     expect(branchCount()).toBe(before);
     manager.dispose();
@@ -759,6 +763,8 @@ describe("SessionManager", () => {
     expect(gitOut(repository, "rev-parse", "origin/main")).toBe(remoteHead);
     expect(hasUpstream(repository, session.branch ?? "")).toBe(false);
     expect((await manager.listSessions(project.id))[0]?.branch).toBe(session.branch);
+    expect((await manager.listSessions(project.id))[0]?.baseRef).toBe("origin/main");
+    expect((await manager.sessionStatusContext(session.id)).baseRef).toBe("origin/main");
     expect(manager.rootFor(session.id)).toBe(project.rootPath);
     manager.dispose();
   });
@@ -777,6 +783,7 @@ describe("SessionManager", () => {
 
     expect(gitOut(repository, "branch", "--show-current")).toBe(session.branch);
     expect(gitOut(repository, "rev-parse", "HEAD")).toBe(releaseHead);
+    expect(session.baseRef).toBe("release");
     manager.dispose();
   });
 
@@ -1937,6 +1944,56 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 
+  it("keeps the temporary branch once it is published or linked to a pull request", async () => {
+    const { manager, fake, project } = makeGitSandboxManager("cw-session-branch-published-");
+    const git = (manager as unknown as { git: { branchPublished(root: string, branch: string): Promise<boolean>; renameBranch: (...args: unknown[]) => Promise<string> } }).git;
+    const renameBranch = vi.spyOn(git, "renameBranch");
+    const renameForTitle = vi.spyOn(manager as unknown as { renameBranchForTitle(sessionId: string, turnId: string): Promise<void> }, "renameBranchForTitle");
+    const published = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    const linked = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    manager.linkPr(linked.id, { ref: { host: "github.com", owner: "acme", repo: "widgets", number: 42 }, origin: "linked", lastSeenSha: "", lastSeenAt: 0 });
+    const checked: string[] = [];
+    git.branchPublished = async (_root, branch) => {
+      checked.push(branch);
+      return branch === published.branch;
+    };
+
+    await manager.startTurn(published.id, "fix the login flow");
+    await manager.startTurn(linked.id, "fix the signup flow");
+    fake.completeAll();
+    await vi.waitFor(() => expect(renameForTitle).toHaveBeenCalledTimes(2));
+    await Promise.all(renameForTitle.mock.results.map((result) => result.value));
+
+    const stored = await manager.listSessions(project.id);
+    expect(checked).toHaveLength(2);
+    expect(renameBranch).not.toHaveBeenCalled();
+    expect(stored.find((s) => s.id === published.id)?.branch).toBe(published.branch);
+    expect(stored.find((s) => s.id === linked.id)?.branch).toBe(linked.branch);
+    manager.dispose();
+  });
+
+  it("drops the title branch rename when the session is archived while the publish check runs", async () => {
+    const { manager, fake, project } = makeGitSandboxManager("cw-session-branch-archived-");
+    const git = (manager as unknown as { git: { branchPublished(root: string, branch: string): Promise<boolean>; renameBranch: (...args: unknown[]) => Promise<string> } }).git;
+    const store = (manager as unknown as { store: SessionStore }).store;
+    const renameBranch = vi.spyOn(git, "renameBranch");
+    const renameForTitle = vi.spyOn(manager as unknown as { renameBranchForTitle(sessionId: string, turnId: string): Promise<void> }, "renameBranchForTitle");
+    const session = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    git.branchPublished = async () => {
+      store.updateSession(session.id, { status: "archived" }, "user-set-status");
+      return false;
+    };
+
+    await manager.startTurn(session.id, "fix the login flow");
+    fake.completeAll();
+    await vi.waitFor(() => expect(renameForTitle).toHaveBeenCalledTimes(1));
+    await renameForTitle.mock.results[0].value;
+
+    expect(renameBranch).not.toHaveBeenCalled();
+    expect(store.getSession(session.id)?.branch).toBe(session.branch);
+    manager.dispose();
+  });
+
   it("suffixes the renamed branch on collision", async () => {
     const { manager, fake, project, repository } = makeGitSandboxManager("cw-session-branch-collision-");
     const session = await manager.createSession(project.id, "claude", { baseBranch: "main" });
@@ -2607,6 +2664,86 @@ describe("SessionManager", () => {
 
     expect(store.getSession(disabled.id)?.status).toBe("holding");
     manager.dispose();
+  });
+
+  it("applies tracked PR snapshots to live sessions, ends babysit on merge and ignores sync-only changes", async () => {
+    const widgets = { host: "github.com", owner: "acme", repo: "widgets", number: 42 };
+    const { manager, project } = makePrManager({ prState: () => "OPEN" });
+    const store = (manager as unknown as { store: SessionStore }).store;
+    const emitted: string[] = [];
+    manager.setSessionEmitter((session) => emitted.push(session.id));
+    const babysat = await manager.createSession(project.id, "claude", { mode: "current" });
+    const holding = await manager.createSession(project.id, "claude", { mode: "current" });
+    const resolved = await manager.createSession(project.id, "claude", { mode: "current" });
+    for (const session of [babysat, resolved]) {
+      manager.linkPr(session.id, { ref: widgets, origin: "workflow", workflowId: "babysit", lastSeenSha: "old", lastSeenAt: 0 });
+    }
+    manager.linkPr(holding.id, { ref: widgets, origin: "linked", lastSeenSha: "old", lastSeenAt: 0 });
+    store.updateSession(babysat.id, { status: "babysit" });
+    store.updateSession(holding.id, { status: "holding" });
+    store.updateSession(resolved.id, { status: "resolved" });
+    const holdingMeta = store.getSession(holding.id);
+    if (!holdingMeta) throw new Error("expected the holding session");
+    holdingMeta.updatedAt = 1;
+    emitted.length = 0;
+
+    const merged = { state: "MERGED" as const, headRefOid: "sha-1", updatedAt: 10, syncedAt: 20 };
+    expect(manager.applyPrSnapshots(new Map([[prKey(widgets), merged]])).sort()).toEqual([babysat.id, holding.id].sort());
+    expect(emitted.sort()).toEqual([babysat.id, holding.id].sort());
+    expect(store.getSession(babysat.id)?.prs?.[0].snapshot).toEqual(merged);
+    expect(store.getSession(babysat.id)?.status).toBe("holding");
+    expect(store.getSession(holding.id)?.prs?.[0].snapshot).toEqual(merged);
+    expect(store.getSession(holding.id)?.updatedAt).toBe(1);
+    expect(store.getSession(resolved.id)?.prs?.[0].snapshot).toBeUndefined();
+
+    expect(manager.applyPrSnapshots(new Map([[prKey(widgets), { ...merged, syncedAt: 99 }]]))).toEqual([]);
+    expect(manager.trackedPrRefs()).toEqual([{ ref: widgets, snapshot: merged }]);
+    manager.dispose();
+  });
+
+  it("injects the project's GitHub account only into claude turns and terminals", async () => {
+    const { manager, fake, project } = makePrManager({});
+    const cachedToken = vi.spyOn(defaultGitHubAccounts, "cachedToken").mockReturnValue("tok-test");
+    const token = vi.spyOn(defaultGitHubAccounts, "token").mockResolvedValue("tok-test");
+    try {
+      manager.setProjectGitHubAccount(project.id, { host: "git.example.com", login: "octo" });
+      const claude = await manager.createSession(project.id, "claude", { mode: "current" });
+      const codex = await manager.createSession(project.id, "codex", { mode: "current" });
+
+      await manager.startTurn(claude.id, "go");
+      expect(fake.lastRequest?.env).toMatchObject({ GH_HOST: "git.example.com", GH_ENTERPRISE_TOKEN: "tok-test" });
+      await manager.startTurn(codex.id, "go");
+      expect((fake.lastRequest?.env as Record<string, string>).GH_ENTERPRISE_TOKEN).not.toBe("tok-test");
+      expect(manager.turnEnv(codex.id, project.rootPath)).toMatchObject({ GH_HOST: "git.example.com", GH_ENTERPRISE_TOKEN: "tok-test" });
+      expect(token).toHaveBeenCalledWith("git.example.com", "octo");
+    } finally {
+      token.mockRestore();
+      cachedToken.mockRestore();
+      manager.dispose();
+    }
+  });
+
+  it("warns once per session when the project's GitHub account has no cached token", async () => {
+    const { manager, project } = makePrManager({});
+    const cachedToken = vi.spyOn(defaultGitHubAccounts, "cachedToken").mockReturnValue(null);
+    const token = vi.spyOn(defaultGitHubAccounts, "token").mockRejectedValue(new Error("no token"));
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      manager.setProjectGitHubAccount(project.id, { host: "git.example.com", login: "octo" });
+      const session = await manager.createSession(project.id, "claude", { mode: "current" });
+
+      const env = manager.turnEnv(session.id, project.rootPath);
+      manager.turnEnv(session.id, project.rootPath);
+
+      expect(env.GH_HOST).not.toBe("git.example.com");
+      const warnings = warn.mock.calls.filter(([message]) => String(message).startsWith("[git] no cached GitHub token"));
+      expect(warnings).toEqual([["[git] no cached GitHub token for octo@git.example.com; agent uses gh's active account"]]);
+    } finally {
+      warn.mockRestore();
+      token.mockRestore();
+      cachedToken.mockRestore();
+      manager.dispose();
+    }
   });
 
   it("settles a babysit session once its PR finishes, to holding when auto-settling is off", async () => {

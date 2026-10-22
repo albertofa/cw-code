@@ -1,3 +1,6 @@
+import type { PrRef } from "@cw-code/contracts";
+import { isSafePositiveInt } from "./githubRefs.js";
+
 export const INBOX_SEARCH_LIMIT = 50;
 
 const PR_SUMMARY_FIELDS = `
@@ -336,4 +339,16 @@ export function inboxSearchQueries(now: number): string[] {
     "is:pr is:open involves:@me archived:false sort:updated-desc",
     `is:pr is:merged author:@me merged:>=${since} sort:updated-desc`
   ];
+}
+
+export function buildTrackedPrQuery(refs: PrRef[]): string {
+  const aliases = refs.map((ref, index) => {
+    if (!isSafePositiveInt(ref.number)) throw new Error(`invalid pull request number '${String(ref.number)}'`);
+    return `  pr${index}: repository(owner: ${JSON.stringify(ref.owner)}, name: ${JSON.stringify(ref.repo)}) {
+    pullRequest(number: ${ref.number}) {
+      ...PrSummaryFields
+    }
+  }`;
+  });
+  return ["query {", ...aliases, "}", `fragment PrSummaryFields on PullRequest {${PR_SUMMARY_FIELDS}}`, ""].join("\n");
 }

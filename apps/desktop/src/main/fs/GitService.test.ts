@@ -1,9 +1,11 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { GitService, countUntrackedLines, fetchArgsForRef, gitPathTarget, isAppManagedPath, isValidBranchName, mapLimit, parseGitHubAccounts, parseGitHubRemote, parseNumstat, parsePorcelainV2Status, parsePrNumber, parsePullRequest, parseWorktreeList, pickDefaultBase, redactUrlCredentials, selectGitHubAccount, sweepStaleSnapshotIndexes, worktreeNameFor } from "./GitService.js";
+import { isAbsolute, join } from "node:path";
+import { sameWorktreePath } from "../sessions/worktreeCleanup.js";
+import type { GitHubAccounts } from "../github/GitHubAccounts.js";
+import { GitService, countUntrackedLines, fetchArgsForRef, gitPathTarget, isAppManagedPath, isValidBranchName, mapLimit, parseGitHubAccounts, parseGitHubRemote, parseNumstat, parsePorcelainV2Status, parsePrNumber, parseWorktreeList, pickDefaultBase, redactUrlCredentials, selectGitHubAccount, sweepStaleSnapshotIndexes, worktreeNameFor } from "./GitService.js";
 
 function initSandbox(): { sandbox: string; repository: string; service: GitService } {
   const sandbox = mkdtempSync(join(tmpdir(), "cw-git-"));
@@ -123,36 +125,6 @@ describe("parseWorktreeList", () => {
       { path: "C:/repo", branch: "main" },
       { path: "C:/repo-feature", branch: "feature/topic" }
     ]);
-  });
-});
-
-describe("parsePullRequest", () => {
-  it("summarizes PR state and checks", () => {
-    const parsed = parsePullRequest(JSON.stringify({
-      number: 42,
-      title: "Worktrees",
-      url: "https://github.com/acme/repo/pull/42",
-      state: "OPEN",
-      isDraft: false,
-      reviewDecision: "APPROVED",
-      mergeStateStatus: "CLEAN",
-      headRefName: "feature",
-      baseRefName: "main",
-      statusCheckRollup: [
-        { conclusion: "SUCCESS" },
-        { conclusion: "FAILURE" },
-        { status: "IN_PROGRESS" }
-      ]
-    }));
-    expect(parsed).toMatchObject({
-      number: 42,
-      state: "OPEN",
-      checks: { total: 3, passed: 1, failed: 1, pending: 1 }
-    });
-  });
-
-  it("degrades gracefully for invalid gh output", () => {
-    expect(parsePullRequest("not-json")).toBeNull();
   });
 });
 
@@ -685,6 +657,38 @@ describe("GitService worktrees", () => {
     const branchDiff = await service.diff(created.path, "branch", "main");
     expect(branchDiff.baseRef).toBe("main");
     expect(branchDiff.patch).toContain("feature.txt");
+  });
+
+  it("compares against the session base or the default branch, never the upstream", async () => {
+    const { sandbox, repository, service } = initSandbox();
+    execFileSync("git", ["-C", repository, "branch", "develop"]);
+    const created = await service.createWorktree(repository, "project", "sess_basenoupstream1", join(sandbox, "worktrees"), "main");
+    writeFileSync(join(created.path, "feature.txt"), "work\n", "utf8");
+    execFileSync("git", ["-C", created.path, "add", "feature.txt"]);
+    execFileSync("git", ["-C", created.path, "-c", "user.name=cw-code", "-c", "user.email=test@cw-code.local", "commit", "-m", "feature work"]);
+    execFileSync("git", ["-C", created.path, "branch", "--set-upstream-to=develop"]);
+
+    expect(await service.status(created.path)).toMatchObject({ baseRef: "main", baseAhead: 1, ahead: 1 });
+    expect(await service.status(created.path, undefined, { baseRef: "develop" })).toMatchObject({ baseRef: "develop", baseAhead: 1 });
+    expect(await service.status(created.path, undefined, { baseRef: "gone" })).toMatchObject({ baseRef: "main" });
+    expect((await service.diff(created.path, "branch")).baseRef).toBe("main");
+  });
+
+  it("reports absolute git locations and whether a branch is published", async () => {
+    const { sandbox, repository, service } = initSandbox();
+    const created = await service.createWorktree(repository, "project", "sess_locations1", join(sandbox, "worktrees"), "main");
+    const locations = await service.gitLocations(created.path);
+    expect(locations).not.toBeNull();
+    expect(isAbsolute(locations!.gitDir) && isAbsolute(locations!.commonDir)).toBe(true);
+    expect(sameWorktreePath(locations!.commonDir, join(repository, ".git"))).toBe(true);
+    expect(sameWorktreePath(locations!.gitDir, locations!.commonDir)).toBe(false);
+
+    expect(await service.branchPublished(repository, created.branch)).toBe(false);
+    execFileSync("git", ["-C", repository, "update-ref", `refs/remotes/origin/${created.branch}`, "HEAD"]);
+    execFileSync("git", ["-C", repository, "remote", "add", "origin", "https://example.invalid/o/r.git"]);
+    expect(await service.branchPublished(repository, created.branch)).toBe(true);
+    execFileSync("git", ["-C", repository, "config", "branch.main.merge", "refs/heads/main"]);
+    expect(await service.branchPublished(repository, "main")).toBe(true);
   });
 
   it("reports working, staged and branch paths relative to a subfolder root", async () => {
@@ -1544,5 +1548,72 @@ describe("parsePorcelainV2Status", () => {
 
     expect(status.branch).toBe("HEAD");
     expect(status.headSha).toBe(sha);
+  });
+});
+
+describe("GitService pull request cache", () => {
+  const prList = JSON.stringify([{
+    number: 5,
+    url: "https://github.com/acme/repo/pull/5",
+    state: "OPEN",
+    headRefName: "feature",
+    headRepositoryOwner: { login: "acme" },
+    updatedAt: "2026-10-22T00:00:00Z"
+  }]);
+
+  function pendingGh(): { service: GitService; pending: Array<{ resolve: (stdout: string) => void }> } {
+    const pending: Array<{ resolve: (stdout: string) => void }> = [];
+    const accounts = {
+      select: async () => ({
+        account: { host: "github.com", login: "acme", active: true, authenticated: true, hasRepositoryAccess: true },
+        source: "single" as const,
+        error: null,
+        accounts: []
+      }),
+      withToken: <T>(): Promise<T> => new Promise<T>((resolve) => {
+        pending.push({ resolve: (stdout) => resolve(stdout as unknown as T) });
+      })
+    };
+    return { service: new GitService(undefined, accounts as unknown as GitHubAccounts), pending };
+  }
+
+  function featureRepository(): string {
+    const { repository } = initSandbox();
+    execFileSync("git", ["-C", repository, "remote", "add", "origin", "https://github.com/acme/repo.git"]);
+    execFileSync("git", ["-C", repository, "checkout", "-q", "-b", "feature"]);
+    return repository;
+  }
+
+  it("does not cache a lookup that started before the pull request was invalidated", async () => {
+    const repository = featureRepository();
+    const { service, pending } = pendingGh();
+
+    const stale = service.status(repository);
+    await vi.waitFor(() => expect(pending).toHaveLength(1));
+    service.invalidatePullRequest(repository);
+    pending[0].resolve("[]");
+    expect((await stale).pullRequest).toBeNull();
+
+    const fresh = service.status(repository);
+    await vi.waitFor(() => expect(pending).toHaveLength(2));
+    pending[1].resolve(prList);
+    expect((await fresh).pullRequest?.number).toBe(5);
+  });
+
+  it("keeps a forced lookup when an older lookup finishes after it", async () => {
+    const repository = featureRepository();
+    const { service, pending } = pendingGh();
+
+    const stale = service.status(repository);
+    await vi.waitFor(() => expect(pending).toHaveLength(1));
+    const forced = service.status(repository, undefined, { forcePullRequest: true });
+    await vi.waitFor(() => expect(pending).toHaveLength(2));
+    pending[1].resolve(prList);
+    expect((await forced).pullRequest?.number).toBe(5);
+    pending[0].resolve("[]");
+    await stale;
+
+    expect((await service.status(repository, undefined, { baseRef: "main" })).pullRequest?.number).toBe(5);
+    expect(pending).toHaveLength(2);
   });
 });
