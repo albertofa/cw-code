@@ -37,6 +37,8 @@ import { defaultBinary, GitService, sweepStaleSnapshotIndexes } from "./fs/GitSe
 import { gitBaseline, gitDecorations, listWorkspaceFiles, searchText } from "./fs/workspaceQueries.js";
 import { assertOpenablePath } from "./fs/openPathPolicy.js";
 import { assertPrRef, PullRequestService } from "./github/PullRequestService.js";
+import { configureGitHubAccounts, defaultGitHubAccounts } from "./github/GitHubAccounts.js";
+import { githubCliBinary } from "./github/githubAccount.js";
 import { assertCountBase, assertSearchKind, assertSearchQuery, GitHubSearchService } from "./github/GitHubSearchService.js";
 import { assertIssueRef, assertOwnerLogin, assertRepoRef, assertRunRef } from "./github/githubRefs.js";
 import { MAX_COUNT_QUERIES } from "./github/issueQueries.js";
@@ -252,7 +254,8 @@ function createUpdateService(settings: AppSettings): UpdateService {
 function createServices(stores: { sessionStore: SessionStore; settingsStore: SettingsStore }): Services {
   let pullRequests: PullRequestService;
   const fileWatcher = new FileWatcher((event) => sendToMainWindow("fs.changed", event));
-  const git: GitService = new GitService(() => sessions.getSettings());
+  configureGitHubAccounts(() => githubCliBinary(() => sessions.getSettings()));
+  const git: GitService = new GitService(() => sessions.getSettings(), defaultGitHubAccounts);
   const sessions: SessionManager = new SessionManager({
     sessionStore: stores.sessionStore,
     settingsStore: stores.settingsStore,

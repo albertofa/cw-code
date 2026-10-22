@@ -9,6 +9,7 @@ import { simpleGit } from "simple-git";
 import { sanitizedChildEnv } from "../shellEnvironment.js";
 import { ciFromRollup } from "../github/prParsers.js";
 import { sameWorktreePath } from "../sessions/worktreeCleanup.js";
+import { defaultGitHubAccounts, type GitHubAccounts } from "../github/GitHubAccounts.js";
 import type {
   AppSettings,
   GitBranchInfo,
@@ -637,10 +638,9 @@ export async function fetchGhAuthStatus(binary: string, cwd: string): Promise<Gi
   return parseGitHubAccounts(stdout);
 }
 
-async function queryPullRequest(root: string, ghBinary: string, remote: ParsedGitHubRemote, account: GitHubAccountInfo): Promise<{ pullRequest: GitPullRequest | null; error: string | null }> {
+async function queryPullRequest(root: string, ghBinary: string, remote: ParsedGitHubRemote, account: GitHubAccountInfo, accounts: GitHubAccounts): Promise<{ pullRequest: GitPullRequest | null; error: string | null }> {
   try {
-    const token = await fetchGhToken(ghBinary, root, remote.host, account.login);
-    if (!token) throw new Error(`No token available for ${account.login}`);
+    const token = await accounts.token(remote.host, account.login);
     const stdout = await execText(ghBinary, [
       "pr", "view", "--json",
       "number,title,url,state,isDraft,reviewDecision,mergeStateStatus,headRefName,baseRefName,statusCheckRollup"
@@ -826,7 +826,6 @@ export interface DeleteBranchResult {
 }
 
 export class GitService {
-  private accountCache = new Map<string, { expiresAt: number; accounts: GitHubAccountInfo[] }>();
   private statusInFlight = new Map<string, { generation: number; promise: Promise<GitStatus> }>();
   private statusDone = new Map<string, CacheEntry<GitStatus>>();
   private statusGeneration = new Map<string, number>();
@@ -838,10 +837,13 @@ export class GitService {
   private remoteCache = new Map<string, CacheEntry<ParsedGitHubRemote | null>>();
   private snapshotQueues = new Map<string, Promise<void>>();
 
-  constructor(private getSettings: () => SourceControlSettings = () => ({
-    gitBinaryPath: defaultBinary("git"),
-    githubCliBinaryPath: defaultBinary("gh")
-  })) {}
+  constructor(
+    private getSettings: () => SourceControlSettings = () => ({
+      gitBinaryPath: defaultBinary("git"),
+      githubCliBinaryPath: defaultBinary("gh")
+    }),
+    private accounts: GitHubAccounts = defaultGitHubAccounts
+  ) {}
 
   private settings(): SourceControlSettings {
     const settings = this.getSettings();
@@ -1810,34 +1812,6 @@ export class GitService {
     return parseGitHubRemote(url);
   }
 
-  private async tokenFor(root: string, remote: ParsedGitHubRemote, login: string): Promise<string> {
-    return fetchGhToken(this.settings().githubCliBinaryPath, root, remote.host, login);
-  }
-
-  private async accountsFor(root: string, remote: ParsedGitHubRemote): Promise<GitHubAccountInfo[]> {
-    const key = `${this.settings().githubCliBinaryPath}|${remote.host}|${remote.slug}`;
-    const cached = this.accountCache.get(key);
-    if (cached && cached.expiresAt > Date.now()) return cached.accounts.map((account) => ({ ...account }));
-    const accounts = (await fetchGhAuthStatus(this.settings().githubCliBinaryPath, root))
-      .filter((account) => account.host.toLowerCase() === remote.host);
-    await Promise.all(accounts.map(async (account) => {
-      if (!account.authenticated) {
-        account.hasRepositoryAccess = false;
-        return;
-      }
-      try {
-        const token = await this.tokenFor(root, remote, account.login);
-        if (!token) throw new Error("empty token");
-        await execText(this.settings().githubCliBinaryPath, ["repo", "view", `${remote.host}/${remote.slug}`, "--json", "nameWithOwner"], root, 8_000, authenticatedEnvironment(remote.host, token));
-        account.hasRepositoryAccess = true;
-      } catch {
-        account.hasRepositoryAccess = false;
-      }
-    }));
-    this.accountCache.set(key, { expiresAt: Date.now() + 5 * 60_000, accounts: accounts.map((account) => ({ ...account })) });
-    return accounts;
-  }
-
   private async cachedRemote(root: string): Promise<ParsedGitHubRemote | null> {
     const key = cacheKey(root);
     const cached = this.remoteCache.get(key);
@@ -1850,12 +1824,8 @@ export class GitService {
   private async githubContext(root: string, project?: Project): Promise<{ remote: ParsedGitHubRemote | null; accounts: GitHubAccountInfo[]; selection: AccountSelection }> {
     const remote = await this.cachedRemote(root);
     if (!remote) return { remote: null, accounts: [], selection: { account: null, source: "none", error: null } };
-    try {
-      const accounts = await this.accountsFor(root, remote);
-      return { remote, accounts, selection: selectGitHubAccount(accounts, remote.host, remote.owner, project?.githubAccount) };
-    } catch (error) {
-      return { remote, accounts: [], selection: { account: null, source: "none", error: (error as Error).message || "GitHub CLI unavailable" } };
-    }
+    const { accounts, ...selection } = await this.accounts.select(remote.host, remote.owner, project?.githubAccount, remote.slug);
+    return { remote, accounts, selection };
   }
 
   private async binaryHealth(binary: string, args: string[], cwd: string): Promise<SourceControlBinaryHealth> {
@@ -1950,7 +1920,7 @@ export class GitService {
     const key = `${cacheKey(root)}|${branch}|${account.login}`;
     const cached = this.prCache.get(key);
     if (cached && cached.expiresAt > Date.now()) return cached.value;
-    const value = await queryPullRequest(root, this.settings().githubCliBinaryPath, remote, account);
+    const value = await queryPullRequest(root, this.settings().githubCliBinaryPath, remote, account, this.accounts);
     if (value.error === null) this.prCache.set(key, { expiresAt: Date.now() + PR_CACHE_TTL_MS, value });
     return value;
   }

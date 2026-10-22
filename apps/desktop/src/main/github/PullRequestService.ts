@@ -5,7 +5,7 @@ import { dirname, isAbsolute, relative, resolve } from "node:path";
 import type { AppSettings, PrDetail, PrInboxResult, PrRef, PrSummary, Project, RepoRef } from "@cw-code/contracts";
 import { authenticatedEnvironment, execText, type GitService } from "../fs/GitService.js";
 import { expandHome } from "../skills/skillPaths.js";
-import { OWNER_RE, REPO_RE, assertRepoRef, assertRunId, isSafePositiveInt } from "./githubRefs.js";
+import { OWNER_RE, REPO_RE, assertRepoRef, assertRunId, isSafePositiveInt, isValidHost } from "./githubRefs.js";
 import { GH_HOST, githubCliBinary, resolveGitHubAccount, type AccountResolution } from "./githubAccount.js";
 import { DETAIL_QUERY, HEAD_QUERY, INBOX_QUERY, INBOX_SEARCH_LIMIT, inboxSearchQueries } from "./prQueries.js";
 import { parseDetail, parseHead, parseInbox, prKey, type PrHeadInfo } from "./prParsers.js";
@@ -17,7 +17,7 @@ const CLONE_TIMEOUT_MS = 5 * 60_000;
 
 export function assertPrRef(ref: PrRef): void {
   if (!ref || typeof ref !== "object") throw new Error("invalid pull request reference");
-  if (ref.host !== GH_HOST) throw new Error(`unsupported GitHub host '${String(ref.host)}'`);
+  if (!isValidHost(ref.host)) throw new Error(`invalid GitHub host '${String(ref.host)}'`);
   if (typeof ref.owner !== "string" || !OWNER_RE.test(ref.owner)) throw new Error(`invalid repository owner '${String(ref.owner)}'`);
   if (typeof ref.repo !== "string" || !REPO_RE.test(ref.repo) || ref.repo === "." || ref.repo === "..") {
     throw new Error(`invalid repository name '${String(ref.repo)}'`);
@@ -88,8 +88,8 @@ export class PullRequestService {
     return githubCliBinary(this.settings);
   }
 
-  private resolveAccount(): Promise<AccountResolution> {
-    return resolveGitHubAccount(this.settings);
+  private resolveAccount(ref?: Pick<PrRef, "host" | "owner">): Promise<AccountResolution> {
+    return resolveGitHubAccount(this.settings, ref?.host ?? GH_HOST, ref?.owner ?? "");
   }
 
   async inbox(force = false): Promise<PrInboxResult> {
@@ -136,7 +136,7 @@ export class PullRequestService {
 
   async detail(ref: PrRef): Promise<PrDetail> {
     assertPrRef(ref);
-    const resolution = await this.resolveAccount();
+    const resolution = await this.resolveAccount(ref);
     if ("error" in resolution) throw new Error(resolution.error);
     const { account, token } = resolution;
     const stdout = await execText(
@@ -154,7 +154,7 @@ export class PullRequestService {
 
   async diff(ref: PrRef): Promise<string> {
     assertPrRef(ref);
-    const resolution = await this.resolveAccount();
+    const resolution = await this.resolveAccount(ref);
     if ("error" in resolution) throw new Error(resolution.error);
     const { account, token } = resolution;
     return execText(
@@ -169,7 +169,7 @@ export class PullRequestService {
   async failedCheckLog(ref: PrRef, runId: number): Promise<string> {
     assertPrRef(ref);
     assertRunId(runId);
-    const resolution = await this.resolveAccount();
+    const resolution = await this.resolveAccount(ref);
     if ("error" in resolution) throw new Error(resolution.error);
     const { account, token } = resolution;
     return execText(
@@ -256,7 +256,7 @@ export class PullRequestService {
   private async fetchHead(ref: PrRef): Promise<PrHeadInfo | null> {
     try {
       assertPrRef(ref);
-      const resolution = await this.resolveAccount();
+      const resolution = await this.resolveAccount(ref);
       if ("error" in resolution) return null;
       const { account, token } = resolution;
       const stdout = await execText(

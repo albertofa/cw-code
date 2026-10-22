@@ -134,8 +134,17 @@ describe("assertPrRef", () => {
     expect(() => assertPrRef(ref({ owner: "acme/evil" }))).toThrow();
   });
 
-  it("rejects a host other than github.com", () => {
-    expect(() => assertPrRef(ref({ host: "github.example.com" }))).toThrow();
+  it("accepts an enterprise host", () => {
+    expect(() => assertPrRef(ref({ host: "ghe.example.com" }))).not.toThrow();
+    expect(() => assertPrRef(ref({ host: "GHE.Example.com" }))).not.toThrow();
+  });
+
+  it("rejects a malformed host", () => {
+    expect(() => assertPrRef(ref({ host: "bad host" }))).toThrow();
+    expect(() => assertPrRef(ref({ host: "localhost" }))).toThrow();
+    expect(() => assertPrRef(ref({ host: "evil.com/path" }))).toThrow();
+    expect(() => assertPrRef(ref({ host: "-bad.example.com" }))).toThrow();
+    expect(() => assertPrRef(ref({ host: 1 as unknown as string }))).toThrow();
   });
 });
 
