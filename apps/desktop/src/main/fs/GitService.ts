@@ -7,7 +7,7 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "nod
 import { setTimeout as delay } from "node:timers/promises";
 import { simpleGit } from "simple-git";
 import { sanitizedChildEnv } from "../shellEnvironment.js";
-import { ciFromRollup } from "../github/prParsers.js";
+import { parsePullRequestList, pickBranchPullRequest, pickComparisonBase } from "./branchPullRequest.js";
 import { sameWorktreePath } from "../sessions/worktreeCleanup.js";
 import { defaultGitHubAccounts, type GitHubAccounts } from "../github/GitHubAccounts.js";
 import type {
@@ -49,12 +49,6 @@ interface WorktreeEntry {
   branch: string | null;
 }
 
-interface GhCheck {
-  conclusion?: string;
-  status?: string;
-  state?: string;
-}
-
 export interface ParsedGitHubRemote {
   host: string;
   owner: string;
@@ -69,7 +63,12 @@ interface AccountSelection {
   error: string | null;
 }
 
-type SourceControlSettings = Pick<AppSettings, "gitBinaryPath" | "githubCliBinaryPath">;
+interface PullRequestLookup {
+  pullRequest: GitPullRequest | null;
+  error: string | null;
+}
+
+type SourceControlSettings =Pick<AppSettings, "gitBinaryPath" | "githubCliBinaryPath">;
 
 export function defaultBinary(name: "git" | "gh"): string {
   return process.platform === "win32" ? `${name}.exe` : name;
@@ -85,6 +84,7 @@ export function cleanAuthEnvironment(): NodeJS.ProcessEnv {
   env["GCM_INTERACTIVE"] = "never";
   env["GIT_ASKPASS"] = "";
   env["SSH_ASKPASS"] = "";
+  env["GIT_OPTIONAL_LOCKS"] = "0";
   return env;
 }
 
@@ -102,6 +102,7 @@ function withNonInteractiveEnv(base?: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
   env["GCM_INTERACTIVE"] = "never";
   env["GIT_ASKPASS"] = "";
   env["SSH_ASKPASS"] = "";
+  env["GIT_OPTIONAL_LOCKS"] = "0";
   return env;
 }
 
@@ -549,36 +550,6 @@ export async function countUntrackedLines(root: string, file: string): Promise<{
   }
 }
 
-export function parsePullRequest(stdout: string): GitPullRequest | null {
-  let raw: Record<string, unknown>;
-  try {
-    raw = JSON.parse(stdout) as Record<string, unknown>;
-  } catch {
-    return null;
-  }
-  const number = typeof raw.number === "number" ? raw.number : 0;
-  const url = typeof raw.url === "string" ? raw.url : "";
-  if (number <= 0 || !url) return null;
-  const rollup = Array.isArray(raw.statusCheckRollup) ? raw.statusCheckRollup as GhCheck[] : [];
-  const { checks } = ciFromRollup(rollup.map((check) => check.conclusion || check.state || check.status || ""));
-  const rawState = typeof raw.state === "string" ? raw.state : "OPEN";
-  const state = rawState === "MERGED" || rawState === "CLOSED" ? rawState : "OPEN";
-  return {
-    number,
-    title: typeof raw.title === "string" ? raw.title : `Pull request #${number}`,
-    url,
-    state,
-    isDraft: raw.isDraft === true,
-    reviewDecision: typeof raw.reviewDecision === "string" && raw.reviewDecision ? raw.reviewDecision : null,
-    mergeStateStatus: typeof raw.mergeStateStatus === "string" && raw.mergeStateStatus ? raw.mergeStateStatus : null,
-    headRefName: typeof raw.headRefName === "string" ? raw.headRefName : "",
-    baseRefName: typeof raw.baseRefName === "string" ? raw.baseRefName : "",
-    headRefOid: typeof raw.headRefOid === "string" ? raw.headRefOid : "",
-    updatedAt: 0,
-    checks
-  };
-}
-
 export function execText(command: string, args: string[], cwd: string, timeout = 10_000, env?: NodeJS.ProcessEnv, stdin?: string): Promise<string> {
   return new Promise((resolvePromise, reject) => {
     const child = execFile(command, args, { cwd, timeout, windowsHide: true, maxBuffer: 16 * 1024 * 1024, env: env ?? withNonInteractiveEnv() }, (error, stdout, stderr) => {
@@ -638,19 +609,23 @@ export async function fetchGhAuthStatus(binary: string, cwd: string): Promise<Gi
   return parseGitHubAccounts(stdout);
 }
 
-async function queryPullRequest(root: string, ghBinary: string, remote: ParsedGitHubRemote, account: GitHubAccountInfo, accounts: GitHubAccounts): Promise<{ pullRequest: GitPullRequest | null; error: string | null }> {
+const PR_LIST_FIELDS = "number,title,url,state,isDraft,reviewDecision,mergeStateStatus,headRefName,baseRefName,headRefOid,headRepositoryOwner,statusCheckRollup,updatedAt";
+
+interface BranchPullRequestTarget {
+  branch: string;
+  headSha: string | null;
+}
+
+async function queryPullRequest(root: string, ghBinary: string, remote: ParsedGitHubRemote, account: GitHubAccountInfo, accounts: GitHubAccounts, target: BranchPullRequestTarget): Promise<PullRequestLookup> {
   try {
     const stdout = await accounts.withToken(remote.host, account.login, (token) =>
       execText(ghBinary, [
-        "pr", "view", "--json",
-        "number,title,url,state,isDraft,reviewDecision,mergeStateStatus,headRefName,baseRefName,statusCheckRollup"
+        "pr", "list", "--head", target.branch, "--state", "all", "--limit", "10", "--json", PR_LIST_FIELDS
       ], root, 8_000, authenticatedEnvironment(remote.host, token))
     );
-    return { pullRequest: parsePullRequest(stdout), error: null };
+    return { pullRequest: pickBranchPullRequest(parsePullRequestList(stdout), { ...target, owner: remote.owner }), error: null };
   } catch (error) {
-    const message = (error as Error).message;
-    if (/no pull requests? found/i.test(message)) return { pullRequest: null, error: null };
-    return { pullRequest: null, error: message || "GitHub CLI unavailable" };
+    return { pullRequest: null, error: (error as Error).message || "GitHub CLI unavailable" };
   }
 }
 
@@ -679,8 +654,19 @@ function cacheKey(root: string): string {
   return process.platform === "win32" ? normalized.toLowerCase() : normalized;
 }
 
+function rootScopedKey(root: string, ...parts: string[]): string {
+  return [cacheKey(root), ...parts].join("|");
+}
+
+function deleteRootEntries<V>(cache: Map<string, V>, rootKey: string): void {
+  for (const key of cache.keys()) {
+    if (key.startsWith(`${rootKey}|`)) cache.delete(key);
+  }
+}
+
 export const STATUS_CACHE_TTL_MS = 5_000;
 export const PR_CACHE_TTL_MS = 60_000;
+export const PR_MISSING_TTL_MS = 15_000;
 export const BRANCH_CACHE_TTL_MS = 15_000;
 const LAYOUT_CACHE_TTL_MS = 5 * 60_000;
 const REMOTE_CACHE_TTL_MS = 5 * 60_000;
@@ -774,6 +760,13 @@ function networkFailureReason(error: unknown): string {
 interface RepoLayout {
   repositoryRoot: string;
   isWorktree: boolean;
+  gitDir: string;
+  commonDir: string;
+}
+
+export interface GitStatusOptions {
+  baseRef?: string;
+  forcePullRequest?: boolean;
 }
 const DIFF_PATCH_MAX_BYTES = 400_000;
 const SNAPSHOT_TIMEOUT_MS = 15_000;
@@ -830,7 +823,7 @@ export class GitService {
   private statusInFlight = new Map<string, { generation: number; promise: Promise<GitStatus> }>();
   private statusDone = new Map<string, CacheEntry<GitStatus>>();
   private statusGeneration = new Map<string, number>();
-  private prCache = new Map<string, CacheEntry<{ pullRequest: GitPullRequest | null; error: string | null }>>();
+  private prCache = new Map<string, CacheEntry<PullRequestLookup>>();
   private branchDone = new Map<string, CacheEntry<GitBranchInfo[]>>();
   private branchInFlight = new Map<string, Promise<GitBranchInfo[]>>();
   private diffInFlight = new Map<string, Promise<GitDiffResult>>();
@@ -855,9 +848,10 @@ export class GitService {
   }
 
   private git(root: string) {
-    return simpleGit({ baseDir: root, binary: this.settings().gitBinaryPath, unsafe: INHERITED_ENV_UNSAFE }).env(
-      sanitizedChildEnv(process.env, process.platform)
-    );
+    return simpleGit({ baseDir: root, binary: this.settings().gitBinaryPath, unsafe: INHERITED_ENV_UNSAFE }).env({
+      ...sanitizedChildEnv(process.env, process.platform),
+      GIT_OPTIONAL_LOCKS: "0"
+    });
   }
 
   private async trackedLineCounts(root: string): Promise<{ addedLines: number; deletedLines: number }> {
@@ -898,18 +892,46 @@ export class GitService {
     if (cached && cached.expiresAt > Date.now()) return cached.value;
     let output: string[];
     try {
-      output = (await execText(this.settings().gitBinaryPath, ["rev-parse", "--show-toplevel", "--git-dir", "--git-common-dir"], root))
-        .replace(/\r/g, "").split("\n").filter(Boolean);
+      output = (await execText(this.settings().gitBinaryPath, ["rev-parse", "--path-format=absolute", "--show-toplevel", "--git-dir", "--git-common-dir"], root))
+        .replace(/\r/g, "").split("\n").filter((line) => line && !line.startsWith("--path-format"));
     } catch {
       return null;
     }
     if (output.length < 3) return null;
+    const gitDir = resolve(root, output[1]);
+    const commonDir = resolve(root, output[2]);
     const value: RepoLayout = {
       repositoryRoot: resolve(output[0]),
-      isWorktree: !sameWorktreePath(resolve(root, output[1]), resolve(root, output[2]))
+      isWorktree: !sameWorktreePath(gitDir, commonDir),
+      gitDir,
+      commonDir
     };
     this.layoutCache.set(key, { expiresAt: Date.now() + LAYOUT_CACHE_TTL_MS, value });
     return value;
+  }
+
+  async gitLocations(root: string): Promise<{ gitDir: string; commonDir: string } | null> {
+    const layout = await this.repoLayout(root);
+    return layout ? { gitDir: layout.gitDir, commonDir: layout.commonDir } : null;
+  }
+
+  async branchPublished(root: string, branch: string): Promise<boolean> {
+    if (!isValidBranchName(branch)) return false;
+    const binary = this.settings().gitBinaryPath;
+    try {
+      const [merge, remotes, remoteRefs] = await Promise.all([
+        execWithStatus(binary, ["config", "--get", `branch.${branch}.merge`], root, 10_000),
+        execText(binary, ["remote"], root),
+        execText(binary, ["for-each-ref", "--format=%(refname)", "refs/remotes"], root)
+      ]);
+      if (merge.code === 0 && merge.stdout.trim()) return true;
+      const refs = new Set(remoteRefs.replace(/\r/g, "").split("\n").map((line) => line.trim()));
+      return remotes.replace(/\r/g, "").split("\n").map((line) => line.trim()).filter(Boolean)
+        .some((remote) => refs.has(`refs/remotes/${remote}/${branch}`));
+    } catch (error) {
+      console.warn(`git: could not tell whether '${branch}' is published in ${root}; treating it as published: ${(error as Error).message}`);
+      return true;
+    }
   }
 
   async isRepository(root: string): Promise<boolean> {
@@ -1008,13 +1030,23 @@ export class GitService {
     }
   }
 
-  private invalidateStatus(root: string): void {
+  private dropStatus(root: string): void {
     const key = cacheKey(root);
     this.statusGeneration.set(key, (this.statusGeneration.get(key) ?? 0) + 1);
-    this.statusDone.delete(key);
-    this.statusInFlight.delete(key);
+    deleteRootEntries(this.statusDone, key);
+    deleteRootEntries(this.statusInFlight, key);
+  }
+
+  private invalidateStatus(root: string): void {
+    const key = cacheKey(root);
+    this.dropStatus(root);
     this.layoutCache.delete(key);
     this.remoteCache.delete(key);
+  }
+
+  invalidatePullRequest(root: string): void {
+    deleteRootEntries(this.prCache, cacheKey(root));
+    this.dropStatus(root);
   }
 
   async initSubmodules(worktreePath: string): Promise<void> {
@@ -1530,10 +1562,7 @@ export class GitService {
     const git = this.git(root);
     if (target.remote) await git.raw(["checkout", "--track", target.name]);
     else await git.checkout(target.name);
-    const key = cacheKey(root);
-    this.statusGeneration.set(key, (this.statusGeneration.get(key) ?? 0) + 1);
-    this.statusDone.delete(key);
-    this.statusInFlight.delete(key);
+    this.dropStatus(root);
     this.invalidateBranches(root);
     return target.label;
   }
@@ -1607,16 +1636,31 @@ export class GitService {
   }
 
   private async defaultBase(root: string, headRef: string, branches: GitBranchInfo[]): Promise<string> {
+    const preferred = await this.readDefaultBase(root);
+    const fallback = BASE_CANDIDATES.find((candidate) => candidate !== headRef && branches.some((item) => item.name === candidate))
+      ?? branches.find((item) => !item.current)?.name
+      ?? null;
+    const base = pickComparisonBase({ requested: null, requestedExists: false, defaultBase: preferred !== headRef ? preferred : null, fallback });
+    if (!base) throw new Error("no branch is available to compare against");
+    return base;
+  }
+
+  private async readDefaultBase(root: string): Promise<string | null> {
     try {
-      const upstream = (await this.git(root).revparse(["--abbrev-ref", "--symbolic-full-name", "@{upstream}"])).trim();
-      if (upstream) return upstream;
-    } catch {}
-    for (const candidate of ["main", "master", "origin/main", "origin/master"]) {
-      if (candidate !== headRef && branches.some((item) => item.name === candidate)) return candidate;
+      return await this.defaultBaseRef(root);
+    } catch (error) {
+      console.warn(`git: could not read the default base of ${root}: ${(error as Error).message}`);
+      return null;
     }
-    const fallback = branches.find((item) => !item.current);
-    if (!fallback) throw new Error("no branch is available to compare against");
-    return fallback.name;
+  }
+
+  private async resolveCommit(root: string, ref: string, timeout = 10_000): Promise<string | null> {
+    if (!ref || ref.startsWith("-")) return null;
+    try {
+      return (await execText(this.settings().gitBinaryPath, [...HOOKLESS_ARGS, "rev-parse", "--verify", "--quiet", `${ref}^{commit}`], root, timeout)).trim() || null;
+    } catch {
+      return null;
+    }
   }
 
   async snapshotWorkingTree(root: string): Promise<string> {
@@ -1678,12 +1722,8 @@ export class GitService {
     }
   }
 
-  private async headCommit(root: string, timeout: number): Promise<string | null> {
-    try {
-      return (await execText(this.settings().gitBinaryPath, [...HOOKLESS_ARGS, "rev-parse", "--verify", "--quiet", "HEAD^{commit}"], root, timeout)).trim() || null;
-    } catch {
-      return null;
-    }
+  private headCommit(root: string, timeout: number): Promise<string | null> {
+    return this.resolveCommit(root, "HEAD", timeout);
   }
 
   private async snapshotHead(root: string, headSha?: string): Promise<string> {
@@ -1898,33 +1938,45 @@ export class GitService {
     await Promise.all([setOrUnset("user.name", name), setOrUnset("user.email", email)]);
   }
 
-  async status(root: string, project?: Project): Promise<GitStatus> {
-    const key = cacheKey(root);
+  async status(root: string, project?: Project, opts: GitStatusOptions = {}): Promise<GitStatus> {
+    const baseRef = opts.baseRef?.trim() || null;
+    const rootKey = cacheKey(root);
+    const key = rootScopedKey(root, baseRef ?? "");
+    if (opts.forcePullRequest) this.dropStatus(root);
     const cached = this.statusDone.get(key);
     if (cached && cached.expiresAt > Date.now()) return cached.value;
     const inFlight = this.statusInFlight.get(key);
     if (inFlight) return inFlight.promise;
-    const generation = this.statusGeneration.get(key) ?? 0;
-    const promise = this.computeStatus(root, project).then((value) => {
-      if ((this.statusGeneration.get(key) ?? 0) === generation) {
+    const generation = this.statusGeneration.get(rootKey) ?? 0;
+    const promise = this.computeStatus(root, project, baseRef, opts.forcePullRequest === true).then((value) => {
+      if ((this.statusGeneration.get(rootKey) ?? 0) === generation) {
         this.statusDone.set(key, { expiresAt: Date.now() + STATUS_CACHE_TTL_MS, value });
       }
       return value;
     }).finally(() => {
-      const current = this.statusInFlight.get(key);
-      if (current?.generation === generation) this.statusInFlight.delete(key);
+      if (this.statusInFlight.get(key)?.promise === promise) this.statusInFlight.delete(key);
     });
     this.statusInFlight.set(key, { generation, promise });
     return promise;
   }
 
-  private async cachedPullRequest(root: string, branch: string, remote: ParsedGitHubRemote, account: GitHubAccountInfo): Promise<{ pullRequest: GitPullRequest | null; error: string | null }> {
-    const key = `${cacheKey(root)}|${branch}|${account.login}`;
+  private async cachedPullRequest(root: string, target: BranchPullRequestTarget, remote: ParsedGitHubRemote, account: GitHubAccountInfo, force: boolean): Promise<PullRequestLookup> {
+    const key = rootScopedKey(root, target.branch, target.headSha ?? "", account.login);
     const cached = this.prCache.get(key);
-    if (cached && cached.expiresAt > Date.now()) return cached.value;
-    const value = await queryPullRequest(root, this.settings().githubCliBinaryPath, remote, account, this.accounts);
-    if (value.error === null) this.prCache.set(key, { expiresAt: Date.now() + PR_CACHE_TTL_MS, value });
+    if (!force && cached && cached.expiresAt > Date.now()) return cached.value;
+    const value = await queryPullRequest(root, this.settings().githubCliBinaryPath, remote, account, this.accounts, target);
+    if (value.error === null) {
+      const ttl = value.pullRequest ? PR_CACHE_TTL_MS : PR_MISSING_TTL_MS;
+      this.prCache.set(key, { expiresAt: Date.now() + ttl, value });
+    }
     return value;
+  }
+
+  private pullRequestLookup(root: string, branch: string, headSha: string | null, defaultBase: string | null, context: { remote: ParsedGitHubRemote | null; selection: AccountSelection }, force: boolean): Promise<PullRequestLookup> {
+    if (!context.remote || !context.selection.account) return Promise.resolve({ pullRequest: null, error: context.selection.error });
+    const defaultBranch = defaultBase?.startsWith(ORIGIN_PREFIX) ? defaultBase.slice(ORIGIN_PREFIX.length) : defaultBase;
+    if (branch === "HEAD" || branch === defaultBranch) return Promise.resolve({ pullRequest: null, error: null });
+    return this.cachedPullRequest(root, { branch, headSha }, context.remote, context.selection.account, force);
   }
 
   private async fallbackBase(root: string, headRef: string): Promise<string | null> {
@@ -1939,12 +1991,12 @@ export class GitService {
     return branches.find((item) => !item.current)?.name ?? null;
   }
 
-  private async baseComparison(root: string, status: PorcelainStatus): Promise<{ baseRef: string | null; baseAhead: number; baseBehind: number }> {
-    if (status.upstream && status.tracking) {
-      return { baseRef: status.upstream, baseAhead: status.tracking.ahead, baseBehind: status.tracking.behind };
-    }
+  private async baseComparison(root: string, branch: string, requested: string | null, defaultBase: string | null): Promise<{ baseRef: string | null; baseAhead: number; baseBehind: number }> {
     try {
-      const base = await this.fallbackBase(root, status.branch);
+      const requestedExists = requested ? (await this.resolveCommit(root, requested)) !== null : false;
+      const comparableDefault = defaultBase !== branch ? defaultBase : null;
+      const fallback = (requested && requestedExists) || comparableDefault ? null : await this.fallbackBase(root, branch);
+      const base = pickComparisonBase({ requested, requestedExists, defaultBase: comparableDefault, fallback });
       if (!base) return { baseRef: null, baseAhead: 0, baseBehind: 0 };
       try {
         const output = (await this.git(root).raw(["rev-list", "--left-right", "--count", `${base}...HEAD`])).trim();
@@ -1965,7 +2017,7 @@ export class GitService {
     }
   }
 
-  private async computeStatus(root: string, project?: Project): Promise<GitStatus> {
+  private async computeStatus(root: string, project: Project | undefined, requestedBase: string | null, forcePullRequest: boolean): Promise<GitStatus> {
     const fallback: GitStatus = {
       available: false,
       branch: "not a repository",
@@ -1994,19 +2046,18 @@ export class GitService {
     try {
       const layout = await this.repoLayout(root);
       if (!layout) return fallback;
-      const [summary, context] = await Promise.all([
+      const [summary, context, defaultBase] = await Promise.all([
         execText(this.settings().gitBinaryPath, ["status", "--porcelain=v2", "--branch", "-uall", "-z"], root, 20_000)
           .then(parsePorcelainV2Status),
-        this.githubContext(root, project)
+        this.githubContext(root, project),
+        this.readDefaultBase(root)
       ]);
       const branch = summary.branch;
       const visibleFiles = summary.files.filter((file) => !isAppManagedPath(file.path));
       const [github, lineCounts, base] = await Promise.all([
-        context.remote && context.selection.account
-          ? this.cachedPullRequest(root, branch, context.remote, context.selection.account)
-          : Promise.resolve({ pullRequest: null, error: context.selection.error }),
+        this.pullRequestLookup(root, branch, summary.headSha, defaultBase, context, forcePullRequest),
         this.lineCounts(root, visibleFiles),
-        this.baseComparison(root, summary)
+        this.baseComparison(root, branch, requestedBase, defaultBase)
       ]);
       const dirtyCount = visibleFiles.length;
       const stagedCount = visibleFiles.filter((file) => !file.untracked && file.index !== ".").length;
