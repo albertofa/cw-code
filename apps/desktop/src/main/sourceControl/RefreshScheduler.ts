@@ -27,7 +27,7 @@ export class RefreshScheduler {
     private readonly run: (key: string, request: RefreshRequest) => Promise<void>,
     opts: { concurrency: number; warn?: (message: string) => void },
   ) {
-    this.concurrency = Math.max(1, Math.floor(opts.concurrency));
+    this.concurrency = Number.isFinite(opts.concurrency) ? Math.max(1, Math.floor(opts.concurrency)) : 1;
     this.warn = opts.warn ?? ((message) => console.warn(message));
   }
 

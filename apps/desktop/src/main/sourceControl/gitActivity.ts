@@ -4,9 +4,9 @@ export interface ToolGitEffect {
 }
 
 export const REMOTE_EFFECT_RE =
-  /\bgh\s+pr\s+(create|merge|close|reopen|ready|edit)\b|\bgit\s+push\b|\bgh\s+api\b[^\n]*\/pulls\b/;
+  /\bgh\s+pr\s+(create|merge|close|reopen|ready|edit)\b|\bgit(?:\s+-[cC]\s+\S+)*\s+push\b|\bgh\s+api\b[^\n]*\/pulls\b/;
 
-const SHELL_TOOLS = new Set(["bash", "shell"]);
+const SHELL_TOOLS = new Set(["bash", "shell", "powershell"]);
 const EDIT_TOOLS = new Set(["edit", "write", "multiedit", "notebookedit", "patch", "apply_patch"]);
 const NO_EFFECT: ToolGitEffect = { refreshLocal: false, remoteEffect: false };
 

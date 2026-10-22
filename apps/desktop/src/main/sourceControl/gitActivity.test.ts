@@ -23,6 +23,8 @@ describe("classifyToolCall", () => {
 
   it("joins array commands before matching", () => {
     expect(classifyToolCall("shell", { command: ["git", "push", "origin", "x"] })).toEqual(REMOTE);
+    expect(classifyToolCall("PowerShell", { command: "git -C C:\\repo push" })).toEqual(REMOTE);
+    expect(classifyToolCall("Bash", { command: "git -c core.hooksPath=/dev/null push" })).toEqual(REMOTE);
     expect(classifyToolCall("shell", { command: ["bash", "-lc", "gh pr create"] })).toEqual(REMOTE);
     expect(classifyToolCall("shell", { command: ["ls", 3, null] })).toEqual(LOCAL);
   });
