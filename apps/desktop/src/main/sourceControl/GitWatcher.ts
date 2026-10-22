@@ -35,11 +35,13 @@ interface WatchTarget {
   roots: Map<string, string>;
   handles: WatcherHandle[];
   timer: NodeJS.Timeout | null;
+  firstPendingAt: number | null;
   warned: Set<string>;
   closed: boolean;
 }
 
 export const GIT_WATCH_DEBOUNCE_MS = 300;
+const GIT_WATCH_MAX_WAIT_MS = 1_500;
 
 export const gitChokidarFactory: GitWatchFactory = (base, { recursive }) => {
   const watcher = chokidar.watch(base, {
@@ -73,7 +75,8 @@ function desiredTargets(entries: GitWatchRoot[]): Map<string, TargetPlan> {
       `common:${commonKey}`,
       [
         { base: entry.commonDir, relativeTo: entry.commonDir, recursive: false },
-        { base: join(entry.commonDir, "refs"), relativeTo: entry.commonDir, recursive: true },
+        { base: join(entry.commonDir, "refs", "heads"), relativeTo: entry.commonDir, recursive: true },
+        { base: join(entry.commonDir, "refs", "remotes"), relativeTo: entry.commonDir, recursive: true },
       ],
       entry,
     );
@@ -124,7 +127,7 @@ export class GitWatcher {
   }
 
   private openTarget(plan: TargetPlan): WatchTarget {
-    const target: WatchTarget = { roots: plan.roots, handles: [], timer: null, warned: new Set(), closed: false };
+    const target: WatchTarget = { roots: plan.roots, handles: [], timer: null, firstPendingAt: null, warned: new Set(), closed: false };
     for (const spec of plan.specs) {
       const handle = this.factory(spec.base, { recursive: spec.recursive });
       target.handles.push(handle);
@@ -139,12 +142,16 @@ export class GitWatcher {
     const rel = relative(spec.relativeTo, absPath);
     if (rel === ".." || rel.startsWith("..\\") || rel.startsWith("../")) return;
     if (gitWatchEventKind(rel) !== "relevant") return;
+    const now = Date.now();
+    target.firstPendingAt ??= now;
+    const remaining = Math.max(0, GIT_WATCH_MAX_WAIT_MS - (now - target.firstPendingAt));
     if (target.timer) clearTimeout(target.timer);
-    target.timer = setTimeout(() => this.flush(target), this.debounceMs);
+    target.timer = setTimeout(() => this.flush(target), Math.min(this.debounceMs, remaining));
   }
 
   private flush(target: WatchTarget): void {
     target.timer = null;
+    target.firstPendingAt = null;
     if (target.closed) return;
     const roots = [...target.roots.values()];
     if (roots.length > 0) this.onChange(roots);
@@ -160,6 +167,7 @@ export class GitWatcher {
     target.closed = true;
     if (target.timer) clearTimeout(target.timer);
     target.timer = null;
+    target.firstPendingAt = null;
     await Promise.all(
       target.handles.map(async (handle) => {
         try {

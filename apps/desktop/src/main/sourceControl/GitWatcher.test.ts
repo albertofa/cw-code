@@ -37,6 +37,8 @@ class FakeHandle implements WatcherHandle {
 const COMMON = resolve("/repo/.git");
 const GIT_DIR_A = join(COMMON, "worktrees", "a");
 const GIT_DIR_B = join(COMMON, "worktrees", "b");
+const REFS_HEADS = join(COMMON, "refs", "heads");
+const REFS_REMOTES = join(COMMON, "refs", "remotes");
 const ROOT_MAIN: GitWatchRoot = { root: resolve("/repo"), gitDir: COMMON, commonDir: COMMON };
 const ROOT_A: GitWatchRoot = { root: resolve("/wt/a"), gitDir: GIT_DIR_A, commonDir: COMMON };
 const ROOT_B: GitWatchRoot = { root: resolve("/wt/b"), gitDir: GIT_DIR_B, commonDir: COMMON };
@@ -72,27 +74,28 @@ describe("GitWatcher", () => {
     vi.useRealTimers();
   });
 
-  it("opens one non-recursive commonDir watcher and one recursive refs watcher shared by worktrees", () => {
+  it("opens one non-recursive commonDir watcher and recursive refs/heads and refs/remotes watchers shared by worktrees", () => {
     watcher.setRoots([ROOT_A, ROOT_B]);
 
     expect(handles.filter((handle) => handle.base === COMMON)).toHaveLength(1);
     expect(handleFor(COMMON).recursive).toBe(false);
-    expect(handleFor(join(COMMON, "refs")).recursive).toBe(true);
+    expect(handleFor(REFS_HEADS).recursive).toBe(true);
+    expect(handleFor(REFS_REMOTES).recursive).toBe(true);
     expect(handleFor(GIT_DIR_A).recursive).toBe(false);
     expect(handleFor(GIT_DIR_B).recursive).toBe(false);
-    expect(handles).toHaveLength(4);
+    expect(handles).toHaveLength(5);
   });
 
   it("does not open a second watcher when gitDir equals commonDir", () => {
     watcher.setRoots([ROOT_MAIN]);
 
-    expect(handles.map((handle) => handle.base).sort()).toEqual([COMMON, join(COMMON, "refs")].sort());
+    expect(handles.map((handle) => handle.base).sort()).toEqual([COMMON, REFS_HEADS, REFS_REMOTES].sort());
   });
 
   it("notifies every root sharing the commonDir on a refs change", () => {
     watcher.setRoots([ROOT_A, ROOT_B]);
 
-    handleFor(join(COMMON, "refs")).fire(join(COMMON, "refs", "heads", "cw", "x"));
+    handleFor(REFS_HEADS).fire(join(COMMON, "refs", "heads", "cw", "x"));
     vi.advanceTimersByTime(300);
 
     expect(onChange).toHaveBeenCalledTimes(1);
@@ -124,7 +127,7 @@ describe("GitWatcher", () => {
     const variant: GitWatchRoot = { ...ROOT_B, commonDir: `${COMMON}/`, gitDir: GIT_DIR_B };
     watcher.setRoots([ROOT_A, variant]);
 
-    expect(handles.filter((handle) => handle.base === join(COMMON, "refs"))).toHaveLength(1);
+    expect(handles.filter((handle) => handle.base === REFS_HEADS)).toHaveLength(1);
   });
 
   it.each([
@@ -139,7 +142,7 @@ describe("GitWatcher", () => {
 
     handleFor(COMMON).fire(pathIn(COMMON));
     handleFor(GIT_DIR_A).fire(pathIn(GIT_DIR_A));
-    handleFor(join(COMMON, "refs")).fire(join(COMMON, "refs", "heads", "x.lock"));
+    handleFor(REFS_HEADS).fire(join(COMMON, "refs", "heads", "x.lock"));
     vi.advanceTimersByTime(1000);
 
     expect(onChange).not.toHaveBeenCalled();
@@ -156,7 +159,7 @@ describe("GitWatcher", () => {
 
   it("coalesces a burst into a single notification after the debounce", () => {
     watcher.setRoots([ROOT_A]);
-    const refs = handleFor(join(COMMON, "refs"));
+    const refs = handleFor(REFS_HEADS);
 
     refs.fire(join(COMMON, "refs", "heads", "a"));
     vi.advanceTimersByTime(200);
@@ -173,9 +176,30 @@ describe("GitWatcher", () => {
     expect(onChange).toHaveBeenCalledTimes(1);
   });
 
+  it("flushes a continuous burst after the max wait", () => {
+    watcher.setRoots([ROOT_A]);
+    const refs = handleFor(REFS_HEADS);
+
+    for (let elapsed = 0; elapsed < 1500; elapsed += 200) {
+      refs.fire(join(COMMON, "refs", "heads", `b${elapsed}`));
+      vi.advanceTimersByTime(200);
+    }
+
+    expect(onChange).toHaveBeenCalledTimes(1);
+  });
+
+  it("notifies on refs/remotes changes after a push", () => {
+    watcher.setRoots([ROOT_A]);
+
+    handleFor(REFS_REMOTES).fire(join(COMMON, "refs", "remotes", "origin", "feature"));
+    vi.advanceTimersByTime(300);
+
+    expect(onChange).toHaveBeenCalledWith([ROOT_A.root]);
+  });
+
   it("closes handles that are no longer needed and keeps the rest", () => {
     watcher.setRoots([ROOT_A, ROOT_B]);
-    const refs = handleFor(join(COMMON, "refs"));
+    const refs = handleFor(REFS_HEADS);
     const gitDirB = handleFor(GIT_DIR_B);
 
     watcher.setRoots([ROOT_A]);
@@ -191,7 +215,7 @@ describe("GitWatcher", () => {
 
   it("closes every handle when all roots are removed and drops pending notifications", () => {
     watcher.setRoots([ROOT_A]);
-    handleFor(join(COMMON, "refs")).fire(join(COMMON, "refs", "heads", "x"));
+    handleFor(REFS_HEADS).fire(join(COMMON, "refs", "heads", "x"));
 
     const opened = [...handles];
     watcher.setRoots([]);
@@ -217,7 +241,7 @@ describe("GitWatcher", () => {
     watcher.setRoots([]);
     watcher.setRoots([ROOT_A]);
 
-    expect(handles).toHaveLength(6);
+    expect(handles).toHaveLength(8);
     expect(handleFor(GIT_DIR_A).closed).toBe(false);
   });
 
@@ -241,7 +265,7 @@ describe("GitWatcher", () => {
     expect(warn.mock.calls[0][0]).toContain("[git-watcher]");
     expect(warn.mock.calls[0][0]).toContain("EPERM");
 
-    handleFor(join(COMMON, "refs")).fire(join(COMMON, "refs", "heads", "x"));
+    handleFor(REFS_HEADS).fire(join(COMMON, "refs", "heads", "x"));
     vi.advanceTimersByTime(300);
     expect(onChange).toHaveBeenCalledTimes(1);
   });
