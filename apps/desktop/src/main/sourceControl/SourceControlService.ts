@@ -11,7 +11,7 @@ import { statusGroupsForRoot, type StatusCandidate, type StatusGroup } from "./s
 
 export const TOOL_REFRESH_DEBOUNCE_MS = 250;
 export const STATUS_REFRESH_CONCURRENCY = 4;
-const MIN_POLL_SECONDS = 10;
+const MIN_POLL_SECONDS = 5;
 const LOG_PREFIX = "[source-control]";
 
 export interface SourceControlDeps {
@@ -239,7 +239,8 @@ export class SourceControlService {
       const project = this.sessions.getProject(group.projectId);
       status = await this.git.status(root, project, {
         ...(group.baseRef ? { baseRef: group.baseRef } : {}),
-        forcePullRequest: request.forcePullRequest
+        forcePullRequest: request.forcePullRequest,
+        fresh: true
       });
     } catch (error) {
       this.recordFailure(group.sessionIds, `git status failed for ${root}: ${describeError(error)}`);

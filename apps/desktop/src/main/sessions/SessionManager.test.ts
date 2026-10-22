@@ -2704,6 +2704,7 @@ describe("SessionManager", () => {
   it("injects the project's GitHub account only into claude turns and terminals", async () => {
     const { manager, fake, project } = makePrManager({});
     const cachedToken = vi.spyOn(defaultGitHubAccounts, "cachedToken").mockReturnValue("tok-test");
+    const token = vi.spyOn(defaultGitHubAccounts, "token").mockResolvedValue("tok-test");
     try {
       manager.setProjectGitHubAccount(project.id, { host: "git.example.com", login: "octo" });
       const claude = await manager.createSession(project.id, "claude", { mode: "current" });
@@ -2714,7 +2715,10 @@ describe("SessionManager", () => {
       await manager.startTurn(codex.id, "go");
       expect((fake.lastRequest?.env as Record<string, string>).GH_ENTERPRISE_TOKEN).not.toBe("tok-test");
       expect(manager.turnEnv(codex.id, project.rootPath)).toMatchObject({ GH_HOST: "git.example.com", GH_ENTERPRISE_TOKEN: "tok-test" });
+      expect(token).toHaveBeenCalledTimes(1);
+      expect(token).toHaveBeenCalledWith("git.example.com", "octo");
     } finally {
+      token.mockRestore();
       cachedToken.mockRestore();
       manager.dispose();
     }

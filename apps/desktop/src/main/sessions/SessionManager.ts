@@ -1632,6 +1632,16 @@ export class SessionManager {
     return githubAccountEnv(account, token);
   }
 
+  private async refreshGitHubToken(project: Project): Promise<void> {
+    const account = project.githubAccount;
+    if (!account) return;
+    try {
+      await defaultGitHubAccounts.token(account.host, account.login);
+    } catch (err) {
+      console.warn(`[git] could not refresh the GitHub token for ${account.login}@${account.host}: ${(err as Error).message}`);
+    }
+  }
+
   turnEnv(sessionId: string, cwd: string): Record<string, string> {
     const session = this.store.getSession(sessionId);
     const project = session ? this.store.getProject(session.projectId) : undefined;
@@ -1895,6 +1905,8 @@ export class SessionManager {
       const stored = this.getComposer(sessionId);
       const prefs = { ...stored, ...(opts?.prefs ?? {}) };
       const driver = this.drivers[session.driver];
+      if (session.driver === "claude") await this.refreshGitHubToken(project);
+      this.assertNotReserved();
       const handle = driver.startTurn({
         sessionId,
         prompt,

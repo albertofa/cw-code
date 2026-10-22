@@ -767,6 +767,8 @@ interface RepoLayout {
 export interface GitStatusOptions {
   baseRef?: string;
   forcePullRequest?: boolean;
+  /** Skip the short-lived status cache without forcing a new PR lookup. */
+  fresh?: boolean;
 }
 const DIFF_PATCH_MAX_BYTES = 400_000;
 const SNAPSHOT_TIMEOUT_MS = 15_000;
@@ -1970,7 +1972,7 @@ export class GitService {
     const baseRef = opts.baseRef?.trim() || null;
     const rootKey = cacheKey(root);
     const key = rootScopedKey(root, baseRef ?? "");
-    if (opts.forcePullRequest) this.dropStatus(root);
+    if (opts.forcePullRequest || opts.fresh) this.dropStatus(root);
     const cached = this.statusDone.get(key);
     if (cached && cached.expiresAt > Date.now()) return cached.value;
     const inFlight = this.statusInFlight.get(key);

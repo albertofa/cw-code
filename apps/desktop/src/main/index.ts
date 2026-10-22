@@ -270,6 +270,8 @@ function createUpdateService(settings: AppSettings): UpdateService {
   });
 }
 
+const PR_STATE_REUSE_MS = 60_000;
+
 function createServices(stores: { sessionStore: SessionStore; settingsStore: SettingsStore }): Services {
   let pullRequests: PullRequestService;
   const fileWatcher = new FileWatcher((event) => sendToMainWindow("fs.changed", event));
@@ -286,7 +288,8 @@ function createServices(stores: { sessionStore: SessionStore; settingsStore: Set
     },
     prState: (ref) => prTracker.snapshot(ref)?.state ?? pullRequests.knownState(ref),
     prStateRefresh: async (ref) => {
-      await prTracker.refresh([ref]);
+      const syncedAt = prTracker.snapshot(ref)?.syncedAt ?? 0;
+      if (Date.now() - syncedAt >= PR_STATE_REUSE_MS) await prTracker.refresh([ref]);
       return prTracker.snapshot(ref)?.state ?? pullRequests.refreshState(ref);
     },
     prUpdatedAt: (ref) => prTracker.snapshot(ref)?.updatedAt ?? pullRequests.knownUpdatedAt(ref),

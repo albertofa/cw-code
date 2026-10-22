@@ -204,10 +204,11 @@ describe("pickMainSession", () => {
 });
 
 describe("tracked summaries and link snapshots", () => {
-  it("prefers the newer of the inbox and tracked summaries, inbox on ties", () => {
+  it("prefers the newer of the inbox and tracked summaries, tracked on ties", () => {
     const inbox = summary(1, { updatedAt: 100, title: "inbox" });
     expect(mergeSummary(inbox, summary(1, { updatedAt: 200, title: "tracked" }))?.title).toBe("tracked");
-    expect(mergeSummary(inbox, summary(1, { updatedAt: 100, title: "tracked" }))?.title).toBe("inbox");
+    expect(mergeSummary(inbox, summary(1, { updatedAt: 100, title: "tracked" }))?.title).toBe("tracked");
+    expect(mergeSummary(summary(1, { updatedAt: 300, title: "inbox" }), summary(1, { updatedAt: 200 }))?.title).toBe("inbox");
     expect(mergeSummary(undefined, summary(1, { title: "tracked" }))?.title).toBe("tracked");
     expect(mergeSummary(inbox, undefined)?.title).toBe("inbox");
     expect(mergeSummary(undefined, undefined)).toBeUndefined();

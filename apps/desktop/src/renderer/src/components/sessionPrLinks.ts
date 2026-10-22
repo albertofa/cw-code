@@ -42,7 +42,7 @@ export function prRefLabel(ref: PrRef): string {
 export function mergeSummary(inbox: PrSummary | undefined, tracked: PrSummary | undefined): PrSummary | undefined {
   if (!inbox) return tracked;
   if (!tracked) return inbox;
-  return tracked.updatedAt > inbox.updatedAt ? tracked : inbox;
+  return inbox.updatedAt > tracked.updatedAt ? inbox : tracked;
 }
 
 export function prSummaryLookup(
