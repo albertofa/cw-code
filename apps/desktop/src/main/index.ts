@@ -1351,13 +1351,13 @@ function registerIpc(services: Services): void {
     }
   );
   ipcMain.handle("pty.open", (_e, args: { sessionId: string; kind: PtyKind }) =>
-    sessions.ensureWorktree(args.sessionId).then((root) =>
+    sessions.ensureWorktree(args.sessionId).then(async (root) =>
       ptys.open(
         args.sessionId,
         root,
         args.kind,
         sessions.resumeCursorFor(args.sessionId),
-        sessions.turnEnv(args.sessionId, root),
+        await sessions.terminalEnv(args.sessionId, root),
         (id, data) => {
           mainWindow?.webContents.send("pty.data", { ptyId: id, data });
         },

@@ -2715,7 +2715,6 @@ describe("SessionManager", () => {
       await manager.startTurn(codex.id, "go");
       expect((fake.lastRequest?.env as Record<string, string>).GH_ENTERPRISE_TOKEN).not.toBe("tok-test");
       expect(manager.turnEnv(codex.id, project.rootPath)).toMatchObject({ GH_HOST: "git.example.com", GH_ENTERPRISE_TOKEN: "tok-test" });
-      expect(token).toHaveBeenCalledTimes(1);
       expect(token).toHaveBeenCalledWith("git.example.com", "octo");
     } finally {
       token.mockRestore();
@@ -2727,6 +2726,7 @@ describe("SessionManager", () => {
   it("warns once per session when the project's GitHub account has no cached token", async () => {
     const { manager, project } = makePrManager({});
     const cachedToken = vi.spyOn(defaultGitHubAccounts, "cachedToken").mockReturnValue(null);
+    const token = vi.spyOn(defaultGitHubAccounts, "token").mockRejectedValue(new Error("no token"));
     const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     try {
       manager.setProjectGitHubAccount(project.id, { host: "git.example.com", login: "octo" });
@@ -2740,6 +2740,7 @@ describe("SessionManager", () => {
       expect(warnings).toEqual([["[git] no cached GitHub token for octo@git.example.com; agent uses gh's active account"]]);
     } finally {
       warn.mockRestore();
+      token.mockRestore();
       cachedToken.mockRestore();
       manager.dispose();
     }

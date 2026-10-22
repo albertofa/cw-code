@@ -205,13 +205,16 @@ function newerSnapshot(current: PrLinkSnapshot | undefined, candidate: unknown):
   return !current || candidate.syncedAt > current.syncedAt ? candidate : current;
 }
 
-export function latestLinkSnapshot(sessions: SessionMeta[], ref: PrRef): PrLinkSnapshot | undefined {
-  let latest: PrLinkSnapshot | undefined;
+export function latestLinkSnapshots(sessions: SessionMeta[]): Map<string, PrLinkSnapshot> {
+  const byKey = new Map<string, PrLinkSnapshot>();
   for (const session of sessions) {
-    const link = findLink(session.prs, ref);
-    if (link) latest = newerSnapshot(latest, link.snapshot);
+    for (const link of session.prs ?? []) {
+      const key = prKey(link.ref);
+      const latest = newerSnapshot(byKey.get(key), link.snapshot);
+      if (latest) byKey.set(key, latest);
+    }
   }
-  return latest;
+  return byKey;
 }
 
 export function collectTrackedPrRefs(sessions: SessionMeta[]): Array<{ ref: PrRef; snapshot?: PrLinkSnapshot }> {

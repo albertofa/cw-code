@@ -60,7 +60,7 @@ import {
   findLink,
   findRunLink,
   isFinishedPrState,
-  latestLinkSnapshot,
+  latestLinkSnapshots,
   linkFromStatus,
   markLinkSeenAt,
   markSeen,
@@ -234,6 +234,7 @@ export class SessionManager {
   private worktreeRecovery = new Map<string, Promise<string>>();
   private branchRenamed = new Set<string>();
   private missingTokenWarned = new Set<string>();
+  private linkSnapshotCache: { revision: number; byKey: Map<string, PrLinkSnapshot> } | null = null;
   private onEvent: (sessionId: string, event: ThreadEvent) => void;
   private onTitle: (sessionId: string, title: string) => void;
   private onResolved: (sessionId: string) => void;
@@ -452,7 +453,10 @@ export class SessionManager {
   }
 
   private linkSnapshot(ref: PrRef, liveUpdatedAt: number | null): PrLinkSnapshot | undefined {
-    const stored = latestLinkSnapshot(this.store.listAllSessions(), ref);
+    if (this.linkSnapshotCache?.revision !== this.store.revision) {
+      this.linkSnapshotCache = { revision: this.store.revision, byKey: latestLinkSnapshots(this.store.listAllSessions()) };
+    }
+    const stored = this.linkSnapshotCache.byKey.get(prKey(ref));
     if (!stored || (liveUpdatedAt !== null && liveUpdatedAt > stored.updatedAt)) return undefined;
     return stored;
   }
@@ -608,7 +612,9 @@ export class SessionManager {
   }
 
   setProjectGitHubAccount(projectId: string, account: { host: string; login: string } | null): Project {
-    return this.store.updateProject(projectId, { githubAccount: account ?? undefined }, account === null);
+    const project = this.store.updateProject(projectId, { githubAccount: account ?? undefined }, account === null);
+    void this.refreshGitHubToken(project);
+    return project;
   }
 
   async listSessions(projectId: string): Promise<SessionMeta[]> {
@@ -1640,6 +1646,13 @@ export class SessionManager {
     } catch (err) {
       console.warn(`[git] could not refresh the GitHub token for ${account.login}@${account.host}: ${(err as Error).message}`);
     }
+  }
+
+  async terminalEnv(sessionId: string, cwd: string): Promise<Record<string, string>> {
+    const session = this.store.getSession(sessionId);
+    const project = session ? this.store.getProject(session.projectId) : undefined;
+    if (project) await this.refreshGitHubToken(project);
+    return this.turnEnv(sessionId, cwd);
   }
 
   turnEnv(sessionId: string, cwd: string): Record<string, string> {

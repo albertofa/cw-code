@@ -176,6 +176,8 @@ export class SessionStore {
   private data: StoreShape = { projects: [], sessions: [] };
   private extras: MetadataDocument = {};
   private lastGood: LastGoodRefresher;
+  /** Increments on every persisted write so callers can cache derived views. */
+  revision = 0;
 
   constructor(dbPath: string) {
     this.filePath = sessionStoreFile(dbPath);
@@ -196,6 +198,7 @@ export class SessionStore {
   }
 
   private persist(): void {
+    this.revision += 1;
     writeFileAtomic(
       this.filePath,
       JSON.stringify({ schemaVersion: SESSION_SCHEMA_VERSION, projects: this.data.projects, sessions: this.data.sessions.map(withoutTransientFields), ...this.extras })

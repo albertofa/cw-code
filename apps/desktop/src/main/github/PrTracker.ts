@@ -3,6 +3,7 @@ import type { AppSettings, PrLinkSnapshot, PrRef, PrSummary } from "@cw-code/con
 import { prKey } from "../../shared/prRef.js";
 import { authenticatedEnvironment, execWithStatus } from "../fs/GitService.js";
 import { RefreshScheduler } from "../sourceControl/RefreshScheduler.js";
+import { defaultGitHubAccounts, isGitHubAuthError } from "./GitHubAccounts.js";
 import { githubCliBinary, resolveGitHubAccount } from "./githubAccount.js";
 import { assertPrRef } from "./PullRequestService.js";
 import { graphqlOutcome, parseTrackedPrs } from "./prParsers.js";
@@ -167,7 +168,13 @@ export class PrTracker {
         batch.forEach((state, index) => {
           if (wasForced[index]) state.forced = true;
         });
-        this.backOff(host, `query failed for ${host}: ${describeError(error)}`);
+        const message = describeError(error);
+        if (isGitHubAuthError(message)) {
+          defaultGitHubAccounts.invalidateToken(resolution.account.host, resolution.account.login);
+          console.warn(`${LOG_PREFIX} GitHub rejected the token for ${resolution.account.login}@${host}; retrying with a fresh token next tick`);
+        } else {
+          this.backOff(host, `query failed for ${host}: ${message}`);
+        }
         break;
       }
     }

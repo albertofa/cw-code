@@ -15,6 +15,7 @@ vi.mock("./githubAccount.js", () => ({
   resolveGitHubAccount: mocks.resolveGitHubAccount
 }));
 
+import { defaultGitHubAccounts } from "./GitHubAccounts.js";
 import { PrTracker } from "./PrTracker.js";
 
 const settings = () => ({}) as AppSettings;
@@ -147,5 +148,22 @@ describe("PrTracker", () => {
     expect(queryOfCall(0)).toContain("pullRequest(number: 2)");
     expect(queryOfCall(0)).not.toContain("pullRequest(number: 3)");
     expect(queryOfCall(0)).not.toContain("bad owner");
+  });
+
+  it("drops a rejected token and retries on the next tick without backing off the host", async () => {
+    const invalidate = vi.spyOn(defaultGitHubAccounts, "invalidateToken").mockImplementation(() => undefined);
+    const onChanged = vi.fn();
+    const tracker = new PrTracker(settings, onChanged);
+    tracker.setTracked([{ ref: ref(1) }]);
+    mocks.execWithStatus.mockResolvedValueOnce({ code: 1, stdout: "", stderr: "HTTP 401: Bad credentials" });
+    mocks.execWithStatus.mockResolvedValueOnce(respond({ pr0: { pullRequest: node(1) } }));
+
+    await tracker.tick();
+    expect(invalidate).toHaveBeenCalledWith("github.com", "octocat");
+    await tracker.tick();
+
+    expect(mocks.execWithStatus).toHaveBeenCalledTimes(2);
+    expect(onChanged).toHaveBeenCalledTimes(1);
+    invalidate.mockRestore();
   });
 });

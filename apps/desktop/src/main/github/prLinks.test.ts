@@ -15,7 +15,7 @@ import {
   authorLocalBranch,
   canOwnAutoLink,
   collectTrackedPrRefs,
-  latestLinkSnapshot,
+  latestLinkSnapshots,
   findIssueLink,
   applyFinalReview,
   findLink,
@@ -308,8 +308,9 @@ describe("link snapshots", () => {
       session({ id: "a", status: "resolved", prs: [link({ snapshot: snapshot({ state: "CLOSED", syncedAt: 40 }) })] }),
       session({ id: "b", prs: [link({ snapshot: snapshot({ syncedAt: 10 }) })] })
     ];
-    expect(latestLinkSnapshot(sessions, ref)?.state).toBe("CLOSED");
-    expect(latestLinkSnapshot(sessions, other)).toBeUndefined();
+    const latest = latestLinkSnapshots(sessions);
+    expect(latest.get(prKey(ref))?.state).toBe("CLOSED");
+    expect(latest.get(prKey(other))).toBeUndefined();
   });
 });
 
