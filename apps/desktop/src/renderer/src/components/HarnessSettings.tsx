@@ -289,7 +289,8 @@ function StatusCard({ driver, check, onOpenUsage }: { driver: DriverName; check:
   const runRecheck = useCallback(async () => {
     await Promise.all([recheckHarnesses(), refreshAccount([driver], true)]);
     const usage = useUsageStore.getState();
-    if (usage.accountError[driver] || useSettingsDraftStore.getState().harnessChecksError) throw new Error("Recheck failed");
+    const failed = usage.accountError[driver] || usage.accountByDriver[driver]?.state.status === "error";
+    if (failed || useSettingsDraftStore.getState().harnessChecksError) throw new Error("Recheck failed");
   }, [recheckHarnesses, refreshAccount, driver]);
   const recheck = useRefreshFeedback(runRecheck);
   const rechecking = recheck.busy || checksLoading || accountLoading;

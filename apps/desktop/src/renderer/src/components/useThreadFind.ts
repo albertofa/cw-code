@@ -92,6 +92,9 @@ export function useThreadFind({
   const inputRef = useRef<HTMLInputElement | null>(null);
   const rangesRef = useRef<Range[]>([]);
   rangesRef.current = ranges;
+  // Bumped only by navigation, so re-indexing a live turn never yanks the thread.
+  const [scrollReq, setScrollReq] = useState(0);
+  const scrolledReq = useRef(-1);
 
   // Re-index whenever the query, the thread content, or the open state changes.
   useEffect(() => {
@@ -120,6 +123,7 @@ export function useThreadFind({
 
   useEffect(() => {
     setActive(0);
+    setScrollReq((n) => n + 1);
   }, [query]);
 
   useEffect(() => () => clearPaint(), []);
@@ -133,15 +137,16 @@ export function useThreadFind({
 
   const activeRange = ranges[active] ?? null;
 
-  // Paint and reveal the active match.
+  // Paint the active match on every re-index; only navigation scrolls to it.
   useEffect(() => {
-    if (!activeRange) {
-      paint(HIGHLIGHT_ACTIVE, []);
-      return;
-    }
-    paint(HIGHLIGHT_ACTIVE, [activeRange]);
+    paint(HIGHLIGHT_ACTIVE, activeRange ? [activeRange] : []);
+  }, [activeRange]);
+
+  useEffect(() => {
+    if (!activeRange || scrolledReq.current === scrollReq) return;
     const scroll = scrollRef.current;
     if (!scroll) return;
+    scrolledReq.current = scrollReq;
     const expanded = revealRange(activeRange);
     const run = () => {
       const rect = activeRange.getBoundingClientRect();
@@ -156,12 +161,13 @@ export function useThreadFind({
     }
     const raf = requestAnimationFrame(() => requestAnimationFrame(run));
     return () => cancelAnimationFrame(raf);
-  }, [activeRange, scrollRef]);
+  }, [activeRange, scrollReq, scrollRef]);
 
   const step = useCallback((delta: number) => {
     const count = rangesRef.current.length;
     if (count === 0) return;
     setActive((current) => (current + delta + count) % count);
+    setScrollReq((n) => n + 1);
   }, []);
 
   const next = useCallback(() => step(1), [step]);
@@ -173,6 +179,7 @@ export function useThreadFind({
     const selected = selection && !selection.isCollapsed ? selection.toString().trim() : "";
     if (selected.length > 0 && selected.length <= 120 && !selected.includes("\n")) setQuery(selected);
     setOpen(true);
+    setScrollReq((n) => n + 1);
     requestAnimationFrame(() => {
       inputRef.current?.focus();
       inputRef.current?.select();

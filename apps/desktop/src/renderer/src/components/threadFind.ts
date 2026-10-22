@@ -83,19 +83,26 @@ export function buildTextIndex(root: Element): TextIndex {
   return { text, chunks };
 }
 
-/** Case-insensitive, non-overlapping matches, in document order. */
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+/**
+ * Case-insensitive, non-overlapping matches, in document order. Offsets index
+ * the original text: lowercasing first would shift them, since case folding can
+ * change length (`İ` folds to two code units).
+ */
 export function findMatches(text: string, query: string): MatchSpan[] {
-  const needle = query.toLowerCase();
-  if (needle.length === 0) return [];
-  const haystack = text.toLowerCase();
+  if (query.length === 0) return [];
+  const pattern = new RegExp(escapeRegExp(query), "gi");
   const spans: MatchSpan[] = [];
-  let from = 0;
-  for (;;) {
-    const at = haystack.indexOf(needle, from);
-    if (at === -1) return spans;
-    spans.push({ start: at, end: at + needle.length });
-    from = at + needle.length;
+  for (let match = pattern.exec(text); match !== null; match = pattern.exec(text)) {
+    const length = match[0].length;
+    if (length === 0) break;
+    spans.push({ start: match.index, end: match.index + length });
+    pattern.lastIndex = match.index + length;
   }
+  return spans;
 }
 
 /** Index of the chunk containing `offset`, or -1 when the index is empty. */

@@ -26,6 +26,17 @@ describe("findMatches", () => {
   it("returns nothing for an empty query", () => {
     expect(findMatches("anything", "")).toEqual([]);
   });
+
+  it("keeps offsets in the original text when case folding changes length", () => {
+    // "İ".toLowerCase() is two code units, which would shift every later offset.
+    const text = "İ x";
+    const [span] = findMatches(text, "x");
+    expect(text.slice(span.start, span.end)).toBe("x");
+  });
+
+  it("treats the query as literal text, not a pattern", () => {
+    expect(findMatches("a.c and abc", "a.c")).toEqual([{ start: 0, end: 3 }]);
+  });
 });
 
 describe("buildTextIndex", () => {
@@ -61,6 +72,13 @@ describe("rangeForSpan", () => {
     const range = rangeForSpan(index, span);
     expect(range).not.toBeNull();
     expect(range?.toString()).toBe("refactor");
+  });
+
+  it("maps a match that follows a length-changing case fold", () => {
+    const root = host("<p>İstanbul rollback</p>");
+    const index = buildTextIndex(root);
+    const [span] = findMatches(index.text, "rollback");
+    expect(rangeForSpan(index, span)?.toString()).toBe("rollback");
   });
 
   it("maps a match inside a single node", () => {

@@ -8215,9 +8215,6 @@ button.gitbar-checkout:hover {
 @media (prefers-reduced-motion: reduce) {
   .binary-picker-spin,
   .skills-spin,
-  .usage-refresh-btn svg.spin,
-  .sp-btn-sm svg.spin,
-  .usage-pulse.is-busy,
   .msg-user.is-pinpoint {
     animation: none;
   }
@@ -10902,6 +10899,14 @@ button.gitbar-checkout:hover {
   }
   50% {
     opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sp-btn-sm svg.spin,
+  .usage-refresh-btn svg.spin,
+  .usage-pulse.is-busy {
+    animation: none;
   }
 }
 
