@@ -41,10 +41,13 @@ describe("parseExtraArgs", () => {
 });
 
 describe("resolveClaudeModels", () => {
-  it("resolves defaults to all curated models", () => {
-    expect(resolveClaudeModels(DEFAULT_SETTINGS, CLAUDE_CURATED_MODELS)).toEqual(
-      CLAUDE_CURATED_MODELS.map((m) => ({ id: m.id, label: m.label, source: "curated" }))
-    );
+  it("resolves defaults to the latest model of each family", () => {
+    expect(resolveClaudeModels(DEFAULT_SETTINGS, CLAUDE_CURATED_MODELS)).toEqual([
+      { id: "claude-opus-5-5", label: "Opus 5.5", source: "curated" },
+      { id: "claude-sonnet-5-5", label: "Sonnet 5.5", source: "curated" },
+      { id: "fable", label: "Fable 5.1", source: "curated" },
+      { id: "claude-haiku-5-5", label: "Haiku 5.5", source: "curated" }
+    ]);
   });
 
   it("keeps curated order and drops a disabled model", () => {
