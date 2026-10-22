@@ -3158,7 +3158,7 @@ describe("SessionManager", () => {
     const a = await manager.createSession(project.id, "claude");
     await manager.startTurn(a.id, "Fix the login redirect loop");
     expect(String(fake.lastRequest?.sessionId).startsWith("title:")).toBe(true);
-    expect(fake.lastRequest).toMatchObject({ model: "claude-sonnet-5", effort: "low" });
+    expect(fake.lastRequest).toMatchObject({ model: "claude-sonnet-5-5", effort: "low" });
     expect(String(fake.lastRequest?.prompt)).toContain("Fix the login redirect loop");
     const titleCwd = String(fake.lastRequest?.cwd);
     expect(titleCwd.length).toBeGreaterThan(0);

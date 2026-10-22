@@ -21,7 +21,6 @@ import type {
   SettingsPatch,
   ThemeBase
 } from "@cw-code/contracts";
-import { CLAUDE_CURATED_MODELS } from "../providers/claude/ClaudeCliDriver.js";
 import { writeFileAtomic } from "../storage/atomicFile.js";
 import { backupBeforeRepair } from "../storage/backups.js";
 import { isMetadataDocument, type MetadataDocument, type MetadataMigration, type MetadataSchema } from "../storage/metadataDocument.js";
@@ -248,7 +247,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   claudeDefaultModel: "",
   codexDefaultModel: "",
   opencodeDefaultModel: "",
-  claudeEnabledModels: CLAUDE_CURATED_MODELS.map((m) => m.id),
+  claudeEnabledModels: ["claude-opus-5-5", "claude-sonnet-5-5", "fable", "claude-haiku-5-5"],
   claudeCustomModel: { id: "", name: "" },
   claudeReasoningExpanded: false,
   opencodeReasoningExpanded: false,
@@ -263,7 +262,7 @@ export const DEFAULT_SETTINGS: AppSettings = {
   holdingHours: 6,
   autoTitleEnabled: true,
   autoTitleDriver: "claude",
-  autoTitleModel: "claude-sonnet-5",
+  autoTitleModel: "claude-sonnet-5-5",
   autoTitleEffort: "low",
   prRefreshIntervalSeconds: 120,
   prCloneRoot: "~/.cw-code/repos",
