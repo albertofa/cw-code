@@ -1,7 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "bun:test";
 import { lastGoodBackupPath, migrationBackupPath } from "./backups.js";
 import { isMetadataDocument, MetadataError, type MetadataMigration } from "./metadataDocument.js";
 import { LAST_GOOD_REFRESH_INTERVAL_MS, LastGoodRefresher, loadVersionedJson, type VersionedJsonOptions } from "./versionedJson.js";
@@ -220,7 +220,7 @@ describe("loadVersionedJson", () => {
     expect(existsSync(lastGoodBackupPath(file))).toBe(false);
   });
 
-  it.runIf(process.platform === "win32")("keeps the original file when the migrated write cannot replace it", () => {
+  it.if(process.platform === "win32")("keeps the original file when the migrated write cannot replace it", () => {
     const file = tempFile();
     writeFileSync(file, '{"items":[]}', "utf8");
     chmodSync(file, 0o444);

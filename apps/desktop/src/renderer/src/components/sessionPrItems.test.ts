@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import type { GitPullRequest, PrDetail, PrRef, PrSummary, SessionPrLink } from "@cw-code/contracts";
 import { prKey } from "./prInbox.js";
 import { canLinkItem, sessionPrItemLabel, sessionPrItems, sessionPrItemsTitle, withBranchSummary } from "./sessionPrItems.js";

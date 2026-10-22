@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "bun:test";
+import { stubGlobal, unstubAllGlobals } from "../../../../tests/testing.js";
 import type { AppSettings, ThreadEvent } from "@cw-code/contracts";
 import { OpencodeDriver } from "./OpencodeDriver.js";
 import type { OpencodeServerPool } from "./opencodeServerPool.js";
@@ -6,7 +7,7 @@ import type { OpencodeServerPool } from "./opencodeServerPool.js";
 describe("OpencodeDriver stopSession", () => {
   it("invalidates the server for a known session cwd and forgets it", async () => {
     const events: ThreadEvent[] = [];
-    vi.stubGlobal(
+    stubGlobal(
       "fetch",
       vi.fn().mockImplementation((url: string, init?: RequestInit) => {
         if (url.endsWith("/event")) return Promise.resolve({ ok: false, status: 500, body: null });
@@ -50,7 +51,7 @@ describe("OpencodeDriver stopSession", () => {
         driver.dispose();
       }
     } finally {
-      vi.unstubAllGlobals();
+      unstubAllGlobals();
     }
   });
 

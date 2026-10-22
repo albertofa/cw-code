@@ -1,5 +1,5 @@
-// @vitest-environment jsdom
-import { afterEach, describe, expect, it } from "vitest";
+import "../../../tests/dom.js";
+import { afterEach, describe, expect, it } from "bun:test";
 import { deriveThemeTokens } from "../../shared/themes.js";
 import type { CustomTheme } from "./cw.js";
 import { applyTheme, cacheTheme, THEME_STORAGE_KEY, THEME_VARS_ATTRIBUTE, type StoredTheme } from "./theme.js";

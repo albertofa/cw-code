@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import { gunzipSync } from "node:zlib";
 import { type BlockMap, CancellationToken, type DownloadOptions, HttpExecutor, configureRequestOptions, configureRequestUrl } from "builder-util-runtime";
 import { GenericDifferentialDownloader } from "electron-updater/out/differentialDownloader/GenericDifferentialDownloader.js";
-import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { loadElectronBuilderBlockMap } from "./blockMapBuilder.ts";
 import { parseFaults } from "./feedFaults.ts";
 import { type FeedServer, startFeedServer, summarizeTransfers } from "./feedServer.ts";
@@ -45,7 +45,7 @@ async function readBlockMap(path: string): Promise<BlockMap> {
   return JSON.parse(gunzipSync(await readFile(path)).toString("utf8")) as BlockMap;
 }
 
-describe("feed server against electron-updater 6.8.9 download code", { retry: 2 }, () => {
+describe("feed server against electron-updater 6.8.9 download code", () => {
   let dir: string;
   let oldBytes: Buffer;
   let newBytes: Buffer;
@@ -95,7 +95,7 @@ describe("feed server against electron-updater 6.8.9 download code", { retry: 2 
   it.each([
     ["multipart range requests", true],
     ["one range per request", false]
-  ])("rebuilds the new installer differentially with %s", async (_label, multipleRanges) => {
+  ])("rebuilds the new installer differentially with %s", { retry: 2 }, async (_label, multipleRanges) => {
     await withFeed([], async (feed) => {
       const output = join(dir, `differential-${String(multipleRanges)}.exe`);
       await differential(feed, output, multipleRanges);
@@ -109,19 +109,19 @@ describe("feed server against electron-updater 6.8.9 download code", { retry: 2 
     });
   });
 
-  it("fails the differential download when ranges arrive corrupted", async () => {
+  it("fails the differential download when ranges arrive corrupted", { retry: 2 }, async () => {
     await withFeed([{ type: "corrupt", path: NEW_NAME, offset: 1_050_000, length: 4 }], async (feed) => {
       await expect(differential(feed, join(dir, "differential-corrupt.exe"), true)).rejects.toThrow(/sha512 checksum mismatch/);
     });
   });
 
-  it("fails the differential download when a range response is cut short", async () => {
+  it("fails the differential download when a range response is cut short", { retry: 2 }, async () => {
     await withFeed([{ type: "truncate", path: NEW_NAME, bytes: 50_000 }], async (feed) => {
       await expect(differential(feed, join(dir, "differential-truncated.exe"), false)).rejects.toThrow();
     });
   });
 
-  it("downloads and verifies the full installer", async () => {
+  it("downloads and verifies the full installer", { retry: 2 }, async () => {
     await withFeed([], async (feed) => {
       const output = join(dir, "full.exe");
       await executor.download(new URL(NEW_NAME, feed.url), output, { sha512: sha512(newBytes), cancellationToken: new CancellationToken() });
@@ -136,7 +136,7 @@ describe("feed server against electron-updater 6.8.9 download code", { retry: 2 
     ["truncated", [{ type: "truncate", path: NEW_NAME, bytes: 100_000 }]],
     ["missing", [{ type: "missing", path: NEW_NAME }]],
     ["unavailable", [{ type: "unavailable", path: NEW_NAME }]]
-  ])("rejects a %s full download", async (_label, faults) => {
+  ])("rejects a %s full download", { retry: 2 }, async (_label, faults) => {
     await withFeed(faults, async (feed) => {
       await expect(
         executor.download(new URL(NEW_NAME, feed.url), join(dir, "full-fault.exe"), { sha512: sha512(newBytes), cancellationToken: new CancellationToken() })

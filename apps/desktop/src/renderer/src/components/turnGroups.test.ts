@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { buildThreadNodes, countActivityTools, groupTurns, splitTurn } from "./turnGroups.js";
 import type { ChatMessage } from "../stores/appStore.js";
 

@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
+import { advanceTimersByTimeAsync } from "../../../tests/testing.js";
 import { RefreshScheduler, type RefreshRequest } from "./RefreshScheduler.js";
 
 interface Call {
@@ -26,7 +27,7 @@ describe("RefreshScheduler", () => {
     );
   };
 
-  const settle = () => vi.advanceTimersByTimeAsync(0);
+  const settle = () => advanceTimersByTimeAsync(0);
 
   beforeEach(() => {
     vi.useFakeTimers();
@@ -160,21 +161,21 @@ describe("RefreshScheduler", () => {
   describe("debounce", () => {
     it("delays the run until the debounce window elapses", async () => {
       void scheduler.request("a", LOCAL, 250);
-      await vi.advanceTimersByTimeAsync(249);
+      await advanceTimersByTimeAsync(249);
       expect(calls).toHaveLength(0);
-      await vi.advanceTimersByTimeAsync(1);
+      await advanceTimersByTimeAsync(1);
       expect(calls).toHaveLength(1);
     });
 
     it("coalesces a burst into one run and extends the window on each request", async () => {
       void scheduler.request("a", LOCAL, 250);
-      await vi.advanceTimersByTimeAsync(200);
+      await advanceTimersByTimeAsync(200);
       void scheduler.request("a", LOCAL, 250);
-      await vi.advanceTimersByTimeAsync(200);
+      await advanceTimersByTimeAsync(200);
       void scheduler.request("a", FORCED, 250);
-      await vi.advanceTimersByTimeAsync(249);
+      await advanceTimersByTimeAsync(249);
       expect(calls).toHaveLength(0);
-      await vi.advanceTimersByTimeAsync(1);
+      await advanceTimersByTimeAsync(1);
       expect(calls).toHaveLength(1);
       expect(calls[0].request.forcePullRequest).toBe(true);
     });
@@ -185,16 +186,16 @@ describe("RefreshScheduler", () => {
       expect(calls).toHaveLength(1);
       expect(calls[0].request.forcePullRequest).toBe(true);
       calls[0].resolve();
-      await vi.advanceTimersByTimeAsync(1000);
+      await advanceTimersByTimeAsync(1000);
       expect(calls).toHaveLength(1);
     });
 
     it("keeps debouncing keys independently", async () => {
       void scheduler.request("a", LOCAL, 100);
       void scheduler.request("b", LOCAL, 300);
-      await vi.advanceTimersByTimeAsync(100);
+      await advanceTimersByTimeAsync(100);
       expect(calls.map((call) => call.key)).toEqual(["a"]);
-      await vi.advanceTimersByTimeAsync(200);
+      await advanceTimersByTimeAsync(200);
       expect(calls.map((call) => call.key)).toEqual(["a", "b"]);
     });
 
@@ -202,16 +203,16 @@ describe("RefreshScheduler", () => {
       void scheduler.request("a", LOCAL);
       void scheduler.request("a", LOCAL, 250);
       calls[0].resolve();
-      await vi.advanceTimersByTimeAsync(249);
+      await advanceTimersByTimeAsync(249);
       expect(calls).toHaveLength(1);
-      await vi.advanceTimersByTimeAsync(1);
+      await advanceTimersByTimeAsync(1);
       expect(calls).toHaveLength(2);
     });
 
     it("runs the follow-up as soon as the run ends when the debounce already elapsed", async () => {
       void scheduler.request("a", LOCAL);
       void scheduler.request("a", LOCAL, 100);
-      await vi.advanceTimersByTimeAsync(500);
+      await advanceTimersByTimeAsync(500);
       expect(calls).toHaveLength(1);
       calls[0].resolve();
       await settle();
@@ -250,7 +251,7 @@ describe("RefreshScheduler", () => {
       void scheduler.request("a", LOCAL, 100).then(() => {
         done = true;
       });
-      await vi.advanceTimersByTimeAsync(100);
+      await advanceTimersByTimeAsync(100);
       expect(done).toBe(false);
       calls[0].resolve();
       await settle();
@@ -324,7 +325,7 @@ describe("RefreshScheduler", () => {
     it("cancels debounce timers", async () => {
       void scheduler.request("a", LOCAL, 250);
       scheduler.dispose();
-      await vi.advanceTimersByTimeAsync(1000);
+      await advanceTimersByTimeAsync(1000);
       expect(calls).toHaveLength(0);
       expect(vi.getTimerCount()).toBe(0);
     });
@@ -357,7 +358,7 @@ describe("RefreshScheduler", () => {
       scheduler.dispose();
       await expect(scheduler.request("a", LOCAL)).resolves.toBeUndefined();
       await expect(scheduler.request("a", LOCAL, 100)).resolves.toBeUndefined();
-      await vi.advanceTimersByTimeAsync(1000);
+      await advanceTimersByTimeAsync(1000);
       expect(calls).toHaveLength(0);
     });
   });

@@ -1,5 +1,5 @@
-// @vitest-environment jsdom
-import { beforeEach, describe, expect, it } from "vitest";
+import "../../../../tests/dom.js";
+import { beforeEach, describe, expect, it } from "bun:test";
 import { getLastModel, getRecentModels, pushRecentModel, setLastModel } from "./lastModel.js";
 
 describe("lastModel", () => {

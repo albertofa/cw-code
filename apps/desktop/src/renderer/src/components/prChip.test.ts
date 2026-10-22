@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import type { GitPullRequest, PrSummary } from "@cw-code/contracts";
 import { prChip } from "./prChip.js";
 

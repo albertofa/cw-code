@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import type { DirEntry } from "@cw-code/contracts";
 import { ancestorsOf, flattenTree, parentDir, rebasePath } from "./treeModel.js";
 

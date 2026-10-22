@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { OpencodeV2EventDecoder } from "./opencodeV2Events.js";
 
 const SID = "ses_root";

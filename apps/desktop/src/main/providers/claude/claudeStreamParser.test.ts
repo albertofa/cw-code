@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import {
   attributeClaudeSubagentEvent,
   buildClaudeAllowRule,
@@ -282,7 +282,7 @@ describe("parseStreamLine", () => {
       num_turns: 2,
       is_error: false
     });
-    let captured: Parameters<Parameters<typeof parseStreamLine>[3]>[0] | null = null;
+    let captured = null as Parameters<Parameters<typeof parseStreamLine>[3]>[0] | null;
     const events = parseStreamLine(line, "t1", "s1", (info) => {
       captured = info;
     });
@@ -386,7 +386,7 @@ describe("parseStreamLine", () => {
       total_cost_usd: 0.03,
       usage: { input_tokens: 120, output_tokens: 30 }
     });
-    let captured: Parameters<Parameters<typeof parseStreamLine>[3]>[0] | null = null;
+    let captured = null as Parameters<Parameters<typeof parseStreamLine>[3]>[0] | null;
     let ackCalls = 0;
     const events = parseStreamLine(
       line,

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import type { AppSettings } from "@cw-code/contracts";
 import { buildResumeArgs, PtyPool, type PtyInstance, type PtyModule } from "./PtyPool.js";
 import { SHUTDOWN_RESERVED_MESSAGE } from "../shutdown/shutdownReservation.js";

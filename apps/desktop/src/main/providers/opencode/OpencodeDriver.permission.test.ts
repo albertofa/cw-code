@@ -1,10 +1,11 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "bun:test";
+import { stubGlobal, unstubAllGlobals } from "../../../../tests/testing.js";
 import type { AppSettings, PermissionMode, ThreadEvent } from "@cw-code/contracts";
 import { OpencodeDriver } from "./OpencodeDriver.js";
 import type { OpencodeServerPool } from "./opencodeServerPool.js";
 
 afterEach(() => {
-  vi.unstubAllGlobals();
+  unstubAllGlobals();
 });
 
 function json(data: unknown, status = 200): Response {
@@ -73,7 +74,7 @@ function startHarness(
 ): Harness {
   const events: ThreadEvent[] = [];
   const permissionReplies: string[] = [];
-  vi.stubGlobal(
+  stubGlobal(
     "fetch",
     vi.fn().mockImplementation((url: string, init?: RequestInit) => {
       if (init?.method === "POST" && url.includes("/permission")) permissionReplies.push(url);

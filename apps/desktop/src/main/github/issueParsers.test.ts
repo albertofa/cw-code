@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { issueRefFromUrl, parseCounts, parseIssueDetail, parseIssueSearch } from "./issueParsers.js";
 
 function issueNode(overrides: Record<string, unknown> = {}) {

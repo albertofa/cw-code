@@ -284,7 +284,7 @@ Record:
    monitor reports `stable vX.Y.Z (<sha>) ok; alpha vX.Y.Z (<sha>) ok`. Alpha
    clients take the stable too, because it is newer than their alpha.
 6. The base `X.Y.Z` is now used up. Before the next alpha, open a normal PR
-   with `node tools/release/src/cli/release.ts set-base --version X.Y.(Z+1)`.
+   with `bun tools/release/src/cli/release.ts set-base --version X.Y.(Z+1)`.
    Until it merges, alpha plans fail with "base already published as stable".
 
 Record: candidate tag and SHA, stable tag, run id, `/releases/latest` result,
@@ -421,7 +421,7 @@ in the table below.
    a `publish` run and reject the `release-publish` deployment. Expected: no
    draft, no tag, no release.
 3. **Roll forward on a client.** In a disposable VM with the update-test
-   builds from `node scripts/verify-installed-upgrade.mjs --dry-run`, install
+   builds from `bun scripts/verify-installed-upgrade.mjs --dry-run`, install
    N (`X.Y.Z-alpha.9001`), serve N+1 with `feed-serve` from
    `apps/desktop/dist-updatetest/X.Y.Z-alpha.9002`, let it download (ready),
    stop the server and serve N+2 (`...9003`) instead. Expected: Check for
@@ -451,7 +451,7 @@ Incident log:
 ## Feed monitor
 
 `.github/workflows/check-update-feed.yml` runs
-`node tools/release/src/cli/release.ts monitor-feed` every 6 hours (at minute
+`bun tools/release/src/cli/release.ts monitor-feed` every 6 hours (at minute
 23) and on manual dispatch. It has `contents: read` only, no secrets, pinned
 actions and a 20-minute timeout. It opens no issues and uploads nothing. A
 healthy run writes one summary line. It collects nothing about users: it only
@@ -492,7 +492,7 @@ What it checks, the way installed clients read the feed:
 A failed run retries twice (30 s, then 60 s) before it reports. Locally:
 
 ```sh
-node tools/release/src/cli/release.ts monitor-feed [--attempts 3] [--delay-seconds 30] [--verify-installer-digest] [--report report.json]
+bun tools/release/src/cli/release.ts monitor-feed [--attempts 3] [--delay-seconds 30] [--verify-installer-digest] [--report report.json]
 ```
 
 Without `GH_TOKEN` it is fully anonymous. Result on 2026-09-25 against the

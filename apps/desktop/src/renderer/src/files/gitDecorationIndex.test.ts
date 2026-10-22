@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import type { GitFileDecoration } from "@cw-code/contracts";
 import { buildDecorationIndex } from "./gitDecorationIndex.js";
 

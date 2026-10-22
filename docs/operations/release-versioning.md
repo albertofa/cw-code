@@ -169,8 +169,8 @@ the same checks before creating the draft and again right before publishing
 
 ## CLI
 
-All commands live in `tools/release/src/cli/release.ts`, run directly with Node's native
-TypeScript support (`node tools/release/src/cli/release.ts <command> ...`, no build step).
+All commands live in `tools/release/src/cli/release.ts`, run directly with Bun
+(`bun tools/release/src/cli/release.ts <command> ...`, no build step).
 They print machine-readable JSON to stdout and, when `$GITHUB_OUTPUT` is set, also append
 `channel`, `version`, `tag`, `sha`, `skip`, `reason` (as applicable) as workflow outputs using
 the heredoc delimiter format, so values are never corrupted or split by embedded newlines.
@@ -201,7 +201,7 @@ the heredoc delimiter format, so values are never corrupted or split by embedded
 - `monitor-feed` — the scheduled read-only feed check; documented in
   [rollout.md](rollout.md#feed-monitor).
 
-`pnpm release:plan` is a root convenience alias for `plan`. `gh api` calls use whatever auth `gh` has
+`bun run release:plan` is a root convenience alias for `plan`. `gh api` calls use whatever auth `gh` has
 (a read-only `GH_TOKEN` in CI, or `gh auth login` locally); any `gh api` failure is reported with
 its original message and a hint to check network access and auth, and releases are fetched with `per_page=100` plus a `--jq`
 projection limited to the fields the tool actually reads.

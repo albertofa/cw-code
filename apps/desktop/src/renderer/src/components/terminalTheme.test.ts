@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { THEME_PALETTES } from "../../../shared/themes.js";
 import type { ThemeBase } from "../cw.js";
 import { terminalTheme } from "./terminalTheme.js";

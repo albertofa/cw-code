@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { planMarker } from "./planMarker.ts";
 import type { RemoteRelease } from "./releaseClient.ts";
 import { selectLinuxUpgradeBase, selectUpgradeBase } from "./upgradeBase.ts";

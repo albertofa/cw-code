@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { parseUpdateInfo } from "./updateInfoYaml.ts";
 import {
   type AutotestEvent,
@@ -117,7 +117,7 @@ describe("scenario matrix", () => {
     for (const entry of UPGRADE_SCENARIOS) {
       if (entry.expect.outcome === "relaunched") {
         expect(entry.mode).toBe("install");
-        expect(entry.expect.finalVersion).toBe(entry.feed.release);
+        expect(entry.expect.finalVersion).toBe(entry.feed.release!);
       } else {
         expect(entry.expect.finalVersion).toBe(entry.install);
       }

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { parseV2PendingForms, parseV2QuestionForm, v2FormAnswer } from "./opencodeV2Forms.js";
 
 const QUESTION_FORM = {
@@ -64,7 +64,7 @@ describe("v2 forms", () => {
     const login = { id: "frm_login", sessionID: "ses_child", title: "Login", fields: [{ key: "n", type: "number" }] };
     const global = { id: "frm_global", sessionID: "global", title: "MCP", fields: [{ key: "a", type: "string" }] };
     expect(parseV2PendingForms({ data: [QUESTION_FORM, login, global, { id: "frm_x" }] })).toEqual([
-      { kind: "question.asked", question: parseV2QuestionForm(QUESTION_FORM) },
+      { kind: "question.asked", question: parseV2QuestionForm(QUESTION_FORM)! },
       { kind: "form.unsupported", sessionID: "ses_child", formId: "frm_login", title: "Login" }
     ]);
   });

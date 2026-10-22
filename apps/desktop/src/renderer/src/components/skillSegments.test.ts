@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { findSkillMentions, findSkillReferences } from "../../../shared/skillMentions.js";
 import { skillSegments } from "./skillSegments.js";
 

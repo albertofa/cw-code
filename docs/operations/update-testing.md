@@ -54,9 +54,9 @@ release, reads a token or touches a real account.
 from one root directory. CLI:
 
 ```sh
-node tools/release/src/cli/release.ts feed-serve --root <dir> [--port 47613] [--faults '<json>' | --faults-file <file>] [--log requests.jsonl]
-node tools/release/src/cli/release.ts validate-feed --dir <dir> [--version X] [--channels alpha.yml,latest.yml] [--require-blockmap]
-node tools/release/src/cli/release.ts validate-feed --platform linux --dir <dir> [--version X]
+bun tools/release/src/cli/release.ts feed-serve --root <dir> [--port 47613] [--faults '<json>' | --faults-file <file>] [--log requests.jsonl]
+bun tools/release/src/cli/release.ts validate-feed --dir <dir> [--version X] [--channels alpha.yml,latest.yml] [--require-blockmap]
+bun tools/release/src/cli/release.ts validate-feed --platform linux --dir <dir> [--version X]
 ```
 
 - Paths: only `[A-Za-z0-9._-]` segments. `..`, `.`, empty segments, absolute
@@ -136,13 +136,13 @@ other shape.
 `src/main/buildFlags.d.ts`). `main/index.ts` imports
 `updates/updateAutotest.js` inside `if (__CW_UPDATE_TEST_BUILD__)`, so a
 production build drops the module and every `CW_UPDATE_AUTOTEST*` string.
-`node scripts/verify-installed-upgrade.mjs --assert-production-bundle [<out/main>] [--asar <app.asar>] [--desktop-dir <dir>]`
+`bun scripts/verify-installed-upgrade.mjs --assert-production-bundle [<out/main>] [--asar <app.asar>] [--desktop-dir <dir>]`
 fails when `CW_UPDATE_TEST_BUILD` is set, when `out/main/index.js` is missing,
 when `out/main` has an `updateAutotest-*` chunk or a script containing
 `cw-update-autotest` / `CW_UPDATE_AUTOTEST`, and, with `--asar`, when the
 archive's `package.json` `main` is not `out/main/index.js`, when it has any
 `out-updatetest/` entry or `updateAutotest-*` chunk, or when any bundled script
-under `out/` contains a marker. It runs on the shipping path: after `pnpm build`
+under `out/` contains a marker. It runs on the shipping path: after `bun run build`
 in the `verify` job of `ci.yml`, on `dist/win-unpacked` in its `windows` job,
 and in `sign-windows.yml` `package-app` (from the tooling checkout, after a step
 that refuses `CW_UPDATE_TEST_BUILD`) before
@@ -193,9 +193,9 @@ line).
 Safe anywhere (no install):
 
 ```sh
-pnpm --filter @cw-code/desktop build
-node scripts/verify-installed-upgrade.mjs --assert-production-bundle
-node scripts/verify-installed-upgrade.mjs --dry-run [--scenarios n-to-n1,faults] [--work-dir <dir>] [--evidence <file>]
+bun --filter @cw-code/desktop build
+bun scripts/verify-installed-upgrade.mjs --assert-production-bundle
+bun scripts/verify-installed-upgrade.mjs --dry-run [--scenarios n-to-n1,faults] [--work-dir <dir>] [--evidence <file>]
 ```
 
 The dry run builds the production bundle into `out/` and the needed update-test
@@ -213,7 +213,7 @@ scenario, so a killed run still leaves what it did (`complete: false`). `--skip-
 Only in a disposable Windows VM or runner:
 
 ```sh
-node scripts/verify-installed-upgrade.mjs --skip-build --disposable-environment --evidence <dir>/installed.json
+bun scripts/verify-installed-upgrade.mjs --skip-build --disposable-environment --evidence <dir>/installed.json
 ```
 
 Per scenario it cleans any leftover update-test install, seeds a fresh
@@ -234,8 +234,8 @@ process left behind is stopped by PID only after its image path is checked
 Running the feed by hand against a build:
 
 ```sh
-node tools/release/src/cli/release.ts validate-feed --dir apps/desktop/dist-updatetest/0.0.1-alpha.9002 --require-blockmap
-node tools/release/src/cli/release.ts feed-serve --root apps/desktop/dist-updatetest/0.0.1-alpha.9002 --port 47613
+bun tools/release/src/cli/release.ts validate-feed --dir apps/desktop/dist-updatetest/0.0.1-alpha.9002 --require-blockmap
+bun tools/release/src/cli/release.ts feed-serve --root apps/desktop/dist-updatetest/0.0.1-alpha.9002 --port 47613
 ```
 
 ## CI
@@ -366,7 +366,7 @@ channel UI checks, done by hand against the same feed.
 ## Production bytes
 
 ```sh
-node scripts/verify-installed-upgrade.mjs --production-bytes --installer <cw-code-Setup-N-x64.exe> --candidate-dir <signed N+1 release set> --disposable-environment [--feed-port 47613] [--devtools-port 9339] --evidence <file>
+bun scripts/verify-installed-upgrade.mjs --production-bytes --installer <cw-code-Setup-N-x64.exe> --candidate-dir <signed N+1 release set> --disposable-environment [--feed-port 47613] [--devtools-port 9339] --evidence <file>
 ```
 
 Production builds contain no autotest path, so this mode drives the real
@@ -400,7 +400,7 @@ duration.
 ### Linux production bytes
 
 ```sh
-node scripts/verify-linux-upgrade.mjs --production-bytes --appimage <cw-code-N-x86_64.AppImage> --deb <cw-code-N-amd64.deb> --candidate-dir <N+1 release set> --work-dir <dir> --evidence <file> --disposable-environment [--desktop-dir <apps/desktop>] [--feed-port 47613] [--devtools-port 9339] [--scenarios appimage,deb]
+bun scripts/verify-linux-upgrade.mjs --production-bytes --appimage <cw-code-N-x86_64.AppImage> --deb <cw-code-N-amd64.deb> --candidate-dir <N+1 release set> --work-dir <dir> --evidence <file> --disposable-environment [--desktop-dir <apps/desktop>] [--feed-port 47613] [--devtools-port 9339] [--scenarios appimage,deb]
 ```
 
 `verify-linux-candidate` in `release.yml` runs it on `ubuntu-22.04` against the

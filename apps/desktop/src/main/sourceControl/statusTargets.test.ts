@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { statusGroupsForRoot, type StatusCandidate } from "./statusTargets.js";
 
 function candidate(overrides: Partial<StatusCandidate> & { id: string }): StatusCandidate {

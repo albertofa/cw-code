@@ -1,22 +1,25 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, mock, vi } from "bun:test";
 import type { AppSettings, PrRef, PrSummary } from "@cw-code/contracts";
 
-const mocks = vi.hoisted(() => ({
+const mocks = {
   execWithStatus: vi.fn(),
   resolveGitHubAccount: vi.fn()
-}));
+};
 
-vi.mock("../fs/GitService.js", () => ({
+const actualGitService = { ...(await import("../fs/GitService.js")) };
+
+mock.module("../fs/GitService.js", () => ({
+  ...actualGitService,
   authenticatedEnvironment: vi.fn(() => ({})),
   execWithStatus: mocks.execWithStatus
 }));
-vi.mock("./githubAccount.js", () => ({
+mock.module("./githubAccount.js", () => ({
   githubCliBinary: () => "gh",
   resolveGitHubAccount: mocks.resolveGitHubAccount
 }));
 
-import { defaultGitHubAccounts } from "./GitHubAccounts.js";
-import { PrTracker } from "./PrTracker.js";
+const { defaultGitHubAccounts } = await import("./GitHubAccounts.js");
+const { PrTracker } = await import("./PrTracker.js");
 
 const settings = () => ({}) as AppSettings;
 const ref = (number: number): PrRef => ({ host: "github.com", owner: "acme", repo: "widgets", number });

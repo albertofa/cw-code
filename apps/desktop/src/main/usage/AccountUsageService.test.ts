@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "bun:test";
 import type { AccountUsageState, CliDriver, DriverKind } from "@cw-code/contracts";
 import { AccountUsageService } from "./AccountUsageService.js";
 

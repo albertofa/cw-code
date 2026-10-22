@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import type { TaskSnapshot, ThreadEvent } from "@cw-code/contracts";
 import { ToolTaskTracker, isSubagentToolName } from "./toolTasks.js";
 
@@ -65,7 +65,7 @@ describe("ToolTaskTracker call", () => {
 
     const out = tracker.observe(call("c1"), SESSION);
 
-    expect(out).toEqual([{ ...call("c1"), task: running("c1", 100) }]);
+    expect(out).toEqual<unknown[]>([{ ...call("c1"), task: running("c1", 100) }]);
   });
 
   it("keeps the same snapshot when the call is re-emitted", () => {
@@ -74,7 +74,7 @@ describe("ToolTaskTracker call", () => {
 
     const out = tracker.observe(call("c1"), SESSION);
 
-    expect(out).toEqual([{ ...call("c1"), task: running("c1", 100) }]);
+    expect(out).toEqual<unknown[]>([{ ...call("c1"), task: running("c1", 100) }]);
   });
 
   it("leaves non-subagent tool calls untouched", () => {

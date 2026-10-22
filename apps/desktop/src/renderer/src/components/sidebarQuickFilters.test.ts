@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { matchesQuickFilter, matchesSessionQuery, quickFilterCounts, toggleQuickFilter, type QuickFilterFacts } from "./sidebarQuickFilters.js";
 
 const facts = (patch: Partial<QuickFilterFacts> = {}): QuickFilterFacts => ({ status: "idle", linkCount: 0, ...patch });

@@ -344,8 +344,8 @@ marker plus all four Linux assets (AppImage, .deb, `latest-linux.yml`,
 never accepts an alpha. A stable candidate takes the highest N of either channel.
 
 ```sh
-node tools/release/src/cli/release.ts select-upgrade-base --plan plan.json
-node tools/release/src/cli/release.ts select-upgrade-base --plan plan.json --platform linux
+bun tools/release/src/cli/release.ts select-upgrade-base --plan plan.json
+bun tools/release/src/cli/release.ts select-upgrade-base --plan plan.json --platform linux
 ```
 
 Windows, in `verify-candidate`:
@@ -396,7 +396,7 @@ Publish a fresh alpha from current `main` and promote that one.
 | `sign-windows.yml` final set (with `win-unpacked/`) | 14 days |
 | CI and upgrade-test artifacts (including `linux-package-ubuntu-22.04` and `linux-package-ubuntu-24.04`) | 7 days |
 
-Summaries record the source SHA, the gate tooling commit, node, pnpm,
+Summaries record the source SHA, the gate tooling commit, bun,
 electron-builder and app-builder-lib versions, the signing mode, publisher and the
 installer's Authenticode status and signer, and every asset digest.
 
@@ -515,16 +515,16 @@ may have been public; problems are fixed by rolling forward to a higher version.
 Safe on a developer machine (no install, no upload):
 
 ```sh
-node tools/release/src/cli/release.ts plan --channel alpha --force --sha <origin/main SHA> --out plan.json
+bun tools/release/src/cli/release.ts plan --channel alpha --force --sha <origin/main SHA> --out plan.json
 # build win-unpacked and the installer with electron-builder --publish never into a
 # gitignored or temp folder, then in that folder's release dir. The Linux files come
-# from `pnpm --filter @cw-code/desktop dist:linux` on a Linux machine (see
+# from `bun --filter @cw-code/desktop dist:linux` on a Linux machine (see
 # linux-packaging.md); copy the AppImage, the deb and latest-linux.yml into release-linux.
-node tools/release/src/cli/release.ts rehash --dir release-full
+bun tools/release/src/cli/release.ts rehash --dir release-full
 pwsh scripts/verify-signatures.ps1 -Root release-full -AllowUnsigned -OutFile release-full/verify-signatures.json
-node tools/release/src/cli/release.ts signing-manifest --mode unsigned --production false --version <v> --source-sha <sha> --run-id <id> --package-info release-full/package-info.json --report release-full/verify-signatures.json --release-dir release-full --out release-full/signing.json
-node tools/release/src/cli/release.ts stage-release-set --from release-full --to release-set --plan plan.json --linux-from release-linux
-node tools/release/src/cli/release.ts validate-release-assets --dir release-set --plan plan.json --run-id <id> --unpacked-root release-full
+bun tools/release/src/cli/release.ts signing-manifest --mode unsigned --production false --version <v> --source-sha <sha> --run-id <id> --package-info release-full/package-info.json --report release-full/verify-signatures.json --release-dir release-full --out release-full/signing.json
+bun tools/release/src/cli/release.ts stage-release-set --from release-full --to release-set --plan plan.json --linux-from release-linux
+bun tools/release/src/cli/release.ts validate-release-assets --dir release-set --plan plan.json --run-id <id> --unpacked-root release-full
 ```
 
 Never run `publish` locally; its behavior is covered by `publishRelease.test.ts`

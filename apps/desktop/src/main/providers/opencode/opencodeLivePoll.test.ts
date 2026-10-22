@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { childModelOf, collectPartTypes, collectTaskParts, diffLiveTools, type LiveMessage, type LiveSeen } from "./opencodeLivePoll.js";
 
 function runningTask(callID: string, description = "Do work"): LiveMessage {

@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeEach, describe, expect, it } from "bun:test";
 import { bufferKey, buffersForPaths, isDirtyBuffer, useEditorBuffers } from "./editorBuffers.js";
 
 const store = () => useEditorBuffers.getState();

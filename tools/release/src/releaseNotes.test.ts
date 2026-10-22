@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { buildReleaseNotes, groupCommitSubjects, renderReleaseNotes } from "./releaseNotes.ts";
 
 describe("groupCommitSubjects", () => {

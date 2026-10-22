@@ -1,21 +1,22 @@
 import { mkdtempSync, readFileSync, type OpenMode, type PathLike } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, mock, vi } from "bun:test";
 import { writeFileAtomic } from "./atomicFile.js";
 
 const DIRECTORY_FD = 987_654;
 
-const directorySync = vi.hoisted(() => ({
+const directorySync = {
   dir: null as string | null,
   fsyncError: null as string | null,
   opened: 0,
   synced: 0,
   closed: 0
-}));
+};
 
-vi.mock("node:fs", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("node:fs")>();
+const actual = { ...(await import("node:fs")) };
+
+mock.module("node:fs", () => {
   return {
     ...actual,
     openSync: vi.fn((path: PathLike, flags: OpenMode) => {

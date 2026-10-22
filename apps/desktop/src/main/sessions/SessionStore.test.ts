@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "bun:test";
 import { existsSync, mkdtempSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -322,7 +322,7 @@ describe("SessionStore", () => {
       [...original.projects].sort((a, b) => a.name.localeCompare(b.name))
     );
     for (const session of original.sessions) {
-      const expected =
+      const expected: SessionMeta =
         session.status === "working"
           ? { ...session, status: "holding" }
           : session.status === "idle"
@@ -332,7 +332,7 @@ describe("SessionStore", () => {
     }
     const persisted = readJson(file);
     expect(persisted.schemaVersion).toBe(SESSION_SCHEMA_VERSION);
-    expect(persisted.projects).toEqual(original.projects);
+    expect(persisted.projects).toEqual<unknown[]>(original.projects);
     expect(persisted.sessions.map((s) => s.resumeCursor)).toEqual(original.sessions.map((s) => s.resumeCursor));
     expect(readFileSync(`${file}.v0.bak`).equals(FIXTURE)).toBe(true);
   });
@@ -408,7 +408,7 @@ describe("SessionStore", () => {
       thrown = error;
     }
     expect(thrown).toBeInstanceOf(MetadataError);
-    expect((thrown as MetadataError).kind).toBe(kind);
+    expect((thrown as MetadataError).kind).toBe<string>(kind);
     expect((thrown as MetadataError).store).toBe("sessions");
     expect(readFileSync(file, "utf8")).toBe(content);
   });

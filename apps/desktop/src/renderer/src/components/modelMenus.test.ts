@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import type { ModelOption } from "../cw.js";
 import { CLAUDE_CURATED_MODELS as DRIVER_CURATED_MODELS } from "../../../main/providers/claude/ClaudeCliDriver.js";
 import {

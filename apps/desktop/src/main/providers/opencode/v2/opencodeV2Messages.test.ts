@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { mapOpencodeMessages } from "../opencodeHistory.js";
 import { summarizeOpencodeTurn, turnMessagesOf } from "../opencodeMessage.js";
 import { collectTaskParts, diffLiveTools, type LiveMessage } from "../opencodeLivePoll.js";

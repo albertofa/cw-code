@@ -92,7 +92,7 @@ configuration.
 ## Requirements
 
 - Windows or Linux (x64) for the packaged application.
-- Node.js 24.x and pnpm 11.5.3 for development.
+- Bun 1.4.4 for development.
 - At least one supported CLI installed and authenticated:
   - Claude Code `2.1.260` or newer (`claude`)
   - OpenCode v1 `1.18.31` or newer, or v2 `2.0.32` or newer (`opencode`).
@@ -106,24 +106,24 @@ settings instead of bundling them or their credentials.
 ## Development
 
 ```powershell
-pnpm install
-pnpm dev
-pnpm typecheck
-pnpm test
-pnpm build
-pnpm dist
+bun install
+bun run dev
+bun run typecheck
+bun run test
+bun run build
+bun run dist
 ```
 
-`pnpm dist` creates the Windows installer; on Linux,
-`pnpm --filter @cw-code/desktop dist:linux` creates the AppImage and the .deb.
-On Linux, `pnpm install` compiles `node-pty` from source, so install a C++
+`bun run dist` creates the Windows installer; on Linux,
+`bun --filter @cw-code/desktop dist:linux` creates the AppImage and the .deb.
+On Linux, `bun install` compiles `node-pty` from source, so install a C++
 toolchain and Python 3 first (`sudo apt-get install build-essential python3` on
 Debian and Ubuntu). Native PTY support is loaded lazily;
 if its binary does not match the Electron runtime, the app continues without
 PTY tabs and shows a degraded-state message. To rebuild `node-pty` locally:
 
 ```powershell
-pnpm --filter @cw-code/desktop exec electron-rebuild -f -w node-pty
+bun --cwd apps/desktop electron-rebuild -f -w node-pty
 ```
 
 ## Architecture

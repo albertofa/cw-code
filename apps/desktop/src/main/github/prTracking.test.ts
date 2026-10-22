@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import type { PrLinkSnapshot, PrSummary } from "@cw-code/contracts";
 import {
   PR_CLOSED_INTERVAL_MS,

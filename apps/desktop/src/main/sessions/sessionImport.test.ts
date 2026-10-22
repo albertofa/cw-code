@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { join } from "node:path";
 import type { NativeSession, Project } from "@cw-code/contracts";
 import { importableSessions, withRepositories } from "./sessionImport.js";

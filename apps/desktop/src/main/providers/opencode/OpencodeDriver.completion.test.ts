@@ -1,10 +1,11 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "bun:test";
+import { stubGlobal, unstubAllGlobals } from "../../../../tests/testing.js";
 import type { AppSettings, ThreadEvent } from "@cw-code/contracts";
 import { OpencodeDriver } from "./OpencodeDriver.js";
 import type { OpencodeServerPool } from "./opencodeServerPool.js";
 
 afterEach(() => {
-  vi.unstubAllGlobals();
+  unstubAllGlobals();
 });
 
 function json(data: unknown, status = 200): Response {
@@ -69,7 +70,7 @@ describe("OpencodeDriver detached send", () => {
     const events: ThreadEvent[] = [];
     const sse = controllableSse();
     let posts = 0;
-    vi.stubGlobal(
+    stubGlobal(
       "fetch",
       vi.fn().mockImplementation((url: string, init?: RequestInit) => {
         if (url.endsWith("/event")) return Promise.resolve(sse.response);
@@ -103,7 +104,7 @@ describe("OpencodeDriver detached send", () => {
   it("retries text-only once when attachments are rejected", async () => {
     const events: ThreadEvent[] = [];
     const bodies: string[] = [];
-    vi.stubGlobal(
+    stubGlobal(
       "fetch",
       vi.fn().mockImplementation((url: string, init?: RequestInit) => {
         if (url.endsWith("/event")) return Promise.resolve({ ok: false, status: 500, body: null });
@@ -137,7 +138,7 @@ describe("OpencodeDriver detached send", () => {
 
   it("fails the turn on an immediate send rejection", async () => {
     const events: ThreadEvent[] = [];
-    vi.stubGlobal(
+    stubGlobal(
       "fetch",
       vi.fn().mockImplementation((url: string, init?: RequestInit) => {
         if (url.endsWith("/event")) return Promise.resolve({ ok: false, status: 500, body: null });
@@ -160,7 +161,7 @@ describe("OpencodeDriver detached send", () => {
 
   it("fails the turn with a retryable error when the server process is gone", async () => {
     const events: ThreadEvent[] = [];
-    vi.stubGlobal(
+    stubGlobal(
       "fetch",
       vi.fn().mockImplementation((url: string, init?: RequestInit) => {
         if (url.endsWith("/event")) return Promise.resolve({ ok: false, status: 500, body: null });
@@ -202,7 +203,7 @@ describe("OpencodeDriver detached send", () => {
       }
     ];
     let plainGets = 0;
-    vi.stubGlobal(
+    stubGlobal(
       "fetch",
       vi.fn().mockImplementation((url: string, init?: RequestInit) => {
         if (url.endsWith("/event")) return Promise.resolve({ ok: false, status: 500, body: null });
@@ -232,7 +233,7 @@ describe("OpencodeDriver detached send", () => {
   it("drops streamed text deltas for compaction summary messages", async () => {
     const events: ThreadEvent[] = [];
     const sse = controllableSse();
-    vi.stubGlobal(
+    stubGlobal(
       "fetch",
       vi.fn().mockImplementation((url: string, init?: RequestInit) => {
         if (url.endsWith("/event")) return Promise.resolve(sse.response);
@@ -281,7 +282,7 @@ describe("OpencodeDriver detached send", () => {
       }
     ];
     let plainGets = 0;
-    vi.stubGlobal(
+    stubGlobal(
       "fetch",
       vi.fn().mockImplementation((url: string, init?: RequestInit) => {
         if (url.endsWith("/event")) return Promise.resolve({ ok: false, status: 500, body: null });
@@ -324,7 +325,7 @@ describe("OpencodeDriver detached send", () => {
       }
     ];
     let plainGets = 0;
-    vi.stubGlobal(
+    stubGlobal(
       "fetch",
       vi.fn().mockImplementation((url: string, init?: RequestInit) => {
         if (url.endsWith("/event")) return Promise.resolve({ ok: false, status: 500, body: null });

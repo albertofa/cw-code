@@ -1,6 +1,7 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { EventEmitter } from "node:events";
+import { beforeEach, describe, expect, it, mock } from "bun:test";
 
-const updaterMock = vi.hoisted(() => ({
+const updaterMock = {
   instances: [] as Array<{
     className: string;
     writes: string[];
@@ -13,11 +14,9 @@ const updaterMock = vi.hoisted(() => ({
   downloadArgs: [] as unknown[],
   installCalls: [] as Array<[boolean, boolean]>,
   installError: null as Error | null
-}));
+};
 
-vi.mock("electron-updater", async () => {
-  const { EventEmitter } = await import("node:events");
-
+mock.module("electron-updater", () => {
   class CancellationToken {
     cancelled = false;
     constructor() {
@@ -85,10 +84,11 @@ vi.mock("electron-updater", async () => {
   return { CancellationToken, NsisUpdater, AppImageUpdater, DebUpdater };
 });
 
-import { downloadedInfo, ElectronUpdaterAdapter, STAGING_ID_PLACEHOLDER } from "./ElectronUpdaterAdapter.js";
 import type { UpdaterKind } from "./UpdateService.js";
 
-function create(kind: UpdaterKind = "nsis"): { adapter: ElectronUpdaterAdapter; logs: string[]; instance: (typeof updaterMock.instances)[number] } {
+const { downloadedInfo, ElectronUpdaterAdapter, STAGING_ID_PLACEHOLDER } = await import("./ElectronUpdaterAdapter.js");
+
+function create(kind: UpdaterKind = "nsis"): { adapter: InstanceType<typeof ElectronUpdaterAdapter>; logs: string[]; instance: (typeof updaterMock.instances)[number] } {
   const logs: string[] = [];
   const adapter = new ElectronUpdaterAdapter({
     kind,

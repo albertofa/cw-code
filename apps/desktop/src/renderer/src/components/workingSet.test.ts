@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { compareWorkingSet, expiredHoldingIds, isWorkingSetStatus, WORKING_SET_STATUSES } from "./workingSet.js";
 import type { Session, SessionStatus } from "../cw.js";
 

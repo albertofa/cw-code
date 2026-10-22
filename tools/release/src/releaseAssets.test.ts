@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promis
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { gzipSync } from "node:zlib";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { ReleasePlan } from "./planValidation.ts";
 import { appImageNameFor, blockMapShapeErrors, debNameFor, installerNameFor, publishableAssetNames, stageReleaseSet, validateReleaseAssets } from "./releaseAssets.ts";
 import type { SigningManifest } from "./signingManifest.ts";

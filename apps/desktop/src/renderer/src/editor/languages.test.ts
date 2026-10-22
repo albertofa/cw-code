@@ -1,5 +1,5 @@
 import { bundledLanguagesInfo } from "shiki/langs";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { resolveLanguage } from "./languages.js";
 import { SHIKI_LANGUAGES } from "./shikiLanguages.js";
 

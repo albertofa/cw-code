@@ -1,7 +1,7 @@
 import { chmodSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { listBackups } from "./backups.js";
 import { metadataSchemaFor, openMetadataStores } from "./metadataStores.js";
 import { restoreBackup, startFresh } from "./recovery.js";
@@ -67,7 +67,7 @@ describe("openMetadataStores", () => {
     expect(opened.issues[0].message).toMatch(/could not open the file: E[A-Z]+/);
   });
 
-  it.runIf(process.platform === "win32")("reports a locked file that cannot be rewritten during load instead of throwing", () => {
+  it.if(process.platform === "win32")("reports a locked file that cannot be rewritten during load instead of throwing", () => {
     const { dbPath, settingsPath, sessionsFile } = paths();
     const content = JSON.stringify({
       schemaVersion: 1,

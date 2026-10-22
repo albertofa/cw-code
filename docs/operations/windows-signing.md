@@ -471,7 +471,7 @@ switch a signed release to `unsigned`.
 ## Local packaging
 
 `apps/desktop/electron-builder.yml` sets `win.signExecutable: false`, so electron-builder
-never signs any file, and `win.verifyUpdateCodeSignature: true`. `pnpm dist` and `dist:dir`
+never signs any file, and `win.verifyUpdateCodeSignature: true`. `bun run dist` and `dist:dir`
 produce **unsigned, non-production** builds. One exception: if `CSC_LINK`/`WIN_CSC_LINK`
 (or `signtoolOptions.certificateSubjectName`/`certificateSha1`) is set, electron-builder
 still reads that certificate to derive a `publisherName` for `app-update.yml`, even though

@@ -1,4 +1,5 @@
-import { describe, expect, it, vi, afterEach } from "vitest";
+import { describe, expect, it, vi, afterEach } from "bun:test";
+import { stubGlobal, unstubAllGlobals } from "../../../../tests/testing.js";
 import {
   OPENCODE_DIRECTORY_HEADER,
   OPENCODE_NO_TIMEOUT,
@@ -10,7 +11,7 @@ import {
 } from "./opencodeFetch.js";
 
 afterEach(() => {
-  vi.unstubAllGlobals();
+  unstubAllGlobals();
 });
 
 describe("isConnectionError", () => {
@@ -35,14 +36,14 @@ describe("isTimeoutError", () => {
 
 describe("opencodeFetch", () => {
   it("wraps connection refusals in OpencodeConnectionError", async () => {
-    vi.stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("fetch failed")));
+    stubGlobal("fetch", vi.fn().mockRejectedValue(new TypeError("fetch failed")));
     await expect(opencodeFetch("http://127.0.0.1:41001/session", { port: 41001 })).rejects.toBeInstanceOf(
       OpencodeConnectionError
     );
   });
 
   it("times out slow servers", async () => {
-    vi.stubGlobal(
+    stubGlobal(
       "fetch",
       vi.fn().mockImplementation(
         (_url: string, init?: RequestInit) =>
@@ -59,7 +60,7 @@ describe("opencodeFetch", () => {
   });
 
   it("respects an external abort signal without reporting a timeout", async () => {    const controller = new AbortController();
-    vi.stubGlobal(
+    stubGlobal(
       "fetch",
       vi.fn().mockImplementation(
         (_url: string, init?: RequestInit) =>
@@ -79,7 +80,7 @@ describe("opencodeFetch", () => {
     await expect(pending).rejects.toBeInstanceOf(DOMException);
   });
   it("never aborts slow requests when the timeout is disabled", async () => {
-    vi.stubGlobal(
+    stubGlobal(
       "fetch",
       vi.fn().mockImplementation(
         () => new Promise((resolve) => setTimeout(() => resolve({ ok: true }), 60))
@@ -95,7 +96,7 @@ describe("opencodeFetch", () => {
 
   it("sends the directory routing header without dropping other headers", async () => {
     const seen: Array<{ url: string; init?: RequestInit }> = [];
-    vi.stubGlobal(
+    stubGlobal(
       "fetch",
       vi.fn().mockImplementation((url: string, init?: RequestInit) => {
         seen.push({ url, init });

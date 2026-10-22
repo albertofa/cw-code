@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import {
   mkdirSync,
   mkdtempSync,
@@ -37,7 +37,7 @@ describe("FileService sandbox", () => {
     await expect(svc.writeFileGuarded(root, "..\\outside.txt", "x")).rejects.toThrow(/escapes project root/);
   });
 
-  it.runIf(process.platform === "win32")("rejects paths on another drive", () => {
+  it.if(process.platform === "win32")("rejects paths on another drive", () => {
     const other = root.toUpperCase().startsWith("Z:") ? "Y:" : "Z:";
     expect(() => assertInside(root, `${other}/x/a.md`)).toThrow(/escapes project root/);
     expect(() => assertInside(root, `${other}\\x\\a.md`)).toThrow(/escapes project root/);
@@ -492,7 +492,7 @@ describe("FileService file operations", () => {
     });
   });
 
-  it.runIf(process.platform === "win32")("treats a differently cased spelling of the root as the root", () => {
+  it.if(process.platform === "win32")("treats a differently cased spelling of the root as the root", () => {
     const root = makeRoot();
     expect(() => svc.resolveEntry(root, `../${basename(root).toUpperCase()}`)).toThrow(
       "cannot modify the workspace root"
@@ -517,7 +517,7 @@ describe("FileService file operations", () => {
       }
     });
 
-    it.runIf(process.platform === "win32")("rejects another drive on tree operations", async () => {
+    it.if(process.platform === "win32")("rejects another drive on tree operations", async () => {
       const root = makeRoot();
       const other = root.toUpperCase().startsWith("Z:") ? "Y:" : "Z:";
       await expect(svc.readFileInfo(root, `${other}x`)).rejects.toThrow(/escapes project root/);

@@ -1,4 +1,4 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "bun:test";
 import { parsePullRequestList, pickBranchPullRequest, pickComparisonBase, type BranchPullRequestCandidate } from "./branchPullRequest.js";
 
 const HEAD = "a".repeat(40);

@@ -1,5 +1,5 @@
-// @vitest-environment jsdom
-import { describe, expect, it } from "vitest";
+import "../../../../tests/dom.js";
+import { describe, expect, it } from "bun:test";
 import type { ProjectGitHubRepo } from "../cw.js";
 import { badgeSearchKeys, BUILTIN_VIEWS, cappedRunSources, clonedReposOf, evictionCandidates, orgFromRepos, searchKey } from "./githubStore.js";
 

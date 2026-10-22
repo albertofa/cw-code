@@ -1,7 +1,7 @@
 import { mkdirSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import type { PrRef, PrSummary } from "@cw-code/contracts";
 import type { GitService, ParsedGitHubRemote } from "../fs/GitService.js";
 import { DEFAULT_SETTINGS } from "../settings/SettingsStore.js";
@@ -231,8 +231,12 @@ describe("PullRequestService.clone target identity", () => {
     const first = service.clone(prRef("alice"));
     const second = service.clone(prRef("bob"));
     release();
-    await expect(first).resolves.toMatchObject({ rootPath: target });
-    await expect(second).rejects.toThrow(/belongs to alice\/widgets, not bob\/widgets/);
+    const [cloned, refused] = await Promise.allSettled([first, second]);
+    expect(cloned).toMatchObject({ status: "fulfilled", value: { rootPath: target } });
+    expect(refused).toMatchObject({
+      status: "rejected",
+      reason: expect.objectContaining({ message: expect.stringMatching(/belongs to alice\/widgets, not bob\/widgets/) })
+    });
   });
 });
 

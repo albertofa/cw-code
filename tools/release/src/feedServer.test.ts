@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { request } from "node:http";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { parseFaults } from "./feedFaults.ts";
 import { type FeedServer, FEED_HOST, startFeedServer, summarizeTransfers } from "./feedServer.ts";
 

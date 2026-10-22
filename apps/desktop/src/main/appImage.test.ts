@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { resolveAppImageRelaunch } from "./appImage.js";
 
 const mounted = "/tmp/.mount_cw-codeAbC123/cw-code-bin";

@@ -14,7 +14,7 @@ function check(binary, args) {
 check("claude", ["--version"]);
 check("opencode", ["--version"]);
 
-const tsc = spawnSync("pnpm", ["--filter", "@cw-code/desktop", "exec", "tsc", "--noEmit", "-p", "tsconfig.json"], {
+const tsc = spawnSync("bun", ["--filter", "@cw-code/desktop", "typecheck"], {
   encoding: "utf8",
   timeout: 180000,
   shell: true
@@ -25,11 +25,11 @@ if (tsc.status !== 0) {
   process.exitCode = 1;
 }
 
-const test = spawnSync("pnpm", ["--filter", "@cw-code/desktop", "test"], {
+const test = spawnSync("bun", ["--filter", "@cw-code/desktop", "test"], {
   encoding: "utf8",
   timeout: 300000,
   shell: true
 });
-const summary = test.stdout.match(/Tests\s+.*/)?.[0] ?? "no summary";
+const summary = `${test.stdout}${test.stderr}`.match(/\d+ pass\s+(?:\d+ skip\s+)?\d+ fail/)?.[0].replace(/\s+/g, " ") ?? "no summary";
 console.log(`tests: ${summary}`);
 if (test.status !== 0) process.exitCode = 1;

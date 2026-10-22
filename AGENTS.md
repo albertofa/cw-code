@@ -23,14 +23,14 @@ Core behaviors:
 
 ## Stack
 
-- pnpm monorepo: `apps/desktop` (Electron + React 19 + zustand + xterm.js),
+- Bun monorepo (package manager, script and test runtime): `apps/desktop` (Electron + React 19 + zustand + xterm.js),
   `packages/contracts` (shared types only, no runtime logic).
 - Main/preload/renderer communicate exclusively through the typed preload bridge;
   the renderer never spawns processes or touches the filesystem.
 - Session metadata persists as atomic JSON under `~/.cw-code/userdata`.
   Logs live in `~/.cw-code/logs`, paste/preview attachments in
   `~/.cw-code/userdata/attachments`, worktrees in `~/.cw-code/worktrees`.
-- Tests run on vitest; builds via electron-vite and electron-builder (Windows NSIS; Linux AppImage and deb).
+- Tests run on `bun test`; use `bun run test` (each package sets its own flags and preload, helpers in `apps/desktop/tests`); builds via electron-vite and electron-builder (Windows NSIS; Linux AppImage and deb).
 
 ## Guidelines
 

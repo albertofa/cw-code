@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { claudeTurnUsage, type ClaudeModelUsageSnapshot } from "./claudeUsage.js";
 
 function haikuResult(overrides: Record<string, unknown> = {}) {

@@ -1,10 +1,11 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "bun:test";
+import { stubGlobal, unstubAllGlobals } from "../../../../tests/testing.js";
 import type { AppSettings, QuestionInfo, ThreadEvent } from "@cw-code/contracts";
 import { OpencodeDriver } from "./OpencodeDriver.js";
 import type { OpencodeServerPool } from "./opencodeServerPool.js";
 
 afterEach(() => {
-  vi.unstubAllGlobals();
+  unstubAllGlobals();
 });
 
 const questions: QuestionInfo[] = [
@@ -54,7 +55,7 @@ describe("OpencodeDriver question reply routing", () => {
     const events: ThreadEvent[] = [];
     const seen: string[] = [];
     let body = "";
-    vi.stubGlobal(
+    stubGlobal(
       "fetch",
       vi.fn().mockImplementation((url: string, init?: RequestInit) => {
         seen.push(url);
@@ -77,7 +78,7 @@ describe("OpencodeDriver question reply routing", () => {
   it("skips SPA HTML fallbacks instead of treating them as success", async () => {
     const events: ThreadEvent[] = [];
     const seen: string[] = [];
-    vi.stubGlobal(
+    stubGlobal(
       "fetch",
       vi.fn().mockImplementation((url: string) => {
         seen.push(url);
@@ -103,7 +104,7 @@ describe("OpencodeDriver question reply routing", () => {
 
   it("throws instead of silently succeeding when every route returns HTML", async () => {
     const events: ThreadEvent[] = [];
-    vi.stubGlobal(
+    stubGlobal(
       "fetch",
       vi.fn().mockImplementation(() => Promise.resolve(html()))
     );

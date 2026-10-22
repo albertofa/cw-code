@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { createFixtureReleaseSource, type FixtureRelease } from "./fixtures/fixtureReleaseSource.ts";
 import { planMarker } from "./planMarker.ts";
 import type { ReleasePlan } from "./planValidation.ts";

@@ -2,14 +2,24 @@
   "name": "cw-code",
   "version": "0.0.1-alpha.21",
   "private": true,
-  "packageManager": "pnpm@11.5.3",
+  "packageManager": "bun@1.4.4",
+  "workspaces": [
+    "apps/*",
+    "packages/*",
+    "tools/*"
+  ],
+  "trustedDependencies": [
+    "electron",
+    "esbuild",
+    "node-pty"
+  ],
   "scripts": {
-    "dev": "pnpm --filter @cw-code/desktop dev",
-    "build": "pnpm -r build",
-    "test": "pnpm -r test",
-    "typecheck": "pnpm -r typecheck",
-    "dist": "pnpm --filter @cw-code/desktop dist",
-    "release:plan": "node tools/release/src/cli/release.ts plan"
+    "dev": "bun --filter @cw-code/desktop dev",
+    "build": "bun --filter '*' build",
+    "test": "bun --filter '*' test",
+    "typecheck": "bun --filter '*' typecheck",
+    "dist": "bun --filter @cw-code/desktop dist",
+    "release:plan": "bun tools/release/src/cli/release.ts plan"
   },
   "description": "A desktop workspace for Claude Code, OpenCode, and Codex.",
   "license": "MIT",

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import type { IssueSummary, PrSummary, WorkflowRunSummary } from "@cw-code/contracts";
 import { prKeyOf } from "./githubQuery.js";
 import {

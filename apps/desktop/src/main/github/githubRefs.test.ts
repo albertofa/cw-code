@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { assertIssueRef } from "./githubRefs.js";
 
 const valid = { host: "github.com", owner: "acme", repo: "widgets", number: 7 };

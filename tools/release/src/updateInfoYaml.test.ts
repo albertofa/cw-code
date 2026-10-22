@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { formatScalar, parseScalar, parseSingleInstallerUpdateInfo, parseUpdateInfo, readPublisherNames, rewriteUpdateInfo } from "./updateInfoYaml.ts";
 
 const OLD_SHA = "OHXwimalg4cncuhddJevvTcG2qq5N6+/fJad/b+Z7hY6FxTYZizn+Mllv3jtU+Esx/CwnOI9H7DQgtS/emIGQQ==";

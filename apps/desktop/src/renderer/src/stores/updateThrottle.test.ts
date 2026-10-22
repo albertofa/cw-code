@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import type { UpdateState } from "../cw.js";
 import { PROGRESS_RENDER_INTERVAL_MS, shouldApplyUpdateState } from "./updateThrottle.js";
 

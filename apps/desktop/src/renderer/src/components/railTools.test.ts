@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { checkCountsTone, checksTone, gitDiffSummary, paneDiffSummary, railGroups } from "./railTools.js";
 
 describe("railGroups", () => {

@@ -143,13 +143,10 @@ jobs:
         with:
           ref: ${{ inputs.source-sha }}
           persist-credentials: false
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          version: 11.5.3
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 24
-      - run: pnpm install --frozen-lockfile
+          bun-version: 1.4.4
+      - run: bun install --frozen-lockfile
       - name: Require the publisher name in signpath mode
         env:
           MODE: ${{ inputs.signing-mode }}
@@ -162,14 +159,14 @@ jobs:
       - name: Apply the release version to the workspace
         env:
           VERSION: ${{ inputs.version }}
-        run: node tools/release/src/cli/release.ts apply --version "$VERSION"
+        run: bun tools/release/src/cli/release.ts apply --version "$VERSION"
       - name: Refuse update-test build flags
         run: |
           if [ -n "${CW_UPDATE_TEST_BUILD:-}" ]; then
             echo "::error::CW_UPDATE_TEST_BUILD is set; a production package must never contain the update autotest mode"
             exit 1
           fi
-      - run: pnpm --filter @cw-code/desktop build
+      - run: bun --filter @cw-code/desktop build
       - name: Package win-unpacked (NSIS target writes app-update.yml; the installer built here is discarded)
         env:
           MODE: ${{ inputs.signing-mode }}
@@ -179,7 +176,7 @@ jobs:
           if [ "$MODE" = "signpath" ]; then
             args+=("-c.win.signtoolOptions.publisherName=${PUBLISHER}")
           fi
-          pnpm --filter @cw-code/desktop exec electron-builder "${args[@]}"
+          bun --bun --cwd apps/desktop electron-builder "${args[@]}"
       - name: Check the packaged app layout
         run: |
           for file in cw-code.exe resources/app-update.yml resources/elevate.exe; do
@@ -193,9 +190,9 @@ jobs:
           persist-credentials: false
       - name: Install the gate tooling
         working-directory: tooling
-        run: pnpm install --frozen-lockfile --ignore-scripts --filter @cw-code/release-tools
+        run: bun install --frozen-lockfile --ignore-scripts --filter @cw-code/release-tools
       - name: Reject any update autotest path in the packaged app
-        run: node tooling/scripts/verify-installed-upgrade.mjs --assert-production-bundle apps/desktop/out/main --asar apps/desktop/dist/win-unpacked/resources/app.asar --desktop-dir apps/desktop
+        run: bun tooling/scripts/verify-installed-upgrade.mjs --assert-production-bundle apps/desktop/out/main --asar apps/desktop/dist/win-unpacked/resources/app.asar --desktop-dir apps/desktop
       - name: Record package provenance
         env:
           VERSION: ${{ inputs.version }}
@@ -205,7 +202,7 @@ jobs:
           RUN_ID: ${{ github.run_id }}
           TOOLING_SHA: ${{ job.workflow_sha }}
         run: |
-          node -e 'require("fs").writeFileSync("apps/desktop/dist/package-info.json", JSON.stringify({ version: process.env.VERSION, sourceSha: process.env.SOURCE_SHA, signingMode: process.env.MODE, production: process.env.PRODUCTION === "true", runId: process.env.RUN_ID, toolingSha: process.env.TOOLING_SHA }, null, 2) + "\n")'
+          bun -e 'require("fs").writeFileSync("apps/desktop/dist/package-info.json", JSON.stringify({ version: process.env.VERSION, sourceSha: process.env.SOURCE_SHA, signingMode: process.env.MODE, production: process.env.PRODUCTION === "true", runId: process.env.RUN_ID, toolingSha: process.env.TOOLING_SHA }, null, 2) + "\n")'
       - name: Upload win-unpacked
         id: upload
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
@@ -286,13 +283,10 @@ jobs:
         with:
           ref: ${{ inputs.source-sha }}
           persist-credentials: false
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          version: 11.5.3
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 24
-      - run: pnpm install --frozen-lockfile
+          bun-version: 1.4.4
+      - run: bun install --frozen-lockfile
       - name: Check out the gate tooling from the signing workflow's commit
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -311,7 +305,7 @@ jobs:
       - name: Apply the release version to the workspace
         env:
           VERSION: ${{ inputs.version }}
-        run: node tools/release/src/cli/release.ts apply --version "$VERSION"
+        run: bun tools/release/src/cli/release.ts apply --version "$VERSION"
       - name: Download the app to package
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -331,7 +325,7 @@ jobs:
         run: ./tooling/scripts/tree-digest.ps1 -Path app-input/win-unpacked | Set-Content "$env:RUNNER_TEMP/app-before.txt"
       - name: Build the NSIS installer from the prepackaged app
         run: |
-          pnpm --filter @cw-code/desktop exec electron-builder --prepackaged "$GITHUB_WORKSPACE/app-input/win-unpacked" \
+          bun --bun --cwd apps/desktop electron-builder --prepackaged "$GITHUB_WORKSPACE/app-input/win-unpacked" \
             --win nsis --x64 --publish never "-c.nsis.packElevateHelper=false" "-c.directories.output=dist-installer"
       - name: Fail if packaging changed any app file
         shell: pwsh
@@ -455,17 +449,14 @@ jobs:
             echo "::error::tooling checkout is at '$actual', expected the signing workflow commit '$TOOLING_SHA'"
             exit 1
           fi
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          version: 11.5.3
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 24
+          bun-version: 1.4.4
       - name: Install the gate tooling
         working-directory: tooling
         env:
           ELECTRON_SKIP_BINARY_DOWNLOAD: "1"
-        run: pnpm install --frozen-lockfile
+        run: bun install --frozen-lockfile
       - name: Download the update metadata
         uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
         with:
@@ -482,7 +473,7 @@ jobs:
           name: ${{ needs.guard.outputs.app-input }}
           path: release
       - name: Regenerate the blockmap and update info after the last byte-changing step
-        run: node tooling/tools/release/src/cli/release.ts rehash --dir release | tee release/rehash.json
+        run: bun tooling/tools/release/src/cli/release.ts rehash --dir release | tee release/rehash.json
       - name: Verify Authenticode signatures (first-party publisher and timestamp, third-party status)
         shell: pwsh
         env:
@@ -513,7 +504,7 @@ jobs:
           if [ "$MODE" = "signpath" ]; then
             args+=(--publisher "$PUBLISHER")
           fi
-          node tooling/tools/release/src/cli/release.ts "${args[@]}"
+          bun tooling/tools/release/src/cli/release.ts "${args[@]}"
       - name: Re-read signing.json against the release set
         env:
           PRODUCTION: ${{ inputs.production }}
@@ -526,7 +517,7 @@ jobs:
           if [ "$PRODUCTION" = "true" ]; then
             args+=(--require-production)
           fi
-          node tooling/tools/release/src/cli/release.ts "${args[@]}"
+          bun tooling/tools/release/src/cli/release.ts "${args[@]}"
       - name: Upload the final release set
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         with:

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import type { PrWorkflow, RunRef, WorkflowRunSummary, WorkflowSubject } from "../cw.js";
 import {
   baseWorkspaceHint,

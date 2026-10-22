@@ -1,10 +1,11 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "bun:test";
+import { stubGlobal, unstubAllGlobals } from "../../../../tests/testing.js";
 import type { AppSettings } from "@cw-code/contracts";
 import { OpencodeDriver } from "./OpencodeDriver.js";
 import type { OpencodeServerPool } from "./opencodeServerPool.js";
 
 function stubFetch(abortDelayMs: number, calls: string[]): void {
-  vi.stubGlobal(
+  stubGlobal(
     "fetch",
     vi.fn().mockImplementation((url: string, init?: RequestInit) => {
       if (url.endsWith("/event")) return Promise.resolve({ ok: false, status: 500, body: null });
@@ -44,7 +45,7 @@ function makeDriver() {
 }
 
 afterEach(() => {
-  vi.unstubAllGlobals();
+  unstubAllGlobals();
 });
 
 describe("OpencodeDriver shutdown", () => {

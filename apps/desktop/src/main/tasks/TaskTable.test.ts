@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { TaskTable, mapCliTaskStatus, stateRank, type TaskObservation, type TaskOutputSource } from "./TaskTable.js";
 
 function tableWith(...observations: TaskObservation[]): TaskTable {
@@ -44,7 +44,7 @@ describe("mapCliTaskStatus", () => {
     ["  Completed ", "completed"],
     ["IN_PROGRESS", "running"]
   ])("maps %j to %s", (status, expected) => {
-    expect(mapCliTaskStatus(status)).toBe(expected);
+    expect(mapCliTaskStatus(status)).toBe<string | undefined>(expected);
   });
 
   it("returns undefined for unknown or missing statuses", () => {

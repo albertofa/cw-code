@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import type { Project, Session } from "../cw.js";
 import { sameRootSessionIds, snapshotKey, snapshotTurnMatches, splitRepoPath, turnTotals } from "./turnChanges.js";
 

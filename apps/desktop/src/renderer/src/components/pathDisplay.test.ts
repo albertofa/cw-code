@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { expandHome, formatFileSubject, looksLikeFileMention, shortenHome, shortenHomeInText, stripMentionMarker } from "./pathDisplay.js";
 
 describe("shortenHome", () => {

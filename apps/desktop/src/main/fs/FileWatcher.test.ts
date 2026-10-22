@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
+import { waitFor } from "../../../tests/testing.js";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
@@ -283,7 +284,7 @@ describe("FileWatcher with chokidar", () => {
     watcher.setWatched("s1", root, ["", "src"]);
 
     let counter = 0;
-    await vi.waitFor(
+    await waitFor(
       async () => {
         await writeFile(join(root, "src", "a.ts"), String(++counter));
         expect(events.flatMap((event) => event.paths)).toContain("src/a.ts");

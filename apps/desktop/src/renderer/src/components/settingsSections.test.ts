@@ -1,5 +1,5 @@
-// @vitest-environment jsdom
-import { beforeEach, describe, expect, it } from "vitest";
+import "../../../../tests/dom.js";
+import { beforeEach, describe, expect, it } from "bun:test";
 import type { AppSettings } from "../cw.js";
 import { useSettingsDraftStore } from "../stores/settingsDraftStore.js";
 import { useNotifs } from "./Notifications.js";

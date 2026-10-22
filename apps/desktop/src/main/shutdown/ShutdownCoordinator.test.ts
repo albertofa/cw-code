@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import type { ShutdownActiveTurn, ShutdownReason, ShutdownTerminal } from "@cw-code/contracts";
 import { ShutdownCoordinator, type ShutdownClock, type ShutdownPtys, type ShutdownSessions } from "./ShutdownCoordinator.js";
 

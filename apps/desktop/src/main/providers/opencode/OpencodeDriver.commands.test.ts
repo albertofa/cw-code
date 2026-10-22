@@ -1,11 +1,12 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "bun:test";
+import { stubGlobal, unstubAllGlobals } from "../../../../tests/testing.js";
 import type { AppSettings, ThreadEvent } from "@cw-code/contracts";
 import { join } from "node:path";
 import { OpencodeDriver } from "./OpencodeDriver.js";
 import type { OpencodeServerPool } from "./opencodeServerPool.js";
 
 afterEach(() => {
-  vi.unstubAllGlobals();
+  unstubAllGlobals();
 });
 
 interface Call {
@@ -54,7 +55,7 @@ const HISTORY = [
 
 function stubFetch(route: Route, sse?: Response): Call[] {
   const calls: Call[] = [];
-  vi.stubGlobal(
+  stubGlobal(
     "fetch",
     vi.fn().mockImplementation(async (url: string, init?: RequestInit) => {
       const call: Call = {

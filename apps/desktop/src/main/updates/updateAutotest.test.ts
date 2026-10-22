@@ -1,5 +1,5 @@
 import { join, resolve } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import type { ShutdownPrepareRequest, ShutdownPrepareResult, UpdateActionResult, UpdatePhase, UpdateState } from "@cw-code/contracts";
 import {
   BUSY_TURN_PROMPT,
@@ -361,7 +361,7 @@ describe("runUpdateAutotest", () => {
     const io = new MemoryIo();
     const fake = fakeHost(io, options as FakeOptions);
     await runUpdateAutotest(config(), fake.host, io);
-    expect(fake.calls).toEqual(calls);
+    expect(fake.calls).toEqual([...calls]);
     expect(io.events().at(-2)).toMatchObject({ event: "result", outcome });
   });
 

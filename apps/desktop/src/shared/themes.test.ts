@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import type { CustomTheme, ThemeBase } from "@cw-code/contracts";
 import {
   BUILTIN_THEME_IDS,
@@ -13,6 +13,7 @@ import {
   deriveThemeTokens,
   mixHex,
   resolveActiveTheme,
+  type ActiveTheme,
   windowBackgroundColor,
   withAlpha
 } from "./themes.js";
@@ -492,7 +493,7 @@ describe("resolveActiveTheme", () => {
   });
 
   it("resolves the bundled Claude theme on the light base with derived tokens", () => {
-    const expected = { base: "light", tokens: deriveThemeTokens("light", claudeTheme().colors) };
+    const expected: ActiveTheme = { base: "light", tokens: deriveThemeTokens("light", claudeTheme().colors) };
     expect(resolveActiveTheme("claude", [], false)).toEqual(expected);
     expect(resolveActiveTheme("claude", [], true)).toEqual(expected);
   });

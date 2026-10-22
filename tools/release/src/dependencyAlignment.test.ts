@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { createRequire } from "node:module";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 
 const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "../../..");
 
@@ -24,6 +24,6 @@ describe("dependency alignment with the shipped updater", () => {
     expect(expected).toMatch(/^\d+\.\d+\.\d+$/);
     expect(tools.dependencies?.["builder-util-runtime"]).toBe(expected);
     const fromTools = createRequire(resolve(REPO_ROOT, "tools/release/package.json"));
-    expect(readManifest(fromTools.resolve("builder-util-runtime/package.json")).version).toBe(expected);
+    expect(readManifest(fromTools.resolve("builder-util-runtime/package.json")).version).toBe<string | undefined>(expected);
   });
 });

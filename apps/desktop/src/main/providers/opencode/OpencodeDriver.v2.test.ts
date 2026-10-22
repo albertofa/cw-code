@@ -1,10 +1,11 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "bun:test";
+import { stubGlobal, unstubAllGlobals } from "../../../../tests/testing.js";
 import type { AppSettings, ThreadEvent } from "@cw-code/contracts";
 import { OpencodeDriver } from "./OpencodeDriver.js";
 import type { OpencodeServerPool } from "./opencodeServerPool.js";
 
 afterEach(() => {
-  vi.unstubAllGlobals();
+  unstubAllGlobals();
 });
 
 const SID = "ses_v2";
@@ -67,7 +68,7 @@ interface ServerState {
 }
 
 function stubServer(sse: ReturnType<typeof controllableSse>, state: ServerState): void {
-  vi.stubGlobal(
+  stubGlobal(
     "fetch",
     vi.fn().mockImplementation((url: string, init?: RequestInit) => {
       const path = new URL(url).pathname;
@@ -165,7 +166,7 @@ describe("OpencodeDriver on an opencode v2 server", () => {
     const deletes: string[] = [];
     stubServer(sse, state);
     const base = globalThis.fetch;
-    vi.stubGlobal(
+    stubGlobal(
       "fetch",
       vi.fn().mockImplementation((url: string, init?: RequestInit) => {
         if (init?.method === "DELETE") {
@@ -197,7 +198,7 @@ describe("OpencodeDriver on an opencode v2 server", () => {
     const interrupts: string[] = [];
     stubServer(sse, state);
     const base = globalThis.fetch;
-    vi.stubGlobal(
+    stubGlobal(
       "fetch",
       vi.fn().mockImplementation((url: string, init?: RequestInit) => {
         if (url.endsWith("/interrupt")) {
@@ -234,7 +235,7 @@ describe("OpencodeDriver on an opencode v2 server", () => {
     state.messages = [...earlier, USER, inFlight];
     stubServer(sse, state);
     const base = globalThis.fetch;
-    vi.stubGlobal(
+    stubGlobal(
       "fetch",
       vi.fn().mockImplementation((url: string, init?: RequestInit) =>
         new URL(url).pathname === "/api/session/active" ? Promise.resolve(json({ data: { [SID]: {} } })) : base(url, init)

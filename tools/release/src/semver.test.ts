@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { baseOf, compareVersions, formatVersion, parseTag, parseVersion, sameBase, tagOf, tryParseVersion } from "./semver.ts";
 
 describe("parseVersion", () => {

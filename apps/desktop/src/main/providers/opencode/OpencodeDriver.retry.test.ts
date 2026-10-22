@@ -1,10 +1,11 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "bun:test";
+import { stubGlobal, unstubAllGlobals } from "../../../../tests/testing.js";
 import type { AppSettings, ThreadEvent } from "@cw-code/contracts";
 import { OpencodeDriver } from "./OpencodeDriver.js";
 import type { OpencodeServerPool } from "./opencodeServerPool.js";
 
 afterEach(() => {
-  vi.unstubAllGlobals();
+  unstubAllGlobals();
 });
 
 function json(data: unknown, status = 200): Response {
@@ -94,7 +95,7 @@ function startDriver(events: ThreadEvent[], probeOk = true): { driver: OpencodeD
 describe("OpencodeDriver retryConnection", () => {
   it("returns done and the refetched history when the run already ended", async () => {
     const events: ThreadEvent[] = [];
-    vi.stubGlobal(
+    stubGlobal(
       "fetch",
       vi.fn().mockImplementation((url: string) => {
         if (url.endsWith("/session/ses_1")) return Promise.resolve(json({ id: "ses_1" }));
@@ -116,7 +117,7 @@ describe("OpencodeDriver retryConnection", () => {
     const events: ThreadEvent[] = [];
     const sse = controllableSse();
     let payload = RUNNING_MESSAGE;
-    vi.stubGlobal(
+    stubGlobal(
       "fetch",
       vi.fn().mockImplementation((url: string) => {
         if (url.endsWith("/event")) return Promise.resolve(sse.response);
@@ -143,7 +144,7 @@ describe("OpencodeDriver retryConnection", () => {
 
   it("invalidates a dead server and respawns before probing", async () => {
     const events: ThreadEvent[] = [];
-    vi.stubGlobal(
+    stubGlobal(
       "fetch",
       vi.fn().mockImplementation((url: string) => {
         if (url.endsWith("/session/ses_1")) return Promise.resolve(json({ id: "ses_1" }));
@@ -162,7 +163,7 @@ describe("OpencodeDriver retryConnection", () => {
 
   it("throws when the session no longer exists on the server", async () => {
     const events: ThreadEvent[] = [];
-    vi.stubGlobal(
+    stubGlobal(
       "fetch",
       vi.fn().mockImplementation((url: string) => {
         if (url.endsWith("/session/ses_1")) return Promise.resolve(new Response(null, { status: 404 }));

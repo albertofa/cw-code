@@ -1,4 +1,5 @@
-import { describe, expect, it, vi, afterEach } from "vitest";
+import { describe, expect, it, vi, afterEach } from "bun:test";
+import { stubGlobal, unstubAllGlobals } from "../../../../tests/testing.js";
 import type { AppSettings, ThreadEvent } from "@cw-code/contracts";
 import { OpencodeDriver, sameDirectory } from "./OpencodeDriver.js";
 import { OPENCODE_DIRECTORY_HEADER } from "./opencodeFetch.js";
@@ -13,7 +14,7 @@ interface SeenRequest {
 }
 
 function stubFetch(seen: SeenRequest[], createdDirectory: string | undefined): void {
-  vi.stubGlobal(
+  stubGlobal(
     "fetch",
     vi.fn().mockImplementation((url: string, init?: RequestInit) => {
       seen.push({ url, method: init?.method ?? "GET", headers: { ...((init?.headers ?? {}) as Record<string, string>) } });
@@ -58,7 +59,7 @@ function makeDriver(poolOverrides: Partial<Record<string, () => void>> = {}): { 
 }
 
 afterEach(() => {
-  vi.unstubAllGlobals();
+  unstubAllGlobals();
 });
 
 describe("OpencodeDriver directory routing", () => {

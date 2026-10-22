@@ -12,13 +12,13 @@ Thanks for contributing to cw-code.
 ## Local workflow
 
 ```powershell
-pnpm install
-pnpm typecheck
-pnpm test
-pnpm build
+bun install
+bun run typecheck
+bun run test
+bun run build
 ```
 
-Use `pnpm dev` to exercise the Electron application locally. Provider-specific
+Use `bun run dev` to exercise the Electron application locally. Provider-specific
 manual testing requires the corresponding CLI to be installed and authenticated.
 
 ## Code conventions

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { worktreeCandidates } from "./worktreeCandidates.js";
 import type { Session } from "../cw.js";
 
