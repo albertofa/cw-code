@@ -1,5 +1,5 @@
-import { useEffect, useState, type ReactNode } from "react";
-import { AlertTriangle, ChartColumn, CheckCircle2, RefreshCw, Search, Star, XCircle } from "lucide-react";
+import { useCallback, useEffect, useState, type ReactNode } from "react";
+import { AlertTriangle, ChartColumn, Check, CheckCircle2, RefreshCw, Search, Star, XCircle } from "lucide-react";
 import type { AccountUsageSnapshot, AppSettings, DriverName, ModelOption } from "../cw.js";
 import { useSettingsDraftStore, type HarnessCheck } from "../stores/settingsDraftStore.js";
 import { useUsageStore } from "../stores/usageStore.js";
@@ -11,6 +11,7 @@ import { HARNESS_NAMES } from "./settingsSections.js";
 import { isHarnessSkipped } from "./harnessAvailability.js";
 import { SettingsGroup, SettingsRow, SettingsSwitch, type BinaryPickHandler } from "./SettingsLayout.js";
 import { unavailableTitle } from "./UsagePlanCard.js";
+import { useRefreshFeedback } from "./refreshFeedback.js";
 
 const ARGS_PLACEHOLDER: Record<DriverName, string> = {
   claude: "--dangerously-skip-permissions",
@@ -285,6 +286,14 @@ function StatusCard({ driver, check, onOpenUsage }: { driver: DriverName; check:
     if (!usage.accountByDriver[driver] && !usage.accountLoading[driver]) void refreshAccount([driver]);
   }, [driver, refreshAccount]);
 
+  const runRecheck = useCallback(async () => {
+    await Promise.all([recheckHarnesses(), refreshAccount([driver], true)]);
+    const usage = useUsageStore.getState();
+    if (usage.accountError[driver] || useSettingsDraftStore.getState().harnessChecksError) throw new Error("Recheck failed");
+  }, [recheckHarnesses, refreshAccount, driver]);
+  const recheck = useRefreshFeedback(runRecheck);
+  const rechecking = recheck.busy || checksLoading || accountLoading;
+
   const status = checksError
     ? { tone: "bad", icon: <XCircle size={14} aria-hidden="true" />, text: "Version check failed" }
     : !check
@@ -324,16 +333,17 @@ function StatusCard({ driver, check, onOpenUsage }: { driver: DriverName; check:
         <dd className="sans">{account.plan}</dd>
       </dl>
       <div className="sp-aside-actions">
-        <button
-          type="button"
-          className="btn sp-btn-sm"
-          disabled={checksLoading || accountLoading}
-          onClick={() => {
-            void recheckHarnesses();
-            void refreshAccount([driver], true);
-          }}
-        >
-          <RefreshCw size={12} aria-hidden="true" /> {checksLoading || accountLoading ? "Checking…" : "Recheck"}
+        <button type="button" className="btn sp-btn-sm" disabled={rechecking} onClick={recheck.trigger} aria-live="polite">
+          {recheck.phase === "done" ? (
+            <>
+              <Check size={12} aria-hidden="true" /> Up to date
+            </>
+          ) : (
+            <>
+              <RefreshCw size={12} className={rechecking ? "spin" : undefined} aria-hidden="true" />{" "}
+              {rechecking ? "Checking…" : recheck.phase === "failed" ? "Retry check" : "Recheck"}
+            </>
+          )}
         </button>
         <button type="button" className="btn sp-btn-sm" onClick={onOpenUsage}>
           <ChartColumn size={12} aria-hidden="true" /> Usage

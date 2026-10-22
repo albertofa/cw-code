@@ -1,5 +1,5 @@
-import { useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
-import { RefreshCw } from "lucide-react";
+import { useCallback, useEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { AlertTriangle, Check, RefreshCw } from "lucide-react";
 import type { DriverName, Project, Session } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import { usePrStore } from "../stores/prStore.js";
@@ -9,6 +9,7 @@ import { UsagePlanCard } from "./UsagePlanCard.js";
 import { MenuSelect } from "./MenuSelect.js";
 import { useNow, formatCostUsd } from "./usageFormat.js";
 import { formatRelativeAge } from "./prInboxModel.js";
+import { useRefreshFeedback } from "./refreshFeedback.js";
 import { formatTokensShort } from "./subagents.js";
 import { harnessLabel } from "./toolTabs.js";
 import {
@@ -345,10 +346,23 @@ export function UsageView() {
   const sessionRows = useMemo(() => topSessions(filteredRows, 5), [filteredRows]);
   const totalsRow = useMemo(() => totals(filteredRows), [filteredRows]);
 
-  const refreshAll = () => {
-    void refreshAccount(DRIVERS, true);
-    void loadLedger({ sinceDay: sinceDayFor(days, new Date()) });
-  };
+  const refreshAll = useCallback(async () => {
+    await Promise.all([refreshAccount(DRIVERS, true), loadLedger({ sinceDay: sinceDayFor(daysRef.current, new Date()) })]);
+    const state = useUsageStore.getState();
+    const failed = DRIVERS.some((d) => state.accountError[d] || state.accountByDriver[d]?.state.status === "error");
+    if (failed) throw new Error("Some plan limits could not be refreshed");
+  }, [refreshAccount, loadLedger]);
+  const refresh = useRefreshFeedback(refreshAll);
+
+  const refreshStatus = refresh.busy
+    ? "Refreshing…"
+    : refresh.phase === "failed"
+      ? "Refresh failed"
+      : !accountFetchedAt
+        ? "Not refreshed yet"
+        : now - accountFetchedAt < 5000
+          ? "Updated just now"
+          : `Updated ${formatRelativeAge(accountFetchedAt, now)} ago`;
 
   const chartTotal = dailyPoints.reduce((sum, p) => sum + visibleDrivers.reduce((s, d) => s + p.byDriver[d], 0), 0);
   const modelsTotal = modelRows.reduce((sum, r) => sum + r.value, 0);
@@ -361,9 +375,21 @@ export function UsageView() {
           <p>Plan limits come from each CLI&apos;s own account data. Token totals are counted by cw-code from the turns it ran on this device.</p>
         </div>
         <div className="usage-head-right">
-          <span>{accountFetchedAt ? `Updated ${formatRelativeAge(accountFetchedAt, now)} ago` : "Not refreshed yet"}</span>
-          <button className="icon-btn" title="Refresh all" aria-label="Refresh all" onClick={refreshAll}>
-            <RefreshCw size={16} />
+          <span aria-live="polite">{refreshStatus}</span>
+          <button
+            className={`icon-btn usage-refresh-btn${refresh.busy ? " is-busy" : ""}${refresh.phase === "done" ? " is-done" : ""}`}
+            title="Refresh all"
+            aria-label="Refresh all"
+            disabled={refresh.busy}
+            onClick={refresh.trigger}
+          >
+            {refresh.phase === "done" ? (
+              <Check size={16} aria-hidden="true" />
+            ) : refresh.phase === "failed" ? (
+              <AlertTriangle size={16} aria-hidden="true" />
+            ) : (
+              <RefreshCw size={16} className={refresh.busy ? "spin" : undefined} aria-hidden="true" />
+            )}
           </button>
         </div>
       </div>

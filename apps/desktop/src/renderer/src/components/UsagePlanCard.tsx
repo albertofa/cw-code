@@ -124,10 +124,18 @@ export function UsagePlanCard({
             </>
           )}
           {state.notes.length > 0 && <div className="usage-note">{state.notes.join(" ")}</div>}
-          <div className="usage-card-foot">
-            <span className="usage-pulse" aria-hidden="true" />
-            <span>Updated</span>
-            <span className="usage-when">{formatRelativeAge(snapshot.fetchedAt, now)} ago</span>
+          <div className="usage-card-foot" aria-live="polite">
+            <span className={`usage-pulse${loading ? " is-busy" : ""}`} aria-hidden="true" />
+            {loading ? (
+              <span>Refreshing…</span>
+            ) : (
+              <>
+                <span>Updated</span>
+                <span className="usage-when">
+                  {now - snapshot.fetchedAt < 5000 ? "just now" : `${formatRelativeAge(snapshot.fetchedAt, now)} ago`}
+                </span>
+              </>
+            )}
           </div>
         </>
       )}

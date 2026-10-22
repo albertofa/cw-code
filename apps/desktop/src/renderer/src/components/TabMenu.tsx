@@ -2,9 +2,9 @@ import { useEffect, useState, type MouseEvent as ReactMouseEvent, type ReactNode
 import type { DockableTabId, PanelId } from "@cw-code/contracts";
 import { AppWindow, PanelBottom, PanelRight, Pin, RotateCcw, X, type LucideIcon } from "lucide-react";
 import { selectSessionPanel, usePanelStore } from "../stores/panelStore.js";
+import { useMenuPosition } from "./menuPosition.js";
 
 const MENU_WIDTH = 240;
-const MENU_HEIGHT = 260;
 
 const PANELS: Array<{ id: PanelId; label: string; Icon: LucideIcon }> = [
   { id: "main", label: "Main", Icon: AppWindow },
@@ -44,13 +44,13 @@ export function TabMenu({
     };
   }, [onClose]);
 
-  const left = Math.max(8, Math.min(x, window.innerWidth - MENU_WIDTH - 8));
-  const top = Math.max(8, Math.min(y, window.innerHeight - MENU_HEIGHT - 8));
+  const { ref, style } = useMenuPosition(x, y);
 
   return (
     <div
+      ref={ref}
       className="ctx-menu tab-menu"
-      style={{ left, top }}
+      style={style}
       role="menu"
       aria-label="Tab actions"
       onPointerDown={(e) => e.stopPropagation()}
