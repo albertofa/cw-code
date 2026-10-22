@@ -617,6 +617,10 @@ export class SessionManager {
     return this.store.listSessions(projectId);
   }
 
+  listAllSessions(): SessionMeta[] {
+    return this.store.listAllSessions();
+  }
+
   async createSession(projectId: string, driver: DriverKind, options: CreateSessionOptions = {}): Promise<SessionMeta> {
     this.assertNotReserved();
     if (options.baseFallback !== undefined && options.baseFallback !== "default") {

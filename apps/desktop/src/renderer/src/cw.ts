@@ -632,6 +632,9 @@ export interface CwApi {
     importAll(): Promise<SkillsListResult>;
   };
   getGitStatus(sessionId: string): Promise<GitStatus>;
+  watchGitStatus(sessionIds: string[]): Promise<void>;
+  setGitActive(active: boolean): Promise<void>;
+  onGitStatus(cb: (update: GitStatusUpdate) => void): () => void;
   listGitBranches(sessionId: string): Promise<GitBranchInfo[]>;
   listProjectBranches(projectId: string): Promise<GitBranchInfo[]>;
   switchGitBranch(sessionId: string, branch: string): Promise<GitStatus>;
@@ -644,6 +647,8 @@ export interface CwApi {
   getUsageLedger(query: UsageLedgerQuery): Promise<UsageLedgerRow[]>;
   getAccountUsage(drivers: DriverName[], force?: boolean): Promise<AccountUsageSnapshot[]>;
   getPrInbox(force?: boolean): Promise<PrInboxResult>;
+  getTrackedPrs(): Promise<PrSummary[]>;
+  onTrackedPrs(cb: (items: PrSummary[]) => void): () => void;
   getPrDetail(ref: PrRef): Promise<PrDetail>;
   getPrDiff(ref: PrRef): Promise<string>;
   getPrCheckLog(ref: PrRef, runId: number): Promise<string>;
