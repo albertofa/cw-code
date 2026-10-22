@@ -215,7 +215,7 @@ export async function startFeedServer(options: FeedServerOptions): Promise<FeedS
     const streamed = method === "HEAD" ? { written: 0, complete: true } : await streamBody(response, file.path, body, fault);
     record({ ...base, servedPath: file.relativePath, status: body.status, bytes: streamed.written, fault: fault?.type ?? null }, startedAt);
     if (streamed.complete) response.end();
-    else response.destroy();
+    else response.socket?.destroy();
   };
 
   const inflight = new Set<Promise<void>>();
@@ -225,7 +225,7 @@ export async function startFeedServer(options: FeedServerOptions): Promise<FeedS
         response.writeHead(500, { "Content-Length": "0" });
         response.end();
       } else {
-        response.destroy();
+        response.socket?.destroy();
       }
     });
     inflight.add(task);
@@ -244,8 +244,9 @@ export async function startFeedServer(options: FeedServerOptions): Promise<FeedS
       while (inflight.size > 0) await Promise.all([...inflight]);
     },
     close: async () => {
+      const closed = new Promise<void>((resolve, rejectClose) => server.close((error) => (error ? rejectClose(error) : resolve())));
       server.closeAllConnections();
-      await new Promise<void>((resolve, rejectClose) => server.close((error) => (error ? rejectClose(error) : resolve())));
+      await closed;
     }
   };
 }
