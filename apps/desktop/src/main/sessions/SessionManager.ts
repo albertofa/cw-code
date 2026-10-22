@@ -233,6 +233,7 @@ export class SessionManager {
   private idleSweep: Promise<string[]> | null = null;
   private worktreeRecovery = new Map<string, Promise<string>>();
   private branchRenamed = new Set<string>();
+  private missingTokenWarned = new Set<string>();
   private onEvent: (sessionId: string, event: ThreadEvent) => void;
   private onTitle: (sessionId: string, title: string) => void;
   private onResolved: (sessionId: string) => void;
@@ -462,7 +463,7 @@ export class SessionManager {
       if (session.status === "resolved" || session.status === "archived") continue;
       const prs = applyLinkSnapshots(session.prs, snapshots);
       if (!prs) continue;
-      this.store.updateSession(session.id, { prs });
+      this.store.replacePrLinksQuietly(session.id, prs);
       changed.push(session.id);
     }
     for (const sessionId of changed) {
@@ -1088,9 +1089,9 @@ export class SessionManager {
           }
           finishedKeys.add(prKey(link.ref));
         }
-        if (finishedKeys.size !== session.prs.length) continue;
         const current = this.store.getSession(session.id);
         if (!current || !SETTLEABLE_STATUSES.has(current.status)) continue;
+        if (finishedKeys.size !== (current.prs?.length ?? 0)) continue;
         if (!onlyFinishedLinks(current.prs, finishedKeys)) continue;
         if (this.sessionBusy(session.id)) continue;
         const target = this.settings.get().prFinishedSessionStatus;
@@ -1605,21 +1606,32 @@ export class SessionManager {
     sessionId: string,
     session: SessionMeta | undefined,
     project: Project | undefined,
-    cwd: string
+    cwd: string,
+    withGitHubAccount = false
   ): Record<string, string> {
-    const account = project?.githubAccount;
     return {
       CW_WORKTREE_PATH: cwd,
       CW_PROJECT_ROOT: project?.rootPath ?? cwd,
       CW_SESSION_ID: session?.id ?? sessionId,
-      ...githubAccountEnv(account, account ? defaultGitHubAccounts.cachedToken(account.host, account.login) : null)
+      ...(withGitHubAccount ? this.githubAccountVars(session?.id ?? sessionId, project) : {})
     };
+  }
+
+  private githubAccountVars(sessionId: string, project: Project | undefined): Record<string, string> {
+    const account = project?.githubAccount;
+    if (!account) return {};
+    const token = defaultGitHubAccounts.cachedToken(account.host, account.login);
+    if (!token && !this.missingTokenWarned.has(sessionId)) {
+      this.missingTokenWarned.add(sessionId);
+      console.warn(`[git] no cached GitHub token for ${account.login}@${account.host}; agent uses gh's active account`);
+    }
+    return githubAccountEnv(account, token);
   }
 
   turnEnv(sessionId: string, cwd: string): Record<string, string> {
     const session = this.store.getSession(sessionId);
     const project = session ? this.store.getProject(session.projectId) : undefined;
-    return buildTurnEnv(process.env, this.sessionEnvVars(sessionId, session, project, cwd));
+    return buildTurnEnv(process.env, this.sessionEnvVars(sessionId, session, project, cwd, true));
   }
 
   private async captureTurnSnapshot(sessionId: string, cwd: string): Promise<Omit<TurnSnapshot, "turnId"> | null> {
@@ -1891,7 +1903,7 @@ export class SessionManager {
         attachments: resolveAttachments(project.rootPath, cwd, opts?.attachments ?? []),
         ...(opts?.command ? { command: opts.command } : {}),
         ...(!opts?.command && opts?.skills?.length ? { skills: opts.skills } : {}),
-        env: buildTurnEnv(process.env, this.sessionEnvVars(session.id, session, project, cwd))
+        env: buildTurnEnv(process.env, this.sessionEnvVars(session.id, session, project, cwd, session.driver === "claude"))
       });
       this.activeTurns.set(handle.turnId, { sessionId, startedAt: Date.now() });
       if (opts?.prRefs && opts.prRefs.length > 0) this.turnPrRefs.set(handle.turnId, opts.prRefs);
@@ -2289,6 +2301,15 @@ export class SessionManager {
     this.emitSession(sessionId);
   }
 
+  private branchShared(sessionId: string, worktreePath: string, branch: string): boolean {
+    return this.store.listAllSessions().some(
+      (other) =>
+        other.id !== sessionId &&
+        pinsWorktree(other) &&
+        ((other.worktreePath && sameWorktreePath(other.worktreePath, worktreePath)) || other.branch === branch)
+    );
+  }
+
   private async renameBranchForTitle(sessionId: string, turnId: string): Promise<void> {
     if (this.branchRenamed.has(sessionId)) return;
     const session = this.store.getSession(sessionId);
@@ -2299,19 +2320,21 @@ export class SessionManager {
     if (!temporary || !title || title === "New session") return;
     const candidate = branchNameForTitle(title);
     if (!candidate || candidate === branch) return;
-    const shared = this.store.listAllSessions().some(
-      (other) =>
-        other.id !== sessionId &&
-        pinsWorktree(other) &&
-        ((other.worktreePath && sameWorktreePath(other.worktreePath, worktreePath)) || other.branch === branch)
-    );
-    if (shared) return;
+    if (this.branchShared(sessionId, worktreePath, branch)) return;
     this.branchRenamed.add(sessionId);
     try {
       const project = this.getProject(session.projectId);
       const published = await this.git.branchPublished(project.rootPath, branch);
       const current = this.store.getSession(sessionId);
-      if (current?.branch !== branch) {
+      const unchanged =
+        current !== undefined &&
+        current.status !== "resolved" &&
+        current.status !== "archived" &&
+        current.branch === branch &&
+        current.worktreePath !== undefined &&
+        sameWorktreePath(current.worktreePath, worktreePath);
+      const shared = unchanged && this.branchShared(sessionId, worktreePath, branch);
+      if (!unchanged || shared) {
         this.branchRenamed.delete(sessionId);
         return;
       }

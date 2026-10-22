@@ -169,6 +169,20 @@ describe("linkFromStatus", () => {
     }
   });
 
+  it("links a finished pull request only when it finished during the session's life", () => {
+    const fresh = session({ createdAt: 1_000 });
+    const finishedAt = (updatedAt: number) =>
+      status({ headSha: "sha-1", pullRequest: pullRequest({ state: "MERGED", headRefOid: "sha-1", updatedAt }) });
+    expect(linkFromStatus(fresh, finishedAt(999), 2_000)).toBeNull();
+    expect(linkFromStatus(fresh, finishedAt(1_000), 2_000)).toMatchObject({ ref: { number: 42 } });
+    expect(linkFromStatus(fresh, finishedAt(1_500), 2_000)).toMatchObject({ ref: { number: 42 } });
+  });
+
+  it("links an open pull request updated before the session started", () => {
+    const open = status({ pullRequest: pullRequest({ updatedAt: 10 }) });
+    expect(linkFromStatus(session({ createdAt: 1_000 }), open, 2_000)).toMatchObject({ ref: { number: 42 } });
+  });
+
   it("does not link a merged pull request whose head is another commit", () => {
     const merged = status({ headSha: "sha-2", pullRequest: pullRequest({ state: "MERGED", headRefOid: "sha-1" }) });
     expect(linkFromStatus(session(), merged, 100)).toBeNull();

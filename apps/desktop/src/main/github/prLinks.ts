@@ -24,8 +24,9 @@ export function canOwnAutoLink(session: SessionMeta): boolean {
   return session.status !== "resolved" && session.status !== "archived";
 }
 
-function belongsToCheckout(pullRequest: GitPullRequest, headSha: string | null | undefined): boolean {
+function belongsToSession(session: SessionMeta, pullRequest: GitPullRequest, headSha: string | null | undefined): boolean {
   if (pullRequest.state === "OPEN") return true;
+  if (pullRequest.updatedAt < session.createdAt) return false;
   return pullRequest.headRefOid !== "" && !!headSha && pullRequest.headRefOid === headSha;
 }
 
@@ -33,7 +34,7 @@ export function linkFromStatus(session: SessionMeta, status: GitStatus, now: num
   if (!canOwnAutoLink(session) || session.branch !== status.branch) return null;
   const pullRequest = status.pullRequest;
   if (!pullRequest || pullRequest.headRefName !== status.branch) return null;
-  if (!belongsToCheckout(pullRequest, status.headSha)) return null;
+  if (!belongsToSession(session, pullRequest, status.headSha)) return null;
   const ref = prRefFromUrl(pullRequest.url);
   if (!ref) return null;
   if (session.prUnlinked?.includes(prKey(ref))) return null;

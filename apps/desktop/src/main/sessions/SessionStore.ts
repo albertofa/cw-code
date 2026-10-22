@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { ComposerPrefs, DriverKind, Project, SessionMeta, SessionStatus } from "@cw-code/contracts";
+import type { ComposerPrefs, DriverKind, Project, SessionMeta, SessionPrLink, SessionStatus } from "@cw-code/contracts";
 import { traceSessionStatus, type SessionStatusReason } from "../debug/sessionStatusTrace.js";
 import { isValidPrLink, upsertLink } from "../github/prLinks.js";
 import { expandHome } from "../skills/skillPaths.js";
@@ -341,6 +341,14 @@ export class SessionStore {
         reason: reason ?? "unknown"
       });
     }
+    this.persist();
+  }
+
+  replacePrLinksQuietly(id: string, prs: SessionPrLink[]): void {
+    const current = this.getSession(id);
+    if (!current) return;
+    if (prs.length === 0) delete current.prs;
+    else current.prs = prs;
     this.persist();
   }
 
