@@ -19,6 +19,11 @@ function assertInside(root: string, target: string): string {
   return abs;
 }
 
+function resolveFileTarget(root: string, target: string): string {
+  if (UNC_OR_DEVICE_PREFIX.test(target) || !isAbsolute(target)) return assertInside(root, target);
+  return resolve(target);
+}
+
 const PREVIEW_MAX_BYTES = 2 * 1024 * 1024;
 
 const OUTSIDE_PREVIEW_EXTS = new Set([".md", ".markdown", ".html", ".htm"]);
@@ -138,7 +143,7 @@ export class FileService {
   }
 
   readImage(root: string, target: string): { mime: string; base64: string } {
-    const abs = assertInside(root, target);
+    const abs = resolveFileTarget(root, target);
     const ext = abs.split(".").pop() ?? "";
     const mime = imageExtMime(ext);
     if (!mime) throw new Error(`not an image: ${target}`);
@@ -215,7 +220,7 @@ export class FileService {
   }
 
   async readFileInfo(root: string, target: string): Promise<FileReadResult> {
-    const abs = assertInside(root, target);
+    const abs = resolveFileTarget(root, target);
     const stats = await statOrNull(abs);
     if (!stats?.isFile()) return { kind: "missing" };
     const { mtimeMs, size } = stats;
@@ -229,7 +234,7 @@ export class FileService {
   }
 
   async writeFileGuarded(root: string, target: string, content: string, expectedMtimeMs?: number): Promise<FileStatInfo> {
-    const abs = assertInside(root, target);
+    const abs = resolveFileTarget(root, target);
     if (expectedMtimeMs !== undefined) {
       const existing = await statOrNull(abs);
       if (existing && Math.floor(existing.mtimeMs) !== Math.floor(expectedMtimeMs)) {
@@ -279,4 +284,4 @@ export class FileService {
   }
 }
 
-export { assertInside };
+export { assertInside, resolveFileTarget };

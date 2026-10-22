@@ -31,7 +31,7 @@ import type { PtyKind } from "./pty/PtyPool.js";
 import { SessionManager } from "./sessions/SessionManager.js";
 import { AccountUsageService } from "./usage/AccountUsageService.js";
 import { SkillsStore } from "./skills/SkillsStore.js";
-import { FileService, IMAGE_MAX_BYTES, imageExtMime } from "./fs/FileService.js";
+import { FileService, IMAGE_MAX_BYTES, imageExtMime, resolveFileTarget } from "./fs/FileService.js";
 import { FileWatcher } from "./fs/FileWatcher.js";
 import { defaultBinary, GitService, sweepStaleSnapshotIndexes } from "./fs/GitService.js";
 import { gitBaseline, gitDecorations, listWorkspaceFiles, searchText } from "./fs/workspaceQueries.js";
@@ -1208,7 +1208,7 @@ function registerIpc(services: Services): void {
   ipcMain.handle("fs.revealPath", async (_e, raw: unknown) => {
     const args = parseArgs(raw, "fs.revealPath");
     const path = parseString(args.path, "path");
-    shell.showItemInFolder(files.resolveEntry(await fsRoot(args), path));
+    shell.showItemInFolder(resolveFileTarget(await fsRoot(args), path));
   });
   ipcMain.handle("fs.workspaceRoot", (_e, raw: unknown) => fsRoot(parseArgs(raw, "fs.workspaceRoot")));
   ipcMain.handle("fs.listWorkspaceFiles", async (_e, raw: unknown) => {

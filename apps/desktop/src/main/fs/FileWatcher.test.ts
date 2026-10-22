@@ -196,6 +196,17 @@ describe("FileWatcher", () => {
     expect(events).toEqual([]);
   });
 
+  it("watches absolute paths outside the root and reports them as requested", () => {
+    const outside = resolve("elsewhere", "a.sql");
+    const requested = outside.replace(/\\/g, "/");
+    watcher.setWatched("s1", root, ["", requested]);
+    expect(handles[0].initial).toEqual([root, outside]);
+    handles[0].fire(outside);
+    handles[0].fire(resolve("elsewhere", "b.sql"));
+    vi.advanceTimersByTime(150);
+    expect(events).toEqual([{ sessionId: "s1", paths: [requested] }]);
+  });
+
   it("drops invalid paths with a warning", () => {
     watcher.setWatched("s1", root, ["../escape", "//server/share", "src"]);
     expect(handles[0].initial).toEqual([abs("src")]);

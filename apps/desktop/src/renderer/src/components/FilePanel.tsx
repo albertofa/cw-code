@@ -20,6 +20,7 @@ import {
 import type { DirEntry, FsChangeEvent, GitBaseline } from "@cw-code/contracts";
 import { useConfirm } from "./ConfirmDialog.js";
 import { ipcErrorMessage } from "./ipcError.js";
+import { isAbsolutePath } from "./Markdown.js";
 import { EditorGroup, isImagePath, type PathReveal, type TabView } from "./files/EditorGroup.js";
 import { FileContextMenu, type MenuEntry } from "./files/FileContextMenu.js";
 import { FileExplorer, type InlineEdit } from "./files/FileExplorer.js";
@@ -242,6 +243,7 @@ function FileWorkspace({ sessionId }: { sessionId: string }) {
 
   const refreshBaseline = useCallback(
     (path: string) => {
+      if (isAbsolutePath(path)) return;
       window.cw
         .gitBaseline(sessionId, path)
         .then((baseline) => {
@@ -342,7 +344,8 @@ function FileWorkspace({ sessionId }: { sessionId: string }) {
               }
               return;
             }
-            setViews((prev) => ({ ...prev, [path]: { status: "error", message: `${path} doesn’t exist in this workspace.` } }));
+            const where = isAbsolutePath(path) ? "" : " in this workspace";
+            setViews((prev) => ({ ...prev, [path]: { status: "error", message: `${path} doesn’t exist${where}.` } }));
           } else {
             setViews((prev) => ({ ...prev, [path]: { status: info.kind, size: info.size } }));
           }
@@ -357,6 +360,7 @@ function FileWorkspace({ sessionId }: { sessionId: string }) {
 
   const revealInTree = useCallback(
     (path: string) => {
+      if (isAbsolutePath(path)) return;
       const dirs = ancestorsOf(path);
       setExpandedPaths((current) => {
         const next = new Set(current);
@@ -570,7 +574,8 @@ function FileWorkspace({ sessionId }: { sessionId: string }) {
         if (!relative) {
           const root = await workspaceRoot();
           const sep = root.includes("\\") ? "\\" : "/";
-          text = path ? `${root.replace(/[\\/]+$/, "")}${sep}${path.split("/").join(sep)}` : root;
+          if (isAbsolutePath(path)) text = path.split("/").join(sep);
+          else text = path ? `${root.replace(/[\\/]+$/, "")}${sep}${path.split("/").join(sep)}` : root;
         }
         await navigator.clipboard.writeText(text);
       } catch (err) {
@@ -788,6 +793,7 @@ function FileWorkspace({ sessionId }: { sessionId: string }) {
       const index = tabs.findIndex((tab) => tab.path === path);
       const tab = tabs[index];
       const store = useFileTabs.getState();
+      const outside = isAbsolutePath(path);
       const items: MenuEntry[] = [
         { label: "Close", Icon: X, shortcut: "Ctrl+W", run: () => closeTab(path) },
         {
@@ -810,16 +816,20 @@ function FileWorkspace({ sessionId }: { sessionId: string }) {
         "separator",
         ...(tab?.preview ? ([{ label: "Keep Open", Icon: Pin, run: () => store.pin(sessionId, path) }] as MenuEntry[]) : []),
         { label: "Copy Path", Icon: Copy, run: () => void copyPath(path, false) },
-        { label: "Copy Relative Path", Icon: ClipboardCopy, run: () => void copyPath(path, true) },
-        {
-          label: "Reveal in Explorer View",
-          Icon: Files,
-          run: () => {
-            showSide();
-            setSideView("explorer");
-            revealInTree(path);
-          }
-        },
+        ...(outside
+          ? []
+          : ([
+              { label: "Copy Relative Path", Icon: ClipboardCopy, run: () => void copyPath(path, true) },
+              {
+                label: "Reveal in Explorer View",
+                Icon: Files,
+                run: () => {
+                  showSide();
+                  setSideView("explorer");
+                  revealInTree(path);
+                }
+              }
+            ] as MenuEntry[])),
         { label: navigator.userAgent.includes("Windows") ? "Reveal in File Explorer" : "Reveal in File Manager", Icon: ExternalLink, run: () => void revealInOs(path) }
       ];
       setMenu({ x: e.clientX, y: e.clientY, items });
@@ -842,6 +852,10 @@ function FileWorkspace({ sessionId }: { sessionId: string }) {
         if (!aliveRef.current) return;
         if (info.kind !== "missing") {
           openFile(path, { preview: true, line: line ?? null, revealTree: true });
+          return;
+        }
+        if (isAbsolutePath(path)) {
+          showNotice(`${path} doesn’t exist.`, "error");
           return;
         }
         const match = resolveRevealPath(path, await window.cw.listWorkspaceFiles(sessionId));
@@ -938,6 +952,7 @@ function FileWorkspace({ sessionId }: { sessionId: string }) {
         onTabMenu={tabMenu}
         onSave={(path) => void save(path)}
         onRevealInTree={(path) => {
+          if (isAbsolutePath(path)) return;
           showSide();
           setSideView("explorer");
           revealInTree(path);
