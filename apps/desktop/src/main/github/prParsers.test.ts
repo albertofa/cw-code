@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { PrSummary } from "@cw-code/contracts";
-import { actorLoginOf, bucketFor, ciFromRollup, graphqlOutcome, graphqlPartialFailure, parseDetail, parseHead, parseInbox, parsePrSearch, prKey, prRefFromUrl, withBotSuffix } from "./prParsers.js";
+import { actorLoginOf, bucketFor, ciFromRollup, graphqlOutcome, graphqlPartialFailure, parseDetail, parseHead, parseInbox, parsePrSearch, parseTrackedPrs, prKey, prRefFromUrl, withBotSuffix } from "./prParsers.js";
 
 function rollupNode(state: string) {
   return { __typename: "CheckRun", conclusion: state };
@@ -605,5 +605,47 @@ describe("parseDetail", () => {
 
   it("returns null when the pull request node is missing", () => {
     expect(parseDetail(JSON.stringify({ data: { repository: {} } }), "octocat")).toBeNull();
+  });
+});
+
+describe("parseTrackedPrs", () => {
+  const refs = [
+    { host: "github.com", owner: "acme", repo: "widgets", number: 1 },
+    { host: "github.com", owner: "acme", repo: "widgets", number: 2 },
+    { host: "github.com", owner: "acme", repo: "gadgets", number: 3 }
+  ];
+
+  it("maps aliases back to refs and skips missing or null pull requests", () => {
+    const json = JSON.stringify({
+      data: {
+        pr0: { pullRequest: summaryNode({ viewerDidAuthor: true }) },
+        pr1: { pullRequest: null },
+        pr2: { pullRequest: summaryNode({ number: 3, url: "https://github.com/acme/gadgets/pull/3", state: "MERGED" }) }
+      }
+    });
+    const result = parseTrackedPrs(json, refs, "octocat");
+    expect([...result.keys()]).toEqual(["github.com/acme/widgets#1", "github.com/acme/gadgets#3"]);
+    expect(result.get("github.com/acme/widgets#1")?.viewerIsAuthor).toBe(true);
+    expect(result.get("github.com/acme/gadgets#3")?.state).toBe("MERGED");
+  });
+
+  it("uses the viewer to flag review requests", () => {
+    const node = summaryNode({ reviewRequests: { nodes: [{ requestedReviewer: { login: "octocat" } }] } });
+    const result = parseTrackedPrs(JSON.stringify({ data: { pr0: { pullRequest: node } } }), refs.slice(0, 1), "octocat");
+    expect(result.get("github.com/acme/widgets#1")?.reviewRequestedFromViewer).toBe(true);
+  });
+
+  it("keeps partial data when the response also carries errors", () => {
+    const json = JSON.stringify({
+      data: { pr0: { pullRequest: summaryNode() }, pr1: null },
+      errors: [{ type: "NOT_FOUND", path: ["pr1"], message: "Could not resolve to a Repository" }]
+    });
+    const result = parseTrackedPrs(json, refs.slice(0, 2), "octocat");
+    expect([...result.keys()]).toEqual(["github.com/acme/widgets#1"]);
+  });
+
+  it("returns an empty map for malformed or data-less responses", () => {
+    expect(parseTrackedPrs("not json", refs, "octocat").size).toBe(0);
+    expect(parseTrackedPrs(JSON.stringify({ errors: [{ message: "boom" }] }), refs, "octocat").size).toBe(0);
   });
 });

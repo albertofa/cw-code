@@ -172,7 +172,7 @@ export function avatarUrlsOf(actors: unknown[]): Record<string, string> {
   return urls;
 }
 
-function parseSummaryNode(node: Record<string, unknown>, viewer: string | null): PrSummary | null {
+export function parseSummaryNode(node: Record<string, unknown>, viewer: string | null): PrSummary | null {
   const url = asString(node.url);
   const ref = prRefFromUrl(url);
   const number = asNumber(node.number);
@@ -214,6 +214,18 @@ function parseSummaryNode(node: Record<string, unknown>, viewer: string | null):
     ]),
     updatedAt: asEpochMs(node.updatedAt)
   };
+}
+
+export function parseTrackedPrs(json: string, refs: PrRef[], viewer: string): Map<string, PrSummary> {
+  const summaries = new Map<string, PrSummary>();
+  const data = asRecord(asRecord(parseJsonObject(json)).data);
+  refs.forEach((ref, index) => {
+    const node = asRecord(asRecord(data[`pr${index}`]).pullRequest);
+    if (Object.keys(node).length === 0) return;
+    const summary = parseSummaryNode(node, viewer || null);
+    if (summary) summaries.set(prKey(ref), summary);
+  });
+  return summaries;
 }
 
 export function parseJsonObject(json: string): Record<string, unknown> | null {
