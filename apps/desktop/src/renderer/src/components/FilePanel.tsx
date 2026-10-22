@@ -340,7 +340,8 @@ function FileWorkspace({ sessionId }: { sessionId: string }) {
           } else if (info.kind === "missing") {
             if (registered.has(key) && useEditorBuffers.getState().buffers[key]) {
               if (!useEditorBuffers.getState().markMissing(key)) {
-                showNotice(`${baseName(path)} was deleted on disk. It still has unsaved edits; saving will recreate it.`, "error");
+                const onSave = isAbsolutePath(path) ? "it can't be saved because it's outside the workspace" : "saving will recreate it";
+                showNotice(`${baseName(path)} was deleted on disk. It still has unsaved edits; ${onSave}.`, "error");
               }
               return;
             }

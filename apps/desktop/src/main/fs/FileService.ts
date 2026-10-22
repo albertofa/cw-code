@@ -8,14 +8,15 @@ import { attachmentsDir } from "../paths/appPaths.js";
 
 const UNC_OR_DEVICE_PREFIX = /^[\\/]{2}/;
 
+function isOutsideRoot(root: string, abs: string): boolean {
+  const rel = relative(resolve(root), abs);
+  return isAbsolute(rel) || rel === ".." || rel.startsWith(`..${sep}`);
+}
+
 function assertInside(root: string, target: string): string {
   if (UNC_OR_DEVICE_PREFIX.test(target)) throw new Error(`path escapes project root: ${target}`);
-  const base = resolve(root);
-  const abs = resolve(base, target.replace(/\\/g, "/"));
-  const rel = relative(base, abs);
-  if (isAbsolute(rel) || rel === ".." || rel.startsWith(`..${sep}`)) {
-    throw new Error(`path escapes project root: ${target}`);
-  }
+  const abs = resolve(resolve(root), target.replace(/\\/g, "/"));
+  if (isOutsideRoot(root, abs)) throw new Error(`path escapes project root: ${target}`);
   return abs;
 }
 
@@ -235,8 +236,9 @@ export class FileService {
 
   async writeFileGuarded(root: string, target: string, content: string, expectedMtimeMs?: number): Promise<FileStatInfo> {
     const abs = resolveFileTarget(root, target);
+    const existing = await statOrNull(abs);
+    if (!existing?.isFile() && isOutsideRoot(root, abs)) throw new Error(`file not found: ${target}`);
     if (expectedMtimeMs !== undefined) {
-      const existing = await statOrNull(abs);
       if (existing && Math.floor(existing.mtimeMs) !== Math.floor(expectedMtimeMs)) {
         throw new Error(`file changed on disk: ${target}`);
       }
@@ -284,4 +286,4 @@ export class FileService {
   }
 }
 
-export { assertInside, resolveFileTarget };
+export { assertInside, isOutsideRoot, resolveFileTarget };

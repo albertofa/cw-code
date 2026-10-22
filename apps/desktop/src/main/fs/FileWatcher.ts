@@ -1,11 +1,7 @@
-import { isAbsolute, relative, resolve, sep } from "node:path";
+import { relative, resolve } from "node:path";
 import chokidar from "chokidar";
 import type { FsChangeEvent } from "@cw-code/contracts";
-import { resolveFileTarget } from "./FileService.js";
-
-function isOutside(rel: string): boolean {
-  return isAbsolute(rel) || rel === ".." || rel.startsWith(`..${sep}`);
-}
+import { isOutsideRoot, resolveFileTarget } from "./FileService.js";
 
 export interface WatcherHandle {
   add(paths: string[]): void;
@@ -114,7 +110,7 @@ export class FileWatcher {
       try {
         const abs = resolveFileTarget(absRoot, relPath);
         watched.add(abs);
-        if (isOutside(relative(absRoot, abs))) outside.set(abs, relPath);
+        if (isOutsideRoot(absRoot, abs)) outside.set(abs, relPath);
       } catch (err) {
         this.warn(`ignoring watch path "${relPath}": ${err instanceof Error ? err.message : String(err)}`);
       }
@@ -146,8 +142,9 @@ export class FileWatcher {
 
   private record(sessionId: string, session: WatchSession, absPath: string): void {
     if (this.sessions.get(sessionId) !== session) return;
-    const rel = relative(session.root, absPath);
-    const key = isOutside(rel) ? session.outside.get(resolve(absPath)) : rel.replace(/\\/g, "/");
+    const key = isOutsideRoot(session.root, absPath)
+      ? session.outside.get(resolve(absPath))
+      : relative(session.root, absPath).replace(/\\/g, "/");
     if (key === undefined) return;
     session.pending.add(key);
     const now = Date.now();

@@ -202,6 +202,13 @@ describe("FileService file operations", () => {
       expect(readFileSync(file, "utf8")).toBe("select 2;");
     });
 
+    it("never creates a file outside the root", async () => {
+      const file = join(makeRoot(), "new.ts");
+      await expect(svc.writeFileGuarded(makeRoot(), file, "x")).rejects.toThrow(/file not found/);
+      await expect(svc.writeFileGuarded(makeRoot(), file, "x", 1)).rejects.toThrow(/file not found/);
+      expect(() => statSync(file)).toThrow();
+    });
+
     it("reports a missing absolute file as missing", async () => {
       expect(await svc.readFileInfo(makeRoot(), join(makeRoot(), "gone.ts"))).toEqual({ kind: "missing" });
     });
