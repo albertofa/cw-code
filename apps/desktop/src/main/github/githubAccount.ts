@@ -1,6 +1,6 @@
 import type { AppSettings, GitHubAccountInfo } from "@cw-code/contracts";
 import { defaultBinary } from "../fs/GitService.js";
-import { defaultGitHubAccounts } from "./GitHubAccounts.js";
+import { defaultGitHubAccounts, isGitHubAuthError } from "./GitHubAccounts.js";
 
 export const GH_HOST = "github.com";
 
@@ -14,7 +14,8 @@ export function githubCliBinary(settings: () => AppSettings): string {
   return settings().githubCliBinaryPath?.trim() || defaultBinary("gh");
 }
 
-export async function resolveGitHubAccount(_settings: () => AppSettings, host = GH_HOST, owner = ""): Promise<AccountResolution> {
+export async function resolveGitHubAccount(_settings: () => AppSettings, rawHost = GH_HOST, owner = ""): Promise<AccountResolution> {
+  const host = rawHost.toLowerCase();
   const selection = await defaultGitHubAccounts.select(host, owner);
   if (!selection.account) {
     const message = selection.error ?? `No authenticated ${host} account in gh`;
@@ -25,5 +26,26 @@ export async function resolveGitHubAccount(_settings: () => AppSettings, host = 
     return { account: selection.account, token };
   } catch (error) {
     return { error: (error as Error).message || "GitHub CLI unavailable" };
+  }
+}
+
+export async function withGitHubAccount<T>(
+  settings: () => AppSettings,
+  host: string,
+  owner: string,
+  run: (resolved: { account: GitHubAccountInfo; token: string }) => Promise<T>
+): Promise<T> {
+  const resolve = async (): Promise<{ account: GitHubAccountInfo; token: string }> => {
+    const resolution = await resolveGitHubAccount(settings, host, owner);
+    if ("error" in resolution) throw new Error(resolution.error);
+    return resolution;
+  };
+  const first = await resolve();
+  try {
+    return await run(first);
+  } catch (error) {
+    if (!isGitHubAuthError((error as Error).message ?? "")) throw error;
+    defaultGitHubAccounts.invalidateToken(first.account.host, first.account.login);
+    return run(await resolve());
   }
 }

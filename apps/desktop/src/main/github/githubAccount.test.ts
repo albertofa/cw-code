@@ -12,8 +12,8 @@ const gitService = vi.hoisted(() => ({
 
 vi.mock("../fs/GitService.js", () => gitService);
 
-import { configureGitHubAccounts, GitHubAccounts } from "./GitHubAccounts.js";
-import { resolveGitHubAccount } from "./githubAccount.js";
+import { configureGitHubAccounts, GitHubAccounts, isGitHubAuthError } from "./GitHubAccounts.js";
+import { resolveGitHubAccount, withGitHubAccount } from "./githubAccount.js";
 
 const settings = (() => ({}) as AppSettings);
 
@@ -46,6 +46,59 @@ describe("resolveGitHubAccount", () => {
     await resolveGitHubAccount(settings, "ghe.example.com", "acme");
     expect(gitService.selectGitHubAccount).toHaveBeenCalledWith(expect.any(Array), "ghe.example.com", "acme", undefined);
     expect(gitService.fetchGhToken).toHaveBeenCalledWith("gh-host", expect.any(String), "ghe.example.com", "octocat");
+  });
+});
+
+describe("withGitHubAccount", () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    gitService.fetchGhAuthStatus.mockResolvedValue([{ host: "github.com", login: "octocat", authenticated: true }]);
+    gitService.selectGitHubAccount.mockReturnValue({ account: { host: "github.com", login: "octocat" }, source: "single", error: null });
+    configureGitHubAccounts(() => "gh-with-account");
+    gitService.fetchGhToken.mockReset();
+  });
+
+  it("retries once with a fresh token on an auth failure", async () => {
+    gitService.fetchGhToken.mockResolvedValueOnce("stale").mockResolvedValueOnce("fresh");
+    const run = vi.fn(async ({ token }: { token: string }) => {
+      if (token === "stale") throw new Error("HTTP 401: Bad credentials");
+      return token;
+    });
+    expect(await withGitHubAccount(settings, "github.com", "", run)).toBe("fresh");
+    expect(run).toHaveBeenCalledTimes(2);
+    expect(gitService.fetchGhToken).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not retry other failures", async () => {
+    gitService.fetchGhToken.mockResolvedValue("token");
+    const run = vi.fn(async () => {
+      throw new Error("Could not resolve to a Repository");
+    });
+    await expect(withGitHubAccount(settings, "github.com", "", run)).rejects.toThrow("Could not resolve");
+    expect(run).toHaveBeenCalledTimes(1);
+  });
+
+  it("gives up after a single retry", async () => {
+    gitService.fetchGhToken.mockResolvedValue("token");
+    const run = vi.fn(async () => {
+      throw new Error("HTTP 401: Bad credentials");
+    });
+    await expect(withGitHubAccount(settings, "github.com", "", run)).rejects.toThrow("Bad credentials");
+    expect(run).toHaveBeenCalledTimes(2);
+  });
+
+  it("throws the resolution error when no account is available", async () => {
+    gitService.selectGitHubAccount.mockReturnValue({ account: null, source: "none", error: "No authenticated GitHub account found for ghe.example.com" });
+    await expect(withGitHubAccount(settings, "ghe.example.com", "", async () => "x")).rejects.toThrow("No authenticated GitHub account");
+  });
+});
+
+describe("isGitHubAuthError", () => {
+  it("recognizes gh authentication failures only", () => {
+    expect(isGitHubAuthError("gh: HTTP 401: Bad credentials (https://api.github.com/graphql)")).toBe(true);
+    expect(isGitHubAuthError("To get started with GitHub CLI, please run:  gh auth login")).toBe(true);
+    expect(isGitHubAuthError("no pull requests found for branch")).toBe(false);
+    expect(isGitHubAuthError("HTTP 404: Not Found")).toBe(false);
   });
 });
 
@@ -95,6 +148,40 @@ describe("GitHubAccounts", () => {
     expect(await accounts.token("GitHub.com", "one")).toBe("token");
     expect(accounts.cachedToken("github.com", "one")).toBe("token");
     expect(gitService.fetchGhToken).toHaveBeenCalledTimes(1);
+  });
+
+  it("forces a new gh auth token call after invalidateToken", async () => {
+    const accounts = new GitHubAccounts(() => "gh-invalidate-token");
+    gitService.fetchGhToken.mockResolvedValueOnce("old").mockResolvedValueOnce("new");
+    expect(await accounts.token("github.com", "one")).toBe("old");
+    accounts.invalidateToken("github.com", "one");
+    expect(accounts.cachedToken("github.com", "one")).toBeNull();
+    expect(await accounts.token("github.com", "one")).toBe("new");
+    expect(gitService.fetchGhToken).toHaveBeenCalledTimes(2);
+  });
+
+  it("drops every cache on invalidate", async () => {
+    const accounts = new GitHubAccounts(() => "gh-invalidate-all");
+    await accounts.token("github.com", "one");
+    await accounts.accounts("github.com");
+    accounts.invalidate();
+    expect(accounts.cachedToken("github.com", "one")).toBeNull();
+    await accounts.accounts("github.com");
+    expect(gitService.fetchGhAuthStatus).toHaveBeenCalledTimes(2);
+  });
+
+  it("does not cache an empty account list", async () => {
+    const accounts = new GitHubAccounts(() => "gh-empty-list");
+    gitService.fetchGhAuthStatus.mockResolvedValueOnce([]);
+    expect(await accounts.accounts("github.com")).toEqual([]);
+    expect((await accounts.accounts("github.com")).map((account) => account.login)).toEqual(["one", "stale"]);
+    expect(gitService.fetchGhAuthStatus).toHaveBeenCalledTimes(2);
+  });
+
+  it("passes the lower-cased host to gh auth token", async () => {
+    const accounts = new GitHubAccounts(() => "gh-lower-host");
+    await accounts.token("GHE.Example.com", "two");
+    expect(gitService.fetchGhToken).toHaveBeenCalledWith("gh-lower-host", expect.any(String), "ghe.example.com", "two");
   });
 
   it("throws on an empty token and does not cache it", async () => {

@@ -12,11 +12,18 @@ export interface GitHubAccountSelection {
   accounts: GitHubAccountInfo[];
 }
 
+const AUTH_FAILURE_RE = /HTTP 401|Bad credentials|authentication|gh auth login/i;
+
+export function isGitHubAuthError(message: string): boolean {
+  return AUTH_FAILURE_RE.test(message);
+}
+
 class TtlCache<V> {
   private entries = new Map<string, { expiresAt: number; value: V }>();
   private pending = new Map<string, Promise<V>>();
+  private generation = 0;
 
-  constructor(private ttlMs: number) {}
+  constructor(private ttlMs: number, private shouldCache: (value: V) => boolean = () => true) {}
 
   peek(key: string): V | null {
     const entry = this.entries.get(key);
@@ -28,9 +35,10 @@ class TtlCache<V> {
     if (cached !== null) return Promise.resolve(cached);
     const inFlight = this.pending.get(key);
     if (inFlight) return inFlight;
+    const generation = this.generation;
     const promise = loader()
       .then((value) => {
-        this.entries.set(key, { expiresAt: Date.now() + this.ttlMs, value });
+        if (generation === this.generation && this.shouldCache(value)) this.entries.set(key, { expiresAt: Date.now() + this.ttlMs, value });
         return value;
       })
       .finally(() => {
@@ -39,10 +47,21 @@ class TtlCache<V> {
     this.pending.set(key, promise);
     return promise;
   }
+
+  delete(key: string): void {
+    this.entries.delete(key);
+    this.pending.delete(key);
+  }
+
+  clear(): void {
+    this.generation += 1;
+    this.entries.clear();
+    this.pending.clear();
+  }
 }
 
 export class GitHubAccounts {
-  private authStatus = new TtlCache<GitHubAccountInfo[]>(ACCOUNTS_CACHE_TTL_MS);
+  private authStatus = new TtlCache<GitHubAccountInfo[]>(ACCOUNTS_CACHE_TTL_MS, (accounts) => accounts.length > 0);
   private repositoryAccess = new TtlCache<boolean>(ACCOUNTS_CACHE_TTL_MS);
   private tokens = new TtlCache<string>(ACCOUNTS_CACHE_TTL_MS);
 
@@ -56,6 +75,7 @@ export class GitHubAccounts {
   }
 
   async withAccess(host: string, slug: string): Promise<GitHubAccountInfo[]> {
+    host = host.toLowerCase();
     const accounts = await this.accounts(host);
     return Promise.all(accounts.map(async (account) => ({
       ...account,
@@ -80,11 +100,33 @@ export class GitHubAccounts {
 
   token(host: string, login: string): Promise<string> {
     const binary = this.binary();
-    return this.tokens.load(this.tokenKey(binary, host, login), async () => {
-      const value = await fetchGhToken(binary, homedir(), host, login);
+    const hostname = host.toLowerCase();
+    return this.tokens.load(this.tokenKey(binary, hostname, login), async () => {
+      const value = await fetchGhToken(binary, homedir(), hostname, login);
       if (!value) throw new Error(`No token available for ${login}`);
       return value;
     });
+  }
+
+  async withToken<T>(host: string, login: string, run: (token: string) => Promise<T>): Promise<T> {
+    const first = await this.token(host, login);
+    try {
+      return await run(first);
+    } catch (error) {
+      if (!isGitHubAuthError((error as Error).message ?? "")) throw error;
+      this.invalidateToken(host, login);
+      return run(await this.token(host, login));
+    }
+  }
+
+  invalidateToken(host: string, login: string): void {
+    this.tokens.delete(this.tokenKey(this.binary(), host, login));
+  }
+
+  invalidate(): void {
+    this.authStatus.clear();
+    this.repositoryAccess.clear();
+    this.tokens.clear();
   }
 
   cachedToken(host: string, login: string): string | null {
@@ -100,8 +142,9 @@ export class GitHubAccounts {
     const key = `${this.tokenKey(binary, host, login)}|${slug.toLowerCase()}`;
     return this.repositoryAccess.load(key, async () => {
       try {
-        const token = await this.token(host, login);
-        await execText(binary, ["repo", "view", `${host}/${slug}`, "--json", "nameWithOwner"], homedir(), REPO_VIEW_TIMEOUT_MS, authenticatedEnvironment(host, token));
+        await this.withToken(host, login, (token) =>
+          execText(binary, ["repo", "view", `${host}/${slug}`, "--json", "nameWithOwner"], homedir(), REPO_VIEW_TIMEOUT_MS, authenticatedEnvironment(host, token))
+        );
         return true;
       } catch {
         return false;

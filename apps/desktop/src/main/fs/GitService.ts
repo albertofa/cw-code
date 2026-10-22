@@ -640,11 +640,12 @@ export async function fetchGhAuthStatus(binary: string, cwd: string): Promise<Gi
 
 async function queryPullRequest(root: string, ghBinary: string, remote: ParsedGitHubRemote, account: GitHubAccountInfo, accounts: GitHubAccounts): Promise<{ pullRequest: GitPullRequest | null; error: string | null }> {
   try {
-    const token = await accounts.token(remote.host, account.login);
-    const stdout = await execText(ghBinary, [
-      "pr", "view", "--json",
-      "number,title,url,state,isDraft,reviewDecision,mergeStateStatus,headRefName,baseRefName,statusCheckRollup"
-    ], root, 8_000, authenticatedEnvironment(remote.host, token));
+    const stdout = await accounts.withToken(remote.host, account.login, (token) =>
+      execText(ghBinary, [
+        "pr", "view", "--json",
+        "number,title,url,state,isDraft,reviewDecision,mergeStateStatus,headRefName,baseRefName,statusCheckRollup"
+      ], root, 8_000, authenticatedEnvironment(remote.host, token))
+    );
     return { pullRequest: parsePullRequest(stdout), error: null };
   } catch (error) {
     const message = (error as Error).message;
@@ -1838,6 +1839,7 @@ export class GitService {
   }
 
   async health(root?: string, project?: Project): Promise<SourceControlHealth> {
+    this.accounts.invalidate();
     const settings = this.settings();
     const cwd = root || process.cwd();
     const [gitHealth, githubCli] = await Promise.all([
