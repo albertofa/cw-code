@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { parsePullRequestList, pickBranchPullRequest, pickComparisonBase, type BranchPullRequestCandidate } from "./branchPullRequest.js";
 
 const HEAD = "a".repeat(40);
@@ -65,9 +65,16 @@ describe("parsePullRequestList", () => {
   });
 
   it("returns an empty list for malformed output and skips invalid entries", () => {
-    expect(parsePullRequestList("not-json")).toEqual([]);
-    expect(parsePullRequestList(JSON.stringify({ number: 1 }))).toEqual([]);
-    expect(parsePullRequestList(JSON.stringify([null, { number: 0, url: "x" }, { number: 3 }]))).toEqual([]);
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    try {
+      expect(parsePullRequestList("not-json")).toEqual([]);
+      expect(parsePullRequestList(JSON.stringify({ number: 1 }))).toEqual([]);
+      expect(warn).toHaveBeenCalledTimes(2);
+      expect(warn.mock.calls[0][0]).toContain("[git] could not parse gh pr list output");
+      expect(parsePullRequestList(JSON.stringify([null, { number: 0, url: "x" }, { number: 3 }]))).toEqual([]);
+    } finally {
+      warn.mockRestore();
+    }
   });
 });
 

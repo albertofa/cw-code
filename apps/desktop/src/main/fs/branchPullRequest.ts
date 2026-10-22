@@ -56,10 +56,14 @@ export function parsePullRequestList(stdout: string): BranchPullRequestCandidate
   let parsed: unknown;
   try {
     parsed = JSON.parse(stdout);
-  } catch {
+  } catch (error) {
+    console.warn(`[git] could not parse gh pr list output: ${(error as Error).message}`);
     return [];
   }
-  if (!Array.isArray(parsed)) return [];
+  if (!Array.isArray(parsed)) {
+    console.warn("[git] could not parse gh pr list output: expected a JSON array");
+    return [];
+  }
   return parsed.map(parseCandidate).filter((candidate): candidate is BranchPullRequestCandidate => candidate !== null);
 }
 

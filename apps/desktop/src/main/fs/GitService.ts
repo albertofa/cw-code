@@ -68,7 +68,7 @@ interface PullRequestLookup {
   error: string | null;
 }
 
-type SourceControlSettings =Pick<AppSettings, "gitBinaryPath" | "githubCliBinaryPath">;
+type SourceControlSettings = Pick<AppSettings, "gitBinaryPath" | "githubCliBinaryPath">;
 
 export function defaultBinary(name: "git" | "gh"): string {
   return process.platform === "win32" ? `${name}.exe` : name;
@@ -829,6 +829,9 @@ export class GitService {
   private diffInFlight = new Map<string, Promise<GitDiffResult>>();
   private layoutCache = new Map<string, CacheEntry<RepoLayout>>();
   private remoteCache = new Map<string, CacheEntry<ParsedGitHubRemote | null>>();
+  private defaultBaseCache = new Map<string, CacheEntry<string | null>>();
+  private baseRefExistsCache = new Map<string, CacheEntry<boolean>>();
+  private prGeneration = new Map<string, number>();
   private snapshotQueues = new Map<string, Promise<void>>();
 
   constructor(
@@ -1042,10 +1045,20 @@ export class GitService {
     this.dropStatus(root);
     this.layoutCache.delete(key);
     this.remoteCache.delete(key);
+    this.defaultBaseCache.delete(key);
+    deleteRootEntries(this.baseRefExistsCache, key);
+  }
+
+  private bumpPullRequestGeneration(rootKey: string): number {
+    const generation = (this.prGeneration.get(rootKey) ?? 0) + 1;
+    this.prGeneration.set(rootKey, generation);
+    return generation;
   }
 
   invalidatePullRequest(root: string): void {
-    deleteRootEntries(this.prCache, cacheKey(root));
+    const key = cacheKey(root);
+    this.bumpPullRequestGeneration(key);
+    deleteRootEntries(this.prCache, key);
     this.dropStatus(root);
   }
 
@@ -1073,8 +1086,9 @@ export class GitService {
   }
 
   async defaultBaseRef(root: string): Promise<string | null> {
-    const refs = await this.listRefNames(root);
-    return pickDefaultBase(await this.originHeadRef(root), [...refs]);
+    const originHead = await this.originHeadRef(root);
+    if (originHead) return originHead;
+    return pickDefaultBase(null, [...(await this.listRefNames(root))]);
   }
 
   private remoteNamesOnce(root: string): RemoteNames {
@@ -1646,12 +1660,26 @@ export class GitService {
   }
 
   private async readDefaultBase(root: string): Promise<string | null> {
+    const key = cacheKey(root);
+    const cached = this.defaultBaseCache.get(key);
+    if (cached && cached.expiresAt > Date.now()) return cached.value;
     try {
-      return await this.defaultBaseRef(root);
+      const value = await this.defaultBaseRef(root);
+      this.defaultBaseCache.set(key, { expiresAt: Date.now() + LAYOUT_CACHE_TTL_MS, value });
+      return value;
     } catch (error) {
       console.warn(`git: could not read the default base of ${root}: ${(error as Error).message}`);
       return null;
     }
+  }
+
+  private async baseRefExists(root: string, ref: string): Promise<boolean> {
+    const key = rootScopedKey(root, ref);
+    const cached = this.baseRefExistsCache.get(key);
+    if (cached && cached.expiresAt > Date.now()) return cached.value;
+    const value = (await this.resolveCommit(root, ref)) !== null;
+    this.baseRefExistsCache.set(key, { expiresAt: Date.now() + LAYOUT_CACHE_TTL_MS, value });
+    return value;
   }
 
   private async resolveCommit(root: string, ref: string, timeout = 10_000): Promise<string | null> {
@@ -1961,13 +1989,18 @@ export class GitService {
   }
 
   private async cachedPullRequest(root: string, target: BranchPullRequestTarget, remote: ParsedGitHubRemote, account: GitHubAccountInfo, force: boolean): Promise<PullRequestLookup> {
+    const rootKey = cacheKey(root);
     const key = rootScopedKey(root, target.branch, target.headSha ?? "", account.login);
     const cached = this.prCache.get(key);
     if (!force && cached && cached.expiresAt > Date.now()) return cached.value;
+    const generation = force ? this.bumpPullRequestGeneration(rootKey) : this.prGeneration.get(rootKey) ?? 0;
     const value = await queryPullRequest(root, this.settings().githubCliBinaryPath, remote, account, this.accounts, target);
-    if (value.error === null) {
-      const ttl = value.pullRequest ? PR_CACHE_TTL_MS : PR_MISSING_TTL_MS;
-      this.prCache.set(key, { expiresAt: Date.now() + ttl, value });
+    if (value.error === null && (this.prGeneration.get(rootKey) ?? 0) === generation) {
+      const now = Date.now();
+      for (const [entryKey, entry] of this.prCache) {
+        if (entry.expiresAt <= now) this.prCache.delete(entryKey);
+      }
+      this.prCache.set(key, { expiresAt: now + (value.pullRequest ? PR_CACHE_TTL_MS : PR_MISSING_TTL_MS), value });
     }
     return value;
   }
@@ -1991,13 +2024,17 @@ export class GitService {
     return branches.find((item) => !item.current)?.name ?? null;
   }
 
-  private async baseComparison(root: string, branch: string, requested: string | null, defaultBase: string | null): Promise<{ baseRef: string | null; baseAhead: number; baseBehind: number }> {
+  private async baseComparison(root: string, status: PorcelainStatus, requested: string | null, defaultBase: string | null): Promise<{ baseRef: string | null; baseAhead: number; baseBehind: number }> {
+    const branch = status.branch;
     try {
-      const requestedExists = requested ? (await this.resolveCommit(root, requested)) !== null : false;
+      const requestedExists = requested ? await this.baseRefExists(root, requested) : false;
       const comparableDefault = defaultBase !== branch ? defaultBase : null;
       const fallback = (requested && requestedExists) || comparableDefault ? null : await this.fallbackBase(root, branch);
       const base = pickComparisonBase({ requested, requestedExists, defaultBase: comparableDefault, fallback });
       if (!base) return { baseRef: null, baseAhead: 0, baseBehind: 0 };
+      if (status.tracking && base === status.upstream) {
+        return { baseRef: base, baseAhead: status.tracking.ahead, baseBehind: status.tracking.behind };
+      }
       try {
         const output = (await this.git(root).raw(["rev-list", "--left-right", "--count", `${base}...HEAD`])).trim();
         const parts = output.split(/\s+/);
@@ -2057,7 +2094,7 @@ export class GitService {
       const [github, lineCounts, base] = await Promise.all([
         this.pullRequestLookup(root, branch, summary.headSha, defaultBase, context, forcePullRequest),
         this.lineCounts(root, visibleFiles),
-        this.baseComparison(root, branch, requestedBase, defaultBase)
+        this.baseComparison(root, summary, requestedBase, defaultBase)
       ]);
       const dirtyCount = visibleFiles.length;
       const stagedCount = visibleFiles.filter((file) => !file.untracked && file.index !== ".").length;

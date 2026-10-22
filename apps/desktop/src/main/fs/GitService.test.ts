@@ -1,9 +1,10 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
 import { sameWorktreePath } from "../sessions/worktreeCleanup.js";
+import type { GitHubAccounts } from "../github/GitHubAccounts.js";
 import { GitService, countUntrackedLines, fetchArgsForRef, gitPathTarget, isAppManagedPath, isValidBranchName, mapLimit, parseGitHubAccounts, parseGitHubRemote, parseNumstat, parsePorcelainV2Status, parsePrNumber, parseWorktreeList, pickDefaultBase, redactUrlCredentials, selectGitHubAccount, sweepStaleSnapshotIndexes, worktreeNameFor } from "./GitService.js";
 
 function initSandbox(): { sandbox: string; repository: string; service: GitService } {
@@ -1547,5 +1548,72 @@ describe("parsePorcelainV2Status", () => {
 
     expect(status.branch).toBe("HEAD");
     expect(status.headSha).toBe(sha);
+  });
+});
+
+describe("GitService pull request cache", () => {
+  const prList = JSON.stringify([{
+    number: 5,
+    url: "https://github.com/acme/repo/pull/5",
+    state: "OPEN",
+    headRefName: "feature",
+    headRepositoryOwner: { login: "acme" },
+    updatedAt: "2026-10-22T00:00:00Z"
+  }]);
+
+  function pendingGh(): { service: GitService; pending: Array<{ resolve: (stdout: string) => void }> } {
+    const pending: Array<{ resolve: (stdout: string) => void }> = [];
+    const accounts = {
+      select: async () => ({
+        account: { host: "github.com", login: "acme", active: true, authenticated: true, hasRepositoryAccess: true },
+        source: "single" as const,
+        error: null,
+        accounts: []
+      }),
+      withToken: <T>(): Promise<T> => new Promise<T>((resolve) => {
+        pending.push({ resolve: (stdout) => resolve(stdout as unknown as T) });
+      })
+    };
+    return { service: new GitService(undefined, accounts as unknown as GitHubAccounts), pending };
+  }
+
+  function featureRepository(): string {
+    const { repository } = initSandbox();
+    execFileSync("git", ["-C", repository, "remote", "add", "origin", "https://github.com/acme/repo.git"]);
+    execFileSync("git", ["-C", repository, "checkout", "-q", "-b", "feature"]);
+    return repository;
+  }
+
+  it("does not cache a lookup that started before the pull request was invalidated", async () => {
+    const repository = featureRepository();
+    const { service, pending } = pendingGh();
+
+    const stale = service.status(repository);
+    await vi.waitFor(() => expect(pending).toHaveLength(1));
+    service.invalidatePullRequest(repository);
+    pending[0].resolve("[]");
+    expect((await stale).pullRequest).toBeNull();
+
+    const fresh = service.status(repository);
+    await vi.waitFor(() => expect(pending).toHaveLength(2));
+    pending[1].resolve(prList);
+    expect((await fresh).pullRequest?.number).toBe(5);
+  });
+
+  it("keeps a forced lookup when an older lookup finishes after it", async () => {
+    const repository = featureRepository();
+    const { service, pending } = pendingGh();
+
+    const stale = service.status(repository);
+    await vi.waitFor(() => expect(pending).toHaveLength(1));
+    const forced = service.status(repository, undefined, { forcePullRequest: true });
+    await vi.waitFor(() => expect(pending).toHaveLength(2));
+    pending[1].resolve(prList);
+    expect((await forced).pullRequest?.number).toBe(5);
+    pending[0].resolve("[]");
+    await stale;
+
+    expect((await service.status(repository, undefined, { baseRef: "main" })).pullRequest?.number).toBe(5);
+    expect(pending).toHaveLength(2);
   });
 });
