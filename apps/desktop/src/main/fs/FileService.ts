@@ -8,15 +8,21 @@ import { attachmentsDir } from "../paths/appPaths.js";
 
 const UNC_OR_DEVICE_PREFIX = /^[\\/]{2}/;
 
+function isOutsideRoot(root: string, abs: string): boolean {
+  const rel = relative(resolve(root), abs);
+  return isAbsolute(rel) || rel === ".." || rel.startsWith(`..${sep}`);
+}
+
 function assertInside(root: string, target: string): string {
   if (UNC_OR_DEVICE_PREFIX.test(target)) throw new Error(`path escapes project root: ${target}`);
-  const base = resolve(root);
-  const abs = resolve(base, target.replace(/\\/g, "/"));
-  const rel = relative(base, abs);
-  if (isAbsolute(rel) || rel === ".." || rel.startsWith(`..${sep}`)) {
-    throw new Error(`path escapes project root: ${target}`);
-  }
+  const abs = resolve(resolve(root), target.replace(/\\/g, "/"));
+  if (isOutsideRoot(root, abs)) throw new Error(`path escapes project root: ${target}`);
   return abs;
+}
+
+function resolveFileTarget(root: string, target: string): string {
+  if (UNC_OR_DEVICE_PREFIX.test(target) || !isAbsolute(target)) return assertInside(root, target);
+  return resolve(target);
 }
 
 const PREVIEW_MAX_BYTES = 2 * 1024 * 1024;
@@ -138,7 +144,7 @@ export class FileService {
   }
 
   readImage(root: string, target: string): { mime: string; base64: string } {
-    const abs = assertInside(root, target);
+    const abs = resolveFileTarget(root, target);
     const ext = abs.split(".").pop() ?? "";
     const mime = imageExtMime(ext);
     if (!mime) throw new Error(`not an image: ${target}`);
@@ -215,7 +221,7 @@ export class FileService {
   }
 
   async readFileInfo(root: string, target: string): Promise<FileReadResult> {
-    const abs = assertInside(root, target);
+    const abs = resolveFileTarget(root, target);
     const stats = await statOrNull(abs);
     if (!stats?.isFile()) return { kind: "missing" };
     const { mtimeMs, size } = stats;
@@ -229,9 +235,10 @@ export class FileService {
   }
 
   async writeFileGuarded(root: string, target: string, content: string, expectedMtimeMs?: number): Promise<FileStatInfo> {
-    const abs = assertInside(root, target);
+    const abs = resolveFileTarget(root, target);
+    const existing = await statOrNull(abs);
+    if (!existing?.isFile() && isOutsideRoot(root, abs)) throw new Error(`file not found: ${target}`);
     if (expectedMtimeMs !== undefined) {
-      const existing = await statOrNull(abs);
       if (existing && Math.floor(existing.mtimeMs) !== Math.floor(expectedMtimeMs)) {
         throw new Error(`file changed on disk: ${target}`);
       }
@@ -279,4 +286,4 @@ export class FileService {
   }
 }
 
-export { assertInside };
+export { assertInside, isOutsideRoot, resolveFileTarget };

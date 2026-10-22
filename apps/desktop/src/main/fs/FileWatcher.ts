@@ -1,7 +1,7 @@
 import { relative, resolve } from "node:path";
 import chokidar from "chokidar";
 import type { FsChangeEvent } from "@cw-code/contracts";
-import { assertInside } from "./FileService.js";
+import { isOutsideRoot, resolveFileTarget } from "./FileService.js";
 
 export interface WatcherHandle {
   add(paths: string[]): void;
@@ -23,6 +23,7 @@ interface WatchSession {
   root: string;
   handle: WatcherHandle;
   watched: Set<string>;
+  outside: Map<string, string>;
   pending: Set<string>;
   timer: NodeJS.Timeout | null;
   firstPendingAt: number | null;
@@ -67,19 +68,20 @@ export class FileWatcher {
 
   setWatched(sessionId: string, root: string, relPaths: string[]): void {
     const absRoot = resolve(root);
-    const next = this.resolveAll(absRoot, relPaths);
+    const { watched: next, outside } = this.resolveAll(absRoot, relPaths);
     let session = this.sessions.get(sessionId);
     if (session && session.root !== absRoot) {
       void this.closeSession(session);
       session = undefined;
     }
     if (!session) {
-      this.sessions.set(sessionId, this.openSession(sessionId, absRoot, next));
+      this.sessions.set(sessionId, this.openSession(sessionId, absRoot, next, outside));
       return;
     }
     const toAdd = [...next].filter((path) => !session.watched.has(path));
     const hasRemoved = [...session.watched].some((path) => !next.has(path));
     session.watched = next;
+    session.outside = outside;
     if (hasRemoved) {
       void this.closeHandle(session.handle);
       this.attach(sessionId, session, this.factory(absRoot, [...next]));
@@ -101,23 +103,27 @@ export class FileWatcher {
     await Promise.all(sessions.map((session) => this.closeSession(session)));
   }
 
-  private resolveAll(absRoot: string, relPaths: string[]): Set<string> {
-    const resolved = new Set<string>();
+  private resolveAll(absRoot: string, relPaths: string[]): { watched: Set<string>; outside: Map<string, string> } {
+    const watched = new Set<string>();
+    const outside = new Map<string, string>();
     for (const relPath of relPaths) {
       try {
-        resolved.add(assertInside(absRoot, relPath));
+        const abs = resolveFileTarget(absRoot, relPath);
+        watched.add(abs);
+        if (isOutsideRoot(absRoot, abs)) outside.set(abs, relPath);
       } catch (err) {
         this.warn(`ignoring watch path "${relPath}": ${err instanceof Error ? err.message : String(err)}`);
       }
     }
-    return resolved;
+    return { watched, outside };
   }
 
-  private openSession(sessionId: string, root: string, watched: Set<string>): WatchSession {
+  private openSession(sessionId: string, root: string, watched: Set<string>, outside: Map<string, string>): WatchSession {
     const session: WatchSession = {
       root,
       handle: this.factory(root, [...watched]),
       watched,
+      outside,
       pending: new Set(),
       timer: null,
       firstPendingAt: null,
@@ -136,9 +142,11 @@ export class FileWatcher {
 
   private record(sessionId: string, session: WatchSession, absPath: string): void {
     if (this.sessions.get(sessionId) !== session) return;
-    const rel = relative(session.root, absPath).replace(/\\/g, "/");
-    if (rel === ".." || rel.startsWith("../")) return;
-    session.pending.add(rel);
+    const key = isOutsideRoot(session.root, absPath)
+      ? session.outside.get(resolve(absPath))
+      : relative(session.root, absPath).replace(/\\/g, "/");
+    if (key === undefined) return;
+    session.pending.add(key);
     const now = Date.now();
     session.firstPendingAt ??= now;
     const remaining = Math.max(0, this.maxWaitMs - (now - session.firstPendingAt));

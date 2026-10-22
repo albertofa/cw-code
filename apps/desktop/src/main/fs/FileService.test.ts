@@ -191,6 +191,36 @@ describe("FileService file operations", () => {
     return mkdtempSync(join(tmpdir(), "cw-fileops-"));
   }
 
+  describe("absolute paths outside the workspace", () => {
+    it("reads and writes an absolute file outside the root", async () => {
+      const root = makeRoot();
+      const file = join(makeRoot(), "migration.sql");
+      writeFileSync(file, "select 1;", "utf8");
+      const info = await readText(root, file);
+      expect(info).toMatchObject({ content: "select 1;", readOnly: false });
+      await svc.writeFileGuarded(root, file.replace(/\\/g, "/"), "select 2;", info.mtimeMs);
+      expect(readFileSync(file, "utf8")).toBe("select 2;");
+    });
+
+    it("never creates a file outside the root", async () => {
+      const file = join(makeRoot(), "new.ts");
+      await expect(svc.writeFileGuarded(makeRoot(), file, "x")).rejects.toThrow(/file not found/);
+      await expect(svc.writeFileGuarded(makeRoot(), file, "x", 1)).rejects.toThrow(/file not found/);
+      expect(() => statSync(file)).toThrow();
+    });
+
+    it("reports a missing absolute file as missing", async () => {
+      expect(await svc.readFileInfo(makeRoot(), join(makeRoot(), "gone.ts"))).toEqual({ kind: "missing" });
+    });
+
+    it("still rejects relative escapes and network paths", async () => {
+      const root = makeRoot();
+      await expect(svc.readFileInfo(root, "../x.ts")).rejects.toThrow(/escapes project root/);
+      await expect(svc.readFileInfo(root, "//server/share/x.ts")).rejects.toThrow(/escapes project root/);
+      await expect(svc.writeFileGuarded(root, "\\\\?\\C:\\x.ts", "x")).rejects.toThrow(/escapes project root/);
+    });
+  });
+
   describe("readFileInfo", () => {
     it("reads text with size and mtime", async () => {
       const root = makeRoot();
@@ -475,8 +505,10 @@ describe("FileService file operations", () => {
     it("rejects escaping paths in every operation", async () => {
       const root = makeRoot();
       for (const target of escapes) {
-        await expect(svc.readFileInfo(root, target), target).rejects.toThrow(/escapes project root/);
-        await expect(svc.writeFileGuarded(root, target, "x"), target).rejects.toThrow(/escapes project root/);
+        if (target !== "/outside/x") {
+          await expect(svc.readFileInfo(root, target), target).rejects.toThrow(/escapes project root/);
+          await expect(svc.writeFileGuarded(root, target, "x"), target).rejects.toThrow(/escapes project root/);
+        }
         await expect(svc.createFile(root, target), target).rejects.toThrow(/escapes project root/);
         await expect(svc.createDir(root, target), target).rejects.toThrow(/escapes project root/);
         await expect(svc.renamePath(root, target, "ok.txt"), target).rejects.toThrow(/escapes project root/);
@@ -485,10 +517,10 @@ describe("FileService file operations", () => {
       }
     });
 
-    it.runIf(process.platform === "win32")("rejects another drive on every operation", async () => {
+    it.runIf(process.platform === "win32")("rejects another drive on tree operations", async () => {
       const root = makeRoot();
       const other = root.toUpperCase().startsWith("Z:") ? "Y:" : "Z:";
-      await expect(svc.readFileInfo(root, `${other}/x`)).rejects.toThrow(/escapes project root/);
+      await expect(svc.readFileInfo(root, `${other}x`)).rejects.toThrow(/escapes project root/);
       await expect(svc.createFile(root, `${other}/x`)).rejects.toThrow(/escapes project root/);
     });
   });
