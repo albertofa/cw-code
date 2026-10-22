@@ -53,6 +53,8 @@ function gitPr(number: number, overrides: Partial<GitPullRequest> = {}): GitPull
     mergeStateStatus: null,
     headRefName: `feature/${number}`,
     baseRefName: "main",
+    headRefOid: "",
+    updatedAt: 0,
     checks: { total: 1, passed: 1, failed: 0, pending: 0 },
     ...overrides
   };

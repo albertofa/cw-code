@@ -1,17 +1,17 @@
 import type { GitPullRequest, PrDetail, PrRef, PrSummary, SessionPrLink } from "../cw.js";
 import { prChip, type PrChip, type PrChipTone } from "./prChip.js";
-import { prKey } from "./prInbox.js";
+import { prKey, prRefFromUrl } from "../../../shared/prRef.js";
 import { hasUnseen } from "./prUpdates.js";
 
 interface LinkedSession {
   prs?: SessionPrLink[];
 }
 
+export { prRefFromUrl };
+
 export type PrSummaryLookup = ReadonlyMap<string, PrSummary>;
 
 const NO_LINKS: SessionPrLink[] = [];
-
-const PR_URL_RE = /^https?:\/\/([^/]+)\/([^/]+)\/([^/]+)\/pull\/(\d+)/i;
 
 const TONE_RANK: Record<PrChipTone, number> = { bad: 0, info: 1, warn: 2, neutral: 3, ok: 4 };
 const UNKNOWN_RANK = 5;
@@ -37,14 +37,6 @@ export function sessionsLinkedTo<S extends LinkedSession>(sessions: S[], ref: Pr
 
 export function prRefLabel(ref: PrRef): string {
   return `${ref.owner}/${ref.repo}#${ref.number}`;
-}
-
-export function prRefFromUrl(url: string): PrRef | null {
-  const match = PR_URL_RE.exec(url.trim());
-  if (!match) return null;
-  const number = Number.parseInt(match[4], 10);
-  if (!Number.isSafeInteger(number) || number <= 0) return null;
-  return { host: match[1].toLowerCase(), owner: match[2], repo: match[3], number };
 }
 
 export function prSummaryLookup(inboxItems: PrSummary[], detailByKey: Record<string, PrDetail>): Map<string, PrSummary> {

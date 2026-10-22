@@ -63,6 +63,8 @@ function pullRequest(overrides: Partial<GitPullRequest> = {}): GitPullRequest {
     mergeStateStatus: null,
     headRefName: "feature",
     baseRefName: "main",
+    headRefOid: "",
+    updatedAt: 0,
     checks: { total: 0, passed: 0, failed: 0, pending: 0 },
     ...overrides
   };

@@ -62,6 +62,8 @@ export interface SessionMeta {
   autoResolved?: boolean;
   /** Last known branch. Live Git status remains the source of truth. */
   branch?: string;
+  /** Ref the session branch started from; comparison base for ahead/behind and branch diffs. */
+  baseRef?: string;
   prs?: SessionPrLink[];
   issues?: SessionIssueLink[];
   runs?: SessionRunLink[];
@@ -171,6 +173,9 @@ export interface GitPullRequest {
   mergeStateStatus: string | null;
   headRefName: string;
   baseRefName: string;
+  headRefOid: string;
+  /** Epoch ms of the last update on GitHub; 0 when unknown. */
+  updatedAt: number;
   checks: GitPullRequestChecks;
 }
 
@@ -201,6 +206,11 @@ export interface GitStatus {
   githubAccount: string | null;
   githubAccountSource: GitHubAccountSelectionSource;
   clean: boolean;
+}
+
+export interface GitStatusUpdate {
+  sessionId: string;
+  status: GitStatus;
 }
 
 export type GitHubAccountSelectionSource = "project" | "owner" | "access" | "single" | "active" | "none";

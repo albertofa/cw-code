@@ -16,6 +16,19 @@ import type {
   FileStatInfo,
   FsChangeEvent,
   GitDecorations,
+  GitBranchInfo,
+  GitDiffMode,
+  GitDiffResult,
+  GitHubAccountInfo,
+  GitHubAccountSelectionSource,
+  GitPullRequest,
+  GitStatus,
+  GitStatusUpdate,
+  PrLinkSnapshot,
+  SourceControlHealth,
+  TurnChanges,
+  TurnFileChange,
+  TurnSnapshot,
   GitBaseline,
   HarnessId,
   ImportableSession,
@@ -103,6 +116,19 @@ import type {
 } from "@cw-code/contracts";
 
 export type {
+  GitBranchInfo,
+  GitDiffMode,
+  GitDiffResult,
+  GitHubAccountInfo,
+  GitHubAccountSelectionSource,
+  GitPullRequest,
+  GitStatus,
+  GitStatusUpdate,
+  PrLinkSnapshot,
+  SourceControlHealth,
+  TurnChanges,
+  TurnFileChange,
+  TurnSnapshot,
   DirEntry,
   ImportableSession,
   ImportSessionRequest,
@@ -211,6 +237,7 @@ export interface Session {
   updatedAt: number;
   worktreePath?: string;
   branch?: string;
+  baseRef?: string;
   prs?: SessionPrLink[];
   issues?: SessionIssueLink[];
   runs?: SessionRunLink[];
@@ -219,17 +246,6 @@ export interface Session {
   effectivePermissionMode?: string;
   lastTurnSnapshot?: TurnSnapshot;
   createNotice?: string;
-}
-
-export interface TurnSnapshot {
-  turnId: string;
-  sha?: string;
-  capturedAt: number;
-  error?: string;
-  endSha?: string;
-  endedAt?: number;
-  endError?: string;
-  undoneAt?: number;
 }
 
 export type CreateWorkspaceMode = "current" | "new" | "previous";
@@ -470,104 +486,6 @@ export interface PermissionOption {
   label: string;
   description: string;
   native: boolean;
-}
-
-export interface GitStatus {
-  available: boolean;
-  branch: string;
-  headSha?: string | null;
-  dirtyCount: number;
-  addedLines: number;
-  deletedLines: number;
-  stagedCount: number;
-  ahead: number;
-  behind: number;
-  baseRef: string | null;
-  baseAhead: number;
-  baseBehind: number;
-  isWorktree: boolean;
-  worktreeName: string;
-  worktreePath: string;
-  repositoryRoot: string;
-  prNumber: number | null;
-  pullRequest: GitPullRequest | null;
-  githubError: string | null;
-  githubHost: string | null;
-  githubAccount: string | null;
-  githubAccountSource: GitHubAccountSelectionSource;
-  clean: boolean;
-}
-
-export type GitHubAccountSelectionSource = "project" | "owner" | "access" | "single" | "active" | "none";
-
-export interface GitHubAccountInfo {
-  host: string;
-  login: string;
-  active: boolean;
-  authenticated: boolean;
-  hasRepositoryAccess: boolean | null;
-}
-
-export interface SourceControlHealth {
-  git: { path: string; available: boolean; version: string | null; error: string | null };
-  githubCli: { path: string; available: boolean; version: string | null; error: string | null };
-  repository: {
-    available: boolean; root: string | null; branch: string | null; remoteUrl: string | null;
-    githubHost: string | null; githubRepository: string | null; userName: string | null;
-    userEmail: string | null; error: string | null;
-  };
-  github: {
-    accounts: GitHubAccountInfo[]; selectedAccount: string | null;
-    selectionSource: GitHubAccountSelectionSource; error: string | null;
-  };
-  issues: Array<{ level: "error" | "warning"; message: string }>;
-}
-
-export interface GitPullRequest {
-  number: number;
-  title: string;
-  url: string;
-  state: "OPEN" | "CLOSED" | "MERGED";
-  isDraft: boolean;
-  reviewDecision: string | null;
-  mergeStateStatus: string | null;
-  headRefName: string;
-  baseRefName: string;
-  checks: { total: number; passed: number; failed: number; pending: number };
-}
-
-export interface GitBranchInfo {
-  name: string;
-  label: string;
-  current: boolean;
-  remote: boolean;
-  worktreePath: string | null;
-}
-
-export type GitDiffMode = "working" | "staged" | "branch" | "turn";
-
-export interface GitDiffResult {
-  mode: GitDiffMode;
-  patch: string;
-  baseRef: string | null;
-  headRef: string;
-}
-
-export interface TurnFileChange {
-  path: string;
-  change: "modified" | "added" | "deleted";
-  added: number;
-  deleted: number;
-  binary: boolean;
-}
-
-export interface TurnChanges {
-  turnId: string;
-  files: TurnFileChange[];
-  endSha: string | null;
-  undoable: boolean;
-  reason?: string;
-  conflicts: string[];
 }
 
 export interface CustomModel {

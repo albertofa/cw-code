@@ -1,8 +1,7 @@
-import type { PrBucket, PrRef, PrSummary } from "../cw.js";
+import { prKey } from "../../../shared/prRef.js";
+import type { PrBucket, PrSummary } from "../cw.js";
 
-export function prKey(ref: PrRef): string {
-  return `${ref.host}/${ref.owner}/${ref.repo}#${ref.number}`;
-}
+export { prKey };
 
 export function prBucket(pr: PrSummary): PrBucket {
   if (pr.state === "MERGED") return "merged";

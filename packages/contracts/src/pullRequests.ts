@@ -130,6 +130,15 @@ export interface PrDetail extends PrSummary {
 
 export type PrLinkOrigin = "opened" | "workflow" | "linked";
 
+export interface PrLinkSnapshot {
+  state: "OPEN" | "CLOSED" | "MERGED";
+  headRefOid: string;
+  /** Epoch ms of the PR's last update on GitHub. */
+  updatedAt: number;
+  /** Epoch ms when cw-code last read this PR. */
+  syncedAt: number;
+}
+
 export interface SessionPrLink {
   ref: PrRef;
   origin: PrLinkOrigin;
@@ -138,6 +147,7 @@ export interface SessionPrLink {
   lastSeenAt: number;
   /** PR head on which the session's final review turn ended without pushing changes. */
   finalReviewSha?: string;
+  snapshot?: PrLinkSnapshot;
 }
 
 export type PrUpdateKind = "commits" | "review" | "comment" | "checks_failed" | "checks_passed" | "review_requested";

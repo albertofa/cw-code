@@ -572,6 +572,8 @@ export function parsePullRequest(stdout: string): GitPullRequest | null {
     mergeStateStatus: typeof raw.mergeStateStatus === "string" && raw.mergeStateStatus ? raw.mergeStateStatus : null,
     headRefName: typeof raw.headRefName === "string" ? raw.headRefName : "",
     baseRefName: typeof raw.baseRefName === "string" ? raw.baseRefName : "",
+    headRefOid: typeof raw.headRefOid === "string" ? raw.headRefOid : "",
+    updatedAt: 0,
     checks
   };
 }
