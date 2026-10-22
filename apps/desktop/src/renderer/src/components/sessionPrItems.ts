@@ -15,7 +15,6 @@ export interface SessionPrItem {
   title: string | null;
   url: string;
   state: GitPullRequest["state"];
-  supported: boolean;
   headSha: string;
   detail: PrDetail | undefined;
   unseen: boolean;
@@ -28,11 +27,6 @@ interface LinkedSession {
 }
 
 const NO_RECENCY = 0;
-const SUPPORTED_HOST = "github.com";
-
-function isSupportedHost(ref: PrRef): boolean {
-  return ref.host.toLowerCase() === SUPPORTED_HOST;
-}
 
 function refUrl(ref: PrRef): string {
   return `https://${ref.host}/${ref.owner}/${ref.repo}/pull/${ref.number}`;
@@ -57,13 +51,12 @@ function linkedItem(
     chip,
     title: basis?.title ?? git?.title ?? null,
     url: basis?.url ?? git?.url ?? refUrl(link.ref),
-    state: basis?.state ?? git?.state ?? "OPEN",
-    supported: isSupportedHost(link.ref),
-    headSha: basis?.headRefOid ?? "",
+    state: basis?.state ?? link.snapshot?.state ?? git?.state ?? "OPEN",
+    headSha: basis?.headRefOid ?? link.snapshot?.headRefOid ?? "",
     detail: detailByKey[key],
     unseen: basis !== undefined && hasUnseen(basis, link),
-    urgency: prUrgency(summaryByKey.get(key), git),
-    updatedAt: basis?.updatedAt ?? NO_RECENCY
+    urgency: prUrgency(summaryByKey.get(key), git, link.snapshot),
+    updatedAt: basis?.updatedAt ?? link.snapshot?.updatedAt ?? NO_RECENCY
   };
 }
 
@@ -85,7 +78,6 @@ function branchItem(
     title: basis?.title ?? gitPr.title,
     url: gitPr.url,
     state: basis?.state ?? gitPr.state,
-    supported: isSupportedHost(ref),
     headSha: basis?.headRefOid ?? "",
     detail: detailByKey[key],
     unseen: false,
@@ -120,7 +112,7 @@ export function sessionPrItemsTitle(items: SessionPrItem[]): string {
 }
 
 export function canLinkItem(item: SessionPrItem): boolean {
-  return item.source === "branch" && item.supported && item.state === "OPEN";
+  return item.source === "branch" && item.state === "OPEN";
 }
 
 export function withBranchSummary(

@@ -28,8 +28,9 @@ export function useNeedsYou(): NeedsYou {
   const pendingQuestions = useAppStore((s) => s.pendingQuestions);
   const inbox = usePrStore((s) => s.inbox);
   const detailByKey = usePrStore((s) => s.detailByKey);
+  const trackedByKey = usePrStore((s) => s.trackedByKey);
   const inboxItems = inbox?.items;
-  const summaryByKey = useMemo(() => prSummaryLookup(inboxItems ?? [], detailByKey), [inboxItems, detailByKey]);
+  const summaryByKey = useMemo(() => prSummaryLookup(inboxItems ?? [], detailByKey, trackedByKey), [inboxItems, detailByKey, trackedByKey]);
   const attentionOf = useCallback(
     (session: Session): Attention | null =>
       sessionAttention({
@@ -49,12 +50,13 @@ export function useNeedsYouDetailLoader(): void {
   const sessionsByProject = useAppStore((s) => s.sessionsByProject);
   const inbox = usePrStore((s) => s.inbox);
   const detailByKey = usePrStore((s) => s.detailByKey);
+  const trackedByKey = usePrStore((s) => s.trackedByKey);
   const loadingByKey = usePrStore((s) => s.detailLoadingByKey);
   const attempts = useRef(new Map<string, DetailAttempt>());
   const fetchedAt = inbox?.fetchedAt ?? 0;
   const pending = useMemo(
-    () => unseenPrsNeedingDetail(Object.values(sessionsByProject).flat(), prSummaryLookup(inbox?.items ?? [], detailByKey), detailByKey),
-    [sessionsByProject, inbox, detailByKey]
+    () => unseenPrsNeedingDetail(Object.values(sessionsByProject).flat(), prSummaryLookup(inbox?.items ?? [], detailByKey, trackedByKey), detailByKey),
+    [sessionsByProject, inbox, detailByKey, trackedByKey]
   );
   const signature = pending.map((pr) => `${prKey(pr.ref)}@${prVersion(pr)}`).join(" ");
   const loadingSignature = pending.filter((pr) => loadingByKey[prKey(pr.ref)]).map((pr) => prKey(pr.ref)).join(" ");

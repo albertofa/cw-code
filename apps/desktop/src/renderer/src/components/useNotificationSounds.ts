@@ -17,9 +17,10 @@ export function useNotificationSounds(): void {
   const pendingQuestions = useAppStore((s) => s.pendingQuestions);
   const inboxItems = usePrStore((s) => s.inbox?.items);
   const detailByKey = usePrStore((s) => s.detailByKey);
+  const trackedByKey = usePrStore((s) => s.trackedByKey);
   const babysitOf = useBabysitStates();
   const tracker = useRef<SoundTracker | null>(null);
-  const summaryByKey = useMemo(() => prSummaryLookup(inboxItems ?? [], detailByKey), [inboxItems, detailByKey]);
+  const summaryByKey = useMemo(() => prSummaryLookup(inboxItems ?? [], detailByKey, trackedByKey), [inboxItems, detailByKey, trackedByKey]);
 
   useEffect(() => {
     const states: Record<string, SessionSoundState> = {};

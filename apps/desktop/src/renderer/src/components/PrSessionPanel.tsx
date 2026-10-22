@@ -15,7 +15,6 @@ import { branchMismatch } from "./sessionBranch.js";
 import { canLinkItem, sessionPrItemLabel, sessionPrItemsTitle, type SessionPrItem } from "./sessionPrItems.js";
 import { displayChip, mostUrgentLink, prRefLabel } from "./sessionPrLinks.js";
 import { useLinkedPrs, usePrSettings, useSessionPrItems } from "./useLinkedPr.js";
-import { openExternalLink } from "./externalLink.js";
 import { useNotifs } from "./Notifications.js";
 import { errorMessage } from "./errorMessage.js";
 
@@ -157,10 +156,6 @@ export function PrSessionChip({ sessionId }: { sessionId: string }) {
 
   const open = (item: SessionPrItem) => {
     setMenuOpen(false);
-    if (!item.supported) {
-      openExternalLink(item.url);
-      return;
-    }
     selectSessionPr(sessionId, item.key);
     openPr(item.ref);
   };

@@ -14,9 +14,10 @@ export function useBabysitStates(): (session: Session) => BabysitState | null {
   const autoPaused = useAppStore((s) => s.autoFollowUpPaused);
   const inboxItems = usePrStore((s) => s.inbox?.items);
   const detailByKey = usePrStore((s) => s.detailByKey);
+  const trackedByKey = usePrStore((s) => s.trackedByKey);
   const { settings } = usePrSettings();
   const workflows = settings?.prWorkflows ?? NO_WORKFLOWS;
-  const summaryByKey = useMemo(() => prSummaryLookup(inboxItems ?? [], detailByKey), [inboxItems, detailByKey]);
+  const summaryByKey = useMemo(() => prSummaryLookup(inboxItems ?? [], detailByKey, trackedByKey), [inboxItems, detailByKey, trackedByKey]);
   return useCallback(
     (session: Session) =>
       babysitState(session, summaryByKey, workflows, {

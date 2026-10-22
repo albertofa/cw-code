@@ -149,20 +149,18 @@ describe("sessionPrItems", () => {
 });
 
 describe("branch item support and linking", () => {
-  it("marks github.com items as supported and keeps other hosts visible but unsupported", () => {
-    const [supported] = sessionPrItems({}, gitPr(18), new Map(), {});
-    expect(supported.supported).toBe(true);
+  it("keeps enterprise hosts as regular branch items", () => {
     const [other] = sessionPrItems({}, gitPr(18, { url: "https://ghe.acme.io/acme/widgets/pull/18" }), new Map(), {});
-    expect(other).toMatchObject({ source: "branch", supported: false, url: "https://ghe.acme.io/acme/widgets/pull/18" });
+    expect(other).toMatchObject({ source: "branch", url: "https://ghe.acme.io/acme/widgets/pull/18" });
     expect(other.ref.host).toBe("ghe.acme.io");
   });
 
-  it("offers linking only for an open, supported branch item", () => {
+  it("offers linking only for an open branch item", () => {
     const branch = (overrides: Partial<GitPullRequest>) => sessionPrItems({}, gitPr(18, overrides), new Map(), {})[0];
     expect(canLinkItem(branch({}))).toBe(true);
     expect(canLinkItem(branch({ state: "MERGED" }))).toBe(false);
     expect(canLinkItem(branch({ state: "CLOSED" }))).toBe(false);
-    expect(canLinkItem(branch({ url: "https://ghe.acme.io/acme/widgets/pull/18" }))).toBe(false);
+    expect(canLinkItem(branch({ url: "https://ghe.acme.io/acme/widgets/pull/18" }))).toBe(true);
   });
 
   it("never offers linking for a linked item", () => {

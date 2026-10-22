@@ -107,7 +107,6 @@ export function App() {
   useNotificationSounds();
   const activeSessionId = useAppStore((s) => s.activeSessionId);
   const sessionsByProject = useAppStore((s) => s.sessionsByProject);
-  const sourceControlRefreshIntervalSeconds = useAppStore((s) => s.sourceControlRefreshIntervalSeconds);
   const prRefreshIntervalSeconds = useAppStore((s) => s.prRefreshIntervalSeconds);
   const mainView = usePrStore((s) => s.mainView);
   const runModal = usePrStore((s) => s.runModal);
@@ -187,6 +186,9 @@ export function App() {
     const off = window.cw.onTurnEvent(handleTurnEvent);
     const offTitle = window.cw.onSessionTitle(({ sessionId, title }) => useAppStore.getState().applySessionTitle(sessionId, title));
     const offSession = window.cw.onSessionUpdated((session) => useAppStore.getState().applySession(session));
+    const offGitStatus = window.cw.onGitStatus(({ sessionId, status }) => useAppStore.getState().applyGitStatus(sessionId, status));
+    const offTrackedPrs = window.cw.onTrackedPrs((items) => usePrStore.getState().applyTracked(items));
+    void usePrStore.getState().loadTracked();
     const offUpdates = useAppStore.getState().subscribeUpdates();
     const offShutdown = window.cw.shutdown.onRequested(() => void handleQuitRequest());
     const offShutdownExpired = window.cw.shutdown.onExpired(() => handleShutdownExpired());
@@ -221,6 +223,8 @@ export function App() {
       off();
       offTitle();
       offSession();
+      offGitStatus();
+      offTrackedPrs();
       offUpdates();
       offShutdown();
       offShutdownExpired();
@@ -240,33 +244,29 @@ export function App() {
     [sessionsByProject]
   );
 
+  const watchedGitKey = useMemo(() => {
+    const ids = new Set(workingSetKey ? workingSetKey.split("|") : []);
+    if (activeSessionId) ids.add(activeSessionId);
+    return [...ids].sort().join("|");
+  }, [workingSetKey, activeSessionId]);
+
   useEffect(() => {
-    if (!workingSetKey) return;
-    let running = false;
-    const refresh = async () => {
-      if (running || document.hidden) return;
-      running = true;
-      try {
-        const { refreshGitStatus } = useAppStore.getState();
-        const ids = workingSetKey.split("|");
-        for (let i = 0; i < ids.length; i += 6) {
-          await Promise.all(ids.slice(i, i + 6).map((id) => refreshGitStatus(id)));
-        }
-      } finally {
-        running = false;
-      }
-    };
-    const onVisibility = () => {
-      if (!document.hidden) void refresh();
-    };
-    void refresh();
-    const timer = window.setInterval(() => void refresh(), sourceControlRefreshIntervalSeconds * 1000);
-    document.addEventListener("visibilitychange", onVisibility);
-    return () => {
-      window.clearInterval(timer);
-      document.removeEventListener("visibilitychange", onVisibility);
-    };
-  }, [workingSetKey, sourceControlRefreshIntervalSeconds]);
+    if (!window.cw) return;
+    void window.cw.watchGitStatus(watchedGitKey ? watchedGitKey.split("|") : []).catch((err: unknown) =>
+      console.warn(`git status watch failed: ${ipcErrorMessage(err)}`)
+    );
+  }, [watchedGitKey]);
+
+  useEffect(() => {
+    if (!window.cw) return;
+    const sync = () =>
+      void window.cw.setGitActive(!document.hidden).catch((err: unknown) =>
+        console.warn(`git status activity update failed: ${ipcErrorMessage(err)}`)
+      );
+    sync();
+    document.addEventListener("visibilitychange", sync);
+    return () => document.removeEventListener("visibilitychange", sync);
+  }, []);
 
   useEffect(() => {
     const onFocus = () => {

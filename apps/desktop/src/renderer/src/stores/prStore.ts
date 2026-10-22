@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { DriverName, GitHubKind, PrDetail, PrInboxResult, PrRef, ProjectGitHubRepo, RepoRef, WorkflowSubject } from "../cw.js";
+import type { DriverName, GitHubKind, PrDetail, PrInboxResult, PrRef, PrSummary, ProjectGitHubRepo, RepoRef, WorkflowSubject } from "../cw.js";
 import { prKey } from "../components/prInbox.js";
 import type { SettingsSection } from "../components/settingsSections.js";
 import { errorMessage } from "../components/errorMessage.js";
@@ -26,6 +26,7 @@ interface PrState {
   inboxLoading: boolean;
   inboxError: string | null;
   detailByKey: Record<string, PrDetail>;
+  trackedByKey: Record<string, PrSummary>;
   detailLoadingByKey: Record<string, boolean>;
   detailErrorByKey: Record<string, string>;
   diffByKey: Record<string, string>;
@@ -36,6 +37,8 @@ interface PrState {
   projectRepos: ProjectGitHubRepo[];
   runModal: RunModalState | null;
   refreshInbox(force?: boolean): Promise<void>;
+  applyTracked(items: PrSummary[]): void;
+  loadTracked(): Promise<void>;
   loadDetail(ref: PrRef): Promise<void>;
   loadDiff(ref: PrRef, force?: boolean): Promise<void>;
   openGitHub(kind?: GitHubKind): void;
@@ -64,6 +67,7 @@ export const usePrStore = create<PrState>((set, get) => ({
   inboxLoading: false,
   inboxError: null,
   detailByKey: {},
+  trackedByKey: {},
   detailLoadingByKey: {},
   detailErrorByKey: {},
   diffByKey: {},
@@ -86,6 +90,18 @@ export const usePrStore = create<PrState>((set, get) => ({
       const message = errorMessage(err);
       console.warn(`[pr] inbox refresh failed: ${message}`);
       set({ inboxLoading: false, inboxError: message });
+    }
+  },
+
+  applyTracked(items: PrSummary[]) {
+    set({ trackedByKey: Object.fromEntries(items.map((item) => [prKey(item.ref), item])) });
+  },
+
+  async loadTracked() {
+    try {
+      get().applyTracked(await window.cw.getTrackedPrs());
+    } catch (err) {
+      console.warn(`[pr] tracked PR load failed: ${errorMessage(err)}`);
     }
   },
 

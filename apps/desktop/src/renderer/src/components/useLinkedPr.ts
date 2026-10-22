@@ -7,7 +7,7 @@ import { detailNeedsRefresh, detailRefreshKey, hasUnseen } from "./prUpdates.js"
 import { errorMessage } from "./errorMessage.js";
 import { branchMismatch } from "./sessionBranch.js";
 import { sessionPrItems, withBranchSummary, type SessionPrItem } from "./sessionPrItems.js";
-import { sessionLinks, type PrSummaryLookup } from "./sessionPrLinks.js";
+import { mergeSummary, sessionLinks, type PrSummaryLookup } from "./sessionPrLinks.js";
 
 export interface LinkedPr {
   key: string;
@@ -33,12 +33,17 @@ export function findSession(sessionsByProject: Record<string, Session[]>, sessio
   return undefined;
 }
 
-function inboxSummaryByKey(inbox: PrInboxResult | null, links: SessionPrLink[]): Map<string, PrSummary> {
+function inboxSummaryByKey(inbox: PrInboxResult | null, links: SessionPrLink[], trackedByKey: Record<string, PrSummary>): Map<string, PrSummary> {
   const wanted = new Set(links.map((link) => prKey(link.ref)));
-  const byKey = new Map<string, PrSummary>();
+  const inboxByKey = new Map<string, PrSummary>();
   for (const item of inbox?.items ?? []) {
     const key = prKey(item.ref);
-    if (wanted.has(key)) byKey.set(key, item);
+    if (wanted.has(key)) inboxByKey.set(key, item);
+  }
+  const byKey = new Map<string, PrSummary>();
+  for (const key of wanted) {
+    const merged = mergeSummary(inboxByKey.get(key), trackedByKey[key]);
+    if (merged) byKey.set(key, merged);
   }
   return byKey;
 }
@@ -47,12 +52,13 @@ export function useLinkedPrs(sessionId: string): LinkedPrs {
   const session = useAppStore((s) => findSession(s.sessionsByProject, sessionId));
   const links = sessionLinks(session);
   const inbox = usePrStore((s) => s.inbox);
+  const trackedByKey = usePrStore((s) => s.trackedByKey);
   const detailByKey = usePrStore((s) => s.detailByKey);
   const loadingByKey = usePrStore((s) => s.detailLoadingByKey);
   const errorByKey = usePrStore((s) => s.detailErrorByKey);
 
   return useMemo(() => {
-    const inboxByKey = inboxSummaryByKey(inbox, links);
+    const inboxByKey = inboxSummaryByKey(inbox, links, trackedByKey);
     const summaryByKey = new Map<string, PrSummary>();
     const items = links.map((link): LinkedPr => {
       const key = prKey(link.ref);
@@ -71,7 +77,7 @@ export function useLinkedPrs(sessionId: string): LinkedPrs {
       };
     });
     return { session, items, summaryByKey };
-  }, [session, links, inbox, detailByKey, loadingByKey, errorByKey]);
+  }, [session, links, inbox, trackedByKey, detailByKey, loadingByKey, errorByKey]);
 }
 
 export function useSessionPrItems(sessionId: string): { items: SessionPrItem[]; session: Session | undefined } {
@@ -96,8 +102,9 @@ export function useLinkedPrLoader(sessionId: string | undefined): void {
   const session = useAppStore((s) => (sessionId ? findSession(s.sessionsByProject, sessionId) : undefined));
   const links = sessionLinks(session);
   const inbox = usePrStore((s) => s.inbox);
+  const trackedByKey = usePrStore((s) => s.trackedByKey);
   const keySignature = links.map((link) => prKey(link.ref)).join(" ");
-  const summaries = inboxSummaryByKey(inbox, links);
+  const summaries = inboxSummaryByKey(inbox, links, trackedByKey);
   const detailSignature = links.map((link) => detailRefreshKey(prKey(link.ref), summaries.get(prKey(link.ref)))).join(" ");
 
   useEffect(() => {
