@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type RefObject } from "react";
-import { buildTextIndex, findMatches, rangeForSpan } from "./threadFind.js";
+import { buildTextIndex, findMatches, rangeForSpan, shouldServeScroll } from "./threadFind.js";
 
 const HIGHLIGHT_ALL = "cw-find";
 const HIGHLIGHT_ACTIVE = "cw-find-active";
@@ -87,9 +87,12 @@ export function useThreadFind({
 }): ThreadFind {
   const [open, setOpen] = useState(false);
   const [query, setQuery] = useState("");
-  const [ranges, setRanges] = useState<Range[]>([]);
+  // Ranges are kept with the query that produced them, so a pending re-index is
+  // never mistaken for results of the query being typed.
+  const [found, setFound] = useState<{ query: string; ranges: Range[] }>({ query: "", ranges: [] });
   const [active, setActive] = useState(0);
   const inputRef = useRef<HTMLInputElement | null>(null);
+  const ranges = found.ranges;
   const rangesRef = useRef<Range[]>([]);
   rangesRef.current = ranges;
   // Bumped only by navigation, so re-indexing a live turn never yanks the thread.
@@ -99,7 +102,7 @@ export function useThreadFind({
   // Re-index whenever the query, the thread content, or the open state changes.
   useEffect(() => {
     if (!open || query.trim().length === 0) {
-      setRanges([]);
+      setFound({ query, ranges: [] });
       clearPaint();
       return;
     }
@@ -108,15 +111,15 @@ export function useThreadFind({
       if (!root) return;
       const index = buildTextIndex(root);
       const spans = findMatches(index.text, query).slice(0, MAX_MATCHES);
-      const found: Range[] = [];
+      const matched: Range[] = [];
       for (const span of spans) {
         const range = rangeForSpan(index, span);
-        if (range) found.push(range);
+        if (range) matched.push(range);
       }
-      setRanges(found);
-      paint(HIGHLIGHT_ALL, found);
-      setActive((current) => (found.length === 0 ? 0 : Math.min(current, found.length - 1)));
-      if (found.length === 0) paint(HIGHLIGHT_ACTIVE, []);
+      setFound({ query, ranges: matched });
+      paint(HIGHLIGHT_ALL, matched);
+      setActive((current) => (matched.length === 0 ? 0 : Math.min(current, matched.length - 1)));
+      if (matched.length === 0) paint(HIGHLIGHT_ACTIVE, []);
     }, INDEX_DEBOUNCE_MS);
     return () => window.clearTimeout(timer);
   }, [open, query, revision, contentRef]);
@@ -143,7 +146,13 @@ export function useThreadFind({
   }, [activeRange]);
 
   useEffect(() => {
-    if (!activeRange || scrolledReq.current === scrollReq) return;
+    const serve = shouldServeScroll({
+      hasMatch: activeRange !== null,
+      matchesCurrentQuery: found.query === query,
+      request: scrollReq,
+      served: scrolledReq.current
+    });
+    if (!serve || !activeRange) return;
     const scroll = scrollRef.current;
     if (!scroll) return;
     scrolledReq.current = scrollReq;
@@ -161,7 +170,7 @@ export function useThreadFind({
     }
     const raf = requestAnimationFrame(() => requestAnimationFrame(run));
     return () => cancelAnimationFrame(raf);
-  }, [activeRange, scrollReq, scrollRef]);
+  }, [activeRange, scrollReq, scrollRef, found.query, query]);
 
   const step = useCallback((delta: number) => {
     const count = rangesRef.current.length;
@@ -188,7 +197,7 @@ export function useThreadFind({
 
   const close = useCallback(() => {
     setOpen(false);
-    setRanges([]);
+    setFound({ query: "", ranges: [] });
     setActive(0);
     clearPaint();
   }, []);

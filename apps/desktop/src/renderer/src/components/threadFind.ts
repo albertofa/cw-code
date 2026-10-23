@@ -138,6 +138,26 @@ export function rangeForSpan(index: TextIndex, span: MatchSpan): Range | null {
   return range;
 }
 
+/**
+ * Whether a pending scroll request should be served. A request is served once,
+ * and only against matches that belong to the current query: while a re-index
+ * is pending, the ranges still describe the previous query and scrolling to
+ * them would move the thread to the wrong place and consume the request.
+ */
+export function shouldServeScroll({
+  hasMatch,
+  matchesCurrentQuery,
+  request,
+  served
+}: {
+  hasMatch: boolean;
+  matchesCurrentQuery: boolean;
+  request: number;
+  served: number;
+}): boolean {
+  return hasMatch && matchesCurrentQuery && request !== served;
+}
+
 /** Short label for a prompt marker or a find result. */
 export function snippet(text: string, max = 90): string {
   const clean = text.replace(/\s+/g, " ").trim();

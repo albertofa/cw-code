@@ -1,6 +1,6 @@
 // @vitest-environment jsdom
 import { describe, expect, it } from "vitest";
-import { buildTextIndex, chunkAt, findMatches, rangeForSpan, snippet } from "./threadFind.js";
+import { buildTextIndex, chunkAt, findMatches, rangeForSpan, shouldServeScroll, snippet } from "./threadFind.js";
 
 function host(html: string): HTMLElement {
   const el = document.createElement("div");
@@ -92,6 +92,26 @@ describe("rangeForSpan", () => {
 describe("chunkAt", () => {
   it("returns -1 when there is nothing indexed", () => {
     expect(chunkAt([], 3)).toBe(-1);
+  });
+});
+
+describe("shouldServeScroll", () => {
+  const base = { hasMatch: true, matchesCurrentQuery: true, request: 2, served: 1 };
+
+  it("serves a fresh navigation request", () => {
+    expect(shouldServeScroll(base)).toBe(true);
+  });
+
+  it("ignores a request already served, so re-indexing a live turn does not move the thread", () => {
+    expect(shouldServeScroll({ ...base, served: 2 })).toBe(false);
+  });
+
+  it("waits for the new query's matches instead of scrolling to the previous ones", () => {
+    expect(shouldServeScroll({ ...base, matchesCurrentQuery: false })).toBe(false);
+  });
+
+  it("stays put when there is no match", () => {
+    expect(shouldServeScroll({ ...base, hasMatch: false })).toBe(false);
   });
 });
 
