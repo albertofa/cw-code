@@ -1,5 +1,5 @@
-// @vitest-environment jsdom
-import { describe, expect, it } from "vitest";
+import "../../../../tests/dom.js";
+import { describe, expect, it } from "bun:test";
 import { buildTextIndex, chunkAt, findMatches, rangeForSpan, shouldServeScroll, snippet } from "./threadFind.js";
 
 function host(html: string): HTMLElement {

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { clampMenuPosition } from "./menuPosition.js";
 
 const viewport = { viewportWidth: 1200, viewportHeight: 800, margin: 8 };
