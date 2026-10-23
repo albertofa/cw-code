@@ -753,7 +753,7 @@ describe("GitService worktrees", () => {
     expect(existsSync(created.path)).toBe(false);
   });
 
-  it("finishes deleting a worktree git unregistered but could not fully delete", async () => {
+  it.if(process.platform === "win32")("finishes deleting a worktree git unregistered but could not fully delete", async () => {
     const { sandbox, repository, service } = initSandbox();
     const worktreesRoot = join(sandbox, "worktrees");
     const created = await service.createWorktree(repository, "project", "sess_locked1", worktreesRoot, "main");

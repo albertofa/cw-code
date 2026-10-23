@@ -1377,12 +1377,12 @@ export class GitService {
     const args = ["worktree", "remove"];
     if (opts.force) args.push("--force");
     args.push(target);
-    const wasRegistered = await this.isRegisteredWorktree(repositoryRoot, target);
+    const wasRegistered = await this.isRegisteredWorktree(repositoryRoot, target).catch(() => false);
     try {
       await git.raw(args);
     } catch (error) {
       const message = (error as Error).message;
-      if (wasRegistered && existsSync(target) && !await this.isRegisteredWorktree(repositoryRoot, target)) {
+      if (wasRegistered && existsSync(target) && !await this.isRegisteredWorktree(repositoryRoot, target).catch(() => true)) {
         await this.finishInterruptedRemoval(target, message);
         this.invalidateStatus(repositoryRoot);
         this.invalidateBranches(repositoryRoot);
@@ -1414,12 +1414,8 @@ export class GitService {
   }
 
   private async isRegisteredWorktree(repositoryRoot: string, path: string): Promise<boolean> {
-    try {
-      const entries = parseWorktreeList(await this.git(repositoryRoot).raw(["worktree", "list", "--porcelain"]));
-      return entries.some((entry) => sameWorktreePath(entry.path, path));
-    } catch {
-      return false;
-    }
+    const entries = parseWorktreeList(await this.git(repositoryRoot).raw(["worktree", "list", "--porcelain"]));
+    return entries.some((entry) => sameWorktreePath(entry.path, path));
   }
 
   private async finishInterruptedRemoval(target: string, gitMessage: string): Promise<void> {
