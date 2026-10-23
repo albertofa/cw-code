@@ -31,12 +31,30 @@ export type SessionStatusReason =
   | "idle-expired"
   | "unknown";
 
+export interface ProjectSettings {
+  /** Harness preselected when a new session starts in this project. */
+  defaultDriver?: DriverKind;
+  /** Model for the default harness. Claude ids may carry the `[1m]` context suffix. */
+  defaultModel?: string;
+  defaultEffort?: EffortLevel;
+  defaultPermissionMode?: PermissionMode;
+  /** Shell script run inside a new session worktree right after it is created. */
+  setupScript?: string;
+  /** Shell script run inside a session worktree right before it is removed. */
+  destroyScript?: string;
+  /** Extra instructions for the generated session title. */
+  titleInstructions?: string;
+  /** Instructions for the generated session branch name. When empty, the branch follows the title. */
+  branchInstructions?: string;
+}
+
 export interface Project {
   id: string;
   rootPath: string;
   name: string;
   /** Optional override. When omitted, cw-code resolves the best authenticated account. */
   githubAccount?: { host: string; login: string };
+  settings?: ProjectSettings;
 }
 
 export interface SessionMeta {
@@ -62,6 +80,8 @@ export interface SessionMeta {
   autoResolved?: boolean;
   /** Last known branch. Live Git status remains the source of truth. */
   branch?: string;
+  /** Branch name cw-code generated for this session, so cleanup may delete it like its own `cw/` branches. */
+  namedBranch?: string;
   /** Ref the session branch started from; comparison base for ahead/behind and branch diffs. */
   baseRef?: string;
   prs?: SessionPrLink[];
@@ -273,6 +293,8 @@ export interface SessionCleanupResult {
   /** Commits on the session branch that no other branch reaches. Present after an orphan check. */
   unmergedCommitCount?: number;
   error?: string;
+  /** Failure of the project's destroy script, which ran before the worktree was removed. */
+  destroyScriptError?: string;
 }
 
 export interface WorktreePruneSummary {

@@ -1,5 +1,5 @@
 import { create } from "zustand";
-import type { AppSettings, CwApi } from "../cw.js";
+import type { AppSettings, CwApi, ProjectSettings } from "../cw.js";
 import { errorMessage } from "../components/errorMessage.js";
 import { useNotifs } from "../components/Notifications.js";
 import { workflowsValidationError } from "../components/prWorkflowEditor.js";
@@ -16,6 +16,11 @@ export interface RepoDraft {
   identityEditable: boolean;
 }
 
+export interface ProjectDraft {
+  projectId: string;
+  settings: ProjectSettings;
+}
+
 interface SettingsDraftState {
   saved: AppSettings | null;
   draft: AppSettings | null;
@@ -27,6 +32,8 @@ interface SettingsDraftState {
   invalidWorkflowId: string | null;
   repoSaved: RepoDraft | null;
   repoDraft: RepoDraft | null;
+  projectSaved: ProjectDraft | null;
+  projectDraft: ProjectDraft | null;
   harnessChecks: HarnessCheck[] | null;
   harnessChecksLoading: boolean;
   harnessChecksError: string | null;
@@ -35,14 +42,26 @@ interface SettingsDraftState {
   applied(patch: Partial<AppSettings>): void;
   setRepoBaseline(repo: RepoDraft | null): void;
   setRepo(patch: Partial<RepoDraft>): void;
+  setProjectBaseline(project: ProjectDraft | null): void;
+  setProjectSettings(patch: Partial<ProjectSettings>): void;
   discard(): void;
   save(): Promise<void>;
   clearInvalidWorkflow(): void;
   recheckHarnesses(): Promise<void>;
 }
 
-function isDirty(state: Pick<SettingsDraftState, "saved" | "draft" | "repoSaved" | "repoDraft">): boolean {
-  return !sameValue(state.draft, state.saved) || !sameValue(state.repoDraft, state.repoSaved);
+type DraftSnapshot = Pick<SettingsDraftState, "saved" | "draft" | "repoSaved" | "repoDraft" | "projectSaved" | "projectDraft">;
+
+export function projectDirty(state: Omit<DraftSnapshot, "saved" | "draft">): boolean {
+  return !sameValue(state.repoDraft, state.repoSaved) || !sameValue(state.projectDraft, state.projectSaved);
+}
+
+function isDirty(state: DraftSnapshot): boolean {
+  return !sameValue(state.draft, state.saved) || projectDirty(state);
+}
+
+function withoutEmpty(settings: ProjectSettings): ProjectSettings {
+  return Object.fromEntries(Object.entries(settings).filter(([, value]) => value !== undefined && value !== "")) as ProjectSettings;
 }
 
 export function accountKey(account: { host: string; login: string } | undefined): string {
@@ -92,13 +111,15 @@ export const useSettingsDraftStore = create<SettingsDraftState>((set, get) => ({
   invalidWorkflowId: null,
   repoSaved: null,
   repoDraft: null,
+  projectSaved: null,
+  projectDraft: null,
   harnessChecks: null,
   harnessChecksLoading: false,
   harnessChecksError: null,
 
   async load() {
     const request = ++loadSeq;
-    set({ loading: true, loadError: null, saveError: null, invalidWorkflowId: null, saved: null, draft: null, repoSaved: null, repoDraft: null, dirty: false });
+    set({ loading: true, loadError: null, saveError: null, invalidWorkflowId: null, saved: null, draft: null, repoSaved: null, repoDraft: null, projectSaved: null, projectDraft: null, dirty: false });
     try {
       const settings = await window.cw.getSettings();
       if (request !== loadSeq) return;
@@ -137,13 +158,26 @@ export const useSettingsDraftStore = create<SettingsDraftState>((set, get) => ({
     set({ repoDraft: next.repoDraft, dirty: isDirty(next) });
   },
 
+  setProjectBaseline(project: ProjectDraft | null) {
+    const baseline = project ? { projectId: project.projectId, settings: withoutEmpty(project.settings) } : null;
+    const next = { ...get(), projectSaved: baseline, projectDraft: baseline };
+    set({ projectSaved: baseline, projectDraft: baseline, dirty: isDirty(next) });
+  },
+
+  setProjectSettings(patch: Partial<ProjectSettings>) {
+    const projectDraft = get().projectDraft;
+    if (!projectDraft) return;
+    const next = { ...get(), projectDraft: { ...projectDraft, settings: withoutEmpty({ ...projectDraft.settings, ...patch }) } };
+    set({ projectDraft: next.projectDraft, dirty: isDirty(next) });
+  },
+
   discard() {
     if (get().saving) discardedDuringSave = true;
-    set({ draft: get().saved, repoDraft: get().repoSaved, dirty: false, saveError: null, invalidWorkflowId: null });
+    set({ draft: get().saved, repoDraft: get().repoSaved, projectDraft: get().projectSaved, dirty: false, saveError: null, invalidWorkflowId: null });
   },
 
   async save() {
-    const { saved, draft, repoDraft, repoSaved, saving } = get();
+    const { saved, draft, repoDraft, repoSaved, projectDraft, projectSaved, saving } = get();
     if (!saved || !draft || saving) return;
     const workflowError = workflowsValidationError(draft.prWorkflows, saved.prWorkflows);
     if (workflowError) {
@@ -181,6 +215,21 @@ export const useSettingsDraftStore = create<SettingsDraftState>((set, get) => ({
         const message = settingsChanged ? `Settings saved, but updating the repository failed: ${reason}` : reason;
         set({ saving: false, saveError: message });
         useNotifs.getState().push({ kind: "error", title: "Could not update the repository", message });
+        return;
+      }
+    }
+    if (projectDraft && !discardedDuringSave && !sameValue(projectDraft, projectSaved)) {
+      try {
+        await useAppStore.getState().updateProjectSettings(projectDraft.projectId, projectDraft.settings);
+        const stored = useAppStore.getState().projects.find((project) => project.id === projectDraft.projectId)?.settings ?? {};
+        const baseline = { projectId: projectDraft.projectId, settings: withoutEmpty(stored) };
+        const after = get();
+        const nextProjectDraft = discardedDuringSave || sameValue(after.projectDraft, projectDraft) ? baseline : after.projectDraft;
+        set({ projectSaved: baseline, projectDraft: nextProjectDraft, dirty: isDirty({ ...after, projectSaved: baseline, projectDraft: nextProjectDraft }) });
+      } catch (err) {
+        const message = errorMessage(err);
+        set({ saving: false, saveError: message });
+        useNotifs.getState().push({ kind: "error", title: "Could not save the project settings", message });
         return;
       }
     }

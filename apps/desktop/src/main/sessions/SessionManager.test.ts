@@ -4115,3 +4115,133 @@ describe("SessionManager", () => {
     manager.dispose();
   });
 });
+
+describe("SessionManager project settings", () => {
+  const windows = process.platform === "win32";
+  const writeEnv = (file: string, variable: string) =>
+    windows ? `Set-Content -NoNewline -Path '${file}' -Value $env:${variable}` : `printf %s "$${variable}" > '${file}'`;
+
+  function notices(received: Array<{ sessionId: string; event: ThreadEvent }>, sessionId: string) {
+    return received.flatMap((r) => (r.sessionId === sessionId && r.event.type === "session.notice" ? [r.event] : []));
+  }
+
+  it("runs the setup script in a new worktree before the first turn starts", async () => {
+    const { manager, fake, project, received } = makeGitSandboxManager("cw-project-setup-");
+    manager.updateProjectSettings(project.id, { setupScript: writeEnv("setup.txt", "CW_SESSION_ID") });
+    const session = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    const worktreePath = session.worktreePath;
+    if (!worktreePath) throw new Error("expected a worktree-backed session");
+
+    await manager.startTurn(session.id, "hello");
+
+    expect(readFileSync(join(worktreePath, "setup.txt"), "utf8")).toBe(session.id);
+    expect(fake.lastRequest?.prompt).toBe("hello");
+    const shown = notices(received, session.id);
+    expect(shown.map((n) => n.severity)).toEqual(["info", "info"]);
+    expect(shown[0].noticeId).toBe(shown[1].noticeId);
+    expect(shown[1].text).toMatch(/^Setup script finished in/);
+    manager.dispose();
+  });
+
+  it("reports a failing setup script in the thread without blocking the turn", async () => {
+    const { manager, fake, project, received } = makeGitSandboxManager("cw-project-setup-fail-");
+    manager.updateProjectSettings(project.id, { setupScript: "echo missing-tool\nexit 3" });
+    const session = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+
+    await manager.startTurn(session.id, "hello");
+
+    expect(fake.lastRequest?.prompt).toBe("hello");
+    const last = notices(received, session.id).at(-1);
+    expect(last?.severity).toBe("error");
+    expect(last?.text).toContain("Setup script failed with exit code 3");
+    expect(last?.text).toContain("missing-tool");
+    manager.dispose();
+  });
+
+  it("skips the setup script for current-checkout sessions", async () => {
+    const { manager, project, received } = makeGitSandboxManager("cw-project-setup-current-");
+    manager.updateProjectSettings(project.id, { setupScript: "exit 1" });
+    const session = await manager.createSession(project.id, "claude", { mode: "current" });
+    await manager.startTurn(session.id, "hello");
+    expect(notices(received, session.id)).toEqual([]);
+    manager.dispose();
+  });
+
+  it("runs the destroy script inside the worktree before removing it", async () => {
+    const { manager, project, repository } = makeGitSandboxManager("cw-project-destroy-");
+    const marker = join(dirname(repository), "destroyed.txt");
+    manager.updateProjectSettings(project.id, { destroyScript: writeEnv(marker, "CW_WORKTREE_PATH") });
+    const session = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    const worktreePath = session.worktreePath;
+    if (!worktreePath) throw new Error("expected a worktree-backed session");
+
+    const result = await manager.resolveSession(session.id, "resolved", { removeWorktree: true });
+
+    expect(result.worktreeRemoved).toBe(true);
+    expect(result.destroyScriptError).toBeUndefined();
+    expect(readFileSync(marker, "utf8")).toBe(worktreePath);
+    expect(existsSync(worktreePath)).toBe(false);
+    manager.dispose();
+  });
+
+  it("keeps a dirty worktree without running the destroy script, and reports destroy failures", async () => {
+    const { manager, project, repository } = makeGitSandboxManager("cw-project-destroy-dirty-");
+    const marker = join(dirname(repository), "destroyed.txt");
+    manager.updateProjectSettings(project.id, { destroyScript: writeEnv(marker, "CW_WORKTREE_PATH") });
+    const dirty = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    writeFileSync(join(dirty.worktreePath!, "README.md"), "changed\n", "utf8");
+
+    const kept = await manager.resolveSession(dirty.id, "resolved", { removeWorktree: true });
+    expect(kept.dirtyBlocked).toBe(true);
+    expect(existsSync(marker)).toBe(false);
+
+    manager.updateProjectSettings(project.id, { destroyScript: "exit 4" });
+    const clean = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    const failed = await manager.resolveSession(clean.id, "resolved", { removeWorktree: true });
+    expect(failed.worktreeRemoved).toBe(true);
+    expect(failed.destroyScriptError).toContain("Destroy script failed with exit code 4");
+    manager.dispose();
+  });
+
+  it("names the worktree branch from the project's branch instructions and cleans it up like its own", async () => {
+    const { manager, fake, project, repository } = makeGitSandboxManager("cw-project-branch-");
+    manager.setSettings({ autoTitleEnabled: true });
+    manager.updateProjectSettings(project.id, { titleInstructions: "Keep it short", branchInstructions: "Use feat/<summary>" });
+    const session = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+
+    await manager.startTurn(session.id, "fix the login flow");
+    const titlePrompt = String(fake.lastRequest?.prompt);
+    expect(titlePrompt).toContain("Project title instructions: Keep it short");
+    expect(titlePrompt).toContain("Project branch instructions: Use feat/<summary>");
+    fake.completeTitle("Fix login flow\nfeat/login-flow");
+    fake.completeAll();
+
+    const branch = await waitForBranch(manager, project.id, session.id, (b) => b === "feat/login-flow");
+    expect(branch).toBe("feat/login-flow");
+    const stored = (await manager.listSessions(project.id)).find((s) => s.id === session.id);
+    expect(stored?.title).toBe("Fix login flow");
+    expect(stored?.namedBranch).toBe("feat/login-flow");
+
+    const result = await manager.resolveSession(session.id, "resolved", { removeWorktree: true });
+    expect(result.branchDeleted).toBe(true);
+    expect(gitOut(repository, "branch", "--list", "feat/login-flow")).toBe("");
+    manager.dispose();
+  });
+
+  it("generates only the branch name when automatic titles are off", async () => {
+    const { manager, fake, project } = makeGitSandboxManager("cw-project-branch-only-");
+    manager.updateProjectSettings(project.id, { branchInstructions: "Use fix/<summary>" });
+    const session = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+
+    await manager.startTurn(session.id, "fix the login flow");
+    expect(String(fake.lastRequest?.sessionId)).toBe(`title:${session.id}`);
+    fake.completeTitle("Generated title\nfix/login-flow");
+    fake.completeAll();
+
+    const branch = await waitForBranch(manager, project.id, session.id, (b) => b === "fix/login-flow");
+    expect(branch).toBe("fix/login-flow");
+    const stored = (await manager.listSessions(project.id)).find((s) => s.id === session.id);
+    expect(stored?.title).toBe("fix the login flow");
+    manager.dispose();
+  });
+});

@@ -1,10 +1,11 @@
 import { randomUUID } from "node:crypto";
 import { mkdirSync } from "node:fs";
 import { dirname, join } from "node:path";
-import type { ComposerPrefs, DriverKind, Project, SessionMeta, SessionPrLink, SessionStatus } from "@cw-code/contracts";
+import type { ComposerPrefs, DriverKind, Project, ProjectSettings, SessionMeta, SessionPrLink, SessionStatus } from "@cw-code/contracts";
 import { traceSessionStatus, type SessionStatusReason } from "../debug/sessionStatusTrace.js";
 import { isValidPrLink, upsertLink } from "../github/prLinks.js";
 import { expandHome } from "../skills/skillPaths.js";
+import { sanitizeProjectSettings } from "./projectSettings.js";
 import { writeFileAtomic } from "../storage/atomicFile.js";
 import { backupBeforeRepair } from "../storage/backups.js";
 import { isMetadataDocument, type MetadataDocument, type MetadataMigration, type MetadataSchema } from "../storage/metadataDocument.js";
@@ -141,6 +142,14 @@ function resetRuntimeStatuses(sessions: SessionMeta[]): boolean {
   return changed;
 }
 
+function copyProject(project: Project): Project {
+  return {
+    ...project,
+    ...(project.githubAccount ? { githubAccount: { ...project.githubAccount } } : {}),
+    ...(project.settings ? { settings: { ...project.settings } } : {})
+  };
+}
+
 function withoutTransientFields(session: SessionMeta): SessionMeta {
   if (!("createNotice" in session)) return session;
   const persisted = { ...session };
@@ -161,6 +170,7 @@ type SessionPatch = Partial<
     | "effectivePermissionMode"
     | "worktreePath"
     | "branch"
+    | "namedBranch"
     | "baseRef"
     | "prs"
     | "prUnlinked"
@@ -241,7 +251,17 @@ export class SessionStore {
       login: patch.githubAccount.login.trim()
     };
     this.persist();
-    return { ...project, ...(project.githubAccount ? { githubAccount: { ...project.githubAccount } } : {}) };
+    return copyProject(project);
+  }
+
+  updateProjectSettings(id: string, settings: ProjectSettings): Project {
+    const project = this.getProject(id);
+    if (!project) throw new Error(`unknown project ${id}`);
+    const sanitized = sanitizeProjectSettings(settings);
+    if (Object.keys(sanitized).length === 0) delete project.settings;
+    else project.settings = sanitized;
+    this.persist();
+    return copyProject(project);
   }
 
   createSession(
@@ -310,6 +330,8 @@ export class SessionStore {
     else if ("worktreePath" in patch) delete current.worktreePath;
     if (patch.branch !== undefined) current.branch = patch.branch;
     else if ("branch" in patch) delete current.branch;
+    if (patch.namedBranch !== undefined) current.namedBranch = patch.namedBranch;
+    else if ("namedBranch" in patch) delete current.namedBranch;
     if (patch.baseRef !== undefined) current.baseRef = patch.baseRef;
     else if ("baseRef" in patch) delete current.baseRef;
     if (patch.prs !== undefined) {

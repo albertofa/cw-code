@@ -24,6 +24,7 @@ import { MenuSelect } from "./MenuSelect.js";
 import { ModelPicker } from "./ModelPicker.js";
 import {
   effortOptionsFor,
+  FALLBACK_PERMISSIONS,
   fallbackEffort,
   hasContextSuffix,
   pickInitialModel,
@@ -97,13 +98,6 @@ const MAX_ARG_COMPLETIONS = 50;
 const SLASH_NAME = /^\/(\S*)$/;
 const SLASH_ARG = /^\/(model|effort)\s+(\S*)$/;
 const SLASH_PENDING_ARGS = /^\/(\S+) +$/;
-
-const FALLBACK_PERMISSIONS: PermissionOption[] = [
-  { id: "manual", label: "Supervised", description: "Ask before commands and file changes.", native: true },
-  { id: "acceptEdits", label: "Auto-accept edits", description: "Auto-approve edits, ask before other actions.", native: true },
-  { id: "auto", label: "Auto", description: "Supported providers approve routine actions; others still ask.", native: true },
-  { id: "bypassPermissions", label: "Full Access", description: "Allow commands and edits without prompts.", native: false }
-];
 
 function permissionIconFor(id: PermissionMode): ReactNode {
   if (id === "manual") return <Lock size={15} />;

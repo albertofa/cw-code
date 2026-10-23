@@ -294,6 +294,7 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
   const openSessionView = usePrStore((s) => s.openSessionView);
   const openUsage = usePrStore((s) => s.openUsage);
   const openSettings = usePrStore((s) => s.openSettings);
+  const openProjectSettings = usePrStore((s) => s.openProjectSettings);
   const [query, setQuery] = useState("");
   const [quickFilter, setQuickFilter] = useState<QuickFilter>("all");
   const [menu, setMenu] = useState<{ sessionId: string; x: number; y: number } | null>(null);
@@ -565,6 +566,11 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
     setMenu(null);
     if (!navigator.clipboard) return;
     void navigator.clipboard.writeText(sessionId).catch(() => {});
+  };
+
+  const openSessionProjectSettings = (sessionId: string) => {
+    setMenu(null);
+    openProjectSettings(source.find((s) => s.id === sessionId)?.projectId);
   };
 
   const commitRename = (sessionId: string) => {
@@ -1131,6 +1137,9 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
             </button>
             <button className="ctx-item" onClick={() => copySessionId(menu.sessionId)}>
               Copy session id
+            </button>
+            <button className="ctx-item" onClick={() => openSessionProjectSettings(menu.sessionId)}>
+              Project settings
             </button>
           </SessionContextMenu>
         </>

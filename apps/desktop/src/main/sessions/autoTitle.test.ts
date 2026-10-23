@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { AUTO_TITLE_TIMEOUT_MS, buildTitlePrompt, sanitizeGeneratedTitle } from "./autoTitle.js";
+import { AUTO_TITLE_TIMEOUT_MS, buildTitlePrompt, parseGeneratedMetadata, sanitizeGeneratedTitle } from "./autoTitle.js";
 
 describe("buildTitlePrompt", () => {
   it("includes the first message", () => {
@@ -95,5 +95,28 @@ describe("sanitizeGeneratedTitle", () => {
 describe("AUTO_TITLE_TIMEOUT_MS", () => {
   it("is 45 seconds", () => {
     expect(AUTO_TITLE_TIMEOUT_MS).toBe(45_000);
+  });
+});
+
+describe("project metadata instructions", () => {
+  it("adds the project's title instructions to the title-only prompt", () => {
+    const prompt = buildTitlePrompt("Fix ABC-12 login", { title: " Start with the ticket key " });
+    expect(prompt).toContain("Project title instructions: Start with the ticket key");
+    expect(prompt).toContain("Reply with the title only.");
+    expect(prompt).not.toContain("branch");
+  });
+
+  it("asks for a title and a branch name when the project has branch instructions", () => {
+    const prompt = buildTitlePrompt("Fix the login flow", { branch: "feat/<summary>" });
+    expect(prompt).toContain("Project branch instructions: feat/<summary>");
+    expect(prompt).toContain("the title on the first line, the branch name on the second");
+    expect(prompt.endsWith("Fix the login flow")).toBe(true);
+  });
+
+  it("parses the title and branch lines, tolerating labels and blank lines", () => {
+    expect(parseGeneratedMetadata("Fix login flow\nfeat/login-flow", true)).toEqual({ title: "Fix login flow", branch: "feat/login-flow" });
+    expect(parseGeneratedMetadata("**Title:** Fix login flow\r\n\r\nBranch name: `feat/login flow`\n", true)).toEqual({ title: "Fix login flow", branch: "feat/login-flow" });
+    expect(parseGeneratedMetadata("Title-case parser", false)).toEqual({ title: "Title-case parser", branch: null });
+    expect(parseGeneratedMetadata("Only a title", true)).toEqual({ title: "Only a title", branch: null });
   });
 });

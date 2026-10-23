@@ -165,6 +165,19 @@
   color: var(--muted);
 }
 
+.sp-crumb-link {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.sp-crumb-link:hover {
+  color: var(--dim);
+}
+
 .sp-crumb strong {
   overflow: hidden;
   text-overflow: ellipsis;
@@ -192,6 +205,7 @@
 .sp-in-general,
 .sp-in-appearance,
 .sp-in-updates,
+.sp-in-projects,
 .sp-in-sourceControl {
   max-width: 920px;
 }
@@ -234,6 +248,7 @@
   align-items: center;
   gap: 12px;
   min-height: 26px;
+  padding: 0 4px 0 16px;
 }
 
 .sp-group-h h2 {
@@ -249,6 +264,99 @@
 .sp-group-h h2 small {
   margin-left: 8px;
   font-size: var(--t-desc);
+  color: var(--faint);
+}
+
+.sp-help {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 18px;
+  margin-left: 4px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: none;
+  vertical-align: middle;
+  color: var(--faint);
+  cursor: help;
+}
+
+.sp-help:hover,
+.sp-help:focus-visible {
+  color: var(--dim);
+  background: var(--hover);
+}
+
+.sp-help:focus-visible {
+  outline: 2px solid var(--violet-line);
+  outline-offset: 1px;
+}
+
+.sp-help-tip {
+  position: fixed;
+  z-index: 160;
+  box-sizing: border-box;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--overlay);
+  box-shadow: var(--shadow-popover);
+  font-size: var(--t-xs);
+  font-weight: 400;
+  line-height: 1.5;
+  color: var(--text);
+  pointer-events: none;
+}
+
+.sp-lab.sp-lab-help {
+  display: flex;
+  align-items: center;
+}
+
+.sp-group-h .sp-project-search {
+  width: 220px;
+  height: 28px;
+}
+
+.sp-project-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  width: 100%;
+  min-height: 38px;
+  padding: 4px 10px;
+  border: 0;
+  border-radius: 8px;
+  background: none;
+  font: inherit;
+  font-size: var(--t-sm);
+  font-weight: 500;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.sp-project-row:hover {
+  background: var(--hover);
+}
+
+.sp-project-row:focus-visible {
+  outline: 2px solid var(--violet-line);
+  outline-offset: -2px;
+}
+
+.sp-project-row > span:not(.project-mono) {
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sp-project-row > svg {
+  flex: none;
   color: var(--faint);
 }
 
@@ -1575,6 +1683,15 @@
   outline: none;
 }
 
+.sp-code-sm {
+  min-height: 6.5em;
+}
+
+.sp-prose {
+  font-family: var(--sans);
+  font-size: var(--t-sm);
+}
+
 .sp-template:focus-visible {
   box-shadow: inset 0 0 0 2px var(--violet-ink), 0 0 0 3px color-mix(in srgb, var(--violet) 14%, transparent);
 }
@@ -1687,6 +1804,77 @@
   .sp-wf-harness {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
+}
+
+.sp-group-box {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--border-soft);
+  border-radius: var(--r-lg);
+  background: var(--bg-deep);
+}
+
+.sp-group-box:empty {
+  display: none;
+}
+
+.sp-group-box > * {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 12px 16px;
+  box-shadow: none;
+}
+
+.sp-group-box > * + * {
+  box-shadow: inset 0 1px 0 var(--hair);
+}
+
+.sp-group-box > .sp-card {
+  padding: 0;
+}
+
+.sp-group-box > .sp-list,
+.sp-group-box > .sp-mlist {
+  padding: 4px 6px;
+}
+
+.sp-group-box > .sp-card,
+.sp-group-box > .sp-list,
+.sp-group-box > .sp-mlist,
+.sp-group-box > .sp-notes,
+.sp-group-box > .sp-repo {
+  border-radius: 0;
+  background: none;
+}
+
+.sp-group-box .sp-card > .sp-card-grid:first-child {
+  padding-top: 14px;
+  box-shadow: none;
+}
+
+.sp-group-box .sp-card > .sp-card-grid:last-child {
+  padding-bottom: 14px;
+}
+
+.sp-group-box > .sp-issue {
+  padding-top: 10px;
+  padding-bottom: 10px;
+}
+
+.sp-group-box > .side-search {
+  margin: 12px 16px 4px;
+  padding: 0 10px;
+  box-shadow: inset 0 0 0 1px var(--border);
+}
+
+.sp-group-box > .side-search + * {
+  box-shadow: none;
+}
+
+.sp-group-box > .settings-error {
+  margin: 12px 16px;
+  padding: 8px 12px;
+  box-shadow: none;
 }
 
 @media (max-width: 900px) {

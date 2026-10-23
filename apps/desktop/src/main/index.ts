@@ -26,7 +26,7 @@ import { claudeCommandsCachePath, cwCodeHome, ensureAppDirs, attachmentsDir, log
 import { reapOrphanedServers } from "./orphanServers.js";
 import { loadLoginShellEnvironment } from "./shellEnvironment.js";
 import type { AppSettings, ApprovalDecision, CliBinary, CommandInvocation, CreateSessionOptions, GitDiffMode, ImportSessionRequest, ProjectGitHubRepo, PrRef, RepoRef, RunRef, RunSources, SessionPrLink, MetadataIssue, SessionStatus, SettingsPatch, ShutdownCommitResult, ShutdownExpiredEvent, ShutdownPrepareRequest, ShutdownReason, ShutdownRequestedEvent, StartupState, UpdateActionResult, UpdateState, UsageLedgerQuery } from "@cw-code/contracts";
-import type { DriverKind, HarnessId, SkillSaveInput, TextSearchQuery } from "@cw-code/contracts";
+import type { DriverKind, HarnessId, ProjectSettings, SkillSaveInput, TextSearchQuery } from "@cw-code/contracts";
 import type { PtyKind } from "./pty/PtyPool.js";
 import { SessionManager } from "./sessions/SessionManager.js";
 import { AccountUsageService } from "./usage/AccountUsageService.js";
@@ -992,6 +992,9 @@ function registerIpc(services: Services): void {
   );
   ipcMain.handle("projects.list", () => sessions.listProjects());
   ipcMain.handle("projects.add", (_e, rootPath: string) => sessions.addProject(rootPath));
+  ipcMain.handle("projects.updateSettings", (_e, args: { projectId: string; settings: ProjectSettings }) =>
+    sessions.updateProjectSettings(args.projectId, args.settings)
+  );
   ipcMain.handle("os.homeDir", () => homedir());
   ipcMain.handle("sessions.list", (_e, projectId: string) => sessions.listSessions(projectId));
   ipcMain.handle("sessions.create", (_e, args: { projectId: string; driver: DriverName; options?: CreateSessionOptions }) =>

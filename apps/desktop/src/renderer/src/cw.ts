@@ -211,11 +211,23 @@ export type {
   UsageWindow
 };
 
+export interface ProjectSettings {
+  defaultDriver?: DriverName;
+  defaultModel?: string;
+  defaultEffort?: EffortLevel;
+  defaultPermissionMode?: PermissionMode;
+  setupScript?: string;
+  destroyScript?: string;
+  titleInstructions?: string;
+  branchInstructions?: string;
+}
+
 export interface Project {
   id: string;
   rootPath: string;
   name: string;
   githubAccount?: { host: string; login: string };
+  settings?: ProjectSettings;
 }
 
 import type { SessionStatusReason } from "@cw-code/contracts";
@@ -270,6 +282,7 @@ export interface SessionCleanupResult {
   unmergedCommits?: boolean;
   unmergedCommitCount?: number;
   error?: string;
+  destroyScriptError?: string;
 }
 
 export interface WorktreePruneSummary {
@@ -451,7 +464,8 @@ export type TurnEvent =
       retryAt: number;
       link?: string;
     }
-  | { type: "session.branch.updated"; turnId: string; sessionId: string; branch: string };
+  | { type: "session.branch.updated"; turnId: string; sessionId: string; branch: string }
+  | { type: "session.notice"; turnId: string; sessionId: string; noticeId: string; text: string; severity: "info" | "warning" | "error" };
 
 export type PermissionMode = "auto" | "acceptEdits" | "bypassPermissions" | "manual";
 
@@ -591,6 +605,7 @@ export interface CwApi {
   openHarnessTrace(): Promise<{ ok: boolean; path?: string; error?: string }>;
   listProjects(): Promise<Project[]>;
   addProject(rootPath: string): Promise<Project>;
+  updateProjectSettings(projectId: string, settings: ProjectSettings): Promise<Project>;
   getHomeDir(): Promise<string>;
   listSessions(projectId: string): Promise<Session[]>;
   createSession(projectId: string, driver: DriverName, options?: CreateSessionOptions): Promise<Session>;

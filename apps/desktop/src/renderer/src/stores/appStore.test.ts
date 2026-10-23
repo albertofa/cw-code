@@ -718,3 +718,74 @@ describe("appStore updates slice", () => {
     expect(useAppStore.getState().updates).toMatchObject({ seq: 9, phase: "ready" });
   });
 });
+
+describe("appStore project defaults", () => {
+  const plain = { id: "proj_1", rootPath: "C:/code/plain", name: "plain" };
+  const tuned = {
+    id: "proj_2",
+    rootPath: "C:/code/tuned",
+    name: "tuned",
+    settings: { defaultDriver: "claude" as const, defaultModel: "claude-opus-5-5[1m]", defaultEffort: "high" as const, defaultPermissionMode: "acceptEdits" as const }
+  };
+
+  beforeEach(() => {
+    window.localStorage.clear();
+    useAppStore.setState({
+      projects: [plain, tuned],
+      sessionsByProject: { proj_1: [], proj_2: [] },
+      activeProjectId: "proj_2",
+      activeSessionId: null,
+      pendingDriver: null,
+      lastDriver: "opencode",
+      installedHarnesses: null,
+      pendingPrefs: { ...DEFAULT_COMPOSER, model: "alpha/m1" }
+    });
+  });
+
+  it("starts a new session with the project's harness, model, effort and permission mode", () => {
+    useAppStore.getState().startNewSession();
+    const state = useAppStore.getState();
+    expect(state.pendingDriver).toBe("claude");
+    expect(state.pendingPrefs).toEqual({ model: "claude-opus-5-5[1m]", effort: "high", permissionMode: "acceptEdits" });
+  });
+
+  it("lets an explicit harness win and leaves its model to the composer", () => {
+    useAppStore.getState().startNewSession("codex");
+    const state = useAppStore.getState();
+    expect(state.pendingDriver).toBe("codex");
+    expect(state.pendingPrefs).toEqual({ model: undefined, effort: "high", permissionMode: "acceptEdits" });
+  });
+
+  it("applies the defaults when the new-session composer switches to the project, and keeps choices for projects without them", async () => {
+    useAppStore.setState({ activeProjectId: "proj_1", pendingDriver: "opencode" });
+    await useAppStore.getState().setPendingProject("proj_2");
+    expect(useAppStore.getState().pendingDriver).toBe("claude");
+    expect(useAppStore.getState().pendingPrefs.model).toBe("claude-opus-5-5[1m]");
+    useAppStore.getState().setPendingPrefs({ effort: "low" });
+    await useAppStore.getState().setPendingProject("proj_1");
+    expect(useAppStore.getState().pendingDriver).toBe("claude");
+    expect(useAppStore.getState().pendingPrefs).toEqual({ model: "claude-opus-5-5[1m]", effort: "low", permissionMode: "acceptEdits" });
+  });
+
+  it("falls back to an installed harness when the project's default is missing", () => {
+    useAppStore.setState({ installedHarnesses: ["codex"] });
+    useAppStore.getState().startNewSession();
+    expect(useAppStore.getState().pendingDriver).toBe("codex");
+    expect(useAppStore.getState().pendingPrefs.model).toBeUndefined();
+  });
+});
+
+describe("appStore session notices", () => {
+  beforeEach(() => {
+    useAppStore.setState({ messagesBySession: {} });
+  });
+
+  it("replaces a notice by id and keeps it out of the loaded-history check", () => {
+    const notice = { type: "session.notice" as const, turnId: "setup:1", sessionId: "sess_n", noticeId: "setup:1" };
+    useAppStore.getState().applyEvent("sess_n", { ...notice, text: "Setup script running…", severity: "info" });
+    useAppStore.getState().applyEvent("sess_n", { ...notice, text: "Setup script failed with exit code 1.", severity: "error" });
+    const messages = useAppStore.getState().messagesBySession["sess_n"];
+    expect(messages).toHaveLength(1);
+    expect(messages[0]).toEqual({ id: "notice-setup:1", role: "system", text: "Setup script failed with exit code 1.", turnId: "worktree-cleanup", isError: true });
+  });
+});

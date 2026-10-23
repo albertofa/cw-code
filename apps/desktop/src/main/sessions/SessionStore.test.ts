@@ -477,3 +477,25 @@ describe("SessionStore", () => {
     expect(readJson(lastGood).projects).toHaveLength(1);
   });
 });
+
+describe("SessionStore project settings", () => {
+  it("persists sanitized project settings and removes them once cleared", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cw-store-"));
+    const dbPath = join(dir, "test.db");
+    const store = new SessionStore(dbPath);
+    const project = store.addProject(join(dir, "repo"));
+
+    const updated = store.updateProjectSettings(project.id, { defaultDriver: "codex", setupScript: " bun install ", titleInstructions: "  " });
+    expect(updated.settings).toEqual({ defaultDriver: "codex", setupScript: "bun install" });
+    updated.settings!.setupScript = "mutated";
+    expect(new SessionStore(dbPath).getProject(project.id)?.settings).toEqual({ defaultDriver: "codex", setupScript: "bun install" });
+
+    const cleared = store.updateProjectSettings(project.id, { setupScript: "" });
+    expect(cleared.settings).toBeUndefined();
+    expect(readJson(join(dir, "test.db.json")).projects[0]).not.toHaveProperty("settings");
+  });
+
+  it("rejects unknown projects", () => {
+    expect(() => makeStore().updateProjectSettings("proj_missing", {})).toThrow("unknown project proj_missing");
+  });
+});

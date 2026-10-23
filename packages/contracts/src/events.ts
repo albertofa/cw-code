@@ -151,7 +151,9 @@ export type ThreadEvent =
       retryAt: number;
       link?: string;
     }
-  | { type: "session.branch.updated"; turnId: string; sessionId: string; branch: string };
+  | { type: "session.branch.updated"; turnId: string; sessionId: string; branch: string }
+  /** App-side progress shown in the thread (e.g. worktree scripts). Repeated noticeIds replace the earlier text. */
+  | { type: "session.notice"; turnId: string; sessionId: string; noticeId: string; text: string; severity: "info" | "warning" | "error" };
 
 export type SessionEvent =
   | { type: "session.list.changed"; projectRoot: string }

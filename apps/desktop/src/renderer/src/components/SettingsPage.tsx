@@ -1,29 +1,27 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { AlertTriangle, Bot, CheckCircle2, ChevronRight, Copy, FolderPlus, Gauge, GitBranch, RefreshCw, Sparkles, XCircle } from "lucide-react";
+import { AlertTriangle, Bot, CheckCircle2, ChevronRight, Gauge, RefreshCw, Sparkles, XCircle } from "lucide-react";
 import type { PanelId } from "@cw-code/contracts";
 import type { AppSettings, DriverName, ModelOption, SourceControlHealth, WorktreePruneSummary } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
 import { usePanelStore } from "../stores/panelStore.js";
 import { usePrStore } from "../stores/prStore.js";
-import { accountKey, useSettingsDraftStore } from "../stores/settingsDraftStore.js";
+import { projectDirty, useSettingsDraftStore } from "../stores/settingsDraftStore.js";
 import { AppearanceSettings } from "./AppearanceSettings.js";
 import { BinaryPicker } from "./BinaryPicker.js";
-import { useConfirm } from "./ConfirmDialog.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { HarnessSettings } from "./HarnessSettings.js";
 import { MenuSelect } from "./MenuSelect.js";
 import { EFFORTS } from "./modelMenus.js";
 import { NotificationSettings } from "./NotificationSettings.js";
 import { useNotifs } from "./Notifications.js";
-import { shortenHome } from "./pathDisplay.js";
 import { PrWorkflowSettings } from "./PrWorkflowSettings.js";
+import { healthFailure, ProjectsSettings } from "./ProjectSettings.js";
 import {
   copySetting,
   HARNESS_IDS,
   HARNESS_NAMES,
   navIdOf,
   navLabel,
-  sameValue,
   sectionSummary,
   SETTING_KEYS,
   unsavedSectionLabels,
@@ -271,127 +269,37 @@ function GeneralSettings() {
   );
 }
 
-function healthFailure(message: string): SourceControlHealth {
-  return {
-    git: { path: "git", available: false, version: null, error: message },
-    githubCli: { path: "gh", available: false, version: null, error: message },
-    repository: { available: false, root: null, branch: null, remoteUrl: null, githubHost: null, githubRepository: null, userName: null, userEmail: null, error: message },
-    github: { accounts: [], selectedAccount: null, selectionSource: "none", error: message },
-    issues: [{ level: "error", message }]
-  };
-}
-
 function SourceControlSettings({ onPickBinary }: { onPickBinary: BinaryPickHandler }) {
   const draft = useSettingsDraftStore((s) => s.draft);
   const set = useSettingsDraftStore((s) => s.set);
-  const repoDraft = useSettingsDraftStore((s) => s.repoDraft);
-  const setRepo = useSettingsDraftStore((s) => s.setRepo);
-  const projects = useAppStore((s) => s.projects);
-  const homeDir = useAppStore((s) => s.homeDir);
-  const addProject = useAppStore((s) => s.addProject);
-  const { confirm, dialog } = useConfirm();
-  const [configProjectId, setConfigProjectId] = useState<string | null>(() => {
-    const state = useAppStore.getState();
-    return (
-      useSettingsDraftStore.getState().repoSaved?.projectId ??
-      state.activeProjectId ??
-      state.projects[0]?.id ??
-      null
-    );
-  });
   const [health, setHealth] = useState<SourceControlHealth | null>(null);
   const [healthLoading, setHealthLoading] = useState(false);
-  const [adding, setAdding] = useState(false);
-  const [copiedId, setCopiedId] = useState<string | null>(null);
   const [pruneBusy, setPruneBusy] = useState(false);
   const [confirmPrune, setConfirmPrune] = useState(false);
   const [pruneSummary, setPruneSummary] = useState<WorktreePruneSummary | null>(null);
   const [pruneError, setPruneError] = useState<string | null>(null);
-  const configProject = projects.find((project) => project.id === configProjectId) ?? projects[0];
-  const configId = configProject?.id ?? null;
   const healthRequest = useRef(0);
-
-  useEffect(() => {
-    void useAppStore.getState().ensureHomeDir().catch(() => undefined);
-  }, []);
 
   const loadHealth = useCallback(() => {
     const request = ++healthRequest.current;
     const current = () => request === healthRequest.current;
     setHealthLoading(true);
     window.cw
-      .getSourceControlHealth(configId ?? undefined)
+      .getSourceControlHealth()
       .then((next) => {
-        if (!current()) return;
-        setHealth(next);
-        const store = useSettingsDraftStore.getState();
-        const keepEdits = store.repoSaved?.projectId === configId && !sameValue(store.repoDraft, store.repoSaved);
-        if (keepEdits) return;
-        const project = useAppStore.getState().projects.find((p) => p.id === configId);
-        store.setRepoBaseline(
-          project
-            ? {
-                projectId: project.id,
-                account: accountKey(project.githubAccount),
-                userName: next.repository.userName ?? "",
-                userEmail: next.repository.userEmail ?? "",
-                identityEditable: next.repository.available
-              }
-            : null
-        );
+        if (current()) setHealth(next);
       })
       .catch((err: unknown) => {
-        if (!current()) return;
-        setHealth(healthFailure(errorMessage(err)));
+        if (current()) setHealth(healthFailure(errorMessage(err)));
       })
       .finally(() => {
         if (current()) setHealthLoading(false);
       });
-  }, [configId]);
+  }, []);
 
   useEffect(() => {
     loadHealth();
   }, [loadHealth]);
-
-  const switchProject = async (id: string) => {
-    if (id === configId) return;
-    const store = useSettingsDraftStore.getState();
-    if (!sameValue(store.repoDraft, store.repoSaved)) {
-      const ok = await confirm({
-        title: "Discard repository changes?",
-        message: `Your unsaved account and commit author changes for ${configProject?.name ?? "this project"} will be lost.`,
-        danger: true,
-        confirmLabel: "Discard"
-      });
-      if (!ok) return;
-    }
-    store.setRepoBaseline(null);
-    setHealth(null);
-    setConfigProjectId(id);
-  };
-
-  const addFolder = () => {
-    setAdding(true);
-    window.cw
-      .pickProjectDir()
-      .then((dir) => (dir ? addProject(dir) : undefined))
-      .catch((err: unknown) => {
-        useNotifs.getState().push({ kind: "error", title: "Could not add project", message: errorMessage(err) });
-      })
-      .finally(() => setAdding(false));
-  };
-
-  const copyPath = (id: string, path: string) => {
-    navigator.clipboard
-      .writeText(path)
-      .then(() => {
-        setCopiedId(id);
-        window.setTimeout(() => setCopiedId((current) => (current === id ? null : current)), 1500);
-      })
-      .catch((err: unknown) => {
-        useNotifs.getState().push({ kind: "error", title: "Could not copy the path", message: errorMessage(err) });
-      });
-  };
 
   const runPrune = async () => {
     setPruneBusy(true);
@@ -418,11 +326,10 @@ function SourceControlSettings({ onPickBinary }: { onPickBinary: BinaryPickHandl
   };
 
   if (!draft) return null;
-  const repoReady = repoDraft !== null && repoDraft.projectId === configId && health?.repository.available === true;
 
   return (
     <>
-      <SettingsPageHead title="Source control" description="Git and GitHub CLI executables, refresh, projects, and each repository's account and commit author." />
+      <SettingsPageHead title="Source control" description="Git and GitHub CLI executables, refresh and worktree maintenance. Each repository's account and commit author live in Projects." />
       <SettingsGroup
         title="Tools and refresh"
         action={
@@ -510,101 +417,6 @@ function SourceControlSettings({ onPickBinary }: { onPickBinary: BinaryPickHandl
         )}
       </SettingsGroup>
 
-      <SettingsGroup
-        title="Projects"
-        action={
-          <button type="button" className="btn sp-btn-sm" onClick={addFolder} disabled={adding}>
-            <FolderPlus size={12} aria-hidden="true" /> {adding ? "Adding…" : "Add project…"}
-          </button>
-        }
-      >
-        {projects.length === 0 ? (
-          <p className="sp-hint">No projects yet. Add a folder to start sessions in it.</p>
-        ) : (
-          <ul className="sp-list" aria-label="Projects">
-            {projects.map((project) => (
-              <li key={project.id} className="sp-list-row">
-                <span className="sp-list-main">
-                  <b>{project.name}</b>
-                  <span className="sp-mono" title={project.rootPath}>
-                    {shortenHome(project.rootPath, homeDir ?? undefined)}
-                  </span>
-                </span>
-                <button type="button" className="btn sp-btn-sm" onClick={() => copyPath(project.id, project.rootPath)} aria-label={`Copy the path of ${project.name}`}>
-                  <Copy size={12} aria-hidden="true" /> {copiedId === project.id ? "Copied" : "Copy"}
-                </button>
-              </li>
-            ))}
-          </ul>
-        )}
-      </SettingsGroup>
-
-      {configProject && (
-        <SettingsGroup title="Repository">
-          <SettingsRow label="Project" hint="The account and commit author below apply to this project." htmlFor="sp-sc-project">
-            <select id="sp-sc-project" className="field sp-select" value={configProject.id} onChange={(e) => void switchProject(e.target.value)}>
-              {projects.map((project) => (
-                <option key={project.id} value={project.id}>
-                  {project.name}
-                </option>
-              ))}
-            </select>
-          </SettingsRow>
-          {!health && healthLoading && <p className="sp-hint">Inspecting repository…</p>}
-          {health && !health.repository.available && (
-            <p className="sp-hint" role="status">
-              {health.repository.error ?? "This project is not a Git repository."}
-            </p>
-          )}
-          {health?.repository.available && repoReady && (
-            <>
-              <div className="sp-repo">
-                <GitBranch size={14} aria-hidden="true" />
-                <span>
-                  <b>{health.repository.githubRepository ?? health.repository.root}</b>
-                  <small>{health.repository.remoteUrl ?? "No remote"}</small>
-                </span>
-              </div>
-              <SettingsRow
-                label="GitHub account"
-                htmlFor="sp-sc-account"
-                hint={`Automatic currently resolves ${health.github.selectedAccount ? `@${health.github.selectedAccount}` : "no account"}${health.github.selectionSource !== "none" ? ` by ${health.github.selectionSource}` : ""}.`}
-              >
-                <select id="sp-sc-account" className="field sp-select" value={repoDraft.account} onChange={(e) => setRepo({ account: e.target.value })}>
-                  <option value="">Automatic (recommended)</option>
-                  {configProject.githubAccount &&
-                    !health.github.accounts.some((account) => account.host === configProject.githubAccount?.host && account.login === configProject.githubAccount?.login) && (
-                      <option value={accountKey(configProject.githubAccount)} disabled>
-                        {configProject.githubAccount.login} · {configProject.githubAccount.host} · unavailable
-                      </option>
-                    )}
-                  {health.github.accounts.map((account) => (
-                    <option key={`${account.host}:${account.login}`} value={accountKey(account)} disabled={!account.authenticated}>
-                      {account.login} · {account.host}
-                      {account.active ? " · active" : ""}
-                      {account.hasRepositoryAccess === false ? " · no access" : ""}
-                    </option>
-                  ))}
-                </select>
-              </SettingsRow>
-              <SettingsRow label="Commit author name" hint="Stored in this repository's local Git config." htmlFor="sp-sc-name">
-                <input id="sp-sc-name" className="field" value={repoDraft.userName} placeholder="Your name" onChange={(e) => setRepo({ userName: e.target.value })} />
-              </SettingsRow>
-              <SettingsRow label="Commit author email" hint="Use the email tied to this project's GitHub account." htmlFor="sp-sc-email">
-                <input
-                  id="sp-sc-email"
-                  className="field"
-                  type="email"
-                  value={repoDraft.userEmail}
-                  placeholder="you@example.com"
-                  onChange={(e) => setRepo({ userEmail: e.target.value })}
-                />
-              </SettingsRow>
-            </>
-          )}
-        </SettingsGroup>
-      )}
-
       <SettingsGroup title="Worktree maintenance">
         <p className="sp-hint">Removes worktree directories that no session references anymore, along with their registration. Sessions are never touched.</p>
         {!confirmPrune ? (
@@ -658,7 +470,6 @@ function SourceControlSettings({ onPickBinary }: { onPickBinary: BinaryPickHandl
           </div>
         )}
       </SettingsGroup>
-      {dialog}
     </>
   );
 }
@@ -673,19 +484,21 @@ export function SettingsPage({
   section,
   harness,
   workflowId,
+  projectId,
   onBack,
   onOpenUsage
 }: {
   section: SettingsSection;
   harness?: DriverName;
   workflowId?: string;
+  projectId?: string;
   onBack: () => void;
   onOpenUsage: () => void;
 }) {
   const draft = useSettingsDraftStore((s) => s.draft);
   const saved = useSettingsDraftStore((s) => s.saved);
   const dirty = useSettingsDraftStore((s) => s.dirty);
-  const repoDirty = useSettingsDraftStore((s) => !sameValue(s.repoDraft, s.repoSaved));
+  const projectsDirty = useSettingsDraftStore(projectDirty);
   const loading = useSettingsDraftStore((s) => s.loading);
   const loadError = useSettingsDraftStore((s) => s.loadError);
   const saving = useSettingsDraftStore((s) => s.saving);
@@ -698,6 +511,8 @@ export function SettingsPage({
   const recheckHarnesses = useSettingsDraftStore((s) => s.recheckHarnesses);
   const invalidWorkflowId = useSettingsDraftStore((s) => s.invalidWorkflowId);
   const openSettings = usePrStore((s) => s.openSettings);
+  const openProjectSettings = usePrStore((s) => s.openProjectSettings);
+  const crumbProject = useAppStore((s) => (section === "projects" && projectId ? s.projects.find((p) => p.id === projectId) : undefined));
   const onBackRef = useRef(onBack);
   onBackRef.current = onBack;
   const navId = navIdOf(section, harness);
@@ -737,7 +552,7 @@ export function SettingsPage({
     void recheckHarnesses();
   };
 
-  const changedLabels = unsavedSectionLabels(saved, draft, repoDirty);
+  const changedLabels = unsavedSectionLabels(saved, draft, projectsDirty);
 
   const renderSection = (current: AppSettings): ReactNode => {
     switch (section) {
@@ -764,6 +579,8 @@ export function SettingsPage({
             <UpdatesSettings draft={current} fallbackVersion={appVersion} onApplied={applied} />
           </>
         );
+      case "projects":
+        return <ProjectsSettings projectId={projectId} />;
       case "sourceControl":
         return <SourceControlSettings onPickBinary={pickBinary} />;
       case "prWorkflows":
@@ -786,7 +603,17 @@ export function SettingsPage({
                 <ChevronRight size={12} aria-hidden="true" />
               </>
             )}
-            <strong aria-current="page">{navLabel(navId)}</strong>
+            {crumbProject ? (
+              <>
+                <button type="button" className="sp-crumb-link" onClick={() => openProjectSettings()}>
+                  {navLabel(navId)}
+                </button>
+                <ChevronRight size={12} aria-hidden="true" />
+                <strong aria-current="page">{crumbProject.name}</strong>
+              </>
+            ) : (
+              <strong aria-current="page">{navLabel(navId)}</strong>
+            )}
           </nav>
         </div>
       </div>

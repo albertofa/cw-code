@@ -12,7 +12,7 @@ export type MainView =
   | { kind: "github" }
   | { kind: "pr"; ref: PrRef; tab: PrDetailTab }
   | { kind: "usage" }
-  | { kind: "settings"; section: SettingsSection; harness?: DriverName; workflowId?: string };
+  | { kind: "settings"; section: SettingsSection; harness?: DriverName; workflowId?: string; projectId?: string };
 
 export interface RunModalState {
   workflowId: string;
@@ -49,6 +49,7 @@ interface PrState {
   openUsage(): void;
   openSettings(section?: SettingsSection, harness?: DriverName): void;
   openWorkflowSettings(workflowId: string): void;
+  openProjectSettings(projectId?: string): void;
   refreshProjectRepos(): Promise<void>;
   projectIdForRef<T extends RepoRef>(ref: T): string | null;
   openRunModal(state: RunModalState): void;
@@ -190,6 +191,10 @@ export const usePrStore = create<PrState>((set, get) => ({
 
   openWorkflowSettings(workflowId: string) {
     set({ mainView: { kind: "settings", section: "prWorkflows", workflowId } });
+  },
+
+  openProjectSettings(projectId?: string) {
+    set({ mainView: { kind: "settings", section: "projects", projectId } });
   },
 
   async refreshProjectRepos() {
