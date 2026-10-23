@@ -1,4 +1,4 @@
-import type { DriverName, EffortLevel, ModelOption, SettingsPatch } from "../cw.js";
+import type { DriverName, EffortLevel, ModelOption, PermissionOption, SettingsPatch } from "../cw.js";
 import { formatTokensShort } from "./subagents.js";
 
 export interface EffortOption {
@@ -47,6 +47,13 @@ const PROVIDER_LABELS: Record<string, string> = {
 };
 
 export const DEFAULT_EFFORT: EffortLevel = "medium";
+
+export const FALLBACK_PERMISSIONS: PermissionOption[] = [
+  { id: "manual", label: "Supervised", description: "Ask before commands and file changes.", native: true },
+  { id: "acceptEdits", label: "Auto-accept edits", description: "Auto-approve edits, ask before other actions.", native: true },
+  { id: "auto", label: "Auto", description: "Supported providers approve routine actions; others still ask.", native: true },
+  { id: "bypassPermissions", label: "Full Access", description: "Allow commands and edits without prompts.", native: false }
+];
 
 export function effortLabel(effort: EffortLevel): string {
   return effort === "xhigh" ? "Extra high" : effort.charAt(0).toUpperCase() + effort.slice(1);

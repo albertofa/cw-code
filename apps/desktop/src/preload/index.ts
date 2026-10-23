@@ -1,5 +1,5 @@
 import { contextBridge, ipcRenderer } from "electron";
-import type { AccountUsageSnapshot, AppSettings, AttentionState, CliBinary, CliDiscoveredCandidate, CliDiscoverResult, CommandInvocation, CommandOption, CreateSessionOptions, DirEntry, FileReadResult, FileStatInfo, FsChangeEvent, GitBranchInfo, GitDecorations, GitBaseline, GitDiffMode, GitDiffResult, GitHubSearchResult, GitStatus, GitStatusUpdate, HarnessId, ImportableSession, ImportSessionRequest, ImportSessionResult, IssueDetail, IssueRef, IssueSummary, ModelMeta, PrDetail, PrInboxResult, Project, ProjectGitHubRepo, PrRef, PrSummary, PrWorkflow, RepoRef, RetryConnectionResult, RunRef, RunSources, RunsResult, SessionCleanupResult, SessionIssueLink, SessionMeta, SessionPrLink, SessionRunLink, SessionStatus, SessionStatusReason, ShutdownAssessment, ShutdownCommitResult, ShutdownExpiredEvent, ShutdownPrepareRequest, ShutdownPrepareResult, ShutdownRequestedEvent, SkillDetail, SkillMeta, SkillSaveInput, SkillsListResult, SourceControlHealth, StartupState, SubagentToolsResult, TextSearchQuery, TextSearchResult, TurnChanges, UpdateActionResult, UpdateChannel, UpdateInstallRequest, UpdateState, UsageLedgerQuery, UsageLedgerRow, WorkflowRunSummary, WorktreePruneSummary } from "@cw-code/contracts";
+import type { AccountUsageSnapshot, AppSettings, AttentionState, CliBinary, CliDiscoveredCandidate, CliDiscoverResult, CommandInvocation, CommandOption, CreateSessionOptions, DirEntry, FileReadResult, FileStatInfo, FsChangeEvent, GitBranchInfo, GitDecorations, GitBaseline, GitDiffMode, GitDiffResult, GitHubSearchResult, GitStatus, GitStatusUpdate, HarnessId, ImportableSession, ImportSessionRequest, ImportSessionResult, IssueDetail, IssueRef, IssueSummary, ModelMeta, PrDetail, PrInboxResult, Project, ProjectGitHubRepo, ProjectSettings, PrRef, PrSummary, PrWorkflow, RepoRef, RetryConnectionResult, RunRef, RunSources, RunsResult, SessionCleanupResult, SessionIssueLink, SessionMeta, SessionPrLink, SessionRunLink, SessionStatus, SessionStatusReason, ShutdownAssessment, ShutdownCommitResult, ShutdownExpiredEvent, ShutdownPrepareRequest, ShutdownPrepareResult, ShutdownRequestedEvent, SkillDetail, SkillMeta, SkillSaveInput, SkillsListResult, SourceControlHealth, StartupState, SubagentToolsResult, TextSearchQuery, TextSearchResult, TurnChanges, UpdateActionResult, UpdateChannel, UpdateInstallRequest, UpdateState, UsageLedgerQuery, UsageLedgerRow, WorkflowRunSummary, WorktreePruneSummary } from "@cw-code/contracts";
 
 export type PermissionMode = "auto" | "acceptEdits" | "bypassPermissions" | "manual";
 export type EffortLevel = "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
@@ -72,6 +72,7 @@ export interface CwApi {
   openHarnessTrace(): Promise<{ ok: boolean; path?: string; error?: string }>;
   listProjects(): Promise<Project[]>;
   addProject(rootPath: string): Promise<Project>;
+  updateProjectSettings(projectId: string, settings: ProjectSettings): Promise<Project>;
   getHomeDir(): Promise<string>;
   listSessions(projectId: string): Promise<unknown[]>;
   createSession(projectId: string, driver: DriverName, options?: CreateSessionOptions): Promise<unknown>;
@@ -246,6 +247,7 @@ const api: CwApi = {
   openHarnessTrace: () => ipcRenderer.invoke("debug.openTrace"),
   listProjects: () => ipcRenderer.invoke("projects.list"),
   addProject: (rootPath: string) => ipcRenderer.invoke("projects.add", rootPath),
+  updateProjectSettings: (projectId: string, settings: ProjectSettings) => ipcRenderer.invoke("projects.updateSettings", { projectId, settings }),
   getHomeDir: () => ipcRenderer.invoke("os.homeDir"),
   listSessions: (projectId: string) => ipcRenderer.invoke("sessions.list", projectId),
   createSession: (projectId: string, driver: DriverName, options?: CreateSessionOptions) =>

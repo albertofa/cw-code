@@ -2,6 +2,7 @@ export type { SessionStatusReason } from "./session.js";
 export type {
   DriverKind,
   Project,
+  ProjectSettings,
   SessionMeta,
   SessionStatus,
   TurnRequest,

@@ -1,6 +1,6 @@
 import type { AppSettings, DriverName } from "../cw.js";
 
-export type SettingsSection = "general" | "appearance" | "notifications" | "updates" | "sourceControl" | "prWorkflows" | "harness";
+export type SettingsSection = "general" | "appearance" | "notifications" | "updates" | "projects" | "sourceControl" | "prWorkflows" | "harness";
 
 export type SettingsNavId = Exclude<SettingsSection, "harness"> | DriverName;
 
@@ -23,6 +23,7 @@ export const SETTINGS_NAV: SettingsNavItem[] = [
   { id: "appearance", label: "Appearance", group: "app" },
   { id: "notifications", label: "Notifications", group: "app" },
   { id: "updates", label: "Updates", group: "app" },
+  { id: "projects", label: "Projects", group: "app" },
   { id: "sourceControl", label: "Source control", group: "app" },
   { id: "prWorkflows", label: "Workflows", group: "app" },
   ...HARNESS_IDS.map((id): SettingsNavItem => ({ id, label: HARNESS_NAMES[id], group: "harnesses" }))
@@ -137,9 +138,9 @@ export function changedSections(saved: AppSettings, draft: AppSettings): Setting
   return SETTINGS_NAV.map((item) => item.id).filter((id) => owners.has(id));
 }
 
-export function unsavedSectionLabels(saved: AppSettings | null, draft: AppSettings | null, repoDirty: boolean): string[] {
+export function unsavedSectionLabels(saved: AppSettings | null, draft: AppSettings | null, projectDirty: boolean): string[] {
   const changed = saved && draft ? changedSections(saved, draft) : [];
-  return SETTINGS_NAV.filter((item) => changed.includes(item.id) || (repoDirty && item.id === "sourceControl")).map((item) => item.label);
+  return SETTINGS_NAV.filter((item) => changed.includes(item.id) || (projectDirty && item.id === "projects")).map((item) => item.label);
 }
 
 export function sectionSummary(labels: string[]): string {

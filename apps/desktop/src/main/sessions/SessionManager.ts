@@ -24,6 +24,7 @@ import type {
   PrRef,
   PrSummary,
   Project,
+  ProjectSettings,
   RetryConnectionResult,
   RunRef,
   SessionCleanupResult,
@@ -89,8 +90,10 @@ import { CodexCliDriver } from "../providers/codex/CodexCliDriver.js";
 import { claimedSessionKeys, importableSessions, nativeSessionKey, projectForCwd, withRepositories, type ImportContext, type PendingClaim } from "./sessionImport.js";
 import { defaultBinary, execText, GitService, mapLimit, safeSegment, sessionBranchName, type CreatedWorktree, type RemoveWorktreeResult, type ResolveBaseOptions } from "../fs/GitService.js";
 import { resolveAttachments } from "./attachments.js";
-import { AUTO_TITLE_TIMEOUT_MS, buildTitlePrompt, sanitizeGeneratedTitle } from "./autoTitle.js";
-import { branchNameForTitle, shouldRenameSessionBranch, TEMP_BRANCH_PATTERN } from "./branchName.js";
+import { AUTO_TITLE_TIMEOUT_MS, buildTitlePrompt, parseGeneratedMetadata } from "./autoTitle.js";
+import { branchNameForTitle, ownsSessionBranch, shouldRenameSessionBranch, TEMP_BRANCH_PATTERN } from "./branchName.js";
+import { sanitizeProjectSettings } from "./projectSettings.js";
+import { describeScriptResult, runWorktreeScript, scriptLabel } from "./worktreeScripts.js";
 import { NEW_SESSION_TITLE, pickRestoreCandidate } from "./sessionRestore.js";
 import { cwCodeHome, opencodeServerDir, sessionDbPath, settingsFilePath, titleGenDir, usageDir, worktreesDir } from "../paths/appPaths.js";
 import { UsageLedger } from "../usage/UsageLedger.js";
@@ -147,6 +150,8 @@ const DRIVER_SHUTDOWN_GRACE_MS = 1000;
 interface TitleTurn {
   sessionId: string;
   placeholder: string;
+  applyTitle: boolean;
+  expectBranch: boolean;
   text: string;
   settled: boolean;
   timer: NodeJS.Timeout;
@@ -233,6 +238,8 @@ export class SessionManager {
   private idleSweep: Promise<string[]> | null = null;
   private worktreeRecovery = new Map<string, Promise<string>>();
   private branchRenamed = new Set<string>();
+  private generatedBranches = new Map<string, string>();
+  private worktreeSetups = new Map<string, { promise: Promise<void>; controller: AbortController }>();
   private missingTokenWarned = new Set<string>();
   private linkSnapshotCache: { revision: number; byKey: Map<string, PrLinkSnapshot> } | null = null;
   private onEvent: (sessionId: string, event: ThreadEvent) => void;
@@ -382,8 +389,9 @@ export class SessionManager {
     turn.settled = true;
     this.titleTurns.delete(turnId);
     clearTimeout(turn.timer);
-    const title = sanitizeGeneratedTitle(turn.text);
-    if (!title) {
+    const { title, branch } = parseGeneratedMetadata(turn.text, turn.expectBranch);
+    if (branch) this.generatedBranches.set(turn.sessionId, branch);
+    if (!title || !turn.applyTitle) {
       turn.resolve(null);
       return;
     }
@@ -617,6 +625,10 @@ export class SessionManager {
     return project;
   }
 
+  updateProjectSettings(projectId: string, settings: ProjectSettings): Project {
+    return this.store.updateProjectSettings(projectId, settings);
+  }
+
   async listSessions(projectId: string): Promise<SessionMeta[]> {
     const project = this.store.getProject(projectId);
     if (!project) throw new Error(`unknown project ${projectId}`);
@@ -662,6 +674,7 @@ export class SessionManager {
       branch: worktree.branch,
       ...storableBaseRef(worktree.baseRef, worktree.branch, options)
     });
+    this.startWorktreeSetup(session, project, worktree.path);
     return withCreateNotice(session, worktree.baseWarning);
   }
 
@@ -1253,6 +1266,8 @@ export class SessionManager {
     );
     this.emitSession(sessionId);
     this.onResolved(sessionId);
+    this.generatedBranches.delete(sessionId);
+    await this.stopWorktreeSetup(sessionId);
     const worktreePath = session.worktreePath;
     try {
       await this.drivers[session.driver].stopSession?.(sessionId);
@@ -1291,6 +1306,8 @@ export class SessionManager {
           : {})
       };
     }
+    const destroyScriptError = await this.runDestroyScript(session, project, worktreePath);
+    const scriptFailure = destroyScriptError ? { destroyScriptError } : {};
     let removal: RemoveWorktreeResult;
     try {
       removal = await this.git.removeWorktree(project.rootPath, worktreePath, { force: false });
@@ -1302,7 +1319,8 @@ export class SessionManager {
         worktreeOrphaned: true,
         worktreeRemoved: false,
         branchDeleted: false,
-        error: (err as Error).message
+        error: (err as Error).message,
+        ...scriptFailure
       };
     }
     if (!removal.removed) {
@@ -1314,11 +1332,12 @@ export class SessionManager {
         worktreeOrphaned: true,
         worktreeRemoved: false,
         ...(removal.dirtyBlocked ? { dirtyBlocked: true } : {}),
-        branchDeleted: false
+        branchDeleted: false,
+        ...scriptFailure
       };
     }
     const branchOutcome = session.branch
-      ? await this.deleteOrphanBranch(project.rootPath, session.branch, worktreePath, opts.forceBranch === true)
+      ? await this.deleteOrphanBranch(project.rootPath, session.branch, worktreePath, opts.forceBranch === true, session.namedBranch)
       : null;
     const patch: Partial<Pick<SessionMeta, "worktreePath" | "branch">> = { worktreePath: undefined };
     if (session.branch && branchOutcome?.deleted) patch.branch = undefined;
@@ -1330,7 +1349,8 @@ export class SessionManager {
       worktreeOrphaned: true,
       worktreeRemoved: true,
       branchDeleted: branchOutcome?.deleted ?? false,
-      ...(branchOutcome?.unmergedCommits ? { unmergedCommits: true } : {})
+      ...(branchOutcome?.unmergedCommits ? { unmergedCommits: true } : {}),
+      ...scriptFailure
     };
   }
 
@@ -1352,9 +1372,10 @@ export class SessionManager {
     repoRoot: string,
     branch: string,
     removedPath: string,
-    force: boolean
+    force: boolean,
+    namedBranch: string | undefined
   ): Promise<BranchOutcome> {
-    if (!branch.startsWith("cw/")) return { deleted: false };
+    if (!ownsSessionBranch(branch, namedBranch)) return { deleted: false };
     try {
       const branches = await this.git.branches(repoRoot);
       const info = branches.find((b) => b.name === branch && !b.remote);
@@ -1371,7 +1392,7 @@ export class SessionManager {
   }
 
   async pruneStaleWorktrees(): Promise<WorktreePruneSummary> {
-    const summary: WorktreePruneSummary = { scanned: 0, removed: 0, skipped: 0, failed: 0, errors: [], keptDirty: [], clearedSessionIds: [] };
+    const summary: WorktreePruneSummary = { scanned: 0, removed: 0, skipped: 0, failed: 0, errors: [], keptDirty: [], clearedSessionIds: [], destroyScriptErrors: [] };
     if (!existsSync(this.worktreesRoot)) {
       this.clearMissingWorktrees(summary);
       return summary;
@@ -1388,7 +1409,7 @@ export class SessionManager {
         summary.scanned += 1;
         if (sessions.some((s) => pinsWorktree(s) && s.worktreePath && sameWorktreePath(s.worktreePath, dirPath))) continue;
         if (looksLikeWorktree(dirPath)) touchedProjects.add(project?.id ?? projectDir.name);
-        await this.removeStaleDir(project?.rootPath ?? null, dirPath, summary);
+        await this.removeStaleDir(project, sessionDir.name, dirPath, summary);
       }
       if (!project && existsSync(projectPath)) {
         try {
@@ -1419,15 +1440,20 @@ export class SessionManager {
     }
   }
 
-  private async removeStaleDir(repoRoot: string | null, dirPath: string, summary: WorktreePruneSummary): Promise<void> {
+  private async removeStaleDir(project: Project | undefined, sessionId: string, dirPath: string, summary: WorktreePruneSummary): Promise<void> {
     if (!looksLikeWorktree(dirPath)) {
       summary.skipped += 1;
       return;
     }
+    const repoRoot = project?.rootPath ?? null;
     if (repoRoot && await this.git.worktreeDirty(dirPath)) {
       summary.keptDirty.push(dirPath);
       return;
     }
+    const destroyFailure = project
+      ? await this.runDestroyScript({ id: sessionId, branch: this.store.getSession(sessionId)?.branch }, project, dirPath)
+      : undefined;
+    if (destroyFailure) summary.destroyScriptErrors.push(`${dirPath}: ${destroyFailure}`);
     try {
       if (repoRoot) await this.git.removeWorktree(repoRoot, dirPath, { force: true });
       else rmSync(dirPath, { recursive: true, force: true });
@@ -1905,6 +1931,7 @@ export class SessionManager {
     this.pendingTurns.add(sessionId);
     try {
       const cwd = await this.ensureWorktree(sessionId);
+      await this.worktreeSetups.get(sessionId)?.promise;
       await this.assertFolderOnSessionBranch(session, project, cwd, opts?.acceptFolderHead);
       const snapshot = await this.captureTurnSnapshot(sessionId, cwd);
       this.assertNotReserved();
@@ -1949,10 +1976,18 @@ export class SessionManager {
   }
 
   private maybeAutoTitle(sessionId: string, prompt: string, placeholder: string): void {
-    if (!this.settings.get().autoTitleEnabled || !prompt.trim()) return;
-    this.launchTitleTurn(sessionId, prompt, placeholder).catch((err: Error) => {
+    if (!prompt.trim()) return;
+    const applyTitle = this.settings.get().autoTitleEnabled;
+    if (!applyTitle && !this.branchInstructionsFor(sessionId)) return;
+    this.launchTitleTurn(sessionId, prompt, placeholder, applyTitle).catch((err: Error) => {
       console.warn(`title generation skipped for ${sessionId}: ${err.message}`);
     });
+  }
+
+  private branchInstructionsFor(sessionId: string): string | undefined {
+    const session = this.store.getSession(sessionId);
+    if (!session?.worktreePath || !session.branch || !TEMP_BRANCH_PATTERN.test(session.branch)) return undefined;
+    return sanitizeProjectSettings(this.store.getProject(session.projectId)?.settings).branchInstructions;
   }
 
   async regenerateTitle(sessionId: string): Promise<string> {
@@ -1977,7 +2012,7 @@ export class SessionManager {
     return session.title === NEW_SESSION_TITLE ? "" : session.title;
   }
 
-  private launchTitleTurn(sessionId: string, prompt: string, placeholder: string): Promise<string | null> {
+  private launchTitleTurn(sessionId: string, prompt: string, placeholder: string, applyTitle = true): Promise<string | null> {
     if (this.shutdownReserved) return Promise.reject(shutdownReservedError());
     for (const pending of this.titleTurns.values()) {
       if (pending.sessionId === sessionId && !pending.settled) return pending.promise;
@@ -1986,11 +2021,14 @@ export class SessionManager {
     const driver = this.drivers[settings.autoTitleDriver];
     const titleSessionId = `title:${sessionId}`;
     const titleRoot = this.titleGenRoot();
+    const projectId = this.store.getSession(sessionId)?.projectId;
+    const titleInstructions = sanitizeProjectSettings(projectId ? this.store.getProject(projectId)?.settings : undefined).titleInstructions;
+    const branchInstructions = this.branchRenamed.has(sessionId) ? undefined : this.branchInstructionsFor(sessionId);
     let handle: TurnHandle;
     try {
       handle = driver.startTurn({
         sessionId: titleSessionId,
-        prompt: buildTitlePrompt(prompt),
+        prompt: buildTitlePrompt(prompt, { title: titleInstructions, branch: branchInstructions }),
         cwd: titleRoot,
         model: settings.autoTitleModel.trim() || undefined,
         effort: settings.autoTitleEffort,
@@ -2018,6 +2056,8 @@ export class SessionManager {
     this.titleTurns.set(handle.turnId, {
       sessionId,
       placeholder,
+      applyTitle,
+      expectBranch: branchInstructions !== undefined,
       text: "",
       settled: false,
       timer,
@@ -2289,6 +2329,7 @@ export class SessionManager {
     if (session.branch && branchExists) {
       try {
         const attached = await this.git.attachWorktree(project.rootPath, expectedPath, session.branch);
+        this.startWorktreeSetup(session, project, attached.path);
         return attached.path;
       } catch (err) {
         console.warn(`worktree attach failed for ${sessionId}: ${(err as Error).message}`);
@@ -2311,7 +2352,68 @@ export class SessionManager {
       );
     }
     if (worktree.branch !== session.branch) this.updateSessionBranch(sessionId, worktree.branch);
+    this.startWorktreeSetup(session, project, worktree.path);
     return worktree.path;
+  }
+
+  private worktreeScriptEnv(sessionId: string, project: Project, worktreePath: string, branch: string | undefined): Record<string, string> {
+    const session = this.store.getSession(sessionId);
+    return buildTurnEnv(process.env, {
+      ...this.sessionEnvVars(sessionId, session, project, worktreePath),
+      ...(branch ? { CW_BRANCH: branch } : {})
+    });
+  }
+
+  private emitNotice(sessionId: string, noticeId: string, text: string, severity: "info" | "warning" | "error"): void {
+    this.onEvent(sessionId, { type: "session.notice", turnId: noticeId, sessionId, noticeId, text, severity });
+  }
+
+  private startWorktreeSetup(session: SessionMeta, project: Project, worktreePath: string): void {
+    const script = sanitizeProjectSettings(project.settings).setupScript;
+    if (!script) return;
+    const sessionId = session.id;
+    this.worktreeSetups.get(sessionId)?.controller.abort();
+    const controller = new AbortController();
+    const noticeId = `setup:${sessionId}:${Date.now()}`;
+    this.emitNotice(sessionId, noticeId, `${scriptLabel("setup")} running…`, "info");
+    const promise = runWorktreeScript({
+      script,
+      cwd: worktreePath,
+      env: this.worktreeScriptEnv(sessionId, project, worktreePath, this.store.getSession(sessionId)?.branch ?? session.branch),
+      signal: controller.signal
+    })
+      .then((result) => {
+        const text = describeScriptResult("setup", result);
+        if (!result.ok) console.warn(`[worktree] session ${sessionId}: ${text}`);
+        this.emitNotice(sessionId, noticeId, text, result.ok ? "info" : "error");
+      })
+      .catch((err: Error) => console.warn(`[worktree] setup script bookkeeping failed for ${sessionId}: ${err.message}`))
+      .finally(() => {
+        if (this.worktreeSetups.get(sessionId)?.promise === promise) this.worktreeSetups.delete(sessionId);
+      });
+    this.worktreeSetups.set(sessionId, { promise, controller });
+  }
+
+  private async stopWorktreeSetup(sessionId: string): Promise<void> {
+    const setup = this.worktreeSetups.get(sessionId);
+    if (!setup) return;
+    setup.controller.abort();
+    await setup.promise;
+  }
+
+  private async runDestroyScript(session: Pick<SessionMeta, "id" | "branch">, project: Project, worktreePath: string): Promise<string | undefined> {
+    const script = sanitizeProjectSettings(project.settings).destroyScript;
+    if (!script || !existsSync(worktreePath)) return undefined;
+    if (await this.git.worktreeDirty(worktreePath).catch(() => false)) return undefined;
+    const result = await runWorktreeScript({
+      script,
+      cwd: worktreePath,
+      env: this.worktreeScriptEnv(session.id, project, worktreePath, session.branch)
+    });
+    if (result.ok) return undefined;
+    const text = describeScriptResult("destroy", result);
+    console.warn(`[worktree] session ${session.id}: ${text}`);
+    return text;
   }
 
   private async branchExists(repoRoot: string, branch: string): Promise<boolean> {
@@ -2341,13 +2443,17 @@ export class SessionManager {
 
   private async renameBranchForTitle(sessionId: string, turnId: string): Promise<void> {
     if (this.branchRenamed.has(sessionId)) return;
+    const pendingTitle = [...this.titleTurns.values()].find((turn) => turn.sessionId === sessionId && turn.expectBranch && !turn.settled);
+    if (pendingTitle) await pendingTitle.promise;
+    if (this.branchRenamed.has(sessionId)) return;
     const session = this.store.getSession(sessionId);
     if (!session?.worktreePath || !session.branch) return;
     const { worktreePath, branch } = session;
     const temporary = TEMP_BRANCH_PATTERN.test(branch);
     const title = session.title.trim();
     if (!temporary || !title || title === "New session") return;
-    const candidate = branchNameForTitle(title);
+    const generated = this.generatedBranches.get(sessionId);
+    const candidate = generated ?? branchNameForTitle(title);
     if (!candidate || candidate === branch) return;
     if (this.branchShared(sessionId, worktreePath, branch)) return;
     this.branchRenamed.add(sessionId);
@@ -2369,6 +2475,10 @@ export class SessionManager {
       }
       if (!shouldRenameSessionBranch({ temporary, hasLinks: (current.prs?.length ?? 0) > 0, published, shared })) return;
       const renamed = await this.git.renameBranch(project.rootPath, branch, candidate, { worktreePath });
+      if (generated) {
+        this.generatedBranches.delete(sessionId);
+        this.store.updateSession(sessionId, { namedBranch: renamed });
+      }
       this.updateSessionBranch(sessionId, renamed);
       this.onEvent(sessionId, { type: "session.branch.updated", turnId, sessionId, branch: renamed });
     } catch (err) {
@@ -2520,6 +2630,7 @@ export class SessionManager {
     for (const pending of this.deltaBuffer.values()) clearTimeout(pending.timer);
     this.deltaBuffer.clear();
     this.cancelBackgroundWork();
+    for (const setup of this.worktreeSetups.values()) setup.controller.abort();
     this.firstPrompts.clear();
     try {
       this.usageLedger.flush();

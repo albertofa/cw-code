@@ -12,7 +12,7 @@ import { SkillsModal } from "./components/SkillsModal.js";
 import { SettingsPage } from "./components/SettingsPage.js";
 import { SettingsNav } from "./components/SettingsNav.js";
 import { useConfirm } from "./components/ConfirmDialog.js";
-import { navIdOf, sameValue, sectionSummary, unsavedSectionLabels } from "./components/settingsSections.js";
+import { navIdOf, sectionSummary, unsavedSectionLabels } from "./components/settingsSections.js";
 import { ThreadView } from "./components/ThreadView.js";
 import { GitHubView } from "./components/GitHubView.js";
 import { PrDetailView } from "./components/PrDetailView.js";
@@ -38,7 +38,7 @@ import { useAppStore } from "./stores/appStore.js";
 import { rightOpenTabs } from "./stores/panelLayout.js";
 import { selectSessionPanel, usePanelStore } from "./stores/panelStore.js";
 import { usePrStore } from "./stores/prStore.js";
-import { useSettingsDraftStore } from "./stores/settingsDraftStore.js";
+import { projectDirty, useSettingsDraftStore } from "./stores/settingsDraftStore.js";
 import { prKey } from "./components/prInbox.js";
 import type { TurnEvent } from "./cw.js";
 
@@ -142,7 +142,7 @@ export function App() {
     async (go: () => void) => {
       const drafts = useSettingsDraftStore.getState();
       if (usePrStore.getState().mainView.kind === "settings" && drafts.dirty) {
-        const changed = unsavedSectionLabels(drafts.saved, drafts.draft, !sameValue(drafts.repoDraft, drafts.repoSaved));
+        const changed = unsavedSectionLabels(drafts.saved, drafts.draft, projectDirty(drafts));
         const lost = changed.length > 0 ? `Your changes in ${sectionSummary(changed)} will be lost.` : "Your unsaved changes will be lost.";
         const ok = await confirm({
           title: "Discard unsaved settings?",
@@ -467,6 +467,7 @@ export function App() {
                 section={mainView.section}
                 harness={mainView.harness}
                 workflowId={mainView.workflowId}
+                projectId={mainView.projectId}
                 onBack={() => void leaveSettings(() => usePrStore.getState().openSessionView())}
                 onOpenUsage={() => void leaveSettings(() => usePrStore.getState().openUsage())}
               />

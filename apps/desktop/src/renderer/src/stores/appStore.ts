@@ -15,6 +15,7 @@ import type {
   ImportSessionRequest,
   PrRef,
   Project,
+  ProjectSettings,
   QuestionRequest,
   Session,
   SessionStatus,
@@ -42,6 +43,7 @@ import { fallbackHarness } from "../components/harnessAvailability.js";
 import { formatDuration, mergeToolPairs } from "../components/toolSummaries.js";
 import { expiredHoldingIds } from "../components/workingSet.js";
 import { defaultNewSessionProjectId } from "../components/projectRecency.js";
+import { projectDriver, withProjectPrefs } from "../components/projectDefaults.js";
 import { useNotifs } from "../components/Notifications.js";
 import type { AutoFollowUpPause } from "../components/prSessionModel.js";
 import { ipcErrorMessage } from "../components/ipcError.js";
@@ -262,6 +264,7 @@ interface AppState {
   saveSettings(patch: SettingsPatch): Promise<AppSettings>;
   saveDefaultModel(driver: DriverName, id: string): Promise<void>;
   setProjectGitHubAccount(projectId: string, account: { host: string; login: string } | null): Promise<void>;
+  updateProjectSettings(projectId: string, settings: ProjectSettings): Promise<void>;
   renameSession(sessionId: string, title: string): Promise<void>;
   regenerateSessionTitle(sessionId: string): Promise<void>;
   setSessionStatus(sessionId: string, status: SessionStatus, reason?: SessionStatusReason): Promise<void>;
@@ -669,11 +672,17 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   async setPendingProject(projectId: string) {
+    const pendingDriver = get().pendingDriver;
+    const settings = get().projects.find((p) => p.id === projectId)?.settings;
+    const target = pendingDriver === null ? null : fallbackHarness(projectDriver(settings, pendingDriver), get().installedHarnesses);
     set({
       activeProjectId: projectId,
       activeSessionId: null,
       pendingWorkspace: defaultWorkspace(get().defaultUseWorktree),
-      newSessionError: null
+      newSessionError: null,
+      ...(pendingDriver !== null && target !== null
+        ? { pendingDriver: target, pendingPrefs: withProjectPrefs(get().pendingPrefs, settings, target, target !== pendingDriver) }
+        : {})
     });
     if (get().sessionsByProject[projectId]) return;
     try {
@@ -720,6 +729,9 @@ export const useAppStore = create<AppState>((set, get) => ({
           ...(result.branchDeleted ? { branch: undefined } : {})
         })
       });
+      if (result.destroyScriptError) {
+        useNotifs.getState().push({ kind: "error", title: "Destroy script failed", message: result.destroyScriptError });
+      }
       if (result.dirtyBlocked) {
         get().appendSystemNotice(
           sessionId,
@@ -841,7 +853,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     const projectId =
       currentProjectId ??
       defaultNewSessionProjectId(get().projects, get().sessionsByProject, get().activeSessionId);
-    const target = fallbackHarness(driver ?? get().lastDriver, get().installedHarnesses);
+    const settings = projectId ? get().projects.find((p) => p.id === projectId)?.settings : undefined;
+    const target = fallbackHarness(driver ?? projectDriver(settings, get().lastDriver), get().installedHarnesses);
     const previous = get().pendingDriver ?? get().lastDriver;
     const currentModel = get().pendingPrefs.model;
     if (currentModel && previous !== target) {
@@ -855,7 +868,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       activeSessionId: null,
       pendingWorkspace: defaultWorkspace(get().defaultUseWorktree),
       newSessionError: null,
-      pendingPrefs: { ...get().pendingPrefs, model: undefined }
+      pendingPrefs: withProjectPrefs(get().pendingPrefs, settings, target, true)
     });
     if (projectId && projectId !== currentProjectId) void get().setPendingProject(projectId);
   },
@@ -1047,6 +1060,11 @@ export const useAppStore = create<AppState>((set, get) => ({
     set({ projects: get().projects.map((project) => project.id === projectId ? updated : project) });
     const ids = (get().sessionsByProject[projectId] ?? []).map((session) => session.id);
     void refreshGitStatusInBatches(ids, (id) => get().refreshGitStatus(id));
+  },
+
+  async updateProjectSettings(projectId: string, settings: ProjectSettings) {
+    const updated = await window.cw.updateProjectSettings(projectId, settings);
+    set({ projects: withProject(get().projects, updated) });
   },
 
   async createSession(driver: DriverName, prefs?: ComposerPrefs, workspace?: CreateSessionOptions) {
@@ -1312,6 +1330,24 @@ export const useAppStore = create<AppState>((set, get) => ({
         messagesBySession: {
           ...get().messagesBySession,
           [sessionId]: [...messages.slice(0, idx), { ...messages[idx], task: event.task }, ...messages.slice(idx + 1)]
+        }
+      });
+      return;
+    }
+    if (event.type === "session.notice") {
+      const id = `notice-${event.noticeId}`;
+      const notice: ChatMessage = {
+        id,
+        role: "system",
+        text: event.text,
+        turnId: LOCAL_NOTICE_TURN_ID,
+        ...(event.severity === "error" ? { isError: true } : event.severity === "warning" ? { severity: "warning" as const } : {})
+      };
+      const idx = messages.findIndex((m) => m.id === id);
+      set({
+        messagesBySession: {
+          ...get().messagesBySession,
+          [sessionId]: idx >= 0 ? [...messages.slice(0, idx), notice, ...messages.slice(idx + 1)] : [...messages, notice]
         }
       });
       return;

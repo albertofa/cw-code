@@ -1,7 +1,8 @@
 import "../../../../tests/dom.js";
 import { beforeEach, describe, expect, it } from "bun:test";
-import type { AppSettings } from "../cw.js";
-import { useSettingsDraftStore } from "../stores/settingsDraftStore.js";
+import type { AppSettings, Project, ProjectSettings } from "../cw.js";
+import { useAppStore } from "../stores/appStore.js";
+import { projectDirty, useSettingsDraftStore } from "../stores/settingsDraftStore.js";
 import { useNotifs } from "./Notifications.js";
 import {
   changedSections,
@@ -151,10 +152,10 @@ describe("settingsPatch", () => {
 });
 
 describe("unsaved section labels", () => {
-  it("names Source control when only the repository draft changed", () => {
+  it("names Projects when only a project draft changed", () => {
     const saved = settingsFixture();
-    expect(unsavedSectionLabels(saved, saved, true)).toEqual(["Source control"]);
-    expect(unsavedSectionLabels(saved, settingsFixture({ holdingHours: 12 }), true)).toEqual(["General", "Source control"]);
+    expect(unsavedSectionLabels(saved, saved, true)).toEqual(["Projects"]);
+    expect(unsavedSectionLabels(saved, settingsFixture({ holdingHours: 12 }), true)).toEqual(["General", "Projects"]);
     expect(unsavedSectionLabels(null, null, false)).toEqual([]);
   });
 
@@ -250,10 +251,14 @@ interface SaveBridge {
   pending: Array<Deferred<AppSettings>>;
   identityCalls: Array<{ projectId: string; name: string; email: string }>;
   identityError: Error | null;
+  projectCalls: Array<{ projectId: string; settings: ProjectSettings }>;
+  projectError: Error | null;
 }
 
+const PROJECT: Project = { id: "p1", rootPath: "C:/code/app", name: "app" };
+
 function installSaveBridge(): SaveBridge {
-  const bridge: SaveBridge = { patches: [], pending: [], identityCalls: [], identityError: null };
+  const bridge: SaveBridge = { patches: [], pending: [], identityCalls: [], identityError: null, projectCalls: [], projectError: null };
   (window as unknown as { cw: unknown }).cw = {
     setSettings: (patch: Partial<AppSettings>) => {
       bridge.patches.push(patch);
@@ -264,6 +269,12 @@ function installSaveBridge(): SaveBridge {
     setRepositoryGitIdentity: async (projectId: string, name: string, email: string) => {
       bridge.identityCalls.push({ projectId, name, email });
       if (bridge.identityError) throw bridge.identityError;
+    },
+    updateProjectSettings: async (projectId: string, settings: ProjectSettings): Promise<Project> => {
+      bridge.projectCalls.push({ projectId, settings });
+      if (bridge.projectError) throw bridge.projectError;
+      const trimmed = Object.fromEntries(Object.entries(settings).map(([key, value]) => [key, typeof value === "string" ? value.trim() : value]));
+      return { ...PROJECT, settings: trimmed };
     }
   };
   return bridge;
@@ -277,7 +288,49 @@ describe("settingsDraftStore save", () => {
     bridge = installSaveBridge();
     useNotifs.setState({ notifs: [] });
     const saved = settingsFixture();
-    useSettingsDraftStore.setState({ saved, draft: saved, dirty: false, saving: false, repoSaved: null, repoDraft: null, saveError: null, invalidWorkflowId: null });
+    useSettingsDraftStore.setState({
+      saved,
+      draft: saved,
+      dirty: false,
+      saving: false,
+      repoSaved: null,
+      repoDraft: null,
+      projectSaved: null,
+      projectDraft: null,
+      saveError: null,
+      invalidWorkflowId: null
+    });
+    useAppStore.setState({ projects: [PROJECT] });
+  });
+
+  it("saves project settings, drops cleared fields and rebases on the stored value", async () => {
+    const store = useSettingsDraftStore.getState();
+    store.setProjectBaseline({ projectId: "p1", settings: { setupScript: "bun install", titleInstructions: "" } });
+    expect(useSettingsDraftStore.getState().dirty).toBe(false);
+    store.setProjectSettings({ setupScript: "", branchInstructions: "feat/<summary>  ", defaultDriver: "codex" });
+    expect(useSettingsDraftStore.getState().projectDraft?.settings).toEqual({ branchInstructions: "feat/<summary>  ", defaultDriver: "codex" });
+    expect(useSettingsDraftStore.getState().dirty).toBe(true);
+    await useSettingsDraftStore.getState().save();
+    const state = useSettingsDraftStore.getState();
+    expect(bridge.patches).toEqual([]);
+    expect(bridge.projectCalls).toEqual([{ projectId: "p1", settings: { branchInstructions: "feat/<summary>  ", defaultDriver: "codex" } }]);
+    expect(state.projectSaved).toEqual({ projectId: "p1", settings: { branchInstructions: "feat/<summary>", defaultDriver: "codex" } });
+    expect(state.projectDraft).toEqual(state.projectSaved);
+    expect(state.dirty).toBe(false);
+    expect(useAppStore.getState().projects[0].settings?.defaultDriver).toBe("codex");
+  });
+
+  it("keeps the project draft dirty when saving the project settings fails", async () => {
+    useSettingsDraftStore.getState().setProjectBaseline({ projectId: "p1", settings: {} });
+    useSettingsDraftStore.getState().setProjectSettings({ destroyScript: "docker compose down" });
+    bridge.projectError = new Error("disk full");
+    await useSettingsDraftStore.getState().save();
+    const state = useSettingsDraftStore.getState();
+    expect(state.projectSaved?.settings).toEqual({});
+    expect(state.projectDraft?.settings).toEqual({ destroyScript: "docker compose down" });
+    expect(state.dirty).toBe(true);
+    expect(state.saveError).toBe("disk full");
+    expect(unsavedSectionLabels(state.saved, state.draft, projectDirty(state))).toEqual(["Projects"]);
   });
 
   it("sends only the changed keys and re-syncs saved from the stored value", async () => {
@@ -345,7 +398,7 @@ describe("settingsDraftStore save", () => {
     expect(state.dirty).toBe(true);
     expect(state.saveError).toBe(expected);
     expect(useNotifs.getState().notifs.at(-1)?.message).toBe(expected);
-    expect(unsavedSectionLabels(state.saved, state.draft, !sameValue(state.repoDraft, state.repoSaved))).toEqual(["Source control"]);
+    expect(unsavedSectionLabels(state.saved, state.draft, projectDirty(state))).toEqual(["Projects"]);
   });
 
   it("blocks the save and names the workflow when an edited prompt uses another target's variables", async () => {

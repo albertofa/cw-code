@@ -1,5 +1,5 @@
 import { describe, expect, it } from "bun:test";
-import { branchNameForTitle, shouldRenameSessionBranch, slugForBranchTitle, TEMP_BRANCH_PATTERN } from "./branchName.js";
+import { branchNameForTitle, ownsSessionBranch, sanitizeGeneratedBranch, shouldRenameSessionBranch, slugForBranchTitle, TEMP_BRANCH_PATTERN } from "./branchName.js";
 
 describe("branchName", () => {
   it("slugs titles to lowercase hyphenated branch names", () => {
@@ -44,5 +44,43 @@ describe("shouldRenameSessionBranch", () => {
     expect(shouldRenameSessionBranch({ ...safe, hasLinks: true })).toBe(false);
     expect(shouldRenameSessionBranch({ ...safe, published: true })).toBe(false);
     expect(shouldRenameSessionBranch({ ...safe, shared: true })).toBe(false);
+  });
+});
+
+describe("sanitizeGeneratedBranch", () => {
+  it("keeps valid names, including prefixes and case", () => {
+    expect(sanitizeGeneratedBranch("feat/ABC-123-login-flow")).toBe("feat/ABC-123-login-flow");
+    expect(sanitizeGeneratedBranch(" `fix/login` ")).toBe("fix/login");
+  });
+
+  it("removes characters and sequences git rejects", () => {
+    expect(sanitizeGeneratedBranch("refs/heads/feat/login flow")).toBe("feat/login-flow");
+    expect(sanitizeGeneratedBranch("feat//..hidden/x..y~^:?*[\\<>|]")).toBe("feat/hidden/x.y]");
+    expect(sanitizeGeneratedBranch("-feat/name.lock")).toBe("feat/name");
+    expect(sanitizeGeneratedBranch("feat/a@{1}")).toBe("feat/a1}");
+    expect(sanitizeGeneratedBranch("feat/trailing/")).toBe("feat/trailing");
+  });
+
+  it("rejects names that are empty or reserved", () => {
+    expect(sanitizeGeneratedBranch("")).toBeNull();
+    expect(sanitizeGeneratedBranch("   ")).toBeNull();
+    expect(sanitizeGeneratedBranch("HEAD")).toBeNull();
+    expect(sanitizeGeneratedBranch("@")).toBeNull();
+    expect(sanitizeGeneratedBranch("///")).toBeNull();
+  });
+
+  it("caps the length without a trailing separator", () => {
+    const name = sanitizeGeneratedBranch(`feat/${"a".repeat(94)}-${"b".repeat(20)}`);
+    expect(name?.length).toBeLessThanOrEqual(100);
+    expect(name?.endsWith("-")).toBe(false);
+  });
+});
+
+describe("ownsSessionBranch", () => {
+  it("owns cw/ branches and the branch cw-code generated for the session", () => {
+    expect(ownsSessionBranch("cw/fix-login", undefined)).toBe(true);
+    expect(ownsSessionBranch("feat/login", "feat/login")).toBe(true);
+    expect(ownsSessionBranch("feat/login", undefined)).toBe(false);
+    expect(ownsSessionBranch("main", "feat/login")).toBe(false);
   });
 });
