@@ -1167,10 +1167,6 @@ button.session-resolved-toggle:hover {
 }
 
 .ws-state.status-babysit.working {
-  padding: 1px 6px;
-  border-radius: 999px;
-  background: var(--babysit);
-  color: var(--on-babysit);
   font-weight: 600;
 }
 
@@ -2877,8 +2873,13 @@ body.session-dragging * {
   color: var(--violet-ink);
 }
 
-.tool-state.running > svg {
-  animation: cw-spin 0.9s linear infinite;
+:is(.tool-card, .tool-group).running > .tool-line .tool-verb {
+  background: linear-gradient(90deg, var(--dim) 0, var(--dim) 120px, var(--text) 155px, var(--dim) 190px, var(--dim) 320px) repeat-x;
+  background-size: 320px 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  color: transparent;
+  animation: turn-text-sweep 2.8s linear infinite;
 }
 
 .tool-state.error {
@@ -2894,8 +2895,10 @@ body.session-dragging * {
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .tool-state.running > svg {
+  :is(.tool-card, .tool-group).running > .tool-line .tool-verb {
     animation: none;
+    color: var(--dim);
+    background: none;
   }
 }
 
@@ -9884,12 +9887,7 @@ button.gitbar-checkout:hover {
   align-items: center;
   gap: 5px;
   flex: none;
-  height: 20px;
-  padding: 0 8px;
-  box-sizing: border-box;
-  border-radius: 999px;
-  background: var(--babysit);
-  color: var(--on-babysit);
+  color: var(--babysit-ink);
   font-size: var(--t-xs);
   font-weight: 650;
   white-space: nowrap;

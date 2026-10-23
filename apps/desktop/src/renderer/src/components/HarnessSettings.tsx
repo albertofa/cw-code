@@ -6,7 +6,7 @@ import { useUsageStore } from "../stores/usageStore.js";
 import { BinaryPicker } from "./BinaryPicker.js";
 import { DriverIcon } from "./DriverIcon.js";
 import { errorMessage } from "./errorMessage.js";
-import { CLAUDE_CURATED_MODELS, defaultModelPatch, filterModels } from "./modelMenus.js";
+import { CLAUDE_CURATED_MODELS, defaultModelPatch, groupModels, pickerSections } from "./modelMenus.js";
 import { HARNESS_NAMES } from "./settingsSections.js";
 import { isHarnessSkipped } from "./harnessAvailability.js";
 import { SettingsGroup, SettingsRow, SettingsSwitch, type BinaryPickHandler } from "./SettingsLayout.js";
@@ -217,7 +217,8 @@ function LiveModels({ driver, draft, set }: { driver: DriverName; draft: AppSett
   }, [driver, binary, reload]);
 
   const star = (id: string) => set(defaultModelPatch(driver, current === id ? "" : id));
-  const shown = filterModels(models ?? [], query);
+  const sections = pickerSections(driver, models ?? [], query);
+  const grouped = groupModels(driver, models ?? []).length > 1;
   const missingDefault = current !== "" && models !== null && !models.some((model) => model.id === current);
 
   return (
@@ -247,10 +248,21 @@ function LiveModels({ driver, draft, set }: { driver: DriverName; draft: AppSett
             onStar={() => star(current)}
           />
         )}
-        {shown.map((model) => (
-          <ModelRow key={model.id} label={model.label} id={model.id} harness={harness} isDefault={current === model.id} onStar={() => star(model.id)} />
+        {sections.map((section) => (
+          <div key={section.id} className="sp-mgroup" role="group" aria-label={section.label}>
+            {grouped && (
+              <div className="sp-mgroup-head" aria-hidden="true">
+                <DriverIcon driver={section.icon} size={13} />
+                <span>{section.label}</span>
+                <span className="n">{section.models.length}</span>
+              </div>
+            )}
+            {section.models.map((model) => (
+              <ModelRow key={model.id} label={model.label} id={model.id} harness={harness} isDefault={current === model.id} onStar={() => star(model.id)} />
+            ))}
+          </div>
         ))}
-        {models !== null && shown.length === 0 && !missingDefault && (
+        {models !== null && sections.length === 0 && !missingDefault && (
           <div className="sp-mempty">{models.length === 0 ? `${harness} reported no models.` : "No models match."}</div>
         )}
       </div>

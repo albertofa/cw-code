@@ -4,7 +4,6 @@ import {
   ChevronRight,
   CircleDashed,
   CircleHelp,
-  LoaderCircle,
   Monitor,
   ShieldAlert,
   Square,
@@ -45,9 +44,8 @@ const STATUS_LABEL: Record<ToolStatus, string> = {
   unknown: "Ended · no completion recorded"
 };
 
-const STATUS_ICON: Record<Exclude<ToolStatus, "complete">, LucideIcon> = {
+const STATUS_ICON: Record<Exclude<ToolStatus, "complete" | "running">, LucideIcon> = {
   error: X,
-  running: LoaderCircle,
   waiting: ShieldAlert,
   pending: CircleDashed,
   stopped: Square,
@@ -61,7 +59,7 @@ function baseName(path: string): string {
 }
 
 function ToolStatusIcon({ status, Icon }: { status: ToolStatus; Icon: LucideIcon }) {
-  const Glyph = status === "complete" ? Icon : STATUS_ICON[status];
+  const Glyph = status === "complete" || status === "running" ? Icon : STATUS_ICON[status];
   const label = STATUS_LABEL[status];
   return (
     <span className={`tool-state ${status}`} role="img" aria-label={label} title={label}>
