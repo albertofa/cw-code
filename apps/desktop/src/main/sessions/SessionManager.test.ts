@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "bun:test";
+import { stubEnv, unstubAllEnvs, waitFor } from "../../../tests/testing.js";
 import { execFileSync } from "node:child_process";
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
@@ -286,7 +287,7 @@ describe("SessionManager", () => {
   it("keeps settings and title generation next to an explicit dbPath instead of the real app home", () => {
     const sandbox = mkdtempSync(join(tmpdir(), "cw-data-dir-"));
     const appHome = join(sandbox, "app-home");
-    vi.stubEnv("CW_CODE_HOME", appHome);
+    stubEnv("CW_CODE_HOME", appHome);
     try {
       const manager = new SessionManager({ dbPath: join(sandbox, "data", "test.db") });
       manager.setSettings({ autoTitleEnabled: false });
@@ -296,7 +297,7 @@ describe("SessionManager", () => {
       expect(titleRoot).toBe(join(sandbox, "data", "title-gen"));
       expect(existsSync(appHome)).toBe(false);
     } finally {
-      vi.unstubAllEnvs();
+      unstubAllEnvs();
     }
   });
 
@@ -690,7 +691,7 @@ describe("SessionManager", () => {
 
     expect(session.worktreePath).toBeTruthy();
     expect(session.branch).toMatch(/^cw\//);
-    expect(manager.rootFor(session.id)).toBe(session.worktreePath);
+    expect(manager.rootFor(session.id)).toBe(session.worktreePath!);
     await manager.startTurn(session.id, "isolated");
     expect(fake.lastRequest?.cwd).toBe(session.worktreePath);
     manager.dispose();
@@ -758,7 +759,7 @@ describe("SessionManager", () => {
     expect(session.worktreePath).toBeUndefined();
     expect(session.branch).toBe(`cw/${session.id.replace(/^sess_/, "")}`);
     expect(session.createNotice).toBeUndefined();
-    expect(gitOut(repository, "branch", "--show-current")).toBe(session.branch);
+    expect(gitOut(repository, "branch", "--show-current")).toBe(session.branch!);
     expect(gitOut(repository, "rev-parse", "HEAD")).toBe(remoteHead);
     expect(gitOut(repository, "rev-parse", "origin/main")).toBe(remoteHead);
     expect(hasUpstream(repository, session.branch ?? "")).toBe(false);
@@ -781,7 +782,7 @@ describe("SessionManager", () => {
 
     const session = await manager.createSession(project.id, "claude", { mode: "current", baseBranch: "release" });
 
-    expect(gitOut(repository, "branch", "--show-current")).toBe(session.branch);
+    expect(gitOut(repository, "branch", "--show-current")).toBe(session.branch!);
     expect(gitOut(repository, "rev-parse", "HEAD")).toBe(releaseHead);
     expect(session.baseRef).toBe("release");
     manager.dispose();
@@ -882,7 +883,7 @@ describe("SessionManager", () => {
     await expect(manager.withBranchSwitch(idle.id, async () => "switched")).rejects.toThrow(message);
 
     fake.completeAll();
-    await vi.waitFor(async () => expect(await manager.withBranchSwitch(idle.id, async () => "switched")).toBe("switched"));
+    await waitFor(async () => expect(await manager.withBranchSwitch(idle.id, async () => "switched")).toBe("switched"));
     manager.dispose();
   });
 
@@ -895,7 +896,7 @@ describe("SessionManager", () => {
       release = resolveGate;
     });
     const pendingSwitch = manager.withBranchSwitch(switching.id, () => gate);
-    await vi.waitFor(() => expect((manager as unknown as { pendingBranchSwitches: Set<string> }).pendingBranchSwitches.has(switching.id)).toBe(true));
+    await waitFor(() => expect((manager as unknown as { pendingBranchSwitches: Set<string> }).pendingBranchSwitches.has(switching.id)).toBe(true));
 
     const message = `${project.name} is switching branches — try again in a moment`;
     await expect(manager.startTurn(other.id, "blocked", { acceptFolderHead: folderHead(repository) })).rejects.toThrow(message);
@@ -924,7 +925,7 @@ describe("SessionManager", () => {
     };
 
     const pendingCreate = manager.createSession(project.id, "claude", { mode: "current" });
-    await vi.waitFor(() => expect(reached).toBe(true));
+    await waitFor(() => expect(reached).toBe(true));
 
     await expect(manager.startTurn(sibling.id, "blocked", { acceptFolderHead: folderHead(repository) })).rejects.toThrow(
       `${project.name} is switching branches — try again in a moment`
@@ -977,7 +978,7 @@ describe("SessionManager", () => {
     await expect(manager.switchBranch(shared.id, "feature")).rejects.toThrow(
       `${project.name} has uncommitted changes — commit or stash them before switching branches`
     );
-    expect(folderHead(repository)).toBe(shared.branch);
+    expect(folderHead(repository)).toBe(shared.branch!);
     gitOut(repository, "checkout", "--", "README.md");
 
     const isolated = await manager.createSession(project.id, "claude", { mode: "new" });
@@ -1295,7 +1296,8 @@ describe("SessionManager", () => {
 
     const firstTurn = await manager.startTurn(session.id, "first");
     const first = stored();
-    expect(first).toMatchObject({ turnId: firstTurn, sha: expect.stringMatching(/^[0-9a-f]{40}$/) });
+    expect(first?.turnId).toBe(firstTurn);
+    expect(first?.sha).toMatch(/^[0-9a-f]{40}$/);
     expect(first?.error).toBeUndefined();
     expect(first?.endSha).toBeUndefined();
 
@@ -1306,7 +1308,9 @@ describe("SessionManager", () => {
     fake.complete(firstTurn);
     await endSnapshotsSettled(manager);
     const ended = stored();
-    expect(ended).toMatchObject({ turnId: firstTurn, sha: first?.sha, endSha: expect.stringMatching(/^[0-9a-f]{40}$/), endedAt: expect.any(Number) });
+    expect(ended).toMatchObject({ turnId: firstTurn, sha: first?.sha });
+    expect(ended?.endSha).toMatch(/^[0-9a-f]{40}$/);
+    expect(ended?.endedAt).toBeNumber();
     expect(execFileSync("git", ["-C", worktreePath, "show", `${ended?.endSha}:README.md`], { encoding: "utf8" }).replace(/\r\n/g, "\n")).toBe("changed\n");
 
     const secondTurn = await manager.startTurn(session.id, "second");
@@ -1463,7 +1467,7 @@ describe("SessionManager", () => {
       return realRestore(...args);
     };
     const pendingUndo = manager.undoTurn(second.id, secondTurn, secondEnd);
-    await vi.waitFor(() => expect((manager as unknown as { pendingUndos: Set<string> }).pendingUndos.has(second.id)).toBe(true));
+    await waitFor(() => expect((manager as unknown as { pendingUndos: Set<string> }).pendingUndos.has(second.id)).toBe(true));
     await expect(manager.startTurn(first.id, "blocked")).rejects.toThrow("session busy (undo pending)");
     await expect(manager.startTurn(second.id, "blocked")).rejects.toThrow("session busy (undo pending)");
     await expect(manager.resolveSession(first.id, "resolved")).rejects.toThrow("session busy (undo pending)");
@@ -1671,7 +1675,7 @@ describe("SessionManager", () => {
     (manager as unknown as { drivers: Record<string, CliDriver> }).drivers.opencode = modelDriver;
     const session = await manager.createSession(project.id, "opencode", { baseBranch: "main" });
     await manager.listModels(session.id);
-    expect(modelDriver.modelCwds).toEqual([session.worktreePath]);
+    expect(modelDriver.modelCwds).toEqual([session.worktreePath!]);
     manager.dispose();
   });
 
@@ -1714,16 +1718,16 @@ describe("SessionManager", () => {
 
   it("overrides stale CW_* values inherited from the process env", () => {
     const { manager } = makeManager();
-    vi.stubEnv("CW_WORKTREE_PATH", "C:\\stale-worktree");
-    vi.stubEnv("CW_PROJECT_ROOT", "C:\\stale-root");
-    vi.stubEnv("CW_SESSION_ID", "stale-session");
+    stubEnv("CW_WORKTREE_PATH", "C:\\stale-worktree");
+    stubEnv("CW_PROJECT_ROOT", "C:\\stale-root");
+    stubEnv("CW_SESSION_ID", "stale-session");
     try {
       const env = manager.turnEnv("missing-session", "C:\\somewhere");
       expect(env["CW_WORKTREE_PATH"]).toBe("C:\\somewhere");
       expect(env["CW_PROJECT_ROOT"]).toBe("C:\\somewhere");
       expect(env["CW_SESSION_ID"]).toBe("missing-session");
     } finally {
-      vi.unstubAllEnvs();
+      unstubAllEnvs();
       manager.dispose();
     }
   });
@@ -1775,7 +1779,7 @@ describe("SessionManager", () => {
     const stored = sessions.find((s) => s.id === session.id);
     expect(stored?.branch).toMatch(/^cw\//);
     const checkedOut = execFileSync("git", ["-C", worktreePath, "rev-parse", "--abbrev-ref", "HEAD"], { encoding: "utf8" }).trim();
-    expect(checkedOut).toBe(stored?.branch);
+    expect(checkedOut).toBe(stored?.branch!);
     manager.dispose();
   });
 
@@ -1961,7 +1965,7 @@ describe("SessionManager", () => {
     await manager.startTurn(published.id, "fix the login flow");
     await manager.startTurn(linked.id, "fix the signup flow");
     fake.completeAll();
-    await vi.waitFor(() => expect(renameForTitle).toHaveBeenCalledTimes(2));
+    await waitFor(() => expect(renameForTitle).toHaveBeenCalledTimes(2));
     await Promise.all(renameForTitle.mock.results.map((result) => result.value));
 
     const stored = await manager.listSessions(project.id);
@@ -1986,7 +1990,7 @@ describe("SessionManager", () => {
 
     await manager.startTurn(session.id, "fix the login flow");
     fake.completeAll();
-    await vi.waitFor(() => expect(renameForTitle).toHaveBeenCalledTimes(1));
+    await waitFor(() => expect(renameForTitle).toHaveBeenCalledTimes(1));
     await renameForTitle.mock.results[0].value;
 
     expect(renameBranch).not.toHaveBeenCalled();

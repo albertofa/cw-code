@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { parseClaudeTaskSystemLine, parseClaudeToolUseResult, type ClaudeTaskSystemInfo } from "./claudeStreamParser.js";
 import {
   claudeCallObservation,
@@ -274,7 +274,7 @@ describe("claudeToolResultObservation", () => {
   });
 
   it("recognizes remote_launched and isAsync acknowledgements without an agent id", () => {
-    const ack = { kind: "background", ref: { toolUseId: "toolu_1" }, background: true };
+    const ack = { kind: "background", ref: { toolUseId: "toolu_1" }, background: true } as const;
     expect(claudeToolResultObservation("toolu_1", "", false, { status: "remote_launched" }, AT)).toStrictEqual(ack);
     expect(claudeToolResultObservation("toolu_1", "", false, { isAsync: true, agentId: "" }, AT)).toStrictEqual(ack);
   });

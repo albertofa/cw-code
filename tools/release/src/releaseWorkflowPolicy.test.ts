@@ -1,6 +1,6 @@
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { jobBlocks, readWorkflowText, runScriptLines, topLevelBlock } from "./workflowLines.ts";
 
 const WORKFLOW_PATH = resolve(dirname(fileURLToPath(import.meta.url)), "../../../.github/workflows/release.yml");
@@ -88,17 +88,17 @@ describe("release.yml policy", () => {
     for (const name of sourceCheckouts) {
       expect(job(name)).toContain('[ "$actual" = "$SOURCE_SHA" ] || { echo "::error::checked out $actual, the plan builds $SOURCE_SHA"; exit 1; }');
       expect(job(name)).toMatch(/ref: \$\{\{ github\.workflow_sha \}\}\n\s+path: tooling/);
-      expect(job(name)).toContain("node tooling/scripts/verify-installed-upgrade.mjs --assert-production-bundle apps/desktop/out/main");
+      expect(job(name)).toContain("bun tooling/scripts/verify-installed-upgrade.mjs --assert-production-bundle apps/desktop/out/main");
     }
     expect(job("build-linux")).toContain(
-      "node tooling/scripts/verify-installed-upgrade.mjs --assert-production-bundle apps/desktop/out/main --asar apps/desktop/dist/linux-unpacked/resources/app.asar"
+      "bun tooling/scripts/verify-installed-upgrade.mjs --assert-production-bundle apps/desktop/out/main --asar apps/desktop/dist/linux-unpacked/resources/app.asar"
     );
     expect(job("verify-linux-candidate")).toMatch(/uses: actions\/checkout@[^\n]+\n\s+with:\n\s+ref: \$\{\{ github\.workflow_sha \}\}/);
     expect(job("plan")).toContain('--sha "$SOURCE"');
   });
 
   it("installs without lifecycle scripts wherever only the release tooling runs", () => {
-    for (const name of ["plan", "publish", "verify-publication"]) expect(job(name)).toContain("pnpm install --frozen-lockfile --ignore-scripts");
+    for (const name of ["plan", "publish", "verify-publication"]) expect(job(name)).toContain("bun install --frozen-lockfile --ignore-scripts");
   });
 
   it("reads the repository by default and grants contents: write only to the protected publish job", () => {
@@ -141,11 +141,11 @@ describe("release.yml policy", () => {
     ]) {
       expect(candidate).toContain(gate);
     }
-    expect(job("verify-source")).toMatch(/pnpm typecheck[\s\S]*pnpm test[\s\S]*pnpm build/);
+    expect(job("verify-source")).toMatch(/bun run typecheck[\s\S]*bun run test[\s\S]*bun run build/);
     expect(job("build-linux")).toMatch(
-      /release\.ts apply --plan plan\/plan\.json[\s\S]*pnpm typecheck[\s\S]*pnpm test[\s\S]*pnpm build[\s\S]*dist:linux[\s\S]*--asar apps\/desktop\/dist\/linux-unpacked\/resources\/app\.asar[\s\S]*node tooling\/scripts\/verify-linux-package\.mjs --desktop-dir apps\/desktop --dist apps\/desktop\/dist --install-deb --disposable-environment[\s\S]*if-no-files-found: error/
+      /release\.ts apply --plan plan\/plan\.json[\s\S]*bun run typecheck[\s\S]*bun run test[\s\S]*bun run build[\s\S]*dist:linux[\s\S]*--asar apps\/desktop\/dist\/linux-unpacked\/resources\/app\.asar[\s\S]*bun tooling\/scripts\/verify-linux-package\.mjs --desktop-dir apps\/desktop --dist apps\/desktop\/dist --install-deb --disposable-environment[\s\S]*if-no-files-found: error/
     );
-    expect(job("build-linux")).not.toMatch(/run: node scripts\//);
+    expect(job("build-linux")).not.toMatch(/run: bun scripts\//);
     expect(job("build-linux")).toMatch(/- name: Upload the Linux packages\n\s+if: always\(\)[\s\S]*apps\/desktop\/dist\/latest-linux\.yml\n\s+apps\/desktop\/dist\/alpha-linux\.yml/);
     expect(job("build-linux")).toContain("linux-artifact: ${{ steps.names.outputs.linux-artifact }}");
     const linuxCandidate = job("verify-linux-candidate");
@@ -158,7 +158,7 @@ describe("release.yml policy", () => {
       expect(linuxCandidate).toContain(gate);
     }
     expect(linuxCandidate).toMatch(
-      /gh release download [^\n]+--dir upgrade-base\n\s+node tools\/release\/src\/cli\/release\.ts validate-feed --platform linux --dir upgrade-base --version "\$BASE_VERSION"\n\s+chmod \+x "upgrade-base\/\$APPIMAGE"[\s\S]*verify-linux-upgrade\.mjs/
+      /gh release download [^\n]+--dir upgrade-base\n\s+bun tools\/release\/src\/cli\/release\.ts validate-feed --platform linux --dir upgrade-base --version "\$BASE_VERSION"\n\s+chmod \+x "upgrade-base\/\$APPIMAGE"[\s\S]*verify-linux-upgrade\.mjs/
     );
     expect(job("verify-candidate")).toContain('validate-feed --dir upgrade-base --version "$BASE_VERSION"');
   });
@@ -167,6 +167,12 @@ describe("release.yml policy", () => {
     const plan = job("plan");
     expect(plan).toMatch(
       /- name: Require Linux packaging in the source commit\n\s+if: steps\.plan\.outputs\.skip == 'false'\n\s+env:\n\s+SOURCE_SHA: \$\{\{ steps\.plan\.outputs\.sha \}\}[\s\S]*git show "\$SOURCE_SHA:apps\/desktop\/package\.json"[\s\S]*\["dist:linux"\][\s\S]*an alpha built before Linux support cannot be promoted to stable; publish a fresh alpha and promote that[\s\S]*exit 1[\s\S]*- name: Upload the plan/
+    );
+  });
+
+  it("refuses in plan a source commit from before the Bun toolchain, since every build job installs it with Bun", () => {
+    expect(job("plan")).toMatch(
+      /- name: Require the Bun toolchain in the source commit\n\s+if: steps\.plan\.outputs\.skip == 'false'\n\s+env:\n\s+SOURCE_SHA: \$\{\{ steps\.plan\.outputs\.sha \}\}[\s\S]*git cat-file -e "\$SOURCE_SHA:bun\.lock"[\s\S]*exit 1[\s\S]*- name: Upload the plan/
     );
   });
 

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import type { UpdateState } from "@cw-code/contracts";
 import {
   RELEASE_NOTES_MAX_CHARS,

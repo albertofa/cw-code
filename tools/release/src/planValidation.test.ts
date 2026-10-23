@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { type ReleasePlan, validatePlanShape } from "./planValidation.ts";
 
 const SHA_A = "a".repeat(40);

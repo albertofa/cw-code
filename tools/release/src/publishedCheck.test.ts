@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import type { ReleasePlan } from "./planValidation.ts";
 import { type AnonymousHttp, checkPublishedRelease, checkPublishedReleaseWithRetries } from "./publishedCheck.ts";
 import { appImageNameFor, debNameFor, installerNameFor, publishableAssetNames } from "./releaseAssets.ts";

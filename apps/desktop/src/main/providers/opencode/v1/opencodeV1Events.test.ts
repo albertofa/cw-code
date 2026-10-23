@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { opencodeV1EventDecoder } from "./opencodeV1Events.js";
 
 const decode = (event: unknown) => opencodeV1EventDecoder.decode(event);
@@ -11,7 +11,7 @@ describe("opencodeV1EventDecoder", () => {
   };
 
   it("decodes part deltas from properties or data", () => {
-    const expected = [{ kind: "delta", sessionID: "ses_1", messageID: "msg_1", partID: "prt_1", field: "text", text: "hel" }];
+    const expected: ReturnType<typeof decode> = [{ kind: "delta", sessionID: "ses_1", messageID: "msg_1", partID: "prt_1", field: "text", text: "hel" }];
     expect(decode(delta)).toEqual(expected);
     expect(decode({ id: "e", type: "message.part.delta", data: delta.properties })).toEqual(expected);
   });

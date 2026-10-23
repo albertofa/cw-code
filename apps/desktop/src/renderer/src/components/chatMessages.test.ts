@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { appendAssistantText, appendReasoningText, closeReasoning, upsertToolCall } from "./chatMessages.js";
 import type { ChatMessage } from "../stores/appStore.js";
 import type { ToolCallEvent } from "./chatMessages.js";

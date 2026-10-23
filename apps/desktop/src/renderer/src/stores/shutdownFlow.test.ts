@@ -1,5 +1,5 @@
-// @vitest-environment jsdom
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import "../../../../tests/dom.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
 import type { ShutdownAssessment, ShutdownPrepareRequest, ShutdownPrepareResult } from "../cw.js";
 import { useAppStore } from "./appStore.js";
 import { useEditorBuffers } from "./editorBuffers.js";

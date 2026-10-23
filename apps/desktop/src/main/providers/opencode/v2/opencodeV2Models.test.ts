@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { mapV2Models } from "./opencodeV2Models.js";
 
 describe("mapV2Models", () => {

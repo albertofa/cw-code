@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import type { DriverName } from "../cw.js";
 import { fallbackHarness, installedHarnesses, isHarnessSkipped, pickableHarnesses } from "./harnessAvailability.js";
 

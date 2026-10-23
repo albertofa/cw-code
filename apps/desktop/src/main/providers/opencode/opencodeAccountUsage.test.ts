@@ -2,7 +2,8 @@ import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { DatabaseSync } from "node:sqlite";
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "bun:test";
+import { releaseSqliteFiles } from "../../../../tests/testing.js";
 import {
   fetchOpencodeGoUsage,
   mapOpencodeGoUsage,
@@ -58,6 +59,7 @@ function oauth(access: string, expires = FUTURE): Record<string, unknown> {
 }
 
 afterEach(() => {
+  releaseSqliteFiles();
   for (const dir of tempDirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 

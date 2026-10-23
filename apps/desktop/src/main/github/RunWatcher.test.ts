@@ -1,4 +1,5 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, setSystemTime, vi } from "bun:test";
+import { advanceTimersByTimeAsync } from "../../../tests/testing.js";
 import type { AppSettings, RunRef, WorkflowRunSummary } from "@cw-code/contracts";
 import { RunWatcher, rateLimitDelayMs } from "./RunWatcher.js";
 import type { GhExec } from "./RunsService.js";
@@ -47,7 +48,7 @@ const settings = (() => ({})) as unknown as () => AppSettings;
 describe("RunWatcher", () => {
   beforeEach(() => {
     vi.useFakeTimers();
-    vi.setSystemTime(new Date("2024-03-01T10:00:00Z"));
+    setSystemTime(new Date("2024-03-01T10:00:00Z"));
   });
 
   afterEach(() => {
@@ -71,13 +72,13 @@ describe("RunWatcher", () => {
       return ok(['etag: W/"v1"'], restRun(1, "in_progress"));
     });
     watcher.watch([REF_A]);
-    await vi.advanceTimersByTimeAsync(15_000);
+    await advanceTimersByTimeAsync(15_000);
     expect(changed).toHaveLength(1);
     expect(changed[0][0]).toMatchObject({ ref: REF_A, status: "in_progress" });
     expect(changed[0][0].jobs).toHaveLength(1);
     expect(exec).toHaveBeenCalledWith(["api", "-i", "repos/acme/widgets/actions/runs/1"]);
 
-    await vi.advanceTimersByTimeAsync(15_000);
+    await advanceTimersByTimeAsync(15_000);
     expect(exec).toHaveBeenCalledWith(["api", "-i", "-H", 'If-None-Match: W/"v1"', "repos/acme/widgets/actions/runs/1"]);
     watcher.dispose();
   });
@@ -90,9 +91,9 @@ describe("RunWatcher", () => {
       return call === 1 ? ok(['etag: "e1"'], restRun(1, "in_progress")) : notModified();
     });
     watcher.watch([REF_A]);
-    await vi.advanceTimersByTimeAsync(15_000);
+    await advanceTimersByTimeAsync(15_000);
     expect(changed).toHaveLength(1);
-    await vi.advanceTimersByTimeAsync(30_000);
+    await advanceTimersByTimeAsync(30_000);
     expect(changed).toHaveLength(1);
     const runCalls = exec.mock.calls.filter(([args]) => !isJobsCall(args) && args.includes("repos/acme/widgets/actions/runs/1"));
     expect(runCalls).toHaveLength(3);
@@ -106,10 +107,10 @@ describe("RunWatcher", () => {
       return ok([], restRun(1, "completed", "success"));
     });
     watcher.watch([REF_A]);
-    await vi.advanceTimersByTimeAsync(15_000);
+    await advanceTimersByTimeAsync(15_000);
     expect(changed[0][0]).toMatchObject({ status: "completed", conclusion: "success" });
     const before = exec.mock.calls.length;
-    await vi.advanceTimersByTimeAsync(60_000);
+    await advanceTimersByTimeAsync(60_000);
     const later = exec.mock.calls.slice(before).filter(([args]) => args.includes("repos/acme/widgets/actions/runs/1"));
     expect(later).toHaveLength(0);
     watcher.dispose();
@@ -119,7 +120,7 @@ describe("RunWatcher", () => {
     const { exec, watcher } = setup(async (args) => (isJobsCall(args) ? NO_JOBS : notModified()));
     watcher.watch([REF_A]);
     watcher.watch([REF_B]);
-    await vi.advanceTimersByTimeAsync(15_000);
+    await advanceTimersByTimeAsync(15_000);
     const paths = exec.mock.calls.map(([args]) => args.at(-1)).filter((path) => path?.startsWith("repos/"));
     expect(paths).toEqual(["repos/acme/widgets/actions/runs/2"]);
     watcher.dispose();
@@ -137,7 +138,7 @@ describe("RunWatcher", () => {
     watcher.setActive(false);
     watcher.watch([REF_A]);
     expect(vi.getTimerCount()).toBe(0);
-    await vi.advanceTimersByTimeAsync(120_000);
+    await advanceTimersByTimeAsync(120_000);
     expect(exec).not.toHaveBeenCalled();
 
     watcher.setActive(true);
@@ -163,10 +164,10 @@ describe("RunWatcher", () => {
     const onCiActivity = vi.fn();
     watcher.onCiActivity = onCiActivity;
     watcher.watch([]);
-    await vi.advanceTimersByTimeAsync(60_000);
+    await advanceTimersByTimeAsync(60_000);
     watcher.setActive(false);
     release(ok([], [{ reason: "ci_activity", updated_at: "2024-03-01T11:00:00Z" }]));
-    await vi.advanceTimersByTimeAsync(0);
+    await advanceTimersByTimeAsync(0);
     expect(onCiActivity).not.toHaveBeenCalled();
     watcher.dispose();
   });
@@ -180,9 +181,9 @@ describe("RunWatcher", () => {
       return ok([], restRun(1, "in_progress"));
     });
     watcher.watch([upperRef, REF_B]);
-    await vi.advanceTimersByTimeAsync(15_000);
+    await advanceTimersByTimeAsync(15_000);
     expect(changed[0][0].ref).toEqual(upperRef);
-    await vi.advanceTimersByTimeAsync(30_000);
+    await advanceTimersByTimeAsync(30_000);
     const missing = exec.mock.calls.filter(([args]) => args.at(-1)?.endsWith("/runs/2"));
     expect(missing).toHaveLength(1);
     expect(warn.mock.calls.filter(([message]) => String(message).includes("404"))).toHaveLength(1);
@@ -196,11 +197,11 @@ describe("RunWatcher", () => {
     const { exec, watcher } = setup(async () => failure("HTTP/2.0 429 Too Many Requests", ["retry-after: 120"]));
     const runCalls = () => exec.mock.calls.filter(([args]) => args.at(-1)?.endsWith("/runs/1")).length;
     watcher.watch([REF_A]);
-    await vi.advanceTimersByTimeAsync(15_000);
+    await advanceTimersByTimeAsync(15_000);
     expect(runCalls()).toBe(1);
-    await vi.advanceTimersByTimeAsync(119_000);
+    await advanceTimersByTimeAsync(119_000);
     expect(runCalls()).toBe(1);
-    await vi.advanceTimersByTimeAsync(1_000);
+    await advanceTimersByTimeAsync(1_000);
     expect(runCalls()).toBe(2);
     expect(warn.mock.calls.filter(([message]) => String(message).includes("runs/1") && String(message).includes("429"))).toHaveLength(1);
     warn.mockRestore();
@@ -213,17 +214,17 @@ describe("RunWatcher", () => {
     const { exec, watcher } = setup(async () => failure("HTTP/2.0 403 Forbidden", headers));
     const runCalls = () => exec.mock.calls.filter(([args]) => args.at(-1)?.endsWith("/runs/1")).length;
     watcher.watch([REF_A]);
-    await vi.advanceTimersByTimeAsync(15_000);
-    await vi.advanceTimersByTimeAsync(15_000);
+    await advanceTimersByTimeAsync(15_000);
+    await advanceTimersByTimeAsync(15_000);
     expect(runCalls()).toBe(2);
     expect(warn.mock.calls.filter(([message]) => String(message).includes("runs/1"))).toHaveLength(1);
 
     headers = ["x-ratelimit-remaining: 0", `x-ratelimit-reset: ${Date.now() / 1000 + 300}`];
-    await vi.advanceTimersByTimeAsync(15_000);
+    await advanceTimersByTimeAsync(15_000);
     expect(runCalls()).toBe(3);
-    await vi.advanceTimersByTimeAsync(200_000);
+    await advanceTimersByTimeAsync(200_000);
     expect(runCalls()).toBe(3);
-    await vi.advanceTimersByTimeAsync(100_000);
+    await advanceTimersByTimeAsync(100_000);
     expect(runCalls()).toBe(4);
     warn.mockRestore();
     watcher.dispose();
@@ -237,7 +238,7 @@ describe("RunWatcher", () => {
     watcher.setActive(false);
     watcher.setActive(true);
     watcher.watch([REF_A]);
-    for (let tick = 0; tick < 4; tick += 1) await vi.advanceTimersByTimeAsync(15_000);
+    for (let tick = 0; tick < 4; tick += 1) await advanceTimersByTimeAsync(15_000);
     expect(warn.mock.calls.filter(([message]) => String(message).includes("runs/1"))).toHaveLength(2);
     warn.mockRestore();
     watcher.dispose();
@@ -254,14 +255,14 @@ describe("RunWatcher", () => {
       return Promise.resolve(ok(['etag: "e"'], restRun(Number(path.split("/").pop()), "in_progress")));
     });
     watcher.watch(refs);
-    await vi.advanceTimersByTimeAsync(15_000);
+    await advanceTimersByTimeAsync(15_000);
     watcher.setActive(false);
     releaseFifth(ok(['etag: "e"'], restRun(5, "in_progress")));
-    await vi.advanceTimersByTimeAsync(0);
+    await advanceTimersByTimeAsync(0);
     expect(changed).toHaveLength(0);
 
     watcher.setActive(true);
-    await vi.advanceTimersByTimeAsync(15_000);
+    await advanceTimersByTimeAsync(15_000);
     const firstRunCalls = exec.mock.calls.filter(([args]) => args.at(-1)?.endsWith("/runs/1"));
     expect(firstRunCalls.at(-1)?.[0]).not.toContain('If-None-Match: "e"');
     expect(changed).toHaveLength(1);
@@ -274,12 +275,12 @@ describe("RunWatcher", () => {
     watcher.watch([REF_A]);
     watcher.dispose();
     expect(vi.getTimerCount()).toBe(0);
-    await vi.advanceTimersByTimeAsync(60_000);
+    await advanceTimersByTimeAsync(60_000);
     expect(exec).not.toHaveBeenCalled();
 
     watcher.setActive(true);
     watcher.watch([REF_A]);
-    await vi.advanceTimersByTimeAsync(15_000);
+    await advanceTimersByTimeAsync(15_000);
     expect(changed).toHaveLength(1);
     watcher.dispose();
   });
@@ -288,7 +289,7 @@ describe("RunWatcher", () => {
     const { exec, watcher } = setup(async () => notModified());
     watcher.watch([]);
     expect(vi.getTimerCount()).toBe(1);
-    await vi.advanceTimersByTimeAsync(60_000);
+    await advanceTimersByTimeAsync(60_000);
     expect(exec).toHaveBeenCalledWith(["api", "-i", "notifications"]);
     watcher.dispose();
     expect(vi.getTimerCount()).toBe(0);
@@ -311,13 +312,13 @@ describe("RunWatcher", () => {
     const onCiActivity = vi.fn();
     watcher.onCiActivity = onCiActivity;
     watcher.watch([]);
-    await vi.advanceTimersByTimeAsync(60_000);
+    await advanceTimersByTimeAsync(60_000);
     expect(exec).toHaveBeenCalledTimes(1);
     expect(onCiActivity).not.toHaveBeenCalled();
 
-    await vi.advanceTimersByTimeAsync(89_000);
+    await advanceTimersByTimeAsync(89_000);
     expect(exec).toHaveBeenCalledTimes(1);
-    await vi.advanceTimersByTimeAsync(1_000);
+    await advanceTimersByTimeAsync(1_000);
     expect(exec).toHaveBeenLastCalledWith(["api", "-i", "-H", "If-Modified-Since: Fri, 01 Mar 2024 10:01:00 GMT", "notifications"]);
     expect(onCiActivity).toHaveBeenCalledTimes(1);
     watcher.dispose();
@@ -326,10 +327,10 @@ describe("RunWatcher", () => {
   it("never polls faster than 60 seconds when GitHub advertises a shorter interval", async () => {
     const { exec, watcher } = setup(async () => ok(["x-poll-interval: 10"], []));
     watcher.watch([]);
-    await vi.advanceTimersByTimeAsync(60_000);
-    await vi.advanceTimersByTimeAsync(59_000);
+    await advanceTimersByTimeAsync(60_000);
+    await advanceTimersByTimeAsync(59_000);
     expect(exec).toHaveBeenCalledTimes(1);
-    await vi.advanceTimersByTimeAsync(1_000);
+    await advanceTimersByTimeAsync(1_000);
     expect(exec).toHaveBeenCalledTimes(2);
     watcher.dispose();
   });
@@ -344,9 +345,9 @@ describe("RunWatcher", () => {
       return ok([], restRun(1, "in_progress"));
     });
     watcher.watch([REF_A]);
-    await vi.advanceTimersByTimeAsync(15_000);
+    await advanceTimersByTimeAsync(15_000);
     expect(changed).toHaveLength(0);
-    await vi.advanceTimersByTimeAsync(15_000);
+    await advanceTimersByTimeAsync(15_000);
     expect(changed).toHaveLength(1);
     watcher.dispose();
   });

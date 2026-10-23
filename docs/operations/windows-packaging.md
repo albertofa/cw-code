@@ -57,7 +57,7 @@ Pinned in `apps/desktop/package.json`:
 `node-pty` ships N-API prebuilds for `win32-x64`, so `npmRebuild: false` never
 requires a C++ toolchain to produce the Windows package. This is specific to the
 `win32-x64` prebuilt binary path documented below — the Linux CI job (`verify`)
-still compiles `node-pty` from source via `node-gyp` when it runs `pnpm install`,
+still compiles `node-pty` from source via `node-gyp` when it runs `bun install`,
 since no Linux prebuild is bundled; that job is unaffected by `npmRebuild` (which
 only governs `electron-builder`'s packaging step) and needs a working native
 toolchain on the runner, which `ubuntu-latest` already provides. The Linux
@@ -127,12 +127,12 @@ unpacked together.
 ## Packaging locally
 
 ```sh
-pnpm --filter @cw-code/desktop dist       # electron-vite build + NSIS installer, --publish never
-pnpm --filter @cw-code/desktop dist:dir   # same, but --dir (unpacked win-unpacked/ only, for diagnostics)
+bun --filter @cw-code/desktop dist       # electron-vite build + NSIS installer, --publish never
+bun --filter @cw-code/desktop dist:dir   # same, but --dir (unpacked win-unpacked/ only, for diagnostics)
 ```
 
 Both always pass `--publish never`; no credentials are read or required. Root
-`pnpm dist` forwards to the desktop package's `dist` script.
+`bun run dist` forwards to the desktop package's `dist` script.
 
 Local builds are **unsigned and non-production**. `win.signExecutable: false` stops
 electron-builder from signing any file. Without a certificate in the environment, no
@@ -145,7 +145,7 @@ unset locally. Signed releases only come from `.github/workflows/sign-windows.ym
 ## Verifying a build
 
 ```sh
-node scripts/verify-windows-package.mjs [--dist <dir>]
+bun scripts/verify-windows-package.mjs [--dist <dir>]
 ```
 
 Defaults to `apps/desktop/dist`. It checks, and prints as JSON plus a human
@@ -239,7 +239,7 @@ diagnostic on timeout) before returning.
   it writes to the real per-user cw-code data paths on the runner.
 
 The `windows` CI job (`.github/workflows/ci.yml`) builds the canonical installer
-(`pnpm --filter @cw-code/desktop dist`), rejects any update autotest path in the
+(`bun --filter @cw-code/desktop dist`), rejects any update autotest path in the
 packaged `app.asar`, runs `--install` (silent install, packaged startup probe,
 uninstall), and uploads the installer, blockmap and verifier JSON as a 7-day
 artifact. The job requests no permissions beyond `contents: read`, never

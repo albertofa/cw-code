@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import type { ReleaseInfo } from "./releaseSource.ts";
 import { parseVersion } from "./semver.ts";
 import {

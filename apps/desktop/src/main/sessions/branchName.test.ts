@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { branchNameForTitle, shouldRenameSessionBranch, slugForBranchTitle, TEMP_BRANCH_PATTERN } from "./branchName.js";
 
 describe("branchName", () => {

@@ -1,5 +1,5 @@
-// @vitest-environment jsdom
-import { beforeEach, describe, expect, it } from "vitest";
+import "../../../../tests/dom.js";
+import { beforeEach, describe, expect, it } from "bun:test";
 import type { DockableTabId } from "@cw-code/contracts";
 import {
   DEFAULT_AUTO,

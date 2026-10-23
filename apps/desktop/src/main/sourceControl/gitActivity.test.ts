@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { classifyToolCall, gitWatchEventKind, REMOTE_EFFECT_RE } from "./gitActivity.js";
 
 const LOCAL = { refreshLocal: true, remoteEffect: false };

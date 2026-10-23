@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { findStaleWorktreeDirs, isWorktreeOrphaned, rootsOverlap, sameWorktreePath } from "./worktreeCleanup.js";
 import type { SessionStatus } from "@cw-code/contracts";
 import { mkdtempSync } from "node:fs";
@@ -140,7 +140,7 @@ describe("rootsOverlap", () => {
     expect(rootsOverlap(`${repo}2`, join(repo, "sub"))).toBe(false);
   });
 
-  it.runIf(process.platform === "win32" || process.platform === "darwin")("ignores letter case on case-insensitive platforms", () => {
+  it.if(process.platform === "win32" || process.platform === "darwin")("ignores letter case on case-insensitive platforms", () => {
     expect(rootsOverlap(repo.toUpperCase(), join(repo, "sub"))).toBe(true);
   });
 });

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { MAX_ATTENTION_COUNT, attentionDescription, parseAttentionState, resetsAttention, shouldFlash } from "./attention.js";
 
 describe("shouldFlash", () => {

@@ -1,6 +1,6 @@
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { jobBlocks, readWorkflowText, runScriptLines, topLevelBlock } from "./workflowLines.ts";
 
 const WORKFLOW_PATH = resolve(dirname(fileURLToPath(import.meta.url)), "../../../.github/workflows/upgrade-test.yml");
@@ -12,7 +12,7 @@ describe("upgrade-test.yml policy", () => {
     const triggers = topLevelBlock(lines, "on").filter((line) => /^ {2}\S/.test(line)).map((line) => line.trim());
     expect(triggers).toEqual(["workflow_dispatch:", "schedule:", "pull_request:"]);
     for (const path of [
-      "pnpm-lock.yaml",
+      "bun.lock",
       "apps/desktop/package.json",
       "apps/desktop/src/main/updates/**",
       "apps/desktop/src/main/shutdown/**",

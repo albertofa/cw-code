@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import type { PrWorkflowHarness } from "@cw-code/contracts";
 import type { ModelOption, PermissionOption } from "../cw.js";
 import { fallbackPermission, harnessSummary, INHERITED_HARNESS, resolveWorkflowHarness, type WorkflowHarnessContext } from "./workflowHarness.js";

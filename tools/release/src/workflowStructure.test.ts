@@ -2,7 +2,7 @@ import { readdirSync, readFileSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { load } from "js-yaml";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 
 const WORKFLOWS_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "../../../.github/workflows");
 

@@ -1,6 +1,6 @@
 import { parseUpdateInfo as parseWithElectronUpdater } from "electron-updater/out/providers/Provider.js";
 import { load } from "js-yaml";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { normalizeReleaseNotes, parseUpdateInfo, readReleaseText, rewriteUpdateInfo, withReleaseText } from "./updateInfoYaml.ts";
 
 const SHA = "OHXwimalg4cncuhddJevvTcG2qq5N6+/fJad/b+Z7hY6FxTYZizn+Mllv3jtU+Esx/CwnOI9H7DQgtS/emIGQQ==";

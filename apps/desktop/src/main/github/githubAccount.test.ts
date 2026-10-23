@@ -1,19 +1,19 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, mock, vi } from "bun:test";
 import type { AppSettings } from "@cw-code/contracts";
 
-const gitService = vi.hoisted(() => ({
+const gitService = {
   defaultBinary: vi.fn((name: string) => name),
   fetchGhAuthStatus: vi.fn(),
   fetchGhToken: vi.fn(),
   selectGitHubAccount: vi.fn(),
   authenticatedEnvironment: vi.fn(),
   execText: vi.fn()
-}));
+};
 
-vi.mock("../fs/GitService.js", () => gitService);
+mock.module("../fs/GitService.js", () => gitService);
 
-import { configureGitHubAccounts, GitHubAccounts, isGitHubAuthError } from "./GitHubAccounts.js";
-import { resolveGitHubAccount, withGitHubAccount } from "./githubAccount.js";
+const { configureGitHubAccounts, GitHubAccounts, isGitHubAuthError } = await import("./GitHubAccounts.js");
+const { resolveGitHubAccount, withGitHubAccount } = await import("./githubAccount.js");
 
 const settings = (() => ({}) as AppSettings);
 

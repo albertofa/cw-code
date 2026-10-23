@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { BUNDLED_THEMES } from "../../../shared/themes.js";
 import type { CustomTheme } from "../cw.js";
 import { activeThemeName, newCustomTheme, tokenLabel, withoutColor } from "./themeChoices.js";
@@ -57,7 +57,7 @@ describe("newCustomTheme", () => {
       id: "custom-3f2504e0-4f89-11d3-9a0c-0305e82c3301",
       name: "Claude copy",
       base: "light",
-      colors: claude?.colors
+      colors: claude!.colors
     });
     expect(copy.colors).not.toBe(claude?.colors);
   });

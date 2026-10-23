@@ -373,7 +373,7 @@ generateUpdatesFilesForAllChannels: true
 No token is in the config. `dist`, `dist:dir` and `dist:linux` keep `--publish never`,
 so local builds never upload anything.
 
-Verified with `pnpm --filter @cw-code/desktop dist` on electron-builder 26.15.3
+Verified with `bun --filter @cw-code/desktop dist` on electron-builder 26.15.3
 (version `0.0.1-alpha.21`, 2026-09-24):
 
 `dist/win-unpacked/resources/app-update.yml`:
@@ -596,7 +596,7 @@ before. Interrupted turns stay `holding`/interrupted and are never restarted.
 
 ## Verification
 
-Automated (vitest): `UpdateService.install.test.ts` (install contract with the
+Automated (bun test): `UpdateService.install.test.ts` (install contract with the
 real coordinator and fakes: validation, update-reason tokens only, not-ready,
 superseded, commit through the coordinator, dispose skipped while installing,
 non-retryable failure after the installer started, retryable failure before,

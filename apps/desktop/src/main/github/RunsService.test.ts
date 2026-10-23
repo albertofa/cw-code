@@ -1,14 +1,16 @@
-import { beforeEach, describe, expect, it, vi } from "vitest";
+import { beforeEach, describe, expect, it, mock, vi } from "bun:test";
 import type { AppSettings } from "@cw-code/contracts";
+import type { GhExec } from "./RunsService.js";
 
-const account = vi.hoisted(() => ({ login: "octocat" }));
+const account = { login: "octocat" };
+const actualGitHubAccount = { ...(await import("./githubAccount.js")) };
 
-vi.mock("./githubAccount.js", async (importOriginal) => ({
-  ...(await importOriginal<typeof import("./githubAccount.js")>()),
+mock.module("./githubAccount.js", () => ({
+  ...actualGitHubAccount,
   resolveGitHubAccount: async () => ({ account: { host: "github.com", login: account.login }, token: "not-a-real-token" })
 }));
 
-import { RunsService, type GhExec } from "./RunsService.js";
+const { RunsService } = await import("./RunsService.js");
 
 const settings = (() => ({})) as unknown as () => AppSettings;
 const SOURCES = { prSearchQuery: null, repos: [{ host: "github.com", owner: "acme", repo: "widgets" }], orgs: [] };

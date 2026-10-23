@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { channelOfVersion as mainChannelOfVersion } from "../../../main/updates/updateState.js";
 import { channelOfVersion } from "./updateChannel.js";
 

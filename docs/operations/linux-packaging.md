@@ -31,8 +31,8 @@ lists them.
 ## Building
 
 ```sh
-pnpm install
-pnpm --filter @cw-code/desktop dist:linux   # electron-vite build + AppImage and deb, --publish never
+bun install
+bun --filter @cw-code/desktop dist:linux   # electron-vite build + AppImage and deb, --publish never
 ```
 
 Build on Linux x64. `dist:linux` is `electron-vite build && electron-builder --linux
@@ -40,9 +40,9 @@ AppImage deb --x64 --publish never`; output goes to `apps/desktop/dist/`, the un
 tree to `apps/desktop/dist/linux-unpacked/`.
 
 **Prerequisites for contributors.** `node-pty` 1.1.0 ships prebuilds for Windows and
-macOS only, so on Linux `pnpm install` compiles it from source with `node-gyp`. You need
+macOS only, so on Linux `bun install` compiles it from source with `node-gyp`. You need
 a C++ toolchain and Python 3 (`sudo apt-get install build-essential python3` on Debian
-and Ubuntu) and Node.js 24 with pnpm 11.5.3. This is the only place a native compile
+and Ubuntu) and Bun 1.4.4. This is the only place a native compile
 happens: installs on Windows and macOS are unaffected. `electron-builder.yml` sets
 `npmRebuild: false`, so packaging never recompiles; it packs the `build/Release/pty.node`
 that the install produced and unpacks it from the asar (`asarUnpack`), and the `files`
@@ -190,7 +190,7 @@ the window itself loads `icon.png` on Linux.
 `scripts/verify-linux-package.mjs` is the install-and-start check for one build:
 
 ```sh
-node scripts/verify-linux-package.mjs --desktop-dir apps/desktop --dist apps/desktop/dist [--install-deb] --disposable-environment
+bun scripts/verify-linux-package.mjs --desktop-dir apps/desktop --dist apps/desktop/dist [--install-deb] --disposable-environment
 ```
 
 It runs only on Linux, as a non-root user (Chromium refuses to start as root with the
@@ -245,8 +245,8 @@ Upgrades are tested separately, by the Linux production-bytes gate in
 On a Linux machine you do not use for work, or a VM:
 
 ```sh
-pnpm --filter @cw-code/desktop dist:linux
-node scripts/verify-linux-package.mjs --desktop-dir apps/desktop --dist apps/desktop/dist --disposable-environment
+bun --filter @cw-code/desktop dist:linux
+bun scripts/verify-linux-package.mjs --desktop-dir apps/desktop --dist apps/desktop/dist --disposable-environment
 ```
 
 Without `--install-deb` only the AppImage is started. Add it only where installing and

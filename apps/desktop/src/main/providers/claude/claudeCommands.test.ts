@@ -3,7 +3,7 @@ import { existsSync, mkdtempSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { PassThrough } from "node:stream";
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
 import {
   CLAUDE_COMMANDS_CACHE_PRUNE_MS,
   CLAUDE_COMMANDS_CACHE_TTL_MS,

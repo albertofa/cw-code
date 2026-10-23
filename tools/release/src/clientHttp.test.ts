@@ -1,5 +1,5 @@
 import { createHash } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { type FetchLike, createClientHttp } from "./clientHttp.ts";
 
 interface Call {
@@ -28,7 +28,7 @@ describe("createClientHttp", () => {
     await http.text("https://github.com/albertofa/cw-code/releases/latest", "application/json");
     await http.size("https://github.com/albertofa/cw-code/releases/download/v1.0.0/cw-code-Setup-1.0.0-x64.exe");
     await http.digest("https://github.com/albertofa/cw-code/releases/download/v1.0.0/signing.json");
-    expect(calls.map((call) => call.headers.Authorization ?? null)).toEqual(["Bearer token-value", null, null, null]);
+    expect(calls.map((call) => call.headers.Authorization ?? null)).toEqual<Array<string | null>>(["Bearer token-value", null, null, null]);
     expect(calls.map((call) => call.redirect)).toEqual(["error", "follow", "follow", "follow"]);
     expect(calls.every((call) => call.hasSignal && call.headers["User-Agent"] === "cw-code-release-check")).toBe(true);
   });

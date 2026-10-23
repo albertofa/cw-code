@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { mergeLoginEnv, parseMarkedEnv, sanitizedChildEnv } from "./shellEnvironment.js";
 
 const MARKER = "__MARK__";

@@ -1,7 +1,7 @@
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { lastGoodBackupPath, listBackups, migrationBackupPath } from "./backups.js";
 import { isMetadataDocument, type MetadataSchema } from "./metadataDocument.js";
 import { restoreBackup, startFresh } from "./recovery.js";
@@ -139,7 +139,7 @@ describe("restoreBackup", () => {
     expect(existsSync(file)).toBe(true);
   });
 
-  it.runIf(process.platform === "win32")("keeps the source and the .broken copy when writing the restored file fails", () => {
+  it.if(process.platform === "win32")("keeps the source and the .broken copy when writing the restored file fails", () => {
     const { dir, file } = setup();
     writeFileSync(file, "broken{", "utf8");
     writeFileSync(lastGoodBackupPath(file), '{"schemaVersion":1,"items":["good"]}', "utf8");

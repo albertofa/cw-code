@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it } from "bun:test";
+import { waitFor } from "../../../../tests/testing.js";
 import { AskBridge, bridgeReplyPayload, normalizeBridgeQuestions } from "./askBridge.js";
 import type { QuestionRequest } from "@cw-code/contracts";
 import type { AddressInfo } from "node:net";
@@ -59,7 +60,7 @@ describe("AskBridge", () => {
     bridge.dispose();
   });
 
-  const settle = () => new Promise<void>((r) => setTimeout(r, 60));
+  const settle = () => waitFor(() => expect(received).toHaveLength(1));
 
   it("routes a chat ask to the renderer and resolves the pending HTTP call", async () => {
     await start();

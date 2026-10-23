@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "bun:test";
+import { stubGlobal, unstubAllGlobals } from "../../../../tests/testing.js";
 import {
   UnsupportedOpencodeServerError,
   basicAuthHeader,
@@ -12,7 +13,7 @@ import {
 } from "./opencodeServerProbe.js";
 
 afterEach(() => {
-  vi.unstubAllGlobals();
+  unstubAllGlobals();
 });
 
 function json(data: unknown, status = 200): Response {
@@ -64,14 +65,14 @@ describe("server credentials", () => {
 describe("identifyServer", () => {
   it("detects v2 from /api/info", async () => {
     const fetchMock = vi.fn().mockResolvedValue(json({ version: "2.0.32", pid: 4, urls: [] }));
-    vi.stubGlobal("fetch", fetchMock);
+    stubGlobal("fetch", fetchMock);
     await expect(identifyServer(4100, "Basic x")).resolves.toEqual({ protocol: "v2", version: "2.0.32" });
     expect(fetchMock.mock.calls[0][0]).toBe("http://127.0.0.1:4100/api/info");
     expect((fetchMock.mock.calls[0][1] as RequestInit).headers).toMatchObject({ Authorization: "Basic x" });
   });
 
   it("falls back to /global/health for v1, whose /api/info is the web app", async () => {
-    vi.stubGlobal(
+    stubGlobal(
       "fetch",
       vi.fn((url: string) => Promise.resolve(url.endsWith("/api/info") ? html() : json({ healthy: true, version: "1.19.3" })))
     );
@@ -79,20 +80,20 @@ describe("identifyServer", () => {
   });
 
   it("rejects a server that only answers HTML instead of passing the check", async () => {
-    vi.stubGlobal("fetch", vi.fn(() => Promise.resolve(html())));
+    stubGlobal("fetch", vi.fn(() => Promise.resolve(html())));
     await expect(identifyServer(4100, "Basic x")).rejects.toBeInstanceOf(UnsupportedOpencodeServerError);
   });
 
   it("gives up early when a live server keeps answering without a supported protocol", async () => {
     const fetchMock = vi.fn(() => Promise.resolve(json({ _tag: "UnauthorizedError" }, 401)));
-    vi.stubGlobal("fetch", fetchMock);
+    stubGlobal("fetch", fetchMock);
     await expect(waitForServerIdentity(4100, "Basic x", 60_000, 1)).rejects.toThrow(/GET \/api\/info answered 401/);
     expect(fetchMock).toHaveBeenCalledTimes(6);
   });
 
   it("keeps waiting while the port refuses connections", async () => {
     let calls = 0;
-    vi.stubGlobal(
+    stubGlobal(
       "fetch",
       vi.fn(() => {
         calls += 1;

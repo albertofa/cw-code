@@ -1,6 +1,6 @@
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { jobBlocks, readWorkflowText, runScriptLines, topLevelBlock } from "./workflowLines.ts";
 
 const WORKFLOW_PATH = resolve(dirname(fileURLToPath(import.meta.url)), "../../../.github/workflows/check-update-feed.yml");
@@ -42,7 +42,7 @@ describe("check-update-feed.yml policy", () => {
 
   it("bounds the run and installs the tooling without lifecycle scripts", () => {
     expect(text).toMatch(/timeout-minutes: \d+/);
-    expect(text).toContain("pnpm install --frozen-lockfile --ignore-scripts");
+    expect(text).toContain("bun install --frozen-lockfile --ignore-scripts");
     expect(text).toMatch(/release\.ts "\$\{args\[@\]\}"/);
     expect(text).toMatch(/args=\(monitor-feed --attempts \d --delay-seconds \d+\)/);
   });

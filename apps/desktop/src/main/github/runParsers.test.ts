@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { mapRestRun, newCiActivity, parseRunSuites } from "./runParsers.js";
 
 function suite(runId: number | null, overrides: Record<string, unknown> = {}) {

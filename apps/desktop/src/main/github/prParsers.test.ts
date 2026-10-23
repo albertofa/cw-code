@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import type { PrSummary } from "@cw-code/contracts";
 import { actorLoginOf, bucketFor, ciFromRollup, graphqlOutcome, graphqlPartialFailure, parseDetail, parseHead, parseInbox, parsePrSearch, parseTrackedPrs, prKey, prRefFromUrl, withBotSuffix } from "./prParsers.js";
 

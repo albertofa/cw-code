@@ -1,5 +1,5 @@
-// @vitest-environment jsdom
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import "../../../../tests/dom.js";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { ShutdownAssessment, ShutdownPrepareRequest, ShutdownPrepareResult, UpdateActionResult, UpdateInstallRequest, UpdateState } from "../cw.js";
 import { useNotifs } from "../components/Notifications.js";
 import { useAppStore } from "./appStore.js";

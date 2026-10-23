@@ -1,7 +1,7 @@
-// @vitest-environment jsdom
+import "../../../../tests/dom.js";
 import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "bun:test";
 import { DEFAULT_APPEARANCE } from "../appearanceFonts.js";
 import type { Session, TurnEvent } from "../cw.js";
 

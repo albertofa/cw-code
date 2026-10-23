@@ -1,6 +1,6 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, mock, vi } from "bun:test";
 
-vi.mock("./cli/spawnCli.js", () => ({
+mock.module("./cli/spawnCli.js", () => ({
   execCliFile: vi.fn(async () => {
     throw Object.assign(new Error("spawn codex.exe EACCES"), { code: "EACCES" });
   })

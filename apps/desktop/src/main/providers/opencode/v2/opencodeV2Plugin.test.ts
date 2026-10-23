@@ -1,4 +1,5 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "bun:test";
+import { stubGlobal, unstubAllGlobals } from "../../../../../tests/testing.js";
 import { mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -19,7 +20,7 @@ interface ContextEvent {
 const dirs: string[] = [];
 
 afterEach(() => {
-  vi.unstubAllGlobals();
+  unstubAllGlobals();
   for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true });
 });
 
@@ -71,7 +72,7 @@ describe("cw-code v2 plugin", () => {
 
   it("posts cw_ask questions to the bridge and formats the answers", async () => {
     const fetchMock = vi.fn().mockResolvedValue(new Response(JSON.stringify({ answers: [["Red"], []] }), { status: 200 }));
-    vi.stubGlobal("fetch", fetchMock);
+    stubGlobal("fetch", fetchMock);
     const { tools } = await loadPlugin({ askBridge: "http://127.0.0.1:9/ask" }, () => undefined);
     const ask = tools.find((t) => t.name === "cw_ask")!;
     const result = await ask.execute(

@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { rotationPath } from "../debug/logRotation.js";
 import { createUpdateLogFile, describeUpdateError, formatLogValue, isMissingReleaseError, redactUpdateText } from "./updateLog.js";
 

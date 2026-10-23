@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it} from "bun:test";
+import { waitFor } from "../../../tests/testing.js";
 import { execFileSync } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -1439,7 +1440,7 @@ describe("turn snapshots", () => {
     expect(await service.snapshotConflicts(repository, startSha, endSha, paths)).toEqual(["README.md", "added.txt"]);
   });
 
-  it.runIf(process.platform === "win32" || process.platform === "darwin")("restores the original name when an added path only differs in case from a file that existed before the turn", async () => {
+  it.if(process.platform === "win32" || process.platform === "darwin")("restores the original name when an added path only differs in case from a file that existed before the turn", async () => {
     const { repository, service } = initSandbox();
     git(repository, "config", "core.ignorecase", "false");
     git(repository, "config", "core.autocrlf", "false");
@@ -1452,7 +1453,7 @@ describe("turn snapshots", () => {
     expect(readFileSync(join(repository, "README.md"), "utf8")).toBe("base\n");
   });
 
-  it.runIf(process.platform !== "win32")("treats a backslash in a git path as part of the file name", async () => {
+  it.if(process.platform !== "win32")("treats a backslash in a git path as part of the file name", async () => {
     const { repository, service } = initSandbox();
     git(repository, "config", "core.autocrlf", "false");
     mkdirSync(join(repository, "a"));
@@ -1478,7 +1479,7 @@ describe("gitPathTarget", () => {
     expect(() => gitPathTarget(base, "")).toThrow(/escapes project root/);
   });
 
-  it.runIf(process.platform !== "win32")("keeps a backslash inside a single path segment", () => {
+  it.if(process.platform !== "win32")("keeps a backslash inside a single path segment", () => {
     expect(gitPathTarget(base, "a\\b.txt")).toBe(`${base}/a\\b.txt`);
   });
 });
@@ -1589,13 +1590,13 @@ describe("GitService pull request cache", () => {
     const { service, pending } = pendingGh();
 
     const stale = service.status(repository);
-    await vi.waitFor(() => expect(pending).toHaveLength(1));
+    await waitFor(() => expect(pending).toHaveLength(1));
     service.invalidatePullRequest(repository);
     pending[0].resolve("[]");
     expect((await stale).pullRequest).toBeNull();
 
     const fresh = service.status(repository);
-    await vi.waitFor(() => expect(pending).toHaveLength(2));
+    await waitFor(() => expect(pending).toHaveLength(2));
     pending[1].resolve(prList);
     expect((await fresh).pullRequest?.number).toBe(5);
   });
@@ -1605,9 +1606,9 @@ describe("GitService pull request cache", () => {
     const { service, pending } = pendingGh();
 
     const stale = service.status(repository);
-    await vi.waitFor(() => expect(pending).toHaveLength(1));
+    await waitFor(() => expect(pending).toHaveLength(1));
     const forced = service.status(repository, undefined, { forcePullRequest: true });
-    await vi.waitFor(() => expect(pending).toHaveLength(2));
+    await waitFor(() => expect(pending).toHaveLength(2));
     pending[1].resolve(prList);
     expect((await forced).pullRequest?.number).toBe(5);
     pending[0].resolve("[]");

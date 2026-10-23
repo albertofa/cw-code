@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { mapOpencodeMessages } from "./opencodeHistory.js";
 import { mergeToolPairs } from "../../../renderer/src/components/toolSummaries.js";
 import type { ChatMessage } from "../../../renderer/src/stores/appStore.js";

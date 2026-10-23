@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import type { OpencodeClient, OpencodeRequestInit } from "../opencodeProtocol.js";
 import { opencodeV1Protocol } from "./opencodeV1Protocol.js";
 

@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "bun:test";
 import { join, resolve } from "node:path";
 import { GitWatcher, type GitWatchFactory, type GitWatchRoot, type WatcherHandle } from "./GitWatcher.js";
 

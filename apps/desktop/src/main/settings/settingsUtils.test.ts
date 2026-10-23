@@ -1,5 +1,5 @@
 import { normalize } from "node:path";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { CLAUDE_CURATED_MODELS } from "../providers/claude/ClaudeCliDriver.js";
 import { DEFAULT_SETTINGS } from "./SettingsStore.js";
 import {

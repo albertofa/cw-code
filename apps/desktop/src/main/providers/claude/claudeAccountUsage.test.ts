@@ -1,6 +1,6 @@
 import { EventEmitter } from "node:events";
 import { PassThrough } from "node:stream";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "bun:test";
 import { mapClaudeUsage, probeClaudeAccountUsage } from "./claudeAccountUsage.js";
 
 function controlResponse(response: unknown) {
@@ -253,7 +253,7 @@ describe("probeClaudeAccountUsage", () => {
     const options = (child as unknown as { spawnOptions?: { cwd?: string } }).spawnOptions;
     expect(options?.cwd).toBeTruthy();
     const stdinEnd = vi.spyOn(child.stdin, "end");
-    const requestId = (JSON.parse(child.stdin.read()?.toString().trim().split("\n")[1] ?? "null") as {
+    const requestId = (JSON.parse(child.stdin.read(child.stdin.readableLength)?.toString().trim().split("\n")[1] ?? "null") as {
       request_id: string;
     }).request_id;
     child.stdout.write(

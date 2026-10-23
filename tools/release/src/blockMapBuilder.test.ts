@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { gunzipSync } from "node:zlib";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { loadElectronBuilderBlockMap } from "./blockMapBuilder.ts";
 
 const DESKTOP_PACKAGE_JSON = resolve(dirname(fileURLToPath(import.meta.url)), "../../../apps/desktop/package.json");

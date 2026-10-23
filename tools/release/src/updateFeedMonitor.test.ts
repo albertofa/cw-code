@@ -1,5 +1,5 @@
 import { createHash, randomBytes } from "node:crypto";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import type { FeedMonitorHttp } from "./clientHttp.ts";
 import { planMarker } from "./planMarker.ts";
 import { appImageNameFor, debNameFor, installerNameFor } from "./releaseAssets.ts";

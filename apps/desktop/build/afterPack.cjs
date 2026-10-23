@@ -30,7 +30,7 @@ exports.default = async function afterPack(context) {
   }
   const ptyNativeModule = path.join(context.appOutDir, PTY_NATIVE_MODULE);
   if (!(await exists(ptyNativeModule))) {
-    throw new Error(`node-pty native module missing from the Linux package: ${ptyNativeModule}. Run pnpm install on Linux so node-pty compiles build/Release/pty.node.`);
+    throw new Error(`node-pty native module missing from the Linux package: ${ptyNativeModule}. Run bun install on Linux so node-pty compiles build/Release/pty.node.`);
   }
   const executableName = context.packager.executableName;
   const binaryName = `${executableName}-bin`;

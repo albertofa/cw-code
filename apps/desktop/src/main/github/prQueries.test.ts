@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { buildTrackedPrQuery } from "./prQueries.js";
 
 const ref = (number: number, owner = "acme", repo = "widgets") => ({ host: "github.com", owner, repo, number });

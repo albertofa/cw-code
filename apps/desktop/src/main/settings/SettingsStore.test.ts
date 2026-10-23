@@ -2,7 +2,7 @@ import { chmodSync, existsSync, mkdtempSync, readFileSync, statSync, utimesSync,
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "bun:test";
 import type { AppSettings, DriverKind, EffortLevel, PrFinishedSessionStatus, PrWorkflow, SavedGitHubView } from "@cw-code/contracts";
 import { MetadataError } from "../storage/metadataDocument.js";
 import { DEFAULT_SETTINGS, SETTINGS_SCHEMA_VERSION, SettingsStore } from "./SettingsStore.js";
@@ -169,7 +169,7 @@ describe("SettingsStore", () => {
     expect(existsSync(`${filePath}.before-repair.bak`)).toBe(false);
   });
 
-  it.runIf(process.platform === "win32")("keeps memory in step with disk when saving fails", () => {
+  it.if(process.platform === "win32")("keeps memory in step with disk when saving fails", () => {
     const filePath = tempFilePath();
     const store = new SettingsStore(filePath);
     chmodSync(filePath, 0o444);
@@ -189,7 +189,7 @@ describe("SettingsStore", () => {
     const settings = new SettingsStore(filePath).get();
 
     for (const key of Object.keys(original).filter((k) => k !== "prWorkflows") as Array<keyof AppSettings>) {
-      expect(settings[key]).toEqual(original[key]);
+      expect(settings[key]).toEqual<unknown>(original[key]);
     }
     const workflows = original.prWorkflows as PrWorkflow[];
     expect(settings.prWorkflows[0]).toEqual({

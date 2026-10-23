@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { detectEol, detectIndent, languageLabelFallback } from "./textFormat.js";
 
 describe("detectEol", () => {

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { MAX_RANGES, multipartLayout, parseRangeHeader } from "./feedRange.ts";
 
 describe("parseRangeHeader", () => {

@@ -15,19 +15,15 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          version: 11.5.3
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 24
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm typecheck
-      - run: pnpm test
-      - run: pnpm build
+          bun-version: 1.4.4
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun run test
+      - run: bun run build
       - name: Production main bundle carries no update autotest path
-        run: node scripts/verify-installed-upgrade.mjs --assert-production-bundle
+        run: bun scripts/verify-installed-upgrade.mjs --assert-production-bundle
 
   windows:
     runs-on: windows-latest
@@ -41,23 +37,19 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          version: 11.5.3
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 24
-          cache: pnpm
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm typecheck
-      - run: pnpm test
-      - run: pnpm build
+          bun-version: 1.4.4
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun run test
+      - run: bun run build
       - name: Package installer with the canonical dist script
-        run: pnpm --filter @cw-code/desktop dist
+        run: bun --filter @cw-code/desktop dist
       - name: Reject any update autotest path in the packaged app
-        run: node scripts/verify-installed-upgrade.mjs --assert-production-bundle --asar apps/desktop/dist/win-unpacked/resources/app.asar
+        run: bun scripts/verify-installed-upgrade.mjs --assert-production-bundle --asar apps/desktop/dist/win-unpacked/resources/app.asar
       - name: Clean install + packaged startup probe (canonical build)
-        run: node scripts/verify-windows-package.mjs --install --disposable-environment
+        run: bun scripts/verify-windows-package.mjs --install --disposable-environment
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:
@@ -79,25 +71,21 @@ jobs:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           persist-credentials: false
-      - uses: pnpm/action-setup@ea17c68df8912ef543352723c149a84f56e3d413 # v6.1.0
+      - uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
         with:
-          version: 11.5.3
-      - uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
-        with:
-          node-version: 24
-          cache: pnpm
+          bun-version: 1.4.4
       - name: Install the packaged-app probe dependencies
         run: sudo apt-get update && sudo apt-get install -y xvfb xauth
-      - run: pnpm install --frozen-lockfile
-      - run: pnpm typecheck
-      - run: pnpm test
-      - run: pnpm build
+      - run: bun install --frozen-lockfile
+      - run: bun run typecheck
+      - run: bun run test
+      - run: bun run build
       - name: Package the AppImage and deb with the canonical dist script
-        run: pnpm --filter @cw-code/desktop dist:linux
+        run: bun --filter @cw-code/desktop dist:linux
       - name: Reject any update autotest path in the packaged app
-        run: node scripts/verify-installed-upgrade.mjs --assert-production-bundle --asar apps/desktop/dist/linux-unpacked/resources/app.asar
+        run: bun scripts/verify-installed-upgrade.mjs --assert-production-bundle --asar apps/desktop/dist/linux-unpacked/resources/app.asar
       - name: AppImage start + deb install, start, node-pty, remove (canonical build)
-        run: node scripts/verify-linux-package.mjs --desktop-dir apps/desktop --dist apps/desktop/dist --install-deb --disposable-environment
+        run: bun scripts/verify-linux-package.mjs --desktop-dir apps/desktop --dist apps/desktop/dist --install-deb --disposable-environment
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a # v7.0.1
         if: always()
         with:

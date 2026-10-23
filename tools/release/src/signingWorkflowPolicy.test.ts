@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { jobBlocks, runScriptLines, topLevelBlock } from "./workflowLines.ts";
 
 const WORKFLOW_PATH = resolve(dirname(fileURLToPath(import.meta.url)), "../../../.github/workflows/sign-windows.yml");
@@ -68,7 +68,7 @@ describe("sign-windows.yml policy", () => {
     const body = jobBlocks(lines).get("package-app") ?? [];
     const text = body.join("\n");
     const guard = body.findIndex((line) => line.includes("CW_UPDATE_TEST_BUILD"));
-    const build = body.findIndex((line) => line.includes("pnpm --filter @cw-code/desktop build"));
+    const build = body.findIndex((line) => line.includes("bun --filter @cw-code/desktop build"));
     const assertion = body.findIndex((line) => line.includes("--assert-production-bundle"));
     const upload = body.findIndex((line) => line.includes("name: Upload win-unpacked"));
     expect(guard).toBeGreaterThan(-1);

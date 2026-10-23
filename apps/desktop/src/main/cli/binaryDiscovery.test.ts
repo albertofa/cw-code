@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import type { CliBinary } from "@cw-code/contracts";
 import { candidatePaths, dedupeShimCandidates } from "./binaryDiscovery.js";
 import type { CandidatePathsOptions } from "./binaryDiscovery.js";

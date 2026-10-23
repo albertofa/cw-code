@@ -1,7 +1,7 @@
 import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import { GhError, createGitHubReleaseClient } from "./gitHubReleaseClient.ts";
 import type { RemoteRelease } from "./releaseClient.ts";
 

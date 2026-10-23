@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import type { PrCheck, PrDetail, PrTimelineItem, SessionPrLink } from "@cw-code/contracts";
 import { detailNeedsRefresh, detailRefreshKey, firstUnseenIndex, hasUnseen, seenThrough, updatesSince } from "./prUpdates.js";
 

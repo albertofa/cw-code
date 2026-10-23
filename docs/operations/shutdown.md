@@ -114,7 +114,7 @@ resumes it through the CLI's own resume cursor.
 - `app.requestSingleInstanceLock()` runs before any store is opened. A second
   instance quits immediately; the first instance restores and focuses its
   window. The lock is keyed on Electron `userData`. Packaged builds keep
-  `%APPDATA%/@cw-code/desktop`; unpackaged (`pnpm dev`) builds switch to
+  `%APPDATA%/@cw-code/desktop`; unpackaged (`bun run dev`) builds switch to
   `%APPDATA%/@cw-code/desktop-dev` first (unless `--user-data-dir` is passed), so
   dev and the installed app each hold their own lock and can run side by side.
   They still share `~/.cw-code` (projects, sessions, settings) unless
@@ -201,7 +201,7 @@ registered.
 
 ## Verification
 
-Automated (vitest): `ShutdownCoordinator.test.ts` (ordering, session isolation,
+Automated (bun test): `ShutdownCoordinator.test.ts` (ordering, session isolation,
 cancellation, timeout, ownership, re-entry, installer-start failure and retry),
 `SessionManager.shutdown.test.ts`, `PtyPool.test.ts`, driver shutdown tests for
 Claude, Codex, OpenCode and the tracing wrapper, `codexAppServer.test.ts`
@@ -228,7 +228,7 @@ project and a disposable `CW_CODE_HOME`; never the developer's live install):
    open: the window reloads and new turns can start.
 7. Reach the timeout dialog, then press Ctrl+R: after the reload, closing the
    window shows the dialog again (not "already in progress").
-8. Run `pnpm dev` while the installed app is open: both windows stay up.
+8. Run `bun run dev` while the installed app is open: both windows stay up.
 9. Open file A, edit it, then click a file that fails to load: the editor is
    empty and read-only, Save is hidden, and the quit dialog still lists A.
 10. Reach the timeout dialog and wait 120 s without choosing: the dialog closes

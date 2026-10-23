@@ -1,4 +1,5 @@
-import { describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "bun:test";
+import { advanceTimersByTimeAsync } from "../../../../tests/testing.js";
 import { EventEmitter } from "node:events";
 import { mkdirSync, mkdtempSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
@@ -994,7 +995,7 @@ describe("ClaudeCliDriver persistent process", () => {
       children[0].stdout.write(`${resultLine({ result: "Waiting for CI" })}\n`);
       await settle();
 
-      await vi.advanceTimersByTimeAsync(CLAUDE_IDLE_EVICT_MS * 2);
+      await advanceTimersByTimeAsync(CLAUDE_IDLE_EVICT_MS * 2);
       expect(killed).toHaveLength(0);
 
       children[0].stdout.write(
@@ -1013,7 +1014,7 @@ describe("ClaudeCliDriver persistent process", () => {
         [handle.turnId, "CI passed", 0]
       ]);
       expect(finalTask(events, "call-bash")).toMatchObject({ kind: "shell", state: "completed", output: "CI passed" });
-      await vi.advanceTimersByTimeAsync(CLAUDE_IDLE_EVICT_MS);
+      await advanceTimersByTimeAsync(CLAUDE_IDLE_EVICT_MS);
       expect(killed).toHaveLength(1);
       driver.dispose();
     } finally {
@@ -1433,7 +1434,7 @@ describe("ClaudeCliDriver persistent process", () => {
       children[0].stdout.write(`${resultLine()}\n`);
       await settle();
       expect(killed).toHaveLength(0);
-      await vi.advanceTimersByTimeAsync(CLAUDE_IDLE_EVICT_MS);
+      await advanceTimersByTimeAsync(CLAUDE_IDLE_EVICT_MS);
       expect(killed).toHaveLength(1);
       driver.dispose();
     } finally {
@@ -1450,7 +1451,7 @@ describe("ClaudeCliDriver persistent process", () => {
       children[0].stdout.write(`${resultLine()}\n`);
       await settle();
       for (let hour = 0; hour < 12; hour += 1) {
-        await vi.advanceTimersByTimeAsync(CLAUDE_IDLE_EVICT_MS);
+        await advanceTimersByTimeAsync(CLAUDE_IDLE_EVICT_MS);
         expect(killed).toHaveLength(0);
       }
       driver.dispose();
@@ -1468,10 +1469,10 @@ describe("ClaudeCliDriver persistent process", () => {
       await settle();
       children[0].stdout.write(`${resultLine()}\n`);
       await settle();
-      await vi.advanceTimersByTimeAsync(CLAUDE_IDLE_EVICT_MS);
+      await advanceTimersByTimeAsync(CLAUDE_IDLE_EVICT_MS);
       expect(killed).toHaveLength(0);
       inWorkingSet = false;
-      await vi.advanceTimersByTimeAsync(CLAUDE_IDLE_EVICT_MS);
+      await advanceTimersByTimeAsync(CLAUDE_IDLE_EVICT_MS);
       expect(killed).toHaveLength(1);
       driver.dispose();
     } finally {
@@ -1566,7 +1567,7 @@ describe("ClaudeCliDriver shutdown", () => {
       driver.startTurn({ sessionId: "sess_1", prompt: "work", cwd: "C:\\proj" });
       const pending = driver.shutdown({ timeoutMs: 60 * 60 * 1000 });
       children[0].stdout.write(`${resultLine()}\n`);
-      await vi.advanceTimersByTimeAsync(CLAUDE_IDLE_EVICT_MS * 2);
+      await advanceTimersByTimeAsync(CLAUDE_IDLE_EVICT_MS * 2);
       expect(killed).toEqual([]);
       expect(driver.activity().ownedProcesses).toBe(1);
       children[0].exitCode = 0;

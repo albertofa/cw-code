@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import { assertCountBase, assertSearchQuery, GitHubSearchService, interpretSearchResponse, withTypeQualifier } from "./GitHubSearchService.js";
 
 describe("assertCountBase", () => {

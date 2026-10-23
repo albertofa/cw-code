@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import type { PrDetail, PrWorkflow, SessionPrLink } from "@cw-code/contracts";
 import {
   AUTO_FOLLOW_UP_LIMIT,

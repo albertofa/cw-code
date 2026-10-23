@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import manifest from "material-icon-theme/dist/material-icons.json";
 import { iconFileName, resolveIconName, type IconManifest } from "./iconTheme.js";
 

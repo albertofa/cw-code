@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it } from "bun:test";
 import type { UsageLedgerRow } from "../cw.js";
 import { byModel, contextMeter, dailyByDriver, topSessions, totals, turnTokens } from "./usageModel.js";
 

@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join, normalize } from "node:path";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, mock, vi } from "bun:test";
 import {
   attachmentsDir,
   cwCodeHome,
@@ -16,10 +16,11 @@ import {
   worktreesDir
 } from "./appPaths.js";
 
-const readdirFailure = vi.hoisted(() => ({ dir: null as string | null }));
+const readdirFailure = { dir: null as string | null };
 
-vi.mock("node:fs", async (importOriginal) => {
-  const actual = await importOriginal<typeof import("node:fs")>();
+const actual = { ...(await import("node:fs")) };
+
+mock.module("node:fs", () => {
   return {
     ...actual,
     readdirSync: vi.fn((...args: Parameters<typeof actual.readdirSync>) => {

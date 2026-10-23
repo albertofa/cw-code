@@ -526,7 +526,7 @@ export async function runLinuxProductionBytes(options) {
   const candidate = await validateLinuxReleaseFeed(options.candidateDir);
   if (candidate.errors.length > 0) throw new Error(`candidate Linux feed is invalid: ${candidate.errors.join("; ")}`);
   const asar = await resolveAsarLib(options.desktopDir);
-  if (!asar) throw new Error("@electron/asar is not resolvable from the desktop package; run pnpm install");
+  if (!asar) throw new Error("@electron/asar is not resolvable from the desktop package; run bun install");
 
   const report = {
     schema: 1,

@@ -8,12 +8,10 @@
     ".": "./dist/index.js"
   },
   "scripts": {
-    "build": "tsc -p tsconfig.json",
-    "typecheck": "tsc --noEmit -p tsconfig.json",
-    "test": "vitest run --passWithNoTests"
+    "build": "bun --bun tsc -p tsconfig.json",
+    "typecheck": "bun --bun tsc --noEmit -p tsconfig.json"
   },
   "devDependencies": {
-    "typescript": "^5.6.3",
-    "vitest": "^3.2.4"
+    "typescript": "^5.6.3"
   }
 }
