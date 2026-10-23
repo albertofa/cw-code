@@ -4203,6 +4203,28 @@ describe("SessionManager project settings", () => {
     manager.dispose();
   });
 
+  it("reports destroy-script failures from the stale prune separately and passes the session branch", async () => {
+    const { manager, project, repository } = makeGitSandboxManager("cw-project-destroy-prune-");
+    const marker = join(dirname(repository), "branch.txt");
+    const session = await manager.createSession(project.id, "claude", { baseBranch: "main" });
+    const worktreePath = session.worktreePath;
+    if (!worktreePath || !session.branch) throw new Error("expected a worktree-backed session with a branch");
+    await manager.resolveSession(session.id, "resolved", { removeWorktree: false });
+    expect(existsSync(worktreePath)).toBe(true);
+    manager.updateProjectSettings(project.id, { destroyScript: `${writeEnv(marker, "CW_BRANCH")}\nexit 5` });
+
+    const summary = await manager.pruneStaleWorktrees();
+
+    expect(summary.removed).toBe(1);
+    expect(summary.failed).toBe(0);
+    expect(summary.errors).toEqual([]);
+    expect(summary.destroyScriptErrors).toHaveLength(1);
+    expect(summary.destroyScriptErrors[0]).toContain("Destroy script failed with exit code 5");
+    expect(readFileSync(marker, "utf8")).toBe(session.branch);
+    expect(existsSync(worktreePath)).toBe(false);
+    manager.dispose();
+  });
+
   it("names the worktree branch from the project's branch instructions and cleans it up like its own", async () => {
     const { manager, fake, project, repository } = makeGitSandboxManager("cw-project-branch-");
     manager.setSettings({ autoTitleEnabled: true });

@@ -305,6 +305,8 @@ export interface WorktreePruneSummary {
   errors: string[];
   keptDirty: string[];
   clearedSessionIds: string[];
+  /** Destroy-script failures for worktrees that were still removed. */
+  destroyScriptErrors: string[];
 }
 
 export type GitDiffMode = "working" | "staged" | "branch" | "turn";

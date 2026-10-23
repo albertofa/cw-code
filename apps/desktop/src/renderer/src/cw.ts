@@ -293,6 +293,7 @@ export interface WorktreePruneSummary {
   errors: string[];
   keptDirty: string[];
   clearedSessionIds: string[];
+  destroyScriptErrors: string[];
 }
 
 export interface TodoItem {

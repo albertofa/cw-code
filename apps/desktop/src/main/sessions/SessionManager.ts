@@ -1392,7 +1392,7 @@ export class SessionManager {
   }
 
   async pruneStaleWorktrees(): Promise<WorktreePruneSummary> {
-    const summary: WorktreePruneSummary = { scanned: 0, removed: 0, skipped: 0, failed: 0, errors: [], keptDirty: [], clearedSessionIds: [] };
+    const summary: WorktreePruneSummary = { scanned: 0, removed: 0, skipped: 0, failed: 0, errors: [], keptDirty: [], clearedSessionIds: [], destroyScriptErrors: [] };
     if (!existsSync(this.worktreesRoot)) {
       this.clearMissingWorktrees(summary);
       return summary;
@@ -1450,8 +1450,10 @@ export class SessionManager {
       summary.keptDirty.push(dirPath);
       return;
     }
-    const destroyFailure = project ? await this.runDestroyScript({ id: sessionId }, project, dirPath) : undefined;
-    if (destroyFailure) summary.errors.push(`${dirPath}: ${destroyFailure}`);
+    const destroyFailure = project
+      ? await this.runDestroyScript({ id: sessionId, branch: this.store.getSession(sessionId)?.branch }, project, dirPath)
+      : undefined;
+    if (destroyFailure) summary.destroyScriptErrors.push(`${dirPath}: ${destroyFailure}`);
     try {
       if (repoRoot) await this.git.removeWorktree(repoRoot, dirPath, { force: true });
       else rmSync(dirPath, { recursive: true, force: true });

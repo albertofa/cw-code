@@ -316,6 +316,9 @@ function SourceControlSettings({ onPickBinary }: { onPickBinary: BinaryPickHandl
           message: summary.errors[0] ?? `${summary.failed} worktrees could not be removed`
         });
       }
+      if (summary.destroyScriptErrors.length > 0) {
+        useNotifs.getState().push({ kind: "error", title: "Destroy script failed", message: summary.destroyScriptErrors[0] });
+      }
     } catch (err) {
       const message = errorMessage(err) || "Could not prune worktrees";
       setPruneError(message);
@@ -462,6 +465,9 @@ function SourceControlSettings({ onPickBinary }: { onPickBinary: BinaryPickHandl
               </div>
             )}
             {pruneSummary.failed > 0 && <div className="settings-error">{pruneSummary.errors.join("\n")}</div>}
+            {pruneSummary.destroyScriptErrors.length > 0 && (
+              <div className="settings-error">{["Removed, but the destroy script failed:", ...pruneSummary.destroyScriptErrors].join("\n")}</div>
+            )}
           </div>
         )}
         {pruneError && (
