@@ -778,6 +778,8 @@ const SNAPSHOT_INDEX_PATTERN = /^cw-snapshot-[0-9a-f-]{36}\.index(?:\.lock)?$/i;
 const SNAPSHOT_INDEX_MAX_AGE_MS = 60 * 60_000;
 const RESTORE_LOCK_ATTEMPTS = 3;
 const RESTORE_LOCK_RETRY_MS = 200;
+const LOCKED_WORKTREE_RM_ATTEMPTS = 10;
+const LOCKED_WORKTREE_RM_RETRY_MS = 500;
 const SNAPSHOT_OBJECT_WRITE_ATTEMPTS = 3;
 const SNAPSHOT_OBJECT_WRITE_RETRY_MS = 100;
 const INHERITED_ENV_UNSAFE = {
@@ -1375,10 +1377,17 @@ export class GitService {
     const args = ["worktree", "remove"];
     if (opts.force) args.push("--force");
     args.push(target);
+    const wasRegistered = await this.isRegisteredWorktree(repositoryRoot, target);
     try {
       await git.raw(args);
     } catch (error) {
       const message = (error as Error).message;
+      if (wasRegistered && existsSync(target) && !await this.isRegisteredWorktree(repositoryRoot, target)) {
+        await this.finishInterruptedRemoval(target, message);
+        this.invalidateStatus(repositoryRoot);
+        this.invalidateBranches(repositoryRoot);
+        return { removed: true };
+      }
       if (!opts.force && existsSync(target) && await this.isDirtyWorktree(target)) {
         return { removed: false, dirtyBlocked: true };
       }
@@ -1402,6 +1411,31 @@ export class GitService {
     this.invalidateStatus(repositoryRoot);
     this.invalidateBranches(repositoryRoot);
     return { removed: true };
+  }
+
+  private async isRegisteredWorktree(repositoryRoot: string, path: string): Promise<boolean> {
+    try {
+      const entries = parseWorktreeList(await this.git(repositoryRoot).raw(["worktree", "list", "--porcelain"]));
+      return entries.some((entry) => sameWorktreePath(entry.path, path));
+    } catch {
+      return false;
+    }
+  }
+
+  private async finishInterruptedRemoval(target: string, gitMessage: string): Promise<void> {
+    for (let attempt = 1; ; attempt += 1) {
+      try {
+        await rm(target, { recursive: true, force: true });
+        return;
+      } catch (error) {
+        if (attempt >= LOCKED_WORKTREE_RM_ATTEMPTS) {
+          throw new Error(
+            `could not remove worktree '${target}': ${gitMessage.trim()}; a process may still be using it (${(error as Error).message})`
+          );
+        }
+        await delay(LOCKED_WORKTREE_RM_RETRY_MS);
+      }
+    }
   }
 
   async worktreeDirty(path: string): Promise<boolean> {

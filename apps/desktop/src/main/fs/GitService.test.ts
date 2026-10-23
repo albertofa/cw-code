@@ -1,6 +1,6 @@
 import { describe, expect, it} from "bun:test";
 import { waitFor } from "../../../tests/testing.js";
-import { execFileSync } from "node:child_process";
+import { execFileSync, spawn } from "node:child_process";
 import { chmodSync, existsSync, mkdirSync, mkdtempSync, readFileSync, readdirSync, renameSync, rmSync, symlinkSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { isAbsolute, join } from "node:path";
@@ -751,6 +751,28 @@ describe("GitService worktrees", () => {
     const forced = await service.removeWorktree(repository, created.path, { force: true });
     expect(forced).toEqual({ removed: true });
     expect(existsSync(created.path)).toBe(false);
+  });
+
+  it("finishes deleting a worktree git unregistered but could not fully delete", async () => {
+    const { sandbox, repository, service } = initSandbox();
+    const worktreesRoot = join(sandbox, "worktrees");
+    const created = await service.createWorktree(repository, "project", "sess_locked1", worktreesRoot, "main");
+    const lockedDir = join(created.path, "node_modules", "pkg");
+    mkdirSync(lockedDir, { recursive: true });
+    writeFileSync(join(created.path, ".gitignore"), "node_modules/\n", "utf8");
+    execFileSync("git", ["-C", created.path, "add", ".gitignore"]);
+    execFileSync("git", ["-C", created.path, "-c", "user.name=cw-code", "-c", "user.email=test@cw-code.local", "commit", "-m", "ignore"]);
+    const holder = spawn(process.execPath, ["-e", "setTimeout(() => {}, 1500)"], { cwd: lockedDir, stdio: "ignore" });
+    const exited = new Promise((resolve) => holder.once("exit", resolve));
+
+    try {
+      expect(await service.removeWorktree(repository, created.path)).toEqual({ removed: true });
+      expect(existsSync(created.path)).toBe(false);
+      expect((await service.worktrees(repository)).some((entry) => sameWorktreePath(entry.path, created.path))).toBe(false);
+    } finally {
+      holder.kill();
+      await exited;
+    }
   });
 
   it("treats an already-gone worktree path as a no-op prune", async () => {
