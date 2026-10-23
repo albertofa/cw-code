@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Download, GitBranch, GitFork, History } from "lucide-react";
+import { Download, Folder, GitBranch, GitFork, History } from "lucide-react";
 import { useAppStore } from "../stores/appStore.js";
 import type { CreateSessionOptions, CreateWorkspaceMode, DriverName, GitBranchInfo, Session } from "../cw.js";
 import { worktreeCandidates } from "./worktreeCandidates.js";
@@ -84,9 +84,9 @@ export function NewThread({
   const modeOptions = [
     {
       id: "current",
-      label: "Current checkout",
+      label: "Local",
       description: `No worktree — switches ${project?.name ?? "the project"} to a new branch from the selected base`,
-      icon: <GitBranch size={13} />
+      icon: <Folder size={13} />
     },
     {
       id: "new",

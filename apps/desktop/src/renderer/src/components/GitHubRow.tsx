@@ -170,7 +170,7 @@ function PeopleCell({ subject, viewer }: { subject: RowSubject; viewer: string |
     const { run } = subject;
     return (
       <HoverCard className="hub-people" card={card}>
-        {run.actor ? <GitHubAvatar login={run.actor} viewer={run.actor.toLowerCase() === viewer?.toLowerCase()} /> : <span className="hub-people-none">—</span>}
+        {run.actor ? <GitHubAvatar login={run.actor} avatarUrl={run.actorAvatarUrl} viewer={run.actor.toLowerCase() === viewer?.toLowerCase()} /> : <span className="hub-people-none">—</span>}
         {run.event === "schedule" && <span className="hub-people-none">scheduled</span>}
       </HoverCard>
     );

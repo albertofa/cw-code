@@ -138,6 +138,22 @@ describe("parseRunSuites", () => {
     expect(parseRunSuites(json)[0].actor).toBe("dependabot[bot]");
   });
 
+  it("keeps the creator's https avatar and drops insecure ones", () => {
+    const json = JSON.stringify({
+      data: {
+        search: {
+          nodes: [
+            prNode(4, [
+              suite(810, { creator: { login: "octocat", avatarUrl: "https://avatars.githubusercontent.com/u/1?s=48" } }),
+              suite(811, { creator: { login: "mallory", avatarUrl: "http://a.test/m.png" } })
+            ])
+          ]
+        }
+      }
+    });
+    expect(parseRunSuites(json).map((run) => run.actorAvatarUrl)).toEqual(["https://avatars.githubusercontent.com/u/1?s=48", undefined]);
+  });
+
   it("drops suites without a workflow run", () => {
     const json = JSON.stringify({ data: { search: { nodes: [prNode(1, [suite(null), suite(400)])] } } });
     expect(parseRunSuites(json).map((run) => run.ref.runId)).toEqual([400]);
@@ -259,6 +275,11 @@ describe("mapRestRun", () => {
     expect(mapRestRun({ ...restRun, actor: { login: "dependabot", type: "Bot" } }, null)?.actor).toBe("dependabot[bot]");
     expect(mapRestRun({ ...restRun, actor: { login: "dependabot[bot]", type: "Bot" } }, null)?.actor).toBe("dependabot[bot]");
     expect(mapRestRun({ ...restRun, actor: { login: "octocat", type: "User" } }, null)?.actor).toBe("octocat");
+  });
+
+  it("maps the actor's avatar_url", () => {
+    const avatar = "https://avatars.githubusercontent.com/u/1?v=4";
+    expect(mapRestRun({ ...restRun, actor: { login: "octocat", avatar_url: avatar } }, null)?.actorAvatarUrl).toBe(avatar);
   });
 
   it("returns null for payloads without an id or a run url", () => {
