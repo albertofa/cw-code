@@ -1424,6 +1424,8 @@ body.session-dragging * {
   position: fixed;
   z-index: 91;
   min-width: 140px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
   background: var(--raised);
   border: 1px solid var(--border);
   border-radius: var(--r-md);
@@ -3079,6 +3081,194 @@ body.session-dragging * {
   min-height: 0;
   display: flex;
   flex-direction: column;
+}
+
+/* Prompt rail — one marker per prompt, on the right edge of the thread. */
+.prompt-rail {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  bottom: calc(var(--composer-overlay-h, 0px) + 10px);
+  width: 14px;
+  z-index: 12;
+  pointer-events: none;
+}
+
+.prompt-rail-view {
+  position: absolute;
+  right: 4px;
+  width: 6px;
+  min-height: 10px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--text) 7%, transparent);
+}
+
+.prompt-rail-mark {
+  position: absolute;
+  right: 0;
+  width: 14px;
+  height: 12px;
+  margin-top: -6px;
+  padding: 0;
+  border: 0;
+  background: none;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.prompt-rail-bar {
+  width: 10px;
+  height: 3px;
+  border-radius: 2px;
+  background: color-mix(in srgb, var(--text) 32%, transparent);
+  transition:
+    background var(--dur-fast) var(--ease-out),
+    width var(--dur-fast) var(--ease-out);
+}
+
+.prompt-rail-mark:hover .prompt-rail-bar,
+.prompt-rail-mark:focus-visible .prompt-rail-bar {
+  width: 14px;
+  background: var(--accent);
+}
+
+.prompt-rail-match {
+  position: absolute;
+  right: 1px;
+  width: 5px;
+  height: 2px;
+  margin-top: -1px;
+  border-radius: 1px;
+  background: var(--warning);
+}
+
+.prompt-rail-match.is-active {
+  width: 8px;
+  height: 3px;
+  background: var(--accent);
+}
+
+.prompt-rail-tip {
+  position: fixed;
+  z-index: 160;
+  transform: translateY(-50%);
+  max-width: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid var(--border);
+  background: var(--overlay);
+  box-shadow: var(--shadow-popover);
+  pointer-events: none;
+}
+
+.prompt-rail-tip-n {
+  color: var(--faint);
+  font-size: var(--t-2xs);
+}
+
+.prompt-rail-tip-text {
+  color: var(--text);
+  font-size: var(--t-xs);
+  line-height: 1.45;
+}
+
+.msg-user.is-pinpoint {
+  animation: prompt-pinpoint 1.4s var(--ease-out);
+}
+
+@keyframes prompt-pinpoint {
+  0%,
+  60% {
+    box-shadow: 0 0 0 2px color-mix(in srgb, var(--accent) 70%, transparent);
+  }
+  100% {
+    box-shadow: 0 0 0 2px transparent;
+  }
+}
+
+/* Find in conversation */
+.thread-find {
+  position: absolute;
+  top: 10px;
+  right: 28px;
+  z-index: 30;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 5px 6px 5px 9px;
+  border-radius: var(--r-md);
+  border: 1px solid var(--border);
+  background: var(--overlay);
+  box-shadow: var(--shadow-popover);
+}
+
+.thread-find-ic {
+  color: var(--faint);
+  flex: none;
+}
+
+.thread-find-input {
+  width: 190px;
+  border: 0;
+  outline: none;
+  background: none;
+  color: var(--text);
+  font-family: var(--sans);
+  font-size: var(--t-sm);
+}
+
+.thread-find-count {
+  min-width: 46px;
+  text-align: right;
+  color: var(--faint);
+  font-size: var(--t-xs);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.thread-find-count.is-empty {
+  color: var(--danger);
+}
+
+.thread-find-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: var(--r-sm);
+  background: none;
+  color: var(--faint);
+  cursor: pointer;
+}
+
+.thread-find-btn:hover:not(:disabled),
+.thread-find-btn:focus-visible {
+  background: var(--hover);
+  color: var(--text);
+}
+
+.thread-find-btn:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+
+::highlight(cw-find) {
+  background: color-mix(in srgb, var(--warning) 45%, transparent);
+  color: var(--text);
+}
+
+::highlight(cw-find-active) {
+  background: var(--accent);
+  color: var(--on-accent);
 }
 
 .thread-composer-spacer {
@@ -8024,7 +8214,8 @@ button.gitbar-checkout:hover {
 
 @media (prefers-reduced-motion: reduce) {
   .binary-picker-spin,
-  .skills-spin {
+  .skills-spin,
+  .msg-user.is-pinpoint {
     animation: none;
   }
 }
@@ -10439,6 +10630,20 @@ button.gitbar-checkout:hover {
   white-space: nowrap;
 }
 
+.sp-btn-sm svg.spin,
+.usage-refresh-btn svg.spin {
+  animation: cw-spin 0.9s linear infinite;
+}
+
+.usage-refresh-btn.is-done {
+  color: var(--success);
+}
+
+.usage-refresh-btn:disabled {
+  cursor: default;
+  opacity: 0.8;
+}
+
 .usage-scroll {
   padding: 0 28px 28px;
   display: flex;
@@ -10679,6 +10884,30 @@ button.gitbar-checkout:hover {
   background: var(--success);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--success) 18%, transparent);
   flex: none;
+}
+
+.usage-pulse.is-busy {
+  background: var(--accent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 18%, transparent);
+  animation: usage-pulse-busy 1s ease-in-out infinite;
+}
+
+@keyframes usage-pulse-busy {
+  0%,
+  100% {
+    opacity: 0.35;
+  }
+  50% {
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sp-btn-sm svg.spin,
+  .usage-refresh-btn svg.spin,
+  .usage-pulse.is-busy {
+    animation: none;
+  }
 }
 
 .usage-empty-line {

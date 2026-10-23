@@ -43,6 +43,9 @@ import { SkillChip } from "./SkillChip.js";
 import { skillSegments } from "./skillSegments.js";
 import { findSkillReferences } from "../../../shared/skillMentions.js";
 import { useSessionSkillNames } from "../stores/sessionSkillsStore.js";
+import { PromptRail, type PromptMark } from "./PromptRail.js";
+import { ThreadFindBar } from "./ThreadFindBar.js";
+import { useThreadFind } from "./useThreadFind.js";
 
 const EMPTY_MESSAGES: ChatMessage[] = [];
 const SKILL_TOKEN_HINT = /(^|\s)[$/][A-Za-z0-9]/;
@@ -101,7 +104,7 @@ function UserMessage({
   const validDate = date && Number.isFinite(date.getTime()) ? date : undefined;
 
   return (
-    <div className="msg-user-wrap">
+    <div className="msg-user-wrap" data-prompt-id={message.id}>
       <div className="msg-user">
         {splitImageMentions(message.text).map((seg, i) =>
           seg.kind === "image" ? (
@@ -225,6 +228,7 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
   useLinkedPrLoader(showNew ? undefined : session?.id);
   useMarkTurnSeen(showNew ? undefined : session?.id, session?.status, !hidden);
   const scrollRef = useRef<HTMLDivElement>(null);
+  const innerRef = useRef<HTMLDivElement>(null);
   const stageRef = useRef<HTMLDivElement>(null);
   const composerWrapRef = useRef<HTMLDivElement>(null);
   const stickRef = useRef(true);
@@ -234,6 +238,11 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
   const savedScrollTopRef = useRef(0);
   const lastDistanceRef = useRef(0);
   const [atBottom, setAtBottom] = useState(true);
+
+  const promptMarks = useMemo<PromptMark[]>(
+    () => messages.filter((m) => m.role === "user").map((m) => ({ id: m.id, text: m.text })),
+    [messages]
+  );
 
   const sessionId = session?.id;
   const turnSnapshot = session?.lastTurnSnapshot;
@@ -245,6 +254,12 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
       : resolveMainTab(panelMainOrder, panelDockByTab, session.driver, panelActiveMain, hasPr, isToolAvailable);
   const showMainTool: DockableTabId | null = resolvedMainTab === "chat" ? null : resolvedMainTab;
   const threadMounted = !showNew && showMainTool === null;
+  const find = useThreadFind({
+    scrollRef,
+    contentRef: innerRef,
+    enabled: threadMounted && !hidden,
+    revision: messages
+  });
   const basePath = session?.worktreePath ?? project?.rootPath ?? "";
   const onOpenPreview = useCallback(
     (path: string) => {
@@ -555,7 +570,7 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
         {...dropMain.bind}
       >
         <div className="thread-scroll" ref={scrollRef} onScroll={onScroll}>
-        <div className="thread-inner">
+        <div className="thread-inner" ref={innerRef}>
           {historyLoading && messages.length === 0 && (
             <div className="empty">
               <div className="empty-mark"><Sparkles aria-hidden="true" size={22} /></div>
@@ -606,6 +621,14 @@ export function ThreadView({ hidden = false }: { hidden?: boolean }) {
           </div>
         </div>
       </div>
+      <PromptRail
+        scrollRef={scrollRef}
+        prompts={promptMarks}
+        matches={find.ranges}
+        activeRange={find.activeRange}
+        revision={messages}
+      />
+      <ThreadFindBar find={find} />
       {!atBottom && (
         <button className="jump-bottom" onClick={scrollToBottom} title="Scroll to bottom" aria-label="Scroll to bottom">
           <ChevronDown size={14} aria-hidden="true" />

@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent } from "react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type MouseEvent as ReactMouseEvent, type ReactNode } from "react";
 import { Activity, Bell, ChartColumn, Check, ChevronDown, ChevronRight, ChevronUp, CircleHelp, Clock, GitBranch, GitPullRequest, Hash, LoaderCircle, Plus, Search, Settings, ShieldAlert, X, type LucideIcon } from "lucide-react";
 import type { DriverName, PrSummary, Session, SessionStatus } from "../cw.js";
 import { useAppStore } from "../stores/appStore.js";
@@ -19,6 +19,7 @@ import { anyLinkUnseen, displayChip, linksTitle, mostUrgentLink, sessionLinks } 
 import { matchesQuickFilter, matchesSessionQuery, quickFilterCounts, toggleQuickFilter, type QuickFilter, type QuickFilterFacts } from "./sidebarQuickFilters.js";
 import { needsYouEntries, type Attention, type AttentionKind } from "./needsYou.js";
 import { useNeedsYou } from "./useNeedsYou.js";
+import { useMenuPosition } from "./menuPosition.js";
 import appIcon from "../assets/console-c.svg";
 
 const IDLE_LIMIT = 4;
@@ -260,6 +261,15 @@ function DebugMenu() {
   );
 }
 
+
+function SessionContextMenu({ x, y, children }: { x: number; y: number; children: ReactNode }) {
+  const { ref, style } = useMenuPosition(x, y);
+  return (
+    <div ref={ref} className="ctx-menu" style={style} role="menu" onClick={(e) => e.stopPropagation()}>
+      {children}
+    </div>
+  );
+}
 
 export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { onOpenSkills: () => void; skillsOpen?: boolean; hidden?: boolean }) {
   const hiddenRef = useRef(hidden);
@@ -1092,11 +1102,7 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
               setMenu(null);
             }}
           />
-          <div
-            className="ctx-menu"
-            style={{ left: Math.min(menu.x, window.innerWidth - 160), top: menu.y }}
-            onClick={(e) => e.stopPropagation()}
-          >
+          <SessionContextMenu x={menu.x} y={menu.y}>
             <button
               className="ctx-item"
               onClick={() => {
@@ -1126,7 +1132,7 @@ export function Sidebar({ onOpenSkills, skillsOpen = false, hidden = false }: { 
             <button className="ctx-item" onClick={() => copySessionId(menu.sessionId)}>
               Copy session id
             </button>
-          </div>
+          </SessionContextMenu>
         </>
       )}
       <UpdateIndicator />
