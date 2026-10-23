@@ -50,6 +50,11 @@ function runRefFromUrl(url: string): RunRef | null {
   return { host: match[1].toLowerCase(), owner: match[2], repo: match[3], runId };
 }
 
+function actorAvatar(url: unknown): { actorAvatarUrl?: string } {
+  const value = asString(url);
+  return value.startsWith("https://") ? { actorAvatarUrl: value } : {};
+}
+
 interface CommitContext {
   repo: RepoRef | null;
   sha: string;
@@ -80,6 +85,7 @@ function suiteToRun(suite: Record<string, unknown>, context: CommitContext): Wor
     headSha: context.sha,
     title: context.title,
     actor: actor || null,
+    ...(actor ? actorAvatar(asRecord(suite.creator).avatarUrl) : {}),
     status,
     conclusion: status === "completed" ? mapRunConclusion(suite.conclusion) : null,
     prNumber: context.prNumber,
@@ -160,6 +166,7 @@ export function mapRestRun(run: unknown, jobs: unknown): WorkflowRunSummary | nu
     headSha: asString(record.head_sha),
     title: asString(record.display_title) || asString(record.name),
     actor: actor || null,
+    ...(actor ? actorAvatar(actorRecord.avatar_url) : {}),
     status,
     conclusion: status === "completed" ? mapRunConclusion(record.conclusion) : null,
     prNumber: pullRequestNumber > 0 ? pullRequestNumber : null,

@@ -236,7 +236,7 @@ export function PeopleCard({ subject, viewer }: { subject: HoverSubject; viewer:
           Triggered by
         </div>
         <CardSection label="Actor">
-          {run.actor ? <PersonLine login={run.actor} viewer={viewer} /> : <span className="tone-neutral">Unknown</span>}
+          {run.actor ? <PersonLine login={run.actor} avatarUrl={run.actorAvatarUrl} viewer={viewer} /> : <span className="tone-neutral">Unknown</span>}
         </CardSection>
         <CardSection label="Event">
           <div className="hub-card-line">

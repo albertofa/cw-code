@@ -115,6 +115,7 @@ export interface WorkflowRunSummary {
   headSha: string;
   title: string;
   actor: string | null;
+  actorAvatarUrl?: string;
   status: RunStatus;
   conclusion: RunConclusion;
   prNumber: number | null;
