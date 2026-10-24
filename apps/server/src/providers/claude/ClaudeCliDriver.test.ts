@@ -420,6 +420,14 @@ describe("ClaudeCliDriver persistent process", () => {
     driver.dispose();
   });
 
+  it("never launches auto-title turns with --chrome", async () => {
+    const { driver, spawnCalls } = makeDriver(() => false, () => ({ ...SETTINGS, claudeChromeEnabled: true }));
+    driver.startTurn({ sessionId: "title:s1", cwd: "C:\\proj", prompt: "title this", maxTurns: 1 });
+    await settle();
+    expect(spawnCalls[0]?.args).not.toContain("--chrome");
+    driver.dispose();
+  });
+
   it("keeps the process and stdin open after a result line", async () => {
     const { driver, events, children, killed } = makeDriver();
     driver.startTurn({ sessionId: "s1", cwd: "C:\\proj", prompt: "go" });

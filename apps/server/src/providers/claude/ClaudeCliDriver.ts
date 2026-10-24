@@ -202,9 +202,9 @@ export class ClaudeCliDriver implements CliDriver {
     return parseExtraArgs(this.getSettings().claudeExtraArgs);
   }
 
-  private turnLaunchArgs(): string[] {
+  private turnLaunchArgs(request: TurnRequest): string[] {
     const args = this.extraArgs();
-    if (this.getSettings().claudeChromeEnabled) args.push("--chrome");
+    if (this.getSettings().claudeChromeEnabled && !request.sessionId.startsWith("title:")) args.push("--chrome");
     return args;
   }
 
@@ -214,7 +214,7 @@ export class ClaudeCliDriver implements CliDriver {
       request.model ?? "",
       request.effort ?? "",
       request.permissionMode ?? "",
-      this.turnLaunchArgs()
+      this.turnLaunchArgs(request)
     ]);
   }
 
@@ -818,7 +818,7 @@ export class ClaudeCliDriver implements CliDriver {
     }
 
     if (existing) this.terminate(existing);
-    const args = [...this.turnLaunchArgs(), ...buildClaudeArgs(request)];
+    const args = [...this.turnLaunchArgs(request), ...buildClaudeArgs(request)];
     const child = this.spawnFn(binary, args, {
       cwd: request.cwd,
       windowsHide: true,

@@ -1,4 +1,4 @@
-import { describe, expect, it } from "bun:test";
+import { describe, expect, it, vi } from "bun:test";
 import { mkdtempSync, writeFileSync } from "node:fs";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
@@ -27,9 +27,19 @@ describe("readClaudeChromeDefault", () => {
     expect(readClaudeChromeDefault(writeConfig(JSON.stringify({})))).toBe(false);
   });
 
-  it("degrades to off for missing or malformed config", () => {
+  it("treats a missing config as off without warning", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
     expect(readClaudeChromeDefault(join(tmpdir(), "missing-claude-config", ".claude.json"))).toBe(false);
-    expect(readClaudeChromeDefault(writeConfig("{not json"))).toBe(false);
     expect(readClaudeChromeDefault(writeConfig("null"))).toBe(false);
+    expect(warn).not.toHaveBeenCalled();
+    warn.mockRestore();
+  });
+
+  it("warns and degrades to off for unreadable or malformed config", () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => {});
+    expect(readClaudeChromeDefault(mkdtempSync(join(tmpdir(), "claude-chrome-dir-")))).toBe(false);
+    expect(readClaudeChromeDefault(writeConfig("{not json"))).toBe(false);
+    expect(warn).toHaveBeenCalledTimes(2);
+    warn.mockRestore();
   });
 });

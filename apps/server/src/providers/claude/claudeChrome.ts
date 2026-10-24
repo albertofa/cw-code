@@ -7,17 +7,13 @@ export function claudeGlobalConfigPath(env: NodeJS.ProcessEnv = process.env): st
 }
 
 export function readClaudeChromeDefault(configPath = claudeGlobalConfigPath()): boolean {
-  let raw: string;
   try {
-    raw = readFileSync(configPath, "utf8");
-  } catch {
-    return false;
-  }
-  try {
-    const config: unknown = JSON.parse(raw);
+    const config: unknown = JSON.parse(readFileSync(configPath, "utf8"));
     return typeof config === "object" && config !== null && (config as Record<string, unknown>)["claudeInChromeDefaultEnabled"] === true;
   } catch (err) {
-    console.warn(`claude config unreadable, Claude in Chrome setting left off: ${(err as Error).message}`);
+    if ((err as NodeJS.ErrnoException).code !== "ENOENT") {
+      console.warn(`claude config unreadable, Claude in Chrome setting left off: ${(err as Error).message}`);
+    }
     return false;
   }
 }
