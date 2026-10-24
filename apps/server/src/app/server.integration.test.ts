@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { ServerClient } from "@cw-code/client";
-import type { AppSettings, ServerReady, StartupState } from "@cw-code/contracts";
+import type { AppSettings, DeviceCreateResult, DeviceInfo, ServerReady, StartupState } from "@cw-code/contracts";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -55,8 +55,8 @@ async function readTaggedLine(proc: ServerProcess, tag: string): Promise<string>
   }
 }
 
-async function connect(): Promise<ServerClient> {
-  const client = new ServerClient({ endpoint: { url: ready.url, token }, client: "desktop-ui" });
+async function connect(clientToken = token): Promise<ServerClient> {
+  const client = new ServerClient({ endpoint: { url: ready.url, token: clientToken }, client: "desktop-ui" });
   clients.push(client);
   await client.connect();
   return client;
@@ -126,6 +126,32 @@ describe("server process", () => {
     expect(await client.call("topics.subscribe", { topics: ["sidebar"] })).toEqual({});
     await expect(client.call("topics.subscribe", { topics: ["pty/x:shell"] })).rejects.toMatchObject({ code: "invalid-topic" });
     expect(await client.call("topics.unsubscribe", { topics: ["sidebar", "app"] })).toBeNull();
+  });
+
+  it("lets only the owner manage device tokens and closes a revoked device with 4401", async () => {
+    const owner = await connect();
+    const created = await owner.call<DeviceCreateResult>("devices.create", { name: "Phone" });
+    expect(created.device).toMatchObject({ name: "Phone", connected: false });
+    expect(readFileSync(join(home, "userdata", "devices.json"), "utf8")).not.toContain(created.token);
+
+    const device = await connect(created.token);
+    await expect(device.call("devices.create", { name: "Rogue" })).rejects.toMatchObject({ code: "forbidden" });
+    await expect(device.call("devices.revoke", { id: created.device.id })).rejects.toMatchObject({ code: "forbidden" });
+    expect((await device.call<DeviceInfo[]>("devices.list")).map((info) => info.id)).toContain(created.device.id);
+
+    const changed = new Promise<DeviceInfo[]>((resolve) => {
+      owner.on("devices.changed", (payload) => resolve(payload as DeviceInfo[]));
+    });
+    const closed = new Promise<void>((resolve) => {
+      device.onState((state) => {
+        if (state === "closed") resolve();
+      });
+    });
+    await owner.call("devices.revoke", { id: created.device.id });
+    await closed;
+    expect(device.lastError?.code).toBe("unauthorized");
+    expect((await changed).some((info) => info.id === created.device.id)).toBe(false);
+    await expect(connect(created.token)).rejects.toMatchObject({ code: "unauthorized" });
   });
 
   it("refuses to start a second server on the same home", async () => {

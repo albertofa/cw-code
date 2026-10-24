@@ -5,7 +5,7 @@ import { eventAudience } from "./eventAudience.js";
 function receivers(channel: string): ClientKind[] {
   const accept = eventAudience(channel);
   const kinds: ClientKind[] = ["desktop-ui", "desktop-shell", "web"];
-  return kinds.filter((client) => !accept || accept({ clientId: "c", client }));
+  return kinds.filter((client) => !accept || accept({ clientId: "c", client, auth: { kind: "owner" } }));
 }
 
 describe("eventAudience", () => {

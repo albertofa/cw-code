@@ -2,6 +2,7 @@ import type { ServerApp } from "../app/ServerApp.js";
 import type { Router } from "../transport/Router.js";
 import { registerCliHandlers } from "./cli.js";
 import { registerDebugHandlers } from "./debug.js";
+import { registerDeviceHandlers } from "./devices.js";
 import { registerFileHandlers } from "./files.js";
 import { registerGitHandlers } from "./git.js";
 import { registerGitHubHandlers } from "./github.js";
@@ -34,4 +35,5 @@ export function registerHandlers(router: Router, app: ServerApp): void {
   registerDebugHandlers(router);
   registerServerHandlers(router, app);
   registerTopicHandlers(router, app);
+  registerDeviceHandlers(router, app);
 }

@@ -33,3 +33,16 @@ export interface TopicsParams {
 }
 
 export type TopicSubscribeResult = Record<string, { rev: number; data: unknown }>;
+
+export interface DeviceInfo {
+  id: string;
+  name: string;
+  createdAt: number;
+  lastSeenAt: number | null;
+  connected: boolean;
+}
+
+export interface DeviceCreateResult {
+  device: DeviceInfo;
+  token: string;
+}

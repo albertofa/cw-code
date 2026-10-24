@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import { Router, toRpcError, type CallContext } from "./Router.js";
 
-const ctx: CallContext = { clientId: "c1", client: "web" };
+const ctx: CallContext = { clientId: "c1", client: "web", auth: { kind: "owner" } };
 
 describe("Router", () => {
   test("dispatches params and context to the handler", async () => {

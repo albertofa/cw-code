@@ -1,5 +1,5 @@
 import { SERVER_TOKEN_FILE } from "@cw-code/shared/protocol";
-import { randomBytes } from "node:crypto";
+import { randomBytes, timingSafeEqual } from "node:crypto";
 import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -55,4 +55,10 @@ export function loadOrCreateOwnerToken(dir: string): string {
     if (isValid(raced)) return raced;
     return rewriteToken(path, token);
   }
+}
+
+export function tokensEqual(expected: string, received: string): boolean {
+  const a = Buffer.from(expected);
+  const b = Buffer.from(received);
+  return a.length === b.length && timingSafeEqual(a, b);
 }

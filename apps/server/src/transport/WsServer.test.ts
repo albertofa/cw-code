@@ -10,10 +10,11 @@ import {
   PROTOCOL_VERSION
 } from "@cw-code/shared/protocol";
 import { connect, type Socket } from "node:net";
-import { Router, type CallContext } from "./Router.js";
+import { Router, type CallContext, type ClientAuth } from "./Router.js";
 import { sendRaw, WsServer, wsUrl, type FrameSink, type WsServerOptions } from "./WsServer.js";
 
 const TOKEN = "t".repeat(64);
+const OWNER: ClientAuth = { kind: "owner" };
 const servers: WsServer[] = [];
 const clients: ServerClient[] = [];
 const sockets: WebSocket[] = [];
@@ -30,7 +31,7 @@ interface RawSocket {
 
 function startServer(overrides: Partial<WsServerOptions> = {}): { server: WsServer; router: Router; url: string } {
   const router = overrides.router ?? new Router();
-  const server = new WsServer({ host: "127.0.0.1", port: 0, token: TOKEN, version: "9.9.9", router, ...overrides });
+  const server = new WsServer({ host: "127.0.0.1", port: 0, authorize: (token) => (token === TOKEN ? OWNER : null), version: "9.9.9", router, ...overrides });
   servers.push(server);
   return { server, router, url: server.start().url };
 }
@@ -187,7 +188,7 @@ describe("WsServer", () => {
     const client = newClient(url);
     const welcome = await client.connect();
     await client.call("who");
-    expect(seen).toEqual([{ clientId: welcome.clientId, client: "desktop-ui" }]);
+    expect(seen).toEqual([{ clientId: welcome.clientId, client: "desktop-ui", auth: OWNER }]);
   });
 
   test("fire-and-forget reaches the handler and produces no result", async () => {
@@ -230,6 +231,22 @@ describe("WsServer", () => {
     const { url } = startServer();
     const error = await newClient(url, "wrong").connect().catch((e: unknown) => e);
     expect(error).toBeInstanceOf(ServerCallError);
+    expect((error as ServerCallError).code).toBe("unauthorized");
+  });
+
+  test("accepts owner and device tokens and rejects unknown ones", async () => {
+    const auths: unknown[] = [];
+    const { router, url } = startServer({
+      authorize: (token) => (token === TOKEN ? OWNER : token === "device-token" ? { kind: "device", deviceId: "dev_1" } : null)
+    });
+    router.handle("whoami", (_params, ctx) => ctx.auth);
+    const owner = newClient(url);
+    const device = newClient(url, "device-token");
+    await owner.connect();
+    await device.connect();
+    auths.push(await owner.call("whoami"), await device.call("whoami"));
+    expect(auths).toEqual([{ kind: "owner" }, { kind: "device", deviceId: "dev_1" }]);
+    const error = await newClient(url, "unknown").connect().catch((e: unknown) => e);
     expect((error as ServerCallError).code).toBe("unauthorized");
   });
 
@@ -383,9 +400,9 @@ describe("WsServer", () => {
     const closed = new Promise<CallContext>((resolve) => server.onClientClosed(resolve));
     const client = newClient(url);
     const welcome = await client.connect();
-    expect(server.clients()).toEqual([{ clientId: welcome.clientId, client: "desktop-ui" }]);
+    expect(server.clients()).toEqual([{ clientId: welcome.clientId, client: "desktop-ui", auth: OWNER }]);
     client.close();
-    expect(await closed).toEqual({ clientId: welcome.clientId, client: "desktop-ui" });
+    expect(await closed).toEqual({ clientId: welcome.clientId, client: "desktop-ui", auth: OWNER });
     expect(server.clients()).toEqual([]);
   });
 

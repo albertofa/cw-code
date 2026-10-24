@@ -117,7 +117,7 @@ describe("confirmLiveEndpoint", () => {
   });
 
   test("confirms a real websocket server", async () => {
-    const server = new WsServer({ host: "127.0.0.1", port: 0, token: "t".repeat(64), version: "1.0.0", router: new Router() });
+    const server = new WsServer({ host: "127.0.0.1", port: 0, authorize: () => null, version: "1.0.0", router: new Router() });
     try {
       const { url, port } = server.start();
       expect(await confirmLiveEndpoint({ ...ready(OTHER_PID), url, port })).toBe(true);
@@ -127,7 +127,7 @@ describe("confirmLiveEndpoint", () => {
   });
 
   test("rejects a closed port", async () => {
-    const server = new WsServer({ host: "127.0.0.1", port: 0, token: "t".repeat(64), version: "1.0.0", router: new Router() });
+    const server = new WsServer({ host: "127.0.0.1", port: 0, authorize: () => null, version: "1.0.0", router: new Router() });
     const { url, port } = server.start();
     await server.stop();
     expect(await confirmLiveEndpoint({ ...ready(OTHER_PID), url, port })).toBe(false);

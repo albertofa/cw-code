@@ -7,13 +7,13 @@ import {
   CLOSE_UNAUTHORIZED,
   PROTOCOL_VERSION
 } from "@cw-code/shared/protocol";
-import { randomUUID, timingSafeEqual } from "node:crypto";
-import { toRpcError, type CallContext, type Router } from "./Router.js";
+import { randomUUID } from "node:crypto";
+import { toRpcError, type CallContext, type ClientAuth, type Router } from "./Router.js";
 
 export interface WsServerOptions {
   host: string;
   port: number;
-  token: string;
+  authorize(token: string): ClientAuth | null;
   version: string;
   router: Router;
   helloTimeoutMs?: number;
@@ -57,12 +57,6 @@ function asCall(message: Record<string, unknown>): CallMessage | null {
   if (message.t !== "call" || typeof message.method !== "string") return null;
   if (message.id !== undefined && typeof message.id !== "number") return null;
   return message as CallMessage;
-}
-
-function tokensEqual(expected: string, received: string): boolean {
-  const a = Buffer.from(expected);
-  const b = Buffer.from(received);
-  return a.length === b.length && timingSafeEqual(a, b);
 }
 
 export function sendRaw(ws: FrameSink, data: string): void {
@@ -204,7 +198,8 @@ export class WsServer {
 
   private authenticate(ws: Socket, message: Record<string, unknown> | null): void {
     const hello = asHello(message);
-    if (!hello || !tokensEqual(this.options.token, hello.token)) {
+    const auth = hello ? this.options.authorize(hello.token) : null;
+    if (!hello || !auth) {
       ws.close(CLOSE_UNAUTHORIZED, "unauthorized");
       return;
     }
@@ -214,7 +209,7 @@ export class WsServer {
     }
     if (ws.data.helloTimer) clearTimeout(ws.data.helloTimer);
     ws.data.helloTimer = null;
-    ws.data.ctx = { clientId: randomUUID(), client: hello.client };
+    ws.data.ctx = { clientId: randomUUID(), client: hello.client, auth };
     this.socketsByClient.set(ws.data.ctx.clientId, ws);
     const welcome: ServerMessage = { t: "welcome", protocol: PROTOCOL_VERSION, serverVersion: this.options.version, clientId: ws.data.ctx.clientId };
     sendRaw(ws, JSON.stringify(welcome));

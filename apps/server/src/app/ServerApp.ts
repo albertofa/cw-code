@@ -1,5 +1,5 @@
-import type { AppNotice, ServerReady, ShutdownCommitResult, ShutdownExpiredEvent, ShutdownReason, ShutdownStatus, StartupState } from "@cw-code/contracts";
-import { PROTOCOL_VERSION, SERVER_READY_PREFIX } from "@cw-code/shared/protocol";
+import type { AppNotice, DeviceInfo, ServerReady, ShutdownCommitResult, ShutdownExpiredEvent, ShutdownReason, ShutdownStatus, StartupState } from "@cw-code/contracts";
+import { CLOSE_UNAUTHORIZED, PROTOCOL_VERSION, SERVER_READY_PREFIX } from "@cw-code/shared/protocol";
 import { appendCrashLog, initCrashLog } from "../debug/crashLog.js";
 import { initHarnessTrace } from "../debug/harnessTrace.js";
 import { initSessionStatusTrace } from "../debug/sessionStatusTrace.js";
@@ -12,8 +12,9 @@ import { initOpencodeModelsCache } from "../providers/opencode/opencodeModels.js
 import { openMetadataStores } from "../storage/metadataStores.js";
 import type { ServerArgs } from "../transport/args.js";
 import { removeEndpoint, writeEndpoint } from "../transport/endpointFile.js";
-import { loadOrCreateOwnerToken } from "../transport/ownerToken.js";
-import { Router } from "../transport/Router.js";
+import { DeviceTokens } from "../transport/deviceTokens.js";
+import { loadOrCreateOwnerToken, tokensEqual } from "../transport/ownerToken.js";
+import { Router, type ClientAuth } from "../transport/Router.js";
 import { TopicRegistry } from "../transport/TopicRegistry.js";
 import { WsServer } from "../transport/WsServer.js";
 import { eventAudience } from "./eventAudience.js";
@@ -37,6 +38,7 @@ function isProcessGone(pid: number): boolean {
 export class ServerApp {
   readonly router = new Router();
   readonly topics = new TopicRegistry();
+  private deviceTokens: DeviceTokens | null = null;
   private services: Services | null = null;
   private state: StartupState = { mode: "ready" };
   private servicesDisposed = false;
@@ -69,6 +71,26 @@ export class ServerApp {
     this.ws?.sendTo([clientId], channel, payload);
   }
 
+  get devices(): DeviceTokens {
+    if (!this.deviceTokens) throw new Error("device tokens are not loaded");
+    return this.deviceTokens;
+  }
+
+  deviceInfos(): DeviceInfo[] {
+    const connected = new Set(this.ws?.clients().flatMap((ctx) => (ctx.auth.kind === "device" ? [ctx.auth.deviceId] : [])));
+    return this.devices.list().map(({ id, name, createdAt, lastSeenAt }) => ({ id, name, createdAt, lastSeenAt, connected: connected.has(id) }));
+  }
+
+  emitDevicesChanged(): void {
+    this.emit("devices.changed", this.deviceInfos());
+  }
+
+  revokeDevice(id: string): void {
+    if (!this.devices.revoke(id)) throw Object.assign(new Error(`unknown device '${id}'`), { code: "not-found" });
+    this.ws?.closeClients((ctx) => ctx.auth.kind === "device" && ctx.auth.deviceId === id, CLOSE_UNAUTHORIZED, "device revoked");
+    this.emitDevicesChanged();
+  }
+
   currentServices(): Services | null {
     return this.services;
   }
@@ -97,9 +119,18 @@ export class ServerApp {
     process.on("unhandledRejection", (reason) => {
       appendCrashLog(`unhandledRejection: ${String(reason)}`);
     });
-    const token = loadOrCreateOwnerToken(userdataDir());
+    const ownerToken = loadOrCreateOwnerToken(userdataDir());
+    const devices = new DeviceTokens(userdataDir());
+    this.deviceTokens = devices;
     registerHandlers(this.router, this);
-    const ws = new WsServer({ host: this.args.host, port: this.args.port, token, version: this.version, router: this.router });
+    const authorize = (token: string): ClientAuth | null => {
+      const device = devices.verify(token);
+      if (tokensEqual(ownerToken, token)) return { kind: "owner" };
+      if (!device) return null;
+      devices.touch(device.id, Date.now());
+      return { kind: "device", deviceId: device.id };
+    };
+    const ws = new WsServer({ host: this.args.host, port: this.args.port, authorize, version: this.version, router: this.router });
     const { url, port } = this.bind(ws);
     this.ws = ws;
     this.openStores();
