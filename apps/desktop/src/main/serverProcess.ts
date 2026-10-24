@@ -190,7 +190,7 @@ export class ServerProcess {
     const command = serverCommand(
       this.options.launch,
       process.platform,
-      process.env,
+      process.stdout.isTTY || process.stdin.isTTY ? { ...process.env, CW_LAUNCHED_FROM_TERMINAL: "1" } : process.env,
       ["--port", String(this.port), "--parent-pid", String(process.pid), "--legacy-user-data", this.options.launch.legacyUserData],
       { homeDir: homedir(), exists: existsSync }
     );

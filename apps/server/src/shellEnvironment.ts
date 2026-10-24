@@ -212,7 +212,7 @@ async function captureLoginEnv(shell: string, platform: NodeJS.Platform): Promis
 }
 
 function isLaunchedFromTerminal(): boolean {
-  return process.stdout.isTTY === true || process.stdin.isTTY === true;
+  return process.stdout.isTTY === true || process.stdin.isTTY === true || process.env.CW_LAUNCHED_FROM_TERMINAL === "1";
 }
 
 export async function loadLoginShellEnvironment(platform: NodeJS.Platform): Promise<string[]> {

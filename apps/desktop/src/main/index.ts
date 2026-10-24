@@ -196,6 +196,7 @@ function stopServer(): Promise<void> {
     .finally(() => {
       serverStopped = true;
       link.close();
+      updates?.dispose();
     });
   serverStop = stopping;
   return stopping;
