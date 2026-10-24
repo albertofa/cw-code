@@ -104,7 +104,6 @@ export class WsServer {
         if (new URL(req.url).pathname !== WS_PATH) return new Response("not found", { status: 404 });
         const origin = req.headers.get("origin");
         if (this.options.isOriginAllowed && !this.options.isOriginAllowed(origin, req.headers.get("host"))) {
-          console.warn(`rejected websocket upgrade from origin ${JSON.stringify(origin)}`);
           this.options.onOriginRejected?.(origin);
           return new Response("forbidden", { status: 403 });
         }

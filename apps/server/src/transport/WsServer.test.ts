@@ -516,12 +516,13 @@ describe("WsServer", () => {
 
   test("answers 403 to a rejected Origin before upgrading and passes origin and host to the policy", async () => {
     const seen: Array<[string | null, string | null]> = [];
-    const warn = spyOn(console, "warn").mockImplementation(() => undefined);
+    const rejected: Array<string | null> = [];
     const { url } = startServer({
       isOriginAllowed: (origin, host) => {
         seen.push([origin, host]);
         return origin !== "https://evil.example";
-      }
+      },
+      onOriginRejected: (origin) => rejected.push(origin)
     });
     const base = url.replace("ws://", "http://");
     const host = new URL(base).host;
@@ -533,8 +534,7 @@ describe("WsServer", () => {
       ["file://", host],
       [null, host]
     ]);
-    expect(warn.mock.calls.some(([message]) => String(message).includes("https://evil.example"))).toBe(true);
-    warn.mockRestore();
+    expect(rejected).toEqual(["https://evil.example"]);
   });
 
   test("start reports the bound port and url, and refuses a second start", () => {

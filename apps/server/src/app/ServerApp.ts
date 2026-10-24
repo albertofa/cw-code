@@ -175,7 +175,10 @@ export class ServerApp {
     }
     const host = decision.host;
     const isOriginAllowed = createOriginPolicy(this.args.allowOrigins);
-    const onOriginRejected = createRejectedOriginLogger(appendCrashLog);
+    const onOriginRejected = createRejectedOriginLogger((entry) => {
+      console.warn(entry);
+      appendCrashLog(entry);
+    });
     const ws = new WsServer({ host, port: this.args.port, authorize, isOriginAllowed, onOriginRejected, version: this.version, router: this.router });
     const { url, port } = this.bind(ws, host);
     this.ws = ws;
