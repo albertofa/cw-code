@@ -2264,7 +2264,7 @@ export class SessionManager {
     this.turnFinalReviews.delete(turnId);
     this.captureEndSnapshot(sessionId, turnId, driver ? () => this.driverSettled(driver, sessionId) : undefined);
     this.store.updateSession(sessionId, { status: "holding" }, "turn-interrupted");
-    this.onEvent(sessionId, { type: "turn.interrupted", turnId, sessionId });
+    this.onEvent(sessionId, { type: "turn.interrupted", turnId, sessionId, ...(this.shutdownReserved ? { reason: "shutdown" as const } : {}) });
     if (!session) return;
     if (this.shutdownReserved) this.interruptedForShutdown.add(sessionId);
     this.emitSession(sessionId);
