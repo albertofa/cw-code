@@ -267,13 +267,16 @@ export class ServerClient {
         this.sentTopics.add(topic);
         this.topicCallIds.set(topic, id);
       }
+      const settled = (): string[] => {
+        const owned = batch.filter((topic) => this.topicCallIds.get(topic) === id);
+        for (const topic of owned) this.topicCallIds.delete(topic);
+        return owned;
+      };
       this.pending.set(id, {
-        resolve: () => undefined,
+        resolve: () => void settled(),
         reject: (error) => {
           const disconnected = error.code === "disconnected";
-          for (const topic of batch) {
-            if (this.topicCallIds.get(topic) !== id) continue;
-            this.topicCallIds.delete(topic);
+          for (const topic of settled()) {
             this.sentTopics.delete(topic);
             if (!disconnected) this.failedTopics.add(topic);
           }
