@@ -220,6 +220,7 @@ export function createCwApi(client: ServerClient, desktop: DesktopApi, shutdownH
     setGitHubActive: (active) => callVoid("github.setActive", { active }),
     onGitHubRunsChanged: (cb) => subscribe("github.runsChanged", cb),
     onGitHubCiActivity: (cb) => client.on("github.ciActivity", () => cb()),
+    subscribeTopics: (topics) => client.subscribe(topics),
     cloneGitHubRepo: (repo) => call<Project>("github.clone", { repo }),
     getProjectGitHubRepos: () => call<ProjectGitHubRepo[]>("prs.projectRepos"),
     linkSessionPr: (sessionId, link) => call<Session>("sessions.linkPr", { sessionId, link }),

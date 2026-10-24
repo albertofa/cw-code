@@ -680,6 +680,7 @@ export interface CwApi {
   setGitHubActive(active: boolean): Promise<void>;
   onGitHubRunsChanged(cb: (runs: WorkflowRunSummary[]) => void): () => void;
   onGitHubCiActivity(cb: () => void): () => void;
+  subscribeTopics(topics: string[]): () => void;
   cloneGitHubRepo(repo: RepoRef): Promise<Project>;
   getProjectGitHubRepos(): Promise<ProjectGitHubRepo[]>;
   linkSessionPr(sessionId: string, link: SessionPrLink): Promise<Session>;
