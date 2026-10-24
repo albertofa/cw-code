@@ -1544,6 +1544,10 @@ if (process.platform === "linux") {
   app.commandLine.appendSwitch("class", "cw-code");
 }
 
+if (process.platform === "win32") {
+  app.commandLine.appendSwitch("disable-features", "CalculateNativeWinOcclusion");
+}
+
 if (!app.isPackaged && !app.commandLine.hasSwitch("user-data-dir")) {
   app.setPath("userData", join(app.getPath("appData"), "@cw-code", "desktop-dev"));
 }
