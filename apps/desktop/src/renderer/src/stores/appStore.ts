@@ -58,6 +58,21 @@ const LOCAL_NOTICE_TURN_ID = "worktree-cleanup";
 function hasLoadedMessages(messages: ChatMessage[] | undefined): boolean {
   return (messages ?? []).some((m) => m.turnId !== LOCAL_NOTICE_TURN_ID);
 }
+
+function historyAheadOfLive(history: ChatMessage[], current: ChatMessage[]): ChatMessage[] {
+  const live = current.filter((m) => m.turnId !== LOCAL_NOTICE_TURN_ID);
+  const ids = new Set(live.map((m) => m.id));
+  const turnIds = new Set(live.map((m) => m.turnId));
+  const stamps = live.flatMap((m) => (m.timestamp !== undefined ? [m.timestamp] : []));
+  const liveSince = stamps.length > 0 ? Math.min(...stamps) : undefined;
+  const earlier = history.filter(
+    (m) =>
+      !ids.has(m.id) &&
+      !turnIds.has(m.turnId) &&
+      (liveSince === undefined || m.timestamp === undefined || m.timestamp < liveSince)
+  );
+  return [...earlier, ...current];
+}
 let pendingSeq = 0;
 let lastUpdateAppliedAt = 0;
 let pendingPromptInFlight = false;
@@ -209,6 +224,7 @@ interface AppState {
   pauseAutoFollowUp(sessionId: string, reason?: AutoFollowUpPause): void;
   resumeAutoFollowUp(sessionId: string): void;
   loadingHistory: Record<string, boolean>;
+  historyLoadedBySession: Record<string, boolean>;
   historyErrorBySession: Record<string, string>;
   turnStartedAt: Record<string, number>;
   turnDurations: Record<string, Record<string, number>>;
@@ -455,6 +471,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   autoFollowUpTurns: {},
   autoFollowUpPaused: {},
   loadingHistory: {},
+  historyLoadedBySession: {},
   historyErrorBySession: {},
   subagentToolsByKey: {},
   subagentToolsLoading: {},
@@ -946,7 +963,7 @@ export const useAppStore = create<AppState>((set, get) => ({
 
   async ensureHistory(sessionId: string, opts?: { force?: boolean; isRetry?: boolean }) {
     if (!opts?.force) {
-      if (hasLoadedMessages(get().messagesBySession[sessionId])) return;
+      if (get().historyLoadedBySession[sessionId]) return;
       if (get().loadingHistory[sessionId]) return;
     }
     set({
@@ -958,10 +975,15 @@ export const useAppStore = create<AppState>((set, get) => ({
     try {
       const history = await window.cw.getHistory(sessionId);
       const current = get().messagesBySession[sessionId] ?? [];
-      if (!hasLoadedMessages(current) && history.length > 0) {
+      const firstLoad = !get().historyLoadedBySession[sessionId];
+      set({ historyLoadedBySession: { ...get().historyLoadedBySession, [sessionId]: true } });
+      if (firstLoad && history.length > 0) {
         const merged = withBufferedTasks(sessionId, mergeToolPairs(history));
         set({
-          messagesBySession: { ...get().messagesBySession, [sessionId]: [...merged, ...current] }
+          messagesBySession: {
+            ...get().messagesBySession,
+            [sessionId]: hasLoadedMessages(current) ? historyAheadOfLive(merged, current) : [...merged, ...current]
+          }
         });
         if (get().todosBySession[sessionId] === undefined) {
           const seeded = [...merged].reverse().find((m) => m.todos !== undefined)?.todos;
@@ -1133,6 +1155,7 @@ export const useAppStore = create<AppState>((set, get) => ({
       },
       activeProjectId: projectId,
       activeSessionId: session.id,
+      historyLoadedBySession: { ...get().historyLoadedBySession, [session.id]: true },
       pendingDriver: null,
       lastDriver: driver
     });
@@ -1337,7 +1360,8 @@ export const useAppStore = create<AppState>((set, get) => ({
         messagesBySession: {
           ...get().messagesBySession,
           [sessionId]: withBufferedTasks(sessionId, mergeToolPairs(result.history))
-        }
+        },
+        historyLoadedBySession: { ...get().historyLoadedBySession, [sessionId]: true }
       });
       void get().hydrateActiveTurns();
     } catch (err) {
