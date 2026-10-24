@@ -46,8 +46,9 @@ Core behaviors:
   `PROTOCOL_VERSION` is 2; a mismatch closes the socket.
 - Multi-client: several clients (`desktop-ui`, `desktop-shell`, `web`) connect to one server.
   Events are routed by topic: `apps/server/src/app/eventTopics.ts` maps each channel to a
-  topic (`app`, `sidebar`, `prs`, `usage`, `github/<view>`, `session/<id>`, `git/<id>`,
-  `files/<id>`, `pty/<id>`; helpers in `packages/shared/src/topics.ts`). A channel mapped
+  topic (`app`, `sidebar`, `prs`, `github/runs`, `session/<id>`, `git/<id>`, `files/<id>`,
+  `pty/<id>`; `usage` and other `github/<view>` names are reserved; helpers in
+  `packages/shared/src/topics.ts`). A channel mapped
   to no topic (settings, startup/shutdown, `app.notice`) goes to every client, filtered by
   client kind (`eventAudience.ts`). Clients opt in with `ServerClient.subscribe(topics)`
   (ref-counted, resent after reconnect) which calls `topics.subscribe`/`topics.unsubscribe`
@@ -90,9 +91,10 @@ Core behaviors:
   never returned only to the caller.
 - A new server event needs a topic in `eventTopics.ts` (or an explicit `broadcast` entry);
   an unmapped channel is broadcast to everyone with a warning.
-- View-driven data (git status, file changes, PR and run lists, session threads) is
-  subscribe-while-visible: the client subscribes when the view mounts and disposes when it
-  unmounts, and the server watches only what has subscribers.
+- View-driven data (git status, file changes, GitHub runs) is subscribe-while-visible: the
+  client subscribes while the view is shown and the window visible, and the server watches
+  only what has subscribers. Session topics stay subscribed for every open session, because
+  the renderer derives notifications from their turn events.
 - Never parse CLI-internal file formats as truth; use them for display only and
   degrade gracefully when shapes drift.
 - Normalize filesystem paths at storage boundaries; resolve executables through
