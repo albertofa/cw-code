@@ -305,6 +305,32 @@ describe("WsServer", () => {
     expect(silent.messages).toEqual([]);
   });
 
+  test("sendTo reaches only the named authenticated clients", async () => {
+    const { server, url } = startServer();
+    const target = newClient(url);
+    const other = newClient(url);
+    const otherSaw: unknown[] = [];
+    other.on("direct", (payload) => otherSaw.push(payload));
+    const received = new Promise<unknown>((resolve) => target.on("direct", resolve));
+    const [targetWelcome] = await Promise.all([target.connect(), other.connect()]);
+    server.sendTo([targetWelcome.clientId, "unknown-client"], "direct", { n: 1 });
+    expect(await received).toEqual({ n: 1 });
+    await sleep(100);
+    expect(otherSaw).toEqual([]);
+  });
+
+  test("closeClients closes only the matching sockets and reports the count", async () => {
+    const { server, url } = startServer();
+    const keep = await authenticatedSocket(url);
+    const drop = rawSocket(url);
+    await drop.opened;
+    drop.send({ t: "hello", token: TOKEN, protocol: PROTOCOL_VERSION, client: "desktop-shell" });
+    await drop.nextMessage();
+    expect(server.closeClients((ctx) => ctx.client === "desktop-shell", 4321, "revoked")).toBe(1);
+    expect(await drop.closed).toBe(4321);
+    expect(keep.ws.readyState).toBe(WebSocket.OPEN);
+  });
+
   test("broadcast skips clients the filter rejects", async () => {
     const { server, url } = startServer();
     const ui = newClient(url);

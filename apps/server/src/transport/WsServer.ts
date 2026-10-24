@@ -87,6 +87,7 @@ export function wsUrl(host: string, port: number): string {
 export class WsServer {
   private server: Bun.Server<SocketData> | null = null;
   private sockets = new Set<Socket>();
+  private socketsByClient = new Map<string, Socket>();
   private closedListeners = new Set<(ctx: CallContext) => void>();
   private readonly helloTimeoutMs: number;
 
@@ -125,6 +126,25 @@ export class WsServer {
     }
   }
 
+  sendTo(clientIds: Iterable<string>, channel: string, payload: unknown): void {
+    const data = JSON.stringify({ t: "event", channel, payload } satisfies ServerMessage);
+    for (const clientId of clientIds) {
+      const ws = this.socketsByClient.get(clientId);
+      if (ws) sendRaw(ws, data);
+    }
+  }
+
+  closeClients(match: (ctx: CallContext) => boolean, code: number, reason: string): number {
+    let closed = 0;
+    for (const ws of [...this.sockets]) {
+      const ctx = ws.data.ctx;
+      if (!ctx || !match(ctx)) continue;
+      ws.close(code, reason);
+      closed += 1;
+    }
+    return closed;
+  }
+
   onClientClosed(cb: (ctx: CallContext) => void): () => void {
     this.closedListeners.add(cb);
     return () => {
@@ -154,6 +174,7 @@ export class WsServer {
 
   private onClose(ws: Socket): void {
     this.sockets.delete(ws);
+    if (ws.data.ctx && this.socketsByClient.get(ws.data.ctx.clientId) === ws) this.socketsByClient.delete(ws.data.ctx.clientId);
     if (ws.data.helloTimer) clearTimeout(ws.data.helloTimer);
     ws.data.helloTimer = null;
     const ctx = ws.data.ctx;
@@ -194,6 +215,7 @@ export class WsServer {
     if (ws.data.helloTimer) clearTimeout(ws.data.helloTimer);
     ws.data.helloTimer = null;
     ws.data.ctx = { clientId: randomUUID(), client: hello.client };
+    this.socketsByClient.set(ws.data.ctx.clientId, ws);
     const welcome: ServerMessage = { t: "welcome", protocol: PROTOCOL_VERSION, serverVersion: this.options.version, clientId: ws.data.ctx.clientId };
     sendRaw(ws, JSON.stringify(welcome));
   }

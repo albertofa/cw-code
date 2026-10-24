@@ -13,6 +13,7 @@ import { registerSettingsHandlers } from "./settings.js";
 import { registerShutdownHandlers } from "./shutdown.js";
 import { registerSkillHandlers } from "./skills.js";
 import { registerStartupHandlers } from "./startup.js";
+import { registerTopicHandlers } from "./topics.js";
 import { registerTurnHandlers } from "./turns.js";
 import { registerUsageHandlers } from "./usage.js";
 
@@ -32,4 +33,5 @@ export function registerHandlers(router: Router, app: ServerApp): void {
   registerStartupHandlers(router, app);
   registerDebugHandlers(router);
   registerServerHandlers(router, app);
+  registerTopicHandlers(router, app);
 }

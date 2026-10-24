@@ -14,6 +14,7 @@ import type { ServerArgs } from "../transport/args.js";
 import { removeEndpoint, writeEndpoint } from "../transport/endpointFile.js";
 import { loadOrCreateOwnerToken } from "../transport/ownerToken.js";
 import { Router } from "../transport/Router.js";
+import { TopicRegistry } from "../transport/TopicRegistry.js";
 import { WsServer } from "../transport/WsServer.js";
 import { eventAudience } from "./eventAudience.js";
 import { createServices, type Services } from "./services.js";
@@ -35,6 +36,7 @@ function isProcessGone(pid: number): boolean {
 
 export class ServerApp {
   readonly router = new Router();
+  readonly topics = new TopicRegistry();
   private services: Services | null = null;
   private state: StartupState = { mode: "ready" };
   private servicesDisposed = false;
@@ -61,6 +63,14 @@ export class ServerApp {
 
   emit(channel: string, payload?: unknown): void {
     this.ws?.broadcast(channel, payload, eventAudience(channel));
+  }
+
+  sendTo(clientId: string, channel: string, payload?: unknown): void {
+    this.ws?.sendTo([clientId], channel, payload);
+  }
+
+  currentServices(): Services | null {
+    return this.services;
   }
 
   start(loginShellWarnings: string[]): ServerReady {
@@ -94,6 +104,7 @@ export class ServerApp {
     this.ws = ws;
     this.openStores();
     ws.onClientClosed((ctx) => {
+      this.topics.dropClient(ctx.clientId);
       if (ctx.client === "desktop-ui" && !this.stopping) this.handleUiDisconnected(ws);
     });
     const ready: ServerReady = { url, port, pid: process.pid, protocol: PROTOCOL_VERSION, version: this.version };

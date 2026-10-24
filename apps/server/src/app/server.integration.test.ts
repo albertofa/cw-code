@@ -121,6 +121,13 @@ describe("server process", () => {
     expect((await changed).claudeReasoningExpanded).toBe(next);
   });
 
+  it("accepts topic subscriptions and rejects pty topics", async () => {
+    const client = await connect();
+    expect(await client.call("topics.subscribe", { topics: ["sidebar"] })).toEqual({});
+    await expect(client.call("topics.subscribe", { topics: ["pty/x:shell"] })).rejects.toMatchObject({ code: "invalid-topic" });
+    expect(await client.call("topics.unsubscribe", { topics: ["sidebar", "app"] })).toBeNull();
+  });
+
   it("refuses to start a second server on the same home", async () => {
     const second = spawnServer();
     const running = JSON.parse(await readTaggedLine(second, "CW_SERVER_RUNNING")) as ServerReady;
