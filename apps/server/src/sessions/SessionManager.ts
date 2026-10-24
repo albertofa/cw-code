@@ -2326,7 +2326,14 @@ export class SessionManager {
       if (!session) throw new Error(`unknown session ${entry.sessionId}`);
       await answer(this.drivers[session.driver]);
     } catch (err) {
-      this.pendingRequests.release(requestId);
+      if (this.pendingRequests.release(entry)) {
+        this.onEvent(
+          entry.sessionId,
+          entry.kind === "approval"
+            ? { type: "approval.request", turnId: entry.turnId, request: entry.request }
+            : { type: "question.request", turnId: entry.turnId, request: entry.request }
+        );
+      }
       throw err;
     }
   }

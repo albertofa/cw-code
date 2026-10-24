@@ -62,11 +62,22 @@ describe("PendingRequests", () => {
   it("release makes a claimed request answerable and listed again", () => {
     const pending = new PendingRequests();
     pending.add(approval("a"));
-    pending.claim("a", "approval");
-    pending.release("a");
+    const claimed = pending.claim("a", "approval");
+    expect(pending.release(claimed)).toBe(true);
 
     expect(ids(pending.list("s1"))).toEqual(["a"]);
     expect(pending.claim("a", "approval").request.requestId).toBe("a");
+  });
+
+  it("ignores a stale release after the request was replaced and claimed again", () => {
+    const pending = new PendingRequests();
+    pending.add(approval("a"));
+    const stale = pending.claim("a", "approval");
+    pending.add(approval("a"));
+    pending.claim("a", "approval");
+
+    expect(pending.release(stale)).toBe(false);
+    expect(pending.list("s1")).toEqual([]);
   });
 
   it("re-adding a request replaces it and drops its claim", () => {

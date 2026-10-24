@@ -4406,13 +4406,17 @@ describe("SessionManager pending requests", () => {
   });
 
   it("releases the claim and returns the driver error when answering fails", async () => {
-    const { manager, fake, session, turnId, requestApproval } = await makeAnsweringManager();
+    const { manager, fake, received, session, turnId, requestApproval } = await makeAnsweringManager();
     requestApproval("a");
     const requestId = `a@${turnId}`;
     fake.failWith = new Error("pipe closed");
+    const before = received.length;
 
     expect((await rejection(manager.respondApproval(requestId, "accept"))).message).toBe("pipe closed");
     expect(pendingIds(manager, session.id)).toEqual([requestId]);
+    const reEmitted = received.slice(before).filter((entry) => entry.event.type === "approval.request");
+    expect(reEmitted).toHaveLength(1);
+    expect(reEmitted[0].event).toMatchObject({ type: "approval.request", turnId, request: { requestId } });
 
     fake.failWith = null;
     await manager.respondApproval(requestId, "accept");

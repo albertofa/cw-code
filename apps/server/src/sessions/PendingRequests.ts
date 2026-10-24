@@ -37,8 +37,10 @@ export class PendingRequests {
     return entry;
   }
 
-  release(requestId: string): void {
-    this.claimed.delete(requestId);
+  release(entry: PendingRequest): boolean {
+    const requestId = entry.request.requestId;
+    if (this.entries.get(requestId) !== entry) return false;
+    return this.claimed.delete(requestId);
   }
 
   list(sessionId: string): PendingRequest[] {
