@@ -416,6 +416,14 @@ function knownTurnId(value: string | undefined): string | undefined {
   return value !== undefined && !isPendingTurn(value) ? value : undefined;
 }
 
+async function answerPendingRequest(answer: Promise<void>): Promise<void> {
+  try {
+    await answer;
+  } catch (err) {
+    if ((err as { code?: unknown } | null)?.code !== "request-not-pending") throw err;
+  }
+}
+
 export const useAppStore = create<AppState>((set, get) => ({
   shutdown: null,
   projects: [],
@@ -1295,7 +1303,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   async respondApproval(requestId: string, decision: ApprovalDecision) {
-    await window.cw.respondApproval(requestId, decision);
+    await answerPendingRequest(window.cw.respondApproval(requestId, decision));
     const approvals = get().pendingApprovals;
     let changed = false;
     const next: Record<string, ApprovalRequest[]> = {};
@@ -1308,7 +1316,7 @@ export const useAppStore = create<AppState>((set, get) => ({
   },
 
   async respondQuestion(sessionId: string, requestId: string, answers: Record<string, string>) {
-    await window.cw.respondQuestion(requestId, answers);
+    await answerPendingRequest(window.cw.respondQuestion(requestId, answers));
     const pending = get().pendingQuestions[sessionId] ?? [];
     set({
       pendingQuestions: {

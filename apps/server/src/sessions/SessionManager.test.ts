@@ -5,7 +5,7 @@ import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync
 import { dirname, join, resolve } from "node:path";
 import { tmpdir } from "node:os";
 import { randomUUID } from "node:crypto";
-import type { CliDriver, HistoryMessage, ModelOption, SessionMeta, TaskSnapshot, ThreadEvent, TurnHandle, TurnSnapshot } from "@cw-code/contracts";
+import type { ApprovalDecision, CliDriver, HistoryMessage, ModelOption, SessionMeta, TaskSnapshot, ThreadEvent, TurnHandle, TurnSnapshot } from "@cw-code/contracts";
 import { SessionManager, type SessionManagerOptions } from "./SessionManager.js";
 import { SYNTHETIC_FULL_ACCESS_DESCRIPTION } from "../providers/permissions.js";
 import type { SessionStore } from "./SessionStore.js";
@@ -4265,5 +4265,168 @@ describe("SessionManager project settings", () => {
     const stored = (await manager.listSessions(project.id)).find((s) => s.id === session.id);
     expect(stored?.title).toBe("fix the login flow");
     manager.dispose();
+  });
+});
+
+class AnsweringDriver extends FakeDriver {
+  approvalCalls: Array<{ requestId: string; decision: ApprovalDecision }> = [];
+  questionCalls: Array<{ requestId: string; answers: Record<string, string> }> = [];
+  gate: Promise<void> | null = null;
+  failWith: Error | null = null;
+  constructor(private readonly route: (event: ThreadEvent) => void) {
+    super(route);
+  }
+  async respondToApproval(requestId: string, decision: ApprovalDecision): Promise<void> {
+    this.approvalCalls.push({ requestId, decision });
+    if (this.gate) await this.gate;
+    if (this.failWith) throw this.failWith;
+    this.route({ type: "approval.resolved", turnId: requestId.split("@")[1] ?? "", requestId });
+  }
+  async respondToQuestion(requestId: string, answers: Record<string, string>): Promise<void> {
+    this.questionCalls.push({ requestId, answers });
+    this.route({ type: "question.resolved", turnId: requestId.split("@")[1] ?? "", requestId, answers });
+  }
+}
+
+async function makeAnsweringManager() {
+  const dir = mkdtempSync(join(tmpdir(), "cw-test-"));
+  const received: Array<{ sessionId: string; event: ThreadEvent }> = [];
+  const manager = new SessionManager({
+    dbPath: join(dir, "test.db"),
+    settingsPath: join(dir, "settings.json"),
+    onEvent: (sessionId, event) => received.push({ sessionId, event })
+  });
+  const routeEvent = (event: ThreadEvent) => (manager as unknown as { routeEvent(e: ThreadEvent): void }).routeEvent(event);
+  const fake = new AnsweringDriver(routeEvent);
+  (manager as unknown as { drivers: Record<string, CliDriver> }).drivers = { claude: fake, opencode: fake, codex: fake };
+  manager.setSettings({ autoTitleEnabled: false });
+  const project = manager.addProject(join(dir, "proj"));
+  const session = await manager.createSession(project.id, "claude");
+  const turnId = await manager.startTurn(session.id, "hello");
+  const requestApproval = (requestId: string) =>
+    routeEvent({
+      type: "approval.request",
+      turnId,
+      request: { requestId: `${requestId}@${turnId}`, kind: "command", title: "run?", decisions: ["accept", "decline"] }
+    });
+  const requestQuestion = (requestId: string) =>
+    routeEvent({ type: "question.request", turnId, request: { requestId: `${requestId}@${turnId}`, turnId, questions: [] } });
+  return { manager, fake, received, session, turnId, routeEvent, requestApproval, requestQuestion };
+}
+
+function pendingIds(manager: SessionManager, sessionId: string): string[] {
+  return manager.listPendingRequests(sessionId).map((entry) => entry.request.requestId);
+}
+
+async function rejection(promise: Promise<unknown>): Promise<{ message?: string; code?: string }> {
+  try {
+    await promise;
+  } catch (error) {
+    return error as { message?: string; code?: string };
+  }
+  throw new Error("expected a rejection");
+}
+
+describe("SessionManager pending requests", () => {
+  it("lists approval and question requests for their session", async () => {
+    const { manager, session, turnId, requestApproval, requestQuestion } = await makeAnsweringManager();
+    requestApproval("a");
+    requestQuestion("q");
+
+    expect(pendingIds(manager, session.id)).toEqual([`a@${turnId}`, `q@${turnId}`]);
+    expect(manager.listPendingRequests(session.id).map((entry) => entry.kind)).toEqual(["approval", "question"]);
+    manager.dispose();
+  });
+
+  it("answers once when two clients respond concurrently and hides the claimed request", async () => {
+    const { manager, fake, session, turnId, requestApproval } = await makeAnsweringManager();
+    requestApproval("a");
+    const requestId = `a@${turnId}`;
+    let open = () => {};
+    fake.gate = new Promise<void>((resolve) => {
+      open = resolve;
+    });
+
+    const first = manager.respondApproval(requestId, "accept");
+    const second = rejection(manager.respondApproval(requestId, "decline"));
+    expect(pendingIds(manager, session.id)).toEqual([]);
+    expect((await second).code).toBe("request-not-pending");
+
+    open();
+    await first;
+    expect(fake.approvalCalls).toEqual([{ requestId, decision: "accept" }]);
+    expect((await rejection(manager.respondApproval(requestId, "accept"))).code).toBe("request-not-pending");
+    manager.dispose();
+  });
+
+  it("releases the claim and returns the driver error when answering fails", async () => {
+    const { manager, fake, session, turnId, requestApproval } = await makeAnsweringManager();
+    requestApproval("a");
+    const requestId = `a@${turnId}`;
+    fake.failWith = new Error("pipe closed");
+
+    expect((await rejection(manager.respondApproval(requestId, "accept"))).message).toBe("pipe closed");
+    expect(pendingIds(manager, session.id)).toEqual([requestId]);
+
+    fake.failWith = null;
+    await manager.respondApproval(requestId, "accept");
+    expect(fake.approvalCalls).toHaveLength(2);
+    expect(pendingIds(manager, session.id)).toEqual([]);
+    manager.dispose();
+  });
+
+  it("routes question answers to the session's driver and clears them on resolve", async () => {
+    const { manager, fake, session, turnId, requestQuestion } = await makeAnsweringManager();
+    requestQuestion("q");
+    const requestId = `q@${turnId}`;
+
+    await manager.respondQuestion(requestId, { pick: "yes" });
+
+    expect(fake.questionCalls).toEqual([{ requestId, answers: { pick: "yes" } }]);
+    expect(pendingIds(manager, session.id)).toEqual([]);
+    manager.dispose();
+  });
+
+  it("rejects an answer of the wrong kind with request-not-pending", async () => {
+    const { manager, fake, turnId, requestQuestion } = await makeAnsweringManager();
+    requestQuestion("q");
+
+    expect((await rejection(manager.respondApproval(`q@${turnId}`, "accept"))).code).toBe("request-not-pending");
+    expect(fake.approvalCalls).toEqual([]);
+    manager.dispose();
+  });
+
+  it("clears leftovers when the turn finishes and emits synthetic resolved events first", async () => {
+    const { manager, fake, received, session, turnId, requestApproval, requestQuestion } = await makeAnsweringManager();
+    requestApproval("a");
+    requestQuestion("q");
+
+    fake.complete(turnId);
+
+    expect(pendingIds(manager, session.id)).toEqual([]);
+    const resolved = received.filter(({ event }) => event.type === "approval.resolved" || event.type === "question.resolved");
+    expect(resolved).toEqual([
+      { sessionId: session.id, event: { type: "approval.resolved", turnId, requestId: `a@${turnId}` } },
+      { sessionId: session.id, event: { type: "question.resolved", turnId, requestId: `q@${turnId}`, answers: null } }
+    ]);
+    const doneIndex = received.findIndex(({ event }) => event.type === "turn.done");
+    expect(doneIndex).toBeGreaterThan(received.indexOf(resolved[1]));
+    manager.dispose();
+  });
+
+  it("clears leftovers on interrupt and on turn.error", async () => {
+    const interrupted = await makeAnsweringManager();
+    interrupted.requestApproval("a");
+    interrupted.manager.interrupt(interrupted.turnId);
+    expect(pendingIds(interrupted.manager, interrupted.session.id)).toEqual([]);
+    expect(interrupted.received.some(({ event }) => event.type === "approval.resolved")).toBe(true);
+    interrupted.manager.dispose();
+
+    const failed = await makeAnsweringManager();
+    failed.requestQuestion("q");
+    failed.routeEvent({ type: "turn.error", turnId: failed.turnId, message: "boom" });
+    expect(pendingIds(failed.manager, failed.session.id)).toEqual([]);
+    expect(failed.received.some(({ event }) => event.type === "question.resolved" && event.answers === null)).toBe(true);
+    failed.manager.dispose();
   });
 });

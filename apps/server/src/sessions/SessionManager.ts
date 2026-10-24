@@ -99,6 +99,7 @@ import { cwCodeHome, opencodeServerDir, sessionDbPath, settingsFilePath, titleGe
 import { UsageLedger } from "../usage/UsageLedger.js";
 import { shutdownReservedError } from "../shutdown/shutdownReservation.js";
 import { overlayLiveTasks } from "../tasks/overlayLiveTasks.js";
+import { PendingRequests, type PendingRequest } from "./PendingRequests.js";
 
 export interface SessionManagerOptions {
   dbPath?: string;
@@ -229,6 +230,7 @@ export class SessionManager {
   private interruptedForShutdown = new Set<string>();
   private activeTurns = new Map<string, { sessionId: string; startedAt: number }>();
   private settledTurns = new Map<string, string>();
+  private pendingRequests = new PendingRequests();
   private titleTurns = new Map<string, TitleTurn>();
   private firstPrompts = new Map<string, string>();
   private pendingTurns = new Set<string>();
@@ -522,6 +524,7 @@ export class SessionManager {
         const wasActive = this.activeTurns.has(event.turnId);
         const turnStartedAt = this.activeTurns.get(event.turnId)?.startedAt;
         this.settleTurn(event.turnId, event.sessionId);
+        this.dropPendingRequests(this.pendingRequests.clearTurn(event.turnId));
         const stillActive = [...this.activeTurns.values()].some((entry) => entry.sessionId === event.sessionId);
         if (stillActive) {
           this.store.updateSession(event.sessionId, { resumeCursor: event.resumeCursor });
@@ -540,6 +543,7 @@ export class SessionManager {
     if (event.type === "turn.error") {
       if (sessionId) this.settleTurn(event.turnId, sessionId);
       else this.activeTurns.delete(event.turnId);
+      this.dropPendingRequests(this.pendingRequests.clearTurn(event.turnId));
       this.turnPrRefs.delete(event.turnId);
       this.turnFinalReviews.delete(event.turnId);
       if (sessionId) {
@@ -555,9 +559,17 @@ export class SessionManager {
       }
     }
     if (event.type === "approval.request" || event.type === "question.request") {
-      if (sessionId) this.store.updateSession(sessionId, { status: "input-required" }, "approval-pending");
+      if (sessionId) {
+        this.pendingRequests.add(
+          event.type === "approval.request"
+            ? { kind: "approval", sessionId, turnId: event.turnId, request: event.request }
+            : { kind: "question", sessionId, turnId: event.turnId, request: event.request }
+        );
+        this.store.updateSession(sessionId, { status: "input-required" }, "approval-pending");
+      }
     }
     if (event.type === "approval.resolved" || event.type === "question.resolved") {
+      this.pendingRequests.resolve(event.requestId);
       if (sessionId && this.activeTurns.has(event.turnId)) {
         this.store.updateSession(sessionId, { status: "working" }, "approval-resolved");
       }
@@ -1259,6 +1271,7 @@ export class SessionManager {
     this.firstPrompts.delete(sessionId);
     this.branchRenamed.delete(sessionId);
     this.cancelTitleTurns(sessionId);
+    this.dropPendingRequests(this.pendingRequests.clearSession(sessionId));
     this.store.updateSession(
       sessionId,
       { status, ...(opts.auto ? { autoResolved: true } : {}) },
@@ -2221,6 +2234,7 @@ export class SessionManager {
     const driver = session ? this.drivers[session.driver] : undefined;
     driver?.interrupt(turnId);
     this.settleTurn(turnId, sessionId);
+    this.dropPendingRequests(this.pendingRequests.clearTurn(turnId));
     this.turnPrRefs.delete(turnId);
     this.turnFinalReviews.delete(turnId);
     this.captureEndSnapshot(sessionId, turnId, driver ? () => this.driverSettled(driver, sessionId) : undefined);
@@ -2258,25 +2272,49 @@ export class SessionManager {
     return { ...result, history: overlayLiveTasks(result.history, driverLiveTasks(driver, sessionId)) };
   }
 
+  listPendingRequests(sessionId: string): PendingRequest[] {
+    return this.pendingRequests.list(sessionId);
+  }
+
   async respondApproval(requestId: string, decision: ApprovalDecision): Promise<void> {
-    for (const driver of Object.values(this.drivers)) {
-      if (typeof driver.respondToApproval !== "function") continue;
-      try {
-        await driver.respondToApproval(requestId, decision);
-      } catch (err) {
-        console.warn(`approval response failed for ${driver.kind}: ${(err as Error).message}`);
-      }
-    }
+    await this.answerPendingRequest(requestId, "approval", async (driver) => {
+      if (typeof driver.respondToApproval !== "function") throw new Error(`${driver.kind} cannot answer approvals`);
+      await driver.respondToApproval(requestId, decision);
+    });
   }
 
   async respondQuestion(requestId: string, answers: Record<string, string>): Promise<void> {
-    for (const driver of Object.values(this.drivers)) {
-      if (typeof driver.respondToQuestion !== "function") continue;
-      try {
-        await driver.respondToQuestion(requestId, answers);
-      } catch (err) {
-        console.warn(`question response failed for ${driver.kind}: ${(err as Error).message}`);
-      }
+    await this.answerPendingRequest(requestId, "question", async (driver) => {
+      if (typeof driver.respondToQuestion !== "function") throw new Error(`${driver.kind} cannot answer questions`);
+      await driver.respondToQuestion(requestId, answers);
+    });
+  }
+
+  private async answerPendingRequest(
+    requestId: string,
+    kind: PendingRequest["kind"],
+    answer: (driver: CliDriver) => Promise<void>
+  ): Promise<void> {
+    const entry = this.pendingRequests.claim(requestId, kind);
+    try {
+      const session = this.store.getSession(entry.sessionId);
+      if (!session) throw new Error(`unknown session ${entry.sessionId}`);
+      await answer(this.drivers[session.driver]);
+    } catch (err) {
+      this.pendingRequests.release(requestId);
+      throw err;
+    }
+  }
+
+  private dropPendingRequests(entries: PendingRequest[]): void {
+    for (const entry of entries) {
+      const requestId = entry.request.requestId;
+      this.onEvent(
+        entry.sessionId,
+        entry.kind === "approval"
+          ? { type: "approval.resolved", turnId: entry.turnId, requestId }
+          : { type: "question.resolved", turnId: entry.turnId, requestId, answers: null }
+      );
     }
   }
 

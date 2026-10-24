@@ -1,4 +1,4 @@
-import type { GitStatusUpdate } from "@cw-code/contracts";
+import type { GitStatusUpdate, ThreadEvent } from "@cw-code/contracts";
 import { filesTopic, GITHUB_RUNS_TOPIC, PRS_TOPIC, topicId } from "@cw-code/shared/topics";
 import { MAX_WATCHED_RUNS } from "../github/RunWatcher.js";
 import type { ServerApp } from "./ServerApp.js";
@@ -103,6 +103,21 @@ export function wireTopics(app: ServerApp): TopicWiring {
       syncWatchedRuns();
     },
     onLast: stopWatchingRuns
+  });
+
+  app.topics.on("session/", {
+    onSubscribe: (clientId, topic) => {
+      const sessionId = topicId(topic, "session/");
+      const services = app.currentServices();
+      if (!sessionId || !services) return;
+      for (const entry of services.sessions.listPendingRequests(sessionId)) {
+        const event: ThreadEvent =
+          entry.kind === "approval"
+            ? { type: "approval.request", turnId: entry.turnId, request: entry.request }
+            : { type: "question.request", turnId: entry.turnId, request: entry.request };
+        app.sendTo(clientId, "turn.event", { sessionId, event });
+      }
+    }
   });
 
   return {
