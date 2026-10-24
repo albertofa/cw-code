@@ -339,6 +339,7 @@ export class ServerApp {
   private handleShutdownRecovered(failure: string | null): void {
     this.servicesDisposed = false;
     this.startSessionSweeps();
+    this.topicWiring.resync();
     this.emitShutdownChanged();
     if (!failure) return;
     appendCrashLog(`shutdown recovery could not restart CLI drivers: ${failure}`);
