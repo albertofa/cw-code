@@ -426,6 +426,10 @@ function closeTurn(book: TurnBookkeeping, sessionId: string, turnId: string | un
   return { busyTurns, turnStartedAt, turnDurations };
 }
 
+type TurnStartedEvent = Extract<TurnEvent, { type: "turn.started" }>;
+
+const ignoredTurnStarts = new Map<string, TurnStartedEvent>();
+
 function knownTurnId(value: string | undefined): string | undefined {
   return value !== undefined && !isPendingTurn(value) ? value : undefined;
 }
@@ -1194,6 +1198,8 @@ export const useAppStore = create<AppState>((set, get) => ({
     const previousTodos = get().todosBySession[sessionId];
     const acceptFolderHead = opts?.acceptFolderHead ?? useBranchStore.getState().keptFolderHeadBySession[sessionId];
     const pending = nextPendingTurnId();
+    const previousAutoTurns = get().autoFollowUpTurns[sessionId];
+    ignoredTurnStarts.delete(sessionId);
     set({
       busyTurns: { ...get().busyTurns, [sessionId]: pending },
       autoFollowUpTurns: { ...get().autoFollowUpTurns, [sessionId]: opts?.auto ? (get().autoFollowUpTurns[sessionId] ?? 0) + 1 : 0 },
@@ -1216,7 +1222,10 @@ export const useAppStore = create<AppState>((set, get) => ({
         ...(acceptFolderHead ? { acceptFolderHead } : {})
       });
     } catch (err) {
+      const remoteStart = ignoredTurnStarts.get(sessionId);
+      ignoredTurnStarts.delete(sessionId);
       if (get().busyTurns[sessionId] === pending) {
+        const revertAutoTurns = opts?.auto && (err as { code?: unknown } | null)?.code === "session-busy";
         const book = closeTurn(
           { busyTurns: get().busyTurns, turnStartedAt: get().turnStartedAt, turnDurations: get().turnDurations },
           sessionId,
@@ -1226,6 +1235,14 @@ export const useAppStore = create<AppState>((set, get) => ({
           busyTurns: book.busyTurns,
           turnStartedAt: book.turnStartedAt,
           turnDurations: book.turnDurations,
+          ...(revertAutoTurns
+            ? {
+                autoFollowUpTurns:
+                  previousAutoTurns === undefined
+                    ? without(get().autoFollowUpTurns, sessionId)
+                    : { ...get().autoFollowUpTurns, [sessionId]: previousAutoTurns }
+              }
+            : {}),
           ...(previousTodos && previousTodos.length > 0 && (get().todosBySession[sessionId] ?? []).length === 0
             ? { todosBySession: { ...get().todosBySession, [sessionId]: previousTodos } }
             : {}),
@@ -1233,19 +1250,23 @@ export const useAppStore = create<AppState>((set, get) => ({
             ? { sessionsByProject: withSessionStatus(get().sessionsByProject, sessionId, previous.status) }
             : {})
         });
+        if (remoteStart) get().applyEvent(sessionId, remoteStart);
       }
       throw err;
     }
+    ignoredTurnStarts.delete(sessionId);
     const superseded = get().busyTurns[sessionId] !== pending;
+    const existing = get().messagesBySession[sessionId] ?? [];
     set({
       ...(superseded ? {} : { busyTurns: { ...get().busyTurns, [sessionId]: turnId } }),
-      messagesBySession: {
-        ...get().messagesBySession,
-        [sessionId]: [
-          ...(get().messagesBySession[sessionId] ?? []),
-          { id: `${turnId}-u`, role: "user", text: prompt, turnId, timestamp: Date.now() }
-        ]
-      }
+      ...(existing.some((m) => m.id === `${turnId}-u`)
+        ? {}
+        : {
+            messagesBySession: {
+              ...get().messagesBySession,
+              [sessionId]: [...existing, { id: `${turnId}-u`, role: "user", text: prompt, turnId, timestamp: Date.now() }]
+            }
+          })
     });
     if (superseded) void window.cw.interrupt(turnId);
     else void get().hydrateActiveTurns();
@@ -1388,14 +1409,18 @@ export const useAppStore = create<AppState>((set, get) => ({
     }
     if (event.type === "turn.started") {
       const current = get().busyTurns[sessionId];
-      if (isPendingTurn(current) || current === event.turnId) return;
+      if (isPendingTurn(current)) {
+        ignoredTurnStarts.set(sessionId, event);
+        return;
+      }
+      if (current === event.turnId) return;
       const userId = `${event.turnId}-u`;
       set({
         busyTurns: { ...get().busyTurns, [sessionId]: event.turnId },
         turnStartedAt: { ...get().turnStartedAt, [sessionId]: event.startedAt },
         todosBySession: { ...get().todosBySession, [sessionId]: [] },
         sessionsByProject: withSessionStatus(get().sessionsByProject, sessionId, "working"),
-        ...(messages.some((m) => m.id === userId)
+        ...(event.prompt === "" || messages.some((m) => m.id === userId)
           ? {}
           : {
               messagesBySession: {

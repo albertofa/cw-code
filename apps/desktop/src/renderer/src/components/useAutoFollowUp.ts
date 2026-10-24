@@ -23,7 +23,6 @@ import { errorMessage } from "./errorMessage.js";
 import { ipcErrorMessage } from "./ipcError.js";
 
 const NO_WORKFLOWS: PrWorkflow[] = [];
-const SESSION_BUSY = /^session busy\b/;
 
 function isBusy(sessionId: string): boolean {
   return useAppStore.getState().busyTurns[sessionId] !== undefined;
@@ -53,7 +52,7 @@ async function sendAutoFollowUp(followUp: AutoFollowUp, settings: AppSettings, h
       ...(finalReview ? { finalReview: { ref: link.ref, sha: detail.headRefOid } } : {})
     });
   } catch (err) {
-    if (SESSION_BUSY.test(ipcErrorMessage(err))) return false;
+    if ((err as { code?: unknown } | null)?.code === "session-busy") return false;
     useAppStore.getState().pauseAutoFollowUp(sessionId, "error");
     useNotifs.getState().push({
       kind: "error",

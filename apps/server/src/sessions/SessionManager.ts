@@ -99,6 +99,7 @@ import { cwCodeHome, opencodeServerDir, sessionDbPath, settingsFilePath, titleGe
 import { UsageLedger } from "../usage/UsageLedger.js";
 import { shutdownReservedError } from "../shutdown/shutdownReservation.js";
 import { overlayLiveTasks } from "../tasks/overlayLiveTasks.js";
+import { SessionBusyError } from "./SessionBusyError.js";
 import { PendingRequests, type PendingRequest } from "./PendingRequests.js";
 
 export interface SessionManagerOptions {
@@ -1957,9 +1958,9 @@ export class SessionManager {
     const project = this.store.getProject(session.projectId);
     if (!project) throw new Error(`unknown project ${session.projectId}`);
     for (const [turnId, entry] of this.activeTurns) {
-      if (entry.sessionId === sessionId) throw new Error(`session busy (turn ${turnId})`);
+      if (entry.sessionId === sessionId) throw new SessionBusyError(`turn ${turnId}`);
     }
-    if (this.pendingTurns.has(sessionId)) throw new Error("session busy (turn pending)");
+    if (this.pendingTurns.has(sessionId)) throw new SessionBusyError("turn pending");
     if (this.pendingResolves.has(sessionId)) throw new Error("session busy (resolve pending)");
     if (this.undoPendingOnRoot(session)) throw new Error("session busy (undo pending)");
     if (this.branchSwitchPendingOnRoot(session)) throw new Error(`${project.name} is switching branches — try again in a moment`);
@@ -2289,7 +2290,9 @@ export class SessionManager {
       permissionMode: this.getComposer(sessionId).permissionMode
     });
     if (result.status === "running" && result.turnId) {
-      this.activeTurns.set(result.turnId, { sessionId, startedAt: Date.now() });
+      const startedAt = Date.now();
+      this.activeTurns.set(result.turnId, { sessionId, startedAt });
+      this.onEvent(sessionId, { type: "turn.started", turnId: result.turnId, sessionId, startedAt, prompt: "" });
       this.store.updateSession(sessionId, { status: "working" }, "retry-connected");
     } else {
       this.store.updateSession(sessionId, { status: "idle" }, "retry-idle");

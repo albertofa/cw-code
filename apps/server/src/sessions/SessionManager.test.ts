@@ -327,7 +327,7 @@ describe("SessionManager", () => {
     const sessions: SessionMeta[] = [];
     manager.setProjectEmitter((project) => projects.push(project));
     manager.setSessionEmitter((session) => sessions.push(session));
-    const project = manager.addProject("C:\proj-mutations");
+    const project = manager.addProject("C:\\proj-mutations");
     expect(projects.map((p) => p.id)).toEqual([project.id]);
     manager.updateProjectSettings(project.id, {});
     expect(projects).toHaveLength(2);
@@ -2239,6 +2239,7 @@ describe("SessionManager", () => {
     expect(started?.sessionId).toBe(session.id);
     expect(started?.event).toMatchObject({ type: "turn.started", turnId, sessionId: session.id, prompt: "hello there" });
     expect(received.some((r) => r.event.type === "turn.interrupted")).toBe(false);
+    expect((await rejection(manager.startTurn(session.id, "again"))).code).toBe("session-busy");
     manager.interrupt(turnId);
     const interrupted = received.find((r) => r.event.type === "turn.interrupted");
     expect(interrupted?.sessionId).toBe(session.id);

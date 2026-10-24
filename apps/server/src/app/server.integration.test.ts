@@ -163,13 +163,16 @@ describe("server process", () => {
     await watcher.call("topics.subscribe", { topics: ["sidebar"] });
 
     const root = mkdtempSync(join(tmpdir(), "cw-sidebar-"));
-    const project = await bystander.call<Project>("projects.add", root);
-    const session = await bystander.call<SessionMeta>("sessions.create", { projectId: project.id, driver: "claude" });
-    await new Promise((resolve) => setTimeout(resolve, 300));
-    expect(projectsSeen.map((seen) => seen.id)).toEqual([project.id]);
-    expect(sessionsSeen.map((seen) => seen.id)).toEqual([session.id]);
-    expect(leaked).toEqual([]);
-    rmSync(root, { recursive: true, force: true });
+    try {
+      const project = await bystander.call<Project>("projects.add", root);
+      const session = await bystander.call<SessionMeta>("sessions.create", { projectId: project.id, driver: "claude" });
+      await new Promise((resolve) => setTimeout(resolve, 300));
+      expect(projectsSeen.map((seen) => seen.id)).toEqual([project.id]);
+      expect(sessionsSeen.map((seen) => seen.id)).toEqual([session.id]);
+      expect(leaked).toEqual([]);
+    } finally {
+      rmSync(root, { recursive: true, force: true });
+    }
   });
 
   it("lets only the owner manage device tokens and closes a revoked device with 4401", async () => {
