@@ -1397,6 +1397,7 @@ export const useAppStore = create<AppState>((set, get) => ({
         turnDurations: book.turnDurations,
         pendingApprovals: approvals,
         pendingQuestions: questions,
+        autoFollowUpPaused: withAutoPause(get().autoFollowUpPaused, sessionId, "interrupted"),
         sessionsByProject: patchSession(get().sessionsByProject, sessionId, { status: "holding", updatedAt: Date.now() })
       });
       return;
