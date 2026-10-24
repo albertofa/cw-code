@@ -609,7 +609,7 @@ function startUpdateAutotest(pending: PendingUpdateAutotest | null): void {
               cancel: async (token) => {
                 await link.call("shutdown.cancel", { token });
               },
-              isIdle: async () => (await link.call<ShutdownStatus>("shutdown.status")).idle
+              isIdle: async () => link.shutdown.idle
             }
           : null,
       install: (request) => (service ? installUpdate(service, request) : Promise.reject(new Error("cw-code services are not running"))),
