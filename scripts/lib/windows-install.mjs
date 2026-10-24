@@ -85,7 +85,25 @@ export function installDiagnostics(registryKeys) {
       return `${key}:\n${result.status === 0 ? result.stdout.trim() : "(absent)"}`;
     })
     .join("\n");
-  return `processes:\n${processes.stdout.trim() || "(none)"}\nregistry:\n${registry}`;
+  return `processes:\n${processes.stdout.trim() || "(none)"}\nwindows:\n${installerWindowTexts()}\nregistry:\n${registry}`;
+}
+
+const INSTALLER_WINDOW_SCRIPT = `
+Add-Type -AssemblyName UIAutomationClient, UIAutomationTypes
+$ids = @(Get-CimInstance Win32_Process | Where-Object { $_.Name -like '*Setup*' -or $_.Name -like 'Un_*' -or $_.Name -like 'Au_*' } | ForEach-Object { [int]$_.ProcessId })
+$root = [System.Windows.Automation.AutomationElement]::RootElement
+foreach ($window in $root.FindAll([System.Windows.Automation.TreeScope]::Children, [System.Windows.Automation.Condition]::TrueCondition)) {
+  if ($ids -notcontains $window.Current.ProcessId) { continue }
+  "window (pid $($window.Current.ProcessId)): $($window.Current.Name)"
+  foreach ($element in $window.FindAll([System.Windows.Automation.TreeScope]::Descendants, [System.Windows.Automation.Condition]::TrueCondition)) {
+    if ($element.Current.Name) { "  $($element.Current.ControlType.ProgrammaticName): $($element.Current.Name)" }
+  }
+}`;
+
+function installerWindowTexts() {
+  const result = spawnSync("powershell", ["-NoProfile", "-NonInteractive", "-Command", INSTALLER_WINDOW_SCRIPT], { encoding: "utf8", timeout: 30_000 });
+  if (result.error) return `(could not read installer windows: ${result.error.message})`;
+  return result.stdout.trim() || result.stderr.trim() || "(none)";
 }
 
 const INSTALLER_RETRY_DELAYS_SECONDS = [15, 30, 60, 120];
