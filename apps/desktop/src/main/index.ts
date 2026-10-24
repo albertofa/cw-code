@@ -2,6 +2,7 @@ import { app, BrowserWindow, dialog, ipcMain, nativeImage, nativeTheme, powerMon
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
+import { setTimeout as delay } from "node:timers/promises";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import type {
   AppNotice,
@@ -34,6 +35,7 @@ import { channelOfVersion, initialUpdateState, isUpdateChannel } from "./updates
 const __dirname = dirname(fileURLToPath(import.meta.url));
 
 const RENDERER_SHUTDOWN_ACK_MS = 5_000;
+const INSTALL_EXIT_TIMEOUT_MS = 30_000;
 const UPDATES_PENDING_MESSAGE = "Updates are unavailable until the cw-code server is ready";
 
 if (process.platform === "linux") {
@@ -516,7 +518,12 @@ async function commitInstall(token: string, action: () => void): Promise<Shutdow
     restartAfterFailedInstall = true;
     throw error;
   }
-  return result;
+  await delay(INSTALL_EXIT_TIMEOUT_MS);
+  appendCrashLog(`cw-code did not exit within ${INSTALL_EXIT_TIMEOUT_MS}ms after starting the installer; restarting the server`);
+  quitApproved = false;
+  restartAfterFailedInstall = true;
+  void serverProcess.start().catch((error: unknown) => reportFatalError("cw-code server stopped", error));
+  return { ok: false, message: `cw-code did not exit within ${Math.round(INSTALL_EXIT_TIMEOUT_MS / 1000)}s. Normal use has been restored.` };
 }
 
 async function installUpdate(service: UpdateService, args: unknown): Promise<UpdateActionResult> {
