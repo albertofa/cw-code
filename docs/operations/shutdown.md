@@ -121,32 +121,37 @@ resumes it through the CLI's own resume cursor.
   `CW_CODE_HOME` is set for dev: two instances writing the same stores can
   overwrite each other's changes, so point dev at its own `CW_CODE_HOME` when
   both run.
-- On Windows and Linux, closing the main window is intercepted while normal
-  services run: main sends `shutdown.requested { reason: "quit" }` to the
-  renderer. If the renderer does not call `shutdown.assess` or
-  `shutdown.prepare` within 5 s of that request (hung or crashed renderer),
-  main flushes, disposes and quits as before. On macOS closing the window keeps
-  the previous behaviour (the app stays running); the coordinated flow runs on
+- The coordinator lives in the cw-code server (`apps/server`); the Electron
+  shell (`apps/desktop/src/main`) only owns the window and the quit decision.
+- On Windows and Linux, closing the main window is intercepted while the server
+  link is open: the shell sends `shutdown.requested { reason: "quit" }` to the
+  renderer. If the renderer does not acknowledge (it does so when it calls
+  `shutdown.assess` or `shutdown.prepare` on the server) within 5 s (hung or
+  crashed renderer), the shell stops the server gracefully (`server.stop`, which
+  flushes and disposes) and quits. On macOS closing the window keeps the
+  previous behaviour (the app stays running); the coordinated flow runs on
   `before-quit` (Cmd+Q) instead.
-- `before-quit` is re-entrancy safe: it prompts only while no quit is approved
-  and no commit is running; otherwise it flushes and disposes services once.
+- `shutdown.quit` on the server commits the token, disposes services, replies
+  and exits; the renderer then sends `app.quit` to the shell, which quits.
+- `before-quit` is re-entrancy safe: it prompts only while no quit is approved;
+  once approved it waits for the server process to stop (graceful, then kill)
+  before the app exits.
 - OS session end (`session-end` on Windows, `powerMonitor` `shutdown`
-  elsewhere) flushes and disposes only; it never installs anything.
-- `SIGINT` / `SIGTERM` quit without the dialog.
-- If the renderer process dies or the main frame reloads or navigates (Ctrl+R,
-  the error boundary's Reload) while a flow is prepared or timed out, main
-  recovers the coordinator so the reloaded window is usable. Recovery runs on
-  `did-navigate` and `did-finish-load`, after the new document has committed,
-  so a navigation that is cancelled before it starts (for example an external
-  link blocked by `will-navigate`) never drops a live token. If recovery happens
-  after the window was already closed (a quit that never exited), main opens a
-  new window.
+  elsewhere) and `SIGINT` / `SIGTERM` approve the quit and stop the server
+  without the dialog; they never install anything. The server also exits on its
+  own when the shell's process disappears (`--parent-pid`).
+- If the renderer process dies or reloads while a flow is prepared or timed out,
+  its WebSocket closes and the server recovers the coordinator (and detaches
+  terminals when no other UI client is connected), so the reloaded window is
+  usable.
 - Recovery mode (broken metadata, see `metadata-migrations.md`) has no
   services and no coordinator; the window closes and the app quits normally.
 
-IPC: `shutdown.assess`, `shutdown.prepare`, `shutdown.force`, `shutdown.cancel`,
-`shutdown.quit` (all argument-validated in main) and the `shutdown.requested`
-and `shutdown.expired` events. The renderer API is `window.cw.shutdown.*`.
+Server methods: `shutdown.assess`, `shutdown.status`, `shutdown.prepare`,
+`shutdown.force`, `shutdown.cancel`, `shutdown.quit` (all argument-validated in
+the server) and the `shutdown.expired` / `shutdown.changed` events; the shell
+sends `shutdown.requested` to the renderer. The renderer API is
+`window.cw.shutdown.*`.
 `updates.install` commits a token through the same coordinator (see
 `updater.md`).
 

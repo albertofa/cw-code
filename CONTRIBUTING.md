@@ -24,8 +24,9 @@ manual testing requires the corresponding CLI to be installed and authenticated.
 ## Code conventions
 
 - Keep CLI-specific behavior behind the `CliDriver` seam.
-- Keep the IPC handler, preload bridge, renderer types, and store synchronized
-  when changing the main-to-renderer contract.
+- Put behavior in the server (`apps/server`); the UI only renders server state and
+  sends intents. Keep the contracts type, server handler, client adapter and store
+  synchronized when changing the server-to-UI contract.
 - Prefer small, typed changes and graceful visible failures over silent fallback.
 - Add tests for stable parsers, mappers, routing, and filesystem boundaries.
 

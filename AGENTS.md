@@ -21,23 +21,47 @@ Core behaviors:
 - History display is best-effort (local transcripts / server API); continuing a
   session always resumes full CLI context, independent of what history shows.
 
+## Architecture
+
+- `apps/server` (`@cw-code/server`): standalone Bun process that owns every operation —
+  CLI drivers, sessions, git, GitHub, files, terminals, settings, shutdown. It serves one
+  WebSocket (`/ws`) and is the only place business logic lives. Packaged as a
+  `bun build --compile` binary with `node-pty` as a sidecar (`CW_NODE_PTY`).
+- `apps/desktop`: Electron shell only — spawns and supervises the server (or attaches to a
+  running one), owns the window, zoom, attention badge, native dialogs, OS open/reveal and
+  auto-updates, and exposes them to the renderer as `window.cwDesktop` (`DesktopApi`).
+- `apps/desktop/src/renderer`: the UI. Talks to the server only through `@cw-code/client`
+  (`window.cw` is built from it in `renderer/src/server/createCwApi.ts`) and to the shell only
+  through `window.cwDesktop`. It never spawns processes, touches the filesystem, or imports
+  server code.
+- `packages/contracts`: shared types only, no runtime values (resolves to `dist` at runtime).
+  `packages/shared`: source-only runtime helpers usable by server, shell and UI
+  (`@cw-code/shared/<module>`, incl. protocol constants). `packages/client`: `ServerClient`.
+- Protocol: client sends `hello` (owner token from `~/.cw-code/userdata/server-token`,
+  `PROTOCOL_VERSION`), then `call`s (method names like `sessions.create`; no id =
+  fire-and-forget); the server answers `result`s and broadcasts `event`s. Payloads are JSON —
+  no `Map`/`Set`/`Date`/binary (send base64). The server writes `userdata/server.json` and
+  prints `CW_SERVER_READY <json>` when listening; a second server on the same home prints
+  `CW_SERVER_RUNNING <json>` and exits 3.
+
 ## Stack
 
-- Bun monorepo (package manager, script and test runtime): `apps/desktop` (Electron + React 19 + zustand + xterm.js),
-  `packages/contracts` (shared types only, no runtime logic).
-- Main/preload/renderer communicate exclusively through the typed preload bridge;
-  the renderer never spawns processes or touches the filesystem.
+- Bun monorepo (package manager, script and test runtime). UI: React 19 + zustand + xterm.js.
 - Session metadata persists as atomic JSON under `~/.cw-code/userdata`.
   Logs live in `~/.cw-code/logs`, paste/preview attachments in
   `~/.cw-code/userdata/attachments`, worktrees in `~/.cw-code/worktrees`.
-- Tests run on `bun test`; use `bun run test` (each package sets its own flags and preload, helpers in `apps/desktop/tests`); builds via electron-vite and electron-builder (Windows NSIS; Linux AppImage and deb).
+- Tests run on `bun test`; use `bun run test` (packages run sequentially; each sets its own flags and preload, helpers in `apps/*/tests`); builds via electron-vite, the server compile script, and electron-builder (Windows NSIS; Linux AppImage and deb).
 
 ## Guidelines
 
 - Follow the `CliDriver` seam for anything CLI-related. Supporting a new CLI
   means adding a driver, never changing UI or orchestration code.
-- Keep the main↔renderer contract in sync across all four layers whenever it
-  changes: IPC handler, preload bridge, renderer types, store.
+- New behavior goes in the server; the UI renders server state and sends intents. Keep a
+  contract change in sync across all four layers: contracts type, server handler/event,
+  client adapter (`createCwApi` / `CwApi`), store. Shell features follow the same rule with
+  `DesktopApi`, shell IPC and preload.
+- Assume several clients may be connected: server state changes must be broadcast, never
+  returned only to the caller.
 - Never parse CLI-internal file formats as truth; use them for display only and
   degrade gracefully when shapes drift.
 - Normalize filesystem paths at storage boundaries; resolve executables through
