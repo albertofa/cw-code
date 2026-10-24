@@ -87,9 +87,12 @@ idle ──prepare──▶ preparing ──▶ prepared ──commit──▶ c
   `force(token)` (dispose the remaining owned processes, then close terminals)
   or `cancel(token)` (drivers are rebuilt and the terminals were never closed).
 - `commit(token, action)` runs the quit or install action once; repeated calls
-  with the same token share the same promise. If the action throws, or the
-  process is still alive after 30 s, the coordinator recovers and returns a
-  failure message.
+  with the same token share the same promise. If the action throws, the
+  coordinator recovers and returns a failure message. The server's
+  `shutdown.quit` disposes services as its action and exits right after
+  replying, so the "still alive after 30 s" check runs in the Electron shell
+  instead: an update install stays pending until the app exits, and after 30 s
+  the shell restarts its server, reconnects, and reports the failure.
 - A prepared or timed-out token is a 120 s lease: if it is not committed,
   forced or cancelled in time (for example the renderer reloaded or hung), the
   coordinator recovers on its own and calls `onExpired(reason)`; main then

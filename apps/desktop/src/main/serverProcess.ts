@@ -147,6 +147,8 @@ export class ServerProcess {
   }
 
   start(): Promise<ServerReady> {
+    this.stopRequested = false;
+    this.stopping = null;
     return this.launchExclusive();
   }
 

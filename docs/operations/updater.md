@@ -571,9 +571,12 @@ before. Interrupted turns stay `holding`/interrupted and are never restarted.
   that error into an exception) makes the commit fail at once. The coordinator
   recovers the drivers and terminal pool, and the service returns to `ready`
   with `error.context` `install`, retryable.
-- A process that is still alive 30 s after `quitAndInstall` returned (the
-  installer may be running, or the quit was blocked) gets the same service
-  recovery, but the install error is not retryable: "The installer was
+- The server commits the shutdown and exits right after replying, so the
+  Electron shell owns the exit timeout: a successful commit stays pending until
+  the app exits. A shell that is still alive 30 s after `quitAndInstall`
+  returned (the installer may be running, or the quit was blocked) restarts its
+  server, reconnects, and reports a failure; the install error is not
+  retryable: "The installer was
   started; restart cw-code if it is still open". `electron-updater` latches
   `quitAndInstallCalled` once an installer was spawned, so a second call would
   silently do nothing. From then on the service refuses installs, checks and

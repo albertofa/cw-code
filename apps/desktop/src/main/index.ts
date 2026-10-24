@@ -520,10 +520,21 @@ async function commitInstall(token: string, action: () => void): Promise<Shutdow
   }
   await delay(INSTALL_EXIT_TIMEOUT_MS);
   appendCrashLog(`cw-code did not exit within ${INSTALL_EXIT_TIMEOUT_MS}ms after starting the installer; restarting the server`);
+  await restoreAfterFailedInstall();
+  return { ok: false, message: `cw-code did not exit within ${Math.round(INSTALL_EXIT_TIMEOUT_MS / 1000)}s. Normal use has been restored.` };
+}
+
+async function restoreAfterFailedInstall(): Promise<void> {
   quitApproved = false;
   restartAfterFailedInstall = true;
-  void serverProcess.start().catch((error: unknown) => reportFatalError("cw-code server stopped", error));
-  return { ok: false, message: `cw-code did not exit within ${Math.round(INSTALL_EXIT_TIMEOUT_MS / 1000)}s. Normal use has been restored.` };
+  serverStop = null;
+  serverStopped = false;
+  try {
+    await serverProcess.start();
+    await link.connect();
+  } catch (error) {
+    reportFatalError("cw-code server stopped", error);
+  }
 }
 
 async function installUpdate(service: UpdateService, args: unknown): Promise<UpdateActionResult> {

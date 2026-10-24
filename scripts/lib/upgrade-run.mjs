@@ -517,7 +517,7 @@ export async function runScenario(entry, context) {
     } catch (err) {
       record.problems.push(`feed server did not close: ${err.message}`);
     }
-    if (record.problems.length > 0) record.notes.push(`diagnostics before cleanup:\n${installDiagnostics(registryPaths(TEST_GUID, false))}`);
+    if (record.problems.length > 0) record.notes.push(`diagnostics before cleanup:\n${installDiagnostics(keys)}`);
     const stopped = [];
     for (const pid of knownPids) stopped.push(killProcessTreeIfImage(pid, isUpdateTestImage));
     for (const fake of readJsonLines(paths.fakeLog)) {

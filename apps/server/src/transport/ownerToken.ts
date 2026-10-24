@@ -1,8 +1,7 @@
 import { SERVER_TOKEN_FILE } from "@cw-code/shared/protocol";
 import { randomBytes } from "node:crypto";
-import { chmodSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { chmodSync, mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
-import { writeFileAtomic } from "../storage/atomicFile.js";
 
 const TOKEN_PATTERN = /^[0-9a-f]{64}$/;
 const OWNER_ONLY = 0o600;
@@ -25,12 +24,14 @@ function isValid(token: string | null): token is string {
 }
 
 function rewriteToken(path: string, token: string): string {
-  writeFileAtomic(path, token);
+  const temp = `${path}.${process.pid}.tmp`;
+  writeFileSync(temp, token, { mode: OWNER_ONLY });
   try {
-    chmodSync(path, OWNER_ONLY);
+    chmodSync(temp, OWNER_ONLY);
   } catch (error) {
-    if (process.platform !== "win32") console.warn(`could not restrict ${path} to its owner: ${(error as Error).message}`);
+    if (process.platform !== "win32") console.warn(`could not restrict ${temp} to its owner: ${(error as Error).message}`);
   }
+  renameSync(temp, path);
   return token;
 }
 
