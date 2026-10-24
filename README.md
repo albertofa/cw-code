@@ -116,25 +116,30 @@ bun run dist
 
 `bun run dist` creates the Windows installer; on Linux,
 `bun --filter @cw-code/desktop dist:linux` creates the AppImage and the .deb.
+Both build the server first (`bun --filter @cw-code/server build`), which compiles
+`apps/server` into `apps/server/dist/cw-code-server` with `node-pty` beside it as a
+sidecar; the installers ship them under `resources/server/`.
 On Linux, `bun install` compiles `node-pty` from source, so install a C++
 toolchain and Python 3 first (`sudo apt-get install build-essential python3` on
-Debian and Ubuntu). Native PTY support is loaded lazily;
-if its binary does not match the Electron runtime, the app continues without
-PTY tabs and shows a degraded-state message. To rebuild `node-pty` locally:
-
-```powershell
-bun --cwd apps/desktop electron-rebuild -f -w node-pty
-```
+Debian and Ubuntu). `node-pty` runs in the Bun server, not in Electron, so it is
+never rebuilt for Electron. Native PTY support is loaded lazily; if the binary
+fails to load, the app continues without PTY tabs and shows a degraded-state
+message.
 
 ## Architecture
 
-- `apps/desktop` contains the Electron main process, preload bridge, and React
-  renderer.
-- `packages/contracts` contains shared types without runtime logic.
+- `apps/server` is a standalone Bun WebSocket server that owns all operations:
+  sessions, CLI drivers, PTYs, files, git, settings, and shutdown coordination.
+- `apps/desktop` is the Electron shell (window, updater, native dialogs and a
+  small set of IPC channels), the preload bridge, and the React renderer. The shell
+  spawns the server and the renderer talks to it over the WebSocket.
+- `packages/contracts` contains shared types without runtime logic;
+  `packages/client` is the WebSocket client and `packages/shared` holds pure helpers
+  used by more than one app or package.
 - CLI integrations implement the `CliDriver` seam and are isolated from UI
   orchestration.
-- The renderer communicates with the main process only through the typed
-  preload bridge.
+- The renderer reaches the server through the typed WebSocket client, and the
+  Electron shell only through the typed preload bridge.
 - App-owned files live under `~/.cw-code`: session metadata as atomic JSON
   in `userdata/`, paste/preview attachments in `userdata/attachments/`,
   logs in `logs/`, worktrees in `worktrees/`.

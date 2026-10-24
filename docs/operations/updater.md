@@ -24,8 +24,8 @@ All updater code is in `apps/desktop/src/main/updates/`:
 
 The contract types live in `packages/contracts/src/updates.ts`.
 
-`main/index.ts` creates the service in `createServices()`, so it exists only in
-normal startup. Recovery mode has no updater on purpose: the user has to fix the
+`main/index.ts` creates the service in `ensureUpdateService()`, once the server link
+reports startup mode `ready`, so it exists only in normal startup. Recovery mode has no updater on purpose: the user has to fix the
 metadata first, and an update must not replace the app while its data files are
 broken. The service is disposed on `before-quit`, except while `installing`
 (see [Failure recovery](#failure-recovery)). The adapter, and with it the `NsisUpdater` instance, is created

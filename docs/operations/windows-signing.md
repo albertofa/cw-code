@@ -33,8 +33,11 @@ binaries may still ship inside a signed package. cw-code therefore signs exactly
 This list lives in code in two places: `$FirstPartyAppFiles` in
 `scripts/verify-signatures.ps1`, and `FIRST_PARTY_APP_FILES` / `roleOf` in
 `tools/release/src/signingManifest.ts`. Callers cannot change it. Every other PE file under
-`win-unpacked` (Electron's DLLs, ffmpeg, node-pty's prebuilt `.node`/`.exe`/`.dll` files,
-electron-builder's `elevate.exe`) is **third-party**.
+`win-unpacked` (Electron's DLLs, ffmpeg, node-pty's prebuilt `.node`/`.exe`/`.dll` files
+under `resources/server/node_modules/node-pty`, electron-builder's `elevate.exe`) is
+**third-party**. That includes `win-unpacked/resources/server/cw-code-server.exe`, the
+compiled server, which is first-party code that is not signed yet (see
+[Known gap: server binary is unsigned](#known-gap-server-binary-is-unsigned)).
 
 | Role | Accepted |
 | --- | --- |
@@ -126,8 +129,8 @@ without the owner's explicit approval.
      writes the request (mode, version, source-sha, run SHA/ref, tooling commit) to the step
      summary.
 2. **package-app**: checks out `source-sha`, runs a frozen install, `release apply
-   --version`, `electron-vite build`, and `electron-builder --win nsis --x64 --publish
-   never`. In `signpath` mode it adds
+   --version`, the server build (`bun --filter @cw-code/server build`), `electron-vite
+   build`, and `electron-builder --win nsis --x64 --publish never`. In `signpath` mode it adds
    `-c.win.signtoolOptions.publisherName=<CW_WINDOWS_PUBLISHER_NAME>` and fails if that
    variable is empty. It writes `package-info.json` (`version`, `sourceSha`,
    `signingMode`, `production`, `runId`, `toolingSha`) and uploads `win-unpacked/` plus
@@ -207,6 +210,31 @@ The installer must pack exactly the tree that was signed and verified.
 `isAdminRightsRequired` for `perMachine: true`, which this app does not use). The
 tree-digest check turns any other write by electron-builder into a hard failure.
 Per-machine installs keep working because `elevate.exe` is already in the app.
+
+### Known gap: server binary is unsigned
+
+`win-unpacked/resources/server/cw-code-server.exe` is the Bun-compiled server the app
+spawns (`apps/desktop/electron-builder.yml` ships it through `extraResources`). It is
+first-party code, but it is not signed: `.signpath/artifact-configurations/app.xml` lists
+only `win-unpacked/cw-code.exe`, and the signing scope code treats every other PE file as
+third-party, where `NotSigned` is accepted. The `Check the packaged app layout` step in
+`package-app` only requires that the file exists.
+
+To sign it:
+
+1. Add a `<pe-file path="win-unpacked/resources/server/cw-code-server.exe">` entry with
+   `<authenticode-sign />` to `.signpath/artifact-configurations/app.xml`, and have a
+   SignPath administrator re-upload that artifact configuration. The entry has no effect
+   until it is uploaded.
+2. Add `win-unpacked/resources/server/cw-code-server.exe` to `FIRST_PARTY_APP_FILES` in
+   `tools/release/src/signingManifest.ts` and to `$FirstPartyAppFiles` in
+   `scripts/verify-signatures.ps1`, so the file is verified as first-party (`Valid`,
+   expected publisher, timestamped) and the first-party set check requires it.
+3. Add `win-unpacked/resources/server/cw-code-server.exe` to the file list of the
+   `Check the signed output layout` step of the `sign-app` job in `sign-windows.yml`.
+4. Check once that a Bun `--compile` executable still runs after Authenticode signing,
+   by running the signed `cw-code-server.exe` and the packaged startup probe against the
+   signed package. Do not enable the entry before that check passes.
 
 ### Known gap: the uninstaller
 

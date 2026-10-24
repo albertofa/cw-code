@@ -3,7 +3,7 @@
 cw-code runs real CLI processes on the user's behalf. Quitting the app, and
 later restarting to install an update, must not lose unsaved edits, must say
 which work gets interrupted, and must stop only processes cw-code started. One
-coordinator handles both cases: `apps/desktop/src/main/shutdown/ShutdownCoordinator.ts`.
+coordinator handles both cases: `apps/server/src/shutdown/ShutdownCoordinator.ts`.
 
 ## Owned process inventory
 
@@ -109,7 +109,7 @@ Interrupted turns keep the existing marking: the session becomes `holding`
 resent automatically and no process is resurrected; continuing a session
 resumes it through the CLI's own resume cursor.
 
-## Quit path (main process)
+## Quit path (Electron shell)
 
 - `app.requestSingleInstanceLock()` runs before any store is opened. A second
   instance quits immediately; the first instance restores and focuses its

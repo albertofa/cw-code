@@ -11,8 +11,9 @@ that a later, separately-gated publish job in `release.yml` consumes.
 - Alpha: `X.Y.Z-alpha.N`.
 
 `apps/desktop/package.json`'s `X.Y.Z` (its prerelease identifier, if any, stripped) is the
-single authoritative "intended next stable base". The three package.json files
-(root, `apps/desktop`, `packages/contracts`) must always carry the same version; `check-sync`
+single authoritative "intended next stable base". The six package.json files
+(root, `apps/desktop`, `apps/server`, `packages/client`, `packages/contracts`,
+`packages/shared`) must always carry the same version; `check-sync`
 verifies this and `set-base`/`apply` keep them in sync.
 
 The next alpha for the current base is `base-alpha.(N + 1)`, where `N` is the highest
@@ -29,9 +30,11 @@ Planning an alpha is rejected outright if:
 
 Either case is a hard error, not a skip — bump the base first with a normal PR (`set-base`).
 
-The version applied to the three `package.json` files happens only inside the CI workspace
+The version applied to the six `package.json` files happens only inside the CI workspace
 at build time, via `apply`, and is never committed. Because there is no version-bump commit,
-there is no recursive CI trigger. The publish job of `release.yml` creates the git tag `v<version>`
+there is no recursive CI trigger. The server binary embeds the version of
+`apps/server/package.json` when it is compiled, so `apply` must run before the server
+build in every packaging job. The publish job of `release.yml` creates the git tag `v<version>`
 at the exact source SHA recorded in the plan — the tag is never created here.
 
 ## Stable promotion
@@ -190,9 +193,9 @@ the heredoc delimiter format, so values are never corrupted or split by embedded
   `apply --version <version>` remains for local/manual use but is rejected unless `<version>`
   is on the current desktop base (use `set-base` to change the base, or pass `--plan`).
   Applies to the workspace only, never committed.
-- `set-base --version X.Y.Z` — writes a new stable base into the three `package.json` files
+- `set-base --version X.Y.Z` — writes a new stable base into the six `package.json` files
   (this is the normal-PR path referenced above).
-- `check-sync` — verifies the three `package.json` files agree on a single version.
+- `check-sync` — verifies the six `package.json` files agree on a single version.
 - `rehash`, `signing-manifest`, `check-signing-manifest` — Windows signing post-processing
   and the `signing.json` gate; documented in [windows-signing.md](windows-signing.md).
 - `stage-release-set`, `validate-release-assets`, `select-upgrade-base`, `publish`,
