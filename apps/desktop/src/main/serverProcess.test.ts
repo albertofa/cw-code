@@ -2,7 +2,7 @@ import { describe, expect, it } from "bun:test";
 import { join, resolve } from "node:path";
 import { allowRestart, parseServerLine, serverCommand, splitLines } from "./serverProcess.js";
 
-const READY = { url: "ws://127.0.0.1:51234/ws", port: 51234, pid: 4242, protocol: 1, version: "0.0.1-alpha.21" };
+const READY = { url: "ws://127.0.0.1:51234/ws", port: 51234, pid: 4242, protocol: 2, version: "0.0.1-alpha.21" };
 
 describe("parseServerLine", () => {
   it("reads the ready and already-running announcements", () => {

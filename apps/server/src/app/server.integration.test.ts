@@ -1,6 +1,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "bun:test";
 import { ServerClient } from "@cw-code/client";
-import type { AppSettings, DeviceCreateResult, DeviceInfo, ServerReady, StartupState } from "@cw-code/contracts";
+import type { AppSettings, ClientKind, DeviceCreateResult, DeviceInfo, PrSummary, ServerReady, StartupState } from "@cw-code/contracts";
 import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -55,8 +55,8 @@ async function readTaggedLine(proc: ServerProcess, tag: string): Promise<string>
   }
 }
 
-async function connect(clientToken = token): Promise<ServerClient> {
-  const client = new ServerClient({ endpoint: { url: ready.url, token: clientToken }, client: "desktop-ui" });
+async function connect(clientToken = token, kind: ClientKind = "desktop-ui"): Promise<ServerClient> {
+  const client = new ServerClient({ endpoint: { url: ready.url, token: clientToken }, client: kind });
   clients.push(client);
   await client.connect();
   return client;
@@ -128,17 +128,39 @@ describe("server process", () => {
     expect(await client.call("topics.unsubscribe", { topics: ["sidebar", "app"] })).toBeNull();
   });
 
+  it("pushes tracked PRs only to the subscriber and still broadcasts settings", async () => {
+    const subscriber = await connect();
+    const bystander = await connect();
+    const pushed: PrSummary[][] = [];
+    const leaked: unknown[] = [];
+    subscriber.on("prs.tracked", (payload) => pushed.push(payload as PrSummary[]));
+    bystander.on("prs.tracked", (payload) => leaked.push(payload));
+    expect(await subscriber.call("topics.subscribe", { topics: ["prs"] })).toEqual({});
+    expect(pushed).toEqual([[]]);
+
+    const settingsSeen = (client: ServerClient) =>
+      new Promise<AppSettings>((resolve) => {
+        client.on("settings.changed", (payload) => resolve(payload as AppSettings));
+      });
+    const both = Promise.all([settingsSeen(subscriber), settingsSeen(bystander)]);
+    const current = await subscriber.call<AppSettings>("settings.get");
+    await subscriber.call("settings.set", { claudeReasoningExpanded: !current.claudeReasoningExpanded });
+    for (const seen of await both) expect(seen.claudeReasoningExpanded).toBe(!current.claudeReasoningExpanded);
+    expect(leaked).toEqual([]);
+  });
+
   it("lets only the owner manage device tokens and closes a revoked device with 4401", async () => {
     const owner = await connect();
     const created = await owner.call<DeviceCreateResult>("devices.create", { name: "Phone" });
     expect(created.device).toMatchObject({ name: "Phone", connected: false });
     expect(readFileSync(join(home, "userdata", "devices.json"), "utf8")).not.toContain(created.token);
 
-    const device = await connect(created.token);
+    const device = await connect(created.token, "web");
     await expect(device.call("devices.create", { name: "Rogue" })).rejects.toMatchObject({ code: "forbidden" });
     await expect(device.call("devices.revoke", { id: created.device.id })).rejects.toMatchObject({ code: "forbidden" });
     expect((await device.call<DeviceInfo[]>("devices.list")).map((info) => info.id)).toContain(created.device.id);
 
+    await owner.call("topics.subscribe", { topics: ["app"] });
     const changed = new Promise<DeviceInfo[]>((resolve) => {
       owner.on("devices.changed", (payload) => resolve(payload as DeviceInfo[]));
     });
@@ -151,7 +173,7 @@ describe("server process", () => {
     await closed;
     expect(device.lastError?.code).toBe("unauthorized");
     expect((await changed).some((info) => info.id === created.device.id)).toBe(false);
-    await expect(connect(created.token)).rejects.toMatchObject({ code: "unauthorized" });
+    await expect(connect(created.token, "web")).rejects.toMatchObject({ code: "unauthorized" });
   });
 
   it("refuses to start a second server on the same home", async () => {

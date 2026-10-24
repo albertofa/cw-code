@@ -12,7 +12,7 @@ const UNUSED_PID = 2_147_483_000;
 let root: string;
 
 function ready(pid: number): ServerReady {
-  return { url: "ws://127.0.0.1:4000/ws", port: 4000, pid, protocol: 1, version: "1.2.3" };
+  return { url: "ws://127.0.0.1:4000/ws", port: 4000, pid, protocol: 2, version: "1.2.3" };
 }
 
 beforeEach(() => {

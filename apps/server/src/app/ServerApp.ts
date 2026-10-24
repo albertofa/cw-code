@@ -18,7 +18,9 @@ import { Router, type ClientAuth } from "../transport/Router.js";
 import { TopicRegistry } from "../transport/TopicRegistry.js";
 import { WsServer } from "../transport/WsServer.js";
 import { eventAudience } from "./eventAudience.js";
+import { eventTopic } from "./eventTopics.js";
 import { createServices, type Services } from "./services.js";
+import { wireTopics } from "./topicWiring.js";
 
 const SESSION_SETTLE_INTERVAL_MS = 60_000;
 const SESSION_SETTLE_INITIAL_DELAY_MS = 5_000;
@@ -38,6 +40,7 @@ function isProcessGone(pid: number): boolean {
 export class ServerApp {
   readonly router = new Router();
   readonly topics = new TopicRegistry();
+  private readonly topicWiring = wireTopics(this);
   private deviceTokens: DeviceTokens | null = null;
   private services: Services | null = null;
   private state: StartupState = { mode: "ready" };
@@ -64,7 +67,14 @@ export class ServerApp {
   }
 
   emit(channel: string, payload?: unknown): void {
-    this.ws?.broadcast(channel, payload, eventAudience(channel));
+    const topic = eventTopic(channel, payload);
+    if (topic === null) {
+      this.ws?.broadcast(channel, payload, eventAudience(channel));
+      return;
+    }
+    const subscribers = this.topics.subscribers(topic);
+    if (subscribers.size === 0) return;
+    this.ws?.sendTo(subscribers, channel, payload);
   }
 
   sendTo(clientId: string, channel: string, payload?: unknown): void {
@@ -271,6 +281,7 @@ export class ServerApp {
         console.warn(`turn snapshot index sweep failed: ${(err as Error).message}`);
       });
     this.startSessionSweeps();
+    this.topicWiring.resync();
   }
 
   private handleShutdownRecovered(failure: string | null): void {

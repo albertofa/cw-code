@@ -1,6 +1,6 @@
 import type { ServerReady } from "@cw-code/contracts";
 
-export const PROTOCOL_VERSION = 1;
+export const PROTOCOL_VERSION = 2;
 export const CLOSE_UNAUTHORIZED = 4401;
 export const CLOSE_PROTOCOL_MISMATCH = 4426;
 export const CLOSE_HELLO_TIMEOUT = 4408;
