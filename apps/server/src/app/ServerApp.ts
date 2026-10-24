@@ -22,6 +22,7 @@ const SESSION_SETTLE_INTERVAL_MS = 60_000;
 const SESSION_SETTLE_INITIAL_DELAY_MS = 5_000;
 const PARENT_CHECK_INTERVAL_MS = 2_000;
 const STOP_AFTER_REPLY_MS = 50;
+const STOP_DEADLINE_MS = 5_000;
 
 function isProcessGone(pid: number): boolean {
   try {
@@ -167,6 +168,10 @@ export class ServerApp {
   async stop(exitCode: number): Promise<void> {
     if (this.stopping) return;
     this.stopping = true;
+    setTimeout(() => {
+      appendCrashLog(`server did not stop within ${STOP_DEADLINE_MS}ms; exiting`);
+      process.exit(exitCode);
+    }, STOP_DEADLINE_MS);
     if (this.parentTimer) clearInterval(this.parentTimer);
     this.parentTimer = null;
     try {

@@ -141,7 +141,7 @@ export class WsServer {
     if (!server) return;
     this.server = null;
     for (const ws of [...this.sockets]) ws.close(CLOSE_SERVER_STOPPING, "server stopping");
-    await server.stop();
+    await server.stop(true);
   }
 
   private onOpen(ws: Socket): void {
