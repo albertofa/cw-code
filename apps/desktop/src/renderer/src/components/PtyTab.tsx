@@ -45,8 +45,6 @@ export function PtyTab({ sessionId, kind }: { sessionId: string; kind: DriverNam
     let observer: ResizeObserver | null = null;
     let raf = 0;
     let nudgeRaf = 0;
-    let ready = false;
-    const pendingData: Array<{ ptyId: string; data: string }> = [];
     const pendingExit: Array<{ ptyId: string; token: string; exitCode: number }> = [];
 
     const pushSize = () => {
@@ -113,12 +111,7 @@ export function PtyTab({ sessionId, kind }: { sessionId: string; kind: DriverNam
       remeasureWhenFontLoads(term);
 
       offPty = window.cw.onPtyData((msg) => {
-        if (msg.ptyId !== ptyIdRef.current) {
-          if (!ptyIdRef.current) pendingData.push(msg);
-          return;
-        }
-        if (ready && term) term.write(msg.data);
-        else pendingData.push(msg);
+        if (msg.ptyId === ptyIdRef.current) term?.write(msg.data);
       });
       offExit = window.cw.onPtyExit((msg) => {
         if (!ptyIdRef.current) {
@@ -130,7 +123,7 @@ export function PtyTab({ sessionId, kind }: { sessionId: string; kind: DriverNam
 
       window.cw.openPty(sessionId, kind).then(({ ptyId, token, replay }) => {
         if (disposed) {
-          window.cw.detachPty(ptyId, token);
+          window.cw.detachPty(ptyId);
           return;
         }
         ptyIdRef.current = ptyId;
@@ -140,11 +133,6 @@ export function PtyTab({ sessionId, kind }: { sessionId: string; kind: DriverNam
           term.write(replay);
           nudgeRepaint(ptyId);
         }
-        ready = true;
-        for (const chunk of pendingData) {
-          if (chunk.ptyId === ptyId) term?.write(chunk.data);
-        }
-        pendingData.length = 0;
         const exited = pendingExit.find((entry) => entry.ptyId === ptyId && entry.token === token);
         if (exited) setExitCode(exited.exitCode);
       }).catch((err: Error) => {
@@ -173,7 +161,7 @@ export function PtyTab({ sessionId, kind }: { sessionId: string; kind: DriverNam
       dataHandler?.dispose();
       offPty?.();
       offExit?.();
-      if (ptyIdRef.current && ptyTokenRef.current) window.cw.detachPty(ptyIdRef.current, ptyTokenRef.current);
+      if (ptyIdRef.current) window.cw.detachPty(ptyIdRef.current);
       ptyIdRef.current = null;
       ptyTokenRef.current = null;
       termRef.current?.dispose();

@@ -29,13 +29,25 @@ describe("buildResumeArgs", () => {
 
 class FakePty implements PtyInstance {
   kills = 0;
+  writes: string[] = [];
+  resizes: Array<[number, number]> = [];
+  private dataHandlers: Array<(data: string) => void> = [];
   private exitHandlers: Array<(e: { exitCode: number }) => void> = [];
-  onData(): void {}
+  onData(cb: (data: string) => void): void {
+    this.dataHandlers.push(cb);
+  }
   onExit(cb: (e: { exitCode: number }) => void): void {
     this.exitHandlers.push(cb);
   }
-  write(): void {}
-  resize(): void {}
+  write(data: string): void {
+    this.writes.push(data);
+  }
+  resize(cols: number, rows: number): void {
+    this.resizes.push([cols, rows]);
+  }
+  emit(data: string): void {
+    for (const handler of this.dataHandlers) handler(data);
+  }
   kill(): void {
     this.kills += 1;
   }
@@ -240,5 +252,39 @@ describe("PtyPool terminal launch", () => {
       return null;
     });
     expect(asked).toBe(false);
+  });
+});
+
+describe("PtyPool clients", () => {
+  it("forwards every chunk and returns everything so far as the replay", async () => {
+    const { pool, spawned } = makePool();
+    const forwarded: string[] = [];
+    await pool.open("sess_a", ".", "shell", "", undefined, (_ptyId, data) => forwarded.push(data));
+    spawned[0].emit("one ");
+    spawned[0].emit("two");
+    expect(forwarded).toEqual(["one ", "two"]);
+    await expect(pool.open("sess_a", ".", "shell", "", undefined, noData)).resolves.toMatchObject({ replay: "one two" });
+  });
+
+  it("records a resize from a client that is not the latest without applying it", async () => {
+    const { pool, spawned } = makePool();
+    await pool.open("sess_a", ".", "shell", "", undefined, noData);
+    pool.resize("sess_a:shell", "a", 100, 40);
+    pool.resize("sess_a:shell", "b", 80, 24);
+    expect(spawned[0].resizes).toEqual([[100, 40]]);
+    pool.write("sess_a:shell", "b", "ls");
+    expect(spawned[0].resizes).toEqual([[100, 40], [80, 24]]);
+    expect(spawned[0].writes).toEqual(["ls"]);
+    pool.detach("sess_a:shell", "b");
+    expect(spawned[0].resizes).toEqual([[100, 40], [80, 24], [100, 40]]);
+  });
+
+  it("ignores sizes that are not integers between 1 and 1000", async () => {
+    const { pool, spawned } = makePool();
+    await pool.open("sess_a", ".", "shell", "", undefined, noData);
+    pool.resize("sess_a:shell", "a", 0, 24);
+    pool.resize("sess_a:shell", "a", 80, 1001);
+    pool.resize("sess_a:shell", "a", 80.5, 24);
+    expect(spawned[0].resizes).toEqual([]);
   });
 });

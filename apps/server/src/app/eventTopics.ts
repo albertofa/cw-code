@@ -1,4 +1,4 @@
-import { APP_TOPIC, filesTopic, GITHUB_RUNS_TOPIC, gitTopic, PRS_TOPIC, sessionTopic, SIDEBAR_TOPIC } from "@cw-code/shared/topics";
+import { APP_TOPIC, filesTopic, GITHUB_RUNS_TOPIC, gitTopic, PRS_TOPIC, ptyTopic, sessionTopic, SIDEBAR_TOPIC } from "@cw-code/shared/topics";
 
 type TopicResolver = (payload: unknown) => string | null;
 
@@ -17,6 +17,8 @@ const broadcast: TopicResolver = () => null;
 
 const bySession = (build: (sessionId: string) => string): TopicResolver => (payload) => build(field(payload, "sessionId"));
 
+const byPty: TopicResolver = (payload) => ptyTopic(field(payload, "ptyId"));
+
 const CHANNEL_TOPICS: ReadonlyMap<string, TopicResolver> = new Map([
   ["turn.event", bySession(sessionTopic)],
   ["composer.changed", bySession(sessionTopic)],
@@ -28,8 +30,8 @@ const CHANNEL_TOPICS: ReadonlyMap<string, TopicResolver> = new Map([
   ["prs.tracked", fixed(PRS_TOPIC)],
   ["github.runsChanged", fixed(GITHUB_RUNS_TOPIC)],
   ["github.ciActivity", fixed(GITHUB_RUNS_TOPIC)],
-  ["pty.data", broadcast],
-  ["pty.exit", broadcast],
+  ["pty.data", byPty],
+  ["pty.exit", byPty],
   ["skills.changed", fixed(APP_TOPIC)],
   ["devices.changed", fixed(APP_TOPIC)],
   ["shutdown.expired", broadcast],

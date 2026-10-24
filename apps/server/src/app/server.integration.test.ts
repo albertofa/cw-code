@@ -125,6 +125,7 @@ describe("server process", () => {
     const client = await connect();
     expect(await client.call("topics.subscribe", { topics: ["sidebar"] })).toEqual({});
     await expect(client.call("topics.subscribe", { topics: ["pty/x:shell"] })).rejects.toMatchObject({ code: "invalid-topic" });
+    await expect(client.call("topics.unsubscribe", { topics: ["pty/x:shell"] })).rejects.toMatchObject({ code: "invalid-topic" });
     expect(await client.call("topics.unsubscribe", { topics: ["sidebar", "app"] })).toBeNull();
   });
 

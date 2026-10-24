@@ -16,6 +16,7 @@ function parseTopics(params: unknown, method: string): string[] {
   if (topics.length > MAX_TOPICS_PER_CALL) throw rpcError("invalid-topic", `${method} accepts at most ${MAX_TOPICS_PER_CALL} topics per call`);
   for (const topic of topics) {
     if (!isValidTopic(topic)) throw rpcError("invalid-topic", `invalid topic: ${JSON.stringify(topic)}`);
+    if (topic.startsWith(PTY_PREFIX)) throw rpcError("invalid-topic", "pty topics are managed by pty.open/pty.detach");
   }
   return topics as string[];
 }
@@ -23,9 +24,6 @@ function parseTopics(params: unknown, method: string): string[] {
 export function registerTopicHandlers(router: Router, app: ServerApp): void {
   handle<TopicsParams>(router, "topics.subscribe", (params, ctx): TopicSubscribeResult => {
     const topics = parseTopics(params, "topics.subscribe");
-    if (topics.some((topic) => topic.startsWith(PTY_PREFIX))) {
-      throw rpcError("invalid-topic", "pty topics are managed by pty.open/pty.detach");
-    }
     const added = new Set(topics.filter((topic) => !app.topics.isSubscribed(ctx.clientId, topic)));
     if (app.topics.countFor(ctx.clientId) + added.size > MAX_TOPICS_PER_CLIENT) {
       throw rpcError("too-many-topics", `a client may subscribe to at most ${MAX_TOPICS_PER_CLIENT} topics`);

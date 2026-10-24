@@ -5,6 +5,7 @@ import type { ServerApp } from "./ServerApp.js";
 
 const GIT_PREFIX = "git/";
 const FILES_PREFIX = "files/";
+const PTY_PREFIX = "pty/";
 
 export interface TopicWiring {
   resync(): void;
@@ -85,6 +86,12 @@ export function wireTopics(app: ServerApp): TopicWiring {
       if (!sessionId) return;
       app.clientInputs.clearPaths(clientId, sessionId);
       applyFiles(sessionId);
+    }
+  });
+  app.topics.on(PTY_PREFIX, {
+    onUnsubscribe: (clientId, topic) => {
+      const ptyId = topicId(topic, PTY_PREFIX);
+      if (ptyId) app.currentServices()?.ptys.detach(ptyId, clientId);
     }
   });
   app.topics.on(GITHUB_RUNS_TOPIC, {

@@ -8,6 +8,7 @@ import { traceHarnessCall, truncateError } from "../debug/harnessTrace.js";
 import { shutdownReservedError } from "../shutdown/shutdownReservation.js";
 import { sanitizedChildEnv } from "../shellEnvironment.js";
 import { detachProcessGroup, killProcessTreeByPid } from "../processTree.js";
+import { LatestClientSize, type PtySize } from "./ptySize.js";
 
 export type PtyKind = "claude" | "opencode" | "codex" | "shell";
 
@@ -42,11 +43,17 @@ interface PtyEntry {
   proc: PtyInstance;
   replay: string;
   token: string;
-  attachedCount: number;
+  sizes: LatestClientSize;
   release?: () => void;
 }
 
 const REPLAY_LIMIT_CHARS = 262_144;
+const INITIAL_SIZE: PtySize = { cols: 120, rows: 30 };
+const MAX_DIMENSION = 1000;
+
+function isDimension(value: number): boolean {
+  return Number.isInteger(value) && value >= 1 && value <= MAX_DIMENSION;
+}
 
 let cachedPty: PtyModule | null = null;
 let loadError: string | null = null;
@@ -158,18 +165,17 @@ export class PtyPool {
   }
 
   private attach(entry: PtyEntry, ptyId: string): PtyAttachResult {
-    entry.attachedCount += 1;
     if (this.pendingKills.delete(ptyId)) this.kill(ptyId);
     return { ptyId, token: entry.token, replay: entry.replay };
   }
 
-  detach(ptyId: string, token: string): void {
+  detach(ptyId: string, clientId: string): void {
     const entry = this.ptys.get(ptyId);
-    if (entry && entry.token === token && entry.attachedCount > 0) entry.attachedCount -= 1;
+    if (entry) this.applySize(entry, entry.sizes.remove(clientId));
   }
 
-  detachAll(): void {
-    for (const entry of this.ptys.values()) entry.attachedCount = 0;
+  private applySize(entry: PtyEntry, size: PtySize | null): void {
+    if (size) entry.proc.resize(size.cols, size.rows);
   }
 
   private async spawn(
@@ -261,8 +267,8 @@ export class PtyPool {
     try {
       proc = pty.spawn(target.file, target.args, {
         name: "xterm-256color",
-        cols: 120,
-        rows: 30,
+        cols: INITIAL_SIZE.cols,
+        rows: INITIAL_SIZE.rows,
         cwd,
         env: sanitizedChildEnv({ ...(env ?? process.env), ...(attached?.env ?? {}) }, process.platform)
       });
@@ -284,11 +290,11 @@ export class PtyPool {
       this.killPty(proc);
       throw new Error("pty pool disposed");
     }
-    const entry: PtyEntry = { sessionId, kind, proc, replay: "", token: `pty-${this.nextToken++}`, attachedCount: 0 };
+    const entry: PtyEntry = { sessionId, kind, proc, replay: "", token: `pty-${this.nextToken++}`, sizes: new LatestClientSize(INITIAL_SIZE) };
     this.ptys.set(ptyId, entry);
     proc.onData((data) => {
       appendReplay(entry, data);
-      if (entry.attachedCount > 0) onData(ptyId, data);
+      onData(ptyId, data);
     });
     proc.onExit(({ exitCode }) => {
       if (this.ptys.get(ptyId) === entry) this.ptys.delete(ptyId);
@@ -308,12 +314,21 @@ export class PtyPool {
     return entry;
   }
 
-  write(ptyId: string, data: string): void {
-    this.ptys.get(ptyId)?.proc.write(data);
+  has(ptyId: string): boolean {
+    return this.ptys.has(ptyId);
   }
 
-  resize(ptyId: string, cols: number, rows: number): void {
-    this.ptys.get(ptyId)?.proc.resize(cols, rows);
+  write(ptyId: string, clientId: string, data: string): void {
+    const entry = this.ptys.get(ptyId);
+    if (!entry) return;
+    this.applySize(entry, entry.sizes.input(clientId));
+    entry.proc.write(data);
+  }
+
+  resize(ptyId: string, clientId: string, cols: number, rows: number): void {
+    const entry = this.ptys.get(ptyId);
+    if (!entry || !isDimension(cols) || !isDimension(rows)) return;
+    this.applySize(entry, entry.sizes.resize(clientId, { cols, rows }));
   }
 
   kill(ptyId: string): void {

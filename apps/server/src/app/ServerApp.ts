@@ -157,7 +157,7 @@ export class ServerApp {
     ws.onClientClosed((ctx) => {
       this.topics.dropClient(ctx.clientId);
       this.clientInputs.dropClient(ctx.clientId);
-      if (ctx.client === "desktop-ui" && !this.stopping) this.handleUiDisconnected(ws);
+      if (ctx.client === "desktop-ui" && !this.stopping) this.handleUiDisconnected();
     });
     const ready: ServerReady = { url, port, pid: process.pid, protocol: PROTOCOL_VERSION, version: this.version };
     writeEndpoint(userdataDir(), ready);
@@ -269,6 +269,7 @@ export class ServerApp {
     initClaudeCommandsCache(claudeCommandsCachePath());
     const services = createServices(stores, {
       emit: (channel, payload) => this.emit(channel, payload),
+      dropTopic: (topic) => this.topics.dropTopic(topic),
       legacyAppRoots: this.args.legacyUserData,
       onShutdownRecovered: (failure) => this.handleShutdownRecovered(failure),
       onShutdownExpired: (reason) => this.handleShutdownExpired(reason)
@@ -311,10 +312,8 @@ export class ServerApp {
     this.emitShutdownChanged();
   }
 
-  private handleUiDisconnected(ws: WsServer): void {
+  private handleUiDisconnected(): void {
     this.recoverAbandonedShutdown();
-    if (ws.clients().some((client) => client.client === "desktop-ui")) return;
-    this.services?.ptys.detachAll();
   }
 
   private recoverAbandonedShutdown(): void {

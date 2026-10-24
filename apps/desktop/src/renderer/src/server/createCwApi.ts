@@ -53,6 +53,7 @@ import type {
   SessionCleanupResult
 } from "../cw.js";
 import { ipcErrorMessage } from "../components/ipcError.js";
+import { createPtyAttachments, type PtyOpenResult } from "./ptyAttachments.js";
 
 const BASE64_CHUNK = 0x8000;
 
@@ -70,6 +71,7 @@ export function createCwApi(client: ServerClient, desktop: DesktopApi, shutdownH
   const call = <T>(method: string, params?: unknown): Promise<T> => client.call<T>(method, params);
   const callVoid = (method: string, params?: unknown): Promise<void> => client.call(method, params).then(() => undefined);
   const subscribe = <T>(channel: string, cb: (payload: T) => void): (() => void) => client.on(channel, (payload) => cb(payload as T));
+  const ptyAttachments = createPtyAttachments((ptyId) => client.send("pty.detach", { ptyId }));
 
   function searchGitHub(kind: "pr", query: string, countBase: string, force?: boolean): Promise<GitHubSearchResult<PrSummary>>;
   function searchGitHub(kind: "issue", query: string, countBase: string, force?: boolean): Promise<GitHubSearchResult<IssueSummary>>;
@@ -260,10 +262,10 @@ export function createCwApi(client: ServerClient, desktop: DesktopApi, shutdownH
       return call<string>("fs.savePasteImage", { projectId, mime, base64: toBase64(data) });
     },
     readImage: (args) => call<{ mime: string; base64: string }>("fs.readImage", args),
-    openPty: (sessionId, kind) => call<{ ptyId: string; token: string; replay: string }>("pty.open", { sessionId, kind }),
+    openPty: (sessionId, kind) => ptyAttachments.open(() => call<PtyOpenResult>("pty.open", { sessionId, kind })),
     writePty: (ptyId, data) => client.send("pty.write", { ptyId, data }),
     resizePty: (ptyId, cols, rows) => client.send("pty.resize", { ptyId, cols, rows }),
-    detachPty: (ptyId, token) => client.send("pty.detach", { ptyId, token }),
+    detachPty: (ptyId) => ptyAttachments.detach(ptyId),
     killPty: (ptyId) => client.send("pty.kill", { ptyId }),
     onPtyData: (cb) => subscribe("pty.data", cb),
     onPtyExit: (cb) => subscribe("pty.exit", cb),

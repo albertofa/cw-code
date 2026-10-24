@@ -15,7 +15,9 @@ describe("eventTopic", () => {
     ["github.runsChanged", [], "github/runs"],
     ["github.ciActivity", {}, "github/runs"],
     ["skills.changed", { skills: [] }, "app"],
-    ["devices.changed", [], "app"]
+    ["devices.changed", [], "app"],
+    ["pty.data", { ptyId: "sess_a:shell", data: "x" }, "pty/sess_a:shell"],
+    ["pty.exit", { ptyId: "sess_a:shell", token: "pty-1", exitCode: 0 }, "pty/sess_a:shell"]
   ])("routes %s to its topic", (channel, payload, topic) => {
     expect(eventTopic(channel, payload)).toBe(topic);
   });
@@ -25,9 +27,7 @@ describe("eventTopic", () => {
     ["settings.changed"],
     ["startup.changed"],
     ["shutdown.changed"],
-    ["app.notice"],
-    ["pty.data"],
-    ["pty.exit"]
+    ["app.notice"]
   ])("broadcasts %s", (channel) => {
     expect(eventTopic(channel, {})).toBeNull();
   });
@@ -35,7 +35,8 @@ describe("eventTopic", () => {
   test.each([
     ["turn.event", { sessionId: "", event: {} }],
     ["turn.event", { event: {} }],
-    ["composer.changed", null]
+    ["composer.changed", null],
+    ["pty.data", { data: "x" }]
   ])("gives %s with a missing id a topic nobody can subscribe to", (channel, payload) => {
     const topic = eventTopic(channel, payload);
     expect(topic).not.toBeNull();
