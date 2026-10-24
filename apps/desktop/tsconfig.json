@@ -8,6 +8,7 @@
     "noEmit": true,
     "baseUrl": ".",
     "paths": {
+      "@cw-code/client": ["../../packages/client/src/index.ts"],
       "@cw-code/contracts": ["../../packages/contracts/src/index.ts"],
       "@cw-code/shared/*": ["../../packages/shared/src/*"],
       "@cw-code/server/*": ["../server/src/*"]
