@@ -21,7 +21,7 @@ import { TopicRegistry } from "../transport/TopicRegistry.js";
 import { WsServer } from "../transport/WsServer.js";
 import { ClientInputs } from "./clientInputs.js";
 import { eventAudience } from "./eventAudience.js";
-import { eventTopic } from "./eventTopics.js";
+import { eventTopic, isRoutableTopic } from "./eventTopics.js";
 import { createServices, type Services } from "./services.js";
 import { wireTopics } from "./topicWiring.js";
 
@@ -76,9 +76,14 @@ export class ServerApp {
       this.ws?.broadcast(channel, payload, eventAudience(channel));
       return;
     }
+    if (!isRoutableTopic(channel, topic)) return;
     const subscribers = this.topics.subscribers(topic);
     if (subscribers.size === 0) return;
     this.ws?.sendTo(subscribers, channel, payload);
+  }
+
+  isConnected(clientId: string): boolean {
+    return this.ws?.isConnected(clientId) ?? false;
   }
 
   sendTo(clientId: string, channel: string, payload?: unknown): void {

@@ -1,6 +1,6 @@
 import { describe, expect, spyOn, test } from "bun:test";
 import { isValidTopic } from "@cw-code/shared/topics";
-import { eventTopic } from "./eventTopics.js";
+import { eventTopic, isRoutableTopic } from "./eventTopics.js";
 
 describe("eventTopic", () => {
   test.each([
@@ -41,6 +41,19 @@ describe("eventTopic", () => {
     const topic = eventTopic(channel, payload);
     expect(topic).not.toBeNull();
     expect(isValidTopic(topic)).toBe(false);
+  });
+
+  test("drops an invalid topic and warns once per channel", () => {
+    const warn = spyOn(console, "warn").mockImplementation(() => {});
+    try {
+      expect(isRoutableTopic("turn.event", "session/")).toBe(false);
+      expect(isRoutableTopic("turn.event", "session/")).toBe(false);
+      expect(isRoutableTopic("pty.data", "pty/")).toBe(false);
+      expect(warn).toHaveBeenCalledTimes(2);
+      expect(isRoutableTopic("turn.event", "session/sess_a")).toBe(true);
+    } finally {
+      warn.mockRestore();
+    }
   });
 
   test("broadcasts an unknown channel and warns once", () => {

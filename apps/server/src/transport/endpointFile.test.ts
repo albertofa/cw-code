@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import type { ServerReady } from "@cw-code/contracts";
+import { PROTOCOL_VERSION } from "@cw-code/shared/protocol";
 import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -12,7 +13,7 @@ const UNUSED_PID = 2_147_483_000;
 let root: string;
 
 function ready(pid: number): ServerReady {
-  return { url: "ws://127.0.0.1:4000/ws", port: 4000, pid, protocol: 2, version: "1.2.3" };
+  return { url: "ws://127.0.0.1:4000/ws", port: 4000, pid, protocol: PROTOCOL_VERSION, version: "1.2.3" };
 }
 
 beforeEach(() => {

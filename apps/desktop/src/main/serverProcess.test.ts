@@ -1,8 +1,9 @@
 import { describe, expect, it } from "bun:test";
+import { PROTOCOL_VERSION } from "@cw-code/shared/protocol";
 import { join, resolve } from "node:path";
 import { allowRestart, parseServerLine, serverArgs, serverCommand, splitLines } from "./serverProcess.js";
 
-const READY = { url: "ws://127.0.0.1:51234/ws", port: 51234, pid: 4242, protocol: 2, version: "0.0.1-alpha.21" };
+const READY = { url: "ws://127.0.0.1:51234/ws", port: 51234, pid: 4242, protocol: PROTOCOL_VERSION, version: "0.0.1-alpha.21" };
 
 describe("parseServerLine", () => {
   it("reads the ready and already-running announcements", () => {

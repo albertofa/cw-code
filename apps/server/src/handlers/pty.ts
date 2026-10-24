@@ -2,7 +2,7 @@ import { ptyTopic } from "@cw-code/shared/topics";
 import type { ServerApp } from "../app/ServerApp.js";
 import type { PtyKind } from "../pty/PtyPool.js";
 import type { CallContext, Router } from "../transport/Router.js";
-import { handle } from "./shared.js";
+import { handle, subscribeIfConnected } from "./shared.js";
 
 export function registerPtyHandlers(router: Router, app: ServerApp): void {
   const services = () => app.requireServices();
@@ -23,7 +23,7 @@ export function registerPtyHandlers(router: Router, app: ServerApp): void {
         )
       )
       .then((result) => {
-        app.topics.subscribe(ctx.clientId, [ptyTopic(result.ptyId)]);
+        subscribeIfConnected(app, ctx.clientId, [ptyTopic(result.ptyId)]);
         return result;
       });
   });

@@ -4,12 +4,12 @@ import { homedir } from "node:os";
 import type { ServerApp } from "../app/ServerApp.js";
 import type { SessionStatusReason } from "../debug/sessionStatusTrace.js";
 import type { Router } from "../transport/Router.js";
-import { handle } from "./shared.js";
+import { handle, subscribeIfConnected } from "./shared.js";
 
 export function registerSessionHandlers(router: Router, app: ServerApp): void {
   const services = () => app.requireServices();
   const subscribeToSession = (clientId: string, sessionId: string): void => {
-    if (app.topics.countFor(clientId) < MAX_TOPICS_PER_CLIENT) app.topics.subscribe(clientId, [sessionTopic(sessionId)]);
+    if (app.topics.countFor(clientId) < MAX_TOPICS_PER_CLIENT) subscribeIfConnected(app, clientId, [sessionTopic(sessionId)]);
   };
   handle(router, "projects.list", () => services().sessions.listProjects());
   handle<string>(router, "projects.add", (rootPath) => services().sessions.addProject(rootPath));

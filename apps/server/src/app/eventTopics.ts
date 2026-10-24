@@ -1,4 +1,4 @@
-import { APP_TOPIC, filesTopic, GITHUB_RUNS_TOPIC, gitTopic, PRS_TOPIC, ptyTopic, sessionTopic, SIDEBAR_TOPIC } from "@cw-code/shared/topics";
+import { APP_TOPIC, filesTopic, GITHUB_RUNS_TOPIC, gitTopic, isValidTopic, PRS_TOPIC, ptyTopic, sessionTopic, SIDEBAR_TOPIC } from "@cw-code/shared/topics";
 
 type TopicResolver = (payload: unknown) => string | null;
 
@@ -42,6 +42,17 @@ const CHANNEL_TOPICS: ReadonlyMap<string, TopicResolver> = new Map([
 ]);
 
 const warnedChannels = new Set<string>();
+
+const warnedInvalidChannels = new Set<string>();
+
+export function isRoutableTopic(channel: string, topic: string): boolean {
+  if (isValidTopic(topic)) return true;
+  if (!warnedInvalidChannels.has(channel)) {
+    warnedInvalidChannels.add(channel);
+    console.warn(`[events] channel '${channel}' produced invalid topic ${JSON.stringify(topic)}; dropping its events`);
+  }
+  return false;
+}
 
 export function eventTopic(channel: string, payload: unknown): string | null {
   const resolve = CHANNEL_TOPICS.get(channel);

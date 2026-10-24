@@ -148,6 +148,20 @@ describe("WsServer", () => {
     expect(await client.call("echo", { a: 1 })).toEqual({ params: { a: 1 }, client: "desktop-ui" });
   });
 
+  test("reports whether a client is connected", async () => {
+    const { server, url } = startServer();
+    const client = newClient(url);
+    const { clientId } = await client.connect();
+    expect(server.isConnected(clientId)).toBe(true);
+    expect(server.isConnected("unknown")).toBe(false);
+    const closed = new Promise<void>((resolve) => {
+      server.onClientClosed(() => resolve());
+    });
+    client.close();
+    await closed;
+    expect(server.isConnected(clientId)).toBe(false);
+  });
+
   test("resolves null for handlers that return nothing", async () => {
     const { router, url } = startServer();
     router.handle("noop", () => undefined);

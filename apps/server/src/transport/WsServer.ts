@@ -138,6 +138,10 @@ export class WsServer {
     }
   }
 
+  isConnected(clientId: string): boolean {
+    return this.socketsByClient.has(clientId);
+  }
+
   closeClients(match: (ctx: CallContext) => boolean, code: number, reason: string): number {
     let closed = 0;
     for (const ws of [...this.sockets]) {
